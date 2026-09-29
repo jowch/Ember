@@ -1,6 +1,6 @@
-# turtleR design
+# Ember design
 
-turtleR (working name) is a reactive notebook for R with Pluto.jl's
+Ember is a reactive notebook for R with Pluto.jl's
 guarantees: each global is defined in one cell, editing a cell reruns the
 cells that depend on it, the notebook is one plain-text file with durable cell
 IDs, and its package environment is detected from the code and recorded in
@@ -16,7 +16,7 @@ Python cells with inputs declared by hand; Quarto, Shiny and learnr need
 reactivity declared with `reactive()` or `input:`. marimo closed R support as
 "not planned" (marimo#6620).
 
-turtleR is an **R package written in R**, standalone, MIT-licensed. It plays
+Ember is an **R package written in R**, standalone, MIT-licensed. It plays
 the part Pluto plays for Julia:
 
 - a **server** R process: reads cells, builds the graph, schedules runs,
@@ -303,7 +303,7 @@ Linux: a C compiler) and, if missing, stops with instructions.
 A plain `.R` file that runs top to bottom with `Rscript`:
 
 ```r
-### A turtleR notebook ###
+### An Ember notebook ###
 # /// environment
 # r_version = "4.5.1"
 # snapshot = "2026-09-01"
@@ -383,7 +383,7 @@ AI features, the welcome page.
 
 **Interactive inputs.** Pluto's frontend already has the mechanism (bonds:
 the page reports an input's value, the server sets a variable and reruns its
-dependents). turtleR keeps it; the R-side API is to be designed.
+dependents). Ember keeps it; the R-side API is to be designed.
 
 **Look distinct:** own colours, fonts and layout. Programs that inject
 scripts into the page (Endeavor does) rely on the DOM hooks Pluto's page has
@@ -424,7 +424,7 @@ Each step ends in something that runs.
   blank. marimo, which also opens without running by default, saves the
   session's outputs as you work to `__marimo__/session/<notebook>.json` and
   restores them on open when every cell's code still matches. Proposed: the
-  same, beside the file (`.turtleR/<notebook>.json`), but per cell: restore a
+  same, beside the file (`.ember/<notebook>.json`), but per cell: restore a
   cell's output when its code and its ancestors' code match, so one edited
   cell doesn't blank the whole notebook. The notebook file itself stays code
   only.
