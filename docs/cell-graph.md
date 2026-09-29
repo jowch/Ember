@@ -84,13 +84,16 @@ a$formulas[[1]]$columns  # "y" "x"
 
 ## Shape
 
-**Three files.** `R/rules.R` holds the tables the design calls "the
-engine's rules": attach functions, setting functions, untrackable reads,
-formula operators, ignored names. Changing a rule is one edit in one file,
-which is what "rare and announced" needs. `R/analysis.R` owns reading one
-cell. `R/graph.R` owns everything across cells. Nothing in `graph.R`
-inspects language objects and nothing in `analysis.R` knows about other
-cells, so the boundary is the `ember_cell_analysis` value.
+**Files.** `R/rules.R` holds the tables the design calls "the engine's
+rules": attach functions, setting functions, untrackable reads, formula
+operators, ignored names, glue functions. Changing a rule is one edit in one
+file, which is what "rare and announced" needs. Reading one cell is
+`R/analysis.R` (the result type and `read_cell()`), `R/scope.R`,
+`R/walk.R`, `R/walk-formula.R`, `R/walk-calls.R` and `R/positions.R`.
+Everything across cells is `R/graph.R` (building) and `R/queries.R`.
+Nothing in the graph files inspects language objects and nothing in the
+reading files knows about other cells, so the boundary is the
+`ember_cell_analysis` value.
 
 **`ember_cell_analysis`** is a list of small data frames (`definitions`,
 `references`, `packages`, `settings`, `sourced`, `notes`), a list of

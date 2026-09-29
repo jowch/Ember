@@ -46,9 +46,24 @@ untracked_reads <- c("get", "get0", "mget", "exists", "dynGet",
 
 #' Calls whose arguments are code, not references.
 #'
-#' Their arguments are not walked. `bquote` is walked, because `.()` parts
+#' Their arguments are not walked (except `substitute`'s second argument;
+#' see `walk_expr`'s dispatch). `bquote` is walked, because `.()` parts
 #' read globals and the design prefers an extra edge to a missing one.
 quoting_functions <- c("quote", "substitute", "expression", "alist")
+
+#' Functions whose string-literal arguments are glue templates (`"{...}"`
+#' interpolation): a cell that only uses another cell's variable inside
+#' such a string still needs the edge, or it goes stale (cell-graph.md's
+#' glue design gap).
+glue_functions <- c("glue", "glue_data", "str_glue")
+
+#' Is `name` one of the glue-syntax functions? Every `cli_`-prefixed
+#' function (`cli_alert_success`, `cli_abort`, `cli_text`, `cli_warn`,
+#' `cli_inform`, ...) uses glue syntax for interpolation, so the whole
+#' family is matched by prefix instead of listing each one.
+is_glue_function <- function(name) {
+  name %in% glue_functions || startsWith(name, "cli_")
+}
 
 #' Assignment operators, each with the side that names the target.
 assignment_ops <- c("<-" = "lhs", "=" = "lhs", "<<-" = "lhs",
@@ -89,10 +104,17 @@ formula_data_positional <- c("lm", "glm", "aov", "lmer", "glmer", "nls",
 #' and `.env` are purrr/dplyr pronouns and `~` lambda arguments, never a
 #' notebook object. `break` and `next` parse as zero-argument calls
 #' (`` `break`() ``); listing them here is simpler than special-casing loop
-#' control in the walker.
+#' control in the walker. `..1`, `..2`, ... (any `..N`) are purrr's
+#' positional lambda pronouns; matched by `is_dot_dot_name()` since N is
+#' unbounded, not listed here.
 ignored_names <- c(".", ".Random.seed", "T", "F", "TRUE", "FALSE", "NULL",
-                   "NA", "Inf", "NaN", "...", "..1", "..2", "..3",
+                   "NA", "Inf", "NaN", "...",
                    ".x", ".y", ".data", ".env", "break", "next")
+
+#' Is `name` a `..N` positional lambda pronoun (`..1`, `..2`, `..42`, ...)?
+is_dot_dot_name <- function(name) {
+  grepl("^\\.\\.[0-9]+$", name)
+}
 
 #' Is `name` private to its cell?
 #'

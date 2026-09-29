@@ -116,8 +116,12 @@ repository depends on them.
 ```
 DESCRIPTION               # imports: httpuv, later, processx, jsonlite, RcppMsgPack, renv
 R/
-  analysis.R              # cell reading: definitions, references, packages
-  graph.R                 # topology, run order, errors
+  rules.R                 # the engine's rules as tables
+  analysis.R              # cell reading: the result type and read_cell()
+  scope.R, walk*.R        # the walker: scopes, constructs, formulas, calls
+  positions.R             # exact positions from getParseData()
+  graph.R                 # edges, run order, errors
+  queries.R               # upstream, downstream, affected, summaries
   notebook.R              # file format: read, write
   server.R                # httpuv, websocket protocol, state diffs
   packages.R              # detection, lock, install
@@ -219,6 +223,14 @@ look like references; that only adds an edge when some cell defines a global
 with the same name. The cost is a rerun, or a false cycle when that cell also
 reads the result (`df |> mutate(z = x * 2)`, then a later cell defines `x`
 from it); the error suggests renaming the global.
+
+**Code inside strings and lambdas.** glue and cli interpolate `{…}` in
+strings (`glue("{total} of {n}")`, `cli_alert("{n} files")`), so the
+expression in each segment is read as code; `{{` is an escape. A one-sided
+formula passed to a function that isn't a model function (purrr's
+`~ { v <- .x * 2; v + 1 }`) is a lambda: it is read as a function body with
+its own locals, not by the formula rule. Both were found by the corpus test
+in build step 1.
 
 **Writes static reading can't see.** `assign()`, `load()`, `data()`,
 `list2env()`, `makeActiveBinding()`, and `<<-` or `rm()` inside a function
@@ -793,9 +805,23 @@ HTML export (`/notebookexport`), which Endeavor uses.
 
 **Replace for R:**
 
-- R syntax highlighting (CodeMirror's legacy R mode). It gives no syntax
-  tree, so go-to-definition and variable highlighting use the server's
-  analysis, sent with each cell's dependencies.
+- An R grammar for CodeMirror 6, written for Ember in Lezer, CodeMirror's
+  parser system, as Pluto has one for Julia. It gives highlighting, bracket
+  matching, folding and indentation, and keeps a tree for half-typed code.
+  The only existing one, `lezer-r` 0.1.3, fails on `;`, `|>`, `\(x)`,
+  formulas, `if (a) b else c`, unary minus and `x[1, ]` (16 of 24 installed
+  vignette scripts had errors), and tree-sitter-r would need an adapter and
+  lose CodeMirror's tree-based features. The hard part is R's line breaks
+  (a newline ends an expression only when it is complete and outside `(` or
+  `[`; `else` on the next line is valid inside braces only), handled with an
+  external tokenizer as Lezer's JavaScript grammar handles semicolons. It is
+  tested by comparing its expression boundaries with `getParseData()` on the
+  corpus from build step 1, and may be offered back to `lezer-r`.
+- Go-to-definition and variable highlighting use the server's analysis
+  (each name with its exact position), sent with each cell's dependencies;
+  the browser only marks the spans. Completion and help come from the
+  worker, with a fallback to base R names and the notebook's definitions
+  when there is no worker or it is busy, as Pluto's does.
 - Autocomplete and the help panel from the worker's completion and help.
 - Error display for R tracebacks. "Multiple definitions" and "Cyclic
   references" keep Pluto's rendering.
@@ -911,6 +937,8 @@ run), and the snapshot has no stale state.
 2. **Engine without UI:** file format, worker, scheduler, R API, tests.
 3. **Packages:** detection, lock, installs.
 4. **UI fork:** protocol in R, removals, R adaptations, theme.
+   - **R grammar for the editor,** a separate track run alongside step 2:
+     it depends on nothing else, and the corpus to test it exists.
 5. **Interactive inputs.**
 
 Each step ends in something that runs.
