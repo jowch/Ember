@@ -185,9 +185,11 @@ help.
 ## Reading cells
 
 A walker over R's language objects, in the style of Pluto's
-ExpressionExplorer (estimate 500–800 lines), built on codetools'
-`walkCode()`, which ships with R and drives `R CMD check`'s search for
-undefined globals. For each cell:
+ExpressionExplorer (about 1000 lines), written as a plain recursion rather
+than on codetools' `walkCode()`: codetools would only supply the recursion,
+and its `findGlobals()` rules differ from Ember's (it treats `s` in
+`s <- s + 1` as local and skips formulas). The design of this step is in
+[cell-graph.md](cell-graph.md). For each cell:
 
 - **Definitions:** names assigned at the top level (`<-`, `=`, `->`, `<<-`,
   `->>`, `%<>%`), `for` loop variables, names assigned in either branch of an
