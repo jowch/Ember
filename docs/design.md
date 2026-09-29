@@ -575,9 +575,15 @@ can move many packages when a notebook is old; the preview shows it.
 when installing. Measured: `renv.lock` runs to about 38 lines per
 package (2201 lines for 58 packages) and `rv.lock` to about 9; either
 conflicts when two people add packages on different branches, and one line
-per package lets git merge additions line by line. A hash is optional: rv's
-lock has none, and renv recorded none for Posit Package Manager binaries.
-renv restored exact versions from such a minimal lock in 4 s.
+per package lets git merge additions line by line. There is no hash: CRAN
+never republishes a version and Bioconductor bumps the version on every
+change, so name, version and source already fix the code (GitHub packages
+carry their commit). A hash couldn't check what Ember installs anyway:
+binaries differ per platform and can be rebuilt, and the source tarball's MD5
+is already in CRAN's index. renv restored exact versions from such a
+minimal lock in 4 s. A line may carry extra fields after the source, which
+older versions of Ember ignore, so a stronger check (SHA-256) can be added
+later without breaking files.
 
 **Running the file with its own packages.** `Rscript notebook.R` uses the
 packages installed where it runs, so it gives the notebook's results only
@@ -730,9 +736,9 @@ load("fits.RData")
 # c93b… fits
 # ///
 # /// lock
-# cli 3.6.5 CRAN 9c1e…
-# dplyr 1.1.4 CRAN 4b7d…
-# ggplot2 3.5.2 CRAN a02f…
+# cli 3.6.5 CRAN
+# dplyr 1.1.4 CRAN
+# ggplot2 3.5.2 CRAN
 # (one line per package)
 # ///
 ```
