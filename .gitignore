@@ -46,3 +46,6 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# Spike code and results, kept out of the repo
+spikes/

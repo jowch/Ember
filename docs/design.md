@@ -114,7 +114,7 @@ repository depends on them.
 ## Layout
 
 ```
-DESCRIPTION               # imports: httpuv, later, processx, jsonlite, RcppMsgPack
+DESCRIPTION               # imports: httpuv, later, processx, jsonlite, RcppMsgPack, renv
 R/
   analysis.R              # cell reading: definitions, references, packages
   graph.R                 # topology, run order, errors
@@ -141,7 +141,20 @@ This maps one to one onto Pluto's server and workers:
   over a socket. Its code is `inst/worker.R`, found with
   `system.file("worker.R", package = "ember")`: files in `R/` are built into
   Ember's namespace at install, so the worker couldn't read them without
-  loading Ember.
+  loading Ember. It starts as `Rscript --vanilla` with `R_LIBS_USER` set to
+  the notebook's library and `R_LIBS` and `R_LIBS_SITE` unset, which leaves
+  exactly the notebook's library and R's own (measured: the user's personal
+  library, where rig puts pak, is hidden). A worker starts and connects in
+  about 115 ms; package loading comes on top.
+
+The server resets SIGINT to its default before starting workers. A process
+started in the background by a shell (`&`) inherits SIGINT as ignored, R then
+never installs its interrupt handler, and interrupts silently do nothing
+(measured: a 10 s loop ran to the end; with the reset, it stopped in 10 ms).
+The reset is a few lines of C, so the server package has compiled code from
+the start. The server polls the worker socket from its `later` loop every
+5 ms (about 2% of a core when idle), and must read a large worker message in
+pieces rather than all at once, so a big output can't stall it.
 
 The server runs two ways. From an interactive R session, the R API starts
 it as a background process (processx) and returns a handle to get its URL and
@@ -342,8 +355,10 @@ text truncated, as a Jupyter MIME bundle does, so programs that read outputs
 as text (Endeavor's agent) see the first rows of a table rather than "HTML
 output". The UI accepts HTML, PNG, SVG, markdown and LaTeX. Steps 2 and 3
 need knitr or repr loaded; the worker loads them from the notebook's library
-only when they are there and a value needs them. That changes no results, so the
-`Rscript` target holds. The package spike counts how often they are present.
+only when they are there and a value needs them. That changes no results, so
+the `Rscript` target holds. Measured: knitr is in the dependencies of common
+packages (rmarkdown, roxygen2); repr was absent from all 222 packages behind
+the top 200, so step 3 rarely applies.
 
 Markdown, HTML and layout need no Ember package: htmltools and commonmark do
 it and run under `Rscript`. Interactive inputs will need one, the R
@@ -368,7 +383,9 @@ has no SIGINT; processx sends CTRL+C through a helper (to verify in the
 spike). Compiled code often ignores interrupts, so "restart worker" is always
 available, as in Pluto. If a cell hasn't stopped a few seconds after an
 interrupt, the UI offers the restart and lists the cells that will need to
-run again, as RStudio's "Terminate R" does.
+run again, as RStudio's "Terminate R" does. An interrupt isn't lost: R acts
+on it when the compiled code returns, so if the cell stops late, the offer
+goes away. A restart takes about 120 ms before packages load.
 
 Nothing stops native code short of a restart, and Ember doesn't try to keep
 state across one. R only sets a flag on SIGINT, which native code sees only
@@ -403,13 +420,20 @@ cell depends on. Anywhere else they are an error, caught twice:
 
 Loading a package can change these too: many packages set default options
 in `.onLoad`, and with `library()` allowed in any cell, and `pkg::fn` loading
-a package without one, that happens in ordinary cells. So the worker traces
-`loadNamespace()`, which every load goes through, and compares the settings
-before and after each load. Changes made while loading belong to the package
+a package without one, that happens in ordinary cells (measured: 86 of the
+199 most-downloaded CRAN packages add options when loaded, 10 add
+environment variables). So the worker traces `loadNamespace()`, which every
+load goes through, and `library()`, whose `.onAttach` can add more (openxlsx
+and tidyverse set options only there), and compares the settings before and
+after each. Changes made while loading belong to the package
 and are allowed; `Rscript` makes them too. The rest belong to the cell's code
 and are an error. A package that overwrites a setting the notebook already
 changed gets a note, since in the notebook it may load at a different point
-than in the script.
+than in the script. In a clean process none of the 199 changed an existing
+option or variable, only added new ones; whether any overwrite a value the
+notebook set is still untested. None changed the working directory or
+locale. RcppArmadillo, rstan and V8 create `.Random.seed` when loaded, which
+the global-environment check already skips.
 
 For a change that should apply to one piece of code, the scoped form is
 allowed: withr's `with_options(list(digits = 3), print(fit))`, `with_envvar`,
@@ -471,10 +495,14 @@ running user code:
   httpuv's networking runs on its own C++ thread, and static paths (widget
   files, the frontend) are served there without R. If notebooks still slow
   each other down, the fallback is one server process per notebook.
-- **State diffs and encoding.** Diffing nested R lists and encoding msgpack
-  in R are slow for large payloads. Outputs are sent whole when they change,
-  not diffed, and images go as raw bytes, which R writes quickly. Encoding
-  uses RcppMsgPack (compiled); the diffs are Ember's own R code.
+- **State diffs and encoding.** Measured, for a state of 2000 cells with
+  1 KB outputs: encoding it all with RcppMsgPack takes 14 ms (jsonlite: 583
+  ms), and the diff for one changed cell 0.95 ms. A straight port of Pluto's
+  diff grew with the square of the notebook's size; two changes fixed it:
+  match names once per object, and skip any part where `identical()` finds
+  the same object. That holds when each new state is made by modifying the
+  previous one, so R's copy-on-modify shares everything unchanged; the server
+  keeps to that. Images go as raw bytes (0.06 ms for 500 KB).
 - **Results from the worker.** Values never cross to the server; the worker
   renders them (the first rows of a data frame, a PNG, HTML) and sends only
   that, as Pluto's worker does.
@@ -532,20 +560,24 @@ outside the rule and are marked unchecked.
   time, from its release to the next. Versions that were all current at one
   moment form a valid lock, and for spans of time, overlapping pairwise
   already means overlapping at one moment; so finding a lock is finding a
-  date. The data is CRAN's release dates, published by Posit Package Manager
-  and CRAN's archive. The installer (rv or renv) only ever sees one dated
+  date. The data is every CRAN version's release date, which
+  crandb.r-pkg.org gives per package (fetching 100 packages took 3 s with 16
+  requests at a time; finding a date took 13 ms). Ember caches it, since
+  crandb is a community service. The installer only ever sees one dated
   repository URL.
 
 CRAN's checks aren't a guarantee (a package can be broken or archived on
 some date), but they are much stronger than minimum versions. Moving the date
 can move many packages when a notebook is old; the preview shows it.
 
-**The lock in the file** is one line per package: name, version, source
-(`CRAN`, `Bioc`, or a GitHub commit) and hash. Ember converts it to renv's or
-rv's lock format when installing. A JSON `renv.lock` runs to about ten lines
-per package, over a thousand comment lines for a tidyverse notebook, and
-conflicts when two people add packages on different branches; one line per
-package keeps the footer short and lets git merge additions line by line.
+**The lock in the file** is one line per package: name, version and source
+(`CRAN`, `Bioc`, or a GitHub commit). Ember converts it to an `renv.lock`
+when installing. Measured: `renv.lock` runs to about 38 lines per
+package (2201 lines for 58 packages) and `rv.lock` to about 9; either
+conflicts when two people add packages on different branches, and one line
+per package lets git merge additions line by line. A hash is optional: rv's
+lock has none, and renv recorded none for Posit Package Manager binaries.
+renv restored exact versions from such a minimal lock in 4 s.
 
 **Running the file with its own packages.** `Rscript notebook.R` uses the
 packages installed where it runs, so it gives the notebook's results only
@@ -554,9 +586,13 @@ bottom with the notebook's own library, installing it from the lock first
 if needed.
 
 **Snapshots.** Posit Package Manager freezes a repository at a date through a
-dated URL (`https://packagemanager.posit.co/cran/2026-09-01`); whether it has
-matching Bioconductor snapshots is checked in the rv/renv spike. The engine
-sets the notebook's `repos` to those URLs when resolving and installing.
+dated URL (`https://packagemanager.posit.co/cran/2026-09-01`), and
+Bioconductor the same way, per release
+(`…/bioconductor/2026-06-01/packages/3.23/bioc`); both serve binaries for
+R 4.6 on macOS (measured). The engine sets the notebook's `repos` to those
+URLs when resolving and installing, and leaves the path within them to the
+installer: R 4.6 moved macOS binaries to a new path, which rv and renv both
+found without help.
 Posit's docs describe this as the supported way to pin
 (https://docs.posit.co/rspm/user/get-repo-url.html). Its terms for a tool
 that uses the public instance by default aren't stated; the engine
@@ -592,9 +628,29 @@ the lock. The shared cache is what grows, since it keeps every version ever
 installed. The package view shows disk use (libraries and cache) with a
 "clean up" button, and `ember::clean()` does the same from R, also clearing
 cache entries no library uses; hosts such as Endeavor call it through the R
-API. Two candidates,
-settled by a spike: **rv** (Rust CLI, fast, pre-1.0) or **renv** (R, mature,
-what R users know). pak copies instead of linking, so it's out.
+API.
+
+**Installer: renv.** pak copies instead of linking, so it's out. The
+spike installed the same 42 packages (dplyr, ggplot2, data.table, lme4, sf)
+with both, from a dated URL:
+
+| | rv (Rust CLI, pre-1.0) | renv (R, mature) |
+|---|---|---|
+| First library | 8.4 s | 6.5 s |
+| Second library, same cache | 0.15 s | 1.8 s (mostly R startup) |
+| Library from cache | APFS clones | hard links |
+| Bioconductor | a second dated repository | the same |
+| Exact versions from a list | refuses per-package pins; relies on the dated URL | yes |
+
+Both work; Ember uses renv. It is an ordinary CRAN dependency that R users
+know, restores exact versions, and installs four packages at a time by
+default (`renv.config.install.jobs`); `MAKEFLAGS=-jN` parallelises compiling
+within a package. rv's measured gain, about 1.5 s on a warm cache, is mostly
+R's startup. Shipping rv would mean one of: bundling seven platform binaries
+(about 28 MB), which CRAN rejects; building its Rust source at install; or
+downloading it on first use, as tinytex fetches TeX. Because the file's lock
+is Ember's own one-line format, rv can be added later behind the same
+conversion without changing notebooks.
 
 **R itself.** The engine runs on the R it was started with. If that differs
 from the notebook's recorded R version, the engine says so and records the
@@ -604,13 +660,26 @@ every Bioconductor package at once; the engine says so before recording it.
 Installing a matching R (rig, including its user mode that needs no admin
 rights) is up to the user or the program driving the engine.
 
+Measured with rig 0.10.0 user mode on macOS: R installs into
+`~/.local/share/rig/r/<version>` without admin rights, and versions run side
+by side. The tree can be moved or copied, but only runs through its own
+`bin/R` and `bin/Rscript` scripts, which point the dynamic linker at its
+`lib`; so Ember always starts R through them. R is signed. A copy marked
+with macOS's quarantine flag (as a browser or some unzip tools set) shows
+Gatekeeper dialogs on first launch and waits for them, which stalls a worker
+nobody is watching; a program that downloads R must not quarantine it, or
+must clear the flag (`xattr -dr com.apple.quarantine`). `capabilities()`
+without arguments warns about X11 on Macs without XQuartz; the worker doesn't
+call it.
+
 **Compilers.** Posit Package Manager serves binaries for macOS, Windows and
 common Linux systems, including Bioconductor software packages since
 2026.08. Source builds are still needed for GitHub packages with compiled
 code, R versions outside the binary window (current minor and four before
 it), and packages whose binary build failed. Before one, the engine checks
-for the tools (macOS: `xcode-select -p` and gfortran; Windows: Rtools;
-Linux: a C compiler) and, if missing, stops with instructions. Linux
+for the tools (macOS: `xcode-select -p` and the Fortran compiler R names in
+`R CMD config FC`, `/opt/gfortran/bin/gfortran`; Windows: Rtools; Linux: a C
+compiler) and, if missing, stops with instructions. Linux
 packages also need system libraries (GDAL for sf, libxml2 for xml2). Posit
 Package Manager publishes each package's system requirements, so before
 installing, the engine checks for them and, if any are missing, names the
@@ -691,9 +760,23 @@ A hard fork of Pluto's frontend (Preact, no build step in development, about
 **Protocol.** One notebook state object synced as patches over websockets,
 plus about fifteen request types. It has barely changed in a year. The
 server side is ported to R: state diffs (Pluto's Firebasey), msgpack
-encoding through RcppMsgPack (the only maintained msgpack package on CRAN),
-and care that length-one R vectors go out as single values, not one-element
-arrays.
+encoding through RcppMsgPack (the only maintained msgpack package on CRAN).
+The spike ran Pluto's unmodified frontend (v1.0.3) against about 250 lines of
+R with six message types (`connect`, `ping`, `update_notebook`,
+`run_multiple_cells`, `interrupt_all`, `reset_shared_state`): editing and
+running a cell took 24–33 ms end to end, and stop worked. The encoding rules
+it found:
+
+- Every JavaScript array is an unnamed `list()`, or a one-element vector
+  arrives as a single value.
+- An empty object is `setNames(list(), character())`; `list()` encodes as
+  `[]`, which broke the page once.
+- A field set to null is `x[k] <- list(NULL)`; `x[[k]] <- NULL` deletes it.
+- A field keeps one type (integer or double), or every update sends a patch.
+- Decoding keeps arrays as lists (`simplify = FALSE`).
+
+The unbundled frontend loads about 130 modules from CDNs; the fork ships a
+bundled copy so it works offline.
 
 **Remove** (about half the frontend): Julia scope analysis and syntax
 plugins, the Pkg UI, Binder, upload, slider server, recording, the AI
@@ -789,16 +872,24 @@ run), and the snapshot has no stale state.
 
 ## Build order
 
-0. **Spikes**, each a few days, to run before committing to the design. They
-   will be done in a separate working session.
+0. **Spikes**, to run before committing to the design. Done on macOS
+   (2026-09-29; results are folded into the sections above): server and
+   worker, the frontend stub, rig, rv against renv, and package loading.
+   Still to run: the first three on Linux and Windows; the URL secret; rich
+   outputs in the browser; whether any package overwrites a setting the
+   notebook already set.
    - Server and worker: httpuv serving the UI while a worker runs a long
      cell; interrupting a running cell and restarting its worker, on macOS,
-     Linux and Windows.
+     Linux and Windows. Pluto's unmodified frontend talking to a stub R
+     server for one cell (state patches, msgpack, length-one vectors), since
+     the protocol port is the largest risk in the UI fork.
    - rig's user-mode R on macOS and Windows: relocated R, code signing,
      packages with compiled code.
    - rv against renv for per-notebook libraries, on all three systems,
      including how each installs Bioconductor packages and whether Posit
-     Package Manager has dated Bioconductor snapshots.
+     Package Manager has dated Bioconductor snapshots. Also where to get
+     every CRAN version's release date, which the one-date lock rule needs
+     to find a date, and how fast it is to query.
    - Package loading and global settings: load the 200 most-downloaded CRAN
      packages one at a time and compare options, environment variables,
      working directory and locale before and after each load. This checks
