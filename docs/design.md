@@ -2,9 +2,10 @@
 
 Ember is a reactive notebook for R with Pluto.jl's
 guarantees: each global is defined in one cell, editing a cell reruns the
-cells that depend on it, the notebook is one plain-text file with durable cell
-IDs, and its package environment is detected from the code and recorded in
-that file. Nothing here is built yet.
+cells that depend on it (or marks them stale, if the notebook asks), the
+notebook is one plain-text file with durable cell IDs, and its package
+environment is detected from the code and recorded in that file. Nothing
+here is built yet.
 
 _Drafted 2026-09-26 in the Endeavor project; moved here 2026-09-27._
 
@@ -32,12 +33,60 @@ repository depends on them.
 
 - **Platforms: macOS, Linux and Windows**, wherever the current R release
   runs.
+- **`Rscript notebook.R` gives the notebook's results.** Running the file top
+  to bottom does what running every cell in the notebook does, given the
+  same package versions (`ember::run()` supplies them from the lock). So
+  cells run in the global environment, as a script's code does, not in a new
+  environment per run as Pluto's cells run in a new module: `source()`,
+  `<<-`, `data()` and S4 classes all write to the global environment.
+- **Reuse before writing.** Use an existing package or R's own code where one
+  does the job, and write new code only for what is Ember's own. The worker
+  is the exception: it can use only R and the packages that ship with it.
+- **Plain R first, compiled code only where measured.** The parts that need
+  speed are already compiled (httpuv, later, processx, jsonlite, and R's own
+  `serialize()` and `identical()`). If the server spike finds an R part too
+  slow, only that part moves to C or Rust (extendr), behind the same R
+  function, and only in the server; the worker stays base R.
+- **A stable file format.** The format should rarely change. When it does,
+  every Ember can open and convert notebooks written by any earlier
+  version; dropping support for an old format needs a strong reason. The
+  engine's rules (what counts as a reference, masking order, what is a
+  global setting) get the same care: a change can make the same file rerun
+  different cells or raise new errors, so it is rare and announced in the
+  release notes.
 - **Static cell IDs, cell order and fold state in the file**, as in Pluto.
+- **The code in the file is the authority.** Eliminating hidden state
+  includes stale outputs: every output shown comes from running the current
+  code in the current worker, or is visibly marked stale (see the next
+  entry). Outputs are never saved or restored, not in the file and not
+  beside it.
+- **Edits rerun dependents, or mark them stale.** A notebook setting, as
+  marimo's `on_cell_change`: "autorun" (the default, as Pluto) reruns the
+  cells that depend on an edited cell; "lazy" marks them stale instead,
+  keeping their outputs dimmed and labelled until they run. Running a stale
+  cell runs its stale ancestors first. Pluto's safe preview shows editing
+  without running is workable.
 - **Open without running.** Running a cell runs its unrun ancestors first.
   "Run all" is one click. Long simulations don't start just because a
   notebook was opened.
+- **Every notebook opens in safe preview**, as in Pluto, even one that ran
+  before: no worker and no installs. This protects against unfamiliar code
+  (installing detected packages runs their install scripts, and loading runs
+  their `.onLoad`) and against a crash loop, where code that crashed the last
+  session crashes the next one as soon as it opens. The user can read and
+  edit cells; edits are staged, not run. A banner says what running will do
+  ("starts R, installs 3 packages"). The first run the user asks for, a cell
+  or "Run all", allows execution for the session: it starts the worker,
+  installs what's missing, then runs. Nothing is remembered between sessions.
+  Endeavor's `allow_execution` tool maps onto this. marimo has no such
+  state: it opens without running by default (`auto_instantiate = False`),
+  but its `--sandbox` mode starts installing a notebook's packages as soon as
+  it opens, and its docs only warn to "run notebooks from sources you trust".
 - **Packages detected from the code** (`library()` and friends), installed
   automatically and locked inside the file, as Pluto's package manager does.
+- **`library()` in any cell**, as `using` is in Pluto. The worker keeps the
+  search path in step with the notebook (see
+  [Attached packages](#attached-packages)).
 - **One definition per global, as in Pluto**, including objects modified in
   a later cell (see [Reading cells](#reading-cells)).
 - **Global settings only in the setup cell**; elsewhere they are an error,
@@ -48,7 +97,8 @@ repository depends on them.
   plain R. Style advice (`local()` for private work, pipelines or named
   stages, where to put `set.seed()`) goes in the user docs, never in errors.
 - **Assume too many dependencies rather than too few.** An extra edge costs a
-  rerun; a missing edge leaves a stale result.
+  rerun, or rarely a false "Cyclic references" error; a missing edge leaves a
+  stale result.
 - **Random numbers work as in R.** `set.seed()` goes wherever the user puts
   it; the engine adds no seeding. The random state isn't a variable in the
   graph, so a cell that draws numbers without its own `set.seed()` can give
@@ -64,15 +114,16 @@ repository depends on them.
 ## Layout
 
 ```
-DESCRIPTION               # imports: httpuv, later, processx, jsonlite
+DESCRIPTION               # imports: httpuv, later, processx, jsonlite, RcppMsgPack
 R/
   analysis.R              # cell reading: definitions, references, packages
   graph.R                 # topology, run order, errors
   notebook.R              # file format: read, write
   server.R                # httpuv, websocket protocol, state diffs
-  worker.R                # started in the worker; base R only
   packages.R              # detection, lock, install
-inst/frontend/            # forked Pluto frontend
+inst/
+  worker.R                # started in the worker; base R only
+  frontend/               # forked Pluto frontend
 tests/testthat/
 ```
 
@@ -87,7 +138,22 @@ This maps one to one onto Pluto's server and workers:
 - **Worker** (the notebook's library): a plain `Rscript` running a loop
   written in base R plus the packages that ship with R (utils, tools,
   grDevices, codetools). It exchanges `serialize()`d messages with the server
-  over a socket.
+  over a socket. Its code is `inst/worker.R`, found with
+  `system.file("worker.R", package = "ember")`: files in `R/` are built into
+  Ember's namespace at install, so the worker couldn't read them without
+  loading Ember.
+
+The server runs two ways. From an interactive R session, the R API starts
+it as a background process (processx) and returns a handle to get its URL and
+stop it; running httpuv inside the caller's session would freeze the UI
+whenever that session is busy. A host program that starts its own R process
+(Endeavor) calls a blocking entry point instead, as `Pluto.run()` is, after
+loading its adapter into the same process (see
+[Integration with Endeavor](#integration-with-endeavor)).
+
+The UI requires a secret in its URL, as Pluto's `require_secret_for_access`
+and Jupyter's token do: the server runs code, and any page or program on the
+machine can reach a loopback port.
 
 Why not callr or mirai for the worker: both load their own packages into the
 worker, and R shares loaded packages across the whole process. If a notebook
@@ -106,18 +172,23 @@ help.
 ## Reading cells
 
 A walker over R's language objects, in the style of Pluto's
-ExpressionExplorer (estimate 500–800 lines). For each cell:
+ExpressionExplorer (estimate 500–800 lines), built on codetools'
+`walkCode()`, which ships with R and drives `R CMD check`'s search for
+undefined globals. For each cell:
 
 - **Definitions:** names assigned at the top level (`<-`, `=`, `->`, `<<-`,
   `->>`, `%<>%`), `for` loop variables, names assigned in either branch of an
   `if`, functions.
 - **References:** names read before the cell defines them, excluding
-  function arguments and names local to function bodies or `local()`, and
-  symbols inside formulas (`~`).
+  function arguments and names local to function bodies or `local()`.
+  Formulas follow their own rule (see [Formulas](#formulas)).
 - **Packages:** `library`, `require`, `requireNamespace`, `pkg::fn`,
   `pkg:::fn`, `box::use`, `pacman::p_load`, as `renv::dependencies()` does.
 - **Edges:** a reference becomes an edge only if another cell defines that
-  name.
+  name, or a package the cell attaches exports it. Exports come from
+  `getNamespaceExports()` once the package is installed, so editing a
+  `library(dplyr)` cell reruns the cells that call `mutate`. Pluto doesn't
+  know exports and only runs `using` cells first.
 - **Private names:** names starting with a dot (`.i`, `.tmp`) are private to
   their cell, like marimo's `_` names (R doesn't allow a leading `_`). R
   already hides dot-names from `ls()`. Using one from another cell is an
@@ -130,12 +201,32 @@ so two cells looping over `i` conflict, and the error suggests `.i`.
 
 Non-standard evaluation (dplyr columns, ggplot's `aes`) makes column names
 look like references; that only adds an edge when some cell defines a global
-with the same name, and the cost is a rerun.
+with the same name. The cost is a rerun, or a false cycle when that cell also
+reads the result (`df |> mutate(z = x * 2)`, then a later cell defines `x`
+from it); the error suggests renaming the global.
 
-Not visible to static reading. These run normally; the engine only shows a
-note that it can't track them:
-`assign`, `get`, `eval(parse())`, `load`, `attach`, `with`, `list2env`,
-`makeActiveBinding`, `setwd`.
+**Writes static reading can't see.** `assign()`, `load()`, `data()`,
+`list2env()`, `makeActiveBinding()`, and `<<-` or `rm()` inside a function
+change globals without a visible assignment. Under the `Rscript` target they
+must be tracked, not just noted, so the worker compares the global
+environment before and after each cell. Before the cell it keeps a list of
+the global variables (references, not copies, dropped when the cell ends);
+after, it compares names with `ls(globalenv(), all.names = TRUE)` and values
+with `identical()`, which returns at once for an object that wasn't replaced.
+
+- **A new name** becomes a definition of the cell, learned at run time as a
+  computed `source()` path is, under the usual rules: dependents rerun, and
+  a name another cell defines is a "Multiple definitions" error.
+- **A changed or removed variable of another cell** is the same case as
+  `df$col <- v` in a later cell: a "Multiple definitions" error, pointing to
+  the line where it can.
+- **Definitions learned at run time are recorded in the footer**, so a
+  notebook opened without running still orders its cells correctly.
+- `.Random.seed` is skipped; see the random-numbers decision.
+
+Reads can't be watched this way. `get()`, `mget()`, `exists()` and
+`eval(parse())` run normally, and the engine shows a note that it can't track
+them.
 
 **Code in other files.** `source("helpers.R")` with a literal path is read
 like part of the cell:
@@ -143,8 +234,8 @@ like part of the cell:
 - The engine parses the file and counts its top-level definitions (and its
   `library()` calls) as the cell's own, following `source()` calls inside it.
 - It watches the file. When the file changes, the cell and its dependents
-  are marked stale, or rerun if the user turns that on, like marimo's module
-  reloader (`lazy` and `autorun`).
+  rerun or are marked stale, following the notebook's autorun or lazy
+  setting, like marimo's module reloader.
 - A computed path (`source(file.path(dir, "helpers.R"))`, a loop over
   `list.files()`) is learned when the cell runs. The worker traces
   `base::source` and `sys.source`, which also catches `base::source()` and
@@ -180,37 +271,145 @@ classes, data.table's `:=` and `set*()`). Those stay untracked, as mutation
 is in Pluto and marimo; the user docs say so and the engine warns when a
 cell modifies one defined elsewhere.
 
+### Formulas
+
+A formula looks up each name in `data` first and then in the environment it
+was created in, which for cell code is the global environment. So
+`lm(y ~ poly(x, deg), data = df)` reads the global `deg`, and `Rscript`
+always uses its current value. Which names are columns depends on `df`'s
+value, so static reading decides by position instead:
+
+- **No `data` argument** (`lm(y ~ x)`): every symbol in the formula is a
+  reference. R can only find them among the globals.
+- **With `data`:** bare terms and the first argument of calls inside the
+  formula (`x` in `poly(x, deg)`, `log(n)` in `offset(log(n))`) are taken as
+  columns. Other arguments (`deg` in `poly(x, deg)`, `k` in `s(x, k = k)`)
+  are references: they are nearly always settings, not data. `.` (all other
+  columns) is never a reference.
+
+Taking terms as columns keeps a common pattern free of a false cycle: a cell
+fits `lm(y ~ x, data = df)`, and a later cell defines a prediction grid
+`x <- seq(…)` and calls `predict(fit, …)`.
+
+The rule is wrong when a formula mixes a data frame with a global vector
+(`lm(y ~ x + z, data = df)`, `z` not a column), and it errs towards a missing
+edge. So after the cell runs, the worker checks that each name taken as a
+column is in `names()` of the data frame the function received; if one
+isn't, the engine adds the edge and shows a note.
+
+In Julia, StatsModels' `@formula` always treats terms as columns, so Pluto
+needs no such rule.
+
 ## Running cells
 
 The worker runs each cell in the global environment:
 
-1. Remove the variables the cell defined last time.
+1. Remove the variables the cell defined last time and drop its display
+   data (see below), so the old and new values aren't in memory at once.
 2. Evaluate inside `withCallingHandlers`, collecting messages and warnings
    as structured items and errors with `sys.calls()` for the traceback.
 3. Open a fresh plot device per cell (ragg if the notebook's library has it,
    otherwise base `png`), so `par()` settings end with the cell. Plots are
    re-rendered at a new size when the UI asks.
-4. Turn the output value into a display: data frames as table data for the
-   UI's table view, htmlwidgets through htmltools (already loaded if the
-   value is one), everything else as printed text. Which values count as
-   output is an [open question](#open-questions).
+4. Turn the output value into a display (see "How values display" below).
+
+**Which values a cell shows** follows marimo: the last visible value is the
+cell's output. Earlier visible values, `print()`, `cat()`, messages and
+warnings go to a console area below it, in order. R Markdown instead shows
+every visible value inline, and Pluto shows only the last value.
+
+**How values display.** Julia has one display function in its base
+language, `show(io, MIME"text/html"(), x)`, that every package extends. R has
+none; packages implement two outside conventions instead: knitr's
+`knit_print()` (R Markdown and Quarto; gt, flextable, kableExtra) and repr's
+`repr_html()`, `repr_png()`, `repr_markdown()`, `repr_latex()` (IRkernel's
+MIME types). Ember supports both rather than adding a third, and tries in
+order, as marimo does with `_display_`, its own formatters, `_mime_` and
+`_repr_*_`:
+
+1. htmlwidgets and htmltools HTML (plotly, leaflet, DT, reactable, `tags`).
+2. `knit_print()` methods.
+3. `repr_*()` methods.
+4. Ember's own views: data frames, tibbles and data.table in the paged
+   table view; plots (ggplot, lattice, grid, base) as images re-rendered on
+   resize; lists and nested structures as an expandable tree, as Pluto shows
+   Julia collections.
+5. `print()` text, with colour on, so tibble and cli output keeps its
+   colours; the UI turns the terminal colour codes into styled text.
+
+Every rich output also carries a `text/plain` form, the value's `print()`
+text truncated, as a Jupyter MIME bundle does, so programs that read outputs
+as text (Endeavor's agent) see the first rows of a table rather than "HTML
+output". The UI accepts HTML, PNG, SVG, markdown and LaTeX. Steps 2 and 3
+need knitr or repr loaded; the worker loads them from the notebook's library
+only when they are there and a value needs them. That changes no results, so the
+`Rscript` target holds. The package spike counts how often they are present.
+
+Markdown, HTML and layout need no Ember package: htmltools and commonmark do
+it and run under `Rscript`. Interactive inputs will need one, the R
+counterpart of PlutoUI; see [Interactive inputs](#the-ui).
+
+**Widget files.** An htmlwidget carries its JavaScript and CSS as
+dependencies: a name, a version and a folder in the installed package. The
+worker sends them with the widget's HTML; the server registers each folder as
+an httpuv static path (`/deps/<name>-<version>/`), and the page adds a
+`<script>` or `<link>` the first time it sees a name and version. Ten plotly
+charts load plotly.js once. Inlining the files instead would resend about
+3.5 MB of plotly.js with every plot and rerun. The server only serves folders
+inside the notebook's library.
+
+**Display data.** Re-rendering a plot at a new size needs the recorded plot
+(`recordPlot()`), and paging a table needs the data frame. The worker keeps
+these only for each cell's current output and drops them when the cell
+reruns or is deleted, so a removed variable isn't kept alive by its display.
 
 Interrupts go to the worker as SIGINT on macOS and Linux (processx). Windows
 has no SIGINT; processx sends CTRL+C through a helper (to verify in the
 spike). Compiled code often ignores interrupts, so "restart worker" is always
-available, as in Pluto.
+available, as in Pluto. If a cell hasn't stopped a few seconds after an
+interrupt, the UI offers the restart and lists the cells that will need to
+run again, as RStudio's "Terminate R" does.
+
+Nothing stops native code short of a restart, and Ember doesn't try to keep
+state across one. R only sets a flag on SIGINT, which native code sees only
+if it calls `R_CheckUserInterrupt()`; repeated interrupts don't escalate as
+they do in Julia. Keeping a forked copy of the worker before each cell works
+on macOS and Linux but crashes when a library has started threads
+(Accelerate, OpenMP, Java) and doesn't exist on Windows; saving values to
+disk loses external pointers. A cell that hangs or crashes the worker is the
+user's to avoid.
+
+**Restarting the worker** should be rare. It happens when compiled code
+ignores an interrupt, when a package crashes the process, when a package the
+worker has loaded changes version (R can't reload it in place; with a fixed
+snapshot date this mostly happens when the user moves the date), or when the
+user frees memory. A new worker is empty, as on open, and is treated the same
+way: outputs are cleared and every cell shows as not run. Running a cell runs
+the ancestors it needs first, so the user runs only as far into the graph as
+they want, as in marimo's lazy mode; "Run all" regenerates everything.
 
 **Global settings.** `options()` (printed digits, `warn`, `contrasts`, which
 changes model fits), `ggplot2::theme_set()`, `Sys.setenv()`, `setwd()` and
 `Sys.setlocale()` change later cells' results without any variable
-connecting them. Global settings go in the setup cell with the `library()`
-calls, which every cell depends on. Anywhere else they are an error, caught
-twice:
+connecting them. So does `attach()`, which makes a data frame's columns
+visible to every cell. Global settings go in the setup cell, which every
+cell depends on. Anywhere else they are an error, caught twice:
 
 - **When reading the cell:** a top-level call to one of these functions.
 - **After running it:** the worker compares `options()`, environment
-  variables, working directory and locale before and after each cell, which
+  variables, working directory, locale and `search()` (leaving out what the
+  notebook's `library()` calls attached) before and after each cell, which
   also catches changes made inside functions.
+
+Loading a package can change these too: many packages set default options
+in `.onLoad`, and with `library()` allowed in any cell, and `pkg::fn` loading
+a package without one, that happens in ordinary cells. So the worker traces
+`loadNamespace()`, which every load goes through, and compares the settings
+before and after each load. Changes made while loading belong to the package
+and are allowed; `Rscript` makes them too. The rest belong to the cell's code
+and are an error. A package that overwrites a setting the notebook already
+changed gets a note, since in the notebook it may load at a different point
+than in the script.
 
 For a change that should apply to one piece of code, the scoped form is
 allowed: withr's `with_options(list(digits = 3), print(fit))`, `with_envvar`,
@@ -221,12 +420,42 @@ with plain `Rscript`. `par()` needs no rule: each cell draws on its own
 device.
 
 **Deleting a cell** removes its variables. **Changing the setup cell**
-restarts the worker, because attached packages can't be detached cleanly.
+resets options, environment variables, working directory and locale to the
+worker's starting values before it reruns, so a deleted setting doesn't
+linger.
 
 **Editor services** run in the worker with base R: completion through
 `utils`'s completion functions (as IRkernel does), help pages through
 `tools::Rd2HTML`, signatures through `args()`. These use internal `utils`
 functions, so they're tested on each R release.
+
+### Attached packages
+
+`library()` and `require()` may appear in any cell. This follows Pluto,
+which handles `using` in two steps (`PlutoDependencyExplorer.jl`'s
+`cell_precedence_heuristic`, and `move_vars` in Pluto's `Run.jl`):
+
+- **Cells that attach packages run first**, before other cells.
+- **The search path is rebuilt, not unloaded.** Pluto evaluates each run in a
+  new module and repeats only the `using` lines of cells still in the
+  notebook, so a deleted `using` stops applying while the package stays
+  loaded. Ember's worker does the same with the search path: when a cell
+  that attaches packages is added, edited or deleted, it detaches the
+  packages the notebook attached (`detach()` without unloading) and attaches
+  the current set again. Namespaces stay loaded. Only a change of package
+  version restarts the worker.
+- **Masking follows file order.** In R the package attached last wins
+  (`dplyr::filter` over `stats::filter`), and that is normal use, so Julia's
+  rule that an ambiguous name is an error doesn't fit. The worker attaches in
+  file order, so which function a name means doesn't depend on which cell ran
+  last. The UI shows R's masking message.
+- **The real search path is kept**, rather than a private chain of
+  environments, so packages that attach others themselves (`Depends:`, or a
+  `library()` call in package code) keep working.
+
+marimo takes a different route that doesn't carry over: an `import` is an
+ordinary definition under the one-definition rule, and `from x import *` is
+an error. `library()` is R's star import.
 
 ## Performance
 
@@ -239,10 +468,13 @@ running user code:
 - **The server has one thread.** Anything slow in it (reading a big file,
   resolving packages) freezes the UI for every notebook it serves. Installs
   and resolution run in subprocesses; everything else must stay short.
+  httpuv's networking runs on its own C++ thread, and static paths (widget
+  files, the frontend) are served there without R. If notebooks still slow
+  each other down, the fallback is one server process per notebook.
 - **State diffs and encoding.** Diffing nested R lists and encoding msgpack
   in R are slow for large payloads. Outputs are sent whole when they change,
-  not diffed, and images go as raw bytes, which R writes quickly. If the
-  pure-R encoder is too slow, RcppMsgPack (compiled) replaces it.
+  not diffed, and images go as raw bytes, which R writes quickly. Encoding
+  uses RcppMsgPack (compiled); the diffs are Ember's own R code.
 - **Results from the worker.** Values never cross to the server; the worker
   renders them (the first rows of a data frame, a PNG, HTML) and sends only
   that, as Pluto's worker does.
@@ -258,37 +490,119 @@ The server spike (below) measures the first three on a large notebook.
 As with Pluto, the user writes `library(dplyr)` and the engine does the
 rest:
 
-1. Detect the notebook's packages from the code.
+1. Detect the notebook's packages from the code, plus the header's short
+   `[extra_packages]` list for packages the code can't reveal: some are only
+   needed at run time (`ggsave("x.svg")` needs svglite). When a cell fails
+   with "there is no package called 'svglite'", the engine offers to add it
+   to that list.
 2. Resolve each against CRAN and Bioconductor at the notebook's snapshot
    date. GitHub packages can't be inferred; the user records `user/repo` for
    them, and the engine prompts when a name isn't found.
-3. Update the lock and install into the notebook's library in a subprocess,
-   then restart the worker.
+3. Update the lock and install into the notebook's library in a subprocess.
+   The worker restarts only if a package it has already loaded changed
+   version; a new package is just loaded.
 
-The file records the R version, the snapshot date, the explicit sources and
-the full lock. The snapshot and the lock do different jobs: the snapshot
-fixes which versions are available to install, the lock records which
-versions the notebook uses.
+The file records the R version, the snapshot date, the Bioconductor release
+when one is used, the explicit sources and the full lock. The snapshot and
+the lock do different jobs: the snapshot fixes which versions are available
+to install, the lock records which versions the notebook uses.
+
+**Every lock is CRAN as it was on one date.** CRAN checks that a new version
+doesn't break the packages that depend on it before accepting it, so the
+versions current on one day were checked together; a lock mixing dates was
+not. R packages declare only minimum versions (`rlang (>= 1.1.0)`), never
+upper bounds, so this is the strictest consistency R's metadata allows, and
+Ember enforces it: the lock never mixes CRAN dates. With a Bioconductor pin,
+the rule is one CRAN date plus one Bioconductor release, whose packages are
+already consistent with each other. GitHub packages have no date; they sit
+outside the rule and are marked unchecked.
+
+- **Adding a package** resolves it at the notebook's date, with its
+  dependencies. On open, packages already in the lock install at exactly the
+  locked versions; only new ones are resolved.
+- **Removing a package** from the code removes it, and dependencies nothing
+  else needs, from the lock when the file is saved, as Pluto does.
+- **Updating one package** ("update dplyr to 1.2.0", as Pluto offers per
+  package) moves the notebook to the earliest date on which that version was
+  current, so the other packages move only as far as they must. **Update
+  all** moves the date to today. **Pinning an older version** moves the date
+  back to when it was current. Each shows every version that changes before
+  applying.
+- **No solver is needed.** Each package version was current for one span of
+  time, from its release to the next. Versions that were all current at one
+  moment form a valid lock, and for spans of time, overlapping pairwise
+  already means overlapping at one moment; so finding a lock is finding a
+  date. The data is CRAN's release dates, published by Posit Package Manager
+  and CRAN's archive. The installer (rv or renv) only ever sees one dated
+  repository URL.
+
+CRAN's checks aren't a guarantee (a package can be broken or archived on
+some date), but they are much stronger than minimum versions. Moving the date
+can move many packages when a notebook is old; the preview shows it.
+
+**The lock in the file** is one line per package: name, version, source
+(`CRAN`, `Bioc`, or a GitHub commit) and hash. Ember converts it to renv's or
+rv's lock format when installing. A JSON `renv.lock` runs to about ten lines
+per package, over a thousand comment lines for a tidyverse notebook, and
+conflicts when two people add packages on different branches; one line per
+package keeps the footer short and lets git merge additions line by line.
+
+**Running the file with its own packages.** `Rscript notebook.R` uses the
+packages installed where it runs, so it gives the notebook's results only
+when the versions match. `ember::run("notebook.R")` runs the file top to
+bottom with the notebook's own library, installing it from the lock first
+if needed.
 
 **Snapshots.** Posit Package Manager freezes a repository at a date through a
-dated URL (`https://packagemanager.posit.co/cran/2026-09-01`); Bioconductor
-has matching snapshots. The engine sets the notebook's `repos` to those URLs
-when resolving and installing. Posit's docs describe this as the supported
-way to pin (https://docs.posit.co/rspm/user/get-repo-url.html). Its terms for
-a tool that uses the public instance by default aren't stated; the engine
+dated URL (`https://packagemanager.posit.co/cran/2026-09-01`); whether it has
+matching Bioconductor snapshots is checked in the rv/renv spike. The engine
+sets the notebook's `repos` to those URLs when resolving and installing.
+Posit's docs describe this as the supported way to pin
+(https://docs.posit.co/rspm/user/get-repo-url.html). Its terms for a tool
+that uses the public instance by default aren't stated; the engine
 lets the repository base URL be changed, for example to an institution's own
 Package Manager.
 
+**Bioconductor** is always a source when resolving, because some CRAN
+packages depend on Bioconductor ones (WGCNA needs `impute` and `GO.db`);
+Bioconductor doesn't reuse CRAN package names, so the two don't clash. Its
+packages are versioned by release, not by date, and each release supports
+one R minor version. So `bioc_version` goes in the header only once the lock
+holds a Bioconductor package, directly or as a dependency. It is set to the
+release matching the notebook's R, Bioconductor packages resolve from that
+release, and the engine warns if the CRAN snapshot date falls outside the
+release's window, since those combinations were never tested together. A
+CRAN-only notebook carries no Bioconductor pin and no tie to an R version.
+
+**Large installs ask first.** Annotation and genome packages
+(`org.Hs.eg.db`, `BSgenome.*`) run from hundreds of MB to several GB. Above a
+size threshold the engine shows the download size and waits for the user
+before installing.
+
 **Installs** link from a shared cache into a per-notebook library, so a
-second notebook with the same packages installs in seconds. Two candidates,
+second notebook with the same packages installs in seconds. A library is
+named by a hash of the lock, not by the notebook's path: moving or renaming a
+notebook doesn't orphan it, notebooks with the same lock share one, and
+Ember never has to track where notebooks live.
+
+**Cleanup.** Ember records when each library was last used and, when the
+server starts, deletes those unused for 60 days; they hold only links, so a
+returning notebook's library is rebuilt from the cache in seconds, or from
+the lock. The shared cache is what grows, since it keeps every version ever
+installed. The package view shows disk use (libraries and cache) with a
+"clean up" button, and `ember::clean()` does the same from R, also clearing
+cache entries no library uses; hosts such as Endeavor call it through the R
+API. Two candidates,
 settled by a spike: **rv** (Rust CLI, fast, pre-1.0) or **renv** (R, mature,
 what R users know). pak copies instead of linking, so it's out.
 
 **R itself.** The engine runs on the R it was started with. If that differs
 from the notebook's recorded R version, the engine says so and records the
-new version once the user runs the notebook on it. Installing a matching R
-(rig, including its user mode that needs no admin rights) is up to the user
-or the program driving the engine.
+new version once the user runs the notebook on it. With a Bioconductor pin, a
+new R minor version also means a new Bioconductor release, which updates
+every Bioconductor package at once; the engine says so before recording it.
+Installing a matching R (rig, including its user mode that needs no admin
+rights) is up to the user or the program driving the engine.
 
 **Compilers.** Posit Package Manager serves binaries for macOS, Windows and
 common Linux systems, including Bioconductor software packages since
@@ -296,7 +610,11 @@ common Linux systems, including Bioconductor software packages since
 code, R versions outside the binary window (current minor and four before
 it), and packages whose binary build failed. Before one, the engine checks
 for the tools (macOS: `xcode-select -p` and gfortran; Windows: Rtools;
-Linux: a C compiler) and, if missing, stops with instructions.
+Linux: a C compiler) and, if missing, stops with instructions. Linux
+packages also need system libraries (GDAL for sf, libxml2 for xml2). Posit
+Package Manager publishes each package's system requirements, so before
+installing, the engine checks for them and, if any are missing, names the
+exact `apt` or `dnf` command; installing them stays with the user.
 
 ## File format
 
@@ -305,10 +623,14 @@ A plain `.R` file that runs top to bottom with `Rscript`:
 ```r
 ### An Ember notebook ###
 # /// environment
+# ember_version = "0.1.0"
 # r_version = "4.5.1"
 # snapshot = "2026-09-01"
+# bioc_version = "3.22"
 # [sources]
 # mypkg = "github:lab/mypkg@3f2a1c9"
+# [extra_packages]
+# svglite
 # ///
 
 # %% id=6f1c9a2e-…
@@ -323,24 +645,43 @@ options(digits = 4)
 # %% id=a41e…
 curves <- read.csv("growth.csv")
 
+# %% id=c93b…
+load("fits.RData")
+
 # /// cell order
 # 6f1c9a2e-…
 # 0b7d… folded
 # a41e…
+# c93b…
 # ///
 # /// sourced files
 # helpers.R sha256:9c1e…
 # ///
+# /// learned definitions
+# c93b… fits
+# ///
 # /// lock
-# (full lock)
+# cli 3.6.5 CRAN 9c1e…
+# dplyr 1.1.4 CRAN 4b7d…
+# ggplot2 3.5.2 CRAN a02f…
+# (one line per package)
 # ///
 ```
 
 - Cells are written in run order, so `source()` works; the display order and
-  fold state are in the footer, as in Pluto.
+  fold state are in the footer, as in Pluto. Where the graph allows several
+  orders, display order breaks the tie, so small edits don't reshuffle the
+  file and markdown cells stay next to their neighbours.
 - `# %%` is the cell marker Positron and VS Code already understand.
 - Markdown lines use `#'`, so `knitr::spin` renders the file as a report.
-- Package names aren't repeated in the header; they come from the code.
+- Package names aren't repeated in the header; they come from the code,
+  except the few in `[extra_packages]` that the code can't reveal.
+- `ember_version` is the Ember version that last saved the file, as Pluto
+  writes its version on the file's second line and marimo writes
+  `__generated_with`. An older Ember opening a newer file says so and opens
+  it read-only, since the file may use rules it doesn't know. A newer Ember
+  converts an older file when it saves, and keeps a converter for every
+  earlier format, tested against saved example files from each version.
 
 ## The UI
 
@@ -350,13 +691,14 @@ A hard fork of Pluto's frontend (Preact, no build step in development, about
 **Protocol.** One notebook state object synced as patches over websockets,
 plus about fifteen request types. It has barely changed in a year. The
 server side is ported to R: state diffs (Pluto's Firebasey), msgpack
-encoding (a small pure-R encoder, or RcppMsgPack, the only maintained msgpack
-package on CRAN), and care that length-one R vectors go out as single values,
-not one-element arrays.
+encoding through RcppMsgPack (the only maintained msgpack package on CRAN),
+and care that length-one R vectors go out as single values, not one-element
+arrays.
 
 **Remove** (about half the frontend): Julia scope analysis and syntax
-plugins, the Pkg UI, Binder, export and upload, slider server, recording, the
-AI features, the welcome page.
+plugins, the Pkg UI, Binder, upload, slider server, recording, the AI
+features, the welcome page. Keep the file download (`/notebookfile`) and the
+HTML export (`/notebookexport`), which Endeavor uses.
 
 **Replace for R:**
 
@@ -367,6 +709,13 @@ AI features, the welcome page.
 - Error display for R tracebacks. "Multiple definitions" and "Cyclic
   references" keep Pluto's rendering.
 - A package status view for detected packages and install progress.
+- Rich outputs: HTML (with widget files loaded once per page), PNG, SVG,
+  markdown, LaTeX, the table view, the tree view for lists, and terminal
+  colours in printed text.
+- The worker's memory use, next to its status. R rarely returns freed
+  memory to the operating system, so a long session can look large; the
+  display points to "restart worker", which leaves cells not run rather
+  than rerunning them.
 
 **Familiar to R users:**
 
@@ -391,6 +740,53 @@ scripts into the page (Endeavor does) rely on the DOM hooks Pluto's page has
 buttons, the error element) and its CSS variable names; renaming them is a
 change to coordinate with them.
 
+## Integration with Endeavor
+
+Endeavor (`../endeavor`) is a macOS app that puts a Claude agent next to a
+live notebook, through MCP tools such as `read_cell`, `edit_cell`,
+`execute_cell`, `get_cell_dependencies` and `view_cell_output`. Its plan for
+R is in its `docs/r-notebooks.md`; its engine interface is in
+`docs/runtime-core.md`. Ember has no Endeavor code: an adapter,
+`runtime-r/`, lives in Endeavor, is loaded into Ember's server process, and
+answers Endeavor's calls through Ember's R API. So Ember's R API has to
+cover what the adapter needs:
+
+- **Notebooks:** open (without running), new, shut down, move the file.
+- **Snapshot:** per cell, code, folded, running, queued, errored, stale (lazy
+  mode), last run time and duration, output (`text/plain` form and MIME
+  type) or a structured error (kind, message, suggested fixes); the notebook's
+  process status.
+- **Graph without running:** per cell, definitions (static, and those learned
+  at run time from the footer), references, direct upstream and downstream
+  cells, packages; the run order and the cells that can't run (cycles,
+  multiple definitions).
+- **Edits:** a batch of set code (refused if the current code isn't the
+  expected code), insert at an index, delete, move, fold, applied at once;
+  Ember saves the file and updates its own UI.
+- **Runs:** run a list of cells, marking them queued at once; interrupt;
+  restart; `parse()` a cell's code to report syntax errors.
+- **Events,** as Pluto's `on_event` gives: cell state changed, graph
+  changed, file saved, run finished, notebook opened, notebook shut down.
+- **A PNG of a cell's output** for `view_cell_output`. Plots already are
+  PNGs. Other outputs have none, as with Pluto, where the tool refuses
+  Markdown, HTML and text and points the agent to `read_cell`, which gets
+  the `text/plain` form. So an htmlwidget chart (plotly, leaflet) is text to
+  the agent.
+
+Endeavor also relies on the page. Its injected script reads Pluto's DOM hooks
+(`pluto-cell` elements with the cell UUID, `.code_differs`, `.selected`,
+`pluto-output`, the error element, the add-cell buttons), its `--pluto-*` CSS
+variables, the `window.editor_state` object, CodeMirror 6's internals for
+inline diffs, and the URLs `/edit?id=…&secret=…`, `/notebookfile` and
+`/notebookexport`. The fork keeps all of these and keeps CodeMirror 6; the
+Julia-shaped parts of the state (`nbpkg`, the package log in `status_tree`)
+change, and Endeavor's per-backend page adapter handles them. Cell and
+notebook IDs are full 36-character UUIDs.
+
+Two Endeavor documents describe Pluto's behaviour where Ember's differs, and
+need updating there: `restart` "then every cell runs" (Ember leaves cells not
+run), and the snapshot has no stale state.
+
 ## Build order
 
 0. **Spikes**, each a few days, to run before committing to the design. They
@@ -400,7 +796,16 @@ change to coordinate with them.
      Linux and Windows.
    - rig's user-mode R on macOS and Windows: relocated R, code signing,
      packages with compiled code.
-   - rv against renv for per-notebook libraries, on all three systems.
+   - rv against renv for per-notebook libraries, on all three systems,
+     including how each installs Bioconductor packages and whether Posit
+     Package Manager has dated Bioconductor snapshots.
+   - Package loading and global settings: load the 200 most-downloaded CRAN
+     packages one at a time and compare options, environment variables,
+     working directory and locale before and after each load. This checks
+     that many packages set options in `.onLoad` (assumed, not measured) and
+     whether any overwrites an existing setting, which decides whether the
+     note in [Global settings](#running-cells) is needed. The same run
+     counts how often knitr and repr are installed as dependencies.
 1. **Cell reading and graph**, tested on a corpus of a few hundred real R
    scripts, compared against flowR (a GPL-3 R dataflow analyser, used only in
    tests, not shipped).
@@ -410,21 +815,3 @@ change to coordinate with them.
 5. **Interactive inputs.**
 
 Each step ends in something that runs.
-
-## Open questions
-
-- **Which values a cell shows.** R prints every visible top-level value; R
-  Markdown shows all of them inline. marimo shows only the cell's last
-  expression as its output, and sends `print()` and other console output to
-  a console area below the cell. Pluto shows only the last value. Proposed,
-  following marimo: the last visible value is the cell's output; earlier
-  visible values, `print()`, `cat()`, messages and warnings go to a console
-  area below it, in order.
-- **Outputs on open.** Since notebooks open without running, they would open
-  blank. marimo, which also opens without running by default, saves the
-  session's outputs as you work to `__marimo__/session/<notebook>.json` and
-  restores them on open when every cell's code still matches. Proposed: the
-  same, beside the file (`.ember/<notebook>.json`), but per cell: restore a
-  cell's output when its code and its ancestors' code match, so one edited
-  cell doesn't blank the whole notebook. The notebook file itself stays code
-  only.
