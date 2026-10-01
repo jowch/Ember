@@ -172,3 +172,8 @@ test_that("an install failure names what failed to build", {
   expect_match(msg, "failed to install \"cli\", \"dplyr\"", fixed = TRUE)
   expect_identical(install_failure_message("no reason given", 2L), "install failed, status 2")
 })
+
+test_that("an install failure message ignores terminal colour codes", {
+  msg <- install_failure_message(c("\033[?25h\033[31mError: failed to install \"toyA\"\033[39m"), 1L)
+  expect_match(msg, "Error: failed to install \"toyA\"", fixed = TRUE)
+})

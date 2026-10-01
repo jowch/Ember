@@ -369,6 +369,8 @@ start_worker_process <- function(nb, fx) {
 #' lines name each package that didn't build, and renv's last "Error" line
 #' lists every package it gave up on. The full output is in the log.
 install_failure_message <- function(lines, status) {
+  # renv colours its output with terminal escape codes.
+  lines <- gsub("\033\\[[0-9;?]*[A-Za-z]", "", lines)
   lines <- sub("^\\s+", "", lines)
   why <- unique(c(grep("^ERROR:", lines, value = TRUE),
                   utils::tail(grep("^Error", lines, value = TRUE), 1)))

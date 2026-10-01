@@ -17,6 +17,12 @@
 
 main <- function(plan_path) {
   plan <- readRDS(plan_path)
+  # The lock's dated repositories decide what installs. A user's (or CI's)
+  # renv settings would otherwise replace them: RENV_CONFIG_REPOS_OVERRIDE
+  # points renv at another repository, and a profile or project changes
+  # which library and lockfile it uses.
+  Sys.unsetenv(c("RENV_CONFIG_REPOS_OVERRIDE", "RENV_PROFILE", "RENV_PROJECT",
+                 "RENV_PATHS_LIBRARY", "RENV_PATHS_LOCKFILE"))
 
   if (!is.null(ember:::read_library_manifest(plan$path))) {
     unlink(plan$staging, recursive = TRUE)
