@@ -152,7 +152,11 @@ ev_install_done <- function(token, key, manifest, message, log, at)
 fx_fetch_index    <- function(key, url) effect("fetch_index", key = key, url = url)
 fx_check_library  <- function(key, path) effect("check_library", key = key, path = path)
 #' `lock` and `repos` are everything the installer needs; it writes the
-#' renv lockfile itself (lock.R, `renv_lockfile_of()`).
+#' renv lockfile itself (lock.R, `renv_lockfile_of()`). `repos` is the
+#' dated mapping `repo_urls()` builds (name -> dated URL), not the raw
+#' `ember_repos` value: `renv_lockfile_of()` writes it straight into the
+#' lockfile's `Repositories`, which `Source = "Repository"` entries resolve
+#' against by name ("CRAN", "BioCsoft").
 fx_install        <- function(token, key, path, lock, repos)
   effect("install", token = token, key = key, path = path, lock = lock, repos = repos)
 #' Deviation from the sketch: `fx_cancel_install()` also carries `key`, not
@@ -299,7 +303,8 @@ schedule_packages <- function(state, old) {
     tgt$status <- "installing"
     tgt$progress <- NULL
     state$packages$target <- tgt
-    effects <- c(effects, list(fx_install(token, tgt$key, tgt$path, state$file$lock, state$options$repos)))
+    effects <- c(effects, list(fx_install(token, tgt$key, tgt$path, state$file$lock,
+                                          repo_urls(state$options$repos, state$file$header))))
   }
 
   # ---- 5. Switch -------------------------------------------------------------

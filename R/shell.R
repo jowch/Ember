@@ -275,9 +275,10 @@ run_effect <- function(nb, fx) {
         },
         make_done = function(status, output) {
           manifest <- tryCatch(read_library_manifest(fx$path), error = function(e) NULL)
+          lines <- strsplit(output, "\n", fixed = TRUE)[[1]]
           ev_install_done(fx$token, fx$key, manifest,
-                          message = if (identical(status, 0L)) NULL else paste("install failed, status", status),
-                          log = utils::tail(output, 20), at = Sys.time())
+                          message = if (identical(status, 0L)) NULL else install_failure_message(lines, status),
+                          log = utils::tail(lines, 40), at = Sys.time())
         })
     },
     cancel_install = {
@@ -364,6 +365,17 @@ start_worker_process <- function(nb, fx) {
   invisible(NULL)
 }
 
+#' Why an install failed, from the installer's output: R's own "ERROR:"
+#' lines name each package that didn't build, and renv's last "Error" line
+#' lists every package it gave up on. The full output is in the log.
+install_failure_message <- function(lines, status) {
+  lines <- sub("^\\s+", "", lines)
+  why <- unique(c(grep("^ERROR:", lines, value = TRUE),
+                  utils::tail(grep("^Error", lines, value = TRUE), 1)))
+  if (length(why) == 0) return(paste("install failed, status", status))
+  paste(c("install failed:", why), collapse = "\n")
+}
+
 #' Whatever the worker has written to stdout or stderr since the last poll.
 #' Cell output is captured inside the worker; this is R's own and native
 #' code's output, and the pipe must be drained or the worker blocks once
@@ -386,6 +398,13 @@ keep_output_tail <- function(nb, text, keep = 4000L) {
 #' interval, so a busy worker doesn't make it noisier.
 poll <- function(nb) {
   tryCatch(poll_jobs(nb), error = function(e) NULL)
+  # `poll_jobs()` only enqueues (an index fetch or an install may finish with
+  # no worker involved at all, e.g. safe preview): without a worker message
+  # arriving in the same tick, nothing below would otherwise drain the
+  # inbox, and an index_fetched/install_done event would sit unprocessed
+  # until some unrelated dispatch happened to drain it. `drain()` is a
+  # cheap no-op when the inbox is already empty (the common case).
+  if (length(nb$inbox) > 0) drain(nb)
 
   if (!is.null(nb$proc) && is.null(nb$con) && !is.null(nb$listen)) {
     if (isTRUE(tryCatch(socketSelect(list(nb$listen), timeout = 0), error = function(e) FALSE))) {

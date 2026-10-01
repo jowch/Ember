@@ -162,3 +162,13 @@ test_that("an effect that enqueues an event is handled in the same drain (82)", 
   expect_equal(seen, c("first", "second"))
   expect_equal(reply, "first-reply")
 })
+
+test_that("an install failure names what failed to build", {
+  lines <- c("Installing cli ...", "cleancall.c:39:28: error: ...",
+             "ERROR: compilation failed for package 'cli'",
+             "Error: failed to install \"cli\", \"dplyr\"", "Execution halted")
+  msg <- install_failure_message(lines, 1L)
+  expect_match(msg, "compilation failed for package 'cli'", fixed = TRUE)
+  expect_match(msg, "failed to install \"cli\", \"dplyr\"", fixed = TRUE)
+  expect_identical(install_failure_message("no reason given", 2L), "install failed, status 2")
+})

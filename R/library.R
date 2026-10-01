@@ -112,7 +112,11 @@ index_fetch_command <- function(key, url, cache = cache_dir()) {
   code <- paste0(
     "local({library(ember); ember:::fetch_index_main(",
     deparse(key), ", ", deparse(url), ", ", deparse(path), ")})")
-  list(command = rscript, args = c("--vanilla", "-e", code), env = "current")
+  # The server's own library path, as for the installer, so the child finds
+  # the same Ember the server runs.
+  env <- c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep),
+           R_LIBS_USER = "", R_LIBS_SITE = "")
+  list(command = rscript, args = c("--vanilla", "-e", code), env = env)
 }
 
 # ---- Libraries ---------------------------------------------------------------
@@ -133,11 +137,12 @@ read_library_manifest <- function(path) {
 #' Record that a library was used now. The shell calls it when it starts a
 #' worker on `path` and when it reads the manifest. Cleanup reads it.
 touch_library <- function(path) {
+  if (!dir.exists(path)) return(invisible(NULL))
   marker <- file.path(path, "ember-last-used")
-  tryCatch({
+  tryCatch(suppressWarnings({
     if (!file.exists(marker)) file.create(marker)
     Sys.setFileTime(marker, Sys.time())
-  }, error = function(e) NULL)
+  }), error = function(e) NULL)
   invisible(NULL)
 }
 

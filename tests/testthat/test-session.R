@@ -1,12 +1,14 @@
 # End to end: the R API with a real worker, through the shell. No package
-# installs (`library = NULL`): every notebook cell here is base R only.
+# installs: every notebook cell here is base R only, so `open_notebook()`'s
+# default `repos`/`cache` never resolve anything (an empty lock's library is
+# the empty one, no network, no install).
 # Waits use `wait_for()`/`run_cells(wait = TRUE)`, never `Sys.sleep`.
 #
 # Covers engine-tests.md items 106-117 ("End to end").
 
 test_that("open_notebook starts no process; the snapshot is preview (106)", {
   path <- write_session_notebook(list(S = cell("")))
-  nb <- open_notebook(path, library = NULL)
+  nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
 
   expect_null(nb$proc)
@@ -18,7 +20,7 @@ test_that("open_notebook starts no process; the snapshot is preview (106)", {
 test_that("run_cells(wait = TRUE) runs every cell with the expected outputs (107)", {
   cells <- list(S = cell(""), A = cell("x <- 21"), B = cell("y <- x * 2"), C = cell("y + 1"))
   path <- write_session_notebook(cells)
-  nb <- open_notebook(path, library = NULL)
+  nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
 
   res <- run_cells(nb, wait = TRUE, timeout = 20)
@@ -34,7 +36,7 @@ test_that("run_cells(wait = TRUE) runs every cell with the expected outputs (107
 test_that("editing an upstream cell reruns dependents in autorun (108)", {
   cells <- list(S = cell(""), A = cell("x <- 1"), B = cell("x * 10"))
   path <- write_session_notebook(cells)
-  nb <- open_notebook(path, library = NULL)
+  nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
   run_cells(nb, wait = TRUE, timeout = 20)
 
@@ -49,7 +51,7 @@ test_that("editing an upstream cell reruns dependents in autorun (108)", {
 test_that("lazy mode marks dependents stale, then runs them on request (109)", {
   cells <- list(S = cell(""), A = cell("x <- 1"), B = cell("x * 10"))
   path <- write_session_notebook(cells, on_cell_change = "lazy")
-  nb <- open_notebook(path, library = NULL)
+  nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
   run_cells(nb, wait = TRUE, timeout = 20)
 
@@ -70,7 +72,7 @@ test_that("lazy mode marks dependents stale, then runs them on request (109)", {
 test_that("the file on disk matches the state after an edit, and file_saved fires (110)", {
   cells <- list(S = cell(""), A = cell("1"))
   path <- write_session_notebook(cells)
-  nb <- open_notebook(path, library = NULL)
+  nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
 
   saved <- FALSE
@@ -96,7 +98,7 @@ test_that("a learned definition from load() is saved in the footer and orders ce
   cells <- list(S = cell(""), A = cell(sprintf("load(%s)", deparse(rdata_path))),
                B = cell("fits + 1"))
   path <- write_session_notebook(cells, dir = dir)
-  nb <- open_notebook(path, library = NULL)
+  nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
 
   res <- run_cells(nb, wait = TRUE, timeout = 20)
@@ -109,7 +111,7 @@ test_that("a learned definition from load() is saved in the footer and orders ce
   expect_match(file_text, "fits")
 
   close_notebook(nb)
-  nb2 <- open_notebook(path, library = NULL)
+  nb2 <- open_notebook(path)
   on.exit(close_notebook(nb2), add = TRUE)
   g <- dependency_graph(nb2)
   expect_true("fits" %in% g$cells[["A"]]$definitions)
@@ -122,7 +124,7 @@ test_that("opening and closing an untouched notebook writes nothing (112)", {
   before_bytes <- readBin(path, "raw", file.info(path)$size)
   before_mtime <- file.info(path)$mtime
 
-  nb <- open_notebook(path, library = NULL)
+  nb <- open_notebook(path)
   close_notebook(nb)
 
   after_bytes <- readBin(path, "raw", file.info(path)$size)
@@ -142,7 +144,7 @@ test_that("interrupting a stuck cell offers a restart after the grace period (11
   cells <- list(S = cell(sprintf("dyn.load(%s)", deparse(so))),
                A = cell('.Call("stuck", 6L)'))
   path <- write_session_notebook(cells)
-  nb <- open_notebook(path, library = NULL)
+  nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
 
   run_cells(nb, "A", wait = FALSE)
@@ -169,7 +171,7 @@ test_that("interrupting a stuck cell offers a restart after the grace period (11
 test_that("a crashed worker reports worker_exited, and the next run starts a new one (114)", {
   cells <- list(S = cell(""), A = cell("tools::pskill(Sys.getpid())"))
   path <- write_session_notebook(cells)
-  nb <- open_notebook(path, library = NULL)
+  nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
 
   run_cells(nb, "A", wait = TRUE, timeout = 15)
@@ -190,7 +192,7 @@ test_that("a crashed worker reports worker_exited, and the next run starts a new
 test_that("Endeavor-shaped calls: apply with expected, run(wait = FALSE), seq, render_png (115)", {
   cells <- list(S = cell(""), A = cell("1"))
   path <- write_session_notebook(cells)
-  nb <- open_notebook(path, library = NULL)
+  nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
 
   refused <- tryCatch({ edit_notebook(nb, set_code("A", "2", expected = "wrong")); NULL },
@@ -214,7 +216,7 @@ test_that("Endeavor-shaped calls: apply with expected, run(wait = FALSE), seq, r
 
   cells2 <- list(S = cell(""), P = cell("plot(1:10)"))
   path2 <- write_session_notebook(cells2)
-  nb2 <- open_notebook(path2, library = NULL)
+  nb2 <- open_notebook(path2)
   on.exit(close_notebook(nb2), add = TRUE)
   run_cells(nb2, wait = TRUE, timeout = 20)
   png <- render_png(nb2, "P")
@@ -225,7 +227,7 @@ test_that("Endeavor-shaped calls: apply with expected, run(wait = FALSE), seq, r
 test_that("two consecutive notebook_state() values share unchanged cells (116)", {
   cells <- list(S = cell(""), A = cell("1"), B = cell("2"))
   path <- write_session_notebook(cells)
-  nb <- open_notebook(path, library = NULL)
+  nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
   run_cells(nb, wait = TRUE, timeout = 20)
 
@@ -241,7 +243,7 @@ test_that("two consecutive notebook_state() values share unchanged cells (116)",
 test_that("a later callback keeps firing during a 2 s busy cell (117)", {
   cells <- list(S = cell(""), A = cell("Sys.sleep(2)"))
   path <- write_session_notebook(cells)
-  nb <- open_notebook(path, library = NULL)
+  nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
 
   ticks <- list()

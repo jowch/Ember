@@ -25,9 +25,9 @@ directly, they read it through \code{notebook_snapshot()},
 \code{dependency_graph()} and \code{notebook_state()}.
 }
 \usage{
-open_notebook(path, library = NULL)
+open_notebook(path, repos = ember_repos(), cache = cache_dir())
 
-new_notebook(path, library = NULL)
+new_notebook(path, repos = ember_repos(), cache = cache_dir())
 
 close_notebook(nb)
 
@@ -61,9 +61,10 @@ wait_for(nb, predicate = is_idle, timeout = 10)
 \item{path}{Path to the notebook's \code{.R} file. For \code{open_notebook()}, an
 existing file (one without Ember's header opens too). For \code{new_notebook()},
 a path that does not yet exist. For \code{move_notebook()}, the new path.}
-\item{library}{Library path the worker gets as \code{R_LIBS_USER}. \code{NULL}
-means a fresh empty directory under \code{tempdir()} (only R's own packages are
-visible).}
+\item{repos}{\code{ember_repos()}: where indexes and packages come from. See
+\link{packages}.}
+\item{cache}{\code{cache_dir()}: where libraries, indexes and renv's cache live.
+See \link{packages}.}
 \item{nb}{An \code{ember_notebook} handle, as returned by \code{open_notebook()} or
 \code{new_notebook()}.}
 \item{on_cell_change}{\code{"autorun"} (edit-then-run reruns dependents
@@ -102,9 +103,10 @@ finished, timed_out)}.
 
 \code{notebook_snapshot()} returns a plain list describing the notebook's
 current, safe-to-keep state: \code{list(id, path, seq, read_only, allowed,
-process, restart_offered, worker_message, problems, order, cells)}, where
-\code{process} is one of \code{"preview"}, \code{"starting"}, \code{"ready"},
-\code{"busy"}, \code{"stopped"}.
+process, restart_offered, worker_message, problems, order, cells, packages)},
+where \code{process} is one of \code{"preview"}, \code{"starting"},
+\code{"ready"}, \code{"busy"}, \code{"stopped"}, and \code{packages} is
+\code{package_status(nb)}'s value (see \link{packages}).
 
 \code{dependency_graph()} returns the notebook's current \code{ember_graph} (see
 \link{notebook_graph}), reflecting staged edits.
@@ -128,6 +130,10 @@ graph; no worker starts and nothing runs until \code{run_cells()} or
 any unrun, stale or failed ancestors first, in dependency order, one at a
 time; cells that can't run because of a graph error are returned in
 \code{skipped} rather than queued.
+
+The worker always starts from the notebook's own package library: its lock
+is resolved and installed as needed (see \link{packages}), so there is no
+separate \code{library} argument to hand it a different one.
 
 \code{on_notebook_event()}'s \code{note} is \code{list(kind, seq, ...)} with \code{kind} one
 of \code{"notebook_opened"}, \code{"cell_state"}, \code{"topology_changed"},

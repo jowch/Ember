@@ -1,7 +1,7 @@
 # Test-only helpers for test-session.R: real notebooks opened through the
-# API, with a real worker but no package installs (`library = NULL`, so
-# only R's own packages are visible -- every notebook cell here must stick
-# to base R).
+# API, with a real worker but no package installs (every notebook cell here
+# must stick to base R, so `open_notebook()`'s default `repos`/`cache` never
+# resolve or install anything: an empty lock's library is the empty one).
 
 #' Write `text` to `path` with exactly those bytes: no trailing newline
 #' added, unlike `writeLines()`.
@@ -58,3 +58,24 @@ compile_stuck_lib <- function() {
 
 #' The id -> `ember_cell_view` lookup from a snapshot's cells.
 snap_view <- function(snap, id) Find(function(v) identical(v$id, id), snap$cells)
+
+#' Make the installed Ember visible to subprocesses. The installer and index
+#' fetch run `library(ember)` in a child R with the server's library path.
+#' Under R CMD check Ember is installed; under load_all() it is only the
+#' source tree, so it is installed once into a temporary library put first
+#' on the path.
+use_installed_ember <- function() {
+  path <- find.package("ember")
+  if (dir.exists(file.path(path, "Meta"))) return(invisible())
+  lib <- file.path(tempdir(), "ember-self-lib")
+  if (!dir.exists(file.path(lib, "ember", "Meta"))) {
+    dir.create(lib, showWarnings = FALSE, recursive = TRUE)
+    res <- processx::run(file.path(R.home("bin"), "R"),
+      c("CMD", "INSTALL", "--no-docs", "--no-help", "--no-test-load",
+        paste0("--library=", lib), path),
+      error_on_status = FALSE, timeout = 300)
+    if (res$status != 0) stop("could not install ember for the subprocess tests:\n", res$stderr)
+  }
+  if (!lib %in% .libPaths()) .libPaths(c(lib, .libPaths()))
+  invisible()
+}

@@ -1,20 +1,5 @@
 # R API additions for packages. Thin wrappers, as in api.R: one event per
-# call, the reply returned. Merges into api.R when built.
-
-# ---- Opening -----------------------------------------------------------------
-
-#' `open_notebook()` and `new_notebook()` lose `library =` and gain:
-#'
-#' @param repos `ember_repos()`: where indexes and packages come from.
-#' @param cache `cache_dir()`: where libraries, indexes and renv's cache live.
-#'
-#' Both go into `state$options` with `r = r_info()`; the core never reads
-#' them from the environment. The step-2 tests that passed `library = NULL`
-#' use notebooks with no packages, whose library is the empty one.
-#' The first open in a process starts `clean(cache = FALSE)` as a job.
-open_notebook <- function(path, repos = ember_repos(), cache = cache_dir()) {
-  stop("not implemented")
-}
+# call, the reply returned.
 
 # ---- Reading -----------------------------------------------------------------
 
@@ -54,7 +39,21 @@ remove_extra_package <- function(name) list(op = "remove_extra_package", name = 
 #'   problems)`.
 #' @export
 preview_date <- function(nb, date = Sys.Date(), wait = TRUE, timeout = 60) {
-  stop("not implemented")
+  date <- format(as.Date(date), "%Y-%m-%d")
+  dispatch(nb, ev_preview_date(date, at = Sys.time()))
+
+  if (isTRUE(wait)) {
+    wait_for(nb, function(snap) {
+      prop <- snap$packages$proposal
+      !is.null(prop) && identical(prop$date, date) && prop$status %in% c("ready", "failed")
+    }, timeout = timeout)
+  }
+
+  prop <- package_status(nb)$proposal
+  if (is.null(prop) || !identical(prop$date, date)) {
+    return(list(date = date, status = "fetching", changes = NULL, problems = NULL))
+  }
+  list(date = prop$date, status = prop$status, changes = prop$changes, problems = prop$problems)
 }
 
 #' Apply a previewed date move. Refused (an `ember_refused` condition)
@@ -67,7 +66,10 @@ preview_date <- function(nb, date = Sys.Date(), wait = TRUE, timeout = 60) {
 #' library is ready and every cell is left not run.
 #' @export
 set_date <- function(nb, date) {
-  stop("not implemented")
+  date <- format(as.Date(date), "%Y-%m-%d")
+  reply <- dispatch(nb, ev_set_date(date, at = Sys.time()))
+  if (inherits(reply, "ember_refused")) stop(reply)
+  invisible(reply)
 }
 
 #' Increment 3. Move the date so that `name` is at `version` (the latest
@@ -75,7 +77,6 @@ set_date <- function(nb, date) {
 #' CRAN's release dates (crandb.r-pkg.org, cached), so the other packages
 #' move only as far as they must. Returns the preview; `set_date()` with
 #' its date applies it. Pinning an older version is the same call.
-#' @export
 preview_update <- function(nb, name, version = NULL, wait = TRUE, timeout = 60) {
   stop("not implemented")
 }
@@ -93,18 +94,34 @@ preview_update <- function(nb, name, version = NULL, wait = TRUE, timeout = 60) 
 #'
 #' @return The exit status, invisibly.
 #' @export
-run <- function(path, repos = ember_repos(), cache = cache_dir(),
-                echo = TRUE) {
-  # file <- parse_notebook(read_file_utf8(path), new_id = uuid)
-  # wanted <- wanted_packages(notebook_graph(code_of(file$cells), file$setup), file$header)
-  # gap <- setdiff(wanted, file$lock$entries$name); if (length(gap)) message(...)
-  # lib <- if (nrow(file$lock$entries) == 0) empty_library(r_info(), cache)$path
-  #        else ensure_library(file$lock, repo_urls(repos, file$header), cache = cache)
-  # touch_library(lib)
-  # processx::run(Rscript, c("--vanilla", path), wd = dirname(path),
-  #   env = c("current", R_LIBS_USER = lib, R_LIBS = "", R_LIBS_SITE = ""),
-  #   echo = echo, error_on_status = FALSE)$status
-  stop("not implemented")
+run <- function(path, repos = ember_repos(), cache = cache_dir(), echo = TRUE) {
+  text <- read_file_utf8(path)
+  file <- parse_notebook(text, new_id = uuid)
+
+  graph <- notebook_graph(code_of(file$cells), setup = file$setup)
+  wanted <- wanted_packages(graph, file$header)
+  locked_names <- if (is.null(file$lock$entries) || nrow(file$lock$entries) == 0) {
+    character()
+  } else {
+    file$lock$entries$name
+  }
+  gap <- setdiff(wanted, locked_names)
+  if (length(gap) > 0) {
+    message("ember: ", path, " uses package(s) not in its lock: ", paste(gap, collapse = ", "))
+  }
+
+  lib <- if (is.null(file$lock$entries) || nrow(file$lock$entries) == 0) {
+    empty_library(r_info(), cache)$path
+  } else {
+    ensure_library(file$lock, repo_urls(repos, file$header), cache = cache, echo = echo)
+  }
+  touch_library(lib)
+
+  rscript <- file.path(R.home("bin"), "Rscript")
+  res <- processx::run(rscript, c("--vanilla", path), wd = dirname(path),
+                       env = c("current", R_LIBS_USER = lib, R_LIBS = "", R_LIBS_SITE = ""),
+                       echo = echo, error_on_status = FALSE)
+  invisible(res$status)
 }
 
 # `clean()` is exported from library.R. Endeavor calls it through the

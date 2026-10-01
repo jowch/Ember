@@ -22,6 +22,8 @@ The public surface is grouped onto a few pages:
     whole notebook.
   \item \link{graph_queries}: read-only queries over a graph (upstream,
     downstream, run order, errors, summaries).
+  \item \link{packages}: a notebook's packages (status, the date move,
+    running or cleaning up outside a session).
 }
 }
 \author{

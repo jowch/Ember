@@ -28,9 +28,11 @@ done; clear out ticked items at each release.
 
 ## Packages (build step 3)
 
-- [ ] Detection from the code, the lock, installs with renv into per-notebook libraries — missing (workers get an empty library today, so only R's own packages load)
-- [ ] Exports of installed packages for the graph before a cell attaches them — missing
-- [ ] Moving the snapshot date, per-package updates, Bioconductor, cleanup of unused libraries — missing
+- [x] Detection from the code, the lock, installs with renv into per-notebook libraries — missing
+- [x] Exports of installed packages for the graph before a cell attaches them — missing
+- [ ] Per-package update and pin (crandb release dates), Bioconductor, GitHub sources, install consent for large downloads, compiler and system-library checks, disk use (increments 2 and 3 in packages.md); moving to a date and cleanup are built — missing
+- [ ] A snapshot date from before the running R was released has no binaries for it, so packages build from source, and old versions may not compile on the new R (cli from 2024 on R 4.6: `Rf_findVar` removed). Detect it before installing and explain (increment 2's install plan) — missing
+- [ ] `renv` is in Imports but used only by the installer script, so R CMD check notes it as not imported — improvised
 
 ## UI (build step 4)
 

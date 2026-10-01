@@ -57,21 +57,22 @@ read_file_utf8 <- function(path) {
 #' opens read-only (`notebook_snapshot(nb)$read_only`); a file from an older
 #' Ember opens normally and is converted when it is next saved.
 #'
+#' The worker always starts from the notebook's own package library (its
+#' lock, resolved and installed as needed): there is no separate `library`
+#' argument to hand it a different one.
+#'
 #' @param path Path to an existing `.R` file. A file without Ember's header
 #'   opens as a notebook too (see `parse_notebook()`).
-#' @param library Library path the worker gets as `R_LIBS_USER`. `NULL`
-#'   means a fresh empty directory under `tempdir()` (only R's own packages
-#'   are visible). Step 3 supplies the notebook's real library.
+#' @param repos `ember_repos()`: where indexes and packages come from.
+#' @param cache `cache_dir()`: where libraries, indexes and renv's cache
+#'   live.
 #' @return An `ember_notebook`.
 #' @export
-open_notebook <- function(path, library = NULL) {
+open_notebook <- function(path, repos = ember_repos(), cache = cache_dir()) {
   text <- read_file_utf8(path)
   file <- parse_notebook(text, new_id = uuid)
-  if (is.null(library)) {
-    library <- tempfile("ember-lib-")
-    dir.create(library, recursive = TRUE, showWarnings = FALSE)
-  }
-  state <- new_state(file, path = path, id = uuid(), options = list(library = library),
+  state <- new_state(file, path = path, id = uuid(),
+                     options = list(repos = repos, cache = cache, r = r_info()),
                      at = Sys.time())
   nb <- session_start(state)
   dispatch(nb, ev_open(at = Sys.time()))
@@ -84,7 +85,7 @@ open_notebook <- function(path, library = NULL) {
 #' snapshot date), one empty setup cell and one empty code cell, then opens
 #' it as `open_notebook()` does. Refuses to overwrite an existing file.
 #' @export
-new_notebook <- function(path, library = NULL) {
+new_notebook <- function(path, repos = ember_repos(), cache = cache_dir()) {
   if (file.exists(path)) stop(sprintf("ember: %s already exists", path))
   setup_id <- uuid()
   code_id <- uuid()
@@ -101,7 +102,7 @@ new_notebook <- function(path, library = NULL) {
     lock = empty_lock(), extra_blocks = list(), format = ember_format)
   ok <- write_atomic(path, format_notebook(file))
   if (!ok) stop(sprintf("ember: could not write %s", path))
-  open_notebook(path, library = library)
+  open_notebook(path, repos = repos, cache = cache)
 }
 
 #' Stop the worker, stop watching files, and detach the handle.
@@ -261,11 +262,12 @@ restart_notebook <- function(nb) {
 #' What the notebook looks like now: a plain list, safe to keep.
 #'
 #' `list(id, path, seq, read_only, allowed, process, restart_offered,
-#' worker_message, problems, order, cells)` where `process` is one of
-#' `"preview"`, `"starting"`, `"ready"`, `"busy"`, `"stopped"`, and `cells`
+#' worker_message, problems, order, cells, packages)` where `process` is one
+#' of `"preview"`, `"starting"`, `"ready"`, `"busy"`, `"stopped"`, `cells`
 #' is a named list (display order) of `ember_cell_view` (see
-#' `snapshot_of()` in state.R). Endeavor's `snapshot` maps onto this one to
-#' one.
+#' `snapshot_of()` in state.R), and `packages` is `package_status(nb)`'s
+#' value (packages-core.R's `packages_view()`). Endeavor's `snapshot` maps
+#' onto this one to one.
 #' @export
 notebook_snapshot <- function(nb) {
   s <- snapshot_of(nb$state)
@@ -273,7 +275,7 @@ notebook_snapshot <- function(nb) {
       read_only = isTRUE(nb$state$read_only), allowed = isTRUE(nb$state$allowed),
       process = s$process, restart_offered = s$restart_offered,
       worker_message = s$worker_message, problems = nb$state$problems,
-      order = names(nb$state$cells), cells = s$cells)
+      order = names(nb$state$cells), cells = s$cells, packages = s$packages)
 }
 
 #' The notebook's current `ember_graph` (step 1's type).
