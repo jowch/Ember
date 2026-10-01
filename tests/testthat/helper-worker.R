@@ -10,6 +10,8 @@ ember_package_root <- function() {
 }
 
 worker_script_path <- function() {
+  installed <- system.file("worker.R", package = "ember")
+  if (nzchar(installed)) return(installed)
   normalizePath(file.path(ember_package_root(), "inst", "worker.R"), mustWork = TRUE)
 }
 
@@ -42,7 +44,7 @@ fixture_lib <- function() {
   }
   lib <- file.path(tempdir(), "ember-fixture-lib")
   dir.create(lib, showWarnings = FALSE, recursive = TRUE)
-  fixtures_dir <- file.path(ember_package_root(), "tests", "testthat", "fixtures")
+  fixtures_dir <- normalizePath(testthat::test_path("fixtures"), mustWork = TRUE)
   pkgs <- list.dirs(fixtures_dir, recursive = FALSE)
   r_bin <- file.path(R.home("bin"), "R")
   res <- processx::run(r_bin,

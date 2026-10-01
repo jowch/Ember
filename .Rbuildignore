@@ -2,3 +2,5 @@
 ^spikes$
 ^grammar$
 ^\.claude$
+^LICENSE\.md$
+^\.github$

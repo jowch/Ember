@@ -248,17 +248,11 @@ keeps display order unless an edge forces a move.
 
 ## Open questions and risks
 
-- Is the setup cell always the first cell in display order, or does the
-  file format need to mark it? The sketch takes it as a parameter with
-  that default.
-- Should `library()` inside a function body count as attaching? The
-  sketch counts `library` at any depth (an extra edge is the cheap side),
-  but a function that attaches conditionally would then always run first.
-- Should learned references (formula check results) be persisted in the
-  footer like learned definitions? The design lists only definitions;
-  without persistence the added edge is lost until the cell reruns.
-- The walker's speed on large cells should be measured on the corpus
-  (build step 1's test).
+- Resolved: the setup cell is marked `[setup]` in the file (see
+  [engine.md](engine.md)), and the walker's speed was measured on the
+  corpus (about 5 ms per file at the median).
+- Still open, tracked in [design-gaps.md](design-gaps.md): `library()`
+  inside a function body, and saving learned references in the footer.
 
 ## Next implementation step
 

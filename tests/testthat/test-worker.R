@@ -400,8 +400,8 @@ test_that("sigint_reset_when_inherited_ignored", {
     'p$kill()'
   ), script)
 
-  ember_so <- file.path(ember_package_root(), "src", "ember.so")
-  skip_if_not(file.exists(ember_so), "ember.so not built")
+  ember_so <- getLoadedDLLs()[["ember"]][["path"]]
+  skip_if_not(file.exists(ember_so), "ember's compiled code not loaded")
   user_lib <- tempfile("ember-worker-lib-")
   dir.create(user_lib, recursive = TRUE)
   r_bin <- file.path(R.home("bin"), "Rscript")

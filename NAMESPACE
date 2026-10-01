@@ -1,4 +1,6 @@
 useDynLib(ember, .registration = TRUE)
+importFrom(stats, setNames)
+importFrom(utils, getParseData)
 export(read_cell)
 export(notebook_graph)
 export(graph_learn)

@@ -246,6 +246,8 @@ after each dispatch.
 
 ## Open questions and risks
 
+Follow-ups to act on are in [design-gaps.md](design-gaps.md).
+
 - **Measured:** rebuilding the graph after an edit takes 30 ms at 100
   cells, 64 ms at 500 and 590 ms at 2000, spread across step 1's
   `notebook_graph()` with no single hot spot. Fine for typical notebooks;

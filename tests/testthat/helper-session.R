@@ -40,7 +40,7 @@ write_session_notebook <- function(cells, setup = names(cells)[1],
 compile_stuck_lib <- function() {
   src_dir <- tempfile("ember-stuck-")
   dir.create(src_dir)
-  src <- file.path(ember_package_root(), "tests", "testthat", "fixtures", "stuck.c")
+  src <- normalizePath(testthat::test_path("fixtures", "stuck.c"), mustWork = TRUE)
   if (!file.exists(src)) return(NULL)
   file.copy(src, file.path(src_dir, "stuck.c"))
 

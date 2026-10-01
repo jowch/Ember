@@ -1,0 +1,67 @@
+# Design gaps
+
+Known gaps and follow-ups, by area. **Missing**: doesn't exist yet.
+**Improvised**: built, works, but needs a proper look. Tick an item when it's
+done; clear out ticked items at each release.
+
+## Engine
+
+- [ ] Graph rebuild after an edit is whole-notebook: 30 ms at 100 cells, 64 ms at 500, 590 ms at 2000, spread across `notebook_graph()` with no single hot spot — improvised
+- [ ] Learned references (formula columns that weren't in the data) aren't saved in the footer, so the edge they add is lost on reopen until the cell reruns — missing
+- [ ] `library()` inside a function body counts as attaching, so a function that attaches conditionally always makes its cell run first — improvised
+- [ ] Listeners run on the server thread after every dispatch; a `cell_state` storm during "Run all" on a 2000-cell notebook isn't measured — missing
+- [ ] The session polls on `later`'s global loop, shared with whatever else the host process runs; a host callback that blocks stalls the poll. Decide whether to use a private loop — missing
+
+## Worker
+
+- [ ] Editor services: completion, help pages and signatures (the request kinds exist and reply "unsupported") — missing
+- [ ] Code that sets out to can reach the worker's own environment (`parent.env(environment(library))`); accidental shadowing is prevented, deliberate access isn't — improvised
+- [ ] Undoing a non-setup cell's `attach()` or `detach()` is best effort: an entry that left the search path can't be recreated — improvised
+- [ ] Formula column check skips a `data` argument that is a call rather than a symbol or `$`/`[[` path — improvised
+- [ ] Plot size isn't reported back, so `render_png()`'s `size` is always `NULL` — missing
+- [ ] Interrupts on Windows (processx's CTRL+C helper) untested — missing
+
+## File format
+
+- [ ] Converter tests need saved example files from each released format; only format 1 exists — missing
+- [ ] Computed `source()` paths in the footer don't record which cell sourced them; they stand in for all cells until every code cell has run — improvised
+
+## Packages (build step 3)
+
+- [ ] Detection from the code, the lock, installs with renv into per-notebook libraries — missing (workers get an empty library today, so only R's own packages load)
+- [ ] Exports of installed packages for the graph before a cell attaches them — missing
+- [ ] Moving the snapshot date, per-package updates, Bioconductor, cleanup of unused libraries — missing
+
+## UI (build step 4)
+
+- [ ] Pluto frontend fork, protocol in R, removals, R adaptations, theme — missing
+- [ ] The R grammar wired into CodeMirror — missing
+- [ ] Rich outputs in the browser: widget files as static paths, table and tree views, terminal colours — missing
+- [ ] URL secret — missing
+
+## Grammar
+
+- [ ] The corpus test reads the gitignored `spikes/corpus/`, so it only runs on one machine. Commit a small corpus or skip when absent — improvised
+- [ ] Offer it back to `lezer-r` — missing
+
+## Integration with Endeavor
+
+- [ ] The adapter's `run(wait = TRUE)` can't block the server; it needs `on_notebook_event()` or a promise once httpuv is in (step 4) — missing
+- [ ] Endeavor's docs still describe Pluto's restart ("then every cell runs") and a snapshot without stale state; update them there — missing
+
+## Packaging and CI
+
+- [x] LICENSE in R's two-line `YEAR` / `COPYRIGHT HOLDER` form for `MIT + file LICENSE` — missing
+- [x] `R CMD check` clean on macOS — missing
+- [x] CI on macOS, Linux and Windows (`.github/workflows/check.yaml`) — missing
+
+## Spikes still to run
+
+- [ ] Server and worker on Linux and Windows (responsiveness, interrupt, restart) — missing
+- [ ] rig's user-mode R on Windows — missing
+- [ ] rv against renv on Linux and Windows, including Bioconductor — missing
+- [ ] Whether any package overwrites a setting the notebook already set (decides whether the note in Global settings is needed) — missing
+
+## Interactive inputs (build step 5)
+
+- [ ] The R-side API for bonds (Pluto's `@bind`) — missing
