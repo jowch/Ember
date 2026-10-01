@@ -242,10 +242,60 @@ run_effect <- function(nb, fx) {
         nb$listen <- NULL
       }
     },
+    fetch_index = {
+      idx <- tryCatch(cached_index(fx$key, nb$state$options$cache), error = function(e) NULL)
+      if (!is.null(idx)) {
+        enqueue(nb, ev_index_fetched(fx$key, idx, at = Sys.time()))
+      } else {
+        cmd <- index_fetch_command(fx$key, fx$url, nb$state$options$cache)
+        job_start(fx$key, cmd, nb,
+          make_progress = function(line) NULL,
+          make_done = function(status, output) {
+            if (identical(status, 0L)) {
+              idx2 <- tryCatch(cached_index(fx$key, nb$state$options$cache), error = function(e) NULL)
+              if (!is.null(idx2)) ev_index_fetched(fx$key, idx2, at = Sys.time())
+              else ev_index_failed(fx$key, "index fetch produced no index", at = Sys.time())
+            } else {
+              ev_index_failed(fx$key, paste(utils::tail(output, 20), collapse = "\n"), at = Sys.time())
+            }
+          })
+      }
+    },
+    check_library = {
+      touch_library(fx$path)
+      manifest <- tryCatch(read_library_manifest(fx$path), error = function(e) NULL)
+      enqueue(nb, ev_library_checked(fx$key, manifest, at = Sys.time()))
+    },
+    install = {
+      cmd <- installer_command(fx$lock, fx$repos, fx$path, nb$state$options$cache)
+      job_start(fx$key, cmd, nb,
+        make_progress = function(line) {
+          item <- parse_install_progress_line(line)
+          if (is.null(item)) NULL else ev_install_progress(fx$token, item, at = Sys.time())
+        },
+        make_done = function(status, output) {
+          manifest <- tryCatch(read_library_manifest(fx$path), error = function(e) NULL)
+          ev_install_done(fx$token, fx$key, manifest,
+                          message = if (identical(status, 0L)) NULL else paste("install failed, status", status),
+                          log = utils::tail(output, 20), at = Sys.time())
+        })
+    },
+    cancel_install = {
+      job_leave(fx$key, nb)
+    },
     stop("ember: unknown effect type: ", fx$type)
   )
   invisible(NULL)
 }
+
+#' Best-effort parse of one line of the installer's output into a progress
+#' item, or `NULL` when the line isn't progress. (design.md, Tradeoffs
+#' accepted: "best-effort install progress, parsed from renv's output,
+#' ... the manifest, not the progress, says what was installed.") renv's own
+#' console format isn't contracted, so increment 1 ships with no parser
+#' rather than one tuned to a format that can change under it; `fx_install`
+#' effects still carry progress events end to end once one is written here.
+parse_install_progress_line <- function(line) NULL
 
 #' Read one sourced file for `ev_files_read`: `list(text, hash)`, with
 #' `text = NA` when the file is missing.
@@ -287,6 +337,7 @@ start_worker_process <- function(nb, fx) {
   lib <- fx$library
   if (is.null(lib)) lib <- file.path(tempdir(), "ember-empty-lib")
   if (!dir.exists(lib)) dir.create(lib, recursive = TRUE, showWarnings = FALSE)
+  tryCatch(touch_library(lib), error = function(e) NULL)
 
   rscript <- file.path(R.home("bin"), "Rscript")
   boot <- paste0(
@@ -334,6 +385,8 @@ keep_output_tail <- function(nb, text, keep = 4000L) {
 #' File watching is checked at most every 500 ms regardless of the poll
 #' interval, so a busy worker doesn't make it noisier.
 poll <- function(nb) {
+  tryCatch(poll_jobs(nb), error = function(e) NULL)
+
   if (!is.null(nb$proc) && is.null(nb$con) && !is.null(nb$listen)) {
     if (isTRUE(tryCatch(socketSelect(list(nb$listen), timeout = 0), error = function(e) FALSE))) {
       nb$con <- tryCatch(socketAccept(nb$listen, blocking = FALSE, open = "a+b"),
@@ -509,7 +562,8 @@ worker_event <- function(msg, gen, at, secret = NULL) {
       if (!is.null(secret) && !identical(msg$secret, secret)) {
         return(wk_failed(gen, "protocol error: wrong secret", at))
       }
-      wk_hello(gen, list(pid = msg$pid, r_version = msg$r_version, lib_paths = msg$lib_paths), at)
+      wk_hello(gen, list(pid = msg$pid, r_version = msg$r_version, lib_paths = msg$lib_paths,
+                        loaded = msg$loaded %||% character()), at)
     },
     console  = wk_console(gen, msg$token, msg$item, at),
     source   = wk_source(gen, msg$token, msg$path, msg$text, at),

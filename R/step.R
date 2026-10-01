@@ -103,7 +103,8 @@ step <- function(state, event) {
   if (isTRUE(state$closed)) return(list(state = state, effects = list(), reply = NULL))
   state$clock <- event$at
   r <- reduce(state, event)
-  s <- schedule(r$state)
+  pk <- schedule_packages(r$state, old = state)
+  s <- schedule(pk$state)
   reads <- missing_file_reads(s$state)
   new <- s$state
   if (!identical(new, state)) new$seq <- state$seq + 1L
@@ -114,7 +115,7 @@ step <- function(state, event) {
   # was). Patching it here, after that decision, is simpler than every
   # reducer predicting it.
   if (is.list(reply) && !is.null(reply$seq)) reply$seq <- new$seq
-  list(state = new, effects = c(r$effects, s$effects, reads), reply = reply)
+  list(state = new, effects = c(r$effects, pk$effects, s$effects, reads), reply = reply)
 }
 
 reduce <- function(state, event) {
@@ -140,6 +141,13 @@ reduce <- function(state, event) {
     wk_rendered      = reduce_wk_rendered(state, event),
     wk_exited        = reduce_wk_exited(state, event),
     tm_offer_restart = reduce_offer_restart(state, event),
+    preview_date     = reduce_preview_date(state, event),
+    set_date         = reduce_set_date(state, event),
+    index_fetched    = reduce_index_fetched(state, event),
+    index_failed     = reduce_index_failed(state, event),
+    library_checked  = reduce_library_checked(state, event),
+    install_progress = reduce_install_progress(state, event),
+    install_done     = reduce_install_done(state, event),
     stop("unknown event type: ", event$type)
   )
 }
@@ -158,6 +166,10 @@ schedule <- function(state) {
   if (!isTRUE(state$allowed) || isTRUE(state$read_only)) {
     return(list(state = state, effects = list()))
   }
+  # A conflicting library switch is waiting for the running cell to finish
+  # (switch_library() in packages-core.R): send nothing new meanwhile, so no
+  # further cell loads the version about to be replaced.
+  if (switch_pending(state)) return(list(state = state, effects = list()))
   w <- state$worker
   if (identical(w$status, "off") ||
       (identical(w$status, "stopped") && length(state$pending) > 0)) {
@@ -168,16 +180,38 @@ schedule <- function(state) {
     state$worker$interrupt <- NULL
     state$worker$restart_offered <- FALSE
     return(list(state = state,
-               effects = list(fx_start_worker(gen, state$options$library, dirname(state$path)))))
+               effects = list(fx_start_worker(gen, state$packages$active$path, dirname(state$path)))))
   }
   if (!identical(w$status, "ready")) return(list(state = state, effects = list()))
 
   id <- NULL
   fblocked <- failed_blockers(state)
+  waiting <- waiting_cells(state)
+  # A target library that failed can never bring in the packages these
+  # cells are waiting for; drop them from `pending` instead of leaving them
+  # queued forever (packages-core.R, waiting_cells()).
+  if (identical(state$packages$target$status, "failed") && length(waiting) > 0) {
+    state$pending <- setdiff(state$pending, names(waiting))
+    waiting <- list()
+  }
   repeat {
     queue <- run_order(state$graph, state$pending)
     if (length(queue) == 0) return(list(state = state, effects = list()))
     candidate <- queue[1]
+    if (!is.null(waiting[[candidate]])) {
+      # Leave it queued (it isn't blocked, just not ready yet) and look
+      # further down the queue for something that can run now, dropping
+      # anything else along the way that can't (same rule as below).
+      found <- NULL
+      for (q in queue[-1]) {
+        if (!is.null(waiting[[q]])) next
+        if (can_run(state, q, fblocked)) { found <- q; break }
+        state$pending <- setdiff(state$pending, q)
+      }
+      if (is.null(found)) return(list(state = state, effects = list()))
+      id <- found
+      break
+    }
     if (can_run(state, candidate, fblocked)) { id <- candidate; break }
     state$pending <- setdiff(state$pending, candidate)
   }
@@ -239,15 +273,20 @@ failed_blockers <- function(state) {
 #' The worker's `run` message for `id`. See the protocol in worker.R.
 #'
 #' `list(type = "run", cell, token, code, role = "setup" | "cell",
-#' order = <code cell ids in run order>, formulas = graph$analyses[[id]]$formulas)`.
+#' order = <code cell ids in run order>, formulas = graph$analyses[[id]]$formulas,
+#' library = state$packages$active$path)`.
 #' `order` is what the worker rebuilds the search path from (attaching
 #' cells' packages in file order); sending it with every run keeps the
-#' worker converging on the current order without a separate sync.
+#' worker converging on the current order without a separate sync. `library`
+#' is sent the same way: the worker calls `.libPaths()` when it differs from
+#' its own, so a newly installed package is picked up with no restart
+#' (packages-core.R, "The worker follows the library").
 run_message <- function(state, id, token) {
   order <- Filter(function(i) identical(state$cells[[i]]$kind, "code"), state$graph$order)
   list(type = "run", cell = id, token = token, code = state$cells[[id]]$code,
       role = if (identical(id, state$setup)) "setup" else "cell",
-      order = order, formulas = state$graph$analyses[[id]]$formulas)
+      order = order, formulas = state$graph$analyses[[id]]$formulas,
+      library = state$packages$active$path)
 }
 
 #' Cells that need to run before `id` can: its transitive upstream that is
@@ -366,7 +405,7 @@ drop_downstream <- function(state, id) {
 #' changed for no real reason.
 rebuild_graph <- function(state) {
   new_graph <- notebook_graph(code_of(state$cells), setup = state$setup,
-                              exports = state$exports,
+                              exports = exports_of(state),
                               learned = state$graph$learned,
                               previous = state$graph,
                               read_file = reader_of(state$files))
@@ -388,10 +427,17 @@ missing_file_reads <- function(state) {
 # ---- API events --------------------------------------------------------------
 
 #' Allow execution. Reply: `TRUE` if it was already allowed.
-#' `schedule()` starts the worker.
+#' `schedule()` starts the worker. Also records the running R version into
+#' the header when it differs (design.md, Decisions: "records the new
+#' version once the user runs the notebook on it"), so a notebook written on
+#' one R and reopened on another doesn't silently claim the wrong one.
 reduce_allow <- function(state, event) {
   reply <- isTRUE(state$allowed)
   state$allowed <- TRUE
+  r_version <- state$options$r$version
+  if (!is.null(r_version) && !identical(state$file$header$r_version, r_version)) {
+    state$file$header$r_version <- r_version
+  }
   list(state = state, effects = list(), reply = reply)
 }
 
@@ -424,6 +470,7 @@ reduce_apply <- function(state, event) {
   }
   ops <- event$ops
   cells <- state$cells
+  header <- state$file$header
   inserted <- character()
   deleted <- character()
 
@@ -485,6 +532,21 @@ reduce_apply <- function(state, event) {
       } else {
         cells[[op$cell]]$folded <- isTRUE(op$folded)
       }
+    } else if (identical(op$op, "add_extra_package")) {
+      header$extra_packages <- sort(unique(c(header$extra_packages, op$name)))
+    } else if (identical(op$op, "remove_extra_package")) {
+      # Refused when the name is also named directly in code: removing it
+      # from [extra_packages] would do nothing (schedule_packages() would
+      # just put it back), so the refusal is a more honest answer than a
+      # silent no-op.
+      code_only_header <- header
+      code_only_header$extra_packages <- character()
+      code_wanted <- wanted_packages(state$graph, code_only_header)
+      if (op$name %in% code_wanted) {
+        bad <- refused(sprintf("%s is named in code; remove it there instead", op$name), op)
+      } else {
+        header$extra_packages <- setdiff(header$extra_packages, op$name)
+      }
     } else {
       bad <- refused(sprintf("unknown op %s", op$op), op)
     }
@@ -492,6 +554,7 @@ reduce_apply <- function(state, event) {
   }
 
   state$cells <- cells
+  state$file$header <- header
   effects <- list()
   for (id in deleted) {
     old_result <- state$results[[id]]
@@ -515,11 +578,25 @@ reduce_apply <- function(state, event) {
 }
 
 #' Ask to run cells.
+#'
+#' Also retries a failed target library once, and any failed index whose
+#' wanted set hasn't changed: `schedule_packages()`'s install and resolve
+#' stages don't loop on a broken package by themselves (no retry storm while
+#' offline), but asking to run again is "I want this to work now", the same
+#' way a stopped worker restarts only when something is asked to run.
 reduce_run <- function(state, event) {
   if (isTRUE(state$read_only)) {
     return(list(state = state, effects = list(), reply = refused("notebook is read-only")))
   }
   state$allowed <- TRUE
+  if (identical(state$packages$target$status, "failed")) {
+    state$packages$target$status <- "missing"
+    state$packages$target$message <- NULL
+    state$packages$target$log <- character()
+  }
+  failed_keys <- Filter(function(k) identical(state$packages$indexes[[k]]$status, "failed"),
+                        names(state$packages$indexes))
+  for (k in failed_keys) state$packages$indexes[[k]] <- NULL
   code_ids <- Filter(function(i) identical(state$cells[[i]]$kind, "code"), names(state$cells))
   ids <- event$ids %||% code_ids
   ids <- ids[ids %in% names(state$cells)]
@@ -559,26 +636,46 @@ reduce_restart <- function(state, event) {
     return(list(state = state, effects = list(),
                reply = refused("safe preview: nothing to restart")))
   }
+  r <- restart_worker(state, reason = NULL)
+  list(state = r$state, effects = r$effects, reply = TRUE)
+}
+
+#' Kill and restart the worker: a fresh generation, no running cell, every
+#' result cleared and nothing left pending (every cell shows not run).
+#' Shared by `reduce_restart()` and `switch_library()` (packages-core.R),
+#' which calls this when a ready target library changes the version of a
+#' namespace the worker has loaded. `reason`, when given, becomes
+#' `worker$exit$message`, so the snapshot says why every cell is not run
+#' ("dplyr changed 1.1.4 -> 1.2.1; R restarted").
+restart_worker <- function(state, reason = NULL) {
   w <- state$worker
   effects <- list()
   if (w$status %in% c("starting", "ready", "busy")) effects <- list(fx_kill_worker(w$gen))
   gen <- w$gen + 1L
   state$worker <- structure(list(status = "starting", gen = gen, running = NULL,
                                  interrupt = NULL, restart_offered = FALSE,
-                                 info = NULL, exit = NULL),
+                                 info = NULL,
+                                 exit = if (!is.null(reason)) list(status = NA_integer_, message = reason) else NULL,
+                                 loaded = character()),
                             class = "ember_worker_state")
-  effects <- c(effects, list(fx_start_worker(gen, state$options$library, dirname(state$path))))
+  effects <- c(effects, list(fx_start_worker(gen, state$packages$active$path, dirname(state$path))))
   state$results <- list()
   state$pending <- character()
-  list(state = state, effects = effects, reply = TRUE)
+  list(state = state, effects = effects)
 }
 
 #' Shut down: kill the worker, close the shell. Reply: `!allowed`.
+#' An install still running is left for the shell's job table (library.R):
+#' this session no longer cares (`fx_cancel_install`), but another session
+#' wanting the same library keeps the job alive.
 reduce_shutdown <- function(state, event) {
   reply <- !isTRUE(state$allowed)
   w <- state$worker
   effects <- list()
   if (w$status %in% c("starting", "ready", "busy")) effects <- list(fx_kill_worker(w$gen))
+  if (!is.null(state$packages$install)) {
+    effects <- c(effects, list(fx_cancel_install(state$packages$install$token, state$packages$install$key)))
+  }
   effects <- c(effects, list(fx_close()))
   state$closed <- TRUE
   list(state = state, effects = effects, reply = reply)
@@ -677,6 +774,7 @@ reduce_wk_hello <- function(state, event) {
   if (!eq(event$gen, state$worker$gen)) return(list(state = state, effects = list(), reply = NULL))
   state$worker$status <- "ready"
   state$worker$info <- event$info
+  state$worker$loaded <- event$info$loaded %||% character()
   list(state = state, effects = list(), reply = NULL)
 }
 
@@ -796,18 +894,35 @@ reduce_wk_done <- function(state, event) {
     state <- rebuild_graph(state)  # graph_learn() below would otherwise keep the old exports
   }
 
+  if (!is.null(report$loaded) && length(report$loaded) > 0) {
+    loaded <- state$worker$loaded
+    loaded[names(report$loaded)] <- report$loaded
+    state$worker$loaded <- loaded
+  }
+
   error <- NULL
   if (!is.null(report$error)) {
     err <- report$error
     if (is.character(err)) err <- list(message = err)
-    msg <- err$message %||% "error"
-    # A denied computed `source()` makes the worker raise an R error whose
-    # message is exactly what `reduce_wk_source()` sent back; recognising it
-    # here reports the real cause (`source_conflict`) instead of a plain
-    # `error`.
-    kind <- if (!is.null(w$running$refused_source) &&
-               identical(msg, w$running$refused_source)) "source_conflict" else "error"
-    error <- new_run_error(kind, message = msg, traceback = err$traceback %||% character())
+    if (!is.null(err$package)) {
+      # R's own packageNotFoundError, not a message match (works in every
+      # locale): packages-core.R's missing_package_error() both classifies
+      # it and, when the active library claims the package is installed,
+      # marks the library to be checked again (another process may have
+      # cleaned it).
+      mp <- missing_package_error(state, err$package)
+      state <- mp$state
+      error <- mp$error
+    } else {
+      msg <- err$message %||% "error"
+      # A denied computed `source()` makes the worker raise an R error whose
+      # message is exactly what `reduce_wk_source()` sent back; recognising it
+      # here reports the real cause (`source_conflict`) instead of a plain
+      # `error`.
+      kind <- if (!is.null(w$running$refused_source) &&
+                 identical(msg, w$running$refused_source)) "source_conflict" else "error"
+      error <- new_run_error(kind, message = msg, traceback = err$traceback %||% character())
+    }
   } else {
     changed_removed <- union(report$changed %||% character(), report$removed %||% character())
     owners <- unique(unlist(lapply(changed_removed, function(n) {

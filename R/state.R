@@ -12,6 +12,21 @@
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
+#' The exports the graph is built with: the installed packages' (from the
+#' active library's manifest), overridden by what the worker reported for
+#' packages it attached. Replaces the bare `state$exports` in
+#' `rebuild_graph()` (step.R) and `check_state()`'s graph invariant, so a
+#' cell that attaches dplyr gets dplyr's edges before it ever runs.
+#'
+#' At `new_state()` time `state$packages` doesn't exist yet, so the initial
+#' graph is built with `exports = list()` directly; that is equal to
+#' `exports_of()` at that point anyway, since a fresh `packages` state's
+#' `active` is always the empty library (no exports) and `state$exports`
+#' starts empty too.
+exports_of <- function(state) {
+  utils::modifyList(state$packages$active$exports, state$exports)
+}
+
 # ---- The state ---------------------------------------------------------------
 
 #' The session state.
@@ -75,9 +90,26 @@
 #' * `worker$running` is not `NULL` iff `worker$status == "busy"`.
 #' * `!allowed` implies `worker$status == "off"`, `pending` and `results`
 #'   empty.
+#' Default `r_info()` (library.R), computed inline so state.R doesn't take a
+#' hard dependency on library.R's version of it: callers (`open_notebook()`)
+#' are expected to pass `options$r <- r_info()` themselves; this is only the
+#' fallback for tests and for opening with no options at all.
+default_r_info <- function() {
+  list(version = paste(R.version$major, R.version$minor, sep = "."),
+      minor = paste(R.version$major, strsplit(R.version$minor, "\\.", fixed = FALSE)[[1]][1], sep = "."),
+      platform = R.version$platform)
+}
+
 new_state <- function(file, path, id, options, at) {
   if (is.null(options)) options <- list()
   if (is.null(options$grace)) options$grace <- 3
+  if (is.null(options$repos)) options$repos <- ember_repos()
+  if (is.null(options$cache)) options$cache <- tempfile("ember-cache-")
+  # `[[` (exact), not `$`: `options$r` partial-matches `options$repos` via
+  # `$`'s partial-matching on lists whenever `repos` is already set and `r`
+  # isn't, which would make this check always find a (wrong) non-NULL value
+  # and skip filling in the real `r`.
+  if (is.null(options[["r"]])) options$r <- default_r_info()
   cells <- file$cells
   setup <- file$setup
   files <- list()
@@ -108,6 +140,9 @@ new_state <- function(file, path, id, options, at) {
     }
   }
 
+  wanted <- wanted_packages(graph, file$header)
+  packages <- new_packages_state(file$lock, wanted, options$r, options$cache)
+
   structure(list(
     id = id, path = path, read_only = isTRUE(file$read_only),
     problems = file$problems,
@@ -115,7 +150,7 @@ new_state <- function(file, path, id, options, at) {
                extra_blocks = file$extra_blocks, format = file$format),
     cells = cells, setup = setup, files = files, computed_sources = list(),
     footer_sources = footer_sources,
-    exports = list(), graph = graph, options = options,
+    exports = list(), graph = graph, options = options, packages = packages,
     allowed = FALSE, closed = FALSE, worker = new_worker_state(),
     pending = character(), results = list(), clock = at, seq = 0L,
     next_token = 1L
@@ -138,9 +173,14 @@ new_state <- function(file, path, id, options, at) {
 #' * `restart_offered`: logical.
 #' * `info`: what the hello said (pid, R version, library paths), or `NULL`.
 #' * `exit`: `NULL` or `list(status, message)` from the last exit.
+#' * `loaded`: named character, namespace -> version, for non-base
+#'   namespaces loaded in this worker (from the hello and every `done`
+#'   report). Reset with the worker: `restart_worker()` makes a fresh
+#'   `new_worker_state()`.
 new_worker_state <- function() {
   structure(list(status = "off", gen = 0L, running = NULL, interrupt = NULL,
-                 restart_offered = FALSE, info = NULL, exit = NULL),
+                 restart_offered = FALSE, info = NULL, exit = NULL,
+                 loaded = character()),
             class = "ember_worker_state")
 }
 
@@ -223,6 +263,7 @@ snapshot_of <- function(state) {
   running <- state$worker$running
   running_cell <- if (!is.null(running)) running$cell else NA_character_
   queued <- setdiff(run_order(graph, state$pending), running_cell)
+  waiting <- waiting_cells(state)
 
   ids <- names(state$cells)
   views <- list()
@@ -256,7 +297,8 @@ snapshot_of <- function(state) {
       console = if (is_running) running$console
                 else if (!is.null(result)) result$console else list(),
       last_run = if (!is.null(result)) result$started_at else NULL,
-      runtime = if (!is.null(result)) result$runtime else NULL
+      runtime = if (!is.null(result)) result$runtime else NULL,
+      waiting_for = waiting[[id]] %||% character()
     ), class = "ember_cell_view")
   }
 
@@ -264,7 +306,7 @@ snapshot_of <- function(state) {
   list(cells = views, process = process,
       restart_offered = isTRUE(state$worker$restart_offered),
       worker_message = if (!is.null(state$worker$exit)) state$worker$exit$message else NULL,
-      seq = state$seq)
+      seq = state$seq, packages = packages_view(state))
 }
 
 #' `TRUE` when nothing is queued or running. The default `wait_for()`
@@ -359,6 +401,13 @@ notifications <- function(old, new) {
     nts <- c(nts, list(list(kind = "notebook_shut_down")))
   }
 
+  pkg_same <- identical(old$packages, new$packages) &&
+    identical(old$file$lock, new$file$lock) && identical(old$file$header, new$file$header) &&
+    identical(old$worker$loaded, new$worker$loaded) && identical(old$graph, new$graph)
+  if (!pkg_same && !identical(packages_view(old), packages_view(new))) {
+    nts <- c(nts, list(list(kind = "packages_changed")))
+  }
+
   nts
 }
 
@@ -394,7 +443,7 @@ check_state <- function(state) {
   problems <- character()
 
   expected <- notebook_graph(code_of(state$cells), setup = state$setup,
-                             exports = state$exports, learned = state$graph$learned,
+                             exports = exports_of(state), learned = state$graph$learned,
                              previous = state$graph, read_file = reader_of(state$files))
   # `read_file` is a closure freshly made over `state$files`; it is never
   # the same object as the one already stored on the graph even when it
@@ -435,6 +484,18 @@ check_state <- function(state) {
     }
     if (length(state$pending) > 0) problems <- c(problems, "!allowed but pending nonempty")
     if (length(state$results) > 0) problems <- c(problems, "!allowed but results nonempty")
+  }
+
+  p <- state$packages
+  target_info <- library_for(state$file$lock, state$options$r, state$options$cache)
+  if (!identical(p$target$key, target_info$key)) {
+    problems <- c(problems, "packages$target is not library_for(state$file$lock)")
+  }
+  if (!identical(p$active$status, "ready")) {
+    problems <- c(problems, "packages$active is not ready")
+  }
+  if (!isTRUE(state$allowed) && !is.null(p$install)) {
+    problems <- c(problems, "packages$install running in safe preview")
   }
 
   if (length(problems) > 0) stop(paste(problems, collapse = "; "))

@@ -8,6 +8,6 @@ Description: A reactive notebook engine for R in the style of Pluto.jl.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Depends: R (>= 4.1.0)
-Imports: later, processx, stats, utils
+Imports: later, processx, renv, stats, utils
 Suggests: testthat (>= 3.0.0)
 Config/testthat/edition: 3

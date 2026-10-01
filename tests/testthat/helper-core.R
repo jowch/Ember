@@ -23,7 +23,7 @@ cell <- function(code = "", kind = c("code", "markdown"), folded = FALSE) {
 #' An `ember_notebook_file` built straight from cells, without going through
 #' `parse_notebook()`.
 fake_file <- function(cells, setup = names(cells)[1], on_cell_change = "autorun",
-                      learned = list(), lock = character(), extra_blocks = list(),
+                      learned = list(), lock = empty_lock(), extra_blocks = list(),
                       format = 1L, read_only = FALSE) {
   new_notebook_file(
     header = new_header(ember_version = "0.1.0", r_version = "4.3.0",
@@ -45,14 +45,16 @@ fake_state <- function(cells, setup = names(cells)[1], on_cell_change = "autorun
 #' A fake `wk_done` report. `created`/`changed`/`removed` are character;
 #' `settings` a list of `list(kind, name, before, after)`; `attached` a
 #' named list package -> exports; `error` `NULL` or `list(message, traceback)`.
+#' `loaded` (step 3): named character, namespace -> version, as the worker's
+#' `done` report carries it.
 report <- function(status = "ok", output = NULL, console = list(), error = NULL,
                    runtime = 0, created = character(), changed = character(),
                    removed = character(), settings = list(), load_notes = character(),
-                   attached = list(), formula_misses = NULL) {
+                   attached = list(), formula_misses = NULL, loaded = character()) {
   list(status = status, output = output, console = console, error = error,
       runtime = runtime, created = created, changed = changed, removed = removed,
       settings = settings, load_notes = load_notes, attached = attached,
-      formula_misses = formula_misses)
+      formula_misses = formula_misses, loaded = loaded)
 }
 
 #' Fold `step()` over a sequence of events, checking invariants after each

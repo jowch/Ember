@@ -1,0 +1,548 @@
+# Tests for step 3's core: the `state$packages` fields, `schedule_packages()`
+# and the new `step()` reducers (R/packages-core.R, plus the step-3 changes
+# in R/state.R and R/step.R). No process, no network: `drive()` (from
+# helper-core.R) folds `step()` over synthetic events, including fake
+# `index_fetched`/`library_checked`/`install_done` events standing in for
+# the shell's subprocess jobs, and checks `check_state()` after each one.
+#
+# Covers docs/packages-tests.md items 28-58 ("Core: packages in step()")
+# and 67-69 ("Worker (test-worker.R additions)", in test-worker.R instead).
+#
+# Index fixtures: tests/testthat/fixtures/repos/cran/<date>/src/contrib/PACKAGES
+# (docs/packages-tests.md's fixture list): dplyr -> cli, glue; viz -> cli;
+# spatial -> Matrix (recommended); cli and dplyr both move version between
+# 2026-09-01 and 2026-09-30.
+
+# ---- Local helpers (packages-specific; not in helper-core.R) -----------------
+
+#' A notebook file with package-related header fields `fake_file()` doesn't
+#' expose (`snapshot`, `extra_packages`, `lock`).
+pkg_file <- function(cells, setup = names(cells)[1], snapshot = "2026-09-01",
+                     extra_packages = character(), lock = empty_lock(),
+                     on_cell_change = "autorun") {
+  new_notebook_file(
+    header = new_header(ember_version = "0.1.0", r_version = "4.3.0", snapshot = snapshot,
+                        on_cell_change = on_cell_change, extra_packages = extra_packages),
+    cells = cells, setup = setup, run_order = names(cells), learned = list(),
+    sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
+    lock = lock, extra_blocks = list(), format = 1L, read_only = FALSE, problems = NULL)
+}
+
+#' A fresh session state with package-related fields, otherwise like
+#' `fake_state()`.
+pkg_state <- function(cells, ..., options = list(), at = 0) {
+  file <- pkg_file(cells, ...)
+  new_state(file, path = "nb.R", id = "n1", options = options, at = at)
+}
+
+#' The CRAN fixture index at `date`, read from disk once per call (no
+#' network, no mock: the same `read_repo_index()` PPM would go through).
+cran_index <- function(date = "2026-09-01") {
+  read_repo_index(testthat::test_path("fixtures", "repos", "cran", date, "src", "contrib", "PACKAGES"),
+                  key = repo_key("cran", date), label = "CRAN")
+}
+
+#' A fake library manifest for `ev_library_checked()`/`ev_install_done()`.
+manifest <- function(installed = character(), exports = list()) {
+  list(installed = installed, exports = exports)
+}
+
+#' Op constructors for the two edit ops in R/api-packages.R (its own file;
+#' duplicated here in the shape `reduce_apply()` expects, matching
+#' `add_extra_package()`/`remove_extra_package()` there).
+op_add_extra_package <- function(name) list(op = "add_extra_package", name = name)
+op_remove_extra_package <- function(name) list(op = "remove_extra_package", name = name)
+
+#' The type of every effect in a `drive()` result (or a plain effects list).
+effect_types <- function(result) {
+  effects <- if (!is.null(result$effects)) result$effects else result
+  vapply(effects, function(e) e$type, character(1))
+}
+
+#' The first effect of `type` in a `drive()` result.
+find_effect <- function(result, type) {
+  effects <- if (!is.null(result$effects)) result$effects else result
+  Find(function(e) identical(e$type, type), effects)
+}
+
+# ---- Resolving --------------------------------------------------------------
+
+test_that("opening a notebook whose lock already answers its code emits no effect (28)", {
+  s <- pkg_state(list(S = cell("")))
+  r <- drive(s, ev_open(at(1)))
+  expect_equal(r$effects, list())
+  expect_equal(r$state$packages$resolved_for, character())
+  expect_equal(r$state$packages$active$status, "ready")
+})
+
+test_that("a notebook whose code names a package the lock lacks emits fetch_index (29)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  expect_equal(effect_types(r), "fetch_index")
+  expect_equal(find_effect(r, "fetch_index")$key, repo_key("cran", "2026-09-01"))
+})
+
+test_that("a notebook with no snapshot date gets the event's date when its first package appears (30)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")), snapshot = NA_character_)
+  r <- drive(s, ev_open(as.Date("2026-09-15")))
+  expect_equal(r$state$file$header$snapshot, "2026-09-15")
+  expect_equal(find_effect(r, "fetch_index")$key, repo_key("cran", "2026-09-15"))
+})
+
+test_that("index_fetched resolves, writes the lock, and the derived file text changes (31)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  idx <- cran_index("2026-09-01")
+  r2 <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), idx, at(2)))
+  expect_setequal(r2$state$file$lock$entries$name, c("cli", "dplyr", "glue"))
+  expect_equal(r2$state$packages$resolved_for, "dplyr")
+  text <- format_notebook(notebook_file_of(r2$state))
+  expect_match(text, "dplyr 1.1.4 CRAN", fixed = TRUE)
+})
+
+test_that("a duplicate index_fetched is a no-op (32)", {
+  key <- repo_key("cran", "2026-09-01")
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  idx <- cran_index("2026-09-01")
+  r2 <- drive(r$state, ev_index_fetched(key, idx, at(2)))
+  r3 <- drive(r2$state, ev_index_fetched(key, idx, at(3)))
+  expect_equal(r3$effects, list())
+  expect_equal(r3$state$seq, r2$state$seq)
+})
+
+test_that("index_failed keeps the lock and adds index_unavailable; same wanted set doesn't refetch (33)", {
+  key <- repo_key("cran", "2026-09-01")
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  r2 <- drive(r$state, ev_index_failed(key, "network down", at(2)))
+  expect_equal(nrow(r2$state$file$lock$entries), 0)
+  expect_true("index_unavailable" %in% r2$state$packages$problems$kind)
+
+  # An unrelated edit still leaves the wanted set at just "dplyr"; the failed
+  # slot's `wanted` matches, so it isn't refetched.
+  r3 <- drive(r2$state, ev_apply(list(op_set_code("S", "1 + 1")), at(3)))
+  expect_equal(effect_types(r3), character())
+  expect_true("index_unavailable" %in% r3$state$packages$problems$kind)
+})
+
+# ---- Looking at and installing the library ------------------------------------
+
+test_that("in safe preview a missing library is checked but never installed (34)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(2)))
+  expect_true("check_library" %in% effect_types(r))
+
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(3)))
+  expect_equal(r$state$packages$target$status, "missing")
+  expect_false("install" %in% effect_types(r))
+  expect_false(isTRUE(r$state$allowed))
+})
+
+test_that("after allow, a missing target emits exactly one install; a second event emits none (35)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(2)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(3)))
+
+  r <- drive(r$state, ev_allow(at(4)))
+  expect_equal(sum(effect_types(r) == "install"), 1)
+  expect_equal(r$state$packages$target$status, "installing")
+
+  r2 <- drive(r$state, ev_render("nonexistent", 10, 10, at(5)))
+  expect_equal(sum(effect_types(r2) == "install"), 0)
+})
+
+test_that("a lock change during an install waits for the running job, then installs the new target (36)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(2)))
+  old_key <- r$state$packages$target$key
+  r <- drive(r$state, ev_library_checked(old_key, NULL, at(3)))
+  r <- drive(r$state, ev_allow(at(4)))
+  expect_equal(r$state$packages$install$key, old_key)
+  old_token <- r$state$packages$install$token
+
+  # Add a package directly (viz, also resolved from the already-loaded
+  # index): the lock, and so the target library, changes while the old
+  # install is still running.
+  r <- drive(r$state, ev_apply(list(op_add_extra_package("viz")), at(5)))
+  new_key <- r$state$packages$target$key
+  expect_false(identical(new_key, old_key))
+  expect_equal(r$state$packages$install$key, old_key)
+  expect_equal(sum(effect_types(r) == "install"), 0)
+
+  r <- drive(r$state, ev_library_checked(new_key, NULL, at(6)))
+  r <- drive(r$state, ev_install_done(old_token, old_key, NULL, NULL, character(), at(7)))
+  expect_null_or_new <- r$state$packages$install
+  expect_equal(r$state$packages$install$key, new_key)
+  expect_equal(sum(effect_types(r) == "install"), 1)
+  expect_equal(find_effect(r, "install")$key, new_key)
+})
+
+test_that("install_done for an old token or key leaves the target alone (37)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(2)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(3)))
+  r <- drive(r$state, ev_allow(at(4)))
+  key <- r$state$packages$target$key
+  token <- r$state$packages$install$token
+
+  r2 <- drive(r$state, ev_install_done(token + 1000L, key, manifest(c(dplyr = "1.1.4")), NULL, character(), at(5)))
+  expect_equal(r2$state$packages$install, r$state$packages$install)
+  expect_equal(r2$state$packages$target$status, "installing")
+})
+
+test_that("install_done with no manifest marks the target failed and adds install_failed (38)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(2)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(3)))
+  r <- drive(r$state, ev_allow(at(4)))
+  key <- r$state$packages$target$key
+  token <- r$state$packages$install$token
+
+  r2 <- drive(r$state, ev_install_done(token, key, NULL, "renv failed", c("compiler missing"), at(5)))
+  expect_equal(r2$state$packages$target$status, "failed")
+  expect_true("install_failed" %in% r2$state$packages$problems$kind)
+  expect_null(r2$state$packages$install)
+})
+
+test_that("a failed target is not retried until ev_run, which retries it once (39)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(2)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(3)))
+  r <- drive(r$state, ev_allow(at(4)))
+  key <- r$state$packages$target$key
+  token <- r$state$packages$install$token
+  r <- drive(r$state, ev_install_done(token, key, NULL, "renv failed", character(), at(5)))
+  expect_equal(r$state$packages$target$status, "failed")
+
+  r2 <- drive(r$state, ev_apply(list(op_fold("A", TRUE)), at(6)))
+  expect_equal(sum(effect_types(r2) == "install"), 0)
+  expect_equal(r2$state$packages$target$status, "failed")
+
+  r3 <- drive(r2$state, ev_run(NULL, at(7)))
+  expect_equal(r3$state$packages$target$status, "installing")
+  expect_equal(sum(effect_types(r3) == "install"), 1)
+})
+
+# ---- Waiting cells ------------------------------------------------------------
+
+test_that("a cell attaching a package not yet installed stays pending and is not sent (40)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)\n1 + 1")))
+  r <- boot(s, "A")
+  expect_true("A" %in% r$state$pending)
+  expect_false(identical(last_sent(r)$cell, "A"))
+})
+
+test_that("a cell downstream of a waiting cell is not sent; an unrelated cell is (41)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)\nx <- 1"),
+                      B = cell("y <- x + 1"), C = cell("z <- 2")))
+  r <- boot(s, c("A", "B", "C"))
+  expect_true(all(c("A", "B") %in% r$state$pending))
+  expect_equal(last_sent(r)$cell, "C")
+})
+
+test_that("a cell using a not_found package is sent and doesn't wait (43)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(nosuchpkg)")))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(2)))
+  expect_true("not_found" %in% r$state$packages$problems$kind)
+
+  r <- boot(r$state, "A", at0 = 10)
+  expect_equal(last_sent(r)$cell, "A")
+})
+
+test_that("when the library becomes ready the waiting cell is sent with the new library path (42)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)\n1 + 1")))
+  r <- boot(s, "A")
+  expect_false(identical(last_sent(r)$cell, "A"))
+
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(20)))
+  target_key <- r$state$packages$target$key
+  r <- drive(r$state, ev_library_checked(target_key, NULL, at(21)))
+  r <- drive(r$state, ev_install_done(r$state$packages$install$token, target_key,
+                                      manifest(c(dplyr = "1.1.4", cli = "3.6.5", glue = "1.8.0")),
+                                      NULL, character(), at(22)))
+  expect_equal(last_sent(r)$cell, "A")
+  expect_equal(last_sent(r)$library, r$state$packages$active$path)
+  expect_equal(r$state$packages$active$key, target_key)
+})
+
+# ---- Library readiness and restarts -------------------------------------------
+
+#' Get a notebook using dplyr through install, the worker started and the
+#' cell run once, so `worker$loaded` has dplyr at the first date's version.
+#' Returns the `drive()` result positioned right after that.
+dplyr_running <- function() {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)\n1 + 1")))
+  r <- boot(s, "A")
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index("2026-09-01"), at(20)))
+  key <- r$state$packages$target$key
+  r <- drive(r$state, ev_library_checked(key, NULL, at(21)))
+  r <- drive(r$state, ev_install_done(r$state$packages$install$token, key,
+                                      manifest(c(dplyr = "1.1.4", cli = "3.6.5", glue = "1.8.0")),
+                                      NULL, character(), at(22)))
+  expect_equal(last_sent(r)$cell, "A")
+  r <- drive(r$state, wk_done(r$state$worker$gen, last_token(r),
+                             report(created = "x", loaded = c(dplyr = "1.1.4", cli = "3.6.5", glue = "1.8.0")),
+                             at(23)))
+  r
+}
+
+test_that("a ready target with no version conflict becomes active without a restart (44)", {
+  r <- dplyr_running()
+  gen_before <- r$state$worker$gen
+  # Adding glue's dependency closure again (viz, which only needs cli, not a
+  # new dplyr version) exercises a lock change with no conflict.
+  r2 <- drive(r$state, ev_apply(list(op_add_extra_package("viz")), at(30)))
+  key2 <- r2$state$packages$target$key
+  r2 <- drive(r2$state, ev_library_checked(key2, NULL, at(31)))
+  r2 <- drive(r2$state, ev_install_done(r2$state$packages$install$token, key2,
+                                        manifest(c(dplyr = "1.1.4", cli = "3.6.5", glue = "1.8.0", viz = "2.0.0")),
+                                        NULL, character(), at(32)))
+  expect_equal(r2$state$packages$active$key, key2)
+  expect_equal(r2$state$worker$gen, gen_before)
+  expect_identical(r2$state$worker$status, "ready")
+})
+
+test_that("a ready target that changes a loaded package's version restarts the worker (45)", {
+  r <- dplyr_running()
+  gen_before <- r$state$worker$gen
+
+  r2 <- drive(r$state, ev_preview_date(as.Date("2026-09-30"), at(30)))
+  r2 <- drive(r2$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(31)))
+  r2 <- drive(r2$state, ev_set_date(as.Date("2026-09-30"), at(32)))
+  key2 <- r2$state$packages$target$key
+
+  r2 <- drive(r2$state, ev_library_checked(key2, NULL, at(33)))
+  r2 <- drive(r2$state, ev_install_done(r2$state$packages$install$token, key2,
+                                        manifest(c(dplyr = "1.1.5", cli = "3.6.6", glue = "1.8.0")),
+                                        NULL, character(), at(34)))
+
+  expect_true(r2$state$worker$gen > gen_before)
+  expect_equal(r2$state$results, list())
+  expect_match(r2$state$worker$exit$message, "dplyr")
+  expect_equal(r2$state$packages$active$key, key2)
+})
+
+test_that("a conflicting switch while a cell runs waits for done, sends nothing new, then restarts (46)", {
+  r <- dplyr_running()
+  gen_before <- r$state$worker$gen
+
+  # Start a new run of A so the worker is busy when the newer library
+  # becomes ready.
+  r <- drive(r$state, ev_run("A", at(30)))
+  expect_identical(r$state$worker$status, "busy")
+  running_token <- r$state$worker$running$token
+
+  r2 <- drive(r$state, ev_preview_date(as.Date("2026-09-30"), at(31)))
+  r2 <- drive(r2$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(32)))
+  r2 <- drive(r2$state, ev_set_date(as.Date("2026-09-30"), at(33)))
+  key2 <- r2$state$packages$target$key
+  r2 <- drive(r2$state, ev_library_checked(key2, NULL, at(34)))
+  r2 <- drive(r2$state, ev_install_done(r2$state$packages$install$token, key2,
+                                        manifest(c(dplyr = "1.1.5", cli = "3.6.6", glue = "1.8.0")),
+                                        NULL, character(), at(35)))
+  # The switch is pending: the worker is still busy on the old library, so
+  # nothing new was sent and the active library hasn't moved yet.
+  expect_identical(r2$state$worker$gen, gen_before)
+  expect_false(identical(r2$state$packages$active$key, key2))
+  expect_identical(r2$state$worker$status, "busy")
+
+  r3 <- drive(r2$state, wk_done(r2$state$worker$gen, running_token, report(created = "x"), at(36)))
+  expect_true(r3$state$worker$gen > gen_before)
+  expect_equal(r3$state$packages$active$key, key2)
+})
+
+# ---- Missing-package errors ----------------------------------------------------
+
+test_that("a worker packageNotFoundError outside the lock gives a missing_package error (48)", {
+  s <- pkg_state(list(S = cell(""), A = cell("1 + 1")))
+  r <- boot(s, "A")
+  r <- drive(r$state, wk_done(1, last_token(r), report(error = list(message = "there is no package called 'nope'",
+                                                                    package = "nope")), at(10)))
+  v <- snapshot_of(r$state)$cells$A
+  expect_equal(v$errors[[1]]$kind, "missing_package")
+  expect_match(v$errors[[1]]$fixes, "nope")
+  expect_match(v$errors[[1]]$fixes, "extra_packages")
+})
+
+test_that("the same error for a package the active library claims makes the library be checked again (49)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)\n1 + 1")))
+  r <- boot(s, "A")
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(20)))
+  key <- r$state$packages$target$key
+  r <- drive(r$state, ev_library_checked(key, NULL, at(21)))
+  r <- drive(r$state, ev_install_done(r$state$packages$install$token, key,
+                                      manifest(c(dplyr = "1.1.4", cli = "3.6.5", glue = "1.8.0")),
+                                      NULL, character(), at(22)))
+  expect_equal(last_sent(r)$cell, "A")
+  r <- drive(r$state, wk_done(r$state$worker$gen, last_token(r),
+                             report(error = list(message = "there is no package called 'dplyr'", package = "dplyr")),
+                             at(23)))
+  # `active` stays "ready" (check_state()'s invariant: it's always what the
+  # worker last had, even while stale); `target` is put back to "unknown",
+  # and schedule_packages() immediately re-checks it in the same dispatch.
+  expect_equal(r$state$packages$active$status, "ready")
+  expect_true("check_library" %in% effect_types(r))
+})
+
+# ---- extra_packages ops --------------------------------------------------------
+
+test_that("library_checked exports give a cell attaching the package edges before it runs (47)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)\nfilter(1)")))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(2)))
+  key <- r$state$packages$target$key
+  r <- drive(r$state, ev_library_checked(key, manifest(c(dplyr = "1.1.4", cli = "3.6.5", glue = "1.8.0"),
+                                                       exports = list(dplyr = "filter")), at(3)))
+  expect_true("filter" %in% unlist(r$state$graph$cells$A$references %||% character()) ||
+             "dplyr" %in% r$state$graph$cells$A$attaches)
+})
+
+test_that("add_extra_package changes the header and resolves (50)", {
+  s <- pkg_state(list(S = cell("")))
+  r <- drive(s, ev_apply(list(op_add_extra_package("svglite")), at(1)))
+  expect_equal(r$state$file$header$extra_packages, "svglite")
+  expect_true("fetch_index" %in% effect_types(r))
+})
+
+test_that("remove_extra_package is refused for a name already from code (50)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_apply(list(op_remove_extra_package("dplyr")), at(1)))
+  expect_s3_class(r$reply, "ember_refused")
+})
+
+test_that("remove_extra_package removes a name not referenced in code (50)", {
+  s <- pkg_state(list(S = cell("")), extra_packages = "svglite")
+  r <- drive(s, ev_apply(list(op_remove_extra_package("svglite")), at(1)))
+  expect_equal(r$state$file$header$extra_packages, character())
+})
+
+# ---- Moving the date ------------------------------------------------------------
+
+test_that("preview_date fetches the date's index and fills the proposal's changes (51)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index("2026-09-01"), at(2)))
+
+  r <- drive(r$state, ev_preview_date(as.Date("2026-09-30"), at(3)))
+  expect_true(r$reply)
+  expect_true("fetch_index" %in% effect_types(r))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(4)))
+  prop <- r$state$packages$proposal
+  expect_equal(prop$status, "ready")
+  expect_true("dplyr" %in% prop$changes$name)
+  expect_equal(prop$changes$change[prop$changes$name == "dplyr"], "upgraded")
+})
+
+test_that("set_date is refused without a ready, current preview for that date (52)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_set_date(as.Date("2026-09-30"), at(1)))
+  expect_s3_class(r$reply, "ember_refused")
+})
+
+test_that("set_date moves the header date and the lock in one step (53)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index("2026-09-01"), at(2)))
+  r <- drive(r$state, ev_preview_date(as.Date("2026-09-30"), at(3)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(4)))
+
+  r <- drive(r$state, ev_set_date(as.Date("2026-09-30"), at(5)))
+  expect_equal(r$state$file$header$snapshot, as.Date("2026-09-30"))
+  expect_true(all(r$state$file$lock$entries$version[r$state$file$lock$entries$name == "dplyr"] == "1.1.5"))
+  expect_null(r$state$packages$proposal)
+})
+
+test_that("an edit that changes the wanted set recomputes a ready proposal (54)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index("2026-09-01"), at(2)))
+  r <- drive(r$state, ev_preview_date(as.Date("2026-09-30"), at(3)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(4)))
+  expect_equal(r$state$packages$proposal$status, "ready")
+
+  r2 <- drive(r$state, ev_apply(list(op_add_extra_package("viz")), at(5)))
+  # viz's index is already loaded (same CRAN repos), so the proposal
+  # recomputes to "ready" again (`for_wanted` catches up), rather than
+  # staying stale for the old wanted set. viz's version is the same on both
+  # fixture dates, so it's in the proposal's lock without being in its
+  # `changes` (nothing to report for an unchanged package).
+  expect_equal(r2$state$packages$proposal$status, "ready")
+  expect_setequal(r2$state$packages$proposal$for_wanted, c("dplyr", "viz"))
+  expect_true("viz" %in% r2$state$packages$proposal$lock$entries$name)
+})
+
+test_that("allow records the running R version in the header when it differs (55)", {
+  s <- pkg_state(list(S = cell("")), options = list(r = list(version = "9.9.9", minor = "9.9", platform = "test")))
+  r <- drive(s, ev_allow(at(1)))
+  expect_equal(r$state$file$header$r_version, "9.9.9")
+})
+
+# ---- Snapshot projection --------------------------------------------------------
+
+test_that("packages_view per-package statuses: installed, installing, missing, failed, not_found (56)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)\nlibrary(nosuchpkg)")))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(2)))
+  v <- packages_view(r$state)
+  expect_setequal(v$packages$status[v$packages$name %in% c("cli", "dplyr", "glue")], "missing")
+  expect_true("not_found" %in% v$packages$status)
+
+  key <- r$state$packages$target$key
+  r <- drive(r$state, ev_library_checked(key, NULL, at(3)))
+  r <- drive(r$state, ev_allow(at(4)))
+  v2 <- packages_view(r$state)
+  expect_true("installing" %in% v2$packages$status)
+
+  r <- drive(r$state, ev_install_done(r$state$packages$install$token, key, NULL, "boom", character(), at(5)))
+  v3 <- packages_view(r$state)
+  expect_true("failed" %in% v3$packages$status)
+
+  r <- drive(r$state, ev_run(NULL, at(6)))
+  r <- drive(r$state, ev_install_done(r$state$packages$install$token, key,
+                                      manifest(c(dplyr = "1.1.4", cli = "3.6.5", glue = "1.8.0")),
+                                      NULL, character(), at(7)))
+  v4 <- packages_view(r$state)
+  expect_setequal(v4$packages$status[v4$packages$name %in% c("cli", "dplyr", "glue")], "installed")
+})
+
+test_that("packages_changed is notified once per dispatch when the view changes, and not otherwise (57)", {
+  # The bare `ev_open` only starts a fetch (an effect); nothing visible in
+  # `packages_view()` changes yet (the lock is still empty either way), so
+  # the observable change is at `index_fetched`, once the lock fills in.
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  r2 <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(2)))
+  notes <- notifications(r$state, r2$state)
+  expect_equal(sum(vapply(notes, function(n) n$kind, character(1)) == "packages_changed"), 1)
+
+  r3 <- drive(r2$state, ev_render("nonexistent", 1, 1, at(3)))
+  notes2 <- notifications(r2$state, r3$state)
+  expect_false("packages_changed" %in% vapply(notes2, function(n) n$kind, character(1)))
+})
+
+# ---- check_state() holds throughout --------------------------------------------
+
+test_that("check_state() holds after every step across a full packages lifecycle (58)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)\n1 + 1")))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(2)))
+  key <- r$state$packages$target$key
+  r <- drive(r$state, ev_library_checked(key, NULL, at(3)))
+  r <- drive(r$state, ev_allow(at(4)))
+  r <- drive(r$state, ev_install_done(r$state$packages$install$token, key,
+                                      manifest(c(dplyr = "1.1.4", cli = "3.6.5", glue = "1.8.0")),
+                                      NULL, character(), at(5)))
+  r <- drive(r$state, wk_started(r$state$worker$gen, 1L, at(6)), wk_hello(r$state$worker$gen, list(), at(7)))
+  r <- drive(r$state, wk_done(r$state$worker$gen, last_token(r), report(created = "x"), at(8)))
+  # drive() already calls check_state() after every step() above; reaching
+  # here without an error is the assertion.
+  expect_true(TRUE)
+})

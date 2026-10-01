@@ -1,0 +1,68 @@
+Package: cli
+Version: 3.6.6
+NeedsCompilation: no
+
+Package: glue
+Version: 1.8.0
+NeedsCompilation: no
+
+Package: dplyr
+Version: 1.1.5
+Imports: cli, glue
+Suggests: testthat, covr
+NeedsCompilation: no
+
+Package: viz
+Version: 2.0.0
+Imports: cli
+NeedsCompilation: no
+
+Package: Rcpp
+Version: 1.0.12
+NeedsCompilation: yes
+
+Package: fastcalc
+Version: 0.3.0
+Imports: cli
+LinkingTo: Rcpp
+NeedsCompilation: yes
+
+Package: withmethods
+Version: 2.1.0
+Depends: R (>= 4.1), methods
+NeedsCompilation: no
+
+Package: Matrix
+Version: 1.6-5
+NeedsCompilation: yes
+
+Package: spatial
+Version: 0.9.0
+Imports: Matrix
+NeedsCompilation: no
+
+Package: oldie
+Version: 1.0.0
+NeedsCompilation: no
+
+Package: oldie
+Version: 2.0.0
+NeedsCompilation: no
+
+Package: rlang
+Version: 1.1.3
+NeedsCompilation: yes
+
+Package: lifecycle
+Version: 1.0.4
+Imports: rlang
+NeedsCompilation: no
+
+Package: standalone
+Version: 1.0.0
+NeedsCompilation: no
+
+Package: another
+Version: 0.5.0
+Imports: standalone
+NeedsCompilation: no

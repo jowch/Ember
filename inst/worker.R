@@ -69,6 +69,22 @@ loader_originals <- list()  # the real loadNamespace/library/require functions
                              # install_traces() replaced, kept so tracebacks can drop
                              # the wrapper's own frame (identified by identity, not text)
 
+#' Base packages, duplicated from lock.R's `base_packages`: the worker is a
+#' separate process that sees only base R, so it can't source the server's
+#' R/ code to share the one list.
+ember_base_packages <- c("base", "compiler", "datasets", "graphics", "grDevices",
+                         "grid", "methods", "parallel", "splines", "stats",
+                         "stats4", "tcltk", "tools", "utils")
+
+#' Non-base namespaces loaded in this process, with their versions: named
+#' character, namespace -> version. Reported in the hello and every `done`
+#' (design.md, "The worker follows the library"), so the server knows which
+#' loaded namespaces a library switch would change.
+loaded_namespace_versions <- function() {
+  ns <- setdiff(loadedNamespaces(), ember_base_packages)
+  stats::setNames(vapply(ns, function(n) as.character(getNamespaceVersion(n)), character(1)), ns)
+}
+
 main <- function() {
   port <- as.integer(commandArgs(trailingOnly = TRUE)[1])
   con <<- socketConnection("127.0.0.1", port, blocking = TRUE, open = "r+b",
@@ -77,44 +93,41 @@ main <- function() {
   settings_start <<- snapshot_settings()
   send(list(type = "hello", secret = Sys.getenv("EMBER_SECRET"),
             pid = Sys.getpid(), r_version = R.version.string,
-            lib_paths = .libPaths()))
+            lib_paths = .libPaths(), loaded = loaded_namespace_versions()))
   Sys.unsetenv("EMBER_SECRET")      # cells must not see it
+  # Interrupts are held off everywhere in the loop and allowed only while a
+  # cell's own code runs or its value is displayed (`allowInterrupts()` in
+  # run_cell()). A SIGINT arriving at any other moment (late, between runs,
+  # mid-message) is signalled when the iteration ends and dropped there, so
+  # it can't reach top level and stop the worker, or lose a message.
   repeat {
-    msg <- if (length(deferred)) {
-      m <- deferred[[1]]
-      deferred <<- deferred[-1]
-      m
-    } else {
-      tryCatch(receive(), interrupt = function(i) list(type = "noop"))
-    }
-    if (is.null(msg)) {
-      quit(save = "no")  # server gone
-    }
-    # Everything here runs between cells, never while user code is
-    # evaluating, so an interrupt landing anywhere in it (a SIGINT that
-    # arrives late, after the run it was meant for already finished) must
-    # not reach top level and kill the worker: it's just swallowed, since
-    # there's nothing left to interrupt. `run_cell()` installs its own
-    # interrupt handling for the evaluation itself; `send()` and the
-    # `remove_cell` bookkeeping are additionally wrapped in
-    # `suspendInterrupts()` so a SIGINT can't catch them partway through
-    # and leave the search path or the wire protocol in a half-updated
-    # state.
-    tryCatch({
-      switch(msg$type,
-        run = send(list(type = "done", cell = msg$cell, token = msg$token,
-                         report = run_cell(msg))),
-        remove_cell = base::suspendInterrupts({
-          remove_cell(msg$cell)
-          cell_order <<- msg$order
-          rebuild_search_path()
-        }),
-        render = send(base::suspendInterrupts(render_plot(msg))),
-        quit = quit(save = "no"),
-        NULL  # noop, or an unknown type: ignored
-      )
-    }, interrupt = function(i) NULL)
+    tryCatch(base::suspendInterrupts(handle_next()), interrupt = function(i) NULL)
   }
+}
+
+#' Read the next message (or take a deferred one) and act on it.
+handle_next <- function() {
+  msg <- if (length(deferred)) {
+    m <- deferred[[1]]
+    deferred <<- deferred[-1]
+    m
+  } else {
+    receive()
+  }
+  if (is.null(msg)) quit(save = "no")  # server gone
+  switch(msg$type,
+    run = send(list(type = "done", cell = msg$cell, token = msg$token,
+                     report = run_cell(msg))),
+    remove_cell = {
+      remove_cell(msg$cell)
+      cell_order <<- msg$order
+      rebuild_search_path()
+    },
+    render = send(render_plot(msg)),
+    quit = quit(save = "no"),
+    NULL  # noop, or an unknown type: ignored
+  )
+  invisible()
 }
 
 #' Write one wire frame. Wrapped in `suspendInterrupts()` so a SIGINT
@@ -182,10 +195,19 @@ read_exactly <- function(n) {
 #' "interrupted" with whatever facts were gathered so far, so bookkeeping
 #' can't be left half done silently.
 run_cell <- function(msg) {
+  # Converging on the active library the way the search path converges on
+  # `order` (worker.R's file header): a new package just needs `.libPaths()`
+  # updated before the code runs, no restart, as long as nothing already
+  # loaded changes version (the server's `switch_library()` is what decides
+  # *when* it's safe to send a `library` that would change one).
+  if (!is.null(msg$library) && !identical(.libPaths()[1], msg$library)) {
+    .libPaths(msg$library)
+  }
+
   rc <- list(status = "ok", output = NULL, console = list(), error = NULL,
              runtime = NA_real_, created = character(), changed = character(),
              removed = character(), settings = list(), load_notes = character(),
-             attached = list(), formula_misses = character())
+             attached = list(), formula_misses = character(), loaded = character())
 
   # `dev`/`console` are closed here (not just at their normal point of use
   # below) so an interrupt landing anywhere in this function — including
@@ -228,7 +250,7 @@ run_cell <- function(msg) {
     err <- NULL
     exprs <- parse(text = msg$code, keep.source = TRUE)
 
-    tryCatch(
+    tryCatch(base::allowInterrupts(
       withCallingHandlers({
         for (e in exprs) {
           r <- withVisible(eval(e, globalenv()))
@@ -273,8 +295,13 @@ run_cell <- function(msg) {
           if (length(idx) && idx[1] > 1) call <- calls[[idx[1] - 1]]
         }
         err <<- list(message = conditionMessage(e), call = call,
-                     traceback = clean_calls(calls[!is_original]))
-      }),
+                     traceback = clean_calls(calls[!is_original]),
+                     # `e$package` is set by R's own loadNamespace()/library()
+                     # for a packageNotFoundError regardless of locale, so the
+                     # server can recognise a missing package without matching
+                     # the (locale-translated) message text.
+                     package = if (inherits(e, "packageNotFoundError")) e$package else NULL)
+      })),
       interrupt = function(i) rc$status <<- "interrupted",
       error     = function(e) rc$status <<- "error")
 
@@ -292,19 +319,14 @@ run_cell <- function(msg) {
       rc$runtime <- unname((proc.time() - t0)[["elapsed"]])
       if (!is.null(err)) rc$error <- err
 
-      # `suspendInterrupts()` only defers interrupts checked through R's
-      # normal evaluator safepoints; `Sys.sleep()` (reachable here if the
-      # value's print method, knit_print() or an htmlwidget dependency
-      # calls it) has its own interrupt check that fires regardless of
-      # suspension (measured: confirmed with a minimal repro). Catching
-      # `interrupt` around just this call absorbs that case locally so
-      # the rest of the bookkeeping below still runs unconditionally.
+      # Displaying runs the value's print and format methods, which are
+      # the user's code too, so it can be interrupted like the cell.
       output <- NULL
       if (rc$status == "ok") {
-        output <- tryCatch({
+        output <- tryCatch(base::allowInterrupts({
           if (visible) display_value(value, msg$cell, dev, console)
           else display_plot(msg$cell, dev)
-        }, interrupt = function(i) { rc$status <<- "interrupted"; NULL },
+        }), interrupt = function(i) { rc$status <<- "interrupted"; NULL },
            error = function(e) NULL)
       }
       close_device(dev)
@@ -345,6 +367,8 @@ run_cell <- function(msg) {
       # from the desired path on the next rebuild).
       attached[[msg$cell]] <<- attach_requests[[msg$cell]]
       ever_attached <<- union(ever_attached, attach_requests[[msg$cell]])
+      rc$loaded <- loaded_namespace_versions()
+
       new_pkgs <- setdiff(packages_on_search(search()), packages_on_search(search0))
       rc$attached <- stats::setNames(
         lapply(new_pkgs, function(p) tryCatch(getNamespaceExports(p), error = function(e) character())),

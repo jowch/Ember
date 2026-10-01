@@ -98,7 +98,7 @@ new_notebook <- function(path, library = NULL) {
     header = header, cells = cells, setup = setup_id, run_order = names(cells),
     learned = list(),
     sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
-    lock = character(), extra_blocks = list(), format = ember_format)
+    lock = empty_lock(), extra_blocks = list(), format = ember_format)
   ok <- write_atomic(path, format_notebook(file))
   if (!ok) stop(sprintf("ember: could not write %s", path))
   open_notebook(path, library = library)

@@ -3,9 +3,10 @@
 # server, no `later`. Every wait is a blocking read with a timeout
 # (worker_harness()'s $receive()), never Sys.sleep polling.
 
-run_msg <- function(cell, token, code, role = "cell", order = character(), formulas = list()) {
+run_msg <- function(cell, token, code, role = "cell", order = character(), formulas = list(),
+                    library = NULL) {
   list(type = "run", cell = cell, token = token, code = code, role = role,
-       order = order, formulas = formulas)
+       order = order, formulas = formulas, library = library)
 }
 
 #' Run code in a fresh harness and return the `done` report. Fails the
@@ -14,7 +15,7 @@ run_and_wait <- function(h, cell, token, code, ..., timeout = 5) {
   h$send(run_msg(cell, token, code, ...))
   repeat {
     m <- h$receive(timeout)
-    if (is.null(m)) stop("worker did not reply within ", timeout, "s")
+    if (is.null(m)) no_reply(h, timeout)
     if (identical(m$type, "done")) return(m$report)
   }
 }
@@ -565,4 +566,58 @@ test_that("user_sink_in_cell_does_not_break_worker_capture", {
   check <- run_and_wait(h, "b", 2L, 'cat("next cell\\n"); sink.number()')
   expect_identical(vapply(check$console, `[[`, "", "text"), "next cell\n")
   expect_identical(check$output$text, "[1] 1")
+})
+
+# ---- Packages (step 3) ----------------------------------------------------------
+
+test_that("the hello and each done report loaded namespaces with versions (67)", {
+  flib <- fixture_lib()
+  h <- worker_harness(extra_libs = flib)
+  on.exit(h$close())
+
+  # Base packages never appear (they're never locked and would make every
+  # hello's `loaded` nonempty regardless of the notebook).
+  expect_true(is.character(h$hello$loaded))
+  expect_false("base" %in% names(h$hello$loaded))
+  expect_false("emberfix1" %in% names(h$hello$loaded))
+
+  r <- run_and_wait(h, "a", 1L, "library(emberfix1)", order = "a")
+  expect_identical(r$status, "ok")
+  expect_true(is.character(r$loaded))
+  expect_identical(unname(r$loaded["emberfix1"]), "0.0.1")
+  expect_false("base" %in% names(r$loaded))
+})
+
+test_that("library(notapkg) reports error$package regardless of locale (68)", {
+  h <- worker_harness()
+  on.exit(h$close())
+
+  # Changing LC_MESSAGES in the setup cell is kept (not reverted, unlike a
+  # plain cell); if the locale isn't installed on this machine, skip rather
+  # than fail on an environment difference.
+  set_locale <- run_and_wait(h, "setup", 1L, 'Sys.setlocale("LC_MESSAGES", "fr_FR.UTF-8")', role = "setup")
+  if (identical(set_locale$status, "error") ||
+      !identical(set_locale$output$text, '[1] "fr_FR.UTF-8"')) {
+    skip("fr_FR.UTF-8 locale not available on this machine")
+  }
+
+  r <- run_and_wait(h, "a", 2L, "library(notapkg)")
+  expect_identical(r$status, "error")
+  expect_identical(r$error$package, "notapkg")
+})
+
+test_that("a run message with a new library changes .libPaths() before the code runs (69)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  new_lib <- tempfile("ember-new-lib-")
+  dir.create(new_lib)
+
+  # Compared inside the worker process (normalizePath() on both sides, done
+  # there) so the test doesn't depend on the test process and the worker
+  # process resolving the same path string identically (e.g. symlinked temp
+  # directories).
+  code <- sprintf("identical(normalizePath(.libPaths()[1]), normalizePath(%s))", deparse(new_lib))
+  r <- run_and_wait(h, "b", 1L, code, library = new_lib)
+  expect_identical(r$status, "ok")
+  expect_identical(r$output$text, "[1] TRUE")
 })

@@ -314,6 +314,11 @@ test_that("the setup cell's run message has role setup (48)", {
 
 test_that("attached exports from a report add a package edge (49)", {
   s <- fake_state(list(S = cell(""), A = cell("library(dplyr)"), B = cell("mutate(df)")))
+  # Step 3's waiting rule (packages-core.R) holds a cell naming a package
+  # that isn't installed; marking dplyr already installed in the (empty,
+  # test-only) active library keeps this test about the exports edge, not
+  # about resolving or installing dplyr.
+  s$packages$active$installed <- c(dplyr = "1.0.0")
   expect_false("A" %in% s$graph$upstream$B)
   r <- boot(s, "A")
   r2 <- drive(r$state, wk_done(1, last_token(r), report(attached = list(dplyr = "mutate")), at(10)))

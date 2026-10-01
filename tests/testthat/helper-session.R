@@ -27,7 +27,7 @@ write_session_notebook <- function(cells, setup = names(cells)[1],
     header = header, cells = cells, setup = setup, run_order = names(cells),
     learned = list(),
     sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
-    lock = character(), extra_blocks = list(), format = ember_format)
+    lock = empty_lock(), extra_blocks = list(), format = ember_format)
   path <- file.path(dir, "nb.R")
   write_file_exact(path, format_notebook(file))
   path

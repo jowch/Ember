@@ -46,7 +46,8 @@ test_that("parse_canonical_example parses the design.md example", {
   expect_equal(file$learned, list(load1 = "fits"))
   expect_equal(file$sourced, data.frame(path = "helpers.R", hash = "sha256:9c1e",
                                         stringsAsFactors = FALSE))
-  expect_equal(file$lock, c("cli 3.6.5 CRAN", "dplyr 1.1.4 CRAN", "ggplot2 3.5.2 CRAN"))
+  expect_equal(format_lock_lines(file$lock),
+              c("cli 3.6.5 CRAN", "dplyr 1.1.4 CRAN", "ggplot2 3.5.2 CRAN"))
   expect_null(file$problems)
 })
 
@@ -106,7 +107,7 @@ random_notebook_file <- function(new_id) {
                     learned = list(),
                     sourced = data.frame(path = character(), hash = character(),
                                          stringsAsFactors = FALSE),
-                    lock = character(), extra_blocks = list(), format = 1L)
+                    lock = empty_lock(), extra_blocks = list(), format = 1L)
 }
 
 test_that("round_trip_generated: 200 generated notebooks round-trip byte for byte", {
@@ -133,7 +134,7 @@ test_that("cells_written_in_run_order writes cells in run order, display order i
                             run_order = c("a", "b"), learned = list(),
                             sourced = data.frame(path = character(), hash = character(),
                                                  stringsAsFactors = FALSE),
-                            lock = character(), extra_blocks = list(), format = 1L)
+                            lock = empty_lock(), extra_blocks = list(), format = 1L)
   text <- format_notebook(file, order = c("a", "b"))
   lines <- strsplit(text, "\n", fixed = TRUE)[[1]]
   expect_equal(which(grepl("^# %% id=a", lines)) < which(grepl("^# %% id=b", lines)), TRUE)
@@ -250,7 +251,7 @@ test_that("header_optional_fields are written only when set", {
                             learned = list(),
                             sourced = data.frame(path = character(), hash = character(),
                                                  stringsAsFactors = FALSE),
-                            lock = character(), extra_blocks = list(), format = 1L)
+                            lock = empty_lock(), extra_blocks = list(), format = 1L)
   text <- format_notebook(file)
   expect_false(grepl("bioc_version", text))
   expect_false(grepl("\\[sources\\]", text))
@@ -263,7 +264,7 @@ test_that("header_optional_fields are written only when set", {
                              learned = list(),
                              sourced = data.frame(path = character(), hash = character(),
                                                   stringsAsFactors = FALSE),
-                             lock = character(), extra_blocks = list(), format = 1L)
+                             lock = empty_lock(), extra_blocks = list(), format = 1L)
   text2 <- format_notebook(file2)
   expect_true(grepl("bioc_version = \"3.22\"", text2, fixed = TRUE))
   expect_true(grepl("[sources]", text2, fixed = TRUE))
@@ -281,7 +282,7 @@ test_that("toml_strings round-trip quotes, backslashes and spaces", {
                             learned = list(),
                             sourced = data.frame(path = odd, hash = "md5:abc",
                                                  stringsAsFactors = FALSE),
-                            lock = character(), extra_blocks = list(), format = 1L)
+                            lock = empty_lock(), extra_blocks = list(), format = 1L)
   text <- format_notebook(file)
   reparsed <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
   expect_equal(unname(reparsed$header$sources["p"]), odd)
@@ -296,7 +297,7 @@ test_that("newer_version_read_only sets read_only and notes newer_version", {
                              learned = list(),
                              sourced = data.frame(path = character(), hash = character(),
                                                   stringsAsFactors = FALSE),
-                             lock = character(), extra_blocks = list(), format = 1L)
+                             lock = empty_lock(), extra_blocks = list(), format = 1L)
   text <- format_notebook(file0)
   file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
   expect_true(file$read_only)

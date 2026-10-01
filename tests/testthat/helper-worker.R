@@ -205,13 +205,23 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
 #' test_that() turns it into a normal recorded failure. `on_frame`, if
 #' given, is called with every non-"done" frame as it's read, for tests
 #' that need to answer a "source" request or otherwise react mid-run.
+#' Fail a test whose worker went quiet, saying whether it is still running
+#' and what it last wrote, so a failure on a CI machine can be diagnosed.
+no_reply <- function(h, timeout) {
+  alive <- h$process$is_alive()
+  err <- tryCatch(h$process$read_error_lines(), error = function(e) character())
+  out <- tryCatch(h$process$read_output_lines(), error = function(e) character())
+  stop(sprintf("worker did not reply within %ss (alive: %s)\n%s", timeout, alive,
+               paste(utils::tail(c(out, err), 20), collapse = "\n")), call. = FALSE)
+}
+
 wait_for_done <- function(h, timeout = 5, on_frame = NULL) {
   deadline <- Sys.time() + timeout
   repeat {
     remaining <- as.numeric(deadline - Sys.time(), units = "secs")
-    if (remaining <= 0) stop(sprintf("worker did not reply within %ss", timeout))
+    if (remaining <= 0) no_reply(h, timeout)
     m <- h$receive(remaining)
-    if (is.null(m)) stop(sprintf("worker did not reply within %ss", timeout))
+    if (is.null(m)) no_reply(h, timeout)
     if (identical(m$type, "done")) return(m$report)
     if (!is.null(on_frame)) on_frame(m)
   }

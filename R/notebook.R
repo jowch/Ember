@@ -51,7 +51,8 @@
 #'   when Ember wrote it). Informational: the graph recomputes the order.
 #' * `learned`: named list id -> character, from "learned definitions".
 #' * `sourced`: data frame `path`, `hash`.
-#' * `lock`: character, the lock block's lines without the `# ` prefix.
+#' * `lock`: `ember_lock` (lock.R), parsed from the lock block's lines.
+#'   `format_lock_lines()` turns it back into the block's lines.
 #' * `extra_blocks`: named list block name -> character lines, verbatim.
 #' * `format`: integer format number the text was in (before conversion).
 #' * `read_only`: `TRUE` when `header$ember_version` is newer than this
@@ -484,8 +485,9 @@ parse_notebook_core <- function(text, new_id) {
 
   sourced <- parse_sourced_block(footer_blocks[["sourced files"]])
   learned <- parse_learned_block(footer_blocks[["learned definitions"]], display_order)
-  lock <- footer_blocks[["lock"]]
-  if (is.null(lock)) lock <- character()
+  lock_lines <- footer_blocks[["lock"]]
+  if (is.null(lock_lines)) lock_lines <- character()
+  lock <- parse_lock_lines(lock_lines)$lock
 
   known_footer <- c("cell order", "sourced files", "learned definitions", "lock")
   extra_names <- setdiff(names(footer_blocks), known_footer)
@@ -634,8 +636,9 @@ format_notebook <- function(file, order = NULL) {
     footer <- c(footer, "# /// learned definitions", lines, "# ///")
   }
 
-  if (length(file$lock) > 0) {
-    footer <- c(footer, "# /// lock", paste0("# ", file$lock), "# ///")
+  lock_lines <- format_lock_lines(file$lock)
+  if (length(lock_lines) > 0) {
+    footer <- c(footer, "# /// lock", paste0("# ", lock_lines), "# ///")
   }
 
   for (nm in names(file$extra_blocks)) {
