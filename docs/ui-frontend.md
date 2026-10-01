@@ -95,3 +95,5 @@ spot with one grep.
 - **DOM hooks, CSS variable names, `window.editor_state`, the URLs**:
   untouched, so Endeavor's injected script keeps working.
 - **Text, theme, logo, welcome page**: increment 2.
+
+- `common/clock sync.js` and `lang/corporate english.json` are renamed with underscores, and their two imports updated: R CMD check rejects file names with spaces.

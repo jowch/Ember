@@ -3,7 +3,7 @@ import { cl } from "../common/ClassTable.js"
 
 import { LiveDocsTab } from "./LiveDocsTab.js"
 import { is_finished, StatusTab, total_done, total_tasks, useStatusItem } from "./StatusTab.js"
-import { useMyClockIsAheadBy } from "../common/clock sync.js"
+import { useMyClockIsAheadBy } from "../common/clock_sync.js"
 import { BackendLaunchPhase } from "../common/Binder.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { t, th } from "../common/lang.js"
