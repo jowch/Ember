@@ -23,8 +23,8 @@ new_accumulator <- function(read_file, file, stack) {
   acc$line <- 0L
   acc$pd <- NULL
   acc$top_scope <- new_scope("top")
-  acc$def_rows <- list()
-  acc$ref_rows <- list()
+  acc$def_rows <- new_rows()
+  acc$ref_rows <- new_rows()
   acc$pkg_rows <- list()
   acc$setting_rows <- list()
   acc$sourced_rows <- list()
@@ -94,7 +94,9 @@ new_scope <- function(kind, names = character(), parent = NULL,
                        home = NULL, defer_target = NULL) {
   self <- new.env(parent = emptyenv())
   self$kind <- kind
-  self$names <- names
+  self$names <- character()
+  self$bound <- new.env(parent = emptyenv(), hash = TRUE)
+  bind_names(self, names)
   self$parent <- parent
   self$home <- home
   self$defer_target <- defer_target
@@ -122,10 +124,41 @@ in_function <- function(scope) {
 
 is_bound <- function(scope, name) {
   while (!is.null(scope)) {
-    if (name %in% scope$names) return(TRUE)
+    if (exists(name, envir = scope$bound, inherits = FALSE)) return(TRUE)
     scope <- scope$parent
   }
   FALSE
+}
+
+#' Add names to a scope. `names` keeps their order for the branch logic in
+#' `walk_if()`; `bound` is the hashed set `is_bound()` looks in, so a cell
+#' with thousands of definitions doesn't search a long vector per read.
+bind_names <- function(scope, names) {
+  new <- names[!vapply(names, exists, logical(1), envir = scope$bound, inherits = FALSE)]
+  new <- unique(new)
+  if (length(new) == 0) return(invisible())
+  for (n in new) assign(n, TRUE, envir = scope$bound)
+  scope$names <- c(scope$names, new)
+  invisible()
+}
+
+#' An append-only list of rows. Appending to a list held in an environment
+#' copies the whole list each time; this keeps rows by number instead.
+new_rows <- function() {
+  store <- new.env(parent = emptyenv(), hash = TRUE)
+  store$n <- 0L
+  store
+}
+
+rows_push <- function(store, row) {
+  store$n <- store$n + 1L
+  assign(sprintf("r%d", store$n), row, envir = store)
+  invisible()
+}
+
+rows_list <- function(store) {
+  if (store$n == 0L) return(list())
+  unname(mget(sprintf("r%d", seq_len(store$n)), envir = store))
 }
 
 #' Walk up to the cell's top scope, crossing any number of `local()`
@@ -164,9 +197,8 @@ record_read <- function(acc, scope, name, where = "code", pos = NULL) {
     }
     acc$deferred[[length(acc$deferred) + 1]] <- row
   } else {
-    acc$ref_rows[[length(acc$ref_rows) + 1]] <-
-      list(name = name, line = pos$line, col = pos$col, end_col = pos$end_col,
-           where = where, file = acc$file)
+    rows_push(acc$ref_rows, list(name = name, line = pos$line, col = pos$col, end_col = pos$end_col,
+           where = where, file = acc$file))
   }
 }
 
@@ -179,13 +211,11 @@ record_definition <- function(acc, scope, name, kind, pos = NULL) {
   if (is_ignored(name)) return(invisible())
   if (is.null(pos)) pos <- fallback_pos(acc)
   if (identical(scope$kind, "top")) {
-    acc$def_rows[[length(acc$def_rows) + 1]] <-
-      list(name = name, line = pos$line, col = pos$col, end_col = pos$end_col,
-           kind = kind, file = acc$file)
+    rows_push(acc$def_rows,
+              list(name = name, line = pos$line, col = pos$col, end_col = pos$end_col,
+                   kind = kind, file = acc$file))
   }
-  if (scope$kind %in% c("top", "local", "function")) {
-    scope$names <- c(scope$names, name)
-  }
+  if (scope$kind %in% c("top", "local", "function")) bind_names(scope, name)
 }
 
 #' Record a definition made by `assign()`/`data()` reached from the top
@@ -197,10 +227,10 @@ record_definition <- function(acc, scope, name, kind, pos = NULL) {
 record_top_level_definition <- function(acc, scope, name, kind, pos = NULL) {
   if (is_ignored(name)) return(invisible())
   if (is.null(pos)) pos <- fallback_pos(acc)
-  acc$def_rows[[length(acc$def_rows) + 1]] <-
-    list(name = name, line = pos$line, col = pos$col, end_col = pos$end_col,
-         kind = kind, file = acc$file)
-  scope$names <- c(scope$names, name)
+  rows_push(acc$def_rows,
+            list(name = name, line = pos$line, col = pos$col, end_col = pos$end_col,
+                 kind = kind, file = acc$file))
+  bind_names(scope, name)
 }
 
 record_package <- function(acc, name, attached) {

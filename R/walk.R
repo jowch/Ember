@@ -408,7 +408,7 @@ walk_if <- function(e, scope, acc, pid = NA_integer_) {
   }
 
   if (length(added) > 0 && scope$kind %in% c("top", "local", "function")) {
-    scope$names <- unique(c(scope$names, added))
+    bind_names(scope, added)
   }
 }
 
@@ -464,10 +464,10 @@ walk_assignment <- function(e, scope, acc, op, pid = NA_integer_) {
     } else {
       top <- escape_to_top(scope)
       tpos <- pd_position(acc, tpid)
-      acc$def_rows[[length(acc$def_rows) + 1]] <-
-        list(name = target_name, line = tpos$line, col = tpos$col,
-             end_col = tpos$end_col, kind = "assign", file = acc$file)
-      top$names <- unique(c(top$names, target_name))
+      rows_push(acc$def_rows,
+                list(name = target_name, line = tpos$line, col = tpos$col,
+                     end_col = tpos$end_col, kind = "assign", file = acc$file))
+      bind_names(top, target_name)
     }
     return(invisible())
   }

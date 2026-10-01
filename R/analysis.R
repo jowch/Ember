@@ -271,7 +271,7 @@ expression_line <- function(exprs, i) {
 #' (dropping any the cell defines anywhere at its own top level), drop
 #' ignored names, and de-duplicate.
 finish <- function(acc, code) {
-  defs <- rbind_all(def_rows_to_df(acc$def_rows), acc$extra_defs)
+  defs <- rbind_all(def_rows_to_df(rows_list(acc$def_rows)), acc$extra_defs)
   row.names(defs) <- NULL
   def_names <- if (nrow(defs) > 0) unique(defs$name) else character()
 
@@ -280,7 +280,7 @@ finish <- function(acc, code) {
     deferred_df <- deferred_df[!(deferred_df$name %in% def_names), , drop = FALSE]
   }
 
-  refs <- rbind_all(ref_rows_to_df(acc$ref_rows), acc$extra_refs)
+  refs <- rbind_all(ref_rows_to_df(rows_list(acc$ref_rows)), acc$extra_refs)
   refs <- rbind(refs, deferred_df)
   if (nrow(refs) > 0) {
     refs <- refs[!vapply(refs$name, is_ignored, logical(1)), , drop = FALSE]

@@ -381,7 +381,7 @@ walk_source <- function(e, scope, acc, arg_pids = NULL) {
   acc$extra_sourced[[length(acc$extra_sourced) + 1]] <- sub$sourced
   acc$extra_notes[[length(acc$extra_notes) + 1]] <- sub$notes
   if (nrow(sub$definitions) > 0) {
-    scope$names <- unique(c(scope$names, sub$definitions$name))
+    bind_names(scope, sub$definitions$name)
   }
   invisible()
 }
