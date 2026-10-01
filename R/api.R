@@ -142,7 +142,7 @@ edit_notebook <- function(nb, ...) {
   ops <- list(...)
   resolved <- lapply(ops, function(op) {
     if (identical(op$op, "insert")) {
-      op$id <- uuid()
+      if (is.null(op$id)) op$id <- uuid()
     } else if (!is.null(op$cell)) {
       op$cell <- resolve_cell_id(nb, op$cell)
     }
@@ -162,10 +162,15 @@ set_code <- function(cell, code, expected = NULL) {
   structure(list(op = "set_code", cell = cell, code = code,
                  expected = expected), class = "ember_op")
 }
+#' `id`, when given, is kept by `edit_notebook()` instead of generating a
+#' fresh one (it must be a 36-character UUID not already in use; a reused
+#' id is refused). The step-4 UI server passes the id the page already
+#' shows the new cell under, so inserting never makes the browser's cell
+#' flicker away and a run requested for it right after never misses.
 #' @export
-insert_cell <- function(index, code = "", kind = c("code", "markdown")) {
+insert_cell <- function(index, code = "", kind = c("code", "markdown"), id = NULL) {
   structure(list(op = "insert", index = index, code = code,
-                 kind = match.arg(kind)), class = "ember_op")
+                 kind = match.arg(kind), id = id), class = "ember_op")
 }
 #' @export
 delete_cell <- function(cell) {

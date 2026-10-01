@@ -251,62 +251,137 @@ new_display <- function(mime, data, text, deps = list(), size = NULL) {
 #'
 #' For the running cell, `console` is what has streamed so far and `output`
 #' is the previous result's, shown as stale.
+#'
+#' Built from `view_context()` (the notebook-wide facts, computed once) and
+#' `cell_view()` (one cell's view), so the step-4 UI's projection
+#' (`pluto_state()`, pluto-state.R) can share exactly the same rules
+#' instead of keeping a second copy of "what queued/blocked/stale means".
 snapshot_of <- function(state) {
-  graph <- state$graph
-  blocked_direct <- blocked_cells(graph)
-  blocked_down <- unlist(lapply(blocked_direct, function(b) {
-    downstream(graph, b, transitive = TRUE)
-  }), use.names = FALSE)
-  blocked_ids <- union(blocked_direct, blocked_down)
-  fblocked <- failed_blockers(state)
-
-  running <- state$worker$running
-  running_cell <- if (!is.null(running)) running$cell else NA_character_
-  queued <- setdiff(run_order(graph, state$pending), running_cell)
-  waiting <- waiting_cells(state)
-
-  ids <- names(state$cells)
-  views <- list()
-  for (i in seq_along(ids)) {
-    id <- ids[i]
-    cell <- state$cells[[id]]
-    result <- state$results[[id]]
-    is_running <- !is.null(running) && identical(running$cell, id)
-
-    g_errors <- lapply(cell_errors(graph, id), function(e) {
-      list(kind = e$kind, message = e$message, fixes = e$fixes)
-    })
-    r_error <- if (!is.null(result) && !is.null(result$error)) {
-      list(list(kind = result$error$kind, message = result$error$message,
-                fixes = result$error$fixes))
-    } else {
-      list()
-    }
-
-    views[[id]] <- structure(list(
-      id = id, index = i, kind = cell$kind, code = cell$code,
-      folded = isTRUE(cell$folded), setup = identical(id, state$setup),
-      queued = id %in% queued, running = is_running,
-      status = if (!is.null(result)) result$status else "not_run",
-      stale = !is.null(result) && isTRUE(result$stale),
-      code_differs = !is.null(result) && !identical(result$code, cell$code),
-      blocked = id %in% blocked_ids,
-      blocked_by = fblocked[[id]] %||% NA_character_,
-      errors = c(g_errors, r_error),
-      output = if (!is.null(result)) result$output else NULL,
-      console = if (is_running) running$console
-                else if (!is.null(result)) result$console else list(),
-      last_run = if (!is.null(result)) result$started_at else NULL,
-      runtime = if (!is.null(result)) result$runtime else NULL,
-      waiting_for = waiting[[id]] %||% character()
-    ), class = "ember_cell_view")
-  }
+  ctx <- view_context(state)
+  ids <- ctx$ids
+  views <- stats::setNames(lapply(seq_along(ids), function(i) cell_view(state, ctx, i)), ids)
 
   process <- if (!isTRUE(state$allowed)) "preview" else state$worker$status
   list(cells = views, process = process,
       restart_offered = isTRUE(state$worker$restart_offered),
       worker_message = if (!is.null(state$worker$exit)) state$worker$exit$message else NULL,
       seq = state$seq, packages = packages_view(state))
+}
+
+#' Everything `snapshot_of()` and `pluto_state()` compute once for the whole
+#' notebook, so no per-cell loop repeats a notebook-wide pass (`%in%` over
+#' every blocked/queued id, `cell_errors()`'s `Filter()` over every graph
+#' error) once per cell: that would make a 2000-cell snapshot or projection
+#' quadratic.
+#'
+#' Every per-cell field here is a plain (unnamed) vector or list in display
+#' order, read by callers with `[[i]]` (the cell's position in `ids`,
+#' 1-based), never `[[id]]`: R's named `[[` is a linear scan over the names,
+#' so at 2000 cells a handful of named lookups per cell (one per field this
+#' used to be keyed by id) cost tens of milliseconds on their own (measured).
+#' Only `fblocked`/`waiting` arrive keyed by id (from `failed_blockers()`/
+#' `waiting_cells()`, which only name the few cells they're about), so they
+#' are re-keyed to position once here, not per cell.
+#'
+#' * `ids`: `names(state$cells)`, fixed once so callers don't call it again.
+#' * `running`: `state$worker$running`, or `NULL`; `running_idx` its cell's
+#'   position in `ids`, or `NA`.
+#' * `queued`, `blocked`: logical, position -> queued (not the running cell)
+#'   or blocked (a graph error on it or an ancestor).
+#' * `blocked_by`: list, position -> the ancestor whose failed result blocks
+#'   it, or `NULL`.
+#' * `waiting`: list, position -> `waiting_cells()`'s value, or `NULL`.
+#' * `errors_by_cell`: list, position -> the graph errors naming it
+#'   (`cell_errors(graph, id)`'s result), grouped once over `graph$errors`.
+view_context <- function(state) {
+  graph <- state$graph
+  ids <- names(state$cells)
+  n <- length(ids)
+
+  blocked_direct <- blocked_cells(graph)
+  blocked_down <- unlist(lapply(blocked_direct, function(b) {
+    downstream(graph, b, transitive = TRUE)
+  }), use.names = FALSE)
+  blocked_ids <- union(blocked_direct, blocked_down)
+  blocked <- ids %in% blocked_ids
+
+  fblocked <- failed_blockers(state)
+  blocked_by <- vector("list", n)
+  if (length(fblocked) > 0) {
+    at <- match(names(fblocked), ids)
+    ok <- !is.na(at)
+    blocked_by[at[ok]] <- fblocked[ok]
+  }
+
+  running <- state$worker$running
+  running_idx <- if (!is.null(running)) match(running$cell, ids) else NA_integer_
+  running_cell <- if (!is.null(running)) running$cell else NA_character_
+  queued_ids <- setdiff(run_order(graph, state$pending), running_cell)
+  queued <- ids %in% queued_ids
+
+  waiting <- waiting_cells(state)
+  waiting_vec <- vector("list", n)
+  if (length(waiting) > 0) {
+    at <- match(names(waiting), ids)
+    ok <- !is.na(at)
+    waiting_vec[at[ok]] <- waiting[ok]
+  }
+
+  # A cell with no entry here has no graph error; callers read `NULL` as
+  # "no errors" rather than every slot being pre-filled with `list()`, which
+  # would cost one allocation per cell on every call even when nothing ever
+  # errors.
+  errors_by_cell <- vector("list", n)
+  for (e in graph$errors) {
+    for (cid in e$cells) {
+      at <- match(cid, ids)
+      if (!is.na(at)) errors_by_cell[[at]] <- c(errors_by_cell[[at]], list(e))
+    }
+  }
+
+  list(ids = ids, running = running, running_idx = running_idx,
+      queued = queued, blocked = blocked, blocked_by = blocked_by,
+      waiting = waiting_vec, errors_by_cell = errors_by_cell)
+}
+
+#' One cell's `ember_cell_view`, from `state` and the `view_context()` it
+#' belongs to, at position `i` (1-based, `ctx$ids[i]`'s position).
+cell_view <- function(state, ctx, i) {
+  id <- ctx$ids[[i]]
+  cell <- state$cells[[i]]            # `state$cells` is in display order:
+                                      # position, not a named lookup
+  result <- state$results[[id]]       # `results` isn't aligned with `cells`
+  is_running <- !is.na(ctx$running_idx) && ctx$running_idx == i
+
+  g_errors <- lapply(ctx$errors_by_cell[[i]], function(e) {
+    list(kind = e$kind, message = e$message, fixes = e$fixes,
+        names = e$names, traceback = character())
+  })
+  r_error <- if (!is.null(result) && !is.null(result$error)) {
+    list(list(kind = result$error$kind, message = result$error$message,
+              fixes = result$error$fixes, names = result$error$names,
+              traceback = result$error$traceback))
+  } else {
+    list()
+  }
+
+  structure(list(
+    id = id, index = i, kind = cell$kind, code = cell$code,
+    folded = isTRUE(cell$folded), setup = identical(id, state$setup),
+    queued = ctx$queued[[i]], running = is_running,
+    status = if (!is.null(result)) result$status else "not_run",
+    stale = !is.null(result) && isTRUE(result$stale),
+    code_differs = !is.null(result) && !identical(result$code, cell$code),
+    blocked = ctx$blocked[[i]],
+    blocked_by = ctx$blocked_by[[i]] %||% NA_character_,
+    errors = c(g_errors, r_error),
+    output = if (!is.null(result)) result$output else NULL,
+    console = if (is_running) ctx$running$console
+              else if (!is.null(result)) result$console else list(),
+    last_run = if (!is.null(result)) result$started_at else NULL,
+    runtime = if (!is.null(result)) result$runtime else NULL,
+    waiting_for = ctx$waiting[[i]] %||% character()
+  ), class = "ember_cell_view")
 }
 
 #' `TRUE` when nothing is queued or running. The default `wait_for()`

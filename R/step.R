@@ -495,8 +495,6 @@ reduce_apply <- function(state, event) {
     if (identical(op$op, "set_code")) {
       if (!(op$cell %in% names(cells))) {
         bad <- refused(sprintf("unknown cell %s", op$cell), op)
-      } else if (!identical(cells[[op$cell]]$kind, "code")) {
-        bad <- refused(sprintf("%s is not a code cell", op$cell), op)
       } else {
         code <- normalise_code(op$code)
         if (!is.null(op$expected) &&
