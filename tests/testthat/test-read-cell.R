@@ -24,13 +24,14 @@ test_that("definitions_of and references_of return unique names in source order"
   expect_equal(references_of(a), character())
 })
 
-# The bound catches a return to quadratic time (13 s for this input), not
-# small slowdowns: timing on a loaded machine varies.
+# Compares 6000 lines with 1500, so a slow machine doesn't matter: linear
+# time gives a ratio near 4, quadratic near 16.
 test_that("read_cell() reads 6000 generated lines in linear time", {
-  code <- paste(sprintf("x%d <- f(x%d, y)", 1:6000, 0:5999), collapse = "\n")
-  elapsed <- system.time(a <- read_cell(code))[["elapsed"]]
+  gen <- function(n) paste(sprintf("x%d <- f(x%d, y)", 1:n, 0:(n - 1)), collapse = "\n")
+  short <- system.time(read_cell(gen(1500)))[["elapsed"]]
+  long <- system.time(a <- read_cell(gen(6000)))[["elapsed"]]
   expect_equal(nrow(a$definitions), 6000)
-  expect_lt(elapsed, 5)
+  expect_lt(long / max(short, 0.01), 9)
 })
 
 test_that("read_cell() never errors on ~20 odd but parseable one-liners", {

@@ -132,10 +132,15 @@ send <- function(msg) {
   })
 }
 
+#' Read one frame. The wait can be interrupted (it consumes nothing); the
+#' read can't, or an interrupt partway through a frame would leave the rest
+#' of it on the wire to be misread as the next frame's length.
 receive <- function() {
-  n <- readBin(con, "integer", n = 1, endian = "big")
-  if (length(n) == 0) return(NULL)
-  unserialize(readBin(con, "raw", n = n))
+  socketSelect(list(con))
+  base::suspendInterrupts({
+    n <- readBin(con, "integer", n = 1, endian = "big")
+    if (length(n) == 0) NULL else unserialize(readBin(con, "raw", n = n))
+  })
 }
 
 # ---- Running a cell ----------------------------------------------------------
@@ -666,7 +671,12 @@ install_traces <- function() {
       } else NA_character_
       ember_load_enter(pkg)
       on.exit(ember_load_exit(), add = TRUE)
-      result <- original(...)
+      # Called as the notebook wrote it (`library(x)`, not `original(...)`),
+      # so the error call and the function's own sys.call() are the user's.
+      real_call <- mc
+      real_call[[1]] <- as.name(name)
+      result <- eval(real_call, list2env(stats::setNames(list(original), name),
+                                         parent = call_env))
       # library()/require(): record that this cell named a package for
       # attaching, whether or not attaching it was a no-op because it was
       # already on the path (a plain search() diff would miss that case,
@@ -871,7 +881,8 @@ console_collector <- function(cell, token) {
     seek(con, self$read_pos)
     raw_bytes <- readBin(con, "raw", n = size - self$read_pos)
     self$read_pos <- size
-    txt <- rawToChar(raw_bytes)
+    # The sink file is in text mode, which writes "\r\n" on Windows.
+    txt <- gsub("\r\n", "\n", rawToChar(raw_bytes), fixed = TRUE)
     if (nzchar(txt)) add_item("stdout", txt)
   }
 

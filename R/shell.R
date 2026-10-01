@@ -553,15 +553,15 @@ write_atomic <- function(path, text) {
   tmp <- tempfile("ember-", tmpdir = dir, fileext = ".tmp")
   wrote <- tryCatch(suppressWarnings({
     con <- file(tmp, open = "wb")
-    on.exit(close(con))
-    writeBin(charToRaw(enc2utf8(text)), con)
+    tryCatch(writeBin(charToRaw(enc2utf8(text)), con), finally = close(con))
     TRUE
   }), error = function(e) FALSE)
   if (!isTRUE(wrote)) {
     unlink(tmp)
     return(FALSE)
   }
-  moved <- tryCatch({ file.rename(tmp, path); TRUE }, error = function(e) FALSE)
+  # The temp file must be closed before this: Windows won't rename an open file.
+  moved <- isTRUE(tryCatch(suppressWarnings(file.rename(tmp, path)), error = function(e) FALSE))
   if (!isTRUE(moved) || !file.exists(path)) {
     unlink(tmp)
     return(FALSE)

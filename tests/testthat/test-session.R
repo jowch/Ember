@@ -262,14 +262,20 @@ test_that("a later callback keeps firing during a 2 s busy cell (117)", {
   expect_gt(length(ticks), 10)
   times <- vapply(ticks, as.numeric, numeric(1))
   gaps <- diff(times)
-  expect_lt(max(gaps), 0.05)
+  # A blocked server would show a gap near the cell's 2 s; shared CI
+  # machines show occasional pauses of a few hundred ms.
+  expect_lt(max(gaps), 0.5)
 })
 
 test_that("worker_output_pipe_drained", {
   path <- tempfile(fileext = ".R")
   nb <- new_notebook(path)
   on.exit(close_notebook(nb))
-  edit_notebook(nb, set_code(2, 'for (i in 1:2000) system2("echo", strrep("x", 100)); 1'))
+  # A child process writes 200 KB straight to the worker's stdout, past
+  # the pipe's buffer, bypassing the cell's capture.
+  rscript <- deparse(file.path(R.home("bin"), "Rscript"))
+  code <- paste0("system2(", rscript, ", c('-e', shQuote('cat(strrep(\"x\", 2e5))'))); 1")
+  edit_notebook(nb, set_code(2, code))
   run_cells(nb, wait = TRUE, timeout = 30)
   expect_identical(notebook_snapshot(nb)$cells[[2]]$status, "ok")
 })
