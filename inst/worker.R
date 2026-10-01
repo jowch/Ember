@@ -160,6 +160,8 @@ send <- function(msg) {
   # Forced first: `msg` is often a promise for run_cell(), whose cell must
   # stay interruptible.
   force(msg)
+  trace_line("send", msg$type)
+  on.exit(trace_line("sent", msg$type))
   uninterrupted({
     payload <- serialize(msg, NULL)
     writeBin(length(payload), con, endian = "big")
@@ -280,6 +282,7 @@ run_cell <- function(msg) {
     visible <- FALSE
     err <- NULL
     exprs <- parse(text = msg$code, keep.source = TRUE)
+    trace_line("eval", msg$cell)
 
     tryCatch(
       withCallingHandlers({
@@ -342,6 +345,7 @@ run_cell <- function(msg) {
     # An interrupt arriving inside is passed on once the block completes
     # (caught by the `interrupt=` below), so the cell is reported
     # "interrupted" with the bookkeeping done.
+    trace_line("evaluated", msg$cell, rc$status)
     uninterrupted({
       rc$runtime <- unname((proc.time() - t0)[["elapsed"]])
       if (!is.null(err)) rc$error <- err
@@ -404,6 +408,7 @@ run_cell <- function(msg) {
       rebuild_search_path()
 
       rc$formula_misses <- check_formulas(msg$formulas)
+      trace_line("bookkept", msg$cell)
     })
   }, interrupt = function(i) {
     rc$status <<- "interrupted"
@@ -823,6 +828,7 @@ ember_trace_source <- function() {
 #' only `running`).
 trace_source <- function(file) {
   if (is.null(running) || length(load_stack) > 0 || inherits(file, "connection")) return(invisible())
+  trace_line("source", file)
   path <- tryCatch(normalizePath(file, mustWork = FALSE), error = function(e) as.character(file))
   text <- tryCatch(paste(readLines(path, warn = FALSE), collapse = "\n"), error = function(e) NA_character_)
   send(list(type = "source", cell = running$cell, token = running$token, path = path, text = text))
