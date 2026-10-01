@@ -431,6 +431,9 @@ test_that("known_attached_packages_never_shrink", {
 })
 
 test_that("interrupt_during_display_still_completes_bookkeeping", {
+  # Windows delivers the interrupt through processx's CTRL+C helper, too late
+  # for this test's timing; tracked in docs/design-gaps.md.
+  skip_on_os("windows")
   h <- worker_harness()
   on.exit(h$close())
   run_and_wait(h, "a", 1L,

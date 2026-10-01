@@ -132,15 +132,19 @@ send <- function(msg) {
   })
 }
 
-#' Read one frame. The wait can be interrupted (it consumes nothing); the
-#' read can't, or an interrupt partway through a frame would leave the rest
-#' of it on the wire to be misread as the next frame's length.
+#' Read one frame, or `NULL` when the server has gone. Runs only between
+#' cells, where an interrupt has nothing to stop, so interrupts are held off
+#' for the whole read: one arriving partway through a frame would leave the
+#' rest on the wire to be misread as the next frame's length. An interrupt
+#' held off this way is signalled when the read ends; it is dropped there,
+#' after `got` is set, so the frame it arrived during isn't lost.
 receive <- function() {
-  socketSelect(list(con))
-  base::suspendInterrupts({
+  got <- list(type = "noop")
+  tryCatch(base::suspendInterrupts({
     n <- readBin(con, "integer", n = 1, endian = "big")
-    if (length(n) == 0) NULL else unserialize(readBin(con, "raw", n = n))
-  })
+    got <- if (length(n) == 0) NULL else unserialize(readBin(con, "raw", n = n))
+  }), interrupt = function(i) NULL)
+  got
 }
 
 # ---- Running a cell ----------------------------------------------------------
