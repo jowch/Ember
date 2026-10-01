@@ -562,7 +562,9 @@ test_that("\"/\" serves Ember's own index, not Pluto's vendored welcome page (re
 })
 
 test_that("http_index() escapes a notebook's path into its HTML (review4 10)", {
-  evil_dir <- file.path(tempdir(), paste0("ember-nb-", "<script>alert(1)</script>"))
+  # Windows forbids < and > in file names; a quote that breaks out of an
+  # attribute is the same attack and is allowed everywhere.
+  evil_dir <- file.path(tempdir(), "ember-nb-' onmouseover='alert(1)&x")
   dir.create(evil_dir, recursive = TRUE, showWarnings = FALSE)
   path <- write_session_notebook(list(S = cell(""), A = cell("1")), dir = evil_dir)
   nb <- open_notebook(path)
@@ -571,8 +573,8 @@ test_that("http_index() escapes a notebook's path into its HTML (review4 10)", {
   host_notebook(server, nb)
 
   resp <- http_call(server, fake_req("/", "secret=s"))
-  expect_false(grepl("<script>alert(1)</script>", resp$body, fixed = TRUE))
-  expect_match(resp$body, "&lt;script&gt;alert(1)&lt;/script&gt;", fixed = TRUE)
+  expect_false(grepl("' onmouseover='alert(1)&x", resp$body, fixed = TRUE))
+  expect_match(resp$body, "&#39; onmouseover=&#39;alert(1)&amp;x", fixed = TRUE)
 })
 
 # ---- start_server(): a real child process, skipped on CRAN -----------------
