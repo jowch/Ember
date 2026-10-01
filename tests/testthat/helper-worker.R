@@ -133,7 +133,8 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
     r_bin, c("--vanilla", "-e", boot, as.character(srv$port)),
     env = c("current",
             R_LIBS_USER = lib_path, R_LIBS = "", R_LIBS_SITE = "",
-            EMBER_WORKER = worker_script_path(), EMBER_SECRET = secret),
+            EMBER_WORKER = worker_script_path(), EMBER_SECRET = secret,
+            EMBER_WORKER_TRACE = "1"),
     stdout = "|", stderr = "|")
 
   fail <- function(...) {

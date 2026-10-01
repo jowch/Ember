@@ -82,14 +82,22 @@ test_that("read_library_manifest returns NULL for a missing folder and for a fol
 # ---- The installer's rename race (60) --------------------------------------
 
 test_that("two installs of one key racing in two processes leave one library and no staging folder (60)", {
-  pkg_root <- normalizePath(file.path(testthat::test_path(), "..", ".."), mustWork = TRUE)
+  # The installed package under R CMD check (installed packages have Meta/);
+  # the source tree under load_all(). Recompiling the source in each
+  # subprocess fails on Windows while the parent holds the DLL.
+  pkg_path <- find.package("ember")
+  load_ember <- if (dir.exists(file.path(pkg_path, "Meta"))) {
+    paste0("loadNamespace('ember', lib.loc = ", deparse(dirname(pkg_path)), ")")
+  } else {
+    paste0("suppressMessages(pkgload::load_all(", deparse(pkg_path), ", quiet = TRUE))")
+  }
   path <- tempfile("ember-lib-race-")
   stagings <- c(paste0(path, ".staging-1"), paste0(path, ".staging-2"))
 
   rscript <- file.path(R.home("bin"), "Rscript")
   race_code <- function(staging) {
     paste0(
-      "suppressMessages(pkgload::load_all(", deparse(pkg_root), ", quiet = TRUE)); ",
+      load_ember, "; ",
       "dir.create(", deparse(staging), ", recursive = TRUE); ",
       "manifest <- list(lock_lines = character(), r = ember:::r_info(), ",
       "installed = character(), exports = list(), cache_entries = character(), ",

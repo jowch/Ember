@@ -115,6 +115,8 @@ handle_next <- function() {
     receive()
   }
   if (is.null(msg)) quit(save = "no")  # server gone
+  trace_line("message", msg$type)
+  on.exit(trace_line("handled", msg$type))
   switch(msg$type,
     run = send(list(type = "done", cell = msg$cell, token = msg$token,
                      report = run_cell(msg))),
@@ -172,12 +174,24 @@ receive <- function() {
 read_exactly <- function(n) {
   out <- raw(0)
   while (length(out) < n) {
-    if (!isTRUE(socketSelect(list(con), timeout = 1))) next
+    ready <- socketSelect(list(con), timeout = 1)
+    trace_line("select", n, length(out), ready)
+    if (!isTRUE(ready)) next
     more <- readBin(con, "raw", n = n - length(out))
+    trace_line("read", length(more))
     if (length(more) == 0) return(NULL)
     out <- c(out, more)
   }
   out
+}
+
+#' With EMBER_WORKER_TRACE set, a line on stderr per step of the message
+#' loop, for diagnosing a worker that stops answering on a machine we can't
+#' log into.
+trace_line <- function(...) {
+  if (nzchar(Sys.getenv("EMBER_WORKER_TRACE"))) {
+    cat("[worker]", format(Sys.time(), "%H:%M:%OS3"), ..., "\n", file = stderr())
+  }
 }
 
 # ---- Running a cell ----------------------------------------------------------
