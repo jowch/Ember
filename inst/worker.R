@@ -95,14 +95,37 @@ main <- function() {
             pid = Sys.getpid(), r_version = R.version.string,
             lib_paths = .libPaths(), loaded = loaded_namespace_versions()))
   Sys.unsetenv("EMBER_SECRET")      # cells must not see it
-  # Interrupts are held off everywhere in the loop and allowed only while a
-  # cell's own code runs or its value is displayed (`allowInterrupts()` in
-  # run_cell()). A SIGINT arriving at any other moment (late, between runs,
-  # mid-message) is signalled when the iteration ends and dropped there, so
-  # it can't reach top level and stop the worker, or lose a message.
+  # An interrupt that arrives between cells (late, or while a message is
+  # read) has nothing to stop: it is resumed where it landed. While a cell
+  # runs, run_cell()'s own handlers are nearer and catch it first.
   repeat {
-    tryCatch(base::suspendInterrupts(handle_next()), interrupt = function(i) NULL)
+    withCallingHandlers(handle_next(), interrupt = ignore_interrupt)
   }
+}
+
+#' Continue after an interrupt as if it hadn't happened. R offers a
+#' "resume" restart for a real SIGINT; a re-signalled one (see
+#' `uninterrupted()`) has none, and returning simply carries on.
+ignore_interrupt <- function(i) {
+  if (!is.null(findRestart("resume"))) invokeRestart("resume")
+}
+
+#' Evaluate `expr` without letting an interrupt cut it short, then pass the
+#' interrupt on. Used for wire reads and writes, where stopping partway
+#' would leave half a frame, and for a cell's bookkeeping.
+#' `suspendInterrupts()` isn't enough: on Linux a socket wait delivers the
+#' interrupt anyway (seen in CI).
+uninterrupted <- function(expr) {
+  interrupted <- FALSE
+  value <- withCallingHandlers(expr, interrupt = function(i) {
+    interrupted <<- TRUE
+    if (!is.null(findRestart("resume"))) invokeRestart("resume")
+  })
+  if (interrupted) {
+    signalCondition(structure(class = c("interrupt", "condition"),
+                              list(message = "", call = NULL)))
+  }
+  value
 }
 
 #' Read the next message (or take a deferred one) and act on it.
@@ -132,38 +155,32 @@ handle_next <- function() {
   invisible()
 }
 
-#' Write one wire frame. Wrapped in `suspendInterrupts()` so a SIGINT
-#' arriving mid-send can't leave a partial frame on the wire: once a send
-#' starts, it always finishes before the interrupt is delivered.
+#' Write one wire frame, whole even if an interrupt arrives meanwhile.
 send <- function(msg) {
-  # Forced first: `msg` is often a promise for run_cell(), which must not
-  # run with interrupts suspended.
+  # Forced first: `msg` is often a promise for run_cell(), whose cell must
+  # stay interruptible.
   force(msg)
-  base::suspendInterrupts({
+  uninterrupted({
     payload <- serialize(msg, NULL)
     writeBin(length(payload), con, endian = "big")
     writeBin(payload, con)
     flush(con)
   })
+  invisible()
 }
 
-#' Read one frame, or `NULL` when the server has gone. Runs only between
-#' cells, where an interrupt has nothing to stop, so interrupts are held off
-#' for the whole read: one arriving partway through a frame would leave the
-#' rest on the wire to be misread as the next frame's length. An interrupt
-#' held off this way is signalled when the read ends; it is dropped there,
-#' after `got` is set, so the frame it arrived during isn't lost.
+#' Read one frame, or `NULL` when the server has gone. Whole even if an
+#' interrupt arrives meanwhile: stopping partway would leave the rest on the
+#' wire to be misread as the next frame's length.
 receive <- function() {
-  got <- list(type = "noop")
-  tryCatch(base::suspendInterrupts({
+  uninterrupted({
     header <- read_exactly(4L)
-    got <- if (is.null(header)) NULL else {
+    if (is.null(header)) NULL else {
       n <- readBin(header, "integer", n = 1, endian = "big")
       payload <- read_exactly(n)
       if (is.null(payload)) NULL else unserialize(payload)
     }
-  }), interrupt = function(i) NULL)
-  got
+  })
 }
 
 #' Exactly `n` bytes from the server, or `NULL` once it has closed the
@@ -227,7 +244,7 @@ run_cell <- function(msg) {
   # below) so an interrupt landing anywhere in this function — including
   # after the cell's code finished, while display or bookkeeping is still
   # running — can never leave a sink or a device open. Once the bookkeeping
-  # block below (wrapped in `suspendInterrupts()`) has closed them itself,
+  # block below (wrapped in `uninterrupted()`) has closed them itself,
   # it sets these back to NULL so this doesn't try to close them twice.
   dev <- NULL
   console <- NULL
@@ -264,7 +281,7 @@ run_cell <- function(msg) {
     err <- NULL
     exprs <- parse(text = msg$code, keep.source = TRUE)
 
-    tryCatch(base::allowInterrupts(
+    tryCatch(
       withCallingHandlers({
         for (e in exprs) {
           r <- withVisible(eval(e, globalenv()))
@@ -315,21 +332,17 @@ run_cell <- function(msg) {
                      # server can recognise a missing package without matching
                      # the (locale-translated) message text.
                      package = if (inherits(e, "packageNotFoundError")) e$package else NULL)
-      })),
+      }),
       interrupt = function(i) rc$status <<- "interrupted",
       error     = function(e) rc$status <<- "error")
 
     # Everything from here on is bookkeeping, not cell evaluation: it must
     # finish once started, or the worker's own state (owned globals, the
     # settings baseline, attached packages) falls out of step with reality.
-    # It starts right where the inner tryCatch above ends, with no gap, so
-    # an interrupt can't land between them and skip the block entirely; an
-    # interrupt arriving anywhere inside is deferred until the block
-    # completes, then delivered (caught by the `interrupt=` below), so a
-    # cell that finished running but got interrupted while its output was
-    # being displayed is reported "interrupted" with the bookkeeping done,
-    # not skipped.
-    base::suspendInterrupts({
+    # An interrupt arriving inside is passed on once the block completes
+    # (caught by the `interrupt=` below), so the cell is reported
+    # "interrupted" with the bookkeeping done.
+    uninterrupted({
       rc$runtime <- unname((proc.time() - t0)[["elapsed"]])
       if (!is.null(err)) rc$error <- err
 
@@ -337,10 +350,10 @@ run_cell <- function(msg) {
       # the user's code too, so it can be interrupted like the cell.
       output <- NULL
       if (rc$status == "ok") {
-        output <- tryCatch(base::allowInterrupts({
+        output <- tryCatch({
           if (visible) display_value(value, msg$cell, dev, console)
           else display_plot(msg$cell, dev)
-        }), interrupt = function(i) { rc$status <<- "interrupted"; NULL },
+        }, interrupt = function(i) { rc$status <<- "interrupted"; NULL },
            error = function(e) NULL)
       }
       close_device(dev)
