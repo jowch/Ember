@@ -1,0 +1,331 @@
+#binder_spinners {
+    width: 100%;
+    height: 100%;
+    display: block;
+    position: absolute;
+    overflow: hidden;
+
+    opacity: 0;
+    transition: opacity 1s ease-in-out;
+    pointer-events: none;
+}
+
+binder-spinner#ring_1 {
+    border-top-color: #f5a252;
+    width: 300px;
+    height: 300px;
+    margin-left: calc(-0.5 * 300px);
+    margin-top: calc(-0.5 * 300px);
+    animation-duration: 2s;
+}
+binder-spinner#ring_2 {
+    border-top-color: #579aca;
+    width: 380px;
+    height: 380px;
+    margin-left: calc(-0.5 * 380px);
+    margin-top: calc(-0.5 * 380px);
+    animation-duration: 3s;
+}
+binder-spinner#ring_3 {
+    border-top-color: #e56581;
+    width: 460px;
+    height: 460px;
+    margin-left: calc(-0.5 * 460px);
+    margin-top: calc(-0.5 * 460px);
+    animation-duration: 4s;
+}
+binder-spinner {
+    top: 117px;
+    left: 80vw;
+    position: absolute;
+    border: 25px solid transparent;
+    display: block;
+    border-radius: 100%;
+    animation: spin 4s linear infinite;
+}
+
+@keyframes spin {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+.edit_or_run {
+    position: fixed;
+    z-index: 2000;
+    top: 9px;
+    right: 8px;
+    display: flex;
+    gap: 0.7em;
+    max-width: calc(100% - 30px - 2em);
+    justify-content: flex-end;
+}
+.binder_help_text button {
+    padding: 7px 20px;
+    background: #fffdf7;
+    box-shadow: 0px 0px 20px 0px #ffffff;
+    cursor: pointer;
+    display: block;
+}
+
+body.wiggle_binder .edit_or_run > button:first-child {
+    /* position: fixed; */
+    animation: wiggle-binder-button 0.3s ease-in-out 0s 1;
+}
+
+@keyframes wiggle-binder-button {
+    0% {
+        transform: rotate(0deg);
+    }
+    30% {
+        transform: rotate(10deg);
+    }
+    70% {
+        transform: rotate(-10deg);
+    }
+    100% {
+        transform: rotate(0deg);
+    }
+}
+
+.binder_help_text button img {
+    margin: -8px;
+    margin-left: 0px;
+    font-style: normal;
+    color: black;
+    font-weight: 900;
+    height: 2.2em;
+}
+
+.edit_or_run > button {
+    width: 100%;
+    display: flex;
+    text-align: center;
+    z-index: 2000;
+    box-shadow: none;
+    cursor: pointer;
+    background: unset;
+    background-color: var(--overlay-button-bg);
+    border: 3px solid hsl(236deg 28% 50% / 46%);
+    font-size: 16px;
+    /* font-style: italic; */
+    font-family: var(--system-ui-font-stack);
+    letter-spacing: 0.1px;
+    color: var(--black);
+    white-space: nowrap;
+    padding: 8px 16px;
+    border-radius: 30px;
+    flex: 0 1 max-content;
+    overflow: hidden;
+    align-items: center;
+    gap: 0.5em;
+}
+
+.edit_or_run > button:hover {
+    text-decoration: underline;
+}
+
+.edit_or_run > button > span.yayicon {
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    background-size: contain;
+    background-repeat: no-repeat;
+    background-position: center;
+    filter: var(--image-filters);
+    vertical-align: -0.1em;
+    transform: scale(1.3);
+    flex: 0 0 auto;
+}
+
+.edit_or_run > button.edit_or_run_button > span.yayicon {
+    background-image: url("https://cdn.jsdelivr.net/gh/ionic-team/ionicons@5.5.1/src/svg/play-circle-outline.svg");
+}
+
+.edit_or_run > button.view_hidden_code > span.yayicon {
+    background-image: url("https://cdn.jsdelivr.net/gh/ionic-team/ionicons@5.5.1/src/svg/code-working-outline.svg");
+}
+.edit_or_run > button.view_hidden_code_cancel > span.yayicon {
+    background-image: url("https://cdn.jsdelivr.net/gh/ionic-team/ionicons@5.5.1/src/svg/close-outline.svg");
+}
+
+@container editor (width < 400px) {
+    .edit_or_run > button.edit_or_run_button .text {
+        display: none;
+    }
+}
+
+.binder_help_text {
+    --width: min(85vw, 570px);
+    position: fixed;
+    max-height: calc(100svh - 4rem);
+    overflow: auto;
+    width: var(--width);
+    padding: 16px;
+    border-radius: 8px;
+    background-color: white;
+    color: black;
+    color-scheme: light;
+    box-shadow: 0px 0px 0px 100vmax #0000004a;
+    font-family: var(--sans-serif-font-stack);
+    border: 0;
+}
+.binder_help_text a {
+    color: black;
+}
+
+@media (max-width: 500px) {
+    .binder_help_text {
+        top: 0;
+        width: 100vw;
+        left: 0;
+        max-height: 100svh;
+    }
+}
+
+.binder_help_text .close {
+    position: absolute;
+    --size: 32px;
+    top: 5px;
+    right: 5px;
+    width: var(--size);
+    height: var(--size);
+    background-size: var(--size) var(--size);
+    cursor: pointer;
+    background-image: url("https://cdn.jsdelivr.net/gh/ionic-team/ionicons@5.5.1/src/svg/close-outline.svg");
+}
+
+.download_div,
+.copy_div {
+    padding: 4px 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    height: 40px;
+    margin-bottom: 0.75rem;
+}
+
+.download_div,
+.binder_help_text button,
+.download_div,
+.copy_div {
+    width: max(60%, 10rem);
+    margin: 0px auto;
+    border: 3px solid #3f448c5e;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.download_div a,
+.copy_div input {
+    width: calc(100% - 8px - 1rem);
+    outline: none;
+    border: none;
+    font-size: 0.7rem;
+    font-family: "Roboto Mono", monospace;
+    line-height: 1.4;
+    cursor: text;
+}
+
+.download_div,
+.download_div a {
+    cursor: pointer;
+}
+
+.download_icon,
+.copy_icon {
+    position: relative;
+    cursor: pointer;
+    height: 1.5rem;
+    width: 1.5rem;
+    background-size: 1rem 1rem;
+    background-position: center;
+    background-repeat: no-repeat;
+    background-image: url("https://cdn.jsdelivr.net/gh/ionic-team/ionicons@5.5.1/src/svg/copy-outline.svg");
+    box-shadow: 0px 0px 60px 60px white;
+}
+
+.download_icon {
+    background-image: url("https://cdn.jsdelivr.net/gh/ionic-team/ionicons@5.5.1/src/svg/download-outline.svg");
+}
+
+.copy_icon.success_copy::after {
+    content: "Copied!";
+    position: absolute;
+    background-color: rgb(220, 235, 245);
+    border-radius: 0.5rem;
+    line-height: 1.5rem;
+    text-align: center;
+    width: 4rem;
+    font-size: 0.75rem;
+    font-family: JuliaMono, monospace;
+    font-weight: bold;
+    /* left: calc(-2rem + 0.75rem); */
+    animation: fadeout 3s;
+}
+
+.copy_icon:not(.success_copy):hover::after {
+    content: "Copy";
+    position: absolute;
+    background-color: rgb(244, 245, 220);
+    border-radius: 0.5rem;
+    line-height: 1.5rem;
+    text-align: center;
+    width: 4rem;
+    font-size: 0.75rem;
+    font-family: JuliaMono, monospace;
+    font-weight: bold;
+}
+
+.copy_icon::after {
+    right: 1.5rem;
+}
+
+@keyframes fadeout {
+    0% {
+        opacity: 1;
+    }
+    20% {
+        opacity: 1;
+    }
+    40% {
+        opacity: 0;
+    }
+    100% {
+        opacity: 0;
+    }
+}
+
+.command {
+    font-size: 1.2rem;
+    font-weight: bold;
+    margin-bottom: 0.75rem;
+}
+.edit_or_run li {
+    margin-bottom: 2rem;
+}
+.edit_or_run li video,
+.edit_or_run li img {
+    /* outline: 1px solid black; */
+    border: 5px solid rgb(212, 212, 212);
+    border-radius: 5px;
+    width: 100%;
+}
+
+.expected_runtime_box {
+    padding: 0.6em 1em;
+    border-radius: 0.6em;
+    font-style: italic;
+    display: block;
+    background: linear-gradient(45deg, hsl(222deg 52% 87%), #e5f7ff);
+    margin: 2em 0em -2em 0em;
+    color: #323232;
+}
+
+.expected_runtime_box span {
+    font-style: initial;
+    font-weight: bold;
+}
