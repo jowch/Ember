@@ -95,7 +95,9 @@ test_that("a notebook with library(toyA) on the file:// toy repo installs toyA a
   expect_equal(snap_view(snap, "A")$output$text, "[1] \"toyA 0.1 says: hello from toyB\"")
 
   status <- package_status(nb)
-  expect_equal(status$library$status, "ready")
+  expect_equal(status$library$status, "ready",
+               info = paste(c(status$library$message,
+                              notebook_state(nb)$packages$target$log), collapse = "\n"))
   pkgs <- status$packages
   expect_setequal(pkgs$name, c("toyA", "toyB"))
   expect_equal(pkgs$version[pkgs$name == "toyA"], "0.1")

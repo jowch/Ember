@@ -128,6 +128,8 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
     "local({e <- new.env(parent = baseenv()); ",
     "sys.source(Sys.getenv('EMBER_WORKER'), e); e$main()})")
 
+  out_file <- tempfile("ember-worker-out-")
+  err_file <- tempfile("ember-worker-err-")
   r_bin <- file.path(R.home("bin"), "Rscript")
   p <- processx::process$new(
     r_bin, c("--vanilla", "-e", boot, as.character(srv$port)),
@@ -135,7 +137,9 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
             R_LIBS_USER = lib_path, R_LIBS = "", R_LIBS_SITE = "",
             EMBER_WORKER = worker_script_path(), EMBER_SECRET = secret,
             EMBER_WORKER_TRACE = "1"),
-    stdout = "|", stderr = "|")
+    # Files, not pipes: nothing reads a pipe until a test fails, and a
+    # worker writing to a full pipe blocks.
+    stdout = out_file, stderr = err_file)
 
   fail <- function(...) {
     tryCatch(if (p$is_alive()) p$kill(), error = function(e) NULL)
@@ -149,7 +153,7 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
     remaining <- as.numeric(deadline - Sys.time(), units = "secs")
     if (remaining <= 0) {
       fail("worker did not connect within ", connect_timeout, "s:\n",
-           paste(p$read_all_error_lines(), collapse = "\n"))
+           paste(if (file.exists(err_file)) readLines(err_file, warn = FALSE), collapse = "\n"))
     }
     if (wait_socket(srv$socket, Sys.time() + min(remaining, 0.1))) {
       con <- socketAccept(srv$socket, blocking = TRUE, open = "a+b", timeout = 60 * 60 * 24)
@@ -157,13 +161,15 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
     }
     if (!p$is_alive()) {
       fail("worker exited before connecting:\n",
-           paste(p$read_all_error_lines(), collapse = "\n"))
+           paste(if (file.exists(err_file)) readLines(err_file, warn = FALSE), collapse = "\n"))
     }
   }
   close(srv$socket)  # the one connection is accepted; the listener isn't needed anymore
 
   h <- new.env()
   h$process <- p
+  h$out_file <- out_file
+  h$err_file <- err_file
   h$con <- con
   h$closed <- FALSE
   h$send <- function(msg) write_frame(con, msg)
@@ -210,8 +216,9 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
 #' and what it last wrote, so a failure on a CI machine can be diagnosed.
 no_reply <- function(h, timeout) {
   alive <- h$process$is_alive()
-  err <- tryCatch(h$process$read_error_lines(), error = function(e) character())
-  out <- tryCatch(h$process$read_output_lines(), error = function(e) character())
+  read <- function(f) if (file.exists(f)) readLines(f, warn = FALSE) else character()
+  err <- read(h$err_file)
+  out <- read(h$out_file)
   stop(sprintf("worker did not reply within %ss (alive: %s)\n%s", timeout, alive,
                paste(utils::tail(c(out, err), 20), collapse = "\n")), call. = FALSE)
 }
