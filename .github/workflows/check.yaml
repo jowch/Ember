@@ -48,3 +48,27 @@ jobs:
       - name: Generated parser is committed and current
         run: git diff --exit-code -- src/parser.js src/parser.terms.js dist
       - run: npm test
+
+  codemirror-ember-setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            grammar/package-lock.json
+            frontend-setup/package-lock.json
+      - name: Build the R grammar (frontend-setup depends on it by path)
+        working-directory: grammar
+        run: |
+          npm ci
+          npm run build
+      - name: Rebuild the CodeMirror bundle
+        working-directory: frontend-setup
+        run: |
+          npm ci
+          npm run build
+      - name: Committed bundle matches a fresh rebuild
+        run: diff -q frontend-setup/dist/codemirror-ember-setup.js inst/frontend/imports/codemirror-ember-setup.js

@@ -1,2 +1,5 @@
+// Vendored, not CDN-loaded like the rest of imports/: this bundle has
+// Ember's R grammar built in (see frontend-setup/ at the repository root
+// and docs/ui-frontend.md for why it can't be a second <script> instead).
 // @ts-ignore
-export * from "https://cdn.jsdelivr.net/gh/JuliaPluto/codemirror-pluto-setup@2002.0.8/dist/index.es.min.js"
+export * from "./codemirror-ember-setup.js"
