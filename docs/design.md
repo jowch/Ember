@@ -939,7 +939,8 @@ run), and the snapshot has no stale state.
    tests, not shipped).
 2. **Engine without UI:** file format, worker, scheduler, R API, tests.
    Built; the design is in [engine.md](engine.md).
-3. **Packages:** detection, lock, installs.
+3. **Packages:** detection, lock, installs. The first increment (CRAN) is
+   built; the design and what follows are in [packages.md](packages.md).
 4. **UI fork:** protocol in R, removals, R adaptations, theme.
    - **R grammar for the editor,** a separate track run alongside step 2:
      it depends on nothing else, and the corpus to test it exists.
