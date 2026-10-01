@@ -371,5 +371,6 @@ test_that("a one-cell change at 2000 cells stays fast when every cell has a resu
     if (identical(id, "c7")) next
     expect_identical(p2$js$cell_results[[id]], p1$js$cell_results[[id]], info = id)
   }
-  expect_lt(tt, 0.06)
+  # Loose enough for slow CI runners (60 ms on Windows), still far below ~2s.
+  expect_lt(tt, 0.5)
 })
