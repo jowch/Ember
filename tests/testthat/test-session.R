@@ -88,6 +88,76 @@ test_that("the file on disk matches the state after an edit, and file_saved fire
   expect_equal(on_disk, expected)
 })
 
+# ---- review4 item 2: move_notebook() validates before changing state ---------
+
+test_that("move_notebook() refuses to overwrite an existing file (review4 2)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+
+  victim <- file.path(dirname(path), "important.R")
+  writeLines("precious data", victim)
+
+  expect_error(move_notebook(nb, victim), class = "ember_refused")
+  expect_equal(readLines(victim), "precious data")
+  expect_true(file.exists(path))
+  expect_equal(notebook_state(nb)$path, path)
+})
+
+test_that("move_notebook() refuses a target in a folder that doesn't exist (review4 2)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+
+  bad <- file.path(dirname(path), "no_such_dir", "nb.R")
+  expect_error(move_notebook(nb, bad), class = "ember_refused")
+  expect_false(file.exists(bad))
+  expect_true(file.exists(path))
+  expect_equal(notebook_state(nb)$path, path)
+
+  # The state is never left pointing at the bad path, so an unrelated edit
+  # afterwards still saves normally (no save_failed problem, no loop).
+  edit_notebook(nb, set_code("A", "2"))
+  expect_equal(nrow(notebook_state(nb)$problems %||% data.frame()), 0)
+})
+
+test_that("move_notebook() refuses a relative path (review4 2)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+
+  expect_error(move_notebook(nb, "relative.R"), class = "ember_refused")
+  expect_true(file.exists(path))
+})
+
+test_that("a failing save is not retried within one drain, and is retried on the next change (review4 2)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  dir <- dirname(path)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+
+  Sys.chmod(dir, "0555")
+  on.exit(Sys.chmod(dir, "0755"), add = TRUE)
+  if (file.access(dir, 2) == 0) {
+    skip("cannot make a directory unwritable in this environment (likely running as root)")
+  }
+
+  # Before the fix, `save_if_changed()` re-enqueued `ev_save_failed` forever
+  # within this one drain (the text never changes, so the write is retried
+  # every time the event is processed), pinning a core at 100% CPU. This
+  # must return promptly and record the failure exactly once.
+  t <- system.time(edit_notebook(nb, set_code("A", "2")))
+  expect_lt(t[["elapsed"]], 2)
+  problems <- notebook_state(nb)$problems
+  expect_equal(sum(problems$kind == "save_failed"), 1)
+
+  # A further edit while still unwritable is a *new* change (different
+  # text), so it is retried and fails again -- one more row, not a flood.
+  edit_notebook(nb, set_code("A", "3"))
+  problems2 <- notebook_state(nb)$problems
+  expect_equal(sum(problems2$kind == "save_failed"), 2)
+})
+
 test_that("a learned definition from load() is saved in the footer and orders cells on reopen (111)", {
   dir <- tempfile("ember-nb-")
   dir.create(dir, recursive = TRUE)

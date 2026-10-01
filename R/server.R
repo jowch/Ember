@@ -236,7 +236,7 @@ edit_url <- function(server, id) {
 #' already accepted elsewhere in this codebase for the same OS-level gap.
 pick_free_port <- function(tries = 30L) {
   for (i in seq_len(tries)) {
-    port <- sample(20000:59999, 1)
+    port <- random_port()
     ok <- tryCatch({ close(serverSocket(port)); TRUE }, error = function(e) FALSE)
     if (ok) return(port)
   }
@@ -338,7 +338,17 @@ on_note <- function(server, hub, note) {
   hub$due <- TRUE
   elapsed <- as.numeric(Sys.time() - hub$last_flush, units = "secs")
   delay <- max(0, server$throttle - elapsed)
-  later::later(function() if (isTRUE(hub$due)) flush_clients(server, hub), delay)
+  # Guarded the same way handle_message() guards a request handler: an
+  # error here runs on `later`'s global loop, outside any request, so
+  # without the tryCatch it would propagate out of run_now() and could end
+  # serve()'s whole blocking loop over one bad flush.
+  later::later(function() {
+    if (isTRUE(hub$due)) {
+      tryCatch(flush_clients(server, hub), error = function(e) {
+        message("ember: scheduled flush failed: ", conditionMessage(e))
+      })
+    }
+  }, delay)
   invisible(NULL)
 }
 
@@ -399,6 +409,7 @@ thumbs_down <- function(why) {
 #' applied through one atomic edit_notebook() call; see pluto-edits.R.
 on_update_notebook <- function(server, cl, hub, req) {
   if (is.null(hub)) {
+    server$counter <- server$counter + 1L
     send(cl, diff_message(req$notebook_id, server$counter, list(), req,
                           thumbs_down("no such notebook")))
     return(invisible(NULL))
@@ -601,14 +612,83 @@ parse_cookie_header <- function(h) {
   out
 }
 
-#' Does this request carry the server's secret, in the query string or the
-#' cookie `/edit` sets? Checked on every route that reaches R and on the
-#' websocket; static files are exempt (design.md, Synthesis decision).
+#' The cookie name for this server. Named per port, not a fixed
+#' "ember_secret": cookies are scoped by host and path, never by port
+#' (RFC 6265), so two Ember servers both on 127.0.0.1 would otherwise
+#' overwrite each other's cookie in a shared browser profile, and whichever
+#' set it last would silently break the other's `/notebookfile` and
+#' `/notebookexport` links (those rely on the cookie alone: see
+#' `export_url()` in Editor.js, which sends no `secret=`). `server$port` is
+#' `NULL` only in tests that build a server with no real listener; those
+#' never set the cookie or check it across two server objects, so the name
+#' doesn't need to be unique there.
+cookie_name <- function(server) {
+  if (is.null(server$port)) "ember_secret" else sprintf("ember_secret_%d", server$port)
+}
+
+#' Does this request carry the server's secret, in the query string or (for
+#' plain navigations only -- see `secret_ok_ws()`) the cookie `/edit` sets?
+#' Checked on every HTTP route that reaches R; static files are exempt
+#' (design.md, Synthesis decision).
 secret_ok <- function(server, req) {
   q <- parse_query_string(req$QUERY_STRING)
   if (!is.null(q$secret) && identical(q$secret, server$secret)) return(TRUE)
   cookies <- parse_cookie_header(req$HTTP_COOKIE)
-  !is.null(cookies$ember_secret) && identical(cookies$ember_secret, server$secret)
+  val <- cookies[[cookie_name(server)]]
+  !is.null(val) && identical(val, server$secret)
+}
+
+#' The websocket's own, stricter check: the secret must be in the URL's
+#' query string. The cookie is never enough here, even though it's enough
+#' for plain navigations: a cookie is attached by the browser to *every*
+#' request to this host (including `HttpOnly` ones, which JavaScript can't
+#' even read), regardless of which page's script opened the connection or
+#' what port that page was served from (cookies ignore port, same reasoning
+#' as `cookie_name()`). A page from a different origin -- another port on
+#' 127.0.0.1, reachable by anything on the machine (design.md, Processes)
+#' -- can open a WebSocket to this server and have the browser attach the
+#' cookie automatically; it cannot read or set the query string's secret,
+#' which only this server's own pages ever see (PlutoConnection.js's
+#' `ws_address_from_base()` copies it from the page's own URL). Pairs with
+#' `origin_ok()`, checked first in `onWSOpen`.
+secret_ok_ws <- function(server, req) {
+  q <- parse_query_string(req$QUERY_STRING)
+  !is.null(q$secret) && identical(q$secret, server$secret)
+}
+
+#' This server's own origin strings, `host:port` with no scheme, matching
+#' what browsers send in `Origin`/`Host`: `127.0.0.1:<port>` and
+#' `localhost:<port>`. Empty when `server$port` isn't known yet (tests that
+#' build a server with no real listener): `origin_ok()` then has nothing to
+#' compare against and allows everything, the same stance those tests
+#' already take toward the secret check before a port exists.
+server_hosts <- function(server) {
+  if (is.null(server$port)) return(character())
+  sprintf(c("127.0.0.1:%d", "localhost:%d"), server$port)
+}
+
+#' Is this request's `Origin` (when present) and `Host` (when present)
+#' exactly this server's own? The secret alone isn't enough to keep another
+#' page out (design.md, Processes: "any page or program on the machine can
+#' reach a loopback port") once that page can get hold of it -- a cookie
+#' sent automatically regardless of origin, or a secret the user pasted
+#' somewhere a second page could read it -- so every request that reaches R,
+#' and the websocket, is also checked against where it actually came from.
+#' `Origin` is absent for same-origin navigations in some browsers and for
+#' every request this package's own HTTP client sends (`http_get_raw()`,
+#' `start_server()$open()`); `Host` is normally always present on a real
+#' request but absent from every existing test's hand-built one, so only a
+#' header that *is* present and wrong is refused, never a missing one.
+origin_ok <- function(server, req) {
+  hosts <- server_hosts(server)
+  if (length(hosts) == 0) return(TRUE)
+  origin <- req$HTTP_ORIGIN
+  if (!is.null(origin) && nzchar(origin)) {
+    if (!(sub("^[a-zA-Z][a-zA-Z0-9+.-]*://", "", origin) %in% hosts)) return(FALSE)
+  }
+  host <- req$HTTP_HOST
+  if (!is.null(host) && nzchar(host) && !(host %in% hosts)) return(FALSE)
+  TRUE
 }
 
 http_text <- function(status, body, content_type = "text/plain; charset=utf-8", headers = list()) {
@@ -616,15 +696,28 @@ http_text <- function(status, body, content_type = "text/plain; charset=utf-8", 
       body = body)
 }
 
+#' Escape text written into HTML this server generates itself (`http_index()`):
+#' a notebook's path is attacker-influenced in principle (whatever `/open`
+#' was given) even though opening one already requires the secret.
+html_escape <- function(x) {
+  x <- gsub("&", "&amp;", x, fixed = TRUE)
+  x <- gsub("<", "&lt;", x, fixed = TRUE)
+  x <- gsub(">", "&gt;", x, fixed = TRUE)
+  x <- gsub('"', "&quot;", x, fixed = TRUE)
+  gsub("'", "&#39;", x, fixed = TRUE)
+}
+
 #' `GET /edit?id=` -> editor.html, with the secret cookie set (so the page's
-#' own websocket and later requests can rely on the cookie alone).
+#' own plain navigations, `/notebookfile` and `/notebookexport`, can rely on
+#' the cookie alone; the websocket never does, see `secret_ok_ws()`).
 http_edit <- function(server, req) {
   q <- parse_query_string(req$QUERY_STRING)
   hub <- if (!is.null(q$id)) mget(q$id, envir = server$hubs, ifnotfound = list(NULL))[[1]] else NULL
   if (is.null(hub)) return(http_text(404L, "no such notebook"))
   body <- read_file_utf8(file.path(server$frontend, "editor.html"))
   http_text(200L, body, "text/html; charset=utf-8",
-           list("Set-Cookie" = sprintf("ember_secret=%s; SameSite=Strict; HttpOnly; Path=/", server$secret)))
+           list("Set-Cookie" = sprintf("%s=%s; SameSite=Strict; HttpOnly; Path=/",
+                                       cookie_name(server), server$secret)))
 }
 
 #' `GET /open?path=` -> open (or find) the notebook, host it owned, redirect
@@ -673,19 +766,25 @@ http_notebookexport <- function(server, req) {
   http_text(200L, export_html(notebook_state(hub$nb)), "text/html; charset=utf-8")
 }
 
-#' `GET /` -> a plain list of hosted notebooks with their edit links.
+#' `GET /` -> a plain list of hosted notebooks with their edit links. This is
+#' Ember's own page, not Pluto's Julia welcome screen: `http_app()` turns off
+#' the static server's automatic `index.html` for `/` so this is what a
+#' browser actually sees there (the welcome screen's own assets still work
+#' at their own paths; nothing else changes).
 http_index <- function(server, req) {
   ids <- ls(server$hubs)
   items <- vapply(ids, function(id) {
     hub <- get(id, envir = server$hubs)
     st <- notebook_state(hub$nb)
-    sprintf('<li><a href="/edit?id=%s&secret=%s">%s</a></li>', st$id, server$secret, st$path)
+    sprintf('<li><a href="/edit?id=%s&secret=%s">%s</a></li>',
+           html_escape(st$id), html_escape(server$secret), html_escape(st$path))
   }, character(1))
   body <- paste0("<html><body><h1>ember</h1><ul>", paste(items, collapse = ""), "</ul></body></html>")
   http_text(200L, body, "text/html; charset=utf-8")
 }
 
 http_call <- function(server, req) {
+  if (!origin_ok(server, req)) return(http_text(403L, "forbidden"))
   if (!secret_ok(server, req)) return(http_text(403L, "forbidden"))
   switch(req$PATH_INFO,
     "/edit" = http_edit(server, req),
@@ -700,13 +799,20 @@ http_call <- function(server, req) {
 #'
 #' * Static files (`staticPaths`, served on httpuv's thread without R):
 #'   everything under the frontend folder except editor.html (excluded so it
-#'   always reaches `call`, which checks the secret). No secret elsewhere:
+#'   always reaches `call`, which checks the secret) and `/`'s automatic
+#'   `index.html` (`indexhtml = FALSE`: without it, a request for exactly
+#'   `/` would be answered with Pluto's own Julia welcome page -- a file
+#'   that happens to exist in the vendored frontend folder -- before `call`
+#'   ever sees it; see `http_index()`). No secret on static files otherwise:
 #'   the frontend's code is not private (Pluto exempts .js/.css too).
-#' * `call` (R): checks the secret (query `secret=` or cookie
-#'   `ember_secret`) and answers 403 otherwise, then routes `/edit`,
-#'   `/open`, `/notebookfile`, `/notebookexport` and `/`.
-#' * `onWSOpen`: check the secret in `ws$request`; without it, `ws$close()`
-#'   before any handler is set. Otherwise `ws$onMessage(...)` inside
+#' * `call` (R): checks the request's origin (`origin_ok()`) and then the
+#'   secret (query `secret=` or the per-port cookie, `secret_ok()`),
+#'   answering 403 otherwise, then routes `/edit`, `/open`, `/notebookfile`,
+#'   `/notebookexport` and `/`.
+#' * `onWSOpen`: checks the same origin, and the secret in the URL's query
+#'   string only (`secret_ok_ws()`; see its doc for why the cookie that
+#'   satisfies `call` above isn't accepted here). Either failing closes the
+#'   socket before any handler is set. Otherwise `ws$onMessage(...)` inside
 #'   tryCatch (log, never throw into httpuv), and `ws$onClose` drops the
 #'   clients on that socket.
 http_app <- function(server) {
@@ -718,11 +824,11 @@ http_app <- function(server) {
       })
     },
     staticPaths = list(
-      "/" = httpuv::staticPath(server$frontend, fallthrough = TRUE),
+      "/" = httpuv::staticPath(server$frontend, fallthrough = TRUE, indexhtml = FALSE),
       "/editor.html" = httpuv::excludeStaticPath()
     ),
     onWSOpen = function(ws) {
-      if (!secret_ok(server, ws$request)) {
+      if (!origin_ok(server, ws$request) || !secret_ok_ws(server, ws$request)) {
         ws$close()
         return(invisible(NULL))
       }
@@ -737,30 +843,14 @@ http_app <- function(server) {
 
 # ---- Static export -------------------------------------------------------------
 
-#' A small base64 encoder (no package dependency: base R has none in
-#' base/utils). Used only for export_html()'s data URLs.
+#' Base64, for export_html()'s data URLs. `jsonlite::base64_enc()` is
+#' vectorised C code; an earlier version of this function was a per-byte R
+#' loop (~1.2s per MB, on the server's one thread, blocking every other
+#' request and websocket message for that long), which only ever showed up
+#' on a large plot or a notebook export, where it mattered most.
 base64_encode <- function(bytes) {
   if (length(bytes) == 0) return("")
-  alphabet <- c(LETTERS, letters, as.character(0:9), "+", "/")
-  pad <- (3L - length(bytes) %% 3L) %% 3L
-  padded <- c(bytes, raw(pad))
-  v <- as.integer(padded)
-  n <- length(v) %/% 3L
-  idx <- integer(4L * n)
-  for (i in seq_len(n)) {
-    b1 <- v[3L * i - 2L]; b2 <- v[3L * i - 1L]; b3 <- v[3L * i]
-    word <- bitwShiftL(b1, 16L) + bitwShiftL(b2, 8L) + b3
-    base <- 4L * (i - 1L)
-    idx[base + 1L] <- bitwAnd(bitwShiftR(word, 18L), 63L)
-    idx[base + 2L] <- bitwAnd(bitwShiftR(word, 12L), 63L)
-    idx[base + 3L] <- bitwAnd(bitwShiftR(word, 6L), 63L)
-    idx[base + 4L] <- bitwAnd(word, 63L)
-  }
-  out <- paste(alphabet[idx + 1L], collapse = "")
-  if (pad > 0) {
-    out <- paste0(substr(out, 1, nchar(out) - pad), strrep("=", pad))
-  }
-  out
+  jsonlite::base64_enc(bytes)
 }
 
 js_string_literal <- function(x) paste0('"', gsub('"', '\\\\"', x, fixed = TRUE), '"')

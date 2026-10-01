@@ -21,6 +21,17 @@ event <- function(type, at, ...) {
   structure(list(type = type, at = at, ...), class = "ember_event")
 }
 
+#' A 36-character UUID (any version/variant, case-insensitive): the shape
+#' `uuid()` (api.R) generates and the only shape a cell id is allowed to
+#' have. Checked on every insert op before it reaches `state$cells`
+#' (`reduce_apply()`): an id from the frontend is untrusted input, and a
+#' non-UUID id (a stray `# ///` or `# %%` line, a newline, an empty string)
+#' written into the notebook file as a cell's id corrupts the file's format.
+is_uuid <- function(x) {
+  is.character(x) && length(x) == 1 && !is.na(x) &&
+    grepl("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", x)
+}
+
 # From the API
 ev_open        <- function(at) event("open", at)
 ev_allow       <- function(at) event("allow", at)
@@ -507,7 +518,9 @@ reduce_apply <- function(state, event) {
         }
       }
     } else if (identical(op$op, "insert")) {
-      if (op$id %in% names(cells)) {
+      if (!is_uuid(op$id)) {
+        bad <- refused("cell id must be a UUID", op)
+      } else if (op$id %in% names(cells)) {
         bad <- refused("id already used", op)
       } else if (op$index < 1 || op$index > length(cells) + 1) {
         bad <- refused("index out of range", op)

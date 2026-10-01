@@ -49,13 +49,17 @@ fake_socket <- function() {
 }
 
 #' A hand-built Rook request, enough for http_call() and onWSOpen()'s
-#' secret_ok() check.
+#' secret checks.
 #' `query` is given without its leading "?" (e.g. "id=abc&secret=s"); Rook's
 #' own QUERY_STRING keeps that "?" when non-empty and is "" when there is
 #' none (verified against a real httpuv request), so this adds it here the
-#' way a real request would carry it.
-fake_req <- function(path, query = "", cookie = NULL) {
+#' way a real request would carry it. `origin`/`host` set HTTP_ORIGIN/
+#' HTTP_HOST (e.g. "http://127.0.0.1:9999" / "127.0.0.1:9999") for
+#' origin_ok() tests.
+fake_req <- function(path, query = "", cookie = NULL, origin = NULL, host = NULL) {
   req <- list(PATH_INFO = path, QUERY_STRING = if (nzchar(query)) paste0("?", query) else "")
   if (!is.null(cookie)) req$HTTP_COOKIE <- cookie
+  if (!is.null(origin)) req$HTTP_ORIGIN <- origin
+  if (!is.null(host)) req$HTTP_HOST <- host
   req
 }

@@ -141,7 +141,7 @@ cell_key <- function(state, ctx, i) {
   id <- ctx$ids[[i]]
   running <- ctx$running
   is_running <- !is.null(running) && identical(running$cell, id)
-  list(cell = state$cells[[i]], result = state$results[[id]],
+  list(cell = state$cells[[i]], result = ctx$results[[i]],
        is_running = is_running, console = if (is_running) running$console else NULL,
        queued = ctx$queued[[i]], blocked = ctx$blocked[[i]],
        blocked_by = ctx$blocked_by[[i]], waiting_for = ctx$waiting[[i]],
@@ -157,7 +157,7 @@ cell_key <- function(state, ctx, i) {
 key_unchanged <- function(state, ctx, i, prev_key) {
   if (!identical(state$cells[[i]], prev_key$cell)) return(FALSE)
   id <- ctx$ids[[i]]
-  if (!identical(state$results[[id]], prev_key$result)) return(FALSE)
+  if (!identical(ctx$results[[i]], prev_key$result)) return(FALSE)
   running <- ctx$running
   is_running <- !is.null(running) && identical(running$cell, id)
   if (!identical(is_running, prev_key$is_running)) return(FALSE)
@@ -183,9 +183,14 @@ project_cell_input <- function(view) {
 #' * `queued`, `running`: the view's.
 #' * `errored`: any error on the view, or status "error"/"interrupted".
 #' * `runtime`: seconds -> nanoseconds as a double, or NULL when not run.
-#' * `depends_on_disabled_cells`: `stale || !is.na(blocked_by)`. Pluto dims a
-#'   cell with this class; that is the increment-1 stand-in for "stale" and
-#'   "an ancestor failed" until the fork has its own label (increment 2).
+#' * `depends_on_disabled_cells`: `stale || code_differs || !is.na(blocked_by)`.
+#'   Pluto dims a cell with this class; that is the increment-1 stand-in for
+#'   "stale", "an ancestor failed" and "this cell's code changed since its
+#'   last run" (an edit made outside the page -- the R API, Endeavor -- with
+#'   no run after it) until the fork has its own labels (increment 2).
+#'   `code_differs` is derived from `cell$code` and `result$code`, both
+#'   already in `cell_key()`'s key, so no extra field is needed there: any
+#'   change to it is already a key change.
 #' * `output`: project_output() of the view.
 #' * `logs`: project_logs() of the view's console.
 #' * `published_object_keys = list()`, `depends_on_skipped_cells = FALSE`.
@@ -195,7 +200,8 @@ project_cell_result <- function(view) {
       queued = isTRUE(view$queued), running = isTRUE(view$running),
       errored = errored,
       runtime = if (is.null(view$runtime)) NULL else as.double(view$runtime) * 1e9,
-      depends_on_disabled_cells = isTRUE(view$stale) || !is.na(view$blocked_by),
+      depends_on_disabled_cells = isTRUE(view$stale) || isTRUE(view$code_differs) ||
+        !is.na(view$blocked_by),
       output = project_output(view),
       logs = project_logs(view$console, view$id),
       published_object_keys = list(), depends_on_skipped_cells = FALSE)

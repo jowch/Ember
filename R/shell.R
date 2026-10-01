@@ -22,7 +22,10 @@
 #' An `ember_notebook` environment with:
 #' `state` (the current `ember_state`), `inbox` (list of events),
 #' `draining` (logical), `written` (the file text last written or read:
-#' the save comparison's baseline), `listeners` (named list of functions),
+#' the save comparison's baseline), `save_failed_text` (the text a write
+#' last failed on, or `NULL`: skips retrying it until it changes, so a
+#' write that can never succeed -- e.g. a move to a folder that doesn't
+#' exist -- doesn't spin the drain forever), `listeners` (named list of functions),
 #' `proc` (processx process or `NULL`), `proc_gen` (its generation),
 #' `listen` (server socket for the worker to connect to), `port`,
 #' `secret` (random string the worker must send in its hello; any process
@@ -40,6 +43,7 @@ session_start <- function(state) {
   nb$draining <- FALSE
   nb$written <- format_notebook(notebook_file_of(state))
   nb$saved <- FALSE
+  nb$save_failed_text <- NULL
   nb$listeners <- list()
   nb$proc <- NULL
   nb$proc_gen <- 0L
@@ -124,9 +128,29 @@ maybe_start_cleanup <- function() {
   invisible(NULL)
 }
 
-#' A random string for the worker's hello to carry back.
+#' `n` raw bytes from the OS random source (src/random.c): never
+#' sample()/runif(), which are predictable after set.seed() and would
+#' advance the caller's .Random.seed just by starting a server.
+os_random_bytes <- function(n) .Call(C_random_bytes, as.integer(n))
+
+#' A random string for the worker's hello to carry back, and (serve()'s
+#' default) the URL secret. Drawn from the OS random source, not R's own
+#' generator: design.md, Processes -- "any process on the machine can reach
+#' a loopback port", so this must not be guessable from set.seed(), and
+#' starting a server must not change the caller's random stream.
 random_secret <- function(n = 40) {
-  paste(sample(c(letters, LETTERS, 0:9), n, replace = TRUE), collapse = "")
+  alphabet <- c(letters, LETTERS, as.character(0:9))
+  idx <- as.integer(os_random_bytes(n)) %% length(alphabet) + 1L
+  paste(alphabet[idx], collapse = "")
+}
+
+#' A port in 20000:59999 from the OS random source, not sample(): used
+#' wherever a port is picked opportunistically (pick_free_port(),
+#' pick_listen_socket()) so probing for a free port never touches the
+#' caller's .Random.seed.
+random_port <- function() {
+  b <- as.integer(os_random_bytes(2))
+  20000L + ((b[1] * 256L + b[2]) %% 40000L)
 }
 
 #' Append an event to the inbox. Effects call this to raise a new event
@@ -209,18 +233,29 @@ drain <- function(nb) {
 #' `graph$learned`, `files` and `file` are identical to the previous
 #' drain's (handled by `notebook_graph()`'s analysis cache and R's
 #' `identical()` short cuts on unchanged parts).
+#'
+#' A failed write (the file's new folder is gone, permissions changed, the
+#' disk is full) is not retried with the same text: `ev_save_failed()` joins
+#' the inbox and is processed by this same drain, which calls this function
+#' again with `text` unchanged, so without `nb$save_failed_text` the write
+#' would fail, re-enqueue, and fail again forever (every poll tick), pinning
+#' a core at 100% CPU. The failure is recorded once in `problems`; the next
+#' change (any dispatch that makes `text` differ, e.g. a successful
+#' move_notebook() to a folder that does exist) tries again.
 save_if_changed <- function(nb) {
   s <- nb$state
   if (isTRUE(s$read_only)) return(invisible(NULL))
   text <- format_notebook(notebook_file_of(s))
-  if (!identical(text, nb$written)) {
-    ok <- write_atomic(s$path, text)
-    if (ok) {
-      nb$written <- text
-      nb$saved <- TRUE
-    } else {
-      enqueue(nb, ev_save_failed("could not write the notebook file", at = Sys.time()))
-    }
+  if (identical(text, nb$written)) return(invisible(NULL))
+  if (!is.null(nb$save_failed_text) && identical(text, nb$save_failed_text)) return(invisible(NULL))
+  ok <- write_atomic(s$path, text)
+  if (ok) {
+    nb$written <- text
+    nb$saved <- TRUE
+    nb$save_failed_text <- NULL
+  } else {
+    nb$save_failed_text <- text
+    enqueue(nb, ev_save_failed("could not write the notebook file", at = Sys.time()))
   }
   invisible(NULL)
 }
@@ -404,7 +439,7 @@ stamp <- function(event) { event$at <- Sys.time(); event }
 #' A free TCP port to listen on, as a server socket.
 pick_listen_socket <- function(tries = 50) {
   for (i in seq_len(tries)) {
-    port <- sample(20000:59999, 1)
+    port <- random_port()
     s <- tryCatch(serverSocket(port), error = function(e) NULL)
     if (!is.null(s)) return(list(socket = s, port = port))
   }

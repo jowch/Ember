@@ -60,9 +60,18 @@ test_that("apply is atomic: a bad `expected` refuses the whole batch (24)", {
 
 test_that("inserted ids come from the ops, in op order (25)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1")))
-  r <- drive(s, ev_apply(list(op_insert("n1", 3, "a <- 1"), op_insert("n2", 4, "b <- 2")), at(1)))
-  expect_equal(r$reply$inserted, c("n1", "n2"))
-  expect_equal(names(r$state$cells), c("S", "A", "n1", "n2"))
+  n1 <- "11111111-1111-4111-8111-111111111111"
+  n2 <- "22222222-2222-4222-8222-222222222222"
+  r <- drive(s, ev_apply(list(op_insert(n1, 3, "a <- 1"), op_insert(n2, 4, "b <- 2")), at(1)))
+  expect_equal(r$reply$inserted, c(n1, n2))
+  expect_equal(names(r$state$cells), c("S", "A", n1, n2))
+})
+
+test_that("a non-UUID insert id is refused (review4 item 6)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1")))
+  r <- drive(s, ev_apply(list(op_insert("not a uuid\n# ///", 3, "a <- 1")), at(1)))
+  expect_s3_class(r$reply, "ember_refused")
+  expect_equal(names(r$state$cells), c("S", "A"))
 })
 
 test_that("deleting the setup cell is refused (26)", {
@@ -608,7 +617,8 @@ test_that("an errored rerun keeps previously learned definitions instead of repl
 
 test_that("an insert op containing a marker line is refused, like set_code (item 17)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1")))
-  r <- drive(s, ev_apply(list(op_insert("n1", 3, "x <- 1\n# %% id=evil\ny <- 2")), at(1)))
+  n1 <- "33333333-3333-4333-8333-333333333333"
+  r <- drive(s, ev_apply(list(op_insert(n1, 3, "x <- 1\n# %% id=evil\ny <- 2")), at(1)))
   expect_true(inherits(r$reply, "ember_refused"))
   expect_identical(r$state, at_clock(s, 1))
 })

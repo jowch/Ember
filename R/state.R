@@ -293,10 +293,22 @@ snapshot_of <- function(state) {
 #' * `waiting`: list, position -> `waiting_cells()`'s value, or `NULL`.
 #' * `errors_by_cell`: list, position -> the graph errors naming it
 #'   (`cell_errors(graph, id)`'s result), grouped once over `graph$errors`.
+#' * `results`: list, position -> `state$results[[id]]` or `NULL`, aligned
+#'   once with `match()`: `results` isn't stored in display order (it's
+#'   keyed by id, and holds only cells that have run), so without this a
+#'   per-cell loop reading it by id is a named-list scan repeated once per
+#'   cell -- quadratic at a few thousand cells (measured: 0.95ms a cell with
+#'   every cell holding a result).
 view_context <- function(state) {
   graph <- state$graph
   ids <- names(state$cells)
   n <- length(ids)
+  results <- state$results
+  results <- if (is.null(results) || length(results) == 0) {
+    vector("list", n)
+  } else {
+    results[match(ids, names(results))]
+  }
 
   blocked_direct <- blocked_cells(graph)
   blocked_down <- unlist(lapply(blocked_direct, function(b) {
@@ -341,7 +353,7 @@ view_context <- function(state) {
 
   list(ids = ids, running = running, running_idx = running_idx,
       queued = queued, blocked = blocked, blocked_by = blocked_by,
-      waiting = waiting_vec, errors_by_cell = errors_by_cell)
+      waiting = waiting_vec, errors_by_cell = errors_by_cell, results = results)
 }
 
 #' One cell's `ember_cell_view`, from `state` and the `view_context()` it
@@ -350,7 +362,7 @@ cell_view <- function(state, ctx, i) {
   id <- ctx$ids[[i]]
   cell <- state$cells[[i]]            # `state$cells` is in display order:
                                       # position, not a named lookup
-  result <- state$results[[id]]       # `results` isn't aligned with `cells`
+  result <- ctx$results[[i]]          # view_context() already aligned this by position
   is_running <- !is.na(ctx$running_idx) && ctx$running_idx == i
 
   g_errors <- lapply(ctx$errors_by_cell[[i]], function(e) {

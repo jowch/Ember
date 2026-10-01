@@ -46,7 +46,9 @@ done; clear out ticked items at each release.
 - [ ] Pluto frontend fork, protocol in R, removals, R adaptations, theme — missing
 - [ ] The R grammar wired into CodeMirror — missing
 - [ ] Rich outputs in the browser: widget files as static paths, table and tree views, terminal colours — missing
-- [ ] URL secret — missing
+- [x] URL secret — missing
+- [ ] The server finds the notebook from each message's `notebook_id` rather than the one the client connected to, so one page's socket can act on another notebook it names (both need the secret) — improvised
+- [ ] The browser tests run against whatever ember Rscript's default library has; they should install the working tree into a temp library themselves — improvised
 
 ## Grammar
 

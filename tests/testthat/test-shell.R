@@ -163,6 +163,31 @@ test_that("an effect that enqueues an event is handled in the same drain (82)", 
   expect_equal(reply, "first-reply")
 })
 
+# ---- review4 item 3: secrets and ports from the OS random source -------------
+
+test_that("random_secret() reads the OS random source, not R's generator (review4 3)", {
+  seed_before <- { set.seed(42); get(".Random.seed", envir = .GlobalEnv) }
+  s1 <- random_secret(32)
+  seed_after <- get(".Random.seed", envir = .GlobalEnv)
+  expect_identical(seed_before, seed_after)
+
+  # Two secrets drawn right after the same set.seed() must differ: a
+  # sample()-based secret would be identical both times, which is exactly
+  # what makes it guessable once an attacker knows the seed.
+  set.seed(42); s2 <- random_secret(32)
+  set.seed(42); s3 <- random_secret(32)
+  expect_false(identical(s2, s3))
+  expect_equal(nchar(s1), 32)
+})
+
+test_that("random_port() doesn't touch .Random.seed either (review4 3)", {
+  set.seed(1)
+  seed_before <- get(".Random.seed", envir = .GlobalEnv)
+  p <- random_port()
+  expect_identical(get(".Random.seed", envir = .GlobalEnv), seed_before)
+  expect_true(p >= 20000L && p <= 59999L)
+})
+
 test_that("an install failure names what failed to build", {
   lines <- c("Installing cli ...", "cleancall.c:39:28: error: ...",
              "ERROR: compilation failed for package 'cli'",

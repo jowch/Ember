@@ -94,14 +94,35 @@ test_that("a stale expected is refused with the engine's reason; the client roll
   edit_notebook(nb, set_code(a, "99"))   # another writer; throttle 0 flushed cl$sent already
   cl$sent <- stale                       # ...but this tab hasn't received that flush yet
 
-  handle_message(server, ws, wire("update_notebook", notebook_id = id,
-    updates = list(patch("replace", list("cell_inputs", a, "code"), "client's code"))))
+  # `ws$page()` only replays messages the *server* sent; it says nothing
+  # about what the browser already shows at the moment it sends this
+  # request. A real browser applies its own patch to its local document
+  # optimistically, before any reply arrives (review4 item 8: a test that
+  # skips this step still passes even if the server's refusal carries no
+  # reversal at all, because an earlier, unrelated flush already happened
+  # to show the right value). `outgoing` is applied to the tab's view here,
+  # the same way the browser's own `send()` would.
+  outgoing <- list(patch("replace", list("cell_inputs", a, "code"), "client's code"))
+  n0 <- length(ws$messages)
+  browser_page <- fb_apply_all(ws$page(), outgoing)
+  expect_equal(browser_page$cell_inputs[[a]]$code, "client's code")
+
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = outgoing))
 
   reply <- ws$last()
   expect_equal(reply$message$response$update_went_well, "\U0001F44E")
   expect_true(nzchar(reply$message$response$why_not))
   expect_equal(notebook_state(nb)$cells[[a]]$code, "99")
-  expect_equal(ws$page()$cell_inputs[[a]]$code, "99")
+
+  # The refusal's own reply must carry the reverting patch: applying every
+  # message from this request onward (there is exactly one: the reply
+  # itself, since throttle = 0 and nothing else changed) to the browser's
+  # optimistic view must bring it back to the engine's real code.
+  expect_true(length(reply$message$patches) > 0)
+  for (m in ws$messages[-seq_len(n0)]) {
+    if (identical(m$type, "notebook_diff")) browser_page <- fb_apply_all(browser_page, m$message$patches)
+  }
+  expect_equal(browser_page$cell_inputs[[a]]$code, "99")
 })
 
 # ---- 29. run_multiple_cells: feedback, then queued/running/output -----------
@@ -416,6 +437,142 @@ test_that("a websocket opened without the secret is closed before any handler is
             onClose = function(f) stop("should not be reached without the secret"))
   app$onWSOpen(ws)
   expect_true(closed)
+})
+
+# ---- review4 item 1: the secret cookie must not open a websocket; Origin/Host --
+
+test_that("a websocket opened with only the ember_secret cookie (no ?secret=) is refused (review4 1)", {
+  # The reproduction: a page from another origin on 127.0.0.1 can't read an
+  # HttpOnly cookie, but the browser attaches it anyway to any request to
+  # this host -- including a WebSocket handshake it opens. If the cookie
+  # alone were enough, that page could connect and run code (attacker.html).
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  server$port <- 40001L
+  host_notebook(server, nb)
+
+  app <- http_app(server)
+  closed <- FALSE
+  ws <- list(request = fake_req("/", "", cookie = "ember_secret_40001=s"),
+            close = function() closed <<- TRUE,
+            onMessage = function(f) stop("should not be reached"),
+            onClose = function(f) stop("should not be reached"))
+  app$onWSOpen(ws)
+  expect_true(closed)
+})
+
+test_that("a websocket opened with the secret in the query string connects normally (review4 1)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  server$port <- 40001L
+  host_notebook(server, nb)
+
+  app <- http_app(server)
+  opened <- FALSE
+  ws <- list(request = fake_req("/", "secret=s"), close = function() stop("should not be closed"),
+            onMessage = function(f) opened <<- TRUE, onClose = function(f) NULL)
+  app$onWSOpen(ws)
+  expect_true(opened)
+})
+
+test_that("http_call() and onWSOpen() refuse a mismatched Origin or Host (review4 1)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  server$port <- 40002L
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+
+  resp <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id),
+                                     origin = "http://127.0.0.1:9999"))
+  expect_equal(resp$status, 403L)
+  resp2 <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id),
+                                      host = "127.0.0.1:9999"))
+  expect_equal(resp2$status, 403L)
+
+  # Its own origin, in either spelling, is accepted.
+  resp3 <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id),
+                                      origin = "http://127.0.0.1:40002", host = "127.0.0.1:40002"))
+  expect_equal(resp3$status, 200L)
+  resp4 <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id),
+                                      host = "localhost:40002"))
+  expect_equal(resp4$status, 200L)
+
+  app <- http_app(server)
+  closed <- FALSE
+  ws <- list(request = fake_req("/", "secret=s", origin = "http://127.0.0.1:9999"),
+            close = function() closed <<- TRUE, onMessage = function(f) NULL, onClose = function(f) NULL)
+  app$onWSOpen(ws)
+  expect_true(closed)
+})
+
+# ---- review4 item 5: the cookie is named per port -----------------------------
+
+test_that("two servers on different ports don't share a cookie name (review4 5)", {
+  pathA <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  pathB <- write_session_notebook(list(S = cell(""), A = cell("2")))
+  nbA <- open_notebook(pathA); on.exit(close_notebook(nbA), add = TRUE)
+  nbB <- open_notebook(pathB); on.exit(close_notebook(nbB), add = TRUE)
+  serverA <- new_server("secretA", throttle = 0); serverA$port <- 50001L
+  serverB <- new_server("secretB", throttle = 0); serverB$port <- 50002L
+  host_notebook(serverA, nbA)
+  host_notebook(serverB, nbB)
+  idA <- notebook_state(nbA)$id
+
+  respA <- http_call(serverA, fake_req("/edit", sprintf("id=%s&secret=secretA", idA)))
+  expect_match(respA$headers[["Set-Cookie"]], "^ember_secret_50001=secretA")
+
+  # A browser that holds both servers' cookies (they share a cookie jar on
+  # 127.0.0.1, since cookies ignore port) still reaches server A using only
+  # its own cookie: server B's, also present, is simply a different name.
+  both_cookies <- "ember_secret_50001=secretA; ember_secret_50002=secretB"
+  resp <- http_call(serverA, fake_req("/notebookfile", sprintf("id=%s", idA), cookie = both_cookies))
+  expect_equal(resp$status, 200L)
+
+  # Without server A's own cookie, B's doesn't substitute for it.
+  resp2 <- http_call(serverA, fake_req("/notebookfile", sprintf("id=%s", idA),
+                                       cookie = "ember_secret_50002=secretB"))
+  expect_equal(resp2$status, 403L)
+})
+
+# ---- review4 item 10: "/" is Ember's own index, and it escapes its HTML ----
+
+test_that("\"/\" serves Ember's own index, not Pluto's vendored welcome page (review4 10)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+
+  # httpuv auto-serves a folder's index.html for "/" unless told not to;
+  # frontend/index.html is Pluto's own welcome screen (vendored, unrelated
+  # to Ember's `/`), so without `indexhtml = FALSE` it would win over
+  # http_call()'s own "/" route below and a browser would never see it.
+  app <- http_app(server)
+  expect_false(app$staticPaths[["/"]]$options$indexhtml)
+
+  resp <- http_call(server, fake_req("/", "secret=s"))
+  expect_equal(resp$status, 200L)
+  expect_match(resp$body, "<h1>ember</h1>")
+})
+
+test_that("http_index() escapes a notebook's path into its HTML (review4 10)", {
+  evil_dir <- file.path(tempdir(), paste0("ember-nb-", "<script>alert(1)</script>"))
+  dir.create(evil_dir, recursive = TRUE, showWarnings = FALSE)
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")), dir = evil_dir)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+
+  resp <- http_call(server, fake_req("/", "secret=s"))
+  expect_false(grepl("<script>alert(1)</script>", resp$body, fixed = TRUE))
+  expect_match(resp$body, "&lt;script&gt;alert(1)&lt;/script&gt;", fixed = TRUE)
 })
 
 # ---- start_server(): a real child process, skipped on CRAN -----------------

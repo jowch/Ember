@@ -278,6 +278,18 @@ with the R grammar inside, committed, and checked by CI.
 - **The page names new cells**: `insert_cell()` takes an optional `id`.
 - **Exports highlight as Julia** until the offline bundle (increment 2).
 - **Pluto's usage reporting** (`stats.plutojl.org`) is switched off.
+- **The websocket never accepts the `ember_secret` cookie, only `?secret=`
+  in its own URL**, and every route that reaches R (including the
+  websocket) also checks `Origin`/`Host` against the server's own
+  `127.0.0.1:<port>`/`localhost:<port>`. The cookie, once set, is attached
+  by the browser to *every* request to this host regardless of which page's
+  script sent it and regardless of port (cookies ignore port, RFC 6265);
+  accepting it on the websocket let any other page on the machine connect
+  and run code. Plain navigations (`/edit`, `/notebookfile`,
+  `/notebookexport`) still accept the cookie, since those can only be
+  initiated by the page itself, not by a cross-origin script. The cookie is
+  named per port (`ember_secret_<port>`) so two Ember servers on
+  127.0.0.1 don't overwrite each other's.
 
 ## Tradeoffs accepted
 

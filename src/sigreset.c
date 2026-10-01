@@ -18,8 +18,13 @@ SEXP C_reset_sigint(void) {
   return ScalarLogical(was_ignored);
 }
 
+/* Defined in random.c; declared here so both routines can be registered
+   from the package's one R_init_ember(). */
+extern SEXP C_random_bytes(SEXP n);
+
 static const R_CallMethodDef call_methods[] = {
   {"C_reset_sigint", (DL_FUNC) &C_reset_sigint, 0},
+  {"C_random_bytes", (DL_FUNC) &C_random_bytes, 1},
   {NULL, NULL, 0}
 };
 

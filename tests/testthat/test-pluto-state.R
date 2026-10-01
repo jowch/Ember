@@ -47,10 +47,11 @@ test_that("reuse never changes values, for a spread of engine fixtures (7)", {
   r3 <- drive(r2$state, ev_apply(list(op_set_code("B", "b <- a + 1")), at(11)))
   check_invisible(r2$state, r3$state)
 
-  r4 <- drive(r3$state, ev_apply(list(op_insert("new1", 2, "z <- 1")), at(12)))
+  new1 <- "44444444-4444-4444-8444-444444444444"
+  r4 <- drive(r3$state, ev_apply(list(op_insert(new1, 2, "z <- 1")), at(12)))
   check_invisible(r3$state, r4$state)
 
-  r5 <- drive(r4$state, ev_apply(list(op_delete("new1")), at(13)))
+  r5 <- drive(r4$state, ev_apply(list(op_delete(new1)), at(13)))
   check_invisible(r4$state, r5$state)
 })
 
@@ -227,17 +228,21 @@ test_that("blocked-by-failure sets depends_on_disabled_cells (12)", {
   expect_true(cr$depends_on_disabled_cells)
 })
 
-test_that("code that differs from the last run shows only in cell_inputs (12)", {
+test_that("code that differs from the last run also marks cell_results stale (12)", {
+  # An edit made outside the page (the R API, Endeavor) leaves the old
+  # output showing under the new code until something tells the frontend to
+  # dim it: `depends_on_disabled_cells` is the only field Pluto's Cell.js
+  # reads for that, so `code_differs` has to show up there, not only in
+  # `cell_inputs` (review4 item 4).
   s <- fake_state(list(S = cell(""), A = cell("x <- 1")))
   r <- boot(s, "A")
   r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
   p1 <- pluto_state(r$state)
+  expect_false(p1$js$cell_results$A$depends_on_disabled_cells)
   r2 <- drive(r$state, ev_apply(list(op_set_code("A", "x <- 2")), at(11)))
   p2 <- pluto_state(r2$state, p1)
   expect_equal(p2$js$cell_inputs$A$code, "x <- 2")
-  d <- fb_diff(p1$js, p2$js)
-  touched_results <- Filter(function(p) length(p$path) >= 1 && identical(p$path[[1]], "cell_results"), d)
-  expect_equal(length(touched_results), 0)
+  expect_true(p2$js$cell_results$A$depends_on_disabled_cells)
 })
 
 # ---- 13. process_status / nbpkg ------------------------------------------------
@@ -334,5 +339,37 @@ test_that("a one-cell change at 2000 cells keeps every other cell's projection i
     expect_identical(p2$js$cell_results[[id]], p1$js$cell_results[[id]], info = id)
   }
   expect_false(identical(p2$js$cell_inputs$c7, p1$js$cell_inputs$c7))
+  expect_lt(tt, 0.06)
+})
+
+test_that("a one-cell change at 2000 cells stays fast when every cell has a result (review4 item 7)", {
+  # The quadratic case the bare timing test above didn't catch: with no
+  # results at all, `state$results[[id]]` is a named lookup into an empty
+  # list, which is cheap regardless of the loop around it. Once every cell
+  # has run, that same per-cell lookup is a linear scan over a 2000-entry
+  # named list, done once per cell per flush -- 0.95ms a cell, ~2s total,
+  # before view_context() aligned `results` by position with match().
+  cells <- list(S = cell(""))
+  for (i in 1:2000) cells[[sprintf("c%d", i)]] <- cell(sprintf("x%d <- %d", i, i))
+  s <- fake_state(cells, setup = "S")
+  s$allowed <- TRUE
+  ids <- names(s$cells)
+  s$results <- stats::setNames(lapply(ids, function(id) {
+    list(status = "ok", code = s$cells[[id]]$code,
+        output = list(mime = "text/plain", data = "1", text = "1"), console = list(),
+        started_at = 1, runtime = 0.01, stale = FALSE, error = NULL, defined = character())
+  }), ids)
+  p1 <- pluto_state(s)
+
+  s2 <- drive(s, ev_apply(list(op_set_code("c7", "x7 <- 999")), at(1)))$state
+
+  tt <- system.time(p2 <- pluto_state(s2, p1))[["elapsed"]]
+  cat(sprintf("\n[timing] pluto_state() at 2000 cells, every cell has a result, one changed: %.1f ms\n",
+             tt * 1000))
+
+  for (id in ids) {
+    if (identical(id, "c7")) next
+    expect_identical(p2$js$cell_results[[id]], p1$js$cell_results[[id]], info = id)
+  }
   expect_lt(tt, 0.06)
 })

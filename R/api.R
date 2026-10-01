@@ -116,9 +116,29 @@ close_notebook <- function(nb) {
 }
 
 #' Move the notebook file. The handle stays valid; returns the new path.
+#'
+#' Validated before anything changes (an `ember_refused` condition, same as
+#' `edit_notebook()`'s refusals, so a caller catches both the same way):
+#' `path` must be absolute (a relative path is ambiguous -- relative to the
+#' notebook's folder? the process's cwd? -- so it is refused rather than
+#' guessed), the target must not already exist (a silent overwrite of
+#' another file), and its folder must already exist (so the state is never
+#' left pointing at a path nothing can write: the UI server's
+#' on_update_notebook() relies on this to keep a bad move from being
+#' followed by a save loop, shell.R's save_if_changed()).
 #' @export
 move_notebook <- function(nb, path) {
-  dispatch(nb, ev_move(path, at = Sys.time()))
+  if (!is_absolute_path(path)) {
+    stop(refused(sprintf("%s is not an absolute path", path)))
+  }
+  target <- normalizePath(path, mustWork = FALSE, winslash = "/")
+  if (file.exists(target)) {
+    stop(refused(sprintf("%s already exists", target)))
+  }
+  if (!dir.exists(dirname(target))) {
+    stop(refused(sprintf("the folder %s does not exist", dirname(target))))
+  }
+  dispatch(nb, ev_move(target, at = Sys.time()))
 }
 
 # ---- Editing ------------------------------------------------------------------
