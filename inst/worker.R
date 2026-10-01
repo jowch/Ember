@@ -141,10 +141,30 @@ send <- function(msg) {
 receive <- function() {
   got <- list(type = "noop")
   tryCatch(base::suspendInterrupts({
-    n <- readBin(con, "integer", n = 1, endian = "big")
-    got <- if (length(n) == 0) NULL else unserialize(readBin(con, "raw", n = n))
+    header <- read_exactly(4L)
+    got <- if (is.null(header)) NULL else {
+      n <- readBin(header, "integer", n = 1, endian = "big")
+      payload <- read_exactly(n)
+      if (is.null(payload)) NULL else unserialize(payload)
+    }
   }), interrupt = function(i) NULL)
   got
+}
+
+#' Exactly `n` bytes from the server, or `NULL` once it has closed the
+#' socket. A signal can cut a blocking read short with nothing read (seen
+#' on Linux), which looks like end of file; so each read waits until the
+#' socket is readable, and only a readable socket that gives no bytes counts
+#' as closed.
+read_exactly <- function(n) {
+  out <- raw(0)
+  while (length(out) < n) {
+    if (!isTRUE(socketSelect(list(con), timeout = 1))) next
+    more <- readBin(con, "raw", n = n - length(out))
+    if (length(more) == 0) return(NULL)
+    out <- c(out, more)
+  }
+  out
 }
 
 # ---- Running a cell ----------------------------------------------------------
