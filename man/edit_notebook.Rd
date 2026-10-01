@@ -18,7 +18,7 @@ edit_notebook(nb, ...)
 
 set_code(cell, code, expected = NULL)
 
-insert_cell(index, code = "", kind = c("code", "markdown"))
+insert_cell(index, code = "", kind = c("code", "markdown"), id = NULL)
 
 delete_cell(cell)
 
@@ -39,6 +39,8 @@ skips the check.}
 \item{index}{1-based display position: where to insert (\code{insert_cell()}) or
 move to (\code{move_cell()}).}
 \item{kind}{\code{"code"} or \code{"markdown"}.}
+\item{id}{The new cell's id (a 36-character UUID), for a caller that names the
+cell itself, as the browser does. \code{NULL} generates one.}
 \item{folded}{\code{TRUE} to fold the cell's code away in a view, \code{FALSE} to
 show it.}
 }

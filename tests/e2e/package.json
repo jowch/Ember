@@ -1,0 +1,13 @@
+{
+  "name": "ember-e2e",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Browser end-to-end tests for the step-4 UI server, against a real server and worker (docs/ui-tests.md, section 3).",
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-timeout=60000 tests/"
+  },
+  "dependencies": {
+    "playwright-core": "^1.63.0"
+  }
+}

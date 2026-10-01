@@ -49,3 +49,8 @@ rsconnect/
 
 # Spike code and results, kept out of the repo
 spikes/
+
+# JS tooling dependencies, reinstalled by CI/npm ci, not committed
+node_modules/
+tests/e2e/test-results/
+tests/e2e/*.png

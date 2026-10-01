@@ -254,7 +254,7 @@ project_output <- function(view) {
   if (is.null(out)) return(wrap("text/plain", ""))
 
   switch(out$mime,
-    "text/plain" = wrap("text/plain", out$data),
+    "text/plain" = wrap("text/plain", out$data %||% out$text),
     "text/html" = wrap("text/html", out$data),
     "image/png" = wrap("image/png", out$data),
     "image/svg+xml" = wrap("image/svg+xml", out$data),

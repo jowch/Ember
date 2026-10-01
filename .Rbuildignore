@@ -1,6 +1,8 @@
 ^docs$
 ^spikes$
 ^grammar$
+^frontend-setup$
 ^\.claude$
 ^LICENSE\.md$
 ^\.github$
+^tests/e2e$

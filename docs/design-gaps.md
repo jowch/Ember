@@ -36,6 +36,9 @@ done; clear out ticked items at each release.
 
 ## UI (build step 4)
 
+- [ ] Replace Pluto's logo and name in the page with Ember's own (with the theme, increment 2) — missing
+- [ ] Credit the Pluto.jl authors as copyright holders of the vendored frontend in DESCRIPTION or inst/COPYRIGHTS before any CRAN release — missing
+
 - [ ] The cell menu still offers Pluto's "ask AI", and the footer's feedback form still shows (inert: nothing is sent) — improvised
 
 - [ ] Pluto frontend fork, protocol in R, removals, R adaptations, theme — missing
