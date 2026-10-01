@@ -1,0 +1,24 @@
+{
+  "name": "@ember/lezer-r",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lezer grammar for R, for CodeMirror 6 syntax highlighting in Ember.",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "lezer-generator src/r.grammar -o src/parser.js && rollup -c",
+    "build:parser-only": "lezer-generator src/r.grammar -o src/parser.js",
+    "test": "node --test test/test.js",
+    "corpus": "node test/corpus.mjs"
+  },
+  "devDependencies": {
+    "@lezer/generator": "^1.8.1",
+    "@lezer/highlight": "^1.2.5",
+    "@lezer/lr": "^1.4.10",
+    "@rollup/plugin-node-resolve": "^15.2.3",
+    "rollup": "^4.24.0"
+  },
+  "dependencies": {
+    "@lezer/common": "^1.2.1"
+  }
+}

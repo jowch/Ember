@@ -1,0 +1,203 @@
+// Lezer grammar for R (R 4.1+), written for CodeMirror 6 syntax
+// highlighting, folding and bracket matching. Not a validator: ambiguous
+// or invalid-but-plausible constructs are generally accepted leniently
+// rather than rejected, since the consumer is an editor, not R itself.
+//
+// R distinguishes "expr" from "expr_or_assign" (the latter additionally
+// allows bare `=` assignment). We mirror that split as `expression` vs
+// `TopExpr`, so that `f(x = 1)` unambiguously parses `x = 1` as a named
+// argument rather than as a nested `=` assignment expression (which, in
+// real R, can only appear in statement position or inside parentheses).
+
+@top Program { statements }
+
+@skip { spaces | newline | Comment }
+
+@precedence {
+  else,
+  call @left,
+  ns @left,
+  member @left,
+  pow @right,
+  unary,
+  colon @left,
+  special @left,
+  muldiv @left,
+  addsub @left,
+  compare @left,
+  not,
+  and @left,
+  or @left,
+  formula @right,
+  rightassign @right,
+  leftassign @right,
+  eq @right,
+  question @right
+}
+
+statements { (TopExpr (sep+ TopExpr)*)? sep* }
+
+sep { ";" | InsertedSemi }
+
+commaSep<x> { (x? ("," x?)*)? }
+
+kw<term> { @specialize[@name={term}]<Identifier, term> }
+
+TopExpr { expression | EqAssign }
+
+EqAssign { expression !eq AssignOp<"="> TopExpr }
+
+expression[@isGroup=Expression] {
+  Identifier | Backtick | Number | String | RawString |
+  True | False | Null | NaConst | Inf | NaN | Dots | PipePlaceholder |
+  ParenExpr |
+  Block |
+  FunctionDef |
+  Lambda |
+  IfExpr |
+  ForExpr |
+  WhileExpr |
+  RepeatExpr |
+  BreakExpr |
+  NextExpr |
+  Call |
+  Subscript |
+  Subscript2 |
+  UnaryExpr |
+  NotExpr |
+  BinaryExpr |
+  AssignExpr |
+  NamespaceExpr |
+  MemberExpr |
+  FormulaExpr |
+  HelpExpr
+}
+
+RawString { RawStringOpen RawStringTail }
+
+ParenExpr { ParenL TopExpr ParenR }
+
+Block { BraceL statements BraceR }
+
+ParamList { ParenL commaSep<Param> ParenR }
+Param { ParamName ("=" expression)? }
+ParamName { Identifier | Backtick | kw<"..."> }
+
+ArgList { ContinueParenL commaSep<Arg> ParenR }
+Arg { NamedArg | expression }
+NamedArg { ArgName "=" expression? }
+ArgName { Identifier | Backtick | String | kw<"..."> }
+
+FunctionDef { kw<"function"> ParamList TopExpr }
+Lambda { "\\" ParamList TopExpr }
+
+IfExpr { kw<"if"> ParenL expression ParenR TopExpr (!else kw<"else"> TopExpr)? }
+ForExpr { kw<"for"> ParenL (Identifier | Backtick) kw<"in"> expression ParenR TopExpr }
+WhileExpr { kw<"while"> ParenL expression ParenR TopExpr }
+RepeatExpr { kw<"repeat"> TopExpr }
+BreakExpr { kw<"break"> }
+NextExpr { kw<"next"> }
+
+Call { expression !call ArgList }
+Subscript { expression !call ContinueBracketL commaSep<Arg> BracketR }
+Subscript2 { expression !call ContinueDBracketL commaSep<Arg> BracketR BracketR }
+
+UnaryExpr { ArithOp<"-" | "+"> !unary expression }
+NotExpr { "!" !not expression }
+
+BinaryExpr {
+  expression !pow ArithOp<"^"> expression |
+  expression !colon ":" expression |
+  expression !special (SpecialOp | "|>") expression |
+  expression !muldiv ArithOp<"*" | "/"> expression |
+  expression !addsub ArithOp<ContinueAddOp> expression |
+  expression !compare CompareOp<"==" | "!=" | "<=" | ">=" | "<" | ">"> expression |
+  expression !and LogicOp<"&&" | "&"> expression |
+  expression !or LogicOp<"||" | "|"> expression
+}
+
+FormulaExpr {
+  "~" !formula expression |
+  expression !formula "~" expression
+}
+
+AssignExpr {
+  expression !rightassign AssignOp<"->>" | "->"> expression |
+  expression !leftassign AssignOp<"<<-" | "<-" | ":="> expression
+}
+
+NamespaceExpr { expression !ns NamespaceOp<"::" | ":::"> (Identifier | Backtick | String) }
+MemberExpr { expression !member MemberOp<"$" | "@"> (Identifier | Backtick | String) }
+
+HelpExpr {
+  "?" !question expression |
+  expression !question "?" expression
+}
+
+ArithOp<expr> { expr }
+CompareOp<expr> { expr }
+LogicOp<expr> { expr }
+AssignOp<expr> { expr }
+NamespaceOp<expr> { expr }
+MemberOp<expr> { expr }
+
+True { kw<"TRUE"> }
+False { kw<"FALSE"> }
+Null { kw<"NULL"> }
+NaConst { kw<"NA"> | kw<"NA_integer_"> | kw<"NA_real_"> | kw<"NA_character_"> | kw<"NA_complex_"> }
+Inf { kw<"Inf"> }
+NaN { kw<"NaN"> }
+Dots { kw<"..."> }
+PipePlaceholder { kw<"_"> }
+
+@tokens {
+  spaces[@export] { $[\t\u000B\u000C\u0020\u00a0]+ }
+  newline[@export] { $[\r\n] }
+  Comment[@export] { "#" ![\n]* }
+
+  identStart { $[a-zA-Z_ªµºÀ-ʯͰ-῿Ⰰ-퟿豈-﷏ﷰ-�] }
+  identCont { $[a-zA-Z0-9_.ªµºÀ-ʯͰ-῿Ⰰ-퟿豈-﷏ﷰ-�] }
+
+  Identifier {
+    identStart identCont* |
+    "." (identStart | ".") identCont* |
+    "."
+  }
+
+  Backtick { "`" (![`])* "`"? }
+
+  Number {
+    (@digit+ ("." @digit*)? | "." @digit+) (("e" | "E") ("+" | "-")? @digit+)? ("i" | "L")? |
+    "0" ("x" | "X") $[0-9a-fA-F]+ ("i" | "L")?
+  }
+
+  String {
+    '"' (![\\"] | "\\" _)* '"'? |
+    "'" (![\\'] | "\\" _)* "'"?
+  }
+
+  SpecialOp { "%" ![%\r\n]* "%" }
+
+  ParenL[@export] { "(" }
+  ParenR[@export] { ")" }
+  BracketR[@export] { "]" }
+  BraceL[@export] { "{" }
+  BraceR[@export] { "}" }
+
+  "," ";" "::" ":::" ":=" "$" "@" "^" ":" "|>" "*" "/" "+" "-"
+  "==" "!=" "<=" ">=" "<" ">" "!" "&&" "&" "||" "|" "~" "->>" "->" "<<-" "<-" "=" "?" "\\"
+
+  RawStringOpen { ("r" | "R") ("\"" | "'") "-"* ("(" | "[" | "{") }
+
+  @precedence { RawStringOpen, Number, Identifier }
+}
+
+@external tokens insertSemicolonTokenizer from "./tokens.js" { InsertedSemi }
+@external tokens rawStringTailTokenizer from "./tokens.js" { RawStringTail }
+@external tokens callContinuationTokenizer from "./tokens.js" { ContinueParenL, ContinueBracketL, ContinueDBracketL }
+@external tokens continueAddOpTokenizer from "./tokens.js" { ContinueAddOp }
+@context trackNewlines from "./tokens.js"
+
+@external propSource rHighlight from "./highlight.js"
+
+@detectDelim

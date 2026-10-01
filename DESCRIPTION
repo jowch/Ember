@@ -1,12 +1,13 @@
 Package: ember
 Title: Reactive Notebooks for R
 Version: 0.0.0.9000
-Authors@R: person("Jonathan", "Chen", role = c("aut", "cre"))
+Authors@R: person("Jonathan", "Chen", email = "jonathanwchen@pm.me", role = c("aut", "cre"))
 Description: A reactive notebook engine for R in the style of Pluto.jl.
     Cells are read statically into a dependency graph, so editing a cell
     reruns the cells that depend on it.
 License: MIT + file LICENSE
 Encoding: UTF-8
 Depends: R (>= 4.1.0)
+Imports: later, processx
 Suggests: testthat (>= 3.0.0)
 Config/testthat/edition: 3

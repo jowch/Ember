@@ -1,0 +1,346 @@
+# assignment and semicolons
+
+x <- 1
+y <- 2
+z <- 3; w <- 4
+
+==>
+
+Program(TopExpr(AssignExpr(Identifier,AssignOp("<-"),Number)),InsertedSemi,TopExpr(AssignExpr(Identifier,AssignOp("<-"),Number)),InsertedSemi,TopExpr(AssignExpr(Identifier,AssignOp("<-"),Number)),";",TopExpr(AssignExpr(Identifier,AssignOp("<-"),Number)))
+
+# newline ends statement before unary minus
+
+x <- 1
+-2
+
+==>
+
+Program(TopExpr(AssignExpr(Identifier,AssignOp("<-"),Number)),InsertedSemi,TopExpr(UnaryExpr(ArithOp("-"),Number)))
+
+# binary operator continues across newline
+
+x <- 1 +
+  2
+
+==>
+
+Program(TopExpr(AssignExpr(Identifier,AssignOp("<-"),BinaryExpr(Number,ArithOp(ContinueAddOp),Number))))
+
+# if without else at top level is lenient
+
+if (a) x
+y <- 1
+
+==>
+
+Program(TopExpr(IfExpr(if,ParenL,Identifier,ParenR,TopExpr(Identifier))),InsertedSemi,TopExpr(AssignExpr(Identifier,AssignOp("<-"),Number)))
+
+# if else across newline inside block
+
+f <- function(a) {
+  if (a) {
+    1
+  }
+  else {
+    2
+  }
+}
+
+==>
+
+Program(TopExpr(AssignExpr(Identifier,AssignOp("<-"),FunctionDef(function,ParamList(ParenL,Param(ParamName(Identifier)),ParenR),TopExpr(Block(BraceL,TopExpr(IfExpr(if,ParenL,Identifier,ParenR,TopExpr(Block(BraceL,TopExpr(Number),BraceR)),else,TopExpr(Block(BraceL,TopExpr(Number),BraceR)))),BraceR))))))
+
+# if else same line
+
+if (a) 1 else 2
+
+==>
+
+Program(TopExpr(IfExpr(if,ParenL,Identifier,ParenR,TopExpr(Number),else,TopExpr(Number))))
+
+# for while repeat
+
+for (i in 1:10) print(i)
+while (TRUE) break
+repeat { break }
+
+==>
+
+Program(TopExpr(ForExpr(for,ParenL,Identifier,in,BinaryExpr(Number,":",Number),ParenR,TopExpr(Call(Identifier,ArgList(ContinueParenL,Arg(Identifier),ParenR))))),InsertedSemi,TopExpr(WhileExpr(while,ParenL,True(TRUE),ParenR,TopExpr(BreakExpr(break)))),InsertedSemi,TopExpr(RepeatExpr(repeat,TopExpr(Block(BraceL,TopExpr(BreakExpr(break)),BraceR)))))
+
+# function def and call
+
+f <- function(a, b = 1) a + b
+f(1, 2)
+
+==>
+
+Program(TopExpr(AssignExpr(Identifier,AssignOp("<-"),FunctionDef(function,ParamList(ParenL,Param(ParamName(Identifier)),",",Param(ParamName(Identifier),"=",Number),ParenR),TopExpr(BinaryExpr(Identifier,ArithOp(ContinueAddOp),Identifier))))),InsertedSemi,TopExpr(Call(Identifier,ArgList(ContinueParenL,Arg(Number),",",Arg(Number),ParenR))))
+
+# lambda shorthand
+
+sq <- \(x) x^2
+
+==>
+
+Program(TopExpr(AssignExpr(Identifier,AssignOp("<-"),Lambda("\\",ParamList(ParenL,Param(ParamName(Identifier)),ParenR),TopExpr(BinaryExpr(Identifier,ArithOp("^"),Number))))))
+
+# empty args in calls and subscripts
+
+x[1, ]
+x[, 2]
+f(,)
+f()
+
+==>
+
+Program(TopExpr(Subscript(Identifier,ContinueBracketL,Arg(Number),",",BracketR)),InsertedSemi,TopExpr(Subscript(Identifier,ContinueBracketL,",",Arg(Number),BracketR)),InsertedSemi,TopExpr(Call(Identifier,ArgList(ContinueParenL,",",ParenR))),InsertedSemi,TopExpr(Call(Identifier,ArgList(ContinueParenL,ParenR))))
+
+# double bracket subscript chaining
+
+x[[1]][2]
+
+==>
+
+Program(TopExpr(Subscript(Subscript2(Identifier,ContinueDBracketL,Arg(Number),BracketR,BracketR),ContinueBracketL,Arg(Number),BracketR)))
+
+# named args with string and backtick names
+
+f("a" = 1, `b c` = 2, d = 3)
+
+==>
+
+Program(TopExpr(Call(Identifier,ArgList(ContinueParenL,Arg(NamedArg(ArgName(String),"=",Number)),",",Arg(NamedArg(ArgName(Backtick),"=",Number)),",",Arg(NamedArg(ArgName(Identifier),"=",Number)),ParenR))))
+
+# formula unary and binary
+
+~x
+y ~ x + (1 | g)
+
+==>
+
+Program(TopExpr(FormulaExpr("~",Identifier)),InsertedSemi,TopExpr(FormulaExpr(Identifier,"~",BinaryExpr(Identifier,ArithOp(ContinueAddOp),ParenExpr(ParenL,TopExpr(BinaryExpr(Number,LogicOp("|"),Identifier)),ParenR)))))
+
+# unary minus binds looser than pow
+
+-x^2
+
+==>
+
+Program(TopExpr(UnaryExpr(ArithOp("-"),BinaryExpr(Identifier,ArithOp("^"),Number))))
+
+# mixed assignment associativity
+
+a = b <- c
+
+==>
+
+Program(TopExpr(EqAssign(Identifier,AssignOp("="),TopExpr(AssignExpr(Identifier,AssignOp("<-"),Identifier)))))
+
+# namespace operators
+
+pkg::fn(1)
+pkg:::fn2()
+
+==>
+
+Program(TopExpr(Call(NamespaceExpr(Identifier,NamespaceOp("::"),Identifier),ArgList(ContinueParenL,Arg(Number),ParenR))),InsertedSemi,TopExpr(Call(NamespaceExpr(Identifier,NamespaceOp(":::"),Identifier),ArgList(ContinueParenL,ParenR))))
+
+# native pipe
+
+df |> head() |> summary()
+
+==>
+
+Program(TopExpr(BinaryExpr(BinaryExpr(Identifier,"|>",Call(Identifier,ArgList(ContinueParenL,ParenR))),"|>",Call(Identifier,ArgList(ContinueParenL,ParenR)))))
+
+# pipe placeholder
+
+df |> (\(x) f(x, y = _))()
+
+==>
+
+Program(TopExpr(BinaryExpr(Identifier,"|>",Call(ParenExpr(ParenL,TopExpr(Lambda("\\",ParamList(ParenL,Param(ParamName(Identifier)),ParenR),TopExpr(Call(Identifier,ArgList(ContinueParenL,Arg(Identifier),",",Arg(NamedArg(ArgName(Identifier),"=",PipePlaceholder(_))),ParenR))))),ParenR),ArgList(ContinueParenL,ParenR)))))
+
+# raw strings with parens and dashes
+
+s1 <- r"(a\b)"
+s2 <- r"---{raw [stuff] here}---"
+s3 <- R'[simple]'
+
+==>
+
+Program(TopExpr(AssignExpr(Identifier,AssignOp("<-"),RawString(RawStringOpen,RawStringTail))),InsertedSemi,TopExpr(AssignExpr(Identifier,AssignOp("<-"),RawString(RawStringOpen,RawStringTail))),InsertedSemi,TopExpr(AssignExpr(Identifier,AssignOp("<-"),RawString(RawStringOpen,RawStringTail))))
+
+# numbers
+
+x <- c(1L, 1.5, 1e-3, 0x1F, 1i, .5, 1.)
+
+==>
+
+Program(TopExpr(AssignExpr(Identifier,AssignOp("<-"),Call(Identifier,ArgList(ContinueParenL,Arg(Number),",",Arg(Number),",",Arg(Number),",",Arg(Number),",",Arg(Number),",",Arg(Number),",",Arg(Number),ParenR)))))
+
+# dot-dot pronouns and dots
+
+f <- function(...) { ..1 + ..2 }
+
+==>
+
+Program(TopExpr(AssignExpr(Identifier,AssignOp("<-"),FunctionDef(function,ParamList(ParenL,Param(ParamName("...")),ParenR),TopExpr(Block(BraceL,TopExpr(BinaryExpr(Identifier,ArithOp(ContinueAddOp),Identifier)),BraceR))))))
+
+# special constants
+
+c(TRUE, FALSE, NULL, NA, NA_integer_, NA_real_, NA_character_, Inf, NaN)
+
+==>
+
+Program(TopExpr(Call(Identifier,ArgList(ContinueParenL,Arg(True(TRUE)),",",Arg(False(FALSE)),",",Arg(Null(NULL)),",",Arg(NaConst(NA)),",",Arg(NaConst(NA_integer_)),",",Arg(NaConst(NA_real_)),",",Arg(NaConst(NA_character_)),",",Arg(Inf(Inf)),",",Arg(NaN(NaN)),ParenR))))
+
+# member and at access
+
+obj$name
+obj@slot
+obj$`weird name`
+
+==>
+
+Program(TopExpr(MemberExpr(Identifier,MemberOp("$"),Identifier)),InsertedSemi,TopExpr(MemberExpr(Identifier,MemberOp("@"),Identifier)),InsertedSemi,TopExpr(MemberExpr(Identifier,MemberOp("$"),Backtick)))
+
+# backtick identifiers
+
+`my var` <- 1
+`+`(1, 2)
+
+==>
+
+Program(TopExpr(AssignExpr(Backtick,AssignOp("<-"),Number)),InsertedSemi,TopExpr(Call(Backtick,ArgList(ContinueParenL,Arg(Number),",",Arg(Number),ParenR))))
+
+# colon and sequence
+
+1:10
+-1:10
+
+==>
+
+Program(TopExpr(BinaryExpr(Number,":",Number)),InsertedSemi,TopExpr(BinaryExpr(UnaryExpr(ArithOp("-"),Number),":",Number)))
+
+# custom infix operators
+
+x %in% y
+x %>% y
+x %+% y
+
+==>
+
+Program(TopExpr(BinaryExpr(Identifier,SpecialOp,Identifier)),InsertedSemi,TopExpr(BinaryExpr(Identifier,SpecialOp,Identifier)),InsertedSemi,TopExpr(BinaryExpr(Identifier,SpecialOp,Identifier)))
+
+# comments
+
+x <- 1 # a comment
+# full line comment
+y <- 2
+
+==>
+
+Program(TopExpr(AssignExpr(Identifier,AssignOp("<-"),Number)),Comment,Comment,InsertedSemi,TopExpr(AssignExpr(Identifier,AssignOp("<-"),Number)))
+
+# semicolons separate statements on one line
+
+x <- 1; y <- 2; z <- 3
+
+==>
+
+Program(TopExpr(AssignExpr(Identifier,AssignOp("<-"),Number)),";",TopExpr(AssignExpr(Identifier,AssignOp("<-"),Number)),";",TopExpr(AssignExpr(Identifier,AssignOp("<-"),Number)))
+
+# blocks and nested blocks
+
+f <- function() {
+  x <- 1
+  {
+    y <- 2
+  }
+  x + y
+}
+
+==>
+
+Program(TopExpr(AssignExpr(Identifier,AssignOp("<-"),FunctionDef(function,ParamList(ParenL,ParenR),TopExpr(Block(BraceL,TopExpr(AssignExpr(Identifier,AssignOp("<-"),Number)),InsertedSemi,TopExpr(Block(BraceL,TopExpr(AssignExpr(Identifier,AssignOp("<-"),Number)),BraceR)),InsertedSemi,TopExpr(BinaryExpr(Identifier,ArithOp(ContinueAddOp),Identifier)),BraceR))))))
+
+# parenthesized assignment
+
+(x <- 1)
+
+==>
+
+Program(TopExpr(ParenExpr(ParenL,TopExpr(AssignExpr(Identifier,AssignOp("<-"),Number)),ParenR)))
+
+# help operator
+
+?print
+print ? x
+
+==>
+
+Program(TopExpr(HelpExpr("?",Identifier)),InsertedSemi,TopExpr(HelpExpr(Identifier,"?",Identifier)))
+
+# unicode identifier
+
+café <- 1
+café + 1
+
+==>
+
+Program(TopExpr(AssignExpr(Identifier,AssignOp("<-"),Number)),InsertedSemi,TopExpr(BinaryExpr(Identifier,ArithOp(ContinueAddOp),Number)))
+
+# walrus assignment in data.table style subscript
+
+dt[, newcol := value]
+
+==>
+
+Program(TopExpr(Subscript(Identifier,ContinueBracketL,",",Arg(AssignExpr(Identifier,AssignOp(":="),Identifier)),BracketR)))
+
+# walrus assignment as dynamic named argument
+
+tibble("{name}_2" := x * 2)
+
+==>
+
+Program(TopExpr(Call(Identifier,ArgList(ContinueParenL,Arg(AssignExpr(String,AssignOp(":="),BinaryExpr(Identifier,ArithOp("*"),Number))),ParenR))))
+
+# call does not chain across a newline
+
+set.seed(2)
+(f <- gl(3, 2))
+
+==>
+
+Program(TopExpr(Call(Identifier,ArgList(ContinueParenL,Arg(Number),ParenR))),InsertedSemi,TopExpr(ParenExpr(ParenL,TopExpr(AssignExpr(Identifier,AssignOp("<-"),Call(Identifier,ArgList(ContinueParenL,Arg(Number),",",Arg(Number),ParenR)))),ParenR)))
+
+# subscript does not chain across a newline
+
+x[1]
+y <- 2
+
+==>
+
+Program(TopExpr(Subscript(Identifier,ContinueBracketL,Arg(Number),BracketR)),InsertedSemi,TopExpr(AssignExpr(Identifier,AssignOp("<-"),Number)))
+
+# multi-line string literal
+
+x <- "line one
+line two"
+
+==>
+
+Program(TopExpr(AssignExpr(Identifier,AssignOp("<-"),String)))
+
+# binary plus/minus does not chain across a newline
+
+f(1) + g()
+-2
+
+==>
+
+Program(TopExpr(BinaryExpr(Call(Identifier,ArgList(ContinueParenL,Arg(Number),ParenR)),ArithOp(ContinueAddOp),Call(Identifier,ArgList(ContinueParenL,ParenR)))),InsertedSemi,TopExpr(UnaryExpr(ArithOp("-"),Number)))
+

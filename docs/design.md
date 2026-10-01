@@ -123,6 +123,9 @@ R/
   graph.R                 # edges, run order, errors
   queries.R               # upstream, downstream, affected, summaries
   notebook.R              # file format: read, write
+  state.R, step.R         # the session: one state value, one pure step()
+  shell.R                 # the worker process, socket, polling, saving
+  api.R                   # the R API: open, edit, run, snapshot, events
   server.R                # httpuv, websocket protocol, state diffs
   packages.R              # detection, lock, install
 inst/
@@ -935,6 +938,7 @@ run), and the snapshot has no stale state.
    scripts, compared against flowR (a GPL-3 R dataflow analyser, used only in
    tests, not shipped).
 2. **Engine without UI:** file format, worker, scheduler, R API, tests.
+   Built; the design is in [engine.md](engine.md).
 3. **Packages:** detection, lock, installs.
 4. **UI fork:** protocol in R, removals, R adaptations, theme.
    - **R grammar for the editor,** a separate track run alongside step 2:
