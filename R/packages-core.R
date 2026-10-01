@@ -159,13 +159,25 @@ fx_check_library  <- function(key, path) effect("check_library", key = key, path
 #' against by name ("CRAN", "BioCsoft").
 fx_install        <- function(token, key, path, lock, repos)
   effect("install", token = token, key = key, path = path, lock = lock, repos = repos)
-#' Deviation from the sketch: `fx_cancel_install()` also carries `key`, not
-#' just `token`. The shell's job table (library.R) is keyed by the library
-#' key, not the token (two notebooks installing the *same* library share
-#' one job); `reduce_shutdown()` still has `state$packages$install$key` at
-#' hand when it builds this effect, so passing it along costs nothing and
+#' Deviation from the sketch: `fx_cancel_install()` also carries `key` and
+#' `path`, not just `token`. The shell's job table (library.R) is keyed by
+#' the install's library path, not the token (two notebooks installing the
+#' *same* library share one job, and `path` -- unlike `key`, a hash of the
+#' lock text alone -- also tells apart two sessions whose lock hashes to the
+#' same text but whose library lives under a different cache);
+#' `reduce_shutdown()` still has `state$packages$install$key`/`$path` at
+#' hand when it builds this effect, so passing them along costs nothing and
 #' saves the shell from having to reverse-map a token to a job key.
-fx_cancel_install <- function(token, key) effect("cancel_install", token = token, key = key)
+fx_cancel_install <- function(token, key, path) effect("cancel_install", token = token, key = key, path = path)
+#' Like `fx_cancel_install()` but for an index fetch still "fetching" when
+#' the session shuts down: this session's own subscription to the job must
+#' leave (`job_leave()`, library.R), or the job's subscriber list keeps a
+#' reference to a closed session forever and the subprocess is never killed
+#' even after every other subscriber has gone. `url` is carried along the
+#' same way `fx_install()` carries `repos`: the shell's job key
+#' (`index_job_key()`) needs it and `reduce_shutdown()` can compute it
+#' purely from `state$options$repos`, so the shell doesn't have to.
+fx_cancel_fetch_index <- function(key, url) effect("cancel_fetch_index", key = key, url = url)
 
 # ---- The stage step() runs ---------------------------------------------------
 
@@ -207,7 +219,13 @@ schedule_packages <- function(state, old) {
     p$wanted_cache <- wanted
     if (!setequal(wanted, p$resolved_for)) {
       if (length(wanted) > 0 && (is.null(state$file$header$snapshot) || is.na(state$file$header$snapshot))) {
-        state$file$header$snapshot <- format(as.Date(state$clock), "%Y-%m-%d")
+        # `format()` on a POSIXct uses the local time zone directly; routing
+        # through `as.Date()` first would convert to UTC (its default `tz`)
+        # before taking the date, giving the wrong day for anyone not on
+        # UTC near midnight. `state$clock` may also already be a bare
+        # `Date` (tests, `ev_open(as.Date(...))`), for which `format()`
+        # behaves the same either way.
+        state$file$header$snapshot <- format(state$clock, "%Y-%m-%d")
       }
       needed <- needed_repos(state$file$header)
       to_fetch <- Filter(function(k) {
@@ -299,7 +317,7 @@ schedule_packages <- function(state, old) {
       identical(tgt$status, "missing") && is.null(state$packages$install)) {
     token <- state$packages$next_token
     state$packages$next_token <- token + 1L
-    state$packages$install <- list(token = token, key = tgt$key)
+    state$packages$install <- list(token = token, key = tgt$key, path = tgt$path)
     tgt$status <- "installing"
     tgt$progress <- NULL
     state$packages$target <- tgt
@@ -333,43 +351,64 @@ set_lock <- function(state, lock) {
 
 #' Point the worker at the target library once it is ready.
 #'
-#' * Same key as `active`: nothing.
+#' * The worker is busy: never switch. Deciding whether a switch conflicts
+#'   needs `worker$loaded`, and that only reflects what was attached up to
+#'   the *last* `wk_done`; the cell running right now can still attach the
+#'   very package the switch would change, at a version `loaded` has never
+#'   heard of. Switching mid-run risks exactly that: the running cell then
+#'   loads the old version from the old library's files and nothing ever
+#'   notices. So every switch, conflicting or not, waits for the worker to
+#'   be idle; `schedule()` sends nothing new meanwhile (`switch_pending()`),
+#'   so no further cell loads an old version either.
+#' * Same key as `active`: nothing to switch, but see the mismatch check
+#'   below.
 #' * No conflict (`library_conflicts()` empty): `active <- target`. The
 #'   worker picks up the new path from the next `run` message (it carries
 #'   `library`, as it carries `order`), so a new package is just loaded:
 #'   no restart. Namespaces already loaded keep their files, which are
 #'   links to the same cache entries.
-#' * A conflict and the worker busy: wait. `schedule()` sends nothing new
-#'   meanwhile (`switch_pending()`), so no further cell loads an old
-#'   version.
-#' * A conflict and the worker not busy: `active <- target` and
-#'   `restart_worker(state, reason)` (step.R, factored out of
-#'   `reduce_restart()`): every cell is left not run, and
-#'   `worker$exit$message` says why ("dplyr changed 1.1.4 -> 1.2.1; R
-#'   restarted").
+#' * A conflict, worker idle: `active <- target` and `restart_worker(state,
+#'   reason)` (step.R, factored out of `reduce_restart()`): every cell is
+#'   left not run, and `worker$exit$message` says why ("dplyr changed
+#'   1.1.4 -> 1.2.1; R restarted").
+#' * No switch pending (`target` already equals `active`), worker idle, but
+#'   `worker$loaded` disagrees with `active$installed` anyway: the same
+#'   restart. This is the net for the race above -- a cell that ran while a
+#'   switch was blocked, and so loaded the version the library had *before*
+#'   the switch, is caught the moment its `wk_done` updates `worker$loaded`,
+#'   since that is the next time this runs (`schedule_packages()` calls it
+#'   after every event, `wk_done` included).
 #' @return `list(state, effects)` (not just `state`, since a restart emits
 #'   `fx_kill_worker`/`fx_start_worker`).
 switch_library <- function(state) {
   p <- state$packages
-  if (!identical(p$target$status, "ready") || identical(p$target$key, p$active$key)) {
-    return(list(state = state, effects = list()))
-  }
+  busy <- identical(state$worker$status, "busy")
   loaded <- state$worker$loaded %||% character()
-  conflicts <- library_conflicts(loaded, p$target$installed)
-  if (nrow(conflicts) > 0 && identical(state$worker$status, "busy")) {
-    return(list(state = state, effects = list()))
-  }
-  state$packages$active <- p$target
-  # The active library's exports feed the graph (`exports_of()`, state.R);
-  # rebuilding here, not just from `reduce_library_checked()`/
-  # `reduce_install_done()`, is what makes a package's edges appear the
-  # moment it becomes active even when no install was needed (a library
-  # already complete on disk goes ready -> active in the same step()).
-  state <- rebuild_graph(state)
-  if (nrow(conflicts) > 0) {
+  pending_switch <- identical(p$target$status, "ready") && !identical(p$target$key, p$active$key)
+
+  restart_for <- function(state, conflicts) {
     changes_txt <- paste(sprintf("%s changed %s -> %s", conflicts$name, conflicts$loaded, conflicts$new),
                          collapse = "; ")
-    return(restart_worker(state, reason = paste0(changes_txt, "; R restarted")))
+    restart_worker(state, reason = paste0(changes_txt, "; R restarted"))
+  }
+
+  if (pending_switch) {
+    if (busy) return(list(state = state, effects = list()))
+    conflicts <- library_conflicts(loaded, p$target$installed)
+    state$packages$active <- p$target
+    # The active library's exports feed the graph (`exports_of()`, state.R);
+    # rebuilding here, not just from `reduce_library_checked()`/
+    # `reduce_install_done()`, is what makes a package's edges appear the
+    # moment it becomes active even when no install was needed (a library
+    # already complete on disk goes ready -> active in the same step()).
+    state <- rebuild_graph(state)
+    if (nrow(conflicts) > 0) return(restart_for(state, conflicts))
+    return(list(state = state, effects = list()))
+  }
+
+  if (!busy) {
+    conflicts <- library_conflicts(loaded, p$active$installed)
+    if (nrow(conflicts) > 0) return(restart_for(state, conflicts))
   }
   list(state = state, effects = list())
 }
@@ -385,13 +424,12 @@ library_conflicts <- function(loaded, installed) {
             stringsAsFactors = FALSE)
 }
 
-#' `TRUE` while a conflicting switch waits for the running cell.
+#' `TRUE` while a switch (conflicting or not: `switch_library()` never
+#' switches mid-run) waits for the running cell.
 switch_pending <- function(state) {
   p <- state$packages
   if (!identical(p$target$status, "ready") || identical(p$target$key, p$active$key)) return(FALSE)
-  loaded <- state$worker$loaded %||% character()
-  conflicts <- library_conflicts(loaded, p$target$installed)
-  nrow(conflicts) > 0 && identical(state$worker$status, "busy")
+  identical(state$worker$status, "busy")
 }
 
 # ---- Which cells wait --------------------------------------------------------
@@ -537,7 +575,19 @@ reduce_install_done <- function(state, event) {
 
 #' A preview of moving the date: `proposal <- new_proposal(date)`;
 #' `schedule_packages()` fetches the index and computes it. Reply: `TRUE`.
+#'
+#' Also drops a `"failed"` index slot for that date's key, if one exists:
+#' the Proposal stage of `schedule_packages()` only fetches a key with no
+#' slot at all, so a failed fetch left in place would never be retried --
+#' the user asking to preview again (the same "I want this to work now" as
+#' `ev_run()` retrying a failed library or index, reduce_run()) is exactly
+#' when a retry belongs.
 reduce_preview_date <- function(state, event) {
+  key <- repo_key("cran", event$date)
+  slot <- state$packages$indexes[[key]]
+  if (!is.null(slot) && identical(slot$status, "failed")) {
+    state$packages$indexes[[key]] <- NULL
+  }
   state$packages$proposal <- new_proposal(event$date)
   list(state = state, effects = list(), reply = TRUE)
 }
@@ -561,6 +611,12 @@ reduce_set_date <- function(state, event) {
   state$file$header$snapshot <- event$date
   state <- set_lock(state, prop$lock)
   state$packages$resolved_for <- wanted
+  # The proposal's own resolution already computed `problems` for the new
+  # date (`prop$lock`'s off_date/not_found/not_in_index rows); the old
+  # date's `problems` describe a lock that no longer exists the moment this
+  # applies, and leaving them in place showed stale complaints (a
+  # since-fixed off_date row, say) next to the packages actually in effect.
+  state$packages$problems <- prop$problems
   changes <- prop$changes
   state$packages$proposal <- NULL
   list(state = state, effects = list(), reply = changes)
@@ -569,8 +625,14 @@ reduce_set_date <- function(state, event) {
 #' `wk_done` with `report$error$package` set (the worker saw R's
 #' `packageNotFoundError`, which carries the name, so this is not a message
 #' match and works in every locale):
-#' * not in the lock: run error kind `"missing_package"`, `names = pkg`,
+#' * not in the lock, and not already wanted (not named in code or
+#'   `[extra_packages]`): run error kind `"missing_package"`, `names = pkg`,
 #'   fix "Add pkg to [extra_packages]" (the API op `add_extra_package()`);
+#' * not in the lock, but already wanted: adding it to `[extra_packages]`
+#'   again would do nothing (`schedule_packages()` already tried to resolve
+#'   it and failed), so the fix would be a lie. The error points at the
+#'   real reason instead: an unavailable index, or the resolver's own
+#'   `not_found` problem for `pkg`.
 #' * in the lock and `active` says it is installed: the library changed
 #'   under us (cleaned by another process): `active$status <- "unknown"` and
 #'   target likewise, so it is looked at again;
@@ -584,10 +646,26 @@ missing_package_error <- function(state, pkg) {
   lock_names <- if (is.null(lock_entries) || nrow(lock_entries) == 0) character() else lock_entries$name
 
   if (!(pkg %in% lock_names)) {
-    err <- new_run_error("missing_package",
-      message = sprintf("there is no package called '%s'", pkg),
-      names = pkg,
-      fixes = sprintf("Add %s to [extra_packages]", pkg))
+    wanted <- wanted_packages(state$graph, state$file$header)
+    if (!(pkg %in% wanted)) {
+      err <- new_run_error("missing_package",
+        message = sprintf("there is no package called '%s'", pkg),
+        names = pkg,
+        fixes = sprintf("Add %s to [extra_packages]", pkg))
+      return(list(state = state, error = err))
+    }
+    probs <- state$packages$problems
+    row <- if (!is.null(probs) && nrow(probs) > 0) {
+      Find(function(i) identical(probs$kind[[i]], "index_unavailable") ||
+             (identical(probs$kind[[i]], "not_found") && identical(probs$package[[i]], pkg)),
+          seq_len(nrow(probs)))
+    } else NULL
+    msg <- if (!is.null(row)) {
+      sprintf("there is no package called '%s': %s", pkg, probs$message[[row]])
+    } else {
+      sprintf("there is no package called '%s'", pkg)
+    }
+    err <- new_run_error("missing_package", message = msg, names = pkg, fixes = character())
     return(list(state = state, error = err))
   }
 
@@ -629,41 +707,51 @@ missing_package_error <- function(state, pkg) {
 #' this is what the banner counts), `"failed"`, `"not_found"` (from
 #' `problems`, `version` `NA`). `direct` is `TRUE` for wanted names.
 #' `plan` is what running would do; the banner's "installs 3 packages".
+#' Empty, correctly typed `packages` data.frame: the shape both halves of
+#' `packages_view()` build their rows into.
+empty_packages_df <- function() {
+  data.frame(name = character(), version = character(), source = character(),
+            direct = logical(), status = character(), message = character(),
+            stringsAsFactors = FALSE)
+}
+
 packages_view <- function(state) {
   p <- state$packages
   wanted <- wanted_packages(state$graph, state$file$header)
   entries <- state$file$lock$entries
   installing <- !is.null(p$install) && identical(p$install$key, p$target$key)
+  target_failed <- identical(p$target$status, "failed")
 
-  rows <- list(data.frame(name = character(), version = character(), source = character(),
-                          direct = logical(), status = character(), message = character(),
-                          stringsAsFactors = FALSE))
-  if (!is.null(entries) && nrow(entries) > 0) {
-    for (i in seq_len(nrow(entries))) {
-      nm <- entries$name[i]; ver <- entries$version[i]
-      status <- if (nm %in% names(p$active$installed) &&
-                   identical(unname(p$active$installed[[nm]]), ver)) {
-        "installed"
-      } else if (installing) "installing"
-      else if (identical(p$target$status, "failed")) "failed"
-      else "missing"
-      rows[[length(rows) + 1]] <- data.frame(name = nm, version = ver, source = entries$source[i],
-                                             direct = nm %in% wanted, status = status,
-                                             message = NA_character_, stringsAsFactors = FALSE)
-    }
+  # Built column-wise, not one `data.frame()` call per lock entry plus an
+  # `rbind()` over all of them: that made `packages_view()` (and so
+  # `notifications()`, which calls it on every dispatch that might have
+  # changed anything package-related) quadratic-feeling in the number of
+  # locked packages. Measured at 150 packages: 92 ms before, under the
+  # engine's 30ms-for-`notifications()` budget after.
+  locked_df <- if (is.null(entries) || nrow(entries) == 0) {
+    empty_packages_df()
+  } else {
+    installed <- p$active$installed
+    hit <- match(entries$name, names(installed))
+    is_installed <- !is.na(hit) & entries$version == unname(installed)[hit]
+    status <- ifelse(is_installed, "installed",
+                     ifelse(installing, "installing",
+                            ifelse(target_failed, "failed", "missing")))
+    data.frame(name = entries$name, version = entries$version, source = entries$source,
+              direct = entries$name %in% wanted, status = status,
+              message = NA_character_, stringsAsFactors = FALSE)
   }
+
+  not_found_df <- empty_packages_df()
   if (!is.null(p$problems) && nrow(p$problems) > 0) {
     nf <- p$problems[!is.na(p$problems$kind) & p$problems$kind == "not_found", , drop = FALSE]
     if (nrow(nf) > 0) {
-      for (i in seq_len(nrow(nf))) {
-        rows[[length(rows) + 1]] <- data.frame(name = nf$package[i], version = NA_character_,
-                                               source = NA_character_, direct = nf$package[i] %in% wanted,
-                                               status = "not_found", message = nf$message[i],
-                                               stringsAsFactors = FALSE)
-      }
+      not_found_df <- data.frame(name = nf$package, version = NA_character_, source = NA_character_,
+                                 direct = nf$package %in% wanted, status = "not_found",
+                                 message = nf$message, stringsAsFactors = FALSE)
     }
   }
-  packages_df <- do.call(rbind, rows)
+  packages_df <- rbind(locked_df, not_found_df)
 
   proposal <- NULL
   if (!is.null(p$proposal)) {

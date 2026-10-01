@@ -56,8 +56,72 @@ session_start <- function(state) {
   class(nb) <- "ember_notebook"
 
   reset_sigint()
+  register_session(nb)
+  sync_active_libraries()
+  maybe_start_cleanup()
   schedule_poll(nb)
   nb
+}
+
+# ---- Open-session registry (packages-core.R's `clean()` wiring) --------------
+
+#' Every currently open `ember_notebook` in this process, keyed by its
+#' state's `id` (a UUID, stable for the notebook's whole life even across a
+#' `move`). Used only to keep `active_libraries` (library.R) accurate, so
+#' `clean()` never deletes a library an open session holds as `target` or
+#' `active`. Mutated only by `session_start()` and the `close` effect.
+open_sessions <- new.env(parent = emptyenv())
+
+register_session <- function(nb) {
+  assign(nb$state$id, nb, envir = open_sessions)
+  invisible(NULL)
+}
+
+unregister_session <- function(nb) {
+  id <- nb$state$id
+  if (exists(id, envir = open_sessions, inherits = FALSE)) rm(list = id, envir = open_sessions)
+  invisible(NULL)
+}
+
+#' Recompute `active_libraries` (library.R) from every open session's
+#' current `target`/`active` library path and hand the whole set to
+#' `set_active_libraries()`. Called after `register_session()`/
+#' `unregister_session()` and from `after_dispatch()`, so the set is never
+#' more than one dispatch stale. Cheap regardless of how big any notebook
+#' is: one pass over however many notebooks are open, reading two fields
+#' already computed on each, never a notebook's cells or graph.
+sync_active_libraries <- function() {
+  ids <- ls(open_sessions, all.names = TRUE)
+  paths <- unlist(lapply(ids, function(id) {
+    p <- open_sessions[[id]]$state$packages
+    c(p$target$path, p$active$path)
+  }), use.names = FALSE)
+  set_active_libraries(unique(paths))
+  invisible(NULL)
+}
+
+#' Whether the once-per-process startup `clean()` (design.md: "when the
+#' server starts") has already been scheduled.
+startup_clean <- local({
+  env <- new.env(parent = emptyenv())
+  env$scheduled <- FALSE
+  env
+})
+
+#' Run `clean()` once per process, the first time any notebook opens.
+#' Deferred to a `later` callback (delay 0, so it runs on the next tick of
+#' the same event loop everything else here already uses) rather than run
+#' inline: `open_notebook()` must never block on a filesystem walk over the
+#' whole cache. `cache = FALSE`: the default 60-day sweep of libraries,
+#' staging folders and indexes, not the slower renv-cache reconciliation
+#' (design.md's own split for this call). Safe to call as often as
+#' `session_start()` likes; only the first call after process start does
+#' anything.
+maybe_start_cleanup <- function() {
+  if (isTRUE(startup_clean$scheduled)) return(invisible(NULL))
+  startup_clean$scheduled <- TRUE
+  later::later(function() tryCatch(clean(cache = FALSE), error = function(e) NULL), 0)
+  invisible(NULL)
 }
 
 #' A random string for the worker's hello to carry back.
@@ -180,6 +244,10 @@ after_dispatch <- function(nb, before) {
     }
   }
   sync_watch(nb, watched_files(nb$state))
+  # Any dispatch can have changed `target`/`active` (an install finished, a
+  # switch happened, a close unregistered this session already): keep
+  # `clean()`'s view of what's in use current.
+  sync_active_libraries()
   if (isTRUE(nb$closing)) nb$listeners <- list()
   invisible(NULL)
 }
@@ -241,18 +309,25 @@ run_effect <- function(nb, fx) {
         tryCatch(close(nb$listen), error = function(e) NULL)
         nb$listen <- NULL
       }
+      unregister_session(nb)
     },
     fetch_index = {
-      idx <- tryCatch(cached_index(fx$key, nb$state$options$cache), error = function(e) NULL)
+      idx <- tryCatch(cached_index(fx$key, nb$state$options$cache, url = fx$url), error = function(e) NULL)
       if (!is.null(idx)) {
         enqueue(nb, ev_index_fetched(fx$key, idx, at = Sys.time()))
       } else {
         cmd <- index_fetch_command(fx$key, fx$url, nb$state$options$cache)
-        job_start(fx$key, cmd, nb,
+        # The process-wide job table (library.R) is keyed on more than `key`:
+        # a date string, the job key on its own would let two sessions with
+        # the same key but different repositories or cache directories join
+        # the same download/parse job and each get an index that doesn't
+        # match their own `url`/`cache`.
+        job_start(index_job_key(fx$key, fx$url, nb$state$options$cache), cmd, nb,
           make_progress = function(line) NULL,
           make_done = function(status, output) {
             if (identical(status, 0L)) {
-              idx2 <- tryCatch(cached_index(fx$key, nb$state$options$cache), error = function(e) NULL)
+              idx2 <- tryCatch(cached_index(fx$key, nb$state$options$cache, url = fx$url),
+                               error = function(e) NULL)
               if (!is.null(idx2)) ev_index_fetched(fx$key, idx2, at = Sys.time())
               else ev_index_failed(fx$key, "index fetch produced no index", at = Sys.time())
             } else {
@@ -268,7 +343,13 @@ run_effect <- function(nb, fx) {
     },
     install = {
       cmd <- installer_command(fx$lock, fx$repos, fx$path, nb$state$options$cache)
-      job_start(fx$key, cmd, nb,
+      # Keyed by `path`, not `key`: `key` is a hash of the lock text alone
+      # (library_for(), lock.R), the same for two sessions with the same
+      # lock but different library paths (different caches, or -- in tests
+      # -- the same process pointed at two cache directories). Two such
+      # installs are not the same job and must not share one subprocess or
+      # one `job$subs` list.
+      job_start(fx$path, cmd, nb,
         make_progress = function(line) {
           item <- parse_install_progress_line(line)
           if (is.null(item)) NULL else ev_install_progress(fx$token, item, at = Sys.time())
@@ -282,7 +363,10 @@ run_effect <- function(nb, fx) {
         })
     },
     cancel_install = {
-      job_leave(fx$key, nb)
+      job_leave(fx$path, nb)
+    },
+    cancel_fetch_index = {
+      job_leave(index_job_key(fx$key, fx$url, nb$state$options$cache), nb)
     },
     stop("ember: unknown effect type: ", fx$type)
   )

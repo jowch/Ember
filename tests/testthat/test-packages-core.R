@@ -89,6 +89,19 @@ test_that("a notebook with no snapshot date gets the event's date when its first
   expect_equal(find_effect(r, "fetch_index")$key, repo_key("cran", "2026-09-15"))
 })
 
+test_that("the new snapshot date uses the local date, not UTC's", {
+  # A time that is still "2026-09-15" locally in a far-west zone, but
+  # already "2026-09-16" in UTC: `as.Date()` on a POSIXct defaults to UTC,
+  # which would pick the wrong day for that session.
+  old_tz <- Sys.getenv("TZ", unset = NA)
+  Sys.setenv(TZ = "Etc/GMT+10")  # UTC-10: always behind UTC
+  on.exit(if (is.na(old_tz)) Sys.unsetenv("TZ") else Sys.setenv(TZ = old_tz), add = TRUE)
+  at_local_evening <- as.POSIXct("2026-09-15 23:00:00", tz = "Etc/GMT+10")
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")), snapshot = NA_character_)
+  r <- drive(s, ev_open(at_local_evening))
+  expect_equal(r$state$file$header$snapshot, "2026-09-15")
+})
+
 test_that("index_fetched resolves, writes the lock, and the derived file text changes (31)", {
   s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
   r <- drive(s, ev_open(at(1)))
@@ -392,6 +405,37 @@ test_that("the same error for a package the active library claims makes the libr
   expect_true("check_library" %in% effect_types(r))
 })
 
+test_that("a packageNotFoundError for a package already wanted doesn't offer to add it again (05)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)), ev_index_failed(repo_key("cran", "2026-09-01"),
+                                                "could not resolve host", at(2)))
+  expect_true("index_unavailable" %in% r$state$packages$problems$kind)
+  r <- boot(r$state, "A", at0 = 3)
+  # boot()'s ev_run() retries the failed index once (reduce_run()'s "I want
+  # this to work now" rule), clearing the slot; it fails again before the
+  # cell's wk_done arrives, same as the reproduction.
+  r <- drive(r$state, ev_index_failed(repo_key("cran", "2026-09-01"), "could not resolve host", at(9)))
+  expect_true("index_unavailable" %in% r$state$packages$problems$kind)
+  r <- drive(r$state, wk_done(1, last_token(r), report(status = "error",
+    error = list(message = "there is no package called 'dplyr'", package = "dplyr")), at(10)))
+  e <- r$state$results$A$error
+  expect_equal(e$kind, "missing_package")
+  expect_match(e$message, "could not resolve host", fixed = TRUE)
+  expect_equal(e$fixes, character())
+  expect_false(grepl("extra_packages", e$message))
+})
+
+test_that("shutdown leaves a still-fetching index job, not just a running install", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  expect_equal(r$state$packages$indexes[[repo_key("cran", "2026-09-01")]]$status, "fetching")
+
+  r <- drive(r$state, ev_shutdown(at(2)))
+  ce <- find_effect(r, "cancel_fetch_index")
+  expect_false(is.null(ce))
+  expect_equal(ce$key, repo_key("cran", "2026-09-01"))
+})
+
 # ---- extra_packages ops --------------------------------------------------------
 
 test_that("library_checked exports give a cell attaching the package edges before it runs (47)", {
@@ -441,6 +485,40 @@ test_that("preview_date fetches the date's index and fills the proposal's change
   expect_equal(prop$changes$change[prop$changes$name == "dplyr"], "upgraded")
 })
 
+test_that("preview_date retries a failed index fetch for that date (04)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index("2026-09-01"), at(2)))
+
+  r <- drive(r$state, ev_preview_date(as.Date("2026-09-30"), at(3)))
+  r <- drive(r$state, ev_index_failed(repo_key("cran", "2026-09-30"), "timeout (network blip)", at(4)))
+  expect_equal(r$state$packages$proposal$status, "failed")
+
+  # Network is back; the user asks again. Without the fix the failed slot
+  # is never refetched, so no effect appears and the proposal stays failed.
+  r2 <- drive(r$state, ev_preview_date(as.Date("2026-09-30"), at(5)))
+  expect_true("fetch_index" %in% effect_types(r2))
+  expect_equal(r2$state$packages$proposal$status, "fetching")
+})
+
+test_that("set_date replaces problems with the proposal's, not the old date's (06)", {
+  # dplyr hand-edited to a version the 2026-09-01 index doesn't have:
+  # an off_date problem at the old date.
+  lock <- new_lock(c("cli", "dplyr", "glue"), c("3.6.5", "1.1.3", "1.8.0"), rep("CRAN", 3))
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)\nlibrary(viz)")), lock = lock)
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index("2026-09-01"), at(2)))
+  expect_true("off_date" %in% r$state$packages$problems$kind)
+
+  r <- drive(r$state, ev_preview_date(as.Date("2026-09-30"), at(3)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(4)))
+  prop_problems <- r$state$packages$proposal$problems
+
+  r <- drive(r$state, ev_set_date(as.Date("2026-09-30"), at(5)))
+  expect_false("off_date" %in% r$state$packages$problems$kind)
+  expect_equal(r$state$packages$problems, prop_problems)
+})
+
 test_that("set_date is refused without a ready, current preview for that date (52)", {
   s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
   r <- drive(s, ev_set_date(as.Date("2026-09-30"), at(1)))
@@ -482,6 +560,13 @@ test_that("an edit that changes the wanted set recomputes a ready proposal (54)"
 test_that("allow records the running R version in the header when it differs (55)", {
   s <- pkg_state(list(S = cell("")), options = list(r = list(version = "9.9.9", minor = "9.9", platform = "test")))
   r <- drive(s, ev_allow(at(1)))
+  expect_equal(r$state$file$header$r_version, "9.9.9")
+})
+
+test_that("ev_run also records the running R version in the header when it differs", {
+  s <- pkg_state(list(S = cell(""), A = cell("1 + 1")),
+                options = list(r = list(version = "9.9.9", minor = "9.9", platform = "test")))
+  r <- drive(s, ev_run(NULL, at(1)))
   expect_equal(r$state$file$header$r_version, "9.9.9")
 })
 
@@ -545,4 +630,27 @@ test_that("check_state() holds after every step across a full packages lifecycle
   # drive() already calls check_state() after every step() above; reaching
   # here without an error is the assertion.
   expect_true(TRUE)
+})
+
+# ---- Performance (09) -------------------------------------------------------
+
+test_that("notifications() stays under 30ms at 150 packages and 200 cells", {
+  n <- 150
+  nm <- sprintf("pkg%03d", seq_len(n))
+  lock <- new_lock(nm, rep("1.0.0", n), rep("CRAN", n))
+  cells <- c(list(S = cell("")),
+            setNames(lapply(seq_len(200), function(i) {
+              cell(sprintf("library(%s)\nx%d <- %d", nm[(i %% n) + 1], i, i))
+            }), sprintf("c%d", 1:200)))
+  s <- pkg_state(cells, lock = lock)
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, manifest(lock_versions(lock)), at(2)))
+  st <- r$state
+
+  old <- st
+  old$graph$learned <- list(x = 1)  # force the cheap-path check in notifications() to miss
+  times <- vapply(1:10, function(i) system.time(notifications(old, st))[["elapsed"]], numeric(1))
+  ms <- stats::median(times) * 1000
+  cat(sprintf("\n[timing] notifications() at 150 packages / 200 cells: median %.1f ms\n", ms))
+  expect_lt(ms, 30)
 })

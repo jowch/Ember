@@ -103,7 +103,8 @@ seen what would change.
 with \code{dry_run}, would be) deleted.
 
 \code{ember_repos()} returns an \code{ember_repos} value. \code{cache_dir()} returns a
-path (\code{tools::R_user_dir("ember", "cache")}).
+path: the \code{ember.cache_dir} option if set, otherwise
+\code{tools::R_user_dir("ember", "cache")}.
 }
 \details{
 \code{set_date()} changes the header's \code{snapshot} and the lock in one step and

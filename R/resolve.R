@@ -190,7 +190,10 @@ cell_packages <- function(graph, id) {
 #'     GitHub package, or archived before the date), `"off_date"` (a
 #'     locked version differs from the index at the snapshot date: the
 #'     lock was edited by hand or mixes dates; it is kept, and the problem
-#'     says to move the date or update the package).
+#'     says to move the date or update the package), `"not_in_index"` (`p`
+#'     is locked but no loaded index has it at all, so its own deps can't be
+#'     walked; it is kept at its locked version and the rest of the previous
+#'     lock is kept reachable rather than silently pruned).
 #'
 #' Pseudocode (mode "keep"):
 #'   locked <- lock entries by name
@@ -223,6 +226,15 @@ cell_packages <- function(graph, id) {
 resolve_lock <- function(roots, lock, indexes, needed, mode = c("keep", "fresh")) {
   mode <- match.arg(mode)
   locked <- if (identical(mode, "keep")) lock$entries else lock$entries[0, ]
+  # Unlike `locked`, `orig` is the previous lock's entries in *every* mode,
+  # including "fresh": a date move resolves every package as if it weren't
+  # locked (so its version can move), but an entry whose resolved version
+  # happens not to change still carried an `extra` field (lock.R: a SHA-256
+  # or other field a newer Ember wrote, kept verbatim across saves). Reading
+  # from `locked` alone, as the "keep" branch above does, would always see
+  # an empty table in "fresh" mode and silently drop that field even for a
+  # package whose version didn't move at all.
+  orig <- lock$entries
 
   out_name <- character(); out_version <- character()
   out_source <- character(); out_extra <- character()
@@ -245,8 +257,22 @@ resolve_lock <- function(roots, lock, indexes, needed, mode = c("keep", "fresh")
       e_source <- locked$source[[row]]
       e_extra <- locked$extra[[row]]
       if (is.null(hit) || !identical(hit$version, e_version)) {
-        deps <- if (is.null(hit)) character() else hit$deps
-        if (!is.null(hit)) {
+        if (is.null(hit)) {
+          # `p` is still locked, but no loaded index has it at all (archived,
+          # or hand-written with no repository Ember knows): there is no
+          # entry to read its deps from. Falling back to `character()` here
+          # used to drop every package `p` pulled in, silently, the moment
+          # nothing else in `roots` still needed them. Re-queuing the rest of
+          # the previous lock keeps them reachable instead; harmless when
+          # they really are still needed (the common case), and at worst
+          # keeps an unlocked leaf around one resolution longer than strictly
+          # necessary when `p` itself is later removed too.
+          deps <- setdiff(locked$name, p)
+          problems <- rbind(problems, package_problem(
+            "not_in_index", p,
+            sprintf("%s is locked at %s but is not in the index at this date", p, e_version)))
+        } else {
+          deps <- hit$deps
           problems <- rbind(problems, package_problem(
             "off_date", p,
             sprintf("%s is locked at %s but %s is current at this date", p, e_version, hit$version)))
@@ -266,8 +292,14 @@ resolve_lock <- function(roots, lock, indexes, needed, mode = c("keep", "fresh")
       problems <- rbind(problems, package_problem(
         "not_found", p, sprintf("%s was not found in any repository at this date", p)))
     } else {
+      orig_row <- which(orig$name == p)
+      extra <- if (length(orig_row) == 1 && identical(orig$version[[orig_row]], hit$version)) {
+        orig$extra[[orig_row]]
+      } else {
+        ""
+      }
       out_name <- c(out_name, p); out_version <- c(out_version, hit$version)
-      out_source <- c(out_source, hit$label); out_extra <- c(out_extra, "")
+      out_source <- c(out_source, hit$label); out_extra <- c(out_extra, extra)
       queue <- c(queue, hit$deps)
     }
   }

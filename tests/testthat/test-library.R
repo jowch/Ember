@@ -140,6 +140,33 @@ test_that("cached_index returns the identical object to two callers in one proce
   expect_true(identical(a, b))
 })
 
+test_that("cached_index doesn't answer for a cache that has no file, even if another cache does (07)", {
+  key <- paste0("cran/test-", uuid())
+  cacheA <- tempfile("cacheA-"); cacheB <- tempfile("cacheB-")
+  dir.create(file.path(cacheA, "indexes"), recursive = TRUE)
+  idxA <- structure(list(key = key, name = c("from-A")), class = "ember_repo_index")
+  saveRDS(idxA, index_rds_path(key, cacheA))
+
+  a <- cached_index(key, cacheA, url = "file:///repoA")
+  expect_identical(a$name, "from-A")
+
+  # Same key, a different cache with no file for it yet: the memo must not
+  # hand back cache A's parsed index just because the key string matches.
+  b <- cached_index(key, cacheB, url = "file:///repoB")
+  expect_null(b)
+  expect_false(file.exists(index_rds_path(key, cacheB)))
+})
+
+test_that("installer_command() doesn't perturb the server's own RNG state", {
+  lock <- new_lock("dplyr", "1.1.4", "CRAN")
+  cache <- tempfile("ember-cache-")
+  set.seed(1)
+  before <- .Random.seed
+  installer_command(lock, c(CRAN = "https://example.invalid"),
+                    file.path(cache, "libraries", "x"), cache = cache)
+  expect_identical(.Random.seed, before)
+})
+
 # ---- Jobs (62, 63) ----------------------------------------------------------
 
 test_that("two sessions asking for one index share one job and both get the event (62)", {
@@ -167,6 +194,32 @@ test_that("two sessions asking for one index share one job and both get the even
   expect_true(ok)
   expect_identical(done_of(nb1)[[1]]$status, 0L)
   expect_identical(done_of(nb2)[[1]]$status, 0L)
+})
+
+test_that("two installs with the same lock key but different library paths are separate jobs (07)", {
+  # Two caches give the same lock the same `key` (library_for()'s key is a
+  # hash of the lock text alone) but a different `path`. The shell keys the
+  # install job table on `path`, not `key` (run_effect()'s "install" case,
+  # shell.R), so these must not share one subprocess.
+  lock <- new_lock("dplyr", "1.1.4", "CRAN")
+  r <- list(minor = "4.6", platform = "testplat")
+  infoA <- library_for(lock, r, tempfile("cacheA-"))
+  infoB <- library_for(lock, r, tempfile("cacheB-"))
+  expect_identical(infoA$key, infoB$key)
+  expect_false(identical(infoA$path, infoB$path))
+
+  rscript <- file.path(R.home("bin"), "Rscript")
+  cmd <- list(command = rscript, args = c("--vanilla", "-e", "cat('line\n'); flush(stdout())"),
+             env = "current")
+  nbA <- fake_sub(); nbB <- fake_sub()
+  job_start(infoA$path, cmd, nbA, make_progress = function(line) NULL,
+           make_done = function(status, output) list(kind = "done"))
+  job_start(infoB$path, cmd, nbB, make_progress = function(line) NULL,
+           make_done = function(status, output) list(kind = "done"))
+  expect_identical(length(ls(jobs, all.names = TRUE)), 2L)
+
+  job_leave(infoA$path, nbA)
+  job_leave(infoB$path, nbB)
 })
 
 test_that("job_leave by the last subscriber kills the process (63)", {

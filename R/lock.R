@@ -61,6 +61,26 @@ is_valid_package_name <- function(x) {
   grepl("^[A-Za-z][A-Za-z0-9.]*[A-Za-z0-9]$", x)
 }
 
+#' Whether `x` parses as an R package version (`package_version()`). Used by
+#' `parse_lock_lines()` to catch a version field that isn't one at all (a
+#' hand-edited "latest", say): such a line used to pass through as an
+#' ordinary entry, and later crashed `resolve_lock()`/`lock_diff()`'s own
+#' `package_version()` comparisons -- not a problem row shown to the user,
+#' a hard stop deep in `step()` over one hand-edited character.
+is_valid_version <- function(x) {
+  isTRUE(tryCatch({ package_version(x); TRUE }, error = function(e) FALSE))
+}
+
+#' Whether a lock line's version field is valid for its source: a GitHub
+#' entry's "version" is a commit SHA (`"3f2a1c9"`), which is never a valid
+#' `package_version()` and isn't compared as one anywhere; any non-empty
+#' field is accepted there. A CRAN or Bioc entry's version must parse as
+#' one (`is_valid_version()`), since `resolve_lock()` and `lock_diff()`
+#' both call `package_version()` on it.
+valid_version_field <- function(version, source) {
+  if (startsWith(source, "github:")) nzchar(version) else is_valid_version(version)
+}
+
 # ---- The file block ----------------------------------------------------------
 
 #' Lock block lines (without the `# ` prefix) -> `list(lock, problems)`.
@@ -79,7 +99,8 @@ parse_lock_lines <- function(lines) {
   for (line in lines) {
     fields <- strsplit(line, " ", fixed = TRUE)[[1]]
     pkg <- if (length(fields) >= 1) fields[[1]] else NA_character_
-    ok <- length(fields) >= 3 && is_valid_package_name(pkg) && nchar(fields[[2]]) > 0
+    ok <- length(fields) >= 3 && is_valid_package_name(pkg) &&
+      valid_version_field(fields[[2]], fields[[3]])
     if (ok && pkg %in% seen) {
       unparsed <- c(unparsed, line)
       problems <- rbind(problems, package_problem(

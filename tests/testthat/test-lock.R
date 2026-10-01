@@ -27,6 +27,14 @@ test_that("a malformed line goes to unparsed with a lock_line problem and is wri
   expect_equal(format_lock_lines(r$lock), c("dplyr 1.1.4 CRAN", bad))
 })
 
+test_that("a version field that isn't a version goes to unparsed with a lock_line problem (10)", {
+  bad <- "dplyr latest CRAN"
+  r <- parse_lock_lines(c("cli 3.6.5 CRAN", bad, "glue 1.8.0 CRAN"))
+  expect_equal(r$lock$entries$name, c("cli", "glue"))
+  expect_equal(r$lock$unparsed, bad)
+  expect_equal(r$problems$kind[r$problems$package == "dplyr"], "lock_line")
+})
+
 test_that("a duplicate name keeps the first line and reports the second", {
   r <- parse_lock_lines(c("dplyr 1.1.4 CRAN", "dplyr 1.2.0 CRAN"))
   expect_equal(r$lock$entries$name, "dplyr")

@@ -179,6 +179,11 @@ schedule <- function(state) {
     state$worker$running <- NULL
     state$worker$interrupt <- NULL
     state$worker$restart_offered <- FALSE
+    # The worker that answers `gen` has nothing loaded yet; a stale value
+    # here (left by whatever worker just stopped) would read as a version
+    # conflict the moment the new one reports anything, restarting it for a
+    # phantom reason (packages-core.R, `switch_library()`'s mismatch check).
+    state$worker$loaded <- character()
     return(list(state = state,
                effects = list(fx_start_worker(gen, state$packages$active$path, dirname(state$path)))))
   }
@@ -434,11 +439,22 @@ missing_file_reads <- function(state) {
 reduce_allow <- function(state, event) {
   reply <- isTRUE(state$allowed)
   state$allowed <- TRUE
+  state <- record_r_version(state)
+  list(state = state, effects = list(), reply = reply)
+}
+
+#' Record the running R version into the header when it differs
+#' (design.md, Decisions: "records the new version once the user runs the
+#' notebook on it"), so a notebook written on one R and reopened on another
+#' doesn't silently claim the wrong one. Shared by `reduce_allow()` (the
+#' "Allow execution" button) and `reduce_run()` (asking to run cells also
+#' allows execution, and must record the version the same way allow does).
+record_r_version <- function(state) {
   r_version <- state$options$r$version
   if (!is.null(r_version) && !identical(state$file$header$r_version, r_version)) {
     state$file$header$r_version <- r_version
   }
-  list(state = state, effects = list(), reply = reply)
+  state
 }
 
 #' Normalise code the way the file format requires: trailing blank lines
@@ -589,6 +605,7 @@ reduce_run <- function(state, event) {
     return(list(state = state, effects = list(), reply = refused("notebook is read-only")))
   }
   state$allowed <- TRUE
+  state <- record_r_version(state)
   if (identical(state$packages$target$status, "failed")) {
     state$packages$target$status <- "missing"
     state$packages$target$message <- NULL
@@ -667,14 +684,24 @@ restart_worker <- function(state, reason = NULL) {
 #' Shut down: kill the worker, close the shell. Reply: `!allowed`.
 #' An install still running is left for the shell's job table (library.R):
 #' this session no longer cares (`fx_cancel_install`), but another session
-#' wanting the same library keeps the job alive.
+#' wanting the same library keeps the job alive. Any index fetch still
+#' "fetching" gets the same treatment (`fx_cancel_fetch_index`): leaving
+#' this session's subscription in place would keep a closed session
+#' referenced in the job's subscriber list, and the fetch running (or its
+#' subprocess never reaped) for no subscriber that can still hear about it.
 reduce_shutdown <- function(state, event) {
   reply <- !isTRUE(state$allowed)
   w <- state$worker
   effects <- list()
   if (w$status %in% c("starting", "ready", "busy")) effects <- list(fx_kill_worker(w$gen))
   if (!is.null(state$packages$install)) {
-    effects <- c(effects, list(fx_cancel_install(state$packages$install$token, state$packages$install$key)))
+    effects <- c(effects, list(fx_cancel_install(state$packages$install$token, state$packages$install$key,
+                                                 state$packages$install$path)))
+  }
+  fetching <- Filter(function(k) identical(state$packages$indexes[[k]]$status, "fetching"),
+                     names(state$packages$indexes))
+  for (k in fetching) {
+    effects <- c(effects, list(fx_cancel_fetch_index(k, repo_url(state$options$repos, k))))
   }
   effects <- c(effects, list(fx_close()))
   state$closed <- TRUE
@@ -766,6 +793,10 @@ reduce_wk_failed <- function(state, event) {
   state$worker$running <- NULL
   state$worker$exit <- list(status = NA_integer_, message = event$message)
   state$pending <- character()
+  # No process ever started: whatever `loaded` recorded belongs to a worker
+  # that no longer exists, and would otherwise look like a conflict against
+  # `active` the moment any later event runs `switch_library()`.
+  state$worker$loaded <- character()
   list(state = state, effects = list(), reply = NULL)
 }
 
@@ -1034,6 +1065,12 @@ reduce_wk_exited <- function(state, event) {
   state$worker$running <- NULL
   state$worker$restart_offered <- FALSE
   state$worker$exit <- list(status = event$status, message = event$message)
+  # A fresh worker has nothing loaded; leaving the old process's `loaded`
+  # here would make the next worker's actual (empty) namespace set look
+  # like a version conflict the moment it reports anything, restarting it
+  # for a conflict that doesn't exist and dropping whatever run the user
+  # just asked for.
+  state$worker$loaded <- character()
   list(state = state, effects = list(), reply = NULL)
 }
 

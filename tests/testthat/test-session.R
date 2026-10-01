@@ -281,3 +281,30 @@ test_that("worker_output_pipe_drained", {
   run_cells(nb, wait = TRUE, timeout = 30)
   expect_identical(notebook_snapshot(nb)$cells[[2]]$status, "ok")
 })
+
+test_that("clean() never deletes a library an open notebook holds active, through a real open_notebook() (10)", {
+  cache <- tempfile("ember-cache-")
+  dir.create(cache)
+  path <- write_session_notebook(list(S = cell("")))
+  nb <- open_notebook(path, cache = cache)
+
+  info <- nb$state$packages$active
+  dir.create(info$path, recursive = TRUE, showWarnings = FALSE)
+  manifest <- list(lock_lines = character(), r = r_info(), installed = character(),
+                   exports = list(), cache_entries = character(), created = Sys.time() - 1000)
+  saveRDS(manifest, file.path(info$path, "ember-library.rds"))
+  marker <- file.path(info$path, "ember-last-used")
+  file.create(marker)
+  Sys.setFileTime(marker, Sys.time() - 90 * 86400)
+
+  # Old enough that clean() would otherwise take it; the open session holds
+  # it as `active`, and `open_notebook()` wired that fact into
+  # `active_libraries` (library.R) with no manual `set_active_libraries()`
+  # call from this test.
+  d <- clean(max_age = 60, cache = FALSE, dry_run = TRUE, dir = cache)
+  expect_false(info$path %in% d$path)
+
+  close_notebook(nb)
+  d2 <- clean(max_age = 60, cache = FALSE, dry_run = TRUE, dir = cache)
+  expect_true(info$path %in% d2$path)
+})

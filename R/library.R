@@ -25,7 +25,9 @@
 # renv's own cache writes use renv's locking.
 
 #' @export
-cache_dir <- function() tools::R_user_dir("ember", "cache")
+cache_dir <- function() {
+  getOption("ember.cache_dir", tools::R_user_dir("ember", "cache"))
+}
 
 #' What the session needs to know about the running R:
 #' `list(version = "4.6.1", minor = "4.6", platform = R.version$platform)`.
@@ -60,13 +62,23 @@ index_label_of_key <- function(key) {
 #' gets the same R object for one key. Called by the shell on
 #' `fx_fetch_index` before it starts a download: a cached index arrives in
 #' the same drain, with no subprocess.
-cached_index <- function(key, cache = cache_dir()) {
-  hit <- index_memo[[key]]
+#'
+#' The memo is keyed by `url` and `cache` as well as `key`: `key` alone
+#' (a date string like `"cran/2026-09-01"`) is shared by any repository that
+#' happens to resolve that date, and by any cache directory a test or
+#' another Ember process points at. Keying the memo by `key` alone meant
+#' one session's fetch from one repository, into one cache, could hand its
+#' parsed index to another session reading a *different* cache (or a
+#' different repository) for the same key, before that other cache ever had
+#' a file on disk -- the memo answered for a read that should have missed.
+cached_index <- function(key, cache = cache_dir(), url = NULL) {
+  memo_key <- paste(key, url %||% "", cache, sep = "\u0001")
+  hit <- index_memo[[memo_key]]
   if (!is.null(hit)) return(hit)
   path <- index_rds_path(key, cache)
   if (!file.exists(path)) return(NULL)
   idx <- tryCatch(readRDS(path), error = function(e) NULL)
-  if (!is.null(idx)) index_memo[[key]] <- idx
+  if (!is.null(idx)) index_memo[[memo_key]] <- idx
   idx
 }
 index_memo <- new.env(parent = emptyenv())
@@ -176,8 +188,15 @@ installer_script <- function() {
 #' library must match.
 installer_command <- function(lock, repos, path, cache = cache_dir()) {
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
-  staging <- paste0(path, ".staging-", Sys.getpid(), "-",
-                    paste(sample(c(letters, 0:9), 6, replace = TRUE), collapse = ""))
+  # `tempfile()`'s own unique suffix, not `sample()`: this runs in the
+  # server process, and `sample()` would perturb its `.Random.seed` on
+  # every install, which could silently change the next random draw a
+  # running cell makes (randomness must depend only on the user's own
+  # `set.seed()`, never on unrelated server bookkeeping). `tempfile()`
+  # generates its uniqueness from the process id and a session-specific
+  # counter, not from R's own RNG (confirmed: it leaves `.Random.seed`
+  # untouched).
+  staging <- paste0(path, ".staging-", Sys.getpid(), "-", basename(tempfile()))
   plan <- list(lock_lines = format_lock_lines(lock), repos = repos, r = r_info(),
               staging = staging, path = path, cache = cache)
   plan_path <- tempfile("ember-install-plan-", fileext = ".rds")
@@ -286,8 +305,12 @@ finish_library <- function(staging, path, manifest) {
 
 #' Subprocess jobs the shell runs for effects: index fetches and installs.
 #'
-#' A process-wide table, keyed by job key (the repo key, or the library
-#' key), so two sessions asking for the same index or the same library
+#' A process-wide table, keyed by a job key that identifies the actual
+#' subprocess two sessions could share: the full `(repo key, url, cache)`
+#' for an index fetch (`index_job_key()`), and the library's filesystem
+#' `path` for an install (not its `key`: that's a hash of the lock text
+#' alone, the same for two sessions whose libraries live under different
+#' caches). Two sessions asking for the same index or the same library
 #' share one subprocess and both get the result: the only shared,
 #' mutable thing step 3 adds, and it holds no decisions, only processes and
 #' the list of `(nb, token)` to tell. Polled from each session's existing
@@ -302,6 +325,13 @@ finish_library <- function(staging, path, manifest) {
 #' a future caller wants to poll on behalf of one session only; it isn't
 #' read here.
 jobs <- new.env(parent = emptyenv())
+
+#' The job-table key for an index fetch: `key` alone would let two sessions
+#' fetching the same date from different repositories, or into different
+#' cache directories, join the same download and each get an index that
+#' doesn't match their own `url`/`cache` (the same ambiguity `cached_index()`
+#' guards against in its own memo).
+index_job_key <- function(key, url, cache) paste(key, url, cache, sep = "\u0001")
 
 #' Start, or join a running job with the same key. `make_progress(line)`
 #' -> event or `NULL`; `make_done(status, output)` -> event. Each

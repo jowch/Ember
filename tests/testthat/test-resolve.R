@@ -64,6 +64,25 @@ test_that("a locked version that differs from the index gives off_date and is ke
   expect_equal(r$problems$kind[r$problems$package == "cli"], "off_date")
 })
 
+test_that("a locked package missing from the index (archived) keeps its own deps reachable (03)", {
+  lock <- resolve_lock("another", empty_lock(), list("cran/2026-09-01" = idx1),
+                       needed = "cran/2026-09-01")$lock
+  expect_setequal(lock$entries$name, c("another", "standalone"))
+
+  # The same date's index with "another" removed (archived, or a
+  # hand-written line increment 1 has no index for).
+  keep <- idx1$name != "another"
+  idx_no_another <- new_repo_index(idx1$key, idx1$label, idx1$name[keep], idx1$version[keep],
+                                   idx1$deps[keep], idx1$needs_compilation[keep])
+
+  r <- resolve_lock(c("another", "glue"), lock, list("cran/2026-09-01" = idx_no_another),
+                    needed = "cran/2026-09-01")
+  expect_true(r$complete)
+  expect_setequal(r$lock$entries$name, c("another", "standalone", "glue"))
+  expect_equal(r$lock$entries$version[r$lock$entries$name == "another"], "0.5.0")
+  expect_equal(r$problems$kind[r$problems$package == "another"], "not_in_index")
+})
+
 test_that("a recommended package reached as a dependency (Matrix) is locked", {
   r <- resolve_lock("spatial", empty_lock(), list("cran/2026-09-01" = idx1),
                     needed = "cran/2026-09-01")
@@ -77,6 +96,18 @@ test_that("a missing index makes the result incomplete, names the key in fetch a
   expect_false(r$complete)
   expect_equal(r$fetch, "cran/2026-09-01")
   expect_identical(r$lock, base)
+})
+
+test_that("mode fresh keeps a lock row's extra field when its version didn't change", {
+  # glue is 1.8.0 on both fixture dates; dplyr moves 1.1.4 -> 1.1.5.
+  old <- resolve_lock("dplyr", empty_lock(), list("cran/2026-09-01" = idx1),
+                      needed = "cran/2026-09-01")$lock
+  old$entries$extra[old$entries$name == "glue"] <- "sha256:abcd"
+  new <- resolve_lock("dplyr", old, list("cran/2026-09-30" = idx2),
+                      needed = "cran/2026-09-30", mode = "fresh")
+  expect_true(new$complete)
+  expect_equal(new$lock$entries$extra[new$lock$entries$name == "glue"], "sha256:abcd")
+  expect_equal(new$lock$entries$extra[new$lock$entries$name == "dplyr"], "")
 })
 
 test_that("mode fresh at a later date moves every version and lock_diff lists them", {
