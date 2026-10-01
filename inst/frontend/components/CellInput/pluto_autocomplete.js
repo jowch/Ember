@@ -682,8 +682,11 @@ const superscript_subscript_completion = () => {
  */
 export let pluto_autocomplete = ({
     request_autocomplete,
-    request_special_symbols,
-    request_packages,
+    // Callers may omit these two (Ember has neither Julia packages nor LaTeX/emoji
+    // symbol completion); default to no-op so the completion sources that call them
+    // unconditionally (e.g. on a stray backslash) don't throw.
+    request_special_symbols = () => Promise.resolve(null),
+    request_packages = () => Promise.resolve([]),
     on_update_doc_query,
     request_unsubmitted_global_definitions,
     cell_id,

@@ -45,7 +45,8 @@ import {
 } from "../imports/CodemirrorPlutoSetup.js"
 
 import { markdown, html as htmlLang, javascript, sqlLang, python, julia_mixed } from "./CellInput/mixedParsers.js"
-import { julia } from "../imports/CodemirrorPlutoSetup.js"
+import { r } from "../imports/CodemirrorPlutoSetup.js"
+import { EMBER } from "../common/EmberFlags.js"
 import { pluto_autocomplete } from "./CellInput/pluto_autocomplete.js"
 import { NotebookpackagesFacet, pkgBubblePlugin } from "./CellInput/pkg_bubble_plugin.js"
 import { ARBITRARY_INDENT_LINE_WRAP_LIMIT, awesome_line_wrapping, get_leading_indent } from "./CellInput/awesome_line_wrapping.js"
@@ -104,7 +105,7 @@ const common_style_tags = [
 
 export const pluto_syntax_colors_julia = HighlightStyle.define(common_style_tags, {
     all: { color: `var(--cm-color-editor-text)` },
-    scope: julia().language,
+    scope: r().language,
 })
 
 export const pluto_syntax_colors_javascript = HighlightStyle.define(common_style_tags, {
@@ -277,7 +278,7 @@ export const CellInput = ({
     const dom_node_ref = useRef(/** @type {HTMLElement?} */ (null))
     const remote_code_ref = useRef(/** @type {string?} */ (null))
 
-    let nbpkg_compartment = useCompartment(newcm_ref, NotebookpackagesFacet.of(nbpkg))
+    let nbpkg_compartment = useCompartment(newcm_ref, NotebookpackagesFacet.of(EMBER ? null : nbpkg))
     let global_definitions_compartment = useCompartment(newcm_ref, GlobalDefinitionsFacet.of(global_definition_locations))
     let highlighted_line_compartment = useCompartment(newcm_ref, HighlightLineFacet.of(cm_highlighted_line))
     let highlighted_range_compartment = useCompartment(newcm_ref, HighlightRangeFacet.of(cm_highlighted_range))
@@ -605,7 +606,7 @@ export const CellInput = ({
                     // TODO Use https://codemirror.net/6/docs/ref/#state.Prec when added to pluto-codemirror-setup
                     prevent_holding_a_key_from_doing_things_across_cells,
 
-                    pkgBubblePlugin({ pluto_actions, notebook_id_ref }),
+                    ...(!EMBER ? [pkgBubblePlugin({ pluto_actions, notebook_id_ref })] : []),
                     ScopeStateField,
                     syntaxHighlighting(pluto_syntax_colors_julia),
                     syntaxHighlighting(pluto_syntax_colors_html),
@@ -634,7 +635,7 @@ export const CellInput = ({
                     highlightSelectionMatches({ minSelectionLength: 2, wholeWords: true }),
                     bracketMatching(),
                     docs_updater,
-                    unsubmitted_globals_updater,
+                    ...(!EMBER ? [unsubmitted_globals_updater] : []),
                     tab_help_plugin,
                     // Remove selection on blur
                     EditorView.domEventHandlers({
@@ -674,7 +675,7 @@ export const CellInput = ({
                     EditorState.tabSize.of(4),
                     indentUnitField,
                     indentUnit.from(indentUnitField),
-                    ...(get_settings().CM_MIXED_PARSER
+                    ...(get_settings().CM_MIXED_PARSER && !EMBER
                         ? [
                               julia_mixed(),
                               markdown({
@@ -687,10 +688,10 @@ export const CellInput = ({
                           ]
                         : [
                               //
-                              julia(),
+                              r(),
                           ]),
-                    go_to_definition_plugin,
-                    AiSuggestionPlugin(),
+                    ...(!EMBER ? [go_to_definition_plugin] : []),
+                    ...(!EMBER ? [AiSuggestionPlugin()] : []),
                     pluto_autocomplete({
                         request_autocomplete: async ({ query, query_full }) => {
                             let response = await timeout_promise(
@@ -708,8 +709,12 @@ export const CellInput = ({
                                 too_long: message.too_long,
                             }
                         },
-                        request_packages: () => pluto_actions.send("all_registered_package_names").then(({ message }) => message.results),
-                        request_special_symbols: () => pluto_actions.send("complete_symbols").then(({ message }) => message),
+                        ...(!EMBER
+                            ? {
+                                  request_packages: () => pluto_actions.send("all_registered_package_names").then(({ message }) => message.results),
+                                  request_special_symbols: () => pluto_actions.send("complete_symbols").then(({ message }) => message),
+                              }
+                            : {}),
                         on_update_doc_query,
                         request_unsubmitted_global_definitions: () => pluto_actions.get_unsubmitted_global_definitions(),
                         cell_id,
@@ -1049,13 +1054,14 @@ const InputContextMenu = ({
                           setOpen=${setOpen}
                       />
 
-                      <${InputContextMenuItem}
+                      ${!EMBER &&
+                      html`<${InputContextMenuItem}
                           title=${running_disabled ? t("t_enable_and_run_cell") : t("t_disable_this_cell_and_all_cells_that_depend_on_it")}
                           tag=${running_disabled ? "enable_cell" : "disable_cell"}
                           contents=${running_disabled ? html`<b>${t("t_enable_cell_action")}</b>` : html`${t("t_disable_cell_action")}`}
                           onClick=${toggle_running_disabled}
                           setOpen=${setOpen}
-                      />
+                      />`}
                       ${any_logs
                           ? html`<${InputContextMenuItem}
                                 title=${show_logs ? t("t_show_logs_action_description") : t("t_hide_logs_action_description")}
@@ -1075,13 +1081,14 @@ const InputContextMenu = ({
                             />`
                           : null}
 
-                      <${InputContextMenuItem}
+                      ${!EMBER &&
+                      html`<${InputContextMenuItem}
                           title=${skip_as_script ? t("t_enable_in_file_action_description") : t("t_disable_in_file_action_description")}
                           tag=${skip_as_script ? "run_as_script" : "skip_as_script"}
                           contents=${skip_as_script ? html`<b>${t("t_enable_in_file_action")}</b>` : html`${t("t_disable_in_file_action")}`}
                           onClick=${toggle_skip_as_script}
                           setOpen=${setOpen}
-                      />
+                      />`}
 
                       ${get_settings().AI_EDITOR_FEATURES && pluto_actions.get_session_options?.()?.server?.enable_ai_editor_features !== false
                           ? html`<${InputContextMenuItem}

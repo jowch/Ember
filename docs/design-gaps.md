@@ -36,6 +36,8 @@ done; clear out ticked items at each release.
 
 ## UI (build step 4)
 
+- [ ] The cell menu still offers Pluto's "ask AI", and the footer's feedback form still shows (inert: nothing is sent) — improvised
+
 - [ ] Pluto frontend fork, protocol in R, removals, R adaptations, theme — missing
 - [ ] The R grammar wired into CodeMirror — missing
 - [ ] Rich outputs in the browser: widget files as static paths, table and tree views, terminal colours — missing

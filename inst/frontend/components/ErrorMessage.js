@@ -9,6 +9,7 @@ import { ansi_to_html } from "../imports/AnsiUp.js"
 import { FixWithAIButton } from "./FixWithAIButton.js"
 import { localized_list_htl, t, th } from "../common/lang.js"
 import { get_settings } from "./Settings.js"
+import { EMBER } from "../common/EmberFlags.js"
 
 const nbsp = "\u00A0"
 
@@ -429,9 +430,10 @@ export const ErrorMessage = ({ msg, stacktrace, plain_error, cell_id }) => {
 
                         return html`<p>${th("t_cyclic_references_among", { symbols: symbol_interp })}</p>`
                     } else {
-                        // This must be the hint.
-
-                        return html`<p>${th("t_combine_cells_begin_block")}</p>`
+                        // This must be the hint. Upstream Pluto always rewrites it as Julia's
+                        // "combine into a begin ... end block" suggestion; Ember's server already
+                        // put the engine's own suggested fix in this line, so show it as given.
+                        return EMBER ? html`<p>${line}</p>` : html`<p>${th("t_combine_cells_begin_block")}</p>`
                     }
                 }),
         },
@@ -459,7 +461,8 @@ export const ErrorMessage = ({ msg, stacktrace, plain_error, cell_id }) => {
 
                         return html`<p>${th("t_multiple_definitions_for", { symbols: symbol_interp })}</p>`
                     } else {
-                        return html`<p>${th("t_combine_cells_begin_block")}</p>`
+                        // Same as above: Ember's server already supplies the suggested fix text.
+                        return EMBER ? html`<p>${line}</p>` : html`<p>${th("t_combine_cells_begin_block")}</p>`
                     }
                 }),
         },

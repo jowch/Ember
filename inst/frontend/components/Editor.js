@@ -4,6 +4,7 @@ import immer, { applyPatches, produceWithPatches } from "../imports/immer.js"
 import _ from "../imports/lodash-es.js"
 
 import { empty_notebook_state, is_editor_embedded_inside_editor, set_disable_ui_css } from "../editor.js"
+import { EMBER } from "../common/EmberFlags.js"
 import { create_pluto_connection, ws_address_from_base } from "../common/PlutoConnection.js"
 import { init_feedback } from "../common/Feedback.js"
 import { serialize_cells, deserialize_cells, detect_deserializer } from "../common/Serialization.js"
@@ -950,7 +951,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
             this.client.send("complete", { query: "sq" }, { notebook_id: this.state.notebook.notebook_id })
             this.client.send("complete", { query: "\\sq" }, { notebook_id: this.state.notebook.notebook_id })
 
-            setTimeout(init_feedback, 2 * 1000) // 2 seconds - load feedback a little later for snappier UI
+            if (!EMBER) setTimeout(init_feedback, 2 * 1000) // 2 seconds - load feedback a little later for snappier UI
         }
 
         const on_connection_status = (val, hopeless) => {
@@ -1754,15 +1755,16 @@ ${t("t_key_autosave_description")}`
                         warn_about_untrusted_code=${warn_about_untrusted_code}
                     />
                     
-                    <${RecordingUI} 
+                    ${!EMBER &&
+                    html`<${RecordingUI}
                         notebook_name=${notebook.shortpath}
                         recording_waiting_to_start=${this.state.recording_waiting_to_start}
                         set_recording_states=${({ is_recording, recording_waiting_to_start }) => this.setState({ is_recording, recording_waiting_to_start })}
                         is_recording=${this.state.is_recording}
                         patch_listeners=${this.patch_listeners}
                         export_url=${this.export_url}
-                    />
-                    <${RecordingPlaybackUI} 
+                    />`}
+                    <${RecordingPlaybackUI}
                         launch_params=${launch_params}
                         initializing=${this.state.initializing}
                         apply_notebook_patches=${this.apply_notebook_patches}
@@ -1774,23 +1776,26 @@ ${t("t_key_autosave_description")}`
                             )}
                     />
                     <${ViewCodeOrLaunchBackendButtons} editor=${this} launch_params=${launch_params} status=${status} />
-                    <${FrontMatterInput}
+                    ${!EMBER &&
+                    html`<${FrontMatterInput}
                         filename=${notebook.shortpath}
-                        remote_frontmatter=${notebook.metadata?.frontmatter} 
+                        remote_frontmatter=${notebook.metadata?.frontmatter}
                         set_remote_frontmatter=${(newval) =>
                             this.actions.update_notebook((nb) => {
                                 nb.metadata["frontmatter"] = newval
-                            })} 
-                    />
-                    <${ProjectTomlEditor}
+                            })}
+                    />`}
+                    ${!EMBER &&
+                    html`<${ProjectTomlEditor}
                         notebook=${notebook}
                         process_waiting_for_permission=${status.process_waiting_for_permission}
-                    />
+                    />`}
                     <${ConfirmBeforeLongRuntime} />
-                    <${PlutoLandUpload}
+                    ${!EMBER &&
+                    html`<${PlutoLandUpload}
                         notebook_id=${notebook.notebook_id}
                         notebookexport_url=${this.export_url("notebookexport")}
-                    />
+                    />`}
                     <${BigPkgTerminal}
                         notebook=${notebook}
                     />
@@ -1874,7 +1879,7 @@ ${t("t_key_autosave_description")}`
                             })
                         }}
                     />
-                    <${SlideControls} />
+                    ${!EMBER && html`<${SlideControls} />`}
                     <footer>
                         <div id="info">
                             <a class="footer-button" href="javascript:;" target="_self" onClick=${() => window.dispatchEvent(new CustomEvent("pluto open settings"))}>${th(

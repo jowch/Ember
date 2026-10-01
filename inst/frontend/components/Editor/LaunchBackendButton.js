@@ -7,6 +7,7 @@ import immer, { applyPatches, produceWithPatches } from "../../imports/immer.js"
 import _ from "../../imports/lodash-es.js"
 import { open_pluto_popup } from "../../common/open_pluto_popup.js"
 import { th } from "../../common/lang.js"
+import { EMBER } from "../../common/EmberFlags.js"
 
 /**
  * @param {{
@@ -29,6 +30,7 @@ const EditorLaunchBackendButton = ({ editor, launch_params, status }) => {
             // Don't allow a misconfigured environment to stop offering other backends
         }
     } catch (e) {}
+    if (EMBER) return null
     if (status == null) return null
     if (status.offer_local)
         return html`<${RunLocalButton}

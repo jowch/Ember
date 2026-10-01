@@ -9,6 +9,7 @@ import { useEventListener } from "../common/useEventListener.js"
 import { t, th } from "../common/lang.js"
 import { NotifyWhenDone } from "./NotifyWhenDone.js"
 import { get_settings } from "./Settings.js"
+import { EMBER } from "../common/EmberFlags.js"
 
 /**
  * @typedef PanelTabName
@@ -115,7 +116,8 @@ export let BottomRightPanel = ({
         <aside id="helpbox-wrapper" ref=${container_ref}>
             <pluto-helpbox class=${cl({ hidden, [`helpbox-${open_tab ?? hidden}`]: true })}>
                 <header translate=${false}>
-                    <button
+                    ${!EMBER &&
+                    html`<button
                         title=${t("t_panel_docs_description")}
                         class=${cl({
                             "helpbox-tab-key": true,
@@ -130,7 +132,7 @@ export let BottomRightPanel = ({
                     >
                         <span class="tabicon"></span>
                         <span class="tabname">${t("t_panel_docs")}</span>
-                    </button>
+                    </button>`}
                     <button
                         title=${t("t_panel_status")}
                         class=${cl({
@@ -174,7 +176,7 @@ export let BottomRightPanel = ({
                                   <span></span>
                               </button>`}
                 </header>
-                ${open_tab === "docs"
+                ${!EMBER && open_tab === "docs"
                     ? html`<${LiveDocsTab}
                           focus_on_open=${focus_docs_on_open_ref.current}
                           desired_doc_query=${desired_doc_query}

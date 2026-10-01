@@ -1,6 +1,7 @@
 import immer from "../imports/immer.js"
 import { timeout_promise, ws_address_from_base } from "./PlutoConnection.js"
 import { with_query_params } from "./URLTools.js"
+import { EMBER } from "./EmberFlags.js"
 
 export const BackendLaunchPhase = {
     wait_for_user: 0,
@@ -84,8 +85,12 @@ export const request_binder = (build_url, { on_log }) =>
     })
 
 // view stats on https://stats.plutojl.org/
-export const count_stat = (page) =>
-    fetch(`https://stats.plutojl.org/count?p=/${page}&s=${screen.width},${screen.height},${devicePixelRatio}#skip_sw`, { cache: "no-cache" }).catch(() => {})
+export const count_stat = (page) => {
+    if (EMBER) return
+    return fetch(`https://stats.plutojl.org/count?p=/${page}&s=${screen.width},${screen.height},${devicePixelRatio}#skip_sw`, { cache: "no-cache" }).catch(
+        () => {}
+    )
+}
 
 /**
  * Start a 'headless' binder session, open our notebook in it, and connect to it.

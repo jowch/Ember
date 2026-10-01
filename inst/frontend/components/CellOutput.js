@@ -26,7 +26,7 @@ import { pluto_syntax_colors_julia } from "./CellInput.js"
 
 import hljs from "../imports/highlightjs.js"
 import { julia_mixed } from "./CellInput/mixedParsers.js"
-import { julia } from "../imports/CodemirrorPlutoSetup.js"
+import { julia, r } from "../imports/CodemirrorPlutoSetup.js"
 import { SafePreviewSanitizeMessage } from "./SafePreviewUI.js"
 import lodashLibrary from "../imports/lodash-es.js"
 import { t } from "../common/lang.js"
@@ -644,7 +644,7 @@ export let highlight = (code_element, language) => {
     if (code_element.children.length === 0) {
         if (
             ENABLE_CM_HIGHLIGHTING &&
-            language === "julia" &&
+            language === "r" &&
             // CodeMirror does not want to render inside a `<details>`...
             // I tried to debug this, it does not happen on a clean webpage with the same CM versions:
             // https://glitch.com/edit/#!/wobbly-sweet-fibre?path=script.js%3A51%3A76
@@ -665,7 +665,7 @@ export let highlight = (code_element, language) => {
                         syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
                         EditorState.tabSize.of(4),
                         // TODO Other languages possibly?
-                        ...(language === "julia" ? [get_settings().CM_MIXED_PARSER ? julia_mixed() : julia()] : []),
+                        ...(language === "r" ? [r()] : []),
                         EditorView.lineWrapping,
                         EditorView.editable.of(false),
                     ].filter((x) => x != null),

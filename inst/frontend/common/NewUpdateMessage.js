@@ -1,5 +1,8 @@
-export const new_update_message = (client) =>
-    fetch_pluto_releases()
+import { EMBER } from "./EmberFlags.js"
+
+export const new_update_message = (client) => {
+    if (EMBER) return Promise.resolve()
+    return fetch_pluto_releases()
         .then((releases) => {
             const local = client.version_info.pluto
             const latest = releases[releases.length - 1].tag_name
@@ -26,6 +29,7 @@ export const new_update_message = (client) =>
             // Having this as a uncaught promise broke the frontend tests for me
             // so I'm just swallowing the error explicitly - DRAL
         })
+}
 
 const fetch_pluto_releases = async () => {
     let response = await fetch("https://api.github.com/repos/JuliaPluto/Pluto.jl/releases", {
