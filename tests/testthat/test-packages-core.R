@@ -634,7 +634,10 @@ test_that("check_state() holds after every step across a full packages lifecycle
 
 # ---- Performance (09) -------------------------------------------------------
 
-test_that("notifications() stays under 30ms at 150 packages and 200 cells", {
+# Times packages_view() itself, which is what regressed: one data frame per
+# lock row took 19.5 ms at 150 packages, the column-wise version 1.5 ms. The
+# bound leaves room for slow CI machines and still catches the old way.
+test_that("packages_view() is built column-wise: under 8 ms at 150 packages", {
   n <- 150
   nm <- sprintf("pkg%03d", seq_len(n))
   lock <- new_lock(nm, rep("1.0.0", n), rep("CRAN", n))
@@ -647,10 +650,8 @@ test_that("notifications() stays under 30ms at 150 packages and 200 cells", {
   r <- drive(r$state, ev_library_checked(r$state$packages$target$key, manifest(lock_versions(lock)), at(2)))
   st <- r$state
 
-  old <- st
-  old$graph$learned <- list(x = 1)  # force the cheap-path check in notifications() to miss
-  times <- vapply(1:10, function(i) system.time(notifications(old, st))[["elapsed"]], numeric(1))
+  times <- vapply(1:20, function(i) system.time(packages_view(st))[["elapsed"]], numeric(1))
   ms <- stats::median(times) * 1000
-  cat(sprintf("\n[timing] notifications() at 150 packages / 200 cells: median %.1f ms\n", ms))
-  expect_lt(ms, 30)
+  cat(sprintf("\n[timing] packages_view() at 150 packages: median %.1f ms\n", ms))
+  expect_lt(ms, 8)
 })
