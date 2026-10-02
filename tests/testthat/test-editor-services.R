@@ -19,6 +19,16 @@ test_that("completion_context() (49)", {
   expect_null(ctx3$namespace)
 })
 
+test_that("the fallback offers nothing after $ or @, where only the worker knows the fields", {
+  for (q in c("df$", "df$m", "obj@", "x <- df $ ")) {
+    ctx <- completion_context(q)
+    expect_true(ctx$field, info = q)
+    expect_length(fallback_completions(list(), ctx, base = c("mean", "max"))$items, 0)
+  }
+  expect_false(completion_context("me")$field)
+  expect_false(completion_context("stats::me")$field)
+})
+
 #' A minimal `state` for `fallback_completions()`: `fil_x` defined in cell
 #' `A`, `dplyr` attached with `filter`/`select` exported.
 fallback_state <- function() {

@@ -80,9 +80,12 @@ test("completion: typing me then Ctrl+Space lists mean; after running DF, df$ li
   // itself once it's back to "ready" (ui-2.md, 4a) -- right after
   // submitting DF (the notebook's first run) it's briefly "starting" while
   // the worker process comes up, when completion still falls back.
-  await page.waitForFunction(
-    () => window.editor_state?.notebook?.process_status === "ready",
-    null, { timeout: 30000 });
+  await page.waitForFunction(() => {
+    const nb = window.editor_state?.notebook;
+    const r = nb?.cell_results?.DF;
+    return nb?.process_status === "ready" && r && !r.running && !r.queued &&
+      (r.output?.last_run_timestamp ?? 0) > 0;
+  }, null, { timeout: 60000 });
 
   await completion_eventually(page, newSel, "df$", (ls) => ls.some((l) => l.includes("mpg")), 60000);
   await page.screenshot({ path: path.join(artifactsDir(), "completion-notebook-var.png") });

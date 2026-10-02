@@ -29,7 +29,8 @@ completion_context <- function(query_full) {
   before <- if (starts[3] > 1) substr(line, 1, starts[3] - 1) else ""
 
   list(line = line, cursor = nchar(line, type = "bytes"), token = token,
-      start = nchar(before, type = "bytes"), namespace = namespace)
+      start = nchar(before, type = "bytes"), namespace = namespace,
+      field = is.null(namespace) && grepl("[$@]\\s*$", before))
 }
 
 #' Base R names, computed once per server process: `ls(baseenv())`, the
@@ -75,6 +76,8 @@ is_function_binding <- function(name, envir) {
 #' `complete` reply uses, so `completion_reply()` treats both alike.
 fallback_completions <- function(state, ctx, base = base_names()) {
   prefix <- ctx$token
+  # After `x$` or `x@` only the worker, which has `x`, knows the fields.
+  if (isTRUE(ctx$field)) return(list(token = ctx$token, items = list(), too_long = FALSE))
 
   if (!is.null(ctx$namespace)) {
     # The engine's own tracking (exports_of()) only has a package once some
