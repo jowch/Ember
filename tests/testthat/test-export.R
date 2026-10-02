@@ -104,7 +104,11 @@ test_that("export_html() inlines an htmlwidget's dependency files as data: URLs 
   # The dependency's JS text survives inside the (msgpack + base64 encoded)
   # embedded statefile, as a `data:` URL -- not as a readable substring of
   # the export (it's inside a second, outer base64 layer).
-  statefile_b64 <- regmatches(html, regexec('window\\.pluto_statefile = "data:;base64,([^"]+)"', html))[[1]][2]
+  # Not regexec(): on Windows its offsets into this (non-ASCII) page are
+  # shifted, so the capture picks up the closing quote.
+  start <- regexpr('window.pluto_statefile = "data:;base64,', html, fixed = TRUE)
+  rest <- substring(html, start + attr(start, "match.length"))
+  statefile_b64 <- substr(rest, 1, regexpr('"', rest, fixed = TRUE) - 1)
   js <- mp_decode(jsonlite::base64_dec(statefile_b64))
   body <- js$cell_results$W$output$body
   expect_match(body, "^<script src=\"data:text/javascript;base64,")
