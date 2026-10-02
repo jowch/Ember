@@ -13,3 +13,7 @@ licence. Its text is at inst/frontend/LICENSE.
   <marijnh@gmail.com> and others.
 - Lezer: MIT, Copyright (C) 2018-2021 by Marijn Haverbeke
   <marijnh@gmail.com> and others.
+
+The Ember logo's lettering (inst/frontend/img/logo.svg, man/figures/logo.svg)
+is drawn from Instrument Sans, SIL Open Font License 1.1, Copyright 2022 The
+Instrument Sans Project Authors. No font file is included.

@@ -149,21 +149,26 @@ About 350 KB of files go, plus 534 KB of translations (below).
 - Footer: keep the settings link; the FAQ link points at Ember's README
   until Ember has docs.
 
-**Logo, one file.** `img/logo.svg` becomes a placeholder wordmark: an SVG
-with one `<text>` element, "Ember", in the theme's UI font stack and a
-fixed colour. Everything that shows a logo uses that file and nothing else:
+**Logo.** The mark is a flame with a twisting hollow heart, giving off
+specks; the word is "ember" in Instrument Sans SemiBold, converted to
+outlines so no font is needed. Three files:
 
-- editor.html: both `pluto-logo-big` and `pluto-logo-small` links point at
-  `./img/logo.svg`; the favicon links become one
-  `<link rel="icon" type="image/svg+xml" href="./img/logo.svg">`.
+- `img/logo.svg`: the mark beside the word, for the header (`pluto-logo-big`).
+- `img/favicon.svg`: the mark alone, for the tab icon and the narrow header
+  (`pluto-logo-small`).
+- `man/figures/logo.svg` and `logo.png` (240 by 278): the hex sticker, for
+  the README and pkgdown.
+
+The dark theme already passes header images through `--image-filters`, which
+lightens the word and keeps the flame orange.
+
 - Editor.js:289-290 and NotifyWhenDone.js:45 already read those links.
 - Deleted: `favicon*.png`, `favicon.ico`, `favicon*.svg`,
   `logo_white_contour.svg`.
 
-Dropping in a real logo is replacing `img/logo.svg`. The CSS sizes the
-image by height (editor.css:1049-1054), so any aspect ratio fits. Not every
-browser has supported SVG favicons (Safari was the holdout); if the tab
-icon is blank there, the real logo adds a PNG fallback beside it.
+The CSS sizes the header image by height (editor.css:1049-1054), so any
+aspect ratio fits. Not every browser has supported SVG favicons (Safari was
+the holdout); if the tab icon is blank there, add a PNG fallback beside it.
 
 **Theme.** `themes/light.css` and `themes/dark.css` get new values for the
 same 203 variable names; none is renamed or removed. Colours, fonts and
@@ -1132,8 +1137,8 @@ Decided with the user:
 
 Still open (placeholders until the user decides):
 
-1. **Logo.** A text wordmark "Ember" in `img/logo.svg`; replacing that one
-   file is all it takes.
+1. **Logo.** Decided: the flame-and-specks mark with Instrument Sans (see
+   piece 1, Logo).
 2. **Palette.** Piece 1 keeps Pluto's colour values under the same variable
    names until a palette is chosen.
 3. **Downloaded exports.** Proposed: they load the frontend from jsdelivr at

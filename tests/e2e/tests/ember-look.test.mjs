@@ -23,9 +23,8 @@ test("look: logo, title and body text say Ember, not Pluto/Julia (8)", async (t)
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  const logoHrefs = await page.locator('img#logo-big, img#logo-small').evaluateAll(
-    (imgs) => imgs.map((i) => i.getAttribute("src")));
-  for (const href of logoHrefs) assert.match(href, /img\/logo\.svg$/);
+  assert.match(await page.locator("img#logo-big").getAttribute("src"), /img\/logo\.svg$/);
+  assert.match(await page.locator("img#logo-small").getAttribute("src"), /img\/favicon\.svg$/);
   const altBig = await page.locator("img#logo-big").getAttribute("alt");
   assert.equal(altBig, "Ember");
 

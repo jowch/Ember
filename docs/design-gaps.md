@@ -38,7 +38,7 @@ done; clear out ticked items at each release.
 
 - [ ] A markdown cell shows its source under the rendered text, highlighted as R; it should start folded and highlight as markdown — improvised
 
-- [ ] Replace Pluto's logo and name in the page with Ember's own (with the theme, increment 2) — missing
+- [x] Replace Pluto's logo and name in the page with Ember's own (with the theme, increment 2) — missing
 - [ ] Credit the Pluto.jl authors as copyright holders of the vendored frontend in DESCRIPTION or inst/COPYRIGHTS before any CRAN release — missing
 
 - [ ] The cell menu still offers Pluto's "ask AI", and the footer's feedback form still shows (inert: nothing is sent) — improvised
