@@ -1315,6 +1315,92 @@ nav#at_the_top > #process_status:empty {
     display: none;
 }
 
+#ember-status {
+    font-size: 0.85rem;
+    color: var(--ui-button-color);
+    opacity: 0.7;
+    margin-left: 0.5em;
+    white-space: nowrap;
+}
+
+#ember-status #ember-status-restart {
+    margin-left: 0.4em;
+    color: inherit;
+    text-decoration: underline;
+}
+
+#ember-not-run-bar {
+    font-family: var(--sans-serif-font-stack);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1em;
+    font-size: 0.9rem;
+    padding: 0.4em 1em;
+    background: var(--nav-process-status-bg-color);
+    color: var(--nav-process-status-color);
+}
+
+#ember-not-run-bar button {
+    font-size: inherit;
+    font-weight: 600;
+    background: none;
+    border: 1px solid currentColor;
+    border-radius: 1em;
+    padding: 0.1em 0.9em;
+    cursor: pointer;
+    color: inherit;
+}
+
+#ember-packages-tab {
+    font-family: var(--sans-serif-font-stack);
+    padding: 0.5em 1em;
+    overflow: auto;
+}
+
+#ember-packages-tab .ember-packages-meta {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.2em 1em;
+    margin: 0 0 0.8em 0;
+}
+
+#ember-packages-tab .ember-packages-meta dt {
+    opacity: 0.6;
+}
+
+#ember-packages-tab .ember-packages-library-status {
+    font-weight: 600;
+}
+
+#ember-packages-tab .ember-packages-library-message {
+    font-weight: normal;
+    opacity: 0.7;
+}
+
+.ember-packages-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+}
+
+.ember-packages-table th,
+.ember-packages-table td {
+    text-align: left;
+    padding: 0.25em 0.6em;
+    border-bottom: 1px solid var(--rule-color);
+}
+
+.ember-package-row.ember-package-missing td:last-child,
+.ember-package-row.ember-package-failed td:last-child,
+.ember-package-row.ember-package-not_found td:last-child {
+    color: rgb(var(--error-color));
+}
+
+.ember-package-row.ember-package-installed td:last-child {
+    opacity: 0.7;
+}
+
 pluto-editor.fullscreen .statefile-fetch-progress {
     /* width: 200px;
     height: 27px;
@@ -1691,18 +1777,67 @@ pluto-display > div {
 
 pluto-cell.depends_on_disabled_cells > pluto-output,
 pluto-cell.running_disabled > pluto-output,
+pluto-cell.stale > pluto-output,
+pluto-cell.code_changed > pluto-output,
+pluto-cell.upstream_error > pluto-output,
 pluto-cell.depends_on_disabled_cells > pluto-trafficlight,
 pluto-cell.running_disabled > pluto-trafficlight,
+pluto-cell.stale > pluto-trafficlight,
+pluto-cell.code_changed > pluto-trafficlight,
+pluto-cell.upstream_error > pluto-trafficlight,
 pluto-cell.depends_on_disabled_cells > pluto-input .cm-editor,
 pluto-cell.running_disabled > pluto-input .cm-editor,
+pluto-cell.stale > pluto-input .cm-editor,
+pluto-cell.code_changed > pluto-input .cm-editor,
+pluto-cell.upstream_error > pluto-input .cm-editor,
 pluto-cell.depends_on_disabled_cells > pluto-logs-container,
-pluto-cell.running_disabled > pluto-logs-container {
+pluto-cell.running_disabled > pluto-logs-container,
+pluto-cell.stale > pluto-logs-container,
+pluto-cell.code_changed > pluto-logs-container,
+pluto-cell.upstream_error > pluto-logs-container {
     opacity: 0.3;
 }
 
 pluto-cell.running_disabled > pluto-input .cm-editor,
 pluto-cell.running_disabled > pluto-output {
     background-color: var(--disabled-cell-bg-color);
+}
+
+/* STATUS LABELS (ui-2.md, 5): "stale", "code changed", "upstream error" */
+
+ember-cell-label {
+    display: none;
+    position: absolute;
+    top: 2px;
+    right: 28px;
+    z-index: 20;
+    font-size: 0.7rem;
+    line-height: 1.6;
+    padding: 0 0.5em;
+    border-radius: 1em;
+    pointer-events: none;
+    opacity: 0.85;
+}
+
+pluto-cell.stale > ember-cell-label,
+pluto-cell.code_changed > ember-cell-label,
+pluto-cell.upstream_error > ember-cell-label {
+    display: inline-block;
+}
+
+pluto-cell.stale > ember-cell-label {
+    color: var(--ember-stale-label-color);
+    background-color: var(--ember-stale-label-bg-color);
+}
+
+pluto-cell.code_changed > ember-cell-label {
+    color: var(--ember-code-changed-label-color);
+    background-color: var(--ember-code-changed-label-bg-color);
+}
+
+pluto-cell.upstream_error > ember-cell-label {
+    color: var(--ember-upstream-error-label-color);
+    background-color: var(--ember-upstream-error-label-bg-color);
 }
 
 /* SKIP AS SCRIPT CELLS */
@@ -2909,6 +3044,10 @@ pluto-helpbox > header > button.helpbox-process > .tabicon {
     background-image: url("https://cdn.jsdelivr.net/gh/ionic-team/ionicons@5.5.1/src/svg/terminal.svg");
     background-image: url("https://cdn.jsdelivr.net/gh/ionic-team/ionicons@5.5.1/src/svg/pulse.svg");
     /* content: "💻 "; */
+}
+
+pluto-helpbox > header > button.helpbox-packages > .tabicon {
+    background-image: url("https://cdn.jsdelivr.net/gh/ionic-team/ionicons@5.5.1/src/svg/cube.svg");
 }
 
 pluto-helpbox > header > button.helpbox-tab-key:disabled > .tabicon {

@@ -66,6 +66,10 @@ wk_rendered <- function(gen, cell, display, at)
 wk_exited   <- function(gen, status, message, at)
   event("wk_exited", at, gen = gen, status = status, message = message)
 
+#' From the shell's own periodic sampling (processx's `get_memory_info()`,
+#' not a worker protocol message; ui-2.md, Worker memory). `rss` is bytes.
+ev_worker_usage <- function(gen, rss, at) event("worker_usage", at, gen = gen, rss = rss)
+
 # From timers the core asked for
 tm_offer_restart <- function(gen, token, at)
   event("tm_offer_restart", at, gen = gen, token = token)
@@ -154,6 +158,7 @@ reduce <- function(state, event) {
     wk_done          = reduce_wk_done(state, event),
     wk_rendered      = reduce_wk_rendered(state, event),
     wk_exited        = reduce_wk_exited(state, event),
+    worker_usage     = reduce_worker_usage(state, event),
     tm_offer_restart = reduce_offer_restart(state, event),
     preview_date     = reduce_preview_date(state, event),
     set_date         = reduce_set_date(state, event),
@@ -1118,6 +1123,15 @@ reduce_wk_exited <- function(state, event) {
   # for a conflict that doesn't exist and dropping whatever run the user
   # just asked for.
   state$worker$loaded <- character()
+  list(state = state, effects = list(), reply = NULL)
+}
+
+#' A memory sample from the shell. gen check (same rule as every other
+#' worker event): a sample from a worker that has since been replaced is
+#' dropped, not stored as if it were the new one's.
+reduce_worker_usage <- function(state, event) {
+  if (!eq(event$gen, state$worker$gen)) return(list(state = state, effects = list(), reply = NULL))
+  state$worker_usage <- list(gen = event$gen, rss = event$rss)
   list(state = state, effects = list(), reply = NULL)
 }
 

@@ -39,11 +39,12 @@ import { HijackExternalLinksToOpenInNewTab } from "./HackySideStuff/HijackExtern
 import { get_environment } from "../common/Environment.js"
 import { ProcessStatus } from "../common/ProcessStatus.js"
 import { SafePreviewUI } from "./SafePreviewUI.js"
+import { EmberStatus } from "./EmberStatus.js"
+import { NotRunBar } from "./NotRunBar.js"
 import { open_pluto_popup } from "../common/open_pluto_popup.js"
 import { get_included_external_source } from "../common/external_source.js"
 import { getCurrentLanguage, getWritingDirection, t, th } from "../common/lang.js"
 import { InlineIonicon } from "../common/ClassTable.js"
-import { BigPkgTerminal } from "./PkgTerminalView.js"
 import { desktop_version, is_desktop, move_notebook, open_main_menu, wait_for_file_move } from "./DesktopInterface.js"
 import { with_query_params } from "../common/URLTools.js"
 import semver from "../imports/semver-es.js"
@@ -182,6 +183,7 @@ const first_true_key = (obj) => {
  *  precedence_heuristic: number?,
  *  depends_on_disabled_cells: boolean,
  *  depends_on_skipped_cells: boolean,
+ *  ember: { stale: boolean, code_changed: boolean, blocked_by: string? },
  *  output: {
  *      body: string | Object,
  *      persist_js_state: boolean,
@@ -255,6 +257,34 @@ const first_true_key = (obj) => {
  */
 
 /**
+ * @typedef EmberPackageRow
+ * @type {{ name: string, version: string?, source: string?, direct: boolean, status: string, message: string? }}
+ */
+
+/**
+ * @typedef EmberPackagesData
+ * @type {{
+ *  snapshot: string?,
+ *  r_version: string?,
+ *  bioc_version: string?,
+ *  library: { status: string, message: string?, progress: { done: number, total: number, current: string }? },
+ *  rows: Array<EmberPackageRow>,
+ * }}
+ */
+
+/**
+ * @typedef EmberData
+ * @type {{
+ *  process: "preview" | "starting" | "ready" | "busy" | "stopped",
+ *  worker_memory: number?,
+ *  not_run: number,
+ *  stale: number,
+ *  plan: { install: number, restart: Array<string> }?,
+ *  packages: EmberPackagesData,
+ * }}
+ */
+
+/**
  * @typedef NotebookData
  * @type {{
  *  pluto_version?: string,
@@ -276,6 +306,7 @@ const first_true_key = (obj) => {
  *  nbpkg: NotebookPkgData?,
  *  metadata: object,
  *  status_tree: StatusEntryData?,
+ *  ember: EmberData,
  * }}
  */
 
@@ -714,6 +745,8 @@ export class Editor extends Component {
                     { notebook_id: this.state.notebook.notebook_id },
                     false
                 ),
+            ember_run_all: () =>
+                this.client.send("ember_run_all", {}, { notebook_id: this.state.notebook.notebook_id }, false),
             request_js_link_response: (cell_id, link_id, input) => {
                 return this.client
                     .send(
@@ -1712,6 +1745,7 @@ ${t("t_key_autosave_description")}`
                                                   ? restart_button(t("t_process_give_permission_to_run_code"), true)
                                                   : null
                             }</div>
+                            <${EmberStatus} worker_memory=${notebook.ember?.worker_memory} restart=${restart} />
                             <button class="toggle_export" title=${t("t_export_action_ellipsis")} onClick=${() =>
                                 this.setState({ export_menu_open: !export_menu_open })}><span></span></button>
                         </nav>
@@ -1722,11 +1756,9 @@ ${t("t_key_autosave_description")}`
                         risky_file_source=${notebook.metadata?.risky_file_source}
                         restart=${restart}
                         warn_about_untrusted_code=${warn_about_untrusted_code}
+                        plan=${notebook.ember?.plan}
                     />
                     <${ConfirmBeforeLongRuntime} />
-                    <${BigPkgTerminal}
-                        notebook=${notebook}
-                    />
                     <${Settings} />
                     ${this.props.preamble_element}
                     <${Main}>
@@ -1736,6 +1768,7 @@ ${t("t_key_autosave_description")}`
                             last_hot_reload_time=${notebook.last_hot_reload_time}
                             connected=${this.state.connected}
                         />
+                        <${NotRunBar} not_run=${notebook.ember?.not_run ?? 0} />
                         <${Notebook}
                             notebook=${notebook}
                             cell_inputs_local=${this.state.cell_inputs_local}

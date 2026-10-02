@@ -31,7 +31,9 @@
 #' `secret` (random string the worker must send in its hello; any process
 #' on the machine can reach a loopback port), `con` (the worker socket or
 #' `NULL`), `rx` (`list(chunks, n)`: raw chunks not yet framed, and their
-#' total length), `watch` (path -> mtime), `poll_cancel` (the `later`
+#' total length), `watch` (path -> mtime), `last_mem_check`/
+#' `worker_rss_reported` (the worker memory sampler's own timer and
+#' last-reported value, below), `poll_cancel` (the `later`
 #' cancel function), `closing` (listeners are cleared only after the
 #' closing dispatch's notifications are delivered).
 #' The poll runs on `later`'s global loop, so an interactive console
@@ -55,6 +57,8 @@ session_start <- function(state) {
   nb$out_tail <- ""
   nb$watch <- list()
   nb$last_watch_check <- NULL
+  nb$last_mem_check <- NULL
+  nb$worker_rss_reported <- NULL
   nb$poll_cancel <- NULL
   nb$closing <- FALSE
   class(nb) <- "ember_notebook"
@@ -480,6 +484,12 @@ start_worker_process <- function(nb, fx) {
   nb$out_tail <- ""
   nb$con <- NULL
   nb$rx <- list(chunks = list(), n = 0L)
+  # A new generation's memory starts from nothing known: comparing its first
+  # sample against the old worker's last-reported RSS would compare two
+  # different processes' numbers against each other, and could skip
+  # reporting the new worker's actual first value.
+  nb$last_mem_check <- NULL
+  nb$worker_rss_reported <- NULL
   enqueue(nb, wk_started(fx$gen, proc$get_pid(), at = Sys.time()))
   invisible(NULL)
 }
@@ -512,6 +522,52 @@ keep_output_tail <- function(nb, text, keep = 4000L) {
   n <- nchar(all)
   nb$out_tail <- if (n > keep) substr(all, n - keep + 1L, n) else all
   invisible(NULL)
+}
+
+#' Whether a freshly sampled RSS (bytes) differs enough from the last one
+#' reported to be worth another event: no report yet, or moved by more than
+#' 16 MB or 5%, whichever is larger in absolute terms for a big process
+#' (ui-2.md, Worker memory). Pure, so it's tested directly against a
+#' sequence of samples without a real worker.
+should_report_memory <- function(reported, rss) {
+  if (is.null(reported)) return(TRUE)
+  diff <- abs(rss - reported)
+  diff > 16 * 1024^2 || diff > 0.05 * reported
+}
+
+#' Sample `nb$proc`'s memory once and, if it moved enough, dispatch
+#' `ev_worker_usage()`. Takes `at` rather than calling `Sys.time()` itself so
+#' a test can drive it with a fake `nb$proc` and a fixed clock.
+#'
+#' `get_memory_info()` (processx, backed by the ps package) can fail --
+#' unsupported platform, or the process exiting between the liveness check
+#' and the call; either way memory is just left out, never a crash that
+#' would take the whole poll down with it (ui-2.md's Windows/CI risk).
+sample_worker_memory <- function(nb, at) {
+  info <- tryCatch(nb$proc$get_memory_info(), error = function(e) NULL)
+  rss <- if (!is.null(info)) unname(info[["rss"]]) else NULL
+  if (is.null(rss) || is.na(rss)) return(invisible(NULL))
+  rss <- as.double(rss)
+  if (should_report_memory(nb$worker_rss_reported, rss)) {
+    nb$worker_rss_reported <- rss
+    dispatch(nb, ev_worker_usage(nb$proc_gen, rss, at))
+  }
+  invisible(NULL)
+}
+
+#' The 2s gate around `sample_worker_memory()`, called from `poll()`.
+#' `last_mem_check` is reset whenever a worker (re)spawns
+#' (`start_worker_process()`), so a fresh worker's first sample isn't
+#' delayed by up to 2s of a stopped predecessor's old timer.
+maybe_sample_worker_memory <- function(nb, now) {
+  # Before the worker connects, the process is still starting R and its
+  # size (a few MB) would read as the session's memory.
+  if (is.null(nb$proc) || is.null(nb$con)) return(invisible(NULL))
+  if (!is.null(nb$last_mem_check) && as.numeric(now - nb$last_mem_check, units = "secs") < 2) {
+    return(invisible(NULL))
+  }
+  nb$last_mem_check <- now
+  sample_worker_memory(nb, now)
 }
 
 #' The poll, every 5 ms while a worker exists, every 500 ms otherwise.
@@ -569,6 +625,7 @@ poll <- function(nb) {
   }
 
   if (!is.null(nb$proc)) keep_output_tail(nb, read_output_now(nb$proc))
+  maybe_sample_worker_memory(nb, Sys.time())
 
   if (!is.null(nb$proc) && !isTRUE(tryCatch(nb$proc$is_alive(), error = function(e) FALSE))) {
     status <- tryCatch(nb$proc$get_exit_status(), error = function(e) NA_integer_)

@@ -48,7 +48,8 @@ const CellMemo = ({
     inspecting_hidden_code,
 }) => {
     const { body, last_run_timestamp, mime, persist_js_state, rootassignee } = cell_result?.output || {}
-    const { queued, running, runtime, errored, depends_on_disabled_cells, logs, depends_on_skipped_cells } = cell_result || {}
+    const { queued, running, runtime, errored, depends_on_disabled_cells, logs, depends_on_skipped_cells, ember } = cell_result || {}
+    const { stale, code_changed, blocked_by } = ember || {}
     const { cell_id, code, code_folded, metadata } = cell_input || {}
     return useMemo(() => {
         return html`
@@ -78,6 +79,9 @@ const CellMemo = ({
         ...Object.values(metadata),
         depends_on_disabled_cells,
         depends_on_skipped_cells,
+        stale,
+        code_changed,
+        blocked_by,
         queued,
         running,
         runtime,

@@ -578,6 +578,7 @@ on_run <- function(server, cl, hub, req) {
 #' | get_all_notebooks             | reply "notebook_list" {notebooks = hosted notebooks}           |
 #' | reshow_cell                   | "more" paging (ui-2.md, 3b/3c): dispatch ev_show_more(cell, objectid, dim); flush. No reply (the frontend sends without awaiting one) |
 #' | ember_render_plot             | {cell_id, width, height, res}, clamped: dispatch ev_render(); flush |
+#' | ember_run_all                 | the "N cells not run" bar's button (ui-2.md, 5): run_cells() on not_run_ids(), the same set the bar counts; flush. No reply |
 #' | request_js_link_response, nbpkg_available_versions, nbpkg_get_project_toml, nbpkg_set_project_toml, pkg_update | Julia-only; their UI is disabled in the frontend. Logged, no reply |
 #'
 #' Replies use the reply type Pluto uses for each (connect "👋", ping
@@ -674,6 +675,18 @@ handlers <- list(
     height <- clamp(as.integer(b$height %||% 480L), 100L, 4000L)
     res <- clamp(as.integer(b$res %||% 96L), 72L, 384L)
     dispatch(hub$nb, ev_render(cell, width, height, at = Sys.time(), res = res))
+    flush_clients(server, hub)
+  },
+
+  #' The not-run bar's "Run all": only the cells `project_ember()` counts as
+  #' not run (and whatever they need, which `run_cells()`/`reduce_run()`
+  #' already adds) -- never `run_cells(nb, NULL)`, which would also rerun
+  #' cells already up to date (ui-2.md, Decisions).
+  ember_run_all = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    st <- notebook_state(hub$nb)
+    ids <- not_run_ids(st, view_context(st))
+    if (length(ids) > 0) run_cells(hub$nb, ids)
     flush_clients(server, hub)
   },
 

@@ -107,7 +107,7 @@ const on_jump = (hasBarrier, pluto_actions, cell_id) => () => {
  * */
 export const Cell = ({
     cell_input: { cell_id, code, code_folded, kind, metadata },
-    cell_result: { queued, running, runtime, errored, output, logs, published_object_keys, depends_on_disabled_cells, depends_on_skipped_cells },
+    cell_result: { queued, running, runtime, errored, output, logs, published_object_keys, depends_on_disabled_cells, depends_on_skipped_cells, ember },
     cell_dependencies,
     cell_input_local,
     notebook_id,
@@ -124,6 +124,14 @@ export const Cell = ({
     inspecting_hidden_code,
 }) => {
     const { show_logs, disabled: running_disabled, skip_as_script } = metadata
+    // Three separate labels where increment 1 only had one dimmed state
+    // (ui-2.md, 5): an upstream failure takes precedence over the other two,
+    // since it is also the only one of the three `depends_on_disabled_cells`
+    // still covers (packages-core.R/pluto-state.R's `blocked_by`).
+    const upstream_error = ember?.blocked_by != null
+    const code_changed = !upstream_error && !!ember?.code_changed
+    const stale = !upstream_error && !code_changed && !!ember?.stale
+    const ember_label = upstream_error ? t("t_ember_label_upstream_error") : code_changed ? t("t_ember_label_code_changed") : stale ? t("t_ember_label_stale") : null
     let pluto_actions = useContext(PlutoActionsContext)
     // useCallback because pluto_actions.set_doc_query can change value when you go from viewing a static document to connecting (to binder)
     const on_update_doc_query = useCallback((...args) => pluto_actions.set_doc_query(...args), [pluto_actions])
@@ -313,6 +321,9 @@ export const Cell = ({
                 running_disabled,
                 depends_on_disabled_cells,
                 depends_on_skipped_cells,
+                stale,
+                code_changed,
+                upstream_error,
                 show_input,
                 shrunk: Object.values(logs).length > 0,
                 hooked_up: output?.has_pluto_hook_features ?? false,
@@ -320,6 +331,7 @@ export const Cell = ({
             })}
             id=${cell_id}
         >
+            ${ember_label != null ? html`<ember-cell-label>${ember_label}</ember-cell-label>` : null}
             ${variables.map((name) => html`<span id=${encodeURI(name)} />`)}
             <button
                 onClick=${() => {

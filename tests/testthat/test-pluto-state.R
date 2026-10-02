@@ -70,7 +70,12 @@ test_that("after one cell finishes, every patch sits under its own cell_results 
   for (patch in d) {
     ok <- length(patch$path) == 0 ||
       (length(patch$path) >= 2 && identical(patch$path[[1]], "cell_results") && identical(patch$path[[2]], "A")) ||
-      (length(patch$path) <= 1)
+      (length(patch$path) <= 1) ||
+      # `ember`'s own fields (piece 5): a leaf one level under "ember" is as
+      # much a "top-level scalar" as `process_status` is, just nested one
+      # level deeper because Ember's additions share one map (ui-2.md, Rules
+      # every piece follows).
+      (length(patch$path) == 2 && identical(patch$path[[1]], "ember"))
     expect_true(ok, info = paste(patch$path, collapse = "/"))
   }
   expect_identical(p2$js$cell_inputs$S, p1$js$cell_inputs$S)
@@ -216,8 +221,13 @@ test_that("a running cell's growing console gives an add patch, not a replace (1
 })
 
 # ---- 12. Stale / blocked-by-failure / code_differs ----------------------------
+#
+# Increment 2 (ui-2.md, 5) narrows `depends_on_disabled_cells` to
+# "blocked by a failed ancestor" alone, and gives stale and code-changed
+# cells their own `ember$stale`/`ember$code_changed` labels instead (piece 5
+# decision: "depends_on_disabled_cells becomes blocked_by only").
 
-test_that("stale sets depends_on_disabled_cells (12)", {
+test_that("stale sets ember$stale, not depends_on_disabled_cells (12)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("y <- x")))
   r <- boot(s, c("A", "B"))
   r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
@@ -229,10 +239,11 @@ test_that("stale sets depends_on_disabled_cells (12)", {
   v <- snapshot_of(r2$state)$cells$B
   expect_true(v$stale)
   cr <- project_cell_result(v)
-  expect_true(cr$depends_on_disabled_cells)
+  expect_true(cr$ember$stale)
+  expect_false(cr$depends_on_disabled_cells)
 })
 
-test_that("blocked-by-failure sets depends_on_disabled_cells (12)", {
+test_that("blocked-by-failure sets depends_on_disabled_cells and ember$blocked_by (12)", {
   s <- fake_state(list(S = cell(""), A = cell('x <- stop("boom")'), B = cell("y <- x")))
   r <- boot(s, c("A", "B"))
   r <- drive(r$state, wk_done(1, last_token(r), report(error = list(message = "boom")), at(10)))
@@ -240,23 +251,24 @@ test_that("blocked-by-failure sets depends_on_disabled_cells (12)", {
   expect_false(is.na(v$blocked_by))
   cr <- project_cell_result(v)
   expect_true(cr$depends_on_disabled_cells)
+  expect_equal(cr$ember$blocked_by, v$blocked_by)
 })
 
-test_that("code that differs from the last run also marks cell_results stale (12)", {
+test_that("code that differs from the last run sets ember$code_changed, not depends_on_disabled_cells (12)", {
   # An edit made outside the page (the R API, Endeavor) leaves the old
-  # output showing under the new code until something tells the frontend to
-  # dim it: `depends_on_disabled_cells` is the only field Pluto's Cell.js
-  # reads for that, so `code_differs` has to show up there, not only in
-  # `cell_inputs` (review4 item 4).
+  # output showing under the new code; the page dims it and shows a
+  # "code changed" label from `ember$code_changed` (CellInput.js's own
+  # `.code_differs` class, from the page's *unsubmitted* edit, is unrelated).
   s <- fake_state(list(S = cell(""), A = cell("x <- 1")))
   r <- boot(s, "A")
   r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
   p1 <- pluto_state(r$state)
-  expect_false(p1$js$cell_results$A$depends_on_disabled_cells)
+  expect_false(p1$js$cell_results$A$ember$code_changed)
   r2 <- drive(r$state, ev_apply(list(op_set_code("A", "x <- 2")), at(11)))
   p2 <- pluto_state(r2$state, p1)
   expect_equal(p2$js$cell_inputs$A$code, "x <- 2")
-  expect_true(p2$js$cell_results$A$depends_on_disabled_cells)
+  expect_true(p2$js$cell_results$A$ember$code_changed)
+  expect_false(p2$js$cell_results$A$depends_on_disabled_cells)
 })
 
 # ---- 13. process_status / nbpkg ------------------------------------------------

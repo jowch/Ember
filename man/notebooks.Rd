@@ -106,9 +106,11 @@ finished, timed_out)}.
 
 \code{notebook_snapshot()} returns a plain list describing the notebook's
 current, safe-to-keep state: \code{list(id, path, seq, read_only, allowed,
-process, restart_offered, worker_message, problems, order, cells, packages)},
-where \code{process} is one of \code{"preview"}, \code{"starting"},
-\code{"ready"}, \code{"busy"}, \code{"stopped"}, and \code{packages} is
+process, restart_offered, worker_message, worker_memory, problems, order,
+cells, packages)}, where \code{process} is one of \code{"preview"},
+\code{"starting"}, \code{"ready"}, \code{"busy"}, \code{"stopped"},
+\code{worker_memory} is the worker's last-reported memory in bytes (\code{NULL}
+until sampled for the current worker), and \code{packages} is
 \code{package_status(nb)}'s value (see \link{packages}).
 
 \code{dependency_graph()} returns the notebook's current \code{ember_graph} (see

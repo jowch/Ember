@@ -339,8 +339,8 @@ test_that("every request type in the handler table is answered as documented (36
                "restart_process", "reset_shared_state", "complete", "complete_symbols", "docs",
                "all_registered_package_names", "completepath", "get_all_notebooks")
   silent <- c("interrupt_all", "shutdown_notebook", "reshow_cell", "ember_render_plot",
-             "request_js_link_response", "nbpkg_available_versions", "nbpkg_get_project_toml",
-             "nbpkg_set_project_toml", "pkg_update")
+             "ember_run_all", "request_js_link_response", "nbpkg_available_versions",
+             "nbpkg_get_project_toml", "nbpkg_set_project_toml", "pkg_update")
   expect_setequal(names(handlers), c(answered, silent))
 
   # A fresh notebook and server per type: some requests change engine state

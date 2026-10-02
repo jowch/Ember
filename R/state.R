@@ -67,6 +67,14 @@ exports_of <- function(state) {
 #' * `allowed`: execution allowed this session.
 #' * `closed`: the session was shut down; every later event is a no-op.
 #' * `worker`: `ember_worker_state`, below.
+#' * `worker_usage`: `NULL` or `list(gen, rss)`, the worker's last-reported
+#'   memory (bytes), from `ev_worker_usage()` (shell.R samples it every 2s
+#'   with processx's `get_memory_info()`). Top-level, not part of `worker`,
+#'   so a memory change doesn't make `notifications()`'s cheap
+#'   `identical(old$worker, new$worker)` check see every cell's snapshot as
+#'   possibly changed (ui-2.md, Worker memory). A `gen` from an old worker is
+#'   left in place until the new one reports; readers compare it against
+#'   `worker$gen` themselves.
 #' * `pending`: character ids wanted to run. Not ordered: the next cell is
 #'   always the first of `run_order(graph, pending)` that can run, so an
 #'   edit or a learned definition during a run reorders the queue for free.
@@ -152,6 +160,7 @@ new_state <- function(file, path, id, options, at) {
     footer_sources = footer_sources,
     exports = list(), graph = graph, options = options, packages = packages,
     allowed = FALSE, closed = FALSE, worker = new_worker_state(),
+    worker_usage = NULL,
     pending = character(), results = list(), clock = at, seq = 0L,
     next_token = 1L
   ), class = "ember_state")
@@ -503,7 +512,32 @@ notifications <- function(old, new) {
     nts <- c(nts, list(list(kind = "packages_changed")))
   }
 
+  if (!identical(old$worker_usage, new$worker_usage)) {
+    nts <- c(nts, list(list(kind = "worker_usage")))
+  }
+
   nts
+}
+
+#' Code cells with non-blank code, no result, and neither queued nor
+#' running: the set the "N cells not run" bar counts
+#' (`project_ember()`, pluto-state.R) and `ember_run_all` runs
+#' (server.R). Empty whenever `!state$allowed` (safe preview): nothing has
+#' had a chance to run yet, so there is nothing to offer running.
+not_run_ids <- function(state, ctx) {
+  if (!isTRUE(state$allowed)) return(character())
+  ids <- ctx$ids
+  out <- character()
+  for (i in seq_along(ids)) {
+    cell <- state$cells[[i]]
+    if (!identical(cell$kind, "code")) next
+    if (!nzchar(trimws(cell$code %||% ""))) next
+    if (!is.null(ctx$results[[i]])) next
+    if (isTRUE(ctx$queued[[i]])) next
+    if (!is.na(ctx$running_idx) && ctx$running_idx == i) next
+    out <- c(out, ids[[i]])
+  }
+  out
 }
 
 #' Paths the shell should watch: every literal `source()` path in the

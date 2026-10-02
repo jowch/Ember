@@ -3,7 +3,20 @@ import { open_pluto_popup } from "../common/open_pluto_popup.js"
 import _ from "../imports/lodash-es.js"
 import { html } from "../imports/Preact.js"
 
-export const SafePreviewUI = ({ process_waiting_for_permission, risky_file_source, restart, warn_about_untrusted_code }) => {
+/**
+ * What running would do (ui-2.md, 5): `null` installs nothing, otherwise
+ * `{ install, restart }` from `notebook.ember.plan` (project_ember(),
+ * pluto-state.R / packages_view(), packages-core.R).
+ * @param {{ install: number, restart: string[] }?} plan
+ */
+const plan_text = (plan) => {
+    if (plan == null) return t("t_ember_safe_preview_plan_none")
+    if (plan.install > 0) return t("t_ember_safe_preview_plan_install", { count: plan.install })
+    if (plan.restart.length > 0) return t("t_ember_safe_preview_plan_restart", { names: plan.restart.join(", ") })
+    return t("t_ember_safe_preview_plan_none")
+}
+
+export const SafePreviewUI = ({ process_waiting_for_permission, risky_file_source, restart, warn_about_untrusted_code, plan }) => {
     return html`
         <div class="outline-frame safe-preview"></div>
         ${process_waiting_for_permission
@@ -21,6 +34,7 @@ export const SafePreviewUI = ({ process_waiting_for_permission, risky_file_sourc
                                           <h1>${th("t_safe_preview")}</h1>
                                           <p>${th("t_safe_preview_body")}</p>
 
+                                          <p>${plan_text(plan)}</p>
                                           <p>
                                               ${th("t_safe_preview_run_this_notebook", {
                                                   run_this_notebook: html`<a

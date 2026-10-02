@@ -78,6 +78,12 @@
         --hover-scrollbar-color-2: rgba(0, 0, 0, 0.05);
         --skip-as-script-background-color: #888;
         --depends-on-skip-as-script-background-color: #666;
+        --ember-stale-label-color: rgb(190, 190, 190);
+        --ember-stale-label-bg-color: rgba(255, 255, 255, 0.12);
+        --ember-code-changed-label-color: rgb(var(--code-differs));
+        --ember-code-changed-label-bg-color: rgba(var(--code-differs), 0.25);
+        --ember-upstream-error-label-color: rgb(var(--error-color));
+        --ember-upstream-error-label-bg-color: rgba(var(--error-color), 0.25);
 
         /* Pluto shoulders */
         --shoulder-hover-bg-color: rgba(255, 255, 255, 0.05);

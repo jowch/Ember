@@ -287,20 +287,25 @@ restart_notebook <- function(nb) {
 #' What the notebook looks like now: a plain list, safe to keep.
 #'
 #' `list(id, path, seq, read_only, allowed, process, restart_offered,
-#' worker_message, problems, order, cells, packages)` where `process` is one
-#' of `"preview"`, `"starting"`, `"ready"`, `"busy"`, `"stopped"`, `cells`
-#' is a named list (display order) of `ember_cell_view` (see
-#' `snapshot_of()` in state.R), and `packages` is `package_status(nb)`'s
-#' value (packages-core.R's `packages_view()`). Endeavor's `snapshot` maps
-#' onto this one to one.
+#' worker_message, worker_memory, problems, order, cells, packages)` where
+#' `process` is one of `"preview"`, `"starting"`, `"ready"`, `"busy"`,
+#' `"stopped"`, `cells` is a named list (display order) of `ember_cell_view`
+#' (see `snapshot_of()` in state.R), `packages` is `package_status(nb)`'s
+#' value (packages-core.R's `packages_view()`), and `worker_memory` is the
+#' worker's last-reported RSS in bytes, or `NULL` when none has been sampled
+#' yet for the current worker (shell.R samples it every 2s; ui-2.md, Worker
+#' memory). Endeavor's `snapshot` maps onto this one to one.
 #' @export
 notebook_snapshot <- function(nb) {
   s <- snapshot_of(nb$state)
   cells <- lapply(s$cells, strip_ansi_from_view)
+  wu <- nb$state$worker_usage
+  worker_memory <- if (!is.null(wu) && identical(wu$gen, nb$state$worker$gen)) wu$rss else NULL
   list(id = nb$state$id, path = nb$state$path, seq = s$seq,
       read_only = isTRUE(nb$state$read_only), allowed = isTRUE(nb$state$allowed),
       process = s$process, restart_offered = s$restart_offered,
-      worker_message = s$worker_message, problems = nb$state$problems,
+      worker_message = s$worker_message, worker_memory = worker_memory,
+      problems = nb$state$problems,
       order = names(nb$state$cells), cells = cells, packages = s$packages)
 }
 

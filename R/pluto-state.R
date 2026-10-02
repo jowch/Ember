@@ -113,7 +113,8 @@ pluto_state <- function(state, previous = NULL) {
     nbpkg = reuse(project_nbpkg(state), if (!is.null(pj)) pj$nbpkg else NULL),
     status_tree = reuse(project_status_tree(state), if (!is.null(pj)) pj$status_tree else NULL),
     cell_dependencies = deps,
-    cell_execution_order = reuse(as_arr(state$graph$order), if (!is.null(pj)) pj$cell_execution_order else NULL))
+    cell_execution_order = reuse(as_arr(state$graph$order), if (!is.null(pj)) pj$cell_execution_order else NULL),
+    ember = reuse_fields(project_ember(state, ctx), if (!is.null(pj)) pj$ember else NULL))
   new_pluto_state(js, state, keys, state$graph)
 }
 
@@ -185,25 +186,32 @@ project_cell_input <- function(view) {
 #' * `queued`, `running`: the view's.
 #' * `errored`: any error on the view, or status "error"/"interrupted".
 #' * `runtime`: seconds -> nanoseconds as a double, or NULL when not run.
-#' * `depends_on_disabled_cells`: `stale || code_differs || !is.na(blocked_by)`.
-#'   Pluto dims a cell with this class; that is the increment-1 stand-in for
-#'   "stale", "an ancestor failed" and "this cell's code changed since its
-#'   last run" (an edit made outside the page -- the R API, Endeavor -- with
-#'   no run after it) until the fork has its own labels (increment 2).
-#'   `code_differs` is derived from `cell$code` and `result$code`, both
-#'   already in `cell_key()`'s key, so no extra field is needed there: any
-#'   change to it is already a key change.
+#' * `depends_on_disabled_cells`: `!is.na(blocked_by)` -- an ancestor's
+#'   failed result blocks this one. Increment 1 also folded "stale" and
+#'   "code changed outside the page" into this one flag (Pluto's only dimmed
+#'   state); increment 2 gives those their own labels (`ember$stale`,
+#'   `ember$code_changed`, below), so this field narrows to what it is named
+#'   for.
+#' * `ember`: `list(stale, code_changed, blocked_by = <id> | NULL)`, from the
+#'   view's `stale`, `code_differs` and `blocked_by` -- all already in
+#'   `cell_key()`'s key (`code_differs` is derived from `cell$code` and
+#'   `result$code`; `blocked_by` is `ctx$blocked_by[[i]]`), so no extra key
+#'   field is needed for it. The page shows a "stale", "code changed" or
+#'   "upstream error" label and dims the output the same way
+#'   `depends_on_disabled_cells` used to for all three (ui-2.md, 5).
 #' * `output`: project_output() of the view.
 #' * `logs`: project_logs() of the view's console.
 #' * `published_object_keys = list()`, `depends_on_skipped_cells = FALSE`.
 project_cell_result <- function(view) {
   errored <- length(view$errors) > 0 || view$status %in% c("error", "interrupted")
+  blocked_by <- if (is.na(view$blocked_by)) NULL else view$blocked_by
   list(cell_id = view$id,
       queued = isTRUE(view$queued), running = isTRUE(view$running),
       errored = errored,
       runtime = if (is.null(view$runtime)) NULL else as.double(view$runtime) * 1e9,
-      depends_on_disabled_cells = isTRUE(view$stale) || isTRUE(view$code_differs) ||
-        !is.na(view$blocked_by),
+      depends_on_disabled_cells = !is.null(blocked_by),
+      ember = list(stale = isTRUE(view$stale), code_changed = isTRUE(view$code_differs),
+                  blocked_by = blocked_by),
       output = project_output(view),
       logs = project_logs(view$console, view$id),
       published_object_keys = list(), depends_on_skipped_cells = FALSE)
@@ -530,8 +538,10 @@ project_process_status <- function(state) {
 #'   has a restart link, which is the action Ember offers.
 #' * `install_time_ns = NULL`, `instantiated = library status is "ready"`.
 #'
-#' Increment 2 replaces this with Ember's own package view; until then
-#' Endeavor's page adapter reads the same fields.
+#' Kept filled alongside Ember's own `ember$packages` (project_ember(),
+#' above): Endeavor's page adapter still reads these Pluto-shaped fields
+#' (`endeavor/frontend/src/drawer.ts:218, 244`), so they stay, not just until
+#' increment 2.
 project_nbpkg <- function(state) {
   pv <- packages_view(state)
   p <- state$packages
@@ -570,6 +580,77 @@ project_nbpkg <- function(state) {
       restart_recommended_msg = restart_recommended,
       install_time_ns = NULL,
       instantiated = identical(p$active$status, "ready"))
+}
+
+#' Ember's own top-level status (ui-2.md, 5): packages, "N cells not run",
+#' the worker's memory, and the plan the safe-preview banner describes.
+#' Pluto's `nbpkg`, `status_tree` and `process_status` stay filled beside
+#' this for Endeavor (project_nbpkg(), project_status_tree(), above).
+#'
+#' `list(process, worker_memory, not_run, stale, plan, packages)`:
+#'
+#' * `process`: `"preview"`, `"starting"`, `"ready"`, `"busy"` or
+#'   `"stopped"` -- `state$worker$status`, or `"preview"` in safe preview
+#'   (the same rule `snapshot_of()`'s `process` uses; not Pluto's
+#'   `process_status`, which collapses some of these together).
+#' * `worker_memory`: bytes, or `NULL` when none has been sampled yet, or
+#'   the sample on record is from a worker generation that isn't the current
+#'   one (a restart happened since the last sample; the new worker hasn't
+#'   reported yet).
+#' * `not_run`, `stale`: counts, from `not_run_ids()` (state.R) and the
+#'   views' `stale` flag.
+#' * `plan`: `packages_view(state)$plan`, `list(install, restart)` or `NULL`.
+#' * `packages`: the snapshot date, R/Bioconductor versions, the library's
+#'   status, and one row per locked or not-found package, from
+#'   `packages_view(state)`. `NA` fields (no version, no source, no message)
+#'   become `NULL` for the wire.
+project_ember <- function(state, ctx) {
+  stale <- 0L
+  if (isTRUE(state$allowed)) {
+    for (i in seq_along(ctx$ids)) {
+      r <- ctx$results[[i]]
+      if (!is.null(r) && isTRUE(r$stale)) stale <- stale + 1L
+    }
+  }
+  worker_memory <- NULL
+  wu <- state$worker_usage
+  if (!is.null(wu) && identical(wu$gen, state$worker$gen)) worker_memory <- as.double(wu$rss)
+
+  pv <- packages_view(state)
+  pkgs <- pv$packages
+  rows <- lapply(seq_len(nrow(pkgs)), function(i) {
+    list(name = pkgs$name[[i]],
+        version = if (is.na(pkgs$version[[i]])) NULL else pkgs$version[[i]],
+        source = if (is.na(pkgs$source[[i]])) NULL else pkgs$source[[i]],
+        direct = isTRUE(pkgs$direct[[i]]), status = pkgs$status[[i]],
+        message = if (is.na(pkgs$message[[i]])) NULL else pkgs$message[[i]])
+  })
+  packages <- list(
+    snapshot = pv$snapshot %||% NA_character_, r_version = pv$r_version %||% NA_character_,
+    bioc_version = pv$bioc_version %||% NA_character_,
+    library = list(status = pv$library$status, message = pv$library$message %||% NA_character_,
+                  progress = pv$library$progress),
+    rows = as_arr(rows))
+  # `snapshot`/`r_version`/`bioc_version`/`library$message` are NA when
+  # unset (packages-core.R: a fresh header has no snapshot date until
+  # packages are resolved); the wire has no NA (check_wire()), so each
+  # becomes NULL the same way a row's NA fields do above.
+  if (is.na(packages$snapshot)) packages$snapshot <- NULL
+  if (is.na(packages$r_version)) packages$r_version <- NULL
+  if (is.na(packages$bioc_version)) packages$bioc_version <- NULL
+  if (is.na(packages$library$message)) packages$library$message <- NULL
+
+  plan <- pv$plan
+  if (!is.null(plan)) plan <- list(install = as.integer(plan$install), restart = as_arr(plan$restart))
+
+  # Ember's own vocabulary, not Pluto's `process_status` mapping
+  # (project_process_status() collapses "starting"/"off" together and never
+  # says "stopped"): the same rule snapshot_of() uses for its `process`.
+  process <- if (!isTRUE(state$allowed)) "preview" else state$worker$status
+
+  list(process = process, worker_memory = worker_memory,
+      not_run = length(not_run_ids(state, ctx)), stale = stale,
+      plan = plan, packages = packages)
 }
 
 #' StatusEntryData for the status tab: root "notebook" with subtasks

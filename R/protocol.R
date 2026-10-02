@@ -24,6 +24,18 @@ is_map <- function(x) is.list(x) && !is.null(names(x))
 #' `identical()` returns at its first pointer comparison.
 reuse <- function(new, old) if (!is.null(old) && identical(new, old)) old else new
 
+#' `reuse()` applied field by field: every top-level entry of `new` that
+#' equals the same entry of `old` keeps `old`'s object, so `fb_diff()` finds
+#' only the fields that actually changed instead of replacing the whole map
+#' (pluto-state.R's `project_ember()`, where a worker-memory tick must not
+#' touch `not_run`, `plan` or `packages`).
+reuse_fields <- function(new, old) {
+  nm <- names(new)
+  out <- stats::setNames(vector("list", length(nm)), nm)
+  for (n in nm) out[[n]] <- reuse(new[[n]], if (!is.null(old)) old[[n]] else NULL)
+  out
+}
+
 # ---- msgpack -----------------------------------------------------------------
 
 mp_encode <- function(x) RcppMsgPack::msgpack_pack(x)
@@ -189,11 +201,14 @@ pluto_schema <- function() {
       "published_objects", "bonds", "metadata", "nbpkg", "status_tree",
       "cell_dependencies", "cell_dependencies/*",
       "cell_dependencies/*/downstream_cells_map",
-      "cell_dependencies/*/upstream_cells_map"
+      "cell_dependencies/*/upstream_cells_map",
+      "ember", "ember/packages", "ember/packages/library", "ember/plan",
+      "cell_results/*/ember"
     ),
     arrays = c(
       "cell_order", "cell_execution_order",
-      "cell_results/*/published_object_keys", "cell_results/*/logs"
+      "cell_results/*/published_object_keys", "cell_results/*/logs",
+      "ember/packages/rows", "ember/plan/restart"
     )
   )
 }

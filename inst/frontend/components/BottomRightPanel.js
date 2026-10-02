@@ -2,6 +2,7 @@ import { html, useState, useRef, useEffect, useMemo } from "../imports/Preact.js
 import { cl } from "../common/ClassTable.js"
 
 import { LiveDocsTab } from "./LiveDocsTab.js"
+import { PackagesTab } from "./PackagesTab.js"
 import { is_finished, StatusTab, total_done, total_tasks, useStatusItem } from "./StatusTab.js"
 import { useMyClockIsAheadBy } from "../common/clock_sync.js"
 import { BackendLaunchPhase } from "../common/Binder.js"
@@ -12,7 +13,7 @@ import { get_settings } from "./Settings.js"
 
 /**
  * @typedef PanelTabName
- * @type {"docs" | "process" | null}
+ * @type {"docs" | "process" | "packages" | null}
  */
 
 // The "Live docs" tab, replaced by the R help panel in piece 4.
@@ -160,6 +161,20 @@ export let BottomRightPanel = ({
                                   })}</span
                         >
                     </button>
+                    <button
+                        title=${t("t_panel_packages_description")}
+                        class=${cl({
+                            "helpbox-tab-key": true,
+                            "helpbox-packages": true,
+                            "active": open_tab === "packages",
+                        })}
+                        onClick=${() => {
+                            set_open_tab(open_tab === "packages" ? null : "packages")
+                        }}
+                    >
+                        <span class="tabicon"></span>
+                        <span class="tabname">${t("t_panel_packages")}</span>
+                    </button>
 
                     ${hidden
                         ? null
@@ -193,7 +208,9 @@ export let BottomRightPanel = ({
                             my_clock_is_ahead_by=${my_clock_is_ahead_by}
                             status=${status}
                         />`
-                      : null}
+                      : open_tab === "packages"
+                        ? html`<${PackagesTab} packages=${notebook.ember?.packages} />`
+                        : null}
                 ${get_settings().ALWAYS_NOTIFY_LONG_BUSY && open_tab !== "process"
                     ? // Render the NotifyWhenDone component so it can send a notification
                       html`<div style="display: none" aria-hidden="true"><${NotifyWhenDone} status=${status} /></div>`
