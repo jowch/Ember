@@ -15,5 +15,5 @@ export default {
     entryFileNames: "[name]-[hash].js",
     format: "es",
   },
-  plugins: [nodeResolve(), terser()],
+  plugins: [nodeResolve({ dedupe: (id) => id.startsWith("@lezer/") }), terser()],
 }

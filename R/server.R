@@ -1161,7 +1161,7 @@ base64_encode <- function(bytes) {
   if (length(bytes) == 0) return("")
   # base64_enc() wraps lines at 76 characters; a newline inside the JS
   # string literals and attributes these data: URLs go into breaks them.
-  gsub("\n", "", jsonlite::base64_enc(bytes), fixed = TRUE)
+  gsub("[\r\n]", "", jsonlite::base64_enc(bytes))
 }
 
 js_string_literal <- function(x) paste0('"', gsub('"', '\\\\"', x, fixed = TRUE), '"')

@@ -746,7 +746,7 @@ test_that("display_html resolves and dedupes dependencies, skipped without htmlt
     'd1 <- htmltools::htmlDependency("mylib", "1.0", src = c(file = %s), script = "a.js", stylesheet = "a.css")',
     'd2 <- htmltools::htmlDependency("mylib", "2.0", src = c(file = %s), script = "a.js")',
     'htmltools::attachDependencies(htmltools::tags$div("hi"), list(d1, d2))',
-    sep = "\n"), shQuote(td), shQuote(td))
+    sep = "\n"), deparse(td), deparse(td))
   r <- run_and_wait(h, "a", 1L, code)
   expect_identical(r$output$kind, "html")
   expect_length(r$output$deps, 1)

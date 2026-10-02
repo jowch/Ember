@@ -105,6 +105,10 @@ test("offline: each vendored library does its job (19)", async (t) => {
 
   const page = await newPage(browser);
   blockNonLocal(page);
+  // A slow CPU makes CodeMirror parse in slices, which is the only way a
+  // second copy of @lezer/common in the bundle showed up (MD's fenced R code).
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: 8 });
   await openNotebook(page, server.origin, server.secret, notebook);
 
   // Preact + htm: the page rendered at all (pluto-cell elements exist).
