@@ -94,18 +94,25 @@ New fixtures:
 14. The installed `frontend` folder is under 3 MB;
     `imports/vendor/THIRD-PARTY.txt` exists; every package it names also
     appears in `inst/COPYRIGHTS`.
-15. `export_html(state)` (no root) keeps `href="./` and `src="./`;
-    `export_html(state, root = "https://example.org/f/")` rewrites every one
-    of them and the `pluto-cdn-root` meta, and leaves absolute and `data:`
-    URLs alone. `export_root()` gives
-    `https://cdn.jsdelivr.net/gh/jowch/Ember@v0.2.0/inst/frontend/` for
-    version `0.2.0` and `NULL` for `0.0.0.9000`.
+15. `export_html(state)` has no `src="./`, `href="./` or `url(./` left, and
+    no external URL other than MathJax; its `#ember-modules` holds every
+    `.js` and `.json` file under the frontend, and no embedded module has a
+    relative import specifier left. No frontend `.js` file uses
+    `import.meta` or an `import(` whose argument isn't a string literal
+    (Environment.js's data-URL import is the one allowed exception). A
+    notebook with an htmlwidget output exports with its dep files as data:
+    URLs.
+15a. `serve()` answers a hashed file under `imports/vendor/` with
+    `Cache-Control: public, max-age=31536000, immutable`, and `editor.js`
+    and `edit?...` with `Cache-Control: no-cache`. Every
+    `imports/vendor/*-<hash>.js` named by a shim exists, and no other hashed
+    file does.
 
 **Build (CI job `frontend-build`, not testthat)**
 
 16. `npm ci && npm run build` in `frontend-build/` leaves `git diff
-    --exit-code inst/frontend/imports inst/frontend/fonts
-    inst/frontend/img/icons` clean.
+    --exit-code inst/frontend/imports inst/frontend/img/icons` clean, and a
+    second build changes nothing.
 17. `scripts/check-imports.mjs` passes on the real frontend, and fails when
     run against a frontend file that imports a name the bundle doesn't
     export.
@@ -122,9 +129,13 @@ New fixtures:
     `ANSI` has a `span.ansi-red-fg` (ansi_up); the export dialog opens
     (dialog-polyfill); the fenced R block in `MD` has `.hljs-keyword` spans
     (highlight.js).
-20. Export: fetch `/notebookexport?id=…` and open it from the server with
-    the network blocked: every cell shows, code cells have R highlighting,
-    `B`'s output shows.
+20. Export: fetch `/notebookexport?id=…` after running `rich.R`, save it to
+    a temp file, and open it as `file://` with every network request
+    aborted (MathJax aside): every cell shows, code cells have R
+    highlighting, `B`'s output shows, the table in `TBL` shows, and the DT
+    widget renders rows. The same with `&offline_bundle=true`.
+21. Cache: load the page, reload it; the second load makes no request for
+    any `imports/vendor/*-<hash>.js` file (served from the browser cache).
 
 ## Piece 3: Rich outputs
 

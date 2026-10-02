@@ -1,5 +1,4 @@
-//@ts-ignore
-import { sha256 } from "https://cdn.jsdelivr.net/gh/JuliaPluto/js-sha256@v0.9.0-es6/src/sha256.mjs"
+import { sha256 } from "../imports/JsSha256.js"
 
 export const base64_arraybuffer = async (/** @type {BufferSource} */ data) => {
     /** @type {string} */

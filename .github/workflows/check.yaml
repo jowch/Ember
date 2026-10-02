@@ -85,7 +85,7 @@ jobs:
           path: tests/e2e/test-results/
           if-no-files-found: ignore
 
-  codemirror-ember-setup:
+  frontend-build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -95,16 +95,18 @@ jobs:
           cache: npm
           cache-dependency-path: |
             grammar/package-lock.json
-            frontend-setup/package-lock.json
-      - name: Build the R grammar (frontend-setup depends on it by path)
+            frontend-build/package-lock.json
+      - name: Build the R grammar (frontend-build depends on it by path)
         working-directory: grammar
         run: |
           npm ci
           npm run build
-      - name: Rebuild the CodeMirror bundle
-        working-directory: frontend-setup
+      - name: Build the CodeMirror bundle, the vendor bundles, and copy assets
+        working-directory: frontend-build
         run: |
           npm ci
           npm run build
-      - name: Committed bundle matches a fresh rebuild
-        run: diff -q frontend-setup/dist/codemirror-ember-setup.js inst/frontend/imports/codemirror-ember-setup.js
+      - name: Committed frontend files match a fresh rebuild
+        run: |
+          git diff --exit-code -- inst/frontend/imports inst/frontend/img/icons
+          ! git status --porcelain -- inst/frontend/imports inst/frontend/img/icons | grep '^??'

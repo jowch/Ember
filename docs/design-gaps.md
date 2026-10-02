@@ -34,6 +34,7 @@ done; clear out ticked items at each release.
 - [x] Exports of installed packages for the graph before a cell attaches them — missing
 - [ ] Per-package update and pin (crandb release dates), Bioconductor, GitHub sources, install consent for large downloads, compiler and system-library checks, disk use (increments 2 and 3 in packages.md); moving to a date and cleanup are built — missing
 - [ ] A snapshot date from before the running R was released has no binaries for it, so packages build from source, and old versions may not compile on the new R (cli from 2024 on R 4.6: `Rf_findVar` removed). Detect it before installing and explain (increment 2's install plan) — missing
+- [ ] A failed install reports only "install failed, status 1" with an empty log: the installer's output (renv's and the compiler's errors) never reaches the session, so the reason is invisible in the page and in `notebook_snapshot()` — missing
 - [ ] `renv` is in Imports but used only by the installer script, so R CMD check notes it as not imported — improvised
 
 ## UI (build step 4)
@@ -48,8 +49,9 @@ done; clear out ticked items at each release.
 
 - [ ] Coloured console output (cli, crayon) sits on the log box's dark brown background, where red text is hard to read; the ANSI colours need values chosen for that background, or a lighter box — improvised
 
-- [ ] Self-contained exports, and a browser with no internet: bundle the frontend's third-party libraries (MathJax aside) and serve the bundle always, with content-hashed names and long cache headers so a slow tunnel carries it once — missing
+- [x] Self-contained exports, and a browser with no internet: bundle the frontend's third-party libraries (MathJax aside) and serve the bundle always, with content-hashed names and long cache headers so a slow tunnel carries it once — missing
 
+- [ ] The page requests MathJax from the CDN after every load, even with no TeX on it; offline that is one failed request and a console error (exports included). Load it only when a cell has TeX — improvised
 - [ ] Go-to-definition and variable links in the editor (ui-2.md piece 4e, cut from increment 2). Pluto's Julia `ScopeStateField` stays wired until it has an R replacement — missing
 
 - [x] Remote use: the server accepted only Host `127.0.0.1:<port>` or `localhost:<port>`, so an SSH tunnel to a different local port, or any reverse proxy (Posit Workbench, JupyterHub, VS Code port forwarding), got 403. Now a loopback Host is accepted on any port when Origin matches Host (or is absent); an opt-in `allowed_hosts` argument covers a proxy that isn't loopback — missing
@@ -80,6 +82,7 @@ done; clear out ticked items at each release.
 
 ## Spikes still to run
 
+- [ ] Release builds ship Ember's own frontend files minified (dev keeps them readable): a release script minifies each file in place, keeping names and layout, before `R CMD build`; CI runs the browser tests against that build too. Say where the readable source is (inst/COPYRIGHTS, the frontend README), in case CRAN asks — missing
 - [ ] Server and worker on Linux and Windows (responsiveness, interrupt, restart) — missing
 - [ ] rig's user-mode R on Windows — missing
 - [ ] rv against renv on Linux and Windows, including Bioconductor — missing

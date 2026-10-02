@@ -15,14 +15,14 @@ write_file_exact <- function(path, text) {
 #' it to disk. Returns the path.
 write_session_notebook <- function(cells, setup = names(cells)[1],
                                    on_cell_change = "autorun",
-                                   dir = NULL) {
+                                   dir = NULL, snapshot = "2026-01-01") {
   if (is.null(dir)) {
     dir <- tempfile("ember-nb-")
     dir.create(dir, recursive = TRUE)
   }
   header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
                        r_version = paste(R.version$major, R.version$minor, sep = "."),
-                       snapshot = "2026-01-01", on_cell_change = on_cell_change)
+                       snapshot = snapshot, on_cell_change = on_cell_change)
   file <- new_notebook_file(
     header = header, cells = cells, setup = setup, run_order = names(cells),
     learned = list(),

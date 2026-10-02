@@ -973,3 +973,73 @@ test_that("start_server() returns a working handle, and stop() ends the child (s
   handle$process$wait(5000)
   expect_false(handle$process$is_alive())
 })
+
+# ---- Cache headers: immutable for hashed vendor files, no-cache for the ----
+# ---- rest (ui-2-tests.md 15a) ----------------------------------------------
+
+test_that("serve() answers hashed vendor files immutable and everything else no-cache (15a)", {
+  skip_on_cran()
+
+  ember_lib <- file.path(tempdir(), "ember-self-lib")
+  if (dir.exists(file.path(ember_lib, "ember"))) {
+    old_r_libs_user <- Sys.getenv("R_LIBS_USER", unset = NA)
+    Sys.setenv(R_LIBS_USER = paste(c(ember_lib, Sys.getenv("R_LIBS_USER")), collapse = .Platform$path.sep))
+    on.exit({
+      if (is.na(old_r_libs_user)) Sys.unsetenv("R_LIBS_USER") else Sys.setenv(R_LIBS_USER = old_r_libs_user)
+    }, add = TRUE)
+  }
+
+  # An explicit free port, not the stable default: this file's own earlier
+  # tests also bind port 4321, and immediately re-binding it here (right
+  # after an on.exit `stop()`) has been flaky under the full suite's
+  # timing, landing this test on a leftover process instead of its own.
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  handle <- start_server(path, port = pick_free_port(), open = FALSE, timeout = 30)
+  on.exit(try(handle$stop(), silent = TRUE), add = TRUE)
+
+  m <- regmatches(handle$url, regexec("^http://127\\.0\\.0\\.1:([0-9]+)/\\?secret=(.*)$", handle$url))[[1]]
+  port <- as.integer(m[2])
+
+  frontend_dir <- system.file("frontend", package = "ember")
+  vendor_dir <- file.path(frontend_dir, "imports", "vendor")
+  hashed <- list.files(vendor_dir, pattern = "-[0-9A-Za-z_-]+\\.js$")
+  expect_true(length(hashed) > 0)
+
+  resp <- http_get_raw("127.0.0.1", port, paste0("/imports/vendor/", hashed[[1]]))
+  expect_equal(resp$status, 200L)
+  expect_equal(resp$headers[["cache-control"]], "public, max-age=31536000, immutable")
+
+  resp2 <- http_get_raw("127.0.0.1", port, "/editor.js")
+  expect_equal(resp2$status, 200L)
+  expect_equal(resp2$headers[["cache-control"]], "no-cache")
+
+  edit_url <- handle$open(path)
+  edit_path_and_query <- sub("^http://127\\.0\\.0\\.1:[0-9]+", "", edit_url)
+  resp3 <- http_get_raw("127.0.0.1", port, edit_path_and_query)
+  expect_equal(resp3$status, 200L)
+  expect_equal(resp3$headers[["cache-control"]], "no-cache")
+})
+
+test_that("every hashed vendor file a shim names exists, and no other hashed file does (15a)", {
+  frontend_dir <- system.file("frontend", package = "ember")
+  vendor_dir <- file.path(frontend_dir, "imports", "vendor")
+  on_disk <- list.files(vendor_dir, pattern = "-[0-9A-Za-z_-]+\\.js$")
+
+  shim_files <- list.files(file.path(frontend_dir, "imports"), pattern = "\\.js$", full.names = TRUE)
+  named <- character(0)
+  for (f in shim_files) {
+    text <- readChar(f, file.info(f)$size)
+    found <- regmatches(text, gregexpr('\\./vendor/([A-Za-z0-9_.-]+-[0-9A-Za-z_-]+\\.js)', text, perl = TRUE))[[1]]
+    named <- c(named, sub('^\\./vendor/', "", found))
+  }
+  named <- unique(named)
+
+  # Every named file exists...
+  expect_equal(setdiff(named, on_disk), character(0))
+  # ...and every entry chunk on disk is named by some shim (internal
+  # helper chunks, e.g. commonjs's, are reached only via another chunk's
+  # own import, never a shim's, so they're excluded from this direction).
+  unreferenced <- setdiff(on_disk, named)
+  unreferenced <- unreferenced[!grepl("^_", unreferenced)]
+  expect_equal(unreferenced, character(0))
+})

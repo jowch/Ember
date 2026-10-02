@@ -1,5 +1,4 @@
-//@ts-ignore
-import dialogPolyfill from "https://cdn.jsdelivr.net/npm/dialog-polyfill@0.5.6/dist/dialog-polyfill.esm.min.js"
+import dialogPolyfill from "../imports/DialogPolyfill.js"
 
 import { useEventListener } from "../common/useEventListener.js"
 import { html, useLayoutEffect, useRef } from "../imports/Preact.js"

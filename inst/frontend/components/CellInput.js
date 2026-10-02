@@ -37,7 +37,6 @@ import {
     markdown,
     rLanguage,
     javascriptLanguage,
-    pythonLanguage,
     syntaxHighlighting,
     cssLanguage,
     setDiagnostics,
@@ -109,11 +108,6 @@ export const pluto_syntax_colors_julia = HighlightStyle.define(common_style_tags
 export const pluto_syntax_colors_javascript = HighlightStyle.define(common_style_tags, {
     all: { color: `var(--cm-color-editor-text)`, filter: `contrast(0.5)` },
     scope: javascriptLanguage,
-})
-
-export const pluto_syntax_colors_python = HighlightStyle.define(common_style_tags, {
-    all: { color: `var(--cm-color-editor-text)`, filter: `contrast(0.5)` },
-    scope: pythonLanguage,
 })
 
 export const pluto_syntax_color_any = HighlightStyle.define(common_style_tags, {
@@ -524,7 +518,6 @@ export const CellInput = ({
                     syntaxHighlighting(pluto_syntax_colors_html),
                     syntaxHighlighting(pluto_syntax_colors_markdown),
                     syntaxHighlighting(pluto_syntax_colors_javascript),
-                    syntaxHighlighting(pluto_syntax_colors_python),
                     syntaxHighlighting(pluto_syntax_colors_css),
                     lineNumbers(),
                     highlightSpecialChars(),

@@ -1009,7 +1009,8 @@ http_edit <- function(server, req) {
   # wherever the proxy actually mounts them.
   http_text(200L, body, "text/html; charset=utf-8",
            list("Set-Cookie" = sprintf("%s=%s; SameSite=Strict; HttpOnly; Path=/",
-                                       cookie_name(server), server$secret)))
+                                       cookie_name(server), server$secret),
+                "Cache-Control" = "no-cache"))
 }
 
 #' `GET /open?path=` -> open (or find) the notebook, host it owned, redirect
@@ -1104,6 +1105,11 @@ http_call <- function(server, req) {
 #'   that happens to exist in the vendored frontend folder -- before `call`
 #'   ever sees it; see `http_index()`). No secret on static files otherwise:
 #'   the frontend's code is not private (Pluto exempts .js/.css too).
+#'   `imports/vendor` is its own, more specific static path (httpuv matches
+#'   the longest prefix): its files are content-hashed, so they get a long,
+#'   immutable cache lifetime; everything else is `no-cache`, so the browser
+#'   revalidates with `If-Modified-Since` (a 304 when unchanged) instead of
+#'   assuming a file never changes (docs/ui-2.md, "Offline bundle").
 #' * `call` (R): checks the request's origin (`origin_ok()`) and then the
 #'   secret (query `secret=` or the per-port cookie, `secret_ok()`),
 #'   answering 403 otherwise, then routes `/edit`, `/open`, `/notebookfile`,
@@ -1123,7 +1129,11 @@ http_app <- function(server) {
       })
     },
     staticPaths = list(
-      "/" = httpuv::staticPath(server$frontend, fallthrough = TRUE, indexhtml = FALSE),
+      "/imports/vendor" = httpuv::staticPath(
+        file.path(server$frontend, "imports", "vendor"), fallthrough = TRUE,
+        headers = list("Cache-Control" = "public, max-age=31536000, immutable")),
+      "/" = httpuv::staticPath(server$frontend, fallthrough = TRUE, indexhtml = FALSE,
+                               headers = list("Cache-Control" = "no-cache")),
       "/editor.html" = httpuv::excludeStaticPath()
     ),
     onWSOpen = function(ws) {
@@ -1149,35 +1159,12 @@ http_app <- function(server) {
 #' on a large plot or a notebook export, where it mattered most.
 base64_encode <- function(bytes) {
   if (length(bytes) == 0) return("")
-  jsonlite::base64_enc(bytes)
+  # base64_enc() wraps lines at 76 characters; a newline inside the JS
+  # string literals and attributes these data: URLs go into breaks them.
+  gsub("\n", "", jsonlite::base64_enc(bytes), fixed = TRUE)
 }
 
 js_string_literal <- function(x) paste0('"', gsub('"', '\\\\"', x, fixed = TRUE), '"')
-
-#' Static HTML export, as Pluto's generate_html(): editor.html with a
-#' launch-parameters script (`pluto_notebook_id`, `pluto_disable_ui = true`,
-#' `pluto_statefile` = data URL of mp_encode(pluto_state(state)$js),
-#' `pluto_notebookfile` = data URL of the file text), inserted at the
-#' `pluto-insertion-spot-parameters` meta. Its `pluto-cdn-root` points at
-#' Pluto v1.0.3 on jsdelivr in increment 1, because the fork's files are not
-#' on any CDN; the export shows outputs but highlights code as Julia.
-#' Increment 2's offline bundle replaces that.
-export_html <- function(state) {
-  template <- read_file_utf8(file.path(system.file("frontend", package = "ember"), "editor.html"))
-  js <- pluto_state(state)$js
-  statefile <- paste0("data:;base64,", base64_encode(mp_encode(js)))
-  text <- format_notebook(notebook_file_of(state))
-  notebookfile <- paste0("data:;base64,", base64_encode(charToRaw(enc2utf8(text))))
-
-  params <- paste0(
-    '<script data-pluto-file="launch-parameters">',
-    "window.pluto_notebook_id = ", js_string_literal(state$id), ";",
-    "window.pluto_disable_ui = true;",
-    "window.pluto_statefile = ", js_string_literal(statefile), ";",
-    "window.pluto_notebookfile = ", js_string_literal(notebookfile), ";",
-    "</script>")
-  sub('<meta name="pluto-insertion-spot-parameters"[^>]*/?>', params, template)
-}
 
 # ---- The child process --------------------------------------------------------
 

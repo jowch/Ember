@@ -1,4 +1,4 @@
-import "https://cdn.jsdelivr.net/npm/requestidlecallback-polyfill@1.0.2/index.js"
+import "../imports/RequestIdleCallbackPolyfill.js"
 import { get_included_external_source } from "./external_source.js"
 
 let setup_done = false

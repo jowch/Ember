@@ -263,10 +263,11 @@ nothing saved). So:
 
 ### What the user sees
 
-Nothing changes on screen. The notebook opens with the network off. An
-exported HTML file opened on another machine shows code highlighted as R:
-for a released Ember version it loads Ember's frontend from jsdelivr (or
-works fully offline, if single-file exports are chosen; Open questions).
+Nothing changes on screen. The notebook opens with the network off (as
+over an SSH tunnel from a machine without internet). After the first visit
+the large library files come from the browser's cache without a request. A
+downloaded export is one HTML file that opens from disk on another machine,
+offline, with code highlighted as R and widgets working.
 
 ### Bundle or vendor as-is
 
@@ -288,9 +289,12 @@ file; only their `from` lines change. The CI check is the same as the
 CodeMirror bundle's: `npm ci && npm run build`, then the committed output
 must match. This is deterministic because the lockfile pins every version.
 
-A **full bundle** of the whole frontend (Pluto's own release does this) is
-needed only for single-file exports. It isn't proposed unless the user
-chooses single-file exports (Open questions).
+A **full bundle** of the whole frontend (Pluto's own release does this for
+its offline exports) is not built. It would be a second copy of the
+frontend (about 1.9 MB, pushing the installed package past CRAN's 5 MB),
+and it would have to be rebuilt and committed after every edit to Ember's
+own frontend files. Exports embed the files the live page uses instead
+(Shape, Exports).
 
 ### Measured sizes
 
@@ -349,8 +353,9 @@ version so its source can be found.
      `rollup-plugin-license` writes
      `inst/frontend/imports/vendor/THIRD-PARTY.txt`.
   3. `scripts/copy-assets.mjs`: copies the ionicons SVGs the CSS names into
-     `inst/frontend/img/icons/`, the kept woff2 files into
-     `inst/frontend/fonts/`, and `dialog-polyfill.css`.
+     `inst/frontend/img/icons/`, and `dialog-polyfill.css` and the two
+     iframe-resizer scripts into `imports/vendor/` (piece 1 chose system
+     fonts, so no font files are copied).
 - **Frontend edits**: every `https://` import becomes a relative import:
   the shims in `imports/`, `common/PlutoHash.js`,
   `common/SetupCellEnvironment.js`, `common/SetupMathJax.js`,
@@ -363,46 +368,76 @@ version so its source can be found.
   bundle, so trimming languages can't silently break an import.
 - **CI**: the `codemirror-ember-setup` job becomes `frontend-build`: build
   the grammar, `npm ci && npm run build` in `frontend-build/`, then
-  `git diff --exit-code inst/frontend/imports inst/frontend/fonts inst/frontend/img/icons`.
+  `git diff --exit-code inst/frontend/imports inst/frontend/img/icons`.
   `.Rbuildignore` gets `^frontend-build$`.
 - **An R test that the shipped frontend has no external URLs**
   (`test-frontend-files.R`): it reads every `.js`, `.css` and `.html` under
   `system.file("frontend")` and fails on `https?://` in an `import`, `src`,
   `href` or `url()` position, except an allowlist (MathJax while it stays on
   the CDN). This runs in `R CMD check` with no Node.
-- **Exports.** Today `export_html()` (server.R:866-882) inserts the launch
-  parameters and leaves the template's relative root
-  (`<meta rel="pluto-cdn-root" href="./">` and `./editor.js`,
-  editor.html:33-35). So an export viewed at `/notebookexport` loads
-  Ember's own frontend from the server and already highlights as R, while
-  the same file saved to disk can't find `./editor.js` and shows nothing.
-  ("Local" can't fix the saved file: browsers refuse to load ES modules from
-  `file://` pages.) Change:
+- **Hashed names and cache headers.** The vendor bundles and
+  `codemirror-ember-setup.js` are written as `<name>-<hash>.js` (rollup's
+  `[name]-[hash].js`, hash of the content). The build then rewrites the
+  `from` line of each shim in `imports/` to the new name and deletes the
+  old hashed files, so a rebuild with no change leaves git clean. All hashed
+  files live under `imports/vendor/`. `serve()` mounts that folder as its
+  own static path with `Cache-Control: public, max-age=31536000, immutable`,
+  and the rest of the frontend with `Cache-Control: no-cache` (the browser
+  keeps the file and revalidates it with `If-Modified-Since`, a 304 when
+  unchanged). Both are httpuv static paths
+  (`staticPathOptions(headers = ...)`), served without R. Ember's own files
+  are small, so a revalidation round trip per file is acceptable; the
+  hashed files are the bulk of the bytes. `editor.html` is served by R and
+  gets `no-cache` too.
+- **Exports are self-contained**, every one (`/notebookexport`, with or
+  without `offline_bundle=true`, which Endeavor sends). The export embeds
+  the same files the live page loads; there is no second build.
 
   ```r
-  #' @param root Where the export loads the frontend from: NULL keeps the
-  #'   relative "./" (viewed through this server only); a URL ending in "/"
-  #'   rewrites every `href="./` and `src="./` to it, as Pluto's
-  #'   generate_html() does with its cdn root.
-  export_html(state, root = NULL)
-
-  #' The root for a downloaded export: jsdelivr serving this Ember version's
-  #' inst/frontend from GitHub (https://cdn.jsdelivr.net/gh/jowch/Ember@v<version>/inst/frontend/)
-  #' for a release version (no fourth version component); NULL for a
-  #' development version.
-  export_root()
+  #' editor.html with the launch parameters (as today), and the frontend
+  #' inlined: all-styles.css with its @imports expanded and every url()
+  #' to a local file turned into a data: URL; the favicon and logo links
+  #' as data: URLs; the iframe-resizer scripts inline; and every .js and
+  #' .json file under the frontend embedded as text in one
+  #' <script type="application/json" id="ember-modules">, keyed by its path
+  #' relative to the frontend ("components/Cell.js").
+  #' Each module's relative import specifiers (static `from "..."`,
+  #' `import "..."`, `export ... from "..."`, and `import("...")` with a
+  #' literal) are rewritten to bare keys `ember/<path>`, resolved against
+  #' the importing file's folder.
+  #' Output deps (htmlwidgets' `deps/<name>-<version>/<file>` script and
+  #' stylesheet URLs in the projected state) become data: URLs, so widgets
+  #' work in the file; the export is larger by their size.
+  export_html(state)
   ```
 
-  `/notebookexport` serves `export_html(state, export_root())`. The
-  repository is public, so jsdelivr can serve tagged releases. A
-  development build's export still works only through the server, and the
-  export banner says so. Single-file exports are the alternative (Open
-  questions); if chosen, `/notebookexport?offline_bundle=true`, which
-  Endeavor already sends, returns that form.
+  A small classic `<script>` in the export (`inst/frontend/export-loader.js`,
+  inlined) reads `#ember-modules`, makes a Blob URL per module
+  (`text/javascript`, or `application/json` for `.json`), inserts
+  `<script type="importmap">` mapping each `ember/<path>` to its Blob URL,
+  then inserts `<script type="module">import "ember/editor.js"</script>`.
+  Import maps resolve any order of imports, including cycles, and module
+  scripts inlined in the page load from `file://`, which `./editor.js` can't.
+  `</script` inside embedded text is escaped as `<\/script`.
+
+  This works because nothing in the frontend computes an import path at
+  run time or uses `import.meta` (checked: the one computed `import()`,
+  `common/Environment.js`, loads an injected data URL that Ember never
+  sets). A test (ui-2-tests.md 15) fails if either appears.
+
+  An export of the development package is self-contained too, so
+  `export_root()`, the jsdelivr root and the banner note are dropped.
+
+- **Release builds minify Ember's own files** (decided with the user).
+  The repository keeps them readable; a release script minifies each one
+  in place (same names, same layout, so the live page and exports work
+  the same way) before `R CMD build`, and CI runs the browser tests
+  against that build as well. About 0.7 MB becomes about 0.3 MB.
+  Tracked in design-gaps.md (Packaging and CI); not part of this piece.
 
 ### Tests
 
-ui-2-tests.md 13-20.
+ui-2-tests.md 13-21.
 
 ### Risks
 
@@ -428,7 +463,7 @@ ui-2-tests.md 13-20.
 2. Vendor libraries, one shim at a time, e2e after each.
 3. Icons and fonts; then editor.html's scripts.
 4. The R "no external URLs" test and the e2e offline test.
-5. `export_html(root)` and `export_root()`.
+5. Hashed names, the cache headers, then self-contained `export_html()`.
 
 ---
 
@@ -707,8 +742,8 @@ ui-2-tests.md 21-43.
   `notebook_snapshot()`. The API promises callers the MIME type and the
   `text/plain` form (design.md, Integration with Endeavor), not this
   structure; the change goes in the release notes anyway.
-- Widgets in exports: `/deps/...` doesn't exist in a downloaded export, so
-  widgets render empty there (Open questions).
+- Widgets in exports: their `deps/...` files are inlined as data: URLs
+  (piece 2, Exports), so an export with a DT table is larger by DT's files.
 - Raising `last_run_timestamp` on a re-render re-runs inline scripts in that
   output. Plot, table and tree outputs have none.
 - The colour options are visible to user code (above).
@@ -1147,15 +1182,8 @@ Still open (placeholders until the user decides):
    piece 1, Logo).
 2. **Palette.** Piece 1 keeps Pluto's colour values under the same variable
    names until a palette is chosen.
-3. **Downloaded exports.** Proposed: they load the frontend from jsdelivr at
-   the release's Git tag (small files; need the network to view; development
-   versions work only through the server). Alternative: single-file exports
-   that work offline (about 2-2.5 MB each; needs a full-frontend bundle
-   build). Endeavor already asks for the single-file kind: it saves exports
-   from `/notebookexport?id=…&offline_bundle=true`
-   (endeavor/src/notebook_pane.rs:873), Pluto's self-contained mode, which
-   Ember's server ignores today. htmlwidgets in exports need their files
-   either way: inline them (large) or leave widgets empty in exports.
+3. **Downloaded exports.** Decided: self-contained, offline, one file (piece
+   2, Exports), including widgets' files.
 4. **Markdown fold state in existing files.** New markdown cells start
    folded. A markdown cell in a file without a `folded` mark opens
    unfolded, since fold state is the file's. Folding those by default

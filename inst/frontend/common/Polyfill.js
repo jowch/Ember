@@ -27,7 +27,6 @@ if (Blob.prototype.arrayBuffer == null) {
     }
 }
 
-//@ts-ignore
-import { polyfill as scroll_polyfill } from "https://esm.sh/seamless-scroll-polyfill@2.1.8/lib/polyfill.js?target=es2020"
+import { polyfill as scroll_polyfill } from "../imports/SeamlessScrollPolyfill.js"
 
 scroll_polyfill()

@@ -47,7 +47,7 @@ pluto-tree > pluto-tree-prefix::before {
     bottom: -2px;
     opacity: 0.5;
     cursor: pointer;
-    background-image: url("https://cdn.jsdelivr.net/gh/ionic-team/ionicons@5.5.1/src/svg/caret-down-outline.svg");
+    background-image: url("./img/icons/caret-down-outline.svg");
     filter: var(--image-filters);
 }
 
@@ -56,7 +56,7 @@ pluto-tree.collapsed pluto-tree > pluto-tree-prefix::before {
 }
 
 pluto-tree.collapsed > pluto-tree-prefix::before {
-    background-image: url("https://cdn.jsdelivr.net/gh/ionic-team/ionicons@5.5.1/src/svg/caret-forward-outline.svg");
+    background-image: url("./img/icons/caret-forward-outline.svg");
 }
 
 pluto-tree p-r > p-v {
@@ -191,11 +191,11 @@ pluto-tree-more::before {
     width: 1em;
     opacity: 0.5;
     filter: var(--image-filters);
-    background-image: url("https://cdn.jsdelivr.net/gh/ionic-team/ionicons@5.5.1/src/svg/ellipsis-vertical.svg");
+    background-image: url("./img/icons/ellipsis-vertical.svg");
 }
 
 pluto-tree-more.loading::before {
-    background-image: url("https://cdn.jsdelivr.net/gh/ionic-team/ionicons@5.5.1/src/svg/sync-outline.svg");
+    background-image: url("./img/icons/sync-outline.svg");
     animation: loadspin 3s ease-in-out infinite;
 }
 
@@ -221,7 +221,7 @@ pluto-tree.collapsed pluto-tree-more {
     margin: 0em;
 }
 pluto-tree.collapsed pluto-tree-more::before {
-    background-image: url("https://cdn.jsdelivr.net/gh/ionic-team/ionicons@5.5.1/src/svg/ellipsis-horizontal.svg");
+    background-image: url("./img/icons/ellipsis-horizontal.svg");
 }
 
 /*  */

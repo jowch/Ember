@@ -7,12 +7,46 @@ licence. Its text is at inst/frontend/LICENSE.
 
 - Pluto.jl: MIT, Copyright (c) 2020-2026 the Pluto.jl authors.
 - codemirror-pluto-setup: MIT, Copyright (c) 2021 Pluto.jl authors. Its
-  source, which inst/frontend/imports/codemirror-ember-setup.js is built
-  from, is copied and extended in frontend-setup/src/index.js.
+  source, which inst/frontend/imports/vendor/codemirror-ember-setup-*.js is
+  built from, is copied and extended in frontend-build/src/index.js.
 - CodeMirror 6: MIT, Copyright (C) 2018-2021 by Marijn Haverbeke
   <marijnh@gmail.com> and others.
 - Lezer: MIT, Copyright (C) 2018-2021 by Marijn Haverbeke
   <marijnh@gmail.com> and others.
+
+inst/frontend/imports/vendor/ is built by frontend-build/ (npm) from these
+packages; versions are pinned in frontend-build/package.json and
+frontend-build/package-lock.json, and the generated
+inst/frontend/imports/vendor/THIRD-PARTY.txt carries each package's full
+licence text.
+
+- preact 10.29.2: MIT, Copyright (c) 2015-present Jason Miller.
+- htm 3.1.1: Apache License 2.0, developit.
+- lodash-es (lodash) 4.18.1: MIT, Copyright OpenJS Foundation and other
+  contributors.
+- immer 11.1.8: MIT, Copyright (c) 2017 Michel Weststrate.
+- dompurify 3.4.5: Apache License 2.0 (also available under Mozilla Public
+  License 2.0), Cure53 and DOMPurify contributors.
+- semver 7.8.0: ISC, Copyright (c) Isaac Z. Schlueter and Contributors.
+- ansi_up 6.0.6: MIT, Copyright (c) 2011 github.com/drudru.
+- @observablehq/stdlib 3.3.1: ISC, Copyright 2018 Observable, Inc. Bundles
+  d3-require 1.3.0 (ISC, Copyright 2017-2022 Observable, Inc.), the
+  `require()` it provides to a cell's own JavaScript.
+- dialog-polyfill 0.5.6: BSD 3-Clause, Copyright (c) 2013 The Chromium
+  Authors.
+- iframe-resizer 4.3.11: MIT, Copyright (c) 2013-2023 David J. Bradshaw.
+  (iframe-resizer 5.x changed licence; 4.x is the last MIT release.)
+- highlight.js 11.11.1: BSD 3-Clause, Copyright (c) 2006, Ivan Sagalaev.
+  Only the `r` and `markdown` languages are vendored.
+- requestidlecallback-polyfill 1.0.2: MIT AND Apache-2.0.
+- seamless-scroll-polyfill 2.1.8: MIT, Copyright (c) 2013 Dustan Kasten.
+- msgpack-lite (fonsp/msgpack-lite@0.1.27-es.1, a fork published as a git
+  tag, not on npm): MIT, Copyright (c) 2015 Yusuke Kawasaki.
+- js-sha256 (JuliaPluto/js-sha256@v0.9.0-es6, a fork published as a git tag,
+  not on npm): MIT, Copyright (c) 2014-2017 Chen, Yi-Cyuan.
+- ionicons 5.5.1: MIT, Copyright (c) 2015-present Ionic
+  (http://ionic.io/). Only the SVGs the frontend's CSS names
+  (inst/frontend/img/icons/) are vendored.
 
 The Ember logo's lettering (inst/frontend/img/logo.svg, man/figures/logo.svg)
 is drawn from Instrument Sans, SIL Open Font License 1.1, Copyright 2022 The

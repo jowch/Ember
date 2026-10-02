@@ -1,5 +1,4 @@
-// @ts-ignore
-import _ from "https://cdn.jsdelivr.net/npm/lodash@4.18.1/+esm"
+import _ from "./vendor/lodash-es-B8dYxABH.js"
 export default _
 
 // Note: run `npm install` if you want to get types in your editor

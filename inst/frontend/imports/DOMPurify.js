@@ -1,4 +1,3 @@
-// @ts-ignore
-import purify from "https://esm.sh/dompurify@3.4.5"
+import purify from "./vendor/dompurify-CkEN5vVM.js"
 
 export default purify

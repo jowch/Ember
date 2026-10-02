@@ -1,7 +1,7 @@
 ^docs$
 ^spikes$
 ^grammar$
-^frontend-setup$
+^frontend-build$
 ^\.claude$
 ^LICENSE\.md$
 ^\.github$

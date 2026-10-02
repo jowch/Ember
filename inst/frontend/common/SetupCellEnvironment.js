@@ -1,5 +1,4 @@
-// @ts-ignore
-import { Library } from "https://cdn.jsdelivr.net/npm/@observablehq/stdlib@3.3.1/+esm"
+import { Library } from "../imports/ObservableStdlib.js"
 
 export const make_library = () => {
     // @ts-ignore
