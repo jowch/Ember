@@ -23,6 +23,9 @@ the order the graph needs, not the order they appear on the page.
   versions with renv. Move the date forward when you choose to update.
 - **Safe to open.** A notebook opens in safe preview: you can read it
   without running anything until you choose to.
+- **Rich outputs.** Data frames as paged tables, lists as expandable
+  trees, plots that redraw to fit, htmlwidgets such as DT, and
+  coloured console output.
 - **Runs in your browser.** The interface is a fork of
   [Pluto.jl](https://plutojl.org)'s, adapted for R.
 
@@ -66,8 +69,6 @@ ember::run("analysis.R")
 Ember is being built in steps. Not yet available:
 
 - creating a notebook from the browser (use `new_notebook()` for now);
-- rich outputs: tables, expandable lists, htmlwidgets and resizable plots
-  (in progress);
 - autocomplete and help pages in the editor;
 - interactive inputs, like Pluto's `@bind`.
 
