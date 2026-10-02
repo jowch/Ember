@@ -3324,6 +3324,33 @@ body > pluto-helpbox > header > button:is(.helpbox-close, .helpbox-popout) {
     border-top: 3px solid var(--rule-color);
 }
 
+/* The signature tooltip inside a call (CellInput/signature_hint.js).
+   !important: CodeMirror's own tooltip base theme sets a background on
+   `.cm-tooltip` at a specificity this single class can't otherwise beat. */
+.cm-tooltip.cm-ember-signature-tooltip {
+    background-color: var(--helpbox-bg-color) !important;
+    color: var(--helpbox-text-color) !important;
+    border: 1px solid var(--helpbox-search-border-color);
+    border-radius: 4px;
+    box-shadow: 0 2px 8px var(--helpbox-box-shadow-color);
+    font-family: var(--julia-mono-font-stack);
+    font-size: 0.8rem;
+    padding: 0.3em 0.6em;
+    max-width: 60em;
+    white-space: pre-wrap;
+}
+
+/* Rd2HTML's argument and "See Also" tables */
+.helpbox-docs > section table {
+    border-collapse: collapse;
+    margin-block-end: 1em;
+}
+.helpbox-docs > section table td {
+    padding: 0.15em 0.6em 0.15em 0;
+    vertical-align: top;
+    border-bottom: 1px solid var(--helpbox-search-border-color);
+}
+
 .pluto-docs-binding {
     margin: 0.5em;
     padding: 1em;
@@ -4131,13 +4158,15 @@ pluto-input .cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li {
 }
 
 .cm-completionIcon::before {
-    /* TODO This loses all color when it's not font-family: JuliaMono, which can happen */
-    content: "⚫";
-    font-family: var(--julia-mono-font-stack) !important;
+    content: "";
+    display: inline-block;
+    width: 0.55em;
+    height: 0.55em;
+    border-radius: 50%;
+    background-color: currentColor;
     color: transparent;
-    font-size: 0.75rem;
     margin-right: 0.5em;
-    opacity: 1;
+    vertical-align: middle;
 }
 
 /* CODEMIRROR STYLE */

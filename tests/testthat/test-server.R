@@ -337,7 +337,7 @@ test_that("an unknown request type and malformed bytes are logged and dropped, n
 test_that("every request type in the handler table is answered as documented (36)", {
   answered <- c("connect", "ping", "current_time", "update_notebook", "run_multiple_cells",
                "restart_process", "reset_shared_state", "complete", "complete_symbols", "docs",
-               "all_registered_package_names", "completepath", "get_all_notebooks")
+               "all_registered_package_names", "completepath", "get_all_notebooks", "ember_signature")
   silent <- c("interrupt_all", "shutdown_notebook", "reshow_cell", "ember_render_plot",
              "ember_run_all", "request_js_link_response", "nbpkg_available_versions",
              "nbpkg_get_project_toml", "nbpkg_set_project_toml", "pkg_update")
@@ -702,6 +702,109 @@ test_that("ember_render_plot clamps width/height/res and re-renders through a re
   Sys.sleep(0.2)
   later::run_now(timeout = 0.2)
   expect_identical(notebook_state(nb)$results[[a]], before_a)
+})
+
+# ---- Editor services (ui-2.md, 4) -------------------------------------------
+
+test_that("complete in safe preview replies from the fallback within handle_message(); with an idle worker, df$ completes to df$mpg (56)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("df <- mtcars")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  handle_message(server, ws, wire("complete", notebook_id = id, query = "me", query_full = "me"))
+  reply <- ws$last()
+  expect_identical(reply$type, "complete_result")
+  expect_identical(notebook_snapshot(nb)$process, "preview")
+
+  a <- names(notebook_state(nb)$cells)[2]
+  handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list(a)))
+  expect_true(wait_for(nb, timeout = 20))
+
+  n_before <- length(ws$messages)
+  handle_message(server, ws, wire("complete", notebook_id = id, query = "df$", query_full = "df$"))
+  deadline <- Sys.time() + 10
+  found <- FALSE
+  while (!found && Sys.time() < deadline) {
+    later::run_now(timeout = 1)
+    results <- Filter(function(m) identical(m$type, "complete_result"), ws$messages)
+    if (length(results) > 0) {
+      names <- vapply(results[[length(results)]]$message$results, `[[`, character(1), 1)
+      found <- "df$mpg" %in% names
+    }
+  }
+  expect_true(found)
+})
+
+test_that("docs: preview mean needs R running, a notebook-defined f shows its code, and a worker shows the rewritten help page (57)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("f <- function(x) x + 1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  handle_message(server, ws, wire("docs", notebook_id = id, query = "mean"))
+  r1 <- ws$last()$message
+  expect_identical(r1$status, "\U0001F44D")
+  expect_match(r1$doc, "Run a cell")
+
+  handle_message(server, ws, wire("docs", notebook_id = id, query = "f"))
+  r2 <- ws$last()$message
+  expect_match(r2$doc, "Defined in this notebook")
+  expect_match(r2$doc, "function(x) x", fixed = TRUE)
+
+  a <- names(notebook_state(nb)$cells)[2]
+  handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list(a)))
+  expect_true(wait_for(nb, timeout = 20))
+  n_before <- length(Filter(function(m) identical(m$type, "docs"), ws$messages))
+  handle_message(server, ws, wire("docs", notebook_id = id, query = "mean"))
+  deadline <- Sys.time() + 10
+  docs_msgs <- list()
+  while (length(docs_msgs) <= n_before && Sys.time() < deadline) {
+    later::run_now(timeout = 1)
+    docs_msgs <- Filter(function(m) identical(m$type, "docs"), ws$messages)
+  }
+  r3 <- docs_msgs[[length(docs_msgs)]]$message
+  expect_identical(r3$status, "\U0001F44D")
+  expect_match(r3$doc, "Arithmetic Mean")
+  expect_no_match(r3$doc, "../../base/help", fixed = TRUE)
+})
+
+test_that("ember_signature with a worker and without one (58)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  handle_message(server, ws, wire("ember_signature", notebook_id = id, name = "lm"))
+  expect_match(ws$last()$message$text, "^lm\\(formula, data")
+
+  a <- names(notebook_state(nb)$cells)[2]
+  handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list(a)))
+  expect_true(wait_for(nb, timeout = 20))
+  n_before <- length(Filter(function(m) identical(m$type, "ember_signature"), ws$messages))
+  handle_message(server, ws, wire("ember_signature", notebook_id = id, name = "lm"))
+  deadline <- Sys.time() + 10
+  sig_msgs <- list()
+  while (length(sig_msgs) <= n_before && Sys.time() < deadline) {
+    later::run_now(timeout = 1)
+    sig_msgs <- Filter(function(m) identical(m$type, "ember_signature"), ws$messages)
+  }
+  expect_match(sig_msgs[[length(sig_msgs)]]$message$text, "^lm\\(formula, data")
 })
 
 # ---- start_server(): a real child process, skipped on CRAN -----------------

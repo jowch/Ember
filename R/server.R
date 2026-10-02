@@ -570,15 +570,16 @@ on_run <- function(server, cl, hub, req) {
 #' | restart_process               | preview: run_cells(nb) (the banner's "run notebook code"); else restart_notebook(nb). Then flush |
 #' | shutdown_notebook             | keep_in_session FALSE and the hub is owned: close_notebook(nb), drop hub. A host's notebook: refused (log) |
 #' | reset_shared_state            | cl$sent <- NULL; flush(req, list(from_reset = TRUE))            |
-#' | complete                      | reply {start = 0, stop = 0, results = [], too_long = FALSE}: no editor services yet; answering keeps the page from waiting out its 5 s timeout |
+#' | complete                      | completion_context() + worker_query(complete); pkg:: and a busy/absent worker answer from fallback_completions() (ui-2.md, 4a/4b) |
 #' | complete_symbols              | reply {latex = {}, emoji = {}} (Julia's symbol tables; none for R) |
-#' | docs                          | reply {status = "not_found"}: LiveDocsTab shows docs only for "👍" |
+#' | docs                          | a notebook definition from state; else worker_query(help); else "needs R running" (ui-2.md, 4c) |
 #' | all_registered_package_names  | reply {results = []}                                            |
 #' | completepath                  | reply {start = 0, stop = 0, results = []}                      |
 #' | get_all_notebooks             | reply "notebook_list" {notebooks = hosted notebooks}           |
 #' | reshow_cell                   | "more" paging (ui-2.md, 3b/3c): dispatch ev_show_more(cell, objectid, dim); flush. No reply (the frontend sends without awaiting one) |
 #' | ember_render_plot             | {cell_id, width, height, res}, clamped: dispatch ev_render(); flush |
 #' | ember_run_all                 | the "N cells not run" bar's button (ui-2.md, 5): run_cells() on not_run_ids(), the same set the bar counts; flush. No reply |
+#' | ember_signature                | worker_query(signature); else signature_fallback() (ui-2.md, 4d)   |
 #' | request_js_link_response, nbpkg_available_versions, nbpkg_get_project_toml, nbpkg_set_project_toml, pkg_update | Julia-only; their UI is disabled in the frontend. Logged, no reply |
 #'
 #' Replies use the reply type Pluto uses for each (connect "👋", ping
@@ -635,16 +636,64 @@ handlers <- list(
     if (!is.null(hub)) flush_clients(server, hub, req, list(from_reset = TRUE))
   },
 
+  #' `pkg::` is always answered from the exports the engine already has
+  #' (`fallback_completions()`): utils' own `pkg::` completion would load
+  #' the package into the worker, and typing should never do that. Anything
+  #' else goes to the worker if it's idle, and to the fallback (the
+  #' notebook's definitions, attached packages' exports, base R) on `NULL`
+  #' -- a busy or absent worker, or a timeout (ui-2.md, 4a/4b).
   complete = function(server, cl, hub, req) {
-    send(cl, reply_message(req, "complete_result",
-                           list(start = 0L, stop = 0L, results = list(), too_long = FALSE)))
+    if (is.null(hub)) {
+      send(cl, reply_message(req, "complete_result",
+                             list(start = 0L, stop = 0L, results = list(), too_long = FALSE)))
+      return(invisible(NULL))
+    }
+    st <- notebook_state(hub$nb)
+    ctx <- completion_context(req$body$query_full %||% req$body$query %||% "")
+    if (!is.null(ctx$namespace)) {
+      send(cl, reply_message(req, "complete_result", completion_reply(ctx, fallback_completions(st, ctx))))
+      return(invisible(NULL))
+    }
+    worker_query(hub$nb, list(type = "complete", line = ctx$line, cursor = ctx$cursor), function(reply) {
+      items <- if (!is.null(reply)) reply else fallback_completions(st, ctx)
+      send(cl, reply_message(req, "complete_result", completion_reply(ctx, items)))
+    })
   },
 
   complete_symbols = function(server, cl, hub, req) {
     send(cl, reply_message(req, "complete_symbols_result", list(latex = emptymap(), emoji = emptymap())))
   },
 
-  docs = function(server, cl, hub, req) send(cl, reply_message(req, "docs", list(status = "not_found"))),
+  #' A notebook-defined name (no `pkg::`): its defining cell's code, from
+  #' `state` alone. Otherwise the worker if idle (`help_reply_html()`
+  #' rewrites its page's cross-reference links, or lists the packages when
+  #' several match); a busy or absent worker answers with a page saying so
+  #' (ui-2.md, 4c).
+  docs = function(server, cl, hub, req) {
+    if (is.null(hub)) {
+      send(cl, reply_message(req, "docs", list(status = "not_found")))
+      return(invisible(NULL))
+    }
+    st <- notebook_state(hub$nb)
+    parsed <- parse_help_query(req$body$query %||% "")
+    if (is.null(parsed$package)) {
+      doc <- notebook_definition_doc(st, parsed$name)
+      if (!is.null(doc)) {
+        send(cl, reply_message(req, "docs", list(status = THUMBS_UP, doc = doc)))
+        return(invisible(NULL))
+      }
+    }
+    worker_query(hub$nb, list(type = "help", topic = parsed$name, package = parsed$package), function(reply) {
+      if (!is.null(reply)) {
+        doc <- help_reply_html(reply)
+        send(cl, reply_message(req, "docs", list(status = THUMBS_UP, doc = doc)))
+      } else {
+        busy <- identical(notebook_state(hub$nb)$worker$status, "busy")
+        msg <- if (busy) "<p>R is busy running a cell\u2026</p>" else "<p>Help pages need R running. Run a cell to start it.</p>"
+        send(cl, reply_message(req, "docs", list(status = THUMBS_UP, doc = msg)))
+      }
+    })
+  },
 
   all_registered_package_names = function(server, cl, hub, req) {
     send(cl, reply_message(req, "all_registered_package_names", list(results = list())))
@@ -688,6 +737,24 @@ handlers <- list(
     ids <- not_run_ids(st, view_context(st))
     if (length(ids) > 0) run_cells(hub$nb, ids)
     flush_clients(server, hub)
+  },
+
+  #' The signature tooltip (CellInput/signature_hint.js): the worker's
+  #' `args()` deparse if it's idle, else `signature_fallback()` (base R
+  #' only -- a notebook or other package's function would need R to load
+  #' it, ui-2.md, 4d).
+  ember_signature = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    name <- req$body$name
+    package <- req$body$package
+    if (is.null(name) || !nzchar(name)) {
+      send(cl, reply_message(req, "ember_signature", list(text = NULL)))
+      return(invisible(NULL))
+    }
+    worker_query(hub$nb, list(type = "signature", name = name, package = package), function(reply) {
+      text <- if (!is.null(reply)) reply$text else signature_fallback(name, package)
+      send(cl, reply_message(req, "ember_signature", list(text = text)))
+    })
   },
 
   get_all_notebooks = function(server, cl, hub, req) {

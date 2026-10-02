@@ -780,3 +780,125 @@ test_that("colours are on at boot and text_form never ends in a partial escape (
   expect_true(r2$output$truncated)
   expect_match(r2$output$text, "\033\\[0m$")
 })
+
+# ---- Editor services (ui-2.md, 4) ---------------------------------------------
+
+test_that("complete_line() (44)", {
+  h <- worker_harness()
+  on.exit(h$close())
+
+  run_and_wait(h, "a", 1L, "mtcars <- mtcars; my_var <- 1")
+
+  h$send(list(type = "complete", id = 1L, line = "me", cursor = 2L))
+  m <- h$receive()
+  expect_identical(m$type, "completions")
+  expect_identical(m$id, 1L)
+  expect_true("mean" %in% vapply(m$items, `[[`, character(1), "name"))
+
+  h$send(list(type = "complete", id = 2L, line = "mtcars$m", cursor = 8L))
+  m2 <- h$receive()
+  names2 <- vapply(m2$items, `[[`, character(1), "name")
+  expect_true("mtcars$mpg" %in% names2)
+
+  h$send(list(type = "complete", id = 3L, line = "library(sta", cursor = 11L))
+  m3 <- h$receive()
+  names3 <- vapply(m3$items, `[[`, character(1), "name")
+  expect_true("stats" %in% names3)
+
+  h$send(list(type = "complete", id = 4L, line = "lm(fo", cursor = 5L))
+  m4 <- h$receive()
+  formula_item <- Filter(function(it) grepl("^formula\\s*=", it$name), m4$items)
+  expect_length(formula_item, 1)
+  expect_identical(formula_item[[1]]$kind, "argument")
+
+  myvar_item <- Filter(function(it) identical(it$name, "my_var"), m$items)
+  if (length(myvar_item) == 0) {
+    h$send(list(type = "complete", id = 5L, line = "my_", cursor = 3L))
+    m5 <- h$receive()
+    myvar_item <- Filter(function(it) identical(it$name, "my_var"), m5$items)
+  }
+  expect_length(myvar_item, 1)
+  expect_true(isTRUE(myvar_item[[1]]$notebook))
+
+  run_and_wait(h, "b", 2L, 'makeActiveBinding("counted", local({n <- 0; function() { n <<- n + 1; n }}), globalenv())')
+  # Peek at the binding's internal counter without reading through it
+  # (reading it, directly or via `exists(..., mode = "function")`, is
+  # itself an evaluation): the test must tell "complete_line() evaluated
+  # it" apart from "evaluating it in the test evaluated it".
+  peek <- 'environment(activeBindingFunction("counted", globalenv()))$n'
+  before <- run_and_wait(h, "c", 3L, peek)$output$text
+  h$send(list(type = "complete", id = 6L, line = "count", cursor = 5L))
+  h$receive()
+  after <- run_and_wait(h, "d", 4L, peek)$output$text
+  expect_identical(before, after)
+})
+
+test_that("help() (45)", {
+  h <- worker_harness()
+  on.exit(h$close())
+
+  h$send(list(type = "help", id = 1L, topic = "mean", package = NULL))
+  m <- h$receive()
+  expect_true(m$found)
+  expect_match(m$html, "Arithmetic Mean")
+  expect_no_match(m$html, "<html")
+  expect_no_match(m$html, "<head")
+
+  h$send(list(type = "help", id = 2L, topic = "no_such_topic_xyz", package = NULL))
+  m2 <- h$receive()
+  expect_false(m2$found)
+
+  run_and_wait(h, "a", 1L, "library(stats); library(methods)")
+  h$send(list(type = "help", id = 3L, topic = "show", package = NULL))
+  m3 <- h$receive()
+  if (length(m3$matches) > 0) {
+    pkgs <- vapply(m3$matches, `[[`, character(1), "package")
+    expect_true(length(unique(pkgs)) >= 1)
+  }
+})
+
+test_that("signature() (46)", {
+  h <- worker_harness()
+  on.exit(h$close())
+
+  h$send(list(type = "signature", id = 1L, name = "lm", package = NULL))
+  m <- h$receive()
+  expect_match(m$text, "^lm\\(formula, data")
+
+  h$send(list(type = "signature", id = 2L, name = "pi", package = NULL))
+  m2 <- h$receive()
+  expect_null(m2$text)
+})
+
+test_that("handle_next() answers complete/help/signature with the request's id, deferred not lost during a source wait (47)", {
+  h <- worker_harness()
+  on.exit(h$close())
+
+  h$send(run_msg("a", 1L, 'source(tempfile(fileext = ".R"))'))
+  src <- NULL
+  repeat {
+    m <- h$receive()
+    if (identical(m$type, "source")) { src <- m; break }
+  }
+
+  h$send(list(type = "complete", id = 42L, line = "me", cursor = 2L))
+  h$send(list(type = "signature", id = 43L, name = "lm", package = NULL))
+  h$send(list(type = "source_reply", allow = TRUE, message = ""))
+
+  # The source() call's deferred `complete`/`signature` are only handled
+  # once the run itself is done (handle_next() drains `deferred` before
+  # its next receive()), so they arrive just after "done", not before.
+  seen <- list()
+  repeat {
+    m <- h$receive()
+    if (is.null(m)) break
+    seen[[length(seen) + 1]] <- m
+    types_so_far <- vapply(seen, `[[`, character(1), "type")
+    if (all(c("completions", "signature") %in% types_so_far)) break
+  }
+  types <- vapply(seen, `[[`, character(1), "type")
+  expect_true("completions" %in% types)
+  expect_true("signature" %in% types)
+  expect_identical(seen[[which(types == "completions")]]$id, 42L)
+  expect_identical(seen[[which(types == "signature")]]$id, 43L)
+})

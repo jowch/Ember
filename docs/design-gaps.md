@@ -50,6 +50,8 @@ done; clear out ticked items at each release.
 - [ ] Remote use behind a path prefix: links and redirects are absolute (`/edit`, `/deps/...`, `/open`), so a proxy serving Ember under `/s/<id>/p/<port>/` breaks them. Make every URL relative, as Pluto does — missing
 - [ ] Self-contained exports, and a browser with no internet: bundle the frontend's third-party libraries (MathJax aside) and serve the bundle always, with content-hashed names and long cache headers so a slow tunnel carries it once — missing
 
+- [ ] Go-to-definition and variable links in the editor (ui-2.md piece 4e, cut from increment 2). Pluto's Julia `ScopeStateField` stays wired until it has an R replacement — missing
+
 - [ ] Pluto frontend fork, protocol in R, removals, R adaptations, theme — missing
 - [ ] The R grammar wired into CodeMirror — missing
 - [ ] Rich outputs in the browser: widget files as static paths, table and tree views, terminal colours — missing

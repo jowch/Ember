@@ -44,10 +44,12 @@ import {
     moveLineUp,
     Facet,
     StateField,
+    tooltips,
 } from "../imports/CodemirrorPlutoSetup.js"
 
 import { r } from "../imports/CodemirrorPlutoSetup.js"
 import { pluto_autocomplete } from "./CellInput/pluto_autocomplete.js"
+import { signature_hint } from "./CellInput/signature_hint.js"
 import { ARBITRARY_INDENT_LINE_WRAP_LIMIT, awesome_line_wrapping, get_leading_indent } from "./CellInput/awesome_line_wrapping.js"
 import { cell_movement_plugin, prevent_holding_a_key_from_doing_things_across_cells } from "./CellInput/cell_movement_plugin.js"
 import { pluto_paste_plugin } from "./CellInput/pluto_paste_plugin.js"
@@ -593,9 +595,9 @@ export const CellInput = ({
                           ]
                         : [r()]),
                     pluto_autocomplete({
-                        request_autocomplete: async ({ query, query_full }) => {
+                        request_autocomplete: async ({ query_full }) => {
                             let response = await timeout_promise(
-                                pluto_actions.send("complete", { query, query_full }, { notebook_id: notebook_id_ref.current }),
+                                pluto_actions.send("complete", { query_full }, { notebook_id: notebook_id_ref.current }),
                                 5000
                             ).catch(console.warn)
                             if (!response) return null
@@ -603,18 +605,30 @@ export const CellInput = ({
                             let { message } = response
 
                             return {
-                                start: utf8index_to_ut16index(query_full ?? query, message.start),
-                                stop: utf8index_to_ut16index(query_full ?? query, message.stop),
+                                start: utf8index_to_ut16index(query_full, message.start),
+                                stop: utf8index_to_ut16index(query_full, message.stop),
                                 results: message.results,
                                 too_long: message.too_long,
                             }
                         },
                         on_update_doc_query,
-                        // Local (unsubmitted) definitions came from Julia's scope analysis
-                        // (ScopeStateField), which finds nothing on an R tree; piece 4 rewrites
-                        // this autocomplete module for R.
+                        // Notebook names a cell doesn't read yet still show (the
+                        // engine's downstream_cells_map has an empty array, not a
+                        // missing entry, ui-2.md 4): there is no separate
+                        // "unsubmitted local definition" concept for R.
                         request_unsubmitted_global_definitions: () => ({}),
                         cell_id,
+                    }),
+
+                    tooltips({ position: "absolute" }),
+                    signature_hint({
+                        request_signature: async ({ name, package: pkg }) => {
+                            let response = await timeout_promise(
+                                pluto_actions.send("ember_signature", { name, package: pkg }, { notebook_id: notebook_id_ref.current }),
+                                5000
+                            ).catch(console.warn)
+                            return response?.message?.text ?? null
+                        },
                     }),
 
                     // I put plutoKeyMaps separately because I want make sure we have

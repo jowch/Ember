@@ -34,6 +34,9 @@
 #   more         cell, path, dim     grow a table's or tree's paging limit
 #                                    at `path` (dim 1 rows/items, 2 columns)
 #   render       cell, width, height, res   re-render the cell's recorded plot
+#   complete     id, line, cursor     line: the current line up to the cursor
+#   help         id, topic, package   package NULL: search attached, then all installed
+#   signature    id, name, package
 #   quit
 #
 # Worker -> server
@@ -44,6 +47,15 @@
 #   done         cell, token, report (see run_cell())
 #   rendered     cell, token, display   display is NULL when the cell has no
 #                                       kept value to page or re-render
+#   completions  id, token, items = list(name, kind, notebook), too_long
+#   help_page    id, found, topic, package, html, matches (packages, when several)
+#   signature    id, text             NULL if not a function
+#
+# complete/help/signature are answered outside the run loop's ordering
+# rules: the shell's `worker_query()` sends them only when the worker is
+# idle (shell.R), so they never arrive mid-run and never need the
+# `deferred` queue's ordering -- except while a `source_reply` is awaited,
+# when `handle_next()` defers everything until the run finishes (below).
 #
 # Ordering: the server sends at most one `run` at a time and sends the next
 # only after `done`. `remove_cell`, `more` and `render` may arrive while a
@@ -106,6 +118,8 @@ main <- function() {
   # on, and a setup cell can still change them (a rerun resets to this
   # baseline, same as any other setting).
   options(cli.num_colors = 256L, crayon.enabled = TRUE, crayon.colors = 256L)
+  # So `library(` completion includes installed package names (complete_line()).
+  tryCatch(utils::rc.settings(ipck = TRUE), error = function(e) NULL)
   settings_start <<- snapshot_settings()
   send(list(type = "hello", secret = Sys.getenv("EMBER_SECRET"),
             pid = Sys.getpid(), r_version = R.version.string,
@@ -166,6 +180,16 @@ handle_next <- function() {
     },
     more = send(show_more(msg)),
     render = send(render_plot(msg)),
+    complete = {
+      r <- complete_line(msg$line, msg$cursor)
+      send(list(type = "completions", id = msg$id, token = r$token, items = r$items, too_long = r$too_long))
+    },
+    help = {
+      r <- help_lookup(msg$topic, msg$package)
+      send(list(type = "help_page", id = msg$id, found = r$found, topic = r$topic,
+               package = r$package, html = r$html, matches = r$matches))
+    },
+    signature = send(list(type = "signature", id = msg$id, text = worker_signature(msg$name, msg$package))),
     quit = quit(save = "no"),
     NULL  # noop, or an unknown type: ignored
   )
@@ -1410,6 +1434,164 @@ clean_calls <- function(calls) {
   texts[start:end]
 }
 
-# ---- Editor services (later) -----------------------------------------------------------
-# complete / help messages: stubbed, answer `list(type = "completions",
-# items = list())`. utils:::.completeToken and tools::Rd2HTML in step 4.
+# ---- Editor services ---------------------------------------------------------
+# complete / help / signature: answered between runs (handle_next()), never
+# while a cell runs. `utils:::.completeToken` and `utils:::.getHelpFile` are
+# internal and can change in any R release, so every call here is guarded
+# by tryCatch: a change shows as "no results", never an error in a cell
+# (design.md, "Editor services"; ui-2.md, 4, Risks).
+
+#' utils' own completer evaluates any global that might be a function (it
+#' calls `exists(name, mode = "function")` to decide whether to append
+#' `(`, among other checks), which forces an active binding just to
+#' classify it -- not only the token's own bindings, since it ranks every
+#' candidate in `globalenv()`. Swap every active binding for an inert
+#' placeholder for the call, then put the real ones back: this is the only
+#' way to keep the completer from running a notebook's active-binding code
+#' (`makeActiveBinding()`), since there's no argument that turns the
+#' check off. `activeBindingFunction()` is what makes putting the original
+#' back possible.
+mask_active_bindings <- function(envir) {
+  names <- ls(envir, all.names = TRUE)
+  active <- names[vapply(names, function(n) tryCatch(bindingIsActive(n, envir), error = function(e) FALSE), logical(1))]
+  fns <- stats::setNames(lapply(active, function(n) tryCatch(activeBindingFunction(n, envir), error = function(e) NULL)), active)
+  for (n in active) {
+    if (!is.null(fns[[n]])) {
+      rm(list = n, envir = envir)
+      assign(n, NULL, envir = envir)
+    }
+  }
+  function() {
+    for (n in active) {
+      if (!is.null(fns[[n]])) {
+        if (exists(n, envir = envir, inherits = FALSE)) rm(list = n, envir = envir)
+        makeActiveBinding(n, fns[[n]], envir)
+      }
+    }
+  }
+}
+
+#' utils' own line completion, as IRkernel does: `.assignLinebuffer()` and
+#' `.assignEnd()` set the line and cursor the internal completer reads,
+#' `.guessTokenFromLine()` finds the token being typed, `.completeToken()`
+#' runs the completer, and `.retrieveCompletions()` collects the results.
+#' `rc.settings(ipck = TRUE)` (set once at boot, below) is what makes
+#' `library(` completion include installed package names.
+#'
+#' Returns `list(token, items, too_long)`, `items` a list of `list(name,
+#' kind, notebook)`: `kind` is `"argument"` (the completion ends in `" = "`),
+#' `"package"` (inside a `library(`/`require(` call), `"function"`,
+#' `"path"`, or `"other"`; `notebook` is `TRUE` when the name is bound
+#' directly in `globalenv()`. A completion's value is read with `get0()`
+#' only when its binding isn't active (`bindingIsActive()`), so an active
+#' binding is never evaluated just to classify it.
+complete_line <- function(line, cursor) {
+  tryCatch({
+    unmask <- mask_active_bindings(globalenv())
+    on.exit(unmask(), add = TRUE)
+    utils:::.assignLinebuffer(line)
+    utils:::.assignEnd(cursor)
+    utils:::.guessTokenFromLine()
+    utils:::.completeToken()
+    comps <- utils:::.retrieveCompletions()
+    token <- tryCatch(utils:::.CompletionEnv$token, error = function(e) NULL) %||% ""
+
+    too_long <- length(comps) > 500
+    if (too_long) comps <- comps[seq_len(500)]
+
+    before_cursor <- substr(line, 1, cursor)
+    in_library_call <- grepl("\\b(library|require)\\s*\\(\\s*[[:alnum:]._]*$", before_cursor)
+
+    items <- lapply(comps, function(name) {
+      # `rc.getOption("funarg.suffix")` (default `"="`) is what
+      # `.completeToken()` appends to a function argument name; not
+      # necessarily with surrounding spaces, so this matches the suffix
+      # itself rather than a literal `" = "`.
+      if (grepl("=\\s*$", name)) {
+        list(name = name, kind = "argument", notebook = FALSE)
+      } else if (in_library_call) {
+        list(name = name, kind = "package", notebook = FALSE)
+      } else if (grepl("[/\\\\]$", name)) {
+        list(name = name, kind = "path", notebook = FALSE)
+      } else {
+        active <- tryCatch(bindingIsActive(name, globalenv()), error = function(e) FALSE)
+        val <- if (!active) tryCatch(get0(name, envir = globalenv(), inherits = FALSE), error = function(e) NULL) else NULL
+        kind <- if (is.function(val)) "function" else "other"
+        in_global <- tryCatch(exists(name, envir = globalenv(), inherits = FALSE), error = function(e) FALSE)
+        list(name = name, kind = kind, notebook = in_global)
+      }
+    })
+    list(token = token, items = items, too_long = too_long)
+  }, error = function(e) list(token = "", items = list(), too_long = FALSE))
+}
+
+#' `utils::help()`, called through `do.call()` because it quotes its first
+#' argument (so a plain `help(topic)` can't take a variable). `package`
+#' `NULL` searches attached packages first, then (only if none match) every
+#' installed package. Several matches (the same topic in more than one
+#' package): no page is rendered, `matches` lists each `pkg::topic` for the
+#' server to offer as links. One match: `.getHelpFile()` reads the parsed
+#' Rd, `Rd2HTML()` renders it to a temp file (`dynamic = TRUE`, so
+#' cross-reference links are the short `../../pkg/help/topic` form the
+#' server's `rewrite_help_links()` expects), and only the `<body>` is
+#' returned -- the page already has its own `<html>`/`<head>`.
+help_lookup <- function(topic, package) {
+  tryCatch({
+    matches <- if (!is.null(package)) {
+      do.call(utils::help, list(topic, package = package, help_type = "text"))
+    } else {
+      found <- do.call(utils::help, list(topic, help_type = "text"))
+      if (length(found) == 0) found <- do.call(utils::help, list(topic, help_type = "text", try.all.packages = TRUE))
+      found
+    }
+    if (length(matches) == 0) {
+      return(list(found = FALSE, topic = topic, package = package, html = NULL, matches = list()))
+    }
+
+    # A help path is <libpath>/<package>/help/<topic> (index.search()'s
+    # layout, used whether `package` was given or every installed package
+    # was searched); no attribute carries the package name.
+    pkgs <- vapply(as.character(matches), function(p) basename(dirname(dirname(p))), character(1), USE.NAMES = FALSE)
+    if (length(matches) > 1) {
+      matches_list <- Map(function(p, path) list(package = p, topic = basename(path)),
+                          pkgs, as.character(matches))
+      return(list(found = TRUE, topic = topic, package = package, html = NULL,
+                  matches = unname(matches_list)))
+    }
+
+    rd_path <- as.character(matches)[1]
+    pkg_name <- pkgs[1]
+    rd <- utils:::.getHelpFile(rd_path)
+    out <- tempfile(fileext = ".html")
+    on.exit(unlink(out), add = TRUE)
+    tools::Rd2HTML(rd, out, package = pkg_name, dynamic = TRUE)
+    full <- paste(readLines(out, warn = FALSE), collapse = "\n")
+    body <- sub("(?s).*<body>", "", full, perl = TRUE)
+    body <- sub("(?s)</body>.*", "", body, perl = TRUE)
+    list(found = TRUE, topic = topic, package = pkg_name, html = body, matches = list())
+  }, error = function(e) list(found = FALSE, topic = topic, package = package, html = NULL, matches = list()))
+}
+
+#' `args(fn)` deparsed into `name(arg1, arg2 = default, ...)`, the trailing
+#' `NULL` body dropped. `fn` is looked up with `get()` starting from
+#' `globalenv()`, so it follows the real search path (a notebook definition,
+#' or any attached package) the way the cell's own code would; `package`
+#' not `NULL` looks in that namespace instead. `NULL` when `name` isn't a
+#' function (editor-services.R's `signature_fallback()` shares the deparse
+#' step as `format_signature()`).
+worker_signature <- function(name, package) {
+  tryCatch({
+    fn <- if (!is.null(package)) {
+      get(name, envir = asNamespace(package), inherits = FALSE)
+    } else {
+      get(name, envir = globalenv(), inherits = TRUE, mode = "function")
+    }
+    if (!is.function(fn)) return(NULL)
+    a <- tryCatch(args(fn), error = function(e) NULL)
+    if (is.null(a)) return(NULL)
+    d <- deparse(a)
+    d <- d[seq_len(max(0, length(d) - 1))]
+    text <- gsub("\\s+", " ", paste(d, collapse = " "))
+    sub("^function\\s*", name, trimws(text))
+  }, error = function(e) NULL)
+}

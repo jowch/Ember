@@ -35,7 +35,10 @@
 #' `worker_rss_reported` (the worker memory sampler's own timer and
 #' last-reported value, below), `poll_cancel` (the `later`
 #' cancel function), `closing` (listeners are cleared only after the
-#' closing dispatch's notifications are delivered).
+#' closing dispatch's notifications are delivered), `queries` (environment,
+#' id (character) -> callback, for `worker_query()`'s pending completion/
+#' help/signature questions -- outside `ember_state` and the event log, see
+#' `worker_query()`), `next_query_id` (integer, last id handed out).
 #' The poll runs on `later`'s global loop, so an interactive console
 #' services it whenever R is at the prompt.
 session_start <- function(state) {
@@ -61,6 +64,8 @@ session_start <- function(state) {
   nb$worker_rss_reported <- NULL
   nb$poll_cancel <- NULL
   nb$closing <- FALSE
+  nb$queries <- new.env(parent = emptyenv())
+  nb$next_query_id <- 0L
   class(nb) <- "ember_notebook"
 
   reset_sigint()
@@ -311,6 +316,7 @@ run_effect <- function(nb, fx) {
         }
         nb$proc <- NULL
         nb$rx <- list(chunks = list(), n = 0L)
+        fail_pending_queries(nb)
       }
     },
     interrupt = {
@@ -570,6 +576,72 @@ maybe_sample_worker_memory <- function(nb, now) {
   sample_worker_memory(nb, now)
 }
 
+#' `TRUE` when `nb`'s worker can take a query right now: execution allowed,
+#' status "ready" (so not starting, stopped or off), nothing running or
+#' queued to run, and the socket open. ui-2.md, "4a. Queries to the
+#' worker".
+worker_is_idle <- function(nb) {
+  st <- nb$state
+  isTRUE(st$allowed) && identical(st$worker$status, "ready") &&
+    is.null(st$worker$running) && length(st$pending) == 0 && !is.null(nb$con)
+}
+
+#' Ask the worker a question (`complete`, `help` or `signature`) outside
+#' `step()` and the event log: these never change the notebook, so they
+#' don't belong in the engine's history. `callback(reply)` runs once, with
+#' the worker's reply, or with `NULL` at once if the worker isn't idle, or
+#' with `NULL` after `timeout` seconds, or when the worker exits
+#' (`fail_pending_queries()`). A reply that arrives after the timeout (or
+#' after the worker that was asked is gone) finds no entry in `nb$queries`
+#' and is dropped.
+worker_query <- function(nb, msg, callback, timeout = 0.8) {
+  if (!worker_is_idle(nb)) {
+    callback(NULL)
+    return(invisible(NULL))
+  }
+  id <- nb$next_query_id <- nb$next_query_id + 1L
+  key <- as.character(id)
+  msg$id <- id
+  assign(key, callback, envir = nb$queries)
+  ok <- tryCatch({ write_frame(nb$con, msg); TRUE }, error = function(e) FALSE)
+  if (!ok) {
+    rm(list = key, envir = nb$queries)
+    callback(NULL)
+    return(invisible(NULL))
+  }
+  later::later(function() {
+    if (exists(key, envir = nb$queries, inherits = FALSE)) {
+      cb <- get(key, envir = nb$queries, inherits = FALSE)
+      rm(list = key, envir = nb$queries)
+      cb(NULL)
+    }
+  }, timeout)
+  invisible(NULL)
+}
+
+#' A `completions`/`help_page`/`signature` reply: find its callback by
+#' `msg$id` and call it, or drop the message (its query already timed out).
+answer_query <- function(nb, msg) {
+  key <- as.character(msg$id)
+  if (!exists(key, envir = nb$queries, inherits = FALSE)) return(invisible(NULL))
+  cb <- get(key, envir = nb$queries, inherits = FALSE)
+  rm(list = key, envir = nb$queries)
+  cb(msg)
+  invisible(NULL)
+}
+
+#' Every pending `worker_query()` callback, called with `NULL`: the worker
+#' that was asked is gone (exited, or killed for a protocol error) and will
+#' never answer.
+fail_pending_queries <- function(nb) {
+  for (key in ls(nb$queries, all.names = TRUE)) {
+    cb <- get(key, envir = nb$queries, inherits = FALSE)
+    rm(list = key, envir = nb$queries)
+    cb(NULL)
+  }
+  invisible(NULL)
+}
+
 #' The poll, every 5 ms while a worker exists, every 500 ms otherwise.
 #' File watching is checked at most every 500 ms regardless of the poll
 #' interval, so a busy worker doesn't make it noisier.
@@ -602,6 +674,10 @@ poll <- function(nb) {
     if (length(framed$messages) > 0) {
       broke <- FALSE
       for (msg in framed$messages) {
+        if (!is.null(msg$type) && msg$type %in% c("completions", "help_page", "signature")) {
+          answer_query(nb, msg)
+          next
+        }
         ev <- worker_event(msg, nb$proc_gen, Sys.time(), secret = nb$secret)
         enqueue(nb, ev)
         if (identical(ev$type, "wk_failed")) {
@@ -615,6 +691,7 @@ poll <- function(nb) {
             nb$con <- NULL
           }
           nb$proc <- NULL
+          fail_pending_queries(nb)
           broke <- TRUE
           break
         }
@@ -639,6 +716,7 @@ poll <- function(nb) {
       nb$con <- NULL
     }
     nb$rx <- list(chunks = list(), n = 0L)
+    fail_pending_queries(nb)
     dispatch(nb, wk_exited(gen, status, tail, at = Sys.time()))
   }
 

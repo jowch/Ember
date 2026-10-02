@@ -487,9 +487,21 @@ project_dependencies <- function(graph, previous) {
     out
   }
 
+  #' Pluto lists every definition in `downstream_cells_map`, with an empty
+  #' array when no cell reads it yet (completion of notebook names, and the
+  #' go-to-definition anchor, both read its keys). `name_map()` above only
+  #' has an entry for a name some cell actually reads.
+  with_every_definition <- function(id, down) {
+    defs <- graph$cells[[id]]$definitions %||% character()
+    missing <- setdiff(defs, names(down))
+    if (length(missing) == 0) return(down)
+    down[missing] <- list(as_arr(character()))
+    down
+  }
+
   entries <- stats::setNames(lapply(ids, function(id) {
     list(cell_id = id,
-        downstream_cells_map = name_map(down_groups[[id]], "from"),
+        downstream_cells_map = with_every_definition(id, name_map(down_groups[[id]], "from")),
         upstream_cells_map = name_map(up_groups[[id]], "to"),
         precedence_heuristic = if (length(graph$cells[[id]]$attaches) > 0) 5L else 9L)
   }), ids)

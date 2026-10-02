@@ -77,7 +77,7 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
     }
 
     let docs_element = useMemo(
-        () => html`<${RawHTMLContainer} body=${without_workspace_stuff(state.body)} sanitize_html=${sanitize_html} sanitize_html_message=${false} />`,
+        () => html`<${RawHTMLContainer} body=${state.body} sanitize_html=${sanitize_html} sanitize_html_message=${false} />`,
         [state.body, sanitize_html]
     )
     let no_docs_found = state.loading === false && state.searched_query !== "" && state.searched_query !== state.shown_query
@@ -119,7 +119,7 @@ const post_process_doc_node = (node, on_update_doc_query) => {
     //     highlight(code_element, "julia")
     // }
     for (let code_element of node.querySelectorAll("code:not([class])")) {
-        highlight(code_element, "julia")
+        highlight(code_element, "r")
     }
 
     // Resolve @doc reference links:
@@ -134,11 +134,3 @@ const post_process_doc_node = (node, on_update_doc_query) => {
         }
     }
 }
-
-const without_workspace_stuff = (str) =>
-    str
-        .replace(/Main\.var&quot;workspace\#\d+&quot;\./g, "") // remove workspace modules from variable names
-        .replace(/Main\.workspace\#\d+\./g, "") // remove workspace modules from variable names
-        .replace(/ in Main\.var&quot;workspace\#\d+&quot;/g, "") // remove workspace modules from method lists
-        .replace(/ in Main\.workspace\#\d+/g, "") // remove workspace modules from method lists
-        .replace(/#&#61;&#61;#[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\:\d+/g, "") // remove UUIDs from filenames

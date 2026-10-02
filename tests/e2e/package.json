@@ -5,7 +5,7 @@
   "description": "Browser end-to-end tests for the step-4 UI server, against a real server and worker (docs/ui-tests.md, section 3).",
   "type": "module",
   "scripts": {
-    "test": "node --test --test-timeout=60000 tests/*.test.mjs"
+    "test": "node --test --test-timeout=60000 --test-concurrency=3 tests/*.test.mjs"
   },
   "dependencies": {
     "playwright-core": "^1.63.0"

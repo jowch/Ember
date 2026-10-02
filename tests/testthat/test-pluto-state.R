@@ -336,6 +336,12 @@ test_that("cell_dependencies for a library() cell uses the exported name (14)", 
   expect_equal(deps$B$precedence_heuristic, 9L)
 })
 
+test_that("a definition no cell reads is still in its cell's downstream_cells_map, with an empty array (52)", {
+  g <- notebook_graph(c(S = "", A = "x <- 1; unread <- 2"), setup = "S")
+  deps <- project_dependencies(g, NULL)
+  expect_equal(deps$A$downstream_cells_map$unread, list())
+})
+
 test_that("an edit that changes one cell's references changes only its own and its neighbours' entries (14)", {
   g1 <- notebook_graph(c(S = "", A = "x <- 1", B = "y <- x", C = "z <- 1"), setup = "S")
   d1 <- project_dependencies(g1, NULL)
