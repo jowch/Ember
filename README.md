@@ -26,6 +26,8 @@ the order the graph needs, not the order they appear on the page.
 - **Rich outputs.** Data frames as paged tables, lists as expandable
   trees, plots that redraw to fit, htmlwidgets such as DT, and
   coloured console output.
+- **Help as you type.** Autocomplete from your session, help pages in a
+  side panel, and a function's arguments shown while you type a call.
 - **Runs in your browser.** The interface is a fork of
   [Pluto.jl](https://plutojl.org)'s, adapted for R.
 
@@ -57,6 +59,12 @@ cells. Shift+Enter runs a cell. When you're done:
 srv$stop()
 ```
 
+Ember listens on port 4321 (or the next free port), on your machine only.
+To use it on a remote machine, forward that port over SSH,
+`ssh -L 4321:localhost:4321 server`, and open the address it prints. Behind
+a proxy such as Posit Workbench or JupyterHub, pass the proxy's host name:
+`start_server("analysis.R", allowed_hosts = "workbench.example.org")`.
+
 To run a saved notebook from start to finish outside the browser, with the
 package versions it records:
 
@@ -69,7 +77,6 @@ ember::run("analysis.R")
 Ember is being built in steps. Not yet available:
 
 - creating a notebook from the browser (use `new_notebook()` for now);
-- autocomplete and help pages in the editor;
 - interactive inputs, like Pluto's `@bind`.
 
 The full list of known gaps is in [docs/design-gaps.md](docs/design-gaps.md),
