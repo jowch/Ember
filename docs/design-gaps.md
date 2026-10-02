@@ -12,6 +12,8 @@ done; clear out ticked items at each release.
 - [ ] Listeners run on the server thread after every dispatch; a `cell_state` storm during "Run all" on a 2000-cell notebook isn't measured — missing
 - [ ] The session polls on `later`'s global loop, shared with whatever else the host process runs; a host callback that blocks stalls the poll. Decide whether to use a private loop — missing
 
+- [ ] An idle notebook with a worker uses about 6% of a CPU core, because the shell polls every 5 ms while a worker exists (seen on leftover test servers: 28 CPU-minutes over 8 hours each). Back off while nothing is pending, or wait on the socket instead of polling — improvised
+
 ## Worker
 
 - [ ] Editor services: completion, help pages and signatures (the request kinds exist and reply "unsupported") — missing
@@ -46,11 +48,12 @@ done; clear out ticked items at each release.
 
 - [ ] Coloured console output (cli, crayon) sits on the log box's dark brown background, where red text is hard to read; the ANSI colours need values chosen for that background, or a lighter box — improvised
 
-- [ ] Remote use: the server accepts only Host `127.0.0.1:<port>` or `localhost:<port>`, so an SSH tunnel to a different local port, or any reverse proxy (Posit Workbench, JupyterHub, VS Code port forwarding), gets 403. Accept a loopback Host on any port when Origin matches Host; add an opt-in `allowed_hosts` for proxies — missing
-- [ ] Remote use behind a path prefix: links and redirects are absolute (`/edit`, `/deps/...`, `/open`), so a proxy serving Ember under `/s/<id>/p/<port>/` breaks them. Make every URL relative, as Pluto does — missing
 - [ ] Self-contained exports, and a browser with no internet: bundle the frontend's third-party libraries (MathJax aside) and serve the bundle always, with content-hashed names and long cache headers so a slow tunnel carries it once — missing
 
 - [ ] Go-to-definition and variable links in the editor (ui-2.md piece 4e, cut from increment 2). Pluto's Julia `ScopeStateField` stays wired until it has an R replacement — missing
+
+- [x] Remote use: the server accepted only Host `127.0.0.1:<port>` or `localhost:<port>`, so an SSH tunnel to a different local port, or any reverse proxy (Posit Workbench, JupyterHub, VS Code port forwarding), got 403. Now a loopback Host is accepted on any port when Origin matches Host (or is absent); an opt-in `allowed_hosts` argument covers a proxy that isn't loopback — missing
+- [x] Remote use behind a path prefix: the `/open` redirect and `/`'s notebook links were absolute (`/edit?...`), so a proxy serving Ember under a prefix like `/s/<id>/p/<port>/` (stripping that prefix before forwarding, the usual model) broke them once the browser followed a link built from the unprefixed path the backend sees. Both are relative now, as Pluto does — missing
 
 - [ ] Pluto frontend fork, protocol in R, removals, R adaptations, theme — missing
 - [ ] The R grammar wired into CodeMirror — missing

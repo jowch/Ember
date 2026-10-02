@@ -22,7 +22,10 @@ test('index: "/" shows Ember\'s own hosted-notebook list, not Pluto\'s Julia wel
   assert.match(text, /ember/i);
   assert.doesNotMatch(text, /welcome to pluto/i);
 
-  // Ember's own page links to /edit for every hosted notebook.
-  const editLinks = await page.locator('a[href*="/edit?id="]').count();
+  // Ember's own page links to edit?id= (relative, not "/edit?...": a proxy
+  // serving Ember under a path prefix strips the prefix before forwarding,
+  // so an absolute link would point the browser at the wrong, unprefixed
+  // path; see R/server.R's http_index()) for every hosted notebook.
+  const editLinks = await page.locator('a[href*="edit?id="]').count();
   assert.ok(editLinks >= 1, "the index links to at least the one notebook this server was started with");
 });

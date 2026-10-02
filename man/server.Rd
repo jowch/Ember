@@ -17,9 +17,10 @@ notebooks itself.
 }
 \usage{
 serve(paths = character(), port = 0L, secret = random_secret(32),
-      on_ready = NULL, launch_browser = FALSE)
+      on_ready = NULL, launch_browser = FALSE, allowed_hosts = character())
 
-start_server(path = NULL, port = 0L, open = interactive(), timeout = 15)
+start_server(path = NULL, port = 0L, open = interactive(), timeout = 15,
+             allowed_hosts = character())
 
 host_notebook(server, nb, owned = FALSE)
 
@@ -31,7 +32,10 @@ stop_server(server)
 }
 \arguments{
 \item{paths}{Notebook files to open in safe preview when \code{serve()} starts.}
-\item{port}{Port on \code{127.0.0.1}; \code{0} picks a free one.}
+\item{port}{Port on \code{127.0.0.1}; \code{0} tries the stable default, \code{4321},
+and the next few ports upward before falling back to a free one at random,
+so a browser bookmark, an SSH tunnel command (\verb{ssh -L 4321:localhost:4321})
+or a reverse proxy's saved config keeps working across restarts.}
 \item{secret}{The URL secret. Every page, static file request to
 \verb{/edit}, and websocket connection needs it (as \code{?secret=} or the
 cookie \verb{/edit} sets); files served directly from the frontend folder do
@@ -41,6 +45,14 @@ not.}
 callbacks) and hands them to the server with \code{host_notebook()}.}
 \item{launch_browser}{Open the first notebook's edit URL (or the server's
 own URL if none was given) once the server is ready.}
+\item{allowed_hosts}{\code{Host} names to accept besides loopback
+(\code{127.0.0.1}, \code{localhost}, \code{[::1]}, any port), for a reverse proxy
+that isn't loopback from this R process's point of view -- Posit Workbench,
+JupyterHub's server proxy, a container's exposed port. Each entry can
+include a port (\code{"ember.example.org:8443"}, accepted only on that port)
+or be bare (\code{"ember.example.org"}, accepted on any port). A request's
+\code{Origin}, when present, must still equal its \code{Host} exactly; listing a
+host here never allows a \emph{different} origin to connect. Default: none.}
 \item{path}{A notebook file for \code{start_server()} to open, or \code{NULL} for
 none.}
 \item{open}{Open the notebook in the browser once the child is listening.}

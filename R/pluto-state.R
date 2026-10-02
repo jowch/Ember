@@ -292,8 +292,9 @@ project_output <- function(view) {
 #' `<link>`/`<script>` tags for an HTML output's widget dependencies, in
 #' order, prepended to the HTML (ui-2.md, 3d). A dependency with only
 #' `href` uses that URL directly; one resolved to a notebook-library folder
-#' uses `/deps/<name>-<version>/<file>` (server.R's register_deps()). If any
-#' dependency is named "htmlwidgets", a script asking it to render appends
+#' uses `deps/<name>-<version>/<file>` (server.R's register_deps()),
+#' relative so it stays under a proxy's path prefix. If any dependency is
+#' named "htmlwidgets", a script asking it to render appends
 #' after the tags (htmlwidgets only binds on DOMContentLoaded by itself).
 #' Pluto's script runner already copies each `<script src>` into the page
 #' head once and runs it before inline scripts (CellOutput.js), so loading a
@@ -303,7 +304,7 @@ project_dep_tags <- function(deps) {
   tags <- character()
   has_htmlwidgets <- FALSE
   for (d in deps) {
-    base <- if (!is.null(d$href)) d$href else sprintf("/deps/%s-%s/", d$name, d$version)
+    base <- if (!is.null(d$href)) d$href else sprintf("deps/%s-%s/", d$name, d$version)
     if (identical(d$name, "htmlwidgets")) has_htmlwidgets <- TRUE
     for (f in d$stylesheet %||% character()) {
       tags <- c(tags, sprintf('<link rel="stylesheet" href="%s%s">', base, f))

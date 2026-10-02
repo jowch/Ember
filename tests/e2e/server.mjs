@@ -8,10 +8,31 @@ import { mkdtempSync, copyFileSync, mkdirSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import net from "node:net";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(HERE, "fixtures");
 export const SECRET = "ember-e2e-secret";
+
+/** An ephemeral port, free right now on 127.0.0.1. `startServer()` passes
+ * an explicit port rather than `port = 0`: this suite starts many Ember
+ * servers at once (one per test file, run concurrently by node:test), and
+ * `port = 0` now means "the stable default, 4321" (R/server.R's
+ * `bind_default_port()`), which every one of them would race for. Each
+ * test still exercises that default-port behaviour directly, in
+ * test-server.R; this is only about keeping e2e runs from colliding with
+ * each other and with the port a real interactive session would want. */
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.unref();
+    probe.on("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const port = probe.address().port;
+      probe.close(() => resolve(port));
+    });
+  });
+}
 
 /** Copy `name` from tests/e2e/fixtures into a fresh temp directory, and
  * return its path. Each test gets its own copy so edits (and the file on
@@ -34,7 +55,8 @@ export function tempNotebook(name = "basic.R") {
 export async function startServer(notebookPaths, { timeoutMs = 30000, logFile } = {}) {
   const rscript = process.env.EMBER_RSCRIPT ?? "Rscript";
   const quoted = notebookPaths.map((p) => JSON.stringify(p)).join(", ");
-  const expr = `ember::serve(paths = c(${quoted}), port = 0, secret = ${JSON.stringify(SECRET)})`;
+  const port = await freePort();
+  const expr = `ember::serve(paths = c(${quoted}), port = ${port}, secret = ${JSON.stringify(SECRET)})`;
 
   const child = spawn(rscript, ["--vanilla", "-e", expr], { stdio: ["ignore", "pipe", "pipe"] });
 

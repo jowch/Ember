@@ -30,18 +30,26 @@ WAVE <- "\U0001F44B"
 #' and hands them to the server with host_notebook().
 #'
 #' @param paths Notebook files to open in safe preview at start.
-#' @param port Port on 127.0.0.1; 0 picks a free one.
+#' @param port Port on 127.0.0.1; 0 tries the stable default (see
+#'   `pick_default_port()`) and falls back to a free one.
 #' @param secret The URL secret; every page, file and socket needs it.
 #' @param on_ready `function(server)` or NULL.
 #' @param launch_browser Open the first notebook's URL (or the server's).
+#' @param allowed_hosts `Host` names (with or without `:<port>`) to accept
+#'   besides loopback, for a reverse proxy that isn't loopback from this R
+#'   process's point of view; see `origin_ok()`'s doc. Default: none.
 #' @return Invisibly, when stop_server() is called from a callback.
 #' @export
 serve <- function(paths = character(), port = 0L, secret = random_secret(32),
-                  on_ready = NULL, launch_browser = FALSE) {
-  server <- new_server(secret)
-  actual_port <- if (identical(port, 0L) || identical(port, 0)) pick_free_port() else port
-  server$http <- httpuv::startServer("127.0.0.1", actual_port, http_app(server))
-  server$port <- actual_port
+                  on_ready = NULL, launch_browser = FALSE, allowed_hosts = character()) {
+  server <- new_server(secret, allowed_hosts = allowed_hosts)
+  bound <- if (identical(port, 0L) || identical(port, 0)) {
+    bind_default_port(http_app(server))
+  } else {
+    list(http = httpuv::startServer("127.0.0.1", port, http_app(server)), port = port)
+  }
+  server$http <- bound$http
+  server$port <- bound$port
 
   first_url <- NULL
   for (p in paths) {
@@ -74,8 +82,12 @@ serve <- function(paths = character(), port = 0L, secret = random_secret(32),
 #' the child's "listening" line to learn the port.
 #'
 #' @param path Notebook to open, or NULL for none.
+#' @param port Port on 127.0.0.1; 0 tries the stable default (see
+#'   `pick_default_port()`) and falls back to a free one.
 #' @param open Open the notebook in the browser.
 #' @param timeout Seconds to wait for the child to listen.
+#' @param allowed_hosts `Host` names (with or without `:<port>`) to accept
+#'   besides loopback, for a reverse proxy; see `serve()`'s doc.
 #' @return An `ember_server_handle`: an environment with
 #'   * `url`: the server's base URL including `?secret=`;
 #'   * `open(path)`: opens a notebook in the browser through `/open`, the
@@ -86,7 +98,8 @@ serve <- function(paths = character(), port = 0L, secret = random_secret(32),
 #'   * `process`: the processx handle (`cleanup = TRUE`, `supervise = TRUE`:
 #'     the child goes when this session does).
 #' @export
-start_server <- function(path = NULL, port = 0L, open = interactive(), timeout = 15) {
+start_server <- function(path = NULL, port = 0L, open = interactive(), timeout = 15,
+                         allowed_hosts = character()) {
   secret <- random_secret(32)
   path_env <- if (!is.null(path)) normalizePath(path, mustWork = TRUE) else ""
   r_bin <- file.path(R.home("bin"), "Rscript")
@@ -94,7 +107,8 @@ start_server <- function(path = NULL, port = 0L, open = interactive(), timeout =
   proc <- processx::process$new(
     r_bin, c("--vanilla", "-e", "ember:::serve_child()"),
     env = c("current", EMBER_SECRET = secret, EMBER_PORT = as.character(port),
-            EMBER_PATHS = path_env),
+            EMBER_PATHS = path_env,
+            EMBER_ALLOWED_HOSTS = paste(allowed_hosts, collapse = .Platform$path.sep)),
     stdout = "|", stderr = "2>&1", cleanup = TRUE, supervise = TRUE)
 
   deadline <- Sys.time() + timeout
@@ -126,7 +140,10 @@ start_server <- function(path = NULL, port = 0L, open = interactive(), timeout =
     resp <- http_get_raw("127.0.0.1", port_num, paste0("/open?", qs))
     loc <- resp$headers[["location"]]
     edit <- if (!is.null(loc)) {
-      if (grepl("^https?://", loc)) loc else paste0("http://127.0.0.1:", port_num, loc)
+      # `/open`'s Location is relative (so it still works under a proxy
+      # path prefix; see http_open()'s doc), so it's resolved the way a
+      # browser would resolve it against "/open"'s own URL: relative to "/".
+      if (grepl("^https?://", loc)) loc else paste0("http://127.0.0.1:", port_num, "/", loc)
     } else url
     invisible(edit)
   }
@@ -185,7 +202,8 @@ stop_server <- function(server) { server$stopped <- TRUE; invisible(NULL) }
 #' The server: an environment.
 #'
 #' * `secret`, `port`, `http` (httpuv handle or NULL in tests),
-#'   `stopped` (logical), `frontend` (the vendored frontend folder).
+#'   `stopped` (logical), `frontend` (the vendored frontend folder),
+#'   `allowed_hosts` (character, see `origin_ok()`'s doc).
 #' * `hubs`: environment, notebook id -> hub (environment: `nb`, `proj`
 #'   (`ember_pluto_state` or NULL), `owned`, `due` (a flush is scheduled),
 #'   `last_flush` (time), `unsubscribe`).
@@ -200,11 +218,12 @@ stop_server <- function(server) { server$stopped <- TRUE; invisible(NULL) }
 #' Tests build one with no httpuv and drive handle_message() with fake
 #' sockets; serve() is new_server() plus httpuv plus the loop.
 new_server <- function(secret, frontend = system.file("frontend", package = "ember"),
-                       throttle = 0.03) {
+                       throttle = 0.03, allowed_hosts = character()) {
   server <- new.env(parent = emptyenv())
   server$secret <- secret
   server$frontend <- frontend
   server$throttle <- throttle
+  server$allowed_hosts <- allowed_hosts
   server$port <- NULL
   server$http <- NULL
   server$stopped <- FALSE
@@ -239,10 +258,55 @@ edit_url <- function(server, id) {
 pick_free_port <- function(tries = 30L) {
   for (i in seq_len(tries)) {
     port <- random_port()
-    ok <- tryCatch({ close(serverSocket(port)); TRUE }, error = function(e) FALSE)
-    if (ok) return(port)
+    if (port_free(port)) return(port)
   }
   stop("ember: could not find a free port after ", tries, " tries")
+}
+
+#' Is `port` free on 127.0.0.1 right now? Same open-then-close probe as
+#' `pick_free_port()`, factored out so `pick_default_port()` can try a fixed
+#' port before falling back to a random one.
+port_free <- function(port) {
+  tryCatch({ close(serverSocket(port)); TRUE }, error = function(e) FALSE)
+}
+
+#' The port `serve()`/`start_server()` use when none is given: 4321, so a
+#' browser bookmark, an `ssh -L 4321:localhost:4321` tunnel command or a
+#' proxy's saved config keeps working across restarts, instead of changing
+#' every time (the old behaviour: always `pick_free_port()`, a random port).
+#' Tries 4321 and the next `span - 1` ports upward before giving up on a
+#' fixed one and falling back to `pick_free_port()`; a machine running
+#' several Ember servers, or with 4321 and its neighbours taken by something
+#' else, still gets a server, just not a port stable across its own restarts.
+pick_default_port <- function(preferred = 4321L, span = 20L) {
+  for (port in preferred:(preferred + span - 1L)) {
+    if (port_free(port)) return(port)
+  }
+  pick_free_port()
+}
+
+#' Bind httpuv to the stable default port (`pick_default_port()`) and return
+#' `list(http = <handle>, port = <int>)`. `pick_default_port()`'s probe
+#' (open, then close, then separately hand the number to httpuv) leaves the
+#' same race `pick_free_port()`'s doc already describes, and it bites far
+#' more often here: many `serve(port = 0)` calls starting around the same
+#' moment (several of this package's own e2e tests, or several people on a
+#' shared machine) all probe 4321 as free and then race each other to bind
+#' it. A failed bind is retried with a fresh pick: by then the port that
+#' just lost the race shows as taken, so the next probe moves on, and
+#' `pick_default_port()`'s own random fallback (after `span` sequential
+#' misses) makes repeated collisions on the same number vanishingly
+#' unlikely.
+bind_default_port <- function(app, tries = 10L) {
+  last_err <- NULL
+  for (i in seq_len(tries)) {
+    candidate <- pick_default_port()
+    http <- tryCatch(httpuv::startServer("127.0.0.1", candidate, app),
+                     error = function(e) { last_err <<- e; NULL })
+    if (!is.null(http)) return(list(http = http, port = candidate))
+  }
+  stop("ember: could not bind a port after ", tries, " attempts: ",
+      if (!is.null(last_err)) conditionMessage(last_err) else "unknown error")
 }
 
 # ---- Syncing -----------------------------------------------------------------
@@ -852,38 +916,65 @@ secret_ok_ws <- function(server, req) {
   !is.null(q$secret) && identical(q$secret, server$secret)
 }
 
-#' This server's own origin strings, `host:port` with no scheme, matching
-#' what browsers send in `Origin`/`Host`: `127.0.0.1:<port>` and
-#' `localhost:<port>`. Empty when `server$port` isn't known yet (tests that
-#' build a server with no real listener): `origin_ok()` then has nothing to
-#' compare against and allows everything, the same stance those tests
-#' already take toward the secret check before a port exists.
-server_hosts <- function(server) {
-  if (is.null(server$port)) return(character())
-  sprintf(c("127.0.0.1:%d", "localhost:%d"), server$port)
+#' `Host`/`Origin` names this server treats as "reached through some hop on
+#' this machine", regardless of port: a loopback address can be the far end
+#' of an SSH tunnel (`ssh -L 8080:localhost:<port>`) or a reverse proxy
+#' (Posit Workbench, JupyterHub's server proxy, VS Code port forwarding)
+#' running on the same host, which picks its own local port that has no
+#' relation to `server$port`. `[::1]` is IPv6 loopback, bracketed the way a
+#' `Host` header writes it.
+LOOPBACK_HOST_NAMES <- c("127.0.0.1", "localhost", "[::1]")
+
+#' `host` (a `Host` or `Origin` value, no scheme) with any trailing
+#' `:<port>` removed.
+strip_port <- function(host) sub(":[0-9]+$", "", host)
+
+#' Is `host` a name this server accepts as where a request arrived: a
+#' loopback name on any port, or one of `server$allowed_hosts` -- opt-in,
+#' for a proxy that isn't loopback from this R process's point of view
+#' (it terminates TLS on another machine, or in a container) -- matched
+#' either bare (any port) or with the exact port an entry gives.
+host_allowed <- function(server, host) {
+  if (strip_port(host) %in% LOOPBACK_HOST_NAMES) return(TRUE)
+  allowed <- server$allowed_hosts
+  if (is.null(allowed) || length(allowed) == 0) return(FALSE)
+  host %in% allowed || strip_port(host) %in% allowed
 }
 
-#' Is this request's `Origin` (when present) and `Host` (when present)
-#' exactly this server's own? The secret alone isn't enough to keep another
-#' page out (design.md, Processes: "any page or program on the machine can
-#' reach a loopback port") once that page can get hold of it -- a cookie
-#' sent automatically regardless of origin, or a secret the user pasted
-#' somewhere a second page could read it -- so every request that reaches R,
-#' and the websocket, is also checked against where it actually came from.
-#' `Origin` is absent for same-origin navigations in some browsers and for
-#' every request this package's own HTTP client sends (`http_get_raw()`,
-#' `start_server()$open()`); `Host` is normally always present on a real
-#' request but absent from every existing test's hand-built one, so only a
-#' header that *is* present and wrong is refused, never a missing one.
+#' Is this request's `Host` one this server accepts, and -- when `Origin` is
+#' also present -- does it equal `Host` exactly? The secret alone isn't
+#' enough to keep another page out (design.md, Processes: "any page or
+#' program on the machine can reach a loopback port") once that page can get
+#' hold of it -- a cookie sent automatically regardless of origin, or a
+#' secret the user pasted somewhere a second page could read -- so every
+#' request that reaches R, and the websocket, is also checked against where
+#' it actually came from.
+#'
+#' `Host` says which address the request came in on (loopback, or an
+#' allow-listed proxy name); `Origin`, when a browser sends one, says which
+#' page's script opened the request, and must match `Host` exactly -- not
+#' just also be loopback -- or a page on a different local port or a
+#' different proxied service (same machine, different origin) could ride a
+#' cookie or a leaked secret in. `Origin` is absent for same-origin
+#' navigations in some browsers and for every request this package's own
+#' HTTP client sends (`http_get_raw()`, `start_server()$open()`); a request
+#' with `Origin` but no `Host` can't be checked against anything and is
+#' refused. `Host` is normally always present on a real request but absent
+#' from every existing test's hand-built one, so a missing `Host` alone
+#' (with no `Origin` either) is allowed, the same stance those tests already
+#' take toward the secret check before a port exists.
 origin_ok <- function(server, req) {
-  hosts <- server_hosts(server)
-  if (length(hosts) == 0) return(TRUE)
+  host <- req$HTTP_HOST
+  host_present <- !is.null(host) && nzchar(host)
+  if (host_present && !host_allowed(server, host)) return(FALSE)
+
   origin <- req$HTTP_ORIGIN
   if (!is.null(origin) && nzchar(origin)) {
-    if (!(sub("^[a-zA-Z][a-zA-Z0-9+.-]*://", "", origin) %in% hosts)) return(FALSE)
+    if (!host_present) return(FALSE)
+    origin_host <- sub("^[a-zA-Z][a-zA-Z0-9+.-]*://", "", origin)
+    origin_host <- sub("/.*$", "", origin_host)
+    if (!identical(origin_host, host)) return(FALSE)
   }
-  host <- req$HTTP_HOST
-  if (!is.null(host) && nzchar(host) && !(host %in% hosts)) return(FALSE)
   TRUE
 }
 
@@ -911,6 +1002,11 @@ http_edit <- function(server, req) {
   hub <- if (!is.null(q$id)) mget(q$id, envir = server$hubs, ifnotfound = list(NULL))[[1]] else NULL
   if (is.null(hub)) return(http_text(404L, "no such notebook"))
   body <- read_file_utf8(file.path(server$frontend, "editor.html"))
+  # `Path=/`, not the request's own path: behind a proxy that strips its
+  # path prefix before forwarding (see http_open()'s doc), this process
+  # never learns what that prefix was, so `/` is the only path it could set
+  # that is guaranteed to still cover `/notebookfile` and `/notebookexport`
+  # wherever the proxy actually mounts them.
   http_text(200L, body, "text/html; charset=utf-8",
            list("Set-Cookie" = sprintf("%s=%s; SameSite=Strict; HttpOnly; Path=/",
                                        cookie_name(server), server$secret)))
@@ -937,8 +1033,15 @@ http_open <- function(server, req) {
     host_notebook(server, nb, owned = TRUE)
     notebook_state(nb)$id
   }
+  # Relative, not "/edit?...": a reverse proxy serving Ember under a path
+  # prefix (design.md, Processes) forwards this request's path unprefixed
+  # (the standard JupyterHub/Workbench/VS Code model), so this process never
+  # sees the prefix and can't spell an absolute path under it; a relative
+  # Location is resolved by the browser against *its* URL, which does carry
+  # the prefix, and lands in the right place either way (design-gaps.md,
+  # "Remote use behind a path prefix").
   list(status = 302L,
-      headers = list("Location" = sprintf("/edit?id=%s&secret=%s", id, server$secret)),
+      headers = list("Location" = sprintf("edit?id=%s&secret=%s", id, server$secret)),
       body = "")
 }
 
@@ -972,7 +1075,7 @@ http_index <- function(server, req) {
   items <- vapply(ids, function(id) {
     hub <- get(id, envir = server$hubs)
     st <- notebook_state(hub$nb)
-    sprintf('<li><a href="/edit?id=%s&secret=%s">%s</a></li>',
+    sprintf('<li><a href="edit?id=%s&secret=%s">%s</a></li>',
            html_escape(st$id), html_escape(server$secret), html_escape(st$path))
   }, character(1))
   body <- paste0("<html><body><h1>ember</h1><ul>", paste(items, collapse = ""), "</ul></body></html>")
@@ -1107,12 +1210,14 @@ http_get_raw <- function(host, port, path) {
 }
 
 #' The child's entry point for start_server(): reads EMBER_SECRET,
-#' EMBER_PORT, EMBER_PATHS and calls serve().
+#' EMBER_PORT, EMBER_PATHS, EMBER_ALLOWED_HOSTS and calls serve().
 serve_child <- function() {
   secret <- Sys.getenv("EMBER_SECRET")
   port <- suppressWarnings(as.integer(Sys.getenv("EMBER_PORT", "0")))
   if (is.na(port)) port <- 0L
   paths_env <- Sys.getenv("EMBER_PATHS", "")
   paths <- if (nzchar(paths_env)) strsplit(paths_env, .Platform$path.sep, fixed = TRUE)[[1]] else character()
-  serve(paths = paths, port = port, secret = secret)
+  hosts_env <- Sys.getenv("EMBER_ALLOWED_HOSTS", "")
+  allowed_hosts <- if (nzchar(hosts_env)) strsplit(hosts_env, .Platform$path.sep, fixed = TRUE)[[1]] else character()
+  serve(paths = paths, port = port, secret = secret, allowed_hosts = allowed_hosts)
 }

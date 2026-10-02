@@ -414,7 +414,10 @@ test_that("/open opens (or reuses) the notebook and redirects to its edit URL (h
 
   resp1 <- http_call(server, fake_req("/open", sprintf("path=%s&secret=s", utils::URLencode(path, reserved = TRUE))))
   expect_equal(resp1$status, 302L)
-  expect_match(resp1$headers[["Location"]], "^/edit\\?id=.+&secret=s$")
+  # Relative, not "/edit?...": see http_open()'s doc (a proxy under a path
+  # prefix forwards this request's path unprefixed, so the browser must
+  # resolve the redirect against its own, prefixed URL).
+  expect_match(resp1$headers[["Location"]], "^edit\\?id=.+&secret=s$")
 
   resp2 <- http_call(server, fake_req("/open", sprintf("path=%s&secret=s", utils::URLencode(path, reserved = TRUE))))
   expect_equal(resp1$headers[["Location"]], resp2$headers[["Location"]])   # reused, not reopened
@@ -479,7 +482,7 @@ test_that("a websocket opened with the secret in the query string connects norma
   expect_true(opened)
 })
 
-test_that("http_call() and onWSOpen() refuse a mismatched Origin or Host (review4 1)", {
+test_that("http_call() and onWSOpen() refuse a mismatched Origin (review4 1)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1")))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
@@ -488,11 +491,17 @@ test_that("http_call() and onWSOpen() refuse a mismatched Origin or Host (review
   host_notebook(server, nb)
   id <- notebook_state(nb)$id
 
+  # Origin with no Host at all can't be checked against anything, so it's
+  # refused outright.
   resp <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id),
                                      origin = "http://127.0.0.1:9999"))
   expect_equal(resp$status, 403L)
+
+  # Host on its own, a loopback name on a port that isn't this server's own,
+  # is accepted (the SSH-tunnel/reverse-proxy case; see the "remote use"
+  # tests below): only an Origin that disagrees with Host is refused.
   resp2 <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id),
-                                      host = "127.0.0.1:9999"))
+                                      origin = "http://127.0.0.1:9999", host = "127.0.0.1:40002"))
   expect_equal(resp2$status, 403L)
 
   # Its own origin, in either spelling, is accepted.
@@ -509,6 +518,103 @@ test_that("http_call() and onWSOpen() refuse a mismatched Origin or Host (review
             close = function() closed <<- TRUE, onMessage = function(f) NULL, onClose = function(f) NULL)
   app$onWSOpen(ws)
   expect_true(closed)
+})
+
+# ---- Remote use: loopback on any port, allowed_hosts, DNS rebinding --------
+
+test_that("a loopback Host on a different port (an SSH tunnel or local proxy) is accepted (remote use)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  server$port <- 40003L
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+
+  # `ssh -L 8080:localhost:40003` makes the browser's Host "localhost:8080"
+  # (or "127.0.0.1:8080"), unrelated to the server's own port; no Origin
+  # (a plain navigation): this must now work, which is the bug being fixed.
+  for (host in c("localhost:8080", "127.0.0.1:8080", "[::1]:8080")) {
+    resp <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id), host = host))
+    expect_equal(resp$status, 200L, label = host)
+  }
+
+  # Matching Origin and Host, both on the tunnel's port, is also accepted.
+  resp2 <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id),
+                                      origin = "http://localhost:8080", host = "localhost:8080"))
+  expect_equal(resp2$status, 200L)
+})
+
+test_that("a mismatched Origin is refused even when Host is an accepted loopback tunnel port (remote use)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  server$port <- 40004L
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+
+  # Host alone would be accepted (it's loopback), but an Origin naming a
+  # *different* port -- another page on this machine -- must still be
+  # refused: accepting any loopback Host can't mean trusting any origin.
+  resp <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id),
+                                     origin = "http://127.0.0.1:9999", host = "localhost:8080"))
+  expect_equal(resp$status, 403L)
+})
+
+test_that("a non-loopback Host is refused by default and accepted once listed in allowed_hosts (remote use)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  server$port <- 40005L
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+
+  resp <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id),
+                                     host = "ember.example.org"))
+  expect_equal(resp$status, 403L)
+
+  server$allowed_hosts <- "ember.example.org"
+  resp2 <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id),
+                                      host = "ember.example.org"))
+  expect_equal(resp2$status, 200L)
+
+  # Listed bare, any port on that name is accepted too (a proxy in front of
+  # a load balancer that varies its own port).
+  resp3 <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id),
+                                      host = "ember.example.org:8443"))
+  expect_equal(resp3$status, 200L)
+
+  # A *different* non-loopback name, not listed, is still refused.
+  resp4 <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id),
+                                      host = "other.example.org"))
+  expect_equal(resp4$status, 403L)
+})
+
+test_that("new_server()'s allowed_hosts argument is what host_allowed()/origin_ok() read (remote use)", {
+  server <- new_server("s", allowed_hosts = "ember.example.org")
+  expect_equal(server$allowed_hosts, "ember.example.org")
+  expect_true(host_allowed(server, "ember.example.org"))
+  expect_false(host_allowed(server, "other.example.org"))
+})
+
+test_that("a DNS-rebinding-style Host is refused: a non-loopback name is never trusted on its say-so (remote use)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  server$port <- 40006L
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+
+  # attacker.example can resolve to 127.0.0.1 (DNS rebinding) and the TCP
+  # connection really does land on this loopback server, but the Host header
+  # the browser sends is still the attacker's own name -- not a loopback
+  # name -- so it must be refused like any other unlisted host.
+  resp <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id),
+                                     host = "attacker.example"))
+  expect_equal(resp$status, 403L)
 })
 
 # ---- review4 item 5: the cookie is named per port -----------------------------
@@ -559,6 +665,33 @@ test_that("\"/\" serves Ember's own index, not Pluto's vendored welcome page (re
   resp <- http_call(server, fake_req("/", "secret=s"))
   expect_equal(resp$status, 200L)
   expect_match(resp$body, "<h1>ember</h1>")
+})
+
+# ---- Remote use: a stable default port -----------------------------------
+
+test_that("pick_default_port() prefers 4321, then the next free port up (remote use: stable port)", {
+  p <- pick_default_port()
+  expect_true(p >= 4321L)
+
+  occupied <- tryCatch(serverSocket(4321L), error = function(e) NULL)
+  skip_if(is.null(occupied), "port 4321 not available to reserve for this test")
+  on.exit(close(occupied), add = TRUE)
+  p2 <- pick_default_port()
+  expect_true(p2 != 4321L && p2 >= 4321L)
+})
+
+test_that("serve() with no port given binds 4321 when it's free (remote use: stable port)", {
+  skip_on_cran()
+  probe <- tryCatch(httpuv::startServer("127.0.0.1", 4321L, list()), error = function(e) NULL)
+  skip_if(is.null(probe), "port 4321 not available to test against")
+  probe$stop()
+
+  bound_port <- NULL
+  serve(secret = "s", on_ready = function(server) {
+    bound_port <<- server$port
+    stop_server(server)
+  })
+  expect_equal(bound_port, 4321L)
 })
 
 test_that("http_index() escapes a notebook's path into its HTML (review4 10)", {
