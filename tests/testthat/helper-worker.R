@@ -223,6 +223,19 @@ no_reply <- function(h, timeout) {
                paste(utils::tail(c(out, err), 20), collapse = "\n")), call. = FALSE)
 }
 
+#' Read frames until a "rendered" message arrives (a "more"/"render"
+#' request's reply never comes as "done").
+wait_for_done_or_rendered <- function(h, timeout = 5) {
+  deadline <- Sys.time() + timeout
+  repeat {
+    remaining <- as.numeric(deadline - Sys.time(), units = "secs")
+    if (remaining <= 0) no_reply(h, timeout)
+    m <- h$receive(remaining)
+    if (is.null(m)) no_reply(h, timeout)
+    if (identical(m$type, "rendered")) return(m)
+  }
+}
+
 wait_for_done <- function(h, timeout = 5, on_frame = NULL) {
   deadline <- Sys.time() + timeout
   repeat {

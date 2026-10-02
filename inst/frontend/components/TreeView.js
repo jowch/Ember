@@ -176,6 +176,15 @@ export const TreeView = ({ mime, body, cell_id, persist_js_state, sanitize_html 
                     >${body.elements.map((r) => html`<p-r><p-k>${r[0]}</p-k><p-v>${mimepair_output(r[1])}</p-v></p-r>`)}</pluto-tree-items
                 >`
             break
+        case "r_list":
+            // Like "NamedTuple", but an unnamed item (r[0] === "") omits
+            // the key instead of showing an empty one (ui-2.md, 3c).
+            inner = html`<${prefix} prefix=${body.prefix} prefix_short=${body.prefix_short} /><pluto-tree-items class=${body.type}
+                    >${body.elements.map((r) =>
+                        r === "more" ? more : html`<p-r>${r[0] === "" ? "" : html`<p-k>${r[0]}</p-k>`}<p-v>${mimepair_output(r[1])}</p-v></p-r>`
+                    )}</pluto-tree-items
+                >`
+            break
     }
 
     return html`<pluto-tree class="collapsed ${body.type}" onclick=${onclick} ref=${node_ref}>${inner}</pluto-tree>`
@@ -224,7 +233,7 @@ export const TableView = ({ mime, body, cell_id, persist_js_state, sanitize_html
             ? html`<${EmptyCols} colspan=${maxcolspan} />`
             : html`<thead>
                   <tr class="schema-names">
-                      ${["", ...body.schema.names].map((x) => html`<th>${x === "more" ? more(2) : x}</th>`)}
+                      ${[body.ember_dims ?? "", ...body.schema.names].map((x) => html`<th>${x === "more" ? more(2) : x}</th>`)}
                   </tr>
                   <tr class="schema-types">
                       ${["", ...body.schema.types].map((x) => html`<th>${x === "more" ? null : x}</th>`)}

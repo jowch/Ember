@@ -226,13 +226,21 @@ new_run_error <- function(kind, message, traceback = character(),
 #' `mime` is the primary type (`"text/html"`, `"image/png"`,
 #' `"image/svg+xml"`, `"text/markdown"`, `"text/latex"`,
 #' `"application/vnd.ember.table"`, `"application/vnd.ember.tree"`,
-#' `"text/plain"`); `data` its body (character, or raw for PNG); `text` the
-#' truncated `print()` form, always present; `deps` the htmlwidget
-#' dependencies (name, version, folder) for the server's static paths;
-#' `size` the plot size for an image, else `NULL`.
-new_display <- function(mime, data, text, deps = list(), size = NULL) {
+#' `"text/plain"`); `data` its body (character, or raw for PNG, or the
+#' table/tree structure); `text` the truncated `print()` form, always
+#' present; `deps` the htmlwidget dependencies (name, version, folder) for
+#' the server's static paths; `size` the plot size for an image, else
+#' `NULL`; `token` the run (or re-render) that made this display, so a late
+#' reply for an older run or resize can be told apart from the current one
+#' (`reduce_wk_rendered()`, step.R); `rendered_at` the time of the last
+#' re-render or page ("more"), or `NULL` for a plain run -- this is what
+#' makes `project_output()`'s `last_run_timestamp` advance so the page
+#' redraws a paged table or a resized plot.
+new_display <- function(mime, data, text, deps = list(), size = NULL,
+                        token = NULL, rendered_at = NULL) {
   structure(list(mime = mime, data = data, text = text, deps = deps,
-                 size = size), class = "ember_display")
+                 size = size, token = token, rendered_at = rendered_at),
+            class = "ember_display")
 }
 
 # ---- Projections -------------------------------------------------------------

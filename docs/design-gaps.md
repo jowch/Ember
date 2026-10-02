@@ -44,6 +44,8 @@ done; clear out ticked items at each release.
 - [ ] No way to create a notebook from the browser: the index page lists hosted notebooks only. Today it is `new_notebook()` in R, then `start_server()` — missing
 - [x] The cell menu still offers Pluto's "ask AI", and the footer's feedback form still shows (inert: nothing is sent) — improvised
 
+- [ ] Coloured console output (cli, crayon) sits on the log box's dark brown background, where red text is hard to read; the ANSI colours need values chosen for that background, or a lighter box — improvised
+
 - [ ] Pluto frontend fork, protocol in R, removals, R adaptations, theme — missing
 - [ ] The R grammar wired into CodeMirror — missing
 - [ ] Rich outputs in the browser: widget files as static paths, table and tree views, terminal colours — missing

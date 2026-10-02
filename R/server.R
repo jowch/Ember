@@ -172,6 +172,7 @@ host_notebook <- function(server, nb, owned = FALSE) {
   hub$last_flush <- Sys.time() - 1
   hub$unsubscribe <- on_notebook_event(nb, function(note) on_note(server, hub, note))
   assign(id, hub, envir = server$hubs)
+  register_deps_for_cells(server, hub, names(notebook_state(nb)$cells))
   edit_url(server, id)
 }
 
@@ -209,6 +210,7 @@ new_server <- function(secret, frontend = system.file("frontend", package = "emb
   server$stopped <- FALSE
   server$hubs <- new.env(parent = emptyenv())
   server$clients <- new.env(parent = emptyenv())
+  server$deps <- new.env(parent = emptyenv())
   server$counter <- 0L
   class(server) <- "ember_server"
   server
@@ -309,11 +311,97 @@ drop_clients_of_ws <- function(server, ws) {
 }
 
 #' Remove a hub (notebook_shut_down, or a page that asked to shut down):
-#' unsubscribe from the engine and drop it from `server$hubs`. Clients still
-#' pointed at it simply stop receiving anything further.
+#' unsubscribe from the engine, remove the dependency static paths only this
+#' notebook used, and drop it from `server$hubs`. Clients still pointed at
+#' it simply stop receiving anything further.
 drop_hub <- function(server, hub) {
   if (!is.null(hub$unsubscribe)) hub$unsubscribe()
+  unregister_deps(server, hub)
   if (exists(hub$id, envir = server$hubs, inherits = FALSE)) rm(list = hub$id, envir = server$hubs)
+  invisible(NULL)
+}
+
+# ---- Widget dependency files ---------------------------------------------------
+
+#' Is `dir` an absolute path with no ".." component that lies inside `lib`?
+#' Checked on the path as given, not its symlink target: renv links library
+#' entries into its shared cache, so the resolved path lies outside the
+#' library by design, and a symlink inside the library pointing outside it
+#' is accepted on that basis.
+dep_path_allowed <- function(dir, lib) {
+  if (is.null(dir) || (length(dir) != 1) || is.na(dir) || !nzchar(dir)) return(FALSE)
+  if (is.null(lib) || !nzchar(lib)) return(FALSE)
+  if (!is_absolute_path(dir)) return(FALSE)
+  norm_dir <- gsub("\\\\", "/", dir)
+  parts <- strsplit(norm_dir, "/", fixed = TRUE)[[1]]
+  if (".." %in% parts) return(FALSE)
+  norm_lib <- sub("/+$", "", gsub("\\\\", "/", lib))
+  startsWith(norm_dir, paste0(norm_lib, "/"))
+}
+
+#' Serve a dependency folder at `/deps/<name>-<version>/` when it lies
+#' inside the notebook's library. Idempotent: a key already registered is
+#' left as it is (same name and version, same files, by htmlwidgets'
+#' convention); a second notebook using the same key is added to its
+#' subscriber list. With `server$http` `NULL` (tests) it only records.
+register_deps <- function(server, hub, deps) {
+  lib <- notebook_state(hub$nb)$packages$active$path
+  for (d in deps) {
+    if (!dep_path_allowed(d$dir, lib)) {
+      if (!is.null(d$dir) && !(length(d$dir) == 1 && is.na(d$dir))) {
+        message("ember: refusing dependency ", d$name, "-", d$version, ": not inside the library")
+      }
+      next
+    }
+    key <- sprintf("%s-%s", d$name, d$version)
+    existing <- mget(key, envir = server$deps, ifnotfound = list(NULL))[[1]]
+    if (!is.null(existing)) {
+      if (!(hub$id %in% existing$notebooks)) {
+        existing$notebooks <- c(existing$notebooks, hub$id)
+        assign(key, existing, envir = server$deps)
+      }
+      next
+    }
+    if (!is.null(server$http)) {
+      args <- list(httpuv::staticPath(d$dir))
+      names(args) <- paste0("/deps/", key)
+      do.call(server$http$setStaticPath, args)
+    }
+    assign(key, list(dir = d$dir, notebooks = hub$id), envir = server$deps)
+  }
+  invisible(NULL)
+}
+
+#' Remove the static paths only `hub`'s notebook used (a key two notebooks
+#' share stays registered until both are gone).
+unregister_deps <- function(server, hub) {
+  for (key in ls(server$deps)) {
+    rec <- get(key, envir = server$deps)
+    if (!(hub$id %in% rec$notebooks)) next
+    rec$notebooks <- setdiff(rec$notebooks, hub$id)
+    if (length(rec$notebooks) == 0) {
+      if (!is.null(server$http)) {
+        tryCatch(server$http$removeStaticPath(paste0("/deps/", key)), error = function(e) NULL)
+      }
+      rm(list = key, envir = server$deps)
+    } else {
+      assign(key, rec, envir = server$deps)
+    }
+  }
+  invisible(NULL)
+}
+
+#' Register the dependencies of the outputs of `ids` (a `cell_state`
+#' note's changed cells, or every cell when a notebook is first hosted), so
+#' the files are served before the page ever sees the HTML.
+register_deps_for_cells <- function(server, hub, ids) {
+  if (length(ids) == 0) return(invisible(NULL))
+  state <- notebook_state(hub$nb)
+  for (id in ids) {
+    r <- state$results[[id]]
+    if (is.null(r) || is.null(r$output) || length(r$output$deps) == 0) next
+    register_deps(server, hub, r$output$deps)
+  }
   invisible(NULL)
 }
 
@@ -325,6 +413,9 @@ drop_hub <- function(server, hub) {
 #' `notebook_shut_down` flushes once more (process_status "no_process") and
 #' removes the hub.
 on_note <- function(server, hub, note) {
+  if (identical(note$kind, "cell_state")) {
+    register_deps_for_cells(server, hub, note$cells %||% character())
+  }
   if (identical(note$kind, "notebook_shut_down")) {
     flush_clients(server, hub)
     drop_hub(server, hub)
@@ -485,7 +576,9 @@ on_run <- function(server, cl, hub, req) {
 #' | all_registered_package_names  | reply {results = []}                                            |
 #' | completepath                  | reply {start = 0, stop = 0, results = []}                      |
 #' | get_all_notebooks             | reply "notebook_list" {notebooks = hosted notebooks}           |
-#' | reshow_cell, request_js_link_response, nbpkg_available_versions, nbpkg_get_project_toml, nbpkg_set_project_toml, pkg_update | Julia-only; their UI is disabled in the frontend. Logged, no reply |
+#' | reshow_cell                   | "more" paging (ui-2.md, 3b/3c): dispatch ev_show_more(cell, objectid, dim); flush. No reply (the frontend sends without awaiting one) |
+#' | ember_render_plot             | {cell_id, width, height, res}, clamped: dispatch ev_render(); flush |
+#' | request_js_link_response, nbpkg_available_versions, nbpkg_get_project_toml, nbpkg_set_project_toml, pkg_update | Julia-only; their UI is disabled in the frontend. Logged, no reply |
 #'
 #' Replies use the reply type Pluto uses for each (connect "👋", ping
 #' "pong", ...); the frontend matches replies by request_id, not type.
@@ -561,6 +654,29 @@ handlers <- list(
                            list(start = 0L, stop = 0L, results = list())))
   },
 
+  reshow_cell = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    b <- req$body
+    cell <- b$cell_id
+    if (is.null(cell) || !(cell %in% names(notebook_state(hub$nb)$cells))) return(invisible(NULL))
+    dim <- as.integer(b$dim %||% 1L)
+    dispatch(hub$nb, ev_show_more(cell, path = b$objectid %||% "", dim = dim, at = Sys.time()))
+    flush_clients(server, hub)
+  },
+
+  ember_render_plot = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    b <- req$body
+    cell <- b$cell_id
+    if (is.null(cell) || !(cell %in% names(notebook_state(hub$nb)$cells))) return(invisible(NULL))
+    clamp <- function(x, lo, hi) max(lo, min(hi, x))
+    width <- clamp(as.integer(b$width %||% 720L), 100L, 4000L)
+    height <- clamp(as.integer(b$height %||% 480L), 100L, 4000L)
+    res <- clamp(as.integer(b$res %||% 96L), 72L, 384L)
+    dispatch(hub$nb, ev_render(cell, width, height, at = Sys.time(), res = res))
+    flush_clients(server, hub)
+  },
+
   get_all_notebooks = function(server, cl, hub, req) {
     ids <- ls(server$hubs)
     entries <- lapply(ids, function(id) {
@@ -575,7 +691,7 @@ handlers <- list(
 #' Julia-only requests the frontend still sends in some flows; Ember has no
 #' answer and none is needed (their UI is disabled). Logged, no reply so the
 #' frontend never mistakes silence for a hang on a promise nothing awaits.
-for (julia_only in c("reshow_cell", "request_js_link_response", "nbpkg_available_versions",
+for (julia_only in c("request_js_link_response", "nbpkg_available_versions",
                      "nbpkg_get_project_toml", "nbpkg_set_project_toml", "pkg_update")) {
   handlers[[julia_only]] <- local({
     type <- julia_only

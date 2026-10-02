@@ -42,8 +42,10 @@ ev_restart     <- function(at) event("restart", at)
 ev_shutdown    <- function(at) event("shutdown", at)
 ev_move        <- function(path, at) event("move", at, path = path)
 ev_set_mode    <- function(mode, at) event("set_mode", at, mode = mode)
-ev_render      <- function(cell, width, height, at)
-  event("render", at, cell = cell, width = width, height = height)
+ev_render      <- function(cell, width, height, at, res = 96)
+  event("render", at, cell = cell, width = width, height = height, res = res)
+ev_show_more   <- function(cell, path, dim, at)
+  event("show_more", at, cell = cell, path = path, dim = dim)
 
 # From the shell's own IO
 ev_files_read  <- function(files, at) event("files_read", at, files = files)  # path -> list(text, hash)
@@ -141,6 +143,7 @@ reduce <- function(state, event) {
     move             = reduce_move(state, event),
     set_mode         = reduce_set_mode(state, event),
     render           = reduce_render(state, event),
+    show_more        = reduce_show_more(state, event),
     files_read       = reduce_files_read(state, event),
     save_failed      = reduce_save_failed(state, event),
     wk_started       = reduce_wk_started(state, event),
@@ -733,15 +736,32 @@ reduce_set_mode <- function(state, event) {
   list(state = state, effects = list(), reply = NULL)
 }
 
-#' Re-render a plot at a new size: `fx_send(render)` if the cell's output is
-#' an image and the worker is alive; the answer comes as `wk_rendered`.
+#' Re-render a plot at a new size and pixel density: `fx_send(render)` if
+#' the cell's output is an image and the worker is alive; the answer comes
+#' as `wk_rendered`.
 reduce_render <- function(state, event) {
   r <- state$results[[event$cell]]
   alive <- state$worker$status %in% c("ready", "busy")
   if (is.null(r) || is.null(r$output) || !identical(r$output$mime, "image/png") || !alive) {
     return(list(state = state, effects = list(), reply = NULL))
   }
-  msg <- list(type = "render", cell = event$cell, width = event$width, height = event$height)
+  msg <- list(type = "render", cell = event$cell, width = event$width, height = event$height,
+             res = event$res %||% 96)
+  list(state = state, effects = list(fx_send(state$worker$gen, msg)), reply = NULL)
+}
+
+#' "more" paging, for a table or tree output (ui-2.md, 3c): `fx_send(more)`
+#' if the cell's output is a table or tree and the worker is alive;
+#' otherwise nothing. `dim` is 1 (rows or items) or 2 (columns). The answer
+#' comes as a `rendered` message (`wk_rendered`/`reduce_wk_rendered()`),
+#' same as a plot re-render.
+reduce_show_more <- function(state, event) {
+  r <- state$results[[event$cell]]
+  alive <- state$worker$status %in% c("ready", "busy")
+  pageable <- !is.null(r) && !is.null(r$output) &&
+    r$output$mime %in% c("application/vnd.ember.table", "application/vnd.ember.tree")
+  if (!pageable || !alive) return(list(state = state, effects = list(), reply = NULL))
+  msg <- list(type = "more", cell = event$cell, path = event$path, dim = event$dim)
   list(state = state, effects = list(fx_send(state$worker$gen, msg)), reply = NULL)
 }
 
@@ -1039,19 +1059,34 @@ all_code_cells_ran <- function(state) {
 }
 
 #' gen check; replace `results[[cell]]$output` if the cell still has a
-#' result and its output is an image.
+#' result and `event$display`'s token matches it (a reply for an older run,
+#' or for a run that has since been superseded, is dropped). Works for any
+#' mime now, not only `image/png`: a plot resize, or a "more" page of a
+#' table or tree, both arrive as `wk_rendered`.
+#'
+#' A plot resize only replaces the image bytes and size; `text` (the
+#' `print()` form, used where an image can't be shown) came from the
+#' original run and a resize has no new value to offer in its place. A
+#' table or tree page is rebuilt whole by the worker, so it replaces the
+#' output outright. Either way `rendered_at` is stamped, which is what
+#' makes `project_output()`'s `last_run_timestamp` advance so the page
+#' redraws (pluto-state.R).
 reduce_wk_rendered <- function(state, event) {
   if (!eq(event$gen, state$worker$gen)) return(list(state = state, effects = list(), reply = NULL))
   r <- state$results[[event$cell]]
-  if (is.null(r) || is.null(r$output) || !identical(r$output$mime, "image/png")) {
+  if (is.null(r) || is.null(r$output) || is.null(event$display) ||
+      !eq(event$display$token, r$output$token)) {
     return(list(state = state, effects = list(), reply = NULL))
   }
-  # Only the image bytes and size are new; `text` (the `print()` form, used
-  # where an image can't be shown) came from the original run and a resize
-  # has no new value to offer in its place.
   out <- r$output
-  out$data <- event$display$data
-  out$size <- event$display$size
+  if (identical(out$mime, "image/png") && identical(event$display$mime, "image/png")) {
+    out$data <- event$display$data
+    out$size <- event$display$size
+  } else {
+    out <- event$display
+    out$token <- r$output$token
+  }
+  out$rendered_at <- event$at
   r$output <- out
   state$results[[event$cell]] <- r
   list(state = state, effects = list(), reply = NULL)

@@ -338,9 +338,9 @@ test_that("every request type in the handler table is answered as documented (36
   answered <- c("connect", "ping", "current_time", "update_notebook", "run_multiple_cells",
                "restart_process", "reset_shared_state", "complete", "complete_symbols", "docs",
                "all_registered_package_names", "completepath", "get_all_notebooks")
-  silent <- c("interrupt_all", "shutdown_notebook", "reshow_cell", "request_js_link_response",
-             "nbpkg_available_versions", "nbpkg_get_project_toml", "nbpkg_set_project_toml",
-             "pkg_update")
+  silent <- c("interrupt_all", "shutdown_notebook", "reshow_cell", "ember_render_plot",
+             "request_js_link_response", "nbpkg_available_versions", "nbpkg_get_project_toml",
+             "nbpkg_set_project_toml", "pkg_update")
   expect_setequal(names(handlers), c(answered, silent))
 
   # A fresh notebook and server per type: some requests change engine state
@@ -575,6 +575,133 @@ test_that("http_index() escapes a notebook's path into its HTML (review4 10)", {
   resp <- http_call(server, fake_req("/", "secret=s"))
   expect_false(grepl("' onmouseover='alert(1)&x", resp$body, fixed = TRUE))
   expect_match(resp$body, "&#39; onmouseover=&#39;alert(1)&amp;x", fixed = TRUE)
+})
+
+# ---- Rich outputs: dependency files, reshow_cell, ember_render_plot (34-37) --
+
+test_that("register_deps() registers inside the library once, refuses outside it, and drop_hub() unregisters per notebook (34)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)  # server$http is NULL: register_deps() only records
+  host_notebook(server, nb)
+  hub <- get(notebook_state(nb)$id, envir = server$hubs)
+  lib <- notebook_state(nb)$packages$active$path
+
+  inside <- file.path(lib, "somepkg", "htmlwidgets", "lib", "x-1.0")
+  dir.create(inside, recursive = TRUE)
+  dep <- list(name = "x", version = "1.0", dir = inside, href = NULL, script = "x.js", stylesheet = character())
+
+  register_deps(server, hub, list(dep))
+  expect_true(exists("x-1.0", envir = server$deps))
+  register_deps(server, hub, list(dep))  # idempotent across two notes
+  expect_equal(get("x-1.0", envir = server$deps)$notebooks, hub$id)
+
+  outside <- list(name = "y", version = "1.0", dir = tempfile(), href = NULL, script = character(), stylesheet = character())
+  expect_message(register_deps(server, hub, list(outside)), "refusing")
+  expect_false(exists("y-1.0", envir = server$deps))
+
+  dotdot <- list(name = "z", version = "1.0",
+                 dir = file.path(lib, "..", "escaped"), href = NULL, script = character(), stylesheet = character())
+  expect_message(register_deps(server, hub, list(dotdot)), "refusing")
+
+  # a symlinked entry (as renv's shared cache makes) is accepted: the check
+  # is on the path as given, not its resolved target
+  if (.Platform$OS.type != "windows") {
+    target <- tempfile()
+    dir.create(target)
+    link <- file.path(lib, "linked-pkg")
+    ok <- tryCatch({ file.symlink(target, link); TRUE }, error = function(e) FALSE,
+                   warning = function(w) FALSE)
+    if (ok) {
+      linked_dep <- list(name = "w", version = "1.0", dir = link, href = NULL,
+                        script = character(), stylesheet = character())
+      register_deps(server, hub, list(linked_dep))
+      expect_true(exists("w-1.0", envir = server$deps))
+    }
+  }
+
+  # a key two notebooks use stays until both are gone
+  path2 <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb2 <- open_notebook(path2)
+  on.exit(close_notebook(nb2), add = TRUE)
+  host_notebook(server, nb2)
+  hub2 <- get(notebook_state(nb2)$id, envir = server$hubs)
+  lib2 <- notebook_state(nb2)$packages$active$path
+  inside2 <- file.path(lib2, "somepkg", "htmlwidgets", "lib", "x-1.0")
+  dir.create(inside2, recursive = TRUE, showWarnings = FALSE)
+  register_deps(server, hub2, list(list(name = "x", version = "1.0", dir = inside2, href = NULL,
+                                       script = "x.js", stylesheet = character())))
+  expect_setequal(get("x-1.0", envir = server$deps)$notebooks, c(hub$id, hub2$id))
+
+  drop_hub(server, hub)
+  expect_true(exists("x-1.0", envir = server$deps))
+  expect_equal(get("x-1.0", envir = server$deps)$notebooks, hub2$id)
+  drop_hub(server, hub2)
+  expect_false(exists("x-1.0", envir = server$deps))
+})
+
+test_that("reshow_cell pages a table through a real worker (35)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("mtcars")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  a <- names(notebook_state(nb)$cells)[2]
+
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+  handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list(a)))
+  expect_true(wait_for(nb, timeout = 20))
+
+  handle_message(server, ws, wire("reshow_cell", notebook_id = id, cell_id = a, objectid = "", dim = 1))
+  got_more <- wait_for(nb, function(s) {
+    v <- Find(function(c) identical(c$id, a), s$cells)
+    !is.null(v$output) && length(v$output$data$rows) == 32
+  }, timeout = 10)
+  expect_true(got_more)
+})
+
+test_that("ember_render_plot clamps width/height/res and re-renders through a real worker (36)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1"), B = cell("plot(1:10)")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  cells <- names(notebook_state(nb)$cells)
+  a <- cells[2]; b <- cells[3]
+
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+  handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list(a, b)))
+  expect_true(wait_for(nb, timeout = 20))
+
+  before <- Find(function(c) identical(c$id, b), notebook_snapshot(nb)$cells)$output$data
+  handle_message(server, ws, wire("ember_render_plot", notebook_id = id, cell_id = b,
+                                  width = 99999, height = 1, res = 1))
+  changed <- wait_for(nb, function(s) {
+    v <- Find(function(c) identical(c$id, b), s$cells)
+    !is.null(v$output) && !identical(v$output$data, before)
+  }, timeout = 10)
+  expect_true(changed)
+
+  # clamped to <= 4000 and >= 72 res
+  final <- Find(function(c) identical(c$id, b), notebook_state(nb)$results)
+  out <- notebook_state(nb)$results[[b]]$output
+  expect_lte(out$size$width, 4000L)
+  expect_gte(out$size$res, 72L)
+
+  # a text cell: nothing happens
+  before_a <- notebook_state(nb)$results[[a]]
+  handle_message(server, ws, wire("ember_render_plot", notebook_id = id, cell_id = a,
+                                  width = 500, height = 500, res = 96))
+  Sys.sleep(0.2)
+  later::run_now(timeout = 0.2)
+  expect_identical(notebook_state(nb)$results[[a]], before_a)
 })
 
 # ---- start_server(): a real child process, skipped on CRAN -----------------

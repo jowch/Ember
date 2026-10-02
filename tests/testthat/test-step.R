@@ -672,16 +672,53 @@ test_that("restart is refused on a read-only notebook even when allowed", {
 
 test_that("wk_rendered replaces only the image data, keeping the text form", {
   s <- fake_state(list(S = cell(""), A = cell("plot(1)")))
-  out <- new_display("image/png", "old-bytes", "[plot]", size = list(width = 400, height = 300))
+  tok <- 7L
+  out <- new_display("image/png", "old-bytes", "[plot]", size = list(width = 400, height = 300), token = tok)
   r <- boot(s, "A")
   r <- drive(r$state, wk_done(1, last_token(r), report(output = out), at(10)))
 
-  new_disp <- new_display("image/png", "new-bytes", "ignored-text", size = list(width = 800, height = 600))
+  new_disp <- new_display("image/png", "new-bytes", "ignored-text",
+                          size = list(width = 800, height = 600), token = tok)
   r2 <- drive(r$state, wk_rendered(1, "A", new_disp, at(11)))
   v <- r2$state$results$A$output
   expect_equal(v$data, "new-bytes")
   expect_equal(v$size, list(width = 800, height = 600))
   expect_equal(v$text, "[plot]")
+  expect_equal(v$rendered_at, at(11))
+
+  # a reply from an older run (token mismatch) is dropped
+  stale <- new_display("image/png", "stale-bytes", "x", token = 999L)
+  r3 <- drive(r2$state, wk_rendered(1, "A", stale, at(12)))
+  expect_equal(r3$state$results$A$output$data, "new-bytes")
+})
+
+test_that("reduce_show_more sends 'more' for a table/tree output while the worker is alive, nothing otherwise (ui-2 30)", {
+  s <- fake_state(list(S = cell(""), A = cell("mtcars"), B = cell("1")))
+  table_out <- new_display("application/vnd.ember.table",
+                           list(names = "a", types = "<dbl>", nrow = 1L, ncol = 1L,
+                               row_labels = "1", rows = list("1"), more_rows = 0L, more_cols = 0L),
+                           "mtcars", token = 1L)
+  r <- boot(s, "A")
+  r <- drive(r$state, wk_done(1, last_token(r), report(output = table_out), at(10)))
+
+  r2 <- drive(r$state, ev_show_more("A", path = "", dim = 1L, at = at(11)))
+  sent <- Filter(function(e) identical(e$type, "send"), r2$effects)
+  expect_length(sent, 1)
+  expect_equal(sent[[1]]$msg, list(type = "more", cell = "A", path = "", dim = 1L))
+
+  more_sent <- function(effects) Filter(function(e) identical(e$type, "send") && identical(e$msg$type, "more"), effects)
+
+  # a text output: no "more" is sent
+  s3 <- fake_state(list(S = cell(""), A = cell("1")))
+  r3 <- boot(s3, "A")
+  r3 <- drive(r3$state, wk_done(1, last_token(r3), report(output = new_display("text/plain", NULL, "x", token = 1L)), at(12)))
+  r4 <- step(r3$state, ev_show_more("A", path = "", dim = 1L, at = at(13)))
+  expect_length(more_sent(r4$effects), 0)
+
+  # the worker off: nothing is sent
+  s2 <- fake_state(list(S = cell(""), A = cell("mtcars")))
+  r5 <- step(s2, ev_show_more("A", path = "", dim = 1L, at = at(1)))
+  expect_length(more_sent(r5$effects), 0)
 })
 
 test_that("apply's reply seq matches the actual final seq, even on a no-op", {

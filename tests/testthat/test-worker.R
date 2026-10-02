@@ -158,6 +158,18 @@ test_that("onattach_changes_allowed", {
   expect_identical(check$output$text, '[1] "fix1-attach"')
 })
 
+test_that("library_stays_invisible", {
+  flib <- fixture_lib()
+  h <- worker_harness(extra_libs = flib)
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "library(emberfix1)\n1", order = "a")
+  expect_identical(r$status, "ok")
+  expect_length(r$console, 0)
+  expect_identical(r$output$text, "[1] 1")
+  r2 <- run_and_wait(h, "b", 2L, "require(emberfix1)", order = c("a", "b"))
+  expect_null(r2$output)
+})
+
 test_that("search_path_rebuilt_in_file_order", {
   flib <- fixture_lib()
   h <- worker_harness(extra_libs = flib)
@@ -285,9 +297,14 @@ test_that("data_frame_table_view", {
   expect_identical(r$output$kind, "table")
   expect_identical(r$output$mime, "application/vnd.ember.table")
   expect_identical(r$output$nrow, 3L)
-  expect_identical(r$output$columns$a, c("1", "2", "3"))
-  expect_identical(r$output$columns$b, c("a", "b", "c"))
-  expect_identical(unname(r$output$types["a"]), "integer")
+  expect_identical(r$output$ncol, 2L)
+  expect_identical(r$output$names, c("a", "b"))
+  expect_identical(r$output$row_labels, c("1", "2", "3"))
+  expect_identical(r$output$rows[[1]], c("1", "a"))
+  expect_identical(r$output$rows[[3]], c("3", "c"))
+  expect_identical(r$output$types, c("<int>", "<chr>"))
+  expect_identical(r$output$more_rows, 0L)
+  expect_identical(r$output$more_cols, 0L)
   expect_match(r$output$text, "^  a b")
 })
 
@@ -489,14 +506,17 @@ test_that("print_generic_dispatches_from_notebook_globalenv", {
   expect_match(r$output$text, "custom frobnicated")
 })
 
-test_that("head_generic_dispatches_from_notebook_globalenv", {
+test_that("format_generic_dispatches_from_notebook_globalenv_for_table_columns", {
   h <- worker_harness()
   on.exit(h$close())
-  run_and_wait(h, "a", 1L,
-    'head.weird <- function(x, ...) data.frame(got = "custom-head")')
+  run_and_wait(h, "a", 1L, paste(
+    'format.weird <- function(x, ...) rep("formatted-weird", length(unclass(x)))',
+    '"[.weird" <- function(x, i) structure(unclass(x)[i], class = "weird")',
+    sep = "\n"))
   r <- run_and_wait(h, "b", 2L,
-    'd <- data.frame(a = 1); class(d) <- c("weird", class(d)); d')
-  expect_identical(r$output$columns$got, "custom-head")
+    'd <- data.frame(a = 1); d$a <- structure(d$a, class = "weird"); d')
+  expect_identical(r$output$kind, "table")
+  expect_identical(r$output$rows[[1]], "formatted-weird")
 })
 
 test_that("locale_change_reported_and_reverted_per_category", {
@@ -620,4 +640,143 @@ test_that("a run message with a new library changes .libPaths() before the code 
   r <- run_and_wait(h, "b", 1L, code, library = new_lib)
   expect_identical(r$status, "ok")
   expect_identical(r$output$text, "[1] TRUE")
+})
+
+# ---- Rich outputs (ui-2-tests.md 21-27) --------------------------------------
+
+test_that("classed list objects print instead of becoming a tree (3a, 21)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "lm(mpg ~ wt, mtcars)")
+  expect_identical(r$output$kind, "text")
+  expect_match(r$output$text, "Coefficients")
+
+  r2 <- run_and_wait(h, "b", 2L, "t.test(1:10, 2:11)")
+  expect_identical(r2$output$kind, "text")
+  expect_match(r2$output$text, "t = ")
+
+  r3 <- run_and_wait(h, "c", 3L, "list(a = 1)")
+  expect_identical(r3$output$kind, "tree")
+
+  r4 <- run_and_wait(h, "d", 4L, "mtcars")
+  expect_identical(r4$output$kind, "table")
+})
+
+test_that("display_table shape and tricky frames (22)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "mtcars")
+  expect_identical(length(r$output$names), 8L)
+  expect_true(all(r$output$types == "<dbl>"))
+  expect_identical(r$output$nrow, 32L)
+  expect_identical(r$output$ncol, 11L)
+  expect_identical(length(r$output$rows), 10L)
+  expect_identical(r$output$row_labels[1], "Mazda RX4")
+  expect_identical(r$output$more_rows, 22L)
+  expect_identical(r$output$more_cols, 3L)
+
+  r2 <- run_and_wait(h, "b", 2L,
+    'data.frame(ok = 1:2, bad = I(list(1, 2)))')
+  # a column whose format() errors (a list-column via I()) shows <error>,
+  # the rest of the table intact
+  expect_identical(r2$output$rows[[1]][1], "1")
+
+  r3 <- run_and_wait(h, "c", 3L, "data.frame(a = integer())")
+  expect_identical(r3$output$names, "a")
+  expect_identical(length(r3$output$rows), 0L)
+
+  r4 <- run_and_wait(h, "d", 4L, "data.frame()[, FALSE]")
+  expect_identical(r4$output$names, character())
+})
+
+test_that("display_tree depth, width and leaf text (23)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L,
+    "list(l1 = list(l2 = list(l3 = list(l4 = 1:10))))")
+  # at depth 4 (the 5th level), the value is shown as one-line text
+  find <- function(node, keys) if (length(keys) == 0) node else find(
+    Find(function(it) it$key == keys[1], node$items)$value, keys[-1])
+  leaf <- find(r$output$tree, c("l1", "l2", "l3", "l4"))
+  expect_identical(leaf$type, "text")
+
+  r2 <- run_and_wait(h, "b", 2L, "as.list(1:100)")
+  expect_identical(length(r2$output$tree$items), 20L)
+  expect_identical(r2$output$tree$more, 80L)
+  expect_identical(r2$output$tree$items[[1]]$key, "")
+
+  r3 <- run_and_wait(h, "c", 3L, "list(x = 1, y = 1:10)")
+  expect_identical(r3$output$tree$items[[1]]$value$text, "1")
+  expect_identical(r3$output$tree$items[[2]]$value$text, " int [1:10] 1 2 3 4 5 6 7 8 9 10")
+})
+
+test_that("more pages a table and a tree, reset on rerun (24)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "mtcars")
+  h$send(list(type = "more", cell = "a", path = "", dim = 1L))
+  m1 <- wait_for_done_or_rendered(h)
+  expect_identical(m1$type, "rendered")
+  expect_identical(m1$token, 1L)
+  expect_identical(length(m1$display$rows), 32L)
+
+  h$send(list(type = "more", cell = "a", path = "", dim = 2L))
+  m2 <- wait_for_done_or_rendered(h)
+  expect_identical(m2$display$ncol - m2$display$more_cols, 11L)
+
+  r2 <- run_and_wait(h, "b", 2L, "as.list(1:100)")
+  h$send(list(type = "more", cell = "b", path = "", dim = 1L))
+  m3 <- wait_for_done_or_rendered(h)
+  expect_identical(length(m3$display$tree$items), 80L)
+  expect_identical(m3$token, 2L)
+
+  r3 <- run_and_wait(h, "a", 3L, "mtcars")   # rerun: limits start over
+  expect_identical(length(r3$output$rows), 10L)
+})
+
+test_that("display_html resolves and dedupes dependencies, skipped without htmltools (25)", {
+  skip_if_not_installed("htmltools")
+  h <- worker_harness(extra_libs = dirname(find.package("htmltools")))
+  on.exit(h$close())
+  td <- tempfile()
+  dir.create(td)
+  writeLines("x", file.path(td, "a.js"))
+  writeLines("y", file.path(td, "a.css"))
+  code <- sprintf(paste(
+    'd1 <- htmltools::htmlDependency("mylib", "1.0", src = c(file = %s), script = "a.js", stylesheet = "a.css")',
+    'd2 <- htmltools::htmlDependency("mylib", "2.0", src = c(file = %s), script = "a.js")',
+    'htmltools::attachDependencies(htmltools::tags$div("hi"), list(d1, d2))',
+    sep = "\n"), shQuote(td), shQuote(td))
+  r <- run_and_wait(h, "a", 1L, code)
+  expect_identical(r$output$kind, "html")
+  expect_length(r$output$deps, 1)
+  expect_identical(r$output$deps[[1]]$version, "2.0")
+  expect_identical(normalizePath(r$output$deps[[1]]$dir), normalizePath(td))
+  expect_identical(r$output$deps[[1]]$script, "a.js")
+})
+
+test_that("render_plot at a given width, height and pixel density (26)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  run_and_wait(h, "a", 1L, "plot(1:10)")
+  h$send(list(type = "render", cell = "a", width = 1400L, height = 933L, res = 192L))
+  m <- wait_for_done_or_rendered(h)
+  expect_identical(m$type, "rendered")
+  expect_identical(m$token, 1L)
+  dims <- png_dims(m$display$data)
+  expect_identical(dims, list(width = 1400, height = 933))
+  expect_identical(m$display$size, list(width = 1400L, height = 933L, res = 192L))
+})
+
+test_that("colours are on at boot and text_form never ends in a partial escape (27)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, 'getOption("cli.num_colors")')
+  expect_identical(r$output$text, "[1] 256")
+  expect_identical(r$settings, list())
+
+  r2 <- run_and_wait(h, "b", 2L,
+    'paste(rep("\\033[31mx\\033[39m", 2000), collapse = "")')
+  expect_true(r2$output$truncated)
+  expect_match(r2$output$text, "\033\\[0m$")
 })

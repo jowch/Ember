@@ -49,7 +49,7 @@ dependency_graph(nb)
 
 notebook_state(nb)
 
-render_png(nb, cell, width = NULL, height = NULL, timeout = 5)
+render_png(nb, cell, width = NULL, height = NULL, res = 96, timeout = 5)
 
 on_notebook_event(nb, fn)
 
@@ -81,6 +81,9 @@ and \code{on_notebook_event()} instead.}
 \item{cell}{A cell id or 1-based display index.}
 \item{width, height}{Requested pixel size for \code{render_png()}. \code{NULL} for
 both returns the output's stored image unchanged.}
+\item{res}{Pixel density (dots per inch) for \code{render_png()}'s re-render,
+e.g. \code{96 * devicePixelRatio}. Ignored when \code{width} and \code{height} are
+both \code{NULL}.}
 \item{fn}{Function called as \code{fn(note)} for every notification; see Details.}
 \item{predicate}{Function of a snapshot (as returned by \code{notebook_snapshot()})
 used by \code{wait_for()}; it returns \code{TRUE} once the wait is satisfied.

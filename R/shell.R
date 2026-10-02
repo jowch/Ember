@@ -687,7 +687,7 @@ worker_event <- function(msg, gen, at, secret = NULL) {
     console  = c("token", "item"),
     source   = c("token", "path", "text"),
     done     = c("token", "report"),
-    rendered = c("cell"),
+    rendered = c("cell", "token"),
     NULL
   )
   if (is.null(required)) {
@@ -710,9 +710,14 @@ worker_event <- function(msg, gen, at, secret = NULL) {
     done     = {
       report <- msg$report
       report$output <- as_display(report$output)
+      if (!is.null(report$output)) report$output$token <- msg$token
       wk_done(gen, msg$token, report, at)
     },
-    rendered = wk_rendered(gen, msg$cell, as_display(msg$display), at)
+    rendered = {
+      display <- as_display(msg$display)
+      if (!is.null(display)) display$token <- msg$token
+      wk_rendered(gen, msg$cell, display, at)
+    }
   )
 }
 
@@ -726,11 +731,14 @@ as_display <- function(b) {
     text  = NULL,
     html  = b$html,
     plot  = b$data,
-    table = list(columns = b$columns, types = b$types, nrow = b$nrow),
+    table = list(names = b$names, types = b$types, nrow = b$nrow, ncol = b$ncol,
+                row_labels = b$row_labels, rows = b$rows,
+                more_rows = b$more_rows, more_cols = b$more_cols),
     tree  = b$tree,
     b[!(names(b) %in% c("kind", "mime", "text", "truncated"))]
   )
-  new_display(mime = b$mime, data = data, text = b$text %||% "", deps = b$deps %||% list())
+  new_display(mime = b$mime, data = data, text = b$text %||% "", deps = b$deps %||% list(),
+             size = b$size)
 }
 
 #' Before the first worker starts: if this process inherited SIGINT as

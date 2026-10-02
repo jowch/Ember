@@ -31,7 +31,9 @@
 #   remove_cell  cell, order         drop the cell's globals, display data,
 #                                    and rebuild the search path
 #   source_reply allow, message      only while a `source` request waits
-#   render       cell, width, height re-render the cell's recorded plot
+#   more         cell, path, dim     grow a table's or tree's paging limit
+#                                    at `path` (dim 1 rows/items, 2 columns)
+#   render       cell, width, height, res   re-render the cell's recorded plot
 #   quit
 #
 # Worker -> server
@@ -40,15 +42,18 @@
 #   source       cell, token, path, text                before a computed
 #                                                       source() runs; waits
 #   done         cell, token, report (see run_cell())
-#   rendered     cell, display
+#   rendered     cell, token, display   display is NULL when the cell has no
+#                                       kept value to page or re-render
 #
 # Ordering: the server sends at most one `run` at a time and sends the next
-# only after `done`. `remove_cell` and `render` may arrive while a cell runs
-# (the worker reads them only between runs, or while waiting for a
+# only after `done`. `remove_cell`, `more` and `render` may arrive while a
+# cell runs (the worker reads them only between runs, or while waiting for a
 # `source_reply`, when they are queued in `deferred` and handled after the
 # run). Nothing else needs ordering.
 
 # ---- State (the worker's own; lives in this private environment) -------------
+
+`%||%` <- function(x, y) if (is.null(x)) y else x
 
 con <- NULL            # socket to the server
 owned <- list()        # cell id -> character: globals the cell's runs created
@@ -58,7 +63,14 @@ ever_attached <- character()  # every package any cell has ever attached (never 
                                # attached a package is edited or deleted)
 attach_requests <- list()  # cell id -> character: packages library() named during the current run
 cell_order <- character()  # code cell ids in run order, as last sent
-display <- list()      # cell id -> recorded plot / data frame behind its output
+display <- list()      # cell id -> list(value, token, kind, limits, text, truncated):
+                        # what a cell's output needs kept to be paged or
+                        # re-rendered. `value` is the data frame, the plain
+                        # list, or the recorded plot; `token` the run that
+                        # made it; `kind` "table" | "tree" | "plot"; `limits`
+                        # the paging state (table: list(rows, cols); tree:
+                        # path -> list(items)). Dropped on rerun or delete
+                        # (remove_cell()).
 setup_restore <- NULL  # list(kind, name, value) to put back before setup reruns
 running <- NULL        # list(cell, token) during a run (for the source trace)
 deferred <- list()     # messages read while waiting for a source_reply
@@ -90,6 +102,10 @@ main <- function() {
   con <<- socketConnection("127.0.0.1", port, blocking = TRUE, open = "r+b",
                            timeout = 60 * 60 * 24 * 365)
   install_traces()
+  # Baseline, not a cell's change: a colour terminal under Rscript has these
+  # on, and a setup cell can still change them (a rerun resets to this
+  # baseline, same as any other setting).
+  options(cli.num_colors = 256L, crayon.enabled = TRUE, crayon.colors = 256L)
   settings_start <<- snapshot_settings()
   send(list(type = "hello", secret = Sys.getenv("EMBER_SECRET"),
             pid = Sys.getpid(), r_version = R.version.string,
@@ -148,6 +164,7 @@ handle_next <- function() {
       cell_order <<- msg$order
       rebuild_search_path()
     },
+    more = send(show_more(msg)),
     render = send(render_plot(msg)),
     quit = quit(save = "no"),
     NULL  # noop, or an unknown type: ignored
@@ -355,8 +372,8 @@ run_cell <- function(msg) {
       output <- NULL
       if (rc$status == "ok") {
         output <- tryCatch({
-          if (visible) display_value(value, msg$cell, dev, console)
-          else display_plot(msg$cell, dev)
+          if (visible) display_value(value, msg$cell, msg$token, dev, console)
+          else display_plot(msg$cell, msg$token, dev)
         }, interrupt = function(i) { rc$status <<- "interrupted"; NULL },
            error = function(e) NULL)
       }
@@ -755,8 +772,8 @@ install_traces <- function() {
       # so the error call and the function's own sys.call() are the user's.
       real_call <- mc
       real_call[[1]] <- as.name(name)
-      result <- eval(real_call, list2env(stats::setNames(list(original), name),
-                                         parent = call_env))
+      result <- withVisible(eval(real_call, list2env(stats::setNames(list(original), name),
+                                                     parent = call_env)))
       # library()/require(): record that this cell named a package for
       # attaching, whether or not attaching it was a no-op because it was
       # already on the path (a plain search() diff would miss that case,
@@ -769,7 +786,7 @@ install_traces <- function() {
           attach_requests[[running$cell]] <<- union(attach_requests[[running$cell]], resolved)
         }
       }
-      result
+      if (result$visible) result$value else invisible(result$value)
     }
     unlockBinding(name, base_env)
     assign(name, wrapped, envir = base_env)
@@ -1030,14 +1047,17 @@ read_png <- function(path) {
 #' reasoning about scoping rules). Evaluating the call itself in
 #' globalenv() puts the method search exactly where the notebook's own
 #' top-level code runs, which does see it.
-eval_in_notebook <- function(expr, v) {
-  eval(expr, list(v = v), globalenv())
+#' `extra` adds further bindings (e.g. `n` for a head() call), so a single
+#' environment, with `v` and friends, is what the dispatch happens in.
+eval_in_notebook <- function(expr, v, extra = list()) {
+  eval(expr, c(list(v = v), extra), globalenv())
 }
 
-#' The value's print() text, truncated (first 50 lines, 4000 chars).
+#' The value's print() text, truncated (first 50 lines, 4000 chars). Colour
+#' is on throughout the worker (boot sets `cli.num_colors`); when truncation
+#' lands inside an escape sequence, the partial sequence is dropped and a
+#' reset code appended so the cut text never leaves the terminal mid-colour.
 text_form <- function(value) {
-  old <- options(cli.num_colors = 256)
-  on.exit(options(old))
   txt <- tryCatch(utils::capture.output(eval_in_notebook(quote(print(v)), value)),
                    error = function(e) "<unprintable>")
   truncated <- length(txt) > 50
@@ -1046,6 +1066,10 @@ text_form <- function(value) {
   if (nchar(txt) > 4000) {
     txt <- substr(txt, 1, 4000)
     truncated <- TRUE
+  }
+  if (truncated) {
+    txt <- sub("\033\\[[0-9;]*$", "", txt)
+    txt <- paste0(txt, "\033[0m")
   }
   list(text = txt, truncated = truncated)
 }
@@ -1056,66 +1080,156 @@ display_text <- function(value) {
   list(kind = "text", mime = "text/plain", text = tf$text, truncated = tf$truncated)
 }
 
-#' A data frame, tibble or data.table: the first 1000 rows as text
-#' columns, column types, nrow; the value itself is kept for paging.
-display_table <- function(value, cell) {
-  head_df <- eval_in_notebook(quote(utils::head(v, 1000)), value)
-  cols <- lapply(as.list(head_df), function(col) tryCatch(as.character(col), error = function(e) character()))
-  types <- vapply(as.list(value), function(col) class(col)[1], character(1))
-  display[[cell]] <<- value
-  tf <- text_form(value)
-  list(kind = "table", mime = "application/vnd.ember.table", columns = cols,
-       types = types, nrow = nrow(value), text = tf$text, truncated = tf$truncated)
-}
-
-#' A bounded tree (depth and width), each leaf as one-line text.
-display_tree_node <- function(x, depth, max_depth = 4, max_width = 20) {
-  if (depth >= max_depth || !is.list(x) || is.data.frame(x)) {
-    line <- tryCatch(utils::capture.output(eval_in_notebook(quote(print(v)), x))[1],
-                      error = function(e) "<unprintable>")
-    return(if (is.na(line)) "" else line)
+#' A column's type abbreviation: `pillar::type_sum()` when pillar is loaded
+#' (tibble users have it), else a fixed table (design.md, 3b).
+column_type <- function(col) {
+  if (requireNamespace("pillar", quietly = TRUE)) {
+    ts <- tryCatch(pillar::type_sum(col), error = function(e) NA_character_)
+    if (!is.na(ts)) return(paste0("<", ts, ">"))
   }
-  nms <- names(x)
-  if (is.null(nms)) nms <- rep("", length(x))
-  idx <- seq_len(min(length(x), max_width))
-  lapply(idx, function(i) {
-    nm <- if (nzchar(nms[i])) nms[i] else paste0("[[", i, "]]")
-    list(name = nm, value = display_tree_node(x[[i]], depth + 1, max_depth, max_width))
-  })
+  switch(class(col)[1],
+    numeric = "<dbl>", integer = "<int>", character = "<chr>",
+    logical = "<lgl>", factor = "<fct>", Date = "<date>",
+    POSIXct = "<dttm>", list = "<list>", "<cls>")
 }
 
-#' Plain lists and nested structures as an expandable tree.
-display_tree <- function(value) {
+#' The structural part of a table display (names, types, shown rows), built
+#' fresh from the kept data frame and the current paging limits; shared by
+#' `display_table()` and `show_more()`. Each column is formatted separately
+#' in `tryCatch` so one odd column can't fail the whole table.
+build_table <- function(value, limits) {
+  ncol_total <- tryCatch({ n <- as.integer(ncol(value)); if (is.na(n)) 0L else n },
+                         error = function(e) 0L)
+  nrow_total <- tryCatch({ n <- as.integer(nrow(value)); if (is.na(n)) 0L else n },
+                         error = function(e) 0L)
+  if (ncol_total == 0) {
+    return(list(kind = "table", mime = "application/vnd.ember.table",
+               names = character(), types = character(), nrow = nrow_total, ncol = 0L,
+               row_labels = character(), rows = list(), more_rows = 0L, more_cols = 0L))
+  }
+  rows_n <- min(limits$rows %||% 10L, nrow_total)
+  cols_n <- min(limits$cols %||% 8L, ncol_total)
+  all_names <- names(value)
+  names_shown <- utils::head(all_names, cols_n)
+
+  types_shown <- vapply(names_shown, function(n) column_type(value[[n]]), character(1), USE.NAMES = FALSE)
+  col_values <- lapply(names_shown, function(n) {
+    tryCatch({
+      col_head <- utils::head(value[[n]], rows_n)
+      as.character(eval_in_notebook(quote(format(v)), col_head))
+    }, error = function(e) rep("<error>", rows_n))
+  })
+  row_labels <- tryCatch({
+    rn <- rownames(value)
+    if (is.null(rn)) as.character(seq_len(rows_n)) else utils::head(as.character(rn), rows_n)
+  }, error = function(e) as.character(seq_len(rows_n)))
+
+  rows <- lapply(seq_len(rows_n), function(i) {
+    vapply(col_values, function(cv) if (length(cv) >= i) cv[i] else NA_character_, character(1))
+  })
+
+  list(kind = "table", mime = "application/vnd.ember.table",
+      names = names_shown, types = types_shown, nrow = nrow_total, ncol = ncol_total,
+      row_labels = row_labels, rows = rows,
+      more_rows = max(0L, nrow_total - rows_n), more_cols = max(0L, ncol_total - cols_n))
+}
+
+#' A data frame, tibble or data.table: the first `limits$rows` rows and
+#' `limits$cols` columns, formatted as print() would; the value itself is
+#' kept (`display[[cell]]`) so "more" can rebuild with wider limits.
+display_table <- function(value, cell, token, limits = list(rows = 10L, cols = 8L)) {
   tf <- text_form(value)
+  display[[cell]] <<- list(value = value, token = token, kind = "table",
+                           limits = limits, text = tf$text, truncated = tf$truncated)
+  c(build_table(value, limits), list(text = tf$text, truncated = tf$truncated))
+}
+
+#' One line of text for a tree leaf: format() for a length-1 value, else
+#' the first line of str().
+leaf_text <- function(x) {
+  tryCatch({
+    if (length(x) == 1 && !identical(class(x), "list")) {
+      as.character(eval_in_notebook(quote(format(v)), x))[1]
+    } else {
+      utils::capture.output(utils::str(x))[1]
+    }
+  }, error = function(e) "<unprintable>")
+}
+
+#' A tree's paging limits are keyed by path, and the root's path is `""`:
+#' R's `[[`/`[[<-` on a list silently fail to round-trip a `""` name
+#' (`l[[""]] <- x; l[[""]]` gives `NULL`, measured), so every lookup and
+#' store goes through these two instead of indexing `limits` directly.
+tree_limit_key <- function(path) if (identical(path, "")) "\001root" else path
+tree_limit_get <- function(limits, path) limits[[tree_limit_key(path)]]
+tree_limit_set <- function(limits, path, value) {
+  limits[[tree_limit_key(path)]] <- value
+  limits
+}
+
+#' One tree node (or leaf), to `max_depth` levels, each level showing the
+#' first `limits[[path]]$items` elements (default 20). A value is a node
+#' only when its class is exactly "list" (3a: every classed object, e.g. an
+#' lm fit, is a leaf, printed as R prints it) and the depth limit isn't
+#' reached yet.
+display_tree_node <- function(x, path, depth, limits, max_depth = 4) {
+  if (depth >= max_depth || !identical(class(x), "list")) {
+    return(list(type = "text", text = leaf_text(x)))
+  }
+  items_limit <- tree_limit_get(limits, path)$items %||% 20L
+  n <- length(x)
+  show_n <- min(n, items_limit)
+  nms <- names(x)
+  named <- !is.null(nms)
+  items <- lapply(seq_len(show_n), function(i) {
+    key <- if (named && nzchar(nms[[i]] %||% "")) nms[[i]] else ""
+    child_path <- if (nzchar(path)) paste0(path, "/", i) else as.character(i)
+    list(key = key, value = display_tree_node(x[[i]], child_path, depth + 1, limits, max_depth))
+  })
+  list(type = "list", path = path, length = n, named = named, items = items,
+      more = max(0L, n - show_n))
+}
+
+#' Plain lists and nested structures as an expandable tree; the value is
+#' kept (`display[[cell]]`) so "more" can rebuild with wider limits.
+display_tree <- function(value, cell, token, limits = list()) {
+  tf <- text_form(value)
+  display[[cell]] <<- list(value = value, token = token, kind = "tree",
+                           limits = limits, text = tf$text, truncated = tf$truncated)
   list(kind = "tree", mime = "application/vnd.ember.tree",
-       tree = display_tree_node(value, 0), text = tf$text, truncated = tf$truncated)
+      tree = display_tree_node(value, "", 0, limits), text = tf$text, truncated = tf$truncated)
 }
 
 #' ggplot, trellis, recordedplot or grob: print to draw it, then PNG
-#' bytes via recordPlot()/the device's file.
-display_plot_value <- function(value, cell, dev) {
+#' bytes via recordPlot()/the device's file. The recorded plot is kept
+#' (`display[[cell]]`) so a resize can replay it at a new size.
+display_plot_value <- function(value, cell, token, dev) {
   if (is.null(dev)) return(display_text(value))
   grDevices::dev.set(dev$dev)
   eval_in_notebook(quote(print(v)), value)
   rp <- tryCatch(grDevices::recordPlot(), error = function(e) NULL)
   grDevices::dev.off(dev$dev)
   png_bytes <- read_png(dev$path)
-  display[[cell]] <<- rp
+  display[[cell]] <<- list(value = rp, token = token, kind = "plot")
   tf <- text_form(value)
-  list(kind = "plot", mime = "image/png", data = png_bytes, text = tf$text, truncated = tf$truncated)
+  list(kind = "plot", mime = "image/png", data = png_bytes,
+      size = list(width = 720L, height = 480L, res = 96L),
+      text = tf$text, truncated = tf$truncated)
 }
 
 #' A plot drawn as a side effect (base graphics) with no visible value:
 #' recordPlot(), PNG bytes, kept in display[[cell]].
-display_plot <- function(cell, dev) {
+display_plot <- function(cell, token, dev) {
   if (is.null(dev) || !(dev$dev %in% grDevices::dev.list())) return(NULL)
   grDevices::dev.set(dev$dev)
   rp <- tryCatch(grDevices::recordPlot(), error = function(e) NULL)
   if (is.null(rp) || length(rp[[1]]) == 0) return(NULL)
   grDevices::dev.off(dev$dev)
   png_bytes <- read_png(dev$path)
-  display[[cell]] <<- rp
-  list(kind = "plot", mime = "image/png", data = png_bytes, text = "<plot>", truncated = FALSE)
+  display[[cell]] <<- list(value = rp, token = token, kind = "plot")
+  list(kind = "plot", mime = "image/png", data = png_bytes,
+      size = list(width = 720L, height = 480L, res = 96L),
+      text = "<plot>", truncated = FALSE)
 }
 
 knit_print_method_exists <- function(cl) {
@@ -1144,14 +1258,39 @@ try_repr <- function(value) {
   list(kind = "html", mime = "text/html", html = html, text = tf$text, truncated = tf$truncated)
 }
 
-#' htmlwidgets / htmltools HTML and its dependencies.
+#' One `htmltools::htmlDependency` as the wire shape (design.md, Widget
+#' files): `dir` is the absolute folder the files live in (resolved through
+#' `system.file()` when the dependency names a package), or `NULL` when the
+#' dependency has only an `href`.
+dep_to_wire <- function(d) {
+  dir <- NULL
+  if (!is.null(d$src$file)) {
+    dir <- if (!is.null(d$package)) {
+      tryCatch(system.file(d$src$file, package = d$package), error = function(e) "")
+    } else {
+      d$src$file
+    }
+    if (is.null(dir) || !nzchar(dir)) dir <- NA_character_
+    else dir <- tryCatch(normalizePath(dir, mustWork = FALSE), error = function(e) dir)
+  }
+  list(name = d$name, version = as.character(d$version), dir = dir, href = d$src$href,
+      script = d$script %||% character(), stylesheet = d$stylesheet %||% character(),
+      head = d$head)
+}
+
+#' htmlwidgets / htmltools HTML and its dependencies, resolved
+#' (`htmltools::resolveDependencies()` keeps the newest of each name).
 display_html <- function(value) {
   if (!requireNamespace("htmltools", quietly = TRUE)) return(display_text(value))
   rendered <- tryCatch(htmltools::renderTags(value), error = function(e) NULL)
   if (is.null(rendered)) return(display_text(value))
   tf <- text_form(value)
+  deps <- tryCatch({
+    resolved <- htmltools::resolveDependencies(rendered$dependencies %||% list())
+    lapply(resolved, dep_to_wire)
+  }, error = function(e) list())
   list(kind = "html", mime = "text/html", html = paste(rendered$html, collapse = "\n"),
-       deps = list(), text = tf$text, truncated = tf$truncated)
+       deps = deps, text = tf$text, truncated = tf$truncated)
 }
 
 #' Turn the output value into a display bundle (design.md, How values
@@ -1160,7 +1299,13 @@ display_html <- function(value) {
 #' inside a display method becomes the text form plus a console warning;
 #' it never makes the cell an error (`console` is passed in for exactly
 #' this note, a small addition to the sketch's signature).
-display_value <- function(value, cell, dev, console) {
+#'
+#' 3a: a list is shown as a tree only when its class is exactly "list"; a
+#' classed object built on a list (an `lm` fit, a `t.test()` result) falls
+#' through to `print()` text like anything else, matching design.md's "How
+#' values display" (Ember's own views are for data frames, plots and plain
+#' lists; everything else prints).
+display_value <- function(value, cell, token, dev, console) {
   tryCatch({
     if (inherits(value, c("htmlwidget", "shiny.tag", "shiny.tag.list", "html"))) {
       return(display_html(value))
@@ -1169,11 +1314,11 @@ display_value <- function(value, cell, dev, console) {
     if (!is.null(kp)) return(kp)
     rp <- try_repr(value)
     if (!is.null(rp)) return(rp)
-    if (is.data.frame(value)) return(display_table(value, cell))
+    if (is.data.frame(value)) return(display_table(value, cell, token))
     if (inherits(value, c("gg", "ggplot", "trellis", "recordedplot", "grob"))) {
-      return(display_plot_value(value, cell, dev))
+      return(display_plot_value(value, cell, token, dev))
     }
-    if (is.list(value)) return(display_tree(value))
+    if (identical(class(value), "list")) return(display_tree(value, cell, token))
     display_text(value)
   }, error = function(e) {
     if (!is.null(console)) {
@@ -1184,21 +1329,57 @@ display_value <- function(value, cell, dev, console) {
   })
 }
 
-#' replayPlot() display[[cell]] on a new device at the asked size; return
-#' a `rendered` message.
+#' Worker message `more`: grow the paging limit at `path` (dim 1 rows for a
+#' table or items for a tree, dim 2 columns for a table) and rebuild the
+#' display from the kept value (`display[[cell]]`), as a `rendered` message
+#' carrying the run's token. `path` is `""` for a table (one level); for a
+#' tree it addresses the sublist (e.g. "2/1"). Pluto's own paging steps:
+#' rows/items +60, columns +30.
+show_more <- function(msg) {
+  rec <- display[[msg$cell]]
+  if (is.null(rec) || !(rec$kind %in% c("table", "tree"))) {
+    return(list(type = "rendered", cell = msg$cell, token = rec$token, display = NULL))
+  }
+  if (identical(rec$kind, "table")) {
+    cur <- rec$limits %||% list(rows = 10L, cols = 8L)
+    if (identical(msg$dim, 1L)) cur$rows <- (cur$rows %||% 10L) + 60L
+    if (identical(msg$dim, 2L)) cur$cols <- (cur$cols %||% 8L) + 30L
+    rec$limits <- cur
+    display[[msg$cell]] <<- rec
+    bundle <- c(build_table(rec$value, cur), list(text = rec$text, truncated = rec$truncated))
+  } else {
+    limits <- rec$limits
+    cur <- tree_limit_get(limits, msg$path) %||% list(items = 20L)
+    if (identical(msg$dim, 1L)) cur$items <- (cur$items %||% 20L) + 60L
+    limits <- tree_limit_set(limits, msg$path, cur)
+    rec$limits <- limits
+    display[[msg$cell]] <<- rec
+    bundle <- list(kind = "tree", mime = "application/vnd.ember.tree",
+                   tree = display_tree_node(rec$value, "", 0, limits), text = rec$text,
+                   truncated = rec$truncated)
+  }
+  list(type = "rendered", cell = msg$cell, token = rec$token, display = bundle)
+}
+
+#' replayPlot() display[[cell]]$value on a new device at the asked size and
+#' pixel density; return a `rendered` message carrying the run's token.
 render_plot <- function(msg) {
-  rp <- display[[msg$cell]]
-  if (is.null(rp)) return(list(type = "rendered", cell = msg$cell, display = NULL))
+  rec <- display[[msg$cell]]
+  if (is.null(rec) || !identical(rec$kind, "plot")) {
+    return(list(type = "rendered", cell = msg$cell, token = if (!is.null(rec)) rec$token else NULL, display = NULL))
+  }
+  res <- msg$res %||% 96
   path <- tempfile(fileext = ".png")
   if (requireNamespace("ragg", quietly = TRUE)) {
-    ragg::agg_png(filename = path, width = msg$width, height = msg$height, res = 96, background = "white")
+    ragg::agg_png(filename = path, width = msg$width, height = msg$height, res = res, background = "white")
   } else {
-    grDevices::png(filename = path, width = msg$width, height = msg$height, res = 96, bg = "white")
+    grDevices::png(filename = path, width = msg$width, height = msg$height, res = res, bg = "white")
   }
-  tryCatch(grDevices::replayPlot(rp), error = function(e) NULL)
+  tryCatch(grDevices::replayPlot(rec$value), error = function(e) NULL)
   grDevices::dev.off()
-  list(type = "rendered", cell = msg$cell,
-       display = list(kind = "plot", mime = "image/png", data = read_png(path)))
+  list(type = "rendered", cell = msg$cell, token = rec$token,
+      display = list(kind = "plot", mime = "image/png", data = read_png(path),
+                     size = list(width = msg$width, height = msg$height, res = res)))
 }
 
 #' Strip the worker's own frames from sys.calls(): everything up to and

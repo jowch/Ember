@@ -126,14 +126,16 @@ pluto-tree pluto-tree-items.Set::after {
 pluto-tree.Tuple > pluto-tree-prefix::after,
 pluto-tree.Dict > pluto-tree-prefix::after,
 pluto-tree.NamedTuple > pluto-tree-prefix::after,
-pluto-tree.struct > pluto-tree-prefix::after {
+pluto-tree.struct > pluto-tree-prefix::after,
+pluto-tree.r_list > pluto-tree-prefix::after {
     content: "(";
 }
 
 pluto-tree pluto-tree-items.Tuple::after,
 pluto-tree pluto-tree-items.Dict::after,
 pluto-tree pluto-tree-items.NamedTuple::after,
-pluto-tree pluto-tree-items.struct::after {
+pluto-tree pluto-tree-items.struct::after,
+pluto-tree pluto-tree-items.r_list::after {
     content: ")";
 }
 
@@ -151,7 +153,8 @@ pluto-tree pluto-tree-items.Dict > p-r > p-k::after {
 }
 
 pluto-tree pluto-tree-items.NamedTuple > p-r > p-k::after,
-pluto-tree pluto-tree-items.struct > p-r > p-k::after {
+pluto-tree pluto-tree-items.struct > p-r > p-k::after,
+pluto-tree pluto-tree-items.r_list > p-r > p-k::after {
     content: " = ";
 }
 

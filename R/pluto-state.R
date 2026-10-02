@@ -211,7 +211,10 @@ project_cell_result <- function(view) {
 
 #' The `output` field: `list(body, mime, rootassignee = NULL,
 #' last_run_timestamp, persist_js_state = FALSE, has_pluto_hook_features =
-#' FALSE)`. `last_run_timestamp` is `as.numeric(view$last_run)` or 0.
+#' FALSE)`. `last_run_timestamp` is `max(as.numeric(view$last_run),
+#' as.numeric(view$output$rendered_at))` (or 0): a re-render (a paged table
+#' or tree, a resized plot) bumps it the same way a fresh run would, which
+#' is what makes CellOutput.js redraw (ui-2.md, 3c).
 #'
 #' Precedence: an error on the view wins over the display, as Pluto shows a
 #' cell's error in place of its output.
@@ -223,15 +226,20 @@ project_cell_result <- function(view) {
 #' | status "interrupted"         | application/vnd.pluto.stacktrace+object  | msg "Interrupted", no frames |
 #' | no output (not run, NULL)    | text/plain                               | ""                         |
 #' | text/plain                   | text/plain                               | data (ANSI kept; the frontend colours it) |
-#' | text/html                    | text/html                                | data (deps: increment 2)   |
+#' | text/html                    | text/html                                | data, with dependency `<link>`/`<script>` tags prepended (3d) |
 #' | image/png                    | image/png                                | data (raw -> msgpack bin)  |
 #' | image/svg+xml                | image/svg+xml                            | data                       |
 #' | text/markdown (and markdown cells) | text/html if commonmark is installed in the server's library, else text/plain | rendered / text |
-#' | text/latex, vnd.ember.table, vnd.ember.tree, anything else | text/plain | `text` (the print() form; views are increment 2) |
+#' | application/vnd.ember.table  | application/vnd.pluto.table+object       | project_table(data)        |
+#' | application/vnd.ember.tree   | application/vnd.pluto.tree+object        | project_tree(data)         |
+#' | text/latex, anything else    | text/plain                                | `text` (the print() form)  |
 #'
 #' The running cell shows its previous output, as the snapshot does.
 project_output <- function(view) {
   last_ts <- if (is.null(view$last_run)) 0 else as.numeric(view$last_run)
+  if (!is.null(view$output) && !is.null(view$output$rendered_at)) {
+    last_ts <- max(last_ts, as.numeric(view$output$rendered_at))
+  }
   wrap <- function(mime, body) list(body = body, mime = mime, rootassignee = NULL,
                                     last_run_timestamp = last_ts, persist_js_state = FALSE,
                                     has_pluto_hook_features = FALSE)
@@ -263,12 +271,89 @@ project_output <- function(view) {
 
   switch(out$mime,
     "text/plain" = wrap("text/plain", out$data %||% out$text),
-    "text/html" = wrap("text/html", out$data),
+    "text/html" = wrap("text/html", paste0(project_dep_tags(out$deps), out$data)),
     "image/png" = wrap("image/png", out$data),
     "image/svg+xml" = wrap("image/svg+xml", out$data),
     "text/markdown" = if (commonmark_available()) wrap("text/html", render_markdown(out$data))
                       else wrap("text/plain", out$data),
+    "application/vnd.ember.table" = wrap("application/vnd.pluto.table+object", project_table(out$data)),
+    "application/vnd.ember.tree" = wrap("application/vnd.pluto.tree+object", project_tree(out$data)),
     wrap("text/plain", out$text))
+}
+
+#' `<link>`/`<script>` tags for an HTML output's widget dependencies, in
+#' order, prepended to the HTML (ui-2.md, 3d). A dependency with only
+#' `href` uses that URL directly; one resolved to a notebook-library folder
+#' uses `/deps/<name>-<version>/<file>` (server.R's register_deps()). If any
+#' dependency is named "htmlwidgets", a script asking it to render appends
+#' after the tags (htmlwidgets only binds on DOMContentLoaded by itself).
+#' Pluto's script runner already copies each `<script src>` into the page
+#' head once and runs it before inline scripts (CellOutput.js), so loading a
+#' library once across many outputs needs no further page change.
+project_dep_tags <- function(deps) {
+  if (length(deps) == 0) return("")
+  tags <- character()
+  has_htmlwidgets <- FALSE
+  for (d in deps) {
+    base <- if (!is.null(d$href)) d$href else sprintf("/deps/%s-%s/", d$name, d$version)
+    if (identical(d$name, "htmlwidgets")) has_htmlwidgets <- TRUE
+    for (f in d$stylesheet %||% character()) {
+      tags <- c(tags, sprintf('<link rel="stylesheet" href="%s%s">', base, f))
+    }
+    for (f in d$script %||% character()) {
+      tags <- c(tags, sprintf('<script src="%s%s"></script>', base, f))
+    }
+    if (!is.null(d$head)) tags <- c(tags, d$head)
+  }
+  if (has_htmlwidgets) {
+    tags <- c(tags, "<script>window.HTMLWidgets && HTMLWidgets.staticRender()</script>")
+  }
+  paste(tags, collapse = "")
+}
+
+#' Ember's table display as Pluto's table body (TreeView.js:203-262):
+#' `list(objectid = "", ember_dims = "<nrow> x <ncol>",
+#' schema = list(names = arr(names, "more"?), types = arr(types, "more"?)),
+#' rows = list(arr(label, arr(arr(text, "text/plain"), ..., "more"?)), ...,
+#' "more"?))`. "more" after the names and in each row when `more_cols > 0`;
+#' a final "more" row when `more_rows > 0`. `objectid` `""` is the table
+#' itself (what `reshow_cell` sends back).
+project_table <- function(data) {
+  names_l <- as.list(data$names)
+  types_l <- as.list(data$types)
+  if (data$more_cols > 0) {
+    names_l <- c(names_l, list("more"))
+    types_l <- c(types_l, list("more"))
+  }
+  rows <- lapply(seq_along(data$rows), function(i) {
+    cells <- lapply(data$rows[[i]], function(text) arr(text, "text/plain"))
+    if (data$more_cols > 0) cells <- c(cells, list("more"))
+    arr(data$row_labels[[i]], as_arr(cells))
+  })
+  if (data$more_rows > 0) rows <- c(rows, list("more"))
+  list(objectid = "", ember_dims = sprintf("%d \u00d7 %d", data$nrow, data$ncol),
+      schema = list(names = as_arr(names_l), types = as_arr(types_l)),
+      rows = as_arr(rows))
+}
+
+#' Pluto's tree body (TreeView.js:105-180): `list(objectid = path, type =
+#' "r_list", prefix = "list", prefix_short = "", elements = list(arr(key,
+#' arr(<body>, <mime>)), ..., "more"?))`. A leaf is `arr(text, "text/plain")`;
+#' a node is `arr(project_tree(node), "application/vnd.pluto.tree+object")`.
+#' `data` is one worker tree node (worker.R, 3c: `list(type, path, length,
+#' named, items, more)`).
+project_tree <- function(data) {
+  elements <- lapply(data$items %||% list(), function(it) {
+    pair <- if (identical(it$value$type, "text")) {
+      arr(it$value$text, "text/plain")
+    } else {
+      arr(project_tree(it$value), "application/vnd.pluto.tree+object")
+    }
+    arr(it$key, pair)
+  })
+  if (!is.null(data$more) && data$more > 0) elements <- c(elements, list("more"))
+  list(objectid = data$path, type = "r_list", prefix = "list", prefix_short = "",
+      elements = as_arr(elements))
 }
 
 #' `TRUE` when the commonmark package can be used to render markdown. A

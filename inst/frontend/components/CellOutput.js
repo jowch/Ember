@@ -5,6 +5,7 @@ import { ansi_to_html } from "../imports/AnsiUp.js"
 
 import { ErrorMessage, ParseError } from "./ErrorMessage.js"
 import { TreeView, TableView, ReactDOMElement } from "./TreeView.js"
+import { EmberPlot } from "./EmberPlot.js"
 
 import {
     add_bonds_disabled_message_handler,
@@ -155,6 +156,11 @@ export const OutputBody = ({ mime, body, cell_id, persist_js_state = false, last
 
     switch (mime) {
         case "image/png":
+            if (cell_id != null && cell_id !== "cell_id_not_known") {
+                return html`<div><${EmberPlot} mime=${mime} body=${body} cell_id=${cell_id} last_run_timestamp=${last_run_timestamp} /></div>`
+            }
+            return html`<div><${PlutoImage} mime=${mime} body=${body} /></div>`
+            break
         case "image/jpg":
         case "image/jpeg":
         case "image/gif":
@@ -758,7 +764,7 @@ export const generateCopyHeaderIdButton = (/** @type {HTMLHeadingElement} */ hea
 }
 
 export const ANSITextOutput = ({ body }) => {
-    const has_ansi = /\x1b\[\d+m/.test(body)
+    const has_ansi = /\x1b\[[0-9;]*m/.test(body)
 
     if (has_ansi) {
         return html`<${ANSIUpContents} body=${body} />`

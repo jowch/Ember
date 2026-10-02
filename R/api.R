@@ -296,11 +296,35 @@ restart_notebook <- function(nb) {
 #' @export
 notebook_snapshot <- function(nb) {
   s <- snapshot_of(nb$state)
+  cells <- lapply(s$cells, strip_ansi_from_view)
   list(id = nb$state$id, path = nb$state$path, seq = s$seq,
       read_only = isTRUE(nb$state$read_only), allowed = isTRUE(nb$state$allowed),
       process = s$process, restart_offered = s$restart_offered,
       worker_message = s$worker_message, problems = nb$state$problems,
-      order = names(nb$state$cells), cells = s$cells, packages = s$packages)
+      order = names(nb$state$cells), cells = cells, packages = s$packages)
+}
+
+#' Strip ANSI escape codes (design.md, Terminal colours), so a program
+#' reading output as text (Endeavor's agent) sees `tibble [32 x 11]`, not
+#' escape codes. `notebook_state()` keeps the coloured text, for the page.
+strip_ansi <- function(x) {
+  if (is.null(x)) return(x)
+  gsub("\033\\[[0-9;]*[A-Za-z]", "", x)
+}
+
+#' `view` (an `ember_cell_view`) with ANSI stripped from its output text and
+#' console item text; everything else unchanged.
+strip_ansi_from_view <- function(view) {
+  if (!is.null(view$output) && !is.null(view$output$text)) {
+    view$output$text <- strip_ansi(view$output$text)
+  }
+  if (length(view$console) > 0) {
+    view$console <- lapply(view$console, function(item) {
+      item$text <- strip_ansi(item$text)
+      item
+    })
+  }
+  view
 }
 
 #' The notebook's current `ember_graph` (step 1's type).
@@ -328,7 +352,7 @@ notebook_state <- function(nb) nb$state
 #' caller reads their `text/plain` form from the snapshot.
 #' @return `list(png = <raw> | NULL, mime = <the output's mime type>)`.
 #' @export
-render_png <- function(nb, cell, width = NULL, height = NULL, timeout = 5) {
+render_png <- function(nb, cell, width = NULL, height = NULL, res = 96, timeout = 5) {
   id <- resolve_cell_id(nb, cell)
   find_view <- function() {
     snap <- notebook_snapshot(nb)
@@ -343,7 +367,7 @@ render_png <- function(nb, cell, width = NULL, height = NULL, timeout = 5) {
   }
 
   before <- view$output
-  dispatch(nb, ev_render(id, width, height, at = Sys.time()))
+  dispatch(nb, ev_render(id, width, height, at = Sys.time(), res = res))
   deadline <- Sys.time() + timeout
   repeat {
     now_view <- find_view()

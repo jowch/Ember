@@ -702,6 +702,18 @@ export class Editor extends Component {
                     { notebook_id: this.state.notebook.notebook_id },
                     false
                 ),
+            ember_render_plot: (cell_id, width, height, res) =>
+                this.client.send(
+                    "ember_render_plot",
+                    {
+                        cell_id,
+                        width,
+                        height,
+                        res,
+                    },
+                    { notebook_id: this.state.notebook.notebook_id },
+                    false
+                ),
             request_js_link_response: (cell_id, link_id, input) => {
                 return this.client
                     .send(

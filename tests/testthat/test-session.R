@@ -396,3 +396,22 @@ test_that("insert_cell(kind = markdown) folds the cell in the snapshot and the w
   expect_false(snap_view(snap2, code_id)$folded)
   expect_true(any(grepl(paste0("^# ", code_id, "$"), strsplit(nb$written, "\n")[[1]])))
 })
+
+test_that("notebook_snapshot() strips ANSI from output and console text; notebook_state() keeps it (ui-2 33)", {
+  path <- write_session_notebook(list(S = cell(""),
+    A = cell('cat("\\033[31mred\\033[39m\\n"); "\\033[32mgreen\\033[39m"')))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, wait = TRUE)
+
+  snap <- notebook_snapshot(nb)
+  a <- snap_view(snap, names(snap$cells)[2])
+  expect_false(grepl("\033", a$output$text, fixed = TRUE))
+  expect_false(grepl("\033", a$console[[1]]$text, fixed = TRUE))
+  expect_match(a$output$text, "green")
+  expect_match(a$console[[1]]$text, "red")
+
+  state_view <- Find(function(c) identical(c$id, names(snap$cells)[2]), notebook_state(nb)$results)
+  raw_console <- notebook_state(nb)$results[[names(snap$cells)[2]]]$console
+  expect_true(any(grepl("\033", vapply(raw_console, `[[`, character(1), "text"), fixed = TRUE)))
+})

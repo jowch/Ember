@@ -116,11 +116,24 @@ test_that("output mapping: one case per row of the precedence table (9)", {
   expect_equal(o$mime, "text/html")
   expect_match(o$body, "<strong>bold</strong>")
 
-  # table/tree/latex fall back to the print() form
-  o <- project_output(fake_view(output = new_display("application/vnd.ember.table", list(), "a table")))
-  expect_equal(o$mime, "text/plain"); expect_equal(o$body, "a table")
-  o <- project_output(fake_view(output = new_display("application/vnd.ember.tree", list(), "a tree")))
-  expect_equal(o$mime, "text/plain"); expect_equal(o$body, "a tree")
+  # table becomes Pluto's table body
+  table_data <- list(names = c("a", "b"), types = c("<dbl>", "<chr>"), nrow = 2L, ncol = 2L,
+                     row_labels = c("1", "2"), rows = list(c("1", "x"), c("2", "y")),
+                     more_rows = 0L, more_cols = 0L)
+  o <- project_output(fake_view(output = new_display("application/vnd.ember.table", table_data, "a table")))
+  expect_equal(o$mime, "application/vnd.pluto.table+object")
+  expect_equal(o$body$schema$names, list("a", "b"))
+  expect_equal(o$body$ember_dims, "2 × 2")
+
+  # tree becomes Pluto's tree body
+  tree_data <- list(type = "list", path = "", length = 1L, named = TRUE,
+                    items = list(list(key = "a", value = list(type = "text", text = "1"))), more = 0L)
+  o <- project_output(fake_view(output = new_display("application/vnd.ember.tree", tree_data, "a tree")))
+  expect_equal(o$mime, "application/vnd.pluto.tree+object")
+  expect_equal(o$body$type, "r_list")
+  expect_equal(o$body$elements, list(list("a", list("1", "text/plain"))))
+
+  # latex falls back to the print() form
   o <- project_output(fake_view(output = new_display("text/latex", "$x$", "x")))
   expect_equal(o$mime, "text/plain"); expect_equal(o$body, "x")
 
@@ -395,4 +408,81 @@ test_that("project_cell_input() gives kind markdown/code; check_wire() passes on
   js2 <- pluto_state(r2$state)$js
   expect_equal(js2$cell_inputs$Md$kind, "markdown")
   expect_true(check_wire(js2))
+})
+
+# ---- ui-2-tests.md 28-29: project_table()/project_tree() -------------------
+
+test_that("project_table() ends names/types/rows in 'more' when truncated, each cell a text/plain pair (ui-2 28)", {
+  table_data <- list(names = paste0("c", 1:8), types = rep("<dbl>", 8), nrow = 32L, ncol = 11L,
+                     row_labels = as.character(1:10),
+                     rows = lapply(1:10, function(i) paste0("v", i, "_", 1:8)),
+                     more_rows = 22L, more_cols = 3L)
+  body <- project_table(table_data)
+  expect_equal(body$objectid, "")
+  expect_equal(body$ember_dims, "32 × 11")
+  expect_equal(utils::tail(body$schema$names, 1), list("more"))
+  expect_equal(utils::tail(body$schema$types, 1), list("more"))
+  expect_equal(length(body$schema$names), 9)
+  expect_equal(length(body$rows), 11)  # 10 rows + a final "more" row
+  expect_equal(utils::tail(body$rows, 1), list("more"))
+  row1 <- body$rows[[1]]
+  expect_equal(row1[[1]], "1")
+  cells <- row1[[2]]
+  expect_equal(utils::tail(cells, 1), list("more"))
+  expect_equal(cells[[1]], list("v1_1", "text/plain"))
+
+  s0 <- fake_state(list(S = cell(""), A = cell("mtcars")))
+  js0 <- pluto_state(s0)$js
+  expect_true(check_wire(js0))
+})
+
+test_that("project_tree() nests nodes under vnd.pluto.tree+object, 'more' last, objectid is path (ui-2 29)", {
+  node <- list(type = "list", path = "", length = 3L, named = TRUE,
+              items = list(
+                list(key = "a", value = list(type = "text", text = "1")),
+                list(key = "b", value = list(type = "list", path = "2", length = 1L, named = TRUE,
+                                            items = list(list(key = "c", value = list(type = "text", text = "\"x\""))),
+                                            more = 0L))
+              ), more = 1L)
+  body <- project_tree(node)
+  expect_equal(body$objectid, "")
+  expect_equal(body$type, "r_list")
+  expect_equal(body$elements[[1]], list("a", list("1", "text/plain")))
+  nested <- body$elements[[2]]
+  expect_equal(nested[[1]], "b")
+  expect_equal(nested[[2]][[2]], "application/vnd.pluto.tree+object")
+  expect_equal(nested[[2]][[1]]$objectid, "2")
+  expect_equal(utils::tail(body$elements, 1), list("more"))
+})
+
+# ---- ui-2-tests.md 32: HTML output with widget dependencies -----------------
+
+test_that("project_output() prepends dependency tags in order; staticRender only for htmlwidgets (ui-2 32)", {
+  deps <- list(
+    list(name = "jquery", version = "3.6.0", dir = "/lib", href = NULL,
+        script = "jquery.js", stylesheet = "jquery.css", head = NULL),
+    list(name = "htmlwidgets", version = "1.5", dir = "/lib2", href = NULL,
+        script = "htmlwidgets.js", stylesheet = character(), head = NULL)
+  )
+  o <- project_output(fake_view(output = new_display("text/html", "<div>hi</div>", "hi", deps = deps)))
+  expect_equal(o$mime, "text/html")
+  link_pos <- regexpr('<link rel="stylesheet" href="/deps/jquery-3.6.0/jquery.css">', o$body)
+  script_pos <- regexpr('<script src="/deps/jquery-3.6.0/jquery.js"></script>', o$body)
+  widgets_pos <- regexpr('<script src="/deps/htmlwidgets-1.5/htmlwidgets.js"></script>', o$body)
+  static_render_pos <- regexpr("HTMLWidgets.staticRender", o$body, fixed = TRUE)
+  div_pos <- regexpr("<div>hi</div>", o$body, fixed = TRUE)
+  expect_true(link_pos < script_pos)
+  expect_true(script_pos < widgets_pos)
+  expect_true(widgets_pos < div_pos)
+  expect_gt(static_render_pos, 0)
+
+  # an href-only dependency uses its href directly
+  o2 <- project_output(fake_view(output = new_display("text/html", "<p/>", "p",
+    deps = list(list(name = "cdnlib", version = "1", dir = NULL, href = "https://example.org/",
+                     script = "a.js", stylesheet = character(), head = NULL)))))
+  expect_match(o2$body, '<script src="https://example.org/a.js">', fixed = TRUE)
+
+  # no dependencies: unchanged
+  o3 <- project_output(fake_view(output = new_display("text/html", "<p/>", "p")))
+  expect_equal(o3$body, "<p/>")
 })
