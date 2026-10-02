@@ -798,8 +798,11 @@ it found:
 - A field keeps one type (integer or double), or every update sends a patch.
 - Decoding keeps arrays as lists (`simplify = FALSE`).
 
-The unbundled frontend loads about 130 modules from CDNs; the fork ships a
-bundled copy so it works offline.
+The frontend loads its libraries from CDNs (jsdelivr, esm.sh) at pinned
+versions. The CDNs serve them as immutable for a year, so after the first
+load a browser works from its cache, offline too. A bundled copy isn't
+shipped; if CDN outages ever break the browser tests, CI can keep a browser
+profile or a recorded network archive between runs instead.
 
 **Remove** (about half the frontend): Julia scope analysis and syntax
 plugins, the Pkg UI, Binder, upload, slider server, recording, the AI

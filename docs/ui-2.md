@@ -240,6 +240,13 @@ ui-2-tests.md 1-12.
 
 ## 2. Offline bundle
 
+**Dropped (decided with the user).** Every CDN URL is version-pinned and
+served `immutable` with a one-year `max-age`, so browsers cache the
+libraries after the first load. If CDN outages break the e2e job, CI keeps a
+Playwright profile or a recorded HAR between runs instead. The rest of this
+section is kept for reference. Downloaded exports (Open questions) are a
+separate decision.
+
 ### Problem
 
 The page loads its libraries, fonts and icons from jsdelivr, esm.sh, unpkg
@@ -1096,15 +1103,12 @@ ui-2-tests.md 63-74.
 
 ## Order of implementation
 
-**1 → 2 → 3 → 5 → 4.**
+**1 → 3 → 5 → 4.** Piece 2 is dropped (see its section).
 
 - **1 first**: everything after it edits the same frontend files. Deleting
   first means piece 2 doesn't vendor Julia-only libraries (vmsg,
   rebel-tag-input, Firebase) and piece 4 doesn't rewrite code that is about
   to go. It also stops the page contacting Pluto's servers.
-- **2 second**: after it the e2e job no longer depends on CDNs. Every later
-  piece adds e2e tests, which are then reliable. It needs piece 1's font
-  choices.
 - **3 third**: most user value per line of code. 3a fixes classed objects
   before a tree view could show them wrong. It also adds the missing plot
   e2e test (ui-tests.md 42).
