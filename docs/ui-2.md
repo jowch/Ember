@@ -240,12 +240,14 @@ ui-2-tests.md 1-12.
 
 ## 2. Offline bundle
 
-**Dropped (decided with the user).** Every CDN URL is version-pinned and
-served `immutable` with a one-year `max-age`, so browsers cache the
-libraries after the first load. If CDN outages break the e2e job, CI keeps a
-Playwright profile or a recorded HAR between runs instead. The rest of this
-section is kept for reference. Downloaded exports (Open questions) are a
-separate decision.
+**Revived, after piece 4 (decided with the user).** Two needs the CDN can't
+meet: self-contained downloaded exports (what Pluto's own export menu and
+Endeavor ask for), and a browser with no internet, as when Ember runs on a
+remote machine reached over SSH from a locked-down desktop. So the
+third-party libraries are bundled (MathJax aside, loaded from the CDN only
+when a page has TeX, as Pluto does) and the bundle is served always, live
+page and exports alike. Bundle files get content-hashed names and long
+cache headers, so a slow tunnel carries them once per browser.
 
 ### Problem
 
@@ -1103,7 +1105,7 @@ ui-2-tests.md 63-74.
 
 ## Order of implementation
 
-**1 → 3 → 5 → 4.** Piece 2 is dropped (see its section).
+**1 → 3 → 5 → 4 → 2.** Piece 2 comes last (see its section).
 
 - **1 first**: everything after it edits the same frontend files. Deleting
   first means piece 2 doesn't vendor Julia-only libraries (vmsg,

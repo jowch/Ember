@@ -46,6 +46,10 @@ done; clear out ticked items at each release.
 
 - [ ] Coloured console output (cli, crayon) sits on the log box's dark brown background, where red text is hard to read; the ANSI colours need values chosen for that background, or a lighter box — improvised
 
+- [ ] Remote use: the server accepts only Host `127.0.0.1:<port>` or `localhost:<port>`, so an SSH tunnel to a different local port, or any reverse proxy (Posit Workbench, JupyterHub, VS Code port forwarding), gets 403. Accept a loopback Host on any port when Origin matches Host; add an opt-in `allowed_hosts` for proxies — missing
+- [ ] Remote use behind a path prefix: links and redirects are absolute (`/edit`, `/deps/...`, `/open`), so a proxy serving Ember under `/s/<id>/p/<port>/` breaks them. Make every URL relative, as Pluto does — missing
+- [ ] Self-contained exports, and a browser with no internet: bundle the frontend's third-party libraries (MathJax aside) and serve the bundle always, with content-hashed names and long cache headers so a slow tunnel carries it once — missing
+
 - [ ] Pluto frontend fork, protocol in R, removals, R adaptations, theme — missing
 - [ ] The R grammar wired into CodeMirror — missing
 - [ ] Rich outputs in the browser: widget files as static paths, table and tree views, terminal colours — missing
