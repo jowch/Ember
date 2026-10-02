@@ -798,11 +798,12 @@ it found:
 - A field keeps one type (integer or double), or every update sends a patch.
 - Decoding keeps arrays as lists (`simplify = FALSE`).
 
-The frontend loads its libraries from CDNs (jsdelivr, esm.sh) at pinned
-versions. The CDNs serve them as immutable for a year, so after the first
-load a browser works from its cache, offline too. A bundled copy isn't
-shipped; if CDN outages ever break the browser tests, CI can keep a browser
-profile or a recorded network archive between runs instead.
+The fork ships its third-party libraries as a bundle and always serves it,
+so the page works where the browser has no internet (Ember on a remote
+machine reached over SSH from a locked-down desktop) and downloaded exports
+are self-contained. MathJax stays on the CDN, loaded only when a page has
+TeX, as Pluto does. Bundle files have content-hashed names and long cache
+headers, so a slow tunnel carries them once per browser.
 
 **Remove** (about half the frontend): Julia scope analysis and syntax
 plugins, the Pkg UI, Binder, upload, slider server, recording, the AI
