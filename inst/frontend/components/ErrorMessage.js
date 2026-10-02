@@ -6,10 +6,8 @@ import { PkgTerminalView } from "./PkgTerminalView.js"
 import _ from "../imports/lodash-es.js"
 import { open_bottom_right_panel } from "./BottomRightPanel.js"
 import { ansi_to_html } from "../imports/AnsiUp.js"
-import { FixWithAIButton } from "./FixWithAIButton.js"
 import { localized_list_htl, t, th } from "../common/lang.js"
 import { get_settings } from "./Settings.js"
-import { EMBER } from "../common/EmberFlags.js"
 
 const nbsp = "\u00A0"
 
@@ -265,7 +263,6 @@ export const ParseError = ({ cell_id, diagnostics, last_run_timestamp }) => {
         <jlerror class="syntax-error">
             <header>
                 <p>Syntax error</p>
-                <${FixWithAIButton} cell_id=${cell_id} diagnostics=${diagnostics} last_run_timestamp=${last_run_timestamp} />
             </header>
             <section>
                 <div class="stacktrace-header">
@@ -430,10 +427,10 @@ export const ErrorMessage = ({ msg, stacktrace, plain_error, cell_id }) => {
 
                         return html`<p>${th("t_cyclic_references_among", { symbols: symbol_interp })}</p>`
                     } else {
-                        // This must be the hint. Upstream Pluto always rewrites it as Julia's
-                        // "combine into a begin ... end block" suggestion; Ember's server already
-                        // put the engine's own suggested fix in this line, so show it as given.
-                        return EMBER ? html`<p>${line}</p>` : html`<p>${th("t_combine_cells_begin_block")}</p>`
+                        // Upstream Pluto always rewrites this as Julia's "combine into a
+                        // begin ... end block" suggestion; the server already put the
+                        // engine's own suggested fix in this line, so show it as given.
+                        return html`<p>${line}</p>`
                     }
                 }),
         },
@@ -461,8 +458,8 @@ export const ErrorMessage = ({ msg, stacktrace, plain_error, cell_id }) => {
 
                         return html`<p>${th("t_multiple_definitions_for", { symbols: symbol_interp })}</p>`
                     } else {
-                        // Same as above: Ember's server already supplies the suggested fix text.
-                        return EMBER ? html`<p>${line}</p>` : html`<p>${th("t_combine_cells_begin_block")}</p>`
+                        // Same as above: the server already supplies the suggested fix text.
+                        return html`<p>${line}</p>`
                     }
                 }),
         },

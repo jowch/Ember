@@ -529,7 +529,8 @@ reduce_apply <- function(state, event) {
         if (any(grepl("^# %%|^# ///", strsplit(code, "\n", fixed = TRUE)[[1]]))) {
           bad <- refused("code contains a cell or footer marker line", op)
         } else {
-          new_cell <- list(code = code, kind = op$kind %||% "code", folded = FALSE)
+          new_cell <- list(code = code, kind = op$kind %||% "code",
+                           folded = identical(op$kind, "markdown"))
           cells <- append(cells, setNames(list(new_cell), op$id), after = op$index - 1)
           inserted <- c(inserted, op$id)
         }

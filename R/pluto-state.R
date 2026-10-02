@@ -172,10 +172,12 @@ key_unchanged <- function(state, ctx, i, prev_key) {
 
 # ---- Cells -------------------------------------------------------------------
 
-#' CellInputData. `metadata` is the shared CELL_METADATA.
+#' CellInputData. `metadata` is the shared CELL_METADATA. `kind` is
+#' `view$kind` ("code" or "markdown"); the cell key already covers it (it
+#' holds `state$cells[[i]]`).
 project_cell_input <- function(view) {
   list(cell_id = view$id, code = view$code, code_folded = view$folded,
-       metadata = CELL_METADATA)
+       kind = view$kind, metadata = CELL_METADATA)
 }
 
 #' CellResultData from an `ember_cell_view` (state.R).
@@ -325,15 +327,17 @@ project_parse_error <- function(error, code) {
   ends <- starts + nch
 
   rows <- error$lines
-  if (is.null(rows) || nrow(rows) == 0) {
-    return(list(list(message = error$message, from = 0L,
-                    to = as.integer(ends[1]), line = 1L)))
+  diagnostics <- if (is.null(rows) || nrow(rows) == 0) {
+    list(list(message = error$message, from = 0L,
+             to = as.integer(ends[1]), line = 1L))
+  } else {
+    lapply(seq_len(nrow(rows)), function(i) {
+      ln <- min(max(as.integer(rows$line[i]), 1L), length(lines))
+      list(message = error$message, from = as.integer(starts[ln]),
+          to = as.integer(ends[ln]), line = as.integer(rows$line[i]))
+    })
   }
-  lapply(seq_len(nrow(rows)), function(i) {
-    ln <- min(max(as.integer(rows$line[i]), 1L), length(lines))
-    list(message = error$message, from = as.integer(starts[ln]),
-        to = as.integer(ends[ln]), line = as.integer(rows$line[i]))
-  })
+  list(diagnostics = diagnostics)
 }
 
 #' LogEntryData per console item, in order:

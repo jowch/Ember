@@ -5,7 +5,6 @@ import _ from "../imports/lodash-es.js"
 import { useDialog } from "../common/useDialog.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { t, th } from "../common/lang.js"
-import { LanguagePicker } from "./LanguagePicker.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { and, ctrl_or_cmd_name } from "../common/KeyboardShortcuts.js"
 
@@ -73,14 +72,7 @@ const _Settings = ({}) => {
             placeholder=${placeholder}
         />`
 
-    const ai_disabled_from_backend = pluto_actions.get_session_options?.()?.server?.enable_ai_editor_features === false
-
     const settings_ui = [
-        {
-            title: th("t_settings_lang_title"),
-            description: th("t_settings_lang_description"),
-            component: html`<${LanguagePicker} onChanged=${() => set_require_reload(true)} />`,
-        },
         {
             title: th("t_settings_motivational_stickers_title"),
             description: th("t_settings_motivational_stickers_description"),
@@ -105,19 +97,6 @@ const _Settings = ({}) => {
                 style="width: 11ch;"
             />`,
         },
-        ...(ai_disabled_from_backend
-            ? []
-            : [
-                  {
-                      title: th("t_settings_ai_features_title"),
-                      description: th("t_settings_ai_features_description", {
-                          learn_more: html`<a href="https://plutojl.org/en/docs/ai-editor-features/" target="_blank"
-                              >${t("t_settings_ai_features_learn_more")}</a
-                          >`,
-                      }),
-                      component: make_checkbox("AI_EDITOR_FEATURES"),
-                  },
-              ]),
         {
             title: th("t_settings_dark_mode_title"),
             description: th("t_settings_dark_mode_description"),
@@ -141,7 +120,7 @@ const _Settings = ({}) => {
             title: th("t_settings_code_typeface_title"),
             description: th("t_settings_code_typeface_description"),
             description_2: th("t_settings_code_typeface_description_2"),
-            component: make_textfield("CUSTOM_CODE_FONT_STACK", "JuliaMono"),
+            component: make_textfield("CUSTOM_CODE_FONT_STACK", "monospace"),
         },
         {
             title: th("t_settings_nested_syntax_title"),
@@ -218,8 +197,6 @@ const _Settings = ({}) => {
 }
 
 export const DEFAULT_SETTINGS = {
-    // note: language is not stored here.
-    AI_EDITOR_FEATURES: true,
     MOTIVATIONAL_STICKERS: true,
     ALWAYS_NOTIFY_LONG_BUSY: false,
     CONFIRM_LONG_RUNTIMES_SECONDS: 120,

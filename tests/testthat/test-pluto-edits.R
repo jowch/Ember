@@ -22,9 +22,11 @@ patch_replace <- function(path, value) list(op = "replace", path = path, value =
 patch_add     <- function(path, value) list(op = "add", path = path, value = value)
 patch_remove  <- function(path) list(op = "remove", path = path)
 
-new_cell_patch <- function(id, code = "", folded = FALSE) {
-  list(cell_id = id, code = code, code_folded = folded,
-      metadata = list(disabled = FALSE, show_logs = TRUE, skip_as_script = FALSE))
+new_cell_patch <- function(id, code = "", folded = FALSE, kind = NULL) {
+  patch <- list(cell_id = id, code = code, code_folded = folded,
+               metadata = list(disabled = FALSE, show_logs = TRUE, skip_as_script = FALSE))
+  if (!is.null(kind)) patch$kind <- kind
+  patch
 }
 
 # ---- 15. Set code and run ----------------------------------------------------
@@ -103,6 +105,27 @@ test_that("undo a delete re-adds the cell with the client's (original) id (17)",
   expect_equal(length(ed$ops), 1)
   expect_equal(ed$ops[[1]]$op, "insert")
   expect_equal(ed$ops[[1]]$id, "A2")
+})
+
+# ---- ui-2-tests.md 2: markdown kind survives undo delete and paste ---------
+
+test_that("undo delete of a markdown cell inserts with kind markdown; a plain add gives kind code (ui-2 2)", {
+  before <- base_before(2, ids = c("A", "B"))
+  patches <- list(
+    patch_add(list("cell_inputs", "A2"), new_cell_patch("A2", "# A2", kind = "markdown")),
+    patch_replace(list("cell_order"), as_arr(c("A", "A2", "B"))))
+  ed <- pluto_edits(before, patches)
+  expect_null(ed$refusal)
+  expect_equal(length(ed$ops), 1)
+  expect_equal(ed$ops[[1]]$op, "insert")
+  expect_equal(ed$ops[[1]]$kind, "markdown")
+
+  before2 <- base_before(3)  # A B C
+  patches2 <- list(
+    patch_add(list("cell_inputs", "new1"), new_cell_patch("new1")),
+    patch_replace(list("cell_order"), as_arr(c("A", "B", "new1", "C"))))
+  ed2 <- pluto_edits(before2, patches2)
+  expect_equal(ed2$ops[[1]]$kind, "code")
 })
 
 # ---- 18. Delete two cells ------------------------------------------------------

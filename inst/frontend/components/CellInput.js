@@ -4,7 +4,7 @@ import _ from "../imports/lodash-es.js"
 import { utf8index_to_ut16index } from "../common/UnicodeTools.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { get_selected_doc_from_state } from "./CellInput/LiveDocsFromCursor.js"
-import { go_to_definition_plugin, GlobalDefinitionsFacet } from "./CellInput/go_to_definition_plugin.js"
+import { GlobalDefinitionsFacet } from "./CellInput/go_to_definition_plugin.js"
 // import { debug_syntax_plugin } from "./CellInput/debug_syntax_plugin.js"
 
 import {
@@ -34,6 +34,8 @@ import {
     autocomplete,
     htmlLanguage,
     markdownLanguage,
+    markdown,
+    rLanguage,
     javascriptLanguage,
     pythonLanguage,
     syntaxHighlighting,
@@ -44,11 +46,8 @@ import {
     StateField,
 } from "../imports/CodemirrorPlutoSetup.js"
 
-import { markdown, html as htmlLang, javascript, sqlLang, python, julia_mixed } from "./CellInput/mixedParsers.js"
 import { r } from "../imports/CodemirrorPlutoSetup.js"
-import { EMBER } from "../common/EmberFlags.js"
 import { pluto_autocomplete } from "./CellInput/pluto_autocomplete.js"
-import { NotebookpackagesFacet, pkgBubblePlugin } from "./CellInput/pkg_bubble_plugin.js"
 import { ARBITRARY_INDENT_LINE_WRAP_LIMIT, awesome_line_wrapping, get_leading_indent } from "./CellInput/awesome_line_wrapping.js"
 import { cell_movement_plugin, prevent_holding_a_key_from_doing_things_across_cells } from "./CellInput/cell_movement_plugin.js"
 import { pluto_paste_plugin } from "./CellInput/pluto_paste_plugin.js"
@@ -63,9 +62,6 @@ import { assert_not_null, timeout_promise } from "../common/PlutoConnection.js"
 import { LastFocusWasForcedEffect, tab_help_plugin } from "./CellInput/tab_help_plugin.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { moveLineDown } from "../imports/CodemirrorPlutoSetup.js"
-import { open_pluto_popup } from "../common/open_pluto_popup.js"
-import { AIContext } from "./AIContext.js"
-import { AiSuggestionPlugin } from "./CellInput/ai_suggestion.js"
 import { detect_indent_unit } from "./CellInput/detect_indent_unit.js"
 import { t } from "../common/lang.js"
 import { get_settings } from "./Settings.js"
@@ -228,7 +224,6 @@ let line_and_ch_to_cm6_position = (/** @type {import("../imports/CodemirrorPluto
  *  local_code: string,
  *  remote_code: string,
  *  scroll_into_view_after_creation: boolean,
- *  nbpkg: import("./Editor.js").NotebookPkgData?,
  *  global_definition_locations: { [variable_name: string]: string },
  *  [key: string]: any,
  * }} props
@@ -236,6 +231,7 @@ let line_and_ch_to_cm6_position = (/** @type {import("../imports/CodemirrorPluto
 export const CellInput = ({
     local_code,
     remote_code,
+    kind,
     disable_input,
     focus_after_creation,
     cm_forced_focus,
@@ -249,21 +245,14 @@ export const CellInput = ({
     on_update_doc_query,
     on_focus_neighbor,
     on_line_heights,
-    nbpkg,
     cell_id,
     notebook_id,
-    any_logs,
-    show_logs,
-    set_show_logs,
-    set_cell_disabled,
     cm_highlighted_line,
     cm_highlighted_range,
-    metadata,
     global_definition_locations,
     cm_diagnostics,
 }) => {
     let pluto_actions = useContext(PlutoActionsContext)
-    const { disabled: running_disabled, skip_as_script } = metadata
     let [error, set_error] = useState(null)
     if (error) {
         const to_throw = error
@@ -278,7 +267,6 @@ export const CellInput = ({
     const dom_node_ref = useRef(/** @type {HTMLElement?} */ (null))
     const remote_code_ref = useRef(/** @type {string?} */ (null))
 
-    let nbpkg_compartment = useCompartment(newcm_ref, NotebookpackagesFacet.of(EMBER ? null : nbpkg))
     let global_definitions_compartment = useCompartment(newcm_ref, GlobalDefinitionsFacet.of(global_definition_locations))
     let highlighted_line_compartment = useCompartment(newcm_ref, HighlightLineFacet.of(cm_highlighted_line))
     let highlighted_range_compartment = useCompartment(newcm_ref, HighlightRangeFacet.of(cm_highlighted_range))
@@ -403,67 +391,6 @@ export const CellInput = ({
                 return true
             }
         }
-        const keyMapMD = () => {
-            const cm = /** @type{EditorView} */ (newcm_ref.current)
-            const value = getValue6(cm)
-            const trimmed = value.trim()
-            const offset = value.length - value.trimStart().length
-            if (trimmed.startsWith('md"') && trimmed.endsWith('"')) {
-                // Markdown cell, change to code
-                let start, end
-                if (trimmed.startsWith('md"""') && trimmed.endsWith('"""')) {
-                    // Block markdown
-                    start = 5
-                    end = trimmed.length - 3
-                } else {
-                    // Inline markdown
-                    start = 3
-                    end = trimmed.length - 1
-                }
-                if (start >= end || trimmed.substring(start, end).trim() == "") {
-                    // Corner case: block is empty after removing markdown
-                    setValue6(cm, "")
-                } else {
-                    while (/\s/.test(assert_not_null(trimmed[start]))) {
-                        ++start
-                    }
-                    while (/\s/.test(assert_not_null(trimmed[end - 1]))) {
-                        --end
-                    }
-
-                    // Keep the selection from [start, end) while maintaining cursor position
-                    replaceRange6(cm, "", end + offset, cm.state.doc.length)
-                    // cm.replaceRange("", cm.posFromIndex(end + offset), { line: cm.lineCount() })
-                    replaceRange6(cm, "", 0, start + offset)
-                    // cm.replaceRange("", { line: 0, ch: 0 }, cm.posFromIndex(start + offset))
-                }
-            } else {
-                // Replacing ranges will maintain both the focus, the selections and the cursor
-                let prefix = `md"""\n`
-                let suffix = `\n"""`
-                // TODO Multicursor?
-                let selection = cm.state.selection.main
-                cm.dispatch({
-                    changes: [
-                        { from: 0, to: 0, insert: prefix },
-                        {
-                            from: cm.state.doc.length,
-                            to: cm.state.doc.length,
-                            insert: suffix,
-                        },
-                    ],
-                    selection:
-                        selection.from === 0
-                            ? {
-                                  anchor: selection.from + prefix.length,
-                                  head: selection.to + prefix.length,
-                              }
-                            : undefined,
-                })
-            }
-
-            return true
-        }
         const keyMapDelete = (/** @type {EditorView} */ cm) => {
             if (cm.state.facet(EditorState.readOnly)) {
                 return false
@@ -536,10 +463,6 @@ export const CellInput = ({
             { key: "Ctrl-Enter", mac: "Cmd-Enter", run: keyMapRun },
             { key: "Ctrl-Enter", run: keyMapRun },
             ...(get_settings().CM_TAB_KEY_FOR_INDENT ? [{ key: "Tab", run: keyMapTab, shift: indentLess }] : []),
-            { key: "Ctrl-m", mac: "Cmd-m", run: keyMapMD },
-            { key: "Ctrl-m", run: keyMapMD },
-            // Codemirror6 doesn't like capslock
-            { key: "Ctrl-M", run: keyMapMD },
             // TODO Move Delete and backspace to cell movement plugin
             { key: "Delete", run: keyMapDelete },
             { key: "Ctrl-Delete", run: keyMapDelete },
@@ -572,17 +495,6 @@ export const CellInput = ({
             }
         })
 
-        const unsubmitted_globals_updater = EditorView.updateListener.of((update) => {
-            if (update.docChanged) {
-                const before = [...update.startState.field(ScopeStateField).definitions.keys()]
-                const after = [...update.state.field(ScopeStateField).definitions.keys()]
-
-                if (!_.isEqual(before, after)) {
-                    pluto_actions.set_unsubmitted_global_definitions(cell_id, after)
-                }
-            }
-        })
-
         const usesDarkTheme = window.matchMedia("(prefers-color-scheme: dark)").matches
         const newcm = (newcm_ref.current = new EditorView({
             state: EditorState.create({
@@ -590,7 +502,6 @@ export const CellInput = ({
                 extensions: [
                     EditorView.theme({}, { dark: usesDarkTheme }),
                     // Compartments coming from react state/props
-                    nbpkg_compartment,
                     highlighted_line_compartment,
                     highlighted_range_compartment,
                     global_definitions_compartment,
@@ -606,7 +517,6 @@ export const CellInput = ({
                     // TODO Use https://codemirror.net/6/docs/ref/#state.Prec when added to pluto-codemirror-setup
                     prevent_holding_a_key_from_doing_things_across_cells,
 
-                    ...(!EMBER ? [pkgBubblePlugin({ pluto_actions, notebook_id_ref })] : []),
                     ScopeStateField,
                     syntaxHighlighting(pluto_syntax_colors_julia),
                     syntaxHighlighting(pluto_syntax_colors_html),
@@ -635,7 +545,6 @@ export const CellInput = ({
                     highlightSelectionMatches({ minSelectionLength: 2, wholeWords: true }),
                     bracketMatching(),
                     docs_updater,
-                    ...(!EMBER ? [unsubmitted_globals_updater] : []),
                     tab_help_plugin,
                     // Remove selection on blur
                     EditorView.domEventHandlers({
@@ -675,23 +584,14 @@ export const CellInput = ({
                     EditorState.tabSize.of(4),
                     indentUnitField,
                     indentUnit.from(indentUnitField),
-                    ...(get_settings().CM_MIXED_PARSER && !EMBER
+                    ...(kind === "markdown"
                         ? [
-                              julia_mixed(),
                               markdown({
-                                  defaultCodeLanguage: julia_mixed(),
+                                  base: markdownLanguage,
+                                  codeLanguages: (info) => (/^(r|R|)$/.test(info) ? rLanguage : null),
                               }),
-                              htmlLang(), //Provides tag closing!,
-                              javascript(),
-                              python(),
-                              sqlLang,
                           ]
-                        : [
-                              //
-                              r(),
-                          ]),
-                    ...(!EMBER ? [go_to_definition_plugin] : []),
-                    ...(!EMBER ? [AiSuggestionPlugin()] : []),
+                        : [r()]),
                     pluto_autocomplete({
                         request_autocomplete: async ({ query, query_full }) => {
                             let response = await timeout_promise(
@@ -709,14 +609,11 @@ export const CellInput = ({
                                 too_long: message.too_long,
                             }
                         },
-                        ...(!EMBER
-                            ? {
-                                  request_packages: () => pluto_actions.send("all_registered_package_names").then(({ message }) => message.results),
-                                  request_special_symbols: () => pluto_actions.send("complete_symbols").then(({ message }) => message),
-                              }
-                            : {}),
                         on_update_doc_query,
-                        request_unsubmitted_global_definitions: () => pluto_actions.get_unsubmitted_global_definitions(),
+                        // Local (unsubmitted) definitions came from Julia's scope analysis
+                        // (ScopeStateField), which finds nothing on an R tree; piece 4 rewrites
+                        // this autocomplete module for R.
+                        request_unsubmitted_global_definitions: () => ({}),
                         cell_id,
                     }),
 
@@ -892,12 +789,6 @@ export const CellInput = ({
                 on_delete=${on_delete}
                 cell_id=${cell_id}
                 run_cell=${on_submit}
-                skip_as_script=${skip_as_script}
-                running_disabled=${running_disabled}
-                any_logs=${any_logs}
-                show_logs=${show_logs}
-                set_show_logs=${set_show_logs}
-                set_cell_disabled=${set_cell_disabled}
                 get_current_code=${() => {
                     let cm = newcm_ref.current
                     return cm == null ? "" : getValue6(cm)
@@ -910,18 +801,7 @@ export const CellInput = ({
 
 const PreviewHiddenCode = html`<div class="preview_hidden_code_info">${t("t_reading_hidden_code")}</div>`
 
-const InputContextMenu = ({
-    on_delete,
-    cell_id,
-    run_cell,
-    skip_as_script,
-    running_disabled,
-    any_logs,
-    show_logs,
-    set_show_logs,
-    set_cell_disabled,
-    get_current_code,
-}) => {
+const InputContextMenu = ({ on_delete, cell_id, run_cell, get_current_code }) => {
     const timeout = useRef(null)
     let pluto_actions = useContext(PlutoActionsContext)
     const [open, setOpenState] = useState(false)
@@ -947,20 +827,6 @@ const InputContextMenu = ({
     const mouseenter = () => {
         if (timeout.current) clearTimeout(timeout.current)
     }
-    const toggle_skip_as_script = async (e) => {
-        const new_val = !skip_as_script
-        e.preventDefault()
-        // e.stopPropagation()
-        await pluto_actions.update_notebook((notebook) => {
-            notebook.cell_inputs[cell_id].metadata["skip_as_script"] = new_val
-        })
-    }
-    const toggle_running_disabled = async (e) => {
-        const new_val = !running_disabled
-        await set_cell_disabled(new_val)
-    }
-    const toggle_logs = () => set_show_logs(!show_logs)
-
     const is_copy_output_supported = () => {
         let notebook = /** @type{import("./Editor.js").NotebookData?} */ (pluto_actions.get_notebook())
         let cell_result = notebook?.cell_results?.[cell_id]
@@ -989,17 +855,6 @@ const InputContextMenu = ({
             navigator.clipboard.writeText(strip_ansi_codes(cell_output)).catch(() => {
                 alert(`Error copying cell output`)
             })
-    }
-
-    const ask_ai = () => {
-        open_pluto_popup({
-            type: "info",
-            big: true,
-            css_class: "ai-context",
-            should_focus: true,
-            // source_element: button_ref.current,
-            body: html`<${AIContext} cell_id=${cell_id} current_code=${get_current_code()} />`,
-        })
     }
 
     useEventListener(
@@ -1054,48 +909,12 @@ const InputContextMenu = ({
                           setOpen=${setOpen}
                       />
 
-                      ${!EMBER &&
-                      html`<${InputContextMenuItem}
-                          title=${running_disabled ? t("t_enable_and_run_cell") : t("t_disable_this_cell_and_all_cells_that_depend_on_it")}
-                          tag=${running_disabled ? "enable_cell" : "disable_cell"}
-                          contents=${running_disabled ? html`<b>${t("t_enable_cell_action")}</b>` : html`${t("t_disable_cell_action")}`}
-                          onClick=${toggle_running_disabled}
-                          setOpen=${setOpen}
-                      />`}
-                      ${any_logs
-                          ? html`<${InputContextMenuItem}
-                                title=${show_logs ? t("t_show_logs_action_description") : t("t_hide_logs_action_description")}
-                                tag=${show_logs ? "hide_logs" : "show_logs"}
-                                contents=${show_logs ? t("t_hide_logs_action") : t("t_show_logs_action")}
-                                onClick=${toggle_logs}
-                                setOpen=${setOpen}
-                            />`
-                          : null}
                       ${is_copy_output_supported()
                           ? html`<${InputContextMenuItem}
                                 tag="copy_output"
                                 contents=${t("t_copy_output_action")}
                                 title=${t("t_copy_output_action_description")}
                                 onClick=${copy_output}
-                                setOpen=${setOpen}
-                            />`
-                          : null}
-
-                      ${!EMBER &&
-                      html`<${InputContextMenuItem}
-                          title=${skip_as_script ? t("t_enable_in_file_action_description") : t("t_disable_in_file_action_description")}
-                          tag=${skip_as_script ? "run_as_script" : "skip_as_script"}
-                          contents=${skip_as_script ? html`<b>${t("t_enable_in_file_action")}</b>` : html`${t("t_disable_in_file_action")}`}
-                          onClick=${toggle_skip_as_script}
-                          setOpen=${setOpen}
-                      />`}
-
-                      ${get_settings().AI_EDITOR_FEATURES && pluto_actions.get_session_options?.()?.server?.enable_ai_editor_features !== false
-                          ? html`<${InputContextMenuItem}
-                                tag="ask_ai"
-                                contents=${t("t_ask_ai_action")}
-                                title=${t("t_ask_ai_action_description")}
-                                onClick=${ask_ai}
                                 setOpen=${setOpen}
                             />`
                           : null}

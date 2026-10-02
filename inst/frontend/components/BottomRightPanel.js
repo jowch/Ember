@@ -9,12 +9,14 @@ import { useEventListener } from "../common/useEventListener.js"
 import { t, th } from "../common/lang.js"
 import { NotifyWhenDone } from "./NotifyWhenDone.js"
 import { get_settings } from "./Settings.js"
-import { EMBER } from "../common/EmberFlags.js"
 
 /**
  * @typedef PanelTabName
  * @type {"docs" | "process" | null}
  */
+
+// The "Live docs" tab, replaced by the R help panel in piece 4.
+const HELP_PANEL = false
 
 export const open_bottom_right_panel = (/** @type {PanelTabName} */ tab) => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: tab }))
 
@@ -116,7 +118,7 @@ export let BottomRightPanel = ({
         <aside id="helpbox-wrapper" ref=${container_ref}>
             <pluto-helpbox class=${cl({ hidden, [`helpbox-${open_tab ?? hidden}`]: true })}>
                 <header translate=${false}>
-                    ${!EMBER &&
+                    ${HELP_PANEL &&
                     html`<button
                         title=${t("t_panel_docs_description")}
                         class=${cl({
@@ -176,7 +178,7 @@ export let BottomRightPanel = ({
                                   <span></span>
                               </button>`}
                 </header>
-                ${!EMBER && open_tab === "docs"
+                ${HELP_PANEL && open_tab === "docs"
                     ? html`<${LiveDocsTab}
                           focus_on_open=${focus_docs_on_open_ref.current}
                           desired_doc_query=${desired_doc_query}

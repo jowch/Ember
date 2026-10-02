@@ -5,7 +5,15 @@ import { useEventListener } from "../common/useEventListener.js"
 import { html, useLayoutEffect, useRef } from "../imports/Preact.js"
 import { getCurrentLanguage, t, th } from "../common/lang.js"
 import * as desktop from "./DesktopInterface.js"
-import { with_offline_bundle_query } from "./PlutoLandUpload.js"
+
+/** Add the &offline_bundle=true query parameter to a URL string */
+export const with_offline_bundle_query = (/** @type {string | URL | undefined} */ url) => {
+    if (!url) return url
+    if (url?.toString().startsWith("data:")) return url
+    const u = new URL(url, window.location.href)
+    u.searchParams.set("offline_bundle", "true")
+    return u.toString()
+}
 
 const Circle = ({ fill }) => html`
     <svg

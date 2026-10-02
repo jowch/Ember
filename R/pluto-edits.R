@@ -137,7 +137,8 @@ target_order <- function(before, after) {
 #' Inserted ids keep the client's id (insert_cell(..., id = <client id>);
 #' engine change, see RATIONALE.md): the browser already shows the cell under
 #' that id and its next request is run_multiple_cells for it. Their code is
-#' `after$cell_inputs[[id]]$code` and kind "code".
+#' `after$cell_inputs[[id]]$code` and kind `after$cell_inputs[[id]]$kind %||%
+#' "code"` (undo delete and paste of a markdown cell keep it markdown).
 #'
 #' Indexes are computed as edit_notebook() reads them: positions after the
 #' previous ops, 1-based.
@@ -153,7 +154,8 @@ order_ops <- function(current, target, after) {
     cur  <- setdiff(cur, id)
     idx  <- if (is.null(pred)) 1L else match(pred, cur) + 1L
     ops  <- c(ops, list(if (id %in% current) move_cell(id, idx)
-                        else insert_cell(idx, code = after$cell_inputs[[id]]$code, id = id)))
+                        else insert_cell(idx, code = after$cell_inputs[[id]]$code,
+                                         kind = after$cell_inputs[[id]]$kind %||% "code", id = id)))
     cur  <- append(cur, id, after = idx - 1L)
   }
   stopifnot(identical(cur, target))

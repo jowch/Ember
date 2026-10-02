@@ -6,58 +6,14 @@ import _ from "../imports/lodash-es.js"
 // - The package provides a lot of additional functionality that we don't need.
 // - The main funcionality we need is simple enough.
 
-import {
-    // in alphabetical order
-    chinese_simplified,
-    dansk,
-    deutsch,
-    ellinika,
-    english,
-    english_generated_bases,
-    español,
-    french,
-    italiano,
-    japanese,
-    nederlands_nl,
-    norsk_bokmål,
-    persian,
-    polski,
-    portugues_pt,
-    russian,
-    suomi,
-    corporate_english,
-    czech,
-    arabic,
-} from "../imports/lang_imports.js"
+import { english } from "../imports/lang_imports.js"
 
 /**
- * @typedef {string & keyof typeof english | string & keyof typeof english_generated_bases} TranslationKey
+ * @typedef {string & keyof typeof english} TranslationKey
  */
 
-const without_empty_keys = (obj) => {
-    return Object.fromEntries(Object.entries(obj).filter(([_, value]) => value !== ""))
-}
-
 const resources = {
-    "ar": without_empty_keys(arabic),
-    "zh": without_empty_keys(chinese_simplified),
-    "cs": without_empty_keys(czech),
-    "da": without_empty_keys(dansk),
-    "de": without_empty_keys(deutsch),
-    "el": without_empty_keys(ellinika),
     "en": english,
-    "corpo-US": without_empty_keys(corporate_english),
-    "es-419": without_empty_keys(español),
-    "fa": without_empty_keys(persian),
-    "fi": without_empty_keys(suomi),
-    "fr": without_empty_keys(french),
-    "it": without_empty_keys(italiano),
-    "ja": without_empty_keys(japanese),
-    "nl-NL": without_empty_keys(nederlands_nl),
-    "nb": without_empty_keys(norsk_bokmål),
-    "pt-PT": without_empty_keys(portugues_pt),
-    "pl": without_empty_keys(polski),
-    "ru-RU": without_empty_keys(russian),
 }
 
 /**
@@ -110,35 +66,6 @@ export const t = (key, options = {}) => {
 const format_value = (lang, value) => (typeof value === "number" ? new Intl.NumberFormat(lang).format(value) : value)
 
 /**
- * Get available languages with their display names and translation completeness
- * @returns {Array<{code: string, name: string, completeness: number}>}
- */
-export const getAvailableLanguages = () => {
-    const languages = Object.keys(resources)
-    const englishKeys = Object.keys(resources.en ?? {})
-    const totalKeys = englishKeys.length
-
-    return languages.map((lang) => {
-        const lang_entries = Object.entries(resources[lang] ?? {}).filter(([key, value]) => value !== "")
-        const completeness = totalKeys > 0 ? Math.round((lang_entries.length / totalKeys) * 100) : 100
-
-        return {
-            code: lang,
-            name: t(`t_language_name`, { lng: lang, fallbackLng: false, defaultValue: lang }),
-            completeness: completeness,
-        }
-    })
-}
-
-/**
- * Change the current language
- * @param {string} language - Language code
- */
-export const changeLanguage = async (language) => {
-    localStorage.setItem("i18nextLng", language)
-}
-
-/**
  * Get current language
  * @returns {string}
  */
@@ -172,6 +99,19 @@ const getLanguage = _.memoize((to_search) => {
     }
     return "en"
 }, JSON.stringify)
+
+/** Format a duration in seconds as "5 seconds" or "2 minutes". */
+export const pretty_long_time = (/** @type {number} */ sec) => {
+    const min = sec / 60
+    const sec_r = Math.ceil(sec)
+    const min_r = Math.round(min)
+
+    if (sec < 60) {
+        return new Intl.NumberFormat(getCurrentLanguage(), { style: "unit", unit: "second", unitDisplay: "long" }).format(sec_r)
+    } else {
+        return new Intl.NumberFormat(getCurrentLanguage(), { style: "unit", unit: "minute", unitDisplay: "long" }).format(min_r)
+    }
+}
 
 /**
  * Like t, but you can interpolate Preact elements.

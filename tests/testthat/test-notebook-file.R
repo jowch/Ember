@@ -161,6 +161,8 @@ test_that("no_setup_marker_first_code_cell takes the first code cell and notes i
   file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
   expect_equal(file$setup, "a")
   expect_true("no_setup_marker" %in% problem_kinds(file))
+  # ui-2-tests.md 4: a markdown cell listed without "folded" opens unfolded.
+  expect_false(unname(file$cells[["md"]]$folded))
 })
 
 test_that("markdown_prefix strips '#' ' and a bare \"#'\", keeping an unprefixed line as is", {

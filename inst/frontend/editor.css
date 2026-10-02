@@ -2,32 +2,9 @@
 
 @import url("https://cdn.jsdelivr.net/npm/dialog-polyfill@0.5.6/dist/dialog-polyfill.css");
 
-/* @import url("https://fonts.googleapis.com/css?family=Roboto+Mono:400,400i,500,700&display=swap&subset=cyrillic,cyrillic-ext,greek,greek-ext,latin-ext"); */
-@import url("https://cdn.jsdelivr.net/npm/@fontsource/roboto-mono@4.4.5/400.css");
-@import url("https://cdn.jsdelivr.net/npm/@fontsource/roboto-mono@4.4.5/400-italic.css");
-@import url("https://cdn.jsdelivr.net/npm/@fontsource/roboto-mono@4.4.5/500.css");
-@import url("https://cdn.jsdelivr.net/npm/@fontsource/roboto-mono@4.4.5/700.css");
-
-/* @import url("https://fonts.googleapis.com/css?family=Alegreya+Sans:400,400i,500,500i,700,700i&display=swap&subset=cyrillic,cyrillic-ext,greek,greek-ext,latin-ext,vietnamese"); */
-/* @import url("https://cdn.jsdelivr.net/npm/@fontsource/alegreya-sans@5.0.12/400.css");
-@import url("https://cdn.jsdelivr.net/npm/@fontsource/alegreya-sans@5.0.12/500.css");
-@import url("https://cdn.jsdelivr.net/npm/@fontsource/alegreya-sans@5.0.12/700.css");
-@import url("https://cdn.jsdelivr.net/npm/@fontsource/alegreya-sans@5.0.12/400-italic.css");
-@import url("https://cdn.jsdelivr.net/npm/@fontsource/alegreya-sans@5.0.12/500-italic.css");
-@import url("https://cdn.jsdelivr.net/npm/@fontsource/alegreya-sans@5.0.12/700-italic.css"); */
-@import url("./fonts/alegreya.css");
-
-@import url("./fonts/juliamono.css");
-@import url("./fonts/vollkorn.css");
-/* @import url("https://fonts.googleapis.com/css2?family=Lato&display=swap"); */
-@import url("https://cdn.jsdelivr.net/npm/@fontsource/lato@4.4.5/400.css");
-@import url("https://cdn.jsdelivr.net/npm/@fontsource/lato@4.4.5/400-italic.css");
-
 @import url("./themes/light.css");
 @import url("./themes/dark.css");
 @import url("./ansi-colors.css");
-
-@import url("./featured-card.css");
 
 @import url("./hide-ui.css");
 
@@ -38,16 +15,19 @@
     /* use the value "contextual" to enable contextual ligatures `document.documentElement.style.setProperty('--pluto-operator-ligatures', 'contextual');`
         for julia mono see here: https://cormullion.github.io/pages/2020-07-26-JuliaMono/#contextual_and_stylistic_alternates_and_ligatures */
     --pluto-operator-ligatures: none;
-    --julia-mono-font-stack: JuliaMono, Menlo, "Roboto Mono", "Lucida Sans Typewriter", "Source Code Pro", monospace;
+    --system-fonts-mono: ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    /* Kept under its old name for other CSS and for CodeMirror code; it is
+       the system monospace stack, not JuliaMono, which Ember doesn't vendor. */
+    --julia-mono-font-stack: var(--system-fonts-mono);
     --sans-serif-font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
-    --lato-ui-font-stack:
-        "Lato", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Cantarell, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol",
-        system-ui, sans-serif;
-    --roboto-mono-font-stack: "Roboto Mono", "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", monospace;
     --system-ui-font-stack:
         -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Cantarell, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", system-ui,
         sans-serif;
-    --system-fonts-mono: Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    /* Kept under their old names; both now point at the system stacks
+       instead of the webfonts Ember doesn't vendor. */
+    --lato-ui-font-stack: var(--system-ui-font-stack);
+    --roboto-mono-font-stack: var(--system-fonts-mono);
+    --ember-prose-font-stack: var(--system-ui-font-stack);
 
     color-scheme: light dark;
 
@@ -127,7 +107,7 @@ pluto-notebook {
 /* (can be overriden by custom style) */
 
 pluto-output {
-    font-family: "Alegreya Sans", "Trebuchet MS", sans-serif;
+    font-family: var(--ember-prose-font-stack);
     font-size: 14.5px;
     font-weight: 400;
     color: var(--pluto-output-color);
@@ -139,7 +119,7 @@ pluto-output h3,
 pluto-output h4,
 pluto-output h5,
 pluto-output h6 {
-    font-family: "Vollkorn", Palatino, Georgia, serif;
+    font-family: var(--ember-prose-font-stack);
     font-feature-settings: "lnum", "pnum";
     font-weight: 600;
     color: var(--pluto-output-h-color);
@@ -329,7 +309,7 @@ pluto-output div.admonition {
     margin-block-end: 1em;
 }
 pluto-output div.admonition .admonition-title {
-    font-family: "Vollkorn", Palatino, sans-serif;
+    font-family: var(--ember-prose-font-stack);
     font-feature-settings: "lnum", "pnum";
     color: var(--admonition-title-color);
     font-weight: 600;
@@ -688,7 +668,7 @@ div.export_title {
 }
 a.export_card header {
     margin-block: 0px;
-    font-family: "Vollkorn", Palatino, sans-serif;
+    font-family: var(--ember-prose-font-stack);
     /* font-family: system-ui; */
     font-feature-settings: "lnum", "pnum";
     font-size: 17px;
@@ -1074,7 +1054,7 @@ nav#at_the_top img#logo-small {
     border-radius: 3px;
     border: 2px solid var(--nav-filepicker-focus-color);
     color: var(--white);
-    font-family: "Roboto Mono", monospace;
+    font-family: var(--roboto-mono-font-stack);
     font-weight: 600;
     font-size: 0.75rem;
 }
@@ -3958,7 +3938,7 @@ button.floating_back_button {
 }
 
 .cm-tooltip-lint {
-    font-family: "JuliaMono";
+    font-family: var(--julia-mono-font-stack);
     font-size: 0.75rem;
     z-index: 100;
 }

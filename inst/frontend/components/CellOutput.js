@@ -25,7 +25,6 @@ import { EditorState, EditorView, defaultHighlightStyle, syntaxHighlighting } fr
 import { pluto_syntax_colors_julia } from "./CellInput.js"
 
 import hljs from "../imports/highlightjs.js"
-import { julia_mixed } from "./CellInput/mixedParsers.js"
 import { julia, r } from "../imports/CodemirrorPlutoSetup.js"
 import { SafePreviewSanitizeMessage } from "./SafePreviewUI.js"
 import lodashLibrary from "../imports/lodash-es.js"

@@ -106,7 +106,7 @@ const on_jump = (hasBarrier, pluto_actions, cell_id) => () => {
  * }} props
  * */
 export const Cell = ({
-    cell_input: { cell_id, code, code_folded, metadata },
+    cell_input: { cell_id, code, code_folded, kind, metadata },
     cell_result: { queued, running, runtime, errored, output, logs, published_object_keys, depends_on_disabled_cells, depends_on_skipped_cells },
     cell_dependencies,
     cell_input_local,
@@ -208,7 +208,8 @@ export const Cell = ({
     const activate_animation = useDebouncedTruth(running || queued || waiting_to_run)
 
     const class_code_differs = code !== (cell_input_local?.code ?? code)
-    const no_output_yet = (output?.last_run_timestamp ?? 0) === 0
+    // Markdown cells never run: their output is always the rendered text.
+    const no_output_yet = kind !== "markdown" && (output?.last_run_timestamp ?? 0) === 0
     const code_not_trusted_yet = process_waiting_for_permission && no_output_yet
 
     // When reading the code in a static HTML preview
@@ -344,6 +345,7 @@ export const Cell = ({
             <${CellInput}
                 local_code=${cell_input_local?.code ?? code}
                 remote_code=${code}
+                kind=${kind}
                 global_definition_locations=${global_definition_locations}
                 disable_input=${disable_input}
                 focus_after_creation=${focus_after_creation}
@@ -358,14 +360,8 @@ export const Cell = ({
                 on_update_doc_query=${on_update_doc_query}
                 on_focus_neighbor=${on_focus_neighbor}
                 on_line_heights=${set_line_heights}
-                nbpkg=${nbpkg}
                 cell_id=${cell_id}
                 notebook_id=${notebook_id}
-                metadata=${metadata}
-                any_logs=${any_logs}
-                show_logs=${show_logs}
-                set_show_logs=${set_show_logs}
-                set_cell_disabled=${set_cell_disabled}
                 cm_highlighted_line=${cm_highlighted_line}
                 cm_highlighted_range=${cm_highlighted_range}
                 cm_diagnostics=${cm_diagnostics}

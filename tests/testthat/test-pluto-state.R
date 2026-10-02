@@ -143,8 +143,9 @@ test_that("a parse error gives parseerror+object with one diagnostic on the righ
   v <- snapshot_of(s)$cells$A
   o <- project_output(v)
   expect_equal(o$mime, "application/vnd.pluto.parseerror+object")
-  expect_equal(length(o$body), 1)
-  expect_true(o$body[[1]]$line >= 1)
+  expect_equal(length(o$body$diagnostics), 1)
+  expect_true(o$body$diagnostics[[1]]$line >= 1)
+  expect_true(check_wire(o))
 })
 
 test_that("a multiple-definitions error message starts right, with fixes on separate lines (10)", {
@@ -373,4 +374,25 @@ test_that("a one-cell change at 2000 cells stays fast when every cell has a resu
   }
   # Loose enough for slow CI runners (60 ms on Windows), still far below ~2s.
   expect_lt(tt, 0.5)
+})
+
+# ---- ui-2-tests.md 1: markdown kind on the wire -----------------------------
+
+test_that("project_cell_input() gives kind markdown/code; check_wire() passes on every engine fixture (ui-2 1)", {
+  s0 <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- a"),
+                        Md = cell("# hi", kind = "markdown")))
+  js0 <- pluto_state(s0)$js
+  expect_equal(js0$cell_inputs$Md$kind, "markdown")
+  expect_equal(js0$cell_inputs$A$kind, "code")
+  expect_true(check_wire(js0))
+
+  r1 <- boot(s0, "A")
+  js1 <- pluto_state(r1$state)$js
+  expect_equal(js1$cell_inputs$Md$kind, "markdown")
+  expect_true(check_wire(js1))
+
+  r2 <- drive(r1$state, wk_done(1, last_token(r1), report(created = "a"), at(10)))
+  js2 <- pluto_state(r2$state)$js
+  expect_equal(js2$cell_inputs$Md$kind, "markdown")
+  expect_true(check_wire(js2))
 })

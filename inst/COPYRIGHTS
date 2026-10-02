@@ -1,0 +1,15 @@
+This package's R code and worker (R/, inst/worker.R) are copyright Jonathan
+Chen, licensed under the package's own licence (see LICENSE).
+
+The frontend in inst/frontend is forked from Pluto.jl's frontend
+(https://github.com/fonsp/Pluto.jl), used and modified under the MIT
+licence. Its text is at inst/frontend/LICENSE.
+
+- Pluto.jl: MIT, Copyright (c) 2020-2026 the Pluto.jl authors.
+- codemirror-pluto-setup: MIT, Copyright (c) 2021 Pluto.jl authors. Its
+  source, which inst/frontend/imports/codemirror-ember-setup.js is built
+  from, is copied and extended in frontend-setup/src/index.js.
+- CodeMirror 6: MIT, Copyright (C) 2018-2021 by Marijn Haverbeke
+  <marijnh@gmail.com> and others.
+- Lezer: MIT, Copyright (C) 2018-2021 by Marijn Haverbeke
+  <marijnh@gmail.com> and others.

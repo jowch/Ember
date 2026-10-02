@@ -4,9 +4,8 @@ import _ from "../imports/lodash-es.js"
 //@ts-ignore
 import { useDialog } from "../common/useDialog.js"
 import { useEventListener } from "../common/useEventListener.js"
-import { t, th } from "../common/lang.js"
+import { t, th, pretty_long_time } from "../common/lang.js"
 import { downstream_recursive } from "../common/SliderServerClient.js"
-import { pretty_long_time } from "./EditOrRunButton.js"
 import { and, ctrl_or_cmd_name } from "../common/KeyboardShortcuts.js"
 import { useMillisSinceTruthy } from "./RunArea.js"
 import { cl } from "../common/ClassTable.js"
@@ -145,7 +144,7 @@ export const ConfirmBeforeLongRuntime = ({}) => {
                 ? html`<p class="bonus-info">
                       ${th(current_hint, {
                           submit_all_changes: html`<kbd>${ctrl_or_cmd_name}</kbd>${and}<kbd>S</kbd>`,
-                          disable_cell: html`<a href="https://plutojl.org/en/docs/disable-cell/" target="_blank"
+                          disable_cell: html`<a href="https://github.com/jowch/Ember#readme" target="_blank"
                               ><strong>${t("t_disable_cell_action")}</strong></a
                           >`,
                       })}

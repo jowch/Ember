@@ -14,7 +14,7 @@
 
         /* Cells */
         --normal-cell: 100, 100, 100;
-        /* --code-differs */
+        --code-differs: 155, 144, 108;
         --error-color: 255, 125, 125;
         --normal-cell-color: rgba(var(--normal-cell), 0.2);
         --dark-normal-cell-color: rgba(var(--normal-cell), 0.4);
