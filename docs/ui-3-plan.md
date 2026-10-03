@@ -376,11 +376,17 @@ changes:
   `definer_lookup` and `attachers`, so they satisfy no reference. A
   reference `n` of cell `b` now resolves in this order:
   1. enabled cells defining `n`: `via = "definition"`;
-  2. else disabled cells defining `n`: `via = "disabled"` (what `b` would
+  2. else enabled cells attaching a package that exports `n`:
+     `via = "package"` (an enabled package export wins over a disabled
+     global definer, the same shadowing order as two enabled candidates);
+  3. else disabled cells defining `n`: `via = "disabled"` (what `b` would
      read if they were enabled);
-  3. else enabled cells attaching a package that exports `n`:
-     `via = "package"`;
   4. else disabled cells attaching such a package: `via = "disabled"`.
+
+  Rules 3-4 are skipped for the setup cell: a name only a disabled cell
+  would provide is left unresolved there, as any other unknown name is,
+  rather than ever marking the setup cell itself off (which would take the
+  whole notebook with it, since every other cell depends on it).
 
   A disabled cell's own references still resolve as above, so it keeps its
   edges to what it reads.

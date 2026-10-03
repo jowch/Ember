@@ -322,15 +322,20 @@ resolve_cells <- function(analyses, learned, ids) {
 #' 1. enabled cells (other than `b`) whose public definitions include `n`:
 #'    one edge each, via "definition". If `n` is a dot-name defined in
 #'    another cell, no edge; `find_errors` reports it.
-#' 2. else disabled cells (other than `b`) whose public definitions include
-#'    `n`: one edge each, via "disabled" -- what `b` would read if they
-#'    were enabled.
-#' 3. else enabled cells (other than `b`) attaching a package whose exports
+#' 2. else enabled cells (other than `b`) attaching a package whose exports
 #'    include `n`: one edge each, via "package". A global definition
 #'    shadows a package export, as the global environment comes first on
-#'    R's search path, which is why rule 1 stops the search before this one.
+#'    R's search path, which is why rule 1 stops the search before this
+#'    one; an enabled package export likewise wins over a disabled global
+#'    definer, which is why rules 3-4 come after this one, not before.
+#' 3. else disabled cells (other than `b`) whose public definitions include
+#'    `n`: one edge each, via "disabled" -- what `b` would read if they
+#'    were enabled. Skipped when `b` is the setup cell: a name only a
+#'    disabled cell would provide is left unresolved there, the same as
+#'    any other unknown name, rather than ever marking the setup cell
+#'    itself off (which would take the whole notebook with it).
 #' 4. else disabled cells (other than `b`) attaching such a package: one
-#'    edge each, via "disabled".
+#'    edge each, via "disabled". Also skipped for the setup cell.
 #' A disabled cell's own references resolve the same way (rules 1-4 look at
 #' the target's status, not `b`'s), so it keeps edges to what it reads.
 #' Every cell other than `setup` gets an edge to `setup`, via "setup".
@@ -375,7 +380,7 @@ resolve_edges <- function(cells, setup, exports, ids, disabled = character()) {
     unique(unlist(lapply(pkgs, function(p) tbl[[p]]), use.names = FALSE))
   }
 
-  # Rules 1-2 only see public definitions: private names never appear in
+  # Rule 1 only sees public definitions: private names never appear in
   # `cells[[id]]$definitions`, so a dot-name reference falls through to no
   # edge without a special case here. Each cell's own edges are built as
   # plain vectors and combined with `unlist()` once, rather than growing
@@ -383,6 +388,7 @@ resolve_edges <- function(cells, setup, exports, ids, disabled = character()) {
   ref_edges <- lapply(ids, function(b) {
     refs <- cells[[b]]$references
     if (length(refs) == 0) return(NULL)
+    is_setup <- identical(b, setup)
     parts <- lapply(refs, function(n) {
       definers <- definer_lookup[[n]]
       if (!is.null(definers)) definers <- definers[definers != b]
@@ -391,19 +397,20 @@ resolve_edges <- function(cells, setup, exports, ids, disabled = character()) {
                     name = rep(n, length(definers)),
                     via = rep("definition", length(definers))))
       }
-      disabled_definers <- disabled_definer_lookup[[n]]
-      if (!is.null(disabled_definers)) disabled_definers <- disabled_definers[disabled_definers != b]
-      if (length(disabled_definers) > 0) {
-        return(list(from = rep(b, length(disabled_definers)), to = disabled_definers,
-                    name = rep(n, length(disabled_definers)),
-                    via = rep("disabled", length(disabled_definers))))
-      }
       provider_ids <- package_providers(n, attachers)
       provider_ids <- provider_ids[provider_ids != b]
       if (length(provider_ids) > 0) {
         provider_ids <- ids[ids %in% provider_ids]
         return(list(from = rep(b, length(provider_ids)), to = provider_ids,
                     name = rep(n, length(provider_ids)), via = rep("package", length(provider_ids))))
+      }
+      if (is_setup) return(NULL)
+      disabled_definers <- disabled_definer_lookup[[n]]
+      if (!is.null(disabled_definers)) disabled_definers <- disabled_definers[disabled_definers != b]
+      if (length(disabled_definers) > 0) {
+        return(list(from = rep(b, length(disabled_definers)), to = disabled_definers,
+                    name = rep(n, length(disabled_definers)),
+                    via = rep("disabled", length(disabled_definers))))
       }
       disabled_provider_ids <- package_providers(n, disabled_attachers)
       disabled_provider_ids <- disabled_provider_ids[disabled_provider_ids != b]

@@ -465,26 +465,63 @@ test_that("a dependent of a disabled cell gets a disabled edge and is off (ui-3 
 })
 
 test_that("a disabled package attacher gives a disabled edge; the setup cell's attach wins (ui-3 22)", {
+  # "mypkg"/"myfun", not a real package: wanted_packages() drops base
+  # packages (tools among them) regardless of attachment, which would make
+  # the assertion below pass for the wrong reason.
   g <- build_test_graph(list(
     S = fake_cell(code = "S"),
-    A = fake_cell(code = "A", attaches = "tools"),
-    B = fake_cell(code = "B", refs = "file_ext")
-  ), setup = "S", exports = list(tools = "file_ext"), disabled = "A")
-  row <- g$edges[g$edges$from == "B" & g$edges$name %in% "file_ext", , drop = FALSE]
+    A = fake_cell(code = "A", attaches = "mypkg"),
+    B = fake_cell(code = "B", refs = "myfun")
+  ), setup = "S", exports = list(mypkg = "myfun"), disabled = "A")
+  row <- g$edges[g$edges$from == "B" & g$edges$name %in% "myfun", , drop = FALSE]
   expect_equal(row$to, "A")
   expect_equal(row$via, "disabled")
   expect_true("B" %in% names(g$off))
-  expect_true(any(vapply(g$cells, function(c) "tools" %in% c$packages, logical(1))))
+  # A package used only in a disabled cell stays installed and locked: it's
+  # still in wanted_packages(), not just visible in the per-cell analysis.
+  expect_true("mypkg" %in% wanted_packages(g, list()))
 
   g2 <- build_test_graph(list(
-    S = fake_cell(code = "S", attaches = "tools"),
-    A = fake_cell(code = "A", attaches = "tools"),
-    B = fake_cell(code = "B", refs = "file_ext")
-  ), setup = "S", exports = list(tools = "file_ext"), disabled = "A")
-  row2 <- g2$edges[g2$edges$from == "B" & g2$edges$name %in% "file_ext", , drop = FALSE]
+    S = fake_cell(code = "S", attaches = "mypkg"),
+    A = fake_cell(code = "A", attaches = "mypkg"),
+    B = fake_cell(code = "B", refs = "myfun")
+  ), setup = "S", exports = list(mypkg = "myfun"), disabled = "A")
+  row2 <- g2$edges[g2$edges$from == "B" & g2$edges$name %in% "myfun", , drop = FALSE]
   expect_equal(row2$to, "S")
   expect_equal(row2$via, "package")
   expect_false("B" %in% names(g2$off))
+  expect_true("mypkg" %in% wanted_packages(g2, list()))
+})
+
+test_that("an enabled package export wins over a disabled global definer (review)", {
+  g <- build_test_graph(list(
+    S = fake_cell(code = "S", attaches = "mypkg"),
+    A = fake_cell(code = "A", defs = "myfun"),
+    B = fake_cell(code = "B", refs = "myfun")
+  ), setup = "S", exports = list(mypkg = "myfun"), disabled = "A")
+  row <- g$edges[g$edges$from == "B" & g$edges$name %in% "myfun", , drop = FALSE]
+  expect_equal(row$to, "S")
+  expect_equal(row$via, "package")
+  expect_false("B" %in% names(g$off))
+})
+
+test_that("the setup cell never resolves a reference through a disabled cell (review)", {
+  g <- build_test_graph(list(
+    S = fake_cell(code = "S", attaches = "tools", refs = "x"),
+    A = fake_cell(code = "A", defs = "x")
+  ), setup = "S", exports = list(tools = character()), disabled = "A")
+  expect_equal(nrow(g$edges[g$edges$from == "S" & g$edges$name %in% "x", , drop = FALSE]), 0)
+  expect_equal(g$off, c(A = "A"))
+  expect_false("S" %in% names(g$off))
+
+  # Without disabling A, S resolves normally (a sanity check on the fixture).
+  g2 <- build_test_graph(list(
+    S = fake_cell(code = "S", attaches = "tools", refs = "x"),
+    A = fake_cell(code = "A", defs = "x")
+  ), setup = "S", exports = list(tools = character()))
+  row2 <- g2$edges[g2$edges$from == "S" & g2$edges$name %in% "x", , drop = FALSE]
+  expect_equal(row2$to, "A")
+  expect_equal(row2$via, "definition")
 })
 
 test_that("a disabled cell is excluded from cycle, private_name and global_setting errors (ui-3 23)", {

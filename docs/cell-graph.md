@@ -145,18 +145,23 @@ setup edge, which is what makes "changing the setup cell reruns
 everything" and "the setup cell can't read other cells' names" both fall
 out of ordinary cycle detection instead of special cases.
 
-**Disabled cells** (piece 1b) are given to `notebook_graph()` as
-`disabled`, a set of ids. A disabled cell is read and resolved exactly
-like any other -- it keeps edges to what it reads, and `wanted_packages()`
-still sees what it would attach -- but it defines nothing for anyone else:
-`resolve_edges()` only falls back to a disabled definer or attacher
-(`via = "disabled"`) when no enabled cell provides the name, and
-`find_errors()` leaves disabled cells out of every rule but `parse`. `off`
-is the disabled cells plus everything downstream of them through any edge
-(Pluto's `depends_on_disabled_cells`): a cell is off exactly when it needs
-a name only an off cell provides. A cycle that only exists through a
-`"disabled"` edge is not reported, since that edge is how a dependent of a
-disabled cell is found, not a real ordering constraint.
+**Disabled cells** are given to `notebook_graph()` as `disabled`, a set of
+ids. A disabled cell is read and resolved exactly like any other -- it
+keeps edges to what it reads, and `wanted_packages()` still sees what it
+would attach -- but it defines nothing for anyone else: `resolve_edges()`
+only falls back to a disabled definer or attacher (`via = "disabled"`)
+when no enabled cell provides the name, enabled definitions and enabled
+package exports both taking priority over it (the same shadowing order as
+two enabled candidates), and `find_errors()` leaves disabled cells out of
+every rule but `parse`. The setup cell never takes that fallback: a name
+only a disabled cell would provide is left unresolved there, as any other
+unknown name is, rather than ever marking the setup cell itself off (which
+would take the whole notebook with it). `off` is the disabled cells plus
+everything downstream of them through any edge (Pluto's
+`depends_on_disabled_cells`): a cell is off exactly when it needs a name
+only an off cell provides. A cycle that only exists through a `"disabled"`
+edge is not reported, since that edge is how a dependent of a disabled
+cell is found, not a real ordering constraint.
 
 **Run order** is a display-order-first topological walk (emit ancestors in
 display order, then the cell), run three times: setup, package-attaching
