@@ -411,7 +411,6 @@ test_that("notebook_snapshot() strips ANSI from output and console text; noteboo
   expect_match(a$output$text, "green")
   expect_match(a$console[[1]]$text, "red")
 
-  state_view <- Find(function(c) identical(c$id, names(snap$cells)[2]), notebook_state(nb)$results)
   raw_console <- notebook_state(nb)$results[[names(snap$cells)[2]]]$console
   expect_true(any(grepl("\033", vapply(raw_console, `[[`, character(1), "text"), fixed = TRUE)))
 })
@@ -459,8 +458,15 @@ test_that("worker_query() answers when idle, NULL at once while busy, NULL in pr
   for (i in 1:50) { later::run_now(timeout = 0.05); Sys.sleep(0.02) }
   expect_identical(late_calls, 1L)
   expect_null(late_reply)
-  expect_true(wait_for(nb, timeout = 5))  # the worker is still alive and answers again
+  expect_true(wait_for(nb, timeout = 5))
   expect_false(is.null(nb$proc))
+
+  # The worker is still alive and answers again: a fresh query, with no
+  # short timeout this time, gets a real reply.
+  got_again <- "unset"
+  worker_query(nb, list(type = "signature", name = "lm", package = NULL), function(r) got_again <<- r)
+  expect_true(wait_for(nb, function(s) !identical(got_again, "unset"), timeout = 10))
+  expect_match(got_again$text, "^lm\\(formula, data")
 
   # A worker exit fails every pending query. A real query's reply can beat
   # a kill() by a wide enough margin on a fast loopback that this can't be
