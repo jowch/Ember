@@ -12,7 +12,7 @@ a graph, rebuilding only what that fact can change.
 }
 \usage{
 notebook_graph(cells, setup = names(cells)[1], exports = list(),
-  learned = NULL, previous = NULL, read_file = NULL)
+  learned = NULL, disabled = character(), previous = NULL, read_file = NULL)
 
 graph_learn(graph, cell, definitions = NULL, references = NULL)
 }
@@ -28,6 +28,10 @@ installed. A package not in the list contributes no edges.}
 \item{learned}{\code{list(definitions = <id -> character>, references = <id ->
 character>)} from the footer and from formula checks; \code{NULL} means none.
 Ids not in \code{cells} are dropped.}
+\item{disabled}{Character ids of disabled cells (see \code{disable_cell()}).
+Ids not in \code{cells} are dropped. Disabled cells are analysed like any
+other, but satisfy no other cell's reference and count towards no error
+rule but \code{parse}.}
 \item{previous}{An earlier \code{ember_graph} for the same notebook, or \code{NULL}.
 Analyses are reused for cells whose code is identical and whose sourced
 files still read the same; everything else is recomputed. Passing

@@ -378,8 +378,15 @@ test_that("interrupt_r_code", {
   on.exit(h$close())
   run_and_wait(h, "a", 1L, "x <- 1; y <- 2")
 
-  h$send(run_msg("b", 2L, "t0 <- Sys.time(); repeat { if (as.numeric(Sys.time() - t0) > 10) break }"))
-  Sys.sleep(0.3)
+  # An interrupt that arrives before the loop starts is swallowed between
+  # runs (slow Windows runners), so wait for the loop to say it has begun.
+  started <- tempfile()
+  h$send(run_msg("b", 2L, sprintf(
+    "writeLines('go', %s); t0 <- Sys.time(); repeat { if (as.numeric(Sys.time() - t0) > 10) break }",
+    deparse(started))))
+  deadline <- Sys.time() + 10
+  while (!file.exists(started) && Sys.time() < deadline) Sys.sleep(0.05)
+  expect_true(file.exists(started))
   t0 <- Sys.time()
   h$process$interrupt()
   r <- wait_for_done(h, timeout = 5)
