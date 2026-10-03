@@ -8,33 +8,36 @@ browser, and Pluto's "errors flow downstream" rule. This document plans how
 to build it. Tests are listed in [ui-3-tests.md](ui-3-tests.md) and cited
 here by number.
 
-It is nine branches. Engine work comes first, then the frontend. Each
+It is ten branches. Engine work comes first, then the frontend. Each
 branch ends in something that runs, with CI green; an engine branch that
 changes what the page receives includes the minimal page change, and the
 restyle comes later.
 
-1. **Piece 1, errors flow downstream and Disable cell**: dependents of a
-   failed cell run and fail on their own; no blocked state; a disabled cell
-   and its dependents are skipped and written commented out.
-2. **Piece 2, text cells and inline r**: `#'`-only cells are text;
+1. **Piece 1a, errors flow downstream**: dependents of a failed cell run
+   and fail on their own; no blocked state.
+2. **Piece 1b, Disable cell**: a disabled cell and its dependents are
+   skipped and written commented out; disabled cells define nothing.
+3. **Piece 2, text cells and inline r**: `#'`-only cells are text;
    `` `r expr` `` runs reactively; mixed cells are an error with Split;
    function docstrings in Help.
-3. **Piece 3, figures and Variables data**: fixed figure sizes from `#|`
+4. **Piece 3, figures and Variables data**: fixed figure sizes from `#|`
    lines; each cell reports its globals' types and short values.
-4. **Piece 7a, shared dialogs and menus**: `ask`/`tell` in-page dialogs and
+5. **Piece 7a, shared dialogs and menus**: `ask`/`tell` in-page dialogs and
    a keyboard menu hook, which the later frontend branches build on.
-5. **Piece 4, notebooks and packages from the browser**: start page,
+6. **Piece 4, notebooks and packages from the browser**: start page,
    create, rename or move, recent list, Packages Update, real install
    errors.
-6. **Piece 5, identity and layout**: tokens, fonts, column, header, side
+7. **Piece 5, identity and layout**: tokens, fonts, column, header, side
    panel and its tabs, theme switching.
-7. **Piece 6a, cell chrome**: rail, run/stop, cell menu, "+", chips, empty
-   notebook, disabled states.
-8. **Piece 6b, errors, outputs and text cells**: error box and traceback,
+8. **Piece 6a, cell chrome**: rail, run/stop, cell menu, "+", chips, empty
+   notebook, disabled states; argument tooltips close when the cursor
+   leaves their cell (design-gaps.md).
+9. **Piece 6b, errors, outputs and text cells**: error box and traceback,
    tables, trees, console, ANSI palette, figures, text-cell editing.
-9. **Piece 7, menus, settings, shortcuts, accessibility, wording**: Export
+10. **Piece 7, menus, settings, shortcuts, accessibility, wording**: Export
    menu, Settings, shortcuts sheet, F1, keyboard path, names, wording
-   sweep, dead-code deletion.
+   sweep, dead-code deletion; MathJax loaded only when a cell has TeX
+   (design-gaps.md).
 
 See [Order of implementation](#order-of-implementation) for why.
 
@@ -699,7 +702,8 @@ about 50 lines.
 
 ### Order within the piece
 
-One branch; each step leaves CI green.
+Two branches: 1a is steps 1-5, 1b is steps 6-9. Each step leaves CI
+green.
 
 1. Worker `drop_globals` and the engine sending it on every non-ok result,
    one commit: tests 2, 6, 8, 12.
@@ -710,8 +714,8 @@ One branch; each step leaves CI green.
 4. View, snapshot, projection and page in one commit (the projection stops
    sending `blocked_by` in the commit the page stops reading it):
    `view_context()`, `not_run_ids()`, `cell_key()`,
-   `project_cell_result()`, `project_error()`, Cell.js (jump repointed to
-   `ember.disabled_by`), Notebook.js, ErrorMessage.js, english.json,
+   `project_cell_result()`, `project_error()`, Cell.js (the disabled-cell
+   jump is kept; step 9 repoints it to `ember.disabled_by`), Notebook.js, ErrorMessage.js, english.json,
    editor.css (disabled selectors kept): tests 10, 11.
 5. Request and e2e tests 13, 14 with `upstream.R`; docs for 1a.
 6. File format: reader, writer, `commented`, `disabled = FALSE` in every
@@ -723,7 +727,8 @@ One branch; each step leaves CI green.
    24-31.
 9. View, snapshot, projection, `pluto_edits()`, `on_run()` and the minimal
    page in one commit, so the page sends the patch in the commit the
-   server accepts it; `notebook_file_of()`'s `commented`; man page, docs:
+   server accepts it; Cell.js's jump repointed to `ember.disabled_by`;
+   `notebook_file_of()`'s `commented`; man page, docs:
    tests 17, 32-37 with `disabled.R`.
 
 ---
@@ -2971,17 +2976,20 @@ to existing tests listed under Piece 6 in the tests file.
    and the label CSS: tests 138, 140-142, 152.
 3. "+" overlay and empty-notebook hints (6.2, 6.9): tests 143, 151.
 4. Chips, stale names and the disabled states (6.3, 6.10): tests 144, 149.
+5. Argument tooltips close when the cursor leaves their cell or the cell
+   loses focus (design-gaps.md, "Argument tooltips stay on screen"); an e2e
+   check alongside test 152.
 
 **6b**
 
-5. Error data: worker, engine and projection in one commit (6.4), then the
+6. Error data: worker, engine and projection in one commit (6.4), then the
    ErrorMessage render: tests 127-129, 133, 139, 145.
-6. Tables and trees: worker and projection, then TreeView (6.5): tests 131,
+7. Tables and trees: worker and projection, then TreeView (6.5): tests 131,
    132, 134, 135, 146.
-7. Console and ANSI: the warning call, Logs.js, AnsiUp.js (6.6): tests 130,
+8. Console and ANSI: the warning call, Logs.js, AnsiUp.js (6.6): tests 130,
    136, 147.
-8. Figures CSS (6.7): test 148.
-9. Text cells (6.8): test 150.
+9. Figures CSS (6.7): test 148.
+10. Text cells (6.8): test 150.
 
 ---
 ## 7. Menus, settings, shortcuts, accessibility, wording
@@ -3399,7 +3407,10 @@ test-only dependency (never shipped in the package), for test 171.
 4. 7g: wording, then the deletions (Julia rewriters, stickers, binder,
    frontmatter, CSS, unused keys), running the e2e "open" test after each
    batch: tests 153-157, 159.
-5. axe: test 171.
+5. MathJax loaded only when a cell's output has TeX, so the page makes no
+   CDN request otherwise (design-gaps.md); offline.test.mjs checks that no
+   request leaves the machine.
+6. axe: test 171.
 
 ---
 
