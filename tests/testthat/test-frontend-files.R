@@ -12,6 +12,19 @@ frontend_files <- function(dir) {
   list.files(dir, recursive = TRUE, full.names = TRUE)
 }
 
+#' Strip `//`, `/* */` and (for HTML) `<!-- -->` comments from `text`, an
+#' `ext` ("js", "css" or "html") file's contents, so a comment mentioning
+#' something -- a stale CDN note, a vendored file's doc header -- is never
+#' mistaken for live code.
+strip_comments <- function(text, ext) {
+  text <- gsub("(?s)/\\*.*?\\*/", "", text, perl = TRUE)
+  if (identical(ext, "html")) text <- gsub("(?s)<!--.*?-->", "", text, perl = TRUE)
+  # `(?<!:)` so a `//` straight after a colon -- "https://", "http://" --
+  # is never mistaken for a line comment's start.
+  if (identical(ext, "js")) text <- gsub("(?m)(?<!:)//[^\n]*$", "", text, perl = TRUE)
+  text
+}
+
 #' Every `https?://` URL in `dir`'s `.js`/`.css`/`.html` files that sits in
 #' an import/load position -- a static or dynamic JS import, an HTML
 #' `<link>`/`<script>`'s `src=`/`href=`, or a CSS `url()` -- except one
@@ -21,19 +34,6 @@ frontend_files <- function(dir) {
 external_url_hits <- function(dir, allow = "mathjax@") {
   url_re <- "https?://[^\"'()\\s>]+"
   is_allowed <- function(url) any(vapply(allow, function(a) grepl(a, url, fixed = TRUE), logical(1)))
-
-  # Strip comments before scanning: a URL mentioned in a `//`/`/* */`/
-  # `<!-- -->` comment (a stale CDN note, a vendored file's own doc header)
-  # is text, not a load, the same way ui-2-tests.md 13 exempts a plain
-  # `<a href>`.
-  strip_comments <- function(text, ext) {
-    text <- gsub("(?s)/\\*.*?\\*/", "", text, perl = TRUE)
-    if (identical(ext, "html")) text <- gsub("(?s)<!--.*?-->", "", text, perl = TRUE)
-    # `(?<!:)` so a `//` straight after a colon -- "https://", "http://" --
-    # is never mistaken for a line comment's start.
-    if (identical(ext, "js")) text <- gsub("(?m)(?<!:)//[^\n]*$", "", text, perl = TRUE)
-    text
-  }
 
   read_text <- function(f, ext) {
     text <- tryCatch(readChar(f, file.info(f)$size, useBytes = TRUE), error = function(e) NA_character_)
@@ -211,28 +211,30 @@ test_that("the installed frontend is under 3 MB and THIRD-PARTY.txt matches COPY
 
 # ---- 78. alert()/confirm() only in the three spots piece 7a leaves native ----
 
-test_that("alert()/confirm() calls remain only in Settings.js, ExportBanner.js and Editor.js's shortcut list (78)", {
+test_that("alert()/confirm() calls remain only in Settings.js (1), ExportBanner.js (2) and Editor.js (1) (78)", {
   dir <- frontend_dir()
   js <- frontend_files(dir)
   js <- js[grepl("\\.js$", js)]
 
-  # Comments stripped the same way external_url_hits() does, so a stale
-  # mention of alert()/confirm() in a comment (like the ones dialogs.js's
-  # neighbours leave behind) isn't mistaken for a live call.
-  strip_js_comments <- function(text) {
-    text <- gsub("(?s)/\\*.*?\\*/", "", text, perl = TRUE)
-    gsub("(?m)(?<!:)//[^\n]*$", "", text, perl = TRUE)
-  }
+  # Matches alert(/confirm( plain, as window.alert(/window.confirm(,
+  # bracket-indexed (window["alert"](), and through optional chaining
+  # (confirm?.(), so a dodge around the plain form wouldn't slip past.
+  call_re <- paste0(
+    "\\bwindow\\[[\"'](?:alert|confirm)[\"']\\]\\s*\\(",
+    "|\\bwindow\\.(?:alert|confirm)\\s*\\(",
+    "|\\b(?:alert|confirm)\\s*\\?\\.\\s*\\(",
+    "|\\b(?:alert|confirm)\\s*\\("
+  )
 
-  hits <- character(0)
+  counts <- list()
   for (f in js) {
     text <- tryCatch(readChar(f, file.info(f)$size, useBytes = TRUE), error = function(e) NA_character_)
     if (is.na(text)) next
-    text <- strip_js_comments(text)
-    if (grepl("\\balert\\(|\\bconfirm\\(", text, perl = TRUE)) {
-      hits <- c(hits, basename(f))
-    }
+    text <- strip_comments(text, "js")
+    n <- length(regmatches(text, gregexpr(call_re, text, perl = TRUE))[[1]])
+    if (n > 0) counts[[basename(f)]] <- n
   }
+  counts <- counts[order(names(counts))]
 
-  expect_setequal(hits, c("Settings.js", "ExportBanner.js", "Editor.js"))
+  expect_equal(counts, list("Editor.js" = 1L, "ExportBanner.js" = 2L, "Settings.js" = 1L))
 })
