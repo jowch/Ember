@@ -339,7 +339,8 @@ project_output <- function(view) {
 #' Without commonmark: `text/plain`, with the values (without values, the
 #' spans) put in as plain text -- no tokens, no escaping, no `<span>`.
 project_text <- function(view, wrap) {
-  body <- paste(text_body(view$code), collapse = "\n")
+  body_lines <- text_body(view$code)
+  body <- paste(body_lines, collapse = "\n")
   out <- view$output
   values <- if (!is.null(out) && identical(out$mime, "application/vnd.ember.inline") &&
                 !isTRUE(view$code_differs)) {
@@ -352,11 +353,21 @@ project_text <- function(view, wrap) {
     return(wrap("text/plain", body))
   }
 
-  spans <- inline_spans(view$code)
-  pattern <- "(?<!(^``))(?<!(\\n``))`r[ #]([^`]+)\\s*`"
-  tokens <- sprintf("EMBERINLINE%dX", seq_len(nrow(spans)))
-  marked <- body
-  for (k in seq_along(tokens)) marked <- sub(pattern, tokens[[k]], marked, perl = TRUE)
+  # Marked line by line with replace_inline_matches() (text-cells.R), not
+  # a single sub() over the whole multi-line body: `[^`]+` in
+  # inline_span_pattern isn't anchored to one line, so a plain whole-body
+  # match (unlike inline_spans(), which inline_code() already indexes
+  # `values` by) can run past a line break onto the next span entirely.
+  idx <- 0L
+  tokens <- sprintf("EMBERINLINE%dX", seq_len(length(values)))
+  marked_lines <- vapply(body_lines, function(ln) {
+    mm <- line_inline_matches(ln)
+    if (length(mm$exprs) == 0) return(ln)
+    this_tokens <- tokens[idx + seq_along(mm$exprs)]
+    idx <<- idx + length(mm$exprs)
+    replace_inline_matches(ln, this_tokens)
+  }, character(1), USE.NAMES = FALSE)
+  marked <- paste(marked_lines, collapse = "\n")
 
   if (!commonmark_available()) {
     plain <- marked
@@ -365,10 +376,45 @@ project_text <- function(view, wrap) {
   }
   rendered <- render_markdown(marked)
   for (k in seq_along(tokens)) {
-    span <- sprintf('<span class="ember-inline">%s</span>', html_escape(values[[k]]))
-    rendered <- sub(tokens[[k]], span, rendered, fixed = TRUE)
+    rendered <- replace_inline_token(rendered, tokens[[k]], values[[k]])
   }
   wrap("text/html", rendered)
+}
+
+#' Replace one occurrence of `token` in `rendered` HTML with `value`: a
+#' plain, HTML-escaped value when `token` sits inside an open tag's
+#' attribute (e.g. a link's `href`, from a span inside `[text](` `r
+#' url` `)`) -- markup there would corrupt the attribute, not display --
+#' else the value wrapped in `<span class="ember-inline">`, as a value
+#' outside an attribute always is.
+replace_inline_token <- function(rendered, token, value) {
+  pos <- regexpr(token, rendered, fixed = TRUE)[[1]]
+  if (pos == -1) return(rendered)
+  escaped <- html_escape(value)
+  replacement <- if (inside_html_attribute(rendered, pos)) {
+    escaped
+  } else {
+    sprintf('<span class="ember-inline">%s</span>', escaped)
+  }
+  sub(token, replacement, rendered, fixed = TRUE)
+}
+
+#' `TRUE` when character offset `pos` (1-based, where `token` is about to
+#' be inserted) sits inside an HTML tag's attribute value: the last `<`
+#' before `pos` comes after the last `>` (an open tag, not plain text
+#' between tags), and the tag text since that `<` ends in an unclosed
+#' `="..."` (an attribute has been opened but not yet closed). Checked
+#' textually, not by parsing HTML: the only shape commonmark ever builds
+#' around an inline token is a plain attribute value (a link's `href`, an
+#' image's `src`), never a nested tag.
+inside_html_attribute <- function(rendered, pos) {
+  before <- substr(rendered, 1, pos - 1)
+  lt <- gregexpr("<", before, fixed = TRUE)[[1]]
+  gt <- gregexpr(">", before, fixed = TRUE)[[1]]
+  last_lt <- if (lt[[1]] == -1) 0L else max(lt)
+  last_gt <- if (gt[[1]] == -1) 0L else max(gt)
+  if (last_lt <= last_gt) return(FALSE)
+  grepl('="[^"]*$', substr(before, last_lt, nchar(before)))
 }
 
 #' `script_entry`'s `src` joined onto `base`, plus any other named element

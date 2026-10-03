@@ -15,7 +15,7 @@ nonblank_lines <- function(code) {
 #' "markdown" when not the setup cell, at least one line is non-blank, and
 #' every non-blank line is a text line. Otherwise "code". A mixed cell is
 #' "code", so it stays a graph node and gets the mixed_text graph error.
-#' `#|` lines (piece 3) count as code lines: they never start with `#'`.
+#' `#|` lines (cell options) count as code lines: they never start with `#'`.
 cell_kind <- function(code, setup = FALSE) {
   if (isTRUE(setup)) return("code")
   nb <- nonblank_lines(code)
@@ -68,30 +68,64 @@ split_mixed <- function(code) {
   }, character(1))
 }
 
+#' knitr's inline-code pattern (knitr 1.52, `all_patterns$md$inline.code`).
+#' Applied one line at a time everywhere it's used: an expression can't
+#' span lines, so this is never run against more than one line.
+inline_span_pattern <- "(?<!(^``))(?<!(\\n``))`r[ #]([^`]+)\\s*`"
+
+#' Every `` `r expr` `` span on one line (already known to be a text
+#' line), as `list(starts, lengths, exprs)` (all parallel, left to right;
+#' `starts`/`lengths` are 1-based character offsets into `line`, for
+#' splicing in a replacement). Empty lists when there are none. The one
+#' primitive `inline_spans()` (reading) and `project_text()`
+#' (pluto-state.R, substituting a span for a token) both build on, so a
+#' substitution never touches more of the line than a read would ever
+#' say was a span -- unlike matching `inline_span_pattern` against a
+#' whole multi-line body at once, where `[^`]+` can cross a line break
+#' `inline_spans()` would never let it cross.
+line_inline_matches <- function(line) {
+  none <- list(starts = integer(), lengths = integer(), exprs = character())
+  m <- gregexpr(inline_span_pattern, line, perl = TRUE)[[1]]
+  if (length(m) == 1 && m[[1]] == -1) return(none)
+  lens <- attr(m, "match.length")
+  matched <- regmatches(line, list(m))[[1]]
+  exprs <- vapply(matched, function(one) {
+    expr <- sub("^`r[ #]", "", one)
+    expr <- sub("`$", "", expr)
+    trimws(expr)
+  }, character(1), USE.NAMES = FALSE)
+  list(starts = as.integer(m), lengths = as.integer(lens), exprs = exprs)
+}
+
+#' `line` with each of its inline spans (in order) replaced by the
+#' matching element of `replacements` (same length as
+#' `line_inline_matches(line)$exprs`). Splices right to left so earlier
+#' offsets stay valid as the line's length changes.
+replace_inline_matches <- function(line, replacements) {
+  mm <- line_inline_matches(line)
+  if (length(mm$starts) == 0) return(line)
+  for (k in rev(seq_along(mm$starts))) {
+    s <- mm$starts[[k]]
+    e <- s + mm$lengths[[k]] - 1L
+    line <- paste0(substr(line, 1, s - 1L), replacements[[k]], substr(line, e + 1L, nchar(line)))
+  }
+  line
+}
+
 #' The inline expressions of a text cell, in reading order:
 #' `data.frame(line = <int, line in the cell>, expr = <chr>)`. Matched on
-#' text lines only, with knitr's pattern (knitr 1.52, all_patterns$md$inline.code):
-#' `"(?<!(^``))(?<!(\n``))`r[ #]([^`]+)\\s*`"`. An expression can't span
-#' lines: each `#'` line is matched on its own.
+#' text lines only, via `line_inline_matches()`.
 inline_spans <- function(code) {
   lines <- strsplit(code, "\n", fixed = TRUE)[[1]]
   if (length(lines) == 0) return(data.frame(line = integer(), expr = character(), stringsAsFactors = FALSE))
-  pattern <- "(?<!(^``))(?<!(\\n``))`r[ #]([^`]+)\\s*`"
   out_line <- integer()
   out_expr <- character()
   for (i in seq_along(lines)) {
-    ln <- lines[[i]]
-    if (!text_line(ln)) next
-    m <- gregexpr(pattern, ln, perl = TRUE)[[1]]
-    if (m[[1]] == -1) next
-    matched <- regmatches(ln, gregexpr(pattern, ln, perl = TRUE))[[1]]
-    for (one in matched) {
-      expr <- sub("^`r[ #]", "", one)
-      expr <- sub("`$", "", expr)
-      expr <- trimws(expr)
-      out_line <- c(out_line, i)
-      out_expr <- c(out_expr, expr)
-    }
+    if (!text_line(lines[[i]])) next
+    mm <- line_inline_matches(lines[[i]])
+    if (length(mm$exprs) == 0) next
+    out_line <- c(out_line, rep(i, length(mm$exprs)))
+    out_expr <- c(out_expr, mm$exprs)
   }
   data.frame(line = out_line, expr = out_expr, stringsAsFactors = FALSE)
 }

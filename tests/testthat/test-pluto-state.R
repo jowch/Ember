@@ -191,6 +191,29 @@ test_that("project_output() of a text cell: with and without inline values, code
   expect_true(check_wire(o_plain))
 })
 
+test_that("project_text() matches spans line by line, never across a line break (review)", {
+  # inline_spans() of this code finds exactly one span ("y"): line 1's
+  # `r ` has no closing backtick on its own line, so it isn't one. A
+  # whole-body regex (the old implementation) would instead match across
+  # the line break, consuming "x" as a bogus second span.
+  code <- "#' see `r \n#' x` and `r y`"
+  out <- new_display("application/vnd.ember.inline", list(values = "Y"), "Y")
+  o <- project_output(fake_view(kind = "markdown", code = code, output = out))
+  expect_equal(o$mime, "text/html")
+  expect_match(o$body, '<span class="ember-inline">Y</span>', fixed = TRUE)
+  expect_match(o$body, "r", fixed = TRUE)  # the unmatched "`r " stays literal, rendered by commonmark itself
+})
+
+test_that("project_text() puts an inline value inside an href as plain escaped text, not a span (review)", {
+  code <- "#' [link `r u`](http://e/`r v`)"
+  out <- new_display("application/vnd.ember.inline", list(values = c("U", "V\"<x>")), "U, V")
+  o <- project_output(fake_view(kind = "markdown", code = code, output = out))
+  href <- regmatches(o$body, regexpr('href="[^"]*"', o$body))
+  expect_equal(href, 'href="http://e/V&quot;&lt;x&gt;"')
+  expect_no_match(href, "<span", fixed = TRUE)
+  expect_match(o$body, '<span class="ember-inline">U</span>', fixed = TRUE)
+})
+
 # ---- 10. Errors ----------------------------------------------------------------
 
 test_that("a parse error gives parseerror+object with one diagnostic on the right line (10)", {

@@ -63,3 +63,26 @@ test_that("render_markdown falls back to escaped <pre> without commonmark", {
   testthat::local_mocked_bindings(commonmark_available = function() FALSE)
   expect_equal(render_markdown("<b>hi</b>"), "<pre>&lt;b&gt;hi&lt;/b&gt;</pre>")
 })
+
+test_that("line_inline_matches finds spans on one line with their positions", {
+  mm <- line_inline_matches("The average is `r round(mean(x), 1)` mpg.")
+  expect_equal(mm$exprs, "round(mean(x), 1)")
+  expect_equal(substr("The average is `r round(mean(x), 1)` mpg.", mm$starts, mm$starts + mm$lengths - 1),
+              "`r round(mean(x), 1)`")
+
+  expect_equal(line_inline_matches("no expr here")$exprs, character())
+})
+
+test_that("replace_inline_matches splices replacements in without disturbing the rest of the line", {
+  expect_equal(replace_inline_matches("a `r x` b `r y` c", c("X", "Y")), "a X b Y c")
+  expect_equal(replace_inline_matches("no spans", character()), "no spans")
+})
+
+test_that("line_inline_matches never matches across a line break (review)", {
+  # inline_spans() already matches line by line; this is the shared
+  # primitive project_text() (pluto-state.R) must use the same way, so a
+  # whole-body regex can't consume a span's closing backtick from the
+  # next line.
+  expect_equal(line_inline_matches("see `r ")$exprs, character())
+  expect_equal(line_inline_matches("x` and `r y`")$exprs, "y")
+})
