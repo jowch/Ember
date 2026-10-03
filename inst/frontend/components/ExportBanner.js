@@ -2,7 +2,7 @@ import dialogPolyfill from "../imports/DialogPolyfill.js"
 
 import { useEventListener } from "../common/useEventListener.js"
 import { html, useLayoutEffect, useRef } from "../imports/Preact.js"
-import { getCurrentLanguage, t, th } from "../common/lang.js"
+import { t, th } from "../common/lang.js"
 import * as desktop from "./DesktopInterface.js"
 
 /** Add the &offline_bundle=true query parameter to a URL string */
@@ -14,21 +14,6 @@ export const with_offline_bundle_query = (/** @type {string | URL | undefined} *
     return u.toString()
 }
 
-const Circle = ({ fill }) => html`
-    <svg
-        width="48"
-        height="48"
-        viewBox="0 0 48 48"
-        style="
-        height: .7em;
-        width: .7em;
-        margin-left: .3em;
-        margin-right: .2em;
-    "
-    >
-        <circle cx="24" cy="24" r="24" fill=${fill}></circle>
-    </svg>
-`
 const Triangle = ({ fill }) => html`
     <svg width="48" height="48" viewBox="0 0 48 48" style="height: .7em; width: .7em; margin-left: .3em; margin-right: .2em; margin-bottom: -.1em;">
         <polygon points="24,0 48,40 0,40" fill=${fill} stroke="none" />
@@ -77,7 +62,6 @@ export const ExportBanner = ({
     onClose,
     notebookfile_url,
     notebookexport_url,
-    start_recording,
     process_waiting_for_permission,
 }) => {
     //
@@ -153,9 +137,8 @@ export const ExportBanner = ({
                             e.preventDefault()
                             return
                         }
-                        e.preventDefault()
                         WarnForVisisblePasswords()
-                        window.dispatchEvent(new CustomEvent("open pluto html export", { detail: { download_url: notebookexport_url } }))
+                        exportNotebookDesktop(e, "html", notebook_id)
                     }}
                 >
                     <header role="none"><${Square} fill="#E86F51" /> ${t("t_export_card_static_html")}</header>
@@ -175,29 +158,6 @@ export const ExportBanner = ({
                     <header role="none"><${Square} fill="#619b3d" />${t("t_export_card_pdf")}</header>
                     <section>${th("t_export_card_pdf_description")}</section>
                 </a>
-                ${html`
-                    <div class="export_title">${t("t_export_category_record")}</div>
-                    <a
-                        href="#"
-                        onClick=${(e) => {
-                            WarnForVisisblePasswords()
-                            start_recording()
-                            onClose()
-                            e.preventDefault()
-                        }}
-                        class="export_card"
-                        style=${getCurrentLanguage() === "el" || getCurrentLanguage() === "cs"
-                            ? "--size: 26ch"
-                            : getCurrentLanguage() === "de"
-                              ? "--size: 24ch"
-                              : getCurrentLanguage() === "pt-PT"
-                                ? "--size: 26ch"
-                                : null}
-                    >
-                        <header role="none"><${Circle} fill="#E86F51" />${th("t_export_card_record")}</header>
-                        <section>${th("t_export_card_record_description")}</section>
-                    </a>
-                `}
                 ${prideMonth
                     ? html`<div class="pride_message">
                           <p>${th("t_export_card_pride_month_message")}</p>

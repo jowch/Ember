@@ -1168,7 +1168,6 @@ div.desktop_picker span {
     cursor: pointer;
 }
 
-button.start_stop_recording,
 button.toggle_export,
 .export_small_btns button {
     border: none;
@@ -1176,7 +1175,6 @@ button.toggle_export,
     cursor: pointer;
     opacity: 0.5;
 }
-button.start_stop_recording span,
 button.toggle_export span,
 .export_small_btns button span {
     display: block;
@@ -1186,12 +1184,6 @@ button.toggle_export span,
     width: 25px;
 }
 
-nav#at_the_top button.start_stop_recording span {
-    background-image: url("./img/icons/radio-button-on-outline.svg");
-}
-nav#at_the_top button.start_stop_recording.stop span {
-    background-image: url("./img/icons/stop-circle-outline.svg");
-}
 nav#at_the_top button.toggle_export span {
     background-image: url("./img/icons/share-outline.svg");
     filter: var(--image-filters);
@@ -1475,12 +1467,6 @@ pluto-editor.process_waiting_for_permission > .outline-frame.safe-preview {
     border-bottom: 12px solid var(--restart-recc-header-color);
 }
 
-pluto-editor.recording_waiting_to_start > .outline-frame.recording {
-    border: 12px solid #be6f6fba;
-}
-pluto-editor.is_recording > .outline-frame.recording {
-    border: 12px solid #645e5eba;
-}
 .outline-frame.playback {
     opacity: 1;
     position: absolute;
@@ -1492,10 +1478,6 @@ pluto-editor.is_recording > .outline-frame.recording {
     box-shadow: inset 0px 0px 20px 20px #919bff2b;
 }
 
-pluto-editor.recording_waiting_to_start > header#pluto-nav,
-pluto-editor.is_recording > header#pluto-nav {
-    display: none;
-}
 
 .outline-frame-actions-container {
     position: fixed;
@@ -1516,26 +1498,14 @@ pluto-editor.is_recording > header#pluto-nav {
     border-color: #e86f6c;
     margin: 0 3px;
 }
-.outline-frame-actions-container > .overlay-button.record-no-audio {
-    border-color: #dcc6c6;
-}
 .outline-frame-actions-container > .overlay-button.playback {
     border-color: #c6c6dc;
-}
-span.pluto-icon.stop-recording-icon::after {
-    background-image: url("./img/icons/stop-circle-outline.svg");
-}
-span.pluto-icon.microphone-icon::after {
-    background-image: url("./img/icons/mic-outline.svg");
 }
 span.pluto-icon.info-icon::after {
     background-image: url("./img/icons/information-circle-outline.svg");
 }
 span.pluto-icon.offline-icon::after {
     background-image: url("./img/icons/cloud-offline-outline.svg");
-}
-span.pluto-icon.mute-icon::after {
-    background-image: url("./img/icons/mic-off-outline.svg");
 }
 span.pluto-icon.follow-recording-icon::after {
     background-image: url("./img/icons/arrow-undo-outline.svg");

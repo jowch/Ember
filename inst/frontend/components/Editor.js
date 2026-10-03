@@ -116,8 +116,6 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
     code_differs: state.notebook.cell_order.some(
         (cell_id) => state.cell_inputs_local[cell_id] != null && state.notebook.cell_inputs[cell_id]?.code !== state.cell_inputs_local[cell_id].code
     ),
-    recording_waiting_to_start: state.recording_waiting_to_start,
-    is_recording: state.is_recording,
     isolated_cell_view: launch_params.isolated_cell_ids != null && launch_params.isolated_cell_ids.length > 0,
     // Not sanitized merely for being an export: a downloaded export is an
     // HTML file and can run scripts anyway, and Ember exports inline widget
@@ -354,8 +352,6 @@ export const url_logo_small = get_included_external_source("pluto-logo-small")?.
  * last_created_cell: string | undefined,
  * selected_cells: Array<string>,
  * extended_components: any,
- * is_recording: boolean,
- * recording_waiting_to_start: boolean,
  * slider_server: { connecting: boolean, interactive: boolean },
  * }}
  */
@@ -405,9 +401,6 @@ export class Editor extends Component {
             extended_components: {
                 CustomHeader: null,
             },
-
-            is_recording: false,
-            recording_waiting_to_start: false,
 
             slider_server: {
                 connecting: false,
@@ -1415,7 +1408,6 @@ ${t("t_key_autosave_description")}`
                 e.preventDefault()
             } else if (e.key === "Escape") {
                 this.setState({
-                    recording_waiting_to_start: false,
                     selected_cells: [],
                     export_menu_open: false,
                 })
@@ -1676,7 +1668,6 @@ ${t("t_key_autosave_description")}`
                             process_waiting_for_permission=${status.process_waiting_for_permission}
                             open=${export_menu_open}
                             onClose=${() => this.setState({ export_menu_open: false })}
-                            start_recording=${() => this.setState({ recording_waiting_to_start: true })}
                         />
                         ${
                             status.binder
