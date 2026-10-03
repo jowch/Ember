@@ -130,6 +130,16 @@ const enqueue = (/** @type {Omit<typeof queue[0], "id">} */ item_without_id) => 
 }
 
 /**
+ * Every dialog shown on this page, oldest first, as `{ title, body, answer }`:
+ * `body` is the text (null when it isn't a plain string) and `answer` the
+ * picked action's label, or null for a cancel, once answered. A host that
+ * embeds the page reads it instead of wrapping `window.alert`, which these
+ * dialogs never call; an "ember-dialog" event carries each new entry.
+ */
+const dialog_log = /** @type {Array<{ title: string?, body: string?, answer: string? | undefined }>} */ ([])
+Object.defineProperty(window, "ember_dialogs", { value: dialog_log })
+
+/**
  * Show one dialog with named actions and wait for the one the person picks.
  * Esc, the dialog's cancel event and a click outside resolve `cancel_value`.
  * Buttons name their action (Delete, Cancel, Stop), never Yes/No.
@@ -151,11 +161,16 @@ const enqueue = (/** @type {Omit<typeof queue[0], "id">} */ item_without_id) => 
 export const ask = ({ title, body, actions, cancel_value = null, role = "alertdialog", key }) => {
     if (key != null && pending_by_key.has(key)) return /** @type {Promise<any>} */ (pending_by_key.get(key))
 
+    const entry = { title: title ?? null, body: typeof body === "string" ? body : null, answer: /** @type {string? | undefined} */ (undefined) }
+    dialog_log.push(entry)
+    window.dispatchEvent(new CustomEvent("ember-dialog", { detail: entry }))
+
     const promise = new Promise((resolve) => {
         let settled = false
-        const settle = (/** @type {any} */ value) => {
+        const settle = (/** @type {any} */ value, /** @type {string?} */ label) => {
             if (settled) return
             settled = true
+            entry.answer = label
             if (key != null) pending_by_key.delete(key)
             resolve(value)
             dequeue(item)
@@ -163,7 +178,7 @@ export const ask = ({ title, body, actions, cancel_value = null, role = "alertdi
         const item = enqueue({
             title,
             role,
-            on_close: () => settle(cancel_value),
+            on_close: () => settle(cancel_value, null),
             render: ({ close, describedby_id }) => html`
                 <p id=${describedby_id} class="ember-dialog-text">${body}</p>
                 <div class="ember-dialog-actions">
@@ -174,7 +189,7 @@ export const ask = ({ title, body, actions, cancel_value = null, role = "alertdi
                             autofocus=${a.primary === true ? true : undefined}
                             class=${cl({ "ember-btn": true, primary: a.primary === true, danger: a.danger === true })}
                             onClick=${() => {
-                                settle(a.value)
+                                settle(a.value, a.label)
                                 close()
                             }}
                         >

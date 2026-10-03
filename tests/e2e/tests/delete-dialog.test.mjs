@@ -88,6 +88,13 @@ test("delete several cells: in-page dialog, Tab trapped, Esc cancels and restore
     () => !document.getElementById("A") && !document.getElementById("B"),
     null, { timeout: 10000 });
 
+  // A host embedding the page reads what was asked and answered here.
+  const log = await page.evaluate(() => window.ember_dialogs.map(({ body, answer }) => ({ body, answer })));
+  assert.deepEqual(log, [
+    { body: "Delete 2 cells?", answer: null },
+    { body: "Delete 2 cells?", answer: "Delete" },
+  ]);
+
   assertNoProblems(page);
 });
 

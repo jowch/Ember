@@ -79,6 +79,7 @@ done; clear out ticked items at each release.
 
 ## Integration with Endeavor
 
+- [ ] Endeavor's debug state records page messages by wrapping `window.alert` (src/debug_state.rs `RECORD_ALERTS`); Ember's messages are in-page dialogs now (common/dialogs.js) and never call `alert`, so that list stays empty for Ember. Ember records each dialog in `window.ember_dialogs` (`{title, body, answer}`) and fires an `ember-dialog` event; Endeavor's debug script should read that — missing
 - [ ] The adapter's `run(wait = TRUE)` can't block the server; it needs `on_notebook_event()` or a promise once httpuv is in (step 4) — missing
 - [ ] Endeavor's docs still describe Pluto's restart ("then every cell runs") and a snapshot without stale state; update them there — missing
 - [ ] Endeavor takes F1 and Ctrl/Cmd + ? on `window` in the capture phase for its own shortcut sheet (endeavor/frontend/src/actions.ts:161-172), so inside Endeavor F1 never reaches Ember's "R help at the cursor" (ui-3.md, Keyboard shortcuts). Endeavor should let both keys through on Ember pages, or open Ember's sheet from ⋯ instead — missing
