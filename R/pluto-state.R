@@ -265,12 +265,18 @@ project_cell_result <- function(view) {
 #' | text/html                    | text/html                                | data, with dependency `<link>`/`<script>` tags prepended (3d) |
 #' | image/png                    | image/png                                | data (raw -> msgpack bin)  |
 #' | image/svg+xml                | image/svg+xml                            | data                       |
-#' | text/markdown (and markdown cells) | text/html if commonmark is installed in the server's library, else text/plain | rendered / text |
+#' | text/markdown (and a text cell without values) | text/html if commonmark is installed in the server's library, else text/plain | rendered / text |
 #' | application/vnd.ember.table  | application/vnd.pluto.table+object       | project_table(data)        |
 #' | application/vnd.ember.tree   | application/vnd.pluto.tree+object        | project_tree(data)         |
 #' | text/latex, anything else    | text/plain                                | `text` (the print() form)  |
 #'
-#' The running cell shows its previous output, as the snapshot does.
+#' The running cell shows its previous output, as the snapshot does. A text
+#' cell's errors (including a parse error: its line numbers are in
+#' `inline_code()`'s analysed code, not the cell's own, so
+#' `project_parse_error()` would misalign them) show as for code, ahead of
+#' `project_text()` -- the one place a text cell without inline values still
+#' takes the early return a code cell never reaches, since it has no
+#' `output` to fall through to.
 project_output <- function(view) {
   last_ts <- if (is.null(view$last_run)) 0 else as.numeric(view$last_run)
   if (!is.null(view$output) && !is.null(view$output$rendered_at)) {
@@ -280,18 +286,9 @@ project_output <- function(view) {
                                     last_run_timestamp = last_ts, persist_js_state = FALSE,
                                     has_pluto_hook_features = FALSE)
 
-  # A text cell without inline values never runs (step.R's can_run()
-  # refuses it), so it has no `output`: its displayed body is its own
-  # code (with the `#'` prefixes stripped), rendered directly, every
-  # time, not something a graph or run error could pre-empt. Piece 2's
-  # project_text() replaces this once inline values exist.
-  if (identical(view$kind, "markdown")) {
-    body <- paste(text_body(view$code), collapse = "\n")
-    if (commonmark_available()) return(wrap("text/html", render_markdown(body)))
-    return(wrap("text/plain", body))
-  }
-
-  parse_err <- Find(function(e) identical(e$kind, "parse"), view$errors)
+  parse_err <- if (!identical(view$kind, "markdown")) {
+    Find(function(e) identical(e$kind, "parse"), view$errors)
+  } else NULL
   if (!is.null(parse_err)) {
     return(wrap("application/vnd.pluto.parseerror+object",
                project_parse_error(parse_err, view$code)))
@@ -304,6 +301,8 @@ project_output <- function(view) {
     return(wrap("application/vnd.pluto.stacktrace+object",
                list(msg = "Interrupted", stacktrace = list(), plain_error = "Interrupted")))
   }
+
+  if (identical(view$kind, "markdown")) return(project_text(view, wrap))
 
   out <- view$output
   if (is.null(out)) return(wrap("text/plain", ""))
@@ -318,6 +317,58 @@ project_output <- function(view) {
     "application/vnd.ember.table" = wrap("application/vnd.pluto.table+object", project_table(out$data)),
     "application/vnd.ember.tree" = wrap("application/vnd.pluto.tree+object", project_tree(out$data)),
     wrap("text/plain", out$text))
+}
+
+#' A text cell's body, wrapped with `wrap()` (`project_output()`'s own,
+#' passed through so `last_run_timestamp` is computed once). `values` is
+#' `view$output$data$values` when the output is `application/vnd.ember.inline`
+#' and `!view$code_differs` (a run whose code the cell no longer has), else
+#' `NULL`.
+#'
+#' Without values: the body (`text_body(view$code)`, the `#'` prefixes
+#' stripped) is rendered as written, so each `` `r expr` `` shows as a
+#' markdown code span.
+#'
+#' With values: each inline span is replaced by a plain token
+#' ("EMBERINLINE<k>X", left alone by commonmark even inside a code span or
+#' link) before rendering, then each token is replaced by its value --
+#' `<span class="ember-inline">html-escaped value</span>` once rendered as
+#' HTML, so a value is never itself interpreted as markup (ui-3.md,
+#' Accessibility: "inline values read as plain text").
+#'
+#' Without commonmark: `text/plain`, with the values (without values, the
+#' spans) put in as plain text -- no tokens, no escaping, no `<span>`.
+project_text <- function(view, wrap) {
+  body <- paste(text_body(view$code), collapse = "\n")
+  out <- view$output
+  values <- if (!is.null(out) && identical(out$mime, "application/vnd.ember.inline") &&
+                !isTRUE(view$code_differs)) {
+    out$data$values
+  } else {
+    NULL
+  }
+  if (is.null(values)) {
+    if (commonmark_available()) return(wrap("text/html", render_markdown(body)))
+    return(wrap("text/plain", body))
+  }
+
+  spans <- inline_spans(view$code)
+  pattern <- "(?<!(^``))(?<!(\\n``))`r[ #]([^`]+)\\s*`"
+  tokens <- sprintf("EMBERINLINE%dX", seq_len(nrow(spans)))
+  marked <- body
+  for (k in seq_along(tokens)) marked <- sub(pattern, tokens[[k]], marked, perl = TRUE)
+
+  if (!commonmark_available()) {
+    plain <- marked
+    for (k in seq_along(tokens)) plain <- sub(tokens[[k]], values[[k]], plain, fixed = TRUE)
+    return(wrap("text/plain", plain))
+  }
+  rendered <- render_markdown(marked)
+  for (k in seq_along(tokens)) {
+    span <- sprintf('<span class="ember-inline">%s</span>', html_escape(values[[k]]))
+    rendered <- sub(tokens[[k]], span, rendered, fixed = TRUE)
+  }
+  wrap("text/html", rendered)
 }
 
 #' `script_entry`'s `src` joined onto `base`, plus any other named element

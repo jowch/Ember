@@ -26,8 +26,12 @@
 # (xdr, version 3). msg is a list with `type`.
 #
 # Server -> worker
-#   run          cell, token, code, role ("setup"|"cell"), order (code cell
-#                ids in run order), formulas (list of formula_site)
+#   run          cell, token, code, role ("setup"|"cell"|"text"), order (code
+#                cell ids in run order), formulas (list of formula_site).
+#                For role "text", each line of `code` is one inline
+#                expression (a text cell's `` `r expr` `` spans, one per
+#                line); the report's `output` is an "inline" display
+#                (values, text, no plot) instead of display_value()'s.
 #   remove_cell  cell, order         drop the cell's globals, display data,
 #                                    and rebuild the search path
 #   drop_globals cell                drop a failed cell's globals, keeping
@@ -263,9 +267,10 @@ trace_line <- function(...) {
 #'
 #' Report: list(status = "ok"|"error"|"interrupted", output (display bundle
 #' or NULL), console (list of items, also streamed), error (NULL or
-#' list(message, call, traceback)), runtime, created, changed, removed,
+#' list(message, call, traceback, span)), runtime, created, changed, removed,
 #' settings, load_notes, attached (package -> exports, for packages newly
-#' attached), formula_misses).
+#' attached), formula_misses). `error$span` is set only for role "text": the
+#' 1-based index of the failing line (into `inline_spans()`'s rows).
 #'
 #' An interrupt that lands during the comparison steps (after the cell's
 #' code) is caught around the whole function and reported as
@@ -325,17 +330,30 @@ run_cell <- function(msg) {
     value <- NULL
     visible <- FALSE
     err <- NULL
-    exprs <- parse(text = msg$code, keep.source = TRUE)
+    is_text <- identical(msg$role, "text")
+    text_lines <- if (is_text) strsplit(msg$code, "\n", fixed = TRUE)[[1]] else character()
+    inline_values <- character(length(text_lines))
+    at <- 0L   # the text line being evaluated; reported as error$span
+    if (!is_text) exprs <- parse(text = msg$code, keep.source = TRUE)
     trace_line("eval", msg$cell)
 
     tryCatch(
       withCallingHandlers({
-        for (e in exprs) {
-          r <- withVisible(eval(e, globalenv()))
-          if (r$visible) {
-            if (visible) console$print(value)
-            value <- r$value
-            visible <- TRUE
+        if (is_text) {
+          for (li in seq_along(text_lines)) {
+            at <- li
+            line_exprs <- parse(text = text_lines[[li]], keep.source = TRUE)
+            r <- withVisible(eval(if (length(line_exprs)) line_exprs[[1]] else NULL, globalenv()))
+            inline_values[[li]] <- if (r$visible) inline_text(r$value) else ""
+          }
+        } else {
+          for (e in exprs) {
+            r <- withVisible(eval(e, globalenv()))
+            if (r$visible) {
+              if (visible) console$print(value)
+              value <- r$value
+              visible <- TRUE
+            }
           }
         }
       },
@@ -378,7 +396,10 @@ run_cell <- function(msg) {
                      # for a packageNotFoundError regardless of locale, so the
                      # server can recognise a missing package without matching
                      # the (locale-translated) message text.
-                     package = if (inherits(e, "packageNotFoundError")) e$package else NULL)
+                     package = if (inherits(e, "packageNotFoundError")) e$package else NULL,
+                     # Which text line (`inline_spans()$line` of the cell's
+                     # analysed code) failed, for a text cell only.
+                     span = if (is_text) at else NULL)
       }),
       interrupt = function(i) rc$status <<- "interrupted",
       error     = function(e) rc$status <<- "error")
@@ -399,8 +420,18 @@ run_cell <- function(msg) {
       output <- NULL
       if (rc$status == "ok") {
         output <- tryCatch({
-          if (visible) display_value(value, msg$cell, msg$token, dev, console)
-          else display_plot(msg$cell, msg$token, dev)
+          if (is_text) {
+            # A plot drawn by an inline expression is dropped: the display
+            # step below only builds text (`inline_text()`, run already,
+            # in the eval loop above).
+            list(kind = "inline", mime = "application/vnd.ember.inline",
+                values = inline_values, text = paste(inline_values, collapse = "\n"),
+                truncated = FALSE)
+          } else if (visible) {
+            display_value(value, msg$cell, msg$token, dev, console)
+          } else {
+            display_plot(msg$cell, msg$token, dev)
+          }
         }, interrupt = function(i) { rc$status <<- "interrupted"; NULL },
            error = function(e) NULL)
       }
@@ -1375,6 +1406,15 @@ display_html <- function(value) {
   }, error = function(e) list())
   list(kind = "html", mime = "text/html", html = paste(rendered$html, collapse = "\n"),
        deps = deps, text = tf$text, truncated = tf$truncated)
+}
+
+#' knitr's inline formatting (knitr 1.52, `.inline.hook` and
+#' `round_digits`), so an inline `` `r expr` `` value reads the same as in
+#' knitr::spin's report: a numeric value rounded to `getOption("digits")`,
+#' a vector joined with ", ".
+inline_text <- function(x) {
+  if (is.numeric(x)) x <- as.character(round(x, getOption("digits")))
+  paste(as.character(x), collapse = ", ")
 }
 
 #' Turn the output value into a display bundle (design.md, How values

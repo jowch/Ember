@@ -595,3 +595,27 @@ test_that("a disabled cell is excluded from cycle, private_name and global_setti
   cmp3 <- g3; cmp3$reread <- NULL
   expect_identical(cmp1, cmp3)
 })
+
+# ---- code_of(): a text cell's inline expressions join the graph (42) --------
+
+test_that("code_of(): a text cell's inline expression gives it a real edge and run-order position (42)", {
+  cells <- list(
+    S = list(code = "", kind = "code", folded = FALSE, disabled = FALSE),
+    A = list(code = "x <- 1", kind = "code", folded = FALSE, disabled = FALSE),
+    T = list(code = "#' `r x`", kind = "markdown", folded = TRUE, disabled = FALSE),
+    B = list(code = "x + 1", kind = "code", folded = FALSE, disabled = FALSE)
+  )
+  g <- notebook_graph(code_of(cells), setup = "S")
+  expect_true("A" %in% g$upstream[["T"]])
+  expect_lt(match("A", g$order), match("T", g$order))
+})
+
+test_that("code_of(): a text cell without inline values keeps its place beside its neighbours (42)", {
+  cells <- list(
+    S = list(code = "", kind = "code", folded = FALSE, disabled = FALSE),
+    MD = list(code = "#' just text", kind = "markdown", folded = TRUE, disabled = FALSE),
+    A = list(code = "x <- 1", kind = "code", folded = FALSE, disabled = FALSE)
+  )
+  g <- notebook_graph(code_of(cells), setup = "S")
+  expect_equal(g$order, c("S", "MD", "A"))
+})

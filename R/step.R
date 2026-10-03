@@ -260,15 +260,15 @@ schedule <- function(state) {
   list(state = state, effects = c(dg$effects, list(fx_send(state$worker$gen, run_message(state, id, token)))))
 }
 
-#' Can `id` run now? Not if it is markdown, has a graph error of its own
-#' (`blocked_cells()`), or is off (`state$graph$off`: a disabled cell, or a
-#' dependent of one). A dependent of a failed or graph-broken cell runs on
-#' its own and fails with its own error if it needs what the broken cell
-#' would have provided (engine.md, Decisions: "dependents of a failed cell
-#' run anyway").
+#' Can `id` run now? Not if it never runs (`cell_runs()`: a text cell with
+#' no inline expression), has a graph error of its own (`blocked_cells()`),
+#' or is off (`state$graph$off`: a disabled cell, or a dependent of one). A
+#' dependent of a failed or graph-broken cell runs on its own and fails
+#' with its own error if it needs what the broken cell would have provided
+#' (engine.md, Decisions: "dependents of a failed cell run anyway").
 can_run <- function(state, id) {
   cell <- state$cells[[id]]
-  if (is.null(cell) || identical(cell$kind, "markdown")) return(FALSE)
+  if (is.null(cell) || !cell_runs(cell)) return(FALSE)
   if (id %in% names(state$graph$off)) return(FALSE)
   !(id %in% blocked_cells(state$graph))
 }
@@ -407,7 +407,7 @@ turn_off <- function(state, ids) {
 
 #' The worker's `run` message for `id`. See the protocol in worker.R.
 #'
-#' `list(type = "run", cell, token, code, role = "setup" | "cell",
+#' `list(type = "run", cell, token, code, role = "setup" | "cell" | "text",
 #' order = <code cell ids in run order>, formulas = graph$analyses[[id]]$formulas,
 #' library = state$packages$active$path)`.
 #' `order` is what the worker rebuilds the search path from (attaching
@@ -415,11 +415,21 @@ turn_off <- function(state, ids) {
 #' worker converging on the current order without a separate sync. `library`
 #' is sent the same way: the worker calls `.libPaths()` when it differs from
 #' its own, so a newly installed package is picked up with no restart
-#' (packages-core.R, "The worker follows the library").
+#' (packages-core.R, "The worker follows the library"). `order` is code
+#' cells only: text cells never attach packages.
+#'
+#' A text cell's `role` is `"text"` and its `code` is `inline_code(cell$code)`
+#' (one inline expression per line), not the cell's own `#'`-prefixed code:
+#' `code_differs` (state.R) still compares like for like, since
+#' `worker$running$code` is set from the cell's own code separately
+#' (`schedule()`, step.R).
 run_message <- function(state, id, token) {
   order <- Filter(function(i) identical(state$cells[[i]]$kind, "code"), state$graph$order)
-  list(type = "run", cell = id, token = token, code = state$cells[[id]]$code,
-      role = if (identical(id, state$setup)) "setup" else "cell",
+  cell <- state$cells[[id]]
+  is_text <- identical(cell$kind, "markdown")
+  list(type = "run", cell = id, token = token,
+      code = if (is_text) inline_code(cell$code) else cell$code,
+      role = if (identical(id, state$setup)) "setup" else if (is_text) "text" else "cell",
       order = order, formulas = state$graph$analyses[[id]]$formulas,
       library = state$packages$active$path)
 }
@@ -504,7 +514,7 @@ invalidate_dependents <- function(state, id, names, queue = TRUE) {
     if (is.null(r)) next
     r$stale <- TRUE
     state$results[[cid]] <- r
-    if (queue && autorun && isTRUE(state$allowed) && identical(state$cells[[cid]]$kind, "code") &&
+    if (queue && autorun && isTRUE(state$allowed) && cell_runs(state$cells[[cid]]) &&
         !(cid %in% names(state$graph$off))) {
       state$pending <- union(state$pending, cid)
     }
@@ -597,9 +607,11 @@ normalise_code <- function(code) {
 #' the first failure refuses the whole batch and returns `state` untouched.
 #' Edits never run anything and never mark anything stale by themselves:
 #' until a cell runs, every other result still matches the globals in the
-#' worker. The edited cell shows `code_differs`. A `set_code` that changes a
-#' cell's kind resets it (`forget_run()`) once the batch has applied: a code
-#' cell rewritten as text would otherwise keep its globals for good.
+#' worker. The edited cell shows `code_differs`. A `set_code` that changes
+#' what running the cell means -- its kind, or a text cell's `cell_runs()`
+#' -- resets it (`forget_run()`) once the batch has applied: a code cell
+#' rewritten as text, or a text cell edited down to no inline expression,
+#' would otherwise keep its globals for good.
 reduce_apply <- function(state, event) {
   if (isTRUE(state$read_only)) {
     return(list(state = state, effects = list(), reply = refused("notebook is read-only")))
@@ -609,7 +621,7 @@ reduce_apply <- function(state, event) {
   header <- state$file$header
   inserted <- character()
   deleted <- character()
-  kind_changed <- character()
+  reset_ids <- character()
 
   for (op in ops) {
     bad <- NULL
@@ -624,13 +636,22 @@ reduce_apply <- function(state, event) {
         } else if (any(grepl("^# %%|^# ///", strsplit(code, "\n", fixed = TRUE)[[1]]))) {
           bad <- refused("code contains a cell or footer marker line", op)
         } else {
+          old_cell <- cells[[op$cell]]
           new_kind <- cell_kind(code, setup = identical(op$cell, state$setup))
-          if (!identical(new_kind, cells[[op$cell]]$kind)) {
-            kind_changed <- c(kind_changed, op$cell)
-            if (identical(new_kind, "markdown")) {
-              cells[[op$cell]]$disabled <- FALSE
-              cells[[op$cell]]$folded <- TRUE
-            }
+          new_cell <- list(code = code, kind = new_kind)
+          kind_different <- !identical(new_kind, old_cell$kind)
+          # A reset is needed whenever the edit changes what running the
+          # cell means: its kind changes (even between two kinds that both
+          # run -- the worker is sent completely different code either
+          # way), or -- a text cell throughout -- it gains or loses its
+          # only inline expression (`#' `r x`` edited to `#' no
+          # expression`` needs one with the kind unchanged).
+          if (kind_different || !identical(cell_runs(old_cell), cell_runs(new_cell))) {
+            reset_ids <- c(reset_ids, op$cell)
+          }
+          if (kind_different && identical(new_kind, "markdown")) {
+            cells[[op$cell]]$disabled <- FALSE
+            cells[[op$cell]]$folded <- TRUE
           }
           cells[[op$cell]]$code <- code
           cells[[op$cell]]$kind <- new_kind
@@ -719,7 +740,7 @@ reduce_apply <- function(state, event) {
     state <- fr$state
     effects <- c(effects, fr$effects)
   }
-  for (id in setdiff(kind_changed, deleted)) {
+  for (id in setdiff(reset_ids, deleted)) {
     fr <- forget_run(state, id)
     state <- fr$state
     effects <- c(effects, fr$effects)
@@ -776,8 +797,8 @@ reduce_run <- function(state, event) {
   failed_keys <- Filter(function(k) identical(state$packages$indexes[[k]]$status, "failed"),
                         names(state$packages$indexes))
   for (k in failed_keys) state$packages$indexes[[k]] <- NULL
-  code_ids <- Filter(function(i) identical(state$cells[[i]]$kind, "code"), names(state$cells))
-  ids <- event$ids %||% code_ids
+  runnable_ids <- Filter(function(i) cell_runs(state$cells[[i]]), names(state$cells))
+  ids <- event$ids %||% runnable_ids
   ids <- ids[ids %in% names(state$cells)]
   # Off ids go straight to `skipped`, before computing ancestors: an off id's
   # ancestors would otherwise be queued too, and Pluto's frontend sends
@@ -1161,11 +1182,24 @@ reduce_wk_done <- function(state, event) {
       kind <- if (!is.null(w$running$refused_source) &&
                  identical(msg, w$running$refused_source)) "source_conflict" else "error"
       fd <- if (identical(kind, "error")) failed_definers(state, id) else NULL
+      # `err$span` is the text line (1-based, into inline_spans()) a text
+      # cell's error happened on; line/call point at that `` `r expr` ``
+      # for the page to show. Only a plain "error" on the cell's own code
+      # gets them: an upstream error is about a different cell.
+      error_line <- NULL; error_call <- NULL
+      if (is.null(fd) && !is.null(err$span)) {
+        spans <- inline_spans(state$cells[[id]]$code)
+        if (err$span >= 1 && err$span <= nrow(spans)) {
+          error_line <- spans$line[[err$span]]
+          error_call <- sprintf("`r %s`", spans$expr[[err$span]])
+        }
+      }
       error <- if (!is.null(fd)) {
         new_run_error("upstream", message = msg, traceback = err$traceback %||% character(),
                       names = fd$names, cells = fd$cells)
       } else {
-        new_run_error(kind, message = msg, traceback = err$traceback %||% character())
+        new_run_error(kind, message = msg, traceback = err$traceback %||% character(),
+                      line = error_line, call = error_call)
       }
     }
   } else {

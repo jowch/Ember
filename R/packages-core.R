@@ -467,9 +467,9 @@ waiting_cells <- function(state) {
   resolving <- !setequal(wanted, p$resolved_for)
   any_fetching <- any(vapply(p$indexes, function(s) identical(s$status, "fetching"), logical(1)))
 
-  code_ids <- names(state$cells)[vapply(state$cells, function(c) identical(c$kind, "code"), logical(1))]
+  runnable_ids <- names(state$cells)[vapply(state$cells, cell_runs, logical(1))]
   direct <- list()
-  for (id in code_ids) {
+  for (id in runnable_ids) {
     pkgs <- setdiff(cell_packages(state$graph, id), not_found)
     needed <- Filter(function(pk) {
       !(pk %in% names(installed)) && (pk %in% lock_names || (resolving && any_fetching))

@@ -229,12 +229,16 @@ new_result <- function(code, status, output, console, error, started_at,
 #' changed options, env vars, wd, locale or the search path outside the
 #' setup cell), `"source_conflict"` (a computed `source()` was refused),
 #' `"worker_exited"`. `message`, `traceback` (character, innermost last),
-#' `names`, `fixes` as on `ember_graph_error`.
+#' `names`, `fixes` as on `ember_graph_error`. `call`/`line` are set only
+#' for a text cell's inline expression that errored (the `` `r expr` ``
+#' text and its line in the cell, from `inline_spans()`); piece 6 fills
+#' them for code cells too and shows "Error in `call` · line n".
 new_run_error <- function(kind, message, traceback = character(),
                           names = character(), fixes = character(),
-                          cells = character()) {
+                          cells = character(), call = NULL, line = NULL) {
   structure(list(kind = kind, message = message, traceback = traceback,
-                 names = names, fixes = fixes, cells = cells), class = "ember_run_error")
+                 names = names, fixes = fixes, cells = cells,
+                 call = call, line = line), class = "ember_run_error")
 }
 
 #' A cell's displayed output, as the worker built it.
@@ -242,7 +246,9 @@ new_run_error <- function(kind, message, traceback = character(),
 #' `mime` is the primary type (`"text/html"`, `"image/png"`,
 #' `"image/svg+xml"`, `"text/markdown"`, `"text/latex"`,
 #' `"application/vnd.ember.table"`, `"application/vnd.ember.tree"`,
-#' `"text/plain"`); `data` its body (character, or raw for PNG, or the
+#' `"application/vnd.ember.inline"` (a text cell's inline values; `data`
+#' is `list(values = <chr>)`, one per `` `r expr` `` span), `"text/plain"`);
+#' `data` its body (character, or raw for PNG, or the
 #' table/tree structure); `text` the truncated `print()` form, always
 #' present; `deps` the htmlwidget dependencies (name, version, folder) for
 #' the server's static paths; `size` the plot size for an image, else
@@ -400,7 +406,8 @@ cell_view <- function(state, ctx, i) {
   r_error <- if (!is.null(result) && !is.null(result$error)) {
     list(list(kind = result$error$kind, message = result$error$message,
               fixes = result$error$fixes, names = result$error$names,
-              cells = result$error$cells, traceback = result$error$traceback))
+              cells = result$error$cells, traceback = result$error$traceback,
+              call = result$error$call, line = result$error$line))
   } else {
     list()
   }
@@ -557,7 +564,7 @@ not_run_ids <- function(state, ctx) {
   out <- character()
   for (i in seq_along(ids)) {
     cell <- state$cells[[i]]
-    if (!identical(cell$kind, "code")) next
+    if (!cell_runs(cell)) next
     if (!nzchar(trimws(cell$code %||% ""))) next
     if (!is.null(ctx$results[[i]])) next
     if (isTRUE(ctx$queued[[i]])) next
@@ -590,10 +597,11 @@ reader_of <- function(files) {
   }
 }
 
-#' Code per cell for `notebook_graph()`: a text cell without inline values
-#' as `""` (piece 2 gives one with inline values `inline_code(c$code)`).
+#' Code per cell for `notebook_graph()`: a text cell's inline expressions
+#' (`inline_code()`, "" when it has none), so they take part in the graph
+#' like any other code; a code cell's own code unchanged.
 code_of <- function(cells) {
-  vapply(cells, function(c) if (c$kind == "markdown") "" else c$code,
+  vapply(cells, function(c) if (c$kind == "markdown") inline_code(c$code) else c$code,
          character(1))
 }
 
@@ -625,8 +633,8 @@ check_state <- function(state) {
   if (!all(state$pending %in% names(state$cells))) {
     problems <- c(problems, "pending has ids not in cells")
   } else if (length(state$pending) > 0 &&
-            any(vapply(state$pending, function(id) state$cells[[id]]$kind != "code", logical(1)))) {
-    problems <- c(problems, "pending has a non-code cell")
+            any(vapply(state$pending, function(id) !cell_runs(state$cells[[id]]), logical(1)))) {
+    problems <- c(problems, "pending has a cell that doesn't run")
   } else if (any(state$pending %in% names(state$graph$off))) {
     problems <- c(problems, "pending has an off cell")
   }

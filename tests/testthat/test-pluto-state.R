@@ -87,9 +87,9 @@ test_that("after one cell finishes, every patch sits under its own cell_results 
 
 #' A minimal `ember_cell_view` for project_output()'s precedence table.
 fake_view <- function(kind = "code", status = "not_run", code = "", errors = list(),
-                      output = NULL, last_run = NULL) {
+                      output = NULL, last_run = NULL, code_differs = FALSE) {
   list(kind = kind, status = status, code = code, errors = errors,
-      output = output, last_run = last_run)
+      output = output, last_run = last_run, code_differs = code_differs)
 }
 
 test_that("output mapping: one case per row of the precedence table (9)", {
@@ -152,6 +152,43 @@ test_that("markdown falls back to text/plain without commonmark (9)", {
   o <- project_output(fake_view(kind = "markdown", code = "# h"))
   expect_equal(o$mime, "text/plain")
   expect_equal(o$body, "# h")
+})
+
+# ---- Inline values: project_text() via project_output() (48) ----------------
+
+test_that("project_output() of a text cell: with and without inline values, code_differs, errors (48)", {
+  code <- "#' Half of it is `r x / 2`."
+
+  o_not_run <- project_output(fake_view(kind = "markdown", code = code))
+  expect_equal(o_not_run$mime, "text/html")
+  expect_match(o_not_run$body, "<code>r x / 2</code>")
+  expect_true(check_wire(o_not_run))
+
+  out_ok <- new_display("application/vnd.ember.inline", list(values = "10.5"), "10.5")
+  o_ok <- project_output(fake_view(kind = "markdown", code = code, output = out_ok))
+  expect_equal(o_ok$mime, "text/html")
+  expect_equal(o_ok$body, '<p>Half of it is <span class="ember-inline">10.5</span>.</p>\n')
+  expect_true(check_wire(o_ok))
+
+  out_html <- new_display("application/vnd.ember.inline", list(values = "<b>"), "<b>")
+  o_html <- project_output(fake_view(kind = "markdown", code = "#' `r x`", output = out_html))
+  expect_match(o_html$body, "&lt;b&gt;", fixed = TRUE)
+
+  o_differs <- project_output(fake_view(kind = "markdown", code = code, output = out_ok, code_differs = TRUE))
+  expect_false(grepl("ember-inline", o_differs$body, fixed = TRUE))
+  expect_match(o_differs$body, "<code>r x / 2</code>")
+
+  o_err <- project_output(fake_view(kind = "markdown", code = "#' `r x`",
+    errors = list(list(kind = "error", message = "boom", fixes = character(), names = character(),
+                       cells = character(), traceback = character()))))
+  expect_equal(o_err$mime, "application/vnd.pluto.stacktrace+object")
+  expect_true(check_wire(o_err))
+
+  local_mocked_bindings(commonmark_available = function() FALSE)
+  o_plain <- project_output(fake_view(kind = "markdown", code = code, output = out_ok))
+  expect_equal(o_plain$mime, "text/plain")
+  expect_equal(o_plain$body, "Half of it is 10.5.")
+  expect_true(check_wire(o_plain))
 })
 
 # ---- 10. Errors ----------------------------------------------------------------

@@ -456,6 +456,64 @@ test_that("every run message carries the current code-cell run order (54)", {
   expect_true(all(c("S", "A", "B") %in% msg$order))
 })
 
+# ---- Inline values: autorun, lazy, run_cells() (44, 45) --------------------
+
+test_that("autorun: after A runs, a text cell reading x is queued with role text (44)", {
+  # T has never run yet, so it must be requested alongside A the first time
+  # (invalidate_dependents() only re-queues a cell that already has a
+  # result -- the same rule a brand-new code cell follows); a *second* run
+  # of A, below, is what shows T being re-queued on its own.
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), T = cell("#' `r x / 2`", kind = "markdown")))
+  r <- boot(s, c("A", "T"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+  # schedule() both queues and sends T within this one dispatch, so by now
+  # it's already the running cell, not merely pending.
+  expect_equal(r$state$worker$running$cell, "T")
+  msg <- last_sent(r)
+  expect_equal(msg$cell, "T")
+  expect_equal(msg$role, "text")
+  expect_equal(msg$code, "x / 2")
+
+  out <- new_display("application/vnd.ember.inline", list(values = "0.5"), "0.5")
+  r <- drive(r$state, wk_done(1, last_token(r), report(output = out), at(11)))
+
+  r2 <- drive(r$state, ev_apply(list(op_set_code("A", "x <- 2", expected = "x <- 1")), at(12)))
+  r2 <- drive(r2$state, ev_run("A", at(13)))
+  expect_true("T" %in% r2$state$pending)
+})
+
+test_that("in lazy mode, a dependent text cell goes stale and isn't queued when its ancestor reruns", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), T = cell("#' `r x / 2`", kind = "markdown")),
+                  on_cell_change = "lazy")
+  r <- boot(s, c("A", "T"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+  out <- new_display("application/vnd.ember.inline", list(values = "0.5"), "0.5")
+  r <- drive(r$state, wk_done(1, last_token(r), report(output = out), at(11)))
+
+  r2 <- drive(r$state, ev_apply(list(op_set_code("A", "x <- 2", expected = "x <- 1")), at(12)))
+  r3 <- drive(r2$state, ev_run("A", at(13)))
+  expect_false("T" %in% r3$state$pending)
+  expect_true(isTRUE(r3$state$results[["T"]]$stale))
+})
+
+test_that("reduce_run(): a text cell without inline values is skipped, not queued (45)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), MD = cell("#' just text", kind = "markdown")))
+  r <- drive(s, ev_run("MD", at(1)))
+  expect_false("MD" %in% r$state$pending)
+  expect_true("MD" %in% r$reply$skipped)
+})
+
+test_that("reduce_wk_done(): a text cell's error gets line/call from the failed span (46)", {
+  s <- fake_state(list(S = cell(""), E = cell("#' `r max(carz$wt)`", kind = "markdown")))
+  r <- boot(s, "E")
+  r <- drive(r$state, wk_done(1, last_token(r),
+    report(status = "error", error = list(message = "object 'carz' not found", span = 1L)), at(10)))
+  err <- r$state$results[["E"]]$error
+  expect_equal(err$kind, "error")
+  expect_equal(err$line, 1L)
+  expect_equal(err$call, "`r max(carz$wt)`")
+})
+
 test_that("a wk_done with a stale token or generation is ignored (55)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1")))
   r <- boot(s, "A")

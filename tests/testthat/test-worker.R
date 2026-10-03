@@ -1017,3 +1017,37 @@ test_that("handle_next() answers complete/help/signature with the request's id, 
   expect_identical(seen[[which(types == "completions")]]$id, 42L)
   expect_identical(seen[[which(types == "signature")]]$id, 43L)
 })
+
+# ---- Inline values: role "text" (ui-3 47) -----------------------------------
+
+test_that("run_cell(): role text gives one inline value per line, knitr-style formatting (ui-3 47)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "t", 1L, "1/3\nnrow(mtcars)\ninvisible(1)\nc(1.5, 2)\nletters[1:3]", role = "text")
+  expect_identical(r$status, "ok")
+  expect_identical(r$output$mime, "application/vnd.ember.inline")
+  expect_identical(r$output$values, c("0.3333333", "32", "", "1.5, 2", "a, b, c"))
+  expect_identical(r$output$text, paste(r$output$values, collapse = "\n"))
+
+  if (requireNamespace("knitr", quietly = TRUE)) {
+    hook <- getFromNamespace(".inline.hook", "knitr")
+    expect_identical(r$output$values[[1]], hook(1 / 3))
+    expect_identical(r$output$values[[2]], hook(nrow(mtcars)))
+    expect_identical(r$output$values[[4]], hook(c(1.5, 2)))
+    expect_identical(r$output$values[[5]], hook(letters[1:3]))
+  }
+})
+
+test_that("run_cell(): role text reports the failing line as error$span; earlier assignments stick (ui-3 47)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "t", 1L, "y <- 1\nstop('no')", role = "text")
+  expect_identical(r$status, "error")
+  expect_identical(r$error$span, 2L)
+
+  # A different cell id, so remove_cell() for this run doesn't drop "t"'s
+  # own globals before they can be checked.
+  r2 <- run_and_wait(h, "check", 2L, "y")
+  expect_identical(r2$status, "ok")
+  expect_identical(r2$output$text, "[1] 1")
+})
