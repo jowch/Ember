@@ -27,7 +27,22 @@ test("delete several cells: in-page dialog, Tab trapped, Esc cancels and restore
 
   // --- Esc: cancels, keeps both cells, returns focus ---
 
-  const beforeEsc = await page.evaluateHandle(() => document.activeElement);
+  // A real, always-present header button: focusing it (not clicking --
+  // that would open the export menu) puts a genuine element in
+  // document.activeElement, not document.body, so the later check that
+  // focus comes back to it actually exercises dialogs.js's restore. Its
+  // own keydown has no handler, so Backspace still bubbles to Editor's
+  // document-level listener. Two match the selector; one sits off-screen
+  // (print layout) and can't take focus, so this picks the one actually
+  // in the viewport.
+  const beforeEsc = await page.evaluateHandle(() => {
+    const el = [...document.querySelectorAll("button.toggle_export")].find((e) => e.getBoundingClientRect().top >= 0);
+    el.focus();
+    return el;
+  });
+  assert.notEqual(await page.evaluate((el) => el.tagName, beforeEsc), "BODY");
+  assert.ok(await page.evaluate((el) => el === document.activeElement, beforeEsc), "the header button took focus");
+
   await selectAandB();
   await page.keyboard.press("Backspace");
 
@@ -72,6 +87,33 @@ test("delete several cells: in-page dialog, Tab trapped, Esc cancels and restore
   await page.waitForFunction(
     () => !document.getElementById("A") && !document.getElementById("B"),
     null, { timeout: 10000 });
+
+  assertNoProblems(page);
+});
+
+test("delete several cells: a click on the dialog's backdrop cancels", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "delete-dialog-backdrop.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await page.evaluate(() => window.editor_state_set({ selected_cells: ["A", "B"] }));
+  await page.keyboard.press("Backspace");
+
+  const dialog = page.locator("dialog.ember-dialog[open]");
+  await dialog.waitFor({ state: "visible", timeout: 5000 });
+
+  // A click in a corner of the viewport lands on the <dialog> element
+  // itself (its backdrop covers the page once shown modally), not on its
+  // centred content box.
+  await page.mouse.click(5, 5);
+  await dialog.waitFor({ state: "hidden", timeout: 5000 });
+
+  assert.equal(await page.locator('pluto-cell[id="A"]').count(), 1, "A survives a backdrop click");
+  assert.equal(await page.locator('pluto-cell[id="B"]').count(), 1, "B survives a backdrop click");
 
   assertNoProblems(page);
 });

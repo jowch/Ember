@@ -4,7 +4,7 @@ import { pack, unpack } from "./MsgPack.js"
 import "./Polyfill.js"
 import { Stack } from "./Stack.js"
 import { with_query_params } from "./URLTools.js"
-import { reload_prompt, tell } from "./dialogs.js"
+import { ask, reload_prompt } from "./dialogs.js"
 import { t } from "./lang.js"
 
 const reconnect_after_close_delay = 500
@@ -464,7 +464,16 @@ const alert_if_not_authenticated = async (/** @type {string | URL} */ ws_url, ex
             const auth_url = auth_check_url_from_ws(ws_url)
             const response = await fetch(auth_url)
             if (response.status === 403 || response.status === 401) {
-                if (!is_desktop() || (await is_backend_server_loaded())) tell({ body: t("t_lost_authentication") })
+                if (!is_desktop() || (await is_backend_server_loaded())) {
+                    ask({
+                        body: t("t_lost_authentication"),
+                        actions: [{ label: t("t_reload"), value: "reload", primary: true }],
+                        cancel_value: "cancel",
+                        key: "lost-authentication",
+                    }).then((value) => {
+                        if (value === "reload") location.reload()
+                    })
+                }
             }
         }
     }
