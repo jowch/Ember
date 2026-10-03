@@ -276,6 +276,77 @@ test_that("job_leave by the last subscriber kills the process (63)", {
   expect_null(jobs[[key]])
 })
 
+# ---- poll_jobs(): no inserted newline, failure lines survive the cap -------
+
+#' A minimal stand-in for a `processx::process` handle, giving `poll_jobs()`
+#' exactly the four calls it makes (`is_alive`, `read_output`,
+#' `get_exit_status`, `read_all_output`) with results fixed ahead of time,
+#' rather than depending on a real subprocess's timing to split output
+#' across polls just right.
+fake_job_proc <- function(chunks, exit_status = 1L, final_chunk = "") {
+  i <- 0L
+  self <- new.env(parent = emptyenv())
+  self$is_alive <- function() i < length(chunks)
+  self$read_output <- function() {
+    i <<- i + 1L
+    chunks[[i]]
+  }
+  self$get_exit_status <- function() exit_status
+  self$read_all_output <- function() final_chunk
+  self
+}
+
+#' Register `proc` directly in the job table under `key`, as `job_start()`
+#' would once its subprocess exists, without actually spawning one.
+fake_job <- function(key, proc, nb) {
+  job <- new.env(parent = emptyenv())
+  job$proc <- proc
+  job$buf <- ""
+  job$lines <- character()
+  job$subs <- list(list(nb = nb, make_progress = function(line) NULL,
+                        make_done = function(status, output) list(kind = "done", status = status, output = output)))
+  assign(key, job, envir = jobs)
+}
+
+test_that("poll_jobs() doesn't insert a newline between buf and the final read: a line split across them stays one line", {
+  key <- paste0("job-split-", uuid())
+  # Never ends in "\n": by the time `!alive`, the whole line is still
+  # unterminated, split across one `read_output()` (into `job$buf`) and
+  # the final `read_all_output()` (`rest`) -- exactly the case a `paste()`
+  # with `collapse = "\n"` over `c(job$lines, job$buf, rest)` used to
+  # break, turning one line into two and hiding it from any pattern
+  # anchored on a whole line (`install_failures()`'s `^ERROR: ...`).
+  proc <- fake_job_proc(list("ERROR: compilation fail"), final_chunk = "ed for package 'x'")
+  nb <- fake_sub()
+  fake_job(key, proc, nb)
+
+  poll_jobs(NULL)
+  done <- Filter(function(e) identical(e$kind, "done"), nb$inbox)
+  expect_length(done, 1)
+  expect_equal(done[[1]]$output, "ERROR: compilation failed for package 'x'")
+  expect_null(jobs[[key]])
+})
+
+test_that("poll_jobs(): a line matching the failure patterns survives the 400-line cap", {
+  key <- paste0("job-cap-", uuid())
+  failure_line <- "ERROR: compilation failed for package 'x'"
+  noise <- paste0("noise line ", seq_len(500))
+  chunk <- paste0(c(failure_line, noise), "\n", collapse = "")
+  proc <- fake_job_proc(list(chunk, ""), final_chunk = "")
+  nb <- fake_sub()
+  fake_job(key, proc, nb)
+
+  poll_jobs(NULL)  # reads the chunk: 501 complete lines, over the 400 cap
+  job <- jobs[[key]]
+  expect_true(failure_line %in% job$lines, info = "kept past the cap, not just the most recent 400")
+  expect_true(length(job$lines) < 501, info = "still bounded, not literally unlimited")
+
+  poll_jobs(NULL)  # process no longer alive: done fires
+  done <- Filter(function(e) identical(e$kind, "done"), nb$inbox)
+  expect_length(done, 1)
+  expect_true(grepl(failure_line, done[[1]]$output, fixed = TRUE))
+})
+
 # ---- clean() (64, 65, 66) ---------------------------------------------------
 
 test_that("clean(dry_run = TRUE) lists libraries older than max_age and staging folders older than a day, and deletes nothing (64)", {

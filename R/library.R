@@ -399,17 +399,29 @@ job_leave <- function(key, nb) {
   invisible(NULL)
 }
 
+#' Lines `poll_jobs()` keeps past its 400-line cap even once they'd
+#' otherwise be the oldest and first evicted: the same shapes
+#' `install_failures()` (packages-core.R) looks for, so a failure near
+#' the start of a long, slow build's output is never dropped before
+#' anything gets a chance to parse it. Not a contract (design-gaps.md):
+#' widening this list costs nothing and can only keep more, never less.
+JOB_FAILURE_LINE_RE <- "^(ERROR|Error)|install failed|failed to retrieve"
+
 #' One poll of every running job: read whatever output has arrived, turn
 #' complete lines into progress events for each subscriber, and when a
 #' job's process has exited, turn its status and full output into a done
 #' event for each subscriber and drop the job.
 #'
-#' Every complete line also accumulates into `job$lines` (capped at the
-#' last 400), not just handed to `make_progress` and dropped: `make_done`
-#' needs the whole run's output, not only whatever didn't fit in one poll
-#' as the unfinished last line (`job$buf`) -- an install that runs longer
-#' than a single poll interval used to report an empty log on failure
-#' (design-gaps.md, Packages).
+#' Every complete line also accumulates into `job$lines`, not just handed
+#' to `make_progress` and dropped: `make_done` needs the whole run's
+#' output, not only whatever didn't fit in one poll as the unfinished
+#' last line (`job$buf`) -- an install that runs longer than a single
+#' poll interval used to report an empty log on failure (design-gaps.md,
+#' Packages). Bounded at 400 lines, but a line matching
+#' `JOB_FAILURE_LINE_RE` is kept regardless: capping by a plain
+#' `tail(..., 400)` would drop an early failure line from a log that
+#' keeps printing for thousands of lines afterward (a slow, chatty
+#' configure script, say), leaving `install_failures()` nothing to find.
 poll_jobs <- function(nb) {
   for (key in ls(jobs, all.names = TRUE)) {
     job <- jobs[[key]]
@@ -424,7 +436,10 @@ poll_jobs <- function(nb) {
       complete <- if (ends_with_newline) lines else utils::head(lines, -1L)
       job$buf <- if (ends_with_newline || length(lines) == 0L) "" else utils::tail(lines, 1L)
       if (length(complete) > 0L) {
-        job$lines <- utils::tail(c(job$lines, complete), 400L)
+        combined <- c(job$lines, complete)
+        recent <- utils::tail(combined, 400L)
+        overflow <- utils::head(combined, max(0L, length(combined) - 400L))
+        job$lines <- c(overflow[grepl(JOB_FAILURE_LINE_RE, overflow)], recent)
       }
       for (line in complete) {
         for (s in job$subs) {
@@ -438,7 +453,14 @@ poll_jobs <- function(nb) {
     if (!alive) {
       status <- tryCatch(job$proc$get_exit_status(), error = function(e) NA_integer_)
       rest <- tryCatch(job$proc$read_all_output(), error = function(e) "")
-      output <- paste(c(job$lines, job$buf, rest), collapse = "\n")
+      # `job$buf` and `rest` continue the same unfinished line (whatever
+      # didn't end in "\n" yet when the process exited): joining them
+      # with "\n" like every other pair here would split that one line
+      # in two, and a pattern anchored on the whole line (install_failures()'s
+      # `^ERROR: ...`) would then match neither half.
+      output <- paste0(paste(job$lines, collapse = "\n"),
+                       if (length(job$lines) > 0L) "\n" else "",
+                       job$buf, rest)
       for (s in job$subs) {
         ev <- tryCatch(s$make_done(status, output), error = function(e) NULL)
         if (!is.null(ev)) enqueue(s$nb, ev)
