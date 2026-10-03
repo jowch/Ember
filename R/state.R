@@ -231,8 +231,8 @@ new_result <- function(code, status, output, console, error, started_at,
 #' `"worker_exited"`. `message`, `traceback` (character, innermost last),
 #' `names`, `fixes` as on `ember_graph_error`. `call`/`line` are set only
 #' for a text cell's inline expression that errored (the `` `r expr` ``
-#' text and its line in the cell, from `inline_spans()`); piece 6 fills
-#' them for code cells too and shows "Error in `call` · line n".
+#' text and its line in the cell, from `inline_spans()`); a later increment
+#' can fill them for code cells too and show "Error in `call` \u00b7 line n".
 new_run_error <- function(kind, message, traceback = character(),
                           names = character(), fixes = character(),
                           cells = character(), call = NULL, line = NULL) {

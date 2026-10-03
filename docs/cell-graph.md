@@ -167,9 +167,9 @@ cell is found, not a real ordering constraint.
 display order, then the cell), run three times: setup, package-attaching
 cells, everyone. Compared with Kahn's algorithm with a priority queue, it
 moves a cell only when an edge forces it, which keeps text cells without
-inline values beside their neighbours in the written file (piece 2: one
-with an inline `` `r expr` `` is an ordinary node instead, since it reads
-and runs like any other cell). The order is total: cycle members
+inline values beside their neighbours in the written file (one with an
+inline `` `r expr` `` is an ordinary node instead, since it reads and
+runs like any other cell). The order is total: cycle members
 are placed in display order, so the file writer and the scheduler use one
 `order` and one `errors` list rather than two orderings.
 

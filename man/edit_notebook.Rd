@@ -43,9 +43,8 @@ skips the check.}
 \item{index}{1-based display position: where to insert (\code{insert_cell()}) or
 move to (\code{move_cell()}).}
 \item{id}{The new cell's id (a 36-character UUID), for a caller that names the
-cell itself, as the browser does. \code{NULL} generates one. Its kind is
-always \code{cell_kind(code)} (a cell of only \code{#'} lines is text); there is
-no separate argument for it.}
+cell itself, as the browser does. \code{NULL} generates one. A cell of only
+\code{#'} lines is text; there is no separate argument for its kind.}
 \item{folded}{\code{TRUE} to fold the cell's code away in a view, \code{FALSE} to
 show it.}
 \item{disabled}{\code{TRUE} to disable the cell, \code{FALSE} to re-enable it. A

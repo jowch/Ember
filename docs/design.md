@@ -771,10 +771,12 @@ load("fits.RData")
 - `# %%` is the cell marker Positron and VS Code already understand.
 - A cell whose every non-blank line starts with `#'` is text, so
   `knitr::spin` renders the file as a report; a cell mixing `#'` lines and
-  code is an error. `` `r expr` `` inside a text line runs reactively, like
-  any other code; its value is inserted as plain text once the notebook
-  has run. The `[markdown]` tag an older Ember wrote is still read (an
-  unprefixed line gets a `#'` added) but never written.
+  code is an error. `#'` lines are matched as raw lines, as `knitr::spin`
+  does, so a `#'` line inside a multi-line string makes a cell mixed too.
+  `` `r expr` `` inside a text line runs reactively, like any other code;
+  its value is inserted as plain text once the notebook has run. The
+  `[markdown]` tag an older Ember wrote is still read (an unprefixed line
+  gets a `#'` added) but never written.
 - The comment lines directly above a top-level `name <- function(...)`
   definition, with no blank line between, are its docstring, shown in
   Help.
