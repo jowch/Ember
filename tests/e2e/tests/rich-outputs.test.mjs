@@ -82,12 +82,25 @@ test("plot: PLT re-renders sharper when the viewport narrows (40)", async (t) =>
   const before = await page.evaluate((sel) => document.querySelector(sel).naturalWidth, `${cellSelector("PLT")} img`);
   await page.setViewportSize({ width: 600, height: 800 });
 
+  // ui-2-tests.md 40: within 5s, naturalWidth changes to container width *
+  // devicePixelRatio (+/- 10%).
   await page.waitForFunction(
-    (sel, beforeWidth) => {
+    ([sel, beforeWidth]) => {
       const img = document.querySelector(sel);
-      return img && img.naturalWidth !== beforeWidth;
+      return img != null && img.naturalWidth > 0 && img.naturalWidth !== beforeWidth;
     },
-    `${cellSelector("PLT")} img`, before, { timeout: 5000 }).catch(() => {});
+    [`${cellSelector("PLT")} img`, before], { timeout: 5000 });
+
+  const { naturalWidth, expectedWidth } = await page.evaluate((sel) => {
+    const img = document.querySelector(sel);
+    const containerWidth = img.closest("pluto-output")?.clientWidth ?? img.parentElement.clientWidth;
+    return { naturalWidth: img.naturalWidth, expectedWidth: containerWidth * window.devicePixelRatio };
+  }, `${cellSelector("PLT")} img`);
+  assert.ok(naturalWidth !== before, "expected the plot image to re-render at a different width");
+  assert.ok(
+    Math.abs(naturalWidth - expectedWidth) / expectedWidth <= 0.1,
+    `expected naturalWidth (${naturalWidth}) within 10% of container width * devicePixelRatio (${expectedWidth})`
+  );
 
   assertNoProblems(page);
 });
