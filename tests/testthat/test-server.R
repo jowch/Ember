@@ -178,6 +178,32 @@ test_that("run_multiple_cells {cells: []} runs nothing; a blank new cell doesn't
   expect_equal(notebook_snapshot(nb)$process, "preview")
 })
 
+test_that("update_notebook to a text cell, then running it: kind markdown, folded, rendered as HTML (54)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  a <- names(notebook_state(nb)$cells)[2]
+
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  handle_message(server, ws, wire("update_notebook", notebook_id = id,
+    updates = list(patch("replace", list("cell_inputs", a, "code"), "#' # Title"))))
+  expect_equal(ws$last()$message$response$update_went_well, "\U0001F44D")
+
+  handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list(a)))
+  expect_true(wait_for(nb, timeout = 20))
+
+  page <- ws$page()
+  expect_equal(page$cell_inputs[[a]]$kind, "markdown")
+  expect_true(page$cell_inputs[[a]]$code_folded)
+  expect_match(page$cell_results[[a]]$output$body, "<h1>Title</h1>", fixed = TRUE)
+})
+
 # ---- ember_split_cell (53) -----------------------------------------------
 
 test_that("ember_split_cell splits a mixed cell; stale code or a non-mixed cell is a no-op (53)", {
@@ -201,6 +227,17 @@ test_that("ember_split_cell splits a mixed cell; stale code or a non-mixed cell 
   handle_message(server, ws, wire("ember_split_cell", notebook_id = id, cell_id = "T", code = t_code))
   expect_equal(length(notebook_state(nb)$cells), 3)
 
+  # Malformed input: refused silently, never reaching state$cells[[...]]
+  # with something other than a single string (a numeric index would pick
+  # a cell by position, a character vector would recurse into nested
+  # lists, NULL/NA would error on the lookup).
+  for (bad in list(list(cell_id = 2, code = m_code), list(cell_id = c("M", "S"), code = m_code),
+                  list(cell_id = "M", code = NULL), list(cell_id = NA_character_, code = m_code))) {
+    expect_no_error(do.call(handle_message, list(server, ws,
+      do.call(wire, c(list("ember_split_cell", notebook_id = id), bad)))))
+    expect_equal(length(notebook_state(nb)$cells), 3)
+  }
+
   handle_message(server, ws, wire("ember_split_cell", notebook_id = id, cell_id = "M", code = m_code))
   cells <- notebook_state(nb)$cells
   expect_equal(length(cells), 4)
@@ -212,6 +249,59 @@ test_that("ember_split_cell splits a mixed cell; stale code or a non-mixed cell 
   expect_equal(cells[[new_id]]$kind, "code")
 
   expect_length(Filter(function(e) e$kind == "mixed_text", notebook_state(nb)$graph$errors), 0)
+  # The saved file has M's text and the split-out code in separate cells,
+  # not the original single mixed one.
+  saved_file <- parse_notebook(paste(readLines(path), collapse = "\n"), new_id = function() "x")
+  expect_equal(saved_file$cells[["M"]]$code, "#' a")
+  expect_true(any(vapply(saved_file$cells, function(c) identical(c$code, "x <- 1"), logical(1))))
+})
+
+test_that("ember_split_cell splits into 3+ cells, in order, and refuses an off cell (53)", {
+  path <- write_session_notebook(list(S = cell(""), M = cell("#' a\nx <- 1\n#' b\ny <- 2"),
+                                      B = cell("x + 1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  m_code <- notebook_state(nb)$cells[["M"]]$code
+
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  handle_message(server, ws, wire("ember_split_cell", notebook_id = id, cell_id = "M", code = m_code))
+  cells <- notebook_state(nb)$cells
+  expect_equal(length(cells), 6)
+  ids <- names(cells)
+  m_pos <- match("M", ids)
+  codes <- vapply(ids[m_pos + 0:3], function(i) cells[[i]]$code, character(1))
+  expect_equal(unname(codes), c("#' a", "x <- 1", "#' b", "y <- 2"))
+
+})
+
+test_that("ember_split_cell refuses a mixed cell that is off (a dependent of a disabled cell) (53)", {
+  # find_errors()'s mixed_text rule only excludes a disabled cell itself,
+  # not a dependent of one -- M2 still shows its own mixed_text error
+  # while off, so the request handler needs its own off check.
+  path <- write_session_notebook(list(S = cell(""), D = cell("z <- 1"), M2 = cell("#' note\nz + 1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  edit_notebook(nb, disable_cell("D"))
+  st <- notebook_state(nb)
+  expect_true("M2" %in% names(st$graph$off))
+  expect_true("M2" %in% unlist(lapply(st$graph$errors, function(e) if (e$kind == "mixed_text") e$cells)))
+
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- st$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  handle_message(server, ws, wire("ember_split_cell", notebook_id = id, cell_id = "M2",
+    code = st$cells[["M2"]]$code))
+  expect_equal(length(notebook_state(nb)$cells), 3)
 })
 
 test_that("disabling in safe preview gets a thumbs-up; the run it triggers next leaves the session not allowed (ui-3 36)", {

@@ -840,23 +840,31 @@ handlers <- list(
 
   #' The "Split into n cells" button (ember$split, pluto-state.R): leaves
   #' the text in `cell_id` and puts each further piece in a new cell right
-  #' after it, in order. A no-op when `code` is out of date (the button was
-  #' clicked against a copy the cell has since moved past) or the cell no
-  #' longer mixes text and code. Nothing runs; the edit alone is enough to
-  #' clear the mixed_text error on the first piece.
+  #' after it, in order. A no-op when `cell_id` isn't a single string, the
+  #' cell doesn't exist or is off (a disabled cell or one of its
+  #' dependents), `code` is out of date (the button was clicked against a
+  #' copy the cell has since moved past), or the cell has no mixed_text
+  #' graph error (which already excludes the setup cell and a disabled
+  #' one). Nothing runs; the edit alone is enough to clear the error on
+  #' the first piece.
   ember_split_cell = function(server, cl, hub, req) {
     if (is.null(hub)) return(invisible(NULL))
     b <- req$body
+    cell_id <- b$cell_id
+    if (!is.character(cell_id) || length(cell_id) != 1 || is.na(cell_id)) return(invisible(NULL))
     state <- notebook_state(hub$nb)
-    cell <- state$cells[[b$cell_id %||% ""]]
-    if (is.null(cell) || !identical(cell$kind, "code") || !identical(cell$code, b$code) ||
-        !is_mixed(cell$code)) {
+    cell <- state$cells[[cell_id]]
+    if (is.null(cell) || !is.character(b$code) || length(b$code) != 1 ||
+        !identical(cell$code, b$code) || cell_id %in% names(state$graph$off)) {
       return(invisible(NULL))
     }
+    mixed <- Find(function(e) identical(e$kind, "mixed_text") && cell_id %in% e$cells,
+                  state$graph$errors)
+    if (is.null(mixed)) return(invisible(NULL))
     pieces <- split_mixed(cell$code)
     if (length(pieces) < 2) return(invisible(NULL))
-    i <- match(b$cell_id, names(state$cells))
-    ops <- c(list(set_code(b$cell_id, pieces[[1]], expected = cell$code)),
+    i <- match(cell_id, names(state$cells))
+    ops <- c(list(set_code(cell_id, pieces[[1]], expected = cell$code)),
             lapply(seq_along(pieces)[-1], function(k) insert_cell(i + k - 1L, pieces[[k]])))
     tryCatch(do.call(edit_notebook, c(list(hub$nb), ops)),
             ember_refused = function(e) NULL)
