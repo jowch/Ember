@@ -64,13 +64,48 @@ test("tree: LST is a collapsed tree that expands and pages (40)", async (t) => {
   assertNoProblems(page);
 });
 
-test("plot: PLT re-renders sharper when the viewport narrows (41)", async (t) => {
+/** `newPage()`'s console/pageerror/dialog wiring, for a page made with
+ * `context.newPage()` directly (a custom `deviceScaleFactor` needs its own
+ * context, so `newPage(browser)` can't be used for it). */
+function wireProblems(page) {
+  const problems = [];
+  page.on("console", (m) => { if (m.type() === "error") problems.push("console: " + m.text()); });
+  page.on("pageerror", (e) => problems.push("pageerror: " + e.message));
+  page.on("dialog", async (d) => { problems.push("dialog: " + d.message()); await d.dismiss(); });
+  page.problems = problems;
+  return page;
+}
+
+/** Whether any websocket frame sent by `page` so far contains `needle`
+ * (the ember_render_plot request type's name): binary frames arrive as a
+ * raw-byte string in Playwright, in which the type name's ASCII bytes
+ * appear verbatim (msgpack encodes a short map key as its literal UTF-8
+ * bytes); some Playwright builds instead base64-encode a binary payload,
+ * so both are checked. */
+function watchRenderRequests(page, needle = "ember_render_plot") {
+  const seen = [];
+  page.on("websocket", (ws) => {
+    ws.on("framesent", (frame) => {
+      const payload = frame.payload ?? "";
+      let found = typeof payload === "string" && payload.includes(needle);
+      if (!found) {
+        try { found = Buffer.from(payload, "base64").toString("latin1").includes(needle); } catch { /* not base64 */ }
+      }
+      if (found) seen.push(Date.now());
+    });
+  });
+  return seen;
+}
+
+test("plot: PLT is a fixed-size image that never redraws when the viewport narrows (74)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "rich-plot.server.log") });
   const browser = await launchBrowser();
   t.after(async () => { await browser.close(); server.stop(); });
 
   const page = await newPage(browser);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const renderRequests = watchRenderRequests(page);
   await openNotebook(page, server.origin, server.secret, notebook);
 
   await runCell(page, "PLT");
@@ -79,30 +114,92 @@ test("plot: PLT re-renders sharper when the viewport narrows (41)", async (t) =>
     (sel) => document.querySelector(sel)?.naturalWidth > 0,
     `${cellSelector("PLT")} img`, { timeout: 10000 });
 
-  const before = await page.evaluate((sel) => document.querySelector(sel).naturalWidth, `${cellSelector("PLT")} img`);
+  const widthAt1280 = await page.evaluate(
+    (sel) => document.querySelector(sel).getBoundingClientRect().width, `${cellSelector("PLT")} img`);
+  assert.ok(Math.abs(widthAt1280 - 720) <= 1, `expected a 720 CSS px wide image, got ${widthAt1280}`);
+  const naturalBefore = await page.evaluate((sel) => document.querySelector(sel).naturalWidth, `${cellSelector("PLT")} img`);
+
   await page.setViewportSize({ width: 600, height: 800 });
+  await page.waitForTimeout(3000);
 
-  // ui-2-tests.md 40: within 5s, naturalWidth changes to container width *
-  // devicePixelRatio (+/- 10%).
-  await page.waitForFunction(
-    ([sel, beforeWidth]) => {
-      const img = document.querySelector(sel);
-      return img != null && img.naturalWidth > 0 && img.naturalWidth !== beforeWidth;
-    },
-    [`${cellSelector("PLT")} img`, before], { timeout: 5000 });
+  assert.equal(renderRequests.length, 0, "expected no ember_render_plot request after narrowing the viewport");
+  const naturalAfter = await page.evaluate((sel) => document.querySelector(sel).naturalWidth, `${cellSelector("PLT")} img`);
+  assert.equal(naturalAfter, naturalBefore, "expected the same image, not a re-render");
 
-  const { naturalWidth, expectedWidth } = await page.evaluate((sel) => {
+  const fitsColumn = await page.evaluate((sel) => {
     const img = document.querySelector(sel);
-    const containerWidth = img.closest("pluto-output")?.clientWidth ?? img.parentElement.clientWidth;
-    return { naturalWidth: img.naturalWidth, expectedWidth: containerWidth * window.devicePixelRatio };
+    const column = img.closest("pluto-output");
+    return img.getBoundingClientRect().width <= column.getBoundingClientRect().width + 1;
   }, `${cellSelector("PLT")} img`);
-  assert.ok(naturalWidth !== before, "expected the plot image to re-render at a different width");
-  assert.ok(
-    Math.abs(naturalWidth - expectedWidth) / expectedWidth <= 0.1,
-    `expected naturalWidth (${naturalWidth}) within 10% of container width * devicePixelRatio (${expectedWidth})`
-  );
+  assert.ok(fitsColumn, "expected the image to fit (scale down into) its narrower column");
 
   assertNoProblems(page);
+});
+
+test("plot: FIG's #| fig-width/fig-height lines give a fixed 480 x 384 CSS px image (75)", async (t) => {
+  const notebook = tempNotebook("rich.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "rich-fig.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await runCell(page, "FIG");
+  await page.waitForSelector(`${cellSelector("FIG")} img`, { timeout: 20000 });
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.naturalWidth > 0,
+    `${cellSelector("FIG")} img`, { timeout: 10000 });
+
+  const { width, height } = await page.evaluate((sel) => {
+    const r = document.querySelector(sel).getBoundingClientRect();
+    return { width: r.width, height: r.height };
+  }, `${cellSelector("FIG")} img`);
+  assert.ok(Math.abs(width - 480) <= 1, `expected width 480 CSS px, got ${width}`);
+  assert.ok(Math.abs(height - 384) <= 1, `expected height 384 CSS px, got ${height}`);
+
+  assertNoProblems(page);
+});
+
+test("plot: a 3x-density tab asks for one redraw at res 288; a 1x tab asks for none (76)", { timeout: 60000 }, async (t) => {
+  const notebook = tempNotebook("rich.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "rich-plot-dpr.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const context1x = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
+  const context3x = await browser.newContext({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 3 });
+  t.after(async () => { await context1x.close(); await context3x.close(); });
+
+  const page1 = wireProblems(await context1x.newPage());
+  const page3 = wireProblems(await context3x.newPage());
+  const requests1 = watchRenderRequests(page1);
+  const requests3 = watchRenderRequests(page3);
+
+  await openNotebook(page1, server.origin, server.secret, notebook);
+  await openNotebook(page3, server.origin, server.secret, notebook);
+  await runCell(page1, "PLT");
+
+  for (const page of [page1, page3]) {
+    await page.waitForSelector(`${cellSelector("PLT")} img`, { timeout: 20000 });
+    await page.waitForFunction(
+      (sel) => document.querySelector(sel)?.naturalWidth > 0,
+      `${cellSelector("PLT")} img`, { timeout: 10000 });
+  }
+
+  // The 3x tab's image should widen to res 288 (7.5in default figure width
+  // x 288 = 2160px); the 1x tab's stays at the first-draw 2x density (1440).
+  await page3.waitForFunction(
+    (sel) => document.querySelector(sel)?.naturalWidth === 2160,
+    `${cellSelector("PLT")} img`, { timeout: 10000 });
+  assert.equal(requests3.length, 1, "expected exactly one render request from the 3x tab");
+
+  await page1.waitForTimeout(10000);
+  assert.equal(requests1.length, 0, "expected no render request from the 1x tab");
+  assert.equal(requests3.length, 1, "expected no further render request from the 3x tab over the next 10s");
+
+  assertNoProblems(page1);
+  assertNoProblems(page3);
 });
 
 test("colours: ANSI's log and output have coloured spans and no visible escape codes (43)", async (t) => {

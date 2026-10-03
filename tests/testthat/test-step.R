@@ -1016,6 +1016,21 @@ test_that("wk_rendered replaces only the image data, keeping the text form", {
   expect_equal(r3$state$results$A$output$data, "new-bytes")
 })
 
+test_that("reduce_render() with NULL width and height sends render {cell, res} without those fields (ui-3 66)", {
+  s <- fake_state(list(S = cell(""), A = cell("plot(1)")))
+  out <- new_display("image/png", "bytes", "[plot]", size = list(width = 1440, height = 960, res = 192))
+  r <- boot(s, "A")
+  r <- drive(r$state, wk_done(1, last_token(r), report(output = out), at(10)))
+
+  r2 <- drive(r$state, ev_render("A", NULL, NULL, at(11), res = 288))
+  msg <- last_sent(r2)
+  expect_equal(msg$type, "render")
+  expect_equal(msg$cell, "A")
+  expect_equal(msg$res, 288)
+  expect_false("width" %in% names(msg))
+  expect_false("height" %in% names(msg))
+})
+
 test_that("reduce_show_more sends 'more' for a table/tree output while the worker is alive, nothing otherwise (ui-2 30)", {
   s <- fake_state(list(S = cell(""), A = cell("mtcars"), B = cell("1")))
   table_out <- new_display("application/vnd.ember.table",

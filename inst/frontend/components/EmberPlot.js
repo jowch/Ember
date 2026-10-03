@@ -1,70 +1,72 @@
-import { html, useRef, useEffect, useContext } from "../imports/Preact.js"
+import { html, useRef, useEffect, useState, useContext } from "../imports/Preact.js"
 import { PlutoImage } from "./CellOutput.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 
 /**
- * A plot image that re-renders at the page's width and pixel density
- * (ui-2.md, 3e). Wraps PlutoImage and watches its container's width with a
- * ResizeObserver, debounced 300ms. It asks for a render when the wanted
- * pixel width (round(width * devicePixelRatio)) differs from the image's
- * naturalWidth by more than 10%, and only while the tab is visible.
+ * A plot image at a fixed size (ui-3.md: figures never change with the
+ * window). `figure` (inches, from `cell_results[id].ember.figure`) sets
+ * the `<img>`'s CSS size directly; the image scales down, never up, below
+ * that width. The only redraw this component ever asks for is a higher
+ * pixel density than the current image has -- never a resize.
  *
- * It never asks because another tab's re-render changed the <img> alone:
- * a ResizeObserver only fires when the container's own box changes, not
- * when an image inside it is swapped, so two tabs of different widths
- * settle instead of taking turns forever.
+ * Without `figure` (an older export, or an `image/png` from `knit_print`)
+ * it renders a plain `PlutoImage`, with no size or density logic.
  */
-export const EmberPlot = ({ mime, body, cell_id, last_run_timestamp }) => {
+export const EmberPlot = ({ mime, body, cell_id, last_run_timestamp, figure }) => {
     const pluto_actions = useContext(PlutoActionsContext)
     const container_ref = useRef(/** @type {HTMLElement?} */ (null))
-    const requested_ref = useRef(/** @type {number?} */ (null))
-    const last_run_ref = useRef(last_run_timestamp)
+    const checked_ref = useRef(/** @type {string?} */ (null))
+    const [dpr_tick, set_dpr_tick] = useState(0)
 
     const maybe_ask = () => {
-        if (document.visibilityState !== "visible") return
+        if (figure == null) return
         const container = container_ref.current
         if (container == null) return
         const img = container.querySelector("img")
         if (img == null) return
-        const width = container.clientWidth
-        if (width === 0) return
-        const dpr = window.devicePixelRatio || 1
-        const wanted_width = Math.round(width * dpr)
+        img.style.width = `${figure.width * 96}px`
+        img.style.maxWidth = "100%"
+        img.style.height = "auto"
+
+        if (document.visibilityState !== "visible") return
         const natural = img.naturalWidth
-        if (natural === 0) return
-        const diff = Math.abs(wanted_width - natural) / natural
-        if (diff <= 0.1) return
-        if (requested_ref.current === wanted_width) return
-        requested_ref.current = wanted_width
-        const aspect = img.naturalWidth === 0 ? 1 : img.naturalHeight / img.naturalWidth
-        const wanted_height = Math.max(1, Math.round(wanted_width * aspect))
-        pluto_actions.ember_render_plot(cell_id, wanted_width, wanted_height, 96 * dpr)
+        if (natural === 0) {
+            img.addEventListener("load", maybe_ask, { once: true })
+            return
+        }
+        const dpr = Math.min(window.devicePixelRatio || 1, 4)
+        const key = `${last_run_timestamp}:${dpr}`
+        if (checked_ref.current === key) return
+        checked_ref.current = key
+        const have = natural / (figure.width * 96)
+        if (have < dpr * 0.95) {
+            pluto_actions.ember_render_plot(cell_id, Math.round(96 * dpr))
+        }
     }
 
     useEffect(() => {
-        if (container_ref.current == null) return
-        let timer = null
-        const debounced = () => {
-            if (timer != null) clearTimeout(timer)
-            timer = setTimeout(maybe_ask, 300)
-        }
-        const observer = new ResizeObserver(debounced)
-        observer.observe(container_ref.current)
-        return () => {
-            observer.disconnect()
-            if (timer != null) clearTimeout(timer)
-        }
-    }, [cell_id])
+        maybe_ask()
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [last_run_timestamp, figure?.width, figure?.height])
 
     useEffect(() => {
-        // A new run's image arrived: the size guard from the previous
-        // image no longer applies, and this is worth a fresh check.
-        if (last_run_timestamp !== last_run_ref.current) {
-            last_run_ref.current = last_run_timestamp
-            requested_ref.current = null
-            setTimeout(maybe_ask, 0)
+        if (figure == null) return
+        const dpr = window.devicePixelRatio || 1
+        const mq = matchMedia(`(resolution: ${dpr}dppx)`)
+        const on_change = () => {
+            maybe_ask()
+            // The threshold above is fixed at the dpr it was created with;
+            // re-register against the new one so a later change is still seen.
+            set_dpr_tick((t) => t + 1)
         }
-    }, [last_run_timestamp])
+        mq.addEventListener("change", on_change)
+        return () => mq.removeEventListener("change", on_change)
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [figure?.width, figure?.height, dpr_tick])
 
-    return html`<div ref=${container_ref} style="max-width: 100%;"><${PlutoImage} mime=${mime} body=${body} /></div>`
+    if (figure == null) {
+        return html`<div><${PlutoImage} mime=${mime} body=${body} /></div>`
+    }
+
+    return html`<div ref=${container_ref}><${PlutoImage} mime=${mime} body=${body} /></div>`
 }

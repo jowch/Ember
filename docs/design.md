@@ -339,8 +339,11 @@ The worker runs each cell in the global environment:
 2. Evaluate inside `withCallingHandlers`, collecting messages and warnings
    as structured items and errors with `sys.calls()` for the traceback.
 3. Open a fresh plot device per cell (ragg if the notebook's library has it,
-   otherwise base `png`), so `par()` settings end with the cell. Plots are
-   re-rendered at a new size when the UI asks.
+   otherwise base `png`), at the cell's own figure size (`#| fig-width`/
+   `fig-height`, inches; 7.5 x 5 by default) and a 2x pixel density, so
+   `par()` settings end with the cell. Figures are a fixed size, never
+   changed by the window; they redraw only when the screen's pixel density
+   goes up.
 4. Turn the output value into a display (see "How values display" below).
 
 **Which values a cell shows** follows marimo: the last visible value is the
@@ -361,9 +364,10 @@ order, as marimo does with `_display_`, its own formatters, `_mime_` and
 2. `knit_print()` methods.
 3. `repr_*()` methods.
 4. Ember's own views: data frames, tibbles and data.table in the paged
-   table view; plots (ggplot, lattice, grid, base) as images re-rendered on
-   resize; lists and nested structures as an expandable tree, as Pluto shows
-   Julia collections.
+   table view; plots (ggplot, lattice, grid, base) as fixed-size images,
+   sharp from the first draw and redrawn only when the screen's pixel
+   density goes up; lists and nested structures as an expandable tree, as
+   Pluto shows Julia collections.
 5. `print()` text, with colour on, so tibble and cli output keeps its
    colours; the UI turns the terminal colour codes into styled text.
 
@@ -868,7 +872,8 @@ HTML export (`/notebookexport`), which Endeavor uses.
   paging.
 - Messages and warnings under the output in their own style, as in RStudio's
   chunk output.
-- Plots re-rendered when the cell is resized.
+- Plots at a fixed size (`#| fig-width`/`fig-height`), never resized by the
+  window.
 - "N cells not run" with a Run all button, since notebooks open without
   running.
 

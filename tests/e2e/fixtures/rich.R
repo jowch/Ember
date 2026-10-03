@@ -26,6 +26,11 @@ list(a = 1, b = list(c = "x"), long = as.list(1:100))
 # %% id=PLT
 plot(1:10)
 
+# %% id=FIG
+#| fig-width: 5
+#| fig-height: 4
+plot(1:10)
+
 # %% id=ANSI
 cat("\033[31mred\033[39m\n")
 structure("x", class = "ansi_demo")
@@ -49,6 +54,7 @@ x <- (
 # FIT
 # LST
 # PLT
+# FIG
 # ANSI
 # PARSE
 # MD folded

@@ -298,7 +298,7 @@ export const Cell = ({
             ${code_not_trusted_yet
                 ? html`<${SafePreviewOutput} />`
                 : cell_api_ready
-                  ? html`<${CellOutput} errored=${errored} ...${output} sanitize_html=${sanitize_html} cell_id=${cell_id} />`
+                  ? html`<${CellOutput} errored=${errored} ...${output} ember_figure=${ember?.figure} sanitize_html=${sanitize_html} cell_id=${cell_id} />`
                   : html``}
             ${split_n != null ? html`<button class="ember-split" onClick=${on_split}>${t("t_ember_split", { n: split_n })}</button>` : null}
             <${CellInput}
@@ -371,7 +371,7 @@ export const Cell = ({
  *  [key: string]: any,
  * }} props
  * */
-export const IsolatedCell = ({ cell_input: { cell_id, metadata }, cell_result: { logs, output, published_object_keys }, hidden, sanitize_html = true }) => {
+export const IsolatedCell = ({ cell_input: { cell_id, metadata }, cell_result: { logs, output, published_object_keys, ember }, hidden, sanitize_html = true }) => {
     const node_ref = useRef(/** @type {HTMLElement?} */ (null))
     let pluto_actions = useContext(PlutoActionsContext)
     const cell_api_ready = useCellApi(node_ref, published_object_keys, pluto_actions)
@@ -379,7 +379,7 @@ export const IsolatedCell = ({ cell_input: { cell_id, metadata }, cell_result: {
 
     return html`
         <pluto-cell ref=${node_ref} id=${cell_id} class=${hidden ? "hidden-cell" : "isolated-cell"}>
-            ${cell_api_ready ? html`<${CellOutput} ...${output} sanitize_html=${sanitize_html} cell_id=${cell_id} />` : html``}
+            ${cell_api_ready ? html`<${CellOutput} ...${output} ember_figure=${ember?.figure} sanitize_html=${sanitize_html} cell_id=${cell_id} />` : html``}
             ${show_logs ? html`<${Logs} logs=${Object.values(logs)} line_heights=${[15]} set_cm_highlighted_line=${() => {}} />` : null}
         </pluto-cell>
     `

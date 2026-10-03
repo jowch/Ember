@@ -664,7 +664,7 @@ on_run <- function(server, cl, hub, req) {
 #' | completepath                  | reply {start = 0, stop = 0, results = []}                      |
 #' | get_all_notebooks             | reply "notebook_list" {notebooks = hosted notebooks}           |
 #' | reshow_cell                   | "more" paging (ui-2.md, 3b/3c): dispatch ev_show_more(cell, objectid, dim); flush. No reply (the frontend sends without awaiting one) |
-#' | ember_render_plot             | {cell_id, width, height, res}, clamped: dispatch ev_render(); flush |
+#' | ember_render_plot             | {cell_id, res}, res clamped: dispatch ev_render() at the cell's own figure size; flush |
 #' | ember_run_all                 | the "N cells not run" bar's button (ui-2.md, 5): run_cells() on not_run_ids(), the same set the bar counts; flush. No reply |
 #' | ember_split_cell              | {cell_id, code}: split a mixed_text cell at each text/code change (split_mixed()); nothing if code is stale or the cell isn't mixed. Flush. No reply |
 #' | ember_signature                | worker_query(signature); else signature_fallback() (ui-2.md, 4d)   |
@@ -813,16 +813,17 @@ handlers <- list(
     flush_clients(server, hub)
   },
 
+  #' A density-only redraw (3a): the page never sends a pixel size any
+  #' more, only the wanted `res`; any `width`/`height` in the body is
+  #' ignored, and the worker redraws at the cell's own figure size.
   ember_render_plot = function(server, cl, hub, req) {
     if (is.null(hub)) return(invisible(NULL))
     b <- req$body
     cell <- b$cell_id
     if (is.null(cell) || !(cell %in% names(notebook_state(hub$nb)$cells))) return(invisible(NULL))
     clamp <- function(x, lo, hi) max(lo, min(hi, x))
-    width <- clamp(as.integer(b$width %||% 720L), 100L, 4000L)
-    height <- clamp(as.integer(b$height %||% 480L), 100L, 4000L)
     res <- clamp(as.integer(b$res %||% 96L), 72L, 384L)
-    dispatch(hub$nb, ev_render(cell, width, height, at = Sys.time(), res = res))
+    dispatch(hub$nb, ev_render(cell, NULL, NULL, at = Sys.time(), res = res))
     flush_clients(server, hub)
   },
 

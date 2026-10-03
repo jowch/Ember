@@ -200,10 +200,11 @@ project_cell_input <- function(view) {
 #'   (Pluto's own field, Run.jl:86-91) -- true for a disabled cell itself,
 #'   too.
 #' * `ember`: `list(stale, code_changed, upstream_error?, disabled_by?,
-#'   can_disable, split?)`, from the view's `stale` and `code_differs` --
-#'   both already in `cell_key()`'s key (`code_differs` is derived from
-#'   `cell$code` and `result$code`). `stale` is `isTRUE(view$stale) &&
-#'   !off`: an off cell shows as disabled, not also as stale.
+#'   can_disable, split?, figure?)`, from the view's `stale` and
+#'   `code_differs` -- both already in `cell_key()`'s key (`code_differs`
+#'   is derived from `cell$code` and `result$code`). `stale` is
+#'   `isTRUE(view$stale) && !off`: an off cell shows as disabled, not also
+#'   as stale.
 #'   `upstream_error` is present only when the last error's kind is
 #'   `"upstream"`, as `as_arr(list(list(name, cell), ...))` from that
 #'   error's `names`/`cells` (also in the key, through `result`). The page
@@ -214,6 +215,10 @@ project_cell_input <- function(view) {
 #'   non-setup code cell. `split` is present, as `length(split_mixed(view$code))`,
 #'   only when `view$errors` has a `mixed_text` error: the Split button's
 #'   label (Cell.js), answered by the `ember_split_cell` request (server.R).
+#'   `figure` is present (3a), as `list(width, height)` inches from the
+#'   result's own display size (`size$width/height / size$res`), only when
+#'   the output is `image/png` with a size; it comes from `result`, already
+#'   in the key.
 #' * `output`: project_output() of the view.
 #' * `logs`: project_logs() of the view's console.
 #' * `published_object_keys = list()`, `depends_on_skipped_cells = FALSE`.
@@ -229,11 +234,19 @@ project_cell_result <- function(view) {
   split <- if (!is.null(mixed)) length(split_mixed(view$code)) else NULL
   off <- isTRUE(view$disabled) || !is.na(view$disabled_by)
   can_disable <- identical(view$kind, "code") && !view$setup
+  figure <- if (!is.null(view$output) && identical(view$output$mime, "image/png") &&
+               !is.null(view$output$size)) {
+    sz <- view$output$size
+    list(width = sz$width / sz$res, height = sz$height / sz$res)
+  } else {
+    NULL
+  }
   ember <- c(list(stale = isTRUE(view$stale) && !off, code_changed = isTRUE(view$code_differs)),
             if (!is.null(upstream_error)) list(upstream_error = upstream_error),
             if (!is.na(view$disabled_by)) list(disabled_by = view$disabled_by),
             list(can_disable = can_disable),
-            if (!is.null(split)) list(split = split))
+            if (!is.null(split)) list(split = split),
+            if (!is.null(figure)) list(figure = figure))
   list(cell_id = view$id,
       queued = isTRUE(view$queued), running = isTRUE(view$running),
       errored = errored,

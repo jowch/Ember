@@ -27,7 +27,9 @@
 #
 # Server -> worker
 #   run          cell, token, code, role ("setup"|"cell"|"text"), order (code
-#                cell ids in run order), formulas (list of formula_site).
+#                cell ids in run order), formulas (list of formula_site),
+#                fig (list(width, height, problems), inches: the figure
+#                size to open the plot device at).
 #                For role "text", each line of `code` is one inline
 #                expression (a text cell's `` `r expr` `` spans, one per
 #                line); the report's `output` is an "inline" display
@@ -39,7 +41,9 @@
 #   source_reply allow, message      only while a `source` request waits
 #   more         cell, path, dim     grow a table's or tree's paging limit
 #                                    at `path` (dim 1 rows/items, 2 columns)
-#   render       cell, width, height, res   re-render the cell's recorded plot
+#   render       cell, res, width?, height?   re-render the cell's recorded
+#                plot at its own figure size and `res`, or at `width`/
+#                `height` pixels when both are given (render_png())
 #   complete     id, line, cursor     line: the current line up to the cursor
 #   help         id, topic, package   package NULL: search attached, then all installed
 #   signature    id, name, package
@@ -72,6 +76,9 @@
 # ---- State (the worker's own; lives in this private environment) -------------
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
+
+FIG_RES <- 192                            # first-draw pixel density (2x, for fig.retina = 2)
+FIGURE_DEFAULT <- list(width = 7.5, height = 5)  # mirrors notebook.R's; this file is sourced alone
 
 con <- NULL            # socket to the server
 owned <- list()        # cell id -> character: globals the cell's runs created
@@ -323,8 +330,10 @@ run_cell <- function(msg) {
     attach_requests[[msg$cell]] <<- character()
     running <<- list(cell = msg$cell, token = msg$token)
     search0 <- search()
-    dev <- open_device()
+    fig <- msg$fig %||% FIGURE_DEFAULT
+    dev <- open_device(fig)
     console <- console_collector(msg$cell, msg$token)
+    for (p in fig$problems %||% character()) console$warning(simpleWarning(p))
     t0 <- proc.time()
 
     value <- NULL
@@ -1080,15 +1089,24 @@ console_collector <- function(cell, token) {
 #' A fresh device per cell: ragg::agg_png if the notebook's library has
 #' ragg, else grDevices::png, into a temp file, with
 #' dev.control(displaylist = "enable") so recordPlot() works.
-open_device <- function() {
+#'
+#' Opened at `fig` (list(width, height), inches) and `FIG_RES` (192, a 2x
+#' first draw so 1x and 2x screens never ask for a redraw), the density
+#' lowered for this one image so neither side exceeds 6000 px (a 30 in
+#' figure draws at 200 dpi).
+open_device <- function(fig) {
+  res <- min(FIG_RES, floor(6000 / max(fig$width, fig$height)))
+  width <- round(fig$width * res)
+  height <- round(fig$height * res)
   path <- tempfile(fileext = ".png")
   if (requireNamespace("ragg", quietly = TRUE)) {
-    ragg::agg_png(filename = path, width = 720, height = 480, res = 96, background = "white")
+    ragg::agg_png(filename = path, width = width, height = height, res = res, background = "white")
   } else {
-    grDevices::png(filename = path, width = 720, height = 480, res = 96, bg = "white")
+    grDevices::png(filename = path, width = width, height = height, res = res, bg = "white")
   }
   grDevices::dev.control(displaylist = "enable")
-  list(path = path, dev = grDevices::dev.cur())
+  list(path = path, dev = grDevices::dev.cur(), width = width, height = height, res = res,
+      fig = list(width = fig$width, height = fig$height))
 }
 
 #' Close a device opened by `open_device()`, if it's still open.
@@ -1314,7 +1332,8 @@ display_tree <- function(value, cell, token, limits = list()) {
 
 #' ggplot, trellis, recordedplot or grob: print to draw it, then PNG
 #' bytes via recordPlot()/the device's file. The recorded plot is kept
-#' (`display[[cell]]`) so a resize can replay it at a new size.
+#' (`display[[cell]]`), with the figure size it was drawn at (inches), so
+#' a later `render` can replay it at a new pixel density.
 #'
 #' `text_form()` (which also calls `print()`) runs before `dev.off()`:
 #' with no device open, printing a ggplot/trellis/recordedplot opens R's
@@ -1330,14 +1349,14 @@ display_plot_value <- function(value, cell, token, dev) {
   tf <- text_form(value)
   grDevices::dev.off(dev$dev)
   png_bytes <- read_png(dev$path)
-  display[[cell]] <<- list(value = rp, token = token, kind = "plot")
+  display[[cell]] <<- list(value = rp, token = token, kind = "plot", fig = dev$fig)
   list(kind = "plot", mime = "image/png", data = png_bytes,
-      size = list(width = 720L, height = 480L, res = 96L),
+      size = list(width = dev$width, height = dev$height, res = dev$res),
       text = tf$text, truncated = tf$truncated)
 }
 
 #' A plot drawn as a side effect (base graphics) with no visible value:
-#' recordPlot(), PNG bytes, kept in display[[cell]].
+#' recordPlot(), PNG bytes, kept in display[[cell]] with its figure size.
 display_plot <- function(cell, token, dev) {
   if (is.null(dev) || !(dev$dev %in% grDevices::dev.list())) return(NULL)
   grDevices::dev.set(dev$dev)
@@ -1345,9 +1364,9 @@ display_plot <- function(cell, token, dev) {
   if (is.null(rp) || length(rp[[1]]) == 0) return(NULL)
   grDevices::dev.off(dev$dev)
   png_bytes <- read_png(dev$path)
-  display[[cell]] <<- list(value = rp, token = token, kind = "plot")
+  display[[cell]] <<- list(value = rp, token = token, kind = "plot", fig = dev$fig)
   list(kind = "plot", mime = "image/png", data = png_bytes,
-      size = list(width = 720L, height = 480L, res = 96L),
+      size = list(width = dev$width, height = dev$height, res = dev$res),
       text = "<plot>", truncated = FALSE)
 }
 
@@ -1489,25 +1508,36 @@ show_more <- function(msg) {
   list(type = "rendered", cell = msg$cell, token = rec$token, display = bundle)
 }
 
-#' replayPlot() display[[cell]]$value on a new device at the asked size and
-#' pixel density; return a `rendered` message carrying the run's token.
+#' replayPlot() display[[cell]]$value on a new device and return a
+#' `rendered` message carrying the run's token.
+#'
+#' Without `msg$width`/`height`: drawn at the cell's own figure size
+#' (`rec$fig`, inches) and `msg$res` -- a pixel-density redraw. With both:
+#' drawn at those pixels (`render_png()`'s API, api.R).
 render_plot <- function(msg) {
   rec <- display[[msg$cell]]
   if (is.null(rec) || !identical(rec$kind, "plot")) {
     return(list(type = "rendered", cell = msg$cell, token = if (!is.null(rec)) rec$token else NULL, display = NULL))
   }
   res <- msg$res %||% 96
+  if (!is.null(msg$width) && !is.null(msg$height)) {
+    width <- msg$width
+    height <- msg$height
+  } else {
+    width <- round(rec$fig$width * res)
+    height <- round(rec$fig$height * res)
+  }
   path <- tempfile(fileext = ".png")
   if (requireNamespace("ragg", quietly = TRUE)) {
-    ragg::agg_png(filename = path, width = msg$width, height = msg$height, res = res, background = "white")
+    ragg::agg_png(filename = path, width = width, height = height, res = res, background = "white")
   } else {
-    grDevices::png(filename = path, width = msg$width, height = msg$height, res = res, bg = "white")
+    grDevices::png(filename = path, width = width, height = height, res = res, bg = "white")
   }
   tryCatch(grDevices::replayPlot(rec$value), error = function(e) NULL)
   grDevices::dev.off()
   list(type = "rendered", cell = msg$cell, token = rec$token,
       display = list(kind = "plot", mime = "image/png", data = read_png(path),
-                     size = list(width = msg$width, height = msg$height, res = res)))
+                     size = list(width = width, height = height, res = res)))
 }
 
 #' Strip the worker's own frames from sys.calls(): everything up to and

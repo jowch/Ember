@@ -4,9 +4,9 @@
 # (worker_harness()'s $receive()), never Sys.sleep polling.
 
 run_msg <- function(cell, token, code, role = "cell", order = character(), formulas = list(),
-                    library = NULL) {
+                    library = NULL, fig = NULL) {
   list(type = "run", cell = cell, token = token, code = code, role = role,
-       order = order, formulas = formulas, library = library)
+       order = order, formulas = formulas, library = library, fig = fig)
 }
 
 #' Run code in a fresh harness and return the `done` report. Fails the
@@ -304,6 +304,36 @@ test_that("base_plot_output", {
   expect_identical(rendered$type, "rendered")
   dims <- png_dims(rendered$display$data)
   expect_identical(dims, list(width = 200, height = 150))
+})
+
+test_that("run_cell() opens the device at the cell's figure size and a 2x density (ui-3 64)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "plot(1:10)")
+  expect_identical(png_dims(r$output$data), list(width = 1440, height = 960))
+  expect_identical(r$output$size, list(width = 1440, height = 960, res = 192))
+
+  r2 <- run_and_wait(h, "b", 2L, "plot(1:10)", fig = list(width = 8, height = 4))
+  expect_identical(png_dims(r2$output$data), list(width = 1536, height = 768))
+  expect_identical(r2$output$size, list(width = 1536, height = 768, res = 192))
+
+  # A 40 in side would draw at 7680 px at 192 dpi, over the 6000 px limit
+  # (unreachable through cell_figure_size()'s own 0.5-30 range, but this
+  # message is built by hand, as the worker must still defend against it).
+  r3 <- run_and_wait(h, "c", 3L, "plot(1:10)", fig = list(width = 40, height = 40))
+  expect_identical(png_dims(r3$output$data), list(width = 6000, height = 6000))
+  expect_identical(r3$output$size, list(width = 6000, height = 6000, res = 150))
+})
+
+test_that("a bad #| value's problem is reported as a console warning (ui-3 64)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "plot(1:10)",
+                    fig = list(width = 7.5, height = 5,
+                              problems = "#| fig-width: wide is not a number of inches; using 7.5."))
+  warnings <- Filter(function(it) identical(it$kind, "warning"), r$console)
+  expect_length(warnings, 1)
+  expect_match(warnings[[1]]$text, "fig-width: wide is not a number of inches")
 })
 
 test_that("data_frame_table_view", {
@@ -844,17 +874,26 @@ test_that("display_html resolves and dedupes dependencies, skipped without htmlt
   expect_identical(r$output$deps[[1]]$script, "a.js")
 })
 
-test_that("render_plot at a given width, height and pixel density (27)", {
+test_that("render_plot() redraws at the cell's own figure size and a new res; width/height pixels override (ui-3 65)", {
   h <- worker_harness()
   on.exit(h$close())
-  run_and_wait(h, "a", 1L, "plot(1:10)")
-  h$send(list(type = "render", cell = "a", width = 1400L, height = 933L, res = 192L))
+  run_and_wait(h, "a", 1L, "plot(1:10)", fig = list(width = 8, height = 4))
+
+  h$send(list(type = "render", cell = "a", res = 288L))
   m <- wait_for_done_or_rendered(h)
   expect_identical(m$type, "rendered")
   expect_identical(m$token, 1L)
   dims <- png_dims(m$display$data)
-  expect_identical(dims, list(width = 1400, height = 933))
-  expect_identical(m$display$size, list(width = 1400L, height = 933L, res = 192L))
+  expect_identical(dims, list(width = 2304, height = 1152))
+  expect_identical(m$display$size, list(width = 2304, height = 1152, res = 288L))
+
+  # width/height given: used directly, in pixels (render_png()'s API).
+  h$send(list(type = "render", cell = "a", width = 1400L, height = 933L, res = 192L))
+  m2 <- wait_for_done_or_rendered(h)
+  expect_identical(m2$type, "rendered")
+  dims2 <- png_dims(m2$display$data)
+  expect_identical(dims2, list(width = 1400, height = 933))
+  expect_identical(m2$display$size, list(width = 1400L, height = 933L, res = 192L))
 })
 
 test_that("colours are on at boot and text_form never ends in a partial escape (28)", {

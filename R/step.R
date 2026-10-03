@@ -42,6 +42,9 @@ ev_restart     <- function(at) event("restart", at)
 ev_shutdown    <- function(at) event("shutdown", at)
 ev_move        <- function(path, at) event("move", at, path = path)
 ev_set_mode    <- function(mode, at) event("set_mode", at, mode = mode)
+#' `width`/`height` are pixel sizes for `render_png()`'s API, or `NULL` to
+#' redraw at the cell's own figure size (`ember_render_plot`, a density
+#' change: 3a).
 ev_render      <- function(cell, width, height, at, res = 96)
   event("render", at, cell = cell, width = width, height = height, res = res)
 ev_show_more   <- function(cell, path, dim, at)
@@ -921,15 +924,18 @@ reduce_set_mode <- function(state, event) {
 
 #' Re-render a plot at a new size and pixel density: `fx_send(render)` if
 #' the cell's output is an image and the worker is alive; the answer comes
-#' as `wk_rendered`.
+#' as `wk_rendered`. `width`/`height` NULL (3a's density-only redraw) drop
+#' out of the message instead of being sent as `NULL`, so the worker falls
+#' back to the cell's own figure size.
 reduce_render <- function(state, event) {
   r <- state$results[[event$cell]]
   alive <- state$worker$status %in% c("ready", "busy")
   if (is.null(r) || is.null(r$output) || !identical(r$output$mime, "image/png") || !alive) {
     return(list(state = state, effects = list(), reply = NULL))
   }
-  msg <- list(type = "render", cell = event$cell, width = event$width, height = event$height,
-             res = event$res %||% 96)
+  msg <- c(list(type = "render", cell = event$cell, res = event$res %||% 96),
+          if (!is.null(event$width)) list(width = event$width),
+          if (!is.null(event$height)) list(height = event$height))
   list(state = state, effects = list(fx_send(state$worker$gen, msg)), reply = NULL)
 }
 

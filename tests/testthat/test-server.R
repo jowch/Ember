@@ -1041,7 +1041,7 @@ test_that("reshow_cell pages a table through a real worker (36)", {
   expect_true(got_more)
 })
 
-test_that("ember_render_plot clamps width/height/res and re-renders through a real worker (37)", {
+test_that("ember_render_plot {cell_id, res} re-renders at the cell's own figure size, ignoring width/height; a text cell does nothing (ui-3 72)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1"), B = cell("plot(1:10)")))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
@@ -1059,18 +1059,19 @@ test_that("ember_render_plot clamps width/height/res and re-renders through a re
 
   before <- Find(function(c) identical(c$id, b), notebook_snapshot(nb)$cells)$output$data
   handle_message(server, ws, wire("ember_render_plot", notebook_id = id, cell_id = b,
-                                  width = 99999, height = 1, res = 1))
+                                  width = 99999, height = 1, res = 1000))
   changed <- wait_for(nb, function(s) {
     v <- Find(function(c) identical(c$id, b), s$cells)
     !is.null(v$output) && !identical(v$output$data, before)
   }, timeout = 10)
   expect_true(changed)
 
-  # clamped to <= 4000 and >= 72 res
-  final <- Find(function(c) identical(c$id, b), notebook_state(nb)$results)
+  # res clamped to <= 384; width/height from the body are ignored -- the
+  # cell's own figure size (the default, 7.5 x 5 in) is used instead.
   out <- notebook_state(nb)$results[[b]]$output
-  expect_lte(out$size$width, 4000L)
-  expect_gte(out$size$res, 72L)
+  expect_equal(out$size$res, 384L)
+  expect_equal(out$size$width, round(7.5 * 384))
+  expect_equal(out$size$height, round(5 * 384))
 
   # a text cell: nothing happens
   before_a <- notebook_state(nb)$results[[a]]

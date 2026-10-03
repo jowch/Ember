@@ -161,7 +161,7 @@ export let PlutoImage = ({ body, mime }) => {
  * sanitize_html?: boolean | string,
  * }} args
  */
-export const OutputBody = ({ mime, body, cell_id, persist_js_state = false, last_run_timestamp, sanitize_html = true }) => {
+export const OutputBody = ({ mime, body, cell_id, persist_js_state = false, last_run_timestamp, sanitize_html = true, ember_figure = null }) => {
     // These two arguments might have been passed as strings if OutputBody was used as the custom HTML element <pluto-display>, with string attributes as arguments.
     sanitize_html = sanitize_html !== "false" && sanitize_html !== false
     persist_js_state = persist_js_state === "true" || persist_js_state === true
@@ -169,7 +169,7 @@ export const OutputBody = ({ mime, body, cell_id, persist_js_state = false, last
     switch (mime) {
         case "image/png":
             if (cell_id != null && cell_id !== "cell_id_not_known") {
-                return html`<div><${EmberPlot} mime=${mime} body=${body} cell_id=${cell_id} last_run_timestamp=${last_run_timestamp} /></div>`
+                return html`<div><${EmberPlot} mime=${mime} body=${body} cell_id=${cell_id} last_run_timestamp=${last_run_timestamp} figure=${ember_figure} /></div>`
             }
             return html`<div><${PlutoImage} mime=${mime} body=${body} /></div>`
             break

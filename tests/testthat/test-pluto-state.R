@@ -312,6 +312,24 @@ test_that("project_cell_result(): ember$split for a mixed_text cell, NULL for a 
   expect_null(project_cell_result(vt)$ember$split)
 })
 
+test_that("project_cell_result(): ember$figure from an image/png result; none for a text output; check_wire() passes (ui-3 67)", {
+  s <- fake_state(list(S = cell(""), A = cell("plot(1)")))
+  out <- new_display("image/png", as.raw(1:4), "[plot]", size = list(width = 1536, height = 768, res = 192))
+  r <- boot(s, "A")
+  r <- drive(r$state, wk_done(1, last_token(r), report(output = out), at(10)))
+
+  js <- pluto_state(r$state)$js
+  expect_true(check_wire(js))
+  expect_equal(js$cell_results$A$ember$figure, list(width = 8, height = 4))
+
+  s2 <- fake_state(list(S = cell(""), A = cell("1")))
+  r2 <- boot(s2, "A")
+  r2 <- drive(r2$state,
+             wk_done(1, last_token(r2), report(output = new_display("text/plain", "1", "1")), at(10)))
+  js2 <- pluto_state(r2$state)$js
+  expect_null(js2$cell_results$A$ember$figure)
+})
+
 test_that("an upstream error projects ember$upstream_error, not depends_on_disabled_cells (ui-3 11)", {
   s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("a + 1")))
   r <- boot(s, c("A", "B"))

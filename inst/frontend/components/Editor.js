@@ -729,13 +729,11 @@ export class Editor extends Component {
                     { notebook_id: this.state.notebook.notebook_id },
                     false
                 ),
-            ember_render_plot: (cell_id, width, height, res) =>
+            ember_render_plot: (cell_id, res) =>
                 this.client.send(
                     "ember_render_plot",
                     {
                         cell_id,
-                        width,
-                        height,
                         res,
                     },
                     { notebook_id: this.state.notebook.notebook_id },
