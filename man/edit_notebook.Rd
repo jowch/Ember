@@ -19,7 +19,7 @@ edit_notebook(nb, ...)
 
 set_code(cell, code, expected = NULL)
 
-insert_cell(index, code = "", kind = c("code", "markdown"), id = NULL)
+insert_cell(index, code = "", id = NULL)
 
 delete_cell(cell)
 
@@ -42,9 +42,10 @@ check before applying (Endeavor's optimistic-concurrency check). \code{NULL}
 skips the check.}
 \item{index}{1-based display position: where to insert (\code{insert_cell()}) or
 move to (\code{move_cell()}).}
-\item{kind}{\code{"code"} or \code{"markdown"}.}
 \item{id}{The new cell's id (a 36-character UUID), for a caller that names the
-cell itself, as the browser does. \code{NULL} generates one.}
+cell itself, as the browser does. \code{NULL} generates one. Its kind is
+always \code{cell_kind(code)} (a cell of only \code{#'} lines is text); there is
+no separate argument for it.}
 \item{folded}{\code{TRUE} to fold the cell's code away in a view, \code{FALSE} to
 show it.}
 \item{disabled}{\code{TRUE} to disable the cell, \code{FALSE} to re-enable it. A
