@@ -28,6 +28,9 @@
 /* GENERAL PAGE LAYOUT */
 html {
     font-size: 16px;
+    /* Jumping to a cell (scroll_cell_into_view, a jump link) lands below
+       the sticky header instead of behind it. */
+    scroll-padding-top: var(--ember-header-height);
 }
 
 * {
@@ -54,9 +57,19 @@ pluto-editor {
     overflow-x: clip;
 }
 
+:root {
+    --ember-column: 720px;
+    --ember-panel-width: 400px;
+    --ember-header-height: 52px;
+    --ember-column-left: clamp(16px, calc((100vw - var(--ember-column)) * 0.17), 120px);
+}
+
 main {
     flex: 1;
-    max-width: calc(700px + 25px + 6px); /* 700px + both paddings */
+    /* 25px and 6px are Pluto's own padding, where the cell's left controls
+       sit; piece 6 removes them when it moves the run button, making the
+       column exactly --ember-column wide. */
+    max-width: calc(var(--ember-column) + 25px + 6px);
     padding-top: 0px;
     padding-bottom: 4rem;
     padding-left: 25px;
@@ -72,17 +85,22 @@ body:has(pluto-editor:not(.disable_ui)) {
     overscroll-behavior: contain;
 }
 
-/* | main=25px+700px+6px=731px | pluto-helpbox=350px - 500px | */
-/* min-width: 731px+ */
-
+/* One column on the left; the side panel (piece 5's "Side panel frame")
+   docks in the free space to its right instead of pushing it over. */
 pluto-editor main {
-    align-self: flex-end;
-    margin-right: max(
-        /* First part: center it */ max(0px, (100% - (700px + 25px + 6px)) / 2),
-        /* Second part: push away from the right to take up all free space */ min((100% - (700px + 25px + 6px)), /* but don't do this more than */ 500px)
-    );
+    align-self: flex-start;
+    margin-left: var(--ember-column-left);
+    margin-right: 0;
     position: relative;
-    margin-left: auto;
+}
+
+@media (max-width: 640px) {
+    pluto-editor main {
+        margin-left: 0;
+        padding-left: 16px;
+        padding-right: 16px;
+        max-width: none;
+    }
 }
 
 pluto-notebook {
@@ -509,10 +527,14 @@ pluto-output details[open] summary {
 /* HEADER */
 
 header#pluto-nav {
-    /* position: absolute;
-    top: 0px; */
+    /* The shell: always stuck to the top at a fixed height (piece 5's
+       "Layout"). Piece 5's own "Header contents" step fills it in --
+       until then the process-status content Pluto still renders here can
+       overflow this height, which is expected mid-piece. */
+    position: sticky;
+    top: 0;
     width: 100%;
-    min-height: 60px;
+    height: var(--ember-header-height);
     z-index: 60;
     background-color: var(--header-bg-color);
     transform: translateY(0px);
