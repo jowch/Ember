@@ -215,11 +215,15 @@ project_cell_input <- function(view) {
 #'   non-setup code cell. `split` is present, as `length(split_mixed(view$code))`,
 #'   only when `view$errors` has a `mixed_text` error: the Split button's
 #'   label (Cell.js), answered by the `ember_split_cell` request (server.R).
-#'   `figure` is present (3a), as `list(width, height)` inches from the
-#'   result's own display size (`size$width/height / size$res`), only when
-#'   the output is `image/png` with a size; it comes from `result`, already
-#'   in the key.
-#'   `variables` is present (3b), as `as_arr(view$variables)` (already
+#'   `figure` is present, as `list(width, height)` inches, only when the
+#'   output is `image/png`. It comes from `cell_figure_size(view$code)` --
+#'   the cell's own `#|` lines -- never from the stored image's actual
+#'   pixel size: an API `render_png(width, height)` call replaces that
+#'   stored image (it's an Endeavor-facing API, left as is) without
+#'   changing the cell's figure size every other viewer sees, so reading
+#'   the size back out of it would make one such call resize the figure
+#'   on every open page. `code` is already in the key (through `cell`).
+#'   `variables` is present, as `as_arr(view$variables)` (already
 #'   `list(name, type, value, kind)` per global, sorted, dot-names and an
 #'   off cell's excluded by `cell_variables()`), only when non-empty: the
 #'   Variables tab's contract. It comes from `result`, already in the key.
@@ -238,10 +242,9 @@ project_cell_result <- function(view) {
   split <- if (!is.null(mixed)) length(split_mixed(view$code)) else NULL
   off <- isTRUE(view$disabled) || !is.na(view$disabled_by)
   can_disable <- identical(view$kind, "code") && !view$setup
-  figure <- if (!is.null(view$output) && identical(view$output$mime, "image/png") &&
-               !is.null(view$output$size)) {
-    sz <- view$output$size
-    list(width = sz$width / sz$res, height = sz$height / sz$res)
+  figure <- if (!is.null(view$output) && identical(view$output$mime, "image/png")) {
+    fig <- cell_figure_size(view$code)
+    list(width = fig$width, height = fig$height)
   } else {
     NULL
   }

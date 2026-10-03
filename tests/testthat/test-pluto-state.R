@@ -345,9 +345,12 @@ test_that("ember$variables matches the view; a run of A patches only cell_result
   }
 })
 
-test_that("project_cell_result(): ember$figure from an image/png result; none for a text output; check_wire() passes (ui-3 67)", {
-  s <- fake_state(list(S = cell(""), A = cell("plot(1)")))
-  out <- new_display("image/png", as.raw(1:4), "[plot]", size = list(width = 1536, height = 768, res = 192))
+test_that("project_cell_result(): ember$figure comes from the cell's code, not the stored image's pixel size; none for a text output; check_wire() passes (ui-3 67)", {
+  s <- fake_state(list(S = cell(""), A = cell("#| fig-width: 8\n#| fig-height: 4\nplot(1)")))
+  # Deliberately mismatched against the code's 8 x 4: an API render_png()
+  # call can leave the stored image at any pixel size, and ember$figure
+  # must not follow it (review: ember$figure from the cell's code).
+  out <- new_display("image/png", as.raw(1:4), "[plot]", size = list(width = 999, height = 999, res = 100))
   r <- boot(s, "A")
   r <- drive(r$state, wk_done(1, last_token(r), report(output = out), at(10)))
 
