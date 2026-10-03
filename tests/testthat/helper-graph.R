@@ -54,10 +54,11 @@ fake_cell <- function(code = "",
 #' every one is reused as-is.
 build_test_graph <- function(analyses, setup = names(analyses)[1],
                              exports = list(), learned = NULL,
-                             read_file = NULL) {
+                             disabled = character(), read_file = NULL,
+                             previous = NULL) {
   ids <- names(analyses)
   cells <- vapply(ids, function(id) analyses[[id]]$code, character(1))
-  previous <- list(analyses = analyses)
+  if (is.null(previous)) previous <- list(analyses = analyses)
   notebook_graph(cells, setup = setup, exports = exports, learned = learned,
-                 previous = previous, read_file = read_file)
+                 disabled = disabled, previous = previous, read_file = read_file)
 }

@@ -401,3 +401,132 @@ test_that("a cell with a parse error keeps its setup edge and has no definitions
   expect_length(errs, 1)
   expect_equal(errs[[1]]$cells, "B")
 })
+
+# ---- Disable cell (ui-3 20-23) -----------------------------------------------
+
+test_that("a disabled definer drops out of multiple_definitions; its reader resolves to the other (ui-3 20)", {
+  g <- build_test_graph(list(
+    S = fake_cell(code = "S"),
+    A = fake_cell(code = "A", defs = "x"),
+    A2 = fake_cell(code = "A2", defs = "x"),
+    C = fake_cell(code = "C", refs = "x")
+  ), setup = "S", disabled = "A")
+  expect_length(Filter(function(e) e$kind == "multiple_definitions", g$errors), 0)
+  rows <- g$edges[g$edges$from == "C" & g$edges$name %in% "x", , drop = FALSE]
+  expect_equal(rows$to, "A2")
+  expect_equal(rows$via, "definition")
+  expect_equal(g$off, c(A = "A"))
+
+  g2 <- build_test_graph(list(
+    S = fake_cell(code = "S"),
+    A = fake_cell(code = "A", defs = "x"),
+    A2 = fake_cell(code = "A2", defs = "x"),
+    C = fake_cell(code = "C", refs = "x")
+  ), setup = "S")
+  expect_length(Filter(function(e) e$kind == "multiple_definitions", g2$errors), 1)
+  rows2 <- g2$edges[g2$edges$from == "C" & g2$edges$name %in% "x", , drop = FALSE]
+  expect_setequal(rows2$to, c("A", "A2"))
+})
+
+test_that("a dependent of a disabled cell gets a disabled edge and is off (ui-3 21)", {
+  g <- build_test_graph(list(
+    S = fake_cell(code = "S"),
+    A = fake_cell(code = "A", defs = "x"),
+    C = fake_cell(code = "C", defs = "y", refs = "x"),
+    E = fake_cell(code = "E", refs = "y"),
+    F = fake_cell(code = "F")
+  ), setup = "S", disabled = "A")
+  row <- g$edges[g$edges$from == "C" & g$edges$name %in% "x", , drop = FALSE]
+  expect_equal(nrow(row), 1)
+  expect_equal(row$to, "A")
+  expect_equal(row$via, "disabled")
+  expect_equal(g$off, c(A = "A", C = "A", E = "A"))
+  expect_false("F" %in% names(g$off))
+  expect_equal(downstream(g, "A", transitive = TRUE), c("C", "E"))
+
+  g_enabled <- build_test_graph(list(
+    S = fake_cell(code = "S"),
+    A = fake_cell(code = "A", defs = "x"),
+    C = fake_cell(code = "C", defs = "y", refs = "x"),
+    E = fake_cell(code = "E", refs = "y"),
+    F = fake_cell(code = "F")
+  ), setup = "S")
+  expect_equal(which(g$order == "A") < which(g$order == "C"), TRUE)
+  expect_equal(which(g_enabled$order == "A") < which(g_enabled$order == "C"), TRUE)
+
+  g_both <- build_test_graph(list(
+    S = fake_cell(code = "S"),
+    A = fake_cell(code = "A", defs = "x"),
+    C = fake_cell(code = "C", defs = "y", refs = "x"),
+    E = fake_cell(code = "E", refs = "y"),
+    F = fake_cell(code = "F")
+  ), setup = "S", disabled = c("A", "C"))
+  expect_equal(unname(g_both$off["C"]), "C")
+})
+
+test_that("a disabled package attacher gives a disabled edge; the setup cell's attach wins (ui-3 22)", {
+  g <- build_test_graph(list(
+    S = fake_cell(code = "S"),
+    A = fake_cell(code = "A", attaches = "tools"),
+    B = fake_cell(code = "B", refs = "file_ext")
+  ), setup = "S", exports = list(tools = "file_ext"), disabled = "A")
+  row <- g$edges[g$edges$from == "B" & g$edges$name %in% "file_ext", , drop = FALSE]
+  expect_equal(row$to, "A")
+  expect_equal(row$via, "disabled")
+  expect_true("B" %in% names(g$off))
+  expect_true(any(vapply(g$cells, function(c) "tools" %in% c$packages, logical(1))))
+
+  g2 <- build_test_graph(list(
+    S = fake_cell(code = "S", attaches = "tools"),
+    A = fake_cell(code = "A", attaches = "tools"),
+    B = fake_cell(code = "B", refs = "file_ext")
+  ), setup = "S", exports = list(tools = "file_ext"), disabled = "A")
+  row2 <- g2$edges[g2$edges$from == "B" & g2$edges$name %in% "file_ext", , drop = FALSE]
+  expect_equal(row2$to, "S")
+  expect_equal(row2$via, "package")
+  expect_false("B" %in% names(g2$off))
+})
+
+test_that("a disabled cell is excluded from cycle, private_name and global_setting errors (ui-3 23)", {
+  g <- build_test_graph(list(
+    S = fake_cell(code = "S"),
+    A = fake_cell(code = "A", defs = "x", refs = "y"),
+    C = fake_cell(code = "C", defs = "y", refs = "x")
+  ), setup = "S", disabled = "A")
+  expect_length(Filter(function(e) e$kind == "cycle", g$errors), 0)
+
+  g_enabled <- build_test_graph(list(
+    S = fake_cell(code = "S"),
+    A = fake_cell(code = "A", defs = "x", refs = "y"),
+    C = fake_cell(code = "C", defs = "y", refs = "x")
+  ), setup = "S")
+  expect_length(Filter(function(e) e$kind == "cycle", g_enabled$errors), 1)
+
+  g_parse <- build_test_graph(list(
+    S = fake_cell(code = "S"),
+    A = fake_cell(code = "A", parse_error = list(message = "oops", line = 1L, column = 1L))
+  ), setup = "S", disabled = "A")
+  expect_length(Filter(function(e) e$kind == "parse", g_parse$errors), 1)
+
+  g_setting <- build_test_graph(list(
+    S = fake_cell(code = "S"),
+    A = fake_cell(code = "A", settings = "options")
+  ), setup = "S", disabled = "A")
+  expect_length(Filter(function(e) e$kind == "global_setting", g_setting$errors), 0)
+
+  analyses <- list(
+    S = fake_cell(code = "S"),
+    A = fake_cell(code = "A", defs = "x", refs = "y"),
+    C = fake_cell(code = "C", defs = "y", refs = "x")
+  )
+  g1 <- build_test_graph(analyses, setup = "S", disabled = "A")
+  g2 <- graph_learn(g1, "A", definitions = "x")
+  expect_equal(g2$disabled, "A")
+  expect_equal(g2$off, g1$off)
+  g3 <- notebook_graph(setNames(vapply(names(analyses), function(id) analyses[[id]]$code, character(1)),
+                                names(analyses)),
+                       setup = "S", disabled = "A", previous = g1, read_file = NULL)
+  cmp1 <- g1; cmp1$reread <- NULL
+  cmp3 <- g3; cmp3$reread <- NULL
+  expect_identical(cmp1, cmp3)
+})

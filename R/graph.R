@@ -25,10 +25,21 @@
 #'   the search path.
 #' * `edges`: data frame `from`, `to`, `name`, `via`: `from` depends on
 #'   `to`. `via` is `"definition"` (`to` defines `name`), `"package"` (`to`
-#'   attaches a package exporting `name`), `"setup"` (`to` is the setup
-#'   cell; `name` is `NA`). One row per (from, to, name).
+#'   attaches a package exporting `name`), `"disabled"` (`to` is a disabled
+#'   cell that defines or attaches `name`, and no enabled cell does),
+#'   `"setup"` (`to` is the setup cell; `name` is `NA`). One row per (from,
+#'   to, name).
+#' * `disabled`: character ids of disabled cells, as given to
+#'   `notebook_graph()`. Disabled cells are still fully analysed and keep
+#'   their own edges to what they read; they just satisfy no other cell's
+#'   reference (`resolve_edges()`), so they count towards nothing else's
+#'   `find_errors()` rule but `parse`.
+#' * `off`: named character, off cell id -> the disabled cell it comes
+#'   from (itself, for a disabled cell). See `compute_off()`.
 #' * `upstream`, `downstream`: `id -> character` of direct neighbours, in
-#'   display order, derived from `edges` at build time.
+#'   display order, derived from `edges` at build time (including
+#'   `"disabled"` edges: a disabled cell is ordered, and its dependents
+#'   found, like any other).
 #' * `order`: every cell id, in run order (see `run_order()`).
 #' * `errors`: list of `ember_graph_error`.
 #' * `reread`: ids whose analysis was computed in this build rather than
@@ -44,11 +55,12 @@
 #' `a`; `order` is a permutation of `ids`; a cell with a `parse` error has
 #' no definitions and no references but keeps its setup edge.
 new_graph <- function(ids, setup, analyses, learned, exports, cells, edges,
-                      upstream, downstream, order, errors, reread,
-                      read_file = NULL) {
+                      disabled, off, upstream, downstream, order, errors,
+                      reread, read_file = NULL) {
   structure(list(ids = ids, setup = setup, analyses = analyses,
                  learned = learned, exports = exports, cells = cells,
-                 edges = edges, upstream = upstream, downstream = downstream,
+                 edges = edges, disabled = disabled, off = off,
+                 upstream = upstream, downstream = downstream,
                  order = order, errors = errors, reread = reread,
                  read_file = read_file),
             class = "ember_graph")
@@ -113,6 +125,11 @@ reuse_analysis <- function(prev, code, read_file) {
 #' @param learned `list(definitions = <id -> character>, references = <id ->
 #'   character>)` from the footer and from formula checks; `NULL` means
 #'   none. Ids not in `cells` are dropped.
+#' @param disabled Character ids of disabled cells (the user's choice; see
+#'   `disable_cell()`). Ids not in `cells` are dropped. Disabled cells are
+#'   analysed like any other, but satisfy no other cell's reference
+#'   (`resolve_edges()`) and are left out of every `find_errors()` rule but
+#'   `parse`.
 #' @param previous An earlier `ember_graph` for the same notebook, or
 #'   `NULL`. Analyses are reused for cells whose code is identical and whose
 #'   sourced files still read the same; everything else is recomputed.
@@ -123,13 +140,15 @@ reuse_analysis <- function(prev, code, read_file) {
 #' The build is deterministic and idempotent: the same inputs give an
 #' identical graph, with or without `previous`.
 notebook_graph <- function(cells, setup = names(cells)[1], exports = list(),
-                           learned = NULL, previous = NULL, read_file = NULL) {
+                           learned = NULL, disabled = character(),
+                           previous = NULL, read_file = NULL) {
   ids <- names(cells)
   if (is.null(ids) || any(is.na(ids)) || any(ids == "") ||
       any(duplicated(ids))) {
     stop("cells must be a named character vector with unique, non-empty names")
   }
   if (!isTRUE(setup %in% ids)) stop("setup must be one of the cell ids")
+  disabled <- intersect(disabled, ids)
 
   if (is.null(learned)) learned <- list()
   if (is.null(learned$definitions)) learned$definitions <- list()
@@ -156,8 +175,8 @@ notebook_graph <- function(cells, setup = names(cells)[1], exports = list(),
   # 2. cells: the resolved, per-cell view.
   cells_resolved <- resolve_cells(analyses, learned, ids)
 
-  # 3. edges: resolve_edges(cells, setup, exports).
-  edges <- resolve_edges(cells_resolved, setup, exports, ids)
+  # 3. edges: resolve_edges(cells, setup, exports, disabled).
+  edges <- resolve_edges(cells_resolved, setup, exports, ids, disabled)
 
   # upstream/downstream from edges, in display order. Grouped with split()
   # (one pass over the edge rows) rather than a per-row union(), which
@@ -185,12 +204,31 @@ notebook_graph <- function(cells, setup = names(cells)[1], exports = list(),
   }
 
   # Strongly connected components of the dependency graph, computed once and
-  # shared by find_errors (the cycle error) and compute_order (which cells
-  # can't force an order onto one another).
+  # shared by compute_order (which cells can't force an order onto one
+  # another) and, when nothing is disabled, by find_errors (the cycle
+  # error) too.
   components <- scc_components(ids, upstream_list)
 
-  # 4. errors: find_errors(cells, analyses, edges, setup, ids).
-  errors <- find_errors(cells_resolved, analyses, edges, setup, ids, components)
+  # A cycle that only exists through a "disabled" edge isn't one: that edge
+  # is already how a dependent of a disabled cell is found (upstream/
+  # downstream), not a real ordering constraint. find_errors() gets
+  # components of the graph without those edges instead, computed only when
+  # something is disabled (otherwise identical to `components` above).
+  error_components <- if (length(disabled) == 0) {
+    components
+  } else {
+    no_disabled <- split(edges$to[edges$via != "disabled"], edges$from[edges$via != "disabled"])
+    upstream_no_disabled <- setNames(vector("list", length(ids)), ids)
+    for (id in ids) upstream_no_disabled[[id]] <- character()
+    for (f in names(no_disabled)) upstream_no_disabled[[f]] <- unique(no_disabled[[f]])
+    scc_components(ids, upstream_no_disabled)
+  }
+
+  # 4. errors: find_errors(cells, analyses, edges, setup, ids, disabled).
+  errors <- find_errors(cells_resolved, analyses, edges, setup, ids, error_components, disabled)
+
+  # off: disabled cells and everything downstream of them.
+  off <- compute_off(ids, disabled, downstream_list)
 
   # 5. order <- compute_order(...).
   comp_of <- setNames(rep(NA_integer_, length(ids)), ids)
@@ -201,9 +239,35 @@ notebook_graph <- function(cells, setup = names(cells)[1], exports = list(),
 
   new_graph(ids = ids, setup = setup, analyses = analyses, learned = learned,
             exports = exports, cells = cells_resolved, edges = edges,
+            disabled = disabled, off = off,
             upstream = upstream_list, downstream = downstream_list,
             order = order, errors = errors, reread = reread,
             read_file = read_file)
+}
+
+#' Disabled cells and every cell downstream of them, through any edge
+#' (Pluto's `depends_on_disabled_cells`). Named character: off id -> the
+#' disabled cell it comes from. A disabled cell maps to itself; a dependent
+#' to the first disabled cell, in display order, whose downstream walk
+#' reaches it. Empty when nothing is disabled.
+compute_off <- function(ids, disabled, downstream_list) {
+  ordered <- ids[ids %in% disabled]
+  off <- character()
+  for (did in ordered) off[[did]] <- did
+  for (did in ordered) {
+    seen <- character()
+    visit <- function(i) {
+      for (d in downstream_list[[i]]) {
+        if (!(d %in% seen)) {
+          seen <<- c(seen, d)
+          visit(d)
+        }
+      }
+    }
+    visit(did)
+    for (d in seen) if (!(d %in% names(off))) off[[d]] <- did
+  }
+  off
 }
 
 #' Add what the worker learned about one cell, and rebuild.
@@ -222,7 +286,8 @@ graph_learn <- function(graph, cell, definitions = NULL, references = NULL) {
   cells <- setNames(vapply(graph$ids, function(id) graph$analyses[[id]]$code,
                             character(1)), graph$ids)
   notebook_graph(cells, setup = graph$setup, exports = graph$exports,
-                 learned = learned, previous = graph, read_file = graph$read_file)
+                 learned = learned, disabled = graph$disabled,
+                 previous = graph, read_file = graph$read_file)
 }
 
 #' Public definitions, references, packages per cell.
@@ -254,34 +319,47 @@ resolve_cells <- function(analyses, learned, ids) {
 #'
 #' For each reference `n` of cell `b`, in this order, stopping at the first
 #' rule that yields cells:
-#' 1. cells (other than `b`) whose public definitions include `n`: one edge
-#'    each, via "definition". If `n` is a dot-name defined in another cell,
-#'    no edge; `find_errors` reports it.
-#' 2. else cells (other than `b`) attaching a package whose exports include
-#'    `n`: one edge each, via "package". A global definition shadows a
-#'    package export, as the global environment comes first on R's search
-#'    path, which is why rule 1 stops the search.
+#' 1. enabled cells (other than `b`) whose public definitions include `n`:
+#'    one edge each, via "definition". If `n` is a dot-name defined in
+#'    another cell, no edge; `find_errors` reports it.
+#' 2. else disabled cells (other than `b`) whose public definitions include
+#'    `n`: one edge each, via "disabled" -- what `b` would read if they
+#'    were enabled.
+#' 3. else enabled cells (other than `b`) attaching a package whose exports
+#'    include `n`: one edge each, via "package". A global definition
+#'    shadows a package export, as the global environment comes first on
+#'    R's search path, which is why rule 1 stops the search before this one.
+#' 4. else disabled cells (other than `b`) attaching such a package: one
+#'    edge each, via "disabled".
+#' A disabled cell's own references resolve the same way (rules 1-4 look at
+#' the target's status, not `b`'s), so it keeps edges to what it reads.
 #' Every cell other than `setup` gets an edge to `setup`, via "setup".
-resolve_edges <- function(cells, setup, exports, ids) {
-  # Three lookup tables, each built in one pass so the whole function is
+resolve_edges <- function(cells, setup, exports, ids, disabled = character()) {
+  # Four lookup tables, each built in one pass so the whole function is
   # linear in (total definitions + total exports + total references)
   # instead of the reference-times-cells cost of testing every id against
   # every reference:
-  #  - definer_lookup: name -> ids that publicly define it, display order.
-  #  - attachers: package -> ids attaching it, display order.
+  #  - definer_lookup, disabled_definer_lookup: name -> ids that publicly
+  #    define it (enabled / disabled), display order.
+  #  - attachers, disabled_attachers: package -> ids attaching it (enabled /
+  #    disabled), display order.
   #  - name_to_pkgs: name -> packages (from `exports`) that export it.
-  # A reference is then resolved by two hash lookups (plus, for rule 2, one
-  # lookup per exporting package) rather than a scan of every id.
+  # A reference is then resolved by two hash lookups (plus, for rules 3-4,
+  # one lookup per exporting package) rather than a scan of every id.
   definer_lookup <- new.env(parent = emptyenv())
+  disabled_definer_lookup <- new.env(parent = emptyenv())
   for (id in ids) {
+    tbl <- if (id %in% disabled) disabled_definer_lookup else definer_lookup
     for (n in cells[[id]]$definitions) {
-      definer_lookup[[n]] <- c(definer_lookup[[n]], id)
+      tbl[[n]] <- c(tbl[[n]], id)
     }
   }
   attachers <- new.env(parent = emptyenv())
+  disabled_attachers <- new.env(parent = emptyenv())
   for (id in ids) {
+    tbl <- if (id %in% disabled) disabled_attachers else attachers
     for (p in cells[[id]]$attaches) {
-      attachers[[p]] <- c(attachers[[p]], id)
+      tbl[[p]] <- c(tbl[[p]], id)
     }
   }
   name_to_pkgs <- new.env(parent = emptyenv())
@@ -291,7 +369,13 @@ resolve_edges <- function(cells, setup, exports, ids) {
     }
   }
 
-  # Rule 1 only sees public definitions: private names never appear in
+  package_providers <- function(n, tbl) {
+    pkgs <- name_to_pkgs[[n]]
+    if (is.null(pkgs)) return(character())
+    unique(unlist(lapply(pkgs, function(p) tbl[[p]]), use.names = FALSE))
+  }
+
+  # Rules 1-2 only see public definitions: private names never appear in
   # `cells[[id]]$definitions`, so a dot-name reference falls through to no
   # edge without a special case here. Each cell's own edges are built as
   # plain vectors and combined with `unlist()` once, rather than growing
@@ -301,22 +385,32 @@ resolve_edges <- function(cells, setup, exports, ids) {
     if (length(refs) == 0) return(NULL)
     parts <- lapply(refs, function(n) {
       definers <- definer_lookup[[n]]
-      if (is.null(definers)) definers <- character()
-      definers <- definers[definers != b]
+      if (!is.null(definers)) definers <- definers[definers != b]
       if (length(definers) > 0) {
         return(list(from = rep(b, length(definers)), to = definers,
                     name = rep(n, length(definers)),
                     via = rep("definition", length(definers))))
       }
-      pkgs <- name_to_pkgs[[n]]
-      if (is.null(pkgs)) return(NULL)
-      provider_ids <- unique(unlist(lapply(pkgs, function(p) attachers[[p]]),
-                                    use.names = FALSE))
+      disabled_definers <- disabled_definer_lookup[[n]]
+      if (!is.null(disabled_definers)) disabled_definers <- disabled_definers[disabled_definers != b]
+      if (length(disabled_definers) > 0) {
+        return(list(from = rep(b, length(disabled_definers)), to = disabled_definers,
+                    name = rep(n, length(disabled_definers)),
+                    via = rep("disabled", length(disabled_definers))))
+      }
+      provider_ids <- package_providers(n, attachers)
       provider_ids <- provider_ids[provider_ids != b]
-      if (length(provider_ids) == 0) return(NULL)
-      provider_ids <- ids[ids %in% provider_ids]
-      list(from = rep(b, length(provider_ids)), to = provider_ids,
-          name = rep(n, length(provider_ids)), via = rep("package", length(provider_ids)))
+      if (length(provider_ids) > 0) {
+        provider_ids <- ids[ids %in% provider_ids]
+        return(list(from = rep(b, length(provider_ids)), to = provider_ids,
+                    name = rep(n, length(provider_ids)), via = rep("package", length(provider_ids))))
+      }
+      disabled_provider_ids <- package_providers(n, disabled_attachers)
+      disabled_provider_ids <- disabled_provider_ids[disabled_provider_ids != b]
+      if (length(disabled_provider_ids) == 0) return(NULL)
+      disabled_provider_ids <- ids[ids %in% disabled_provider_ids]
+      list(from = rep(b, length(disabled_provider_ids)), to = disabled_provider_ids,
+          name = rep(n, length(disabled_provider_ids)), via = rep("disabled", length(disabled_provider_ids)))
     })
     parts <- Filter(Negate(is.null), parts)
     if (length(parts) == 0) return(NULL)
@@ -386,8 +480,13 @@ scc_components <- function(ids, adjacency) {
   components
 }
 
-#' All graph errors.
-find_errors <- function(cells, analyses, edges, setup, ids, components) {
+#' All graph errors. `disabled` cells count towards every rule but `parse`
+#' (the user still sees that their code is broken): they define nothing for
+#' `multiple_definitions`, own no private name for `private_name`, are
+#' skipped by `global_setting`, and the cycle check (via `components`) has
+#' already had their edges to and from other cells excluded by the caller.
+find_errors <- function(cells, analyses, edges, setup, ids, components,
+                        disabled = character()) {
   errors <- list()
 
   # parse: analyses[[id]]$parse_error non-NULL.
@@ -404,9 +503,11 @@ find_errors <- function(cells, analyses, edges, setup, ids, components) {
   # multiple_definitions: public name with >1 definer (learned included);
   # cells = the definers; lines from each analysis's definitions rows;
   # fix wording depends on whether any row has kind "replacement", or all
-  # are kind "for".
+  # are kind "for". A disabled cell defines nothing here (Pluto's rule): it
+  # doesn't count as a definer, and can't be named alongside one.
   definer_map <- list()
   for (id in ids) {
+    if (id %in% disabled) next
     for (n in cells[[id]]$definitions) definer_map[[n]] <- union(definer_map[[n]], id)
   }
   for (n in names(definer_map)) {
@@ -444,9 +545,11 @@ find_errors <- function(cells, analyses, edges, setup, ids, components) {
   # testing every id against every private reference.
   private_owner_map <- list()
   for (id in ids) {
+    if (id %in% disabled) next
     for (n in cells[[id]]$private) private_owner_map[[n]] <- union(private_owner_map[[n]], id)
   }
   for (b in ids) {
+    if (b %in% disabled) next
     for (n in cells[[b]]$references) {
       if (!is_private_name(n)) next
       owners <- private_owner_map[[n]]
@@ -462,7 +565,7 @@ find_errors <- function(cells, analyses, edges, setup, ids, components) {
 
   # global_setting: cells[[id]]$settings non-empty and id != setup.
   for (id in ids) {
-    if (identical(id, setup)) next
+    if (identical(id, setup) || id %in% disabled) next
     settings <- cells[[id]]$settings
     if (is.null(settings) || nrow(settings) == 0) next
     fns <- unique(settings$fn)

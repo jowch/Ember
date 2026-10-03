@@ -454,6 +454,7 @@ rebuild_graph <- function(state) {
   new_graph <- notebook_graph(code_of(state$cells), setup = state$setup,
                               exports = exports_of(state),
                               learned = state$graph$learned,
+                              disabled = disabled_ids(state$cells),
                               previous = state$graph,
                               read_file = reader_of(state$files))
   old_cmp <- state$graph; old_cmp$read_file <- NULL; old_cmp$reread <- NULL

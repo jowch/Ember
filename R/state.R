@@ -124,7 +124,8 @@ new_state <- function(file, path, id, options, at) {
   files <- list()
   learned <- list(definitions = file$learned, references = list())
   graph <- notebook_graph(code_of(cells), setup = setup, exports = list(),
-                          learned = learned, read_file = reader_of(files))
+                          learned = learned, disabled = disabled_ids(cells),
+                          read_file = reader_of(files))
 
   # Seed `files` and `footer_sources` from the footer's "sourced files"
   # block (design.md: "Before the first run, the last path recorded in the
@@ -559,12 +560,18 @@ code_of <- function(cells) {
          character(1))
 }
 
+#' Disabled ids for `notebook_graph()`, in display order.
+disabled_ids <- function(cells) {
+  names(cells)[vapply(cells, function(c) isTRUE(c$disabled), logical(1))]
+}
+
 #' Test helper: stop with a message naming each broken invariant.
 check_state <- function(state) {
   problems <- character()
 
   expected <- notebook_graph(code_of(state$cells), setup = state$setup,
                              exports = exports_of(state), learned = state$graph$learned,
+                             disabled = disabled_ids(state$cells),
                              previous = state$graph, read_file = reader_of(state$files))
   # `read_file` is a closure freshly made over `state$files`; it is never
   # the same object as the one already stored on the graph even when it
