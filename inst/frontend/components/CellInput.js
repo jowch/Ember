@@ -835,7 +835,8 @@ const InputContextMenu = ({ on_delete, cell_id, run_cell, get_current_code, can_
                   cell_result.output.body.plain_error
 
         if (cell_output != null)
-            navigator.clipboard.writeText(strip_ansi_codes(cell_output)).catch(() => {
+            navigator.clipboard.writeText(strip_ansi_codes(cell_output)).catch((err) => {
+                console.error("Error copying cell output", err)
                 tell({ body: t("t_copy_output_failed") })
             })
     }

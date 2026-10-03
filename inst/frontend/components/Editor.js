@@ -1274,7 +1274,11 @@ all patches: ${JSON.stringify(patches, null, 1)}
                 // @ts-ignore
                 document.activeElement?.blur()
             } catch (error) {
-                tell({ body: t("t_move_file_failed", { reason: error.message }) })
+                // update_notebook()'s own refusal wraps the server's reason
+                // as `Pluto update_notebook error: (from Julia: <why_not>)`;
+                // the dialog shows just <why_not>, not that wrapper.
+                const wrapped = /^Pluto update_notebook error: \(from Julia: ([\s\S]*)\)$/.exec(error.message)
+                tell({ body: t("t_move_file_failed", { reason: wrapped?.[1] ?? error.message }) })
             } finally {
                 this.setState({ moving_file: false })
             }
