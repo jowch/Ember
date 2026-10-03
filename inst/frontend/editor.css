@@ -4740,3 +4740,134 @@ jlerror.syntax-error > header {
     background: var(--black);
     color: var(--white);
 }
+
+/* Shared dialogs (common/dialogs.js) and menus (common/useMenu.js). */
+
+.ember-dialog {
+    width: min(420px, calc(100vw - 32px));
+    padding: 0;
+    border: none;
+    border-radius: 10px;
+    box-shadow: var(--ember-dialog-shadow);
+    background: var(--header-bg-color);
+    color: var(--pluto-output-color);
+}
+
+.ember-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.3);
+}
+
+.ember-dialog-title {
+    padding: 16px 20px 0;
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.ember-dialog-body {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 20px;
+}
+
+.ember-dialog-text {
+    margin: 0;
+    white-space: pre-line;
+    line-height: 1.5;
+}
+
+.ember-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.ember-btn {
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--pluto-output-color);
+    background: var(--header-bg-color);
+    border: 1px solid var(--rule-color);
+    border-radius: 7px;
+    padding: 6px 14px;
+    cursor: pointer;
+}
+
+.ember-btn.primary {
+    color: var(--process-finished);
+    border-color: var(--process-finished);
+}
+
+.ember-btn.danger {
+    color: var(--process-failed);
+    border-color: var(--process-failed);
+}
+
+.ember-btn:focus-visible,
+.ember-menuitem:focus-visible {
+    outline: 2px solid var(--process-finished);
+    outline-offset: 2px;
+}
+
+.ember-menu {
+    width: max-content;
+    max-width: 320px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px;
+    border: 1px solid var(--rule-color);
+    border-radius: 8px;
+    box-shadow: var(--ember-dialog-shadow);
+    background: var(--header-bg-color);
+}
+
+.ember-menuitem {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    font: inherit;
+    text-align: left;
+    color: var(--pluto-output-color);
+    background: transparent;
+    border: none;
+    border-radius: 5px;
+    padding: 8px 10px;
+    cursor: pointer;
+}
+
+.ember-menuitem:hover,
+.ember-menuitem:focus {
+    background: var(--ember-menu-hover-bg);
+}
+
+.ember-menuitem-title {
+    font-size: 13.5px;
+    font-weight: 500;
+}
+
+.ember-menuitem-desc {
+    font-size: 12px;
+    color: var(--ember-menu-muted-color);
+}
+
+.ember-menu-note {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    font-size: 12.5px;
+    line-height: 1.4;
+    color: var(--pluto-logs-warn-accent-color);
+    background: var(--pluto-logs-warn-color);
+    border-radius: 5px;
+    padding: 8px 10px;
+    margin: 2px 0 4px;
+}
+
+.ember-menu-sep {
+    height: 1px;
+    margin: 4px 2px;
+    background: var(--rule-color);
+}

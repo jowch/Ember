@@ -88,6 +88,11 @@
         --ember-upstream-error-label-color: rgb(153, 27, 27);
         --ember-upstream-error-label-bg-color: rgba(220, 38, 38, 0.15);
 
+        /* Shared dialogs and menus */
+        --ember-dialog-shadow: 0 6px 24px rgba(20, 28, 22, 0.14);
+        --ember-menu-hover-bg: rgba(0, 0, 0, 0.06);
+        --ember-menu-muted-color: rgba(0, 0, 0, 0.55);
+
         /* Pluto shoulders */
         --shoulder-hover-bg-color: rgba(0, 0, 0, 0.05);
 
