@@ -755,8 +755,8 @@ handlers <- list(
   #' `state` alone. Otherwise the worker if idle (`help_reply_html()`
   #' rewrites its page's cross-reference links, or lists the packages when
   #' several match); a busy or absent worker, or an idle one that didn't
-  #' answer in time, answers with a page saying so, with status "⌛" rather
-  #' than "👍": the help panel shows the page and asks again shortly,
+  #' answer in time, answers with a page saying so, with status `HOURGLASS`
+  #' rather than `THUMBS_UP`: the help panel shows the page and asks again shortly,
   #' since nothing else would make it ask while the cursor stays put
   #' (ui-2.md, 4c).
   docs = function(server, cl, hub, req) {
