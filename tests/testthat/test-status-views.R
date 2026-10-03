@@ -6,7 +6,7 @@
 
 test_that("project_ember(): process, not_run, worker_memory and plan (64)", {
   s <- fake_state(list(S = cell(""), A = cell("1"), B = cell("2"), ERR = cell("y <- stop('x')"),
-                       LOOP = cell("3"), MD = cell("# hi", kind = "markdown")))
+                       LOOP = cell("3"), MD = cell("#' hi", kind = "markdown")))
   ctx0 <- view_context(s)
   e0 <- project_ember(s, ctx0)
   expect_equal(e0$process, "preview")

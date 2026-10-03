@@ -107,25 +107,30 @@ test_that("undo a delete re-adds the cell with the client's (original) id (17)",
   expect_equal(ed$ops[[1]]$id, "A2")
 })
 
-# ---- ui-2-tests.md 2: markdown kind survives undo delete and paste ---------
+# ---- ui-2-tests.md 2: a text cell's kind survives undo delete and paste ----
+# (piece 2, ui-3-tests.md 50): kind is no longer a patch field -- a cell's
+# kind is cell_kind() of its own code, so an inserted cell is text exactly
+# when its code is.
 
-test_that("undo delete of a markdown cell inserts with kind markdown; a plain add gives kind code (ui-2 2)", {
+test_that("undo delete of a text cell inserts its #' code; a plain add inserts plain code (ui-2 2)", {
   before <- base_before(2, ids = c("A", "B"))
   patches <- list(
-    patch_add(list("cell_inputs", "A2"), new_cell_patch("A2", "# A2", kind = "markdown")),
+    patch_add(list("cell_inputs", "A2"), new_cell_patch("A2", "#' A2")),
     patch_replace(list("cell_order"), as_arr(c("A", "A2", "B"))))
   ed <- pluto_edits(before, patches)
   expect_null(ed$refusal)
   expect_equal(length(ed$ops), 1)
   expect_equal(ed$ops[[1]]$op, "insert")
-  expect_equal(ed$ops[[1]]$kind, "markdown")
+  expect_equal(ed$ops[[1]]$code, "#' A2")
+  expect_null(ed$ops[[1]]$kind)
 
   before2 <- base_before(3)  # A B C
   patches2 <- list(
     patch_add(list("cell_inputs", "new1"), new_cell_patch("new1")),
     patch_replace(list("cell_order"), as_arr(c("A", "B", "new1", "C"))))
   ed2 <- pluto_edits(before2, patches2)
-  expect_equal(ed2$ops[[1]]$kind, "code")
+  expect_equal(ed2$ops[[1]]$code, "")
+  expect_null(ed2$ops[[1]]$kind)
 })
 
 # ---- 18. Delete two cells ------------------------------------------------------

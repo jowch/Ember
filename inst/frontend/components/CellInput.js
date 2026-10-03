@@ -33,9 +33,6 @@ import {
     indentUnit,
     autocomplete,
     htmlLanguage,
-    markdownLanguage,
-    markdown,
-    rLanguage,
     javascriptLanguage,
     syntaxHighlighting,
     cssLanguage,
@@ -147,29 +144,6 @@ export const pluto_syntax_colors_html = HighlightStyle.define(
     {
         all: { color: "var(--cm-color-html)" },
         scope: htmlLanguage,
-    }
-)
-
-// https://github.com/lezer-parser/markdown/blob/d4de2b03180ced4610bad9cef0ad3a805c43b63a/src/markdown.ts#L1890
-export const pluto_syntax_colors_markdown = HighlightStyle.define(
-    [
-        { tag: tags.comment, color: "var(--cm-color-comment)", fontStyle: "italic" },
-        { tag: tags.content, color: "var(--cm-color-md)" },
-        { tag: tags.heading, color: "var(--cm-color-md)", fontWeight: 700 },
-        // TODO? tags.list
-        { tag: tags.quote, color: "var(--cm-color-md)" },
-        { tag: tags.emphasis, fontStyle: "italic" },
-        { tag: tags.strong, fontWeight: "bolder" },
-        { tag: tags.link, textDecoration: "underline" },
-        { tag: tags.url, color: "var(--cm-color-md)", textDecoration: "none" },
-        { tag: tags.monospace, color: "var(--cm-color-md-accent)" },
-
-        // Marks: `-` for lists, `#` for headers, etc.
-        { tag: tags.processingInstruction, color: "var(--cm-color-md-accent) !important", opacity: "0.5" },
-    ],
-    {
-        all: { color: "var(--cm-color-md)" },
-        scope: markdownLanguage,
     }
 )
 
@@ -518,7 +492,6 @@ export const CellInput = ({
                     ScopeStateField,
                     syntaxHighlighting(pluto_syntax_colors_julia),
                     syntaxHighlighting(pluto_syntax_colors_html),
-                    syntaxHighlighting(pluto_syntax_colors_markdown),
                     syntaxHighlighting(pluto_syntax_colors_javascript),
                     syntaxHighlighting(pluto_syntax_colors_css),
                     lineNumbers(),
@@ -581,14 +554,11 @@ export const CellInput = ({
                     EditorState.tabSize.of(4),
                     indentUnitField,
                     indentUnit.from(indentUnitField),
-                    ...(kind === "markdown"
-                        ? [
-                              markdown({
-                                  base: markdownLanguage,
-                                  codeLanguages: (info) => (/^(r|R|)$/.test(info) ? rLanguage : null),
-                              }),
-                          ]
-                        : [r()]),
+                    // Every cell is R, text cells included: their code
+                    // starts with `#'`, and highlighting it as markdown
+                    // would misread `#' ## Title` as an R comment followed
+                    // by a markdown heading instead of one text line.
+                    r(),
                     pluto_autocomplete({
                         request_autocomplete: async ({ query_full }) => {
                             let response = await timeout_promise(

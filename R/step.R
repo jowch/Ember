@@ -589,15 +589,17 @@ normalise_code <- function(code) {
 #' Apply a batch of edit ops atomically.
 #'
 #' Ops are plain lists: `set_code(cell, code, expected)`, `insert(id, index,
-#' code, kind)` (the id is assigned by the caller, outside the pure core, so
-#' `step()` stays deterministic), `delete(cell)`, `move(cell, index)`,
-#' `fold(cell, folded)`.
+#' code)` (the id is assigned by the caller, outside the pure core, so
+#' `step()` stays deterministic; its kind is always `cell_kind(code)`),
+#' `delete(cell)`, `move(cell, index)`, `fold(cell, folded)`.
 #'
 #' Every op is validated against the cells as they will be when it applies;
 #' the first failure refuses the whole batch and returns `state` untouched.
 #' Edits never run anything and never mark anything stale by themselves:
 #' until a cell runs, every other result still matches the globals in the
-#' worker. The edited cell shows `code_differs`.
+#' worker. The edited cell shows `code_differs`. A `set_code` that changes a
+#' cell's kind resets it (`forget_run()`) once the batch has applied: a code
+#' cell rewritten as text would otherwise keep its globals for good.
 reduce_apply <- function(state, event) {
   if (isTRUE(state$read_only)) {
     return(list(state = state, effects = list(), reply = refused("notebook is read-only")))
@@ -607,6 +609,7 @@ reduce_apply <- function(state, event) {
   header <- state$file$header
   inserted <- character()
   deleted <- character()
+  kind_changed <- character()
 
   for (op in ops) {
     bad <- NULL
@@ -621,7 +624,16 @@ reduce_apply <- function(state, event) {
         } else if (any(grepl("^# %%|^# ///", strsplit(code, "\n", fixed = TRUE)[[1]]))) {
           bad <- refused("code contains a cell or footer marker line", op)
         } else {
+          new_kind <- cell_kind(code, setup = identical(op$cell, state$setup))
+          if (!identical(new_kind, cells[[op$cell]]$kind)) {
+            kind_changed <- c(kind_changed, op$cell)
+            if (identical(new_kind, "markdown")) {
+              cells[[op$cell]]$disabled <- FALSE
+              cells[[op$cell]]$folded <- TRUE
+            }
+          }
           cells[[op$cell]]$code <- code
+          cells[[op$cell]]$kind <- new_kind
         }
       }
     } else if (identical(op$op, "insert")) {
@@ -636,8 +648,9 @@ reduce_apply <- function(state, event) {
         if (any(grepl("^# %%|^# ///", strsplit(code, "\n", fixed = TRUE)[[1]]))) {
           bad <- refused("code contains a cell or footer marker line", op)
         } else {
-          new_cell <- list(code = code, kind = op$kind %||% "code",
-                           folded = identical(op$kind, "markdown"), disabled = FALSE)
+          new_kind <- cell_kind(code)
+          new_cell <- list(code = code, kind = new_kind,
+                           folded = identical(new_kind, "markdown"), disabled = FALSE)
           cells <- append(cells, setNames(list(new_cell), op$id), after = op$index - 1)
           inserted <- c(inserted, op$id)
         }
@@ -702,24 +715,44 @@ reduce_apply <- function(state, event) {
   state$file$header <- header
   effects <- list()
   for (id in deleted) {
-    old_result <- state$results[[id]]
-    state$results[[id]] <- NULL
-    state$computed_sources[[id]] <- NULL
-    state$pending <- setdiff(state$pending, id)
-    state <- invalidate_dependents(state, id,
-                                   if (!is.null(old_result)) old_result$defined else character(),
-                                   queue = FALSE)
-    if (state$worker$status %in% c("starting", "ready", "busy")) {
-      order <- Filter(function(i) {
-        !is.null(state$cells[[i]]) && identical(state$cells[[i]]$kind, "code")
-      }, state$graph$order)
-      effects <- c(effects, list(fx_send(state$worker$gen,
-                                         list(type = "remove_cell", cell = id, order = order))))
-    }
+    fr <- forget_run(state, id)
+    state <- fr$state
+    effects <- c(effects, fr$effects)
+  }
+  for (id in setdiff(kind_changed, deleted)) {
+    fr <- forget_run(state, id)
+    state <- fr$state
+    effects <- c(effects, fr$effects)
   }
   state <- rebuild_graph(state)
   list(state = state, effects = effects,
       reply = list(inserted = inserted, seq = state$seq + 1L))
+}
+
+#' Drop a cell's own result, take it out of `pending`, and tell the worker
+#' to forget it (`remove_cell`, as a delete does), marking its dependents
+#' stale. Shared by `reduce_apply()`'s `delete` op and a `set_code` that
+#' changes what running the cell means (its kind changes, or -- piece 2's
+#' inline values -- a text cell is left with no inline expression): without
+#' this, the cell would keep stale globals the worker no longer has any
+#' code that could reproduce. `id` must already be missing from, or
+#' reflect its new kind in, `state$cells`.
+forget_run <- function(state, id) {
+  old_result <- state$results[[id]]
+  state$results[[id]] <- NULL
+  state$computed_sources[[id]] <- NULL
+  state$pending <- setdiff(state$pending, id)
+  state <- invalidate_dependents(state, id,
+                                 if (!is.null(old_result)) old_result$defined else character(),
+                                 queue = FALSE)
+  effects <- list()
+  if (state$worker$status %in% c("starting", "ready", "busy")) {
+    order <- Filter(function(i) {
+      !is.null(state$cells[[i]]) && identical(state$cells[[i]]$kind, "code")
+    }, state$graph$order)
+    effects <- list(fx_send(state$worker$gen, list(type = "remove_cell", cell = id, order = order)))
+  }
+  list(state = state, effects = effects)
 }
 
 #' Ask to run cells.

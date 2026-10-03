@@ -46,7 +46,9 @@ exports_of <- function(state) {
 #'   (character, one line per package, verbatim), `extra_blocks`, `format`
 #'   (the format the file was read in).
 #' * `cells`: named list, id -> `list(code, kind, folded, disabled)`, in
-#'   display order. `kind` is `"code"` or `"markdown"`. The names are the
+#'   display order. `kind` is always `cell_kind(code, setup = <is this the
+#'   setup cell>)` (text-cells.R): `"code"` or `"markdown"` ("text", in
+#'   ui-3.md's words -- the field keeps Pluto's name). The names are the
 #'   display order; there is no separate order field. `disabled` is the
 #'   user's choice (`disable_cell()`); always `FALSE` for a markdown cell.
 #' * `setup`: the setup cell's id. Always a code cell in `cells`.
@@ -588,7 +590,8 @@ reader_of <- function(files) {
   }
 }
 
-#' Code per cell for `notebook_graph()`: markdown cells as `""`.
+#' Code per cell for `notebook_graph()`: a text cell without inline values
+#' as `""` (piece 2 gives one with inline values `inline_code(c$code)`).
 code_of <- function(cells) {
   vapply(cells, function(c) if (c$kind == "markdown") "" else c$code,
          character(1))
@@ -636,6 +639,11 @@ check_state <- function(state) {
   if (is.null(setup_cell) || !identical(setup_cell$kind, "code")) {
     problems <- c(problems, "setup is not a code cell")
   }
+
+  bad_kind <- Filter(function(id) {
+    !identical(state$cells[[id]]$kind, cell_kind(state$cells[[id]]$code, setup = identical(id, state$setup)))
+  }, names(state$cells))
+  if (length(bad_kind) > 0) problems <- c(problems, "kind is not cell_kind(code)")
 
   busy_consistent <- identical(state$worker$status, "busy") == !is.null(state$worker$running)
   if (!busy_consistent) {

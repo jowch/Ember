@@ -37,7 +37,7 @@ test_that("reuse never changes values, for a spread of engine fixtures (7)", {
   }
 
   s0 <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- a"),
-                        Md = cell("# hi", kind = "markdown")))
+                        Md = cell("#' hi", kind = "markdown")))
   r1 <- boot(s0, "A")
   check_invisible(s0, r1$state)
 
@@ -435,7 +435,7 @@ test_that("a one-cell change at 2000 cells stays fast when every cell has a resu
 
 test_that("project_cell_input() gives kind markdown/code; check_wire() passes on every engine fixture (ui-2 1)", {
   s0 <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- a"),
-                        Md = cell("# hi", kind = "markdown")))
+                        Md = cell("#' hi", kind = "markdown")))
   js0 <- pluto_state(s0)$js
   expect_equal(js0$cell_inputs$Md$kind, "markdown")
   expect_equal(js0$cell_inputs$A$kind, "code")

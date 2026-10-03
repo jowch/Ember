@@ -7,7 +7,7 @@
 
 test_that("snapshot fields are right for every cell status (67)", {
   s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- a"),
-                       Md = cell("notes", kind = "markdown")))
+                       Md = cell("#' notes", kind = "markdown")))
   r <- boot(s, c("A", "B"))
   expect_equal(last_sent(r)$cell, "A")
   r <- drive(r$state, wk_done(1, last_token(r), report(created = "a"), at(10)))

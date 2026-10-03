@@ -447,7 +447,7 @@ test_that("a sourced file's change invalidates the sourcing cell (53)", {
 })
 
 test_that("every run message carries the current code-cell run order (54)", {
-  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), M = cell("doc", kind = "markdown"),
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), M = cell("#' doc", kind = "markdown"),
                        B = cell("y <- x")))
   r <- boot(s, "A")
   msg <- last_sent(r)

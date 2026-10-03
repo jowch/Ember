@@ -42,6 +42,8 @@ test_that("parse_canonical_example parses the design.md example", {
 
   expect_true(unname(file$cells[["md1"]]$folded))
   expect_false(file$cells[["a"]]$folded)
+  expect_true(startsWith(file$cells[["md1"]]$code, "#' "))
+  expect_equal(file$cells[["md1"]]$kind, "markdown")
 
   expect_equal(file$learned, list(load1 = "fits"))
   expect_equal(file$sourced, data.frame(path = "helpers.R", hash = "sha256:9c1e",
@@ -51,11 +53,34 @@ test_that("parse_canonical_example parses the design.md example", {
   expect_null(file$problems)
 })
 
-test_that("round_trip_byte_stable: every format-1 fixture round-trips exactly", {
+#' A `[markdown]`-tagged cell's fixture loses that tag on save (piece 2,
+#' ui-3-plan.md): reading it, writing it, and reading that back gives the
+#' same cells, but the written text itself is no longer byte-identical to
+#' the old-layout fixture.
+has_markdown_tag <- function(path) any(grepl("\\[markdown\\]", read_raw(path)))
+
+test_that("round_trip_byte_stable: every format-1 fixture without a [markdown] tag round-trips exactly", {
   for (path in format_files) {
+    if (has_markdown_tag(path)) next
     text <- read_raw(path)
     file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
     expect_identical(format_notebook(file), text, info = path)
+  }
+})
+
+test_that("round_trip_lost_markdown_tag: a [markdown] fixture loses the tag but reads back the same (41)", {
+  for (path in format_files) {
+    if (!has_markdown_tag(path)) next
+    text <- read_raw(path)
+    file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
+    once <- format_notebook(file)
+    expect_false(grepl("[markdown]", once, fixed = TRUE), info = path)
+    reparsed <- parse_notebook(once, new_id = new_id_seq(), version = "0.1.0")
+    expect_equal(reparsed$cells, file$cells, info = path)
+    # A new-layout file (no [markdown] tag left to lose) round-trips byte
+    # for byte from here on.
+    twice <- format_notebook(reparsed)
+    expect_identical(twice, once, info = path)
   }
 })
 
@@ -89,7 +114,7 @@ random_notebook_file <- function(new_id) {
     code <- if (identical(kinds[[i]], "code")) {
       random_lines(sample(1:4, 1))
     } else {
-      random_lines(sample(1:4, 1), prefix = "##")
+      random_lines(sample(1:4, 1), prefix = "#'")
     }
     cells[[cell_ids[[i]]]] <- list(code = code, kind = kinds[[i]],
                                    folded = sample(c(TRUE, FALSE), 1), disabled = FALSE)
@@ -176,12 +201,13 @@ test_that("no_setup_marker_first_code_cell takes the first code cell and notes i
   expect_false(unname(file$cells[["md"]]$folded))
 })
 
-test_that("markdown_prefix strips '#' ' and a bare \"#'\", keeping an unprefixed line as is", {
+test_that("a [markdown] cell keeps its #' lines as written; an unprefixed line gets one added", {
   text <- paste("# %% id=a [markdown]", "#' heading", "#'", "#'content-no-space",
                "not-prefixed-at-all", "", sep = "\n")
   file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
   expect_equal(file$cells[["a"]]$code,
-              "heading\n\n#'content-no-space\nnot-prefixed-at-all")
+              "#' heading\n#'\n#'content-no-space\n#' not-prefixed-at-all")
+  expect_equal(file$cells[["a"]]$kind, "markdown")
 })
 
 test_that("trailing_blank_lines_normalised drops trailing blanks and is then stable", {
@@ -460,7 +486,7 @@ test_that("disabled on a text cell gives disabled_text_cell and the cell unchang
                "# %% id=b [markdown]", "#' hello", "",
                "# /// cell order", "# a", "# b disabled", "# ///", "", sep = "\n")
   file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
-  expect_equal(file$cells[["b"]]$code, "hello")
+  expect_equal(file$cells[["b"]]$code, "#' hello")
   expect_false(file$cells[["b"]]$disabled)
   expect_true("disabled_text_cell" %in% problem_kinds(file))
 })

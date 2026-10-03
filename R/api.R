@@ -186,11 +186,12 @@ set_code <- function(cell, code, expected = NULL) {
 #' fresh one (it must be a 36-character UUID not already in use; a reused
 #' id is refused). The step-4 UI server passes the id the page already
 #' shows the new cell under, so inserting never makes the browser's cell
-#' flicker away and a run requested for it right after never misses.
+#' flicker away and a run requested for it right after never misses. The
+#' inserted cell's kind is always `cell_kind(code)`: there is no separate
+#' argument for it.
 #' @export
-insert_cell <- function(index, code = "", kind = c("code", "markdown"), id = NULL) {
-  structure(list(op = "insert", index = index, code = code,
-                 kind = match.arg(kind), id = id), class = "ember_op")
+insert_cell <- function(index, code = "", id = NULL) {
+  structure(list(op = "insert", index = index, code = code, id = id), class = "ember_op")
 }
 #' @export
 delete_cell <- function(cell) {

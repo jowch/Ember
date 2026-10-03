@@ -275,12 +275,15 @@ project_output <- function(view) {
                                     last_run_timestamp = last_ts, persist_js_state = FALSE,
                                     has_pluto_hook_features = FALSE)
 
-  # Markdown cells never run (step.R's can_run() refuses them), so they
-  # have no `output`: their displayed body is their own code, rendered
-  # directly, every time, not something a graph or run error could pre-empt.
+  # A text cell without inline values never runs (step.R's can_run()
+  # refuses it), so it has no `output`: its displayed body is its own
+  # code (with the `#'` prefixes stripped), rendered directly, every
+  # time, not something a graph or run error could pre-empt. Piece 2's
+  # project_text() replaces this once inline values exist.
   if (identical(view$kind, "markdown")) {
-    if (commonmark_available()) return(wrap("text/html", render_markdown(view$code)))
-    return(wrap("text/plain", view$code))
+    body <- paste(text_body(view$code), collapse = "\n")
+    if (commonmark_available()) return(wrap("text/html", render_markdown(body)))
+    return(wrap("text/plain", body))
   }
 
   parse_err <- Find(function(e) identical(e$kind, "parse"), view$errors)

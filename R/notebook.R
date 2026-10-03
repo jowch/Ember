@@ -21,8 +21,8 @@
 #   # %% id=<uuid> [setup]
 #   <code lines>
 #   <blank>
-#   # %% id=<uuid> [markdown]
-#   #' <markdown lines>
+#   # %% id=<uuid>
+#   #' <text lines>                  (kind is read from the code: all #' lines is text)
 #   <blank>
 #   ...                              (cells in run order)
 #   # /// cell order                 (display order, "folded" after an id)
@@ -259,16 +259,6 @@ drop_trailing_blank <- function(lines) {
   lines
 }
 
-#' Strip the markdown prefix (`"#' "` or a bare `"#'"`) from each line. A
-#' line without the prefix is kept as is.
-strip_markdown_prefix <- function(lines) {
-  vapply(lines, function(l) {
-    if (identical(l, "#'")) return("")
-    if (startsWith(l, "#' ")) return(substring(l, 4))
-    l
-  }, character(1), USE.NAMES = FALSE)
-}
-
 #' Parse one line as a cell marker, or `NULL` if it isn't one.
 #' Returns `list(id, tags)`, `id` `NA` when missing or empty.
 parse_marker <- function(line) {
@@ -412,7 +402,7 @@ parse_notebook_core <- function(text, new_id) {
   footer_blocks <- list()
 
   cur_id <- NULL
-  cur_kind <- "code"
+  cur_tag_markdown <- FALSE
   cur_lines <- character()
   footer_name <- NULL
   footer_lines <- character()
@@ -424,11 +414,13 @@ parse_notebook_core <- function(text, new_id) {
   # The raw lines are kept as read; whether they need un-commenting isn't
   # known until the footer (read later in the file) says which ids are
   # `disabled` or `commented`, so that pass happens after the whole file is
-  # read, below.
+  # read, below. `tag_markdown` is only the marker's own `[markdown]` tag
+  # (for reading an older Ember's file); a cell's real kind is always
+  # `cell_kind()` of its code, resolved once the setup cell is known.
   flush_cell <- function() {
     if (!is.null(cur_id)) {
-      cells[[cur_id]] <<- list(raw = cur_lines, kind = cur_kind, folded = FALSE,
-                               disabled = FALSE)
+      cells[[cur_id]] <<- list(raw = cur_lines, tag_markdown = cur_tag_markdown,
+                               folded = FALSE, disabled = FALSE)
       file_order <<- c(file_order, cur_id)
     }
   }
@@ -457,7 +449,7 @@ parse_notebook_core <- function(text, new_id) {
       }
       used_ids <- c(used_ids, id)
       cur_id <- id
-      cur_kind <- if ("markdown" %in% marker$tags) "markdown" else "code"
+      cur_tag_markdown <- "markdown" %in% marker$tags
       if ("setup" %in% marker$tags) cell_is_setup <- c(cell_is_setup, id)
       cur_lines <- character()
       mode <- "cell"
@@ -485,7 +477,7 @@ parse_notebook_core <- function(text, new_id) {
         id <- new_id()
         used_ids <- c(used_ids, id)
         cur_id <- id
-        cur_kind <- "code"
+        cur_tag_markdown <- FALSE
         cur_lines <- c(line)
         mode <- "cell"
       }
@@ -500,69 +492,81 @@ parse_notebook_core <- function(text, new_id) {
   problems <- resolved$problems
   display_order <- resolved$order
 
-  # The setup cell must be known before cells are un-commented (a `disabled`
-  # setup cell is its own repair), so it is resolved here rather than after.
-  setup_candidates <- intersect(display_order, cell_is_setup)
-  if (length(setup_candidates) > 0) {
-    setup <- setup_candidates[[1]]
-  } else {
-    code_ids <- display_order[vapply(display_order, function(id) identical(cells[[id]]$kind, "code"), logical(1))]
-    if (length(code_ids) > 0) {
-      setup <- code_ids[[1]]
-    } else {
-      setup <- new_id()
-      cells[[setup]] <- list(raw = character(), kind = "code", folded = FALSE, disabled = FALSE)
-      display_order <- c(setup, display_order)
-    }
-    problems <- add_problem(problems, "no_setup_marker")
-  }
-
+  # Un-comment (disabled/commented) or repair a [markdown]-tagged cell's
+  # lines into plain code text, for every cell -- before the setup cell is
+  # known, since the fallback below picks it by the resulting code
+  # (`cell_kind()`), not by the marker's own tag.
+  codes <- list()
+  tentative_disabled <- character()
   file_commented <- character()
   for (id in display_order) {
     raw <- cells[[id]]$raw
-    kind <- cells[[id]]$kind
-    folded <- isTRUE(unname(resolved$folded[id]))
     is_disabled <- isTRUE(unname(resolved$disabled[id]))
     is_commented <- isTRUE(unname(resolved$commented[id]))
 
-    if (identical(kind, "markdown")) {
+    if (isTRUE(cells[[id]]$tag_markdown)) {
       body <- drop_trailing_blank(raw)
-      code <- paste(strip_markdown_prefix(body), collapse = "\n")
+      # A line without the `#'` prefix (an older Ember's own output used
+      # one before every line; a hand edit might not) gets one added, so a
+      # `[markdown]`-tagged cell can't come out mixed just from this repair.
+      body <- vapply(body, function(l) {
+        if (identical(trimws(l), "") || text_line(l)) l else paste0("#' ", l)
+      }, character(1), USE.NAMES = FALSE)
+      codes[[id]] <- paste(body, collapse = "\n")
       if (is_disabled) problems <- add_problem(problems, "disabled_text_cell", id)
-      cells[[id]] <- list(code = code, kind = kind, folded = folded, disabled = FALSE)
       next
     }
 
-    needs_uncomment <- is_disabled || is_commented
-    disabled <- is_disabled
-    if (disabled && identical(id, setup)) {
-      problems <- add_problem(problems, "disabled_setup_cell", id)
-      disabled <- FALSE
-    }
     # The blank line separating this cell from the next is still a plain
     # blank line in `raw` (dropped here, before un-commenting): a disabled
     # cell's own trailing blank code line is written as a non-blank "##",
     # which only the second drop_trailing_blank() below (after
     # un-commenting) removes.
-    lines <- drop_trailing_blank(raw)
-    if (needs_uncomment) {
+    body_lines <- drop_trailing_blank(raw)
+    if (is_disabled || is_commented) {
       any_uncommented <- FALSE
-      for (k in seq_along(lines)) {
-        ln <- lines[[k]]
-        if (identical(ln, "##")) {
-          lines[[k]] <- ""
-        } else if (startsWith(ln, "## ")) {
-          lines[[k]] <- substring(ln, 4)
+      for (k in seq_along(body_lines)) {
+        one <- body_lines[[k]]
+        if (identical(one, "##")) {
+          body_lines[[k]] <- ""
+        } else if (startsWith(one, "## ")) {
+          body_lines[[k]] <- substring(one, 4)
         } else {
           any_uncommented <- TRUE
         }
       }
       if (any_uncommented) problems <- add_problem(problems, "uncommented_line", id)
     }
-    body <- drop_trailing_blank(lines)
-    code <- paste(body, collapse = "\n")
-    cells[[id]] <- list(code = code, kind = kind, folded = folded, disabled = disabled)
-    if (is_commented && !disabled) file_commented <- c(file_commented, id)
+    codes[[id]] <- paste(drop_trailing_blank(body_lines), collapse = "\n")
+    if (is_disabled) tentative_disabled <- c(tentative_disabled, id)
+    if (is_commented && !is_disabled) file_commented <- c(file_commented, id)
+  }
+
+  setup_candidates <- intersect(display_order, cell_is_setup)
+  if (length(setup_candidates) > 0) {
+    setup <- setup_candidates[[1]]
+  } else {
+    code_ids <- display_order[vapply(display_order, function(id) identical(cell_kind(codes[[id]]), "code"), logical(1))]
+    if (length(code_ids) > 0) {
+      setup <- code_ids[[1]]
+    } else {
+      setup <- new_id()
+      codes[[setup]] <- ""
+      display_order <- c(setup, display_order)
+    }
+    problems <- add_problem(problems, "no_setup_marker")
+  }
+
+  for (id in display_order) {
+    folded <- isTRUE(unname(resolved$folded[id]))
+    disabled <- id %in% tentative_disabled
+    if (disabled && identical(id, setup)) {
+      problems <- add_problem(problems, "disabled_setup_cell", id)
+      disabled <- FALSE
+    }
+    code <- codes[[id]] %||% ""
+    cells[[id]] <- list(code = code, kind = cell_kind(code, setup = identical(id, setup)),
+                        folded = folded, disabled = disabled)
   }
   cells <- cells[display_order]
 
@@ -668,16 +672,15 @@ format_notebook <- function(file, order = NULL) {
   cell_block_lines <- function(id) {
     cell <- file$cells[[id]]
     tags <- character()
-    if (identical(cell$kind, "markdown")) tags <- c(tags, "markdown")
     if (identical(id, file$setup)) tags <- c(tags, "setup")
     suffix <- if (length(tags) > 0) paste0(" ", paste(sprintf("[%s]", tags), collapse = " ")) else ""
     marker <- paste0("# %% id=", id, suffix)
     body <- if (identical(cell$code, "")) character(0) else strsplit(cell$code, "\n", fixed = TRUE)[[1]]
+    # A text cell's code already carries its `#'` prefixes (they are the
+    # text, not added here); only a code cell is ever commented out.
     comment_out <- !identical(cell$kind, "markdown") &&
       (isTRUE(cell$disabled) || (id %in% file$commented))
-    content <- if (identical(cell$kind, "markdown")) {
-      vapply(body, function(l) if (identical(l, "")) "#'" else paste0("#' ", l), character(1))
-    } else if (comment_out) {
+    content <- if (comment_out) {
       vapply(body, function(l) if (identical(l, "")) "##" else paste0("## ", l), character(1))
     } else {
       body
