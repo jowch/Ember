@@ -23,6 +23,8 @@ done; clear out ticked items at each release.
 - [x] Plot size isn't reported back, so `render_png()`'s `size` is always `NULL` — missing
 - [ ] Interrupts on Windows: a plain interrupt works in CI, but one landing while a value is displayed isn't checked (the test is skipped there: processx's CTRL+C helper delivers too late for its timing). A late interrupt can also land in the next cell there, and one arriving between cells has stopped the worker in CI (test skipped there too) — improvised
 
+- [ ] On macOS, R's `serverSocket()` can bind 0.0.0.0:P while another process already listens on 127.0.0.1:P, so a worker connecting to 127.0.0.1:P may reach the other process instead of its own server. Rare, macOS only; bind 127.0.0.1 explicitly or check the peer on connect — missing
+
 ## File format
 
 - [ ] Converter tests need saved example files from each released format; only format 1 exists — missing
