@@ -488,7 +488,7 @@ test_that("every request type in the handler table is answered as documented (36
   answered <- c("connect", "ping", "current_time", "update_notebook", "run_multiple_cells",
                "restart_process", "reset_shared_state", "complete", "complete_symbols", "docs",
                "all_registered_package_names", "completepath", "get_all_notebooks", "ember_signature",
-               "ember_update_packages")
+               "ember_update_packages", "ember_move_notebook")
   silent <- c("interrupt_all", "shutdown_notebook", "reshow_cell", "ember_render_plot",
              "ember_run_all", "ember_split_cell", "ember_apply_update", "ember_cancel_update",
              "request_js_link_response", "nbpkg_available_versions",
@@ -1165,6 +1165,40 @@ test_that("ember_update_packages dispatches the preview with apply = TRUE; the f
   ok <- wait_for(nb, function(snap) identical(snap$packages$snapshot, today), timeout = 30)
   expect_true(ok, info = notebook_state(nb)$packages$target$message %||% "")
   expect_null(notebook_state(nb)$packages$proposal)
+})
+
+test_that("ember_move_notebook refuses an existing name, then moves and patches path/shortpath (94)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  folder <- dirname(path)
+  existing <- file.path(folder, "already-there.R")
+  writeLines("# x", existing)
+  on.exit(unlink(existing), add = TRUE)
+
+  move_replies <- function() Filter(function(m) identical(m$type, "ember_move_notebook"), ws$messages)
+
+  handle_message(server, ws, wire("ember_move_notebook", notebook_id = id, name = "already-there.R", folder = folder))
+  r1 <- move_replies()
+  expect_true(is.character(r1[[length(r1)]]$message$error))
+  expect_true(file.exists(path))
+
+  handle_message(server, ws, wire("ember_move_notebook", notebook_id = id, name = "renamed", folder = folder))
+  r2 <- move_replies()
+  new_path <- file.path(folder, "renamed.R")
+  expect_equal(r2[[length(r2)]]$message$path, new_path)
+  expect_false(file.exists(path))
+  expect_true(file.exists(new_path))
+  expect_equal(notebook_state(nb)$path, new_path)
+  expect_equal(ws$page()$path, new_path)
+  expect_equal(ws$page()$shortpath, "renamed.R")
 })
 
 # ---- Editor services (ui-2.md, 4) -------------------------------------------

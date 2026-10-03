@@ -213,6 +213,7 @@ schedule <- function(state) {
     # conflict the moment the new one reports anything, restarting it for a
     # phantom reason (packages-core.R, `switch_library()`'s mismatch check).
     state$worker$loaded <- character()
+    state$worker$wd <- dirname(state$path)
     return(list(state = state,
                effects = list(fx_start_worker(gen, state$packages$active$path, dirname(state$path)))))
   }
@@ -876,7 +877,7 @@ restart_worker <- function(state, reason = NULL) {
                                  interrupt = NULL, restart_offered = FALSE,
                                  info = NULL,
                                  exit = if (!is.null(reason)) list(status = NA_integer_, message = reason) else NULL,
-                                 loaded = character()),
+                                 loaded = character(), wd = dirname(state$path)),
                             class = "ember_worker_state")
   effects <- c(effects, list(fx_start_worker(gen, state$packages$active$path, dirname(state$path))))
   state$results <- list()
@@ -913,10 +914,26 @@ reduce_shutdown <- function(state, event) {
 
 #' Move: `path` changes; `fx_move_file(old, new)`. The shell moves the file
 #' before it compares the file text, so no second copy is written.
+#'
+#' A `"ready"` or `"busy"` worker is told to follow: `fx_send(chdir, from,
+#' to)`, and `worker$wd` is updated to match, so a run already queued for
+#' that worker doesn't look like a mismatch at its next `wk_hello`. A
+#' `"starting"` worker hasn't said hello yet (a `send` to it is dropped,
+#' shell.R) and keeps its old `wd` here; `reduce_wk_hello()` notices the
+#' mismatch once it does say hello and sends `chdir` then. An `"off"` or
+#' `"stopped"` worker needs nothing: `schedule()` starts the next one in
+#' `dirname(state$path)`, already the new folder.
 reduce_move <- function(state, event) {
   old_path <- state$path
   state$path <- event$path
-  list(state = state, effects = list(fx_move_file(old_path, event$path)), reply = event$path)
+  effects <- list(fx_move_file(old_path, event$path))
+  if (state$worker$status %in% c("ready", "busy")) {
+    from <- state$worker$wd %||% dirname(old_path)
+    to <- dirname(event$path)
+    effects <- c(effects, list(fx_send(state$worker$gen, list(type = "chdir", from = from, to = to))))
+    state$worker$wd <- to
+  }
+  list(state = state, effects = effects, reply = event$path)
 }
 
 reduce_set_mode <- function(state, event) {
@@ -1025,13 +1042,22 @@ reduce_wk_failed <- function(state, event) {
   list(state = state, effects = list(), reply = NULL)
 }
 
-#' gen check; status "ready"; info kept.
+#' gen check; status "ready"; info kept. A move while this worker was
+#' still `"starting"` left `worker$wd` behind (reduce_move() above): if it
+#' now differs from `dirname(state$path)`, send the `chdir` that move
+#' couldn't, and catch `wd` up.
 reduce_wk_hello <- function(state, event) {
   if (!eq(event$gen, state$worker$gen)) return(list(state = state, effects = list(), reply = NULL))
   state$worker$status <- "ready"
   state$worker$info <- event$info
   state$worker$loaded <- event$info$loaded %||% character()
-  list(state = state, effects = list(), reply = NULL)
+  effects <- list()
+  want <- dirname(state$path)
+  if (!identical(state$worker$wd, want)) {
+    effects <- list(fx_send(state$worker$gen, list(type = "chdir", from = state$worker$wd, to = want)))
+    state$worker$wd <- want
+  }
+  list(state = state, effects = effects, reply = NULL)
 }
 
 #' gen and token check; append the item to `worker$running$console`.

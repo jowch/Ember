@@ -131,6 +131,36 @@ test_that("setup_settings_reset_on_rerun", {
   expect_identical(r$output$text, "NULL")
 })
 
+test_that("chdir moves getwd() and the baseline; a setup setwd() survives it (89)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  new_dir <- function(prefix) {
+    p <- tempfile(prefix)
+    dir.create(p)
+    normalizePath(p, winslash = "/", mustWork = TRUE)
+  }
+  f0 <- normalizePath(getwd(), winslash = "/")
+  f1 <- new_dir("ember-chdir-f1-")
+
+  h$send(list(type = "chdir", from = f0, to = f1))
+  r <- run_and_wait(h, "x", 1L, "getwd()")
+  expect_identical(r$output$text, sprintf('[1] "%s"', f1))
+
+  elsewhere <- new_dir("ember-chdir-elsewhere-")
+  run_and_wait(h, "setup", 2L, sprintf("setwd(%s)", deparse(elsewhere)), role = "setup")
+
+  # The notebook moves again while the setup cell's own setwd() is still
+  # in effect: the live wd (elsewhere) is left alone, but the baseline a
+  # setup rerun would go back to (f1) is updated to the new folder.
+  f2 <- new_dir("ember-chdir-f2-")
+  h$send(list(type = "chdir", from = f1, to = f2))
+  r2 <- run_and_wait(h, "y", 3L, "getwd()")
+  expect_identical(r2$output$text, sprintf('[1] "%s"', elsewhere))
+
+  r3 <- run_and_wait(h, "setup", 4L, "getwd()", role = "setup")
+  expect_identical(r3$output$text, sprintf('[1] "%s"', f2))
+})
+
 test_that("package_load_changes_allowed", {
   flib <- fixture_lib()
   h <- worker_harness(extra_libs = flib)

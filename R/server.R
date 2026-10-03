@@ -661,7 +661,7 @@ on_run <- function(server, cl, hub, req) {
 #' | complete_symbols              | reply {latex = {}, emoji = {}} (Julia's symbol tables; none for R) |
 #' | docs                          | a notebook definition from state; else worker_query(help); else "needs R running" (ui-2.md, 4c) |
 #' | all_registered_package_names  | reply {results = []}                                            |
-#' | completepath                  | reply {start = 0, stop = 0, results = []}                      |
+#' | completepath                  | {query, ember_dirs_only?}: reply complete_path()'s {start, stop, results} |
 #' | get_all_notebooks             | reply "notebook_list" {notebooks = hosted notebooks}           |
 #' | reshow_cell                   | "more" paging (ui-2.md, 3b/3c): dispatch ev_show_more(cell, objectid, dim); flush. No reply (the frontend sends without awaiting one) |
 #' | ember_render_plot             | {cell_id, res}, res clamped: dispatch ev_render() at the cell's own figure size; flush |
@@ -671,6 +671,7 @@ on_run <- function(server, cl, hub, req) {
 #' | ember_update_packages          | dispatch ev_preview_date(today, apply = TRUE); flush. No reply       |
 #' | ember_apply_update             | {date}: set_date(hub$nb, date); a refusal is logged. Flush. No reply |
 #' | ember_cancel_update            | dispatch ev_cancel_preview(); flush. No reply                        |
+#' | ember_move_notebook            | {name, folder}: notebook_target_path() + move_notebook(); reply {path} or {error}; flush |
 #' | request_js_link_response, nbpkg_available_versions, nbpkg_get_project_toml, nbpkg_set_project_toml, pkg_update | Julia-only; their UI is disabled in the frontend. Logged, no reply |
 #'
 #' Replies use the reply type Pluto uses for each (connect "👋", ping
@@ -801,9 +802,13 @@ handlers <- list(
     send(cl, reply_message(req, "all_registered_package_names", list(results = list())))
   },
 
+  #' `FolderField`'s completion (and, piece 5, `FilePicker`'s): folder
+  #' entries matching what was typed, from `complete_path()`
+  #' (notebook-files.R). No hub needed; a path is as visible as this
+  #' secret already lets R run.
   completepath = function(server, cl, hub, req) {
-    send(cl, reply_message(req, "completepath_result",
-                           list(start = 0L, stop = 0L, results = list())))
+    r <- complete_path(req$body$query, dirs_only = isTRUE(req$body$ember_dirs_only))
+    send(cl, reply_message(req, "completepath_result", r))
   },
 
   reshow_cell = function(server, cl, hub, req) {
@@ -936,6 +941,22 @@ handlers <- list(
   ember_cancel_update = function(server, cl, hub, req) {
     if (is.null(hub)) return(invisible(NULL))
     dispatch(hub$nb, ev_cancel_preview(at = Sys.time()))
+    flush_clients(server, hub)
+  },
+
+  #' MoveDialog's Save: `notebook_target_path()` then `move_notebook()`,
+  #' replying `{path}` or `{error}` directly to the caller (as
+  #' `ember_signature` does), then flushing so the new `path`/`shortpath`
+  #' reach every client through the normal diff.
+  ember_move_notebook = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    b <- req$body
+    result <- tryCatch({
+      target <- notebook_target_path(b$name, b$folder)
+      move_notebook(hub$nb, target)
+      list(path = target)
+    }, ember_refused = function(e) list(error = conditionMessage(e)))
+    send(cl, reply_message(req, "ember_move_notebook", result))
     flush_clients(server, hub)
   }
 )

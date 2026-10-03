@@ -8,7 +8,6 @@ import { create_pluto_connection, ws_address_from_base } from "../common/PlutoCo
 import { ask, tell, reload_prompt } from "../common/dialogs.js"
 import { serialize_cells, deserialize_cells, detect_deserializer } from "../common/Serialization.js"
 
-import { FilePicker } from "./FilePicker.js"
 import { Preamble } from "./Preamble.js"
 import { Notebook } from "./Notebook.js"
 import { BottomRightPanel } from "./BottomRightPanel.js"
@@ -46,7 +45,8 @@ import { open_pluto_popup } from "../common/open_pluto_popup.js"
 import { get_included_external_source } from "../common/external_source.js"
 import { getCurrentLanguage, getWritingDirection, t, th } from "../common/lang.js"
 import { InlineIonicon } from "../common/ClassTable.js"
-import { desktop_version, is_desktop, move_notebook, open_main_menu, wait_for_file_move } from "./DesktopInterface.js"
+import { desktop_version, is_desktop, open_main_menu } from "./DesktopInterface.js"
+import { MoveDialog } from "./MoveDialog.js"
 import { with_query_params } from "../common/URLTools.js"
 import { ConfirmBeforeLongRuntime, maybe_abort_long_runtime } from "./ConfirmBeforeLongRuntime.js"
 import { detect_indent_unit } from "./CellInput/detect_indent_unit.js"
@@ -90,8 +90,7 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
         (state.backend_launch_phase != null &&
             BackendLaunchPhase.wait_for_user < state.backend_launch_phase &&
             state.backend_launch_phase < BackendLaunchPhase.ready) ||
-        state.initializing ||
-        state.moving_file,
+        state.initializing,
     process_waiting_for_permission: state.notebook.process_status === ProcessStatus.waiting_for_permission && !state.initializing,
     process_restarting: state.notebook.process_status === ProcessStatus.waiting_to_restart,
     process_dead: state.notebook.process_status === ProcessStatus.no_process || state.notebook.process_status === ProcessStatus.waiting_to_restart,
@@ -360,12 +359,12 @@ export const url_logo_small = get_included_external_source("pluto-logo-small")?.
  * refresh_target: ?string,
  * connected: boolean,
  * initializing: boolean,
- * moving_file: boolean,
  * scroller: {
  * up: boolean,
  * down: boolean,
  * },
  * export_menu_open: boolean,
+ * move_dialog_open: boolean,
  * last_created_cell: string | undefined,
  * selected_cells: Array<string>,
  * extended_components: any,
@@ -405,12 +404,12 @@ export class Editor extends Component {
             connected: false,
             initializing: true,
 
-            moving_file: false,
             scroller: {
                 up: false,
                 down: false,
             },
             export_menu_open: false,
+            move_dialog_open: false,
 
             last_created_cell: undefined,
             selected_cells: [],
@@ -785,6 +784,8 @@ export class Editor extends Component {
                 this.client.send("ember_cancel_update", {}, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_split_cell: (cell_id, code) =>
                 this.client.send("ember_split_cell", { cell_id, code }, { notebook_id: this.state.notebook.notebook_id }, false),
+            ember_move_notebook: (name, folder) =>
+                this.client.send("ember_move_notebook", { name, folder }, { notebook_id: this.state.notebook.notebook_id }),
             request_js_link_response: (cell_id, link_id, input) => {
                 return this.client
                     .send(
@@ -1268,68 +1269,6 @@ all patches: ${JSON.stringify(patches, null, 1)}
                 false
             )
         }
-        this.submit_file_change = async (new_path, reset_cm_value) => {
-            const old_path = this.state.notebook.path
-            if (old_path === new_path) {
-                return
-            }
-            if (!this.state.notebook.in_temp_dir) {
-                const confirmed = await ask({
-                    body: t("t_confirm_move_file", { old_path, new_path, interpolation: { escapeValue: false } }),
-                    actions: [
-                        { label: t("t_move"), value: true, primary: true },
-                        { label: t("t_cancel"), value: false },
-                    ],
-                    cancel_value: false,
-                })
-                if (!confirmed) {
-                    throw new Error("Declined by user")
-                }
-            }
-
-            this.setState({ moving_file: true })
-
-            try {
-                await update_notebook((notebook) => {
-                    notebook.in_temp_dir = false
-                    notebook.path = new_path
-                })
-                // @ts-ignore
-                document.activeElement?.blur()
-            } catch (error) {
-                // update_notebook()'s own refusal wraps the server's reason
-                // as `Pluto update_notebook error: (from Julia: <why_not>)`;
-                // the dialog shows just <why_not>, not that wrapper.
-                const wrapped = /^Pluto update_notebook error: \(from Julia: ([\s\S]*)\)$/.exec(error.message)
-                tell({ body: t("t_move_file_failed", { reason: wrapped?.[1] ?? error.message }) })
-            } finally {
-                this.setState({ moving_file: false })
-            }
-        }
-
-        this.desktop_submit_file_change = async () => {
-            this.setState({ moving_file: true })
-
-            try {
-                const file_moved_promise = wait_for_file_move()
-                // ask the electron backend to start moving the notebook. The promise above will be resolved once it is done.
-                move_notebook()
-
-                const loc = await file_moved_promise
-                if (!!loc)
-                    await this.setStatePromise(
-                        immer((/** @type {EditorState} */ state) => {
-                            state.notebook.in_temp_dir = false
-                            state.notebook.path = loc
-                        })
-                    )
-                // @ts-ignore
-                document.activeElement?.blur()
-            } finally {
-                this.setState({ moving_file: false })
-            }
-        }
-
         this.delete_selected = () => {
             if (this.state.selected_cells.length > 0) {
                 this.actions.confirm_delete_multiple(this.state.selected_cells)
@@ -1717,25 +1656,9 @@ ${t("t_key_autosave_description")}`
                             <div class="flex_grow_1"></div>
                             ${
                                 this.state.extended_components.CustomHeader == null &&
-                                (status.binder
-                                    ? html`<pluto-filepicker
-                                          ><a href=${this.export_url("notebookfile")} target="_blank">${t("t_save_notebook_ellipsis")}</a></pluto-filepicker
-                                      >`
-                                    : html`<${FilePicker}
-                                          client=${this.client}
-                                          value=${notebook.in_temp_dir ? "" : notebook.path}
-                                          on_submit=${this.submit_file_change}
-                                          on_desktop_submit=${is_desktop() ? this.desktop_submit_file_change : null}
-                                          readonly=${is_desktop()}
-                                          clear_on_blur=${false}
-                                          suggest_new_file=${{
-                                              base: this.client.session_options?.server?.notebook_path_suggestion ?? "",
-                                          }}
-                                          placeholder=${t("t_save_notebook_ellipsis")}
-                                          button_label=${notebook.in_temp_dir
-                                              ? t("t_save_notebook_button_label_when_currently_not_saved")
-                                              : t("t_save_notebook_button_label_when_currently_saved")}
-                                      />`)
+                                html`<button id="ember-file-name" type="button" title=${notebook.path} onClick=${() => this.setState({ move_dialog_open: true })}>
+                                    ${notebook.shortpath}
+                                </button>`
                             }
                             <div class="flex_grow_2"></div>
                             <div id="process_status">${
@@ -1764,7 +1687,8 @@ ${t("t_key_autosave_description")}`
                                 this.setState({ export_menu_open: !export_menu_open })}><span></span></button>
                         </nav>
                     </header>
-                    
+                    ${this.state.move_dialog_open &&
+                    html`<${MoveDialog} path=${notebook.path} shortpath=${notebook.shortpath} on_close=${() => this.setState({ move_dialog_open: false })} />`}
                     <${SafePreviewUI}
                         process_waiting_for_permission=${status.process_waiting_for_permission}
                         risky_file_source=${notebook.metadata?.risky_file_source}

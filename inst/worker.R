@@ -193,6 +193,26 @@ handle_next <- function() {
       rebuild_search_path()
     },
     drop_globals = drop_globals(msg$cell),
+    chdir = {
+      # getwd() is always the OS's canonical, symlink-resolved form (POSIX
+      # getcwd()); `msg$from`/`msg$to` are the engine's own path strings,
+      # which may not be (macOS's /tmp and /var are themselves symlinks).
+      # Both sides are resolved once here, or every notebook under such a
+      # path would fail the comparison below and never actually chdir,
+      # and a resolved `setup_restore`/`settings_start` value would never
+      # match an unresolved `from` on a later move.
+      resolve <- function(p) tryCatch(normalizePath(p, mustWork = FALSE), error = function(e) p)
+      from <- resolve(msg$from)
+      to <- resolve(msg$to)
+      if (identical(resolve(getwd()), from)) setwd(to)
+      settings_start$wd <<- to
+      if (!is.null(setup_restore)) {
+        setup_restore <<- lapply(setup_restore, function(chg) {
+          if (identical(chg$kind, "wd") && identical(chg$value, from)) chg$value <- to
+          chg
+        })
+      }
+    },
     more = send(show_more(msg)),
     render = send(render_plot(msg)),
     complete = {

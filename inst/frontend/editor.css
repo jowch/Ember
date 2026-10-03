@@ -4937,3 +4937,118 @@ jlerror.syntax-error > header {
     margin: 4px 2px;
     background: var(--ember-border);
 }
+
+/* The header's file-name button (MoveDialog.js), the MoveDialog form and
+ * its shared FolderField (also used, piece 5, by the start page). Piece 5
+ * places and styles the button itself to match board Move5; this is the
+ * minimum so it isn't a bare, unstyled <button>. */
+
+#ember-file-name {
+    font: inherit;
+    font-weight: 500;
+    font-size: 0.8rem;
+    color: var(--nav-filepicker-color);
+    background: none;
+    border: none;
+    border-radius: 5px;
+    padding: 4px 8px;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+#ember-file-name:hover,
+#ember-file-name:focus-visible {
+    background: var(--ember-menu-hover-bg);
+}
+
+.ember-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.ember-field label,
+.ember-field-label {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--ember-menu-muted-color);
+}
+
+.ember-text-input {
+    font: inherit;
+    font-size: 13.5px;
+    color: var(--pluto-output-color);
+    background: var(--pluto-output-bg-color);
+    border: 1px solid var(--ember-border);
+    border-radius: 7px;
+    padding: 7px 10px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.ember-text-input:focus-visible {
+    outline: 2px solid var(--ember-focus-ring);
+    outline-offset: 1px;
+}
+
+.ember-folder-display {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    border: 1px solid var(--ember-border);
+    border-radius: 7px;
+    padding: 7px 10px;
+    font-size: 13.5px;
+}
+
+.ember-link-btn {
+    font: inherit;
+    font-size: 12.5px;
+    color: var(--ember-accent);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+}
+
+.ember-folder-completing {
+    position: relative;
+}
+
+.ember-folder-matches {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 1;
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--ember-border);
+    border-radius: 8px;
+    box-shadow: var(--ember-dialog-shadow);
+    background: var(--header-bg-color);
+}
+
+.ember-folder-matches li {
+    padding: 6px 8px;
+    border-radius: 5px;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.ember-folder-matches li:hover,
+.ember-folder-matches li.highlighted {
+    background: var(--ember-menu-hover-bg);
+}
+
+.ember-dialog-error {
+    color: var(--ember-danger);
+}

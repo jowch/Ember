@@ -1528,3 +1528,37 @@ test_that("run_message() carries fig from the cell's current code (ui-3 63)", {
   expect_equal(msg2$fig$width, 7.5)
   expect_equal(msg2$fig$height, 5)
 })
+
+test_that("reduce_move() tells a ready/busy worker to chdir; an off one needs nothing; a starting one waits for wk_hello (ui-3 85)", {
+  s <- fake_state(list(S = cell(""), A = cell("1")))
+
+  r1 <- drive(s, ev_move("/new/dir/nb.R", at(1)))
+  types1 <- vapply(r1$effects, `[[`, character(1), "type")
+  expect_equal(types1, "move_file")
+
+  r2 <- boot(s, "A")
+  r3 <- drive(r2$state, ev_move("/other/dir/nb.R", at(10)))
+  types3 <- vapply(r3$effects, `[[`, character(1), "type")
+  expect_setequal(types3, c("move_file", "send"))
+  send_fx <- Find(function(e) identical(e$type, "send"), r3$effects)
+  expect_equal(send_fx$msg$type, "chdir")
+  expect_equal(send_fx$msg$from, dirname(s$path))
+  expect_equal(send_fx$msg$to, "/other/dir")
+  expect_equal(r3$state$worker$wd, "/other/dir")
+
+  s4 <- r2$state
+  s4$worker$status <- "starting"
+  s4$worker$running <- NULL
+  s4$worker$gen <- s4$worker$gen + 1L
+  r4 <- drive(s4, ev_move("/elsewhere/nb.R", at(20)))
+  types4 <- vapply(r4$effects, `[[`, character(1), "type")
+  expect_equal(types4, "move_file")
+  expect_equal(r4$state$worker$wd, s4$worker$wd)  # left behind, for wk_hello to notice
+
+  r5 <- drive(r4$state, wk_hello(s4$worker$gen, list(), at(21)))
+  send_fx5 <- Find(function(e) identical(e$type, "send"), r5$effects)
+  expect_equal(send_fx5$msg$type, "chdir")
+  expect_equal(send_fx5$msg$from, s4$worker$wd)
+  expect_equal(send_fx5$msg$to, "/elsewhere")
+  expect_equal(r5$state$worker$wd, "/elsewhere")
+})

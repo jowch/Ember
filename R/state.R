@@ -190,10 +190,14 @@ new_state <- function(file, path, id, options, at) {
 #'   namespaces loaded in this worker (from the hello and every `done`
 #'   report). Reset with the worker: `restart_worker()` makes a fresh
 #'   `new_worker_state()`.
+#' * `wd`: the folder the worker was told to start in (or last `chdir`ed
+#'   to), or `NULL` before it has ever started. Compared against
+#'   `dirname(state$path)` to notice a move made while the worker was
+#'   still starting (`reduce_wk_hello()`, step.R).
 new_worker_state <- function() {
   structure(list(status = "off", gen = 0L, running = NULL, interrupt = NULL,
                  restart_offered = FALSE, info = NULL, exit = NULL,
-                 loaded = character()),
+                 loaded = character(), wd = NULL),
             class = "ember_worker_state")
 }
 

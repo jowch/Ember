@@ -97,7 +97,8 @@ Defaults to "nothing queued or running".}
 \code{close_notebook()} returns \code{TRUE} if the notebook was still in safe
 preview (no worker running).
 
-\code{move_notebook()} returns the new path.
+\code{move_notebook()} returns the new path. A running R process's working
+directory follows the file, unless the notebook changed it.
 
 \code{allow_execution()} returns \code{TRUE} if execution was already allowed.
 

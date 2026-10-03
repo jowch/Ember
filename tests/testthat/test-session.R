@@ -130,6 +130,30 @@ test_that("move_notebook() refuses a relative path (review4 2)", {
   expect_true(file.exists(path))
 })
 
+test_that("move_notebook() while R is running keeps the worker and getwd() follows it (ui-3 91)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, wait = TRUE, timeout = 20)
+  pid0 <- notebook_state(nb)$worker$info$pid
+  expect_true(is.numeric(pid0))
+
+  new_dir <- tempfile("ember-move-")
+  dir.create(new_dir)
+  new_path <- file.path(new_dir, basename(path))
+  move_notebook(nb, new_path)
+  expect_equal(notebook_state(nb)$path, new_path)
+
+  res <- edit_notebook(nb, insert_cell(2, "getwd()"))
+  new_id <- res$inserted[[1]]
+  run_cells(nb, new_id, wait = TRUE, timeout = 20)
+
+  snap <- notebook_snapshot(nb)
+  expect_equal(snap_view(snap, new_id)$output$text,
+              sprintf('[1] "%s"', normalizePath(new_dir, winslash = "/")))
+  expect_equal(notebook_state(nb)$worker$info$pid, pid0)
+})
+
 test_that("a failing save is not retried within one drain, and is retried on the next change (review4 2)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1")))
   dir <- dirname(path)
