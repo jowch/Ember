@@ -618,7 +618,7 @@ on_update_notebook <- function(server, cl, hub, req) {
 #'   preview that would allow execution, start R and install packages just
 #'   because a cell was added. Cells whose code is blank are dropped first.
 #' Ids not in the notebook (a race with a delete) are dropped too, next to
-#' off ids (1b): the frontend sends exactly this request after every
+#' off ids: the frontend sends exactly this request after every
 #' disable/enable toggle (Cell.js's `set_cell_disabled`), and without this,
 #' `run_cells()` would still set `allowed`, starting R in safe preview just
 #' to skip the one cell asked for. Then run_cells(nb, ids) when any remain;

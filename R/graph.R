@@ -250,22 +250,22 @@ notebook_graph <- function(cells, setup = names(cells)[1], exports = list(),
 #' disabled cell it comes from. A disabled cell maps to itself; a dependent
 #' to the first disabled cell, in display order, whose downstream walk
 #' reaches it. Empty when nothing is disabled.
+#' Walks with `downstream(..., transitive = TRUE)` (queries.R) against a
+#' graph-shaped `list(downstream = downstream_list, order = ids)` -- all
+#' that function reads -- instead of a second transitive-walk
+#' implementation. `order` here is display order, not the run order the
+#' real graph will get (computed after `off`, since `compute_order()` needs
+#' `off` nowhere); that only changes the order `downstream()` hands back,
+#' not which ids it reaches, and the assignment loop below doesn't care
+#' about that order, only about which disabled cell's walk gets there first.
 compute_off <- function(ids, disabled, downstream_list) {
   ordered <- ids[ids %in% disabled]
   off <- character()
   for (did in ordered) off[[did]] <- did
+  fake_graph <- list(downstream = downstream_list, order = ids)
   for (did in ordered) {
-    seen <- character()
-    visit <- function(i) {
-      for (d in downstream_list[[i]]) {
-        if (!(d %in% seen)) {
-          seen <<- c(seen, d)
-          visit(d)
-        }
-      }
-    }
-    visit(did)
-    for (d in seen) if (!(d %in% names(off))) off[[d]] <- did
+    reached <- downstream(fake_graph, did, transitive = TRUE)
+    for (d in reached) if (!(d %in% names(off))) off[[d]] <- did
   }
   off
 }
@@ -487,7 +487,7 @@ scc_components <- function(ids, adjacency) {
   components
 }
 
-#' All graph errors. `disabled` cells count towards every rule but `parse`
+#' All graph errors. `disabled` cells count towards no rule but `parse`
 #' (the user still sees that their code is broken): they define nothing for
 #' `multiple_definitions`, own no private name for `private_name`, are
 #' skipped by `global_setting`, and the cycle check (via `components`) has

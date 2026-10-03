@@ -89,12 +89,22 @@ allowed_patch <- function(patch, before) {
     if (length(path) < 3) return(TRUE)   # add/remove a whole cell
     field <- path[[3]]
     if (identical(field, "metadata")) {
-      if (length(path) == 4 && identical(path[[4]], "disabled")) {
+      key <- if (length(path) >= 4) path[[4]] else NULL
+      if (length(path) == 4 && identical(key, "disabled")) {
         id <- path[[2]]
         if (is.null(before$cell_inputs[[id]])) return("that cell was deleted")
         return(TRUE)
       }
-      return(sprintf("Ember doesn't support cell metadata.%s yet", path[[4]] %||% ""))
+      if (is.null(key)) {
+        return("Ember doesn't support replacing cell metadata yet")
+      }
+      if (identical(key, "disabled")) {
+        # length(path) > 4 here: a patch reaching past metadata.disabled
+        # itself (into a value that is just a boolean), not a patch to
+        # metadata.disabled, which is supported.
+        return("Ember doesn't support changing part of cell metadata.disabled yet")
+      }
+      return(sprintf("Ember doesn't support cell metadata.%s yet", key))
     }
     if (!identical(field, "code") && !identical(field, "code_folded")) {
       return(sprintf("Ember doesn't support cell %s yet", field))

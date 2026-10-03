@@ -445,6 +445,16 @@ test_that("a line without '##' in a disabled cell is kept as is, with problem un
   expect_equal(problem_detail(file, "uncommented_line"), "b")
 })
 
+test_that("several uncommented lines in one disabled cell give one problem row, not one per line (review)", {
+  text <- paste("# %% id=a [setup]", "0", "",
+               "# %% id=b", "y <- 2", "z <- 3", "",
+               "# /// cell order", "# a", "# b disabled", "# ///", "", sep = "\n")
+  file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
+  expect_equal(file$cells[["b"]]$code, "y <- 2\nz <- 3")
+  expect_equal(sum(problem_kinds(file) == "uncommented_line"), 1)
+  expect_equal(problem_detail(file, "uncommented_line"), "b")
+})
+
 test_that("disabled on a text cell gives disabled_text_cell and the cell unchanged (ui-3 18)", {
   text <- paste("# %% id=a [setup]", "0", "",
                "# %% id=b [markdown]", "#' hello", "",

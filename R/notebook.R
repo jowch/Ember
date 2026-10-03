@@ -546,6 +546,7 @@ parse_notebook_core <- function(text, new_id) {
     # un-commenting) removes.
     lines <- drop_trailing_blank(raw)
     if (needs_uncomment) {
+      any_uncommented <- FALSE
       for (k in seq_along(lines)) {
         ln <- lines[[k]]
         if (identical(ln, "##")) {
@@ -553,9 +554,10 @@ parse_notebook_core <- function(text, new_id) {
         } else if (startsWith(ln, "## ")) {
           lines[[k]] <- substring(ln, 4)
         } else {
-          problems <- add_problem(problems, "uncommented_line", id)
+          any_uncommented <- TRUE
         }
       }
+      if (any_uncommented) problems <- add_problem(problems, "uncommented_line", id)
     }
     body <- drop_trailing_blank(lines)
     code <- paste(body, collapse = "\n")

@@ -235,6 +235,23 @@ test_that("a metadata.disabled patch gives disable_cell(); show_logs and skip_as
   expect_false(is.null(ed4$refusal))
 })
 
+test_that("allowed_patch() gives a sensible message for metadata paths shorter/longer than disabled's (review)", {
+  before <- base_before(2)
+
+  # The whole metadata object replaced at once: no field name to blame.
+  whole <- allowed_patch(patch_replace(list("cell_inputs", "A", "metadata"), list()), before)
+  expect_false(isTRUE(whole))
+  expect_no_match(whole, "metadata\\.\\s*yet")
+  expect_match(whole, "metadata")
+
+  # Past metadata.disabled itself: still a refusal, but not one implying
+  # metadata.disabled is unsupported (it's supported at length 4).
+  nested <- allowed_patch(
+    patch_replace(list("cell_inputs", "A", "metadata", "disabled", "nested"), TRUE), before)
+  expect_false(isTRUE(nested))
+  expect_match(nested, "metadata\\.disabled")
+})
+
 # ---- 24. Races --------------------------------------------------------------------
 
 test_that("race (a): cell_order missing a cell another writer inserted keeps its place (24)", {

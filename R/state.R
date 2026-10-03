@@ -314,8 +314,8 @@ snapshot_of <- function(state) {
 #'   (`cell_errors(graph, id)`'s result), grouped once over `graph$errors`.
 #'   A cell with its own graph error can't run (`can_run()`, step.R); it
 #'   shows that error rather than running at all.
-#' * `off`: logical, position -> `ids[i] %in% names(state$graph$off)` (1b:
-#'   disabled, or a dependent of a disabled cell).
+#' * `off`: logical, position -> `ids[i] %in% names(state$graph$off)`
+#'   (disabled, or a dependent of a disabled cell).
 #' * `disabled_by`: character, position -> the disabled cell `ids[i]`'s off
 #'   status comes from, or `NA` for a disabled cell itself (it maps to
 #'   itself in `graph$off`, which isn't a "disabled by" relationship) or a
@@ -459,9 +459,9 @@ notebook_file_of <- function(state) {
   learned <- learned[vapply(learned, length, integer(1)) > 0]
 
   # Off code cells that aren't themselves disabled are written commented
-  # out too (1b): the disabled cells carry their own `disabled` flag
-  # instead, and a text cell is never commented (its `#'` lines already
-  # are comments).
+  # out too: the disabled cells carry their own `disabled` flag instead,
+  # and a text cell is never commented (its `#'` lines already are
+  # comments).
   off_ids <- names(state$graph$off)
   commented <- Filter(function(id) {
     !isTRUE(state$cells[[id]]$disabled) && identical(state$cells[[id]]$kind, "code")
@@ -547,7 +547,7 @@ notifications <- function(old, new) {
 #' never reaches zero and "Run all" has nothing left to do about it (the
 #' same check `can_run()`, step.R, makes before running a cell). A
 #' dependent of a failed or graph-broken cell still counts: it runs on its
-#' own and "Run all" can bring it to zero. An off cell (1b: disabled, or a
+#' own and "Run all" can bring it to zero. An off cell (disabled, or a
 #' dependent of one) is excluded too: it never runs until enabled.
 not_run_ids <- function(state, ctx) {
   if (!isTRUE(state$allowed)) return(character())

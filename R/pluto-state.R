@@ -15,7 +15,7 @@ PLUTO_VERSION <- "v1.0.3"
 
 #' Two constant metadata objects, shared by every cell input with that
 #' `disabled` value, so cells with the same value are the same R object in
-#' every projection. Ember supports only `metadata.disabled` (1b); a client
+#' every projection. Ember supports only `metadata.disabled`; a client
 #' that changes another key gets 👎 (see pluto_edits()).
 CELL_METADATA <- list(disabled = FALSE, show_logs = TRUE, skip_as_script = FALSE)
 CELL_METADATA_DISABLED <- list(disabled = TRUE, show_logs = TRUE, skip_as_script = FALSE)
@@ -120,11 +120,15 @@ pluto_state <- function(state, previous = NULL) {
   new_pluto_state(js, state, keys, state$graph)
 }
 
+#' What a cell's two entries depend on, as a list whose big parts are the
+#' engine's own shared objects, so comparing two keys is pointer comparisons
+#' plus a few scalars.
+#'
 #' `list(cell = state$cells[[id]], result = state$results[[id]],
 #'       console = <worker$running$console when this cell runs, else NULL>,
 #'       flags = ctx$flags[[id]],   # queued, running, waiting_for
 #'       errors = ctx$errors[[id]], # graph errors on this cell: shared within one graph
-#'       disabled_by = ctx$disabled_by[[id]],  # 1b: off, from graph$off
+#'       disabled_by = ctx$disabled_by[[id]],  # off, from graph$off
 #'       allowed = state$allowed)   # sanitize/preview only changes with this
 #'
 #' Must cover every input cell_view() reads for this cell; a missed input

@@ -469,7 +469,7 @@ is_fresh <- function(state, id) {
 #' stays not run, in both modes.
 #'
 #' Every touched result gets `stale = TRUE`. In autorun, and when `queue` is
-#' `TRUE`, they are also added to `pending`, unless the cell is off (1b: a
+#' `TRUE`, they are also added to `pending`, unless the cell is off (a
 #' disabled cell, or a dependent of one, never runs); running clears
 #' `stale`. In lazy they stay stale until run. So "dropped from the queue
 #' without running" (an interrupt) leaves a cell correctly stale with no

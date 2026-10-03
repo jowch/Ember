@@ -884,9 +884,10 @@ cover what the adapter needs:
 
 - **Notebooks:** open (without running), new, shut down, move the file.
 - **Snapshot:** per cell, code, folded, running, queued, errored, stale (lazy
-  mode), last run time and duration, output (`text/plain` form and MIME
-  type) or a structured error (kind, message, suggested fixes); the notebook's
-  process status.
+  mode), disabled and disabled_by (the disabled cell a dependent is off
+  because of), last run time and duration, output (`text/plain` form and
+  MIME type) or a structured error (kind, message, suggested fixes); the
+  notebook's process status.
 - **Graph without running:** per cell, definitions (static, and those learned
   at run time from the footer), references, direct upstream and downstream
   cells, packages; the run order and the cells that can't run (cycles,

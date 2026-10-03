@@ -119,7 +119,7 @@ Each derived fact has one source:
 - "Code differs" is `result$code != cells[[id]]$code`.
 - "Not run" means the cell has no result.
 - "Blocked" (can't run at all) is step 1's `blocked_cells()`: a cell with a graph error of its own. A dependent of a failed or graph-broken cell is not blocked; it runs and fails on its own if it needs what the broken cell would have provided.
-- "Off" (ui-3, piece 1b: disable cell) is `names(state$graph$off)`: a disabled cell, or a dependent that needs a name only a disabled cell provides. `can_run()` and `reduce_run()` treat it like blocked, but it is the user's own choice, not an error.
+- "Off" is `names(state$graph$off)`: a disabled cell, or a dependent that needs a name only a disabled cell provides. `can_run()` and `reduce_run()` treat it like blocked, but it is the user's own choice, not an error.
 - Only `stale` is stored, because it records history (an ancestor ran after this result) that the current code can't reveal.
 
 **One pure transition.** `step(state, event)` returns `list(state, effects, reply)` (step.R). It has three stages:
