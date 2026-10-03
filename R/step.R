@@ -753,12 +753,21 @@ reduce_apply <- function(state, event) {
 #' Drop a cell's own result, take it out of `pending`, and tell the worker
 #' to forget it (`remove_cell`, as a delete does), marking its dependents
 #' stale. Shared by `reduce_apply()`'s `delete` op and a `set_code` that
-#' changes what running the cell means (its kind changes, or -- piece 2's
-#' inline values -- a text cell is left with no inline expression): without
-#' this, the cell would keep stale globals the worker no longer has any
-#' code that could reproduce. `id` must already be missing from, or
-#' reflect its new kind in, `state$cells`.
+#' changes what running the cell means (its kind changes, or a text cell
+#' is left with no inline expression): without this, the cell would keep
+#' stale globals the worker no longer has any code that could reproduce.
+#' `id` must already be missing from, or reflect its new kind in,
+#' `state$cells`.
+#'
+#' If `id` is the cell currently running, its `worker$running` is marked
+#' `discard = TRUE`: the `run` already sent is for code this cell no
+#' longer has (or no longer means what it meant), so `reduce_wk_done()`
+#' must free the worker without storing or learning anything from it, the
+#' same as a `done` for a cell deleted mid-run.
 forget_run <- function(state, id) {
+  if (identical(state$worker$running$cell, id)) {
+    state$worker$running$discard <- TRUE
+  }
   old_result <- state$results[[id]]
   state$results[[id]] <- NULL
   state$computed_sources[[id]] <- NULL
@@ -1114,11 +1123,13 @@ reduce_wk_done <- function(state, event) {
   id <- w$running$cell
   report <- event$report
 
-  if (!(id %in% names(state$cells))) {
-    # The cell was deleted while it was running: `reduce_apply()` already
-    # sent `remove_cell` and dropped its result. There is nothing left to
-    # learn or invalidate for an id that no longer exists; just free the
-    # worker so the next pending cell can go.
+  if (!(id %in% names(state$cells)) || isTRUE(w$running$discard)) {
+    # The cell was deleted while it was running, or forget_run() marked
+    # this run `discard` (a set_code changed what running it means while
+    # it was still running): `reduce_apply()` already sent `remove_cell`
+    # and dropped its result either way. There is nothing left to learn
+    # or invalidate for a run this stale; just free the worker so the
+    # next pending cell can go.
     state$worker$status <- "ready"
     state$worker$running <- NULL
     state$worker$interrupt <- NULL
@@ -1188,7 +1199,11 @@ reduce_wk_done <- function(state, event) {
       # gets them: an upstream error is about a different cell.
       error_line <- NULL; error_call <- NULL
       if (is.null(fd) && !is.null(err$span)) {
-        spans <- inline_spans(state$cells[[id]]$code)
+        # The code that actually ran (`w$running$code`), not the cell's
+        # current code: an edit mid-run changes the cell before this
+        # report arrives, and `err$span` indexes the worker's own
+        # inline_spans(), computed from the code it was sent.
+        spans <- inline_spans(w$running$code)
         if (err$span >= 1 && err$span <= nrow(spans)) {
           error_line <- spans$line[[err$span]]
           error_call <- sprintf("`r %s`", spans$expr[[err$span]])

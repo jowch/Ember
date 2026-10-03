@@ -114,6 +114,50 @@ test_that("deleting a run cell removes its variables and invalidates readers (29
   expect_false("B" %in% r2$state$pending)
 })
 
+test_that("set_code of a run code cell to text folds it, drops the result, emits remove_cell, and marks readers stale (43)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("y <- x")))
+  r <- boot(s, NULL)
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(11)))
+  expect_true(!is.null(r$state$results$A) && !is.null(r$state$results$B))
+
+  r2 <- drive(r$state, ev_apply(list(op_set_code("A", "#' now text", expected = "x <- 1")), at(12)))
+  expect_equal(r2$state$cells$A$kind, "markdown")
+  expect_true(isTRUE(r2$state$cells$A$folded))
+  expect_null(r2$state$results$A)
+  sends <- Filter(function(e) identical(e$type, "send") && identical(e$msg$type, "remove_cell"), r2$effects)
+  expect_equal(sends[[1]]$msg$cell, "A")
+  expect_true(isTRUE(r2$state$results$B$stale))
+
+  r3 <- drive(r2$state, ev_apply(list(op_set_code("A", "x <- 2", expected = "#' now text")), at(13)))
+  expect_equal(r3$state$cells$A$kind, "code")
+})
+
+test_that("set_code of a disabled cell to text clears disabled (43)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1")))
+  r <- drive(s, ev_apply(list(op_disable("A")), at(1)))
+  expect_true(r$state$cells$A$disabled)
+
+  r2 <- drive(r$state, ev_apply(list(op_set_code("A", "#' now text", expected = "x <- 1")), at(2)))
+  expect_equal(r2$state$cells$A$kind, "markdown")
+  expect_false(r2$state$cells$A$disabled)
+})
+
+test_that("forget_run() marks the currently running cell discard when its own id is edited mid-run (review)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1")))
+  r <- boot(s, "A")
+  expect_equal(r$state$worker$running$cell, "A")
+
+  r2 <- drive(r$state, ev_apply(list(op_set_code("A", "#' now text", expected = "x <- 1")), at(5)))
+  expect_true(isTRUE(r2$state$worker$running$discard))
+
+  r3 <- drive(r2$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+  expect_null(r3$state$results$A)
+  expect_equal(r3$state$cells$A$kind, "markdown")
+  expect_equal(r3$state$worker$status, "ready")
+  expect_null(r3$state$graph$learned$definitions$A)
+})
+
 test_that("a cell that read a removed name is still invalidated on rerun (30)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("y <- x")))
   r <- boot(s, NULL)
@@ -512,6 +556,19 @@ test_that("reduce_wk_done(): a text cell's error gets line/call from the failed 
   expect_equal(err$kind, "error")
   expect_equal(err$line, 1L)
   expect_equal(err$call, "`r max(carz$wt)`")
+})
+
+test_that("reduce_wk_done(): a span maps onto the code that ran, not an edit made meanwhile (review)", {
+  s <- fake_state(list(S = cell(""), E = cell("#' `r a` `r stop('x')`", kind = "markdown")))
+  r <- boot(s, "E")
+  r2 <- drive(r$state, ev_apply(list(op_set_code(
+    "E", "#' `r q` and `r b`\n#' `r a` `r stop('x')`",
+    expected = "#' `r a` `r stop('x')`")), at(5)))
+  r3 <- drive(r2$state, wk_done(1, last_token(r),
+    report(status = "error", error = list(message = "x", span = 2L)), at(10)))
+  err <- r3$state$results[["E"]]$error
+  expect_equal(err$line, 1L)
+  expect_equal(err$call, "`r stop('x')`")
 })
 
 test_that("a wk_done with a stale token or generation is ignored (55)", {
