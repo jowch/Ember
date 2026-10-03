@@ -203,9 +203,11 @@ host_notebook <- function(server, nb, owned = FALSE) {
   hub$owned <- isTRUE(owned)
   hub$due <- FALSE
   hub$last_flush <- Sys.time() - 1
+  hub$path <- notebook_state(nb)$path
   hub$unsubscribe <- on_notebook_event(nb, function(note) on_note(server, hub, note))
   assign(id, hub, envir = server$hubs)
   register_deps_for_cells(server, hub, names(notebook_state(nb)$cells))
+  tryCatch(remember_notebook(hub$path), error = function(e) NULL)
   edit_url(server, id)
 }
 
@@ -491,8 +493,18 @@ register_deps_for_cells <- function(server, hub, ids) {
 #' projection per window rather than one per worker message; a request
 #' handler's own flush clears `due` and the scheduled one finds nothing.
 #' `notebook_shut_down` flushes once more (process_status "no_process") and
-#' removes the hub.
+#' removes the hub. Every call also checks `hub$path` against the
+#' notebook's current path (set at `host_notebook()`) and, when they
+#' differ -- a move or rename, from the browser, the R API or Endeavor --
+#' calls `remember_notebook(new, replaces = old)`, wrapped in `tryCatch`
+#' (recent.R): a read-only home folder must never break hosting.
 on_note <- function(server, hub, note) {
+  new_path <- notebook_state(hub$nb)$path
+  if (!identical(new_path, hub$path)) {
+    old_path <- hub$path
+    hub$path <- new_path
+    tryCatch(remember_notebook(new_path, replaces = old_path), error = function(e) NULL)
+  }
   if (identical(note$kind, "cell_state")) {
     register_deps_for_cells(server, hub, note$cells %||% character())
   }

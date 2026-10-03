@@ -2,3 +2,7 @@
 # folder in the session's temporary directory, removed when R exits. The
 # cleanup that runs when the first notebook opens only ever sees it.
 options(ember.cache_dir = tempfile("ember-test-cache-"))
+
+# Tests never touch the user's real recent-notebooks file either:
+# tools::R_user_dir("ember", "data") honours this environment variable.
+Sys.setenv(R_USER_DATA_DIR = tempfile("ember-test-data-"))

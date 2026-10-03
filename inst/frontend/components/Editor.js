@@ -1106,12 +1106,6 @@ all patches: ${JSON.stringify(patches, null, 1)}
         }
         this.on_disable_ui()
 
-        setInterval(() => {
-            if (!this.state.static_preview && document.visibilityState === "visible") {
-                update_stored_recent_notebooks(this.state.notebook.path)
-            }
-        }, 1000 * 5)
-
         // Not completely happy with this yet, but it will do for now - DRAL
         /** Patches that are being delayed until all cells have finished running. */
         this.bond_changes_to_apply_when_done = []
@@ -1516,9 +1510,6 @@ ${t("t_key_autosave_description")}`
 
         const new_state = this.state
 
-        if (old_state?.notebook?.path !== new_state.notebook.path) {
-            update_stored_recent_notebooks(new_state.notebook.path, old_state?.notebook?.path)
-        }
         if (old_state?.notebook?.shortpath !== new_state.notebook.shortpath) {
             if (!is_editor_embedded_inside_editor(old_props.pluto_editor_element)) document.title = `${new_state.notebook.shortpath} — Ember`
         }
@@ -1797,21 +1788,5 @@ ${t("t_key_autosave_description")}`
                 </${PlutoBondsContext.Provider}>
             </${PlutoActionsContext.Provider}>
         `
-    }
-}
-
-/* LOCALSTORAGE NOTEBOOKS LIST */
-
-// TODO This is now stored locally, lets store it somewhere central 😈
-export const update_stored_recent_notebooks = (recent_path, /** @type {string | undefined} */ also_delete = undefined) => {
-    if (recent_path != null && recent_path !== default_path) {
-        const stored_string = localStorage.getItem("recent notebooks")
-        const stored_list = stored_string != null ? JSON.parse(stored_string) : []
-        const oldpaths = stored_list
-
-        const newpaths = [recent_path, ...oldpaths.filter((path) => path !== recent_path && path !== also_delete)]
-        if (!_.isEqual(oldpaths, newpaths)) {
-            localStorage.setItem("recent notebooks", JSON.stringify(newpaths.slice(0, 50)))
-        }
     }
 }

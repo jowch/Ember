@@ -68,7 +68,15 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   const prelude = installerScript ? `options(ember.installer_script = ${JSON.stringify(installerScript)}); ` : "";
   const expr = `${prelude}ember::serve(paths = c(${quoted}), port = ${port}, secret = ${JSON.stringify(SECRET)})`;
 
-  const child = spawn(rscript, ["--vanilla", "-e", expr], { stdio: ["ignore", "pipe", "pipe"] });
+  // tools::R_user_dir("ember", "data") (recent.R's recent-notebooks file)
+  // honours this environment variable: each server gets its own temp
+  // folder, so this suite never touches the real one or lets two test
+  // servers share a recent-notebooks file.
+  const dataDir = mkdtempSync(path.join(tmpdir(), "ember-e2e-data-"));
+  const child = spawn(rscript, ["--vanilla", "-e", expr], {
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, R_USER_DATA_DIR: dataDir },
+  });
 
   let buffer = "";
   const append = (chunk) => {
