@@ -1038,6 +1038,14 @@ test_that("run_cell(): role text gives one inline value per line, knitr-style fo
   }
 })
 
+test_that("run_cell(): role text evaluates every expression on a line, in order, and shows the last (review)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "t", 1L, "a <- 2; a * 3\ninvisible(1); 5", role = "text")
+  expect_identical(r$status, "ok")
+  expect_identical(r$output$values, c("6", "5"))
+})
+
 test_that("run_cell(): role text reports the failing line as error$span; earlier assignments stick (ui-3 47)", {
   h <- worker_harness()
   on.exit(h$close())

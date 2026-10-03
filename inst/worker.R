@@ -343,7 +343,11 @@ run_cell <- function(msg) {
           for (li in seq_along(text_lines)) {
             at <- li
             line_exprs <- parse(text = text_lines[[li]], keep.source = TRUE)
-            r <- withVisible(eval(if (length(line_exprs)) line_exprs[[1]] else NULL, globalenv()))
+            # A line can hold more than one expression (`` `r a <- 2; a *
+            # 3` ``, as knitr allows); all of them run, in order, and the
+            # line's value is the last one's, with its own visibility.
+            r <- withVisible(NULL)
+            for (line_e in line_exprs) r <- withVisible(eval(line_e, globalenv()))
             inline_values[[li]] <- if (r$visible) inline_text(r$value) else ""
           }
         } else {
