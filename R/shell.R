@@ -402,9 +402,12 @@ run_effect <- function(nb, fx) {
         make_done = function(status, output) {
           manifest <- tryCatch(read_library_manifest(fx$path), error = function(e) NULL)
           lines <- strsplit(output, "\n", fixed = TRUE)[[1]]
+          failed <- !identical(status, 0L)
           ev_install_done(fx$token, fx$key, manifest,
-                          message = if (identical(status, 0L)) NULL else install_failure_message(lines, status),
-                          log = utils::tail(lines, 40), at = Sys.time())
+                          message = if (failed) install_failure_message(lines, status) else NULL,
+                          log = utils::tail(lines, 200),
+                          failures = if (failed) install_failures(lines) else empty_install_failures(),
+                          at = Sys.time())
         })
     },
     cancel_install = {
@@ -498,19 +501,6 @@ start_worker_process <- function(nb, fx) {
   nb$worker_rss_reported <- NULL
   enqueue(nb, wk_started(fx$gen, proc$get_pid(), at = Sys.time()))
   invisible(NULL)
-}
-
-#' Why an install failed, from the installer's output: R's own "ERROR:"
-#' lines name each package that didn't build, and renv's last "Error" line
-#' lists every package it gave up on. The full output is in the log.
-install_failure_message <- function(lines, status) {
-  # renv colours its output with terminal escape codes.
-  lines <- gsub("\033\\[[0-9;?]*[A-Za-z]", "", lines)
-  lines <- sub("^\\s+", "", lines)
-  why <- unique(c(grep("^ERROR:", lines, value = TRUE),
-                  utils::tail(grep("^Error", lines, value = TRUE), 1)))
-  if (length(why) == 0) return(paste("install failed, status", status))
-  paste(c("install failed:", why), collapse = "\n")
 }
 
 #' Whatever the worker has written to stdout or stderr since the last poll.

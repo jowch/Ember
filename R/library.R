@@ -376,6 +376,7 @@ job_start <- function(key, cmd, nb, make_progress, make_done) {
     job <- new.env(parent = emptyenv())
     job$proc <- proc
     job$buf <- ""
+    job$lines <- character()
     job$subs <- list()
     jobs[[key]] <- job
   }
@@ -402,6 +403,13 @@ job_leave <- function(key, nb) {
 #' complete lines into progress events for each subscriber, and when a
 #' job's process has exited, turn its status and full output into a done
 #' event for each subscriber and drop the job.
+#'
+#' Every complete line also accumulates into `job$lines` (capped at the
+#' last 400), not just handed to `make_progress` and dropped: `make_done`
+#' needs the whole run's output, not only whatever didn't fit in one poll
+#' as the unfinished last line (`job$buf`) -- an install that runs longer
+#' than a single poll interval used to report an empty log on failure
+#' (design-gaps.md, Packages).
 poll_jobs <- function(nb) {
   for (key in ls(jobs, all.names = TRUE)) {
     job <- jobs[[key]]
@@ -415,6 +423,9 @@ poll_jobs <- function(nb) {
       ends_with_newline <- endsWith(job$buf, "\n")
       complete <- if (ends_with_newline) lines else utils::head(lines, -1L)
       job$buf <- if (ends_with_newline || length(lines) == 0L) "" else utils::tail(lines, 1L)
+      if (length(complete) > 0L) {
+        job$lines <- utils::tail(c(job$lines, complete), 400L)
+      }
       for (line in complete) {
         for (s in job$subs) {
           ev <- tryCatch(s$make_progress(line), error = function(e) NULL)
@@ -427,7 +438,7 @@ poll_jobs <- function(nb) {
     if (!alive) {
       status <- tryCatch(job$proc$get_exit_status(), error = function(e) NA_integer_)
       rest <- tryCatch(job$proc$read_all_output(), error = function(e) "")
-      output <- paste0(job$buf, rest)
+      output <- paste(c(job$lines, job$buf, rest), collapse = "\n")
       for (s in job$subs) {
         ev <- tryCatch(s$make_done(status, output), error = function(e) NULL)
         if (!is.null(ev)) enqueue(s$nb, ev)

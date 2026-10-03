@@ -187,18 +187,3 @@ test_that("random_port() doesn't touch .Random.seed either (review4 3)", {
   expect_identical(get(".Random.seed", envir = .GlobalEnv), seed_before)
   expect_true(p >= 20000L && p <= 59999L)
 })
-
-test_that("an install failure names what failed to build", {
-  lines <- c("Installing cli ...", "cleancall.c:39:28: error: ...",
-             "ERROR: compilation failed for package 'cli'",
-             "Error: failed to install \"cli\", \"dplyr\"", "Execution halted")
-  msg <- install_failure_message(lines, 1L)
-  expect_match(msg, "compilation failed for package 'cli'", fixed = TRUE)
-  expect_match(msg, "failed to install \"cli\", \"dplyr\"", fixed = TRUE)
-  expect_identical(install_failure_message("no reason given", 2L), "install failed, status 2")
-})
-
-test_that("an install failure message ignores terminal colour codes", {
-  msg <- install_failure_message(c("\033[?25h\033[31mError: failed to install \"toyA\"\033[39m"), 1L)
-  expect_match(msg, "Error: failed to install \"toyA\"", fixed = TRUE)
-})

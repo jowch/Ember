@@ -1,0 +1,16 @@
+- Installing brokenpkg ...
+Downloading packages -------------------------------------------------
+Downloading brokenpkg from Repository ...
+Downloaded brokenpkg (0.1.0)
+Installing brokenpkg ...
+* installing *source* package ‘brokenpkg’ ...
+** using staged installation
+** libs
+clang -c brokenpkg.c -o brokenpkg.o
+brokenpkg.c:3:10: fatal error: ‘nonexistent.h’ file not found
+1 error generated.
+make: *** [brokenpkg.o] Error 1
+ERROR: compilation failed for package ‘brokenpkg’
+* removing ‘/tmp/x/brokenpkg’
+Error: failed to install ‘brokenpkg’
+Execution halted

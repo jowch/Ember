@@ -58,11 +58,15 @@ export function tempNotebook(name = "basic.R") {
  * since the exact wording isn't an R-level API this depends on. */
 const BIND_FAILURE_RE = /address already in use|eaddrinuse/i;
 
-async function startServerOnce(notebookPaths, { timeoutMs, logFile }) {
+async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript }) {
   const rscript = process.env.EMBER_RSCRIPT ?? "Rscript";
   const quoted = notebookPaths.map((p) => JSON.stringify(p)).join(", ");
   const port = await freePort();
-  const expr = `ember::serve(paths = c(${quoted}), port = ${port}, secret = ${JSON.stringify(SECRET)})`;
+  // Set before `ember::serve()` starts: `installer_script()` (R/library.R)
+  // reads the option when `library.R` builds each install's command, so it
+  // must already be set the first time a notebook tries to install.
+  const prelude = installerScript ? `options(ember.installer_script = ${JSON.stringify(installerScript)}); ` : "";
+  const expr = `${prelude}ember::serve(paths = c(${quoted}), port = ${port}, secret = ${JSON.stringify(SECRET)})`;
 
   const child = spawn(rscript, ["--vanilla", "-e", expr], { stdio: ["ignore", "pipe", "pipe"] });
 
@@ -116,11 +120,11 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile }) {
  * something actually wrong, not a race, and retrying would only hide it
  * behind a slower, equally failing attempt. */
 export async function startServer(notebookPaths, opts = {}) {
-  const { timeoutMs = 30000, logFile, retries = 3 } = opts;
+  const { timeoutMs = 30000, logFile, retries = 3, installerScript } = opts;
   let lastErr;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      return await startServerOnce(notebookPaths, { timeoutMs, logFile });
+      return await startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript });
     } catch (err) {
       if (!err.bindFailure || attempt === retries) throw err;
       lastErr = err;

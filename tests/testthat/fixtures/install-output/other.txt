@@ -1,0 +1,7 @@
+- Installing brokenpkg ...
+* installing *source* package 'brokenpkg' ...
+checking for libxml2... not found
+configure: error: libxml2 not found
+- brokenpkg: install failed
+Error: failed to install "brokenpkg"
+Execution halted

@@ -1,0 +1,15 @@
+- Installing brokenpkg ...
+Downloading packages -------------------------------------------------
+Downloading brokenpkg from Repository ...
+Downloaded brokenpkg (0.1.0)
+Installing brokenpkg ...
+* installing *source* package 'brokenpkg' ...
+** using staged installation
+** R
+** byte-compile and prepare package for lazy loading
+** help
+*** installing help indices
+** building package indices
+** testing if installed package can be loaded from temporary location
+** testing if installed package can be loaded from final location
+** DONE (brokenpkg)

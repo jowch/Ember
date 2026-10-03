@@ -807,6 +807,7 @@ reduce_run <- function(state, event) {
     state$packages$target$status <- "missing"
     state$packages$target$message <- NULL
     state$packages$target$log <- character()
+    state$packages$target$failures <- empty_install_failures()
   }
   failed_keys <- Filter(function(k) identical(state$packages$indexes[[k]]$status, "failed"),
                         names(state$packages$indexes))

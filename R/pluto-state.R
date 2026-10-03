@@ -797,6 +797,14 @@ project_nbpkg <- function(state) {
 #'   status, and one row per locked or not-found package, from
 #'   `packages_view(state)`. `NA` fields (no version, no source, no message)
 #'   become `NULL` for the wire.
+#'
+#'   `packages$library` adds `log` (one string, the installer's last 200
+#'   lines, joined with "\n") and `failures` (`arr(list(package, version,
+#'   kind, detail, needed_by))`, `version` looked up from `packages$rows`
+#'   and `needed_by` from `packages_view()`'s own `library$failures`
+#'   column) -- both only while the library's `status` is `"failed"`;
+#'   `NULL`/`arr()` otherwise, so a page that has never seen a failure
+#'   never sees these fields change.
 project_ember <- function(state, ctx) {
   stale <- 0L
   if (isTRUE(state$allowed)) {
@@ -818,11 +826,30 @@ project_ember <- function(state, ctx) {
         direct = isTRUE(pkgs$direct[[i]]), status = pkgs$status[[i]],
         message = if (is.na(pkgs$message[[i]])) NULL else pkgs$message[[i]])
   })
+  library_failed <- identical(pv$library$status, "failed")
+  log <- if (library_failed && length(pv$library$log) > 0) {
+    paste(pv$library$log, collapse = "\n")
+  } else {
+    NULL
+  }
+  fdf <- pv$library$failures
+  failures <- if (!library_failed || is.null(fdf) || nrow(fdf) == 0) {
+    list()
+  } else {
+    lapply(seq_len(nrow(fdf)), function(i) {
+      ver <- pkgs$version[match(fdf$package[[i]], pkgs$name)]
+      list(package = fdf$package[[i]],
+          version = if (length(ver) == 0 || is.na(ver)) NULL else ver,
+          kind = fdf$kind[[i]],
+          detail = if (is.na(fdf$detail[[i]])) NULL else fdf$detail[[i]],
+          needed_by = as_arr(fdf$needed_by[[i]] %||% character()))
+    })
+  }
   packages <- list(
     snapshot = pv$snapshot %||% NA_character_, r_version = pv$r_version %||% NA_character_,
     bioc_version = pv$bioc_version %||% NA_character_,
     library = list(status = pv$library$status, message = pv$library$message %||% NA_character_,
-                  progress = pv$library$progress),
+                  progress = pv$library$progress, log = log, failures = as_arr(failures)),
     rows = as_arr(rows))
   # `snapshot`/`r_version`/`bioc_version`/`library$message` are NA when
   # unset (packages-core.R: a fresh header has no snapshot date until
@@ -864,11 +891,11 @@ project_status_tree <- function(state) {
 
   pv <- packages_view(state)
   pkgs <- pv$packages
-  touched <- pkgs[pkgs$status %in% c("installed", "installing", "missing", "failed", "not_found"), , drop = FALSE]
+  touched <- pkgs[pkgs$status %in% c("installed", "installing", "missing", "not_installed", "failed", "not_found"), , drop = FALSE]
   if (nrow(touched) > 0) {
     pkg_subtasks <- stats::setNames(lapply(seq_len(nrow(touched)), function(i) {
       st <- touched$status[i]
-      success <- if (st %in% c("installing", "missing")) NULL else identical(st, "installed")
+      success <- if (st %in% c("installing", "missing", "not_installed")) NULL else identical(st, "installed")
       business(touched$name[i], success)
     }), touched$name)
     pkg_success <- if (any(vapply(pkg_subtasks, function(x) is.null(x$success), logical(1)))) {

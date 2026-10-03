@@ -1,0 +1,4 @@
+- Installing brokenpkg ...
+Downloading packages -------------------------------------------------
+Error: failed to retrieve package 'brokenpkg'
+Execution halted

@@ -73,12 +73,25 @@ replace them.}
 \value{
 \code{package_status()} returns a plain list, the same value as
 \code{notebook_snapshot(nb)$packages}: \code{list(snapshot, r_version,
-bioc_version, library = list(status, path, progress, message), packages =
-data.frame(name, version, source, direct, status, message), problems,
-proposal, plan)}. Per package, \code{status} is one of \code{"installed"},
-\code{"installing"}, \code{"missing"}, \code{"failed"}, \code{"not_found"}. \code{plan} is
-\code{NULL} or \code{list(install = <n packages>, restart = <names>)}, what running
-would do.
+bioc_version, library = list(status, path, progress, message, log, failures),
+packages = data.frame(name, version, source, direct, status, message),
+problems, proposal, plan)}. Per package, \code{status} is one of
+\code{"installed"}, \code{"installing"}, \code{"missing"}, \code{"failed"} (named by
+\code{library$failures}, or a direct package that needs one of them),
+\code{"not_installed"} (every other package in a library that failed: its
+staging folder is never renamed into place, so nothing in that install
+actually landed), \code{"not_found"}. \code{plan} is \code{NULL} or
+\code{list(install = <n packages>, restart = <names>)}, what running would do
+(a \code{"not_installed"} package counts toward it exactly as \code{"missing"}
+does).
+
+\code{library$log} is the installer's last 200 lines, or \code{character()}
+unless \code{status} is \code{"failed"}. \code{library$failures} is a data frame
+\code{package}, \code{kind} (\code{"compile"}, \code{"configure"}, \code{"dependency"},
+\code{"download"}, \code{"other"}), \code{detail} (the missing dependency's name for
+\code{"dependency"}, the first \code{ERROR} line for \code{"other"}, \code{NA} otherwise),
+\code{needed_by} (a list column: the direct packages whose dependency closure
+reaches this one). Empty (0 rows) unless \code{status} is \code{"failed"}.
 
 \code{add_extra_package()}/\code{remove_extra_package()} return an \code{ember_op}, a
 plain list, for use with \code{edit_notebook()}; they do nothing on their own.

@@ -726,3 +726,44 @@ test_that("CELL_METADATA_DISABLED, depends_on_disabled_cells, disabled_by and ca
   changed <- Filter(function(id) !identical(p1$js$cell_results[[id]], p2$js$cell_results[[id]]), ids)
   expect_setequal(changed, "T")
 })
+
+# ---- 82: project_ember()'s packages$library$log/failures -------------------
+
+test_that("project_ember(): library$log is set only when failed; check_wire() passes; a repeat flush emits no ember/packages patch (82)", {
+  lock <- new_lock("brokenpkg", "0.1.0", "CRAN")
+  s <- fake_state(list(S = cell(""), A = cell("library(brokenpkg)")), lock = lock)
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(2)))
+  r <- drive(r$state, ev_allow(at(3)))
+  key <- r$state$packages$target$key
+  token <- r$state$packages$install$token
+
+  # Before any failure: not failed yet, so no log and no failures.
+  js0 <- pluto_state(r$state)$js
+  expect_true(check_wire(js0))
+  expect_null(js0$ember$packages$library$log)
+  expect_equal(length(js0$ember$packages$library$failures), 0)
+
+  failures <- data.frame(package = "brokenpkg", kind = "compile", detail = NA_character_,
+                         stringsAsFactors = FALSE)
+  lines <- c("Installing brokenpkg ...", "ERROR: compilation failed for package 'brokenpkg'")
+  r2 <- drive(r$state, ev_install_done(token, key, NULL, "install failed: compilation failed for package 'brokenpkg'",
+                                       lines, at(4), failures = failures))
+
+  p1 <- pluto_state(r2$state)
+  js1 <- p1$js
+  expect_true(check_wire(js1))
+  expect_match(js1$ember$packages$library$log, "compilation failed for package 'brokenpkg'", fixed = TRUE)
+  expect_equal(length(js1$ember$packages$library$failures), 1)
+  expect_equal(js1$ember$packages$library$failures[[1]]$package, "brokenpkg")
+
+  # A second flush of the exact same state must emit no patch at all under
+  # ember/packages: nothing changed, so `reuse_fields()` keeps the old
+  # `packages` object whole (including `log`), not just its scalar fields.
+  p2 <- pluto_state(r2$state, p1)
+  d <- fb_diff(p1$js, p2$js)
+  under_packages <- Filter(function(patch) {
+    length(patch$path) >= 2 && identical(patch$path[[1]], "ember") && identical(patch$path[[2]], "packages")
+  }, d)
+  expect_equal(length(under_packages), 0)
+})

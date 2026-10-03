@@ -1384,6 +1384,7 @@ nav#at_the_top > #process_status:empty {
 }
 
 .ember-package-row.ember-package-missing td:last-child,
+.ember-package-row.ember-package-not_installed td:last-child,
 .ember-package-row.ember-package-failed td:last-child,
 .ember-package-row.ember-package-not_found td:last-child {
     /* var(--ember-upstream-error-label-color), not --error-color: at least
@@ -1394,6 +1395,46 @@ nav#at_the_top > #process_status:empty {
 
 .ember-package-row.ember-package-installed td:last-child {
     opacity: 0.7;
+}
+
+.ember-install-failure-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6em;
+    margin: 0 0 0.8em 0;
+}
+
+.ember-install-failure-card {
+    border: 1px solid var(--rule-color);
+    border-radius: 6px;
+    padding: 0.6em 0.8em;
+}
+
+.ember-install-failure-title {
+    font-weight: 600;
+    margin: 0 0 0.2em 0;
+}
+
+.ember-install-failure-sentence {
+    margin: 0 0 0.5em 0;
+    opacity: 0.85;
+}
+
+.ember-install-failure-actions {
+    display: flex;
+    gap: 0.5em;
+}
+
+.ember-install-failure-log {
+    margin: 0.5em 0 0 0;
+    padding: 0.5em;
+    max-height: 16em;
+    overflow: auto;
+    font-family: var(--mono-font-stack, monospace);
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    background: var(--rule-color);
+    border-radius: 4px;
 }
 
 pluto-editor.fullscreen .statefile-fetch-progress {

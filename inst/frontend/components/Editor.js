@@ -263,12 +263,20 @@ const first_true_key = (obj) => {
  */
 
 /**
+ * @typedef EmberInstallFailure
+ * @type {{ package: string, version: string?, kind: string, detail: string?, needed_by: Array<string> }}
+ */
+
+/**
  * @typedef EmberPackagesData
  * @type {{
  *  snapshot: string?,
  *  r_version: string?,
  *  bioc_version: string?,
- *  library: { status: string, message: string?, progress: { done: number, total: number, current: string }? },
+ *  library: {
+ *   status: string, message: string?, progress: { done: number, total: number, current: string }?,
+ *   log: string?, failures: Array<EmberInstallFailure>,
+ *  },
  *  rows: Array<EmberPackageRow>,
  * }}
  */
@@ -760,6 +768,8 @@ export class Editor extends Component {
                 ),
             ember_run_all: () =>
                 this.client.send("ember_run_all", {}, { notebook_id: this.state.notebook.notebook_id }, false),
+            ember_update_packages: () =>
+                this.client.send("ember_update_packages", {}, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_split_cell: (cell_id, code) =>
                 this.client.send("ember_split_cell", { cell_id, code }, { notebook_id: this.state.notebook.notebook_id }, false),
             request_js_link_response: (cell_id, link_id, input) => {

@@ -262,3 +262,48 @@ test_that("[net] a notebook with library(dplyr) at a fixed past date resolves, i
   expect_match(snap_view(snap, "A")$output$text, locked_version, fixed = TRUE)
   expect_equal(notebook_state(nb)$worker$loaded[["dplyr"]], locked_version)
 })
+
+# ---- 90: the empty-log regression, with the failing-installer fixture ------
+
+#' A notebook naming `brokenpkg`, already locked (no index needed: the
+#' lock alone answers `wanted_packages()`), written to a fresh temp folder.
+write_broken_notebook <- function(dir = NULL) {
+  if (is.null(dir)) {
+    dir <- tempfile("ember-nb-")
+    dir.create(dir, recursive = TRUE)
+  }
+  cells <- list(S = list(code = "library(brokenpkg)", kind = "code", folded = FALSE))
+  header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
+                       r_version = paste(R.version$major, R.version$minor, sep = "."),
+                       snapshot = "2026-09-01")
+  lock <- parse_lock_lines("brokenpkg 0.1.0 CRAN")$lock
+  file <- new_notebook_file(
+    header = header, cells = cells, setup = "S", run_order = "S", learned = list(),
+    sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
+    lock = lock, extra_blocks = list(), format = ember_format)
+  path <- file.path(dir, "nb.R")
+  write_atomic(path, format_notebook(file))
+  path
+}
+
+test_that("a notebook with the failing-installer option reports the real compiler error and a non-empty log (90)", {
+  old <- getOption("ember.installer_script")
+  options(ember.installer_script = testthat::test_path("fixtures", "failing-installer.R"))
+  on.exit(options(ember.installer_script = old), add = TRUE)
+
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  path <- write_broken_notebook()
+
+  nb <- open_notebook(path, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+
+  res <- run_cells(nb, wait = TRUE, timeout = 60)
+  expect_false(res$timed_out)
+
+  status <- package_status(nb)
+  expect_equal(status$library$status, "failed")
+  expect_match(status$library$message, "compilation failed for package", fixed = TRUE)
+  expect_gt(length(status$library$log), 10)
+  expect_equal(status$library$failures$package, "brokenpkg")
+})

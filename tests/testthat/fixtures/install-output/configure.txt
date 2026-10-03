@@ -1,0 +1,9 @@
+- Installing brokenpkg ...
+* installing *source* package 'brokenpkg' ...
+** using staged installation
+checking for pkg-config... no
+configure: error: pkg-config not found
+ERROR: configuration failed for package 'brokenpkg'
+* removing '/tmp/x/brokenpkg'
+Error: failed to install "brokenpkg"
+Execution halted

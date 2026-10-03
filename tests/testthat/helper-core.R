@@ -38,8 +38,10 @@ fake_file <- function(cells, setup = names(cells)[1], on_cell_change = "autorun"
 #' A fresh session state over `cells` (named list from `cell()`), ready to
 #' drive with events. `S` is the default setup id unless given.
 fake_state <- function(cells, setup = names(cells)[1], on_cell_change = "autorun",
-                       learned = list(), options = list(library = NULL), at = 0) {
-  file <- fake_file(cells, setup = setup, on_cell_change = on_cell_change, learned = learned)
+                       learned = list(), lock = empty_lock(),
+                       options = list(library = NULL), at = 0) {
+  file <- fake_file(cells, setup = setup, on_cell_change = on_cell_change, learned = learned,
+                    lock = lock)
   new_state(file, path = "nb.R", id = "n1", options = options, at = at)
 }
 

@@ -112,10 +112,88 @@ new_index_slot <- function(status, index = NULL, message = NULL, wanted = NULL) 
 #' it last, into a staging folder that is then renamed into place (library.R).
 new_library_slot <- function(key, path, status = "unknown", installed = character(),
                              exports = list(), progress = NULL, message = NULL,
-                             log = character()) {
+                             log = character(), failures = empty_install_failures()) {
   structure(list(key = key, path = path, status = status, installed = installed,
-                 exports = exports, progress = progress, message = message, log = log),
+                 exports = exports, progress = progress, message = message, log = log,
+                 failures = failures),
             class = "ember_library_slot")
+}
+
+#' Empty, correctly typed `install_failures()` result: no package, no row.
+empty_install_failures <- function() {
+  data.frame(package = character(), kind = character(), detail = character(),
+            stringsAsFactors = FALSE)
+}
+
+#' Why an install failed, from the installer's output: R's own "ERROR:"
+#' lines name each package that didn't build, and renv's last "Error" line
+#' lists every package it gave up on. The full output is in the log.
+install_failure_message <- function(lines, status) {
+  # renv colours its output with terminal escape codes.
+  lines <- gsub("\033\\[[0-9;?]*[A-Za-z]", "", lines)
+  lines <- sub("^\\s+", "", lines)
+  why <- unique(c(grep("^ERROR:", lines, value = TRUE),
+                  utils::tail(grep("^Error", lines, value = TRUE), 1)))
+  if (length(why) == 0) return(paste("install failed, status", status))
+  paste(c("install failed:", why), collapse = "\n")
+}
+
+#' Which packages an install failed on, and why, from the installer's
+#' output. R's quotes are "‘"/"’" or ASCII depending on locale;
+#' both are matched.
+#' -> data.frame(package, kind, detail): kind "compile" ("ERROR:
+#'    compilation failed for package"), "configure" ("ERROR: configuration
+#'    failed"), "dependency" ("ERROR: dependency 'x' is not available",
+#'    detail = x), "download" (renv's "error downloading" / "failed to
+#'    retrieve" naming the package), "other" (renv's "- [pkg]: install
+#'    failed" with none of the above; detail = first ERROR line).
+#'
+#' Best effort, not a contract (design-gaps.md): renv's and R's own text
+#' can change between versions, so an unrecognised failure still shows up
+#' as "other" with whatever the first `ERROR`/`Error` line says, rather
+#' than being dropped silently.
+install_failures <- function(lines) {
+  lines <- gsub("\033\\[[0-9;?]*[A-Za-z]", "", lines)
+  lines <- gsub("[‘’]", "'", lines)
+  lines <- trimws(lines)
+
+  first_error <- utils::head(grep("^(ERROR|Error)", lines, value = TRUE), 1L)
+  first_error <- if (length(first_error) == 0L) NA_character_ else first_error
+
+  capture <- function(pattern, x, ignore.case = FALSE) {
+    m <- regmatches(x, regexec(pattern, x, ignore.case = ignore.case))[[1]]
+    if (length(m) < 2L) NA_character_ else m[[2]]
+  }
+
+  pkg <- character(); kind <- character(); detail <- character()
+  add <- function(p, k, d) {
+    pkg[length(pkg) + 1L] <<- p
+    kind[length(kind) + 1L] <<- k
+    detail[length(detail) + 1L] <<- d
+  }
+
+  for (line in lines) {
+    if (grepl("^ERROR: compilation failed for package '[^']+'", line)) {
+      add(capture("^ERROR: compilation failed for package '([^']+)'", line), "compile", NA_character_)
+    } else if (grepl("^ERROR: configuration failed for package '[^']+'", line)) {
+      add(capture("^ERROR: configuration failed for package '([^']+)'", line), "configure", NA_character_)
+    } else if (grepl("^ERROR: dependenc[a-z]+ '[^']+' (is|are) not available.*for package '[^']+'", line)) {
+      dep <- capture("^ERROR: dependenc[a-z]+ '([^']+)'", line)
+      pk <- capture(".*for package '([^']+)'", line)
+      add(pk, "dependency", dep)
+    } else if (grepl("error downloading.*package '[^']+'", line, ignore.case = TRUE)) {
+      add(capture(".*error downloading.*package '([^']+)'", line, ignore.case = TRUE),
+         "download", NA_character_)
+    } else if (grepl("failed to retrieve.*package '[^']+'", line, ignore.case = TRUE)) {
+      add(capture(".*failed to retrieve.*package '([^']+)'", line, ignore.case = TRUE),
+         "download", NA_character_)
+    } else if (grepl("^- [^:]+: install failed", line)) {
+      add(capture("^- ([^:]+): install failed", line), "other", first_error)
+    }
+  }
+
+  if (length(pkg) == 0L) return(empty_install_failures())
+  data.frame(package = pkg, kind = kind, detail = detail, stringsAsFactors = FALSE)
 }
 
 #' A date move being previewed: `date`, `status` (`"fetching"`, `"ready"`,
@@ -145,9 +223,12 @@ ev_library_checked <- function(key, manifest, at)            # manifest: NULL wh
   event("library_checked", at, key = key, manifest = manifest)
 ev_install_progress <- function(token, item, at)             # item: list(package, step, done, total)
   event("install_progress", at, token = token, item = item)
-ev_install_done <- function(token, key, manifest, message, log, at)
+#' `failures` is `install_failures()`'s result (empty when the install
+#' succeeded, or when the caller doesn't have one -- tests that build this
+#' event directly don't need to).
+ev_install_done <- function(token, key, manifest, message, log, at, failures = empty_install_failures())
   event("install_done", at, token = token, key = key, manifest = manifest,
-        message = message, log = log)
+        message = message, log = log, failures = failures)
 
 fx_fetch_index    <- function(key, url) effect("fetch_index", key = key, url = url)
 fx_check_library  <- function(key, path) effect("check_library", key = key, path = path)
@@ -537,10 +618,13 @@ reduce_install_progress <- function(state, event) {
 }
 
 #' Token check; `install <- NULL`. If `key` is still the target: manifest ->
-#' `"ready"` (as `reduce_library_checked`), else `"failed"` with `message`
-#' and `log`, plus a `problems` row (`install_failed`, naming the package
-#' when the installer could tell). An old key's result is dropped: the
-#' library exists on disk and costs nothing until cleanup.
+#' `"ready"` (as `reduce_library_checked`), else `"failed"` with `message`,
+#' `log` and `failures` (`event$failures`, `install_failures()`'s result),
+#' plus one `problems` row (`install_failed`) per failed package, each
+#' naming its `package`; falls back to today's single `NA`-package row
+#' only when `event$failures` has none (the installer's output didn't
+#' parse). An old key's result is dropped: the library exists on disk and
+#' costs nothing until cleanup.
 reduce_install_done <- function(state, event) {
   inst <- state$packages$install
   if (is.null(inst) || !eq(inst$token, event$token)) return(list(state = state, effects = list(), reply = NULL))
@@ -558,15 +642,22 @@ reduce_install_done <- function(state, event) {
       tgt$status <- "failed"
       tgt$message <- event$message
       tgt$log <- event$log
+      tgt$failures <- event$failures %||% empty_install_failures()
       tgt$progress <- NULL
       state$packages$target <- tgt
-      row <- data.frame(kind = "install_failed", package = NA_character_,
-                        message = event$message %||% "install failed", fixes = NA_character_,
-                        stringsAsFactors = FALSE)
-      state$packages$problems <- if (is.null(state$packages$problems) || nrow(state$packages$problems) == 0) {
-        row
+      rows <- if (nrow(tgt$failures) > 0) {
+        data.frame(kind = "install_failed", package = tgt$failures$package,
+                  message = event$message %||% "install failed", fixes = NA_character_,
+                  stringsAsFactors = FALSE)
       } else {
-        rbind(state$packages$problems, row)
+        data.frame(kind = "install_failed", package = NA_character_,
+                  message = event$message %||% "install failed", fixes = NA_character_,
+                  stringsAsFactors = FALSE)
+      }
+      state$packages$problems <- if (is.null(state$packages$problems) || nrow(state$packages$problems) == 0) {
+        rows
+      } else {
+        rbind(state$packages$problems, rows)
       }
     }
   }
@@ -697,16 +788,28 @@ missing_package_error <- function(state, pkg) {
 #' The packages part of the snapshot (and `package_status()`): plain data.
 #'
 #' `list(snapshot, r_version, bioc_version,
-#'      library = list(status, path, progress, message),
+#'      library = list(status, path, progress, message, log, failures),
 #'      packages = data.frame(name, version, source, direct, status, message),
 #'      problems, proposal = NULL | list(date, status, changes, problems),
 #'      plan = NULL | list(install = <n packages>, restart = <names>))`
 #'
 #' Per package `status`: `"installed"` (in `active$installed` at the locked
 #' version), `"installing"`, `"missing"` (not installed; in safe preview
-#' this is what the banner counts), `"failed"`, `"not_found"` (from
-#' `problems`, `version` `NA`). `direct` is `TRUE` for wanted names.
-#' `plan` is what running would do; the banner's "installs 3 packages".
+#' this is what the banner counts), `"failed"` (a package `install_failures()`
+#' named, or a direct package that needs one of them), `"not_installed"`
+#' (every other row of a library that failed: the staging folder is never
+#' renamed into place, so nothing in that install actually landed, even
+#' the packages that built fine), `"not_found"` (from `problems`, `version`
+#' `NA`). `direct` is `TRUE` for wanted names. `plan` is what running would
+#' do; the banner's "installs 3 packages" (a `"not_installed"` row counts
+#' toward it exactly as `"missing"` does: running retries it).
+#'
+#' `library$log` is `target$log` (the installer's last lines) and
+#' `library$failures` is `target$failures` (`install_failures()`'s
+#' result) with a `needed_by` column added: for each failed package, the
+#' wanted (direct) packages whose dependency closure reaches it, walked
+#' through whatever indexes are loaded (`find_in_indexes()`, resolve.R) --
+#' `character()` for a package when none are.
 #' Empty, correctly typed `packages` data.frame: the shape both halves of
 #' `packages_view()` build their rows into.
 empty_packages_df <- function() {
@@ -715,12 +818,54 @@ empty_packages_df <- function() {
             stringsAsFactors = FALSE)
 }
 
+#' The wanted (direct) packages whose dependency closure reaches `pkg`,
+#' walking from each root through `find_in_indexes()` (resolve.R) with
+#' whatever indexes are loaded. A root is included when `pkg` is the root
+#' itself (a direct package that failed names itself here too) or appears
+#' anywhere in what it transitively depends on. No loaded index at all
+#' means no closure can be walked, so the result is `character()`: still
+#' correct, just less informative (install_failures()'s own finding is
+#' unaffected).
+failure_needed_by <- function(pkg, wanted, indexes, needed) {
+  roots <- character()
+  for (root in wanted) {
+    seen <- character()
+    queue <- root
+    found <- FALSE
+    while (length(queue) > 0) {
+      cur <- queue[[1]]
+      queue <- queue[-1]
+      if (cur %in% seen) next
+      seen <- c(seen, cur)
+      if (identical(cur, pkg)) { found <- TRUE; break }
+      hit <- find_in_indexes(cur, indexes, needed)
+      if (!is.null(hit)) queue <- c(queue, hit$deps)
+    }
+    if (found) roots <- c(roots, root)
+  }
+  roots
+}
+
 packages_view <- function(state) {
   p <- state$packages
   wanted <- wanted_packages(state$graph, state$file$header)
   entries <- state$file$lock$entries
   installing <- !is.null(p$install) && identical(p$install$key, p$target$key)
   target_failed <- identical(p$target$status, "failed")
+
+  failures <- p$target$failures %||% empty_install_failures()
+  needed_by_names <- character()
+  if (target_failed && nrow(failures) > 0) {
+    needed <- needed_repos(state$file$header)
+    indexes <- lapply(p$indexes, function(s) s$index)
+    failures$needed_by <- lapply(failures$package, function(pk) {
+      failure_needed_by(pk, wanted, indexes, needed)
+    })
+    needed_by_names <- unique(unlist(failures$needed_by))
+  } else {
+    failures$needed_by <- list()
+  }
+  failed_names <- if (target_failed) failures$package else character()
 
   # Built column-wise, not one `data.frame()` call per lock entry plus an
   # `rbind()` over all of them: that made `packages_view()` (and so
@@ -734,9 +879,28 @@ packages_view <- function(state) {
     installed <- p$active$installed
     hit <- match(entries$name, names(installed))
     is_installed <- !is.na(hit) & entries$version == unname(installed)[hit]
-    status <- ifelse(is_installed, "installed",
-                     ifelse(installing, "installing",
-                            ifelse(target_failed, "failed", "missing")))
+    # Built with `status[...] <- ...` on a pre-sized vector, not nested
+    # `ifelse()`: `installing`/`target_failed` are scalars, and nesting a
+    # per-row vector as the "yes" branch of a scalar-tested `ifelse()`
+    # collapses it to that one recycled element for every row (`ifelse()`'s
+    # result length follows `test`, not the branch vectors).
+    #
+    # A failed library's staging folder is never renamed into place, so no
+    # entry is actually installed: every row that isn't itself one of
+    # `install_failures()`'s named packages, or a direct package that
+    # needs one, reverts to "not_installed" rather than "failed" -- it
+    # just never got as far as being attempted.
+    status <- character(nrow(entries))
+    pending <- !is_installed
+    status[is_installed] <- "installed"
+    status[pending & installing] <- "installing"
+    if (target_failed) {
+      failed_row <- entries$name %in% failed_names | entries$name %in% needed_by_names
+      status[pending & !installing & failed_row] <- "failed"
+      status[pending & !installing & !failed_row] <- "not_installed"
+    } else {
+      status[pending & !installing] <- "missing"
+    }
     data.frame(name = entries$name, version = entries$version, source = entries$source,
               direct = entries$name %in% wanted, status = status,
               message = NA_character_, stringsAsFactors = FALSE)
@@ -759,7 +923,7 @@ packages_view <- function(state) {
                      changes = p$proposal$changes, problems = p$proposal$problems)
   }
 
-  missing_n <- sum(packages_df$status == "missing")
+  missing_n <- sum(packages_df$status %in% c("missing", "not_installed"))
   restart_names <- character()
   if (identical(p$target$status, "ready") && !identical(p$target$key, p$active$key)) {
     conf <- library_conflicts(state$worker$loaded %||% character(), p$target$installed)
@@ -774,6 +938,7 @@ packages_view <- function(state) {
   list(snapshot = state$file$header$snapshot, r_version = state$file$header$r_version,
       bioc_version = state$file$header$bioc_version,
       library = list(status = p$target$status, path = p$target$path,
-                    progress = p$target$progress, message = p$target$message),
+                    progress = p$target$progress, message = p$target$message,
+                    log = p$target$log, failures = failures),
       packages = packages_df, problems = p$problems, proposal = proposal, plan = plan)
 }

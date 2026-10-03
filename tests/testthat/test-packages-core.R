@@ -572,7 +572,7 @@ test_that("ev_run also records the running R version in the header when it diffe
 
 # ---- Snapshot projection --------------------------------------------------------
 
-test_that("packages_view per-package statuses: installed, installing, missing, failed, not_found (56)", {
+test_that("packages_view per-package statuses: installed, installing, not_installed, not_found (56)", {
   s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)\nlibrary(nosuchpkg)")))
   r <- drive(s, ev_open(at(1)))
   r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(2)))
@@ -588,7 +588,12 @@ test_that("packages_view per-package statuses: installed, installing, missing, f
 
   r <- drive(r$state, ev_install_done(r$state$packages$install$token, key, NULL, "boom", character(), at(5)))
   v3 <- packages_view(r$state)
-  expect_true("failed" %in% v3$packages$status)
+  # install_failures() parsed nothing from "boom" (no captured installer
+  # output): no row names a specific failed package, so none is "failed" --
+  # the whole batch reverts to "not_installed" (its staging folder was
+  # never renamed into place).
+  expect_true("not_installed" %in% v3$packages$status)
+  expect_false("failed" %in% v3$packages$status)
 
   r <- drive(r$state, ev_run(NULL, at(6)))
   r <- drive(r$state, ev_install_done(r$state$packages$install$token, key,
@@ -654,4 +659,107 @@ test_that("packages_view() is built column-wise: under 8 ms at 150 packages", {
   ms <- stats::median(times) * 1000
   cat(sprintf("\n[timing] packages_view() at 150 packages: median %.1f ms\n", ms))
   expect_lt(ms, 8)
+})
+
+# ---- Install failures (piece 4, step 1) -------------------------------------
+
+#' Captured installer output, as `poll_jobs()` (library.R) now retains it.
+install_output <- function(name) {
+  readLines(testthat::test_path("fixtures", "install-output", paste0(name, ".txt")), warn = FALSE)
+}
+
+test_that("an install failure names what failed to build", {
+  lines <- c("Installing cli ...", "cleancall.c:39:28: error: ...",
+             "ERROR: compilation failed for package 'cli'",
+             "Error: failed to install \"cli\", \"dplyr\"", "Execution halted")
+  msg <- install_failure_message(lines, 1L)
+  expect_match(msg, "compilation failed for package 'cli'", fixed = TRUE)
+  expect_match(msg, "failed to install \"cli\", \"dplyr\"", fixed = TRUE)
+  expect_identical(install_failure_message("no reason given", 2L), "install failed, status 2")
+})
+
+test_that("an install failure message ignores terminal colour codes", {
+  msg <- install_failure_message(c("\033[?25h\033[31mError: failed to install \"toyA\"\033[39m"), 1L)
+  expect_match(msg, "Error: failed to install \"toyA\"", fixed = TRUE)
+})
+
+test_that("install_failures() on each captured output gives the expected rows; no failure gives 0 rows (80)", {
+  expect_equal(nrow(install_failures(install_output("success"))), 0)
+
+  cmp <- install_failures(install_output("compile-ascii"))
+  expect_equal(cmp$package, "brokenpkg")
+  expect_equal(cmp$kind, "compile")
+  expect_true(is.na(cmp$detail))
+
+  # R's quotes are ASCII or curly ("‘"/"’") depending on locale;
+  # both parse to the same row.
+  cmp_curly <- install_failures(install_output("compile-curly"))
+  expect_equal(cmp_curly, cmp)
+
+  cfg <- install_failures(install_output("configure"))
+  expect_equal(cfg$package, "brokenpkg")
+  expect_equal(cfg$kind, "configure")
+
+  dep <- install_failures(install_output("dependency"))
+  expect_equal(dep$package, "broom")
+  expect_equal(dep$kind, "dependency")
+  expect_equal(dep$detail, "rlang")
+
+  dl <- install_failures(install_output("download"))
+  expect_equal(dl$package, "brokenpkg")
+  expect_equal(dl$kind, "download")
+
+  oth <- install_failures(install_output("other"))
+  expect_equal(oth$package, "brokenpkg")
+  expect_equal(oth$kind, "other")
+  expect_match(oth$detail, "^Error: failed to install")
+
+  two <- install_failures(install_output("two-failures"))
+  expect_equal(nrow(two), 2)
+  expect_setequal(two$package, c("rlang", "broom"))
+  expect_equal(two$kind[two$package == "rlang"], "compile")
+  expect_equal(two$kind[two$package == "broom"], "dependency")
+  expect_equal(two$detail[two$package == "broom"], "rlang")
+})
+
+test_that("reduce_install_done() writes one install_failed row per failed package; needed_by walks the loaded index (81)", {
+  lock <- new_lock(c("broom", "rlang"), c("1.0.0", "1.1.0"), c("CRAN", "CRAN"))
+  s <- pkg_state(list(S = cell(""), A = cell("library(broom)")), lock = lock)
+  r0 <- drive(s, ev_open(at(1)))
+  r0 <- drive(r0$state, ev_library_checked(r0$state$packages$target$key, NULL, at(2)))
+  r0 <- drive(r0$state, ev_allow(at(3)))
+  key <- r0$state$packages$target$key
+  token <- r0$state$packages$install$token
+  failures <- data.frame(package = "rlang", kind = "compile", detail = NA_character_,
+                         stringsAsFactors = FALSE)
+
+  idx_key <- repo_key("cran", r0$state$file$header$snapshot)
+  idx <- new_repo_index(idx_key, "CRAN", name = c("broom", "rlang"),
+                        version = c("1.0.0", "1.1.0"),
+                        deps = list("rlang", character()), needs_compilation = c(FALSE, FALSE))
+  state_with_idx <- r0$state
+  state_with_idx$packages$indexes[[idx_key]] <- new_index_slot("ready", index = idx)
+
+  rf <- drive(state_with_idx, ev_install_done(token, key, NULL, "install failed",
+                                           c("ERROR: compilation failed for package 'rlang'"),
+                                           at(5), failures = failures))
+  v <- packages_view(rf$state)
+  expect_equal(v$packages$status[v$packages$name == "broom"], "failed")
+  expect_equal(v$packages$status[v$packages$name == "rlang"], "failed")
+  expect_equal(v$library$failures$needed_by[[1]], "broom")
+  problems <- rf$state$packages$problems
+  install_rows <- problems[problems$kind == "install_failed", ]
+  expect_equal(nrow(install_rows), 1)
+  expect_equal(install_rows$package, "rlang")
+
+  # Without a loaded index, the closure can't be walked: needed_by is
+  # empty, and broom -- the package install_failures() didn't itself name
+  # -- reverts to "not_installed" rather than "failed".
+  rf_noidx <- drive(r0$state, ev_install_done(token, key, NULL, "install failed",
+                                               c("ERROR: compilation failed for package 'rlang'"),
+                                               at(5), failures = failures))
+  v2 <- packages_view(rf_noidx$state)
+  expect_equal(v2$packages$status[v2$packages$name == "rlang"], "failed")
+  expect_equal(v2$packages$status[v2$packages$name == "broom"], "not_installed")
+  expect_equal(length(v2$library$failures$needed_by[[1]]), 0)
 })
