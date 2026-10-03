@@ -16,11 +16,11 @@ done; clear out ticked items at each release.
 
 ## Worker
 
-- [ ] Editor services: completion, help pages and signatures (the request kinds exist and reply "unsupported") — missing
+- [x] Editor services: completion, help pages and signatures (the request kinds exist and reply "unsupported") — missing
 - [ ] Code that sets out to can reach the worker's own environment (`parent.env(environment(library))`); accidental shadowing is prevented, deliberate access isn't — improvised
 - [ ] Undoing a non-setup cell's `attach()` or `detach()` is best effort: an entry that left the search path can't be recreated — improvised
 - [ ] Formula column check skips a `data` argument that is a call rather than a symbol or `$`/`[[` path — improvised
-- [ ] Plot size isn't reported back, so `render_png()`'s `size` is always `NULL` — missing
+- [x] Plot size isn't reported back, so `render_png()`'s `size` is always `NULL` — missing
 - [ ] Interrupts on Windows: a plain interrupt works in CI, but one landing while a value is displayed isn't checked (the test is skipped there: processx's CTRL+C helper delivers too late for its timing). A late interrupt can also land in the next cell there, and one arriving between cells has stopped the worker in CI (test skipped there too) — improvised
 
 ## File format
@@ -59,7 +59,7 @@ done; clear out ticked items at each release.
 
 - [ ] Pluto frontend fork, protocol in R, removals, R adaptations, theme — missing
 - [ ] The R grammar wired into CodeMirror — missing
-- [ ] Rich outputs in the browser: widget files as static paths, table and tree views, terminal colours — missing
+- [x] Rich outputs in the browser: widget files as static paths, table and tree views, terminal colours — missing
 - [x] URL secret — missing
 - [ ] The server finds the notebook from each message's `notebook_id` rather than the one the client connected to, so one page's socket can act on another notebook it names (both need the secret) — improvised
 - [ ] The browser tests run against whatever ember Rscript's default library has; they should install the working tree into a temp library themselves — improvised
