@@ -767,3 +767,43 @@ test_that("project_ember(): library$log is set only when failed; check_wire() pa
   }, d)
   expect_equal(length(under_packages), 0)
 })
+
+# ---- 101-102: project_ember()'s on_cell_change/r_version/worker_started_at -
+
+test_that("project_ember(): on_cell_change, r_version and worker_started_at track the header and the running worker (101)", {
+  s <- fake_state(list(S = cell("")))
+  js0 <- pluto_state(s)$js
+  expect_true(check_wire(js0))
+  expect_equal(js0$ember$on_cell_change, "autorun")
+  expect_null(js0$ember$r_version)
+  expect_null(js0$ember$worker_started_at)
+
+  r <- drive(s, ev_run("S", at(1)), wk_started(1, 99, at(2)))
+  gen <- r$state$worker$gen
+  r <- drive(r$state, wk_hello(gen, list(r_version = "4.6.1"), at(1000)))
+  js1 <- pluto_state(r$state)$js
+  expect_true(check_wire(js1))
+  expect_equal(js1$ember$r_version, "4.6.1")
+  expect_equal(js1$ember$worker_started_at, 1000)
+
+  r2 <- drive(r$state, ev_set_mode("lazy", at(1001)))
+  js2 <- pluto_state(r2$state)$js
+  expect_true(check_wire(js2))
+  expect_equal(js2$ember$on_cell_change, "lazy")
+})
+
+test_that("a worker restart clears worker_started_at until the next hello (102)", {
+  s <- fake_state(list(S = cell("")))
+  r <- drive(s, ev_run("S", at(1)), wk_started(1, 99, at(2)))
+  gen <- r$state$worker$gen
+  r <- drive(r$state, wk_hello(gen, list(r_version = "4.6.1"), at(3)))
+  expect_equal(pluto_state(r$state)$js$ember$worker_started_at, 3)
+
+  r2 <- drive(r$state, ev_restart(at(4)))
+  expect_null(r2$state$worker$started_at)
+  expect_equal(r2$state$worker$status, "starting")
+  expect_null(pluto_state(r2$state)$js$ember$worker_started_at)
+
+  r3 <- drive(r2$state, wk_hello(r2$state$worker$gen, list(r_version = "4.6.1"), at(5)))
+  expect_equal(pluto_state(r3$state)$js$ember$worker_started_at, 5)
+})

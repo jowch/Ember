@@ -885,7 +885,11 @@ project_ember <- function(state, ctx) {
 
   list(process = process, worker_memory = worker_memory,
       not_run = length(not_run_ids(state, ctx)), stale = stale,
-      plan = plan, packages = packages)
+      plan = plan, packages = packages,
+      on_cell_change = state$file$header$on_cell_change,
+      r_version = state$worker$info$r_version %||% NULL,
+      worker_started_at = if (is.null(state$worker$started_at)) NULL
+                          else as.numeric(state$worker$started_at))
 }
 
 #' StatusEntryData for the status tab: root "notebook" with subtasks

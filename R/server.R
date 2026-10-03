@@ -718,6 +718,7 @@ on_run <- function(server, cl, hub, req) {
 #' | ember_new_notebook             | {name, folder}: notebook_target_path() + new_notebook() + host_notebook(owned = TRUE); reply {url} or {error}. No hub |
 #' | ember_open_notebook            | {path}: open_or_find() (shared with /open); reply {url} or {error}. No hub |
 #' | ember_forget_recent            | {path}: forget_notebook(), then the ember_start_page reply. No hub |
+#' | ember_set_mode                 | {mode}: "autorun" or "lazy", else refused; refused when read-only. set_cell_change_mode(nb, mode); flush. No reply |
 #' | request_js_link_response, nbpkg_available_versions, nbpkg_get_project_toml, nbpkg_set_project_toml, pkg_update | Julia-only; their UI is disabled in the frontend. Logged, no reply |
 #'
 #' Replies use the reply type Pluto uses for each (connect "👋", ping
@@ -1057,6 +1058,22 @@ handlers <- list(
   ember_forget_recent = function(server, cl, hub, req) {
     forget_notebook(req$body$path)
     send(cl, reply_message(req, "ember_start_page", start_page_reply(server)))
+  },
+
+  #' Status tab's "When a cell changes": autorun or lazy. A refusal (bad
+  #' mode, or read-only) is never thrown at the client, since the frontend
+  #' sends without awaiting a reply.
+  ember_set_mode = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    mode <- req$body$mode
+    tryCatch({
+      if (!(is.character(mode) && length(mode) == 1 && !is.na(mode) && mode %in% c("autorun", "lazy"))) {
+        stop(refused("ember_set_mode: mode must be \"autorun\" or \"lazy\""))
+      }
+      if (isTRUE(notebook_snapshot(hub$nb)$read_only)) stop(refused("read-only notebook"))
+      set_cell_change_mode(hub$nb, mode)
+    }, ember_refused = function(e) message("ember: refused ember_set_mode: ", conditionMessage(e)))
+    flush_clients(server, hub)
   }
 )
 

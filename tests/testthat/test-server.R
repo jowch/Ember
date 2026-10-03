@@ -492,7 +492,7 @@ test_that("every request type in the handler table is answered as documented (36
                "ember_open_notebook", "ember_forget_recent")
   silent <- c("interrupt_all", "shutdown_notebook", "reshow_cell", "ember_render_plot",
              "ember_run_all", "ember_split_cell", "ember_apply_update", "ember_cancel_update",
-             "request_js_link_response", "nbpkg_available_versions",
+             "ember_set_mode", "request_js_link_response", "nbpkg_available_versions",
              "nbpkg_get_project_toml", "nbpkg_set_project_toml", "pkg_update")
   expect_setequal(names(handlers), c(answered, silent))
 
@@ -1218,6 +1218,78 @@ test_that("host_notebook() through the R API leaves the recent file untouched; /
   id <- open_or_find(server, browser_path)
   on.exit(close_notebook(get(id, envir = server$hubs)$nb), add = TRUE)
   expect_true(normalize_recent_path(browser_path) %in% read_recent())
+})
+
+# ---- 108-109. ember_set_mode: Status tab's "When a cell changes" ----------
+
+test_that("ember_set_mode {mode: \"lazy\"} flushes ember/on_cell_change and rewrites the header line; \"autorun\" removes it (108)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+  expect_equal(ws$page()$ember$on_cell_change, "autorun")
+
+  handle_message(server, ws, wire("ember_set_mode", notebook_id = id, mode = "lazy"))
+  expect_equal(ws$page()$ember$on_cell_change, "lazy")
+  expect_equal(notebook_state(nb)$file$header$on_cell_change, "lazy")
+  expect_match(read_file_utf8(path), '# on_cell_change = "lazy"', fixed = TRUE)
+
+  handle_message(server, ws, wire("ember_set_mode", notebook_id = id, mode = "autorun"))
+  expect_equal(ws$page()$ember$on_cell_change, "autorun")
+  expect_false(grepl("on_cell_change", read_file_utf8(path), fixed = TRUE))
+})
+
+test_that("ember_set_mode refuses a bad mode and a read-only notebook; nothing changes, nothing is flushed (109)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+  before <- read_file_utf8(path)
+
+  handle_message(server, ws, wire("ember_set_mode", notebook_id = id, mode = "sometimes"))
+  expect_equal(ws$page()$ember$on_cell_change, "autorun")
+  expect_equal(read_file_utf8(path), before)
+
+  handle_message(server, ws, wire("ember_set_mode", notebook_id = id, mode = 1))
+  expect_equal(ws$page()$ember$on_cell_change, "autorun")
+  expect_equal(read_file_utf8(path), before)
+
+  # A read-only notebook: a fixture saved by a newer Ember.
+  ro_dir <- tempfile("ember-nb-ro-")
+  dir.create(ro_dir, recursive = TRUE)
+  on.exit(unlink(ro_dir, recursive = TRUE), add = TRUE)
+  header <- new_header(ember_version = "99.0.0", r_version = "4.5.1", snapshot = "2026-01-01")
+  cells <- list(a = list(code = "1", kind = "code", folded = FALSE))
+  file0 <- new_notebook_file(header = header, cells = cells, setup = "a", run_order = "a",
+                             learned = list(),
+                             sourced = data.frame(path = character(), hash = character(),
+                                                  stringsAsFactors = FALSE),
+                             lock = empty_lock(), extra_blocks = list(), format = ember_format)
+  ro_path <- file.path(ro_dir, "nb.R")
+  write_file_exact(ro_path, format_notebook(file0))
+  nb2 <- open_notebook(ro_path)
+  on.exit(close_notebook(nb2), add = TRUE)
+  host_notebook(server, nb2)
+  id2 <- notebook_state(nb2)$id
+  expect_true(notebook_snapshot(nb2)$read_only)
+  ws2 <- fake_socket()
+  handle_message(server, ws2, wire("connect", client_id = "c2", notebook_id = id2))
+  handle_message(server, ws2, wire("update_notebook", client_id = "c2", notebook_id = id2, updates = list()))
+  before2 <- read_file_utf8(ro_path)
+
+  handle_message(server, ws2, wire("ember_set_mode", client_id = "c2", notebook_id = id2, mode = "lazy"))
+  expect_equal(ws2$page()$ember$on_cell_change, "autorun")
+  expect_equal(read_file_utf8(ro_path), before2)
 })
 
 # ---- The start page: ember_start_page, ember_new_notebook, ----------------

@@ -214,6 +214,7 @@ schedule <- function(state) {
     # phantom reason (packages-core.R, `switch_library()`'s mismatch check).
     state$worker$loaded <- character()
     state$worker$wd <- dirname(state$path)
+    state$worker$started_at <- NULL
     return(list(state = state,
                effects = list(fx_start_worker(gen, state$packages$active$path, dirname(state$path)))))
   }
@@ -1042,13 +1043,15 @@ reduce_wk_failed <- function(state, event) {
   list(state = state, effects = list(), reply = NULL)
 }
 
-#' gen check; status "ready"; info kept. A move while this worker was
-#' still `"starting"` left `worker$wd` behind (reduce_move() above): if it
-#' now differs from `dirname(state$path)`, send the `chdir` that move
-#' couldn't, and catch `wd` up.
+#' gen check; status "ready"; info kept; `started_at` recorded from the
+#' event clock. A move while this worker was still `"starting"` left
+#' `worker$wd` behind (reduce_move() above): if it now differs from
+#' `dirname(state$path)`, send the `chdir` that move couldn't, and catch
+#' `wd` up.
 reduce_wk_hello <- function(state, event) {
   if (!eq(event$gen, state$worker$gen)) return(list(state = state, effects = list(), reply = NULL))
   state$worker$status <- "ready"
+  state$worker$started_at <- event$at
   state$worker$info <- event$info
   state$worker$loaded <- event$info$loaded %||% character()
   effects <- list()

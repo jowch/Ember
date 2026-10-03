@@ -776,6 +776,8 @@ export class Editor extends Component {
                 ),
             ember_run_all: () =>
                 this.client.send("ember_run_all", {}, { notebook_id: this.state.notebook.notebook_id }, false),
+            ember_set_mode: (mode) =>
+                this.client.send("ember_set_mode", { mode }, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_update_packages: () =>
                 this.client.send("ember_update_packages", {}, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_apply_update: (date) =>
