@@ -6,10 +6,11 @@ import { useEventListener } from "./useEventListener.js"
  * trigger, `menu_props` on the `role="menu"` container, `item_props(i)` on
  * each `role="menuitem"` button. Up/Down move between items (wrapping),
  * Home/End jump to the ends, Enter/Space activate (the browser's own
- * `<button>` behaviour, nothing extra to wire), Esc and Tab close. A click
- * outside closes. Closing always returns focus to the button; callers that
- * want the menu to close after an item is picked call `close()` themselves,
- * since some items (a toggle) may want to leave it open.
+ * `<button>` behaviour, nothing extra to wire). Esc closes and returns
+ * focus to the button, same as a click outside; Tab closes and lets focus
+ * move on to wherever it would have gone anyway. Callers that want the
+ * menu to close after an item is picked call `close()` themselves, since
+ * some items (a toggle) may want to leave it open.
  *
  * @param {{ count: number }} options
  */
@@ -31,9 +32,9 @@ export const useMenu = ({ count }) => {
                 set_is_open(true)
                 focus_item(0)
             },
-            close: () => {
+            close: (/** @type {{ refocus_button?: boolean }} */ { refocus_button = true } = {}) => {
                 set_is_open(false)
-                button_ref.current?.focus()
+                if (refocus_button) button_ref.current?.focus()
             },
         }),
         []
@@ -81,9 +82,14 @@ export const useMenu = ({ count }) => {
             } else if (e.key === "End") {
                 e.preventDefault()
                 focus_item(count - 1)
-            } else if (e.key === "Escape" || e.key === "Tab") {
+            } else if (e.key === "Escape") {
+                // Stops here so Editor's own Esc handler (clearing the
+                // selection) doesn't also act on the same keypress.
                 e.preventDefault()
+                e.stopPropagation()
                 close()
+            } else if (e.key === "Tab") {
+                close({ refocus_button: false })
             }
         },
     }
@@ -92,6 +98,7 @@ export const useMenu = ({ count }) => {
         ref: (/** @type {HTMLElement?} */ el) => (item_refs.current[i] = el),
         role: "menuitem",
         tabIndex: i === active_index ? 0 : -1,
+        onFocus: () => set_active_index(i),
     })
 
     return { button_props, menu_props, item_props, open, close, is_open }
