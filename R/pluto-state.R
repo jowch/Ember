@@ -289,28 +289,53 @@ project_output <- function(view) {
     wrap("text/plain", out$text))
 }
 
+#' `script_entry`'s `src` joined onto `base`, plus any other named element
+#' (`type`, `integrity`, ...) as its own HTML attribute. htmltools allows a
+#' dependency's `script` list to mix plain file names with such a list
+#' (e.g. `list(src = "a.js", type = "module")`, for a script that needs an
+#' attribute beyond `src`); a plain file name is the common case of this
+#' with no extra attributes.
+dep_script_tag <- function(base, script_entry) {
+  if (is.list(script_entry)) {
+    src <- script_entry$src
+    extra <- script_entry[setdiff(names(script_entry), "src")]
+    attrs <- paste(vapply(names(extra), function(n) sprintf(' %s="%s"', n, extra[[n]]), character(1)),
+                   collapse = "")
+  } else {
+    src <- script_entry
+    attrs <- ""
+  }
+  sprintf('<script src="%s%s"%s></script>', base, src, attrs)
+}
+
 #' `<link>`/`<script>` tags for an HTML output's widget dependencies, in
 #' order, prepended to the HTML (ui-2.md, 3d). A dependency with only
-#' `href` uses that URL directly; one resolved to a notebook-library folder
-#' uses `deps/<name>-<version>/<file>` (server.R's register_deps()),
-#' relative so it stays under a proxy's path prefix. If any dependency is
-#' named "htmlwidgets", a script asking it to render appends
-#' after the tags (htmlwidgets only binds on DOMContentLoaded by itself).
-#' Pluto's script runner already copies each `<script src>` into the page
-#' head once and runs it before inline scripts (CellOutput.js), so loading a
-#' library once across many outputs needs no further page change.
+#' `href` uses that URL directly (normalized to end in "/", the way
+#' htmltools joins a dependency's base with each file: a bare `href` with no
+#' trailing slash, such as `"https://cdn.example.com/lib"`, would otherwise
+#' have its first file concatenated straight onto it with nothing between
+#' them); one resolved to a notebook-library folder uses
+#' `deps/<name>-<version>/<file>` (server.R's register_deps()), already
+#' built with a trailing slash, relative so it stays under a proxy's path
+#' prefix. If any dependency is named "htmlwidgets", a script asking it to
+#' render appends after the tags (htmlwidgets only binds on
+#' DOMContentLoaded by itself). Pluto's script runner already copies each
+#' `<script src>` into the page head once and runs it before inline scripts
+#' (CellOutput.js), so loading a library once across many outputs needs no
+#' further page change.
 project_dep_tags <- function(deps) {
   if (length(deps) == 0) return("")
   tags <- character()
   has_htmlwidgets <- FALSE
   for (d in deps) {
     base <- if (!is.null(d$href)) d$href else sprintf("deps/%s-%s/", d$name, d$version)
+    if (nzchar(base) && !endsWith(base, "/")) base <- paste0(base, "/")
     if (identical(d$name, "htmlwidgets")) has_htmlwidgets <- TRUE
     for (f in d$stylesheet %||% character()) {
       tags <- c(tags, sprintf('<link rel="stylesheet" href="%s%s">', base, f))
     }
-    for (f in d$script %||% character()) {
-      tags <- c(tags, sprintf('<script src="%s%s"></script>', base, f))
+    for (sc in d$script %||% list()) {
+      tags <- c(tags, dep_script_tag(base, sc))
     }
     if (!is.null(d$head)) tags <- c(tags, d$head)
   }

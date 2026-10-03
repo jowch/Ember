@@ -140,14 +140,17 @@ inline_css <- function(path) {
 #' Every dependency any cell's `text/html` output used, keyed the way
 #' `project_dep_tags()` spells it in the HTML (`"<name>-<version>"`), read
 #' straight from the engine state (not `server$deps`: the export has no
-#' server, and these files are already as trusted as the worker that wrote
-#' them).
+#' server). A `dir` outside the notebook's library is dropped by the same
+#' `dep_path_allowed()` check `register_deps()` applies on the live server
+#' (R/server.R): the export must never embed a file the live page would have
+#' refused to serve, even though nothing here goes through an HTTP route.
 collect_output_deps <- function(state) {
+  lib <- state$packages$active$path
   deps <- list()
   for (r in state$results) {
     if (is.null(r$output) || !identical(r$output$mime, "text/html")) next
     for (d in r$output$deps %||% list()) {
-      if (is.null(d$dir)) next
+      if (is.null(d$dir) || !dep_path_allowed(d$dir, lib)) next
       key <- sprintf("%s-%s", d$name, d$version)
       if (is.null(deps[[key]])) deps[[key]] <- d
     }
@@ -155,19 +158,32 @@ collect_output_deps <- function(state) {
   deps
 }
 
+#' Is `file` (the `<file>` segment of a `deps/<key>/<file>` URL) safe to join
+#' onto a dependency's `dir`: no `..` segment and not itself an absolute
+#' path. A cell's `text/html` output is notebook content, so this file name
+#' is attacker-influenced in principle even once `dir` itself is known-good
+#' (`collect_output_deps()`'s `dep_path_allowed()` check) -- without this, a
+#' widget's own HTML could still spell `src="deps/<key>/../../../etc/passwd"`
+#' and have the export embed a file from outside `dir` entirely.
+dep_file_allowed <- function(file) {
+  if (is_absolute_path(file)) return(FALSE)
+  parts <- strsplit(gsub("\\\\", "/", file), "/", fixed = TRUE)[[1]]
+  !(".." %in% parts)
+}
+
 #' `html` (one cell's projected `text/html` output body) with every
 #' `href="deps/<key>/<file>"` / `src="deps/<key>/<file>"` `project_dep_tags()`
 #' wrote turned into a `data:` URL read from `deps[[key]]$dir`. A key not in
-#' `deps`, or a file that doesn't exist, is left as it is (the widget then
-#' renders without that file, as it would live if the dependency were
-#' refused).
+#' `deps`, a `<file>` that fails `dep_file_allowed()`, or a file that doesn't
+#' exist, is left as it is (the widget then renders without that file, as it
+#' would live if the dependency were refused).
 inline_output_deps <- function(html, deps) {
   if (length(deps) == 0) return(html)
   pattern <- '(href|src)="deps/([^"/]+)/([^"]+)"'
   regex_replace_fn(html, pattern, function(m) {
     parts <- regmatches(m, regexec(pattern, m, perl = TRUE))[[1]]
     d <- deps[[parts[3]]]
-    if (is.null(d)) return(m)
+    if (is.null(d) || !dep_file_allowed(parts[4])) return(m)
     full <- file.path(d$dir, parts[4])
     if (!file.exists(full)) return(m)
     sprintf('%s="%s"', parts[2], data_url_for_file(full))

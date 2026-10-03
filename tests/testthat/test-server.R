@@ -426,6 +426,39 @@ test_that("/open opens (or reuses) the notebook and redirects to its edit URL (h
   for (hub in mget(ls(server$hubs), envir = server$hubs)) close_notebook(hub$nb)
 })
 
+test_that("/open and / refuse the cookie alone; /notebookfile still accepts it (review)", {
+  # A page on another port of 127.0.0.1 gets the cookie attached to any
+  # request automatically (cookie_name()'s doc) but can't read or set the
+  # query string; without this, such a page could make this server open any
+  # file on disk as a notebook (/open), or list every hosted notebook's
+  # path (/), using nothing else. /notebookfile and /notebookexport keep
+  # accepting the cookie alone: Editor.js's export_url() links to them with
+  # no secret= of their own, by design.
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+
+  resp_open_cookie <- http_call(server, fake_req("/open", sprintf("path=%s", utils::URLencode(path, reserved = TRUE)),
+                                                 cookie = "ember_secret=s"))
+  expect_equal(resp_open_cookie$status, 403L)
+
+  resp_index_cookie <- http_call(server, fake_req("/", "", cookie = "ember_secret=s"))
+  expect_equal(resp_index_cookie$status, 403L)
+
+  resp_open_query <- http_call(server, fake_req("/open", sprintf("path=%s&secret=s", utils::URLencode(path, reserved = TRUE))))
+  expect_equal(resp_open_query$status, 302L)
+  for (hub in mget(ls(server$hubs), envir = server$hubs)) if (!identical(hub$id, id)) close_notebook(hub$nb)
+
+  resp_index_query <- http_call(server, fake_req("/", "secret=s"))
+  expect_equal(resp_index_query$status, 200L)
+
+  resp_file_cookie <- http_call(server, fake_req("/notebookfile", sprintf("id=%s", id), cookie = "ember_secret=s"))
+  expect_equal(resp_file_cookie$status, 200L)
+})
+
 test_that("a websocket opened without the secret is closed before any handler is set (http)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1")))
   nb <- open_notebook(path)
@@ -592,6 +625,17 @@ test_that("a non-loopback Host is refused by default and accepted once listed in
   expect_equal(resp4$status, 403L)
 })
 
+test_that("EMBER_ALLOWED_HOSTS round-trips a host with an explicit port (review)", {
+  # A Unix path.sep ":" join would chop "hub.example.com:8443"'s port off
+  # (and, with more than one entry, glue two names into one wrong one) on
+  # the way through start_server()'s child process.
+  hosts <- c("hub.example.com:8443", "other.example.org")
+  env_value <- join_allowed_hosts_env(hosts)
+  expect_false(grepl(":", env_value, fixed = TRUE) && !grepl("8443", env_value, fixed = TRUE))
+  expect_equal(split_allowed_hosts_env(env_value), hosts)
+  expect_equal(split_allowed_hosts_env(""), character())
+})
+
 test_that("new_server()'s allowed_hosts argument is what host_allowed()/origin_ok() read (remote use)", {
   server <- new_server("s", allowed_hosts = "ember.example.org")
   expect_equal(server$allowed_hosts, "ember.example.org")
@@ -615,6 +659,49 @@ test_that("a DNS-rebinding-style Host is refused: a non-loopback name is never t
   resp <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id),
                                      host = "attacker.example"))
   expect_equal(resp$status, 403L)
+})
+
+test_that("a Host-rewriting reverse proxy is accepted when Origin's host is in allowed_hosts (review)", {
+  # nginx's default `proxy_pass http://127.0.0.1:<port>;` rewrites Host to
+  # the upstream address before forwarding, so this process sees
+  # "Host: 127.0.0.1:<port>" even though the browser's own Origin is still
+  # the public name the operator put in allowed_hosts. Host alone is
+  # already accepted (it's loopback); the fix is that Origin disagreeing
+  # with Host no longer refuses the request on its own when Origin's host
+  # is explicitly trusted.
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0, allowed_hosts = "hub.example.com")
+  server$port <- 40007L
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+
+  resp <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id),
+                                     origin = "https://hub.example.com", host = "127.0.0.1:40007"))
+  expect_equal(resp$status, 200L)
+
+  # Case-insensitive, and an explicit default port (:443 for https) is the
+  # same as none.
+  resp2 <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id),
+                                      origin = "https://HUB.EXAMPLE.COM:443", host = "127.0.0.1:40007"))
+  expect_equal(resp2$status, 200L)
+
+  # An Origin naming a host NOT in allowed_hosts still can't ride a
+  # loopback-rewritten Host in: this is exactly DNS rebinding's shape
+  # (Host accepted as loopback, Origin disagreeing) and must stay refused.
+  resp3 <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id),
+                                      origin = "https://attacker.example", host = "127.0.0.1:40007"))
+  expect_equal(resp3$status, 403L)
+
+  # allowed_hosts listed WITH an exact port only trusts that port: an
+  # Origin on a different port of the same name is still refused, the same
+  # cross-port protection host_allowed() already gives Host itself.
+  server$allowed_hosts <- "hub.example.com:8443"
+  resp4 <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id),
+                                      origin = "https://hub.example.com:9999",
+                                      host = "127.0.0.1:40007"))
+  expect_equal(resp4$status, 403L)
 })
 
 # ---- review4 item 5: the cookie is named per port -----------------------------
@@ -912,6 +999,33 @@ test_that("docs: preview mean needs R running, a notebook-defined f shows its co
   expect_no_match(r3$doc, "../../base/help", fixed = TRUE)
 })
 
+test_that("docs: an idle worker that doesn't answer in time says so, not 'needs R running' (review)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  allow_execution(nb)
+  expect_true(run_cells(nb, wait = TRUE, timeout = 20)$accepted)
+
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  # The worker is idle (worker_is_idle(nb) is TRUE), but its connection is
+  # broken right before asking, so worker_query()'s write fails and its
+  # callback runs with NULL immediately -- the same shape a real answer
+  # timing out would have, without waiting out the real 0.8s. The reply
+  # must name a timeout, not "Help pages need R running": R *is* running.
+  close(nb$con)
+  handle_message(server, ws, wire("docs", notebook_id = id, query = "mean"))
+  r <- ws$last()$message
+  expect_identical(r$status, "\U0001F44D")
+  expect_match(r$doc, "answer in time")
+  expect_no_match(r$doc, "Run a cell")
+})
+
 test_that("ember_signature with a worker and without one (58)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1")))
   nb <- open_notebook(path)
@@ -1020,7 +1134,7 @@ test_that("serve() answers hashed vendor files immutable and everything else no-
   expect_equal(resp3$headers[["cache-control"]], "no-cache")
 })
 
-test_that("every hashed vendor file a shim names exists, and no other hashed file does (15a)", {
+test_that("every hashed vendor file a shim or editor.html names exists, and no other hashed file does (15a)", {
   frontend_dir <- system.file("frontend", package = "ember")
   vendor_dir <- file.path(frontend_dir, "imports", "vendor")
   on_disk <- list.files(vendor_dir, pattern = "-[0-9A-Za-z_-]+\\.js$")
@@ -1032,13 +1146,23 @@ test_that("every hashed vendor file a shim names exists, and no other hashed fil
     found <- regmatches(text, gregexpr('\\./vendor/([A-Za-z0-9_.-]+-[0-9A-Za-z_-]+\\.js)', text, perl = TRUE))[[1]]
     named <- c(named, sub('^\\./vendor/', "", found))
   }
+  # The two iframe-resizer scripts aren't ES modules a shim imports: they're
+  # loaded as plain <script src> tags straight from editor.html (classic
+  # scripts, not imports -- see copy-assets.mjs's doc), so that file is
+  # searched the same way for its own hashed names.
+  html_text <- readChar(file.path(frontend_dir, "editor.html"),
+                        file.info(file.path(frontend_dir, "editor.html"))$size)
+  found_html <- regmatches(html_text, gregexpr(
+    'imports/vendor/([A-Za-z0-9_.-]+-[0-9A-Za-z_-]+\\.js)', html_text, perl = TRUE))[[1]]
+  named <- c(named, sub('^imports/vendor/', "", found_html))
   named <- unique(named)
 
   # Every named file exists...
   expect_equal(setdiff(named, on_disk), character(0))
-  # ...and every entry chunk on disk is named by some shim (internal
-  # helper chunks, e.g. commonjs's, are reached only via another chunk's
-  # own import, never a shim's, so they're excluded from this direction).
+  # ...and every entry chunk on disk is named by some shim or editor.html
+  # (internal helper chunks, e.g. commonjs's, are reached only via another
+  # chunk's own import, never a shim's or editor.html's, so they're excluded
+  # from this direction).
   unreferenced <- setdiff(on_disk, named)
   unreferenced <- unreferenced[!grepl("^_", unreferenced)]
   expect_equal(unreferenced, character(0))

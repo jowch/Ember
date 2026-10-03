@@ -85,12 +85,20 @@ test_that("export_html() inlines an htmlwidget's dependency files as data: URLs 
   # (pluto-state.R) produce -- not a real htmltools install, which needs
   # a package install this sandbox's renv setup can't always complete
   # (see the [net] test below for that end-to-end path).
-  dep_dir <- tempfile("widgettest-")
+  # dep_dir has to sit inside the notebook's (fake) library for
+  # dep_path_allowed() to accept it (R/export.R, collect_output_deps()):
+  # the export applies the same check the live server does before serving
+  # a dependency, so a dependency outside the library is refused the same
+  # way in both places.
+  lib <- tempfile("widgetlib-")
+  dir.create(lib, recursive = TRUE)
+  dep_dir <- file.path(lib, "widgettest-1.0.0")
   dir.create(dep_dir, recursive = TRUE)
   writeLines("document.title = 'ran'", file.path(dep_dir, "a.js"))
 
   s <- fake_state(list(S = cell(""), W = cell("1")), setup = "S")
   s$allowed <- TRUE
+  s$packages$active$path <- lib
   s$results <- list(W = report(status = "ok", output = list(
     mime = "text/html",
     data = "<div>x</div>",
@@ -115,6 +123,53 @@ test_that("export_html() inlines an htmlwidget's dependency files as data: URLs 
   expect_false(grepl("deps/", body, fixed = TRUE))
 })
 
+test_that("export_html() refuses a dependency dir outside the library (path traversal)", {
+  outside <- tempfile("outside-lib-")
+  dir.create(outside, recursive = TRUE)
+  writeLines("secret", file.path(outside, "a.js"))
+
+  s <- fake_state(list(S = cell(""), W = cell("1")), setup = "S")
+  s$allowed <- TRUE
+  s$packages$active$path <- tempfile("widgetlib-")
+  dir.create(s$packages$active$path, recursive = TRUE)
+  s$results <- list(W = report(status = "ok", output = list(
+    mime = "text/html",
+    data = "<div>x</div>",
+    deps = list(list(name = "widgettest", version = "1.0.0", dir = outside,
+                     script = "a.js", stylesheet = NULL, head = NULL, href = NULL))
+  )))
+
+  html <- export_html(s)
+  start <- regexpr('window.pluto_statefile = "data:;base64,', html, fixed = TRUE)
+  rest <- substring(html, start + attr(start, "match.length"))
+  statefile_b64 <- substr(rest, 1, regexpr('"', rest, fixed = TRUE) - 1)
+  js <- mp_decode(jsonlite::base64_dec(statefile_b64))
+  body <- js$cell_results$W$output$body
+  # The dependency is dropped, not embedded: the untouched "deps/" link
+  # stays in the body (the live server would also refuse to serve it), and
+  # the file's actual content never reaches the export at all.
+  expect_match(body, "deps/widgettest-1.0.0/a.js", fixed = TRUE)
+  expect_false(grepl("secret", body, fixed = TRUE))
+})
+
+test_that("export_html() refuses a dependency file name with a '..' segment", {
+  lib <- tempfile("widgetlib-")
+  dep_dir <- file.path(lib, "widgettest-1.0.0")
+  dir.create(dep_dir, recursive = TRUE)
+  writeLines("safe", file.path(dep_dir, "a.js"))
+  outside_file <- file.path(lib, "secret.txt")
+  writeLines("secret", outside_file)
+
+  deps <- list("widgettest-1.0.0" = list(dir = dep_dir, name = "widgettest", version = "1.0.0"))
+  html <- inline_output_deps('<script src="deps/widgettest-1.0.0/../secret.txt"></script>', deps)
+  # Left untouched -- no data: URL -- rather than reading outside dep_dir.
+  expect_equal(html, '<script src="deps/widgettest-1.0.0/../secret.txt"></script>')
+  expect_false(grepl("base64", html, fixed = TRUE))
+
+  html_ok <- inline_output_deps('<script src="deps/widgettest-1.0.0/a.js"></script>', deps)
+  expect_match(html_ok, "^<script src=\"data:text/javascript;base64,")
+})
+
 # ---- 20, end to end: a real htmltools install (opt-in network test) -------
 
 test_that("[net] a real htmltools widget's dependency survives export (20)", {
@@ -125,7 +180,12 @@ test_that("[net] a real htmltools widget's dependency survives export (20)", {
   dir <- tempfile("ember-export-widget-")
   dir.create(dir, recursive = TRUE)
   path <- write_session_notebook(list(S = cell(""), W = cell(paste(
-    'dep_dir <- tempfile("widgettest"); dir.create(dep_dir)',
+    # Inside .libPaths()[1] (the notebook's own library), not a bare
+    # tempfile(): dep_path_allowed() (R/export.R, collect_output_deps())
+    # refuses a dependency outside the library on the live server too, so a
+    # dependency this test wants embedded has to live where a real widget
+    # package's installed files actually would.
+    'dep_dir <- file.path(.libPaths()[1], "widgettest-1.0.0"); dir.create(dep_dir)',
     'writeLines("1", file.path(dep_dir, "a.js"))',
     'htmltools::browsable(htmltools::tagList(',
     '  htmltools::tags$div("x"),',
@@ -139,7 +199,10 @@ test_that("[net] a real htmltools widget's dependency survives export (20)", {
   allow_execution(nb)
 
   res <- run_cells(nb, wait = TRUE, timeout = 120)
-  if (!res$accepted || res$timed_out) skip("worker did not finish installing/running in time")
+  # Not skip(): this test only runs at all with EMBER_TEST_NETWORK=1, which
+  # CI now sets precisely so a real install-and-run regression is caught
+  # rather than silently skipped.
+  if (!res$accepted || res$timed_out) fail("worker did not finish installing/running in time")
   state <- notebook_state(nb)
   w <- state$results[["W"]]
   expect_identical(w$status, "ok")
