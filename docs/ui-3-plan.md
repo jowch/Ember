@@ -3476,10 +3476,5 @@ test-only dependency (never shipped in the package), for test 171.
 Everything the drafts asked has been decided (ui-3.md and the user's
 decisions recorded above). The signature tooltip shows only the
 arguments, also for notebook functions; a docstring is read in Help.
-Left open:
-
-1. **Endeavor follow-ups**, outside this repository and listed in
-   design-gaps.md: F1 and the shortcut sheet (actions.ts:161-172), the
-   theme following the system instead of `data-theme`, its CSS for the old
-   trafficlight stripes and `.error-header`, its Present/Record/Frontmatter
-   actions, and the new `"disabled"` edge kind in graph queries.
+Nothing is left open. Endeavor follow-ups are listed in design-gaps.md and
+are not part of this increment.
