@@ -1257,3 +1257,25 @@ test_that("notebook_file_of() writes a disabled cell's dependent commented, and 
   file3 <- notebook_file_of(r3$state)
   expect_false("B" %in% file3$commented)
 })
+
+test_that("a sourced-file change doesn't re-queue an off cell (review)", {
+  s <- fake_state(list(S = cell(""), A = cell('source("h.R"); x <- 1'), B = cell("x + 1"), C = cell("2")))
+  r <- boot(s, c("A", "B"))
+  # Seed the initial hash for h.R: the first `ev_files_read` for a path never
+  # seen before only records it (state$files[[p]] was NULL, so it isn't
+  # "changed"); a later one with a different hash is what reduce_files_read()
+  # treats as a real change.
+  r <- drive(r$state, ev_files_read(list("h.R" = list(text = "z <- 1", hash = "v1")), at(9)))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(), at(11)))
+  expect_false(is.null(r$state$results$A))
+  expect_false(is.null(r$state$results$B))
+
+  r2 <- drive(r$state, ev_apply(list(op_disable("A")), at(20)))
+  r3 <- drive(r2$state, ev_run("C", at(21)))
+  expect_equal(r3$state$worker$running$cell, "C")
+
+  r4 <- drive(r3$state, ev_files_read(list("h.R" = list(text = "z <- 2", hash = "v2")), at(22)))
+  expect_false("A" %in% r4$state$pending)
+  expect_true(isTRUE(r4$state$results$A$stale))
+})

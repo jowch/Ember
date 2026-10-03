@@ -904,7 +904,9 @@ reduce_files_read <- function(state, event) {
       if (is.null(r)) next
       r$stale <- TRUE
       state$results[[id]] <- r
-      if (autorun && isTRUE(state$allowed)) state$pending <- union(state$pending, id)
+      if (autorun && isTRUE(state$allowed) && can_run(state, id)) {
+        state$pending <- union(state$pending, id)
+      }
       # design.md: a sourced-file change marks the cell *and its
       # dependents* stale (autorun also queues them), not the sourcing
       # cell alone.
