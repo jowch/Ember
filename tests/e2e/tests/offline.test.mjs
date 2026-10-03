@@ -167,6 +167,34 @@ test("offline: each vendored library does its job (19)", async (t) => {
   assertNoProblemsOffline(page);
 });
 
+test("offline: the three bundled fonts load with no network request leaving localhost (116)", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "offline-fonts.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  const aborted = blockNonLocal(page);
+
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  const checks = await page.evaluate(async () => {
+    await document.fonts.ready;
+    return {
+      figtree: document.fonts.check("16px Figtree"),
+      sourceSerif: document.fonts.check("16px 'Source Serif 4'"),
+      plexMono: document.fonts.check("13px 'IBM Plex Mono'"),
+    };
+  });
+
+  assert.equal(checks.figtree, true, "expected Figtree to be a loadable font");
+  assert.equal(checks.sourceSerif, true, "expected Source Serif 4 to be a loadable font");
+  assert.equal(checks.plexMono, true, "expected IBM Plex Mono to be a loadable font");
+  assert.ok(aborted.every((u) => /mathjax/.test(u)), `expected no non-MathJax request to leave localhost: ${aborted}`);
+
+  assertNoProblemsOffline(page);
+});
+
 test("cache: a hashed vendor file is served from cache on a second fetch (21)", async (t) => {
   // Not page.reload() + counting page.on("request") events: attaching a
   // request/response listener keeps Playwright's CDP Network domain

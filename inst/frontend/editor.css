@@ -1,6 +1,7 @@
 @charset "UTF-8";
 
 @import url("./imports/vendor/dialog-polyfill-hT0ET4tf.css");
+@import url("./fonts.css");
 
 @import url("./themes/light.css");
 @import url("./themes/dark.css");
@@ -16,19 +17,18 @@
     /* use the value "contextual" to enable contextual ligatures `document.documentElement.style.setProperty('--pluto-operator-ligatures', 'contextual');`
         for julia mono see here: https://cormullion.github.io/pages/2020-07-26-JuliaMono/#contextual_and_stylistic_alternates_and_ligatures */
     --pluto-operator-ligatures: none;
-    --system-fonts-mono: ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-    /* Kept under its old name for other CSS and for CodeMirror code; it is
-       the system monospace stack, not JuliaMono, which Ember doesn't vendor. */
-    --julia-mono-font-stack: var(--system-fonts-mono);
-    --sans-serif-font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
-    --system-ui-font-stack:
-        -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Cantarell, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", system-ui,
-        sans-serif;
-    /* Kept under their old names; both now point at the system stacks
-       instead of the webfonts Ember doesn't vendor. */
-    --lato-ui-font-stack: var(--system-ui-font-stack);
-    --roboto-mono-font-stack: var(--system-fonts-mono);
-    --ember-prose-font-stack: var(--system-ui-font-stack);
+    --ember-ui-font: "Figtree", ui-sans-serif, system-ui, sans-serif;
+    --ember-prose-font: "Source Serif 4", ui-serif, Georgia, serif;
+    --ember-code-font: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    /* Kept under their old names: other CSS and CodeMirror code still
+       reads them. */
+    --sans-serif-font-stack: var(--ember-ui-font);
+    --system-ui-font-stack: var(--ember-ui-font);
+    --lato-ui-font-stack: var(--ember-ui-font);
+    --julia-mono-font-stack: var(--ember-code-font);
+    --roboto-mono-font-stack: var(--ember-code-font);
+    --system-fonts-mono: var(--ember-code-font);
+    --ember-prose-font-stack: var(--ember-prose-font);
 
     color-scheme: light dark;
 
@@ -531,7 +531,7 @@ header#pluto-nav {
         background-color 0.5s ease-in-out,
         transform 0.25s cubic-bezier(0.18, 0.89, 0.49, 1.13);
     border-bottom: solid 1px var(--header-border-color);
-    font-family: var(--roboto-mono-font-stack);
+    font-family: var(--ember-ui-font);
     font-weight: 400;
     font-size: 0.8rem;
 }
@@ -823,7 +823,7 @@ dialog.export-html-dialog :is(.ple-bigbutton, .ple-plutoland-phase) {
 }
 
 dialog.export-html-dialog a.ple-plutoland-url {
-    font-family: monospace, sans-serif;
+    font-family: var(--ember-code-font);
     font-size: 0.7em;
     font-weight: 700;
     text-overflow: clip;
@@ -2661,7 +2661,7 @@ pkg-popup.busy {
 }
 
 pkg-version {
-    font-family: monospace;
+    font-family: var(--ember-code-font);
     font-size: 0.75rem;
     color: var(--pkg-version-color);
 }
@@ -2739,7 +2739,7 @@ body pkg-terminal:not(.asdf) pre:not(.asdf) {
     white-space: pre-wrap;
     word-break: break-all;
     font-size: 0.6rem;
-    font-family: monospace;
+    font-family: var(--ember-code-font);
     font-variant-ligatures: none;
     margin: 0;
     color: inherit;

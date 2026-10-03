@@ -241,7 +241,7 @@ export const Notebook = ({
                 (cell_outputs_delayed && notebook.cell_order.length >= render_cell_outputs_minimum)
                     ? html`<div
                           style="
-                        font-family: system-ui;
+                        font-family: var(--ember-ui-font, system-ui);
                         font-style: italic;
                         padding: 0.3rem 1rem;
                         margin: 1rem 0rem;

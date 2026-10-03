@@ -128,7 +128,7 @@ const EditorLoader = ({ launch_params, pluto_editor_element }) => {
                 .catch((e) => {
                     console.error(e)
                     set_error_banner(html`
-                        <main style="font-family: system-ui, sans-serif;">
+                        <main style="font-family: var(--ember-ui-font, system-ui, sans-serif);">
                             <h2>Failed to load notebook</h2>
                             <p>The statefile failed to download. Original error message:</p>
                             <pre style="overflow: auto;"><code>${e.toString()}</code></pre>

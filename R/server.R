@@ -1433,10 +1433,11 @@ http_call <- function(server, req) {
 #'   vendored frontend folder -- before `call` ever sees it; see
 #'   `http_start()`). No secret on static files otherwise:
 #'   the frontend's code is not private (Pluto exempts .js/.css too).
-#'   `imports/vendor` is its own, more specific static path (httpuv matches
-#'   the longest prefix): its files are content-hashed, so they get a long,
-#'   immutable cache lifetime; everything else is `no-cache`, so the browser
-#'   revalidates with `If-Modified-Since` (a 304 when unchanged) instead of
+#'   `imports/vendor` and `fonts` are their own, more specific static paths
+#'   (httpuv matches the longest prefix): their files are content-hashed, so
+#'   they get a long, immutable cache lifetime; everything else is
+#'   `no-cache`, so the browser revalidates with `If-Modified-Since` (a 304
+#'   when unchanged) instead of
 #'   assuming a file never changes (docs/ui-2.md, "Offline bundle").
 #' * `call` (R): checks the request's origin (`origin_ok()`) and then the
 #'   secret (query `secret=` or the per-port cookie, `secret_ok()`),
@@ -1459,6 +1460,9 @@ http_app <- function(server) {
     staticPaths = list(
       "/imports/vendor" = httpuv::staticPath(
         file.path(server$frontend, "imports", "vendor"), fallthrough = TRUE,
+        headers = list("Cache-Control" = "public, max-age=31536000, immutable")),
+      "/fonts" = httpuv::staticPath(
+        file.path(server$frontend, "fonts"), fallthrough = TRUE,
         headers = list("Cache-Control" = "public, max-age=31536000, immutable")),
       "/" = httpuv::staticPath(server$frontend, fallthrough = TRUE, indexhtml = FALSE,
                                headers = list("Cache-Control" = "no-cache")),

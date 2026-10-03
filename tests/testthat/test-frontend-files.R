@@ -137,6 +137,59 @@ test_that("inst/COPYRIGHTS and DESCRIPTION credit Pluto.jl (7)", {
   expect_true(any(grepl("Pluto.jl", vapply(cph, function(p) paste(p$given, p$family), character(1)))))
 })
 
+# ---- 103. Bundled fonts (piece 5, "Fonts") ---------------------------------
+
+test_that("fonts.css names a file under fonts/ for each bundled family, and OFL licences exist (103)", {
+  dir <- frontend_dir()
+  fonts_css_path <- file.path(dir, "fonts.css")
+  expect_true(file.exists(fonts_css_path))
+  fonts_css <- readChar(fonts_css_path, file.info(fonts_css_path)$size)
+
+  urls <- regmatches(fonts_css, gregexpr('url\\("([^"]+)"\\)', fonts_css, perl = TRUE))[[1]]
+  expect_true(length(urls) > 0)
+  for (u in urls) expect_match(u, '^url\\("\\./fonts/', info = u)
+
+  families <- c("Figtree", "Source Serif 4", "IBM Plex Mono")
+  for (fam in families) {
+    expect_true(grepl(paste0('font-family:\\s*"', fam, '"'), fonts_css), info = fam)
+  }
+
+  for (licence in c("OFL-figtree.txt", "OFL-source-serif-4.txt", "OFL-ibm-plex-mono.txt")) {
+    p <- file.path(dir, "fonts", licence)
+    expect_true(file.exists(p), info = licence)
+    text <- readChar(p, file.info(p)$size)
+    expect_true(grepl("SIL Open Font License", text, fixed = TRUE), info = licence)
+  }
+
+  copyrights_path <- system.file("COPYRIGHTS", package = "ember")
+  if (nzchar(copyrights_path)) {
+    copyrights <- readChar(copyrights_path, file.info(copyrights_path)$size)
+    for (fam in families) expect_true(grepl(fam, copyrights, fixed = TRUE), info = fam)
+  }
+})
+
+# ---- 107. No hard-coded monospace/system-ui font-family -------------------
+
+test_that("no frontend file sets font-family: monospace or system-ui outside the token definitions (107)", {
+  dir <- frontend_dir()
+  files <- frontend_files(dir)
+  files <- files[grepl("\\.(css|js|html)$", files)]
+  # The token definitions themselves (editor.css's --ember-*-font custom
+  # properties) legitimately name "system-ui" as a fallback keyword; they
+  # don't match this pattern since it looks for the literal CSS property
+  # `font-family:`, not a custom property's value.
+  pat <- "font-family:\\s*(monospace|system-ui)\\b"
+  hits <- character()
+  for (f in files) {
+    ext <- sub(".*\\.", "", f)
+    text <- tryCatch(readChar(f, file.info(f)$size, useBytes = TRUE), error = function(e) NA_character_)
+    if (is.na(text)) next
+    text <- strip_comments(text, ext)
+    if (grepl(pat, text, perl = TRUE)) hits <- c(hits, f)
+  }
+  expect_equal(hits, character(0))
+})
+
 # ---- 13. No external URL except the MathJax allowlist ---------------------
 
 test_that("the installed frontend has no external URL in a load position, except MathJax (13)", {
