@@ -208,3 +208,31 @@ test_that("the installed frontend is under 3 MB and THIRD-PARTY.txt matches COPY
   missing <- names[!vapply(names, function(n) grepl(n, copyrights, fixed = TRUE), logical(1))]
   expect_equal(missing, character(0))
 })
+
+# ---- 78. alert()/confirm() only in the three spots piece 7a leaves native ----
+
+test_that("alert()/confirm() calls remain only in Settings.js, ExportBanner.js and Editor.js's shortcut list (78)", {
+  dir <- frontend_dir()
+  js <- frontend_files(dir)
+  js <- js[grepl("\\.js$", js)]
+
+  # Comments stripped the same way external_url_hits() does, so a stale
+  # mention of alert()/confirm() in a comment (like the ones dialogs.js's
+  # neighbours leave behind) isn't mistaken for a live call.
+  strip_js_comments <- function(text) {
+    text <- gsub("(?s)/\\*.*?\\*/", "", text, perl = TRUE)
+    gsub("(?m)(?<!:)//[^\n]*$", "", text, perl = TRUE)
+  }
+
+  hits <- character(0)
+  for (f in js) {
+    text <- tryCatch(readChar(f, file.info(f)$size, useBytes = TRUE), error = function(e) NA_character_)
+    if (is.na(text)) next
+    text <- strip_js_comments(text)
+    if (grepl("\\balert\\(|\\bconfirm\\(", text, perl = TRUE)) {
+      hits <- c(hits, basename(f))
+    }
+  }
+
+  expect_setequal(hits, c("Settings.js", "ExportBanner.js", "Editor.js"))
+})

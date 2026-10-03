@@ -1,0 +1,77 @@
+// Test 79 (docs/ui-3-tests.md, piece 7a): deleting several cells asks
+// through common/dialogs.js's in-page `ask`, not window.confirm(). Selects
+// A and B through window.editor_state_set, the same hook Endeavor uses
+// (Editor.js:editor_state_set), then drives the dialog with the keyboard:
+// focus starts on Delete, Tab stays inside, Esc cancels (keeping both
+// cells and returning focus where it was), then a second run confirms the
+// delete. newPage()'s dialog handler fails the test on any *native*
+// alert()/confirm(), so a regression back to window.confirm() would show
+// up as an unexpected dialog, not a hang.
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import path from "node:path";
+import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook } from "../browser.mjs";
+
+test("delete several cells: in-page dialog, Tab trapped, Esc cancels and restores focus", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "delete-dialog.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  const selectAandB = () => page.evaluate(() => window.editor_state_set({ selected_cells: ["A", "B"] }));
+
+  // --- Esc: cancels, keeps both cells, returns focus ---
+
+  const beforeEsc = await page.evaluateHandle(() => document.activeElement);
+  await selectAandB();
+  await page.keyboard.press("Backspace");
+
+  const dialog = page.locator("dialog.ember-dialog[open]");
+  await dialog.waitFor({ state: "visible", timeout: 5000 });
+  assert.match(await dialog.innerText(), /Delete 2 cells\?/);
+
+  const deleteButton = dialog.getByRole("button", { name: "Delete" });
+  await assert.doesNotReject(deleteButton.evaluate((el) => { if (document.activeElement !== el) throw new Error("not focused"); }));
+
+  // Tab a few times and check focus never lands on anything outside the
+  // dialog. Chromium's native modal-dialog trapping rests briefly on
+  // <body> between wrapping from the last control back to the first
+  // (nothing else is focusable then), so that's allowed too; landing on
+  // any other page control would not be.
+  for (let i = 0; i < 4; i++) {
+    await page.keyboard.press("Tab");
+    const inside = await dialog.evaluate((d) => d.contains(document.activeElement) || document.activeElement === document.body);
+    assert.ok(inside, "Tab stays inside the dialog");
+  }
+
+  await page.keyboard.press("Escape");
+  await dialog.waitFor({ state: "hidden", timeout: 5000 });
+
+  assert.equal(await page.locator('pluto-cell[id="A"]').count(), 1, "A survives Esc");
+  assert.equal(await page.locator('pluto-cell[id="B"]').count(), 1, "B survives Esc");
+
+  // dialogs.js defers its own restoration a frame to land after Chromium's
+  // own post-close focus handling, so the dialog being hidden doesn't
+  // guarantee focus has settled yet; wait for the real end state instead
+  // of checking once right away.
+  await page.waitForFunction((el) => el === document.activeElement, beforeEsc, { timeout: 2000 });
+
+  // --- Delete: removes both cells ---
+
+  await selectAandB();
+  await page.keyboard.press("Backspace");
+  await dialog.waitFor({ state: "visible", timeout: 5000 });
+  await dialog.getByRole("button", { name: "Delete" }).click();
+  await dialog.waitFor({ state: "hidden", timeout: 5000 });
+
+  await page.waitForFunction(
+    () => !document.getElementById("A") && !document.getElementById("B"),
+    null, { timeout: 10000 });
+
+  assertNoProblems(page);
+});

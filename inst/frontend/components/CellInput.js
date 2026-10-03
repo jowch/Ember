@@ -62,6 +62,7 @@ import { useEventListener } from "../common/useEventListener.js"
 import { moveLineDown } from "../imports/CodemirrorPlutoSetup.js"
 import { detect_indent_unit } from "./CellInput/detect_indent_unit.js"
 import { t } from "../common/lang.js"
+import { tell } from "../common/dialogs.js"
 import { get_settings } from "./Settings.js"
 import { highlightKwargsPlugin } from "./CellInput/highlight_kwargs.js"
 
@@ -835,7 +836,7 @@ const InputContextMenu = ({ on_delete, cell_id, run_cell, get_current_code, can_
 
         if (cell_output != null)
             navigator.clipboard.writeText(strip_ansi_codes(cell_output)).catch(() => {
-                alert(`Error copying cell output`)
+                tell({ body: t("t_copy_output_failed") })
             })
     }
 

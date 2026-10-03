@@ -5,6 +5,7 @@ import _ from "../imports/lodash-es.js"
 
 import { empty_notebook_state, is_editor_embedded_inside_editor, set_disable_ui_css } from "../editor.js"
 import { create_pluto_connection, ws_address_from_base } from "../common/PlutoConnection.js"
+import { ask, tell, reload_prompt } from "../common/dialogs.js"
 import { serialize_cells, deserialize_cells, detect_deserializer } from "../common/Serialization.js"
 
 import { FilePicker } from "./FilePicker.js"
@@ -47,7 +48,6 @@ import { getCurrentLanguage, getWritingDirection, t, th } from "../common/lang.j
 import { InlineIonicon } from "../common/ClassTable.js"
 import { desktop_version, is_desktop, move_notebook, open_main_menu, wait_for_file_move } from "./DesktopInterface.js"
 import { with_query_params } from "../common/URLTools.js"
-import semver from "../imports/semver-es.js"
 import { ConfirmBeforeLongRuntime, maybe_abort_long_runtime } from "./ConfirmBeforeLongRuntime.js"
 import { detect_indent_unit } from "./CellInput/detect_indent_unit.js"
 import { Text } from "../imports/CodemirrorPlutoSetup.js"
@@ -614,9 +614,28 @@ export class Editor extends Component {
                 return await this.actions.add_remote_cell_at(index + delta, code)
             },
             confirm_delete_multiple: async (cell_ids) => {
-                if (cell_ids.length <= 1 || confirm(t("t_confirm_delete_multiple_cells", { count: cell_ids.length }))) {
+                if (
+                    cell_ids.length <= 1 ||
+                    (await ask({
+                        body: t("t_confirm_delete_multiple_cells", { count: cell_ids.length }),
+                        actions: [
+                            { label: t("t_delete"), value: true, primary: true, danger: true },
+                            { label: t("t_cancel"), value: false },
+                        ],
+                        cancel_value: false,
+                    }))
+                ) {
                     if (cell_ids.some((cell_id) => this.state.notebook.cell_results[cell_id]?.running || this.state.notebook.cell_results[cell_id]?.queued)) {
-                        if (confirm(t("t_confirm_delete_multiple_interrupt_notebook"))) {
+                        if (
+                            await ask({
+                                body: t("t_confirm_delete_multiple_interrupt_notebook"),
+                                actions: [
+                                    { label: t("t_stop"), value: true, primary: true },
+                                    { label: t("t_cancel"), value: false },
+                                ],
+                                cancel_value: false,
+                            })
+                        ) {
                             this.actions.interrupt_remote(cell_ids[0])
                         }
                     } else {
@@ -875,7 +894,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
         const check_update_counter = (new_val) => {
             if (new_val <= this.last_update_counter) {
                 console.error("State update out of order", new_val, this.last_update_counter)
-                alert("Oopsie!! please refresh your browser and everything will be alright!")
+                reload_prompt()
             }
             this.last_update_counter = new_val
         }
@@ -895,7 +914,8 @@ all patches: ${JSON.stringify(patches, null, 1)}
                                 message.patches,
                                 empty_notebook_state({ notebook_id: this.state.notebook.notebook_id })
                             ).catch((e) => {
-                                alert(t("t_oopsie_pls_refresh"))
+                                console.error("Failed to reset state after failure", e)
+                                reload_prompt()
                                 throw e
                             })
                         } else if (message.patches.length !== 0) {
@@ -1231,7 +1251,15 @@ all patches: ${JSON.stringify(patches, null, 1)}
                 return
             }
             if (!this.state.notebook.in_temp_dir) {
-                if (!confirm(t("t_confirm_move_file", { old_path, new_path, interpolation: { escapeValue: false } }))) {
+                const confirmed = await ask({
+                    body: t("t_confirm_move_file", { old_path, new_path, interpolation: { escapeValue: false } }),
+                    actions: [
+                        { label: t("t_move"), value: true, primary: true },
+                        { label: t("t_cancel"), value: false },
+                    ],
+                    cancel_value: false,
+                })
+                if (!confirmed) {
                     throw new Error("Declined by user")
                 }
             }
@@ -1246,7 +1274,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                 // @ts-ignore
                 document.activeElement?.blur()
             } catch (error) {
-                alert("Failed to move file:\n\n" + error.message)
+                tell({ body: t("t_move_file_failed", { reason: error.message }) })
             } finally {
                 this.setState({ moving_file: false })
             }
@@ -1432,7 +1460,7 @@ ${t("t_key_autosave_description")}`
                     requestAnimationFrame(() =>
                         navigator.clipboard.writeText(serialized).catch((err) => {
                             console.error("Error copying cells", e, err, navigator.userActivation)
-                            alert(`Error copying cells: ${err?.message ?? err}`)
+                            tell({ body: t("t_copy_cells_failed") })
                         })
                     )
                 }
@@ -1588,49 +1616,25 @@ ${t("t_key_autosave_description")}`
         }
         const warn_about_untrusted_code = this.client.session_options?.security?.warn_about_untrusted_code ?? true
 
-        const restart = async (maybe_confirm = false) => {
-            let jv_before = notebook.nbpkg?.installed_versions?.__internal_julia_manifest_version
-            let jv_after = notebook.nbpkg?.installed_versions?.__internal_julia_version
-            const to_minor = (v) => (v && semver.valid(v) ? `${semver.major(v)}.${semver.minor(v)}` : "unknown")
-
-            let warn_about_changed_julia_version =
-                to_minor(jv_before) !== "unknown" && to_minor(jv_after) !== "unknown" && to_minor(jv_before) !== to_minor(jv_after)
-
-            const version_i18n = {
-                version_old: to_minor(jv_before),
-                version_new: to_minor(jv_after),
-                version_install: to_minor(jv_before),
-            }
-
-            let source = notebook.metadata?.risky_file_source
-            if (
-                (!warn_about_untrusted_code ||
-                    !maybe_confirm ||
-                    source == null ||
-                    confirm(
-                        `${th("t_safe_preview_confirm_before_danger")}\n${t("t_safe_preview_confirm_before")}\n\n${source}\n\n${t("t_safe_preview_confirm_after")}`
-                    )) &&
-                (!warn_about_changed_julia_version ||
-                    !maybe_confirm ||
-                    confirm(
-                        `${th("t_safe_preview_julia_version_change_before_danger", version_i18n)}\n${t("t_safe_preview_julia_version_change_before", version_i18n)}\n\n${t("t_safe_preview_julia_version_change_after", version_i18n)}`
-                    ))
-            ) {
-                await this.actions.update_notebook((notebook) => {
-                    delete notebook.metadata.risky_file_source
-                })
-                await this.client.send(
-                    "restart_process",
-                    {},
-                    {
-                        notebook_id: notebook.notebook_id,
-                    }
-                )
-            }
+        // No confirm() before restarting: the two cases it used to guard
+        // against never happen. `risky_file_source` is never set by the
+        // server (nothing in R/ writes it), and the Julia-version check
+        // reads `__internal_julia_*` keys that `project_nbpkg()` never
+        // sends, so it always reads "unknown" on both sides.
+        const restart = async () => {
+            await this.actions.update_notebook((notebook) => {
+                delete notebook.metadata.risky_file_source
+            })
+            await this.client.send(
+                "restart_process",
+                {},
+                {
+                    notebook_id: notebook.notebook_id,
+                }
+            )
         }
 
-        const restart_button = (text, maybe_confirm = false) =>
-            html`<a href="#" id="restart-process-button" onClick=${() => restart(maybe_confirm)}>${text}</a>`
+        const restart_button = (text) => html`<a href="#" id="restart-process-button" onClick=${() => restart()}>${text}</a>`
 
         return html`
             ${this.state.disable_ui === false && html`<${HijackExternalLinksToOpenInNewTab} />`}
@@ -1733,7 +1737,7 @@ ${t("t_key_autosave_description")}`
                                                       restart_action_short: restart_button(t("t_process_restart_action_short")),
                                                   })
                                                 : statusval === "process_waiting_for_permission"
-                                                  ? restart_button(t("t_process_give_permission_to_run_code"), true)
+                                                  ? restart_button(t("t_process_give_permission_to_run_code"))
                                                   : null
                             }</div>
                             <${EmberStatus} worker_memory=${notebook.ember?.worker_memory} restart=${restart} />
