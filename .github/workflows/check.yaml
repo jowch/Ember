@@ -16,6 +16,12 @@ jobs:
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       R_KEEP_PKG_SOURCE: yes
+      # Only on ubuntu-latest: the opt-in network tests (real package
+      # installs, a real export of a real htmltools widget) need CRAN
+      # reachable, which every runner has, but running them on all three
+      # OSes would triple the network flakiness and runtime for no extra
+      # coverage this suite doesn't already get elsewhere.
+      EMBER_TEST_NETWORK: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: r-lib/actions/setup-r@v2
@@ -57,6 +63,13 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      # Only on ubuntu-latest, for the same reason as EMBER_TEST_NETWORK
+      # above: the install tests are the only ones that exercise a real
+      # package install (widget.R, EMBER_E2E_INSTALLS=1) end to end through
+      # the browser, and running that on every OS would multiply the
+      # install time and flakiness for no coverage this doesn't already
+      # get from the R test suite's own opt-in network tests.
+      EMBER_E2E_INSTALLS: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: r-lib/actions/setup-r@v2

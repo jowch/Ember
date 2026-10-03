@@ -757,8 +757,15 @@ test_that("\"/\" serves Ember's own index, not Pluto's vendored welcome page (re
 # ---- Remote use: a stable default port -----------------------------------
 
 test_that("pick_default_port() prefers 4321, then the next free port up (remote use: stable port)", {
+  # `p >= 4321L` alone also passes when 4321 was free and pick_default_port()
+  # fell through to pick_free_port()'s random fallback anyway (a bug this
+  # test is meant to catch): a random port from that fallback is >= 4321L
+  # about as often as not, so the assertion was weak by chance, not by
+  # design. With 4321 actually free (checked first), it must come back
+  # exactly 4321.
+  was_free <- tryCatch({ close(serverSocket(4321L)); TRUE }, error = function(e) FALSE)
   p <- pick_default_port()
-  expect_true(p >= 4321L)
+  if (was_free) expect_equal(p, 4321L) else expect_true(p >= 4321L)
 
   occupied <- tryCatch(serverSocket(4321L), error = function(e) NULL)
   skip_if(is.null(occupied), "port 4321 not available to reserve for this test")

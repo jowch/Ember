@@ -83,6 +83,18 @@ for (const offlineBundle of [false, true]) {
 
     await page.waitForSelector(`${cellSelector("TBL")} table.pluto-table`, { timeout: 20000 });
 
+    // Code highlighted as R, not Julia (ui-2-tests.md 20's own wording):
+    // a code cell's editor tokenizes with CodeMirror's R grammar (any
+    // highlighted span at all is evidence the bundled grammar loaded and
+    // ran offline, which increment 1's CDN-pointed bundle couldn't do from
+    // file://), and MD's fenced block is tagged "language-r" by the R
+    // grammar's markdown embedding (CellOutput.js switched this from
+    // "language-julia"), not left generic or wrong.
+    const dfSpans = await page.locator(`${cellSelector("DF")} .cm-content span[class]`).count();
+    assert.ok(dfSpans > 0, "expected the DF cell's code to have highlighted spans");
+    const mdCodeClass = await page.locator(`${cellSelector("MD")} pre code`).first().getAttribute("class");
+    assert.match(mdCodeClass, /\blanguage-r\b/);
+
     assertNoProblems(page);
     await page.close();
   });

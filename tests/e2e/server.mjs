@@ -52,7 +52,13 @@ export function tempNotebook(name = "basic.R") {
  * The child's stdout/stderr are drained into a buffer as they arrive
  * (never left unread: docs/engine.md's pitfall about undrained pipes)
  * and written to a log file for CI to upload on failure. */
-export async function startServer(notebookPaths, { timeoutMs = 30000, logFile } = {}) {
+/** Text httpuv/libuv write to stderr when a bind loses the race
+ * freePort()'s doc describes (another process took the port between the
+ * probe closing and this child's own bind) -- checked case-insensitively,
+ * since the exact wording isn't an R-level API this depends on. */
+const BIND_FAILURE_RE = /address already in use|eaddrinuse/i;
+
+async function startServerOnce(notebookPaths, { timeoutMs, logFile }) {
   const rscript = process.env.EMBER_RSCRIPT ?? "Rscript";
   const quoted = notebookPaths.map((p) => JSON.stringify(p)).join(", ");
   const port = await freePort();
@@ -82,7 +88,11 @@ export async function startServer(notebookPaths, { timeoutMs = 30000, logFile } 
       if (m) finish(resolve, m[1]);
     };
     child.stdout.on("data", check);
-    child.on("exit", (code) => finish(reject, new Error(`ember server exited (${code}) before listening:\n${buffer}`)));
+    child.on("exit", (code) => {
+      const err = new Error(`ember server exited (${code}) before listening:\n${buffer}`);
+      err.bindFailure = BIND_FAILURE_RE.test(buffer);
+      finish(reject, err);
+    });
     check();
   });
 
@@ -96,6 +106,27 @@ export async function startServer(notebookPaths, { timeoutMs = 30000, logFile } 
       try { child.kill("SIGTERM"); } catch { /* already gone */ }
     },
   };
+}
+
+/** `startServerOnce()`, retried a few times on the specific bind-failure
+ * race `freePort()`'s own doc already calls out: this suite starts many
+ * servers at once, so two tests' probes can land on the same free port
+ * moments apart, and whichever's child binds second loses. Any other
+ * failure (a real startup error, a timeout) is not retried -- it means
+ * something actually wrong, not a race, and retrying would only hide it
+ * behind a slower, equally failing attempt. */
+export async function startServer(notebookPaths, opts = {}) {
+  const { timeoutMs = 30000, logFile, retries = 3 } = opts;
+  let lastErr;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await startServerOnce(notebookPaths, { timeoutMs, logFile });
+    } catch (err) {
+      if (!err.bindFailure || attempt === retries) throw err;
+      lastErr = err;
+    }
+  }
+  throw lastErr;
 }
 
 /** Where a failed test's artifacts (server log, screenshot) go, for CI to
