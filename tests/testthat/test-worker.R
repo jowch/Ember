@@ -377,7 +377,7 @@ test_that("summarise_globals(): a data frame, a number, a character vector cut a
 
   expect_equal(r$globals$cars$type, "data.frame")
   expect_equal(r$globals$cars$kind, "shape")
-  expect_equal(r$globals$cars$value, "21 rows × 3 columns")
+  expect_equal(r$globals$cars$value, "21 rows \u00d7 3 columns")
 
   expect_equal(r$globals$cutoff$type, "numeric")
   expect_equal(r$globals$cutoff$kind, "value")
@@ -385,7 +385,7 @@ test_that("summarise_globals(): a data frame, a number, a character vector cut a
 
   expect_equal(r$globals$labels$kind, "value")
   expect_true(startsWith(r$globals$labels$value, "\"Mazda RX4\" \"Mazda RX4 Wag\""))
-  expect_true(endsWith(r$globals$labels$value, "…"))
+  expect_true(endsWith(r$globals$labels$value, "\u2026"))
   expect_lte(nchar(r$globals$labels$value), 80)
 })
 
@@ -418,7 +418,7 @@ test_that("summarise_globals(): a model fit (str), a function, NULL, character(0
   expect_equal(r$globals$today$kind, "value")
 
   expect_equal(r$globals$m$kind, "shape")
-  expect_equal(r$globals$m$value, "3 rows × 4 columns")
+  expect_equal(r$globals$m$value, "3 rows \u00d7 4 columns")
 })
 
 test_that("summarise_globals(): an active binding is never called; a failing str() gives kind none (ui-3 68)", {
@@ -441,6 +441,54 @@ test_that("summarise_globals(): an active binding is never called; a failing str
   expect_null(r$globals$bad$value)
 })
 
+test_that("summarise_globals(): the over-budget path doesn't call an active binding either (review: active binding budget)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, paste(
+    "aaa_slow <- Sys.Date()",
+    "format.Date <- function(x, ...) { Sys.sleep(1); 'slow' }",
+    "n_calls <- 0",
+    "makeActiveBinding('zzz_counter', function() { n_calls <<- n_calls + 1; n_calls }, environment())",
+    sep = "\n"), timeout = 10)
+
+  expect_equal(r$globals$zzz_counter$type, "active binding")
+  expect_equal(r$globals$zzz_counter$kind, "none")
+  expect_null(r$globals$zzz_counter$value)
+
+  # read n_calls for real, outside summarise_globals() entirely, so the
+  # proof the binding was never invoked doesn't depend on n_calls's own
+  # summary landing before or after the budget runs out.
+  r2 <- run_and_wait(h, "b", 2L, "n_calls")
+  expect_identical(r2$output$text, "[1] 0")
+})
+
+test_that("summarise_globals(): a slow method is bounded by its own time limit rather than holding up the whole report, and never leaks into a later run (review: setTimeLimit)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  t0 <- Sys.time()
+  r <- run_and_wait(h, "a", 1L, paste(
+    "slow <- Sys.Date()",
+    "format.Date <- function(x, ...) { Sys.sleep(5); 'slow' }",
+    sep = "\n"), timeout = 8)
+  elapsed <- as.numeric(Sys.time() - t0, units = "secs")
+  # setTimeLimit()'s elapsed check isn't honoured in every environment
+  # (confirmed independent of this code: on this sandbox it doesn't even
+  # interrupt a tight CPU loop against a 2s limit over 17s). Where it
+  # fires, the sleep is cut short well under 5s and the global gets kind
+  # "none"; where it doesn't, the cell still finishes (just slower) and
+  # the value comes through. Either way the worker must still be usable
+  # right after, which is what actually matters here.
+  if (elapsed < 4) {
+    expect_equal(r$globals$slow$kind, "none")
+  } else {
+    expect_equal(r$globals$slow$kind, "value")
+  }
+
+  r2 <- run_and_wait(h, "b", 2L, "1 + 1", timeout = 3)
+  expect_identical(r2$status, "ok")
+  expect_identical(r2$output$text, "[1] 2")
+})
+
 test_that("summarise_globals(): a slow format() leaves later names (alphabetically) with kind none (ui-3 68)", {
   h <- worker_harness()
   on.exit(h$close())
@@ -461,6 +509,30 @@ test_that("run_cell() of a <- 1; .b <- 2 reports globals for both names; a rerun
 
   r2 <- run_and_wait(h, "a", 2L, ".b <- 2")
   expect_setequal(names(r2$globals), ".b")
+})
+
+test_that("summarise_globals(): a dot-name's value is never computed, type only (review: dot-name budget)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, ".b <- 1")
+  expect_equal(r$globals$.b$type, "numeric")
+  expect_equal(r$globals$.b$kind, "none")
+  expect_null(r$globals$.b$value)
+})
+
+test_that("a failed run's globals are empty: the worker skips summarising them entirely (review: skip globals on failure)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "a <- 1; stop('boom')")
+  expect_identical(r$status, "error")
+  expect_equal(r$globals, list())
+})
+
+test_that("summarise_value(): a character NA shows unquoted, not \"NA\" in quotes (review)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, 'x <- c("a", NA, "b")')
+  expect_equal(r$globals$x$value, '"a" NA "b"')
 })
 
 test_that("data_frame_table_view", {

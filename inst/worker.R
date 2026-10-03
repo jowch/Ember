@@ -504,9 +504,14 @@ run_cell <- function(msg) {
 
     # Outside uninterrupted(), as display is (worker.R's doc above): a
     # user's str() or format() method may be slow, so an interrupt here
-    # stops the summaries, not the cell's already-gathered facts.
-    rc$globals <- tryCatch(summarise_globals(facts$created),
-                           interrupt = function(i) list(), error = function(e) list())
+    # stops the summaries, not the cell's already-gathered facts. Only an
+    # "ok" run's globals are ever kept by the engine (its result's
+    # variables are about to be dropped otherwise), so a failed or
+    # interrupted run skips the work entirely.
+    if (identical(rc$status, "ok")) {
+      rc$globals <- tryCatch(summarise_globals(facts$created),
+                             interrupt = function(i) list(), error = function(e) list())
+    }
     trace_line("summarised", msg$cell)
   }, interrupt = function(i) {
     rc$status <<- "interrupted"
@@ -580,19 +585,19 @@ compare_globals <- function(before_names, before) {
   list(created = created, changed = changed, removed = removed)
 }
 
-#' At most 80 characters, cut with "…" (the whole string, ellipsis
+#' At most 80 characters, cut with "\u2026" (the whole string, ellipsis
 #' included, never exceeds 80).
 truncate80 <- function(text) {
   if (nchar(text) <= 80) return(text)
-  paste0(substr(text, 1, 79), "…")
+  paste0(substr(text, 1, 79), "\u2026")
 }
 
-#' `"<n> rows × <m> columns"` ("1 row"/"1 column" singular), `n`/`m`
+#' `"<n> rows \u00d7 <m> columns"` ("1 row"/"1 column" singular), `n`/`m`
 #' with a thousands separator.
 shape_text <- function(nr, nc) {
   rows <- if (identical(nr, 1L) || identical(nr, 1)) "1 row" else paste(format(nr, big.mark = ","), "rows")
   cols <- if (identical(nc, 1L) || identical(nc, 1)) "1 column" else paste(format(nc, big.mark = ","), "columns")
-  paste0(rows, " × ", cols)
+  paste0(rows, " \u00d7 ", cols)
 }
 
 #' One global's type and a short value, summarise_globals()'s table.
@@ -608,11 +613,12 @@ summarise_value <- function(x) {
   if (is.matrix(x) || is.array(x)) {
     d <- dim(x)
     if (length(d) == 2) return(list(value = shape_text(d[[1]], d[[2]]), kind = "shape"))
-    return(list(value = paste(paste(d, collapse = " × "), "array"), kind = "shape"))
+    return(list(value = paste(paste(d, collapse = " \u00d7 "), "array"), kind = "shape"))
   }
   if ((is.atomic(x) && is.null(attr(x, "class"))) || inherits(x, c("Date", "POSIXct", "difftime"))) {
     if (length(x) == 0) return(list(value = deparse(x), kind = "value"))
-    vals <- eval_in_notebook(quote(format(head(v, 20), trim = TRUE, justify = "none")), x)
+    vals <- eval_in_notebook(
+      quote(format(head(v, 20), trim = TRUE, justify = "none", na.encode = FALSE)), x)
     if (is.character(x)) vals <- encodeString(vals, quote = "\"")
     return(list(value = paste(vals, collapse = " "), kind = "value"))
   }
@@ -621,40 +627,54 @@ summarise_value <- function(x) {
   list(value = trimws(lines[[1]]), kind = "str")
 }
 
-#' One global's type, kind and value, or type only (kind "none") for an
-#' active binding (never called) or a value whose summary errored.
-summarise_one <- function(name) {
+#' One global's type, kind and value, or (`type_only`) just its type with
+#' kind "none" (the over-budget path). Both branches check
+#' `bindingIsActive()` before any `get()`, so an active binding is never
+#' called either way.
+#'
+#' Bounded to `remaining` seconds with `setTimeLimit()`, `transient =
+#' TRUE` and reset with `on.exit()`: a single slow `format()`/`str()`
+#' method (the user's own code) can't hold up the whole `done` report by
+#' blowing the per-run budget on its own, and the limit can never leak
+#' into the user's later code or an interrupt sent afterwards, since it's
+#' always cleared before this returns, on every path including an error.
+#' A timeout raises same as any other error, so the existing `tryCatch`
+#' below turns it into kind "none" with no special case.
+summarise_one <- function(name, remaining, type_only = FALSE) {
   if (bindingIsActive(name, globalenv())) {
     return(list(type = "active binding", value = NULL, kind = "none"))
   }
   x <- get(name, envir = globalenv(), inherits = FALSE)
-  type <- tryCatch(class(x)[1], error = function(e) NA_character_)
+  type <- tryCatch(class(x)[1], error = function(e) "unknown")
+  if (type_only) return(list(type = type, value = NULL, kind = "none"))
+  setTimeLimit(elapsed = max(remaining, 0), transient = TRUE)
+  on.exit(setTimeLimit(elapsed = Inf, transient = TRUE))
   r <- tryCatch(summarise_value(x), error = function(e) list(value = NULL, kind = "none"))
   list(type = type, value = if (is.null(r$value)) NULL else truncate80(r$value), kind = r$kind)
 }
 
 #' One line per global the cell owns: type and a short value.
 #' Names in alphabetical order; stops summarising after 0.25 s in total and
-#' gives the rest kind = "none" (type only). Active bindings are never
-#' called (as snapshot_globals(), worker.R:476): type "active binding".
-#' Every format()/str() call goes through eval_in_notebook() so the
-#' notebook's own S3 methods are used, in a tryCatch (an error gives kind
-#' "none").
+#' gives the rest kind = "none" (type only). A dot-name's value is never
+#' computed either, type only, same as over budget: the engine drops it
+#' before it ever reaches a page. Active bindings are never called. Every
+#' format()/str() call goes through eval_in_notebook() so the notebook's
+#' own S3 methods are used, in a tryCatch (an error, or a timeout against
+#' what's left of the 0.25 s, gives kind "none").
 #' @return named list name -> list(type, value, kind); `value` NULL when
-#'   kind is "none". At most 80 characters, cut with "…".
+#'   kind is "none". At most 80 characters, cut with "\u2026".
 summarise_globals <- function(names) {
   names <- sort(names)
   out <- stats::setNames(vector("list", length(names)), names)
   budget <- 0.25
   t0 <- proc.time()[["elapsed"]]
   for (name in names) {
-    if (proc.time()[["elapsed"]] - t0 > budget) {
-      type <- tryCatch(class(get(name, envir = globalenv(), inherits = FALSE))[1],
-                       error = function(e) NA_character_)
-      out[[name]] <- list(type = type, value = NULL, kind = "none")
-    } else {
-      out[[name]] <- summarise_one(name)
-    }
+    # A dot-name (private, as the graph treats it) is dropped by the
+    # engine before it ever reaches a page, so its value is never worth
+    # computing -- or worth spending any of the shared budget on.
+    private <- startsWith(name, ".")
+    remaining <- budget - (proc.time()[["elapsed"]] - t0)
+    out[[name]] <- summarise_one(name, remaining, type_only = private || remaining <= 0)
   }
   out
 }
