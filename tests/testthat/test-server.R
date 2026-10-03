@@ -178,6 +178,30 @@ test_that("run_multiple_cells {cells: []} runs nothing; a blank new cell doesn't
   expect_equal(notebook_snapshot(nb)$process, "preview")
 })
 
+test_that("disabling in safe preview gets a thumbs-up; the run it triggers next leaves the session not allowed (ui-3 36)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  a <- names(notebook_state(nb)$cells)[2]
+
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+  expect_equal(notebook_snapshot(nb)$process, "preview")
+
+  handle_message(server, ws, wire("update_notebook", notebook_id = id,
+    updates = list(patch("replace", list("cell_inputs", a, "metadata", "disabled"), TRUE))))
+  reply <- ws$last()
+  expect_equal(reply$message$response$update_went_well, "\U0001F44D")
+  expect_true(notebook_state(nb)$cells[[a]]$disabled)
+
+  handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list(a)))
+  expect_equal(notebook_snapshot(nb)$process, "preview")
+})
+
 # ---- 31. interrupt_all and restart_process -----------------------------------
 
 test_that("interrupt_all sends SIGINT to the running cell (31)", {

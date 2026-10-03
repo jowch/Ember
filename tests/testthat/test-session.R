@@ -503,3 +503,28 @@ test_that("a dependent of a failed cell runs on its own and reruns once the ance
   snap2 <- notebook_snapshot(nb)
   expect_equal(snap_view(snap2, "B")$status, "ok")
 })
+
+test_that("disabling a cell removes it from R; Rscript on the saved file still runs; enabling reruns its dependent (ui-3 35)", {
+  cells <- list(S = cell(""), A = cell("x <- 1; library(tools)"), B = cell("x + 1"),
+               H = cell('c(exists("x"), "package:tools" %in% search())'))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+
+  run_cells(nb, NULL, wait = TRUE, timeout = 20)
+  snap <- notebook_snapshot(nb)
+  expect_equal(snap_view(snap, "B")$status, "ok")
+
+  edit_notebook(nb, disable_cell("A"))
+  run_cells(nb, "H", wait = TRUE, timeout = 20)
+  snap2 <- notebook_snapshot(nb)
+  expect_equal(snap_view(snap2, "H")$output$text, "[1] FALSE FALSE")
+
+  res <- system2(file.path(R.home("bin"), "Rscript"), shQuote(path), stdout = TRUE, stderr = TRUE)
+  expect_equal(attr(res, "status") %||% 0, 0)
+
+  edit_notebook(nb, disable_cell("A", FALSE))
+  run_cells(nb, "A", wait = TRUE, timeout = 20)
+  snap3 <- notebook_snapshot(nb)
+  expect_equal(snap_view(snap3, "B")$status, "ok")
+})

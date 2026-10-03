@@ -27,6 +27,7 @@ done; clear out ticked items at each release.
 
 - [ ] Converter tests need saved example files from each released format; only format 1 exists — missing
 - [ ] Computed `source()` paths in the footer don't record which cell sourced them; they stand in for all cells until every code cell has run — improvised
+- [ ] Undo delete brings a disabled cell back enabled: `order_ops()` re-inserts with code only (pluto-edits.R), so the `disabled` flag doesn't survive a delete-then-undo round trip — improvised
 
 ## Packages (build step 3)
 

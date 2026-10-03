@@ -230,16 +230,14 @@ export const Cell = ({
                 notebook.cell_inputs[cell_id].metadata["disabled"] = new_val
             })
             // we also 'run' the cell if it is disabled, this will make the backend propage the disabled state to dependent cells
-            await on_submit()
+            // (except in safe preview: submitting there would ask to run the whole notebook just from toggling the checkbox)
+            if (!process_waiting_for_permission) await on_submit()
         },
-        [pluto_actions, cell_id, on_submit]
+        [pluto_actions, cell_id, on_submit, process_waiting_for_permission]
     )
 
     const any_logs = useMemo(() => !_.isEmpty(logs), [logs])
 
-    // Ember can't disable a cell yet, so `ember.disabled_by` is never set
-    // and this is always a no-op, same as a stale cell with nothing to
-    // jump to.
     const disabled_by_cell_id = ember?.disabled_by ?? null
     const disabled_jump = useCallback(() => {
         if (disabled_by_cell_id != null) {
@@ -321,6 +319,9 @@ export const Cell = ({
                 cm_highlighted_range=${cm_highlighted_range}
                 cm_diagnostics=${cm_diagnostics}
                 onerror=${remount}
+                can_disable=${ember?.can_disable ?? false}
+                running_disabled=${running_disabled}
+                set_cell_disabled=${set_cell_disabled}
             />
             ${show_logs && cell_api_ready
                 ? html`<${Logs}

@@ -617,9 +617,13 @@ on_update_notebook <- function(server, cl, hub, req) {
 #' * Adding a cell sends run_multiple_cells for the new, empty cell. In safe
 #'   preview that would allow execution, start R and install packages just
 #'   because a cell was added. Cells whose code is blank are dropped first.
-#' Ids not in the notebook (a race with a delete) are dropped too. Then
-#' run_cells(nb, ids) when any remain; the engine marks them queued in the
-#' same dispatch, and the listener's flush shows it.
+#' Ids not in the notebook (a race with a delete) are dropped too, next to
+#' off ids (1b): the frontend sends exactly this request after every
+#' disable/enable toggle (Cell.js's `set_cell_disabled`), and without this,
+#' `run_cells()` would still set `allowed`, starting R in safe preview just
+#' to skip the one cell asked for. Then run_cells(nb, ids) when any remain;
+#' the engine marks them queued in the same dispatch, and the listener's
+#' flush shows it.
 on_run <- function(server, cl, hub, req) {
   send(cl, reply_message(req, "run_feedback", list(disabled_cells = emptymap())))
   if (is.null(hub)) return(invisible(NULL))
@@ -627,8 +631,11 @@ on_run <- function(server, cl, hub, req) {
   requested <- unlist(req$body$cells, use.names = FALSE)
   if (is.null(requested)) requested <- character()
   if (length(requested) > 0) {
-    cells <- notebook_state(hub$nb)$cells
+    state <- notebook_state(hub$nb)
+    cells <- state$cells
+    off <- names(state$graph$off)
     ids <- requested[requested %in% names(cells)]
+    ids <- setdiff(ids, off)
     ids <- ids[vapply(ids, function(id) nzchar(trimws(cells[[id]]$code %||% "")), logical(1))]
     if (length(ids) > 0) run_cells(hub$nb, ids)
   }

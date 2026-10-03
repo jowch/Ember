@@ -740,11 +740,15 @@ curves <- read.csv("growth.csv")
 # %% id=c93b…
 load("fits.RData")
 
+# %% id=d7e0…
+## curves + 1
+
 # /// cell order
 # 6f1c9a2e-…
 # 0b7d… folded
 # a41e…
 # c93b…
+# d7e0… disabled
 # ///
 # /// sourced files
 # helpers.R sha256:9c1e…
@@ -766,6 +770,9 @@ load("fits.RData")
   file and markdown cells stay next to their neighbours.
 - `# %%` is the cell marker Positron and VS Code already understand.
 - Markdown lines use `#'`, so `knitr::spin` renders the file as a report.
+- A disabled cell, and every code cell that needs a name only it provides,
+  is written with `## ` before each line, so `Rscript` skips it. The
+  footer says which (`disabled`, `commented`).
 - Package names aren't repeated in the header; they come from the code,
   except the few in `[extra_packages]` that the code can't reveal.
 - `ember_version` is the Ember version that last saved the file, as Pluto

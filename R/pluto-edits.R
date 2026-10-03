@@ -55,6 +55,10 @@ pluto_edits <- function(before, patches) {
     bf <- before$cell_inputs[[id]]$code_folded
     af <- after$cell_inputs[[id]]$code_folded
     if (!identical(bf, af)) ops <- c(ops, list(fold_cell(id, af)))
+
+    bd <- before$cell_inputs[[id]]$metadata$disabled
+    ad <- after$cell_inputs[[id]]$metadata$disabled
+    if (!identical(bd, ad)) ops <- c(ops, list(disable_cell(id, isTRUE(ad))))
   }
 
   current <- setdiff(before_ids, deleted_ids)
@@ -84,6 +88,14 @@ allowed_patch <- function(patch, before) {
   if (identical(head, "cell_inputs")) {
     if (length(path) < 3) return(TRUE)   # add/remove a whole cell
     field <- path[[3]]
+    if (identical(field, "metadata")) {
+      if (length(path) == 4 && identical(path[[4]], "disabled")) {
+        id <- path[[2]]
+        if (is.null(before$cell_inputs[[id]])) return("that cell was deleted")
+        return(TRUE)
+      }
+      return(sprintf("Ember doesn't support cell metadata.%s yet", path[[4]] %||% ""))
+    }
     if (!identical(field, "code") && !identical(field, "code_folded")) {
       return(sprintf("Ember doesn't support cell %s yet", field))
     }

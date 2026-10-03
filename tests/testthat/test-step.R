@@ -1208,3 +1208,52 @@ test_that("disabling one of two definers clears the clash and the dependent's re
   r4 <- drive(r3$state, ev_run("C", at(22)))
   expect_equal(r4$reply$queued, c(a2, "C"))
 })
+
+test_that("not_run_ids(), the snapshot's disabled/disabled_by, and check_state() (ui-3 32)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1"), N = cell("3")))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(), at(11)))
+  check_state(r$state)
+
+  ctx0 <- view_context(r$state)
+  expect_true("N" %in% not_run_ids(r$state, ctx0))
+
+  r2 <- drive(r$state, ev_apply(list(op_disable("A")), at(20)))
+  check_state(r2$state)
+  ctx <- view_context(r2$state)
+  expect_false("A" %in% not_run_ids(r2$state, ctx))
+  expect_false("B" %in% not_run_ids(r2$state, ctx))
+  expect_true("N" %in% not_run_ids(r2$state, ctx))
+
+  snap <- snapshot_of(r2$state)
+  expect_true(snap$cells$A$disabled)
+  expect_true(is.na(snap$cells$A$disabled_by))
+  expect_false(snap$cells$B$disabled)
+  expect_equal(snap$cells$B$disabled_by, "A")
+  expect_true(isTRUE(snap$cells$A$stale))
+  expect_true(isTRUE(snap$cells$B$stale))
+})
+
+test_that("notebook_file_of() writes a disabled cell's dependent commented, and a cell with an enabled alternative plainly (ui-3 17)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1"), C = cell("2")))
+  r <- boot(s, c("A", "B", "C"))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(), at(11)))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(), at(12)))
+  r2 <- drive(r$state, ev_apply(list(op_disable("A")), at(20)))
+
+  file <- notebook_file_of(r2$state)
+  expect_equal(file$commented, "B")
+  expect_true(file$cells$A$disabled)
+  text <- format_notebook(file)
+  expect_true(grepl("## x \\+ 1", text))
+  expect_true(grepl("# B commented", text))
+  expect_true(grepl("# A disabled", text))
+  expect_false(grepl("## 2", text))   # C resolves plainly, no enabled definer needed
+
+  a2 <- "33333333-3333-4333-8333-333333333333"
+  r3 <- drive(r2$state, ev_apply(list(op_insert(a2, 3, "x <- 2")), at(21)))
+  file3 <- notebook_file_of(r3$state)
+  expect_false("B" %in% file3$commented)
+})

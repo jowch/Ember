@@ -70,8 +70,10 @@ test("look: no requests to external calling-home servers; no Fix with AI (9)", a
   assertNoProblems(page);
 });
 
-// 10. Cell menu: Delete + Copy output only, no deleted actions; no feedback form.
-test("look: cell menu has only Delete/Copy output; no feedback form (10)", async (t) => {
+// 10. Cell menu: Delete + Copy output + Disable cell only, no deleted
+// actions; no feedback form. (ui-3 piece 1b adds "Disable cell" for a
+// non-setup code cell.)
+test("look: cell menu has only Delete/Copy output/Disable cell; no feedback form (10)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "ember-look-10.server.log") });
   const browser = await launchBrowser();
@@ -90,7 +92,8 @@ test("look: cell menu has only Delete/Copy output; no feedback form (10)", async
     (btns) => btns.map((b) => b.className));
   assert.ok(menuItems.some((c) => c.includes("delete")), "Delete cell is offered");
   assert.ok(menuItems.some((c) => c.includes("copy_output")), "Copy output is offered");
-  for (const forbidden of ["ask_ai", "disable_cell", "skip_as_script", "hide_logs", "show_logs"]) {
+  assert.ok(menuItems.some((c) => c.includes("disable_cell")), "Disable cell is offered");
+  for (const forbidden of ["ask_ai", "skip_as_script", "hide_logs", "show_logs"]) {
     assert.ok(!menuItems.some((c) => c.includes(forbidden)), `${forbidden} is not offered`);
   }
 

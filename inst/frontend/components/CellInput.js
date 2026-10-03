@@ -246,6 +246,9 @@ export const CellInput = ({
     cm_highlighted_range,
     global_definition_locations,
     cm_diagnostics,
+    can_disable,
+    running_disabled,
+    set_cell_disabled,
 }) => {
     let pluto_actions = useContext(PlutoActionsContext)
     let [error, set_error] = useState(null)
@@ -799,6 +802,9 @@ export const CellInput = ({
                     let cm = newcm_ref.current
                     return cm == null ? "" : getValue6(cm)
                 }}
+                can_disable=${can_disable}
+                running_disabled=${running_disabled}
+                set_cell_disabled=${set_cell_disabled}
             />
             ${PreviewHiddenCode}
         </pluto-input>
@@ -807,7 +813,7 @@ export const CellInput = ({
 
 const PreviewHiddenCode = html`<div class="preview_hidden_code_info">${t("t_reading_hidden_code")}</div>`
 
-const InputContextMenu = ({ on_delete, cell_id, run_cell, get_current_code }) => {
+const InputContextMenu = ({ on_delete, cell_id, run_cell, get_current_code, can_disable, running_disabled, set_cell_disabled }) => {
     const timeout = useRef(null)
     let pluto_actions = useContext(PlutoActionsContext)
     const [open, setOpenState] = useState(false)
@@ -921,6 +927,16 @@ const InputContextMenu = ({ on_delete, cell_id, run_cell, get_current_code }) =>
                                 contents=${t("t_copy_output_action")}
                                 title=${t("t_copy_output_action_description")}
                                 onClick=${copy_output}
+                                setOpen=${setOpen}
+                            />`
+                          : null}
+
+                      ${can_disable
+                          ? html`<${InputContextMenuItem}
+                                tag="disable_cell"
+                                contents=${running_disabled ? t("t_enable_cell") : t("t_disable_cell")}
+                                title=${running_disabled ? t("t_enable_cell") : t("t_disable_cell")}
+                                onClick=${() => set_cell_disabled(!running_disabled)}
                                 setOpen=${setOpen}
                             />`
                           : null}

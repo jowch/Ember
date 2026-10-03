@@ -554,3 +554,40 @@ test_that("project_dep_tags() accepts htmltools' list form for a script entry (u
   expect_match(tags2, '<script src="deps/mod-1/plain.js"></script>', fixed = TRUE)
   expect_match(tags2, '<script src="deps/mod-1/a.js" type="module"></script>', fixed = TRUE)
 })
+
+# ---- Disable cell (ui-3 33) --------------------------------------------------
+
+test_that("CELL_METADATA_DISABLED, depends_on_disabled_cells, disabled_by and can_disable (ui-3 33)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1"), T = cell("#' hi", kind = "markdown")))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(), at(11)))
+
+  r2 <- drive(r$state, ev_apply(list(op_disable("A")), at(20)))
+  p1 <- pluto_state(r2$state)
+  check_wire(p1$js)
+
+  expect_identical(p1$js$cell_inputs$A$metadata, CELL_METADATA_DISABLED)
+  expect_identical(p1$js$cell_inputs$B$metadata, CELL_METADATA)
+  expect_identical(p1$js$cell_inputs$S$metadata, CELL_METADATA)
+
+  expect_true(p1$js$cell_results$A$depends_on_disabled_cells)
+  expect_true(p1$js$cell_results$B$depends_on_disabled_cells)
+  expect_false(p1$js$cell_results$S$depends_on_disabled_cells)
+
+  expect_null(p1$js$cell_results$A$ember$disabled_by)
+  expect_equal(p1$js$cell_results$B$ember$disabled_by, "A")
+  expect_false(p1$js$cell_results$A$ember$stale)
+  expect_false(p1$js$cell_results$B$ember$stale)
+
+  expect_false(p1$js$cell_results$S$ember$can_disable)
+  expect_false(p1$js$cell_results$T$ember$can_disable)
+  expect_true(p1$js$cell_results$A$ember$can_disable)
+  expect_true(p1$js$cell_results$B$ember$can_disable)
+
+  r3 <- drive(r2$state, ev_apply(list(op_set_code("T", "#' hi there", expected = "#' hi")), at(21)))
+  p2 <- pluto_state(r3$state, p1)
+  ids <- names(p2$js$cell_results)
+  changed <- Filter(function(id) !identical(p1$js$cell_results[[id]], p2$js$cell_results[[id]]), ids)
+  expect_setequal(changed, "T")
+})

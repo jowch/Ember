@@ -13,10 +13,12 @@
 
 PLUTO_VERSION <- "v1.0.3"
 
-#' One constant metadata object shared by every cell input, so it is the same
-#' R object in every projection. Ember has no per-cell metadata: a client
-#' that changes one gets 👎 (see pluto_edits()).
+#' Two constant metadata objects, shared by every cell input with that
+#' `disabled` value, so cells with the same value are the same R object in
+#' every projection. Ember supports only `metadata.disabled` (1b); a client
+#' that changes another key gets 👎 (see pluto_edits()).
 CELL_METADATA <- list(disabled = FALSE, show_logs = TRUE, skip_as_script = FALSE)
+CELL_METADATA_DISABLED <- list(disabled = TRUE, show_logs = TRUE, skip_as_script = FALSE)
 
 # ---- The value ---------------------------------------------------------------
 
@@ -118,14 +120,11 @@ pluto_state <- function(state, previous = NULL) {
   new_pluto_state(js, state, keys, state$graph)
 }
 
-#' What a cell's two entries depend on, as a list whose big parts are the
-#' engine's own shared objects, so comparing two keys is pointer comparisons
-#' plus a few scalars.
-#'
 #' `list(cell = state$cells[[id]], result = state$results[[id]],
 #'       console = <worker$running$console when this cell runs, else NULL>,
 #'       flags = ctx$flags[[id]],   # queued, running, waiting_for
 #'       errors = ctx$errors[[id]], # graph errors on this cell: shared within one graph
+#'       disabled_by = ctx$disabled_by[[id]],  # 1b: off, from graph$off
 #'       allowed = state$allowed)   # sanitize/preview only changes with this
 #'
 #' Must cover every input cell_view() reads for this cell; a missed input
@@ -137,7 +136,13 @@ pluto_state <- function(state, previous = NULL) {
 #' inputs change", so `NULL` (not queued, no error, nothing waiting) is as
 #' good a sentinel as a filled-in default. Every lookup is by position `i`
 #' (`ctx$ids[i]` is this cell's id), never by id: see view_context()'s doc
-#' in state.R for why that matters at 2000 cells.
+#' in state.R for why that matters at 2000 cells. `disabled_by` is kept as
+#' `NA` rather than left absent when there's nothing to report (it is a
+#' plain character vector, so `ctx$disabled_by[[i]]` is always `NA`, never
+#' `NULL`); the cell's own `disabled` flag is already in the key through
+#' `cell`, so only the dependent relationship needs this field.
+#' `can_disable` needs no key field: it depends only on `kind` (in `cell`)
+#' and `setup`, which never changes after open.
 cell_key <- function(state, ctx, i) {
   id <- ctx$ids[[i]]
   running <- ctx$running
@@ -145,7 +150,8 @@ cell_key <- function(state, ctx, i) {
   list(cell = state$cells[[i]], result = ctx$results[[i]],
        is_running = is_running, console = if (is_running) running$console else NULL,
        queued = ctx$queued[[i]], waiting_for = ctx$waiting[[i]],
-       errors = ctx$errors_by_cell[[i]], allowed = state$allowed)
+       errors = ctx$errors_by_cell[[i]], disabled_by = ctx$disabled_by[[i]],
+       allowed = state$allowed)
 }
 
 #' `identical(cell_key(state, ctx, i), prev_key)`, field by field against an
@@ -165,17 +171,20 @@ key_unchanged <- function(state, ctx, i, prev_key) {
   if (!identical(ctx$queued[[i]], prev_key$queued)) return(FALSE)
   if (!identical(ctx$waiting[[i]], prev_key$waiting_for)) return(FALSE)
   if (!identical(ctx$errors_by_cell[[i]], prev_key$errors)) return(FALSE)
+  if (!identical(ctx$disabled_by[[i]], prev_key$disabled_by)) return(FALSE)
   identical(state$allowed, prev_key$allowed)
 }
 
 # ---- Cells -------------------------------------------------------------------
 
-#' CellInputData. `metadata` is the shared CELL_METADATA. `kind` is
-#' `view$kind` ("code" or "markdown"); the cell key already covers it (it
-#' holds `state$cells[[i]]`).
+#' CellInputData. `metadata` is the shared CELL_METADATA or
+#' CELL_METADATA_DISABLED, picked by `view$disabled`, so cells still share
+#' one R object each. `kind` is `view$kind` ("code" or "markdown"); the
+#' cell key already covers it (it holds `state$cells[[i]]`).
 project_cell_input <- function(view) {
   list(cell_id = view$id, code = view$code, code_folded = view$folded,
-       kind = view$kind, metadata = CELL_METADATA)
+       kind = view$kind,
+       metadata = if (isTRUE(view$disabled)) CELL_METADATA_DISABLED else CELL_METADATA)
 }
 
 #' CellResultData from an `ember_cell_view` (state.R).
@@ -183,16 +192,22 @@ project_cell_input <- function(view) {
 #' * `queued`, `running`: the view's.
 #' * `errored`: any error on the view, or status "error"/"interrupted".
 #' * `runtime`: seconds -> nanoseconds as a double, or NULL when not run.
-#' * `depends_on_disabled_cells`: always `FALSE`. Ember has no disabled
-#'   cell yet, and a failed ancestor no longer blocks its dependents.
-#' * `ember`: `list(stale, code_changed, upstream_error?)`, from the view's
-#'   `stale` and `code_differs` -- both already in `cell_key()`'s key
-#'   (`code_differs` is derived from `cell$code` and `result$code`).
+#' * `depends_on_disabled_cells`: `view$disabled || !is.na(view$disabled_by)`
+#'   (Pluto's own field, Run.jl:86-91) -- true for a disabled cell itself,
+#'   too.
+#' * `ember`: `list(stale, code_changed, upstream_error?, disabled_by?,
+#'   can_disable)`, from the view's `stale` and `code_differs` -- both
+#'   already in `cell_key()`'s key (`code_differs` is derived from
+#'   `cell$code` and `result$code`). `stale` is `isTRUE(view$stale) &&
+#'   !off`: an off cell shows as disabled, not also as stale.
 #'   `upstream_error` is present only when the last error's kind is
 #'   `"upstream"`, as `as_arr(list(list(name, cell), ...))` from that
 #'   error's `names`/`cells` (also in the key, through `result`). The page
 #'   shows a "stale" or "code changed" label (ui-2.md, 5); an upstream
 #'   error is an ordinary error box, not a dimmed/labelled cell.
+#'   `disabled_by` is present only for a dependent of a disabled cell
+#'   (absent for the disabled cell itself). `can_disable` is `TRUE` for a
+#'   non-setup code cell.
 #' * `output`: project_output() of the view.
 #' * `logs`: project_logs() of the view's console.
 #' * `published_object_keys = list()`, `depends_on_skipped_cells = FALSE`.
@@ -204,13 +219,17 @@ project_cell_result <- function(view) {
   } else {
     NULL
   }
-  ember <- c(list(stale = isTRUE(view$stale), code_changed = isTRUE(view$code_differs)),
-            if (!is.null(upstream_error)) list(upstream_error = upstream_error))
+  off <- isTRUE(view$disabled) || !is.na(view$disabled_by)
+  can_disable <- identical(view$kind, "code") && !view$setup
+  ember <- c(list(stale = isTRUE(view$stale) && !off, code_changed = isTRUE(view$code_differs)),
+            if (!is.null(upstream_error)) list(upstream_error = upstream_error),
+            if (!is.na(view$disabled_by)) list(disabled_by = view$disabled_by),
+            list(can_disable = can_disable))
   list(cell_id = view$id,
       queued = isTRUE(view$queued), running = isTRUE(view$running),
       errored = errored,
       runtime = if (is.null(view$runtime)) NULL else as.double(view$runtime) * 1e9,
-      depends_on_disabled_cells = FALSE,
+      depends_on_disabled_cells = off,
       ember = ember,
       output = project_output(view),
       logs = project_logs(view$console, view$id),

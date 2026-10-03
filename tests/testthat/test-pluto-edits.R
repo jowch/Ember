@@ -192,10 +192,9 @@ test_that("move the file: move_to set, no ops (22)", {
 
 # ---- 23. Refusals ------------------------------------------------------------------
 
-test_that("refusals: show_logs, disabled, skip_as_script, notebook metadata, a bond (23)", {
+test_that("refusals: show_logs, skip_as_script, notebook metadata, a bond (23)", {
   cases <- list(
     show_logs = patch_replace(list("cell_inputs", "A", "metadata", "show_logs"), FALSE),
-    disabled = patch_replace(list("cell_inputs", "A", "metadata", "disabled"), TRUE),
     skip_as_script = patch_replace(list("cell_inputs", "A", "metadata", "skip_as_script"), TRUE),
     notebook_metadata = patch_add(list("metadata", "some_setting"), TRUE),
     bond = patch_add(list("bonds", "x"), list(value = 1))
@@ -208,6 +207,32 @@ test_that("refusals: show_logs, disabled, skip_as_script, notebook metadata, a b
     # The client's own change still lands in `after`: no undo code exists.
     expect_false(identical(ed$after, before), info = name)
   }
+})
+
+# ---- Disable cell (ui-3 34) --------------------------------------------------
+
+test_that("a metadata.disabled patch gives disable_cell(); show_logs and skip_as_script are still refused (ui-3 34)", {
+  before <- base_before(2)
+  patches <- list(patch_replace(list("cell_inputs", "A", "metadata", "disabled"), TRUE))
+  ed <- pluto_edits(before, patches)
+  expect_null(ed$refusal)
+  expect_equal(ed$ops, list(disable_cell("A", TRUE)))
+
+  before2 <- base_before(2)
+  before2$cell_inputs$A$metadata$disabled <- TRUE
+  patches2 <- list(patch_replace(list("cell_inputs", "A", "metadata", "disabled"), FALSE))
+  ed2 <- pluto_edits(before2, patches2)
+  expect_equal(ed2$ops, list(disable_cell("A", FALSE)))
+
+  before3 <- base_before(2)
+  patches3 <- list(patch_replace(list("cell_inputs", "A", "metadata", "show_logs"), FALSE))
+  ed3 <- pluto_edits(before3, patches3)
+  expect_false(is.null(ed3$refusal))
+
+  before4 <- base_before(2)
+  patches4 <- list(patch_replace(list("cell_inputs", "A", "metadata", "skip_as_script"), TRUE))
+  ed4 <- pluto_edits(before4, patches4)
+  expect_false(is.null(ed4$refusal))
 })
 
 # ---- 24. Races --------------------------------------------------------------------

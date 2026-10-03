@@ -211,6 +211,8 @@
     "t_loading_cells": "Loading cells...",
     "t_reading_hidden_code": "👀 Reading hidden code",
     "t_delete_cell_action": "Delete cell",
+    "t_disable_cell": "Disable cell",
+    "t_enable_cell": "Enable cell",
     "t_copy_output_action": "Copy output",
     "t_copy_output_action_description": "Copy the output of this cell to the clipboard.",
     "t_interrupt_cell": "Interrupt (Ctrl + Q)",
