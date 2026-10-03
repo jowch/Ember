@@ -413,14 +413,6 @@ project_tree <- function(data) {
       elements = as_arr(elements))
 }
 
-#' `TRUE` when the commonmark package can be used to render markdown. A
-#' `Suggests` dependency, not `Imports`: the server runs without it, falling
-#' back to plain text (design.md, "Tradeoffs accepted").
-commonmark_available <- function() requireNamespace("commonmark", quietly = TRUE)
-
-#' Markdown text to an HTML string, via commonmark.
-render_markdown <- function(text) commonmark::markdown_html(text %||% "")
-
 #' Join names the way the frontend's rewritten messages read: one name as
 #' is, two with `conj`, more as a comma list with `conj` before the last.
 #' `conj` is `"and"` for multiple definitions and cycles, `"or"` for an
