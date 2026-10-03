@@ -1072,13 +1072,27 @@ reduce_wk_done <- function(state, event) {
     return(list(state = state, effects = list(), reply = NULL))
   }
 
+  if (!is.null(report$attached) && length(report$attached) > 0) {
+    state$exports <- utils::modifyList(state$exports, report$attached)
+    state <- rebuild_graph(state)  # graph_learn() below would otherwise keep the old exports
+  }
+
+  if (!is.null(report$loaded) && length(report$loaded) > 0) {
+    loaded <- state$worker$loaded
+    loaded[names(report$loaded)] <- report$loaded
+    state$worker$loaded <- loaded
+  }
+
   if (id %in% names(state$graph$off)) {
     # Disabled while it ran: the result is shown dimmed, not fresh or
     # errored, and nothing downstream is touched -- turn_off() already
     # invalidated its dependents when the cell became off, and the
     # `remove_cell` it queued is already behind this run in the worker's
     # own inbox (it reads messages only between runs), so the globals this
-    # run made go too without a separate `drop_globals`.
+    # run made go too without a separate `drop_globals`. The exports and
+    # loaded-namespace bookkeeping above still applies: those reflect the
+    # worker's real process state, independent of whether this particular
+    # run's result is kept.
     result <- new_result(code = w$running$code, status = report$status %||% "ok",
                          output = report$output, console = w$running$console, error = NULL,
                          started_at = w$running$started_at,
@@ -1090,17 +1104,6 @@ reduce_wk_done <- function(state, event) {
     state$worker$interrupt <- NULL
     state$worker$restart_offered <- FALSE
     return(list(state = state, effects = list(), reply = NULL))
-  }
-
-  if (!is.null(report$attached) && length(report$attached) > 0) {
-    state$exports <- utils::modifyList(state$exports, report$attached)
-    state <- rebuild_graph(state)  # graph_learn() below would otherwise keep the old exports
-  }
-
-  if (!is.null(report$loaded) && length(report$loaded) > 0) {
-    loaded <- state$worker$loaded
-    loaded[names(report$loaded)] <- report$loaded
-    state$worker$loaded <- loaded
   }
 
   error <- NULL

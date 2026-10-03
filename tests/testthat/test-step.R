@@ -1279,3 +1279,17 @@ test_that("a sourced-file change doesn't re-queue an off cell (review)", {
   expect_false("A" %in% r4$state$pending)
   expect_true(isTRUE(r4$state$results$A$stale))
 })
+
+test_that("reduce_wk_done() records attached/loaded namespaces even for an off cell (review)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1")))
+  r <- boot(s, "A")
+  r2 <- drive(r$state, ev_apply(list(op_disable("A")), at(20)))
+  expect_equal(r2$state$worker$running$cell, "A")   # disabling mid-run doesn't stop it
+  tok <- r2$state$worker$running$token
+
+  r3 <- drive(r2$state, wk_done(1, tok, report(created = "x", attached = list(mypkg = "f"),
+                                               loaded = c(mypkg = "1.0.0")), at(21)))
+  expect_true(isTRUE(r3$state$results$A$stale))
+  expect_equal(r3$state$exports$mypkg, "f")
+  expect_equal(unname(r3$state$worker$loaded["mypkg"]), "1.0.0")
+})
