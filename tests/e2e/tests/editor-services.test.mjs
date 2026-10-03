@@ -177,11 +177,15 @@ test("help: the cursor inside mean( shows Arithmetic Mean; a link loads another 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
   await runCell(page, "DF");
-  // See the completion test above: the worker answers "mean"'s help only
-  // once it's back to "ready", not merely once DF has run.
-  await page.waitForFunction(
-    () => window.editor_state?.notebook?.process_status === "ready",
-    null, { timeout: 30000 });
+  // The worker answers "mean"'s help itself only when idle: process_status
+  // "ready" (which also covers a busy worker) and no cell running or
+  // queued. Opening the panel earlier gets "R is busy" and a retry, which
+  // the next test covers on purpose.
+  await page.waitForFunction(() => {
+    const nb = window.editor_state?.notebook;
+    return nb?.process_status === "ready" && nb.cell_results?.DF?.runtime != null &&
+      Object.values(nb.cell_results).every((r) => !r.running && !r.queued);
+  }, null, { timeout: 30000 });
 
   await page.hover(cellSelector("DF"));
   await page.locator(`${cellSelector("DF")} button.add_cell.after`).click({ force: true });
@@ -225,6 +229,49 @@ test("help: the cursor inside mean( shows Arithmetic Mean; a link loads another 
   await page.waitForFunction(
     (prev) => !document.querySelector("#helpbox-wrapper h1 code")?.innerText.includes(prev),
     "mean", { timeout: 15000 });
+
+  assertNoProblems(page);
+});
+
+test("help: opened while a cell runs, the panel says R is busy, then shows mean's page once the run ends, with no new keystroke (61)", { timeout: 120000 }, async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help-busy.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await runCell(page, "LOOP");
+  await page.waitForFunction(
+    () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
+    null, { timeout: 10000 });
+
+  await page.hover(cellSelector("B"));
+  await page.locator(`${cellSelector("B")} button.add_cell.after`).click({ force: true });
+  const newCellId = await page.evaluate((bid) => {
+    const cells = Array.from(document.querySelectorAll("pluto-cell"));
+    const i = cells.findIndex((c) => c.id === bid);
+    return cells[i + 1]?.id ?? null;
+  }, "B");
+  const newSel = `pluto-cell[id="${newCellId}"]`;
+
+  await page.locator(`${newSel} .cm-content`).click();
+  await page.keyboard.type("mean(x", { delay: 10 });
+  await page.keyboard.press("Escape");
+  await page.locator("button.helpbox-docs").click();
+
+  await page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("R is busy running a cell"),
+    null, { timeout: 15000 });
+  assert.ok(
+    await page.evaluate(() => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running")),
+    "LOOP was still running when the busy message showed");
+
+  // LOOP runs for 8s; the panel must ask again on its own once R is free.
+  await page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Arithmetic Mean"),
+    null, { timeout: 30000 });
 
   assertNoProblems(page);
 });

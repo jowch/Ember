@@ -7,6 +7,8 @@ import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { cl } from "../common/ClassTable.js"
 import { t } from "../common/lang.js"
 
+const DOCS_RETRY_MS = 1000
+
 /**
  * @param {{
  * focus_on_open: boolean,
@@ -50,6 +52,9 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
         }
     }, [focus_on_open])
 
+    let retry_timer = useRef(/** @type {any} */ (null))
+    useEffect(() => () => clearTimeout(retry_timer.current), [])
+
     let fetch_docs = (new_query) => {
         update_state((state) => {
             state.loading = true
@@ -59,6 +64,20 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
             observablehq.Promises.delay(2000, false),
             pluto_actions.send("docs", { query: new_query.replace(/^\?/, "") }, { notebook_id: notebook.notebook_id }).then((u) => {
                 if (u.message.status === "⌛") {
+                    // R couldn't answer yet (busy, not started, or slow). The
+                    // query only changes when the cursor moves, so ask again.
+                    if (u.message.doc != null) {
+                        update_state((state) => {
+                            state.shown_query = new_query
+                            state.body = u.message.doc
+                        })
+                    }
+                    clearTimeout(retry_timer.current)
+                    retry_timer.current = setTimeout(() => {
+                        update_state((state) => {
+                            if (state.searched_query === new_query) state.searched_query = null
+                        })
+                    }, DOCS_RETRY_MS)
                     return false
                 }
                 if (u.message.status === "👍") {

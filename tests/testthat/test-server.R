@@ -1013,7 +1013,7 @@ test_that("docs: preview mean needs R running, a notebook-defined f shows its co
 
   handle_message(server, ws, wire("docs", notebook_id = id, query = "mean"))
   r1 <- ws$last()$message
-  expect_identical(r1$status, "\U0001F44D")
+  expect_identical(r1$status, "\u231B")
   expect_match(r1$doc, "Run a cell")
 
   handle_message(server, ws, wire("docs", notebook_id = id, query = "f"))
@@ -1060,9 +1060,29 @@ test_that("docs: an idle worker that doesn't answer in time says so, not 'needs 
   close(nb$con)
   handle_message(server, ws, wire("docs", notebook_id = id, query = "mean"))
   r <- ws$last()$message
-  expect_identical(r$status, "\U0001F44D")
+  expect_identical(r$status, "\u231B")
   expect_match(r$doc, "answer in time")
   expect_no_match(r$doc, "Run a cell")
+})
+
+test_that("docs: a busy worker answers with an hourglass, so the help panel asks again (61)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("Sys.sleep(3)")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+  a <- names(notebook_state(nb)$cells)[2]
+  handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list(a)))
+  expect_true(wait_for(nb, function(s) identical(s$process, "busy"), timeout = 15))
+
+  handle_message(server, ws, wire("docs", notebook_id = id, query = "mean"))
+  r <- ws$last()$message
+  expect_identical(r$status, "⌛")
+  expect_match(r$doc, "busy running a cell")
 })
 
 test_that("ember_signature with a worker and without one (59)", {

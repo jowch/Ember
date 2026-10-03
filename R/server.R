@@ -19,6 +19,7 @@
 THUMBS_UP <- "\U0001F44D"
 THUMBS_DOWN <- "\U0001F44E"
 WAVE <- "\U0001F44B"
+HOURGLASS <- "\u231B"
 
 # ---- Public API --------------------------------------------------------------
 
@@ -754,7 +755,10 @@ handlers <- list(
   #' `state` alone. Otherwise the worker if idle (`help_reply_html()`
   #' rewrites its page's cross-reference links, or lists the packages when
   #' several match); a busy or absent worker, or an idle one that didn't
-  #' answer in time, answers with a page saying so (ui-2.md, 4c).
+  #' answer in time, answers with a page saying so, with status "⌛" rather
+  #' than "👍": the help panel shows the page and asks again shortly,
+  #' since nothing else would make it ask while the cursor stays put
+  #' (ui-2.md, 4c).
   docs = function(server, cl, hub, req) {
     if (is.null(hub)) {
       send(cl, reply_message(req, "docs", list(status = "not_found")))
@@ -779,12 +783,12 @@ handlers <- list(
         doc <- help_reply_html(reply)
         send(cl, reply_message(req, "docs", list(status = THUMBS_UP, doc = doc)))
       } else if (was_idle) {
-        msg <- "<p>R didn't answer in time. Try again in a moment.</p>"
-        send(cl, reply_message(req, "docs", list(status = THUMBS_UP, doc = msg)))
+        msg <- "<p>R didn't answer in time. Trying again\u2026</p>"
+        send(cl, reply_message(req, "docs", list(status = HOURGLASS, doc = msg)))
       } else {
         busy <- identical(notebook_state(hub$nb)$worker$status, "busy")
         msg <- if (busy) "<p>R is busy running a cell\u2026</p>" else "<p>Help pages need R running. Run a cell to start it.</p>"
-        send(cl, reply_message(req, "docs", list(status = THUMBS_UP, doc = msg)))
+        send(cl, reply_message(req, "docs", list(status = HOURGLASS, doc = msg)))
       }
     })
   },

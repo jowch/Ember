@@ -938,8 +938,11 @@ Page, `CellInput/pluto_autocomplete.js` rewritten for R:
      `do.call()`, `utils:::.getHelpFile()`, `tools::Rd2HTML(rd, out,
      package, dynamic = TRUE)`, body only. Several matches: a list of
      `pkg::topic` links;
-  3. otherwise: `{status: "👍", doc: "<p>Help pages need R running. Run a
-     cell to start it.</p>"}`, or "R is busy running a cell…".
+  3. otherwise: `{status: "⌛", doc: "<p>Help pages need R running. Run a
+     cell to start it.</p>"}`, or "R is busy running a cell…", or (idle
+     but no answer in time) "R didn't answer in time". LiveDocsTab shows
+     a "⌛" reply's `doc` and asks again after 1 s while the query is
+     unchanged: the cursor staying put sends no new query.
 - `rewrite_help_links(html)` (pure): Rd2HTML's `../../pkg/help/topic`
   links become `@ref pkg::topic`, which LiveDocsTab already turns into a
   new query (LiveDocsTab.js:126-135).
