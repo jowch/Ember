@@ -1044,7 +1044,7 @@ state, and the worker's memory next to its status. None of these exist.
 - A stale cell keeps its output, dimmed, with a small "stale" label; a cell
   whose code changed since its last run (edited from R or by Endeavor)
   shows "code changed"; a cell blocked by a failed ancestor stays dimmed as
-  today, labelled "upstream error".
+  today, labelled "upstream error" (replaced in increment 3, piece 1).
 - A "Packages" tab beside "Help" and "Status": the snapshot date and R
   version, the library's state and install progress, and one row per
   package (name, version, source, status, message), with what running will
@@ -1077,7 +1077,8 @@ Per cell, `cell_results[id].ember = list(stale, code_changed, blocked_by =
 <id> | NULL)`, from the view (`stale`, `code_differs`, `blocked_by`), all
 already in the cell key. `depends_on_disabled_cells` becomes `blocked_by`
 only. Pluto's `nbpkg`, `status_tree` and `process_status` are still filled
-for Endeavor.
+for Endeavor. (`blocked_by` and this `depends_on_disabled_cells` rule are
+replaced in increment 3, piece 1.)
 
 **Worker memory.**
 

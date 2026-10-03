@@ -141,8 +141,8 @@ engine made with `notifications(old, new)`.
 1. returns `previous` when `state` is the same object (extra flushes are
    free);
 2. computes the notebook-wide facts once (`view_context()`: queued, blocked,
-   failed blockers, errors by cell), shared with `snapshot_of()` so the rules
-   live in one place;
+   failed blockers (replaced in increment 3, piece 1), errors by cell),
+   shared with `snapshot_of()` so the rules live in one place;
 3. per cell, builds a key from the engine's own shared objects
    (`cells[[id]]`, `results[[id]]`, the running console, a few flags); if it
    is identical to the previous key, the previous entries are kept as they

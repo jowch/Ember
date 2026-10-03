@@ -228,8 +228,9 @@ allow_execution <- function(nb) {
 #'
 #' The first call allows execution for the session. The cells are queued at
 #' once; they run in run order, one at a time, in the worker. Cells that
-#' can't run (a graph error on the cell or on an ancestor) are not queued
-#' and come back in `skipped`.
+#' can't run (a graph error of their own) are not queued and come back in
+#' `skipped`; a dependent of a failed or graph-broken cell still runs, and
+#' fails on its own if it needs what that cell would have provided.
 #'
 #' @param ids Cell ids or display indexes; `NULL` runs every code cell.
 #' @param wait `TRUE` blocks until the queue is empty or `timeout` passes,

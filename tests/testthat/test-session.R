@@ -485,3 +485,21 @@ test_that("worker_query() answers when idle, NULL at once while busy, NULL in pr
   expect_null(got_b)
   expect_identical(length(ls(nb$queries)), 0L)
 })
+
+test_that("a dependent of a failed cell runs on its own and reruns once the ancestor is fixed (ui-3 13)", {
+  cells <- list(S = cell(""), A = cell('a <- 1; stop("boom")'), B = cell("a + 1"), C = cell('exists("a")'))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+
+  run_cells(nb, NULL, wait = TRUE, timeout = 20)
+  snap <- notebook_snapshot(nb)
+  expect_equal(snap_view(snap, "B")$status, "error")
+  expect_equal(snap_view(snap, "B")$errors[[length(snap_view(snap, "B")$errors)]]$kind, "upstream")
+  expect_equal(snap_view(snap, "C")$output$text, "[1] FALSE")
+
+  edit_notebook(nb, set_code("A", "a <- 1"))
+  run_cells(nb, "A", wait = TRUE, timeout = 20)
+  snap2 <- notebook_snapshot(nb)
+  expect_equal(snap_view(snap2, "B")$status, "ok")
+})

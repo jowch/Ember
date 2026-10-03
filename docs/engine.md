@@ -17,7 +17,7 @@ The design adds rules that cut across those inputs:
 - safe preview
 - autorun versus lazy
 - unrun or stale ancestors run first
-- blocked cells and their dependents don't run
+- dependents of a failed cell run anyway (as Pluto); a failed cell's globals are removed
 - restart leaves every cell not run
 - deleting a cell removes its globals
 - a stale output is always visibly marked
@@ -118,7 +118,7 @@ Each derived fact has one source:
 - "Queued" is `run_order(graph, pending)` minus the running cell.
 - "Code differs" is `result$code != cells[[id]]$code`.
 - "Not run" means the cell has no result.
-- "Blocked" is step 1's `blocked_cells()` plus downstream.
+- "Blocked" (can't run at all) is step 1's `blocked_cells()`: a cell with a graph error of its own. A dependent of a failed or graph-broken cell is not blocked; it runs and fails on its own if it needs what the broken cell would have provided.
 - Only `stale` is stored, because it records history (an ancestor ran after this result) that the current code can't reveal.
 
 **One pure transition.** `step(state, event)` returns `list(state, effects, reply)` (step.R). It has three stages:
@@ -131,7 +131,7 @@ No event handler starts a run itself. So a learned definition, an edit during a 
 
 **Saving and notifying are derived, not emitted.** At the end of each drain the shell compares the file text from `notebook_file_of(state)` with the last text written, and writes only if they differ. It computes `notifications(old, new)` from the two states. No branch in `step()` can forget to save or notify, a burst of worker messages gives one `cell_state`, and opening an Ember-written file never writes it. This is cheap because states share unchanged parts (per the spike).
 
-**Invalidation is one rule.** When a cell starts, the worker removes its old globals. So `schedule()` invalidates, at that moment, its transitive downstream plus every cell reading a name its *previous* run created. When it finishes, `reduce_wk_done()` invalidates again with the post-learning graph. Invalidating marks a cell with a result `stale`, and in autorun also adds it to `pending`. Cells never run stay not run. A cell dropped from the queue (interrupt, upstream error) is already stale, so the snapshot is right without extra code. This replaces step 1's `affected(old, new)` for the session: what matters is what the worker's globals came from, and `result$defined` records that directly.
+**Invalidation is one rule.** When a cell starts, the worker removes its old globals. So `schedule()` invalidates, at that moment, its transitive downstream plus every cell reading a name its *previous* run created. When it finishes, `reduce_wk_done()` invalidates again with the post-learning graph. Invalidating marks a cell with a result `stale`, and in autorun also adds it to `pending`. Cells never run stay not run. A cell dropped from the queue (interrupt) is already stale, so the snapshot is right without extra code. This replaces step 1's `affected(old, new)` for the session: what matters is what the worker's globals came from, and `result$defined` records that directly.
 
 **Generations and tokens make worker events idempotent.** Every worker event carries the generation it came from, and run events carry a token. Events for an old generation or token are no-ops. That is what makes kill-then-start, late interrupts and stale timers safe without locks.
 
@@ -213,8 +213,10 @@ after each dispatch.
 - **An edit never runs anything**, in either mode, as in Pluto (edit, then
   run) and Endeavor (`apply`, then `run`). Running a cell reruns its
   dependents (autorun) or marks them stale (lazy).
-- **Dependents of a cell that errored don't run** (as marimo). They stay
-  stale or not run, and the snapshot says which ancestor failed.
+- **Dependents of a failed cell run anyway (as Pluto); a failed cell's
+  globals are removed.** A dependent that needs what the failed cell would
+  have defined fails on its own, naming the failed cell; one that doesn't
+  need it runs normally.
 - **A setting changed outside the setup cell is put back** by the worker
   and the cell shows the "global setting" error, so later cells never run
   under it.

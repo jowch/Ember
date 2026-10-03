@@ -71,7 +71,7 @@ s$upstream      # "6f1c" "a41e"
 s$downstream    # character()
 s$packages      # data frame: name, attached
 s$errors        # list of ember_graph_error
-blocked_cells(g)  # ids the snapshot marks as can't run
+blocked_cells(g)  # cells with a graph error (they can't run)
 ```
 
 ```r
