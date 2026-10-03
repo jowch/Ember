@@ -245,15 +245,21 @@ changed foreign global and `global_setting`, step.R:996-1010).
   ```
 
   It reads `state$graph$edges` rows with `from == id` and `via %in%
-  c("definition", "package")` (graph.R:26-29) and keeps those whose `to`
-  has `results[[to]]$status %in% c("error", "interrupted")` or is in
-  `blocked_cells(graph)`. Only direct edges count: a chain gives a chain of
-  messages, each linking one step up, as in Pluto. If non-empty, the error
-  becomes `new_run_error("upstream", message = <R's message>, traceback,
-  names = fd$names, cells = fd$cells)`; `new_run_error()` (state.R:227-231)
-  gains `cells = character()`. The setup edge is left out: an error in the
-  setup cell has no name to show, so cells failing after it show their own
-  R error.
+  c("definition", "package")` (graph.R:26-29). A "definition" edge counts
+  when `to` has `results[[to]]$status %in% c("error", "interrupted")` or is
+  in `blocked_cells(graph)`. A "package" edge counts only when `to`'s last
+  error kind is `"missing_package"`: `drop_globals()` keeps a failed cell's
+  attachments, so a plain error on a cell that already attached its
+  package still provides every name it exports, and a dependent's own
+  unrelated error on one of those names is the dependent's own bug, not an
+  upstream one. Only direct edges count: a chain gives a chain of messages,
+  each linking one step up, as in Pluto. Duplicate names (two cells both
+  defining `x`) keep one entry, the first definer in display order. If
+  non-empty, the error becomes `new_run_error("upstream", message = <R's
+  message>, traceback, names = fd$names, cells = fd$cells)`;
+  `new_run_error()` (state.R:227-231) gains `cells = character()`. The
+  setup edge is left out: an error in the setup cell has no name to show,
+  so cells failing after it show their own R error.
 
   The rule is decided when the run ends, not each time the page draws (as
   Pluto's `get_erred_upstreams()`, ErrorMessage.js:644, does). R's "object

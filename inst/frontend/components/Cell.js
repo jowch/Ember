@@ -237,9 +237,9 @@ export const Cell = ({
 
     const any_logs = useMemo(() => !_.isEmpty(logs), [logs])
 
-    // `ember.disabled_by` is filled once ui-3's Disable cell (piece 1b)
-    // lands; until then this is always a no-op, same as a stale cell with
-    // nothing to jump to.
+    // Ember can't disable a cell yet, so `ember.disabled_by` is never set
+    // and this is always a no-op, same as a stale cell with nothing to
+    // jump to.
     const disabled_by_cell_id = ember?.disabled_by ?? null
     const disabled_jump = useCallback(() => {
         if (disabled_by_cell_id != null) {

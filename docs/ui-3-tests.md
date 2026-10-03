@@ -73,10 +73,15 @@ New fixtures:
    sent.
 4. Classification: B errors after A failed. B's error has
    `kind = "upstream"`, `names = "a"`, `cells = "A"`, and R's message
-   kept. If B errors while A is ok, the kind is `"error"`. If A's failure
-   is a `missing_package` or `source_conflict`, B's kind is unchanged. With
-   only the setup edge between them (the setup cell failed), the kind is
-   `"error"`.
+   kept. If B errors while A is ok, the kind is `"error"`. If B's own
+   failure is `missing_package` or `source_conflict` instead of a plain
+   error, its kind is unchanged (not rewritten to `"upstream"`), even
+   though A failed. Through a package edge: if A attached a package and
+   then failed on something else, B calling one of A's exports gets its
+   own `"error"`, not `"upstream"` (the package is still attached); if
+   A's own last failure is `missing_package`, B gets `"upstream"` through
+   that edge. With only the setup edge between them (the setup cell
+   failed), the kind is `"error"`.
 5. A chain: A fails, B reads A and C reads B. B's error links A, and C's
    links B.
 6. Interrupt: interrupting A's run sends `drop_globals` for A, leaves B out

@@ -399,8 +399,7 @@ is_fresh <- function(state, id) {
 #' Every touched result gets `stale = TRUE`. In autorun, and when `queue` is
 #' `TRUE`, they are also added to `pending`; running clears `stale`. In lazy
 #' they stay stale until run. So "dropped from the queue without running"
-#' (an interrupt, an upstream error) leaves a cell correctly stale with no
-#' extra code.
+#' (an interrupt) leaves a cell correctly stale with no extra code.
 #'
 #' `queue = FALSE` is for an edit (including delete): engine.md's Decisions
 #' say an edit never runs anything, in either mode, so deleting a cell marks

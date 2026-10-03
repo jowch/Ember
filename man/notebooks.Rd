@@ -133,8 +133,10 @@ Opening a notebook (\code{open_notebook()}) only parses the file and builds its
 graph; no worker starts and nothing runs until \code{run_cells()} or
 \code{allow_execution()} is called. \code{run_cells()} runs the requested cells and
 any unrun, stale or failed ancestors first, in dependency order, one at a
-time; cells that can't run because of a graph error are returned in
-\code{skipped} rather than queued.
+time. A cell with a graph error of its own, or a text cell passed by id,
+is returned in \code{skipped} rather than queued; a dependent of a failed or
+graph-broken cell still runs, and fails on its own if it needs what that
+cell would have provided.
 
 The worker always starts from the notebook's own package library: its lock
 is resolved and installed as needed (see \link{packages}), so there is no

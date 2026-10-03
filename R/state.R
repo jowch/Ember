@@ -273,7 +273,7 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 #' Built from `view_context()` (the notebook-wide facts, computed once) and
 #' `cell_view()` (one cell's view), so the step-4 UI's projection
 #' (`pluto_state()`, pluto-state.R) can share exactly the same rules
-#' instead of keeping a second copy of "what queued/blocked/stale means".
+#' instead of keeping a second copy of "what queued/stale/errored means".
 snapshot_of <- function(state) {
   ctx <- view_context(state)
   ids <- ctx$ids

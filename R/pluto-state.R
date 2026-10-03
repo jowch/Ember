@@ -50,9 +50,9 @@ new_pluto_state <- function(js, state, keys, graph) {
 pluto_state <- function(state, previous = NULL) {
   if (!is.null(previous) && identical(state, previous$state)) return(previous)
   pj  <- previous$js
-  ctx <- view_context(state)            # state.R: queued set, blocked set,
-                                        # failed blockers, waiting, errors by
-                                        # cell, running id, once per call
+  ctx <- view_context(state)            # state.R: queued set, waiting,
+                                        # errors by cell, running id, once
+                                        # per call
   ids <- ctx$ids; n <- length(ids)
   at  <- if (is.null(pj)) rep(NA_integer_, n) else match(ids, names(pj$cell_inputs))
                                              # one match, never `[[name]]`
@@ -183,18 +183,16 @@ project_cell_input <- function(view) {
 #' * `queued`, `running`: the view's.
 #' * `errored`: any error on the view, or status "error"/"interrupted".
 #' * `runtime`: seconds -> nanoseconds as a double, or NULL when not run.
-#' * `depends_on_disabled_cells`: always `FALSE` in ui-3's piece 1a (Ember
-#'   has no disabled cell yet, and a failed ancestor no longer blocks its
-#'   dependents); piece 1b fills it for real.
+#' * `depends_on_disabled_cells`: always `FALSE`. Ember has no disabled
+#'   cell yet, and a failed ancestor no longer blocks its dependents.
 #' * `ember`: `list(stale, code_changed, upstream_error?)`, from the view's
 #'   `stale` and `code_differs` -- both already in `cell_key()`'s key
 #'   (`code_differs` is derived from `cell$code` and `result$code`).
 #'   `upstream_error` is present only when the last error's kind is
 #'   `"upstream"`, as `as_arr(list(list(name, cell), ...))` from that
 #'   error's `names`/`cells` (also in the key, through `result`). The page
-#'   shows a "stale", "code changed" or "another cell ... contains errors"
-#'   label/message and dims the output the same way `depends_on_disabled_cells`
-#'   used to for all three (ui-2.md, 5).
+#'   shows a "stale" or "code changed" label (ui-2.md, 5); an upstream
+#'   error is an ordinary error box, not a dimmed/labelled cell.
 #' * `output`: project_output() of the view.
 #' * `logs`: project_logs() of the view's console.
 #' * `published_object_keys = list()`, `depends_on_skipped_cells = FALSE`.
