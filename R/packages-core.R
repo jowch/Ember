@@ -139,22 +139,32 @@ install_failure_message <- function(lines, status) {
 }
 
 #' Which packages an install failed on, and why, from the installer's
-#' output. R's quotes are "‘"/"’" or ASCII depending on locale;
-#' both are matched.
+#' output. R's quotes are curly (left/right single quotation marks) or
+#' ASCII depending on locale; both are matched.
 #' -> data.frame(package, kind, detail): kind "compile" ("ERROR:
 #'    compilation failed for package"), "configure" ("ERROR: configuration
 #'    failed"), "dependency" ("ERROR: dependency 'x' is not available",
-#'    detail = x), "download" (renv's "error downloading" / "failed to
-#'    retrieve" naming the package), "other" (renv's "- [pkg]: install
-#'    failed" with none of the above; detail = first ERROR line).
+#'    detail = x), "download" (a summary line, or renv's own "error
+#'    downloading"/"failed to retrieve", naming the package), "other"
+#'    (renv's summary line, `- [pkg]: <reason>` or `- pkg: <reason>`,
+#'    with none of the above; detail = the reason, or the first `ERROR`
+#'    line when the reason itself says only "install failed"). One row
+#'    per package: a package matching more than one pattern (its own
+#'    "ERROR:" line earlier in the log, then renv's summary line at the
+#'    end) keeps the most specific kind, in the order above.
 #'
 #' Best effort, not a contract (design-gaps.md): renv's and R's own text
 #' can change between versions, so an unrecognised failure still shows up
-#' as "other" with whatever the first `ERROR`/`Error` line says, rather
-#' than being dropped silently.
+#' as "other" with whatever its own reason says, rather than being
+#' dropped silently. Captured against real renv 1.3.0/R 4.6.1 output
+#' (fixtures/install-output): the summary line's package name can be
+#' bracketed (`- [pkg]: ...`, seen with `renv::restore()`) or not, and
+#' `renv_record_format_remote()`'s `"pkg@version"` form appears both
+#' there and in "failed to retrieve package '...'" -- stripped here, not
+#' matched into the name.
 install_failures <- function(lines) {
   lines <- gsub("\033\\[[0-9;?]*[A-Za-z]", "", lines)
-  lines <- gsub("[‘’]", "'", lines)
+  lines <- gsub("[\u2018\u2019]", "'", lines)
   lines <- trimws(lines)
 
   first_error <- utils::head(grep("^(ERROR|Error)", lines, value = TRUE), 1L)
@@ -164,10 +174,11 @@ install_failures <- function(lines) {
     m <- regmatches(x, regexec(pattern, x, ignore.case = ignore.case))[[1]]
     if (length(m) < 2L) NA_character_ else m[[2]]
   }
+  strip_version <- function(name) sub("@.*$", "", name)
 
   pkg <- character(); kind <- character(); detail <- character()
   add <- function(p, k, d) {
-    pkg[length(pkg) + 1L] <<- p
+    pkg[length(pkg) + 1L] <<- strip_version(p)
     kind[length(kind) + 1L] <<- k
     detail[length(detail) + 1L] <<- d
   }
@@ -187,13 +198,43 @@ install_failures <- function(lines) {
     } else if (grepl("failed to retrieve.*package '[^']+'", line, ignore.case = TRUE)) {
       add(capture(".*failed to retrieve.*package '([^']+)'", line, ignore.case = TRUE),
          "download", NA_character_)
-    } else if (grepl("^- [^:]+: install failed", line)) {
-      add(capture("^- ([^:]+): install failed", line), "other", first_error)
+    } else if (grepl("^- \\[?[A-Za-z.][A-Za-z0-9._@-]*\\]?:", line)) {
+      # renv's one-line-per-failed-package summary ("The following
+      # package(s) were not installed successfully:"), real wording seen
+      # across versions: "install failed", "error downloading '<url>'
+      # [error code N]" (no "package" before the quote, so the regexes
+      # above never match it), "failed to find binary for 'pkg version'
+      # in package repositories". Whatever it says, this still gets the
+      # package name and a usable reason. The name is restricted to R's
+      # own package-name characters (not just "anything but ']'/':'"),
+      # so it never matches an unrelated "- # <url> --------" line from
+      # renv's "unable to query available packages" listing, which also
+      # starts with "- " and contains a ":" (from "file://").
+      name_pattern <- "^- \\[?([A-Za-z.][A-Za-z0-9._@-]*)\\]?:"
+      name <- capture(name_pattern, line)
+      reason <- trimws(sub(name_pattern, "", line))
+      if (grepl("retriev|download", reason, ignore.case = TRUE)) {
+        add(name, "download", NA_character_)
+      } else {
+        # Not `detail <-`: that name is already the accumulator vector
+        # `add()` appends to, and a plain `<-` inside this loop (no new
+        # scope) would overwrite the whole vector instead of shadowing it.
+        row_detail <- if (grepl("^install failed$", reason, ignore.case = TRUE)) first_error else reason
+        add(name, "other", row_detail)
+      }
     }
   }
 
   if (length(pkg) == 0L) return(empty_install_failures())
-  data.frame(package = pkg, kind = kind, detail = detail, stringsAsFactors = FALSE)
+
+  # One row per package: keep the first (most specific) kind a package
+  # was seen with, in the order the loop above checks patterns in
+  # (compile/configure/dependency before the catch-all summary line).
+  kind_rank <- c(compile = 1L, configure = 2L, dependency = 3L, download = 4L, other = 5L)
+  df <- data.frame(package = pkg, kind = kind, detail = detail, stringsAsFactors = FALSE)
+  df <- df[order(kind_rank[df$kind]), ]
+  df <- df[!duplicated(df$package), ]
+  df[order(df$package), ]
 }
 
 #' A date move being previewed: `date`, `status` (`"fetching"`, `"ready"`,
@@ -227,8 +268,7 @@ new_proposal <- function(date, status = "fetching", lock = NULL, changes = NULL,
 # From the API
 #' `apply = TRUE`: `reduce_preview_date()` stores it on the proposal, and
 #' `schedule_packages()`'s Proposal stage applies the result itself once
-#' it is ready, unless doing so would restart a loaded package (plan,
-#' "Update to today's snapshot").
+#' it is ready, unless doing so would restart a loaded package.
 ev_preview_date <- function(date, at, apply = FALSE) event("preview_date", at, date = date, apply = apply)
 ev_set_date     <- function(date, at) event("set_date", at, date = date)
 #' Drop the current preview without applying it (the page's Cancel on the
@@ -680,6 +720,25 @@ reduce_install_done <- function(state, event) {
       tgt$message <- event$message
       tgt$log <- event$log
       tgt$failures <- event$failures %||% empty_install_failures()
+      # `needed_by` is computed once, here, rather than by every
+      # `packages_view()` call: `failure_needed_by()` walks the loaded
+      # index's dependency graph from every wanted package, which was
+      # showing up as ~35ms per failed package per call at a CRAN-sized
+      # index (packages_view() runs on every dispatch that might have
+      # changed anything package-related, notifications()), and nothing
+      # about the answer changes between one call and the next -- the
+      # failure, the wanted set and the indexes loaded when it happened
+      # are all already fixed by the time this reducer runs.
+      if (nrow(tgt$failures) > 0) {
+        wanted <- wanted_packages(state$graph, state$file$header)
+        needed <- needed_repos(state$file$header)
+        indexes <- lapply(state$packages$indexes, function(s) s$index)
+        tgt$failures$needed_by <- lapply(tgt$failures$package, function(pk) {
+          failure_needed_by(pk, wanted, indexes, needed)
+        })
+      } else {
+        tgt$failures$needed_by <- list()
+      }
       tgt$progress <- NULL
       state$packages$target <- tgt
       rows <- if (nrow(tgt$failures) > 0) {
@@ -909,18 +968,13 @@ packages_view <- function(state) {
   installing <- !is.null(p$install) && identical(p$install$key, p$target$key)
   target_failed <- identical(p$target$status, "failed")
 
+  # `needed_by` is already computed, once, by reduce_install_done(); a
+  # hand-built `target$failures` with no such column (nothing in this
+  # package's own code ever makes one that way, but a test might) reads
+  # as empty rather than erroring on a missing `$needed_by`.
   failures <- p$target$failures %||% empty_install_failures()
-  needed_by_names <- character()
-  if (target_failed && nrow(failures) > 0) {
-    needed <- needed_repos(state$file$header)
-    indexes <- lapply(p$indexes, function(s) s$index)
-    failures$needed_by <- lapply(failures$package, function(pk) {
-      failure_needed_by(pk, wanted, indexes, needed)
-    })
-    needed_by_names <- unique(unlist(failures$needed_by))
-  } else {
-    failures$needed_by <- list()
-  }
+  if (is.null(failures$needed_by)) failures$needed_by <- replicate(nrow(failures), character(), simplify = FALSE)
+  needed_by_names <- if (target_failed) unique(unlist(failures$needed_by)) else character()
   failed_names <- if (target_failed) failures$package else character()
 
   # Built column-wise, not one `data.frame()` call per lock entry plus an

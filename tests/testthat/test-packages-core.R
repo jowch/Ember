@@ -759,6 +759,62 @@ test_that("install_failures() on each captured output gives the expected rows; n
   expect_equal(two$detail[two$package == "broom"], "rlang")
 })
 
+test_that("install_failures() on a real renv 1.3.0 / R 4.6.1 restore() log (ui-3 80)", {
+  # Captured verbatim (fixture-build/renv-build.R, not committed) from a
+  # real `renv::restore()` against a tiny source package whose C file
+  # #includes a header that doesn't exist, run the same way
+  # installer_command()/inst/installer.R run it: real ANSI codes, real
+  # curly quotes, and renv's real bracketed summary line
+  # ("- [brokenpkg]: install failed"), none of which the hand-written
+  # fixtures above exercise.
+  real <- install_failures(install_output("real-renv-compile"))
+  expect_equal(nrow(real), 1)
+  expect_equal(real$package, "brokenpkg")
+  expect_equal(real$kind, "compile")
+})
+
+test_that("install_failures(): renv's bracketed summary line, and '@version' stripped from the name", {
+  lines <- c("The following package(s) were not installed successfully:",
+            "- [brokenpkg]: install failed",
+            "You may need to manually download and install these packages.")
+  r <- install_failures(lines)
+  expect_equal(r$package, "brokenpkg")
+  expect_equal(r$kind, "other")
+
+  dl <- install_failures(c("- [brokenpkg]: failed to retrieve package 'brokenpkg@0.1.0'"))
+  expect_equal(dl$package, "brokenpkg")
+  expect_equal(dl$kind, "download")
+})
+
+test_that("install_failures(): renv's other real summary wordings (no 'package' before the quote, or no quote at all)", {
+  # Real renv 1.3.0 text for two retrieval failures distinct from "install
+  # failed": a raw path with no "package" keyword (so the download-
+  # specific regexes above never match it), and binary lookup failing
+  # with no quoted package name at all.
+  by_path <- install_failures(c(
+    "- [brokenpkg]: error downloading 'file:///tmp/repo/src/contrib/brokenpkg_0.1.0.tar.gz' [error code 37]"))
+  expect_equal(by_path$package, "brokenpkg")
+  expect_equal(by_path$kind, "download")
+
+  no_binary <- install_failures(c(
+    "- [brokenpkg]: failed to find binary for 'brokenpkg 0.1.0' in package repositories"))
+  expect_equal(no_binary$package, "brokenpkg")
+  expect_equal(no_binary$kind, "other")
+})
+
+test_that("install_failures(): one row per package, keeping the most specific kind", {
+  # A package can match both its own ERROR line earlier in the log and
+  # renv's generic summary line at the end; the summary line alone must
+  # never downgrade an already-identified compile/configure/dependency
+  # failure to "other".
+  lines <- c("ERROR: compilation failed for package 'brokenpkg'",
+            "The following package(s) were not installed successfully:",
+            "- [brokenpkg]: install failed")
+  r <- install_failures(lines)
+  expect_equal(nrow(r), 1)
+  expect_equal(r$kind, "compile")
+})
+
 test_that("reduce_install_done() writes one install_failed row per failed package; needed_by walks the loaded index (81)", {
   lock <- new_lock(c("broom", "rlang"), c("1.0.0", "1.1.0"), c("CRAN", "CRAN"))
   s <- pkg_state(list(S = cell(""), A = cell("library(broom)")), lock = lock)

@@ -1,0 +1,52 @@
+- Lockfile written to "/tmp//RtmpFiiCG6/lockfile-d5de3f3ba3d9.json".
+NULL
+The following package(s) will be updated:
+
+# CRAN -----------------------------------------------------------------------
+- brokenpkg   [* -> 0.1.0]
+
+# Downloading packages -------------------------------------------------------
+renv was unable to query available packages from the following repositories:
+- # file:///tmp/ember-renv-test/repo/bin/macosx/sonoma-arm64/contrib/4.6 --------
+error downloading 'file:///tmp/ember-renv-test/repo/bin/macosx/sonoma-arm64/contrib/4.6/PACKAGES.rds' [error code 37]
+error downloading 'file:///tmp/ember-renv-test/repo/bin/macosx/sonoma-arm64/contrib/4.6/PACKAGES.gz' [error code 37]
+error downloading 'file:///tmp/ember-renv-test/repo/bin/macosx/sonoma-arm64/contrib/4.6/PACKAGES' [error code 37]
+
+
+[?25l  (0/1) Downloading: brokenpkg                                                                                                                                  [32m✔[0m brokenpkg 0.1.0                          [522 B in 0.24s]
+                                                                                Successfully downloaded 1 package in 0.12 seconds.
+
+# Installing packages --------------------------------------------------------
+  (0/1) Installing: brokenpkg                                                     (0/1) Installing: brokenpkg                                                                                                                                   [31m✖[0m brokenpkg 0.1.0                         
+
+The following package(s) were not installed successfully:
+- [brokenpkg]: install failed
+You may need to manually download and install these packages.
+
+# brokenpkg ------------------------------------------------------------------
+* installing *source* package ‘brokenpkg’ ...
+** this is package ‘brokenpkg’ version ‘0.1.0’
+** using staged installation
+** libs
+using C compiler: ‘Apple clang version 21.0.0 (clang-2100.3.33.1)’
+using SDK: ‘MacOSX27.0.sdk’
+clang -arch arm64 -I"/Users/me/.local/share/rig/r/4.6.1/include" -DNDEBUG   -I/opt/R/arm64/include    -fPIC  -falign-functions=64 -Wall -g -O2  -c brokenpkg.c -o brokenpkg.o
+brokenpkg.c:1:10: fatal error: 'nonexistent.h' file not found
+    1 | #include <nonexistent.h>
+      |          ^~~~~~~~~~~~~~~
+1 error generated.
+make: *** [brokenpkg.o] Error 1
+ERROR: compilation failed for package ‘brokenpkg’
+* removing ‘/private/tmp/RtmpFiiCG6/staging-d5de64821bfd/.renv/1/brokenpkg’
+
+[?25hError: failed to install "brokenpkg"
+Traceback (most recent calls last):
+5: withCallingHandlers(renv::restore(lockfile = lockfile_tmp, library = staging, 
+       project = project_dir, prompt = FALSE, clean = FALSE), message = function(m) invokeRestart("muffleMessage"))
+4: renv::restore(lockfile = lockfile_tmp, library = staging, project = project_dir, 
+       prompt = FALSE, clean = FALSE)
+3: renv_restore_run_actions(project, diff, current, lockfile, rebuild, 
+       strict, descriptions, retry)
+2: stopf("failed to install %s", paste(dQuote(failed), collapse = ", "))
+1: stop(sprintf(fmt, ...), call. = call.)
+Execution halted

@@ -90,8 +90,11 @@ actually landed), \code{"not_found"}. \code{plan} is \code{NULL} or
 (a \code{"not_installed"} package counts toward it exactly as \code{"missing"}
 does).
 
-\code{library$log} is the installer's last 200 lines, or \code{character()}
-unless \code{status} is \code{"failed"}. \code{library$failures} is a data frame
+\code{library$log} is the installer's last 200 lines from the most recent
+failed install, whatever \code{status} is now: it isn't cleared by a later
+successful install, so it can be stale (describing an earlier failure)
+once \code{status} has moved past \code{"failed"}. \code{character()} before any
+install has ever failed. \code{library$failures} is a data frame
 \code{package}, \code{kind} (\code{"compile"}, \code{"configure"}, \code{"dependency"},
 \code{"download"}, \code{"other"}), \code{detail} (the missing dependency's name for
 \code{"dependency"}, the first \code{ERROR} line for \code{"other"}, \code{NA} otherwise),
@@ -133,12 +136,11 @@ saves the file; the library installs once execution is allowed, and if a
 package the worker has already loaded changed version, the worker
 restarts once the new library is ready, leaving every cell not run.
 \code{set_date()} and an \code{apply = TRUE} preview that needs no restart both
-go through the same pure step, \code{apply_proposal()} (packages-core.R, not
-exported): neither is allowed to apply anything but the current, ready
-proposal.
+apply the proposal the same way internally: neither is allowed to apply
+anything but the current, ready proposal.
 
 A page connected to the notebook sees an \code{apply = TRUE} preview as
-\code{ember$packages$update} (\code{project_ember()}, pluto-state.R):
+\code{ember$packages$update}:
 \code{list(date, status, restart, changes, message)}, present only while such
 a preview exists. A plain \code{preview_date()} call (no \code{apply}) is never
 shown there: it is this function's own, R-side preview, not the Packages
