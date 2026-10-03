@@ -7,7 +7,7 @@ import { t } from "../common/lang.js"
  * restart link to free it. Nothing in safe preview: `worker_memory` is
  * `null` there, and stays `null` until the current worker has reported once.
  *
- * @param {{ worker_memory: number?, restart: (maybe_confirm?: boolean) => void }} props
+ * @param {{ worker_memory: number?, restart: () => void }} props
  */
 export const EmberStatus = ({ worker_memory, restart }) => {
     if (worker_memory == null) return null
@@ -21,7 +21,7 @@ export const EmberStatus = ({ worker_memory, restart }) => {
                 id="ember-status-restart"
                 onClick=${(e) => {
                     e.preventDefault()
-                    restart(true)
+                    restart()
                 }}
                 >${t("t_process_restart_action_short")}</a
             >

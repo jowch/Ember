@@ -1616,15 +1616,7 @@ ${t("t_key_autosave_description")}`
         }
         const warn_about_untrusted_code = this.client.session_options?.security?.warn_about_untrusted_code ?? true
 
-        // No confirm() before restarting: the two cases it used to guard
-        // against never happen. `risky_file_source` is never set by the
-        // server (nothing in R/ writes it), and the Julia-version check
-        // reads `__internal_julia_*` keys that `project_nbpkg()` never
-        // sends, so it always reads "unknown" on both sides.
         const restart = async () => {
-            await this.actions.update_notebook((notebook) => {
-                delete notebook.metadata.risky_file_source
-            })
             await this.client.send(
                 "restart_process",
                 {},
