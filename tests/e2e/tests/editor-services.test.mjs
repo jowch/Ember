@@ -200,7 +200,7 @@ test("help: the cursor inside mean( shows Arithmetic Mean; a link loads another 
   await page.keyboard.type("mean(df$mpg", { delay: 10 });
   await page.keyboard.press("Escape"); // close any autocomplete popup first
 
-  await page.locator("button.helpbox-docs").click();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
   await page.waitForFunction(
     () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Arithmetic Mean"),
     null, { timeout: 15000 });
@@ -259,7 +259,7 @@ test("help: opened while a cell runs, the panel says R is busy, then shows mean'
   await page.locator(`${newSel} .cm-content`).click();
   await page.keyboard.type("mean(x", { delay: 10 });
   await page.keyboard.press("Escape");
-  await page.locator("button.helpbox-docs").click();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
 
   await page.waitForFunction(
     () => document.querySelector("#helpbox-wrapper")?.innerText.includes("R is busy running a cell"),

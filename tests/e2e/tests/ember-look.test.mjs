@@ -198,3 +198,29 @@ test("look: Endeavor's DOM hooks are present (12)", async (t) => {
 
   assertNoProblems(page);
 });
+
+// 123. Endeavor's panel hooks: #helpbox-wrapper, pluto-helpbox > header,
+// #live-docs-search once Help is open; open_bottom_right_panel(null) closes
+// it; header#pluto-nav and main pluto-notebook still exist.
+test("look: Endeavor's panel hooks are present (123)", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "ember-look-123.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  assert.ok(await page.locator("header#pluto-nav").count() > 0);
+  assert.ok(await page.locator("main pluto-notebook").count() > 0);
+
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
+  await page.waitForSelector("#live-docs-search");
+  assert.ok(await page.locator("#helpbox-wrapper").count() > 0);
+  assert.ok(await page.locator("pluto-helpbox > header").count() > 0);
+
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: null })));
+  await page.waitForSelector("#helpbox-wrapper:not(.open)", { state: "attached" });
+
+  assertNoProblems(page);
+});
