@@ -229,22 +229,69 @@ test_that("running a stale cell clears its stale flag (39)", {
   expect_false(isTRUE(r2$state$results$B$stale))
 })
 
-test_that("blocked cells and their downstream are skipped (40)", {
-  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), A2 = cell("x <- 2"), C = cell("y <- x")))
-  r <- drive(s, ev_run(NULL, at(1)))
-  expect_true(all(c("A", "A2", "C") %in% r$reply$skipped))
-  expect_false(any(c("A", "A2", "C") %in% r$state$pending))
+test_that("a graph error blocks only the cell itself, not its dependents (ui-3 7a)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), A2 = cell("z <- 9"),
+                       C = cell("y <- x"), F = cell("2")))
+  r0 <- drive(s, ev_apply(list(op_set_code("A2", "x <- 2")), at(1)))
+  expect_equal(r0$effects, list())
+  expect_equal(r0$state$pending, character())
+
+  r1 <- drive(r0$state, ev_run(NULL, at(2)))
+  expect_true(all(c("A", "A2") %in% r1$reply$skipped))
+  expect_false("C" %in% r1$reply$skipped)
+
+  r2 <- drive(r1$state, wk_started(1, 99, at(3)), wk_hello(1, list(), at(4)))
+  expect_equal(last_sent(r2)$cell, "S")   # the setup cell runs first
+  r3 <- drive(r2$state, wk_done(1, last_token(r2), report(), at(5)))
+  expect_equal(last_sent(r3)$cell, "C")   # A and A2 are blocked; C is not
 })
 
-test_that("an error drops queued downstream cells from pending (41)", {
+test_that("drop_graph_error_results clears a stale graph-error cell before the next run (ui-3 7b)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), A2 = cell("z <- 9"),
+                       E = cell("x + 1"), F = cell("2")))
+  r <- boot(s, c("A", "E"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(11)))
+  expect_equal(r$state$results$A$status, "ok")
+  expect_equal(r$state$results$E$status, "ok")
+
+  r2 <- drive(r$state, ev_apply(list(op_set_code("A2", "x <- 2")), at(20)))
+  expect_equal(r2$effects, list())
+  expect_equal(r2$state$pending, character())
+  expect_equal(r2$state$results$A$status, "ok")   # an edit alone changes nothing in the worker
+
+  r3 <- drive(r2$state, ev_run("F", at(21)))
+  sends <- Filter(function(e) identical(e$type, "send"), r3$effects)
+  expect_equal(sends[[1]]$msg, list(type = "drop_globals", cell = "A"))   # before F's run
+  expect_equal(sends[[length(sends)]]$msg$cell, "F")
+  expect_null(r3$state$results$A)
+  expect_true(isTRUE(r3$state$results$E$stale))
+  expect_equal(r3$state$pending, character())   # E stays stale, not queued (autorun too)
+
+  r4 <- drive(r3$state, wk_done(1, last_token(r3), report(), at(22)))
+  r5 <- drive(r4$state, ev_run("E", at(23)))
+  expect_false(any(vapply(r5$effects, function(e) {
+    identical(e$type, "send") && identical(e$msg$type, "drop_globals")
+  }, logical(1))))
+})
+
+test_that("an error lets a dependent run on its own instead of dropping it from pending (ui-3 9)", {
   s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- a")))
   r <- boot(s, "B")
   expect_equal(last_sent(r)$cell, "A")
   expect_true("B" %in% r$state$pending)
 
   r2 <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "boom")), at(10)))
-  expect_false("B" %in% r2$state$pending)
-  expect_null(r2$state$results$B)
+  expect_true("B" %in% r$state$pending || "B" %in% sent_cells(r2) || identical(r2$state$worker$running$cell, "B"))
+  r3 <- drive(r2$state, wk_done(1, last_token(r2), report(), at(11)))
+  expect_equal(r3$state$results$B$status, "ok")
+})
+
+test_that("a dependent with no result stays not run after an ancestor errors (ui-3 9)", {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- a")))
+  r <- boot(s, "A")
+  r <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "boom")), at(10)))
+  expect_equal(snapshot_of(r$state)$cells$B$status, "not_run")
 })
 
 test_that("run_order follows the current graph, not display order alone (42)", {
@@ -543,7 +590,21 @@ test_that("running all of a 2000-cell chain stays well under 1s (item 4)", {
   expect_equal(length(r$reply$skipped), 0)
 })
 
-test_that("dependents of an errored ancestor stay blocked even when another ancestor reruns (item 6)", {
+test_that("requesting a dependent re-queues its failed ancestor; it runs once the ancestor fails again (ui-3 3)", {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- a")))
+  r <- boot(s, "A")
+  r <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "boom")), at(10)))
+  expect_equal(r$state$results$A$status, "error")
+
+  r2 <- drive(r$state, ev_run("B", at(11)))
+  expect_equal(r2$reply$skipped, character())
+  expect_equal(r2$reply$queued, c("A", "B"))
+
+  r3 <- drive(r2$state, wk_done(1, last_token(r2), report(status = "error", error = list(message = "boom")), at(12)))
+  expect_equal(last_sent(r3)$cell, "B")
+})
+
+test_that("a dependent reruns and fails on its own once its failed ancestor stays failed (item 6, ui-3)", {
   s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- 2"), C = cell("cc <- a + b")))
   r <- boot(s, "C")
   for (val in c("a", "b", "cc")) {
@@ -554,13 +615,15 @@ test_that("dependents of an errored ancestor stay blocked even when another ance
   r <- drive(r$state, ev_apply(list(op_set_code("B", "b <- stop('boom')")), at(20)), ev_run("B", at(21)))
   r <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "boom")), at(22)))
   expect_equal(r$state$results$B$status, "error")
-  expect_true(isTRUE(r$state$results$C$stale))
 
-  r2 <- drive(r$state, ev_run("A", at(30)))
-  r2 <- drive(r2$state, wk_done(1, last_token(r2), report(created = "a"), at(31)))
-  expect_null(r2$state$worker$running)   # C must not have been sent to the worker
-  expect_false("C" %in% r2$state$pending)
-  expect_equal(snapshot_of(r2$state)$cells$C$blocked_by, "B")
+  # C had a result and is a dependent of B: autorun reruns it on its own.
+  expect_equal(last_sent(r)$cell, "C")
+  r2 <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "boom")), at(23)))
+  expect_equal(r2$state$results$C$status, "error")
+
+  r3 <- drive(r2$state, ev_run("A", at(30)))
+  r3 <- drive(r3$state, wk_done(1, last_token(r3), report(created = "a"), at(31)))
+  expect_null(r3$state$results$A$error)
 })
 
 test_that("wk_done for a cell deleted while running is dropped, not crashed (item 8)", {
@@ -769,6 +832,22 @@ test_that("a computed path from the footer stands in until every code cell has r
 })
 
 # ---- ui-3, piece 1: errors flow downstream (docs/ui-3-tests.md) -----------
+
+test_that("autorun: a failed ancestor's effects are drop_globals then the dependent's run (ui-3 1)", {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- a")))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "a"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(11)))
+  expect_equal(r$state$results$B$status, "ok")
+
+  r2 <- drive(r$state, ev_run("A", at(12)))
+  r2 <- drive(r2$state, wk_done(1, last_token(r2),
+                               report(status = "error", error = list(message = "boom")), at(13)))
+  sends <- Filter(function(e) identical(e$type, "send"), r2$effects)
+  expect_equal(sends[[1]]$msg, list(type = "drop_globals", cell = "A"))
+  expect_equal(sends[[length(sends)]]$msg$cell, "B")
+  expect_false("B" %in% r2$state$pending)
+})
 
 test_that("lazy: a failed ancestor sends drop_globals and leaves dependents stale (ui-3 2)", {
   s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- a")), on_cell_change = "lazy")

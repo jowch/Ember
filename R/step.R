@@ -209,7 +209,6 @@ schedule <- function(state) {
   if (!identical(w$status, "ready")) return(list(state = state, effects = list()))
 
   id <- NULL
-  fblocked <- failed_blockers(state)
   waiting <- waiting_cells(state)
   # A target library that failed can never bring in the packages these
   # cells are waiting for; drop them from `pending` instead of leaving them
@@ -229,16 +228,19 @@ schedule <- function(state) {
       found <- NULL
       for (q in queue[-1]) {
         if (!is.null(waiting[[q]])) next
-        if (can_run(state, q, fblocked)) { found <- q; break }
+        if (can_run(state, q)) { found <- q; break }
         state$pending <- setdiff(state$pending, q)
       }
       if (is.null(found)) return(list(state = state, effects = list()))
       id <- found
       break
     }
-    if (can_run(state, candidate, fblocked)) { id <- candidate; break }
+    if (can_run(state, candidate)) { id <- candidate; break }
     state$pending <- setdiff(state$pending, candidate)
   }
+
+  dg <- drop_graph_error_results(state)
+  state <- dg$state
 
   token <- state$next_token
   state$next_token <- state$next_token + 1L
@@ -249,37 +251,25 @@ schedule <- function(state) {
   state$worker$status <- "busy"
   state$worker$running <- list(cell = id, token = token, code = state$cells[[id]]$code,
                                started_at = state$clock, console = list())
-  list(state = state, effects = list(fx_send(state$worker$gen, run_message(state, id, token))))
+  list(state = state, effects = c(dg$effects, list(fx_send(state$worker$gen, run_message(state, id, token)))))
 }
 
-#' Can `id` run now? Not if it is markdown, has a graph error, has an
-#' ancestor with a graph error (`blocked_cells()` and their downstream), or
-#' has an ancestor whose last result errored or was interrupted (engine.md,
-#' Decisions: "dependents of a cell that errored don't run"). A cell dropped
-#' from the queue the moment its ancestor fails is handled by
-#' `drop_downstream()`; this check is for a cell added back to `pending`
-#' later (autorun rerunning an unrelated ancestor, or a fresh `ev_run`)
-#' while the failure still stands.
-#'
-#' `blocked_by_failed`: the `failed_blockers()` map, passed in by callers
-#' that check many ids against the same state so the (usually empty) set of
-#' failed cells is found once rather than per id.
-can_run <- function(state, id, blocked_by_failed = NULL) {
+#' Can `id` run now? Not if it is markdown or has a graph error of its own
+#' (`blocked_cells()`): a dependent of a failed or graph-broken cell runs on
+#' its own and fails with its own error if it needs what the broken cell
+#' would have provided (engine.md, Decisions: "dependents of a failed cell
+#' run anyway").
+can_run <- function(state, id) {
   cell <- state$cells[[id]]
   if (is.null(cell) || identical(cell$kind, "markdown")) return(FALSE)
-  blocked <- blocked_cells(state$graph)
-  if (id %in% blocked) return(FALSE)
-  down <- unlist(lapply(blocked, function(b) downstream(state$graph, b, transitive = TRUE)),
-                 use.names = FALSE)
-  if (id %in% down) return(FALSE)
-  if (is.null(blocked_by_failed)) blocked_by_failed <- failed_blockers(state)
-  is.null(blocked_by_failed[[id]])
+  !(id %in% blocked_cells(state$graph))
 }
 
 #' Map id -> id of the ancestor whose last result errored or was
-#' interrupted, for every cell downstream of such a cell. One
-#' `downstream()` walk per failed cell (usually none), reused by every `id`
-#' checked against the same state rather than walking upstream from each one.
+#' interrupted, for every cell downstream of such a cell. No longer used to
+#' decide whether a cell can run (dependents of a failed cell run anyway);
+#' kept only for `view_context()`'s `blocked_by` field (state.R), which
+#' ui-3's step 4 removes.
 failed_blockers <- function(state) {
   failed <- Filter(function(fid) {
     r <- state$results[[fid]]
@@ -292,6 +282,33 @@ failed_blockers <- function(state) {
     }
   }
   out
+}
+
+#' For every cell in `blocked_cells(graph)` that still has a result: drop
+#' the result, mark its dependents stale (`invalidate_dependents(...,
+#' queue = FALSE)`: nothing is queued, as for an edit), and send
+#' `drop_globals`. Returns `list(state, effects)`; a no-op when there are
+#' none.
+#'
+#' A cell that ran and then gained a graph error (an edit made `x` defined
+#' twice, or a learned definition did) still holds its result, and the
+#' worker its globals. Called from `schedule()` right before a cell is sent,
+#' so an edit alone never touches the worker (engine.md, Decisions: "an edit
+#' never runs anything"), and so it is idempotent (nothing to drop once a
+#' graph error's result has already been cleared).
+drop_graph_error_results <- function(state) {
+  blocked <- blocked_cells(state$graph)
+  stale_results <- Filter(function(id) !is.null(state$results[[id]]), blocked)
+  effects <- list()
+  for (id in stale_results) {
+    old <- state$results[[id]]
+    state$results[[id]] <- NULL
+    state <- invalidate_dependents(state, id, old$defined, queue = FALSE)
+    if (state$worker$status %in% c("starting", "ready", "busy")) {
+      effects <- c(effects, list(fx_send(state$worker$gen, list(type = "drop_globals", cell = id))))
+    }
+  }
+  list(state = state, effects = effects)
 }
 
 #' The worker's `run` message for `id`. See the protocol in worker.R.
@@ -399,8 +416,10 @@ invalidate_dependents <- function(state, id, names, queue = TRUE) {
   state
 }
 
-#' After a cell fails or is interrupted: remove its transitive downstream
-#' from `pending`. They keep (or get) `stale = TRUE`.
+#' After a cell is interrupted: remove its transitive downstream from
+#' `pending`. They keep (or get) `stale = TRUE`. An interrupt means "stop",
+#' unlike a plain error: a failed cell's dependents run on their own instead
+#' (`reduce_wk_done()`'s "ok"/"error" branch).
 drop_downstream <- function(state, id) {
   down <- downstream(state$graph, id, transitive = TRUE)
   state$pending <- setdiff(state$pending, down)
@@ -640,8 +659,7 @@ reduce_run <- function(state, event) {
   ancestors <- upstream_of_set(state$graph, ids)
   unfresh <- Filter(function(a) !is_fresh(state, a), ancestors)
   want <- union(unfresh, ids)
-  fblocked <- failed_blockers(state)
-  skipped <- Filter(function(id) !can_run(state, id, fblocked), want)
+  skipped <- Filter(function(id) !can_run(state, id), want)
   to_add <- setdiff(want, skipped)
   state$pending <- union(state$pending, to_add)
   reply <- list(accepted = TRUE, queued = run_order(state$graph, state$pending), skipped = skipped)
@@ -1052,10 +1070,16 @@ reduce_wk_done <- function(state, event) {
   if (!identical(status, "ok")) {
     effects <- list(fx_send(state$worker$gen, list(type = "drop_globals", cell = id)))
   }
-  if (identical(status, "ok")) {
-    state <- invalidate_dependents(state, id, report$created %||% character())
-  } else {
+  if (identical(status, "interrupted")) {
+    # An interrupt means "stop": pending's already been emptied by
+    # reduce_interrupt(), so this only needs to mark the downstream stale.
     state <- drop_downstream(state, id)
+  } else {
+    # "ok" and "error" both invalidate the same way: a failed cell's
+    # dependents run on their own and fail if they need what it would have
+    # defined (engine.md, Decisions: "dependents of a failed cell run
+    # anyway").
+    state <- invalidate_dependents(state, id, report$created %||% character())
   }
   list(state = state, effects = effects, reply = NULL)
 }
