@@ -40,6 +40,24 @@ async function completion_eventually(page, sel, code, predicate, timeout = 30000
   throw new Error(`completion for ${JSON.stringify(code)} never satisfied the predicate; last labels: ${JSON.stringify(labels)}`);
 }
 
+/** Click the completion option whose label is exactly `label` (open popup
+ * assumed) and wait for the popup to close, then return the cell's text.
+ * Finding 2 (a worker completion after `$`/`@`/a quoted path duplicating
+ * the receiver, e.g. "df$df$mpg") and finding 1 (a multi-line cell's
+ * replace range landing on the wrong line) both only show up once a
+ * completion is actually accepted, not just listed. Never leaves the cell
+ * empty between steps (deliberately, like completion_eventually() above):
+ * an empty cell that loses focus gets removed. */
+async function accept_completion(page, sel, label) {
+  const option = page.locator(".cm-tooltip-autocomplete .cm-completionLabel").filter({ hasText: new RegExp(`^${label}$`) }).first();
+  await option.click();
+  await page.waitForFunction(
+    () => document.querySelector(".cm-tooltip-autocomplete") == null,
+    null, { timeout: 5000 }
+  ).catch(() => {}); // the popup may already be gone by the time this runs
+  return await page.locator(`${sel} .cm-content`).innerText();
+}
+
 test("completion: typing me then Ctrl+Space lists mean; after running DF, df$ lists mpg (59)", { timeout: 120000 }, async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-complete.server.log") });
@@ -87,14 +105,30 @@ test("completion: typing me then Ctrl+Space lists mean; after running DF, df$ li
       (r.output?.last_run_timestamp ?? 0) > 0;
   }, null, { timeout: 60000 });
 
-  await completion_eventually(page, newSel, "df$", (ls) => ls.some((l) => l.includes("mpg")), 60000);
+  await completion_eventually(page, newSel, "df$", (ls) => ls.includes("mpg"), 60000);
   await page.screenshot({ path: path.join(artifactsDir(), "completion-notebook-var.png") });
+  // Accepting "mpg" must replace only the part after "$": the worker's own
+  // completion token/items for a `$` completion include the receiver
+  // ("df$mpg"), which would duplicate it onto "df$" if the reply's
+  // start/stop didn't already account for that (finding 2).
+  const after_field_completion = await accept_completion(page, newSel, "mpg");
+  assert.equal(after_field_completion, "df$mpg");
 
-  await page.keyboard.press("Escape");
-
+  // completion_eventually() does its own clear-and-retype (never leaving
+  // the cell empty and unfocused, which would get it removed).
   const stats_labels = await completion_eventually(page, newSel, "stats::", (ls) => ls.length > 0);
   assert.ok(stats_labels.length > 0, "stats:: offered some completions");
   await page.screenshot({ path: path.join(artifactsDir(), "completion-stats-namespace.png") });
+  await page.keyboard.press("Escape");
+
+  // A multi-line cell: completion_context()'s start/stop must be an
+  // offset into the *whole* cell text, not just the last line, or
+  // accepting here would land on the wrong line (finding 1).
+  // `keyboard.type()` presses Enter for an embedded "\n", same as typing
+  // the second line by hand.
+  await completion_eventually(page, newSel, "x <- 1\nme", (ls) => ls.includes("mean"), 30000);
+  const after_multiline_completion = await accept_completion(page, newSel, "mean");
+  assert.equal(after_multiline_completion, "x <- 1\nmean");
 
   assertNoProblems(page);
 });
@@ -172,14 +206,25 @@ test("help: the cursor inside mean( shows Arithmetic Mean; a link loads another 
   await page.screenshot({ path: path.join(artifactsDir(), "help-panel-dark.png") });
   await page.emulateMedia({ colorScheme: "light" });
 
+  // "mean"'s Examples section (Rd2HTML's `<pre><code class="language-R">`)
+  // must come back highlighted as R, not as plain text: RawHTMLContainer's
+  // highlighting pass (CellOutput.js) turns that into hljs's own markup.
+  const examples_code = page.locator("#helpbox-wrapper pre code").first();
+  await examples_code.waitFor({ timeout: 15000 });
+  const examples_class = await examples_code.getAttribute("class");
+  assert.match(examples_class ?? "", /\bhljs\b/, "the examples code block was passed to hljs");
+  const highlighted_tokens = await examples_code.locator('[class*="hljs-"]').count();
+  assert.ok(highlighted_tokens > 0, "the examples code got at least one hljs-* token span");
+
+  // "See Also" names other topics as `@ref` links (rewrite_help_links());
+  // mean's page always has some (weighted.mean, colMeans, ...), so this
+  // must not be conditional on finding one.
   const link = page.locator("#helpbox-wrapper section a").first();
-  if (await link.count() > 0) {
-    const link_text = await link.innerText();
-    await link.click();
-    await page.waitForFunction(
-      (prev) => !document.querySelector("#helpbox-wrapper h1 code")?.innerText.includes(prev),
-      "mean", { timeout: 15000 });
-  }
+  assert.equal(await link.count(), 1, "mean's help page has a See Also link");
+  await link.click();
+  await page.waitForFunction(
+    (prev) => !document.querySelector("#helpbox-wrapper h1 code")?.innerText.includes(prev),
+    "mean", { timeout: 15000 });
 
   assertNoProblems(page);
 });
