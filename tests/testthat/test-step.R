@@ -237,8 +237,7 @@ test_that("a graph error blocks only the cell itself, not its dependents (ui-3 7
   expect_equal(r0$state$pending, character())
 
   r1 <- drive(r0$state, ev_run(NULL, at(2)))
-  expect_true(all(c("A", "A2") %in% r1$reply$skipped))
-  expect_false("C" %in% r1$reply$skipped)
+  expect_setequal(r1$reply$skipped, c("A", "A2"))
 
   r2 <- drive(r1$state, wk_started(1, 99, at(3)), wk_hello(1, list(), at(4)))
   expect_equal(last_sent(r2)$cell, "S")   # the setup cell runs first
@@ -273,6 +272,18 @@ test_that("drop_graph_error_results clears a stale graph-error cell before the n
   expect_false(any(vapply(r5$effects, function(e) {
     identical(e$type, "send") && identical(e$msg$type, "drop_globals")
   }, logical(1))))
+})
+
+test_that("two definers of the same name give one upstream entry, the first in display order (ui-3 7c, fix 2)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), A2 = cell("x <- 2"), C = cell("x + 1")))
+  r <- boot(s, "C")
+  expect_true(all(c("A", "A2") %in% blocked_cells(r$state$graph)))
+  tok <- last_token(r)
+  r2 <- drive(r$state, wk_done(1, tok, report(status = "error", error = list(message = "object 'x' not found")), at(10)))
+  err <- r2$state$results$C$error
+  expect_equal(err$kind, "upstream")
+  expect_equal(err$names, "x")
+  expect_equal(err$cells, "A")
 })
 
 test_that("an error lets a dependent run on its own instead of dropping it from pending (ui-3 9)", {
@@ -651,6 +662,59 @@ test_that("only a setup edge between two cells never gives an upstream error (ui
   expect_equal(last_sent(r1)$cell, "A")   # A's only edge to S is the setup edge
   r2 <- drive(r1$state, wk_done(1, last_token(r1), report(status = "error", error = list(message = "A boom")), at(5)))
   expect_equal(r2$state$results$A$error$kind, "error")
+})
+
+test_that("a dependent's own source_conflict kind is not rewritten to upstream (ui-3 4g)", {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), Z = cell("z <- 1"),
+                       DEP = cell("source('h.R'); a + 1")))
+  r <- boot(s, c("A", "DEP"))
+  r1 <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "boom")), at(10)))
+  expect_equal(last_sent(r1)$cell, "DEP")
+  tok <- r1$state$worker$running$token
+  r1b <- drive(r1$state, wk_source(1, tok, "h.R", "z <- 2", at(10.5)))
+  refused_msg <- last_sent(r1b)$message
+
+  r2 <- drive(r1b$state, wk_done(1, tok, report(error = list(message = refused_msg)), at(11)))
+  expect_equal(r2$state$results$DEP$error$kind, "source_conflict")
+})
+
+test_that("a package edge doesn't give upstream once the provider has attached (ui-3 4e, fix 1)", {
+  s <- fake_state(list(S = cell(""), A = cell('library(pkgx); stop("late")'), B = cell("qux(1, 2, 3)")))
+  s$packages$active$installed <- c(pkgx = "1.0.0")
+  r <- boot(s, c("A", "B"))
+  r1 <- drive(r$state, wk_done(1, last_token(r),
+                               report(status = "error", error = list(message = "late"),
+                                      attached = list(pkgx = "qux")), at(10)))
+  expect_true("A" %in% r1$state$graph$upstream$B)
+  expect_equal(last_sent(r1)$cell, "B")   # the dependent runs on its own
+
+  r2 <- drive(r1$state, wk_done(1, last_token(r1),
+                                report(status = "error", error = list(message = "unused arguments")), at(11)))
+  # A's attachment survived its failure (drop_globals keeps attachments), so
+  # B's own unrelated error is not rewritten to "upstream".
+  expect_equal(r2$state$results$B$error$kind, "error")
+})
+
+test_that("a package edge gives upstream when the provider's last failure is missing_package (ui-3 4f, fix 1)", {
+  s <- fake_state(list(S = cell(""), A = cell("library(pkgx)"), B = cell("qux(1)")))
+  s$packages$active$installed <- c(pkgx = "1.0.0")
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(attached = list(pkgx = "qux")), at(10)))
+  expect_true("A" %in% r$state$graph$upstream$B)
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(11)))
+  expect_equal(r$state$results$B$status, "ok")
+
+  r2 <- drive(r$state, ev_run("A", at(20)))
+  r2 <- drive(r2$state, wk_done(1, last_token(r2), report(error = list(message = "irrelevant", package = "pkgx")), at(21)))
+  expect_equal(r2$state$results$A$error$kind, "missing_package")
+  expect_equal(last_sent(r2)$cell, "B")
+
+  r3 <- drive(r2$state, wk_done(1, last_token(r2),
+                                report(status = "error", error = list(message = "object 'qux' not found")), at(22)))
+  err <- r3$state$results$B$error
+  expect_equal(err$kind, "upstream")
+  expect_equal(err$names, "qux")
+  expect_equal(err$cells, "A")
 })
 
 test_that("a chain of upstream errors links one step at a time (ui-3 5)", {

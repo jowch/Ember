@@ -268,23 +268,42 @@ can_run <- function(state, id) {
 #' The cells `id` reads from (by a "definition" or "package" edge, not
 #' "setup") whose last result failed or that have a graph error, with the
 #' names read: `list(names = <chr>, cells = <chr, aligned>)`, or `NULL`.
+#' At most one entry per name, keeping the first definer in display order,
+#' so two cells both defining `x` (a graph error) don't repeat "x".
 #'
 #' Only direct edges count: a chain gives a chain of messages, each linking
 #' one step up (as in Pluto), rather than naming the original failure from
 #' every cell downstream of it. The setup edge is left out: an error in the
 #' setup cell has no name to show, so cells failing after it show their own
 #' R error.
+#'
+#' A "definition" edge counts when its target's last result errored or
+#' interrupted, or the target has a graph error. A "package" edge counts
+#' only when the target's last error kind is `"missing_package"`: unlike a
+#' plain error, which leaves a cell's attachments on the search path
+#' (`drop_globals()` only removes globals), a `missing_package` error means
+#' the package never attached, so `id`'s own name really is missing. A cell
+#' that attached a package and then failed on something else still
+#' provides every name it exports; `id` failing on one of them is `id`'s
+#' own bug, not an upstream one.
 failed_definers <- function(state, id) {
   edges <- state$graph$edges
   rows <- edges[edges$from == id & edges$via %in% c("definition", "package"), , drop = FALSE]
   if (nrow(rows) == 0) return(NULL)
   blocked <- blocked_cells(state$graph)
-  failed <- vapply(rows$to, function(to) {
+  failed <- vapply(seq_len(nrow(rows)), function(i) {
+    to <- rows$to[[i]]
     r <- state$results[[to]]
-    (!is.null(r) && r$status %in% c("error", "interrupted")) || (to %in% blocked)
+    if (identical(rows$via[[i]], "package")) {
+      !is.null(r) && !is.null(r$error) && identical(r$error$kind, "missing_package")
+    } else {
+      (!is.null(r) && r$status %in% c("error", "interrupted")) || (to %in% blocked)
+    }
   }, logical(1))
   if (!any(failed)) return(NULL)
-  list(names = rows$name[failed], cells = rows$to[failed])
+  rows <- rows[failed, , drop = FALSE]
+  keep <- !duplicated(rows$name)
+  list(names = rows$name[keep], cells = rows$to[keep])
 }
 
 #' For every cell in `blocked_cells(graph)` that still has a result: drop
