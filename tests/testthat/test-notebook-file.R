@@ -491,6 +491,20 @@ test_that("disabled on a text cell gives disabled_text_cell and the cell unchang
   expect_true("disabled_text_cell" %in% problem_kinds(file))
 })
 
+test_that("a disabled cell whose un-commented code is only #' lines also gets disabled_text_cell (41)", {
+  # No [markdown] tag: the cell was written (or hand-edited) as disabled
+  # code whose content, once un-commented, turns out to be pure text --
+  # main's Ember once allowed disabling a text cell this way.
+  text <- paste("# %% id=a [setup]", "0", "",
+               "# %% id=d", "## #' hello", "",
+               "# /// cell order", "# a", "# d disabled", "# ///", "", sep = "\n")
+  file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
+  expect_equal(file$cells[["d"]]$code, "#' hello")
+  expect_equal(file$cells[["d"]]$kind, "markdown")
+  expect_false(file$cells[["d"]]$disabled)
+  expect_true("disabled_text_cell" %in% problem_kinds(file))
+})
+
 test_that("disabled on the setup cell un-comments the code and clears the flag (ui-3 18)", {
   text <- paste("# %% id=a [setup]", "## x <- 1", "",
                "# /// cell order", "# a disabled", "# ///", "", sep = "\n")

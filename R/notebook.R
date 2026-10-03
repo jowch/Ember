@@ -565,8 +565,16 @@ parse_notebook_core <- function(text, new_id) {
       disabled <- FALSE
     }
     code <- codes[[id]] %||% ""
-    cells[[id]] <- list(code = code, kind = cell_kind(code, setup = identical(id, setup)),
-                        folded = folded, disabled = disabled)
+    kind <- cell_kind(code, setup = identical(id, setup))
+    # A disabled cell whose un-commented code turns out to be only `#'`
+    # lines (main's Ember once allowed disabling text; a hand edit can
+    # still write it): the same repair as a `[markdown]`-tagged cell
+    # marked disabled, since a text cell can't be disabled either way.
+    if (disabled && identical(kind, "markdown")) {
+      problems <- add_problem(problems, "disabled_text_cell", id)
+      disabled <- FALSE
+    }
+    cells[[id]] <- list(code = code, kind = kind, folded = folded, disabled = disabled)
   }
   cells <- cells[display_order]
 
