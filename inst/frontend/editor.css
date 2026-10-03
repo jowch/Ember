@@ -4746,7 +4746,7 @@ jlerror.syntax-error > header {
 .ember-dialog {
     width: min(420px, calc(100vw - 32px));
     padding: 0;
-    border: none;
+    border: 1px solid var(--ember-border);
     border-radius: 10px;
     box-shadow: var(--ember-dialog-shadow);
     background: var(--header-bg-color);
@@ -4754,7 +4754,7 @@ jlerror.syntax-error > header {
 }
 
 .ember-dialog::backdrop {
-    background: rgba(0, 0, 0, 0.3);
+    background: var(--ember-dialog-backdrop);
 }
 
 .ember-dialog-title {
@@ -4788,25 +4788,25 @@ jlerror.syntax-error > header {
     font-weight: 500;
     color: var(--pluto-output-color);
     background: var(--header-bg-color);
-    border: 1px solid var(--rule-color);
+    border: 1px solid var(--ember-border);
     border-radius: 7px;
     padding: 6px 14px;
     cursor: pointer;
 }
 
 .ember-btn.primary {
-    color: var(--process-finished);
-    border-color: var(--process-finished);
+    color: var(--ember-accent);
+    border-color: var(--ember-accent);
 }
 
 .ember-btn.danger {
-    color: var(--process-failed);
-    border-color: var(--process-failed);
+    color: var(--ember-danger);
+    border-color: var(--ember-danger);
 }
 
 .ember-btn:focus-visible,
 .ember-menuitem:focus-visible {
-    outline: 2px solid var(--process-finished);
+    outline: 2px solid var(--ember-focus-ring);
     outline-offset: 2px;
 }
 
@@ -4817,7 +4817,7 @@ jlerror.syntax-error > header {
     flex-direction: column;
     gap: 2px;
     padding: 4px;
-    border: 1px solid var(--rule-color);
+    border: 1px solid var(--ember-border);
     border-radius: 8px;
     box-shadow: var(--ember-dialog-shadow);
     background: var(--header-bg-color);
@@ -4869,5 +4869,5 @@ jlerror.syntax-error > header {
 .ember-menu-sep {
     height: 1px;
     margin: 4px 2px;
-    background: var(--rule-color);
+    background: var(--ember-border);
 }
