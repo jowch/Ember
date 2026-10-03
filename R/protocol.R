@@ -203,12 +203,13 @@ pluto_schema <- function() {
       "cell_dependencies/*/downstream_cells_map",
       "cell_dependencies/*/upstream_cells_map",
       "ember", "ember/packages", "ember/packages/library", "ember/plan",
-      "cell_results/*/ember"
+      "cell_results/*/ember", "cell_results/*/ember/figure"
     ),
     arrays = c(
       "cell_order", "cell_execution_order",
       "cell_results/*/published_object_keys", "cell_results/*/logs",
-      "ember/packages/rows", "ember/plan/restart"
+      "ember/packages/rows", "ember/plan/restart",
+      "cell_results/*/ember/variables"
     )
   )
 }

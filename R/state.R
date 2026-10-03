@@ -214,8 +214,8 @@ new_worker_state <- function() {
 #'   this result was made. Running the cell clears it.
 #' * `variables`: named list name -> `list(type, value, kind)`, the
 #'   worker's `globals` report (worker.R's `summarise_globals()`), or
-#'   `list()` for a run that isn't "ok" (3b: its globals are about to be
-#'   dropped, piece 1).
+#'   `list()` for a run that isn't "ok": its globals are about to be
+#'   dropped (`drop_globals`).
 new_result <- function(code, status, output, console, error, started_at,
                        runtime, defined, stale = FALSE, variables = list()) {
   structure(list(code = code, status = status, output = output,
@@ -283,7 +283,7 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 #' `console`, `last_run`, `runtime`, `disabled` (the user's own choice),
 #' `disabled_by` (the disabled cell a dependent is off because of, `NA`
 #' otherwise -- including for the disabled cell itself), `variables`
-#' (3b: `list(name, type, value, kind)` per global the cell owns, sorted
+#' (`list(name, type, value, kind)` per global the cell owns, sorted
 #' by name, dot-names excluded, empty for an off cell).
 #'
 #' For the running cell, `console` is what has streamed so far and `output`
@@ -400,8 +400,7 @@ view_context <- function(state) {
 #' `result$variables` as a list of `list(name, type, value, kind)`, sorted
 #' by name, without dot-names (private, as the graph treats them,
 #' graph.R), and empty for an off cell: a disabled cell's globals are gone
-#' (`remove_cell`, piece 1), even though its result (and output) is kept,
-#' dimmed.
+#' (`remove_cell`), even though its result (and output) is kept, dimmed.
 cell_variables <- function(result, off) {
   if (isTRUE(off) || is.null(result) || length(result$variables) == 0) return(list())
   vars <- result$variables

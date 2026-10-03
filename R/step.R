@@ -413,8 +413,8 @@ turn_off <- function(state, ids) {
 #' `list(type = "run", cell, token, code, role = "setup" | "cell" | "text",
 #' order = <code cell ids in run order>, formulas = graph$analyses[[id]]$formulas,
 #' library = state$packages$active$path, fig = cell_figure_size(cell$code))`.
-#' `fig` is the figure size (inches) the cell's `#|` lines ask for (3a);
-#' the worker opens its plot device at that size.
+#' `fig` is the figure size (inches) the cell's `#|` lines ask for; the
+#' worker opens its plot device at that size.
 #' `order` is what the worker rebuilds the search path from (attaching
 #' cells' packages in file order); sending it with every run keeps the
 #' worker converging on the current order without a separate sync. `library`
@@ -924,8 +924,8 @@ reduce_set_mode <- function(state, event) {
 
 #' Re-render a plot at a new size and pixel density: `fx_send(render)` if
 #' the cell's output is an image and the worker is alive; the answer comes
-#' as `wk_rendered`. `width`/`height` NULL (3a's density-only redraw) drop
-#' out of the message instead of being sent as `NULL`, so the worker falls
+#' as `wk_rendered`. `width`/`height` NULL (a density-only redraw) drop out
+#' of the message instead of being sent as `NULL`, so the worker falls
 #' back to the cell's own figure size.
 reduce_render <- function(state, event) {
   r <- state$results[[event$cell]]
@@ -1271,8 +1271,8 @@ reduce_wk_done <- function(state, event) {
   # Variables are kept only for an "ok" result: a run the worker itself
   # reported as failed, or an "ok" one the server turned into an error
   # above (a changed foreign global, a global setting), has its globals
-  # dropped (piece 1's drop_globals), so the report's summaries are about
-  # to be stale.
+  # dropped (drop_globals), so the report's summaries are about to be
+  # stale.
   result <- new_result(code = w$running$code, status = status, output = report$output,
                        console = w$running$console, error = error,
                        started_at = w$running$started_at, runtime = runtime,

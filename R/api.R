@@ -367,7 +367,9 @@ dependency_graph <- function(nb) nb$state$graph
 #' Consecutive values share every unchanged part (they are made by
 #' modifying the previous one), so `identical()` on a sub-part is a cheap
 #' "did this change" test. Callers must treat its fields as read-only and
-#' undocumented except where state.R documents them.
+#' undocumented except where state.R documents them. Unlike
+#' `notebook_snapshot()`, each cell's `variables` here carries its
+#' globals' actual values, not just their names and types.
 #' @export
 notebook_state <- function(nb) nb$state
 
