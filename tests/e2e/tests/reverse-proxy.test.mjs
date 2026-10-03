@@ -51,3 +51,33 @@ test("reverse proxy: a notebook opens and a cell runs through a path prefix on a
 
   assertNoProblems(page);
 });
+
+test("reverse proxy: the bare prefix (no trailing slash) resolves its relative links one level too high (design-gaps.md)", async (t) => {
+  // Not fixable in Ember itself: proxy.mjs's forwardPath() collapses both
+  // the bare prefix and the prefix with a trailing slash to exactly "/"
+  // once forwarded, so this process can't tell which one the browser
+  // actually requested (it never learns the prefix at all). This test
+  // demonstrates the gap docs/design-gaps.md records, rather than a bug in
+  // Ember's own output: http_index()'s "edit?id=..." link is correct
+  // relative to a trailing-slash URL, and wrong relative to a bare one --
+  // that is simply what a relative link does.
+  const notebook = tempNotebook();
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "reverse-proxy-bare.server.log") });
+  const emberPort = Number(new URL(server.url).port);
+  const prefix = "/s/def456/p/1";
+  const proxy = await startReverseProxy(emberPort, prefix);
+  t.after(() => { server.stop(); proxy.stop(); });
+
+  const res = await fetch(`http://127.0.0.1:${proxy.port}${prefix}?secret=${server.secret}`);
+  const html = await res.text();
+  const m = html.match(/<a href="(edit\?id=[^"]+)">/);
+  assert.ok(m, "the index page has a relative edit link");
+
+  // What the browser would actually do: resolve the relative link against
+  // the bare prefix URL it's really at (no trailing slash), landing one
+  // path segment too high -- at ".../p/edit?..." instead of
+  // ".../p/1/edit?...".
+  const resolved = new URL(m[1], `http://127.0.0.1:${proxy.port}${prefix}`);
+  assert.equal(resolved.pathname, "/s/def456/p/edit", "resolves one level too high, as the doc note says");
+  assert.notEqual(resolved.pathname, `${prefix}/edit`);
+});
