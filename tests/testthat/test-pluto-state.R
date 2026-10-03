@@ -558,13 +558,19 @@ test_that("project_dep_tags() accepts htmltools' list form for a script entry (u
 # ---- Disable cell (ui-3 33) --------------------------------------------------
 
 test_that("CELL_METADATA_DISABLED, depends_on_disabled_cells, disabled_by and can_disable (ui-3 33)", {
+  # B never runs: its change after disabling A has to come from disabled_by
+  # entering cell_key(), not from any change to its own result.
   s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1"), T = cell("#' hi", kind = "markdown")))
-  r <- boot(s, c("A", "B"))
+  r <- boot(s, "A")
   r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = "x"), at(10)))
-  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(), at(11)))
+
+  p0 <- pluto_state(r$state)
+  check_wire(p0$js)
+  expect_null(p0$js$cell_results$B$ember$disabled_by)
+  expect_false(p0$js$cell_results$B$depends_on_disabled_cells)
 
   r2 <- drive(r$state, ev_apply(list(op_disable("A")), at(20)))
-  p1 <- pluto_state(r2$state)
+  p1 <- pluto_state(r2$state, p0)
   check_wire(p1$js)
 
   expect_identical(p1$js$cell_inputs$A$metadata, CELL_METADATA_DISABLED)
@@ -584,6 +590,12 @@ test_that("CELL_METADATA_DISABLED, depends_on_disabled_cells, disabled_by and ca
   expect_false(p1$js$cell_results$T$ember$can_disable)
   expect_true(p1$js$cell_results$A$ember$can_disable)
   expect_true(p1$js$cell_results$B$ember$can_disable)
+
+  # Disabling A changed exactly A's and B's entries: S, T and their own
+  # cell_inputs stayed the same R objects, reused from p0.
+  ids0 <- names(p1$js$cell_results)
+  changed0 <- Filter(function(id) !identical(p0$js$cell_results[[id]], p1$js$cell_results[[id]]), ids0)
+  expect_setequal(changed0, c("A", "B"))
 
   r3 <- drive(r2$state, ev_apply(list(op_set_code("T", "#' hi there", expected = "#' hi")), at(21)))
   p2 <- pluto_state(r3$state, p1)

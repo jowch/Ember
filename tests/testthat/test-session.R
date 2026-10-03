@@ -516,6 +516,11 @@ test_that("disabling a cell removes it from R; Rscript on the saved file still r
   expect_equal(snap_view(snap, "B")$status, "ok")
 
   edit_notebook(nb, disable_cell("A"))
+  on_disk <- read_file_utf8(path)
+  expect_match(on_disk, "## x <- 1; library(tools)", fixed = TRUE)
+  expect_match(on_disk, "## x \\+ 1")
+  expect_match(on_disk, "# B commented", fixed = TRUE)
+
   run_cells(nb, "H", wait = TRUE, timeout = 20)
   snap2 <- notebook_snapshot(nb)
   expect_equal(snap_view(snap2, "H")$output$text, "[1] FALSE FALSE")
@@ -523,8 +528,14 @@ test_that("disabling a cell removes it from R; Rscript on the saved file still r
   res <- system2(file.path(R.home("bin"), "Rscript"), shQuote(path), stdout = TRUE, stderr = TRUE)
   expect_equal(attr(res, "status") %||% 0, 0)
 
+  b_before <- snap_view(snap2, "B")
   edit_notebook(nb, disable_cell("A", FALSE))
   run_cells(nb, "A", wait = TRUE, timeout = 20)
   snap3 <- notebook_snapshot(nb)
-  expect_equal(snap_view(snap3, "B")$status, "ok")
+  b_after <- snap_view(snap3, "B")
+  expect_equal(b_after$status, "ok")
+  # Not just "still ok" (it was never cleared): B actually reran, so its
+  # stale flag is down and its run time has moved on.
+  expect_false(isTRUE(b_after$stale))
+  expect_true(b_after$last_run > b_before$last_run)
 })

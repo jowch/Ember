@@ -1099,6 +1099,11 @@ test_that("ev_run(NULL) skips off cells; a run request naming an off cell doesn'
   s4$results$S$stale <- TRUE
   r4 <- drive(s4, ev_run("A", at(22)))
   expect_equal(r4$state$pending, character())
+  expect_equal(r4$reply$queued, character())
+  expect_null(r4$state$worker$running)
+  expect_false(any(vapply(r4$effects, function(e) {
+    identical(e$type, "send") && identical(e$msg$type, "run")
+  }, logical(1))))
 })
 
 test_that("enabling a cell runs it and queues its dependent, in both modes (ui-3 26)", {
@@ -1196,7 +1201,7 @@ test_that("disabling in safe preview has no worker effects but still marks the c
   expect_equal(Filter(function(e) identical(e$type, "send"), r$effects), list())
 })
 
-test_that("disabling one of two definers clears the clash and the dependent's result goes stale (ui-3 31)", {
+test_that("disabling one of two definers clears the clash and marks both the other definer and the dependent stale (ui-3 31)", {
   a2 <- "22222222-2222-4222-8222-222222222222"
   s <- fake_state(list(S = cell(""), A = cell("x <- 1"), C = cell("x + 1")))
   r <- boot(s, c("A", "C"))
@@ -1205,21 +1210,34 @@ test_that("disabling one of two definers clears the clash and the dependent's re
   expect_equal(r$state$results$A$status, "ok")
   expect_equal(r$state$results$C$status, "ok")
 
-  r2 <- drive(r$state, ev_apply(list(op_insert(a2, 3, "x <- 2")), at(20)))
+  # A2 defines an unrelated name at first, so it gets a result of its own
+  # before it ever clashes with A: the spec's "A2 and C have results" means
+  # A2 really has run, not merely that the graph would let it.
+  r2 <- drive(r$state, ev_apply(list(op_insert(a2, 3, "y <- 1")), at(20)))
+  r2 <- drive(r2$state, ev_run(a2, at(21)))
+  r2 <- drive(r2$state, wk_done(1, r2$state$worker$running$token, report(created = "y"), at(22)))
+  expect_equal(r2$state$results[[a2]]$status, "ok")
+
+  # Editing A2 to also define x creates the clash; the edit alone keeps A2's
+  # old result (an edit never invalidates anything by itself).
+  r2 <- drive(r2$state, ev_apply(list(op_set_code(a2, "x <- 2", expected = "y <- 1")), at(23)))
   expect_length(Filter(function(e) e$kind == "multiple_definitions", r2$state$graph$errors), 1)
+  expect_equal(r2$state$results[[a2]]$status, "ok")
+  expect_false(isTRUE(r2$state$results[[a2]]$stale))
   expect_equal(r2$state$results$A$status, "ok")   # the clash alone invalidates nothing
 
-  r3 <- drive(r2$state, ev_apply(list(op_disable("A")), at(21)))
+  r3 <- drive(r2$state, ev_apply(list(op_disable("A")), at(24)))
   expect_length(r3$state$graph$errors, 0)
   sends <- Filter(function(e) identical(e$type, "send"), r3$effects)
   expect_equal(length(sends), 1)
   expect_equal(sends[[1]]$msg$type, "remove_cell")
   expect_equal(sends[[1]]$msg$cell, "A")
   expect_true(isTRUE(r3$state$results$A$stale))
+  expect_true(isTRUE(r3$state$results[[a2]]$stale))   # marked by the owners pass
   expect_true(isTRUE(r3$state$results$C$stale))
   expect_equal(r3$state$pending, character())
 
-  r4 <- drive(r3$state, ev_run("C", at(22)))
+  r4 <- drive(r3$state, ev_run("C", at(25)))
   expect_equal(r4$reply$queued, c(a2, "C"))
 })
 

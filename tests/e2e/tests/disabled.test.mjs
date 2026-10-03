@@ -62,6 +62,11 @@ test("disable cell: toggling off then on, with the file and classes surviving a 
   await page.waitForSelector(`${cellSelector("A")}.running_disabled`, { timeout: 20000 });
   assert.equal(await page.locator(`${cellSelector("B")}.depends_on_disabled_cells`).count(), 1);
 
+  const beforeEnable = await page.evaluate(() => {
+    const cr = window.editor_state.notebook.cell_results;
+    return { aTs: cr["A"]?.output?.last_run_timestamp ?? 0, bTs: cr["B"]?.output?.last_run_timestamp ?? 0 };
+  });
+
   await page.hover(cellSelector("A"));
   await page.locator(`${cellSelector("A")} button.input_context_menu`).click();
   const enableItem = page.locator(`${cellSelector("A")} button.disable_cell`);
@@ -74,6 +79,20 @@ test("disable cell: toggling off then on, with the file and classes surviving a 
   await page.waitForFunction(
     (sel) => !document.querySelector(sel)?.classList.contains("depends_on_disabled_cells"),
     cellSelector("B"), { timeout: 20000 });
+
+  // B's dimmed/stale state genuinely clears (not just the CSS class driven
+  // by depends_on_disabled_cells), and A really reran -- its own run
+  // timestamp moved on, not merely its disabled flag flipping -- which in
+  // turn is what reruns B in autorun.
+  await page.waitForFunction(
+    (before) => {
+      const cr = window.editor_state.notebook.cell_results;
+      const aTs = cr["A"]?.output?.last_run_timestamp ?? 0;
+      const bTs = cr["B"]?.output?.last_run_timestamp ?? 0;
+      return cr["B"]?.ember?.stale === false && aTs > before.aTs && bTs > before.bTs;
+    },
+    beforeEnable, { timeout: 20000 });
+
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("2"),
     cellSelector("B") + " pluto-output", { timeout: 20000 });
