@@ -328,16 +328,16 @@ const pathhints =
                 })
 
                 if (suggest_new_file != null) {
-                    for (let initLength = 3; initLength >= 0; initLength--) {
-                        const init = ".jl".substring(0, initLength)
+                    for (let initLength = 2; initLength >= 0; initLength--) {
+                        const init = ".R".substring(0, initLength)
                         if (queryFileName.endsWith(init)) {
-                            let suggestedFileName = queryFileName + ".jl".substring(initLength)
+                            let suggestedFileName = queryFileName + ".R".substring(initLength)
 
-                            if (suggestedFileName == ".jl") {
-                                suggestedFileName = "notebook.jl"
+                            if (suggestedFileName == ".R") {
+                                suggestedFileName = "notebook.R"
                             }
 
-                            if (initLength == 3) {
+                            if (initLength == 2) {
                                 return null
                             }
                             if (!results.includes(suggestedFileName)) {

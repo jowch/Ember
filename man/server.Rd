@@ -53,9 +53,11 @@ include a port (\code{"ember.example.org:8443"}, accepted only on that port)
 or be bare (\code{"ember.example.org"}, accepted on any port). A request's
 \code{Origin}, when present, must still equal its \code{Host} exactly; listing a
 host here never allows a \emph{different} origin to connect. Default: none.}
-\item{path}{A notebook file for \code{start_server()} to open, or \code{NULL} for
-none.}
-\item{open}{Open the notebook in the browser once the child is listening.}
+\item{path}{A notebook file for \code{start_server()} to open, or \code{NULL} to
+open the start page instead. New notebooks created from the start page
+default to the folder this R session started in.}
+\item{open}{Open the notebook (or, with no \code{path}, the start page) in the
+browser once the child is listening.}
 \item{timeout}{Seconds to wait for the child process to report that it is
 listening.}
 \item{server}{The \code{ember_server} value passed to \code{on_ready()}.}
@@ -89,6 +91,12 @@ engine both use \pkg{later}, so nothing here blocks it. A browser tab's view
 of a notebook is kept in sync by diffing the engine's current state against
 what that tab was last sent, after every change and at the end of every
 request; a page that changes nothing receives nothing.
+
+A server's base URL (\code{/}) is its own start page: hosted and recently
+opened notebooks, "New notebook" and "Open a file". New notebooks default
+to the folder the server was started in. The recent list is a single file
+per user under \code{tools::R_user_dir("ember", "data")}, shared by every
+Ember server that user runs, whatever the port.
 
 \code{start_server()} is for interactive use: running \pkg{httpuv} in the current
 R session would freeze it whenever that session is busy running cells, so

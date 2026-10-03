@@ -4,7 +4,7 @@
 // that prefix to Ember's real port with the prefix stripped -- the usual
 // model for all three (the backend is never told what prefix it's mounted
 // under, which is why every URL Ember itself builds has to be relative; see
-// R/server.R's http_open() and http_index()). No npm dependency: plain
+// R/server.R's http_open() and http_start()). No npm dependency: plain
 // `http` for requests, `net` for the raw TCP half of a websocket upgrade.
 
 import http from "node:http";

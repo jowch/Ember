@@ -59,3 +59,22 @@ test_that("complete_path(): prefix match, dirs_only, hidden entries, byte offset
   expect_equal(unlist(r_hidden$results), ".hidden")
   expect_equal(r_hidden$start, 0L)
 })
+
+test_that("first_free_notebook_name(): notebook.R, then notebook-2.R, notebook-3.R, ...", {
+  dir <- tempfile("ember-free-name-")
+  dir.create(dir)
+  expect_equal(first_free_notebook_name(dir), "notebook.R")
+
+  writeLines("", file.path(dir, "notebook.R"))
+  expect_equal(first_free_notebook_name(dir), "notebook-2.R")
+
+  writeLines("", file.path(dir, "notebook-2.R"))
+  expect_equal(first_free_notebook_name(dir), "notebook-3.R")
+})
+
+test_that("home_relative_folder(): abbreviates the home folder to ~, leaves other paths alone", {
+  home <- path.expand("~")
+  expect_equal(home_relative_folder(home), "~")
+  expect_equal(home_relative_folder(file.path(home, "projects")), file.path("~", "projects"))
+  expect_equal(home_relative_folder("/not/home"), "/not/home")
+})

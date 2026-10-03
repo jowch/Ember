@@ -58,9 +58,10 @@ test("reverse proxy: the bare prefix (no trailing slash) resolves its relative l
   // once forwarded, so this process can't tell which one the browser
   // actually requested (it never learns the prefix at all). This test
   // demonstrates the gap docs/design-gaps.md records, rather than a bug in
-  // Ember's own output: http_index()'s "edit?id=..." link is correct
-  // relative to a trailing-slash URL, and wrong relative to a bare one --
-  // that is simply what a relative link does.
+  // Ember's own output: http_open()'s "Location: edit?id=..." (also what
+  // the start page's ember_new_notebook/ember_open_notebook replies carry)
+  // is correct relative to a trailing-slash URL, and wrong relative to a
+  // bare one -- that is simply what a relative link does.
   const notebook = tempNotebook();
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "reverse-proxy-bare.server.log") });
   const emberPort = Number(new URL(server.url).port);
@@ -68,16 +69,19 @@ test("reverse proxy: the bare prefix (no trailing slash) resolves its relative l
   const proxy = await startReverseProxy(emberPort, prefix);
   t.after(() => { server.stop(); proxy.stop(); });
 
-  const res = await fetch(`http://127.0.0.1:${proxy.port}${prefix}?secret=${server.secret}`);
-  const html = await res.text();
-  const m = html.match(/<a href="(edit\?id=[^"]+)">/);
-  assert.ok(m, "the index page has a relative edit link");
+  // The real relative URL Ember hands back for a notebook (the same
+  // string the start page's ember_new_notebook/ember_open_notebook
+  // replies carry, and what /open redirects to): "edit?id=...&secret=...".
+  const qs = `path=${encodeURIComponent(notebook)}&secret=${server.secret}`;
+  const res = await fetch(`http://127.0.0.1:${proxy.port}${prefix}/open?${qs}`, { redirect: "manual" });
+  const location = res.headers.get("location");
+  assert.match(location ?? "", /^edit\?id=/, "the /open redirect is a relative edit link");
 
-  // What the browser would actually do: resolve the relative link against
-  // the bare prefix URL it's really at (no trailing slash), landing one
-  // path segment too high -- at ".../p/edit?..." instead of
-  // ".../p/1/edit?...".
-  const resolved = new URL(m[1], `http://127.0.0.1:${proxy.port}${prefix}`);
+  // What the browser would actually do if it used that same relative
+  // string from the bare-prefix start page (no trailing slash): resolve
+  // it against the page it's really at, landing one path segment too
+  // high -- at ".../p/edit?..." instead of ".../p/1/edit?...".
+  const resolved = new URL(location, `http://127.0.0.1:${proxy.port}${prefix}`);
   assert.equal(resolved.pathname, "/s/def456/p/edit", "resolves one level too high, as the doc note says");
   assert.notEqual(resolved.pathname, `${prefix}/edit`);
 });

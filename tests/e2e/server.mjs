@@ -58,7 +58,7 @@ export function tempNotebook(name = "basic.R") {
  * since the exact wording isn't an R-level API this depends on. */
 const BIND_FAILURE_RE = /address already in use|eaddrinuse/i;
 
-async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript }) {
+async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd }) {
   const rscript = process.env.EMBER_RSCRIPT ?? "Rscript";
   const quoted = notebookPaths.map((p) => JSON.stringify(p)).join(", ");
   const port = await freePort();
@@ -76,6 +76,11 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   const child = spawn(rscript, ["--vanilla", "-e", expr], {
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, R_USER_DATA_DIR: dataDir },
+    // `new_server()`'s `start_dir` (the start page's default Folder for a
+    // new notebook) is wherever this child's cwd is; default to the
+    // parent's own, same as spawn()'s own default, so tests that care
+    // (start-page.test.mjs) can pin it to a fixture folder instead.
+    cwd,
   });
 
   let buffer = "";
@@ -128,11 +133,11 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
  * something actually wrong, not a race, and retrying would only hide it
  * behind a slower, equally failing attempt. */
 export async function startServer(notebookPaths, opts = {}) {
-  const { timeoutMs = 30000, logFile, retries = 3, installerScript } = opts;
+  const { timeoutMs = 30000, logFile, retries = 3, installerScript, cwd } = opts;
   let lastErr;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      return await startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript });
+      return await startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd });
     } catch (err) {
       if (!err.bindFailure || attempt === retries) throw err;
       lastErr = err;

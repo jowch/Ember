@@ -82,10 +82,13 @@ serve <- function(paths = character(), port = 0L, secret = random_secret(32),
 #' variable (not argv, which other users can read), and this call waits for
 #' the child's "listening" line to learn the port.
 #'
-#' @param path Notebook to open, or NULL for none.
+#' @param path Notebook to open, or NULL to open the start page instead
+#'   (new notebooks there default to the folder this R session started
+#'   in).
 #' @param port Port on 127.0.0.1; 0 tries the stable default (see
 #'   `pick_default_port()`) and falls back to a free one.
-#' @param open Open the notebook in the browser.
+#' @param open Open the notebook (or, with no `path`, the start page) in
+#'   the browser.
 #' @param timeout Seconds to wait for the child to listen.
 #' @param allowed_hosts `Host` names (with or without `:<port>`) to accept
 #'   besides loopback, for a reverse proxy; see `serve()`'s doc.
@@ -169,9 +172,13 @@ start_server <- function(path = NULL, port = 0L, open = interactive(), timeout =
   }
   class(handle) <- "ember_server_handle"
 
-  if (isTRUE(open) && !is.null(path)) {
-    edit <- handle$open(path)
-    utils::browseURL(edit)
+  if (isTRUE(open)) {
+    if (!is.null(path)) {
+      edit <- handle$open(path)
+      utils::browseURL(edit)
+    } else {
+      utils::browseURL(handle$url)
+    }
   }
   handle
 }
@@ -221,10 +228,13 @@ stop_server <- function(server) { server$stopped <- TRUE; invisible(NULL) }
 #'
 #' * `secret`, `port`, `http` (httpuv handle or NULL in tests),
 #'   `stopped` (logical), `frontend` (the vendored frontend folder),
-#'   `allowed_hosts` (character, see `origin_ok()`'s doc).
+#'   `allowed_hosts` (character, see `origin_ok()`'s doc), `start_dir`
+#'   (the folder this process was in when the server started; the start
+#'   page's default Folder for a new notebook).
 #' * `hubs`: environment, notebook id -> hub (environment: `nb`, `proj`
 #'   (`ember_pluto_state` or NULL), `owned`, `due` (a flush is scheduled),
-#'   `last_flush` (time), `unsubscribe`).
+#'   `last_flush` (time), `path` (the notebook's path as of the last
+#'   `on_note()`, to notice a move; set at `host_notebook()`), `unsubscribe`).
 #' * `clients`: environment, client id -> client (environment: `id`, `ws`
 #'   (anything with `$send(raw)`), `notebook_id` (set by connect), `sent`
 #'   (the frontend object as this client has it, or NULL before its first
@@ -249,6 +259,11 @@ new_server <- function(secret, frontend = system.file("frontend", package = "emb
   server$clients <- new.env(parent = emptyenv())
   server$deps <- new.env(parent = emptyenv())
   server$counter <- 0L
+  # Where Ember was started: the default Folder for a new notebook (the
+  # start page's `ember_start_page` reply). `start_server()`'s child
+  # inherits this process's working directory (processx's default), so
+  # this is "where Ember was started" for both entry points.
+  server$start_dir <- getwd()
   class(server) <- "ember_server"
   server
 }
@@ -684,6 +699,10 @@ on_run <- function(server, cl, hub, req) {
 #' | ember_apply_update             | {date}: set_date(hub$nb, date); a refusal is logged. Flush. No reply |
 #' | ember_cancel_update            | dispatch ev_cancel_preview(); flush. No reply                        |
 #' | ember_move_notebook            | {name, folder}: notebook_target_path() + move_notebook(); reply {path} or {error}; flush |
+#' | ember_start_page               | {}: reply start_page_reply() -- start_dir, new_name, open and recent notebooks. No hub |
+#' | ember_new_notebook             | {name, folder}: notebook_target_path() + new_notebook() + host_notebook(owned = TRUE); reply {url} or {error}. No hub |
+#' | ember_open_notebook            | {path}: open_or_find() (shared with /open); reply {url} or {error}. No hub |
+#' | ember_forget_recent            | {path}: forget_notebook(), then the ember_start_page reply. No hub |
 #' | request_js_link_response, nbpkg_available_versions, nbpkg_get_project_toml, nbpkg_set_project_toml, pkg_update | Julia-only; their UI is disabled in the frontend. Logged, no reply |
 #'
 #' Replies use the reply type Pluto uses for each (connect "👋", ping
@@ -970,8 +989,70 @@ handlers <- list(
     }, ember_refused = function(e) list(error = conditionMessage(e)))
     send(cl, reply_message(req, "ember_move_notebook", result))
     flush_clients(server, hub)
+  },
+
+  #' The start page's own sync: no hub needed, never any flush. See
+  #' `start_page_reply()`.
+  ember_start_page = function(server, cl, hub, req) {
+    send(cl, reply_message(req, "ember_start_page", start_page_reply(server)))
+  },
+
+  #' The start page's New notebook: `notebook_target_path()` then
+  #' `new_notebook()` (refuses an existing file) then `host_notebook(owned
+  #' = TRUE)`, replying `{url}` (relative, as `http_open()`'s redirect) or
+  #' `{error}`.
+  ember_new_notebook = function(server, cl, hub, req) {
+    b <- req$body
+    result <- tryCatch({
+      target <- notebook_target_path(b$name, b$folder)
+      nb <- new_notebook(target)
+      host_notebook(server, nb, owned = TRUE)
+      list(url = relative_edit_url(server, notebook_state(nb)$id))
+    }, error = function(e) list(error = conditionMessage(e)))
+    send(cl, reply_message(req, "ember_new_notebook", result))
+  },
+
+  #' The start page's "Open a file": `open_or_find()` (the same function
+  #' `/open` uses), replying `{url}` or `{error}`.
+  ember_open_notebook = function(server, cl, hub, req) {
+    result <- tryCatch(
+      list(url = relative_edit_url(server, open_or_find(server, req$body$path))),
+      error = function(e) list(error = conditionMessage(e)))
+    send(cl, reply_message(req, "ember_open_notebook", result))
+  },
+
+  #' The start page's "Forget": `forget_notebook()`, then the same reply
+  #' `ember_start_page` sends, so the page can refresh its list from one
+  #' handler either way.
+  ember_forget_recent = function(server, cl, hub, req) {
+    forget_notebook(req$body$path)
+    send(cl, reply_message(req, "ember_start_page", start_page_reply(server)))
   }
 )
+
+#' The `ember_start_page` reply: `start_dir` and the default new-notebook
+#' name, every hosted notebook under `open`, and every remembered path not
+#' already open and still on disk under `recent`. Folders are shown with
+#' `home_relative_folder()`, as the board does.
+start_page_reply <- function(server) {
+  ids <- ls(server$hubs)
+  open <- lapply(ids, function(id) {
+    hub <- get(id, envir = server$hubs)
+    snap <- notebook_snapshot(hub$nb)
+    list(notebook_id = id, path = snap$path, name = basename(snap$path),
+        folder = home_relative_folder(dirname(snap$path)),
+        process = snap$process, worker_memory = snap$worker_memory,
+        owned = isTRUE(hub$owned))
+  })
+  open_paths <- vapply(open, function(o) o$path, character(1))
+  recent_paths <- Filter(function(p) !(p %in% open_paths) && file.exists(p), read_recent())
+  recent <- lapply(recent_paths, function(p) {
+    list(path = p, name = basename(p), folder = home_relative_folder(dirname(p)))
+  })
+  list(start_dir = home_relative_folder(server$start_dir),
+      new_name = first_free_notebook_name(server$start_dir),
+      open = open, recent = recent)
+}
 
 #' Julia-only requests the frontend still sends in some flows; Ember has no
 #' answer and none is needed (their UI is disabled). Logged, no reply so the
@@ -1180,9 +1261,9 @@ http_text <- function(status, body, content_type = "text/plain; charset=utf-8", 
       body = body)
 }
 
-#' Escape text written into HTML this server generates itself (`http_index()`):
-#' a notebook's path is attacker-influenced in principle (whatever `/open`
-#' was given) even though opening one already requires the secret.
+#' Escape text written into HTML: used wherever R-side code builds an HTML
+#' string with attacker-influenced content (editor-services.R's docs
+#' pages, text-cells.R's error dump, pluto-state.R's error messages).
 html_escape <- function(x) {
   x <- gsub("&", "&amp;", x, fixed = TRUE)
   x <- gsub("<", "&lt;", x, fixed = TRUE)
@@ -1210,37 +1291,41 @@ http_edit <- function(server, req) {
                 "Cache-Control" = "no-cache"))
 }
 
+#' Find `path` among this server's hosted notebooks, or open and host it
+#' (owned), and return its notebook id. Shared by `http_open()` (`/open`,
+#' a bookmark or `start_server()$open()`) and the start page's
+#' `ember_open_notebook` ("Open a file"). Propagates `open_notebook()`'s
+#' error (a bad path, a parse failure) to the caller.
+open_or_find <- function(server, path) {
+  norm <- normalizePath(path, mustWork = FALSE)
+  for (id in ls(server$hubs)) {
+    hub <- get(id, envir = server$hubs)
+    if (identical(normalizePath(notebook_state(hub$nb)$path, mustWork = FALSE), norm)) return(id)
+  }
+  nb <- open_notebook(path)
+  host_notebook(server, nb, owned = TRUE)
+  notebook_state(nb)$id
+}
+
+#' The relative edit URL for notebook `id`: what `http_open()`'s redirect
+#' and the start page's `ember_new_notebook`/`ember_open_notebook` replies
+#' hand back. Relative, not "/edit?...": a reverse proxy serving Ember
+#' under a path prefix (design.md, Processes) forwards this request's
+#' path unprefixed (the standard JupyterHub/Workbench/VS Code model), so
+#' this process never sees the prefix and can't spell an absolute path
+#' under it; a relative URL is resolved by the browser against *its* own
+#' URL, which does carry the prefix, and lands in the right place either
+#' way (design-gaps.md, "Remote use behind a path prefix").
+relative_edit_url <- function(server, id) sprintf("edit?id=%s&secret=%s", id, server$secret)
+
 #' `GET /open?path=` -> open (or find) the notebook, host it owned, redirect
 #' to its edit URL: the route a bookmark or start_server()$open() uses.
 http_open <- function(server, req) {
   q <- parse_query_string(req$QUERY_STRING)
   if (is.null(q$path) || !nzchar(q$path)) return(http_text(400L, "missing path"))
-  norm <- normalizePath(q$path, mustWork = FALSE)
-
-  existing_id <- NULL
-  for (id in ls(server$hubs)) {
-    hub <- get(id, envir = server$hubs)
-    if (identical(normalizePath(notebook_state(hub$nb)$path, mustWork = FALSE), norm)) {
-      existing_id <- id
-      break
-    }
-  }
-  id <- if (!is.null(existing_id)) existing_id else {
-    nb <- tryCatch(open_notebook(q$path), error = function(e) e)
-    if (inherits(nb, "error")) return(http_text(400L, paste("could not open:", conditionMessage(nb))))
-    host_notebook(server, nb, owned = TRUE)
-    notebook_state(nb)$id
-  }
-  # Relative, not "/edit?...": a reverse proxy serving Ember under a path
-  # prefix (design.md, Processes) forwards this request's path unprefixed
-  # (the standard JupyterHub/Workbench/VS Code model), so this process never
-  # sees the prefix and can't spell an absolute path under it; a relative
-  # Location is resolved by the browser against *its* URL, which does carry
-  # the prefix, and lands in the right place either way (design-gaps.md,
-  # "Remote use behind a path prefix").
-  list(status = 302L,
-      headers = list("Location" = sprintf("edit?id=%s&secret=%s", id, server$secret)),
-      body = "")
+  id <- tryCatch(open_or_find(server, q$path), error = function(e) e)
+  if (inherits(id, "error")) return(http_text(400L, paste("could not open:", conditionMessage(id))))
+  list(status = 302L, headers = list("Location" = relative_edit_url(server, id)), body = "")
 }
 
 #' `GET /notebookfile?id=` -> the notebook file's text, as Pluto serves it
@@ -1263,21 +1348,24 @@ http_notebookexport <- function(server, req) {
   http_text(200L, export_html(notebook_state(hub$nb)), "text/html; charset=utf-8")
 }
 
-#' `GET /` -> a plain list of hosted notebooks with their edit links. This is
-#' Ember's own page, not Pluto's Julia welcome screen: `http_app()` turns off
-#' the static server's automatic `index.html` for `/` so this is what a
+#' `GET /` -> start.html, Ember's own start page: a "My notebooks" list
+#' (open, then recent, each with a "Forget") and "Open a file", built by
+#' StartPage.js from the `ember_start_page` request. This is Ember's own
+#' page, not Pluto's Julia welcome screen: `http_app()` turns off the
+#' static server's automatic `index.html` for `/` so this is what a
 #' browser actually sees there (the welcome screen's own assets still work
-#' at their own paths; nothing else changes).
-http_index <- function(server, req) {
-  ids <- ls(server$hubs)
-  items <- vapply(ids, function(id) {
-    hub <- get(id, envir = server$hubs)
-    st <- notebook_state(hub$nb)
-    sprintf('<li><a href="edit?id=%s&secret=%s">%s</a></li>',
-           html_escape(st$id), html_escape(server$secret), html_escape(st$path))
-  }, character(1))
-  body <- paste0("<html><body><h1>ember</h1><ul>", paste(items, collapse = ""), "</ul></body></html>")
-  http_text(200L, body, "text/html; charset=utf-8")
+#' at their own paths; nothing else changes), and excludes `start.html`
+#' from static serving so a direct request for it still goes through the
+#' secret check below, the same reason `editor.html` is excluded. Sets the
+#' secret cookie, as `http_edit()` does, so a link the page shows to
+#' `/edit` (once a notebook is created or opened) lands on a page that
+#' already has it.
+http_start <- function(server, req) {
+  body <- read_file_utf8(file.path(server$frontend, "start.html"))
+  http_text(200L, body, "text/html; charset=utf-8",
+           list("Set-Cookie" = sprintf("%s=%s; SameSite=Strict; HttpOnly; Path=/",
+                                       cookie_name(server), server$secret),
+                "Cache-Control" = "no-cache"))
 }
 
 #' Routes that require the secret as a query parameter, never the cookie
@@ -1295,19 +1383,20 @@ http_call <- function(server, req) {
     "/open" = http_open(server, req),
     "/notebookfile" = http_notebookfile(server, req),
     "/notebookexport" = http_notebookexport(server, req),
-    "/" = http_index(server, req),
+    "/" = http_start(server, req),
     http_text(404L, "not found"))
 }
 
 #' The httpuv app.
 #'
 #' * Static files (`staticPaths`, served on httpuv's thread without R):
-#'   everything under the frontend folder except editor.html (excluded so it
-#'   always reaches `call`, which checks the secret) and `/`'s automatic
-#'   `index.html` (`indexhtml = FALSE`: without it, a request for exactly
-#'   `/` would be answered with Pluto's own Julia welcome page -- a file
-#'   that happens to exist in the vendored frontend folder -- before `call`
-#'   ever sees it; see `http_index()`). No secret on static files otherwise:
+#'   everything under the frontend folder except editor.html and
+#'   start.html (excluded so they always reach `call`, which checks the
+#'   secret) and `/`'s automatic `index.html` (`indexhtml = FALSE`:
+#'   without it, a request for exactly `/` would be answered with Pluto's
+#'   own Julia welcome page -- a file that happens to exist in the
+#'   vendored frontend folder -- before `call` ever sees it; see
+#'   `http_start()`). No secret on static files otherwise:
 #'   the frontend's code is not private (Pluto exempts .js/.css too).
 #'   `imports/vendor` is its own, more specific static path (httpuv matches
 #'   the longest prefix): its files are content-hashed, so they get a long,
@@ -1338,7 +1427,8 @@ http_app <- function(server) {
         headers = list("Cache-Control" = "public, max-age=31536000, immutable")),
       "/" = httpuv::staticPath(server$frontend, fallthrough = TRUE, indexhtml = FALSE,
                                headers = list("Cache-Control" = "no-cache")),
-      "/editor.html" = httpuv::excludeStaticPath()
+      "/editor.html" = httpuv::excludeStaticPath(),
+      "/start.html" = httpuv::excludeStaticPath()
     ),
     onWSOpen = function(ws) {
       if (!origin_ok(server, ws$request) || !secret_ok_ws(server, ws$request)) {

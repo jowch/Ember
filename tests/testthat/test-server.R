@@ -488,7 +488,8 @@ test_that("every request type in the handler table is answered as documented (36
   answered <- c("connect", "ping", "current_time", "update_notebook", "run_multiple_cells",
                "restart_process", "reset_shared_state", "complete", "complete_symbols", "docs",
                "all_registered_package_names", "completepath", "get_all_notebooks", "ember_signature",
-               "ember_update_packages", "ember_move_notebook")
+               "ember_update_packages", "ember_move_notebook", "ember_start_page", "ember_new_notebook",
+               "ember_open_notebook", "ember_forget_recent")
   silent <- c("interrupt_all", "shutdown_notebook", "reshow_cell", "ember_render_plot",
              "ember_run_all", "ember_split_cell", "ember_apply_update", "ember_cancel_update",
              "request_js_link_response", "nbpkg_available_versions",
@@ -893,14 +894,10 @@ test_that("two servers on different ports don't share a cookie name (review4 5)"
   expect_equal(resp2$status, 403L)
 })
 
-# ---- review4 item 10: "/" is Ember's own index, and it escapes its HTML ----
+# ---- review4 item 10 / ui-3 96: "/" is Ember's own start page -------------
 
-test_that("\"/\" serves Ember's own index, not Pluto's vendored welcome page (review4 10)", {
-  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
-  nb <- open_notebook(path)
-  on.exit(close_notebook(nb), add = TRUE)
+test_that("GET /?secret= serves start.html with the cookie; without the secret it gives 403 (96)", {
   server <- new_server("s", throttle = 0)
-  host_notebook(server, nb)
 
   # httpuv auto-serves a folder's index.html for "/" unless told not to;
   # frontend/index.html is Pluto's own welcome screen (vendored, unrelated
@@ -908,10 +905,16 @@ test_that("\"/\" serves Ember's own index, not Pluto's vendored welcome page (re
   # http_call()'s own "/" route below and a browser would never see it.
   app <- http_app(server)
   expect_false(app$staticPaths[["/"]]$options$indexhtml)
+  expect_true(isTRUE(app$staticPaths[["/start.html"]]$options$exclude))
 
   resp <- http_call(server, fake_req("/", "secret=s"))
   expect_equal(resp$status, 200L)
-  expect_match(resp$body, "<h1>ember</h1>")
+  expect_match(resp$body, "ember-start-root")
+  expect_false(grepl("welcome to pluto", resp$body, ignore.case = TRUE))
+  expect_match(resp$headers[["Set-Cookie"]], "ember_secret", fixed = TRUE)
+
+  denied <- http_call(server, fake_req("/"))
+  expect_equal(denied$status, 403L)
 })
 
 # ---- Remote use: a stable default port -----------------------------------
@@ -946,22 +949,6 @@ test_that("serve() with no port given binds 4321 when it's free (remote use: sta
     stop_server(server)
   })
   expect_equal(bound_port, 4321L)
-})
-
-test_that("http_index() escapes a notebook's path into its HTML (review4 10)", {
-  # Windows forbids < and > in file names; a quote that breaks out of an
-  # attribute is the same attack and is allowed everywhere.
-  evil_dir <- file.path(tempdir(), "ember-nb-' onmouseover='alert(1)&x")
-  dir.create(evil_dir, recursive = TRUE, showWarnings = FALSE)
-  path <- write_session_notebook(list(S = cell(""), A = cell("1")), dir = evil_dir)
-  nb <- open_notebook(path)
-  on.exit(close_notebook(nb), add = TRUE)
-  server <- new_server("s", throttle = 0)
-  host_notebook(server, nb)
-
-  resp <- http_call(server, fake_req("/", "secret=s"))
-  expect_false(grepl("' onmouseover='alert(1)&x", resp$body, fixed = TRUE))
-  expect_match(resp$body, "&#39; onmouseover=&#39;alert(1)&amp;x", fixed = TRUE)
 })
 
 # ---- Rich outputs: dependency files, reshow_cell, ember_render_plot (35-38) --
@@ -1199,6 +1186,117 @@ test_that("ember_move_notebook refuses an existing name, then moves and patches 
   expect_equal(notebook_state(nb)$path, new_path)
   expect_equal(ws$page()$path, new_path)
   expect_equal(ws$page()$shortpath, "renamed.R")
+})
+
+# ---- The start page: ember_start_page, ember_new_notebook, ----------------
+# ---- ember_open_notebook, ember_forget_recent (92, 93) --------------------
+
+test_that("ember_new_notebook replies a url starting edit?id=, hosts the file as owned, and is remembered; the same name again refuses (92)", {
+  dir <- tempfile("ember-start-new-")
+  dir.create(dir)
+  server <- new_server("s", throttle = 0)
+  server$start_dir <- dir
+  ws <- fake_socket()
+
+  handle_message(server, ws, wire("ember_new_notebook", name = "fit", folder = dir))
+  r1 <- ws$last()
+  expect_match(r1$message$url, "^edit\\?id=")
+  target <- file.path(dir, "fit.R")
+  expect_true(file.exists(target))
+  expect_match(read_file_utf8(target), "ember_version", fixed = FALSE)
+  expect_length(ls(server$hubs), 1L)
+  hub <- get(ls(server$hubs)[1], envir = server$hubs)
+  expect_true(isTRUE(hub$owned))
+  on.exit(close_notebook(hub$nb), add = TRUE)
+  expect_true(target %in% read_recent())
+
+  handle_message(server, ws, wire("ember_new_notebook", name = "fit", folder = dir))
+  r2 <- ws$last()
+  expect_true(is.character(r2$message$error))
+  expect_match(r2$message$error, "fit", fixed = TRUE)
+})
+
+test_that("ember_start_page lists a hosted notebook under open and a remembered, closed path under recent; a missing recent file is left out (93)", {
+  dir <- tempfile("ember-start-page-")
+  dir.create(dir)
+  server <- new_server("s", throttle = 0)
+  server$start_dir <- dir
+
+  open_path <- write_session_notebook(list(S = cell(""), A = cell("1")), dir = dir)
+  nb <- open_notebook(open_path)
+  on.exit(close_notebook(nb), add = TRUE)
+  host_notebook(server, nb, owned = TRUE)
+
+  closed_path <- file.path(dir, "closed.R")
+  writeLines("# x", closed_path)
+  remember_notebook(closed_path)
+
+  missing_path <- file.path(dir, "gone.R")
+  remember_notebook(missing_path)
+
+  ws <- fake_socket()
+  handle_message(server, ws, wire("ember_start_page"))
+  reply <- ws$last()$message
+
+  expect_equal(reply$start_dir, home_relative_folder(dir))
+  expect_equal(reply$new_name, "notebook.R")
+  expect_length(reply$open, 1L)
+  expect_equal(reply$open[[1]]$path, open_path)
+  expect_equal(reply$open[[1]]$process, "preview")
+  expect_true(isTRUE(reply$open[[1]]$owned))
+
+  recent_paths <- vapply(reply$recent, function(r) r$path, character(1))
+  expect_true(closed_path %in% recent_paths)
+  expect_false(open_path %in% recent_paths)
+  expect_false(missing_path %in% recent_paths)
+})
+
+test_that("ember_forget_recent removes the path and replies the refreshed start-page list", {
+  dir <- tempfile("ember-start-forget-")
+  dir.create(dir)
+  server <- new_server("s", throttle = 0)
+  server$start_dir <- dir
+
+  path <- file.path(dir, "a.R")
+  writeLines("# x", path)
+  remember_notebook(path)
+
+  ws <- fake_socket()
+  handle_message(server, ws, wire("ember_forget_recent", path = path))
+  reply <- ws$last()$message
+  recent_paths <- vapply(reply$recent, function(r) r$path, character(1))
+  expect_false(path %in% recent_paths)
+  expect_false(path %in% read_recent())
+})
+
+test_that("ember_open_notebook finds an already-open notebook and opens a closed one, both replying a url starting edit?id=; a bad path refuses", {
+  dir <- tempfile("ember-start-open-")
+  dir.create(dir)
+  server <- new_server("s", throttle = 0)
+
+  already_open <- write_session_notebook(list(S = cell(""), A = cell("1")), dir = dir)
+  nb <- open_notebook(already_open)
+  on.exit(close_notebook(nb), add = TRUE)
+  host_notebook(server, nb, owned = TRUE)
+  before <- length(ls(server$hubs))
+
+  ws <- fake_socket()
+  handle_message(server, ws, wire("ember_open_notebook", path = already_open))
+  r1 <- ws$last()
+  expect_match(r1$message$url, "^edit\\?id=")
+  expect_equal(length(ls(server$hubs)), before)
+
+  on_disk <- file.path(dir, "closed.R")
+  writeLines("# x", on_disk)
+  handle_message(server, ws, wire("ember_open_notebook", path = on_disk))
+  r2 <- ws$last()
+  expect_match(r2$message$url, "^edit\\?id=")
+  expect_equal(length(ls(server$hubs)), before + 1L)
+  for (id in ls(server$hubs)) close_notebook(get(id, envir = server$hubs)$nb)
+
+  suppressWarnings(handle_message(server, ws, wire("ember_open_notebook", path = file.path(dir, "does-not-exist.R"))))
+  r3 <- ws$last()
+  expect_true(is.character(r3$message$error))
 })
 
 # ---- Editor services (ui-2.md, 4) -------------------------------------------

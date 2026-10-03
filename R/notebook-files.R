@@ -1,8 +1,10 @@
 # Plain functions for the browser's file-naming surfaces: turning what a
 # person typed into a notebook path (notebook_target_path(), used by the
-# start page's New notebook and the header's rename/move), and listing a
+# start page's New notebook and the header's rename/move), listing a
 # folder's entries for a typed path (complete_path(), behind Pluto's
-# completepath request).
+# completepath request), the New notebook field's default name
+# (first_free_notebook_name()), and showing a folder the way the start
+# page does (home_relative_folder()).
 
 #' A notebook file path from what a person typed.
 #'
@@ -69,4 +71,26 @@ complete_path <- function(query, dirs_only = FALSE) {
   if (length(results) > 200) results <- results[seq_len(200)]
 
   list(start = last_slash, stop = nchar(query, type = "bytes"), results = as.list(results))
+}
+
+#' The first unused name in `dir`: "notebook.R", then "notebook-2.R",
+#' "notebook-3.R", and so on. The start page's New notebook field opens
+#' with this as its default name.
+first_free_notebook_name <- function(dir) {
+  i <- 1L
+  repeat {
+    name <- if (i == 1L) "notebook.R" else sprintf("notebook-%d.R", i)
+    if (!file.exists(file.path(dir, name))) return(name)
+    i <- i + 1L
+  }
+}
+
+#' `path` with the home folder abbreviated to `"~"`, as the start page
+#' shows every folder (its own and each notebook's). A path outside the
+#' home folder is returned unchanged.
+home_relative_folder <- function(path) {
+  home <- sub("/$", "", path.expand("~"))
+  if (identical(path, home)) return("~")
+  if (startsWith(path, paste0(home, "/"))) return(paste0("~", substring(path, nchar(home) + 1L)))
+  path
 }

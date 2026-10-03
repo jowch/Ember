@@ -1,0 +1,148 @@
+/* Shared form widgets for Ember's own (non-Pluto) UI: labelled fields,
+ * text inputs, buttons, the folder-completion field (FolderField.js) and
+ * dialog text/actions/errors. Used by MoveDialog (the header's rename-or-
+ * move form) and by the start page (StartPage.js, New notebook and "Open
+ * a file"), so this lives in its own file rather than editor.css: the
+ * start page doesn't load the rest of editor.css. Relies only on the
+ * theme variables themes/light.css and dark.css define, not on anything
+ * editor.css itself adds. */
+
+:root {
+    /* Kept under its old name for other CSS and for CodeMirror code; it is
+       the system monospace stack, not JuliaMono, which Ember doesn't
+       vendor. Also set in editor.css's own `:root` -- same value, so
+       declaring it again here is harmless on pages that load both. */
+    --system-fonts-mono: ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.mono {
+    font-family: var(--system-fonts-mono);
+}
+
+.ember-dialog-text {
+    margin: 0;
+    white-space: pre-line;
+    line-height: 1.5;
+}
+
+.ember-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.ember-dialog-error {
+    color: var(--ember-danger);
+}
+
+.ember-btn {
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--pluto-output-color);
+    background: var(--header-bg-color);
+    border: 1px solid var(--ember-border);
+    border-radius: 7px;
+    padding: 6px 14px;
+    cursor: pointer;
+}
+
+.ember-btn.primary {
+    color: var(--ember-accent);
+    border-color: var(--ember-accent);
+}
+
+.ember-btn.danger {
+    color: var(--ember-danger);
+    border-color: var(--ember-danger);
+}
+
+.ember-btn:focus-visible {
+    outline: 2px solid var(--ember-focus-ring);
+    outline-offset: 2px;
+}
+
+.ember-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.ember-field label,
+.ember-field-label {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--ember-menu-muted-color);
+}
+
+.ember-text-input {
+    font: inherit;
+    font-size: 13.5px;
+    color: var(--pluto-output-color);
+    background: var(--pluto-output-bg-color);
+    border: 1px solid var(--ember-border);
+    border-radius: 7px;
+    padding: 7px 10px;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.ember-text-input:focus-visible {
+    outline: 2px solid var(--ember-focus-ring);
+    outline-offset: 1px;
+}
+
+.ember-folder-display {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    border: 1px solid var(--ember-border);
+    border-radius: 7px;
+    padding: 7px 10px;
+    font-size: 13.5px;
+}
+
+.ember-link-btn {
+    font: inherit;
+    font-size: 12.5px;
+    color: var(--ember-accent);
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+}
+
+.ember-folder-completing {
+    position: relative;
+}
+
+.ember-folder-matches {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 1;
+    margin: 0;
+    padding: 4px;
+    list-style: none;
+    max-height: 220px;
+    overflow-y: auto;
+    border: 1px solid var(--ember-border);
+    border-radius: 8px;
+    box-shadow: var(--ember-dialog-shadow);
+    background: var(--header-bg-color);
+}
+
+.ember-folder-matches li {
+    padding: 6px 8px;
+    border-radius: 5px;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.ember-folder-matches li:hover,
+.ember-folder-matches li.highlighted {
+    background: var(--ember-menu-hover-bg);
+}
