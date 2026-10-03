@@ -294,6 +294,10 @@ test_that("changing a foreign global is a multiple_definitions run error (46)", 
   err <- r2$state$results$A$error
   expect_equal(err$kind, "multiple_definitions")
   expect_true(length(err$fixes) > 0)
+  # ui-3 8: the server's own run errors drop the failed cell's globals too.
+  expect_true(any(vapply(r2$effects, function(e) {
+    identical(e$type, "send") && identical(e$msg$type, "drop_globals") && identical(e$msg$cell, "A")
+  }, logical(1))))
 })
 
 test_that("a setting change outside setup is an error; inside setup it isn't (47)", {
@@ -307,6 +311,10 @@ test_that("a setting change outside setup is an error; inside setup it isn't (47
   r <- boot(s, "A")
   r2 <- drive(r$state, wk_done(1, last_token(r), report(settings = settings), at(10)))
   expect_equal(r2$state$results$A$error$kind, "global_setting")
+  # ui-3 8: the server's own run errors drop the failed cell's globals too.
+  expect_true(any(vapply(r2$effects, function(e) {
+    identical(e$type, "send") && identical(e$msg$type, "drop_globals") && identical(e$msg$cell, "A")
+  }, logical(1))))
 
   r3 <- drive(s, ev_run("S", at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(), at(3)))
   expect_equal(last_sent(r3)$cell, "S")
@@ -758,4 +766,41 @@ test_that("a computed path from the footer stands in until every code cell has r
   r <- drive(r$state, wk_done(1, last_token(r), report(), at(20)))
   expect_length(r$state$footer_sources, 0)
   expect_false("gen/h.R" %in% notebook_file_of(r$state)$sourced$path)
+})
+
+# ---- ui-3, piece 1: errors flow downstream (docs/ui-3-tests.md) -----------
+
+test_that("lazy: a failed ancestor sends drop_globals and leaves dependents stale (ui-3 2)", {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- a")), on_cell_change = "lazy")
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "a"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(11)))
+  expect_equal(r$state$results$B$status, "ok")
+
+  r2 <- drive(r$state, ev_run("A", at(12)))
+  r2 <- drive(r2$state, wk_done(1, last_token(r2),
+                               report(status = "error", error = list(message = "boom")), at(13)))
+  expect_true(any(vapply(r2$effects, function(e) {
+    identical(e$type, "send") && identical(e$msg$type, "drop_globals") && identical(e$msg$cell, "A")
+  }, logical(1))))
+  expect_true(isTRUE(r2$state$results$B$stale))
+  expect_false("B" %in% r2$state$pending)
+})
+
+test_that("interrupting a cell sends drop_globals and leaves dependents stale (ui-3 6)", {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- a")))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "a"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(11)))
+  expect_equal(r$state$results$B$status, "ok")
+
+  r2 <- drive(r$state, ev_apply(list(op_set_code("A", "a <- 2")), at(20)), ev_run("A", at(21)))
+  tok <- r2$state$worker$running$token
+  r3 <- drive(r2$state, ev_interrupt(at(22)))
+  r4 <- drive(r3$state, wk_done(1, tok, report(status = "interrupted"), at(23)))
+  expect_true(any(vapply(r4$effects, function(e) {
+    identical(e$type, "send") && identical(e$msg$type, "drop_globals") && identical(e$msg$cell, "A")
+  }, logical(1))))
+  expect_false("B" %in% r4$state$pending)
+  expect_true(isTRUE(r4$state$results$B$stale))
 })

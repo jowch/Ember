@@ -1048,12 +1048,16 @@ reduce_wk_done <- function(state, event) {
   state$worker$interrupt <- NULL
   state$worker$restart_offered <- FALSE
 
+  effects <- list()
+  if (!identical(status, "ok")) {
+    effects <- list(fx_send(state$worker$gen, list(type = "drop_globals", cell = id)))
+  }
   if (identical(status, "ok")) {
     state <- invalidate_dependents(state, id, report$created %||% character())
   } else {
     state <- drop_downstream(state, id)
   }
-  list(state = state, effects = list(), reply = NULL)
+  list(state = state, effects = effects, reply = NULL)
 }
 
 #' Every code cell has an "ok" result in this worker, so every computed

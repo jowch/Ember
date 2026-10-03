@@ -608,6 +608,25 @@ test_that("require_and_character_only_library_tracked_for_search_path", {
   expect_false(grepl("package:emberfix2", r$output$text, fixed = TRUE))
 })
 
+test_that("drop_globals removes a cell's globals but keeps its attached packages (ui-3 12)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "x <- 1; library(tools); 2", order = c("a", "chk"))
+  expect_identical(r$status, "ok")
+  expect_true("x" %in% r$created)
+
+  h$send(list(type = "drop_globals", cell = "a"))
+  r2 <- run_and_wait(h, "chk", 2L,
+    'c(has_x = exists("x", envir = globalenv(), inherits = FALSE), has_tools = "package:tools" %in% search())',
+    order = c("a", "chk"))
+  expect_identical(r2$output$text,
+    paste(utils::capture.output(print(c(has_x = FALSE, has_tools = TRUE))), collapse = "\n"))
+
+  r3 <- run_and_wait(h, "a", 3L, "x <- 2", order = c("a", "chk"))
+  expect_identical(r3$status, "ok")
+  expect_true("x" %in% r3$created)
+})
+
 test_that("classed_condition_traceback_excludes_worker_frames", {
   h <- worker_harness()
   on.exit(h$close())

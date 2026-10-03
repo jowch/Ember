@@ -30,6 +30,8 @@
 #                ids in run order), formulas (list of formula_site)
 #   remove_cell  cell, order         drop the cell's globals, display data,
 #                                    and rebuild the search path
+#   drop_globals cell                drop a failed cell's globals, keeping
+#                                    its attached packages
 #   source_reply allow, message      only while a `source` request waits
 #   more         cell, path, dim     grow a table's or tree's paging limit
 #                                    at `path` (dim 1 rows/items, 2 columns)
@@ -178,6 +180,7 @@ handle_next <- function() {
       cell_order <<- msg$order
       rebuild_search_path()
     },
+    drop_globals = drop_globals(msg$cell),
     more = send(show_more(msg)),
     render = send(render_plot(msg)),
     complete = {
@@ -468,6 +471,17 @@ remove_cell <- function(cell) {
   owned[[cell]] <<- NULL
   display[[cell]] <<- NULL
   attached[[cell]] <<- NULL
+}
+
+#' Remove a failed cell's globals, keeping what it attached to the search
+#' path (unlike remove_cell(), which also detaches and drops display data).
+drop_globals <- function(cell) {
+  globals <- owned[[cell]]
+  if (length(globals)) {
+    existing <- intersect(globals, ls(globalenv(), all.names = TRUE))
+    if (length(existing)) rm(list = existing, envir = globalenv())
+  }
+  owned[[cell]] <<- character()
 }
 
 #' A snapshot of the named globals, for later comparison. Active bindings
