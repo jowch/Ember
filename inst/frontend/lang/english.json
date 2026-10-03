@@ -67,9 +67,6 @@
     "t_add_cell": "Add cell ({{key}})",
     "t_drag_to_move_cell": "Drag to move cell",
     "t_show_hide_code": "Show/hide code",
-    "t_cell_disabled_in_file_tooltip": "This cell is directly flagged as disabled in file. Click to know more!",
-    "t_cell_indirectly_disabled_in_file_tooltip": "This cell is indirectly flagged as disabled in file. Click to know more!",
-    "t_cell_upstreamLink": "the upstream one",
     "t_language_picker_description": "Change the language of the interface",
     
 
@@ -223,6 +220,7 @@
     "t_interrupt_cell": "Interrupt (Ctrl + Q)",
     "t_save_cell": "Save code without running",
     "t_jump_cell": "This cell depends on a disabled cell",
+    "t_jump_cell_blocked_by_error": "Blocked by an error upstream — go to it",
     "t_run_cell": "Run cell (Shift + Enter)",
     "t_help_about_tab_navigation_inside_cell": "Press <kbd>Esc</kbd> and then <kbd>Tab</kbd> to continue navigation.",
 

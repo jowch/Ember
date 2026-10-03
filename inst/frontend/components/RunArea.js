@@ -17,6 +17,7 @@ export const RunArea = ({
     depends_on_disabled_cells,
     running_disabled,
     on_jump,
+    jump_title,
 }) => {
     const on_save = on_run /* because disabled cells save without running */
 
@@ -36,7 +37,7 @@ export const RunArea = ({
     const titlemap = {
         interrupt: t("t_interrupt_cell"),
         save: t("t_save_cell"),
-        jump: t("t_jump_cell"),
+        jump: jump_title ?? t("t_jump_cell"),
         run: t("t_run_cell"),
     }
 
