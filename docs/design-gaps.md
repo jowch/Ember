@@ -36,6 +36,7 @@ done; clear out ticked items at each release.
 - [ ] A snapshot date from before the running R was released has no binaries for it, so packages build from source, and old versions may not compile on the new R (cli from 2024 on R 4.6: `Rf_findVar` removed). Detect it before installing and explain (increment 2's install plan) — missing
 - [ ] A failed install reports only "install failed, status 1" with an empty log: the installer's output (renv's and the compiler's errors) never reaches the session, so the reason is invisible in the page and in `notebook_snapshot()` — missing
 - [ ] `renv` is in Imports but used only by the installer script, so R CMD check notes it as not imported — improvised
+- [ ] Indexes are cached forever because a dated index never changes (resolve.R:84-88), but today's can: PPM may publish today's snapshot after the first fetch, so updating to today twice on one day can miss packages released later that day. Harmless, since the lock pins what was chosen; the cache could skip writing an index dated today (ui-3-plan.md, piece 4) — improvised
 
 ## UI (build step 4)
 
@@ -54,6 +55,9 @@ done; clear out ticked items at each release.
 - [ ] The page requests MathJax from the CDN after every load, even with no TeX on it; offline that is one failed request and a console error (exports included). Load it only when a cell has TeX — improvised
 - [ ] Argument tooltips stay on screen after the cursor leaves the cell (seen with `plot(` and `cat(` hints floating over later cells) — missing
 - [ ] Go-to-definition and variable links in the editor (ui-2.md piece 4e, cut from increment 2). Pluto's Julia `ScopeStateField` stays wired until it has an R replacement — missing
+- [ ] Undo after deleting a disabled cell brings it back enabled: `order_ops()` re-inserts with code only (pluto-edits.R:157-158) (ui-3-plan.md, piece 1) — improvised
+- [ ] `render_png()` with an explicit pixel size replaces the cell's stored image, so the page then shows that one-off image; it should return the bytes without storing them (ui-3-plan.md, piece 3) — improvised
+- [ ] Help's signature hint for a notebook function could show the first paragraph of its docstring (ui-3-plan.md, piece 2; not planned) — missing
 
 - [x] Remote use: the server accepted only Host `127.0.0.1:<port>` or `localhost:<port>`, so an SSH tunnel to a different local port, or any reverse proxy (Posit Workbench, JupyterHub, VS Code port forwarding), got 403. Now a loopback Host is accepted on any port when Origin matches Host (or is absent); an opt-in `allowed_hosts` argument covers a proxy that isn't loopback — missing
 - [x] Remote use behind a path prefix: the `/open` redirect and `/`'s notebook links were absolute (`/edit?...`), so a proxy serving Ember under a prefix like `/s/<id>/p/<port>/` (stripping that prefix before forwarding, the usual model) broke them once the browser followed a link built from the unprefixed path the backend sees. Both are relative now, as Pluto does — missing
@@ -75,6 +79,11 @@ done; clear out ticked items at each release.
 
 - [ ] The adapter's `run(wait = TRUE)` can't block the server; it needs `on_notebook_event()` or a promise once httpuv is in (step 4) — missing
 - [ ] Endeavor's docs still describe Pluto's restart ("then every cell runs") and a snapshot without stale state; update them there — missing
+- [ ] Endeavor takes F1 and Ctrl/Cmd + ? on `window` in the capture phase for its own shortcut sheet (endeavor/frontend/src/actions.ts:161-172), so inside Endeavor F1 never reaches Ember's "R help at the cursor" (ui-3.md, Keyboard shortcuts). Endeavor should let both keys through on Ember pages, or open Ember's sheet from ⋯ instead — missing
+- [ ] Endeavor's overrides follow the system theme (theme.ts:77, 139, 196), not Ember's Theme setting; an Ember set to Dark on a light system shows Endeavor's overrides in light colours. Read `<html data-theme>` instead, or hide the setting inside Endeavor — missing
+- [ ] Endeavor's CSS targets Pluto shapes that increment 3 restyles: the striped `pluto-trafficlight::after`, `jlerror > .error-header`, `section.stacktrace-waiting-to-view` (cells.ts:24-34, errors.ts:32-43). Nothing breaks, but those rules stop matching — improvised
+- [ ] Endeavor's Present, Record and Frontmatter actions (actions.ts:1-5, 155-159) do nothing on Ember pages; hide them there — improvised
+- [ ] Graph edges gain `via = "disabled"` (a reader of a name only a disabled cell defines; ui-3-plan.md, piece 1). Check that Endeavor's graph queries treat it as an edge to a cell that doesn't run — missing
 
 ## Packaging and CI
 
@@ -93,3 +102,4 @@ done; clear out ticked items at each release.
 ## Interactive inputs (build step 5)
 
 - [ ] The R-side API for bonds (Pluto's `@bind`) — missing
+- [ ] Interactive inputs bound to variables: a slider or text box whose value is an R variable, so moving it reruns the cells that depend on it. Not in increment 3. Two references: Pluto's `@bind` with the `AbstractPlutoDingetjes` Bonds protocol (the page side, `common/Bond.js` and `common/SliderServerClient.js`, is still in Ember's vendored frontend and is kept), and marimo's `mo.ui.*` elements, whose value other cells read. Increment 3's Export menu drops Pluto's check for password inputs inside bonds (`WarnForVisisblePasswords`); bonds would need it back — missing

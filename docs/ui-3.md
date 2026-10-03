@@ -5,7 +5,8 @@ increment gives Ember its own design, decided with the user on the design
 canvas "Ember UI design" (https://claude.ai/artifact/75RiGtFN1AA65gTjDW2dWM).
 Board names below refer to that canvas.
 
-Status: design complete; implementation not planned yet.
+Status: design complete; implementation planned in [ui-3-plan.md](ui-3-plan.md)
+(tests in [ui-3-tests.md](ui-3-tests.md)).
 
 Goals, from the user: Ember has its own identity rather than Pluto's
 appearance, but keeps what Pluto does well. It is comfortable for long
@@ -74,6 +75,17 @@ out of the way of the data, the code and the results.
   is a small chip on the code's bottom-right corner, also on hover or focus.
 - **Cell menu** (⋯ at the code's top right, in the interface font): Hide
   code, Disable cell, Copy output, Move up, Move down, Delete cell.
+- **Disable cell** (any code cell but the setup cell): the cell and the
+  cells that depend on it stop running, keep their last output dimmed, and
+  their variables are removed from R. A disabled cell does not count as
+  defining its variables (as Pluto): disabling one of two cells that define
+  `x` clears "Multiple definitions", and cells reading `x` then use the
+  other one. A cell that needs a name only a disabled cell provides depends
+  on it ("Depends on a disabled cell. Go to it"). In the file, the disabled
+  cell and those dependents are written with `## ` before each line, so
+  `Rscript` skips them; the cell-order footer marks them `disabled` or
+  `commented`. Packages used only in disabled cells stay installed and
+  locked. Enabling runs the cell.
 - **Adding cells**: Pluto's small "+" with a thin line, shown when hovering
   the gap between cells, above the first and below the last. It is laid over
   the gap, so nothing moves. Ctrl + Enter runs a cell and adds one below.
@@ -146,7 +158,13 @@ out of the way of the data, the code and the results.
   grey italic for anything else. Variables from stale cells are greyed.
 - **Help**: R's own help page for the symbol at the cursor (as now), with
   back/forward and search; description and arguments in serif, usage and
-  examples in mono.
+  examples in mono. For a function the notebook defines: its signature, its
+  docstring, "Defined in a cell · Go to it", and its code folded below. The
+  docstring is the `#` comment lines directly above a top-level
+  `name <- function(...)` or `name <- \(x) ...` (also `=`), with no blank
+  line between, written in Markdown. A blank line makes it an ordinary
+  comment. It is a plain comment, so `Rscript` is unaffected; `#'` stays
+  for text cells only.
 - **Packages**: "Versions as of <date>" with an **Update** button (to
   today's snapshot; there is no date picker), the packages the notebook
   loads (dependencies hidden), and their status. A failed install shows a
@@ -274,3 +292,10 @@ error boxes and the ANSI palette have dark variants. Figures are not themed.
    report the real error (today the log is empty; design-gaps.md).
 7. **Variables**: the worker reports each global's type and a one-line value
    summary, and the engine knows which cell defines it.
+8. **Disable cell**: a `disabled` flag per cell, kept in the cell-order
+   footer (`disabled`, and `commented` for its dependents); their code
+   written behind `## `; disabled cells left out of the definitions the
+   graph resolves; the scheduler skipping them and their dependents.
+9. **Function docstrings**: the comment block above a top-level function
+   definition, read from the cell's source by the server for Help. No file
+   format change.
