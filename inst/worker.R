@@ -79,6 +79,7 @@
 
 FIG_RES <- 192                            # first-draw pixel density (2x, for fig.retina = 2)
 FIGURE_DEFAULT <- list(width = 7.5, height = 5)  # mirrors notebook.R's; this file is sourced alone
+MAX_FIGURE_PX <- 6000                     # neither side of a device or redraw ever exceeds this
 
 con <- NULL            # socket to the server
 owned <- list()        # cell id -> character: globals the cell's runs created
@@ -1174,27 +1175,66 @@ console_collector <- function(cell, token) {
   self
 }
 
+#' `fig$width`/`height` when both are finite numbers above 0, else
+#' `FIGURE_DEFAULT`'s matching side. A hand-built `run`/`render` message
+#' (a test, or any future caller) must not reach `figure_pixels()` with a
+#' missing or non-numeric side: `round(NULL * res)` is `numeric(0)`, which
+#' crashes `ragg::agg_png()`/`grDevices::png()`'s `width=`/`height=` with
+#' an uncaught error -- fatal here, since nothing in `handle_next()`
+#' catches one.
+safe_fig <- function(fig) {
+  side <- function(x, default) {
+    if (is.numeric(x) && length(x) == 1 && is.finite(x) && x > 0) x else default
+  }
+  list(width = side(fig$width, FIGURE_DEFAULT$width), height = side(fig$height, FIGURE_DEFAULT$height))
+}
+
+#' Pixel size for a figure device or redraw: `fig` (list(width, height),
+#' inches; sanitised by `safe_fig()`) at `res` dpi, `res` lowered -- never
+#' raised -- just enough that neither side exceeds `MAX_FIGURE_PX`. A 7.5
+#' x 5 in figure stays at `res` (192 for the first draw, nowhere near the
+#' cap); a hand-built `fig`/`res` pair that would otherwise allocate an
+#' unreasonably large bitmap (a 30 in figure asked for at `res` 384, say)
+#' is capped instead. `res`'s own type is kept when it isn't lowered, so
+#' an integer `res` (as the wire sends it) stays comparable to one.
+#' @return list(width, height, res)
+figure_pixels <- function(fig, res) {
+  fig <- safe_fig(fig)
+  cap_res <- MAX_FIGURE_PX / max(fig$width, fig$height)
+  if (cap_res < res) res <- cap_res
+  list(width = round(fig$width * res), height = round(fig$height * res), res = res)
+}
+
+#' `width`/`height` pixels each capped at `MAX_FIGURE_PX`, for
+#' `render_plot()`'s explicit-size path (`render_png()`'s API): two
+#' independent pixel counts, not a figure size times a density, so each
+#' side is simply capped on its own rather than scaled together. Each
+#' side's own type (integer, as the wire sends it) is kept when it isn't
+#' capped.
+clamp_pixels <- function(width, height) {
+  list(width = if (width > MAX_FIGURE_PX) MAX_FIGURE_PX else width,
+      height = if (height > MAX_FIGURE_PX) MAX_FIGURE_PX else height)
+}
+
 #' A fresh device per cell: ragg::agg_png if the notebook's library has
 #' ragg, else grDevices::png, into a temp file, with
 #' dev.control(displaylist = "enable") so recordPlot() works.
 #'
 #' Opened at `fig` (list(width, height), inches) and `FIG_RES` (192, a 2x
-#' first draw so 1x and 2x screens never ask for a redraw), the density
-#' lowered for this one image so neither side exceeds 6000 px (a 30 in
-#' figure draws at 200 dpi).
+#' first draw so 1x and 2x screens never ask for a redraw) through
+#' `figure_pixels()`, which lowers the density instead when that would
+#' put either side over `MAX_FIGURE_PX`.
 open_device <- function(fig) {
-  res <- min(FIG_RES, floor(6000 / max(fig$width, fig$height)))
-  width <- round(fig$width * res)
-  height <- round(fig$height * res)
+  px <- figure_pixels(fig, FIG_RES)
   path <- tempfile(fileext = ".png")
   if (requireNamespace("ragg", quietly = TRUE)) {
-    ragg::agg_png(filename = path, width = width, height = height, res = res, background = "white")
+    ragg::agg_png(filename = path, width = px$width, height = px$height, res = px$res, background = "white")
   } else {
-    grDevices::png(filename = path, width = width, height = height, res = res, bg = "white")
+    grDevices::png(filename = path, width = px$width, height = px$height, res = px$res, bg = "white")
   }
   grDevices::dev.control(displaylist = "enable")
-  list(path = path, dev = grDevices::dev.cur(), width = width, height = height, res = res,
-      fig = list(width = fig$width, height = fig$height))
+  list(path = path, dev = grDevices::dev.cur(), width = px$width, height = px$height, res = px$res,
+      fig = safe_fig(fig))
 }
 
 #' Close a device opened by `open_device()`, if it's still open.
@@ -1600,8 +1640,22 @@ show_more <- function(msg) {
 #' `rendered` message carrying the run's token.
 #'
 #' Without `msg$width`/`height`: drawn at the cell's own figure size
-#' (`rec$fig`, inches) and `msg$res` -- a pixel-density redraw. With both:
-#' drawn at those pixels (`render_png()`'s API, api.R).
+#' (`rec$fig`, inches) and `msg$res`, through `figure_pixels()` -- the
+#' same cap `open_device()` uses, so a redraw at a high `res` can't
+#' allocate an unreasonably large bitmap either. With both: drawn at
+#' those pixels (`render_png()`'s API, api.R), each capped on its own by
+#' `clamp_pixels()`.
+#'
+#' Opening the device and reading the file back are a `tryCatch`: either
+#' can fail (a bad size, a file that can't be reread), and nothing in
+#' `handle_next()` catches an error that escapes here, which would end
+#' the worker process; a failure reports `display = NULL`, as for no kept
+#' value at all, and the device, if one opened, is always closed.
+#' `replayPlot()` itself fails open (its own inner `tryCatch`, as
+#' `display_plot_value()`'s `recordPlot()` is read regardless of
+#' `print()` failing): an unreplayable recorded plot -- seen replaying a
+#' base-graphics plot across devices on some platforms -- leaves a blank
+#' but correctly sized image rather than losing the redraw entirely.
 render_plot <- function(msg) {
   rec <- display[[msg$cell]]
   if (is.null(rec) || !identical(rec$kind, "plot")) {
@@ -1609,23 +1663,34 @@ render_plot <- function(msg) {
   }
   res <- msg$res %||% 96
   if (!is.null(msg$width) && !is.null(msg$height)) {
-    width <- msg$width
-    height <- msg$height
+    px <- clamp_pixels(msg$width, msg$height)
+    px$res <- res
   } else {
-    width <- round(rec$fig$width * res)
-    height <- round(rec$fig$height * res)
+    px <- figure_pixels(rec$fig, res)
   }
-  path <- tempfile(fileext = ".png")
-  if (requireNamespace("ragg", quietly = TRUE)) {
-    ragg::agg_png(filename = path, width = width, height = height, res = res, background = "white")
-  } else {
-    grDevices::png(filename = path, width = width, height = height, res = res, bg = "white")
+  bytes <- tryCatch({
+    path <- tempfile(fileext = ".png")
+    if (requireNamespace("ragg", quietly = TRUE)) {
+      ragg::agg_png(filename = path, width = px$width, height = px$height, res = px$res, background = "white")
+    } else {
+      grDevices::png(filename = path, width = px$width, height = px$height, res = px$res, bg = "white")
+    }
+    dev_id <- grDevices::dev.cur()
+    # A safety net for a failure between here and the explicit dev.off()
+    # below: the explicit close already made on the success path means
+    # dev.list() no longer has it, so this is a no-op then.
+    on.exit(if (dev_id %in% grDevices::dev.list()) grDevices::dev.off(dev_id), add = TRUE)
+    tryCatch(grDevices::replayPlot(rec$value), error = function(e) NULL)
+    grDevices::dev.off(dev_id)
+    read_png(path)
+  }, error = function(e) NULL)
+
+  if (is.null(bytes)) {
+    return(list(type = "rendered", cell = msg$cell, token = rec$token, display = NULL))
   }
-  tryCatch(grDevices::replayPlot(rec$value), error = function(e) NULL)
-  grDevices::dev.off()
   list(type = "rendered", cell = msg$cell, token = rec$token,
-      display = list(kind = "plot", mime = "image/png", data = read_png(path),
-                     size = list(width = width, height = height, res = res)))
+      display = list(kind = "plot", mime = "image/png", data = bytes,
+                     size = list(width = px$width, height = px$height, res = px$res)))
 }
 
 #' Strip the worker's own frames from sys.calls(): everything up to and

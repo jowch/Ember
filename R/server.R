@@ -813,16 +813,18 @@ handlers <- list(
     flush_clients(server, hub)
   },
 
-  #' A density-only redraw (3a): the page never sends a pixel size any
-  #' more, only the wanted `res`; any `width`/`height` in the body is
-  #' ignored, and the worker redraws at the cell's own figure size.
+  #' A density-only redraw: the page never sends a pixel size any more,
+  #' only the wanted `res`; any `width`/`height` in the body is ignored,
+  #' and the worker redraws at the cell's own figure size.
   ember_render_plot = function(server, cl, hub, req) {
     if (is.null(hub)) return(invisible(NULL))
     b <- req$body
     cell <- b$cell_id
     if (is.null(cell) || !(cell %in% names(notebook_state(hub$nb)$cells))) return(invisible(NULL))
     clamp <- function(x, lo, hi) max(lo, min(hi, x))
-    res <- clamp(as.integer(b$res %||% 96L), 72L, 384L)
+    res <- as.integer(b$res %||% 96L)
+    if (is.na(res)) return(invisible(NULL))
+    res <- clamp(res, 72L, 384L)
     dispatch(hub$nb, ev_render(cell, NULL, NULL, at = Sys.time(), res = res))
     flush_clients(server, hub)
   },

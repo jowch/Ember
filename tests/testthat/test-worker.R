@@ -336,6 +336,40 @@ test_that("a bad #| value's problem is reported as a console warning (ui-3 64)",
   expect_match(warnings[[1]]$text, "fig-width: wide is not a number of inches")
 })
 
+test_that("render_plot() caps a redraw at MAX_FIGURE_PX, even at the server's top res (review: render_plot size cap)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  run_and_wait(h, "a", 1L, "plot(1:10)", fig = list(width = 30, height = 30))
+
+  h$send(list(type = "render", cell = "a", res = 384L))
+  m <- wait_for_done_or_rendered(h)
+  expect_identical(m$type, "rendered")
+  dims <- png_dims(m$display$data)
+  expect_lte(dims$width, 6000)
+  expect_lte(dims$height, 6000)
+  expect_lte(m$display$size$width, 6000)
+  expect_lte(m$display$size$height, 6000)
+})
+
+test_that("render_plot() and open_device() don't crash the worker on a hand-built, malformed fig", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "plot(1:10)", fig = list(width = NULL, height = 5))
+  expect_identical(r$status, "ok")
+  expect_identical(r$output$kind, "plot")
+
+  # render_plot() with no recorded display (an unreplayable or missing
+  # record) reports display = NULL rather than erroring.
+  h$send(list(type = "render", cell = "nonexistent", res = 96L))
+  m <- h$receive(5)
+  expect_identical(m$type, "rendered")
+  expect_null(m$display)
+
+  # the worker is still alive and answering afterwards
+  r2 <- run_and_wait(h, "b", 2L, "1 + 1")
+  expect_identical(r2$status, "ok")
+})
+
 test_that("summarise_globals(): a data frame, a number, a character vector cut at 80 chars (ui-3 68)", {
   h <- worker_harness()
   on.exit(h$close())
