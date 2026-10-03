@@ -284,6 +284,28 @@ failed_blockers <- function(state) {
   out
 }
 
+#' The cells `id` reads from (by a "definition" or "package" edge, not
+#' "setup") whose last result failed or that have a graph error, with the
+#' names read: `list(names = <chr>, cells = <chr, aligned>)`, or `NULL`.
+#'
+#' Only direct edges count: a chain gives a chain of messages, each linking
+#' one step up (as in Pluto), rather than naming the original failure from
+#' every cell downstream of it. The setup edge is left out: an error in the
+#' setup cell has no name to show, so cells failing after it show their own
+#' R error.
+failed_definers <- function(state, id) {
+  edges <- state$graph$edges
+  rows <- edges[edges$from == id & edges$via %in% c("definition", "package"), , drop = FALSE]
+  if (nrow(rows) == 0) return(NULL)
+  blocked <- blocked_cells(state$graph)
+  failed <- vapply(rows$to, function(to) {
+    r <- state$results[[to]]
+    (!is.null(r) && r$status %in% c("error", "interrupted")) || (to %in% blocked)
+  }, logical(1))
+  if (!any(failed)) return(NULL)
+  list(names = rows$name[failed], cells = rows$to[failed])
+}
+
 #' For every cell in `blocked_cells(graph)` that still has a result: drop
 #' the result, mark its dependents stale (`invalidate_dependents(...,
 #' queue = FALSE)`: nothing is queued, as for an edit), and send
@@ -1007,7 +1029,13 @@ reduce_wk_done <- function(state, event) {
       # `error`.
       kind <- if (!is.null(w$running$refused_source) &&
                  identical(msg, w$running$refused_source)) "source_conflict" else "error"
-      error <- new_run_error(kind, message = msg, traceback = err$traceback %||% character())
+      fd <- if (identical(kind, "error")) failed_definers(state, id) else NULL
+      error <- if (!is.null(fd)) {
+        new_run_error("upstream", message = msg, traceback = err$traceback %||% character(),
+                      names = fd$names, cells = fd$cells)
+      } else {
+        new_run_error(kind, message = msg, traceback = err$traceback %||% character())
+      }
     }
   } else {
     changed_removed <- union(report$changed %||% character(), report$removed %||% character())

@@ -604,6 +604,77 @@ test_that("requesting a dependent re-queues its failed ancestor; it runs once th
   expect_equal(last_sent(r3)$cell, "B")
 })
 
+test_that("a dependent's own R error becomes kind upstream, naming the failed ancestor (ui-3 4a)", {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("a + 1")))
+  r <- boot(s, c("A", "B"))
+  r1 <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "boom")), at(10)))
+  expect_equal(last_sent(r1)$cell, "B")   # the dependent runs on its own right after
+
+  r2 <- drive(r1$state, wk_done(1, last_token(r1),
+                                report(status = "error", error = list(message = "object 'a' not found")), at(11)))
+  err <- r2$state$results$B$error
+  expect_equal(err$kind, "upstream")
+  expect_equal(err$names, "a")
+  expect_equal(err$cells, "A")
+  expect_equal(err$message, "object 'a' not found")
+})
+
+test_that("an error's kind stays plain when the referenced ancestor is ok (ui-3 4b)", {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("a + 1")))
+  r <- boot(s, c("A", "B"))
+  r1 <- drive(r$state, wk_done(1, last_token(r), report(created = "a"), at(10)))
+  expect_equal(last_sent(r1)$cell, "B")
+
+  r2 <- drive(r1$state, wk_done(1, last_token(r1), report(status = "error", error = list(message = "boom")), at(11)))
+  expect_equal(r2$state$results$B$error$kind, "error")
+})
+
+test_that("a dependent's own missing_package or source_conflict kind is not rewritten to upstream (ui-3 4c)", {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("a + 1")))
+  r <- boot(s, c("A", "B"))
+  r1 <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "boom")), at(10)))
+  expect_equal(last_sent(r1)$cell, "B")
+
+  r2 <- drive(r1$state, wk_done(1, last_token(r1),
+                                report(error = list(message = "irrelevant", package = "brokenpkg")), at(11)))
+  err <- r2$state$results$B$error
+  expect_equal(err$kind, "missing_package")
+  expect_equal(err$names, "brokenpkg")
+})
+
+test_that("only a setup edge between two cells never gives an upstream error (ui-3 4d)", {
+  s <- fake_state(list(S = cell("stop('setup boom')"), A = cell("1")))
+  r <- drive(s, ev_run("A", at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(), at(3)))
+  expect_equal(last_sent(r)$cell, "S")
+
+  r1 <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "setup boom")), at(4)))
+  expect_equal(last_sent(r1)$cell, "A")   # A's only edge to S is the setup edge
+  r2 <- drive(r1$state, wk_done(1, last_token(r1), report(status = "error", error = list(message = "A boom")), at(5)))
+  expect_equal(r2$state$results$A$error$kind, "error")
+})
+
+test_that("a chain of upstream errors links one step at a time (ui-3 5)", {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- a"), C = cell("c <- b")))
+  r <- boot(s, c("A", "B", "C"))
+  r1 <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "boom")), at(10)))
+  expect_equal(last_sent(r1)$cell, "B")
+
+  r2 <- drive(r1$state, wk_done(1, last_token(r1),
+                                report(status = "error", error = list(message = "object 'a' not found")), at(11)))
+  err_b <- r2$state$results$B$error
+  expect_equal(err_b$kind, "upstream")
+  expect_equal(err_b$names, "a")
+  expect_equal(err_b$cells, "A")
+  expect_equal(last_sent(r2)$cell, "C")
+
+  r3 <- drive(r2$state, wk_done(1, last_token(r2),
+                                report(status = "error", error = list(message = "object 'b' not found")), at(12)))
+  err_c <- r3$state$results$C$error
+  expect_equal(err_c$kind, "upstream")
+  expect_equal(err_c$names, "b")
+  expect_equal(err_c$cells, "B")
+})
+
 test_that("a dependent reruns and fails on its own once its failed ancestor stays failed (item 6, ui-3)", {
   s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- 2"), C = cell("cc <- a + b")))
   r <- boot(s, "C")

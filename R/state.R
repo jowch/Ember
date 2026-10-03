@@ -218,16 +218,19 @@ new_result <- function(code, status, output, console, error, started_at,
 
 #' An error found while running, as opposed to a graph error.
 #'
-#' `kind`: `"error"` (R signalled one), `"multiple_definitions"` (the cell
-#' changed or removed another cell's global), `"global_setting"` (the cell's
-#' own code changed options, env vars, wd, locale or the search path outside
-#' the setup cell), `"source_conflict"` (a computed `source()` was refused),
+#' `kind`: `"error"` (R signalled one), `"upstream"` (a cell this one reads
+#' from failed or has a graph error; `names`/`cells` say which names and
+#' which cells, aligned), `"multiple_definitions"` (the cell changed or
+#' removed another cell's global), `"global_setting"` (the cell's own code
+#' changed options, env vars, wd, locale or the search path outside the
+#' setup cell), `"source_conflict"` (a computed `source()` was refused),
 #' `"worker_exited"`. `message`, `traceback` (character, innermost last),
 #' `names`, `fixes` as on `ember_graph_error`.
 new_run_error <- function(kind, message, traceback = character(),
-                          names = character(), fixes = character()) {
+                          names = character(), fixes = character(),
+                          cells = character()) {
   structure(list(kind = kind, message = message, traceback = traceback,
-                 names = names, fixes = fixes), class = "ember_run_error")
+                 names = names, fixes = fixes, cells = cells), class = "ember_run_error")
 }
 
 #' A cell's displayed output, as the worker built it.
