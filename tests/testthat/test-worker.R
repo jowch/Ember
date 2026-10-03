@@ -274,6 +274,22 @@ test_that("fresh_device_per_cell", {
   expect_identical(r$output$text, "[1] 1 1")
 })
 
+test_that("display_plot_value() doesn't open a new default device (no Rplots.pdf) for a visible plot value", {
+  h <- worker_harness()
+  on.exit(h$close())
+  wd <- tempfile("ember-plot-wd-")
+  dir.create(wd)
+  run_and_wait(h, "a", 1L, sprintf("setwd(%s)", deparse(wd)))
+  # lattice ships with every R install, and a trellis object (like ggplot)
+  # is a *visible value* display_plot_value() handles, as opposed to
+  # base graphics' side-effect plotting (display_plot(), base_plot_output
+  # below).
+  r <- run_and_wait(h, "b", 2L, "library(lattice); xyplot(1 ~ 1)")
+  expect_identical(r$status, "ok")
+  expect_identical(r$output$kind, "plot")
+  expect_false(file.exists(file.path(wd, "Rplots.pdf")))
+})
+
 test_that("base_plot_output", {
   h <- worker_harness()
   on.exit(h$close())
@@ -306,6 +322,44 @@ test_that("data_frame_table_view", {
   expect_identical(r$output$more_rows, 0L)
   expect_identical(r$output$more_cols, 0L)
   expect_match(r$output$text, "^  a b")
+})
+
+test_that("build_table() reads columns by position: duplicate column names don't repeat the first one", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L,
+                    "df <- data.frame(a = 1:3, b = 4:6); names(df) <- c('x', 'x'); df")
+  expect_identical(r$output$names, c("x", "x"))
+  expect_identical(r$output$rows[[1]], c("1", "4"))
+  expect_identical(r$output$rows[[2]], c("2", "5"))
+  expect_identical(r$output$rows[[3]], c("3", "6"))
+})
+
+test_that("build_table() formats a matrix column one value per row, with no NA on the wire", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L,
+                    "data.frame(id = 1:3, m = I(matrix(1:6, nrow = 3)))")
+  expect_identical(r$output$nrow, 3L)
+  expect_length(r$output$rows, 3L)
+  for (row in r$output$rows) expect_length(row, 2L)
+  expect_identical(r$output$rows[[1]][2], "1, 4")
+  expect_identical(r$output$rows[[2]][2], "2, 5")
+  expect_identical(r$output$rows[[3]][2], "3, 6")
+  expect_false(anyNA(unlist(r$output$rows)))
+})
+
+test_that("build_table() formats a nested data frame column one value per row, with no NA on the wire", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L,
+                    "d <- data.frame(id = 1:2); d$nested <- data.frame(a = 1:2, b = 3:4); d")
+  expect_identical(r$output$nrow, 2L)
+  expect_length(r$output$rows, 2L)
+  for (row in r$output$rows) expect_length(row, 2L)
+  expect_identical(r$output$rows[[1]][2], "1, 3")
+  expect_identical(r$output$rows[[2]][2], "2, 4")
+  expect_false(anyNA(unlist(r$output$rows)))
 })
 
 test_that("user_globals_cannot_shadow_worker", {
@@ -710,6 +764,15 @@ test_that("display_tree depth, width and leaf text (23)", {
   expect_identical(r3$output$tree$items[[2]]$value$text, " int [1:10] 1 2 3 4 5 6 7 8 9 10")
 })
 
+test_that("display_tree treats an NA list name as unnamed text, not a nil key", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, 'l <- list(1, 2); names(l) <- c("a", NA); l')
+  expect_identical(r$output$tree$items[[1]]$key, "a")
+  expect_identical(r$output$tree$items[[2]]$key, "<NA>")
+  expect_false(anyNA(vapply(r$output$tree$items, `[[`, character(1), "key")))
+})
+
 test_that("more pages a table and a tree, reset on rerun (24)", {
   h <- worker_harness()
   on.exit(h$close())
@@ -833,6 +896,21 @@ test_that("complete_line() (44)", {
   expect_identical(before, after)
 })
 
+test_that("completion restores a locked active binding's lock (mask_active_bindings())", {
+  h <- worker_harness()
+  on.exit(h$close())
+  run_and_wait(h, "a", 1L,
+              'makeActiveBinding("locked_ab", function() 1, globalenv()); lockBinding("locked_ab", globalenv())')
+  before <- run_and_wait(h, "b", 2L, 'bindingIsLocked("locked_ab", globalenv())')$output$text
+  expect_identical(before, "[1] TRUE")
+
+  h$send(list(type = "complete", id = 7L, line = "locked_", cursor = 7L))
+  h$receive()
+
+  after <- run_and_wait(h, "c", 3L, 'bindingIsLocked("locked_ab", globalenv())')$output$text
+  expect_identical(after, "[1] TRUE")
+})
+
 test_that("help() (45)", {
   h <- worker_harness()
   on.exit(h$close())
@@ -848,13 +926,15 @@ test_that("help() (45)", {
   m2 <- h$receive()
   expect_false(m2$found)
 
-  run_and_wait(h, "a", 1L, "library(stats); library(methods)")
-  h$send(list(type = "help", id = 3L, topic = "show", package = NULL))
+  # "plot" names both base's generic help page and graphics::plot.default
+  # -- both always attached, so this needs no library() call to set up --
+  # and so must come back as more than one match for two distinct
+  # packages, not a single resolved page.
+  h$send(list(type = "help", id = 3L, topic = "plot", package = NULL))
   m3 <- h$receive()
-  if (length(m3$matches) > 0) {
-    pkgs <- vapply(m3$matches, `[[`, character(1), "package")
-    expect_true(length(unique(pkgs)) >= 1)
-  }
+  expect_null(m3$html)
+  pkgs <- vapply(m3$matches, `[[`, character(1), "package")
+  expect_setequal(pkgs, c("base", "graphics"))
 })
 
 test_that("signature() (46)", {
@@ -868,6 +948,22 @@ test_that("signature() (46)", {
   h$send(list(type = "signature", id = 2L, name = "pi", package = NULL))
   m2 <- h$receive()
   expect_null(m2$text)
+})
+
+test_that("signature() for an explicit, unloaded package never loads it in the worker", {
+  skip_if_not(nzchar(system.file(package = "codetools")), "codetools not installed")
+  h <- worker_harness()
+  on.exit(h$close())
+
+  before <- run_and_wait(h, "a", 1L, '"codetools" %in% loadedNamespaces()')$output$text
+  expect_identical(before, "[1] FALSE")
+
+  h$send(list(type = "signature", id = 1L, name = "findGlobals", package = "codetools"))
+  m <- h$receive()
+  expect_null(m$text)
+
+  after <- run_and_wait(h, "b", 2L, '"codetools" %in% loadedNamespaces()')$output$text
+  expect_identical(after, "[1] FALSE")
 })
 
 test_that("handle_next() answers complete/help/signature with the request's id, deferred not lost during a source wait (47)", {

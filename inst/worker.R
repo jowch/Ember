@@ -1106,8 +1106,11 @@ display_text <- function(value) {
 
 #' A column's type abbreviation: `pillar::type_sum()` when pillar is loaded
 #' (tibble users have it), else a fixed table (design.md, 3b).
+#' `isNamespaceLoaded()`, not `requireNamespace()`: the latter loads
+#' pillar (and cli, vctrs) as a side effect on every data frame display,
+#' even in a notebook that never asked for it.
 column_type <- function(col) {
-  if (requireNamespace("pillar", quietly = TRUE)) {
+  if (isNamespaceLoaded("pillar")) {
     ts <- tryCatch(pillar::type_sum(col), error = function(e) NA_character_)
     if (!is.na(ts)) return(paste0("<", ts, ">"))
   }
@@ -1117,10 +1120,37 @@ column_type <- function(col) {
     POSIXct = "<dttm>", list = "<list>", "<cls>")
 }
 
+#' One formatted string per row of `col_head` (already `head()`-ed to the
+#' rows being shown, in display order). A plain vector formats in one
+#' call, same as `print()`. A matrix column, or a nested data frame column
+#' (jsonlite's `fromJSON` makes these often), formats one *cell* or
+#' sub-column at a time, not one string per outer row -- `format()` on the
+#' whole structure returns one string per matrix cell or per nested
+#' column, which would misalign `build_table()`'s per-row lookup (each
+#' row would show values pulled from the wrong row, or past the end of
+#' `col_head` altogether). Those are formatted row by row instead, each
+#' row's own values joined into one string. Always returns exactly
+#' `length(col_head)` (`nrow()` for a matrix/data frame) strings.
+format_column <- function(col_head) {
+  if (is.data.frame(col_head) || is.matrix(col_head)) {
+    n <- NROW(col_head)
+    return(vapply(seq_len(n), function(i) {
+      row <- if (is.data.frame(col_head)) col_head[i, , drop = TRUE] else col_head[i, ]
+      vals <- tryCatch(as.character(eval_in_notebook(quote(format(v)), row)),
+                       error = function(e) "<error>")
+      paste(vals, collapse = ", ")
+    }, character(1)))
+  }
+  as.character(eval_in_notebook(quote(format(v)), col_head))
+}
+
 #' The structural part of a table display (names, types, shown rows), built
 #' fresh from the kept data frame and the current paging limits; shared by
 #' `display_table()` and `show_more()`. Each column is formatted separately
-#' in `tryCatch` so one odd column can't fail the whole table.
+#' in `tryCatch` so one odd column can't fail the whole table. Columns are
+#' read by position (`value[[i]]`), never by name (`value[[names_shown[i]]]`
+#' would read the *first* column of that name twice over for a data frame
+#' with duplicate column names).
 build_table <- function(value, limits) {
   ncol_total <- tryCatch({ n <- as.integer(ncol(value)); if (is.na(n)) 0L else n },
                          error = function(e) 0L)
@@ -1136,11 +1166,11 @@ build_table <- function(value, limits) {
   all_names <- names(value)
   names_shown <- utils::head(all_names, cols_n)
 
-  types_shown <- vapply(names_shown, function(n) column_type(value[[n]]), character(1), USE.NAMES = FALSE)
-  col_values <- lapply(names_shown, function(n) {
+  types_shown <- vapply(seq_len(cols_n), function(i) column_type(value[[i]]), character(1), USE.NAMES = FALSE)
+  col_values <- lapply(seq_len(cols_n), function(i) {
     tryCatch({
-      col_head <- utils::head(value[[n]], rows_n)
-      as.character(eval_in_notebook(quote(format(v)), col_head))
+      col_head <- utils::head(value[[i]], rows_n)
+      format_column(col_head)
     }, error = function(e) rep("<error>", rows_n))
   })
   row_labels <- tryCatch({
@@ -1148,8 +1178,12 @@ build_table <- function(value, limits) {
     if (is.null(rn)) as.character(seq_len(rows_n)) else utils::head(as.character(rn), rows_n)
   }, error = function(e) as.character(seq_len(rows_n)))
 
+  # A msgpack nil (R's NA) is forbidden on this wire: a column formatted
+  # to fewer strings than there are shown rows (an odd column's own
+  # format() shrank it) contributes "" for the missing rows rather than
+  # NA.
   rows <- lapply(seq_len(rows_n), function(i) {
-    vapply(col_values, function(cv) if (length(cv) >= i) cv[i] else NA_character_, character(1))
+    vapply(col_values, function(cv) if (length(cv) >= i) cv[i] else "", character(1))
   })
 
   list(kind = "table", mime = "application/vnd.ember.table",
@@ -1206,7 +1240,12 @@ display_tree_node <- function(x, path, depth, limits, max_depth = 4) {
   nms <- names(x)
   named <- !is.null(nms)
   items <- lapply(seq_len(show_n), function(i) {
-    key <- if (named && nzchar(nms[[i]] %||% "")) nms[[i]] else ""
+    # `nzchar(NA)` is TRUE, so an NA name (possible in `names()`, distinct
+    # from "" meaning no name) would otherwise become a bare `NA` --
+    # a msgpack nil, forbidden as a tree key. print(list()) shows an NA
+    # name as "<NA>"; this does the same.
+    nm <- nms[[i]]
+    key <- if (!named) "" else if (is.na(nm)) "<NA>" else if (nzchar(nm)) nm else ""
     child_path <- if (nzchar(path)) paste0(path, "/", i) else as.character(i)
     list(key = key, value = display_tree_node(x[[i]], child_path, depth + 1, limits, max_depth))
   })
@@ -1227,15 +1266,22 @@ display_tree <- function(value, cell, token, limits = list()) {
 #' ggplot, trellis, recordedplot or grob: print to draw it, then PNG
 #' bytes via recordPlot()/the device's file. The recorded plot is kept
 #' (`display[[cell]]`) so a resize can replay it at a new size.
+#'
+#' `text_form()` (which also calls `print()`) runs before `dev.off()`:
+#' with no device open, printing a ggplot/trellis/recordedplot opens R's
+#' default device (pdf), writing an `Rplots.pdf` into the notebook's
+#' folder as a side effect. `dev$dev` is still current here, so this
+#' second print draws onto it instead -- harmless, since `png_bytes` is
+#' only read after, from the final frame.
 display_plot_value <- function(value, cell, token, dev) {
   if (is.null(dev)) return(display_text(value))
   grDevices::dev.set(dev$dev)
   eval_in_notebook(quote(print(v)), value)
   rp <- tryCatch(grDevices::recordPlot(), error = function(e) NULL)
+  tf <- text_form(value)
   grDevices::dev.off(dev$dev)
   png_bytes <- read_png(dev$path)
   display[[cell]] <<- list(value = rp, token = token, kind = "plot")
-  tf <- text_form(value)
   list(kind = "plot", mime = "image/png", data = png_bytes,
       size = list(width = 720L, height = 480L, res = 96L),
       text = tf$text, truncated = tf$truncated)
@@ -1455,6 +1501,13 @@ mask_active_bindings <- function(envir) {
   names <- ls(envir, all.names = TRUE)
   active <- names[vapply(names, function(n) tryCatch(bindingIsActive(n, envir), error = function(e) FALSE), logical(1))]
   fns <- stats::setNames(lapply(active, function(n) tryCatch(activeBindingFunction(n, envir), error = function(e) NULL)), active)
+  # `rm()` removes a binding even when it's locked (measured: lockBinding()
+  # only blocks assigning or removing it through the normal binding
+  # operations that check the lock, not `rm()`); `makeActiveBinding()`
+  # then creates a fresh, unlocked one, so without re-locking here a
+  # locked active binding would come back unlocked once completion is
+  # done -- silently removing a notebook's own protection.
+  locked <- stats::setNames(vapply(active, function(n) tryCatch(bindingIsLocked(n, envir), error = function(e) FALSE), logical(1)), active)
   for (n in active) {
     if (!is.null(fns[[n]])) {
       rm(list = n, envir = envir)
@@ -1466,6 +1519,7 @@ mask_active_bindings <- function(envir) {
       if (!is.null(fns[[n]])) {
         if (exists(n, envir = envir, inherits = FALSE)) rm(list = n, envir = envir)
         makeActiveBinding(n, fns[[n]], envir)
+        if (isTRUE(locked[[n]])) lockBinding(n, envir)
       }
     }
   }
@@ -1576,12 +1630,15 @@ help_lookup <- function(topic, package) {
 #' `NULL` body dropped. `fn` is looked up with `get()` starting from
 #' `globalenv()`, so it follows the real search path (a notebook definition,
 #' or any attached package) the way the cell's own code would; `package`
-#' not `NULL` looks in that namespace instead. `NULL` when `name` isn't a
-#' function (editor-services.R's `signature_fallback()` shares the deparse
-#' step as `format_signature()`).
+#' not `NULL` looks in that namespace instead -- but only when `package` is
+#' already loaded: `asNamespace()` loads an unloaded package as a side
+#' effect, and typing `pkg::fn(` must never do that. `NULL` when `name`
+#' isn't a function (editor-services.R's `signature_fallback()` shares the
+#' deparse step as `format_signature()`).
 worker_signature <- function(name, package) {
   tryCatch({
     fn <- if (!is.null(package)) {
+      if (!isNamespaceLoaded(package)) return(NULL)
       get(name, envir = asNamespace(package), inherits = FALSE)
     } else {
       get(name, envir = globalenv(), inherits = TRUE, mode = "function")
