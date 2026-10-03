@@ -259,3 +259,34 @@ test_that("ember_run_all runs only not-run cells; a fresh one keeps its last_run
   expect_identical(notebook_state(nb)$results[[a]]$started_at, a_started)
   expect_false(is.null(notebook_state(nb)$results[[b]]))
 })
+
+# ---- not_run_ids() excludes cells "Run all" can't run -----------------------
+
+test_that("not_run_ids() excludes cells in a graph error (two cells defining the same name)", {
+  s <- fake_state(list(S = cell(""), A = cell("z <- 1"), B = cell("z <- 2"), OK = cell("5")))
+  r <- boot(s, "OK")
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(10)))
+
+  ctx <- view_context(r$state)
+  expect_true(ctx$blocked[[match("A", ctx$ids)]])
+  expect_true(ctx$blocked[[match("B", ctx$ids)]])
+
+  ids <- not_run_ids(r$state, ctx)
+  expect_false("A" %in% ids)
+  expect_false("B" %in% ids)
+  expect_false("OK" %in% ids)  # already ran
+})
+
+test_that("not_run_ids() excludes a cell blocked by a failed ancestor", {
+  s <- fake_state(list(S = cell(""), A = cell("1"), ERR = cell("y <- stop('boom')"), C = cell("y + 1")))
+  r <- boot(s, c("ERR", "C"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(error = list(message = "boom")), at(10)))
+
+  ctx <- view_context(r$state)
+  expect_identical(ctx$blocked_by[[match("C", ctx$ids)]], "ERR")
+  expect_null(r$state$results[["C"]])
+
+  ids <- not_run_ids(r$state, ctx)
+  expect_false("C" %in% ids)
+  expect_true("A" %in% ids)  # not run, not blocked: still counted
+})

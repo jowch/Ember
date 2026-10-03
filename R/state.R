@@ -524,6 +524,12 @@ notifications <- function(old, new) {
 #' (`project_ember()`, pluto-state.R) and `ember_run_all` runs
 #' (server.R). Empty whenever `!state$allowed` (safe preview): nothing has
 #' had a chance to run yet, so there is nothing to offer running.
+#'
+#' A cell `ember_run_all` can't run -- one named in a graph error (or
+#' downstream of one, `ctx$blocked`), or downstream of a failed ancestor
+#' (`ctx$blocked_by`) -- is excluded too: otherwise the bar's count never
+#' reaches zero and "Run all" has nothing left to do about it (the same
+#' two checks `can_run()`, step.R, makes before running a cell).
 not_run_ids <- function(state, ctx) {
   if (!isTRUE(state$allowed)) return(character())
   ids <- ctx$ids
@@ -535,6 +541,8 @@ not_run_ids <- function(state, ctx) {
     if (!is.null(ctx$results[[i]])) next
     if (isTRUE(ctx$queued[[i]])) next
     if (!is.na(ctx$running_idx) && ctx$running_idx == i) next
+    if (isTRUE(ctx$blocked[[i]])) next
+    if (!is.null(ctx$blocked_by[[i]])) next
     out <- c(out, ids[[i]])
   }
   out
