@@ -1214,10 +1214,15 @@ reduce_wk_done <- function(state, event) {
   list(state = state, effects = effects, reply = NULL)
 }
 
-#' Every code cell has an "ok" result in this worker, so every computed
-#' `source()` path has been reported by the cell that runs it.
+#' Every code cell that can run has an "ok" result in this worker, so every
+#' computed `source()` path has been reported by the cell that runs it. An
+#' off cell (disabled, or a dependent of one) is excluded, the same as
+#' `not_run_ids()` excludes it: it never runs, so without this a disabled
+#' cell with no result would keep this `FALSE` forever and
+#' `footer_sources` would never clear.
 all_code_cells_ran <- function(state) {
   code <- names(state$cells)[vapply(state$cells, function(c) c$kind == "code", logical(1))]
+  code <- setdiff(code, names(state$graph$off))
   all(vapply(code, function(id) identical(state$results[[id]]$status, "ok"), logical(1)))
 }
 

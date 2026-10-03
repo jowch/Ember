@@ -969,6 +969,20 @@ test_that("a computed path from the footer stands in until every code cell has r
   expect_false("gen/h.R" %in% notebook_file_of(r$state)$sourced$path)
 })
 
+test_that("all_code_cells_ran() excludes an off cell, so the footer source still clears (review)", {
+  file <- fake_file(list(S = cell(""), A = cell("source(p)"), B = cell("x <- 1", disabled = TRUE)))
+  file$sourced <- data.frame(path = "gen/h.R", hash = "md5:abc", stringsAsFactors = FALSE)
+  s <- new_state(file, path = "nb.R", id = "n1", options = list(library = NULL), at = 0)
+  expect_identical(s$footer_sources, "gen/h.R")
+  expect_true("B" %in% names(s$graph$off))
+
+  r <- boot(s, "A")
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(20)))
+  # B is disabled and never runs; without excluding it, all_code_cells_ran()
+  # would stay FALSE forever and the footer source would never clear.
+  expect_length(r$state$footer_sources, 0)
+})
+
 # ---- ui-3, piece 1: errors flow downstream (docs/ui-3-tests.md) -----------
 
 test_that("autorun: a failed ancestor's effects are drop_globals then the dependent's run (ui-3 1)", {
