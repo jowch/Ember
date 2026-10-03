@@ -60,10 +60,21 @@ function main_build() {
         // the frontend already serves as no-cache (R/server.R's http_app()
         // only grants the year-long immutable lifetime to imports/vendor/
         // itself) -- a licence file has no content hash to invalidate a
-        // stale cache with, so it can't share that path.
-        const thirdPartyPath = path.join(ROOT, "dist", "vendor", "THIRD-PARTY.txt")
-        if (fs.existsSync(thirdPartyPath)) {
-            fs.copyFileSync(thirdPartyPath, path.join(IMPORTS_DIR, "THIRD-PARTY.txt"))
+        // stale cache with, so it can't share that path. Two rollup builds
+        // each wrote their own (rollup.vendor.config.js's third-party
+        // libraries, rollup.config.js's CodeMirror/Lezer bundle); this
+        // concatenates them into the one file that ships, sorted so the
+        // combined file is itself stable across rebuilds the same way each
+        // half already is.
+        const thirdPartySources = [
+            path.join(ROOT, "dist", "vendor", "THIRD-PARTY.txt"),
+            path.join(ROOT, "dist", "THIRD-PARTY-codemirror.txt"),
+        ].filter((p) => fs.existsSync(p))
+        if (thirdPartySources.length > 0) {
+            const combined = thirdPartySources
+                .map((p) => fs.readFileSync(p, "utf8").trim())
+                .join("\n\n---\n\n")
+            fs.writeFileSync(path.join(IMPORTS_DIR, "THIRD-PARTY.txt"), combined + "\n")
         }
 
         const { hashed } = copyAssets({ frontendDir: FRONTEND })

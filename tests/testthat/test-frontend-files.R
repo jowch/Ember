@@ -194,6 +194,14 @@ test_that("the installed frontend is under 3 MB and THIRD-PARTY.txt matches COPY
   names <- sub("^Name: ", "", names)
   expect_true(length(names) > 0)
 
+  # rollup.config.js (the CodeMirror/Lezer bundle) and rollup.vendor.config.js
+  # (every other third-party library) each write their own licence file;
+  # build.mjs concatenates both into this one. A name unique to each side
+  # (not a shared dependency) confirms both halves actually made it in, not
+  # just one overwriting the other.
+  expect_true("preact" %in% names, info = "rollup.vendor.config.js's output")
+  expect_true("@codemirror/view" %in% names, info = "rollup.config.js's output")
+
   copyrights_path <- system.file("COPYRIGHTS", package = "ember")
   if (!nzchar(copyrights_path)) skip("installed COPYRIGHTS not found")
   copyrights <- readChar(copyrights_path, file.info(copyrights_path)$size)
