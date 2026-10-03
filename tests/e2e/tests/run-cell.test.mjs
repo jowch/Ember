@@ -52,3 +52,27 @@ test("edit + Shift-Enter: new output appears, and the file on disk has the new c
 
   assertNoProblems(page);
 });
+
+test("run: cell_results[A].ember.variables reports x's name, type and value (ui-3 77)", async (t) => {
+  const notebook = tempNotebook();
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "run-variables.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await setCellCode(page, "A", "x <- 1");
+  await runCell(page, "A");
+  await page.waitForFunction(
+    () => {
+      const v = window.editor_state?.notebook?.cell_results?.["A"]?.ember?.variables;
+      return Array.isArray(v) && v.length > 0;
+    },
+    null, { timeout: 20000 });
+
+  const variables = await page.evaluate(() => window.editor_state.notebook.cell_results["A"]?.ember?.variables);
+  assert.deepEqual(variables, [{ name: "x", type: "numeric", value: "1", kind: "value" }]);
+
+  assertNoProblems(page);
+});

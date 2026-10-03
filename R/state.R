@@ -212,11 +212,16 @@ new_worker_state <- function() {
 #'   readers are invalidated even if the new code no longer defines them.
 #' * `stale`: `TRUE` once an ancestor ran (or a sourced file changed) after
 #'   this result was made. Running the cell clears it.
+#' * `variables`: named list name -> `list(type, value, kind)`, the
+#'   worker's `globals` report (worker.R's `summarise_globals()`), or
+#'   `list()` for a run that isn't "ok" (3b: its globals are about to be
+#'   dropped, piece 1).
 new_result <- function(code, status, output, console, error, started_at,
-                       runtime, defined, stale = FALSE) {
+                       runtime, defined, stale = FALSE, variables = list()) {
   structure(list(code = code, status = status, output = output,
                  console = console, error = error, started_at = started_at,
-                 runtime = runtime, defined = defined, stale = stale),
+                 runtime = runtime, defined = defined, stale = stale,
+                 variables = variables),
             class = "ember_result")
 }
 
@@ -277,7 +282,9 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 #' `"upstream"` run error, `cells`), `output` (`ember_display` or `NULL`),
 #' `console`, `last_run`, `runtime`, `disabled` (the user's own choice),
 #' `disabled_by` (the disabled cell a dependent is off because of, `NA`
-#' otherwise -- including for the disabled cell itself).
+#' otherwise -- including for the disabled cell itself), `variables`
+#' (3b: `list(name, type, value, kind)` per global the cell owns, sorted
+#' by name, dot-names excluded, empty for an off cell).
 #'
 #' For the running cell, `console` is what has streamed so far and `output`
 #' is the previous result's, shown as stale.
@@ -390,6 +397,23 @@ view_context <- function(state) {
       results = results)
 }
 
+#' `result$variables` as a list of `list(name, type, value, kind)`, sorted
+#' by name, without dot-names (private, as the graph treats them,
+#' graph.R), and empty for an off cell: a disabled cell's globals are gone
+#' (`remove_cell`, piece 1), even though its result (and output) is kept,
+#' dimmed.
+cell_variables <- function(result, off) {
+  if (isTRUE(off) || is.null(result) || length(result$variables) == 0) return(list())
+  vars <- result$variables
+  vars <- vars[!startsWith(names(vars), ".")]
+  if (length(vars) == 0) return(list())
+  nm <- sort(names(vars))
+  lapply(nm, function(n) {
+    v <- vars[[n]]
+    list(name = n, type = v$type, value = v$value, kind = v$kind)
+  })
+}
+
 #' One cell's `ember_cell_view`, from `state` and the `view_context()` it
 #' belongs to, at position `i` (1-based, `ctx$ids[i]`'s position).
 cell_view <- function(state, ctx, i) {
@@ -426,7 +450,8 @@ cell_view <- function(state, ctx, i) {
     last_run = if (!is.null(result)) result$started_at else NULL,
     runtime = if (!is.null(result)) result$runtime else NULL,
     waiting_for = ctx$waiting[[i]] %||% character(),
-    disabled = isTRUE(cell$disabled), disabled_by = ctx$disabled_by[[i]]
+    disabled = isTRUE(cell$disabled), disabled_by = ctx$disabled_by[[i]],
+    variables = cell_variables(result, ctx$off[[i]])
   ), class = "ember_cell_view")
 }
 

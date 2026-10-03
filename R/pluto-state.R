@@ -219,6 +219,10 @@ project_cell_input <- function(view) {
 #'   result's own display size (`size$width/height / size$res`), only when
 #'   the output is `image/png` with a size; it comes from `result`, already
 #'   in the key.
+#'   `variables` is present (3b), as `as_arr(view$variables)` (already
+#'   `list(name, type, value, kind)` per global, sorted, dot-names and an
+#'   off cell's excluded by `cell_variables()`), only when non-empty: the
+#'   Variables tab's contract. It comes from `result`, already in the key.
 #' * `output`: project_output() of the view.
 #' * `logs`: project_logs() of the view's console.
 #' * `published_object_keys = list()`, `depends_on_skipped_cells = FALSE`.
@@ -246,7 +250,8 @@ project_cell_result <- function(view) {
             if (!is.na(view$disabled_by)) list(disabled_by = view$disabled_by),
             list(can_disable = can_disable),
             if (!is.null(split)) list(split = split),
-            if (!is.null(figure)) list(figure = figure))
+            if (!is.null(figure)) list(figure = figure),
+            if (length(view$variables) > 0) list(variables = as_arr(view$variables)))
   list(cell_id = view$id,
       queued = isTRUE(view$queued), running = isTRUE(view$running),
       errored = errored,

@@ -312,6 +312,39 @@ test_that("project_cell_result(): ember$split for a mixed_text cell, NULL for a 
   expect_null(project_cell_result(vt)$ember$split)
 })
 
+test_that("ember$variables matches the view; a run of A patches only cell_results/A; export_html()'s state has no variables (ui-3 71)", {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- 1")))
+  r <- boot(s, "A")
+  p1 <- pluto_state(r$state)
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "a",
+             globals = list(a = list(type = "numeric", value = "1", kind = "value"))), at(10)))
+  p2 <- pluto_state(r$state, p1)
+
+  js <- p2$js
+  expect_true(check_wire(js))
+  view <- snapshot_of(r$state)$cells$A
+  expect_equal(js$cell_results$A$ember$variables, as_arr(view$variables))
+  expect_equal(js$cell_results$A$ember$variables, list(list(name = "a", type = "numeric", value = "1", kind = "value")))
+
+  d <- fb_diff(p1$js, p2$js)
+  expect_true(length(d) > 0)
+  for (patch in d) {
+    ok <- length(patch$path) <= 1 ||
+      (length(patch$path) >= 2 && identical(patch$path[[1]], "cell_results") && identical(patch$path[[2]], "A")) ||
+      (length(patch$path) == 2 && identical(patch$path[[1]], "ember"))
+    expect_true(ok, info = paste(patch$path, collapse = "/"))
+  }
+
+  html <- export_html(r$state)
+  start <- regexpr('window.pluto_statefile = "data:;base64,', html, fixed = TRUE)
+  rest <- substring(html, start + attr(start, "match.length"))
+  statefile_b64 <- substr(rest, 1, regexpr('"', rest, fixed = TRUE) - 1)
+  decoded <- mp_decode(jsonlite::base64_dec(statefile_b64))
+  for (id in names(decoded$cell_results)) {
+    expect_null(decoded$cell_results[[id]]$ember$variables)
+  }
+})
+
 test_that("project_cell_result(): ember$figure from an image/png result; none for a text output; check_wire() passes (ui-3 67)", {
   s <- fake_state(list(S = cell(""), A = cell("plot(1)")))
   out <- new_display("image/png", as.raw(1:4), "[plot]", size = list(width = 1536, height = 768, res = 192))

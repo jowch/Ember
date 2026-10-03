@@ -301,7 +301,9 @@ restart_notebook <- function(nb) {
 #' worker_message, worker_memory, problems, order, cells, packages)` where
 #' `process` is one of `"preview"`, `"starting"`, `"ready"`, `"busy"`,
 #' `"stopped"`, `cells` is a named list (display order) of `ember_cell_view`
-#' (see `snapshot_of()` in state.R), `packages` is `package_status(nb)`'s
+#' (see `snapshot_of()` in state.R) with each cell's `variables` carrying
+#' only `name` and `type` (no `value`/`kind`: a value the notebook never
+#' printed stays out of the API), `packages` is `package_status(nb)`'s
 #' value (packages-core.R's `packages_view()`), and `worker_memory` is the
 #' worker's last-reported RSS in bytes, or `NULL` when none has been sampled
 #' yet for the current worker (shell.R samples it every 2s; ui-2.md, Worker
@@ -309,7 +311,7 @@ restart_notebook <- function(nb) {
 #' @export
 notebook_snapshot <- function(nb) {
   s <- snapshot_of(nb$state)
-  cells <- lapply(s$cells, strip_ansi_from_view)
+  cells <- lapply(s$cells, function(v) strip_variable_values(strip_ansi_from_view(v)))
   wu <- nb$state$worker_usage
   worker_memory <- if (!is.null(wu) && identical(wu$gen, nb$state$worker$gen)) wu$rss else NULL
   list(id = nb$state$id, path = nb$state$path, seq = s$seq,
@@ -340,6 +342,15 @@ strip_ansi_from_view <- function(view) {
       item
     })
   }
+  view
+}
+
+#' `view` with its `variables`' `value` and `kind` dropped, keeping only
+#' `name` and `type`: `notebook_snapshot()` is read by API callers
+#' (Endeavor's agent), which should see what a global is, never a value
+#' the notebook itself never printed.
+strip_variable_values <- function(view) {
+  view$variables <- lapply(view$variables, function(v) list(name = v$name, type = v$type))
   view
 }
 

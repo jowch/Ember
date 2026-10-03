@@ -276,8 +276,9 @@ trace_line <- function(...) {
 #' or NULL), console (list of items, also streamed), error (NULL or
 #' list(message, call, traceback, span)), runtime, created, changed, removed,
 #' settings, load_notes, attached (package -> exports, for packages newly
-#' attached), formula_misses). `error$span` is set only for role "text": the
-#' 1-based index of the failing line (into `inline_spans()`'s rows).
+#' attached), formula_misses, globals (see summarise_globals())).
+#' `error$span` is set only for role "text": the 1-based index of the
+#' failing line (into `inline_spans()`'s rows).
 #'
 #' An interrupt that lands during the comparison steps (after the cell's
 #' code) is caught around the whole function and reported as
@@ -296,7 +297,8 @@ run_cell <- function(msg) {
   rc <- list(status = "ok", output = NULL, console = list(), error = NULL,
              runtime = NA_real_, created = character(), changed = character(),
              removed = character(), settings = list(), load_notes = character(),
-             attached = list(), formula_misses = character(), loaded = character())
+             attached = list(), formula_misses = character(), loaded = character(),
+             globals = list())
 
   # `dev`/`console` are closed here (not just at their normal point of use
   # below) so an interrupt landing anywhere in this function — including
@@ -498,6 +500,13 @@ run_cell <- function(msg) {
       rc$formula_misses <- check_formulas(msg$formulas)
       trace_line("bookkept", msg$cell)
     })
+
+    # Outside uninterrupted(), as display is (worker.R's doc above): a
+    # user's str() or format() method may be slow, so an interrupt here
+    # stops the summaries, not the cell's already-gathered facts.
+    rc$globals <- tryCatch(summarise_globals(facts$created),
+                           interrupt = function(i) list(), error = function(e) list())
+    trace_line("summarised", msg$cell)
   }, interrupt = function(i) {
     rc$status <<- "interrupted"
   })
@@ -568,6 +577,85 @@ compare_globals <- function(before_names, before) {
     }
   }
   list(created = created, changed = changed, removed = removed)
+}
+
+#' At most 80 characters, cut with "…" (the whole string, ellipsis
+#' included, never exceeds 80).
+truncate80 <- function(text) {
+  if (nchar(text) <= 80) return(text)
+  paste0(substr(text, 1, 79), "…")
+}
+
+#' `"<n> rows × <m> columns"` ("1 row"/"1 column" singular), `n`/`m`
+#' with a thousands separator.
+shape_text <- function(nr, nc) {
+  rows <- if (identical(nr, 1L) || identical(nr, 1)) "1 row" else paste(format(nr, big.mark = ","), "rows")
+  cols <- if (identical(nc, 1L) || identical(nc, 1)) "1 column" else paste(format(nc, big.mark = ","), "columns")
+  paste0(rows, " × ", cols)
+}
+
+#' One global's type and a short value, summarise_globals()'s table.
+#' `x` is the value itself (never an active binding -- the caller handles
+#' that without calling it).
+summarise_value <- function(x) {
+  if (is.null(x)) return(list(value = "NULL", kind = "value"))
+  if (is.function(x)) {
+    args <- paste(names(formals(args(x))), collapse = ", ")
+    return(list(value = paste0("function(", args, ")"), kind = "value"))
+  }
+  if (is.data.frame(x)) return(list(value = shape_text(nrow(x), ncol(x)), kind = "shape"))
+  if (is.matrix(x) || is.array(x)) {
+    d <- dim(x)
+    if (length(d) == 2) return(list(value = shape_text(d[[1]], d[[2]]), kind = "shape"))
+    return(list(value = paste(paste(d, collapse = " × "), "array"), kind = "shape"))
+  }
+  if ((is.atomic(x) && is.null(attr(x, "class"))) || inherits(x, c("Date", "POSIXct", "difftime"))) {
+    if (length(x) == 0) return(list(value = deparse(x), kind = "value"))
+    vals <- eval_in_notebook(quote(format(head(v, 20), trim = TRUE, justify = "none")), x)
+    if (is.character(x)) vals <- encodeString(vals, quote = "\"")
+    return(list(value = paste(vals, collapse = " "), kind = "value"))
+  }
+  lines <- utils::capture.output(
+    eval_in_notebook(quote(utils::str(v, max.level = 0, give.attr = FALSE, vec.len = 2)), x))
+  list(value = trimws(lines[[1]]), kind = "str")
+}
+
+#' One global's type, kind and value, or type only (kind "none") for an
+#' active binding (never called) or a value whose summary errored.
+summarise_one <- function(name) {
+  if (bindingIsActive(name, globalenv())) {
+    return(list(type = "active binding", value = NULL, kind = "none"))
+  }
+  x <- get(name, envir = globalenv(), inherits = FALSE)
+  type <- tryCatch(class(x)[1], error = function(e) NA_character_)
+  r <- tryCatch(summarise_value(x), error = function(e) list(value = NULL, kind = "none"))
+  list(type = type, value = if (is.null(r$value)) NULL else truncate80(r$value), kind = r$kind)
+}
+
+#' One line per global the cell owns: type and a short value.
+#' Names in alphabetical order; stops summarising after 0.25 s in total and
+#' gives the rest kind = "none" (type only). Active bindings are never
+#' called (as snapshot_globals(), worker.R:476): type "active binding".
+#' Every format()/str() call goes through eval_in_notebook() so the
+#' notebook's own S3 methods are used, in a tryCatch (an error gives kind
+#' "none").
+#' @return named list name -> list(type, value, kind); `value` NULL when
+#'   kind is "none". At most 80 characters, cut with "…".
+summarise_globals <- function(names) {
+  names <- sort(names)
+  out <- stats::setNames(vector("list", length(names)), names)
+  budget <- 0.25
+  t0 <- proc.time()[["elapsed"]]
+  for (name in names) {
+    if (proc.time()[["elapsed"]] - t0 > budget) {
+      type <- tryCatch(class(get(name, envir = globalenv(), inherits = FALSE))[1],
+                       error = function(e) NA_character_)
+      out[[name]] <- list(type = type, value = NULL, kind = "none")
+    } else {
+      out[[name]] <- summarise_one(name)
+    }
+  }
+  out
 }
 
 # ---- Global settings -----------------------------------------------------------

@@ -1016,6 +1016,55 @@ test_that("wk_rendered replaces only the image data, keeping the text form", {
   expect_equal(r3$state$results$A$output$data, "new-bytes")
 })
 
+test_that("cell_view()'s variables is sorted, leaves out dot-names, and empty after wk_exited or for an off cell (ui-3 70)", {
+  s <- fake_state(list(S = cell(""), A = cell("b <- 2; a <- 1; .c <- 3")))
+  r <- boot(s, "A")
+  r <- drive(r$state, wk_done(1, last_token(r),
+                              report(created = c("a", "b", ".c"),
+                                     globals = list(
+                                       a = list(type = "numeric", value = "1", kind = "value"),
+                                       b = list(type = "numeric", value = "2", kind = "value"),
+                                       .c = list(type = "numeric", value = "3", kind = "value"))),
+                              at(10)))
+  vars <- snapshot_of(r$state)$cells$A$variables
+  expect_equal(vapply(vars, `[[`, character(1), "name"), c("a", "b"))
+
+  js <- notebook_snapshot(list(state = r$state))
+  av <- Find(function(v) identical(v$name, "a"), js$cells$A$variables)
+  expect_equal(names(av), c("name", "type"))
+
+  r2 <- drive(r$state, wk_exited(1, 1L, "killed", at(20)))
+  expect_equal(snapshot_of(r2$state)$cells$A$variables, list())
+})
+
+test_that("a done with status error, or an ok done the server turns into a global_setting error, stores no variables (ui-3 70)", {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1")))
+  r <- boot(s, "A")
+  r <- drive(r$state, wk_done(1, last_token(r),
+                              report(status = "error", error = list(message = "boom"),
+                                     created = "a",
+                                     globals = list(a = list(type = "numeric", value = "1", kind = "value"))),
+                              at(10)))
+  expect_equal(snapshot_of(r$state)$cells$A$variables, list())
+
+  s2 <- fake_state(list(S = cell(""), A = cell("1")))
+  r2 <- boot(s2, "A")
+  r2 <- drive(r2$state, wk_done(1, last_token(r2),
+                                report(settings = list(list(kind = "option", name = "digits", before = 7, after = 2)),
+                                       globals = list(x = list(type = "numeric", value = "1", kind = "value"))),
+                                at(10)))
+  expect_equal(r2$state$results$A$error$kind, "global_setting")
+  expect_equal(snapshot_of(r2$state)$cells$A$variables, list())
+})
+
+test_that("an off cell has no variables in its view (ui-3 70)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1", disabled = TRUE), B = cell("x + 1")))
+  r <- boot(s, "A")
+  ctx <- view_context(r$state)
+  va <- Find(function(i) identical(ctx$ids[[i]], "A"), seq_along(ctx$ids))
+  expect_equal(cell_view(r$state, ctx, va)$variables, list())
+})
+
 test_that("reduce_render() with NULL width and height sends render {cell, res} without those fields (ui-3 66)", {
   s <- fake_state(list(S = cell(""), A = cell("plot(1)")))
   out <- new_display("image/png", "bytes", "[plot]", size = list(width = 1440, height = 960, res = 192))

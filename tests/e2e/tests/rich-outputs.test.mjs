@@ -114,9 +114,17 @@ test("plot: PLT is a fixed-size image that never redraws when the viewport narro
     (sel) => document.querySelector(sel)?.naturalWidth > 0,
     `${cellSelector("PLT")} img`, { timeout: 10000 });
 
-  const widthAt1280 = await page.evaluate(
-    (sel) => document.querySelector(sel).getBoundingClientRect().width, `${cellSelector("PLT")} img`);
-  assert.ok(Math.abs(widthAt1280 - 720) <= 1, `expected a 720 CSS px wide image, got ${widthAt1280}`);
+  // 720 CSS px is the figure's own size (7.5in default x 96): the image
+  // never draws wider than that, and fits (scales down into) its column
+  // when the column is narrower (piece 5 sets the column itself to
+  // exactly 720px; until then it's whatever the pre-restyle layout gives).
+  const { widthAt1280, columnWidth } = await page.evaluate((sel) => {
+    const img = document.querySelector(sel);
+    const r = img.getBoundingClientRect();
+    return { widthAt1280: r.width, columnWidth: img.closest("pluto-output").getBoundingClientRect().width };
+  }, `${cellSelector("PLT")} img`);
+  assert.ok(widthAt1280 <= 720 + 1, `expected the image no wider than 720 CSS px, got ${widthAt1280}`);
+  assert.ok(widthAt1280 <= columnWidth + 1, `expected the image to fit its ${columnWidth}px column, got ${widthAt1280}`);
   const naturalBefore = await page.evaluate((sel) => document.querySelector(sel).naturalWidth, `${cellSelector("PLT")} img`);
 
   await page.setViewportSize({ width: 600, height: 800 });

@@ -1268,10 +1268,16 @@ reduce_wk_done <- function(state, event) {
   }
 
   runtime <- as.numeric(event$at) - as.numeric(w$running$started_at)
+  # Variables are kept only for an "ok" result: a run the worker itself
+  # reported as failed, or an "ok" one the server turned into an error
+  # above (a changed foreign global, a global setting), has its globals
+  # dropped (piece 1's drop_globals), so the report's summaries are about
+  # to be stale.
   result <- new_result(code = w$running$code, status = status, output = report$output,
                        console = w$running$console, error = error,
                        started_at = w$running$started_at, runtime = runtime,
-                       defined = report$created %||% character())
+                       defined = report$created %||% character(),
+                       variables = if (identical(status, "ok")) report$globals %||% list() else list())
   state$results[[id]] <- result
   if (length(state$footer_sources) && all_code_cells_ran(state)) {
     state$footer_sources <- character()

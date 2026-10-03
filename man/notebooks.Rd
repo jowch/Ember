@@ -109,9 +109,12 @@ current, safe-to-keep state: \code{list(id, path, seq, read_only, allowed,
 process, restart_offered, worker_message, worker_memory, problems, order,
 cells, packages)}, where \code{process} is one of \code{"preview"},
 \code{"starting"}, \code{"ready"}, \code{"busy"}, \code{"stopped"},
-\code{worker_memory} is the worker's last-reported memory in bytes (\code{NULL}
-until sampled for the current worker), and \code{packages} is
-\code{package_status(nb)}'s value (see \link{packages}).
+each cell's \code{variables} is a list of \code{list(name, type)} for the
+globals it owns (no \code{value} or \code{kind}: a value the notebook
+never printed stays out of this API), \code{worker_memory} is the worker's
+last-reported memory in bytes (\code{NULL} until sampled for the current
+worker), and \code{packages} is \code{package_status(nb)}'s value (see
+\link{packages}).
 
 \code{dependency_graph()} returns the notebook's current \code{ember_graph} (see
 \link{notebook_graph}), reflecting staged edits.

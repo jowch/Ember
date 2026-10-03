@@ -336,6 +336,99 @@ test_that("a bad #| value's problem is reported as a console warning (ui-3 64)",
   expect_match(warnings[[1]]$text, "fig-width: wide is not a number of inches")
 })
 
+test_that("summarise_globals(): a data frame, a number, a character vector cut at 80 chars (ui-3 68)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "cars <- mtcars[1:21, 1:3]\ncutoff <- 4\nlabels <- rownames(mtcars)")
+
+  expect_equal(r$globals$cars$type, "data.frame")
+  expect_equal(r$globals$cars$kind, "shape")
+  expect_equal(r$globals$cars$value, "21 rows × 3 columns")
+
+  expect_equal(r$globals$cutoff$type, "numeric")
+  expect_equal(r$globals$cutoff$kind, "value")
+  expect_equal(r$globals$cutoff$value, "4")
+
+  expect_equal(r$globals$labels$kind, "value")
+  expect_true(startsWith(r$globals$labels$value, "\"Mazda RX4\" \"Mazda RX4 Wag\""))
+  expect_true(endsWith(r$globals$labels$value, "…"))
+  expect_lte(nchar(r$globals$labels$value), 80)
+})
+
+test_that("summarise_globals(): a model fit (str), a function, NULL, character(0), a Date and a matrix (ui-3 68)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, paste(
+    "fit <- lm(mpg ~ wt, mtcars)",
+    "stat <- function(d, i) 1",
+    "nothing <- NULL",
+    "empty <- character(0)",
+    "today <- Sys.Date()",
+    "m <- matrix(1:12, nrow = 3, ncol = 4)",
+    sep = "\n"))
+
+  expect_equal(r$globals$fit$type, "lm")
+  expect_equal(r$globals$fit$kind, "str")
+  expect_equal(r$globals$fit$value, "List of 12")
+
+  expect_equal(r$globals$stat$kind, "value")
+  expect_equal(r$globals$stat$value, "function(d, i)")
+
+  expect_equal(r$globals$nothing$kind, "value")
+  expect_equal(r$globals$nothing$value, "NULL")
+
+  expect_equal(r$globals$empty$kind, "value")
+  expect_equal(r$globals$empty$value, "character(0)")
+
+  expect_equal(r$globals$today$type, "Date")
+  expect_equal(r$globals$today$kind, "value")
+
+  expect_equal(r$globals$m$kind, "shape")
+  expect_equal(r$globals$m$value, "3 rows × 4 columns")
+})
+
+test_that("summarise_globals(): an active binding is never called; a failing str() gives kind none (ui-3 68)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, paste(
+    "n_calls <- 0",
+    "makeActiveBinding('counter', function() { n_calls <<- n_calls + 1; n_calls }, environment())",
+    "bad <- structure(list(), class = 'breaks_str')",
+    "str.breaks_str <- function(object, ...) stop('nope')",
+    sep = "\n"))
+
+  expect_equal(r$globals$counter$type, "active binding")
+  expect_equal(r$globals$counter$kind, "none")
+  expect_null(r$globals$counter$value)
+  # the binding was never invoked by the summary: still at its initial 0
+  expect_equal(r$globals$n_calls$value, "0")
+
+  expect_equal(r$globals$bad$kind, "none")
+  expect_null(r$globals$bad$value)
+})
+
+test_that("summarise_globals(): a slow format() leaves later names (alphabetically) with kind none (ui-3 68)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, paste(
+    "slow <- Sys.Date()",
+    "format.Date <- function(x, ...) { Sys.sleep(1); 'slow' }",
+    "zzz_after <- 1",
+    sep = "\n"), timeout = 10)
+
+  expect_equal(r$globals$zzz_after$kind, "none")
+})
+
+test_that("run_cell() of a <- 1; .b <- 2 reports globals for both names; a rerun that drops a no longer reports it (ui-3 69)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "a <- 1; .b <- 2")
+  expect_setequal(names(r$globals), c("a", ".b"))
+
+  r2 <- run_and_wait(h, "a", 2L, ".b <- 2")
+  expect_setequal(names(r2$globals), ".b")
+})
+
 test_that("data_frame_table_view", {
   h <- worker_harness()
   on.exit(h$close())

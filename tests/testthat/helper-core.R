@@ -47,15 +47,17 @@ fake_state <- function(cells, setup = names(cells)[1], on_cell_change = "autorun
 #' `settings` a list of `list(kind, name, before, after)`; `attached` a
 #' named list package -> exports; `error` `NULL` or `list(message, traceback)`.
 #' `loaded` (step 3): named character, namespace -> version, as the worker's
-#' `done` report carries it.
+#' `done` report carries it. `globals` (3b): named list name ->
+#' `list(type, value, kind)`, as `summarise_globals()` reports it.
 report <- function(status = "ok", output = NULL, console = list(), error = NULL,
                    runtime = 0, created = character(), changed = character(),
                    removed = character(), settings = list(), load_notes = character(),
-                   attached = list(), formula_misses = NULL, loaded = character()) {
+                   attached = list(), formula_misses = NULL, loaded = character(),
+                   globals = list()) {
   list(status = status, output = output, console = console, error = error,
       runtime = runtime, created = created, changed = changed, removed = removed,
       settings = settings, load_notes = load_notes, attached = attached,
-      formula_misses = formula_misses, loaded = loaded)
+      formula_misses = formula_misses, loaded = loaded, globals = globals)
 }
 
 #' Fold `step()` over a sequence of events, checking invariants after each

@@ -247,12 +247,18 @@ dep_files_json <- function(dep_paths) {
 #' offline (MathJax aside, the one CDN allowlisted) with code highlighted
 #' as R and widgets working. `/notebookexport` serves this with or without
 #' `offline_bundle=true`: there is no second, smaller export -- the live
-#' page and the export already load the same bundled frontend.
+#' page and the export already load the same bundled frontend. Every
+#' cell's `ember$variables` (3b) is dropped before encoding: a value the
+#' notebook never printed must not land in a downloaded HTML file.
 export_html <- function(state) {
   frontend_dir <- system.file("frontend", package = "ember")
   template <- read_file_utf8(file.path(frontend_dir, "editor.html"))
 
   js <- pluto_state(state)$js
+  js$cell_results <- lapply(js$cell_results, function(r) {
+    r$ember$variables <- NULL
+    r
+  })
   statefile <- paste0("data:;base64,", base64_encode(mp_encode(js)))
   text <- format_notebook(notebook_file_of(state))
   notebookfile <- paste0("data:;base64,", base64_encode(charToRaw(enc2utf8(text))))
