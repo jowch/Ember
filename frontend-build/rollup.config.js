@@ -7,6 +7,8 @@
 // inst/frontend/imports/vendor/ and rewrites the shim that imports it.
 import { nodeResolve } from "@rollup/plugin-node-resolve"
 import terser from "@rollup/plugin-terser"
+import license from "rollup-plugin-license"
+import path from "node:path"
 
 export default {
   input: { "codemirror-ember-setup": "src/index.js" },
@@ -15,5 +17,25 @@ export default {
     entryFileNames: "[name]-[hash].js",
     format: "es",
   },
-  plugins: [nodeResolve({ dedupe: (id) => id.startsWith("@lezer/") }), terser()],
+  plugins: [
+    nodeResolve({ dedupe: (id) => id.startsWith("@lezer/") }),
+    terser(),
+    // A separate file, not dist/vendor/THIRD-PARTY.txt (rollup.vendor.config.js's
+    // own output): this is a different rollup build with no access to that
+    // one's already-collected dependency list, so writing the same path
+    // would just overwrite it rather than merge. build.mjs concatenates
+    // both into the one file inst/frontend/imports/THIRD-PARTY.txt ships.
+    license({
+      thirdParty: {
+        output: {
+          file: path.resolve("dist", "THIRD-PARTY-codemirror.txt"),
+          template: (dependencies) =>
+            [...dependencies]
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .map((d) => d.text())
+              .join("\n\n---\n\n"),
+        },
+      },
+    }),
+  ],
 }

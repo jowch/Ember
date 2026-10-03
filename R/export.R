@@ -48,15 +48,32 @@ data_url_for_file <- function(path) {
   paste0("data:", mime_for_ext(path), ";base64,", base64_encode(bytes))
 }
 
-#' `</script` anywhere in text destined for inside a `<script>` element,
-#' escaped so the embedding tag can't be closed early (docs/ui-2.md,
-#' "Exports"). Safe to apply to already-JSON-encoded text: a literal
-#' `</script` inside a JSON string isn't escaped by `jsonlite::toJSON()`
-#' (it doesn't escape `/`), so this still finds it; `JSON.parse()` on the
-#' browser side un-escapes `\/` back to `/`, so the decoded value is
-#' unchanged.
+#' `</script` anywhere in text destined for inside a *raw* (non-JSON)
+#' `<script>` element -- the iframe-resizer scripts, `warn_old_browsers.js`,
+#' and `export-loader.js` itself -- escaped case-insensitively (the HTML
+#' tokenizer's own end-tag match is case-insensitive: an original file
+#' spelling it `</SCRIPT>`, however unlikely, closes the element exactly
+#' like `</script>` would) so the embedding tag can't be closed early
+#' (docs/ui-2.md, "Exports"). Use `escape_json_for_script()` instead for a
+#' JSON block (`#ember-modules`, `#ember-deps`): it also closes off `<!--`,
+#' which this narrower escape does not.
 escape_closing_script <- function(text) {
-  gsub("</script", "<\\/script", text, fixed = TRUE)
+  gsub("(?i)</script", "<\\\\/script", text, perl = TRUE)
+}
+
+#' Every `<` in `text` (JSON, about to be written into a `<script
+#' type="application/json">` element's text content) replaced with the JSON
+#' unicode escape `<` -- valid JSON, and decoded back to a literal `<`
+#' by `JSON.parse()` -- so neither `</script` (case-insensitively) nor
+#' `<!--` can survive to be read by the HTML parser as anything but inert
+#' text. `escape_closing_script()`'s narrower, `</script`-only escape still
+#' leaves a `<!--<script>...` sequence able to open "script data escaped"
+#' state early and change how the rest of the element is tokenized; a
+#' frontend `.js` file's own source text, or a cell's HTML output, can
+#' contain either sequence in a comment, a string literal, or markup
+#' (docs/ui-2.md, "Exports"; a review flagged `<!--` specifically).
+escape_json_for_script <- function(text) {
+  gsub("<", "\\u003c", text, fixed = TRUE)
 }
 
 #' `path`, relative to `base_specifier_dir` (a frontend-relative folder, ""
@@ -140,14 +157,17 @@ inline_css <- function(path) {
 #' Every dependency any cell's `text/html` output used, keyed the way
 #' `project_dep_tags()` spells it in the HTML (`"<name>-<version>"`), read
 #' straight from the engine state (not `server$deps`: the export has no
-#' server, and these files are already as trusted as the worker that wrote
-#' them).
+#' server). A `dir` outside the notebook's library is dropped by the same
+#' `dep_path_allowed()` check `register_deps()` applies on the live server
+#' (R/server.R): the export must never embed a file the live page would have
+#' refused to serve, even though nothing here goes through an HTTP route.
 collect_output_deps <- function(state) {
+  lib <- state$packages$active$path
   deps <- list()
   for (r in state$results) {
     if (is.null(r$output) || !identical(r$output$mime, "text/html")) next
     for (d in r$output$deps %||% list()) {
-      if (is.null(d$dir)) next
+      if (is.null(d$dir) || !dep_path_allowed(d$dir, lib)) next
       key <- sprintf("%s-%s", d$name, d$version)
       if (is.null(deps[[key]])) deps[[key]] <- d
     }
@@ -155,37 +175,69 @@ collect_output_deps <- function(state) {
   deps
 }
 
-#' `html` (one cell's projected `text/html` output body) with every
-#' `href="deps/<key>/<file>"` / `src="deps/<key>/<file>"` `project_dep_tags()`
-#' wrote turned into a `data:` URL read from `deps[[key]]$dir`. A key not in
-#' `deps`, or a file that doesn't exist, is left as it is (the widget then
-#' renders without that file, as it would live if the dependency were
-#' refused).
-inline_output_deps <- function(html, deps) {
-  if (length(deps) == 0) return(html)
-  pattern <- '(href|src)="deps/([^"/]+)/([^"]+)"'
-  regex_replace_fn(html, pattern, function(m) {
-    parts <- regmatches(m, regexec(pattern, m, perl = TRUE))[[1]]
-    d <- deps[[parts[3]]]
-    if (is.null(d)) return(m)
-    full <- file.path(d$dir, parts[4])
-    if (!file.exists(full)) return(m)
-    sprintf('%s="%s"', parts[2], data_url_for_file(full))
-  })
+#' Is `file` (the `<file>` segment of a `deps/<key>/<file>` URL) safe to join
+#' onto a dependency's `dir`: no `..` segment and not itself an absolute
+#' path. A cell's `text/html` output is notebook content, so this file name
+#' is attacker-influenced in principle even once `dir` itself is known-good
+#' (`collect_output_deps()`'s `dep_path_allowed()` check) -- without this, a
+#' widget's own HTML could still spell `src="deps/<key>/../../../etc/passwd"`
+#' and have the export embed a file from outside `dir` entirely.
+dep_file_allowed <- function(file) {
+  if (is_absolute_path(file)) return(FALSE)
+  parts <- strsplit(gsub("\\\\", "/", file), "/", fixed = TRUE)[[1]]
+  !(".." %in% parts)
 }
 
-#' `js` (`pluto_state(state)$js`) with every cell's `text/html` output body
-#' passed through `inline_output_deps()`, so widget files are embedded
-#' before the state is encoded into the export's `pluto_statefile`.
-inline_state_deps <- function(js, state) {
-  deps <- collect_output_deps(state)
-  if (length(deps) == 0) return(js)
+#' Every `deps/<key>/<file>` URL referenced in any cell's projected
+#' `text/html` output body (`js$cell_results[[id]]$output$body` --
+#' `project_dep_tags()`'s own output, identical to what the live page gets,
+#' since this reads `js` rather than changing it), mapped to the on-disk
+#' file it names, deduplicated by the URL string itself. Earlier, each
+#' output's body was rewritten to embed its own `data:` copy of every
+#' dependency file it used; ten plotly outputs sharing plotly's ~2 MB bundle
+#' each got their own copy, so the export grew to ~20 MB from that one
+#' dependency alone and took seconds to assemble on the server's one thread.
+#' Reading every body first and returning one url -> path map embeds each
+#' distinct file exactly once instead, however many outputs share it; the
+#' bodies themselves are never touched, so the live page's HTML and the
+#' export's are the same bytes. A `<key>` not in `deps`, a `<file>` that
+#' fails `dep_file_allowed()`, or a file that doesn't exist is dropped (the
+#' widget then renders without that file in the export, as it would live if
+#' the dependency were refused).
+collect_dep_file_paths <- function(js, deps) {
+  if (length(deps) == 0) return(list())
+  pattern <- '(?:href|src)="(deps/([^"/]+)/([^"]+))"'
+  paths <- list()
   for (id in names(js$cell_results)) {
     out <- js$cell_results[[id]]$output
     if (is.null(out) || !identical(out$mime, "text/html")) next
-    js$cell_results[[id]]$output$body <- inline_output_deps(out$body, deps)
+    m <- gregexpr(pattern, out$body, perl = TRUE)
+    for (txt in regmatches(out$body, m)[[1]]) {
+      parts <- regmatches(txt, regexec(pattern, txt, perl = TRUE))[[1]]
+      url <- parts[2]
+      if (!is.null(paths[[url]])) next
+      d <- deps[[parts[3]]]
+      if (is.null(d) || !dep_file_allowed(parts[4])) next
+      full <- file.path(d$dir, parts[4])
+      if (!file.exists(full)) next
+      paths[[url]] <- full
+    }
   }
-  js
+  paths
+}
+
+#' `collect_dep_file_paths()`'s result read into memory, one `list(mime,
+#' data)` (base64) per URL, for the `#ember-deps` JSON block:
+#' export-loader.js turns each into one Blob URL, and CellOutput.js rewrites
+#' `deps/<key>/<file>` src/href attributes to that Blob URL when the map
+#' exists (never on the live page, which has no such map and serves
+#' `/deps/<key>/<file>` for real).
+dep_files_json <- function(dep_paths) {
+  if (length(dep_paths) == 0) return(NULL)
+  entries <- lapply(dep_paths, function(full) {
+    list(mime = mime_for_ext(full), data = base64_encode(readBin(full, "raw", file.info(full)$size)))
+  })
+  as.character(jsonlite::toJSON(entries, auto_unbox = TRUE, null = "null"))
 }
 
 #' Static HTML export, self-contained: editor.html with the launch
@@ -200,7 +252,7 @@ export_html <- function(state) {
   frontend_dir <- system.file("frontend", package = "ember")
   template <- read_file_utf8(file.path(frontend_dir, "editor.html"))
 
-  js <- inline_state_deps(pluto_state(state)$js, state)
+  js <- pluto_state(state)$js
   statefile <- paste0("data:;base64,", base64_encode(mp_encode(js)))
   text <- format_notebook(notebook_file_of(state))
   notebookfile <- paste0("data:;base64,", base64_encode(charToRaw(enc2utf8(text))))
@@ -232,14 +284,22 @@ export_html <- function(state) {
   })
 
   modules <- embed_modules(frontend_dir)
-  modules_json <- escape_closing_script(as.character(
+  modules_json <- escape_json_for_script(as.character(
     jsonlite::toJSON(modules, auto_unbox = TRUE, null = "null")))
   modules_script <- paste0('<script type="application/json" id="ember-modules">', modules_json, "</script>")
+
+  dep_paths <- collect_dep_file_paths(js, collect_output_deps(state))
+  deps_json <- dep_files_json(dep_paths)
+  deps_script <- if (is.null(deps_json)) "" else {
+    paste0('<script type="application/json" id="ember-deps">',
+          escape_json_for_script(deps_json), "</script>")
+  }
+
   loader_text <- escape_closing_script(read_file_utf8(file.path(frontend_dir, "export-loader.js")))
   loader_script <- paste0("<script>", loader_text, "</script>")
 
   html <- sub_literal('<script src="\\./editor\\.js" type="module" defer></script>',
-                      paste0(modules_script, loader_script), html)
+                      paste0(modules_script, deps_script, loader_script), html)
   html <- sub_literal('<script src="\\./warn_old_browsers\\.js"></script>',
                       paste0("<script>", escape_closing_script(read_file_utf8(
                         file.path(frontend_dir, "warn_old_browsers.js"))), "</script>"),

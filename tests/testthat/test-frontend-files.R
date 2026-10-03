@@ -161,6 +161,24 @@ test_that("external_url_hits() catches a planted CDN import (13)", {
   expect_true(any(grepl("AnsiUp.js", hits, fixed = TRUE)))
 })
 
+# ---- Every file under imports/vendor is content-hashed --------------------
+
+test_that("every file in imports/vendor is content-hashed (cache header review)", {
+  # R/server.R serves this one folder with a year-long immutable
+  # Cache-Control; a file with no content hash in its name could never
+  # change without a stale client keeping the old bytes forever. THIRD-PARTY.txt
+  # documents this folder rather than being loaded by anything, so it lives
+  # one level up, in imports/, and is exempt.
+  dir <- frontend_dir()
+  vendor_dir <- file.path(dir, "imports", "vendor")
+  files <- list.files(vendor_dir)
+  expect_true(length(files) > 0)
+
+  unhashed <- files[!grepl("-[0-9A-Za-z_-]{6,}\\.[a-z0-9]+$", files)]
+  expect_equal(unhashed, character(0))
+  expect_false(file.exists(file.path(vendor_dir, "THIRD-PARTY.txt")))
+})
+
 # ---- 14. Frontend size, THIRD-PARTY.txt, COPYRIGHTS cross-check -----------
 
 test_that("the installed frontend is under 3 MB and THIRD-PARTY.txt matches COPYRIGHTS (14)", {
@@ -169,12 +187,20 @@ test_that("the installed frontend is under 3 MB and THIRD-PARTY.txt matches COPY
   total_bytes <- sum(vapply(files, function(f) file.info(f)$size, numeric(1)))
   expect_lt(total_bytes, 3 * 1024 * 1024)
 
-  third_party_path <- file.path(dir, "imports", "vendor", "THIRD-PARTY.txt")
+  third_party_path <- file.path(dir, "imports", "THIRD-PARTY.txt")
   expect_true(file.exists(third_party_path))
   third_party <- readChar(third_party_path, file.info(third_party_path)$size)
   names <- regmatches(third_party, gregexpr("(?m)^Name: (.+)$", third_party, perl = TRUE))[[1]]
   names <- sub("^Name: ", "", names)
   expect_true(length(names) > 0)
+
+  # rollup.config.js (the CodeMirror/Lezer bundle) and rollup.vendor.config.js
+  # (every other third-party library) each write their own licence file;
+  # build.mjs concatenates both into this one. A name unique to each side
+  # (not a shared dependency) confirms both halves actually made it in, not
+  # just one overwriting the other.
+  expect_true("preact" %in% names, info = "rollup.vendor.config.js's output")
+  expect_true("@codemirror/view" %in% names, info = "rollup.config.js's output")
 
   copyrights_path <- system.file("COPYRIGHTS", package = "ember")
   if (!nzchar(copyrights_path)) skip("installed COPYRIGHTS not found")

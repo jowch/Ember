@@ -97,6 +97,21 @@ serve <- function(paths = character(), port = 0L, secret = random_secret(32),
 #'   * `stop()`: kills the child (its workers die with it);
 #'   * `process`: the processx handle (`cleanup = TRUE`, `supervise = TRUE`:
 #'     the child goes when this session does).
+#' `allowed_hosts` joined for `EMBER_ALLOWED_HOSTS`, split back by
+#' `split_allowed_hosts_env()` in `serve_child()`. "," rather than
+#' `.Platform$path.sep`: a host name can legally contain ":" (an explicit
+#' port, `"hub.example.com:8443"`), which is also Unix's `path.sep`, so
+#' joining on that would silently chop every such entry's port off (and
+#' glue two unrelated entries into one wrong host name on the way back).
+#' "," never appears in a valid host name.
+join_allowed_hosts_env <- function(allowed_hosts) paste(allowed_hosts, collapse = ",")
+
+#' The inverse of `join_allowed_hosts_env()`.
+split_allowed_hosts_env <- function(env_value) {
+  if (!nzchar(env_value)) return(character())
+  strsplit(env_value, ",", fixed = TRUE)[[1]]
+}
+
 #' @export
 start_server <- function(path = NULL, port = 0L, open = interactive(), timeout = 15,
                          allowed_hosts = character()) {
@@ -108,7 +123,7 @@ start_server <- function(path = NULL, port = 0L, open = interactive(), timeout =
     r_bin, c("--vanilla", "-e", "ember:::serve_child()"),
     env = c("current", EMBER_SECRET = secret, EMBER_PORT = as.character(port),
             EMBER_PATHS = path_env,
-            EMBER_ALLOWED_HOSTS = paste(allowed_hosts, collapse = .Platform$path.sep)),
+            EMBER_ALLOWED_HOSTS = join_allowed_hosts_env(allowed_hosts)),
     stdout = "|", stderr = "2>&1", cleanup = TRUE, supervise = TRUE)
 
   deadline <- Sys.time() + timeout
@@ -731,8 +746,8 @@ handlers <- list(
   #' A notebook-defined name (no `pkg::`): its defining cell's code, from
   #' `state` alone. Otherwise the worker if idle (`help_reply_html()`
   #' rewrites its page's cross-reference links, or lists the packages when
-  #' several match); a busy or absent worker answers with a page saying so
-  #' (ui-2.md, 4c).
+  #' several match); a busy or absent worker, or an idle one that didn't
+  #' answer in time, answers with a page saying so (ui-2.md, 4c).
   docs = function(server, cl, hub, req) {
     if (is.null(hub)) {
       send(cl, reply_message(req, "docs", list(status = "not_found")))
@@ -747,10 +762,18 @@ handlers <- list(
         return(invisible(NULL))
       }
     }
+    # Recorded before asking: worker_query()'s own NULL reply is ambiguous
+    # between "wasn't idle to begin with" (busy, or no worker at all) and
+    # "was idle, but didn't answer inside the timeout" -- only the caller,
+    # here, still knows which one it was by the time the callback runs.
+    was_idle <- worker_is_idle(hub$nb)
     worker_query(hub$nb, list(type = "help", topic = parsed$name, package = parsed$package), function(reply) {
       if (!is.null(reply)) {
         doc <- help_reply_html(reply)
         send(cl, reply_message(req, "docs", list(status = THUMBS_UP, doc = doc)))
+      } else if (was_idle) {
+        msg <- "<p>R didn't answer in time. Try again in a moment.</p>"
+        send(cl, reply_message(req, "docs", list(status = THUMBS_UP, doc = msg)))
       } else {
         busy <- identical(notebook_state(hub$nb)$worker$status, "busy")
         msg <- if (busy) "<p>R is busy running a cell\u2026</p>" else "<p>Help pages need R running. Run a cell to start it.</p>"
@@ -888,14 +911,41 @@ cookie_name <- function(server) {
 
 #' Does this request carry the server's secret, in the query string or (for
 #' plain navigations only -- see `secret_ok_ws()`) the cookie `/edit` sets?
-#' Checked on every HTTP route that reaches R; static files are exempt
-#' (design.md, Synthesis decision).
+#' Used for routes `/edit` already gated behind a page that knew the secret
+#' set the cookie: `/notebookfile` and `/notebookexport`, which Editor.js's
+#' `export_url()` links to with no `secret=` of their own (see
+#' `cookie_name()`'s doc). `/open` and `/` use `secret_query_ok()` instead:
+#' see its doc for why the cookie isn't enough for them.
 secret_ok <- function(server, req) {
-  q <- parse_query_string(req$QUERY_STRING)
-  if (!is.null(q$secret) && identical(q$secret, server$secret)) return(TRUE)
+  if (secret_query_ok(server, req)) return(TRUE)
   cookies <- parse_cookie_header(req$HTTP_COOKIE)
   val <- cookies[[cookie_name(server)]]
   !is.null(val) && identical(val, server$secret)
+}
+
+#' Does this request carry the server's secret in the query string? Used for
+#' `/open` (which turns an arbitrary `path=` into a hosted, running
+#' notebook) and `/` (which lists every hosted notebook's path and a
+#' `secret=` edit link). Unlike `/notebookfile`/`/notebookexport`, which
+#' only read a notebook a user already opened and are themselves reached
+#' from a page gated on the secret, these two are reachable directly: the
+#' cookie is attached by the browser to *every* request to this host
+#' (`cookie_name()`'s doc), regardless of which page's script made it or
+#' what port that page was served from, so a page on another port of
+#' 127.0.0.1 -- reachable by anything on the machine, design.md, Processes
+#' -- could otherwise make this server open any file on disk as a notebook,
+#' or enumerate every open one, using nothing but the ambient cookie (no
+#' `Origin` is sent for a plain navigation in some browsers, so
+#' `origin_ok()` alone doesn't close this). Every caller that reaches these
+#' two routes already has the secret as a literal: `start_server()$open()`
+#' and the browser-opening code build `/open?...&secret=`, the index page's
+#' own links and `edit_url()` build `secret=` into every URL they hand out,
+#' and Endeavor drives notebooks through the R API (`host_notebook()`), not
+#' HTTP (design.md, "Integration with Endeavor") -- so requiring the query
+#' secret here breaks no legitimate flow.
+secret_query_ok <- function(server, req) {
+  q <- parse_query_string(req$QUERY_STRING)
+  !is.null(q$secret) && identical(q$secret, server$secret)
 }
 
 #' The websocket's own, stricter check: the secret must be in the URL's
@@ -910,11 +960,9 @@ secret_ok <- function(server, req) {
 #' cookie automatically; it cannot read or set the query string's secret,
 #' which only this server's own pages ever see (PlutoConnection.js's
 #' `ws_address_from_base()` copies it from the page's own URL). Pairs with
-#' `origin_ok()`, checked first in `onWSOpen`.
-secret_ok_ws <- function(server, req) {
-  q <- parse_query_string(req$QUERY_STRING)
-  !is.null(q$secret) && identical(q$secret, server$secret)
-}
+#' `origin_ok()`, checked first in `onWSOpen`. The same check as
+#' `secret_query_ok()`, under its own name here for that doc.
+secret_ok_ws <- function(server, req) secret_query_ok(server, req)
 
 #' `Host`/`Origin` names this server treats as "reached through some hop on
 #' this machine", regardless of port: a loopback address can be the far end
@@ -929,40 +977,64 @@ LOOPBACK_HOST_NAMES <- c("127.0.0.1", "localhost", "[::1]")
 #' `:<port>` removed.
 strip_port <- function(host) sub(":[0-9]+$", "", host)
 
+#' `host`, lowercased, with an explicit default port for `scheme` (`:80` for
+#' `http`, `:443` for `https`) removed -- browsers already omit a default
+#' port from `Origin`, but a proxy or a hand-built request might still send
+#' one, and it has to compare equal to the portless form either way.
+#' `scheme` `NA` (a bare `Host` header, which carries no scheme) never
+#' strips a port: `Host` is never expected to spell out `:80`/`:443`
+#' explicitly, and stripping one there on a guessed scheme could make an
+#' actually-different host compare equal.
+normalize_host <- function(host, scheme = NA_character_) {
+  host <- tolower(host)
+  default_port <- c(http = "80", https = "443")[tolower(scheme %||% "")]
+  if (!is.na(default_port)) host <- sub(paste0(":", default_port, "$"), "", host)
+  host
+}
+
 #' Is `host` a name this server accepts as where a request arrived: a
 #' loopback name on any port, or one of `server$allowed_hosts` -- opt-in,
 #' for a proxy that isn't loopback from this R process's point of view
 #' (it terminates TLS on another machine, or in a container) -- matched
-#' either bare (any port) or with the exact port an entry gives.
+#' either bare (any port) or with the exact port an entry gives, case-
+#' insensitively (host names are).
 host_allowed <- function(server, host) {
+  host <- normalize_host(host)
   if (strip_port(host) %in% LOOPBACK_HOST_NAMES) return(TRUE)
-  allowed <- server$allowed_hosts
-  if (is.null(allowed) || length(allowed) == 0) return(FALSE)
+  allowed <- tolower(server$allowed_hosts %||% character())
+  if (length(allowed) == 0) return(FALSE)
   host %in% allowed || strip_port(host) %in% allowed
 }
 
 #' Is this request's `Host` one this server accepts, and -- when `Origin` is
-#' also present -- does it equal `Host` exactly? The secret alone isn't
-#' enough to keep another page out (design.md, Processes: "any page or
-#' program on the machine can reach a loopback port") once that page can get
-#' hold of it -- a cookie sent automatically regardless of origin, or a
-#' secret the user pasted somewhere a second page could read -- so every
-#' request that reaches R, and the websocket, is also checked against where
-#' it actually came from.
+#' also present -- does it name a host this server trusts as that `Host`'s
+#' own? The secret alone isn't enough to keep another page out (design.md,
+#' Processes: "any page or program on the machine can reach a loopback
+#' port") once that page can get hold of it -- a cookie sent automatically
+#' regardless of origin, or a secret the user pasted somewhere a second page
+#' could read -- so every request that reaches R, and the websocket, is also
+#' checked against where it actually came from.
 #'
 #' `Host` says which address the request came in on (loopback, or an
 #' allow-listed proxy name); `Origin`, when a browser sends one, says which
-#' page's script opened the request, and must match `Host` exactly -- not
-#' just also be loopback -- or a page on a different local port or a
-#' different proxied service (same machine, different origin) could ride a
-#' cookie or a leaked secret in. `Origin` is absent for same-origin
-#' navigations in some browsers and for every request this package's own
-#' HTTP client sends (`http_get_raw()`, `start_server()$open()`); a request
-#' with `Origin` but no `Host` can't be checked against anything and is
-#' refused. `Host` is normally always present on a real request but absent
-#' from every existing test's hand-built one, so a missing `Host` alone
-#' (with no `Origin` either) is allowed, the same stance those tests already
-#' take toward the secret check before a port exists.
+#' page's script opened the request. The two are compared case-insensitively
+#' with default ports normalized away, and are allowed to differ in exactly
+#' one case: `Origin`'s host is itself in `server$allowed_hosts` (never
+#' merely loopback-equal to `Host`). That case is a reverse proxy that
+#' rewrites `Host` before forwarding -- nginx's default `proxy_pass` sends
+#' this process `Host: 127.0.0.1:<port>` while the browser's `Origin` is
+#' still the public name the operator put in `allowed_hosts` -- and without
+#' it, every such proxy would be refused even though `allowed_hosts` was
+#' meant to trust it. DNS rebinding sends the same mismatch with an
+#' `Origin` that is NOT in `allowed_hosts`, and is still refused. `Origin`
+#' is absent for same-origin navigations in some browsers and for every
+#' request this package's own HTTP client sends (`http_get_raw()`,
+#' `start_server()$open()`); a request with `Origin` but no `Host` can't be
+#' checked against anything and is refused. `Host` is normally always
+#' present on a real request but absent from every existing test's
+#' hand-built one, so a missing `Host` alone (with no `Origin` either) is
+#' allowed, the same stance those tests already take toward the secret check
+#' before a port exists.
 origin_ok <- function(server, req) {
   host <- req$HTTP_HOST
   host_present <- !is.null(host) && nzchar(host)
@@ -971,9 +1043,16 @@ origin_ok <- function(server, req) {
   origin <- req$HTTP_ORIGIN
   if (!is.null(origin) && nzchar(origin)) {
     if (!host_present) return(FALSE)
+    scheme <- sub("^([a-zA-Z][a-zA-Z0-9+.-]*)://.*$", "\\1", origin)
     origin_host <- sub("^[a-zA-Z][a-zA-Z0-9+.-]*://", "", origin)
     origin_host <- sub("/.*$", "", origin_host)
-    if (!identical(origin_host, host)) return(FALSE)
+    origin_norm <- normalize_host(origin_host, scheme)
+    host_norm <- normalize_host(host)
+    if (!identical(origin_norm, host_norm)) {
+      allowed <- tolower(server$allowed_hosts %||% character())
+      if (length(allowed) == 0) return(FALSE)
+      if (!(origin_norm %in% allowed || strip_port(origin_norm) %in% allowed)) return(FALSE)
+    }
   }
   TRUE
 }
@@ -1083,9 +1162,16 @@ http_index <- function(server, req) {
   http_text(200L, body, "text/html; charset=utf-8")
 }
 
+#' Routes that require the secret as a query parameter, never the cookie
+#' alone (`secret_query_ok()`'s doc): both can be reached by a plain
+#' navigation with no page of this server's in the loop at all.
+QUERY_SECRET_ONLY_PATHS <- c("/open", "/")
+
 http_call <- function(server, req) {
   if (!origin_ok(server, req)) return(http_text(403L, "forbidden"))
-  if (!secret_ok(server, req)) return(http_text(403L, "forbidden"))
+  strict <- isTRUE(req$PATH_INFO %in% QUERY_SECRET_ONLY_PATHS)
+  ok <- if (strict) secret_query_ok(server, req) else secret_ok(server, req)
+  if (!ok) return(http_text(403L, "forbidden"))
   switch(req$PATH_INFO,
     "/edit" = http_edit(server, req),
     "/open" = http_open(server, req),
@@ -1204,7 +1290,6 @@ serve_child <- function() {
   if (is.na(port)) port <- 0L
   paths_env <- Sys.getenv("EMBER_PATHS", "")
   paths <- if (nzchar(paths_env)) strsplit(paths_env, .Platform$path.sep, fixed = TRUE)[[1]] else character()
-  hosts_env <- Sys.getenv("EMBER_ALLOWED_HOSTS", "")
-  allowed_hosts <- if (nzchar(hosts_env)) strsplit(hosts_env, .Platform$path.sep, fixed = TRUE)[[1]] else character()
+  allowed_hosts <- split_allowed_hosts_env(Sys.getenv("EMBER_ALLOWED_HOSTS", ""))
   serve(paths = paths, port = port, secret = secret, allowed_hosts = allowed_hosts)
 }

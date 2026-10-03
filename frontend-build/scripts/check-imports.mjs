@@ -4,8 +4,9 @@
 // can't silently break an importer: this fails loudly instead.
 import fs from "node:fs"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 
-const HERE = path.dirname(new URL(import.meta.url).pathname)
+const HERE = path.dirname(fileURLToPath(import.meta.url))
 const DEFAULT_FRONTEND = path.resolve(HERE, "..", "..", "inst", "frontend")
 
 function listJsFiles(dir) {
@@ -70,7 +71,7 @@ export function checkImports({ frontendDir = DEFAULT_FRONTEND } = {}) {
     return missing
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
     const frontendDir = process.argv[2] ? path.resolve(process.argv[2]) : DEFAULT_FRONTEND
     const missing = checkImports({ frontendDir })
     if (missing.length > 0) {

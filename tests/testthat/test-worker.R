@@ -696,9 +696,9 @@ test_that("a run message with a new library changes .libPaths() before the code 
   expect_identical(r$output$text, "[1] TRUE")
 })
 
-# ---- Rich outputs (ui-2-tests.md 21-27) --------------------------------------
+# ---- Rich outputs (ui-2-tests.md 22-28) --------------------------------------
 
-test_that("classed list objects print instead of becoming a tree (3a, 21)", {
+test_that("classed list objects print instead of becoming a tree (3a, 22)", {
   h <- worker_harness()
   on.exit(h$close())
   r <- run_and_wait(h, "a", 1L, "lm(mpg ~ wt, mtcars)")
@@ -716,7 +716,7 @@ test_that("classed list objects print instead of becoming a tree (3a, 21)", {
   expect_identical(r4$output$kind, "table")
 })
 
-test_that("display_table shape and tricky frames (22)", {
+test_that("display_table shape and tricky frames (23)", {
   h <- worker_harness()
   on.exit(h$close())
   r <- run_and_wait(h, "a", 1L, "mtcars")
@@ -743,7 +743,7 @@ test_that("display_table shape and tricky frames (22)", {
   expect_identical(r4$output$names, character())
 })
 
-test_that("display_tree depth, width and leaf text (23)", {
+test_that("display_tree depth, width and leaf text (24)", {
   h <- worker_harness()
   on.exit(h$close())
   r <- run_and_wait(h, "a", 1L,
@@ -773,7 +773,7 @@ test_that("display_tree treats an NA list name as unnamed text, not a nil key", 
   expect_false(anyNA(vapply(r$output$tree$items, `[[`, character(1), "key")))
 })
 
-test_that("more pages a table and a tree, reset on rerun (24)", {
+test_that("more pages a table and a tree, reset on rerun (25)", {
   h <- worker_harness()
   on.exit(h$close())
   r <- run_and_wait(h, "a", 1L, "mtcars")
@@ -797,7 +797,7 @@ test_that("more pages a table and a tree, reset on rerun (24)", {
   expect_identical(length(r3$output$rows), 10L)
 })
 
-test_that("display_html resolves and dedupes dependencies, skipped without htmltools (25)", {
+test_that("display_html resolves and dedupes dependencies, skipped without htmltools (26)", {
   skip_if_not_installed("htmltools")
   h <- worker_harness(extra_libs = dirname(find.package("htmltools")))
   on.exit(h$close())
@@ -818,7 +818,7 @@ test_that("display_html resolves and dedupes dependencies, skipped without htmlt
   expect_identical(r$output$deps[[1]]$script, "a.js")
 })
 
-test_that("render_plot at a given width, height and pixel density (26)", {
+test_that("render_plot at a given width, height and pixel density (27)", {
   h <- worker_harness()
   on.exit(h$close())
   run_and_wait(h, "a", 1L, "plot(1:10)")
@@ -831,7 +831,7 @@ test_that("render_plot at a given width, height and pixel density (26)", {
   expect_identical(m$display$size, list(width = 1400L, height = 933L, res = 192L))
 })
 
-test_that("colours are on at boot and text_form never ends in a partial escape (27)", {
+test_that("colours are on at boot and text_form never ends in a partial escape (28)", {
   h <- worker_harness()
   on.exit(h$close())
   r <- run_and_wait(h, "a", 1L, 'getOption("cli.num_colors")')

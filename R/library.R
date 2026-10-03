@@ -24,9 +24,39 @@
 # Both outcomes are the same library (per make-operations-idempotent).
 # renv's own cache writes use renv's locking.
 
+#' `path` with its nearest existing ancestor resolved by `normalizePath()`
+#' and the rest (components that don't exist yet) reattached as given.
+#' Plain `normalizePath(path, mustWork = FALSE)` on a path that doesn't
+#' exist yet does no symlink resolution at all on most platforms/R
+#' versions, even when a real symlink sits earlier in the path (macOS's
+#' `/var` -> `/private/var`, under which `tempfile()`'s default root
+#' lives) -- it falls back to a plain string cleanup once it can't `stat()`
+#' the full path. Walking up to the first ancestor that does exist and
+#' resolving only that gets the same canonical spelling `normalizePath()`
+#' would give once the rest of `path` exists too.
+normalize_existing_prefix <- function(path) {
+  if (file.exists(path)) return(normalizePath(path, mustWork = FALSE))
+  parent <- dirname(path)
+  if (identical(parent, path)) return(path)   # reached the filesystem root
+  file.path(normalize_existing_prefix(parent), basename(path))
+}
+
 #' @export
 cache_dir <- function() {
-  getOption("ember.cache_dir", tools::R_user_dir("ember", "cache"))
+  raw <- getOption("ember.cache_dir", tools::R_user_dir("ember", "cache"))
+  # normalize_existing_prefix(), not the raw value: a path built from this
+  # root (every library_for() path, every test's cache_dir override,
+  # setup-cache.R) and a path normalizePath() has already resolved
+  # elsewhere (dep_to_wire(), inst/worker.R, once the dependency's files
+  # really exist) have to spell the exact same directory the same way, or
+  # dep_path_allowed()'s plain string prefix check (R/server.R,
+  # R/export.R) falsely refuses a dependency that really is inside the
+  # library -- which happens on macOS specifically, since `tempfile()`'s
+  # default root is under "/var" (a symlink to "/private/var"). This
+  # doesn't touch dep_path_allowed()'s own, deliberate non-resolution of a
+  # symlink *inside* the library (renv's shared cache): only this one root
+  # is normalized, once, here.
+  normalize_existing_prefix(raw)
 }
 
 #' What the session needs to know about the running R:

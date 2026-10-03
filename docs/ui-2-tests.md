@@ -141,29 +141,29 @@ New fixtures:
 
 **Worker (unit)**
 
-21. `display_value()`: an `lm` fit and a `t.test()` result give kind
+22. `display_value()`: an `lm` fit and a `t.test()` result give kind
     `"text"` with their `print()` text ("Coefficients", "t = "); `list(a =
     1)` gives `"tree"`; `mtcars` gives `"table"`.
-22. `display_table(mtcars, ...)`: 8 names, types all `"<dbl>"`, `nrow` 32,
+23. `display_table(mtcars, ...)`: 8 names, types all `"<dbl>"`, `nrow` 32,
     `ncol` 11, 10 rows, `row_labels[1]` `"Mazda RX4"`, `more_rows` 22,
     `more_cols` 3. A data frame with a column whose `format()` method
     errors shows `"<error>"` in that column and the others intact. A 0-row
     data frame has names and no rows; a 0-column one has neither.
-23. `display_tree()`: a list nested 5 deep shows one-line text at depth 4; a
+24. `display_tree()`: a list nested 5 deep shows one-line text at depth 4; a
     100-item list shows 20 items and `more = 80`; unnamed items have empty
     keys; leaves read `"1"` for `1` and `" int [1:10] 1 2 3 4 5 6 7 8 9 10"`
     for `1:10`.
-24. Paging: after a table display, a `more` message with path `""`, dim 1
+25. Paging: after a table display, a `more` message with path `""`, dim 1
     gives 70 rows; dim 2 gives all 11 columns; for a tree, path `"3"` dim 1
     shows 80 items of that sublist. Each reply is a `rendered` message
     carrying the run's token. After the cell reruns, the limits start over.
-25. `display_html()` with an `htmlDependency(src = c(file = <temp dir>),
+26. `display_html()` with an `htmlDependency(src = c(file = <temp dir>),
     script = "a.js", stylesheet = "a.css")` gives one dep with `dir` that
     temp dir (absolute), `script` `"a.js"`, `stylesheet` `"a.css"`; two
     versions of one name give only the newer. Skipped without htmltools.
-26. `render_plot()` with `width = 1400, height = 933, res = 192` returns a
+27. `render_plot()` with `width = 1400, height = 933, res = 192` returns a
     PNG whose header says 1400 × 933, and `size = list(1400, 933, 192)`.
-27. Colours: at boot `getOption("cli.num_colors")` is 256 and is part of
+28. Colours: at boot `getOption("cli.num_colors")` is 256 and is part of
     `settings_start`, so a cell that doesn't touch it reports no
     global-setting change, and a non-setup cell that sets it is a global
     setting error. `text_form()` of a value printing 5000 coloured
@@ -171,62 +171,62 @@ New fixtures:
 
 **Engine and projection (unit)**
 
-28. `project_table()` of the mtcars display: `schema$names` and
+29. `project_table()` of the mtcars display: `schema$names` and
     `schema$types` end in `"more"`; 10 row entries then `"more"`; each
     row's cell list ends in `"more"`; each cell is `arr(text,
     "text/plain")`; `ember_dims` is `"32 × 11"`; `check_wire()` passes.
-29. `project_tree()` of a nested display: elements are `arr(key, arr(body,
+30. `project_tree()` of a nested display: elements are `arr(key, arr(body,
     mime))`, a nested node has mime `application/vnd.pluto.tree+object`,
     `"more"` is last when items are hidden, `objectid` is the node's path.
-30. `reduce_show_more()` sends `more` when the worker is ready or busy and
+31. `reduce_show_more()` sends `more` when the worker is ready or busy and
     the output is a table or tree; nothing for a text output or with the
     worker off.
-31. `reduce_wk_rendered()` replaces a table, tree or PNG output when the
+32. `reduce_wk_rendered()` replaces a table, tree or PNG output when the
     token matches, drops a reply whose token is from an older run, and sets
     `rendered_at`. The projection's `last_run_timestamp` becomes
     `rendered_at`, and every patch of `fb_diff()` between the two
     projections is under that cell's `cell_results`.
-32. `project_output()` for HTML with dependencies: `<link>` and `<script>`
+33. `project_output()` for HTML with dependencies: `<link>` and `<script>`
     tags in dependency order with `/deps/<name>-<version>/` paths; an
     href-only dependency uses its href; the `staticRender()` script is
     appended only when one dependency is named `htmlwidgets`; HTML without
     dependencies is unchanged.
-33. `notebook_snapshot()` has no ANSI escapes in output `text` or console
+34. `notebook_snapshot()` has no ANSI escapes in output `text` or console
     items; `notebook_state()` still has them.
 
 **Request handling and server**
 
-34. `register_deps()`: a folder inside the active library path is
+35. `register_deps()`: a folder inside the active library path is
     registered once across two notes; a folder outside it, or a path with
     `..`, is refused and logged; a symlink inside the library pointing
     outside it is accepted; `drop_hub()` removes only that notebook's keys,
     and a key two notebooks use stays until both are gone.
-35. `reshow_cell {cell_id, objectid: "", dim: 1}` on a `mtcars` cell (real
+36. `reshow_cell {cell_id, objectid: "", dim: 1}` on a `mtcars` cell (real
     worker): after `wait_for()`, `page()` shows 70 table rows.
-36. `ember_render_plot` clamps width, height and res; for a plot cell the
+37. `ember_render_plot` clamps width, height and res; for a plot cell the
     page's image bytes change and `last_run_timestamp` grows; for a text
     cell nothing happens.
-37. With a real httpuv server (skipped on CRAN): after registration,
+38. With a real httpuv server (skipped on CRAN): after registration,
     `GET /deps/x-1.0/x.js` returns the file without the secret; an
     unregistered `/deps/y-1/` path is 404.
 
 **End to end**
 
-38. Table and print (`rich.R`): `TBL` shows `table.pluto-table` with 10 body
+39. Table and print (`rich.R`): `TBL` shows `table.pluto-table` with 10 body
     rows, a "more" row and a `<dbl>` types row; clicking "more" shows all
     32 rows; `FIT` shows text containing "Coefficients", not a tree.
-39. Tree: `LST` shows a collapsed `pluto-tree`; clicking expands it to show
+40. Tree: `LST` shows a collapsed `pluto-tree`; clicking expands it to show
     `a`, `b`, `long`; the "more" in `long` loads more items.
-40. Plot (ui-tests.md 42, not yet built): `PLT` shows an `<img>`; after
+41. Plot (ui-tests.md 42, not yet built): `PLT` shows an `<img>`; after
     `setViewportSize()` to half the width, the image's `naturalWidth`
     changes to the container width × `devicePixelRatio` (±10%) within 5 s.
-41. Two tabs of different widths on `rich.R` (also covers ui-tests.md 44:
+42. Two tabs of different widths on `rich.R` (also covers ui-tests.md 44:
     an edit run in one tab appears in the other): over 10 s after both
     load, the server log shows at most one render request per tab, not an
     alternating series.
-42. Colours: `ANSI`'s log and output contain `span.ansi-red-fg` and no
+43. Colours: `ANSI`'s log and output contain `span.ansi-red-fg` and no
     visible `\x1b`.
-43. Widgets (`widget.R`, `EMBER_E2E_INSTALLS=1`): after running both cells,
+44. Widgets (`widget.R`, `EMBER_E2E_INSTALLS=1`): after running both cells,
     both divs read `function`; `document.head` has exactly one `<script>`
     whose `src` starts with `/deps/jquery-`.
 
@@ -234,23 +234,23 @@ New fixtures:
 
 **Worker (unit)**
 
-44. `complete_line()`: `"me"` includes `mean`; with `mtcars` defined,
+45. `complete_line()`: `"me"` includes `mean`; with `mtcars` defined,
     `"mtcars$m"` includes `mtcars$mpg`; `"library(sta"` includes `stats`;
     `"lm(fo"` includes `formula = ` with kind `"argument"`; a global
     `my_var` is `notebook = TRUE`; an active binding in `globalenv()` is
     not evaluated (its counter doesn't move).
-45. `help` for `mean`: `found`, HTML contains "Arithmetic Mean" and no
+46. `help` for `mean`: `found`, HTML contains "Arithmetic Mean" and no
     `<html>` or `<head>`; for `no_such_topic`: not found; for a topic in two
     attached packages: `matches` lists both.
-46. `signature`: `lm` gives text starting `lm(formula, data`; `pi` gives
+47. `signature`: `lm` gives text starting `lm(formula, data`; `pi` gives
     `NULL`.
-47. `handle_next()` answers `complete`, `help` and `signature` with the
+48. `handle_next()` answers `complete`, `help` and `signature` with the
     request's `id`, and these messages are deferred, not lost, while a
     `source` reply is awaited.
 
 **Shell (unit, real worker)**
 
-48. `worker_query()` with an idle worker calls back with the reply; with a
+49. `worker_query()` with an idle worker calls back with the reply; with a
     cell running (`Sys.sleep(3)`) it calls back with `NULL` at once; in safe
     preview it calls back with `NULL` and starts no worker. A reply that
     arrives after the timeout is dropped and the worker is not killed. A
@@ -258,52 +258,52 @@ New fixtures:
 
 **Pure (unit)**
 
-49. `completion_context()`: `"x <- dplyr::fil"` gives namespace `dplyr`,
+50. `completion_context()`: `"x <- dplyr::fil"` gives namespace `dplyr`,
     token `fil`, start at byte 12; `"é <- me"` counts `é` as 2 bytes; for a
     multi-line `query_full` only the last line is the line.
-50. `fallback_completions()` on a state where one cell defines `fil_x` and
+51. `fallback_completions()` on a state where one cell defines `fil_x` and
     another attaches a package whose exports include `filter`: prefix `fil`
     gives `fil_x` first, then `filter`, then base names (`file.path`);
     `"dplyr::"` gives that package's exports from the state; more than 500
     matches sets `too_long`.
-51. `completion_reply()`: each result is a six-element array of the types
+52. `completion_reply()`: each result is a six-element array of the types
     the page reads (CellInput.js:700-708), `"keyword_argument"` for
     arguments, `"path"` for files; `start`/`stop` are byte offsets.
-52. `project_dependencies()`: a definition no cell reads is in its cell's
+53. `project_dependencies()`: a definition no cell reads is in its cell's
     `downstream_cells_map` with an empty array.
-53. `rewrite_help_links()`: `../../stats/help/sd` becomes `@ref stats::sd`;
+54. `rewrite_help_links()`: `../../stats/help/sd` becomes `@ref stats::sd`;
     other links are unchanged.
-54. `span_offsets()`: a tab before the name, a two-byte character and an
+55. `span_offsets()`: a tab before the name, a two-byte character and an
     astral character (two UTF-16 units) each give the right offsets.
     `ember_spans` for `y <- x + 1` is defs `[["y", 0, 1]]`, refs `[["x", 5,
     6]]`; rows from a sourced file and rows with `col` NA are left out;
     the spans change exactly when the code does.
-55. `signature_fallback("lm")` gives the stats signature;
+56. `signature_fallback("lm")` gives the stats signature;
     `signature_fallback("my_fun")` gives `NULL`.
 
 **Request handling**
 
-56. `complete` in safe preview: the reply (from the fallback) is sent
+57. `complete` in safe preview: the reply (from the fallback) is sent
     within the same `handle_message()` call and the process stays
     `"preview"`. With an idle worker and `df <- mtcars` run, `complete`
     with `query_full = "df$"` replies with `df$mpg` after `wait_for()`.
-57. `docs`: in preview, for `mean`, the "Help pages need R running" reply;
+58. `docs`: in preview, for `mean`, the "Help pages need R running" reply;
     for a notebook-defined `f`, the defining cell's code; with a worker,
     the help page with rewritten links.
-58. `ember_signature` with a worker and without one.
+59. `ember_signature` with a worker and without one.
 
 **End to end**
 
-59. Completion: typing `me` then Ctrl+Space in a new cell shows a list
+60. Completion: typing `me` then Ctrl+Space in a new cell shows a list
     containing `mean`; Enter inserts it. After running `DF`, typing `df$`
     shows `mpg`. While `LOOP` (basic.R) runs, typing `su` shows `sum`
     within 1 s.
-60. Help: with the cursor inside `mean(`, the Help tab shows "Arithmetic
+61. Help: with the cursor inside `mean(`, the Help tab shows "Arithmetic
     Mean"; clicking a link inside it loads that page in the panel; an
     example block has `.hljs-keyword` spans.
-61. Signature: with the cursor after `lm(`, a tooltip containing
+62. Signature: with the cursor after `lm(`, a tooltip containing
     `formula` appears within 1 s.
-62. Go-to-definition: Ctrl/Cmd-click on `x` in B focuses cell A; typing
+63. Go-to-definition: Ctrl/Cmd-click on `x` in B focuses cell A; typing
     in B removes the marks until B is run again. No module
     `scopestate_statefield.js` is loaded.
 
@@ -311,46 +311,46 @@ New fixtures:
 
 **Unit**
 
-63. `project_ember()` in safe preview: process `"preview"`, `not_run` 0,
+64. `project_ember()` in safe preview: process `"preview"`, `not_run` 0,
     `worker_memory` `NULL`, `plan$install` equal to `packages_view()`'s.
     After running only A in basic.R: `not_run` counts B, ERR, LOOP (3);
     the blank setup cell and `MD` are not counted; after `run_cells(nb,
     NULL)` it is 0.
-64. Per-cell `ember`: in lazy mode, after A reruns, B has `stale = TRUE`;
+65. Per-cell `ember`: in lazy mode, after A reruns, B has `stale = TRUE`;
     after `edit_notebook()` changes B outside the page, B has
     `code_changed = TRUE`; a cell below a failed one has `blocked_by` that
     cell's id. `depends_on_disabled_cells` is `TRUE` only for the blocked
     cell.
-65. A change of `worker_usage` alone gives patches only under
+66. A change of `worker_usage` alone gives patches only under
     `ember/worker_memory`. A usage from an older worker generation is
     ignored.
-66. `ember$packages$rows` mirrors `packages_view()$packages`; an `NA`
+67. `ember$packages$rows` mirrors `packages_view()$packages`; an `NA`
     version is `NULL` on the wire; `check_wire()` passes.
-67. `reduce_worker_usage()` stores the value; `notifications()` returns a
+68. `reduce_worker_usage()` stores the value; `notifications()` returns a
     `worker_usage` note and no `cell_state` note; `notebook_snapshot()`
     has `worker_memory`.
-68. Memory sampling with a fake process whose `get_memory_info()` returns
+69. Memory sampling with a fake process whose `get_memory_info()` returns
     100, 105, 130 MB: an event for 100 and 130 only; an error from
     `get_memory_info()` dispatches nothing.
 
 **Request handling**
 
-69. `ember_run_all` queues the code cells that are not run (and what they
+70. `ember_run_all` queues the code cells that are not run (and what they
     need), then flushes; a cell already run with its code unchanged is not
     rerun (its `last_run` is unchanged).
 
 **End to end**
 
-70. After the first run, the header shows `R · <n> MB` with n > 0; in safe
+71. After the first run, the header shows `R · <n> MB` with n > 0; in safe
     preview it shows nothing.
-71. Run B, then restart R from the header: the bar reads "4 cells not run"
+72. Run B, then restart R from the header: the bar reads "4 cells not run"
     (A, B, ERR, LOOP); "Run all" makes it disappear once they finish
     (ERR's error counts as run).
-72. `lazy.R`: run all, edit A to `x <- 2` and run it: B shows the "stale"
+73. `lazy.R`: run all, edit A to `x <- 2` and run it: B shows the "stale"
     label and dimmed output; running B removes the label.
-73. Packages tab in safe preview on a notebook with `library(htmltools)`:
+74. Packages tab in safe preview on a notebook with `library(htmltools)`:
     one row per locked package with status "missing", and the preview
     banner says it will install that many packages.
-74. Endeavor's fields survive: `window.editor_state.notebook.nbpkg`,
+75. Endeavor's fields survive: `window.editor_state.notebook.nbpkg`,
     `status_tree` and `process_status` are present and filled as in
     increment 1.

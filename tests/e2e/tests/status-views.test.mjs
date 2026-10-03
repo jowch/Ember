@@ -1,4 +1,4 @@
-// Piece 5 (docs/ui-2.md, "Status views"), docs/ui-2-tests.md items 70-74:
+// Piece 5 (docs/ui-2.md, "Status views"), docs/ui-2-tests.md items 71-75:
 // worker memory in the header, the "N cells not run" bar and "Run all",
 // stale labels, the Packages tab, and Endeavor's Pluto-shaped fields
 // staying filled.
@@ -10,7 +10,7 @@ import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, setCellCode, cellSelector } from "../browser.mjs";
 
 // 70. Header memory, nothing in safe preview.
-test("header: worker memory shows after the first run, nothing in safe preview (70)", async (t) => {
+test("header: worker memory shows after the first run, nothing in safe preview (71)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "status-70.server.log") });
   const browser = await launchBrowser();
@@ -31,7 +31,7 @@ test("header: worker memory shows after the first run, nothing in safe preview (
 });
 
 // 71. "N cells not run" bar; restart resets it; "Run all" clears it.
-test('"N cells not run" bar counts, grows after a restart, and "Run all" clears it (71)', async (t) => {
+test('"N cells not run" bar counts, grows after a restart, and "Run all" clears it (72)', async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "status-71.server.log") });
   const browser = await launchBrowser();
@@ -63,7 +63,7 @@ test('"N cells not run" bar counts, grows after a restart, and "Run all" clears 
 });
 
 // 72. Stale label on an edited ancestor's dependent, lazy mode.
-test('lazy.R: editing A shows B as "stale", running B clears it (72)', async (t) => {
+test('lazy.R: editing A shows B as "stale", running B clears it (73)', async (t) => {
   const notebook = tempNotebook("lazy.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "status-72.server.log") });
   const browser = await launchBrowser();
@@ -96,7 +96,7 @@ test('lazy.R: editing A shows B as "stale", running B clears it (72)', async (t)
 // 73. Packages tab in safe preview. Resolving the lock needs CRAN's index
 // (network), as `widget.R`'s install scenario does (ui-2-tests.md's new
 // fixtures note); gated the same way.
-test("Packages tab lists a missing package and the preview banner names the install (73)", {
+test("Packages tab lists a missing package and the preview banner names the install (74)", {
   skip: !process.env.EMBER_E2E_INSTALLS && "set EMBER_E2E_INSTALLS=1 (needs network to resolve the lock)",
 }, async (t) => {
   const notebook = tempNotebook("packages.R");
@@ -126,7 +126,7 @@ test("Packages tab lists a missing package and the preview banner names the inst
 });
 
 // 74. Endeavor's Pluto-shaped fields survive.
-test("Endeavor's nbpkg, status_tree and process_status stay filled (74)", async (t) => {
+test("Endeavor's nbpkg, status_tree and process_status stay filled (75)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "status-74.server.log") });
   const browser = await launchBrowser();

@@ -5,6 +5,37 @@
 #
 # Covers packages-tests.md items 59-66 ("Disk and jobs").
 
+test_that("cache_dir() normalizes ember.cache_dir, even before the folder exists (review: dep_path_allowed() false refusal)", {
+  # dep_path_allowed() (R/server.R, R/export.R) compares a dependency's
+  # resolved dir (normalizePath()d in inst/worker.R's dep_to_wire(), once
+  # the dependency's files really exist) against this root with a plain
+  # string prefix check. On macOS, tempfile()'s default root is under
+  # "/var" (a symlink to "/private/var"), so an un-normalized cache_dir()
+  # and an already-normalized dependency dir can name the same directory
+  # with two different spellings and fail that prefix check even though
+  # the dependency really is inside the library -- and plain
+  # normalizePath(path, mustWork = FALSE) does no symlink resolution at all
+  # when "path" itself doesn't exist yet (the common case: cache_dir() is
+  # called before any library under it has been created).
+  not_yet_created <- tempfile("ember-cache-dir-test-")
+  expect_false(file.exists(not_yet_created))
+  old <- options(ember.cache_dir = not_yet_created)
+  on.exit(options(old), add = TRUE)
+
+  resolved_parent <- normalizePath(dirname(not_yet_created), mustWork = TRUE)
+  expect_identical(cache_dir(), file.path(resolved_parent, basename(not_yet_created)))
+})
+
+test_that("normalize_existing_prefix() resolves an existing path outright and leaves a nonexistent tail as given", {
+  expect_identical(normalize_existing_prefix(tempdir()), normalizePath(tempdir(), mustWork = FALSE))
+
+  nested <- file.path(tempdir(), "a-review-test-dir", "b", "c")
+  expect_false(file.exists(nested))
+  resolved <- normalize_existing_prefix(nested)
+  expect_identical(basename(resolved), "c")
+  expect_identical(basename(dirname(resolved)), "b")
+})
+
 # ---- Helpers -------------------------------------------------------------
 
 #' A bare environment that can receive events the way `enqueue()` (shell.R)

@@ -16,11 +16,11 @@ done; clear out ticked items at each release.
 
 ## Worker
 
-- [ ] Editor services: completion, help pages and signatures (the request kinds exist and reply "unsupported") — missing
+- [x] Editor services: completion, help pages and signatures (the request kinds exist and reply "unsupported") — missing
 - [ ] Code that sets out to can reach the worker's own environment (`parent.env(environment(library))`); accidental shadowing is prevented, deliberate access isn't — improvised
 - [ ] Undoing a non-setup cell's `attach()` or `detach()` is best effort: an entry that left the search path can't be recreated — improvised
 - [ ] Formula column check skips a `data` argument that is a call rather than a symbol or `$`/`[[` path — improvised
-- [ ] Plot size isn't reported back, so `render_png()`'s `size` is always `NULL` — missing
+- [x] Plot size isn't reported back, so `render_png()`'s `size` is always `NULL` — missing
 - [ ] Interrupts on Windows: a plain interrupt works in CI, but one landing while a value is displayed isn't checked (the test is skipped there: processx's CTRL+C helper delivers too late for its timing). A late interrupt can also land in the next cell there, and one arriving between cells has stopped the worker in CI (test skipped there too) — improvised
 
 ## File format
@@ -56,10 +56,11 @@ done; clear out ticked items at each release.
 
 - [x] Remote use: the server accepted only Host `127.0.0.1:<port>` or `localhost:<port>`, so an SSH tunnel to a different local port, or any reverse proxy (Posit Workbench, JupyterHub, VS Code port forwarding), got 403. Now a loopback Host is accepted on any port when Origin matches Host (or is absent); an opt-in `allowed_hosts` argument covers a proxy that isn't loopback — missing
 - [x] Remote use behind a path prefix: the `/open` redirect and `/`'s notebook links were absolute (`/edit?...`), so a proxy serving Ember under a prefix like `/s/<id>/p/<port>/` (stripping that prefix before forwarding, the usual model) broke them once the browser followed a link built from the unprefixed path the backend sees. Both are relative now, as Pluto does — missing
+- [ ] Remote use behind a path prefix, without its trailing slash: a request for the bare prefix (`/s/<id>/p/<port>`, no trailing `/`) and one for the prefix with a trailing slash both arrive here as exactly `GET /` once the proxy strips the prefix (checked against `tests/e2e/proxy.mjs`'s `forwardPath()`, which collapses both to `/`) -- this process has no way to tell them apart, since it never learns the prefix at all (the whole reason every URL it builds is relative, not absolute). `http_index()`'s relative links resolve correctly against the trailing-slash URL but one folder too high against the bare one (a browser resolves a relative URL against its directory, and `.../p/<port>` with no trailing slash has `.../p/` as its directory). Not fixable here: the fix has to be on the proxy's side (redirect the bare prefix to one with a trailing slash before forwarding, which is what a path-prefix-aware proxy like JupyterHub's server proxy already does) — missing
 
 - [ ] Pluto frontend fork, protocol in R, removals, R adaptations, theme — missing
 - [ ] The R grammar wired into CodeMirror — missing
-- [ ] Rich outputs in the browser: widget files as static paths, table and tree views, terminal colours — missing
+- [x] Rich outputs in the browser: widget files as static paths, table and tree views, terminal colours — missing
 - [x] URL secret — missing
 - [ ] The server finds the notebook from each message's `notebook_id` rather than the one the client connected to, so one page's socket can act on another notebook it names (both need the secret) — improvised
 - [ ] The browser tests run against whatever ember Rscript's default library has; they should install the working tree into a temp library themselves — improvised

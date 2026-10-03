@@ -8,10 +8,11 @@
 import { rollup } from "rollup"
 import fs from "node:fs"
 import path from "node:path"
+import { fileURLToPath } from "node:url"
 import { copyAssets } from "./copy-assets.mjs"
 import { checkImports } from "./check-imports.mjs"
 
-const HERE = path.dirname(new URL(import.meta.url).pathname)
+const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, "..")
 const FRONTEND = path.resolve(ROOT, "..", "inst", "frontend")
 const IMPORTS_DIR = path.join(FRONTEND, "imports")
@@ -54,18 +55,33 @@ function main_build() {
                 keep.add(o.fileName)
             }
         }
-        const thirdPartyPath = path.join(ROOT, "dist", "vendor", "THIRD-PARTY.txt")
-        if (fs.existsSync(thirdPartyPath)) {
-            fs.copyFileSync(thirdPartyPath, path.join(VENDOR_DIR, "THIRD-PARTY.txt"))
-            keep.add("THIRD-PARTY.txt")
+        // THIRD-PARTY.txt documents imports/vendor/ but isn't itself loaded
+        // by anything; it lives one level up, in imports/, which the rest of
+        // the frontend already serves as no-cache (R/server.R's http_app()
+        // only grants the year-long immutable lifetime to imports/vendor/
+        // itself) -- a licence file has no content hash to invalidate a
+        // stale cache with, so it can't share that path. Two rollup builds
+        // each wrote their own (rollup.vendor.config.js's third-party
+        // libraries, rollup.config.js's CodeMirror/Lezer bundle); this
+        // concatenates them into the one file that ships, sorted so the
+        // combined file is itself stable across rebuilds the same way each
+        // half already is.
+        const thirdPartySources = [
+            path.join(ROOT, "dist", "vendor", "THIRD-PARTY.txt"),
+            path.join(ROOT, "dist", "THIRD-PARTY-codemirror.txt"),
+        ].filter((p) => fs.existsSync(p))
+        if (thirdPartySources.length > 0) {
+            const combined = thirdPartySources
+                .map((p) => fs.readFileSync(p, "utf8").trim())
+                .join("\n\n---\n\n")
+            fs.writeFileSync(path.join(IMPORTS_DIR, "THIRD-PARTY.txt"), combined + "\n")
         }
 
-        copyAssets({ frontendDir: FRONTEND })
-        keep.add("dialog-polyfill.css")
-        keep.add("iframeResizer.min.js")
-        keep.add("iframeResizer.contentWindow.min.js")
+        const { hashed } = copyAssets({ frontendDir: FRONTEND })
+        for (const name of Object.values(hashed)) keep.add(name)
 
         rewriteShimImports(hashedByBase)
+        rewriteVendorAssetReferences(hashed)
 
         // Delete hashed files nothing refers to any more.
         for (const existing of fs.readdirSync(VENDOR_DIR)) {
@@ -85,6 +101,36 @@ function main_build() {
 }
 
 const ESCAPE_RE = /[.*+?^${}()|[\]\\]/g
+
+/** Rewrite editor.html's two iframe-resizer <script src>s and editor.css's
+ * dialog-polyfill @import to the current build's hashed vendor file names
+ * (`hashed`: unhashed base name -> hashed file name, from copyAssets()). */
+function rewriteVendorAssetReferences(hashed) {
+    const rewrite = (file, base) => {
+        const target = hashed[base]
+        const dot = base.lastIndexOf(".")
+        const stem = base.slice(0, dot).replace(ESCAPE_RE, "\\$&")
+        const ext = base.slice(dot + 1)
+        // Matches the unhashed placeholder (a fresh checkout) or a previous
+        // build's hashed name (a rebuild), the same two cases
+        // rewriteShimImports() above handles for a module's own `from` line.
+        const re = new RegExp(`imports/vendor/${stem}(-[0-9A-Za-z_-]+)?\\.${ext}`)
+        let source = fs.readFileSync(file, "utf8")
+        if (!re.test(source)) {
+            throw new Error(`build: couldn't find imports/vendor/${base} (or a previously hashed form) in ${file}`)
+        }
+        // Not "if changed, write": a rebuild with the same content (the
+        // common case) finds the match already up to date, which is still a
+        // successful find, not an error -- unlike rewriteShimImports()
+        // above, there's exactly one match here, so re-writing it
+        // unconditionally costs nothing.
+        const next = source.replace(re, `imports/vendor/${target}`)
+        fs.writeFileSync(file, next)
+    }
+    rewrite(path.join(FRONTEND, "editor.html"), "iframeResizer.min.js")
+    rewrite(path.join(FRONTEND, "editor.html"), "iframeResizer.contentWindow.min.js")
+    rewrite(path.join(FRONTEND, "editor.css"), "dialog-polyfill.css")
+}
 
 /** Rewrite every `./vendor/<base>[-<hash>].js` specifier in imports/*.js to the current hashed name. */
 function rewriteShimImports(hashedByBase) {

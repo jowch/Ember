@@ -188,7 +188,7 @@ questions). Piece 2 vendors whichever fonts this piece keeps.
   a compartment: `r()` for code; for markdown,
   `markdown({ base: markdownLanguage, codeLanguages: (info) => /^(r|R|)$/.test(info) ? rLanguage : null })`.
   `markdown`, `markdownLanguage` and `rLanguage` are already exported by the
-  bundle (frontend-setup/src/index.js:82, 94).
+  bundle (frontend-build/src/index.js:82, 91).
 - Engine: `insert_cell(..., kind = "markdown")` makes the cell folded
   (step.R:532: `folded = identical(op$kind, "markdown")`).
 - Translation: `order_ops()` inserts with
@@ -206,7 +206,7 @@ questions). Piece 2 vendors whichever fonts this piece keeps.
 - `inst/COPYRIGHTS`: one entry per component with its licence and holder.
   This piece writes Pluto.jl (MIT, "Copyright (c) 2020-2026 the Pluto.jl
   authors", as inst/frontend/LICENSE says), codemirror-pluto-setup (whose
-  source `frontend-setup/src/index.js` copies), CodeMirror 6 and Lezer
+  source `frontend-build/src/index.js` copies), CodeMirror 6 and Lezer
   (MIT). Piece 2 adds the generated third-party list.
 - `inst/frontend/LICENSE` (Pluto's MIT text) stays where it is.
 
@@ -339,9 +339,14 @@ version so its source can be found.
      importers. `merge` stays (Endeavor draws inline diffs).
   2. `rollup.vendor.config.js`: one input per library under `src/vendor/`
      (each file re-exports exactly what the shim needs), output
-     `inst/frontend/imports/vendor/<name>.js`, format `es`, minified, with
-     `chunkFileNames: "[name].js"` so shared code (Preact's core under
-     `preact` and `preact/hooks`) is one file with a stable name. Libraries:
+     `inst/frontend/imports/vendor/<name>-<hash>.js`, format `es`, minified,
+     with `entryFileNames`/`chunkFileNames: "[name]-[hash].js"` so every
+     file's name changes when its content does (R/server.R serves
+     `imports/vendor/` with a year-long immutable `Cache-Control`) and
+     shared code (Preact's core under `preact` and `preact/hooks`) is one
+     file reached by import, not duplicated per entry. `build.mjs` rewrites
+     each shim's `from "./vendor/..."` line to match the current hash after
+     every build. Libraries:
      preact 10.29.2, htm 3.1.1, lodash-es, immer 11.1.8, dompurify 3.4.5,
      semver 7.8.0, ansi_up 6.0.6, @observablehq/stdlib 3.3.1,
      dialog-polyfill 0.5.6, iframe-resizer 4.3.11 (4.x is MIT; 5.x changed
@@ -724,7 +729,7 @@ widgets it has already rendered.
 
 ### Tests
 
-ui-2-tests.md 21-43.
+ui-2-tests.md 22-44.
 
 ### Risks
 
@@ -984,7 +989,7 @@ reason.
 
 ### Tests
 
-ui-2-tests.md 44-62.
+ui-2-tests.md 45-63.
 
 ### Risks
 
@@ -1115,7 +1120,7 @@ bar isn't shown; the banner's own button already runs all
 
 ### Tests
 
-ui-2-tests.md 63-74.
+ui-2-tests.md 64-75.
 
 ### Risks
 

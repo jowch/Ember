@@ -336,7 +336,7 @@ test_that("cell_dependencies for a library() cell uses the exported name (14)", 
   expect_equal(deps$B$precedence_heuristic, 9L)
 })
 
-test_that("a definition no cell reads is still in its cell's downstream_cells_map, with an empty array (52)", {
+test_that("a definition no cell reads is still in its cell's downstream_cells_map, with an empty array (53)", {
   g <- notebook_graph(c(S = "", A = "x <- 1; unread <- 2"), setup = "S")
   deps <- project_dependencies(g, NULL)
   expect_equal(deps$A$downstream_cells_map$unread, list())
@@ -428,7 +428,7 @@ test_that("project_cell_input() gives kind markdown/code; check_wire() passes on
   expect_true(check_wire(js2))
 })
 
-# ---- ui-2-tests.md 28-29: project_table()/project_tree() -------------------
+# ---- ui-2-tests.md 29-30: project_table()/project_tree() -------------------
 
 test_that("project_table() ends names/types/rows in 'more' when truncated, each cell a text/plain pair (ui-2 28)", {
   table_data <- list(names = paste0("c", 1:8), types = rep("<dbl>", 8), nrow = 32L, ncol = 11L,
@@ -473,7 +473,7 @@ test_that("project_tree() nests nodes under vnd.pluto.tree+object, 'more' last, 
   expect_equal(utils::tail(body$elements, 1), list("more"))
 })
 
-# ---- ui-2-tests.md 32: HTML output with widget dependencies -----------------
+# ---- ui-2-tests.md 33: HTML output with widget dependencies -----------------
 
 test_that("project_output() prepends dependency tags in order; staticRender only for htmlwidgets (ui-2 32)", {
   deps <- list(
@@ -503,4 +503,30 @@ test_that("project_output() prepends dependency tags in order; staticRender only
   # no dependencies: unchanged
   o3 <- project_output(fake_view(output = new_display("text/html", "<p/>", "p")))
   expect_equal(o3$body, "<p/>")
+})
+
+test_that("project_dep_tags() adds a '/' between a bare href and its file (ui-2 review)", {
+  tags <- project_dep_tags(list(list(name = "cdnlib", version = "1", dir = NULL,
+    href = "https://example.org/lib", script = "a.js", stylesheet = "a.css", head = NULL)))
+  expect_match(tags, '<link rel="stylesheet" href="https://example.org/lib/a.css">', fixed = TRUE)
+  expect_match(tags, '<script src="https://example.org/lib/a.js"></script>', fixed = TRUE)
+
+  # an href that already ends in "/" isn't doubled
+  tags2 <- project_dep_tags(list(list(name = "cdnlib", version = "1", dir = NULL,
+    href = "https://example.org/lib/", script = "a.js", stylesheet = character(), head = NULL)))
+  expect_match(tags2, '<script src="https://example.org/lib/a.js"></script>', fixed = TRUE)
+  expect_false(grepl("lib//a.js", tags2, fixed = TRUE))
+})
+
+test_that("project_dep_tags() accepts htmltools' list form for a script entry (ui-2 review)", {
+  tags <- project_dep_tags(list(list(name = "mod", version = "1", dir = "/lib", href = NULL,
+    script = list(list(src = "a.js", type = "module")), stylesheet = character(), head = NULL)))
+  expect_match(tags, '<script src="deps/mod-1/a.js" type="module"></script>', fixed = TRUE)
+
+  # a mix of plain names and list entries
+  tags2 <- project_dep_tags(list(list(name = "mod", version = "1", dir = "/lib", href = NULL,
+    script = list("plain.js", list(src = "a.js", type = "module")),
+    stylesheet = character(), head = NULL)))
+  expect_match(tags2, '<script src="deps/mod-1/plain.js"></script>', fixed = TRUE)
+  expect_match(tags2, '<script src="deps/mod-1/a.js" type="module"></script>', fixed = TRUE)
 })

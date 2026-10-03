@@ -9,10 +9,19 @@ licence. Its text is at inst/frontend/LICENSE.
 - codemirror-pluto-setup: MIT, Copyright (c) 2021 Pluto.jl authors. Its
   source, which inst/frontend/imports/vendor/codemirror-ember-setup-*.js is
   built from, is copied and extended in frontend-build/src/index.js.
-- CodeMirror 6: MIT, Copyright (C) 2018-2021 by Marijn Haverbeke
+- CodeMirror 6 (every package the bundle pulls in: @codemirror/autocomplete,
+  @codemirror/collab, @codemirror/commands, @codemirror/lang-css,
+  @codemirror/lang-html, @codemirror/lang-javascript,
+  @codemirror/lang-markdown, @codemirror/language, @codemirror/lint,
+  @codemirror/merge, @codemirror/search, @codemirror/state,
+  @codemirror/view): MIT, Copyright (C) 2018-2021 by Marijn Haverbeke
   <marijnh@gmail.com> and others.
-- Lezer: MIT, Copyright (C) 2018-2021 by Marijn Haverbeke
-  <marijnh@gmail.com> and others.
+- Lezer (@lezer/common, @lezer/css, @lezer/highlight, @lezer/html,
+  @lezer/javascript, @lezer/lr, @lezer/markdown): MIT, Copyright (C)
+  2018-2021 by Marijn Haverbeke <marijnh@gmail.com> and others.
+- CodeMirror/Lezer's own small helper packages, also Marijn Haverbeke's:
+  `@marijn/find-cluster-break`, `crelt`, `style-mod`, `w3c-keyname`. All
+  MIT.
 
 inst/frontend/imports/vendor/ is built by frontend-build/ (npm) from these
 packages; versions are pinned in frontend-build/package.json and
@@ -41,7 +50,22 @@ licence text.
 - requestidlecallback-polyfill 1.0.2: MIT AND Apache-2.0.
 - seamless-scroll-polyfill 2.1.8: MIT, Copyright (c) 2013 Dustan Kasten.
 - msgpack-lite (fonsp/msgpack-lite@0.1.27-es.1, a fork published as a git
-  tag, not on npm): MIT, Copyright (c) 2015 Yusuke Kawasaki.
+  tag, not on npm): MIT, Copyright (c) 2015 Yusuke Kawasaki. Its prebuilt
+  `dist/msgpack-es.min.mjs` (the file actually vendored; see
+  src/vendor/msgpack-lite.js) is a browserify bundle with these further
+  packages' source compiled in, so rollup-plugin-license's dependency walk
+  never sees them as separate modules to credit on its own. Versions are
+  msgpack-lite's own `package.json` dependency ranges (what it depends on
+  today), since the exact versions it bundled at its original release
+  aren't independently recoverable from the minified output:
+  - event-lite ^0.1.1: MIT, Copyright (c) 2016 Yusuke Kawasaki.
+  - ieee754 ^1.1.8: BSD 3-Clause, Copyright (c) 2008 Fair Oaks Labs, Inc.
+  - int64-buffer ^0.1.9: MIT, Copyright (c) 2015 Yusuke Kawasaki.
+  - isarray ^1.0.0: MIT, Copyright (c) 2013 Julian Gruber.
+  - base64-js: MIT, Copyright (c) 2014 Jameson Little. Not a direct
+    dependency of msgpack-lite; present in the bundle via one of the
+    above (browserify's own dependency walk, not visible from
+    msgpack-lite's package.json alone).
 - js-sha256 (JuliaPluto/js-sha256@v0.9.0-es6, a fork published as a git tag,
   not on npm): MIT, Copyright (c) 2014-2017 Chen, Yi-Cyuan.
 - ionicons 5.5.1: MIT, Copyright (c) 2015-present Ionic
