@@ -1054,8 +1054,10 @@ test_that("docs: preview mean needs R running, a notebook-defined f shows its co
 
   handle_message(server, ws, wire("docs", notebook_id = id, query = "f"))
   r2 <- ws$last()$message
-  expect_match(r2$doc, "Defined in this notebook")
+  expect_match(r2$doc, "Defined in a cell")
+  expect_match(r2$doc, "f(x)", fixed = TRUE)
   expect_match(r2$doc, "function(x) x", fixed = TRUE)
+  expect_match(r2$doc, "data-ember-cell=", fixed = TRUE)
 
   a <- names(notebook_state(nb)$cells)[2]
   handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list(a)))
@@ -1072,6 +1074,28 @@ test_that("docs: preview mean needs R running, a notebook-defined f shows its co
   expect_identical(r3$status, "\U0001F44D")
   expect_match(r3$doc, "Arithmetic Mean")
   expect_no_match(r3$doc, "../../base/help", fixed = TRUE)
+})
+
+test_that("docs: a documented function's cell gives the signature, rendered doc, link and folded code (55)", {
+  path <- write_session_notebook(list(S = cell(""),
+    FN = cell("# Drop rows with a missing value.\nclean <- function(df) df[complete.cases(df), ]")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  handle_message(server, ws, wire("docs", notebook_id = id, query = "clean"))
+  r <- ws$last()$message
+  expect_identical(r$status, "\U0001F44D")
+  expect_match(r$doc, "<code>clean(df)</code>", fixed = TRUE)
+  expect_match(r$doc, "Drop rows with a missing value.")
+  expect_match(r$doc, "Defined in a cell")
+  expect_match(r$doc, 'data-ember-cell="FN"', fixed = TRUE)
+  expect_match(r$doc, "<details>", fixed = TRUE)
 })
 
 test_that("docs: an idle worker that doesn't answer in time says so, not 'needs R running' (review)", {

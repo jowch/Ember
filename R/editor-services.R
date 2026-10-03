@@ -206,17 +206,113 @@ parse_help_query <- function(query) {
   list(package = NULL, name = query)
 }
 
-#' `{status: THUMBS_UP, doc: ...}` for a name the notebook itself defines (and no
-#' `pkg::` prefix): the defining cell's code, headed "Defined in this
-#' notebook". `NULL` when no cell defines `name`, so the caller falls
-#' through to the worker or the "needs R running" fallback.
+#' Documented functions in one cell's code. A function is a top-level
+#' `name <- function(...)`, `name <- \(...)`, or the same with `=`. Its doc
+#' is the run of comment lines directly above the expression's first line
+#' (srcref), with no blank line between: lines matching `^\s*#` but not
+#' `^\s*#'` (text) or `^\s*#\|` (cell options), with `^\s*# ?` removed.
+#' Code that doesn't parse gives no rows.
+#'
+#' `name`, `line` (the function's own first line), `signature`
+#' (`"name(arg, b = 1)"`, from the parsed formals, formatted as
+#' `format_signature()` does -- built by evaluating just the `function(...)`
+#' literal, in an empty environment, so default-argument expressions are
+#' kept as unevaluated promises, never run), `doc` (`""` when there is no
+#' comment block).
+function_docs <- function(code) {
+  empty <- function() data.frame(name = character(), line = integer(),
+                                 signature = character(), doc = character(),
+                                 stringsAsFactors = FALSE)
+  exprs <- tryCatch(parse(text = code, keep.source = TRUE), error = function(e) NULL)
+  if (is.null(exprs) || length(exprs) == 0) return(empty())
+
+  lines <- strsplit(code, "\n", fixed = TRUE)[[1]]
+  rows <- list()
+  for (i in seq_along(exprs)) {
+    e <- exprs[[i]]
+    if (!is_top_level_function_def(e)) next
+    name <- as.character(e[[2]])
+    # `baseenv()`, not `emptyenv()`: evaluating a `function(...)` literal
+    # still needs the `function` primitive itself to resolve, even though
+    # the body (and any default argument) is never run to build the
+    # closure -- only called into if the signature's own deparse forced
+    # a default's promise, which format_signature() never does.
+    fn <- tryCatch(eval(e[[3]], envir = new.env(parent = baseenv())), error = function(err) NULL)
+    if (!is.function(fn)) next
+    signature <- format_signature(name, fn) %||% sprintf("%s(...)", name)
+    start_line <- as.integer(attr(exprs, "srcref")[[i]][1])
+    rows[[length(rows) + 1]] <- data.frame(
+      name = name, line = start_line, signature = signature,
+      doc = doc_comment_above(lines, start_line), stringsAsFactors = FALSE)
+  }
+  if (length(rows) == 0) return(empty())
+  do.call(rbind, rows)
+}
+
+#' `TRUE` for a top-level `name <- function(...)` or `name <- \(...)`
+#' expression (`=` counts too); `\(...)` parses identically to
+#' `function(...)`, so no separate check is needed. `clean <- memoise(f)`
+#' and anything inside `local()` are both `FALSE`: their right-hand side
+#' (or the whole expression) isn't a bare `function` call.
+is_top_level_function_def <- function(e) {
+  if (!is.call(e) || length(e) != 3) return(FALSE)
+  op <- e[[1]]
+  if (!(identical(op, as.symbol("<-")) || identical(op, as.symbol("=")))) return(FALSE)
+  if (!is.symbol(e[[2]])) return(FALSE)
+  rhs <- e[[3]]
+  is.call(rhs) && identical(rhs[[1]], as.symbol("function"))
+}
+
+#' The comment lines directly above `lines[[start_line]]`, newest-adjacent
+#' first collected then reversed into source order, joined with "\n"; `""`
+#' when the line just above isn't a plain comment (blank, code, a `#'` text
+#' line or a `#|` cell-options line breaks the run).
+doc_comment_above <- function(lines, start_line) {
+  collected <- character()
+  i <- start_line - 1L
+  while (i >= 1) {
+    ln <- lines[[i]]
+    if (grepl("^\\s*$", ln)) break
+    if (grepl("^\\s*#'", ln) || grepl("^\\s*#\\|", ln)) break
+    if (!grepl("^\\s*#", ln)) break
+    collected <- c(sub("^\\s*# ?", "", ln), collected)
+    i <- i - 1L
+  }
+  paste(collected, collapse = "\n")
+}
+
+#' `{status: THUMBS_UP, doc: ...}` for a name the notebook itself defines (and
+#' no `pkg::` prefix). The HTML: a `<p class="ember-def-sig">` with the
+#' signature, only when `name` is a documented or undocumented top-level
+#' function (`function_docs()`); a `<div class="ember-def-doc">` with the
+#' rendered doc, only when it has one; a `<p class="ember-def-where">`
+#' naming the cell, with a "Go to it" link (`data-ember-cell`,
+#' LiveDocsTab.js); the cell's own code, folded in a `<details>`. `NULL`
+#' when no enabled cell defines `name` (an off cell, piece 1b, defines
+#' nothing), so the caller falls through to the worker or the "needs R
+#' running" fallback.
 notebook_definition_doc <- function(state, name) {
+  off <- names(state$graph$off %||% character())
   for (id in names(state$graph$cells %||% list())) {
-    if (name %in% (state$graph$cells[[id]]$definitions %||% character())) {
-      code <- state$cells[[id]]$code %||% ""
-      return(sprintf("<h2>Defined in this notebook</h2><pre><code class=\"language-r\">%s</code></pre>",
-                     html_escape(code)))
-    }
+    if (id %in% off) next
+    if (!(name %in% (state$graph$cells[[id]]$definitions %||% character()))) next
+
+    code <- state$cells[[id]]$code %||% ""
+    fdocs <- function_docs(code)
+    row <- fdocs[fdocs$name == name, , drop = FALSE]
+    sig_html <- if (nrow(row) > 0) {
+      sprintf('<p class="ember-def-sig"><code>%s</code></p>', html_escape(row$signature[[1]]))
+    } else ""
+    doc_html <- if (nrow(row) > 0 && nzchar(row$doc[[1]])) {
+      sprintf('<div class="ember-def-doc">%s</div>', render_markdown(row$doc[[1]]))
+    } else ""
+    where_html <- sprintf(
+      '<p class="ember-def-where">Defined in a cell · <a href="#" data-ember-cell="%s">Go to it</a></p>',
+      html_escape(id))
+    code_html <- sprintf(
+      '<details><summary>Code</summary><pre><code class="language-r">%s</code></pre></details>',
+      html_escape(code))
+    return(sanitize_help_html(paste0(sig_html, doc_html, where_html, code_html)))
   }
   NULL
 }

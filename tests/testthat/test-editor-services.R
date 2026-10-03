@@ -191,3 +191,83 @@ test_that("signature_fallback() for an explicit, unloaded package never loads it
   expect_null(signature_fallback("findGlobals", package = "codetools"))
   expect_false(isNamespaceLoaded("codetools"))
 })
+
+# ---- function_docs() (51) ---------------------------------------------------
+
+test_that("function_docs(): a documented function gives name, signature and the joined doc (51)", {
+  code <- "# Drop rows with a missing value.\n#\n# Returns a data frame.\nclean <- function(df) df[complete.cases(df), ]"
+  d <- function_docs(code)
+  expect_equal(nrow(d), 1)
+  expect_equal(d$name, "clean")
+  expect_equal(d$signature, "clean(df)")
+  expect_equal(d$doc, "Drop rows with a missing value.\n\nReturns a data frame.")
+})
+
+test_that("function_docs(): a backslash lambda and '=' assignment are read the same way (51)", {
+  code1 <- "# Drop rows with a missing value.\nclean <- \\(df) df[complete.cases(df), ]"
+  d1 <- function_docs(code1)
+  expect_equal(d1$name, "clean")
+  expect_equal(d1$signature, "clean(df)")
+  expect_equal(d1$doc, "Drop rows with a missing value.")
+
+  code2 <- "# Drop rows with a missing value.\nclean = function(df) df[complete.cases(df), ]"
+  d2 <- function_docs(code2)
+  expect_equal(d2$name, "clean")
+  expect_equal(d2$doc, "Drop rows with a missing value.")
+})
+
+test_that("function_docs(): a blank line, or a #| line, above the function gives no doc (51)", {
+  blank <- "# Drop rows.\n\nclean <- function(df) df"
+  expect_equal(function_docs(blank)$doc, "")
+
+  optline <- "# Drop rows.\n#| fig-width: 8\nclean <- function(df) df"
+  expect_equal(function_docs(optline)$doc, "")
+})
+
+test_that("function_docs(): a call result or a function inside local() gives no row (51)", {
+  expect_equal(nrow(function_docs("clean <- memoise(f)")), 0)
+  expect_equal(nrow(function_docs("local({\n  f <- function(x) x\n})")), 0)
+})
+
+test_that("function_docs(): code that doesn't parse gives no rows (51)", {
+  expect_equal(nrow(function_docs("f <- function(")), 0)
+})
+
+# ---- notebook_definition_doc() (52) -----------------------------------------
+
+fn_state <- function(code) {
+  fake_state(list(S = cell(""), FN = cell(code)))
+}
+
+test_that("notebook_definition_doc(): signature, doc, 'Defined in a cell', link, folded code (52)", {
+  code <- "# Drop rows with a missing value.\n#\n# Returns a data frame.\nclean <- function(df) df[complete.cases(df), ]"
+  html <- notebook_definition_doc(fn_state(code), "clean")
+  expect_match(html, "<code>clean(df)</code>", fixed = TRUE)
+  expect_match(html, '<div class="ember-def-doc">', fixed = TRUE)
+  expect_match(html, "Drop rows with a missing value.")
+  expect_match(html, "Defined in a cell")
+  expect_match(html, 'data-ember-cell="FN"', fixed = TRUE)
+  expect_match(html, "<details>", fixed = TRUE)
+  expect_match(html, "<summary>Code</summary>", fixed = TRUE)
+})
+
+test_that("notebook_definition_doc(): a name with no doc gives a bare signature, or nothing, plus folded code (52)", {
+  html_fn <- notebook_definition_doc(fn_state("clean <- function(df) df"), "clean")
+  expect_match(html_fn, "<code>clean(df)</code>", fixed = TRUE)
+  expect_no_match(html_fn, "ember-def-doc", fixed = TRUE)
+
+  html_val <- notebook_definition_doc(fn_state("x <- 1"), "x")
+  expect_no_match(html_val, "ember-def-sig", fixed = TRUE)
+  expect_match(html_val, "Defined in a cell")
+  expect_match(html_val, "<details>", fixed = TRUE)
+})
+
+test_that("notebook_definition_doc(): a <script> in a doc comment is removed (52)", {
+  code <- "# <script>alert(1)</script>Drop rows.\nclean <- function(df) df"
+  html <- notebook_definition_doc(fn_state(code), "clean")
+  expect_no_match(html, "<script>", fixed = TRUE)
+})
+
+test_that("notebook_definition_doc(): NULL when no cell defines the name", {
+  expect_null(notebook_definition_doc(fn_state("x <- 1"), "nope"))
+})

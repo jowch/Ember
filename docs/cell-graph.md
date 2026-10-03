@@ -166,8 +166,10 @@ cell is found, not a real ordering constraint.
 **Run order** is a display-order-first topological walk (emit ancestors in
 display order, then the cell), run three times: setup, package-attaching
 cells, everyone. Compared with Kahn's algorithm with a priority queue, it
-moves a cell only when an edge forces it, which keeps markdown cells beside
-their neighbours in the written file. The order is total: cycle members
+moves a cell only when an edge forces it, which keeps text cells without
+inline values beside their neighbours in the written file (piece 2: one
+with an inline `` `r expr` `` is an ordinary node instead, since it reads
+and runs like any other cell). The order is total: cycle members
 are placed in display order, so the file writer and the scheduler use one
 `order` and one `errors` list rather than two orderings.
 
@@ -260,9 +262,9 @@ keeps display order unless an edge forces a move.
   `read_cell()` is testable against the corpus without a notebook.
 - **A Kahn topological sort with priority classes** for run order. Correct
   and standard, but it emits any ready cell as soon as it is ready, so an
-  independent markdown cell drifts away from its neighbours in the written
-  file; the design asks for display order to break ties in a way that
-  keeps diffs small.
+  independent text cell without inline values drifts away from its
+  neighbours in the written file; the design asks for display order to
+  break ties in a way that keeps diffs small.
 
 ## Open questions and risks
 

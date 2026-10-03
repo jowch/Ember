@@ -730,7 +730,7 @@ library(dplyr)
 library(ggplot2)
 options(digits = 4)
 
-# %% id=0b7d… [markdown]
+# %% id=0b7d…
 #' ## Growth curves
 #' Measured every 30 minutes.
 
@@ -769,10 +769,19 @@ load("fits.RData")
   orders, display order breaks the tie, so small edits don't reshuffle the
   file and markdown cells stay next to their neighbours.
 - `# %%` is the cell marker Positron and VS Code already understand.
-- Markdown lines use `#'`, so `knitr::spin` renders the file as a report.
+- A cell whose every non-blank line starts with `#'` is text, so
+  `knitr::spin` renders the file as a report; a cell mixing `#'` lines and
+  code is an error. `` `r expr` `` inside a text line runs reactively, like
+  any other code; its value is inserted as plain text once the notebook
+  has run. The `[markdown]` tag an older Ember wrote is still read (an
+  unprefixed line gets a `#'` added) but never written.
+- The comment lines directly above a top-level `name <- function(...)`
+  definition, with no blank line between, are its docstring, shown in
+  Help.
 - A disabled cell, and every code cell that needs a name only it provides,
   is written with `## ` before each line, so `Rscript` skips it. The
-  footer says which (`disabled`, `commented`).
+  footer says which (`disabled`, `commented`). A text cell is never
+  written this way: its `#'` lines are already comments.
 - Package names aren't repeated in the header; they come from the code,
   except the few in `[extra_packages]` that the code can't reveal.
 - `ember_version` is the Ember version that last saved the file, as Pluto

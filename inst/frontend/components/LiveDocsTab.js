@@ -152,4 +152,15 @@ const post_process_doc_node = (node, on_update_doc_query) => {
             }
         }
     }
+
+    // A notebook function's "Go to it" link (notebook_definition_doc(),
+    // R/editor-services.R): scroll to and select the cell that defines it,
+    // the same event a Variables name's click dispatches.
+    for (let anchor of node.querySelectorAll("a[data-ember-cell]")) {
+        const cell_id = anchor.getAttribute("data-ember-cell")
+        anchor.onclick = (e) => {
+            e.preventDefault()
+            window.dispatchEvent(new CustomEvent("cell_focus", { detail: { cell_id, line: 0 } }))
+        }
+    }
 }
