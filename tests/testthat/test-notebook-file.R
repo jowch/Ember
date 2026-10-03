@@ -92,13 +92,23 @@ random_notebook_file <- function(new_id) {
       random_lines(sample(1:4, 1), prefix = "##")
     }
     cells[[cell_ids[[i]]]] <- list(code = code, kind = kinds[[i]],
-                                   folded = sample(c(TRUE, FALSE), 1))
+                                   folded = sample(c(TRUE, FALSE), 1), disabled = FALSE)
   }
   display_order <- sample(cell_ids)
   cells <- cells[display_order]
   code_ids <- cell_ids[kinds == "code"]
   setup <- sample(code_ids, 1)
   run_order <- sample(cell_ids)
+
+  # A random third of the non-setup code cells disabled, another third
+  # commented (ui-3 19): both are written with "## " before each line, so
+  # both exercise the same comment/uncomment round trip.
+  other_code <- setdiff(code_ids, setup)
+  shuffled <- sample(other_code)
+  n_third <- length(shuffled) %/% 3L
+  disabled_ids <- shuffled[seq_len(n_third)]
+  commented_ids <- shuffled[seq_len(n_third) + n_third]
+  for (id in disabled_ids) cells[[id]]$disabled <- TRUE
 
   header <- new_header(ember_version = "0.1.0", r_version = "4.5.1", snapshot = "2026-09-01",
                        bioc_version = if (stats::runif(1) < 0.3) "3.22" else NA_character_,
@@ -107,7 +117,8 @@ random_notebook_file <- function(new_id) {
                     learned = list(),
                     sourced = data.frame(path = character(), hash = character(),
                                          stringsAsFactors = FALSE),
-                    lock = empty_lock(), extra_blocks = list(), format = 1L)
+                    lock = empty_lock(), extra_blocks = list(), format = 1L,
+                    commented = commented_ids)
 }
 
 test_that("round_trip_generated: 200 generated notebooks round-trip byte for byte", {
@@ -370,4 +381,85 @@ test_that("a header with no closing marker, ended by a footer block instead of a
   file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
   expect_true("no_header_close" %in% problem_kinds(file))
   expect_equal(length(file$cells), 1)  # no cell markers at all: a synthetic setup cell
+})
+
+# ---- Disable cell: file format (ui-3 15-19) ---------------------------------
+
+header_lines <- function() {
+  c("### An Ember notebook ###", "# /// environment",
+   "# ember_version = \"0.1.0\"", "# r_version = \"4.5.1\"",
+   "# snapshot = \"2026-09-01\"", "# ///", "")
+}
+
+test_that("a disabled cell's code lines are each written with '## ' (ui-3 15)", {
+  text <- paste(c(header_lines(), "# %% id=a [setup]", "0", "",
+               "# %% id=b", "## x <- 1", "##", "##   y", "## # note",
+               "## #' not text", "## #| fig-width: 4", "## ##", "## %% 2", "",
+               "# /// cell order", "# a", "# b disabled", "# ///", ""), collapse = "\n")
+  file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
+  expect_equal(file$cells[["b"]]$code,
+              "x <- 1\n\n  y\n# note\n#' not text\n#| fig-width: 4\n##\n%% 2")
+  expect_true(file$cells[["b"]]$disabled)
+  expect_null(file$problems)
+  expect_identical(format_notebook(file), text)
+})
+
+test_that("folded and disabled both appear on the footer line, folded first (ui-3 15)", {
+  text <- paste(c(header_lines(), "# %% id=a [setup]", "0", "",
+               "# %% id=b", "## x <- 1", "",
+               "# /// cell order", "# a", "# b folded disabled", "# ///", ""), collapse = "\n")
+  file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
+  expect_true(unname(file$cells[["b"]]$folded))
+  expect_true(file$cells[["b"]]$disabled)
+  expect_identical(format_notebook(file), text)
+})
+
+test_that("a commented '%% 2' or '/// x' line inside a disabled cell makes no extra cell or footer block (ui-3 16)", {
+  text <- paste(c(header_lines(), "# %% id=a [setup]", "0", "",
+               "# %% id=b", "## %% 2", "## /// x", "",
+               "# /// cell order", "# a", "# b disabled", "# ///", ""), collapse = "\n")
+  file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
+  expect_equal(names(file$cells), c("a", "b"))
+  expect_equal(file$cells[["b"]]$code, "%% 2\n/// x")
+  expect_identical(format_notebook(file), text)
+})
+
+test_that("a commented cell reads back with its exact code and disabled = FALSE (ui-3 17)", {
+  text <- paste("# %% id=a [setup]", "0", "",
+               "# %% id=b", "## x + 1", "",
+               "# /// cell order", "# a", "# b commented", "# ///", "", sep = "\n")
+  file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
+  expect_equal(file$cells[["b"]]$code, "x + 1")
+  expect_false(file$cells[["b"]]$disabled)
+  expect_equal(file$commented, "b")
+})
+
+test_that("a line without '##' in a disabled cell is kept as is, with problem uncommented_line (ui-3 18)", {
+  text <- paste("# %% id=a [setup]", "0", "",
+               "# %% id=b", "## x <- 1", "y <- 2", "",
+               "# /// cell order", "# a", "# b disabled", "# ///", "", sep = "\n")
+  file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
+  expect_equal(file$cells[["b"]]$code, "x <- 1\ny <- 2")
+  expect_true(file$cells[["b"]]$disabled)
+  expect_true("uncommented_line" %in% problem_kinds(file))
+  expect_equal(problem_detail(file, "uncommented_line"), "b")
+})
+
+test_that("disabled on a text cell gives disabled_text_cell and the cell unchanged (ui-3 18)", {
+  text <- paste("# %% id=a [setup]", "0", "",
+               "# %% id=b [markdown]", "#' hello", "",
+               "# /// cell order", "# a", "# b disabled", "# ///", "", sep = "\n")
+  file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
+  expect_equal(file$cells[["b"]]$code, "hello")
+  expect_false(file$cells[["b"]]$disabled)
+  expect_true("disabled_text_cell" %in% problem_kinds(file))
+})
+
+test_that("disabled on the setup cell un-comments the code and clears the flag (ui-3 18)", {
+  text <- paste("# %% id=a [setup]", "## x <- 1", "",
+               "# /// cell order", "# a disabled", "# ///", "", sep = "\n")
+  file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
+  expect_equal(file$cells[["a"]]$code, "x <- 1")
+  expect_false(file$cells[["a"]]$disabled)
+  expect_true("disabled_setup_cell" %in% problem_kinds(file))
 })

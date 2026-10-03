@@ -90,8 +90,8 @@ new_notebook <- function(path, repos = ember_repos(), cache = cache_dir()) {
   setup_id <- uuid()
   code_id <- uuid()
   cells <- list()
-  cells[[setup_id]] <- list(code = "", kind = "code", folded = FALSE)
-  cells[[code_id]] <- list(code = "", kind = "code", folded = FALSE)
+  cells[[setup_id]] <- list(code = "", kind = "code", folded = FALSE, disabled = FALSE)
+  cells[[code_id]] <- list(code = "", kind = "code", folded = FALSE, disabled = FALSE)
   header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
                        r_version = paste(R.version$major, R.version$minor, sep = "."),
                        snapshot = format(Sys.Date()))

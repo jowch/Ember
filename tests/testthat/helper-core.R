@@ -16,8 +16,9 @@ at_clock <- function(state, time) { state$clock <- at(time); state }
 at <- function(n) n
 
 #' One cell for a fake file's `cells` list.
-cell <- function(code = "", kind = c("code", "markdown"), folded = FALSE) {
-  list(code = code, kind = match.arg(kind), folded = folded)
+cell <- function(code = "", kind = c("code", "markdown"), folded = FALSE,
+                 disabled = FALSE) {
+  list(code = code, kind = match.arg(kind), folded = folded, disabled = disabled)
 }
 
 #' An `ember_notebook_file` built straight from cells, without going through
@@ -124,6 +125,7 @@ op_insert <- function(id, index, code = "", kind = "code") {
 op_delete <- function(cell) list(op = "delete", cell = cell)
 op_move <- function(cell, index) list(op = "move", cell = cell, index = index)
 op_fold <- function(cell, folded = TRUE) list(op = "fold", cell = cell, folded = folded)
+op_disable <- function(cell, disabled = TRUE) list(op = "disable", cell = cell, disabled = disabled)
 
 #' Build a chain notebook with `n` dependent code cells after a setup cell,
 #' for the performance test: `S`, then `c1` (defines `x1`), `c2` (refs `x1`,

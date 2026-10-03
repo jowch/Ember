@@ -561,7 +561,7 @@ reduce_apply <- function(state, event) {
           bad <- refused("code contains a cell or footer marker line", op)
         } else {
           new_cell <- list(code = code, kind = op$kind %||% "code",
-                           folded = identical(op$kind, "markdown"))
+                           folded = identical(op$kind, "markdown"), disabled = FALSE)
           cells <- append(cells, setNames(list(new_cell), op$id), after = op$index - 1)
           inserted <- c(inserted, op$id)
         }

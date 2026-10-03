@@ -45,12 +45,17 @@
 #' The parsed file.
 #'
 #' * `header`: `ember_header`.
-#' * `cells`: named list id -> `list(code, kind, folded)` in display order.
+#' * `cells`: named list id -> `list(code, kind, folded, disabled)` in
+#'   display order.
 #' * `setup`: id.
 #' * `run_order`: ids in the order they appear in the file (the run order
 #'   when Ember wrote it). Informational: the graph recomputes the order.
 #' * `learned`: named list id -> character, from "learned definitions".
 #' * `sourced`: data frame `path`, `hash`.
+#' * `commented`: character ids written with `## ` before each line because
+#'   they are off (a dependent of a disabled cell), as read from the
+#'   footer. Recomputed on every save; a disabled cell is not included
+#'   here (it is marked `disabled` instead).
 #' * `lock`: `ember_lock` (lock.R), parsed from the lock block's lines.
 #'   `format_lock_lines()` turns it back into the block's lines.
 #' * `extra_blocks`: named list block name -> character lines, verbatim.
@@ -61,14 +66,17 @@
 #'   `"no_header"`, `"no_header_close"`, `"no_footer"`, `"duplicate_id"`,
 #'   `"bad_id"`, `"unknown_order_id"`, `"duplicate_order_id"`,
 #'   `"cell_missing_from_order"`, `"no_setup_marker"`,
-#'   `"text_before_first_cell"`, `"newer_version"`, `"converted"`.
+#'   `"text_before_first_cell"`, `"newer_version"`, `"converted"`,
+#'   `"uncommented_line"`, `"disabled_text_cell"`, `"disabled_setup_cell"`.
 new_notebook_file <- function(header, cells, setup, run_order, learned,
                               sourced, lock, extra_blocks, format,
-                              read_only = FALSE, problems = NULL) {
+                              read_only = FALSE, problems = NULL,
+                              commented = character()) {
   structure(list(header = header, cells = cells, setup = setup,
                  run_order = run_order, learned = learned, sourced = sourced,
                  lock = lock, extra_blocks = extra_blocks, format = format,
-                 read_only = read_only, problems = problems),
+                 read_only = read_only, problems = problems,
+                 commented = commented),
             class = "ember_notebook_file")
 }
 
@@ -273,21 +281,28 @@ parse_marker <- function(line) {
   list(id = id, tags = tags)
 }
 
-#' Resolve the display order and fold state from the "cell order" footer
-#' block (or file order when there is none).
+#' Resolve the display order, fold state, and the `disabled`/`commented`
+#' flags from the "cell order" footer block (or file order when there is
+#' none). Words after the id are read as a set (`folded`, `disabled`,
+#' `commented`); unknown words are still ignored.
 resolve_order <- function(file_order, order_lines, problems) {
   if (is.null(order_lines)) {
     folded <- stats::setNames(rep(FALSE, length(file_order)), file_order)
-    return(list(order = file_order, folded = folded,
+    disabled <- stats::setNames(rep(FALSE, length(file_order)), file_order)
+    commented <- stats::setNames(rep(FALSE, length(file_order)), file_order)
+    return(list(order = file_order, folded = folded, disabled = disabled,
+               commented = commented,
                problems = add_problem(problems, "no_footer")))
   }
   listed <- character()
   folded_v <- logical()
+  disabled_v <- logical()
+  commented_v <- logical()
   for (ln in order_lines) {
     parts <- strsplit(trimws(ln), "\\s+")[[1]]
     if (length(parts) == 0 || identical(parts[[1]], "")) next
     id <- parts[[1]]
-    is_folded <- length(parts) > 1 && identical(parts[[2]], "folded")
+    flags <- if (length(parts) > 1) parts[-1] else character()
     if (!(id %in% file_order)) {
       problems <- add_problem(problems, "unknown_order_id", id)
       next
@@ -297,9 +312,11 @@ resolve_order <- function(file_order, order_lines, problems) {
       next
     }
     listed <- c(listed, id)
-    folded_v <- c(folded_v, is_folded)
+    folded_v <- c(folded_v, "folded" %in% flags)
+    disabled_v <- c(disabled_v, "disabled" %in% flags)
+    commented_v <- c(commented_v, "commented" %in% flags)
   }
-  names(folded_v) <- listed
+  names(folded_v) <- names(disabled_v) <- names(commented_v) <- listed
   result <- listed
   for (id in file_order) {
     if (id %in% result) next
@@ -317,9 +334,12 @@ resolve_order <- function(file_order, order_lines, problems) {
       result <- append(result, id, after = match(pred, result))
     }
     folded_v[id] <- FALSE
+    disabled_v[id] <- FALSE
+    commented_v[id] <- FALSE
     problems <- add_problem(problems, "cell_missing_from_order", id)
   }
-  list(order = result, folded = folded_v[result], problems = problems)
+  list(order = result, folded = folded_v[result], disabled = disabled_v[result],
+      commented = commented_v[result], problems = problems)
 }
 
 #' Parse the "sourced files" footer block into a `path`, `hash` data frame.
@@ -401,15 +421,14 @@ parse_notebook_core <- function(text, new_id) {
   used_ids <- character()
   has_marker <- any(vapply(lines, function(l) !is.null(parse_marker(l)), logical(1)))
 
+  # The raw lines are kept as read; whether they need un-commenting isn't
+  # known until the footer (read later in the file) says which ids are
+  # `disabled` or `commented`, so that pass happens after the whole file is
+  # read, below.
   flush_cell <- function() {
     if (!is.null(cur_id)) {
-      body <- drop_trailing_blank(cur_lines)
-      code <- if (identical(cur_kind, "markdown")) {
-        paste(strip_markdown_prefix(body), collapse = "\n")
-      } else {
-        paste(body, collapse = "\n")
-      }
-      cells[[cur_id]] <<- list(code = code, kind = cur_kind, folded = FALSE)
+      cells[[cur_id]] <<- list(raw = cur_lines, kind = cur_kind, folded = FALSE,
+                               disabled = FALSE)
       file_order <<- c(file_order, cur_id)
     }
   }
@@ -480,7 +499,69 @@ parse_notebook_core <- function(text, new_id) {
   resolved <- resolve_order(file_order, order_block, problems)
   problems <- resolved$problems
   display_order <- resolved$order
-  for (id in display_order) cells[[id]]$folded <- isTRUE(unname(resolved$folded[[id]]))
+
+  # The setup cell must be known before cells are un-commented (a `disabled`
+  # setup cell is its own repair), so it is resolved here rather than after.
+  setup_candidates <- intersect(display_order, cell_is_setup)
+  if (length(setup_candidates) > 0) {
+    setup <- setup_candidates[[1]]
+  } else {
+    code_ids <- display_order[vapply(display_order, function(id) identical(cells[[id]]$kind, "code"), logical(1))]
+    if (length(code_ids) > 0) {
+      setup <- code_ids[[1]]
+    } else {
+      setup <- new_id()
+      cells[[setup]] <- list(raw = character(), kind = "code", folded = FALSE, disabled = FALSE)
+      display_order <- c(setup, display_order)
+    }
+    problems <- add_problem(problems, "no_setup_marker")
+  }
+
+  file_commented <- character()
+  for (id in display_order) {
+    raw <- cells[[id]]$raw
+    kind <- cells[[id]]$kind
+    folded <- isTRUE(unname(resolved$folded[id]))
+    is_disabled <- isTRUE(unname(resolved$disabled[id]))
+    is_commented <- isTRUE(unname(resolved$commented[id]))
+
+    if (identical(kind, "markdown")) {
+      body <- drop_trailing_blank(raw)
+      code <- paste(strip_markdown_prefix(body), collapse = "\n")
+      if (is_disabled) problems <- add_problem(problems, "disabled_text_cell", id)
+      cells[[id]] <- list(code = code, kind = kind, folded = folded, disabled = FALSE)
+      next
+    }
+
+    needs_uncomment <- is_disabled || is_commented
+    disabled <- is_disabled
+    if (disabled && identical(id, setup)) {
+      problems <- add_problem(problems, "disabled_setup_cell", id)
+      disabled <- FALSE
+    }
+    # The blank line separating this cell from the next is still a plain
+    # blank line in `raw` (dropped here, before un-commenting): a disabled
+    # cell's own trailing blank code line is written as a non-blank "##",
+    # which only the second drop_trailing_blank() below (after
+    # un-commenting) removes.
+    lines <- drop_trailing_blank(raw)
+    if (needs_uncomment) {
+      for (k in seq_along(lines)) {
+        ln <- lines[[k]]
+        if (identical(ln, "##")) {
+          lines[[k]] <- ""
+        } else if (startsWith(ln, "## ")) {
+          lines[[k]] <- substring(ln, 4)
+        } else {
+          problems <- add_problem(problems, "uncommented_line", id)
+        }
+      }
+    }
+    body <- drop_trailing_blank(lines)
+    code <- paste(body, collapse = "\n")
+    cells[[id]] <- list(code = code, kind = kind, folded = folded, disabled = disabled)
+    if (is_commented && !disabled) file_commented <- c(file_commented, id)
+  }
   cells <- cells[display_order]
 
   sourced <- parse_sourced_block(footer_blocks[["sourced files"]])
@@ -493,25 +574,9 @@ parse_notebook_core <- function(text, new_id) {
   extra_names <- setdiff(names(footer_blocks), known_footer)
   extra_blocks <- footer_blocks[extra_names]
 
-  setup_candidates <- intersect(display_order, cell_is_setup)
-  if (length(setup_candidates) > 0) {
-    setup <- setup_candidates[[1]]
-  } else {
-    code_ids <- display_order[vapply(display_order, function(id) identical(cells[[id]]$kind, "code"), logical(1))]
-    if (length(code_ids) > 0) {
-      setup <- code_ids[[1]]
-    } else {
-      setup <- new_id()
-      cells[[setup]] <- list(code = "", kind = "code", folded = FALSE)
-      display_order <- c(setup, display_order)
-      cells <- cells[display_order]
-    }
-    problems <- add_problem(problems, "no_setup_marker")
-  }
-
   list(header = header, cells = cells, setup = setup, run_order = file_order,
       learned = learned, sourced = sourced, lock = lock,
-      extra_blocks = extra_blocks, problems = problems)
+      extra_blocks = extra_blocks, problems = problems, commented = file_commented)
 }
 
 #' Parse notebook text.
@@ -552,7 +617,8 @@ parse_notebook <- function(text, new_id, version = utils::packageVersion("ember"
                     run_order = parsed$run_order, learned = parsed$learned,
                     sourced = parsed$sourced, lock = parsed$lock,
                     extra_blocks = parsed$extra_blocks, format = file_format,
-                    read_only = read_only, problems = problems_to_df(problems))
+                    read_only = read_only, problems = problems_to_df(problems),
+                    commented = parsed$commented)
 }
 
 # ---- Format ------------------------------------------------------------------
@@ -605,8 +671,12 @@ format_notebook <- function(file, order = NULL) {
     suffix <- if (length(tags) > 0) paste0(" ", paste(sprintf("[%s]", tags), collapse = " ")) else ""
     marker <- paste0("# %% id=", id, suffix)
     body <- if (identical(cell$code, "")) character(0) else strsplit(cell$code, "\n", fixed = TRUE)[[1]]
+    comment_out <- !identical(cell$kind, "markdown") &&
+      (isTRUE(cell$disabled) || (id %in% file$commented))
     content <- if (identical(cell$kind, "markdown")) {
       vapply(body, function(l) if (identical(l, "")) "#'" else paste0("#' ", l), character(1))
+    } else if (comment_out) {
+      vapply(body, function(l) if (identical(l, "")) "##" else paste0("## ", l), character(1))
     } else {
       body
     }
@@ -615,7 +685,14 @@ format_notebook <- function(file, order = NULL) {
 
   display_order <- names(file$cells)
   cell_order_lines <- vapply(display_order, function(id) {
-    if (isTRUE(file$cells[[id]]$folded)) paste0("# ", id, " folded") else paste0("# ", id)
+    flags <- character()
+    if (isTRUE(file$cells[[id]]$folded)) flags <- c(flags, "folded")
+    if (isTRUE(file$cells[[id]]$disabled)) {
+      flags <- c(flags, "disabled")
+    } else if (id %in% file$commented) {
+      flags <- c(flags, "commented")
+    }
+    if (length(flags) == 0) paste0("# ", id) else paste0("# ", id, " ", paste(flags, collapse = " "))
   }, character(1), USE.NAMES = FALSE)
   footer <- c("# /// cell order", cell_order_lines, "# ///")
 

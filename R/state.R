@@ -45,9 +45,10 @@ exports_of <- function(state) {
 #'   `on_cell_change` is the session's mode, changed by `ev_set_mode`), `lock`
 #'   (character, one line per package, verbatim), `extra_blocks`, `format`
 #'   (the format the file was read in).
-#' * `cells`: named list, id -> `list(code, kind, folded)`, in display
-#'   order. `kind` is `"code"` or `"markdown"`. The names are the display
-#'   order; there is no separate order field.
+#' * `cells`: named list, id -> `list(code, kind, folded, disabled)`, in
+#'   display order. `kind` is `"code"` or `"markdown"`. The names are the
+#'   display order; there is no separate order field. `disabled` is the
+#'   user's choice (`disable_cell()`); always `FALSE` for a markdown cell.
 #' * `setup`: the setup cell's id. Always a code cell in `cells`.
 #' * `files`: named list, path -> `list(text, hash)`, the sourced files as
 #'   last read (`text = NA` when the file is missing). The graph reads
