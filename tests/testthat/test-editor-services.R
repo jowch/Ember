@@ -162,6 +162,16 @@ test_that("sanitize_help_html() drops scripts, styles, iframes, event handlers a
   expect_match(clean, "<p>hi</p>", fixed = TRUE)
 })
 
+test_that("sanitize_help_html() drops unquoted event handlers and unquoted javascript: links (review)", {
+  dirty <- '<img src=x onerror=alert(1)> <a href=javascript:alert(1)>a</a> <a href=\'#\' data-ember-cell=\'x\' onclick=\'alert(1)\'>q</a>'
+  clean <- sanitize_help_html(dirty)
+  expect_no_match(clean, "onerror", fixed = TRUE)
+  expect_no_match(clean, "onclick", fixed = TRUE)
+  expect_no_match(clean, "javascript:", fixed = TRUE)
+  expect_match(clean, 'data-ember-cell=\'x\'', fixed = TRUE)
+  expect_match(clean, '<img src=x>', fixed = TRUE)
+})
+
 test_that("signature_fallback() (56)", {
   expect_match(signature_fallback("lm"), "^lm\\(formula, data")
   expect_null(signature_fallback("my_fun"))
@@ -222,6 +232,16 @@ test_that("function_docs(): a blank line, or a #| line, above the function gives
 
   optline <- "# Drop rows.\n#| fig-width: 8\nclean <- function(df) df"
   expect_equal(function_docs(optline)$doc, "")
+})
+
+test_that("function_docs(): an indented comment line above is not a docstring, column 1 only (review)", {
+  code <- "# not\n  # indented\nclean <- function(df) df"
+  expect_equal(function_docs(code)$doc, "")
+})
+
+test_that("function_docs(): two functions sharing one line only give the comment to the first (review)", {
+  d <- function_docs("# a\n\n# b\nf <- function() 1; g <- function() 2")
+  expect_equal(d$doc, c("b", ""))
 })
 
 test_that("function_docs(): a call result or a function inside local() gives no row (51)", {

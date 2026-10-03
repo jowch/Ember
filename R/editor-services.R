@@ -209,16 +209,20 @@ parse_help_query <- function(query) {
 #' Documented functions in one cell's code. A function is a top-level
 #' `name <- function(...)`, `name <- \(...)`, or the same with `=`. Its doc
 #' is the run of comment lines directly above the expression's first line
-#' (srcref), with no blank line between: lines matching `^\s*#` but not
-#' `^\s*#'` (text) or `^\s*#\|` (cell options), with `^\s*# ?` removed.
-#' Code that doesn't parse gives no rows.
+#' (srcref), with no blank line between: lines matching `^#` (column 1
+#' only; an indented comment is never a docstring) but not `^#'` (text) or
+#' `^#\|` (cell options), with `^# ?` removed. Code that doesn't parse
+#' gives no rows.
 #'
 #' `name`, `line` (the function's own first line), `signature`
 #' (`"name(arg, b = 1)"`, from the parsed formals, formatted as
 #' `format_signature()` does -- built by evaluating just the `function(...)`
 #' literal, in an empty environment, so default-argument expressions are
 #' kept as unevaluated promises, never run), `doc` (`""` when there is no
-#' comment block).
+#' comment block). Two functions sharing one line (`f <- function() 1; g
+#' <- function() 2`) share one `line`, but only the first gets the
+#' comment above it as its doc: it sits directly above the line, not
+#' above `g` specifically.
 function_docs <- function(code) {
   empty <- function() data.frame(name = character(), line = integer(),
                                  signature = character(), doc = character(),
@@ -228,6 +232,7 @@ function_docs <- function(code) {
 
   lines <- strsplit(code, "\n", fixed = TRUE)[[1]]
   rows <- list()
+  seen_lines <- integer()
   for (i in seq_along(exprs)) {
     e <- exprs[[i]]
     if (!is_top_level_function_def(e)) next
@@ -241,9 +246,11 @@ function_docs <- function(code) {
     if (!is.function(fn)) next
     signature <- format_signature(name, fn) %||% sprintf("%s(...)", name)
     start_line <- as.integer(attr(exprs, "srcref")[[i]][1])
+    doc <- if (start_line %in% seen_lines) "" else doc_comment_above(lines, start_line)
+    seen_lines <- c(seen_lines, start_line)
     rows[[length(rows) + 1]] <- data.frame(
       name = name, line = start_line, signature = signature,
-      doc = doc_comment_above(lines, start_line), stringsAsFactors = FALSE)
+      doc = doc, stringsAsFactors = FALSE)
   }
   if (length(rows) == 0) return(empty())
   do.call(rbind, rows)
@@ -265,17 +272,18 @@ is_top_level_function_def <- function(e) {
 
 #' The comment lines directly above `lines[[start_line]]`, newest-adjacent
 #' first collected then reversed into source order, joined with "\n"; `""`
-#' when the line just above isn't a plain comment (blank, code, a `#'` text
-#' line or a `#|` cell-options line breaks the run).
+#' when the line just above isn't a plain comment at column 1 (blank,
+#' code, an indented comment, a `#'` text line, or a `#|` cell-options
+#' line, all break the run).
 doc_comment_above <- function(lines, start_line) {
   collected <- character()
   i <- start_line - 1L
   while (i >= 1) {
     ln <- lines[[i]]
     if (grepl("^\\s*$", ln)) break
-    if (grepl("^\\s*#'", ln) || grepl("^\\s*#\\|", ln)) break
-    if (!grepl("^\\s*#", ln)) break
-    collected <- c(sub("^\\s*# ?", "", ln), collected)
+    if (grepl("^#'", ln) || grepl("^#\\|", ln)) break
+    if (!grepl("^#", ln)) break
+    collected <- c(sub("^# ?", "", ln), collected)
     i <- i - 1L
   }
   paste(collected, collapse = "\n")
@@ -288,9 +296,9 @@ doc_comment_above <- function(lines, start_line) {
 #' rendered doc, only when it has one; a `<p class="ember-def-where">`
 #' naming the cell, with a "Go to it" link (`data-ember-cell`,
 #' LiveDocsTab.js); the cell's own code, folded in a `<details>`. `NULL`
-#' when no enabled cell defines `name` (an off cell, piece 1b, defines
-#' nothing), so the caller falls through to the worker or the "needs R
-#' running" fallback.
+#' when no enabled cell defines `name` (an off cell defines nothing), so
+#' the caller falls through to the worker or the "needs R running"
+#' fallback.
 notebook_definition_doc <- function(state, name) {
   off <- names(state$graph$off %||% character())
   for (id in names(state$graph$cells %||% list())) {
@@ -307,7 +315,7 @@ notebook_definition_doc <- function(state, name) {
       sprintf('<div class="ember-def-doc">%s</div>', render_markdown(row$doc[[1]]))
     } else ""
     where_html <- sprintf(
-      '<p class="ember-def-where">Defined in a cell · <a href="#" data-ember-cell="%s">Go to it</a></p>',
+      '<p class="ember-def-where">Defined in a cell \u00b7 <a href="#" data-ember-cell="%s">Go to it</a></p>',
       html_escape(id))
     code_html <- sprintf(
       '<details><summary>Code</summary><pre><code class="language-r">%s</code></pre></details>',
@@ -335,8 +343,12 @@ sanitize_help_html <- function(html) {
   html <- html %||% ""
   html <- gsub("(?is)<(script|style|iframe)\\b[^>]*>.*?</\\1\\s*>", "", html, perl = TRUE)
   html <- gsub("(?is)<(script|style|iframe)\\b[^>]*/?>", "", html, perl = TRUE)
+  # Event handlers, quoted or bare (`onerror=alert(1)`, no quotes at all).
   html <- gsub("(?i)\\s+on[a-z]+\\s*=\\s*(\"[^\"]*\"|'[^']*')", "", html, perl = TRUE)
+  html <- gsub("(?i)\\s+on[a-z]+\\s*=\\s*[^\\s>]*", "", html, perl = TRUE)
+  # javascript: links, quoted or bare (`href=javascript:...`).
   html <- gsub("(?i)(href\\s*=\\s*[\"'])\\s*javascript:[^\"']*", "\\1#", html, perl = TRUE)
+  html <- gsub("(?i)href\\s*=\\s*javascript:[^\\s>]*", 'href="#"', html, perl = TRUE)
   html
 }
 
