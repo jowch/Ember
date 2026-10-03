@@ -52,6 +52,7 @@ done; clear out ticked items at each release.
 - [x] Self-contained exports, and a browser with no internet: bundle the frontend's third-party libraries (MathJax aside) and serve the bundle always, with content-hashed names and long cache headers so a slow tunnel carries it once — missing
 
 - [ ] The page requests MathJax from the CDN after every load, even with no TeX on it; offline that is one failed request and a console error (exports included). Load it only when a cell has TeX — improvised
+- [ ] Argument tooltips stay on screen after the cursor leaves the cell (seen with `plot(` and `cat(` hints floating over later cells) — missing
 - [ ] Go-to-definition and variable links in the editor (ui-2.md piece 4e, cut from increment 2). Pluto's Julia `ScopeStateField` stays wired until it has an R replacement — missing
 
 - [x] Remote use: the server accepted only Host `127.0.0.1:<port>` or `localhost:<port>`, so an SSH tunnel to a different local port, or any reverse proxy (Posit Workbench, JupyterHub, VS Code port forwarding), got 403. Now a loopback Host is accepted on any port when Origin matches Host (or is absent); an opt-in `allowed_hosts` argument covers a proxy that isn't loopback — missing
