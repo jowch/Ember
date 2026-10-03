@@ -468,21 +468,13 @@ test_that("summarise_globals(): a slow method is bounded by its own time limit r
   t0 <- Sys.time()
   r <- run_and_wait(h, "a", 1L, paste(
     "slow <- Sys.Date()",
-    "format.Date <- function(x, ...) { Sys.sleep(5); 'slow' }",
+    "format.Date <- function(x, ...) { t0 <- Sys.time(); repeat if (as.numeric(Sys.time() - t0) > 5) break; 'slow' }",
     sep = "\n"), timeout = 8)
   elapsed <- as.numeric(Sys.time() - t0, units = "secs")
-  # setTimeLimit()'s elapsed check isn't honoured in every environment
-  # (confirmed independent of this code: on this sandbox it doesn't even
-  # interrupt a tight CPU loop against a 2s limit over 17s). Where it
-  # fires, the sleep is cut short well under 5s and the global gets kind
-  # "none"; where it doesn't, the cell still finishes (just slower) and
-  # the value comes through. Either way the worker must still be usable
-  # right after, which is what actually matters here.
-  if (elapsed < 4) {
-    expect_equal(r$globals$slow$kind, "none")
-  } else {
-    expect_equal(r$globals$slow$kind, "value")
-  }
+  # A busy R loop, not Sys.sleep(): setTimeLimit() is checked while R code
+  # runs and does not cut a sleep short.
+  expect_lt(elapsed, 4)
+  expect_equal(r$globals$slow$kind, "none")
 
   r2 <- run_and_wait(h, "b", 2L, "1 + 1", timeout = 3)
   expect_identical(r2$status, "ok")
