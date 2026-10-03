@@ -200,8 +200,8 @@ project_cell_input <- function(view) {
 #'   (Pluto's own field, Run.jl:86-91) -- true for a disabled cell itself,
 #'   too.
 #' * `ember`: `list(stale, code_changed, upstream_error?, disabled_by?,
-#'   can_disable)`, from the view's `stale` and `code_differs` -- both
-#'   already in `cell_key()`'s key (`code_differs` is derived from
+#'   can_disable, split?)`, from the view's `stale` and `code_differs` --
+#'   both already in `cell_key()`'s key (`code_differs` is derived from
 #'   `cell$code` and `result$code`). `stale` is `isTRUE(view$stale) &&
 #'   !off`: an off cell shows as disabled, not also as stale.
 #'   `upstream_error` is present only when the last error's kind is
@@ -211,7 +211,9 @@ project_cell_input <- function(view) {
 #'   error is an ordinary error box, not a dimmed/labelled cell.
 #'   `disabled_by` is present only for a dependent of a disabled cell
 #'   (absent for the disabled cell itself). `can_disable` is `TRUE` for a
-#'   non-setup code cell.
+#'   non-setup code cell. `split` is present, as `length(split_mixed(view$code))`,
+#'   only when `view$errors` has a `mixed_text` error: the Split button's
+#'   label (Cell.js), answered by the `ember_split_cell` request (server.R).
 #' * `output`: project_output() of the view.
 #' * `logs`: project_logs() of the view's console.
 #' * `published_object_keys = list()`, `depends_on_skipped_cells = FALSE`.
@@ -223,12 +225,15 @@ project_cell_result <- function(view) {
   } else {
     NULL
   }
+  mixed <- Find(function(e) identical(e$kind, "mixed_text"), view$errors)
+  split <- if (!is.null(mixed)) length(split_mixed(view$code)) else NULL
   off <- isTRUE(view$disabled) || !is.na(view$disabled_by)
   can_disable <- identical(view$kind, "code") && !view$setup
   ember <- c(list(stale = isTRUE(view$stale) && !off, code_changed = isTRUE(view$code_differs)),
             if (!is.null(upstream_error)) list(upstream_error = upstream_error),
             if (!is.na(view$disabled_by)) list(disabled_by = view$disabled_by),
-            list(can_disable = can_disable))
+            list(can_disable = can_disable),
+            if (!is.null(split)) list(split = split))
   list(cell_id = view$id,
       queued = isTRUE(view$queued), running = isTRUE(view$running),
       errored = errored,

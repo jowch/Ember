@@ -136,6 +136,28 @@ test_that("a setting call in the setup cell is fine", {
   expect_length(Filter(function(e) e$kind == "global_setting", g$errors), 0)
 })
 
+# ---- Mixed text and code (ui-3 42) --------------------------------------------
+
+test_that("a cell mixing #' lines and code gets mixed_text; a pure text or code cell doesn't", {
+  g <- build_test_graph(list(
+    A = fake_cell(code = "#' a\nx <- 1"),
+    B = fake_cell(code = "#' only text"),
+    C = fake_cell(code = "y <- 2")
+  ), setup = "C")
+  err <- Filter(function(e) e$kind == "mixed_text", g$errors)
+  expect_length(err, 1)
+  expect_equal(err[[1]]$cells, "A")
+  expect_equal(err[[1]]$fixes, character())
+})
+
+test_that("the setup cell is never mixed_text even with #' lines above its code", {
+  g <- build_test_graph(list(
+    A = fake_cell(code = "#' setup doc\nlibrary(stats)"),
+    B = fake_cell(code = "1")
+  ), setup = "A")
+  expect_length(Filter(function(e) e$kind == "mixed_text", g$errors), 0)
+})
+
 # ---- Cycles -------------------------------------------------------------------
 
 test_that("a two-cell cycle is one error naming both names", {
@@ -550,6 +572,12 @@ test_that("a disabled cell is excluded from cycle, private_name and global_setti
     A = fake_cell(code = "A", settings = "options")
   ), setup = "S", disabled = "A")
   expect_length(Filter(function(e) e$kind == "global_setting", g_setting$errors), 0)
+
+  g_mixed <- build_test_graph(list(
+    S = fake_cell(code = "S"),
+    A = fake_cell(code = "#' a\nx <- 1")
+  ), setup = "S", disabled = "A")
+  expect_length(Filter(function(e) e$kind == "mixed_text", g_mixed$errors), 0)
 
   analyses <- list(
     S = fake_cell(code = "S"),

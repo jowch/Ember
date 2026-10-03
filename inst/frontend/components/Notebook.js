@@ -49,7 +49,7 @@ const CellMemo = ({
 }) => {
     const { body, last_run_timestamp, mime, persist_js_state, rootassignee } = cell_result?.output || {}
     const { queued, running, runtime, errored, depends_on_disabled_cells, logs, depends_on_skipped_cells, ember } = cell_result || {}
-    const { stale, code_changed } = ember || {}
+    const { stale, code_changed, split } = ember || {}
     const { cell_id, code, code_folded, metadata } = cell_input || {}
     return useMemo(() => {
         return html`
@@ -81,6 +81,7 @@ const CellMemo = ({
         depends_on_skipped_cells,
         stale,
         code_changed,
+        split,
         queued,
         running,
         runtime,

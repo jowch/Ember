@@ -184,7 +184,7 @@ const first_true_key = (obj) => {
  *  precedence_heuristic: number?,
  *  depends_on_disabled_cells: boolean,
  *  depends_on_skipped_cells: boolean,
- *  ember: { stale: boolean, code_changed: boolean, upstream_error?: {name: string, cell: string}[], disabled_by?: string, can_disable: boolean },
+ *  ember: { stale: boolean, code_changed: boolean, upstream_error?: {name: string, cell: string}[], disabled_by?: string, can_disable: boolean, split?: number },
  *  output: {
  *      body: string | Object,
  *      persist_js_state: boolean,
@@ -743,6 +743,8 @@ export class Editor extends Component {
                 ),
             ember_run_all: () =>
                 this.client.send("ember_run_all", {}, { notebook_id: this.state.notebook.notebook_id }, false),
+            ember_split_cell: (cell_id, code) =>
+                this.client.send("ember_split_cell", { cell_id, code }, { notebook_id: this.state.notebook.notebook_id }, false),
             request_js_link_response: (cell_id, link_id, input) => {
                 return this.client
                     .send(

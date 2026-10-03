@@ -245,6 +245,11 @@ export const Cell = ({
         }
     }, [disabled_by_cell_id])
 
+    const split_n = ember?.split ?? null
+    const on_split = useCallback(() => {
+        pluto_actions.ember_split_cell(cell_id, code)
+    }, [pluto_actions, cell_id, code])
+
     return html`
         <pluto-cell
             key=${cell_key}
@@ -295,6 +300,7 @@ export const Cell = ({
                 : cell_api_ready
                   ? html`<${CellOutput} errored=${errored} ...${output} sanitize_html=${sanitize_html} cell_id=${cell_id} />`
                   : html``}
+            ${split_n != null ? html`<button class="ember-split" onClick=${on_split}>${t("t_ember_split", { n: split_n })}</button>` : null}
             <${CellInput}
                 local_code=${cell_input_local?.code ?? code}
                 remote_code=${code}

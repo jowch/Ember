@@ -64,8 +64,22 @@ export class CellOutput extends Component {
         })
     }
 
-    shouldComponentUpdate({ last_run_timestamp, sanitize_html }) {
-        return last_run_timestamp !== this.props.last_run_timestamp || sanitize_html !== this.props.sanitize_html
+    // `last_run_timestamp` alone used to be enough: in vanilla Pluto every
+    // new output comes from an actual run, which always bumps it. Ember's
+    // never-run outputs (a graph error, a text cell's rendered body) stay
+    // at timestamp 0 while their content changes -- a text cell split out
+    // of a mixed one, say -- so `mime`/`body`/`errored` are compared too.
+    shouldComponentUpdate({ last_run_timestamp, sanitize_html, mime, body, errored, rootassignee, persist_js_state, has_pluto_hook_features }) {
+        return (
+            last_run_timestamp !== this.props.last_run_timestamp ||
+            sanitize_html !== this.props.sanitize_html ||
+            mime !== this.props.mime ||
+            body !== this.props.body ||
+            errored !== this.props.errored ||
+            rootassignee !== this.props.rootassignee ||
+            persist_js_state !== this.props.persist_js_state ||
+            has_pluto_hook_features !== this.props.has_pluto_hook_features
+        )
     }
 
     componentDidUpdate(old_props) {

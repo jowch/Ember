@@ -69,7 +69,8 @@ new_graph <- function(ids, setup, analyses, learned, exports, cells, edges,
 #' A graph-level error.
 #'
 #' `kind` is one of `"parse"`, `"multiple_definitions"`, `"cycle"`,
-#' `"private_name"`, `"global_setting"`. `cells` are the ids the error is
+#' `"private_name"`, `"global_setting"`, `"mixed_text"` (a cell mixing `#'`
+#' lines and code; text-cells.R's `is_mixed()`). `cells` are the ids the error is
 #' reported on (all of them can't run). `names` are the globals involved
 #' (empty for `parse` and `global_setting`). `lines` is a data frame `cell`,
 #' `line` pointing at the responsible lines where known. `message` is one
@@ -581,6 +582,21 @@ find_errors <- function(cells, analyses, edges, setup, ids, components,
       message = sprintf("%s changes a global setting outside the setup cell.",
                         paste(fns, collapse = ", ")),
       fixes = "Move it to the setup cell, or use withr::with_options() for one piece of code")
+  }
+
+  # mixed_text: a non-setup cell mixing #' lines and code (text-cells.R's
+  # is_mixed()) is "code" (cell_kind()), so it stays a graph node here, but
+  # nothing in it has run: fixes = character() because the fix is the
+  # Split button (ember$split, pluto-state.R), not a wording suggestion.
+  # A text cell's analysed code has no #' lines (code_of()), so only code
+  # cells can ever match.
+  for (id in ids) {
+    if (identical(id, setup) || id %in% disabled) next
+    if (!is_mixed(analyses[[id]]$code)) next
+    errors[[length(errors) + 1]] <- new_graph_error(
+      kind = "mixed_text", cells = id, names = character(), lines = NULL,
+      message = "Text and code in one cell. A cell is either text (only #' lines) or code. Nothing in it has run.",
+      fixes = character())
   }
 
   # cycle: strongly connected components of `edges` (Tarjan over the

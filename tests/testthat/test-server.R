@@ -178,6 +178,42 @@ test_that("run_multiple_cells {cells: []} runs nothing; a blank new cell doesn't
   expect_equal(notebook_snapshot(nb)$process, "preview")
 })
 
+# ---- ember_split_cell (53) -----------------------------------------------
+
+test_that("ember_split_cell splits a mixed cell; stale code or a non-mixed cell is a no-op (53)", {
+  path <- write_session_notebook(list(S = cell(""), M = cell("#' a\nx <- 1"),
+                                      T = cell("#' hi", kind = "markdown")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  m_code <- notebook_state(nb)$cells[["M"]]$code
+  t_code <- notebook_state(nb)$cells[["T"]]$code
+
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  handle_message(server, ws, wire("ember_split_cell", notebook_id = id, cell_id = "M", code = "stale"))
+  expect_equal(length(notebook_state(nb)$cells), 3)
+
+  handle_message(server, ws, wire("ember_split_cell", notebook_id = id, cell_id = "T", code = t_code))
+  expect_equal(length(notebook_state(nb)$cells), 3)
+
+  handle_message(server, ws, wire("ember_split_cell", notebook_id = id, cell_id = "M", code = m_code))
+  cells <- notebook_state(nb)$cells
+  expect_equal(length(cells), 4)
+  expect_equal(cells[["M"]]$code, "#' a")
+  expect_equal(cells[["M"]]$kind, "markdown")
+  ids <- names(cells)
+  new_id <- ids[[match("M", ids) + 1]]
+  expect_equal(cells[[new_id]]$code, "x <- 1")
+  expect_equal(cells[[new_id]]$kind, "code")
+
+  expect_length(Filter(function(e) e$kind == "mixed_text", notebook_state(nb)$graph$errors), 0)
+})
+
 test_that("disabling in safe preview gets a thumbs-up; the run it triggers next leaves the session not allowed (ui-3 36)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1")))
   nb <- open_notebook(path)
@@ -363,7 +399,7 @@ test_that("every request type in the handler table is answered as documented (36
                "restart_process", "reset_shared_state", "complete", "complete_symbols", "docs",
                "all_registered_package_names", "completepath", "get_all_notebooks", "ember_signature")
   silent <- c("interrupt_all", "shutdown_notebook", "reshow_cell", "ember_render_plot",
-             "ember_run_all", "request_js_link_response", "nbpkg_available_versions",
+             "ember_run_all", "ember_split_cell", "request_js_link_response", "nbpkg_available_versions",
              "nbpkg_get_project_toml", "nbpkg_set_project_toml", "pkg_update")
   expect_setequal(names(handlers), c(answered, silent))
 

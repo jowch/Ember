@@ -23,6 +23,7 @@
     "t_ember_not_run_one": "{{count}} cell not run",
     "t_ember_not_run_other": "{{count}} cells not run",
     "t_ember_run_all": "Run all",
+    "t_ember_split": "Split into {{n}} cells",
     "t_ember_label_stale": "stale",
     "t_ember_label_code_changed": "code changed",
     "t_ember_safe_preview_plan_none": "Running starts R.",

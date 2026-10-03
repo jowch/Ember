@@ -666,6 +666,7 @@ on_run <- function(server, cl, hub, req) {
 #' | reshow_cell                   | "more" paging (ui-2.md, 3b/3c): dispatch ev_show_more(cell, objectid, dim); flush. No reply (the frontend sends without awaiting one) |
 #' | ember_render_plot             | {cell_id, width, height, res}, clamped: dispatch ev_render(); flush |
 #' | ember_run_all                 | the "N cells not run" bar's button (ui-2.md, 5): run_cells() on not_run_ids(), the same set the bar counts; flush. No reply |
+#' | ember_split_cell              | {cell_id, code}: split a mixed_text cell at each text/code change (split_mixed()); nothing if code is stale or the cell isn't mixed. Flush. No reply |
 #' | ember_signature                | worker_query(signature); else signature_fallback() (ui-2.md, 4d)   |
 #' | request_js_link_response, nbpkg_available_versions, nbpkg_get_project_toml, nbpkg_set_project_toml, pkg_update | Julia-only; their UI is disabled in the frontend. Logged, no reply |
 #'
@@ -834,6 +835,31 @@ handlers <- list(
     st <- notebook_state(hub$nb)
     ids <- not_run_ids(st, view_context(st))
     if (length(ids) > 0) run_cells(hub$nb, ids)
+    flush_clients(server, hub)
+  },
+
+  #' The "Split into n cells" button (ember$split, pluto-state.R): leaves
+  #' the text in `cell_id` and puts each further piece in a new cell right
+  #' after it, in order. A no-op when `code` is out of date (the button was
+  #' clicked against a copy the cell has since moved past) or the cell no
+  #' longer mixes text and code. Nothing runs; the edit alone is enough to
+  #' clear the mixed_text error on the first piece.
+  ember_split_cell = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    b <- req$body
+    state <- notebook_state(hub$nb)
+    cell <- state$cells[[b$cell_id %||% ""]]
+    if (is.null(cell) || !identical(cell$kind, "code") || !identical(cell$code, b$code) ||
+        !is_mixed(cell$code)) {
+      return(invisible(NULL))
+    }
+    pieces <- split_mixed(cell$code)
+    if (length(pieces) < 2) return(invisible(NULL))
+    i <- match(b$cell_id, names(state$cells))
+    ops <- c(list(set_code(b$cell_id, pieces[[1]], expected = cell$code)),
+            lapply(seq_along(pieces)[-1], function(k) insert_cell(i + k - 1L, pieces[[k]])))
+    tryCatch(do.call(edit_notebook, c(list(hub$nb), ops)),
+            ember_refused = function(e) NULL)
     flush_clients(server, hub)
   },
 

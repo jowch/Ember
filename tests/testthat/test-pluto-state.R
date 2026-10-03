@@ -243,6 +243,15 @@ test_that("stale sets ember$stale, not depends_on_disabled_cells (12)", {
   expect_false(cr$depends_on_disabled_cells)
 })
 
+test_that("project_cell_result(): ember$split for a mixed_text cell, NULL for a text cell (49)", {
+  s <- fake_state(list(S = cell(""), M = cell("#' a\nx <- 1"), T = cell("#' hi", kind = "markdown")))
+  vm <- snapshot_of(s)$cells$M
+  expect_equal(project_cell_result(vm)$ember$split, 2L)
+
+  vt <- snapshot_of(s)$cells$T
+  expect_null(project_cell_result(vt)$ember$split)
+})
+
 test_that("an upstream error projects ember$upstream_error, not depends_on_disabled_cells (ui-3 11)", {
   s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("a + 1")))
   r <- boot(s, c("A", "B"))
