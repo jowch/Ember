@@ -3474,12 +3474,11 @@ test-only dependency (never shipped in the package), for test 171.
 ## Open points
 
 Everything the drafts asked has been decided (ui-3.md and the user's
-decisions recorded above). Left open:
+decisions recorded above). The signature tooltip shows only the
+arguments, also for notebook functions; a docstring is read in Help.
+Left open:
 
-1. **Signature hint for notebook functions.** Showing a docstring's first
-   paragraph in the signature tooltip (`ember_signature`) is optional and
-   not planned in piece 2.
-2. **Endeavor follow-ups**, outside this repository and listed in
+1. **Endeavor follow-ups**, outside this repository and listed in
    design-gaps.md: F1 and the shortcut sheet (actions.ts:161-172), the
    theme following the system instead of `data-theme`, its CSS for the old
    trafficlight stripes and `.error-header`, its Present/Record/Frontmatter

@@ -57,7 +57,6 @@ done; clear out ticked items at each release.
 - [ ] Go-to-definition and variable links in the editor (ui-2.md piece 4e, cut from increment 2). Pluto's Julia `ScopeStateField` stays wired until it has an R replacement — missing
 - [ ] Undo after deleting a disabled cell brings it back enabled: `order_ops()` re-inserts with code only (pluto-edits.R:157-158) (ui-3-plan.md, piece 1) — improvised
 - [ ] `render_png()` with an explicit pixel size replaces the cell's stored image, so the page then shows that one-off image; it should return the bytes without storing them (ui-3-plan.md, piece 3) — improvised
-- [ ] Help's signature hint for a notebook function could show the first paragraph of its docstring (ui-3-plan.md, piece 2; not planned) — missing
 
 - [x] Remote use: the server accepted only Host `127.0.0.1:<port>` or `localhost:<port>`, so an SSH tunnel to a different local port, or any reverse proxy (Posit Workbench, JupyterHub, VS Code port forwarding), got 403. Now a loopback Host is accepted on any port when Origin matches Host (or is absent); an opt-in `allowed_hosts` argument covers a proxy that isn't loopback — missing
 - [x] Remote use behind a path prefix: the `/open` redirect and `/`'s notebook links were absolute (`/edit?...`), so a proxy serving Ember under a prefix like `/s/<id>/p/<port>/` (stripping that prefix before forwarding, the usual model) broke them once the browser followed a link built from the unprefixed path the backend sees. Both are relative now, as Pluto does — missing
