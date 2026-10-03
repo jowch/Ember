@@ -1759,7 +1759,9 @@ ${t("t_key_autosave_description")}`
                             last_hot_reload_time=${notebook.last_hot_reload_time}
                             connected=${this.state.connected}
                         />
-                        <${NotRunBar} not_run=${notebook.ember?.not_run ?? 0} />
+                        ${!this.state.static_preview &&
+                        !this.state.disable_ui &&
+                        html`<${NotRunBar} not_run=${notebook.ember?.not_run ?? 0} />`}
                         <${Notebook}
                             notebook=${notebook}
                             cell_inputs_local=${this.state.cell_inputs_local}
