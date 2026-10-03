@@ -7,6 +7,9 @@ import { unpack } from "./common/MsgPack.js"
 import { RawHTMLContainer } from "./components/CellOutput.js"
 import { ProcessStatus } from "./common/ProcessStatus.js"
 import { parse_launch_params } from "./common/parse_launch_params.js"
+import { apply_theme } from "./common/theme.js"
+
+apply_theme()
 
 const url_params = new URLSearchParams(window.location.search)
 

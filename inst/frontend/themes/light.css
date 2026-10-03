@@ -1,291 +1,338 @@
-@media (prefers-color-scheme: light) {
-    :root {
-        --image-filters: none;
-        --out-of-focus-opacity: 0.25;
+/* Ember's Sage colour tokens (light) and every Pluto/Endeavor variable
+   name mapped onto them (docs/ui-3-plan.md, "Tokens"). No media query:
+   the active theme is `<html data-theme="light"|"dark">`, set by the
+   inline script in editor.html's <head> and kept in sync by
+   common/theme.js. A name this piece's groups don't mention (an export
+   dialog, the AI prompt box, PlutoLand upload, ...) keeps its old,
+   Pluto-authored value unchanged -- only moved out of the media query. */
+:root {
+    color-scheme: light;
 
-        /* Color scheme */
-        --main-bg-color: white;
-        --rule-color: rgba(0, 0, 0, 0.15);
-        --kbd-border-color: #b3b3b3;
-        --header-bg-color: white;
-        --header-border-color: rgba(0, 0, 0, 0.1);
-        --ui-button-color: #2a2a2b;
-        --cursor-color: black;
+    /* Ember tokens (ui-3.md, "Identity") */
+    --ember-page: #f5f6f3;
+    --ember-panel: #fcfcfb;
+    --ember-code: #eceeea;
+    --ember-line: #dce1db;
+    --ember-text: #1b201d;
+    --ember-muted: #57605a;
+    --ember-faint: #636c65;
+    --ember-accent: #22715f;
+    --ember-on-accent: #ffffff;
+    --ember-accent-bg: #e3efeb;
+    --ember-active: #e3e7e2;
+    --ember-hover: #eef1ed;
+    --ember-logo: #e8590c;
+    --ember-run: #2f5fae;
+    --ember-amber: #7a5a12;
+    --ember-amber-bg: #f5ecd6;
+    --ember-red: #a8322a;
+    --ember-red-bg: #f8e6e3;
+    --ember-rail-idle: #d3d8d2;
+    --ember-rail-run: #7f9ccc;
+    --ember-rail-due: #cdb06e;
+    --ember-rail-err: #d48b83;
+    --ember-err-bg: #faeae7;
+    --ember-err-line: #efc9c3;
+    --ember-due-bg: #f6eedb;
+    --ember-due-line: #e2cc95;
+    --ember-wash: #eceeea;
+    --ember-dis-bg: #e6e9e5;
+    --ember-syn-kw: #7b4a91;
+    --ember-syn-fn: #22715f;
+    --ember-syn-str: #5d6b12;
+    --ember-syn-num: #a0521a;
+    --ember-syn-com: #636c65;
+    --ember-ansi-red: #b42318;
+    --ember-ansi-green: #2b7a4b;
+    --ember-ansi-yellow: #8a5a00;
+    --ember-ansi-blue: #2459b8;
+    --ember-ansi-magenta: #8e3a9a;
+    --ember-ansi-cyan: #0e7490;
+    --ember-shadow: 0 6px 24px rgba(20, 28, 22, 0.14);
+    --ember-panel-shadow: -10px 0 30px rgba(20, 28, 22, 0.16);
+    --ember-scrim: rgba(20, 28, 22, 0.3);
 
-        /* Cells */
-        --normal-cell: 0, 0, 0;
-        --code-differs: 160, 130, 28;
-        --error-color: 240, 168, 168;
-        --normal-cell-color: rgba(var(--normal-cell), 0.1);
-        --dark-normal-cell-color: rgba(var(--normal-cell), 0.2);
-        --selected-cell-color: rgba(40, 78, 189, 0.4);
-        --code-differs-cell-color: rgba(var(--code-differs), 0.68);
-        --error-cell-color: rgba(var(--error-color), 0.7);
-        --bright-error-cell-color: rgb(var(--error-color));
-        --light-error-cell-color: rgba(var(--error-color), 0.05);
+    /* Shared dialogs and menus (piece 7a). --ember-dialog-shadow and
+       --ember-dialog-backdrop alias the tokens above: same values, one
+       name. --ember-menu-hover-bg, --ember-menu-muted-color and
+       --ember-border stay their own, translucent-on-anything tokens --
+       unlike --ember-hover/--ember-muted/--ember-line, which are solid
+       hex meant for a known background. */
+    --ember-dialog-shadow: var(--ember-shadow);
+    --ember-dialog-backdrop: var(--ember-scrim);
+    --ember-menu-hover-bg: rgba(0, 0, 0, 0.06);
+    --ember-menu-muted-color: rgba(0, 0, 0, 0.55);
+    --ember-border: rgba(0, 0, 0, 0.15);
+    --ember-danger: rgb(153, 27, 27);
+    --ember-focus-ring: var(--ember-accent);
 
-        /*Export styling*/
-        --export-bg-color: rgb(60, 67, 101);
-        --export-color: rgb(228, 228, 228);
-        --export-card-bg-color: rgba(255, 255, 255, 0.8);
-        --export-card-title-color: rgba(0, 0, 0, 0.7);
-        --export-card-text-color: rgba(0, 0, 0, 0.5);
-        --export-card-shadow-color: #00000029;
+    --out-of-focus-opacity: 0.25;
 
-        /*Frontmatter styling*/
-        --frontmatter-button-bg-color: white;
-        --frontmatter-outline-color: hsl(230, 14%, 11%);
-        --frontmatter-input-bg-color: #fbfbfb;
-        --frontmatter-input-border-color: hsl(207deg 24% 87%);
+    /* Page and chrome */
+    --image-filters: none;
+    --main-bg-color: var(--ember-page);
+    --pluto-output-bg-color: var(--ember-page);
+    --overlay-button-bg: var(--ember-page);
+    --header-bg-color: var(--ember-panel);
+    --helpbox-bg-color: var(--ember-panel);
+    --input-context-menu-bg-color: var(--ember-panel);
+    --autocomplete-menu-bg-color: var(--ember-panel);
+    --pkg-popup-bg: var(--ember-panel);
+    --rule-color: var(--ember-line);
+    --header-border-color: var(--ember-line);
+    --table-border-color: var(--ember-line);
+    --helpbox-search-border-color: var(--ember-line);
+    --kbd-border-color: #b3b3b3;
+    --cursor-color: black;
 
-        /* PlutoLand upload styling */
-        --plutoland-bg-color: white;
-        --plutoland-bigbutton-bg-color: white;
-        --plutoland-url-fg: #375bbd;
-        --plutoland-url-bg: #f7fbff;
-        --plutoland-or-bg-color: hsl(210 20% 83% / 1);
+    /* Text */
+    --pluto-output-color: var(--ember-text);
+    --pluto-output-h-color: var(--ember-text);
+    --helpbox-text-color: var(--ember-text);
+    --nav-h1-text-color: var(--ember-text);
+    --ui-button-color: var(--ember-text);
+    --cm-color-editor-text: var(--ember-text);
+    --black: var(--ember-text);
+    --white: white;
+    --helpbox-notfound-search-color: var(--ember-faint);
+    --index-light-text-color: var(--ember-faint);
+    --pluto-schema-types-color: var(--ember-faint);
+    --cm-color-line-numbers: var(--ember-faint);
 
-        /*Pluto output styling */
-        --pluto-schema-types-color: rgba(0, 0, 0, 0.4);
-        --pluto-schema-types-border-color: rgba(0, 0, 0, 0.2);
-        /* --pluto-dim-output-color */
-        --pluto-output-color: hsl(0, 0%, 25%);
-        --pluto-output-h-color: hsl(0, 0%, 12%);
-        --pluto-output-bg-color: white;
-        --a-underline: #00000059;
-        --blockquote-color: #555;
-        --blockquote-bg: #f2f2f2;
-        --admonition-title-color: white;
-        --jl-message-color: rgb(219 233 212);
-        --jl-message-accent-color: rgb(158, 200, 137);
-        --jl-info-color: rgb(214 227 244);
-        --jl-info-accent-color: rgb(148, 182, 226);
-        --jl-warn-color: rgb(236 234 213);
-        --jl-warn-accent-color: rgb(207, 199, 138);
-        --jl-danger-color: rgb(245 218 215);
-        --jl-danger-accent-color: rgb(226, 157, 148);
-        --jl-debug-color: rgb(245 218 215);
-        --jl-debug-accent-color: rgb(226, 157, 148);
-        --footnote-border-color: rgba(23, 115, 119, 0.15);
-        --table-border-color: rgba(0, 0, 0, 0.2);
-        --table-bg-hover-color: rgba(159, 158, 224, 0.15);
-        --pluto-tree-color: rgb(0 0 0 / 38%);
+    /* Code */
+    --code-background: var(--ember-code);
+    --code-section-bg-color: var(--ember-code);
+    --helpbox-search-bg-color: var(--ember-code);
+    --blockquote-bg: var(--ember-code);
 
-        /*pluto cell styling*/
-        --disabled-cell-bg-color: rgba(139, 139, 139, 0.25);
-        --selected-cell-bg-color: rgba(40, 78, 189, 0.24);
-        --hover-scrollbar-color-1: rgba(0, 0, 0, 0.15);
-        --hover-scrollbar-color-2: rgba(0, 0, 0, 0.05);
-        --skip-as-script-background-color: #ccc;
-        --depends-on-skip-as-script-background-color: #eee;
-        --ember-stale-label-color: rgb(110, 110, 110);
-        --ember-stale-label-bg-color: rgba(0, 0, 0, 0.08);
-        --ember-code-changed-label-color: rgb(var(--code-differs));
-        --ember-code-changed-label-bg-color: rgba(var(--code-differs), 0.15);
-        /* A dark red on a light red tint: ~6.6:1 against --main-bg-color
-           (computed via WCAG relative luminance), unlike the previous pink
-           on a tint of itself (~1.7:1). */
-        --ember-upstream-error-label-color: rgb(153, 27, 27);
-        --ember-upstream-error-label-bg-color: rgba(220, 38, 38, 0.15);
+    /* Cells */
+    --normal-cell: 211, 216, 210;
+    --code-differs: 122, 90, 18;
+    --error-color: 168, 50, 42;
+    --normal-cell-color: var(--ember-rail-idle);
+    --dark-normal-cell-color: rgba(var(--normal-cell), 0.2);
+    --selected-cell-color: color-mix(in srgb, var(--ember-accent) 40%, transparent);
+    --code-differs-cell-color: var(--ember-rail-due);
+    --error-cell-color: var(--ember-rail-err);
+    --bright-error-cell-color: rgb(var(--error-color));
+    --light-error-cell-color: rgba(var(--error-color), 0.05);
 
-        /* Shared dialogs and menus */
-        --ember-dialog-shadow: 0 6px 24px rgba(20, 28, 22, 0.14);
-        --ember-dialog-backdrop: rgba(20, 28, 22, 0.3);
-        --ember-menu-hover-bg: rgba(0, 0, 0, 0.06);
-        --ember-menu-muted-color: rgba(0, 0, 0, 0.55);
-        /* A dedicated copy, not --rule-color: Endeavor overrides that to a
-           near-invisible alpha (theme.ts), which would leave the dialog
-           and menu borders invisible too. */
-        --ember-border: rgba(0, 0, 0, 0.15);
-        /* 5.8:1 and 8.3:1 against --header-bg-color -- the Sage accent and
-           the upstream-error red, both already >= 4.5:1 text contrast. */
-        --ember-accent: #22715f;
-        --ember-danger: rgb(153, 27, 27);
-        --ember-focus-ring: var(--ember-accent);
+    /*Export styling*/
+    --export-bg-color: rgb(60, 67, 101);
+    --export-color: rgb(228, 228, 228);
+    --export-card-bg-color: rgba(255, 255, 255, 0.8);
+    --export-card-title-color: rgba(0, 0, 0, 0.7);
+    --export-card-text-color: rgba(0, 0, 0, 0.5);
+    --export-card-shadow-color: #00000029;
 
-        /* Pluto shoulders */
-        --shoulder-hover-bg-color: rgba(0, 0, 0, 0.05);
+    /*Frontmatter styling*/
+    --frontmatter-button-bg-color: white;
+    --frontmatter-outline-color: hsl(230, 14%, 11%);
+    --frontmatter-input-bg-color: #fbfbfb;
+    --frontmatter-input-border-color: hsl(207deg 24% 87%);
 
-        /* Logs */
-        --pluto-logs-bg-color: hsl(0deg 0% 98%);
-        --pluto-logs-key-color: rgb(0 0 0 / 51%);
-        --pluto-logs-progress-fill: #ffffff;
-        --pluto-logs-progress-bg: #e7e7e7;
-        --pluto-logs-progress-border: hsl(210deg 16% 74%);
-        --pluto-logs-info-color: white;
-        --pluto-logs-info-accent-color: inherit;
-        --pluto-logs-warn-color: rgb(236 234 213);
-        --pluto-logs-warn-accent-color: #665f26;
-        --pluto-logs-danger-color: rgb(245 218 215);
-        --pluto-logs-danger-accent-color: rgb(172 66 52);
-        --pluto-logs-debug-color: rgb(236 223 247);
-        --pluto-logs-debug-accent-color: rgb(100 50 179);
+    /* PlutoLand upload styling */
+    --plutoland-bg-color: white;
+    --plutoland-bigbutton-bg-color: white;
+    --plutoland-url-fg: #375bbd;
+    --plutoland-url-bg: #f7fbff;
+    --plutoland-or-bg-color: hsl(210 20% 83% / 1);
 
-        /*Top navbar styling*/
-        --nav-h1-text-color: black;
-        --nav-filepicker-color: #6f6f6f;
-        --nav-filepicker-border-color: #b2b2b2;
-        --nav-filepicker-suggest-color: rgba(129, 146, 160, 0.5);
-        --nav-process-status-bg-color: white;
-        --nav-process-status-color: var(--pluto-output-h-color);
+    /*Pluto output styling */
+    --pluto-schema-types-border-color: rgba(0, 0, 0, 0.2);
+    /* --pluto-dim-output-color */
+    --a-underline: #00000059;
+    --blockquote-color: #555;
+    --admonition-title-color: white;
+    --jl-message-color: rgb(219 233 212);
+    --jl-message-accent-color: rgb(158, 200, 137);
+    --jl-info-color: rgb(214 227 244);
+    --jl-info-accent-color: rgb(148, 182, 226);
+    --jl-warn-color: rgb(236 234 213);
+    --jl-warn-accent-color: rgb(207, 199, 138);
+    --jl-danger-color: rgb(245 218 215);
+    --jl-danger-accent-color: rgb(226, 157, 148);
+    --jl-debug-color: rgb(245 218 215);
+    --jl-debug-accent-color: rgb(226, 157, 148);
+    --footnote-border-color: rgba(23, 115, 119, 0.15);
+    --table-bg-hover-color: rgba(159, 158, 224, 0.15);
+    --pluto-tree-color: rgb(0 0 0 / 38%);
 
-        /*header*/
-        --restart-recc-header-color: rgba(114, 192, 255, 0.56);
-        --restart-recc-accent-color: rgba(114, 192, 255);
-        --restart-req-header-color: rgba(170, 41, 32, 0.56);
-        --dead-process-header-color: rgb(230 88 46 / 38%);
-        --loading-header-color: hsla(290, 10%, 80%, 0.5);
-        --disconnected-header-color: rgba(255, 169, 114, 0.56);
-        --binder-loading-header-color: hsl(51deg 64% 90% / 50%);
+    /*pluto cell styling*/
+    --disabled-cell-bg-color: var(--ember-dis-bg);
+    --selected-cell-bg-color: rgba(40, 78, 189, 0.24);
+    --hover-scrollbar-color-1: rgba(0, 0, 0, 0.15);
+    --hover-scrollbar-color-2: rgba(0, 0, 0, 0.05);
+    --skip-as-script-background-color: #ccc;
+    --depends-on-skip-as-script-background-color: #eee;
+    --ember-stale-label-color: rgb(110, 110, 110);
+    --ember-stale-label-bg-color: rgba(0, 0, 0, 0.08);
+    --ember-code-changed-label-color: var(--ember-amber);
+    --ember-code-changed-label-bg-color: var(--ember-amber-bg);
+    --ember-upstream-error-label-color: var(--ember-red);
+    --ember-upstream-error-label-bg-color: var(--ember-red-bg);
 
-        /*loading bar*/
-        --loading-grad-color-1: #f1dba9;
-        --loading-grad-color-2: #d7d7d0;
+    /* Pluto shoulders */
+    --shoulder-hover-bg-color: rgba(0, 0, 0, 0.05);
 
-        /*saveall container*/
-        --overlay-button-bg: #ffffff;
-        --overlay-button-border: hsl(0 4% 91% / 1);
-        --overlay-button-border-save: #f3f2f2;
-        /* --overlay-button-color */
+    /* Logs */
+    --pluto-logs-bg-color: hsl(0deg 0% 98%);
+    --pluto-logs-key-color: rgb(0 0 0 / 51%);
+    --pluto-logs-progress-fill: #ffffff;
+    --pluto-logs-progress-bg: #e7e7e7;
+    --pluto-logs-progress-border: hsl(210deg 16% 74%);
+    --pluto-logs-info-color: white;
+    --pluto-logs-info-accent-color: inherit;
+    --pluto-logs-warn-color: rgb(236 234 213);
+    --pluto-logs-warn-accent-color: #665f26;
+    --pluto-logs-danger-color: rgb(245 218 215);
+    --pluto-logs-danger-accent-color: rgb(172 66 52);
+    --pluto-logs-debug-color: rgb(236 223 247);
+    --pluto-logs-debug-accent-color: rgb(100 50 179);
 
-        /*input_context_menu*/
-        --input-context-menu-border-color: rgba(0, 0, 0, 0.1);
-        --input-context-menu-bg-color: white;
-        --input-context-menu-soon-color: #55555544;
-        --input-context-menu-hover-bg-color: rgba(0, 0, 0, 0.1);
-        --input-context-menu-li-color: #1e1e1e;
+    /*Top navbar styling*/
+    --nav-filepicker-color: #6f6f6f;
+    --nav-filepicker-border-color: #b2b2b2;
+    --nav-filepicker-suggest-color: rgba(129, 146, 160, 0.5);
+    --nav-process-status-bg-color: white;
+    --nav-process-status-color: var(--pluto-output-h-color);
 
-        /* ai features */
-        --ai-gradient-bg: linear-gradient(20deg, #f9ecff, #fff4f2);
-        --ai-prompt-bg: #fbffff;
+    /*header*/
+    --restart-recc-header-color: rgba(114, 192, 255, 0.56);
+    --restart-recc-accent-color: rgba(114, 192, 255);
+    --restart-req-header-color: rgba(170, 41, 32, 0.56);
+    --dead-process-header-color: rgb(230 88 46 / 38%);
+    --loading-header-color: hsla(290, 10%, 80%, 0.5);
+    --disconnected-header-color: rgba(255, 169, 114, 0.56);
+    --binder-loading-header-color: hsl(51deg 64% 90% / 50%);
 
-        /*Pkg status*/
-        --pkg-popup-bg: white;
-        --pkg-popup-border-color: #f0e4ee;
-        --pkg-popup-buttons-bg-color: white;
-        --pkg-version-color: #666;
-        --black: black;
-        --white: white;
-        --pkg-terminal-bg-color: #232433;
-        --pkg-terminal-border-color: #c3c3c3;
+    /*loading bar*/
+    --loading-grad-color-1: #f1dba9;
+    --loading-grad-color-2: #d7d7d0;
 
-        /* run area*/
-        --pluto-runarea-bg-color: hsl(0, 0, 97%);
-        --pluto-runarea-span-color: hsl(353, 5%, 64%);
+    /*saveall container*/
+    --overlay-button-border: hsl(0 4% 91% / 1);
+    --overlay-button-border-save: #f3f2f2;
+    /* --overlay-button-color */
 
-        /*drop ruler*/
-        --dropruler-bg-color: rgba(0, 0, 0, 0.5);
+    /*input_context_menu*/
+    --input-context-menu-border-color: rgba(0, 0, 0, 0.1);
+    --input-context-menu-soon-color: #55555544;
+    --input-context-menu-hover-bg-color: rgba(0, 0, 0, 0.1);
+    --input-context-menu-li-color: #1e1e1e;
 
-        /* jlerror */
-        --jlerror-header-color: #4f1616;
-        --jlerror-mark-bg-color: rgb(243 243 243);
-        --jlerror-a-bg-color: #f5efd9;
-        --jlerror-a-border-left-color: #704141;
-        --jlerror-mark-color: black;
+    /* ai features */
+    --ai-gradient-bg: linear-gradient(20deg, #f9ecff, #fff4f2);
+    --ai-prompt-bg: #fbffff;
 
-        /* helpbox */
-        --helpbox-bg-color: white;
-        --helpbox-box-shadow-color: #00000010;
-        --helpbox-header-bg-color: hsl(0deg 0% 92%);
-        --helpbox-header-tab-bg-color: white;
-        --helpbox-header-color: hsl(230, 14%, 11%);
-        --helpbox-search-bg-color: #fbfbfb;
-        --helpbox-search-border-color: hsl(207deg 24% 87%);
-        --helpbox-notfound-search-color: rgb(139, 139, 139);
-        --helpbox-text-color: black;
-        --code-section-bg-color: whitesmoke;
-        --code-section-bg-color: #f3f3f3; /* TODO: Should this be `-border-color`? */
-        --process-item-bg: #f2f2f2;
-        --process-busy: #ffcd70;
-        --process-finished: hsl(126deg 30% 60%);
-        --process-undefined: rgb(151, 151, 151);
-        --process-failed: hsl(0deg 72.62% 64.6%);
-        --process-notify-bg: hsl(44.86deg 50% 94%);
+    /*Pkg status*/
+    --pkg-popup-border-color: #f0e4ee;
+    --pkg-popup-buttons-bg-color: white;
+    --pkg-version-color: #666;
+    --pkg-terminal-bg-color: #232433;
+    --pkg-terminal-border-color: #c3c3c3;
 
-        /*footer*/
-        --footer-color: #333333;
-        --footer-bg-color: #d7dcd3;
-        --footer-atag-color: black;
-        --footer-input-border-color: #818181;
-        --footer-filepicker-button-color: white;
-        --footer-filepicker-focus-color: #896c6c;
-        --footnote-border-color: rgba(23, 115, 119, 0.15);
-        --settings-bg-color: hsl(328 100% 98% / 1);
-        --settings-p2-color: #717070;
-        --settings-header-bg-color: #f9dadf;
+    /* run area*/
+    --pluto-runarea-bg-color: hsl(0, 0, 97%);
+    --pluto-runarea-span-color: hsl(353, 5%, 64%);
 
-        /* undo delete cell*/
-        --undo-delete-box-shadow-color: #0000000f;
+    /*drop ruler*/
+    --dropruler-bg-color: rgba(0, 0, 0, 0.5);
 
-        /*codemirror hints*/
-        --cm-color-editor-tooltip-border: rgba(0, 0, 0, 0.2);
-        --cm-color-editor-li-aria-selected-bg: #16659d;
-        --cm-color-editor-li-aria-selected: white;
-        --cm-color-editor-li-notexported: rgba(0, 0, 0, 0.5);
-        --code-background: hsla(46, 90%, 98%, 1);
-        --cm-color-code-differs-gutters: rgba(214, 172, 35, 0.2);
-        --cm-color-line-numbers: #8d86875e;
-        --cm-selection-background: hsl(214deg 100% 73% / 48%);
-        --cm-selection-background-blurred: hsl(214deg 0% 73% / 48%);
-        --cm-highlighted: #cbceb668;
+    /* jlerror */
+    --jlerror-header-color: #4f1616;
+    --jlerror-mark-bg-color: rgb(243 243 243);
+    --jlerror-a-bg-color: #f5efd9;
+    --jlerror-a-border-left-color: #704141;
+    --jlerror-mark-color: black;
 
-        /* code highlighting */
-        --cm-color-editor-text: oklch(30% 0% 0deg);
-        --cm-color-comment: oklch(45% 60% 0deg);
-        --cm-color-keyword: oklch(45% 80% 30deg);
-        --cm-color-definition: oklch(28.455% 0.11677 29.223);
-        --cm-color-control-operator: oklch(56.456% 0.23502 350.694);
-        --cm-color-symbol: oklch(45% 80% 90deg);
-        --cm-color-command: oklch(35% 100% 120deg);
-        --cm-color-macro: oklch(45% 80% 150deg);
-        --cm-color-string: oklch(35% 100% 180deg);
-        --cm-color-variable: oklch(45% 40% 270deg);
-        --cm-color-typedef-shadow: oklch(0.91 0.09 72.03);
-        --cm-color-literal: oklch(45% 60% 330deg);
-        --cm-filter-type: brightness(150%) saturate(50%);
-        --cm-color-builtin: #5e7ad3;
-        --cm-color-function: #cc80ac;
-        --cm-color-link: #815ba4;
-        --cm-color-bracket: #41323f;
-        --cm-color-matchingBracket: black;
-        --cm-color-matchingBracket-bg: #1b4bbb21;
-        --cm-color-placeholder-text: rgba(0, 0, 0, 0.2);
-        --cm-color-clickable-underline: #ced2ef;
+    /* helpbox */
+    --helpbox-box-shadow-color: #00000010;
+    --helpbox-header-bg-color: hsl(0deg 0% 92%);
+    --helpbox-header-tab-bg-color: white;
+    --helpbox-header-color: hsl(230, 14%, 11%);
+    --process-item-bg: #f2f2f2;
+    --process-busy: var(--ember-run);
+    --process-finished: var(--ember-accent);
+    --process-undefined: rgb(151, 151, 151);
+    --process-failed: var(--ember-red);
+    --process-notify-bg: hsl(44.86deg 50% 94%);
 
-        /* Mixed parsers */
-        --cm-color-html: #48b685;
-        --cm-color-html-accent: #00ab85;
-        --cm-color-css: #876800;
-        --cm-color-css-accent: #696200;
-        --cm-css-why-doesnt-codemirror-highlight-all-the-text-aaa: #3b3700;
-        --cm-color-md: #005a9b;
-        --cm-color-md-accent: #00a9d1;
+    /*footer*/
+    --footer-color: #333333;
+    --footer-bg-color: #d7dcd3;
+    --footer-atag-color: black;
+    --footer-input-border-color: #818181;
+    --footer-filepicker-button-color: white;
+    --footer-filepicker-focus-color: #896c6c;
+    --settings-bg-color: hsl(328 100% 98% / 1);
+    --settings-p2-color: #717070;
+    --settings-header-bg-color: #f9dadf;
 
-        /*autocomplete menu*/
-        --autocomplete-menu-bg-color: white;
+    /* undo delete cell*/
+    --undo-delete-box-shadow-color: #0000000f;
 
-        /* Landing colors */
-        --index-text-color: hsl(0, 0, 60);
-        --index-light-text-color: #838383;
-        --index-clickable-text-color: black;
-        --docs-binding-bg: #8383830a;
-        --index-card-bg: white;
-        --welcome-mywork-bg: hsl(35deg 66% 93%);
-        --welcome-newnotebook-bg: whitesmoke;
-        --welcome-recentnotebook-bg: white;
-        --welcome-recentnotebook-border: #dfdfdf;
-        --welcome-open-bg: #fbfbfb;
-        --welcome-card-author-backdrop: #ffffffb0;
+    /*codemirror hints*/
+    --cm-color-editor-tooltip-border: rgba(0, 0, 0, 0.2);
+    --cm-color-editor-li-aria-selected-bg: #16659d;
+    --cm-color-editor-li-aria-selected: white;
+    --cm-color-editor-li-notexported: rgba(0, 0, 0, 0.5);
+    --cm-color-code-differs-gutters: rgba(214, 172, 35, 0.2);
+    --cm-selection-background: hsl(214deg 100% 73% / 48%);
+    --cm-selection-background-blurred: hsl(214deg 0% 73% / 48%);
+    --cm-highlighted: #cbceb668;
 
-        /* confirm-before-long-runtime dialog */
-        --confirm-runtime-bg: linear-gradient(180deg, #ffffff, #fdf8e9);
-        --confirm-runtime-bonus-bg: #ffffff;
-        --confirm-runtime-bonus-border: #dadaf1;
-        --confirm-runtime-button-bg: #f4f4f4;
-        --confirm-runtime-button-border: #c1c1c1;
-        --confirm-runtime-yes-bg: black;
-        --confirm-runtime-yes-color: #fff;
-        --confirm-runtime-yes-border: #9b9b9b;
-        --confirm-runtime-yes-progress: linear-gradient(90deg, black, #757575);
-    }
+    /* code highlighting */
+    --cm-color-comment: var(--ember-syn-com);
+    --cm-color-keyword: var(--ember-syn-kw);
+    --cm-color-control-operator: var(--ember-syn-kw);
+    --cm-color-definition: var(--ember-text);
+    --cm-color-symbol: var(--ember-syn-num);
+    --cm-color-command: var(--ember-text);
+    --cm-color-macro: var(--ember-syn-fn);
+    --cm-color-string: var(--ember-syn-str);
+    --cm-color-variable: var(--ember-text);
+    --cm-color-typedef-shadow: oklch(0.91 0.09 72.03);
+    --cm-color-literal: var(--ember-syn-num);
+    --cm-filter-type: brightness(150%) saturate(50%);
+    --cm-color-builtin: var(--ember-syn-fn);
+    --cm-color-function: var(--ember-syn-fn);
+    --cm-color-link: #815ba4;
+    --cm-color-bracket: var(--ember-text);
+    --cm-color-matchingBracket: var(--ember-text);
+    --cm-color-matchingBracket-bg: #1b4bbb21;
+    --cm-color-placeholder-text: rgba(0, 0, 0, 0.2);
+    --cm-color-clickable-underline: #ced2ef;
+
+    /* Mixed parsers */
+    --cm-color-html: #48b685;
+    --cm-color-html-accent: #00ab85;
+    --cm-color-css: #876800;
+    --cm-color-css-accent: #696200;
+    --cm-css-why-doesnt-codemirror-highlight-all-the-text-aaa: #3b3700;
+    --cm-color-md: #005a9b;
+    --cm-color-md-accent: #00a9d1;
+
+    /* Landing colors */
+    --index-text-color: hsl(0, 0, 60);
+    --index-clickable-text-color: black;
+    --docs-binding-bg: #8383830a;
+    --index-card-bg: white;
+    --welcome-mywork-bg: hsl(35deg 66% 93%);
+    --welcome-newnotebook-bg: whitesmoke;
+    --welcome-recentnotebook-bg: white;
+    --welcome-recentnotebook-border: #dfdfdf;
+    --welcome-open-bg: #fbfbfb;
+    --welcome-card-author-backdrop: #ffffffb0;
+
+    /* confirm-before-long-runtime dialog */
+    --confirm-runtime-bg: linear-gradient(180deg, #ffffff, #fdf8e9);
+    --confirm-runtime-bonus-bg: #ffffff;
+    --confirm-runtime-bonus-border: #dadaf1;
+    --confirm-runtime-button-bg: #f4f4f4;
+    --confirm-runtime-button-border: #c1c1c1;
+    --confirm-runtime-yes-bg: black;
+    --confirm-runtime-yes-color: #fff;
+    --confirm-runtime-yes-border: #9b9b9b;
+    --confirm-runtime-yes-progress: linear-gradient(90deg, black, #757575);
 }

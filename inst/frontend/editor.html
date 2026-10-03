@@ -7,9 +7,28 @@
 
     <meta name="pluto-insertion-spot-meta">
 
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="white">
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#2a2928">
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fcfcfb">
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1b201d">
     <meta name="color-scheme" content="light dark">
+
+    <!-- Sets <html data-theme="light"|"dark"> before any stylesheet loads,
+         so the first paint is already in the right theme (ui-3-plan.md,
+         "Theme switching"). common/theme.js does the same on every later
+         switch; kept in sync with get_settings()'s THEME reading. -->
+    <script>
+        (function () {
+            var theme = "system";
+            try {
+                var raw = localStorage.getItem("pluto_setting_THEME");
+                if (raw != null) theme = JSON.parse(raw);
+            } catch (e) {}
+            if (theme !== "light" && theme !== "dark") theme = "system";
+            if (theme === "system") {
+                theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+            }
+            document.documentElement.setAttribute("data-theme", theme);
+        })();
+    </script>
 
     <link rel="icon" type="image/svg+xml" href="./img/favicon.svg">
     <link rel="pluto-external-source" id="pluto-logo-big" href="./img/logo.svg" />

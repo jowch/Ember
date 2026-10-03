@@ -192,6 +192,7 @@ const _Settings = ({}) => {
 }
 
 export const DEFAULT_SETTINGS = {
+    THEME: "system",
     MOTIVATIONAL_STICKERS: true,
     ALWAYS_NOTIFY_LONG_BUSY: false,
     CONFIRM_LONG_RUNTIMES_SECONDS: 120,

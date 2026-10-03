@@ -120,6 +120,110 @@ test_that("every name in pluto-css-variables.txt is defined in both themes (6)",
   }
 })
 
+# ---- 105. Endeavor's variables too, no media query, one dark selector ----
+
+test_that("pluto and endeavor CSS variables are defined in both themes with no media query (105)", {
+  dir <- frontend_dir()
+  # endeavor-css-variables.txt's own two non-colour names (--pluto-cell-spacing,
+  # --sans-serif-font-stack) are set in editor.css/ember-forms.css, not the
+  # theme files -- they don't vary by theme, so they don't belong here; the
+  # e2e "Endeavor's DOM hooks" test resolves the full fixture against the
+  # live page instead. The three cell colours do belong, and are already in
+  # pluto-css-variables.txt.
+  names <- readLines(testthat::test_path("fixtures", "pluto-css-variables.txt"))
+  names <- names[nzchar(names)]
+
+  for (theme in c("light.css", "dark.css")) {
+    theme_path <- file.path(dir, "themes", theme)
+    text <- readChar(theme_path, file.info(theme_path)$size)
+
+    missing <- names[!vapply(names, function(n) grepl(paste0(n, "\\s*:"), text), logical(1))]
+    expect_equal(missing, character(0), info = theme)
+
+    expect_false(grepl("prefers-color-scheme", text), info = theme)
+  }
+
+  dark_path <- file.path(dir, "themes", "dark.css")
+  dark_text <- readChar(dark_path, file.info(dark_path)$size)
+  # Every basic selector in dark.css (ignoring the @media wrapper around
+  # the prefers-contrast tweak) is this one attribute selector -- no
+  # leftover bare `:root` or `.foo` rule from before this piece.
+  selectors <- regmatches(dark_text, gregexpr("(?m)^[^@/{}\n][^{\n]*(?=\\{)", dark_text, perl = TRUE))[[1]]
+  selectors <- trimws(selectors)
+  expect_true(length(selectors) > 0)
+  expect_true(all(selectors == '[data-theme="dark"]' | selectors == ':root[data-theme="dark"]'), info = paste(selectors, collapse = ", "))
+})
+
+# ---- 106. Contrast ---------------------------------------------------------
+
+#' A theme file's `--ember-<name>: #hex;` declaration's value, or NA if the
+#' name isn't a plain hex literal there (an alias like `var(--ember-accent)`
+#' is read through by `read_token()` below instead).
+read_hex <- function(text, name) {
+  m <- regmatches(text, regexpr(paste0("--ember-", name, ":\\s*(var\\(--ember-([a-z-]+)\\)|#[0-9a-fA-F]{6})"), text, perl = TRUE))
+  if (!nzchar(m)) return(NA_character_)
+  inner <- sub(paste0("--ember-", name, ":\\s*"), "", m)
+  if (startsWith(inner, "var(")) return(NA_character_)
+  inner
+}
+
+#' `--ember-<name>`'s hex value in `text`, following one `var(--ember-x)`
+#' alias if the declaration isn't a literal.
+read_token <- function(text, name) {
+  m <- regmatches(text, regexpr(paste0("--ember-", name, ":\\s*(var\\(--ember-([a-z-]+)\\)|#[0-9a-fA-F]{6})"), text, perl = TRUE))
+  stopifnot(nzchar(m))
+  inner <- sub(paste0("--ember-", name, ":\\s*"), "", m)
+  if (startsWith(inner, "var(")) {
+    aliased <- sub("var\\(--ember-([a-z-]+)\\)", "\\1", inner)
+    return(read_hex(text, aliased))
+  }
+  inner
+}
+
+hex_to_rgb <- function(hex) {
+  hex <- sub("^#", "", hex)
+  vapply(c(1, 3, 5), function(i) strtoi(substr(hex, i, i + 1), base = 16L), numeric(1))
+}
+
+relative_luminance <- function(rgb) {
+  srgb <- rgb / 255
+  lin <- ifelse(srgb <= 0.03928, srgb / 12.92, ((srgb + 0.055) / 1.055)^2.4)
+  sum(c(0.2126, 0.7152, 0.0722) * lin)
+}
+
+contrast_ratio <- function(hex1, hex2) {
+  l1 <- relative_luminance(hex_to_rgb(hex1))
+  l2 <- relative_luminance(hex_to_rgb(hex2))
+  (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
+}
+
+test_that("Ember's Sage tokens meet WCAG 4.5:1 text contrast (106)", {
+  dir <- frontend_dir()
+
+  text_on_bg <- list(c("text", "page"), c("text", "panel"), c("text", "code"),
+                      c("muted", "page"), c("muted", "panel"), c("muted", "code"),
+                      c("faint", "page"), c("faint", "panel"), c("faint", "code"),
+                      c("accent", "page"), c("accent", "panel"), c("accent", "code"),
+                      c("syn-kw", "code"), c("syn-fn", "code"), c("syn-str", "code"),
+                      c("syn-num", "code"), c("syn-com", "code"))
+
+  for (theme in c("light.css", "dark.css")) {
+    theme_path <- file.path(dir, "themes", theme)
+    text <- readChar(theme_path, file.info(theme_path)$size)
+
+    for (pair in text_on_bg) {
+      fg <- read_token(text, pair[1])
+      bg <- read_token(text, pair[2])
+      ratio <- contrast_ratio(fg, bg)
+      expect_gte(ratio, 4.5, label = sprintf("%s on %s in %s: %.2f", pair[1], pair[2], theme, ratio))
+    }
+
+    expect_gte(contrast_ratio(read_token(text, "red"), read_token(text, "red-bg")), 4.5, label = theme)
+    expect_gte(contrast_ratio(read_token(text, "amber"), read_token(text, "amber-bg")), 4.5, label = theme)
+    expect_gte(contrast_ratio(read_token(text, "on-accent"), read_token(text, "accent")), 4.5, label = theme)
+  }
+})
+
 # ---- 7. Credits ------------------------------------------------------------
 
 test_that("inst/COPYRIGHTS and DESCRIPTION credit Pluto.jl (7)", {

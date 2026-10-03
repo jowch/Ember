@@ -17,20 +17,9 @@
     /* use the value "contextual" to enable contextual ligatures `document.documentElement.style.setProperty('--pluto-operator-ligatures', 'contextual');`
         for julia mono see here: https://cormullion.github.io/pages/2020-07-26-JuliaMono/#contextual_and_stylistic_alternates_and_ligatures */
     --pluto-operator-ligatures: none;
-    --ember-ui-font: "Figtree", ui-sans-serif, system-ui, sans-serif;
-    --ember-prose-font: "Source Serif 4", ui-serif, Georgia, serif;
-    --ember-code-font: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
-    /* Kept under their old names: other CSS and CodeMirror code still
-       reads them. */
-    --sans-serif-font-stack: var(--ember-ui-font);
-    --system-ui-font-stack: var(--ember-ui-font);
-    --lato-ui-font-stack: var(--ember-ui-font);
-    --julia-mono-font-stack: var(--ember-code-font);
-    --roboto-mono-font-stack: var(--ember-code-font);
-    --system-fonts-mono: var(--ember-code-font);
-    --ember-prose-font-stack: var(--ember-prose-font);
-
-    color-scheme: light dark;
+    /* The font tokens (--ember-ui-font etc. and the names kept for other
+       CSS and CodeMirror) are in ember-forms.css: both this page and the
+       start page load that file, and neither should define them twice. */
 
     --custom-code-font-stack: "";
     --code-font-stack: var(--julia-mono-font-stack); /* Will be overriden later */
@@ -4334,11 +4323,9 @@ pluto-popup code.auto_disabled_variable {
     text-shadow: 0 0 8px rgba(0, 0, 0, 0.5);
 }
 
-@media (prefers-color-scheme: dark) {
-    .cm-selectionMatch {
-        background: none !important;
-        text-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
-    }
+:root[data-theme="dark"] .cm-selectionMatch {
+    background: none !important;
+    text-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
 }
 
 .cm-editor .cm-matchingBracket,

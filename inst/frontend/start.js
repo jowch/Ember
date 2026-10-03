@@ -2,6 +2,9 @@ import { html, render, useEffect, useState } from "./imports/Preact.js"
 import { create_pluto_connection } from "./common/PlutoConnection.js"
 import { PlutoActionsContext } from "./common/PlutoContext.js"
 import { StartPage } from "./components/StartPage.js"
+import { apply_theme } from "./common/theme.js"
+
+apply_theme()
 
 /**
  * The start page's entry point (start.html): a websocket connection with

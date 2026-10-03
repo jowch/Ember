@@ -16,6 +16,7 @@ import { tab_help_plugin } from "./CellInput/tab_help_plugin.js"
 import _ from "../imports/lodash-es.js"
 import { get_settings } from "./Settings.js"
 import { cl } from "../common/ClassTable.js"
+import { is_dark_theme } from "../common/theme.js"
 
 let { autocompletion, completionKeymap } = autocomplete
 
@@ -121,7 +122,7 @@ export const FilePicker = ({ value, readonly, suggest_new_file, button_label, pl
     }
 
     useLayoutEffect(() => {
-        const usesDarkTheme = window.matchMedia("(prefers-color-scheme: dark)").matches
+        const usesDarkTheme = is_dark_theme()
         const keyMapSubmit = () => {
             onSubmit()
             return true
