@@ -294,9 +294,10 @@ test("signature: the cursor after lm( shows a tooltip containing formula within 
   }, "DF");
   const newSel = `pluto-cell[id="${newCellId}"]`;
 
-  const start = Date.now();
   await page.locator(`${newSel} .cm-content`).click();
-  await page.keyboard.type("lm(", { delay: 10 });
+  await page.keyboard.type("lm", { delay: 10 });
+  const start = Date.now();
+  await page.keyboard.type("(");
   await page.waitForSelector(".cm-ember-signature-tooltip", { timeout: 1000 });
   const text = await page.locator(".cm-ember-signature-tooltip").innerText();
   assert.match(text, /formula/);

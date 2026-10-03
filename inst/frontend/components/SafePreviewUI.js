@@ -41,7 +41,7 @@ export const SafePreviewUI = ({ process_waiting_for_permission, risky_file_sourc
                                                       href="#"
                                                       onClick=${(e) => {
                                                           e.preventDefault()
-                                                          restart(true)
+                                                          restart()
                                                           window.dispatchEvent(new CustomEvent("close pluto popup"))
                                                       }}
                                                       >${t("t_safe_preview_run_this_notebook_link")}</a

@@ -53,9 +53,6 @@ export let BottomRightPanel = ({
             // https://github.com/fonsp/Pluto.jl/issues/321
             focus_docs_on_open_ref.current = false
             set_open_tab(e.detail)
-            if (window.getComputedStyle(container_ref.current).display === "none") {
-                alert("This browser window is too small to show docs.\n\nMake the window bigger, or try zooming out.")
-            }
         },
         [set_open_tab]
     )

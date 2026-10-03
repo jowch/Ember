@@ -4,6 +4,8 @@ import { pack, unpack } from "./MsgPack.js"
 import "./Polyfill.js"
 import { Stack } from "./Stack.js"
 import { with_query_params } from "./URLTools.js"
+import { ask, reload_prompt } from "./dialogs.js"
+import { t } from "./lang.js"
 
 const reconnect_after_close_delay = 500
 const retry_after_connect_failure_delay = 5000
@@ -133,15 +135,20 @@ const create_ws_connection = (address, { on_message, on_socket_close }, timeout_
                     try {
                         on_message(message)
                     } catch (process_err) {
-                        console.error("Failed to process message from websocket", process_err, { message })
-                        // prettier-ignore
-                        alert(`Something went wrong! You might need to refresh the page.\n\nPlease open an issue on https://github.com/JuliaPluto/Pluto.jl with this info:\n\nFailed to process update\n${process_err.message}\n\n${JSON.stringify(event)}`)
+                        console.error(
+                            "Failed to process message from websocket. Please open an issue on https://github.com/JuliaPluto/Pluto.jl with this info:",
+                            process_err,
+                            { message }
+                        )
+                        reload_prompt()
                     }
                 } catch (unpack_err) {
-                    console.error("Failed to unpack message from websocket", unpack_err, { event })
-
-                    // prettier-ignore
-                    alert(`Something went wrong! You might need to refresh the page.\n\nPlease open an issue on https://github.com/JuliaPluto/Pluto.jl with this info:\n\nFailed to unpack message\n${unpack_err}\n\n${JSON.stringify(event)}`)
+                    console.error(
+                        "Failed to unpack message from websocket. Please open an issue on https://github.com/JuliaPluto/Pluto.jl with this info:",
+                        unpack_err,
+                        { event }
+                    )
+                    reload_prompt()
                 }
             })
         }
@@ -402,7 +409,7 @@ export const create_pluto_connection = async ({
                     console.log(`State sync ${accept ? "" : "not "}successful`, new Date().toLocaleTimeString())
                     on_connection_status(accept, false)
                     if (!accept) {
-                        alert("Connection out of sync 😥\n\nRefresh the page to continue")
+                        reload_prompt()
                     }
                 },
             })
@@ -457,8 +464,16 @@ const alert_if_not_authenticated = async (/** @type {string | URL} */ ws_url, ex
             const auth_url = auth_check_url_from_ws(ws_url)
             const response = await fetch(auth_url)
             if (response.status === 403 || response.status === 401) {
-                if (!is_desktop() || (await is_backend_server_loaded()))
-                    alert("This window has lost authentication to the Pluto server. Please refresh the page to continue.")
+                if (!is_desktop() || (await is_backend_server_loaded())) {
+                    ask({
+                        body: t("t_lost_authentication"),
+                        actions: [{ label: t("t_reload"), value: "reload", primary: true }],
+                        cancel_value: "cancel",
+                        key: "lost-authentication",
+                    }).then((value) => {
+                        if (value === "reload") location.reload()
+                    })
+                }
             }
         }
     }
