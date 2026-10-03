@@ -1386,7 +1386,10 @@ nav#at_the_top > #process_status:empty {
 .ember-package-row.ember-package-missing td:last-child,
 .ember-package-row.ember-package-failed td:last-child,
 .ember-package-row.ember-package-not_found td:last-child {
-    color: rgb(var(--error-color));
+    /* var(--ember-upstream-error-label-color), not --error-color: at least
+       4.5:1 against --main-bg-color in both themes (computed), unlike
+       --error-color's ~1.9:1 in the light theme. */
+    color: var(--ember-upstream-error-label-color);
 }
 
 .ember-package-row.ember-package-installed td:last-child {
@@ -1781,6 +1784,7 @@ ember-cell-label {
     top: 2px;
     right: 28px;
     z-index: 20;
+    font-family: var(--sans-serif-font-stack);
     font-size: 0.7rem;
     line-height: 1.6;
     padding: 0 0.5em;

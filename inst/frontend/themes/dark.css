@@ -82,8 +82,11 @@
         --ember-stale-label-bg-color: rgba(255, 255, 255, 0.12);
         --ember-code-changed-label-color: rgb(var(--code-differs));
         --ember-code-changed-label-bg-color: rgba(var(--code-differs), 0.25);
-        --ember-upstream-error-label-color: rgb(var(--error-color));
-        --ember-upstream-error-label-bg-color: rgba(var(--error-color), 0.25);
+        /* ~5.4:1 against --main-bg-color (computed via WCAG relative
+           luminance); the previous pair (--error-color on a tint of itself)
+           was ~4.2:1. */
+        --ember-upstream-error-label-color: rgb(255, 140, 140);
+        --ember-upstream-error-label-bg-color: rgba(248, 113, 113, 0.2);
 
         /* Pluto shoulders */
         --shoulder-hover-bg-color: rgba(255, 255, 255, 0.05);
