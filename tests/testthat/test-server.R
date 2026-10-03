@@ -1041,6 +1041,38 @@ test_that("reshow_cell pages a table through a real worker (36)", {
   expect_true(got_more)
 })
 
+test_that("editing a cell's #| line through update_notebook marks it code_differs; running it gives the new ember$figure (ui-3 73)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("plot(1:10)")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  a <- names(notebook_state(nb)$cells)[2]
+
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  run_cells(nb, a, wait = TRUE)
+  figure_before <- pluto_state(notebook_state(nb))$js$cell_results[[a]]$ember$figure
+  expect_equal(figure_before, list(width = 7.5, height = 5))
+
+  new_code <- "#| fig-width: 8\n#| fig-height: 4\nplot(1:10)"
+  updates <- list(patch("replace", list("cell_inputs", a, "code"), new_code))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = updates))
+  expect_equal(notebook_state(nb)$cells[[a]]$code, new_code)
+
+  view_after_edit <- Find(function(c) identical(c$id, a), notebook_snapshot(nb)$cells)
+  expect_true(view_after_edit$code_differs)
+
+  run_cells(nb, a, wait = TRUE)
+  figure_after <- pluto_state(notebook_state(nb))$js$cell_results[[a]]$ember$figure
+  expect_equal(figure_after, list(width = 8, height = 4))
+  view_after_run <- Find(function(c) identical(c$id, a), notebook_snapshot(nb)$cells)
+  expect_false(view_after_run$code_differs)
+})
+
 test_that("ember_render_plot {cell_id, res} re-renders at the cell's own figure size, ignoring width/height; a text cell does nothing (ui-3 72)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1"), B = cell("plot(1:10)")))
   nb <- open_notebook(path)

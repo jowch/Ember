@@ -1057,12 +1057,22 @@ test_that("a done with status error, or an ok done the server turns into a globa
   expect_equal(snapshot_of(r2$state)$cells$A$variables, list())
 })
 
-test_that("an off cell has no variables in its view (ui-3 70)", {
-  s <- fake_state(list(S = cell(""), A = cell("x <- 1", disabled = TRUE), B = cell("x + 1")))
+test_that("an off cell has no variables in its view, even though its result keeps them underneath (ui-3 70)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1")))
   r <- boot(s, "A")
-  ctx <- view_context(r$state)
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x",
+             globals = list(x = list(type = "numeric", value = "1", kind = "value"))), at(10)))
+  expect_length(r$state$results$A$variables, 1)   # really has one, while enabled
+
+  r2 <- drive(r$state, ev_apply(list(op_disable("A")), at(20)))
+  expect_true("A" %in% names(r2$state$graph$off))
+  # the result (and its variables) are kept underneath, for the dimmed
+  # output -- only the view suppresses them while the cell is off.
+  expect_length(r2$state$results$A$variables, 1)
+
+  ctx <- view_context(r2$state)
   va <- Find(function(i) identical(ctx$ids[[i]], "A"), seq_along(ctx$ids))
-  expect_equal(cell_view(r$state, ctx, va)$variables, list())
+  expect_equal(cell_view(r2$state, ctx, va)$variables, list())
 })
 
 test_that("reduce_render() with NULL width and height sends render {cell, res} without those fields (ui-3 66)", {

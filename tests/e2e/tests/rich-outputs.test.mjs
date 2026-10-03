@@ -120,11 +120,16 @@ test("plot: PLT is a fixed-size image that never redraws when the viewport narro
   // exactly 720px; until then it's whatever the pre-restyle layout gives).
   const { widthAt1280, columnWidth } = await page.evaluate((sel) => {
     const img = document.querySelector(sel);
-    const r = img.getBoundingClientRect();
-    return { widthAt1280: r.width, columnWidth: img.closest("pluto-output").getBoundingClientRect().width };
+    const output = img.closest("pluto-output");
+    const style = getComputedStyle(output);
+    const padding_x = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    return {
+      widthAt1280: img.getBoundingClientRect().width,
+      columnWidth: output.getBoundingClientRect().width - padding_x,
+    };
   }, `${cellSelector("PLT")} img`);
-  assert.ok(widthAt1280 <= 720 + 1, `expected the image no wider than 720 CSS px, got ${widthAt1280}`);
-  assert.ok(widthAt1280 <= columnWidth + 1, `expected the image to fit its ${columnWidth}px column, got ${widthAt1280}`);
+  assert.ok(Math.abs(widthAt1280 - Math.min(720, columnWidth)) <= 1,
+    `expected width (${widthAt1280}) to equal min(720, column width) (${Math.min(720, columnWidth)})`);
   const naturalBefore = await page.evaluate((sel) => document.querySelector(sel).naturalWidth, `${cellSelector("PLT")} img`);
 
   await page.setViewportSize({ width: 600, height: 800 });
