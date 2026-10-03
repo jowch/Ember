@@ -363,8 +363,10 @@ New fixtures:
 64. Worker: `run_cell()` of `plot(1:10)` with no `fig` gives a PNG whose
     header says 1440 x 960 and `size = list(1440, 960, 192)`; with
     `fig = list(width = 8, height = 4)`, 1536 x 768; with
-    `fig = list(width = 30, height = 30)`, 6000 x 6000 at res 200; a
-    `problems` entry appears as a console warning item.
+    `fig = list(width = 30, height = 30)`, 5760 x 5760 at res 192 (under
+    the 6000 px cap; the cap matters on a redraw asked at a high `res`
+    instead, render_plot()'s own test); a `problems` entry appears as a
+    console warning item.
 65. Worker: `render_plot(list(cell, res = 288))` after the 8 x 4 run gives
     2304 x 1152 at 288; with `width`/`height` given it uses those pixels
     (replaces ui-2-tests.md 27's size expectation).

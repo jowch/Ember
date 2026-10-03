@@ -550,11 +550,15 @@ test_that("cell_figure_size(): a non-numeric value uses the default and reports 
   expect_match(fig$problems[[1]], "^#\\| fig-width: wide is not a number of inches; using 7.5\\.$")
 })
 
-test_that("cell_figure_size(): a value outside 0.5-30 uses the default and reports a problem (ui-3 62)", {
+test_that("cell_figure_size(): a value outside 0.5-30 uses the default and reports a 'must be between' problem (review)", {
   fig <- cell_figure_size("#| fig-width: 0\nplot(1)")
   expect_equal(fig$width, 7.5)
   expect_length(fig$problems, 1)
-  expect_match(fig$problems[[1]], "fig-width: 0 is not a number of inches; using 7.5\\.$")
+  expect_match(fig$problems[[1]], "fig-width: 0 must be between 0\\.5 and 30 inches; using 7\\.5\\.$")
+
+  fig2 <- cell_figure_size("#| fig-width: 40\nplot(1)")
+  expect_equal(fig2$width, 7.5)
+  expect_match(fig2$problems[[1]], "must be between 0\\.5 and 30 inches")
 })
 
 test_that("cell_figure_size(): an unrelated #| key is ignored, with no problem (ui-3 62)", {
@@ -562,4 +566,33 @@ test_that("cell_figure_size(): an unrelated #| key is ignored, with no problem (
   expect_equal(fig$width, 7.5)
   expect_equal(fig$height, 5)
   expect_equal(fig$problems, character())
+})
+
+test_that("cell_figure_size(): a quoted number is read (review)", {
+  fig <- cell_figure_size('#| fig-width: "6"\nplot(1)')
+  expect_equal(fig$width, 6)
+  expect_equal(fig$problems, character())
+})
+
+test_that("cell_figure_size(): a trailing YAML-style comment is stripped before parsing (review)", {
+  fig <- cell_figure_size("#| fig-width: 6 # wide\nplot(1)")
+  expect_equal(fig$width, 6)
+  expect_equal(fig$problems, character())
+})
+
+test_that("cell_figure_size(): a hex literal is rejected even though as.numeric() would parse it (review)", {
+  fig <- cell_figure_size("#| fig-width: 0x10\nplot(1)")
+  expect_equal(fig$width, 7.5)
+  expect_length(fig$problems, 1)
+  expect_match(fig$problems[[1]], "fig-width: 0x10 is not a number of inches; using 7\\.5\\.$")
+})
+
+test_that("cell_figure_size(): knitr's equals-sign form is reported as a problem naming the colon form (review)", {
+  fig <- cell_figure_size("#| fig.width = 6\nplot(1)")
+  expect_equal(fig$width, 7.5)
+  expect_length(fig$problems, 1)
+  expect_match(fig$problems[[1]], "use fig-width: 6")
+
+  fig2 <- cell_figure_size("#| fig.height = 4\nplot(1)")
+  expect_match(fig2$problems[[1]], "use fig-height: 4")
 })

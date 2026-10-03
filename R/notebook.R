@@ -280,8 +280,13 @@ FIGURE_DEFAULT <- list(width = 7.5, height = 5)
 #' rule; blank lines before it are skipped); a `#|` line further down is
 #' an ordinary comment. Keys `fig-width`/`fig-height` and knitr's
 #' `fig.width`/`fig.height`; other keys (`echo: false`, ...) are ignored.
-#' A value must be a plain number between 0.5 and 30; anything else uses
-#' the default for that side and adds a problem sentence.
+#' Knitr's equals-sign form (`fig.width = 6`) isn't read as a size (only
+#' Quarto's colon syntax is), but adds a problem naming the colon form to
+#' use instead. A value may be quoted (`"6"`) and may carry a trailing
+#' comment (`6 # wide`); a hex literal (`0x10`) is rejected even though
+#' `as.numeric()` would parse it. A value must otherwise be a plain
+#' number between 0.5 and 30; anything else uses the default for that
+#' side and adds a problem sentence.
 #' @return list(width = <dbl>, height = <dbl>, problems = <chr>)
 cell_figure_size <- function(code) {
   lines <- strsplit(code, "\n", fixed = TRUE)[[1]]
@@ -289,21 +294,44 @@ cell_figure_size <- function(code) {
   i <- 1L
   while (i <= n && !nzchar(trimws(lines[[i]]))) i <- i + 1L
 
+  key_pattern <- "fig[-.](width|height)"
   out <- list(width = FIGURE_DEFAULT$width, height = FIGURE_DEFAULT$height,
              problems = character())
   while (i <= n && grepl("^#\\|", lines[[i]])) {
-    m <- regmatches(lines[[i]],
-                    regexec("^#\\|\\s*(fig[-.](width|height))\\s*:\\s*(.*?)\\s*$",
-                            lines[[i]], perl = TRUE))[[1]]
+    line <- lines[[i]]
+    m <- regmatches(line,
+                    regexec(paste0("^#\\|\\s*(", key_pattern, ")\\s*:\\s*(.*?)\\s*$"),
+                            line, perl = TRUE))[[1]]
     if (length(m) == 4) {
       side <- m[[3]]
-      value <- suppressWarnings(as.numeric(m[[4]]))
-      if (is.na(value) || value < 0.5 || value > 30) {
+      raw <- m[[4]]
+      raw <- sub("\\s*#.*$", "", raw)                  # a trailing YAML-style comment
+      if (grepl('^"[^"]*"$', raw) || grepl("^'[^']*'$", raw)) {
+        raw <- substr(raw, 2, nchar(raw) - 1)           # a quoted number ("6")
+      }
+      raw <- trimws(raw)
+      is_hex <- grepl("^[+-]?0[xX][0-9a-fA-F]+$", raw)  # rejected, not a plain number
+      value <- if (is_hex) NA_real_ else suppressWarnings(as.numeric(raw))
+      default_text <- format(FIGURE_DEFAULT[[side]], trim = TRUE)
+      if (is.na(value)) {
         out$problems <- c(out$problems,
-          sprintf("%s is not a number of inches; using %s.", trimws(lines[[i]]),
-                  format(FIGURE_DEFAULT[[side]], trim = TRUE)))
+          sprintf("%s is not a number of inches; using %s.", trimws(line), default_text))
+      } else if (value < 0.5 || value > 30) {
+        out$problems <- c(out$problems,
+          sprintf("%s must be between 0.5 and 30 inches; using %s.", trimws(line), default_text))
       } else {
         out[[side]] <- value
+      }
+    } else {
+      # knitr's dot-key, equals-sign form ("fig.width = 6"): not read as a
+      # figure size (Quarto's colon syntax is), but worth a problem rather
+      # than silently falling through as an unrelated key.
+      eq <- regmatches(line,
+                       regexec(paste0("^#\\|\\s*(", key_pattern, ")\\s*=\\s*(.*?)\\s*$"),
+                               line, perl = TRUE))[[1]]
+      if (length(eq) == 4) {
+        out$problems <- c(out$problems,
+          sprintf("%s; use fig-%s: %s", trimws(line), eq[[3]], trimws(eq[[4]])))
       }
     }
     i <- i + 1L
