@@ -579,6 +579,25 @@ export let RawHTMLContainer = ({ body, className = "", persist_js_state = false,
         // Actually "load" the html
         container.innerHTML = html_content_to_set
 
+        // A self-contained export embeds each widget dependency file once,
+        // as a Blob URL in window.__ember_export_dep_urls (export-loader.js),
+        // rather than once per output: project_dep_tags() (pluto-state.R)
+        // writes the same relative "deps/<key>/<file>" src/href either way,
+        // so this is the one place left to point it at the Blob URL instead
+        // -- a no-op on the live page, which has no such map and serves
+        // /deps/<key>/<file> for real.
+        const export_dep_urls = /** @type {any} */ (window).__ember_export_dep_urls
+        if (export_dep_urls != null) {
+            for (const el of container.querySelectorAll("[src],[href]")) {
+                for (const attr of ["src", "href"]) {
+                    const value = el.getAttribute(attr)
+                    if (value != null && Object.prototype.hasOwnProperty.call(export_dep_urls, value)) {
+                        el.setAttribute(attr, export_dep_urls[value])
+                    }
+                }
+            }
+        }
+
         if (sanitize_html_message && html_content_to_set !== body) {
             // DOMPurify also resolves HTML entities, which can give a false positive. To fix this, we use DOMParser to parse both strings, and we compare the innerHTML of the resulting documents.
             const parser = new DOMParser()

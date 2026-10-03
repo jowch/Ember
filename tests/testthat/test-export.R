@@ -79,54 +79,79 @@ test_that("export_html()'s frontend .js files use no import.meta and no computed
   expect_equal(dynamic_offenders, character(0))
 })
 
-test_that("export_html() inlines an htmlwidget's dependency files as data: URLs (15)", {
-  # A hand-built state with a text/html output and a resolved dependency,
-  # the same shape display_html() (inst/worker.R) and project_dep_tags()
-  # (pluto-state.R) produce -- not a real htmltools install, which needs
-  # a package install this sandbox's renv setup can't always complete
-  # (see the [net] test below for that end-to-end path).
-  # dep_dir has to sit inside the notebook's (fake) library for
-  # dep_path_allowed() to accept it (R/export.R, collect_output_deps()):
-  # the export applies the same check the live server does before serving
-  # a dependency, so a dependency outside the library is refused the same
-  # way in both places.
-  lib <- tempfile("widgetlib-")
-  dir.create(lib, recursive = TRUE)
-  dep_dir <- file.path(lib, "widgettest-1.0.0")
-  dir.create(dep_dir, recursive = TRUE)
-  writeLines("document.title = 'ran'", file.path(dep_dir, "a.js"))
+#' A `/ember-deps` JSON block (if any) read back out of an export's HTML,
+#' as path -> list(mime, data).
+read_deps_script <- function(html) {
+  m <- regmatches(html, regexec(
+    '<script type="application/json" id="ember-deps">(.*?)</script>', html, perl = TRUE))[[1]]
+  if (length(m) == 0) return(NULL)
+  jsonlite::fromJSON(m[2], simplifyVector = FALSE)
+}
 
-  s <- fake_state(list(S = cell(""), W = cell("1")), setup = "S")
+#' A fake state with `n` cells, each a `text/html` output using the same
+#' widget dependency (`dep_dir`/`key`), the shape `display_html()`
+#' (inst/worker.R) and `project_dep_tags()` (pluto-state.R) produce -- not a
+#' real htmltools install, which needs a package install this sandbox's
+#' renv setup can't always complete (see the [net] test below for that
+#' end-to-end path).
+fake_state_with_shared_dep <- function(n, dep_dir, key = "widgettest-1.0.0") {
+  cells <- c(list(S = cell("")), setNames(lapply(seq_len(n), function(i) cell("1")), paste0("W", seq_len(n))))
+  s <- fake_state(cells, setup = "S")
   s$allowed <- TRUE
-  s$packages$active$path <- lib
-  s$results <- list(W = report(status = "ok", output = list(
-    mime = "text/html",
-    data = "<div>x</div>",
-    deps = list(list(name = "widgettest", version = "1.0.0", dir = dep_dir,
-                     script = "a.js", stylesheet = NULL, head = NULL, href = NULL))
-  )))
+  s$packages$active$path <- dirname(dep_dir)
+  s$results <- setNames(lapply(seq_len(n), function(i) {
+    report(status = "ok", output = list(
+      mime = "text/html",
+      data = sprintf("<div>%d</div>", i),
+      deps = list(list(name = "widgettest", version = "1.0.0", dir = dep_dir,
+                       script = "a.js", stylesheet = NULL, head = NULL, href = NULL))))
+  }), paste0("W", seq_len(n)))
+  s
+}
 
-  html <- export_html(s)
-  expect_false(grepl('src="deps/', html, fixed = TRUE))
+test_that("export_html() embeds a dependency file once, however many outputs share it (review: export size)", {
+  dep_dir <- tempfile("widgetlib-widgettest-1.0.0-")
+  dir.create(dep_dir, recursive = TRUE)
+  payload <- paste(rep("x", 5000), collapse = "")   # big enough that 1x vs 3x is unmistakable
+  writeLines(sprintf("document.title = '%s'", payload), file.path(dep_dir, "a.js"))
 
-  # The dependency's JS text survives inside the (msgpack + base64 encoded)
-  # embedded statefile, as a `data:` URL -- not as a readable substring of
-  # the export (it's inside a second, outer base64 layer).
-  # Not regexec(): on Windows its offsets into this (non-ASCII) page are
-  # shifted, so the capture picks up the closing quote.
-  start <- regexpr('window.pluto_statefile = "data:;base64,', html, fixed = TRUE)
-  rest <- substring(html, start + attr(start, "match.length"))
+  s1 <- fake_state_with_shared_dep(1, dep_dir)
+  s3 <- fake_state_with_shared_dep(3, dep_dir)
+
+  html1 <- export_html(s1)
+  html3 <- export_html(s3)
+
+  deps1 <- read_deps_script(html1)
+  deps3 <- read_deps_script(html3)
+  expect_equal(length(deps1), 1)
+  expect_equal(length(deps3), 1)   # one entry, not one per output
+  expect_identical(deps1[[1]]$data, deps3[[1]]$data)
+
+  # The 3-output export is only marginally bigger than the 1-output one
+  # (three "deps/widgettest-1.0.0/a.js" references and two more cell
+  # bodies), nowhere near 3x the dependency's own embedded size -- the
+  # bug this fixes multiplied a shared dependency's cost by every output
+  # using it.
+  grew_by <- nchar(html3) - nchar(html1)
+  expect_lt(grew_by, nchar(deps1[[1]]$data))
+
+  # Each output's body still carries the untouched "deps/<key>/<file>"
+  # reference -- the live page's own HTML, unchanged -- for
+  # export-loader.js/CellOutput.js to rewrite to a Blob URL at render time.
+  start <- regexpr('window.pluto_statefile = "data:;base64,', html3, fixed = TRUE)
+  rest <- substring(html3, start + attr(start, "match.length"))
   statefile_b64 <- substr(rest, 1, regexpr('"', rest, fixed = TRUE) - 1)
   js <- mp_decode(jsonlite::base64_dec(statefile_b64))
-  body <- js$cell_results$W$output$body
-  expect_match(body, "^<script src=\"data:text/javascript;base64,")
-  expect_false(grepl("deps/", body, fixed = TRUE))
+  for (id in c("W1", "W2", "W3")) {
+    expect_match(js$cell_results[[id]]$output$body, "deps/widgettest-1.0.0/a.js", fixed = TRUE)
+  }
 })
 
 test_that("export_html() refuses a dependency dir outside the library (path traversal)", {
   outside <- tempfile("outside-lib-")
   dir.create(outside, recursive = TRUE)
-  writeLines("secret", file.path(outside, "a.js"))
+  marker <- "SECRETMARKERXYZ123"
+  writeLines(marker, file.path(outside, "a.js"))
 
   s <- fake_state(list(S = cell(""), W = cell("1")), setup = "S")
   s$allowed <- TRUE
@@ -140,16 +165,18 @@ test_that("export_html() refuses a dependency dir outside the library (path trav
   )))
 
   html <- export_html(s)
+  # The dependency is dropped, not embedded: no #ember-deps entry, the
+  # file's actual content never reaches the export at all, and the
+  # untouched "deps/" link stays in the body (the live server would also
+  # refuse to serve it).
+  expect_null(read_deps_script(html))
+  expect_false(grepl(marker, html, fixed = TRUE))
+
   start <- regexpr('window.pluto_statefile = "data:;base64,', html, fixed = TRUE)
   rest <- substring(html, start + attr(start, "match.length"))
   statefile_b64 <- substr(rest, 1, regexpr('"', rest, fixed = TRUE) - 1)
   js <- mp_decode(jsonlite::base64_dec(statefile_b64))
-  body <- js$cell_results$W$output$body
-  # The dependency is dropped, not embedded: the untouched "deps/" link
-  # stays in the body (the live server would also refuse to serve it), and
-  # the file's actual content never reaches the export at all.
-  expect_match(body, "deps/widgettest-1.0.0/a.js", fixed = TRUE)
-  expect_false(grepl("secret", body, fixed = TRUE))
+  expect_match(js$cell_results$W$output$body, "deps/widgettest-1.0.0/a.js", fixed = TRUE)
 })
 
 test_that("export_html() refuses a dependency file name with a '..' segment", {
@@ -157,17 +184,47 @@ test_that("export_html() refuses a dependency file name with a '..' segment", {
   dep_dir <- file.path(lib, "widgettest-1.0.0")
   dir.create(dep_dir, recursive = TRUE)
   writeLines("safe", file.path(dep_dir, "a.js"))
-  outside_file <- file.path(lib, "secret.txt")
-  writeLines("secret", outside_file)
+  writeLines("secret", file.path(lib, "secret.txt"))
 
   deps <- list("widgettest-1.0.0" = list(dir = dep_dir, name = "widgettest", version = "1.0.0"))
-  html <- inline_output_deps('<script src="deps/widgettest-1.0.0/../secret.txt"></script>', deps)
-  # Left untouched -- no data: URL -- rather than reading outside dep_dir.
-  expect_equal(html, '<script src="deps/widgettest-1.0.0/../secret.txt"></script>')
-  expect_false(grepl("base64", html, fixed = TRUE))
+  js_bad <- list(cell_results = list(W = list(output = list(
+    mime = "text/html", body = '<script src="deps/widgettest-1.0.0/../secret.txt"></script>'))))
+  paths_bad <- collect_dep_file_paths(js_bad, deps)
+  expect_equal(length(paths_bad), 0)
 
-  html_ok <- inline_output_deps('<script src="deps/widgettest-1.0.0/a.js"></script>', deps)
-  expect_match(html_ok, "^<script src=\"data:text/javascript;base64,")
+  js_ok <- list(cell_results = list(W = list(output = list(
+    mime = "text/html", body = '<script src="deps/widgettest-1.0.0/a.js"></script>'))))
+  paths_ok <- collect_dep_file_paths(js_ok, deps)
+  expect_equal(unname(paths_ok), list(file.path(dep_dir, "a.js")))
+})
+
+test_that("escape_json_for_script() closes off both </SCRIPT> and <!--<script> (review)", {
+  text <- 'a </SCRIPT> b <!--<script> c'
+  json <- jsonlite::toJSON(list(f = text), auto_unbox = TRUE)
+  escaped <- escape_json_for_script(as.character(json))
+  expect_false(grepl("<", escaped, fixed = TRUE))
+  decoded <- jsonlite::fromJSON(escaped, simplifyVector = FALSE)
+  expect_identical(decoded$f, text)
+})
+
+test_that("export_html() embeds a module's </SCRIPT> and <!--<script> text safely (review)", {
+  dir <- tempfile("ember-export-nb-")
+  dir.create(dir, recursive = TRUE)
+  path <- write_session_notebook(list(A = cell("1 + 1")), dir = dir)
+  nb <- open_notebook(path)
+  frontend_dir <- system.file("frontend", package = "ember")
+  planted <- file.path(frontend_dir, "components", "__review_test_planted.js")
+  writeLines('// </SCRIPT> and <!--<script> inside a comment, never executed', planted)
+  on.exit(unlink(planted), add = TRUE)
+
+  html <- export_html(notebook_state(nb))
+  m <- regmatches(html, regexec(
+    '<script type="application/json" id="ember-modules">(.*?)</script>', html, perl = TRUE))[[1]]
+  modules_json_text <- m[2]
+  expect_false(grepl("<", modules_json_text, fixed = TRUE))
+  modules <- jsonlite::fromJSON(modules_json_text, simplifyVector = FALSE)
+  expect_match(modules[["components/__review_test_planted.js"]], "</SCRIPT>", fixed = TRUE)
+  expect_match(modules[["components/__review_test_planted.js"]], "<!--<script>", fixed = TRUE)
 })
 
 # ---- 20, end to end: a real htmltools install (opt-in network test) -------
@@ -208,5 +265,6 @@ test_that("[net] a real htmltools widget's dependency survives export (20)", {
   expect_identical(w$status, "ok")
 
   html <- export_html(state)
-  expect_false(grepl('src="deps/', html, fixed = TRUE))
+  deps <- read_deps_script(html)
+  expect_equal(length(deps), 1)
 })
