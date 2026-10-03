@@ -1021,3 +1021,27 @@ test_that("interrupting a cell sends drop_globals and leaves dependents stale (u
   expect_false("B" %in% r4$state$pending)
   expect_true(isTRUE(r4$state$results$B$stale))
 })
+
+test_that("interrupting a cell marks a reader of its reported names stale even with no learned edge yet (ui-3 6, fix 6)", {
+  # R references "fits" before any run of A has taught the graph that A
+  # defines it, so there is no edge from A to R; only invalidate_dependents()'s
+  # "names" path (not a plain downstream() walk) can find R.
+  s <- fake_state(list(S = cell(""), A = cell("load('x.rds')"), R = cell("print(fits)")))
+  expect_false("A" %in% s$graph$upstream$R)
+
+  r <- boot(s, "R")
+  r <- drive(r$state, wk_done(1, last_token(r),
+                              report(status = "error", error = list(message = "object 'fits' not found")), at(10)))
+  expect_equal(r$state$results$R$status, "error")
+
+  r2 <- drive(r$state, ev_run("A", at(20)))
+  tok <- r2$state$worker$running$token
+  r3 <- drive(r2$state, ev_interrupt(at(21)))
+  r4 <- drive(r3$state, wk_done(1, tok, report(status = "interrupted", created = "fits"), at(22)))
+
+  expect_true(any(vapply(r4$effects, function(e) {
+    identical(e$type, "send") && identical(e$msg$type, "drop_globals") && identical(e$msg$cell, "A")
+  }, logical(1))))
+  expect_false("R" %in% r4$state$pending)
+  expect_true(isTRUE(r4$state$results$R$stale))
+})

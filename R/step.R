@@ -438,23 +438,6 @@ invalidate_dependents <- function(state, id, names, queue = TRUE) {
   state
 }
 
-#' After a cell is interrupted: remove its transitive downstream from
-#' `pending`. They keep (or get) `stale = TRUE`. An interrupt means "stop",
-#' unlike a plain error: a failed cell's dependents run on their own instead
-#' (`reduce_wk_done()`'s "ok"/"error" branch).
-drop_downstream <- function(state, id) {
-  down <- downstream(state$graph, id, transitive = TRUE)
-  state$pending <- setdiff(state$pending, down)
-  for (cid in down) {
-    r <- state$results[[cid]]
-    if (!is.null(r)) {
-      r$stale <- TRUE
-      state$results[[cid]] <- r
-    }
-  }
-  state
-}
-
 #' Rebuild the graph after `cells`, `setup`, `exports` or `files` changed.
 #' The only place `state$graph` is assigned besides `graph_learn()` calls
 #' in `reduce_wk_done()`/`reduce_wk_source()`.
@@ -1100,8 +1083,12 @@ reduce_wk_done <- function(state, event) {
   }
   if (identical(status, "interrupted")) {
     # An interrupt means "stop": pending's already been emptied by
-    # reduce_interrupt(), so this only needs to mark the downstream stale.
-    state <- drop_downstream(state, id)
+    # reduce_interrupt(), so `queue = FALSE` -- nothing is queued even in
+    # autorun. Readers of names the graph hasn't learned yet (only
+    # `report$created` knows them) still need marking stale, the same as
+    # the "ok"/"error" branch below; that's what invalidate_dependents()
+    # (not drop_downstream(), which only walks graph edges) is for.
+    state <- invalidate_dependents(state, id, report$created %||% character(), queue = FALSE)
   } else {
     # "ok" and "error" both invalidate the same way: a failed cell's
     # dependents run on their own and fail if they need what it would have
