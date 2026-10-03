@@ -148,8 +148,6 @@
     "t_settings_code_typeface_title": "Code typeface",
     "t_settings_code_typeface_description": "Enter the name of a locally installed font to use for code editing instead of the default monospace font.",
     "t_settings_code_typeface_description_2": "Note that other people will still read your notebook in the default font.",
-    "t_settings_nested_syntax_title": "Nested syntax highlighting",
-    "t_settings_nested_syntax_description": "Enable nested syntax highlighting for Markdown, HTML, Python, SQL (experimental)",
     "t_settings_spellcheck_title": "Spell checking",
     "t_settings_spellcheck_description": "Allow browser-based spell checking inside Markdown",
     "t_settings_autocomplete_title": "Autocomplete",
@@ -213,7 +211,6 @@
 
     "t_loading_cells": "Loading cells...",
     "t_reading_hidden_code": "👀 Reading hidden code",
-    "t_disable_cell_action": "Disable cell",
     "t_delete_cell_action": "Delete cell",
     "t_copy_output_action": "Copy output",
     "t_copy_output_action_description": "Copy the output of this cell to the clipboard.",
@@ -259,7 +256,6 @@
     "t_confirm_run_many_cells_multiple_roots_zero": "These {{roots}} cells might take {{time}} to run. Confirm?",
     
     "t_confirm_run_many_cells_bonus_a": "Tip: You can edit multiple cells, and then run all in a single batch using {{submit_all_changes}}.",
-    "t_confirm_run_many_cells_bonus_b": "Tip: You can use the {{disable_cell}} feature to control which cells run reactively.",
     
     "t_confirm_delete_multiple_cells": "Delete {{count}} cells?",
     "t_confirm_delete_multiple_interrupt_notebook": "This cell is still running - would you like to interrupt the notebook?",

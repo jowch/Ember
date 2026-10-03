@@ -120,10 +120,9 @@ export const ConfirmBeforeLongRuntime = ({}) => {
     const _has_deps = (num_dependencies ?? 0) > 0
     const _has_single_root = cell_ids?.length === 1
 
-    const possible_hints = /** @type {("t_confirm_run_many_cells_bonus_a" | "t_confirm_run_many_cells_bonus_b")[]} */ (
+    const possible_hints = /** @type {("t_confirm_run_many_cells_bonus_a")[]} */ (
         Object.entries({
             t_confirm_run_many_cells_bonus_a: _has_single_root && _has_deps,
-            t_confirm_run_many_cells_bonus_b: _has_deps,
         })
             .filter(([_, condition]) => condition)
             .map(([key]) => key)
@@ -144,9 +143,6 @@ export const ConfirmBeforeLongRuntime = ({}) => {
                 ? html`<p class="bonus-info">
                       ${th(current_hint, {
                           submit_all_changes: html`<kbd>${ctrl_or_cmd_name}</kbd>${and}<kbd>S</kbd>`,
-                          disable_cell: html`<a href="https://github.com/jowch/Ember#readme" target="_blank"
-                              ><strong>${t("t_disable_cell_action")}</strong></a
-                          >`,
                       })}
                   </p>`
                 : null}

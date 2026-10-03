@@ -69,7 +69,6 @@ import { get_settings } from "./Settings.js"
 import { highlightKwargsPlugin } from "./CellInput/highlight_kwargs.js"
 
 // @ts-ignore
-window.PLUTO_TOGGLE_CM_MIXED_PARSER = () => console.error("Use the Settings menu instead.")
 // @ts-ignore
 window.PLUTO_TOGGLE_CM_SPELLCHECK = () => console.error("Use the Settings menu instead.")
 // @ts-ignore

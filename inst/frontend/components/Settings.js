@@ -123,11 +123,6 @@ const _Settings = ({}) => {
             component: make_textfield("CUSTOM_CODE_FONT_STACK", "monospace"),
         },
         {
-            title: th("t_settings_nested_syntax_title"),
-            description: th("t_settings_nested_syntax_description"),
-            component: make_checkbox("CM_MIXED_PARSER"),
-        },
-        {
             title: th("t_settings_spellcheck_title"),
             description: th("t_settings_spellcheck_description"),
             component: make_checkbox("CM_SPELLCHECK"),
@@ -202,7 +197,6 @@ export const DEFAULT_SETTINGS = {
     CONFIRM_LONG_RUNTIMES_SECONDS: 120,
     CM_AUTOCOMPLETE_ON_TYPE: true,
     CM_SPELLCHECK: false,
-    CM_MIXED_PARSER: false,
     CM_INDENT_UNIT: "tab",
     CM_TAB_KEY_FOR_INDENT: true,
     CUSTOM_CODE_FONT_STACK: "",
