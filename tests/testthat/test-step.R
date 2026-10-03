@@ -1045,3 +1045,166 @@ test_that("interrupting a cell marks a reader of its reported names stale even w
   expect_false("R" %in% r4$state$pending)
   expect_true(isTRUE(r4$state$results$R$stale))
 })
+
+# ---- Disable cell: engine (ui-3 24-31) ---------------------------------------
+
+test_that("disabling a cell removes it and its dependent, keeping both results stale (ui-3 24)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1"), C = cell("2")))
+  r <- boot(s, c("A", "B", "C"))
+  expect_equal(r$state$worker$running$cell, "A")
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = "x"), at(10)))
+  expect_equal(r$state$worker$running$cell, "B")
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(), at(11)))
+  expect_equal(r$state$worker$running$cell, "C")
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(), at(12)))
+  expect_null(r$state$worker$running)
+
+  r2 <- drive(r$state, ev_apply(list(op_disable("A")), at(20)))
+  sends <- Filter(function(e) identical(e$type, "send"), r2$effects)
+  expect_equal(length(sends), 2)
+  expect_equal(vapply(sends, function(e) e$msg$type, character(1)), c("remove_cell", "remove_cell"))
+  expect_equal(vapply(sends, function(e) e$msg$cell, character(1)), c("A", "B"))
+  expect_true(isTRUE(r2$state$results$A$stale))
+  expect_true(isTRUE(r2$state$results$B$stale))
+  expect_false(isTRUE(r2$state$results$C$stale))
+  expect_equal(r2$state$pending, character())
+})
+
+test_that("ev_run(NULL) skips off cells; a run request naming an off cell doesn't queue its stale ancestors (ui-3 25)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1"), C = cell("2")))
+  r <- boot(s, c("A", "B", "C"))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(), at(11)))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(), at(12)))
+  r2 <- drive(r$state, ev_apply(list(op_disable("A")), at(20)))
+
+  r3 <- drive(r2$state, ev_run(NULL, at(21)))
+  expect_setequal(r3$reply$skipped, c("A", "B"))
+
+  s4 <- r2$state
+  s4$results$S$stale <- TRUE
+  r4 <- drive(s4, ev_run("A", at(22)))
+  expect_equal(r4$state$pending, character())
+})
+
+test_that("enabling a cell runs it and queues its dependent, in both modes (ui-3 26)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1"), C = cell("2")))
+  r <- boot(s, c("A", "B", "C"))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(), at(11)))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(), at(12)))
+  r2 <- drive(r$state, ev_apply(list(op_disable("A")), at(20)))
+
+  r5 <- drive(r2$state, ev_apply(list(op_disable("A", FALSE)), at(23)))
+  expect_equal(r5$effects, list())
+  expect_equal(r5$state$pending, character())
+
+  r6 <- drive(r5$state, ev_run("A", at(24)))
+  expect_equal(r6$state$worker$running$cell, "A")
+  r7 <- drive(r6$state, wk_done(1, r6$state$worker$running$token, report(created = "x"), at(25)))
+  expect_equal(r7$state$worker$running$cell, "B")   # autorun: B queued and immediately sent
+
+  s_lazy <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1"), C = cell("2")),
+                       on_cell_change = "lazy")
+  rl <- boot(s_lazy, c("A", "B", "C"))
+  rl <- drive(rl$state, wk_done(1, rl$state$worker$running$token, report(created = "x"), at(10)))
+  rl <- drive(rl$state, wk_done(1, rl$state$worker$running$token, report(), at(11)))
+  rl <- drive(rl$state, wk_done(1, rl$state$worker$running$token, report(), at(12)))
+  rl2 <- drive(rl$state, ev_apply(list(op_disable("A")), at(20)))
+  rl5 <- drive(rl2$state, ev_apply(list(op_disable("A", FALSE)), at(23)))
+  rl6 <- drive(rl5$state, ev_run("A", at(24)))
+  rl7 <- drive(rl6$state, wk_done(1, rl6$state$worker$running$token, report(created = "x"), at(25)))
+  expect_true(isTRUE(rl7$state$results$B$stale))
+  expect_false("B" %in% rl7$state$pending)
+  expect_null(rl7$state$worker$running)
+})
+
+test_that("an edit that makes a cell read a name only a disabled cell provides turns it off (ui-3 27)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1", disabled = TRUE), D = cell("y <- 3")))
+  r <- boot(s, "D")
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = "y"), at(10)))
+  expect_true("D" %in% names(r$state$results))
+
+  r2 <- drive(r$state, ev_apply(list(op_set_code("D", "x * 2")), at(20)))
+  sends <- Filter(function(e) identical(e$type, "send"), r2$effects)
+  expect_equal(length(sends), 1)
+  expect_equal(sends[[1]]$msg$type, "remove_cell")
+  expect_equal(sends[[1]]$msg$cell, "D")
+  expect_true(isTRUE(r2$state$results$D$stale))
+
+  r3 <- drive(r2$state, ev_apply(list(op_set_code("D", "y <- 3", expected = "x * 2")), at(21)))
+  expect_equal(Filter(function(e) identical(e$type, "send"), r3$effects), list())
+})
+
+test_that("disabling the running cell still sends remove_cell; its later done is stored stale with nothing queued (ui-3 28)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1")))
+  r <- boot(s, "A")
+  expect_equal(r$state$worker$running$cell, "A")
+  tok <- r$state$worker$running$token
+
+  r2 <- drive(r$state, ev_apply(list(op_disable("A")), at(20)))
+  sends <- Filter(function(e) identical(e$type, "send"), r2$effects)
+  expect_true(any(vapply(sends, function(e) {
+    identical(e$msg$type, "remove_cell") && identical(e$msg$cell, "A")
+  }, logical(1))))
+  expect_equal(r2$state$worker$running$cell, "A")   # the run itself isn't interrupted
+
+  r3 <- drive(r2$state, wk_done(1, tok, report(created = "x"), at(21)))
+  expect_true(isTRUE(r3$state$results$A$stale))
+  expect_false("B" %in% r3$state$pending)
+  expect_null(r3$state$worker$running)
+  expect_equal(Filter(function(e) identical(e$type, "send") && identical(e$msg$type, "run"), r3$effects),
+              list())
+})
+
+test_that("disabling refuses the setup cell, a text cell and an unknown id, and refuses the whole batch (ui-3 29)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), T = cell("#' hi", kind = "markdown")))
+
+  r <- drive(s, ev_apply(list(op_disable("S")), at(1)))
+  expect_s3_class(r$reply, "ember_refused")
+  expect_equal(r$reply$message, "the setup cell can't be disabled; empty it instead")
+
+  r2 <- drive(s, ev_apply(list(op_disable("T")), at(2)))
+  expect_equal(r2$reply$message, "text cells can't be disabled")
+
+  r3 <- drive(s, ev_apply(list(op_disable("ghost")), at(3)))
+  expect_true(grepl("unknown cell", r3$reply$message))
+
+  r4 <- drive(s, ev_apply(list(op_fold("A", TRUE), op_disable("S")), at(4)))
+  expect_s3_class(r4$reply, "ember_refused")
+  expect_false(isTRUE(unname(r4$state$cells$A$folded)))
+})
+
+test_that("disabling in safe preview has no worker effects but still marks the cell disabled (ui-3 30)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1")))
+  r <- drive(s, ev_apply(list(op_disable("A")), at(1)))
+  expect_true(isTRUE(r$state$cells$A$disabled))
+  expect_equal(Filter(function(e) identical(e$type, "send"), r$effects), list())
+})
+
+test_that("disabling one of two definers clears the clash and the dependent's result goes stale (ui-3 31)", {
+  a2 <- "22222222-2222-4222-8222-222222222222"
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), C = cell("x + 1")))
+  r <- boot(s, c("A", "C"))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(), at(11)))
+  expect_equal(r$state$results$A$status, "ok")
+  expect_equal(r$state$results$C$status, "ok")
+
+  r2 <- drive(r$state, ev_apply(list(op_insert(a2, 3, "x <- 2")), at(20)))
+  expect_length(Filter(function(e) e$kind == "multiple_definitions", r2$state$graph$errors), 1)
+  expect_equal(r2$state$results$A$status, "ok")   # the clash alone invalidates nothing
+
+  r3 <- drive(r2$state, ev_apply(list(op_disable("A")), at(21)))
+  expect_length(r3$state$graph$errors, 0)
+  sends <- Filter(function(e) identical(e$type, "send"), r3$effects)
+  expect_equal(length(sends), 1)
+  expect_equal(sends[[1]]$msg$type, "remove_cell")
+  expect_equal(sends[[1]]$msg$cell, "A")
+  expect_true(isTRUE(r3$state$results$A$stale))
+  expect_true(isTRUE(r3$state$results$C$stale))
+  expect_equal(r3$state$pending, character())
+
+  r4 <- drive(r3$state, ev_run("C", at(22)))
+  expect_equal(r4$reply$queued, c(a2, "C"))
+})

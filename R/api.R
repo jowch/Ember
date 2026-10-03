@@ -204,6 +204,14 @@ move_cell <- function(cell, index) {
 fold_cell <- function(cell, folded = TRUE) {
   structure(list(op = "fold", cell = cell, folded = folded), class = "ember_op")
 }
+#' Disable (or re-enable) a cell: it and every cell that depends on it stop
+#' running, keep their last output dimmed, and lose their globals, as if
+#' deleted. Refused for the setup cell ("empty it instead") and for a text
+#' cell.
+#' @export
+disable_cell <- function(cell, disabled = TRUE) {
+  structure(list(op = "disable", cell = cell, disabled = disabled), class = "ember_op")
+}
 
 #' Switch between autorun and lazy. The mode is the header's
 #' `on_cell_change`, so this edits the file and the change is saved.
@@ -228,9 +236,10 @@ allow_execution <- function(nb) {
 #'
 #' The first call allows execution for the session. The cells are queued at
 #' once; they run in run order, one at a time, in the worker. Cells that
-#' can't run (a graph error of their own) are not queued and come back in
-#' `skipped`; a dependent of a failed or graph-broken cell still runs, and
-#' fails on its own if it needs what that cell would have provided.
+#' can't run (a graph error of their own, a disabled cell, or a dependent
+#' of one) are not queued and come back in `skipped`; a dependent of a
+#' failed or graph-broken cell still runs, and fails on its own if it needs
+#' what that cell would have provided.
 #'
 #' @param ids Cell ids or display indexes; `NULL` runs every code cell.
 #' @param wait `TRUE` blocks until the queue is empty or `timeout` passes,

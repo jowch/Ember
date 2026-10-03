@@ -119,6 +119,7 @@ Each derived fact has one source:
 - "Code differs" is `result$code != cells[[id]]$code`.
 - "Not run" means the cell has no result.
 - "Blocked" (can't run at all) is step 1's `blocked_cells()`: a cell with a graph error of its own. A dependent of a failed or graph-broken cell is not blocked; it runs and fails on its own if it needs what the broken cell would have provided.
+- "Off" (ui-3, piece 1b: disable cell) is `names(state$graph$off)`: a disabled cell, or a dependent that needs a name only a disabled cell provides. `can_run()` and `reduce_run()` treat it like blocked, but it is the user's own choice, not an error.
 - Only `stale` is stored, because it records history (an ancestor ran after this result) that the current code can't reveal.
 
 **One pure transition.** `step(state, event)` returns `list(state, effects, reply)` (step.R). It has three stages:
@@ -217,6 +218,12 @@ after each dispatch.
   globals are removed.** A dependent that needs what the failed cell would
   have defined fails on its own, naming the failed cell; one that doesn't
   need it runs normally.
+- **A disabled cell defines nothing; it and its dependents don't run; their
+  variables are removed; enabling makes them stale.** `disable_cell()`
+  refuses the setup cell ("empty it instead") and text cells. Turning a
+  cell off sends `remove_cell`, as for a delete, and the graph excludes it
+  from `find_errors()`'s rules but `parse`, so disabling one of two cells
+  defining the same name clears "Multiple definitions".
 - **A setting changed outside the setup cell is put back** by the worker
   and the cell shows the "global setting" error, so later cells never run
   under it.

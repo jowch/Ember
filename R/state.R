@@ -590,6 +590,8 @@ check_state <- function(state) {
   } else if (length(state$pending) > 0 &&
             any(vapply(state$pending, function(id) state$cells[[id]]$kind != "code", logical(1)))) {
     problems <- c(problems, "pending has a non-code cell")
+  } else if (any(state$pending %in% names(state$graph$off))) {
+    problems <- c(problems, "pending has an off cell")
   }
 
   if (!all(names(state$results) %in% names(state$cells))) {

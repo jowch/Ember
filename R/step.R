@@ -120,7 +120,13 @@ step <- function(state, event) {
   if (isTRUE(state$closed)) return(list(state = state, effects = list(), reply = NULL))
   state$clock <- event$at
   r <- reduce(state, event)
-  pk <- schedule_packages(r$state, old = state)
+  # A cell becomes off from a disable op, an edit that makes it read a name
+  # only an off cell provides, or a learned definition (graph_learn()) doing
+  # the same; one rule here catches all three, right after reduce() and
+  # before schedule() sends anything.
+  newly_off <- setdiff(names(r$state$graph$off), names(state$graph$off))
+  to <- if (length(newly_off) > 0) turn_off(r$state, newly_off) else list(state = r$state, effects = list())
+  pk <- schedule_packages(to$state, old = state)
   s <- schedule(pk$state)
   reads <- missing_file_reads(s$state)
   new <- s$state
@@ -132,7 +138,7 @@ step <- function(state, event) {
   # was). Patching it here, after that decision, is simpler than every
   # reducer predicting it.
   if (is.list(reply) && !is.null(reply$seq)) reply$seq <- new$seq
-  list(state = new, effects = c(r$effects, pk$effects, s$effects, reads), reply = reply)
+  list(state = new, effects = c(r$effects, to$effects, pk$effects, s$effects, reads), reply = reply)
 }
 
 reduce <- function(state, event) {
@@ -254,14 +260,16 @@ schedule <- function(state) {
   list(state = state, effects = c(dg$effects, list(fx_send(state$worker$gen, run_message(state, id, token)))))
 }
 
-#' Can `id` run now? Not if it is markdown or has a graph error of its own
-#' (`blocked_cells()`): a dependent of a failed or graph-broken cell runs on
+#' Can `id` run now? Not if it is markdown, has a graph error of its own
+#' (`blocked_cells()`), or is off (`state$graph$off`: a disabled cell, or a
+#' dependent of one). A dependent of a failed or graph-broken cell runs on
 #' its own and fails with its own error if it needs what the broken cell
 #' would have provided (engine.md, Decisions: "dependents of a failed cell
 #' run anyway").
 can_run <- function(state, id) {
   cell <- state$cells[[id]]
   if (is.null(cell) || identical(cell$kind, "markdown")) return(FALSE)
+  if (id %in% names(state$graph$off)) return(FALSE)
   !(id %in% blocked_cells(state$graph))
 }
 
@@ -333,6 +341,70 @@ drop_graph_error_results <- function(state) {
   list(state = state, effects = effects)
 }
 
+#' Cells that became off in this event (`names(new$graph$off)` minus
+#' `names(old$graph$off)`, computed by the caller): take them out of
+#' `pending`, mark their results stale (kept, so the page can show them
+#' dimmed), and send `remove_cell` for each that has a result or is
+#' running, as for a deleted cell. Enabled cells that define a name one of
+#' them had defined (`results$defined`) get their result marked stale and
+#' their dependents invalidated, `queue = FALSE`: `remove_cell` may have
+#' removed a global they also made.
+#'
+#' `remove_cell`, not `drop_globals`: a disabled cell should leave R as if
+#' it had been deleted, attachments and display data included, as
+#' `Rscript` would.
+turn_off <- function(state, ids) {
+  state$pending <- setdiff(state$pending, ids)
+  effects <- list()
+  order <- NULL
+
+  defined <- unique(unlist(lapply(ids, function(id) {
+    r <- state$results[[id]]
+    if (is.null(r)) character() else r$defined
+  }), use.names = FALSE))
+
+  for (id in ids) {
+    r <- state$results[[id]]
+    running <- identical(state$worker$running$cell, id)
+    if (!is.null(r)) {
+      r$stale <- TRUE
+      state$results[[id]] <- r
+    }
+    if ((!is.null(r) || running) && state$worker$status %in% c("starting", "ready", "busy")) {
+      if (is.null(order)) {
+        order <- Filter(function(i) {
+          !is.null(state$cells[[i]]) && identical(state$cells[[i]]$kind, "code")
+        }, state$graph$order)
+      }
+      effects <- c(effects, list(fx_send(state$worker$gen,
+                                         list(type = "remove_cell", cell = id, order = order))))
+    }
+  }
+
+  if (length(defined) > 0) {
+    owners <- Filter(function(cid) {
+      !(cid %in% ids) && length(intersect(defined, state$graph$cells[[cid]]$definitions)) > 0
+    }, state$graph$ids)
+    for (cid in owners) {
+      r <- state$results[[cid]]
+      names_for_walk <- character()
+      if (!is.null(r)) {
+        r$stale <- TRUE
+        state$results[[cid]] <- r
+        names_for_walk <- r$defined
+      }
+      # `invalidate_dependents()` still walks `cid`'s current downstream
+      # edges even with no result of its own to report: a cell that never
+      # ran can still be the new resolution for a name its readers used to
+      # get from an off cell, and those readers' stale results are what
+      # needs clearing.
+      state <- invalidate_dependents(state, cid, names_for_walk, queue = FALSE)
+    }
+  }
+
+  list(state = state, effects = effects)
+}
+
 #' The worker's `run` message for `id`. See the protocol in worker.R.
 #'
 #' `list(type = "run", cell, token, code, role = "setup" | "cell",
@@ -397,9 +469,11 @@ is_fresh <- function(state, id) {
 #' stays not run, in both modes.
 #'
 #' Every touched result gets `stale = TRUE`. In autorun, and when `queue` is
-#' `TRUE`, they are also added to `pending`; running clears `stale`. In lazy
-#' they stay stale until run. So "dropped from the queue without running"
-#' (an interrupt) leaves a cell correctly stale with no extra code.
+#' `TRUE`, they are also added to `pending`, unless the cell is off (1b: a
+#' disabled cell, or a dependent of one, never runs); running clears
+#' `stale`. In lazy they stay stale until run. So "dropped from the queue
+#' without running" (an interrupt) leaves a cell correctly stale with no
+#' extra code.
 #'
 #' `queue = FALSE` is for an edit (including delete): engine.md's Decisions
 #' say an edit never runs anything, in either mode, so deleting a cell marks
@@ -430,7 +504,8 @@ invalidate_dependents <- function(state, id, names, queue = TRUE) {
     if (is.null(r)) next
     r$stale <- TRUE
     state$results[[cid]] <- r
-    if (queue && autorun && isTRUE(state$allowed) && identical(state$cells[[cid]]$kind, "code")) {
+    if (queue && autorun && isTRUE(state$allowed) && identical(state$cells[[cid]]$kind, "code") &&
+        !(cid %in% names(state$graph$off))) {
       state$pending <- union(state$pending, cid)
     }
   }
@@ -592,6 +667,16 @@ reduce_apply <- function(state, event) {
       } else {
         cells[[op$cell]]$folded <- isTRUE(op$folded)
       }
+    } else if (identical(op$op, "disable")) {
+      if (!(op$cell %in% names(cells))) {
+        bad <- refused(sprintf("unknown cell %s", op$cell), op)
+      } else if (identical(op$cell, state$setup)) {
+        bad <- refused("the setup cell can't be disabled; empty it instead", op)
+      } else if (!identical(cells[[op$cell]]$kind, "code")) {
+        bad <- refused("text cells can't be disabled", op)
+      } else {
+        cells[[op$cell]]$disabled <- isTRUE(op$disabled)
+      }
     } else if (identical(op$op, "add_extra_package")) {
       header$extra_packages <- sort(unique(c(header$extra_packages, op$name)))
     } else if (identical(op$op, "remove_extra_package")) {
@@ -661,10 +746,15 @@ reduce_run <- function(state, event) {
   code_ids <- Filter(function(i) identical(state$cells[[i]]$kind, "code"), names(state$cells))
   ids <- event$ids %||% code_ids
   ids <- ids[ids %in% names(state$cells)]
-  ancestors <- upstream_of_set(state$graph, ids)
+  # Off ids go straight to `skipped`, before computing ancestors: an off id's
+  # ancestors would otherwise be queued too, and Pluto's frontend sends
+  # exactly this request (run the cell) after every disable/enable toggle.
+  off_ids <- Filter(function(id) id %in% names(state$graph$off), ids)
+  on_ids <- setdiff(ids, off_ids)
+  ancestors <- upstream_of_set(state$graph, on_ids)
   unfresh <- Filter(function(a) !is_fresh(state, a), ancestors)
-  want <- union(unfresh, ids)
-  skipped <- Filter(function(id) !can_run(state, id), want)
+  want <- union(unfresh, on_ids)
+  skipped <- union(off_ids, Filter(function(id) !can_run(state, id), want))
   to_add <- setdiff(want, skipped)
   state$pending <- union(state$pending, to_add)
   reply <- list(accepted = TRUE, queued = run_order(state$graph, state$pending), skipped = skipped)
@@ -973,6 +1063,26 @@ reduce_wk_done <- function(state, event) {
     # sent `remove_cell` and dropped its result. There is nothing left to
     # learn or invalidate for an id that no longer exists; just free the
     # worker so the next pending cell can go.
+    state$worker$status <- "ready"
+    state$worker$running <- NULL
+    state$worker$interrupt <- NULL
+    state$worker$restart_offered <- FALSE
+    return(list(state = state, effects = list(), reply = NULL))
+  }
+
+  if (id %in% names(state$graph$off)) {
+    # Disabled while it ran: the result is shown dimmed, not fresh or
+    # errored, and nothing downstream is touched -- turn_off() already
+    # invalidated its dependents when the cell became off, and the
+    # `remove_cell` it queued is already behind this run in the worker's
+    # own inbox (it reads messages only between runs), so the globals this
+    # run made go too without a separate `drop_globals`.
+    result <- new_result(code = w$running$code, status = report$status %||% "ok",
+                         output = report$output, console = w$running$console, error = NULL,
+                         started_at = w$running$started_at,
+                         runtime = as.numeric(event$at) - as.numeric(w$running$started_at),
+                         defined = report$created %||% character(), stale = TRUE)
+    state$results[[id]] <- result
     state$worker$status <- "ready"
     state$worker$running <- NULL
     state$worker$interrupt <- NULL
