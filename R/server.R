@@ -668,6 +668,9 @@ on_run <- function(server, cl, hub, req) {
 #' | ember_run_all                 | the "N cells not run" bar's button (ui-2.md, 5): run_cells() on not_run_ids(), the same set the bar counts; flush. No reply |
 #' | ember_split_cell              | {cell_id, code}: split a mixed_text cell at each text/code change (split_mixed()); nothing if code is stale or the cell isn't mixed. Flush. No reply |
 #' | ember_signature                | worker_query(signature); else signature_fallback() (ui-2.md, 4d)   |
+#' | ember_update_packages          | dispatch ev_preview_date(today, apply = TRUE); flush. No reply       |
+#' | ember_apply_update             | {date}: set_date(hub$nb, date); a refusal is logged. Flush. No reply |
+#' | ember_cancel_update            | dispatch ev_cancel_preview(); flush. No reply                        |
 #' | request_js_link_response, nbpkg_available_versions, nbpkg_get_project_toml, nbpkg_set_project_toml, pkg_update | Julia-only; their UI is disabled in the frontend. Logged, no reply |
 #'
 #' Replies use the reply type Pluto uses for each (connect "👋", ping
@@ -900,6 +903,40 @@ handlers <- list(
       list(notebook_id = st$id, path = st$path, shortpath = basename(st$path), in_temp_dir = FALSE)
     })
     send(cl, reply_message(req, "notebook_list", list(notebooks = entries)))
+  },
+
+  #' The Packages tab's Update button, and an install failure card's
+  #' Update (PackagesTab.js): preview today's snapshot with `apply =
+  #' TRUE`, so `schedule_packages()` applies it itself once ready unless a
+  #' loaded package would restart (ui-3-plan.md, "Update to today's
+  #' snapshot"). Local time, as the first resolution's "today"
+  #' (packages-core.R). No reply; the page watches `packages.update`.
+  ember_update_packages = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    dispatch(hub$nb, ev_preview_date(format(Sys.time(), "%Y-%m-%d"), at = Sys.time(), apply = TRUE))
+    flush_clients(server, hub)
+  },
+
+  #' The in-tab update question's Update: apply the proposal the page was
+  #' shown. A refusal (the proposal has since changed or gone) is logged,
+  #' never thrown at the client, since the frontend sends without awaiting
+  #' a reply.
+  ember_apply_update = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    date <- req$body$date
+    if (is.character(date) && length(date) == 1 && !is.na(date)) {
+      tryCatch(set_date(hub$nb, date),
+              ember_refused = function(e) message("ember: refused ember_apply_update: ", conditionMessage(e)))
+    }
+    flush_clients(server, hub)
+  },
+
+  #' The in-tab update question's Cancel: drop the proposal without
+  #' applying it.
+  ember_cancel_update = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    dispatch(hub$nb, ev_cancel_preview(at = Sys.time()))
+    flush_clients(server, hub)
   }
 )
 

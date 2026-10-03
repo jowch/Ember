@@ -35,25 +35,42 @@ remove_extra_package <- function(name) list(op = "remove_extra_package", name = 
 #'
 #' "Update all" is `preview_date(nb, Sys.Date())`.
 #'
+#' `apply = TRUE` is what the Packages tab's Update button does
+#' (`ember_update_packages`, server.R): once the preview is ready,
+#' `schedule_packages()` applies it itself (`apply_proposal()`,
+#' packages-core.R), the same change `set_date()` would make, unless doing
+#' so would restart a package the worker has already loaded -- then the
+#' proposal stays `"ready"` with `restart` naming it and waits for
+#' `set_date()` (or, from the page, an explicit answer) instead of
+#' applying on its own. With `wait = TRUE`, this call also returns once
+#' the date has visibly moved, since an applied proposal is cleared the
+#' moment it applies and so may already be gone by the time this checks.
+#'
 #' @return `list(date, status, changes = data.frame(name, from, to, change),
-#'   problems)`.
+#'   problems, restart)`. `restart` is `character()` unless `apply = TRUE`
+#'   left the proposal waiting on a loaded package.
 #' @export
-preview_date <- function(nb, date = Sys.Date(), wait = TRUE, timeout = 60) {
+preview_date <- function(nb, date = Sys.Date(), wait = TRUE, apply = FALSE, timeout = 60) {
   date <- format(as.Date(date), "%Y-%m-%d")
-  dispatch(nb, ev_preview_date(date, at = Sys.time()))
+  dispatch(nb, ev_preview_date(date, at = Sys.time(), apply = apply))
 
   if (isTRUE(wait)) {
     wait_for(nb, function(snap) {
       prop <- snap$packages$proposal
-      !is.null(prop) && identical(prop$date, date) && prop$status %in% c("ready", "failed")
+      if (!is.null(prop) && identical(prop$date, date)) return(prop$status %in% c("ready", "failed"))
+      isTRUE(apply) && identical(snap$packages$snapshot, date)
     }, timeout = timeout)
   }
 
   prop <- package_status(nb)$proposal
-  if (is.null(prop) || !identical(prop$date, date)) {
-    return(list(date = date, status = "fetching", changes = NULL, problems = NULL))
+  if (!is.null(prop) && identical(prop$date, date)) {
+    return(list(date = prop$date, status = prop$status, changes = prop$changes,
+               problems = prop$problems, restart = prop$restart %||% character()))
   }
-  list(date = prop$date, status = prop$status, changes = prop$changes, problems = prop$problems)
+  if (isTRUE(apply) && identical(package_status(nb)$snapshot, date)) {
+    return(list(date = date, status = "ready", changes = NULL, problems = NULL, restart = character()))
+  }
+  list(date = date, status = "fetching", changes = NULL, problems = NULL, restart = character())
 }
 
 #' Apply a previewed date move. Refused (an `ember_refused` condition)

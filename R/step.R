@@ -171,6 +171,7 @@ reduce <- function(state, event) {
     tm_offer_restart = reduce_offer_restart(state, event),
     preview_date     = reduce_preview_date(state, event),
     set_date         = reduce_set_date(state, event),
+    cancel_preview   = reduce_cancel_preview(state, event),
     index_fetched    = reduce_index_fetched(state, event),
     index_failed     = reduce_index_failed(state, event),
     library_checked  = reduce_library_checked(state, event),

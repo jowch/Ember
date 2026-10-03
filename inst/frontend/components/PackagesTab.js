@@ -75,6 +75,40 @@ const InstallFailureCard = ({ failure, rows, r_version, log }) => {
 }
 
 /**
+ * The header's Update button and, once `update` fills in, what it found:
+ * "Checking…" while fetching, the in-tab restart question when applying
+ * would restart a loaded package (ui-3-plan.md, "Update to today's
+ * snapshot"; the engine applies the update itself when nothing would
+ * restart, so the page never has to ask then), or the failure sentence.
+ *
+ * @param {{ update: import("./Editor.js").EmberPackagesUpdate? }} props
+ */
+const PackagesUpdate = ({ update }) => {
+    const pluto_actions = useContext(PlutoActionsContext)
+
+    return html`
+        <div class="ember-packages-update">
+            <button onClick=${() => pluto_actions.ember_update_packages()}>${t("t_ember_update_packages")}</button>
+            ${update == null
+                ? null
+                : update.status === "checking"
+                ? html`<span class="ember-packages-update-checking">${t("t_ember_packages_update_checking")}</span>`
+                : update.status === "failed"
+                ? html`<span class="ember-packages-update-failed"
+                      >${t("t_ember_packages_update_failed", { reason: update.message ?? "" })}</span
+                  >`
+                : update.restart.length > 0
+                ? html`<div class="ember-packages-update-question">
+                      <p>${t("t_ember_packages_update_restart_question", { names: update.restart.join(", ") })}</p>
+                      <button onClick=${() => pluto_actions.ember_apply_update(update.date)}>${t("t_ember_update_packages")}</button>
+                      <button onClick=${() => pluto_actions.ember_cancel_update()}>${t("t_cancel")}</button>
+                  </div>`
+                : null}
+        </div>
+    `
+}
+
+/**
  * The "Packages" tab (ui-2.md, 5; ui-3-plan.md, piece 4): the snapshot
  * date and R version, the library's install status, a card per install
  * failure, and one row per locked or not-found package. Reads
@@ -85,13 +119,13 @@ const InstallFailureCard = ({ failure, rows, r_version, log }) => {
  */
 export const PackagesTab = ({ packages }) => {
     if (packages == null) return null
-    const { snapshot, r_version, library, rows } = packages
+    const { snapshot, r_version, library, rows, update } = packages
 
     return html`
         <div id="ember-packages-tab">
             <dl class="ember-packages-meta">
                 ${snapshot != null
-                    ? html`<dt>${t("t_ember_packages_snapshot")}</dt>
+                    ? html`<dt>${t("t_ember_packages_versions_as_of")}</dt>
                           <dd>${snapshot}</dd>`
                     : null}
                 ${r_version != null
@@ -99,6 +133,7 @@ export const PackagesTab = ({ packages }) => {
                           <dd>${r_version}</dd>`
                     : null}
             </dl>
+            <${PackagesUpdate} update=${update ?? null} />
             <p class="ember-packages-library-status ember-packages-library-${library.status}">
                 ${t(`t_ember_packages_library_status_${library.status}`)}
                 ${library.progress != null ? ` (${library.progress.done}/${library.progress.total})` : ""}

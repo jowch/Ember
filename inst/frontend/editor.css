@@ -1397,6 +1397,31 @@ nav#at_the_top > #process_status:empty {
     opacity: 0.7;
 }
 
+.ember-packages-update {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6em;
+    margin: 0 0 0.8em 0;
+}
+
+.ember-packages-update-checking {
+    opacity: 0.7;
+}
+
+.ember-packages-update-failed {
+    color: var(--ember-upstream-error-label-color);
+}
+
+.ember-packages-update-question {
+    border: 1px solid var(--rule-color);
+    border-radius: 6px;
+    padding: 0.6em 0.8em;
+}
+
+.ember-packages-update-question p {
+    margin: 0 0 0.5em 0;
+}
+
 .ember-install-failure-cards {
     display: flex;
     flex-direction: column;

@@ -557,6 +557,43 @@ test_that("an edit that changes the wanted set recomputes a ready proposal (54)"
   expect_true("viz" %in% r2$state$packages$proposal$lock$entries$name)
 })
 
+# ---- apply = TRUE previews (ui-3-plan.md, "Update to today's snapshot") -----
+
+test_that("an apply = TRUE preview applies itself once ready with nothing loaded to restart (83)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index("2026-09-01"), at(2)))
+
+  r <- drive(r$state, ev_preview_date(as.Date("2026-09-30"), at(3), apply = TRUE))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(4)))
+
+  expect_equal(r$state$file$header$snapshot, as.Date("2026-09-30"))
+  expect_true(all(r$state$file$lock$entries$version[r$state$file$lock$entries$name == "dplyr"] == "1.1.5"))
+  expect_null(r$state$packages$proposal)
+  expect_true(r$state$packages$target$status %in% c("unknown", "checking"))
+})
+
+test_that("an apply = TRUE preview that would restart a loaded package waits for set_date or ev_cancel_preview (84)", {
+  r <- dplyr_running()
+
+  r2 <- drive(r$state, ev_preview_date(as.Date("2026-09-30"), at(30), apply = TRUE))
+  r2 <- drive(r2$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(31)))
+
+  prop <- r2$state$packages$proposal
+  expect_equal(prop$status, "ready")
+  expect_true("dplyr" %in% prop$restart)
+  # Left for the page/console to decide: nothing applied on its own.
+  expect_equal(r2$state$file$header$snapshot, "2026-09-01")
+
+  r3 <- drive(r2$state, ev_set_date(as.Date("2026-09-30"), at(32)))
+  expect_equal(r3$state$file$header$snapshot, as.Date("2026-09-30"))
+  expect_null(r3$state$packages$proposal)
+
+  r4 <- drive(r2$state, ev_cancel_preview(at(33)))
+  expect_null(r4$state$packages$proposal)
+  expect_equal(r4$state$file$header$snapshot, "2026-09-01")
+})
+
 test_that("allow records the running R version in the header when it differs (55)", {
   s <- pkg_state(list(S = cell("")), options = list(r = list(version = "9.9.9", minor = "9.9", platform = "test")))
   r <- drive(s, ev_allow(at(1)))

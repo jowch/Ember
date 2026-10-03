@@ -487,9 +487,11 @@ test_that("an unknown request type and malformed bytes are logged and dropped, n
 test_that("every request type in the handler table is answered as documented (36)", {
   answered <- c("connect", "ping", "current_time", "update_notebook", "run_multiple_cells",
                "restart_process", "reset_shared_state", "complete", "complete_symbols", "docs",
-               "all_registered_package_names", "completepath", "get_all_notebooks", "ember_signature")
+               "all_registered_package_names", "completepath", "get_all_notebooks", "ember_signature",
+               "ember_update_packages")
   silent <- c("interrupt_all", "shutdown_notebook", "reshow_cell", "ember_render_plot",
-             "ember_run_all", "ember_split_cell", "request_js_link_response", "nbpkg_available_versions",
+             "ember_run_all", "ember_split_cell", "ember_apply_update", "ember_cancel_update",
+             "request_js_link_response", "nbpkg_available_versions",
              "nbpkg_get_project_toml", "nbpkg_set_project_toml", "pkg_update")
   expect_setequal(names(handlers), c(answered, silent))
 
@@ -498,7 +500,15 @@ test_that("every request type in the handler table is answered as documented (36
   # later iterations sharing the same worker.
   one_request <- function(type) {
     path <- write_session_notebook(list(S = cell(""), A = cell("1")))
-    nb <- open_notebook(path)
+    # A local, file:// repo (never the real default CRAN mirror): the cell
+    # itself names no package, but `ember_update_packages` always starts an
+    # index fetch for "today" regardless, and a real network call has no
+    # place in this generic table-driven check.
+    root <- normalizePath(testthat::test_path("fixtures", "repos", "cran"), mustWork = TRUE)
+    cache <- tempfile("ember-pkg-cache-")
+    dir.create(cache, recursive = TRUE)
+    on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+    nb <- open_notebook(path, repos = ember_repos(cran = paste0("file://", root)), cache = cache)
     on.exit(close_notebook(nb), add = TRUE)
     server <- new_server("s", throttle = 0)
     host_notebook(server, nb)
@@ -1112,6 +1122,49 @@ test_that("ember_render_plot {cell_id, res} re-renders at the cell's own figure 
   Sys.sleep(0.2)
   later::run_now(timeout = 0.2)
   expect_identical(notebook_state(nb)$results[[a]], before_a)
+})
+
+# ---- Packages from the browser (ui-3-plan.md, piece 4) ----------------------
+
+test_that("ember_update_packages dispatches the preview with apply = TRUE; the file's snapshot moves once the index is fetched (95)", {
+  # A fixture repo built fresh for this test, dated 1999-01-01 (the
+  # notebook's starting snapshot) and real today (`Sys.time()`, not
+  # mocked: server.R's ember_update_packages reads the real clock, and
+  # `Sys.time()` isn't a binding local_mocked_bindings() can stub -- it's
+  # never assigned inside the package). Both dates carry the same single,
+  # dependency-free package, so resolving either needs no network and no
+  # install.
+  root <- tempfile("ember-pkg-repo-")
+  write_packages <- function(date) {
+    dir <- file.path(root, date, "src", "contrib")
+    dir.create(dir, recursive = TRUE)
+    writeLines(c("Package: solo", "Version: 1.0", "NeedsCompilation: no", ""),
+              file.path(dir, "PACKAGES"))
+  }
+  today <- format(Sys.time(), "%Y-%m-%d")
+  write_packages("1999-01-01")
+  write_packages(today)
+  on.exit(unlink(root, recursive = TRUE), add = TRUE)
+  repos <- ember_repos(cran = paste0("file://", root))
+  cache <- tempfile("ember-pkg-cache-")
+  dir.create(cache, recursive = TRUE)
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+
+  path <- write_session_notebook(list(S = cell(""), A = cell("library(solo)")), snapshot = "1999-01-01")
+  nb <- open_notebook(path, repos = repos, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  handle_message(server, ws, wire("ember_update_packages", notebook_id = id))
+
+  ok <- wait_for(nb, function(snap) identical(snap$packages$snapshot, today), timeout = 30)
+  expect_true(ok, info = notebook_state(nb)$packages$target$message %||% "")
+  expect_null(notebook_state(nb)$packages$proposal)
 })
 
 # ---- Editor services (ui-2.md, 4) -------------------------------------------

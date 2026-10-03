@@ -201,18 +201,39 @@ install_failures <- function(lines) {
 #' `changes` (`lock_diff(current, lock)`), `problems`, `for_wanted` (the
 #' wanted set it was computed for; recomputed when that changes, so a
 #' preview never goes stale under an edit).
+#'
+#' * `apply`: set by `ev_preview_date(..., apply = TRUE)` (the Packages
+#'   tab's Update button, through `ember_update_packages`): once the
+#'   resolution is `"ready"`, `schedule_packages()`'s Proposal stage
+#'   applies it itself unless doing so would restart a loaded package, in
+#'   which case the page is asked first. A plain `preview_date()` call
+#'   leaves this `FALSE` and is never applied automatically.
+#' * `restart`: character, set only when an `apply = TRUE` proposal is
+#'   `"ready"` but waiting on the page's answer: the loaded packages
+#'   (`state$worker$loaded`) that `changes` would affect.
+#' * `message`: why the fetch failed (`status == "failed"`), the index
+#'   slot's own message; `NULL` otherwise.
 new_proposal <- function(date, status = "fetching", lock = NULL, changes = NULL,
-                         problems = NULL, for_wanted = NULL) {
+                         problems = NULL, for_wanted = NULL, apply = FALSE,
+                         restart = character(), message = NULL) {
   structure(list(date = date, status = status, lock = lock, changes = changes,
-                 problems = problems, for_wanted = for_wanted),
+                 problems = problems, for_wanted = for_wanted, apply = apply,
+                 restart = restart, message = message),
             class = "ember_proposal")
 }
 
 # ---- Events and effects ------------------------------------------------------
 
 # From the API
-ev_preview_date <- function(date, at) event("preview_date", at, date = date)
+#' `apply = TRUE`: `reduce_preview_date()` stores it on the proposal, and
+#' `schedule_packages()`'s Proposal stage applies the result itself once
+#' it is ready, unless doing so would restart a loaded package (plan,
+#' "Update to today's snapshot").
+ev_preview_date <- function(date, at, apply = FALSE) event("preview_date", at, date = date, apply = apply)
 ev_set_date     <- function(date, at) event("set_date", at, date = date)
+#' Drop the current preview without applying it (the page's Cancel on the
+#' in-tab update question).
+ev_cancel_preview <- function(at) event("cancel_preview", at)
 # `edit_notebook()` ops, applied by reduce_apply() with the others:
 #   add_extra_package(name), remove_extra_package(name)
 
@@ -360,9 +381,24 @@ schedule_packages <- function(state, old) {
       indexes_loaded <- stats::setNames(list(slot$index), key)
       res <- resolve_lock(wanted, state$file$lock, indexes_loaded, needed = key, mode = "fresh")
       if (isTRUE(res$complete)) {
-        state$packages$proposal <- new_proposal(prop$date, status = "ready", lock = res$lock,
-                                                changes = lock_diff(state$file$lock, res$lock),
-                                                problems = res$problems, for_wanted = wanted)
+        changes <- lock_diff(state$file$lock, res$lock)
+        new_prop <- new_proposal(prop$date, status = "ready", lock = res$lock, changes = changes,
+                                 problems = res$problems, for_wanted = wanted, apply = prop$apply)
+        if (isTRUE(prop$apply)) {
+          loaded <- state$worker$loaded %||% character()
+          restart_names <- intersect(changes$name, names(loaded))
+          if (length(restart_names) == 0) {
+            state$packages$proposal <- new_prop
+            ap <- apply_proposal(state)
+            state <- ap$state
+            effects <- c(effects, ap$effects)
+          } else {
+            new_prop$restart <- restart_names
+            state$packages$proposal <- new_prop
+          }
+        } else {
+          state$packages$proposal <- new_prop
+        }
       } else {
         for (k in res$fetch) {
           if (is.null(state$packages$indexes[[k]])) {
@@ -372,7 +408,8 @@ schedule_packages <- function(state, old) {
         }
       }
     } else if (identical(slot$status, "failed")) {
-      state$packages$proposal <- new_proposal(prop$date, status = "failed")
+      state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
+                                              message = slot$message)
     }
   }
 
@@ -679,17 +716,45 @@ reduce_preview_date <- function(state, event) {
   if (!is.null(slot) && identical(slot$status, "failed")) {
     state$packages$indexes[[key]] <- NULL
   }
-  state$packages$proposal <- new_proposal(event$date)
+  state$packages$proposal <- new_proposal(event$date, apply = isTRUE(event$apply))
   list(state = state, effects = list(), reply = TRUE)
+}
+
+#' Drop the current preview without applying it (the in-tab question's
+#' Cancel, `ember_cancel_update`). A no-op if there is none.
+reduce_cancel_preview <- function(state, event) {
+  state$packages$proposal <- NULL
+  list(state = state, effects = list(), reply = NULL)
+}
+
+#' Apply the current proposal: `header$snapshot <- proposal$date`,
+#' `set_lock(proposal$lock)`, `resolved_for <- wanted`, `proposal <-
+#' NULL`. The restart, if a loaded package moved, follows from
+#' `switch_library()` once the new library is ready. Pure; the caller
+#' (`reduce_set_date()`, or `schedule_packages()`'s Proposal stage for an
+#' `apply = TRUE` proposal that needs no restart) has already checked the
+#' proposal is the one to apply.
+#' @return `list(state, effects)`.
+apply_proposal <- function(state) {
+  p <- state$packages
+  prop <- p$proposal
+  wanted <- wanted_packages(state$graph, state$file$header)
+  state$file$header$snapshot <- prop$date
+  state <- set_lock(state, prop$lock)
+  state$packages$resolved_for <- wanted
+  # The proposal's own resolution already computed `problems` for the new
+  # date (`prop$lock`'s off_date/not_found/not_in_index rows); the old
+  # date's `problems` describe a lock that no longer exists the moment this
+  # applies, and leaving them in place showed stale complaints (a
+  # since-fixed off_date row, say) next to the packages actually in effect.
+  state$packages$problems <- prop$problems
+  state$packages$proposal <- NULL
+  list(state = state, effects = list())
 }
 
 #' Apply a previewed date move. Refused unless `proposal` is ready, is for
 #' `event$date`, and was computed for the current wanted set: the caller
-#' must have seen exactly what changes. Then `header$snapshot <- date`,
-#' `set_lock(proposal$lock)`, `resolved_for <- wanted`, `proposal <-
-#' NULL`. The restart, if a loaded package moved, follows from
-#' `switch_library()` once the new library is ready.
-#' Reply: the applied `changes`.
+#' must have seen exactly what changes. Reply: the applied `changes`.
 reduce_set_date <- function(state, event) {
   p <- state$packages
   wanted <- wanted_packages(state$graph, state$file$header)
@@ -699,18 +764,9 @@ reduce_set_date <- function(state, event) {
     return(list(state = state, effects = list(),
                reply = refused("no ready, current preview for that date")))
   }
-  state$file$header$snapshot <- event$date
-  state <- set_lock(state, prop$lock)
-  state$packages$resolved_for <- wanted
-  # The proposal's own resolution already computed `problems` for the new
-  # date (`prop$lock`'s off_date/not_found/not_in_index rows); the old
-  # date's `problems` describe a lock that no longer exists the moment this
-  # applies, and leaving them in place showed stale complaints (a
-  # since-fixed off_date row, say) next to the packages actually in effect.
-  state$packages$problems <- prop$problems
   changes <- prop$changes
-  state$packages$proposal <- NULL
-  list(state = state, effects = list(), reply = changes)
+  ap <- apply_proposal(state)
+  list(state = ap$state, effects = ap$effects, reply = changes)
 }
 
 #' `wk_done` with `report$error$package` set (the worker saw R's
@@ -920,7 +976,9 @@ packages_view <- function(state) {
   proposal <- NULL
   if (!is.null(p$proposal)) {
     proposal <- list(date = p$proposal$date, status = p$proposal$status,
-                     changes = p$proposal$changes, problems = p$proposal$problems)
+                     changes = p$proposal$changes, problems = p$proposal$problems,
+                     apply = isTRUE(p$proposal$apply), restart = p$proposal$restart %||% character(),
+                     message = p$proposal$message)
   }
 
   missing_n <- sum(packages_df$status %in% c("missing", "not_installed"))

@@ -268,6 +268,14 @@ const first_true_key = (obj) => {
  */
 
 /**
+ * @typedef EmberPackagesUpdate
+ * @type {{
+ *  date: string, status: "checking" | "ready" | "failed",
+ *  restart: Array<string>, changes: number, message: string?,
+ * }}
+ */
+
+/**
  * @typedef EmberPackagesData
  * @type {{
  *  snapshot: string?,
@@ -278,6 +286,7 @@ const first_true_key = (obj) => {
  *   log: string?, failures: Array<EmberInstallFailure>,
  *  },
  *  rows: Array<EmberPackageRow>,
+ *  update: EmberPackagesUpdate?,
  * }}
  */
 
@@ -770,6 +779,10 @@ export class Editor extends Component {
                 this.client.send("ember_run_all", {}, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_update_packages: () =>
                 this.client.send("ember_update_packages", {}, { notebook_id: this.state.notebook.notebook_id }, false),
+            ember_apply_update: (date) =>
+                this.client.send("ember_apply_update", { date }, { notebook_id: this.state.notebook.notebook_id }, false),
+            ember_cancel_update: () =>
+                this.client.send("ember_cancel_update", {}, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_split_cell: (cell_id, code) =>
                 this.client.send("ember_split_cell", { cell_id, code }, { notebook_id: this.state.notebook.notebook_id }, false),
             request_js_link_response: (cell_id, link_id, input) => {

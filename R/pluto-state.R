@@ -805,6 +805,13 @@ project_nbpkg <- function(state) {
 #'   column) -- both only while the library's `status` is `"failed"`;
 #'   `NULL`/`arr()` otherwise, so a page that has never seen a failure
 #'   never sees these fields change.
+#' * `update`: `list(date, status = "checking"|"ready"|"failed",
+#'   restart = arr(<names>), changes = <int>, message)` while a proposal
+#'   from `ember_update_packages` (`ev_preview_date(..., apply = TRUE)`)
+#'   exists, else `NULL`. A plain `preview_date()` call from R itself
+#'   shows nothing here: its proposal has `apply = FALSE`. `status`
+#'   `"checking"` is the proposal's `"fetching"` (the page's wording, not
+#'   the core's); `message` is set only once `status == "failed"`.
 project_ember <- function(state, ctx) {
   stale <- 0L
   if (isTRUE(state$allowed)) {
@@ -859,6 +866,14 @@ project_ember <- function(state, ctx) {
   if (is.na(packages$r_version)) packages$r_version <- NULL
   if (is.na(packages$bioc_version)) packages$bioc_version <- NULL
   if (is.na(packages$library$message)) packages$library$message <- NULL
+
+  if (!is.null(pv$proposal) && isTRUE(pv$proposal$apply)) {
+    ui_status <- switch(pv$proposal$status, fetching = "checking", pv$proposal$status)
+    packages$update <- list(date = pv$proposal$date, status = ui_status,
+                            restart = as_arr(pv$proposal$restart %||% character()),
+                            changes = if (is.null(pv$proposal$changes)) 0L else nrow(pv$proposal$changes),
+                            message = pv$proposal$message)
+  }
 
   plan <- pv$plan
   if (!is.null(plan)) plan <- list(install = as.integer(plan$install), restart = as_arr(plan$restart))

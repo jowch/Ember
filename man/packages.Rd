@@ -26,7 +26,7 @@ add_extra_package(name)
 
 remove_extra_package(name)
 
-preview_date(nb, date = Sys.Date(), wait = TRUE, timeout = 60)
+preview_date(nb, date = Sys.Date(), wait = TRUE, apply = FALSE, timeout = 60)
 
 set_date(nb, date)
 
@@ -49,6 +49,11 @@ Sys.Date())} is "update all".}
 \code{timeout} passes, servicing pending work meanwhile, as \code{run_cells()}'s
 \code{wait} does. Only for the console and tests; code running inside an event
 callback must use \code{wait = FALSE} and \code{on_notebook_event()} instead.}
+\item{apply}{\code{TRUE} applies the preview itself once it is ready, the
+same change \code{set_date()} would make, unless doing so would restart a
+package the worker has already loaded; the Packages tab's Update button
+uses this. \code{FALSE} (the default) only ever previews: applying is
+always a separate, explicit \code{set_date()} call.}
 \item{timeout}{Seconds to wait before giving up.}
 \item{path}{Path to a notebook's \code{.R} file, for \code{run()}.}
 \item{repos}{An \code{ember_repos()} value: where indexes and packages come
@@ -99,10 +104,13 @@ plain list, for use with \code{edit_notebook()}; they do nothing on their own.
 name is also named directly in code (removing it from the header would do
 nothing): edit the code instead.
 
-\code{preview_date()} returns \code{list(date, status, changes, problems)}, where
-\code{status} is \code{"fetching"}, \code{"ready"} or \code{"failed"}, and \code{changes} is
+\code{preview_date()} returns \code{list(date, status, changes, problems, restart)},
+where \code{status} is \code{"fetching"}, \code{"ready"} or \code{"failed"}, and \code{changes} is
 \code{NULL} or a data frame \code{name}, \code{from}, \code{to}, \code{change} (\code{"added"},
-\code{"removed"}, \code{"upgraded"}, \code{"downgraded"}, \code{"source"}).
+\code{"removed"}, \code{"upgraded"}, \code{"downgraded"}, \code{"source"}). \code{restart} is
+\code{character()} unless \code{apply = TRUE} left the proposal waiting rather than
+applying it on its own: then it names the loaded packages applying would
+restart.
 
 \code{set_date()} returns, invisibly, the applied \code{changes} (the same shape
 as \code{preview_date()}'s). It is refused (an \code{ember_refused} condition) unless
@@ -124,6 +132,17 @@ path: the \code{ember.cache_dir} option if set, otherwise
 saves the file; the library installs once execution is allowed, and if a
 package the worker has already loaded changed version, the worker
 restarts once the new library is ready, leaving every cell not run.
+\code{set_date()} and an \code{apply = TRUE} preview that needs no restart both
+go through the same pure step, \code{apply_proposal()} (packages-core.R, not
+exported): neither is allowed to apply anything but the current, ready
+proposal.
+
+A page connected to the notebook sees an \code{apply = TRUE} preview as
+\code{ember$packages$update} (\code{project_ember()}, pluto-state.R):
+\code{list(date, status, restart, changes, message)}, present only while such
+a preview exists. A plain \code{preview_date()} call (no \code{apply}) is never
+shown there: it is this function's own, R-side preview, not the Packages
+tab's.
 
 \code{run()} does not resolve: the file's lock is the authority. If the code
 names a package the lock lacks, \code{run()} says so and runs anyway (R
