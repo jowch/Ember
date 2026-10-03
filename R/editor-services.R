@@ -9,15 +9,28 @@
 #' up to the cursor): `list(line, cursor, token, start, namespace)`.
 #' `line` is `query_full`'s last line only (a multi-line query is the text
 #' before the cursor, and only the current line matters to completion);
-#' `cursor` is `line`'s length in UTF-8 bytes. `token` is the identifier
-#' being typed, read backwards from the end of `line`; when it is preceded
-#' by `pkg::` or `pkg:::`, `namespace` is `pkg` and `token` starts after the
-#' colons. `start` is `token`'s UTF-8 byte offset into `line` (and so into
-#' `query_full`, since `token` is always on the last line).
+#' `cursor` is `line`'s length in UTF-8 bytes, the unit `complete_line()`
+#' (worker.R) expects. `token` is the identifier being typed, read
+#' backwards from the end of `line`; when it is preceded by `pkg::` or
+#' `pkg:::`, `namespace` is `pkg` and `token` starts after the colons.
+#' `start` is `token`'s UTF-8 byte offset into the *whole* `query_full`
+#' (prior lines' bytes, each plus one for its `\n`, then the offset within
+#' `line`): the page (CellInput.js's `request_autocomplete`) runs it
+#' through `utf8index_to_ut16index(query_full, ...)` to place the
+#' replacement in the full document, not just the last line.
+#'
+#' `strsplit()` drops a trailing empty string (`"a\n"` splits to `"a"`,
+#' not `c("a", "")`), which would otherwise read the token from the
+#' previous line whenever `query_full` ends in a newline; the trailing
+#' empty last line is added back explicitly.
 completion_context <- function(query_full) {
   query_full <- query_full %||% ""
   lines <- strsplit(query_full, "\n", fixed = TRUE)[[1]]
-  line <- if (length(lines) == 0) "" else lines[length(lines)]
+  if (length(lines) == 0) lines <- ""
+  if (endsWith(query_full, "\n")) lines <- c(lines, "")
+  line <- lines[length(lines)]
+  prior_lines <- if (length(lines) > 1) lines[seq_len(length(lines) - 1)] else character()
+  prior_bytes <- sum(nchar(prior_lines, type = "bytes")) + length(prior_lines)
 
   pattern <- "(?:([.\\p{L}\\p{N}_]+)(:::|::))?([.\\p{L}\\p{N}_]*)$"
   m <- regexpr(pattern, line, perl = TRUE)
@@ -29,7 +42,7 @@ completion_context <- function(query_full) {
   before <- if (starts[3] > 1) substr(line, 1, starts[3] - 1) else ""
 
   list(line = line, cursor = nchar(line, type = "bytes"), token = token,
-      start = nchar(before, type = "bytes"), namespace = namespace,
+      start = prior_bytes + nchar(before, type = "bytes"), namespace = namespace,
       field = is.null(namespace) && grepl("[$@]\\s*$", before))
 }
 
@@ -83,11 +96,15 @@ fallback_completions <- function(state, ctx, base = base_names()) {
     # The engine's own tracking (exports_of()) only has a package once some
     # cell attaches it; R's always-loaded default packages (stats, utils,
     # ...) never go through that, so their own namespace is read directly
-    # -- never a package the engine hasn't already loaded into this process.
+    # -- but only when it's already loaded in this process: typing `pkg::`
+    # must never load `pkg` as a side effect (getNamespaceExports() loads
+    # an unloaded package), so an installed-but-unloaded package offers
+    # nothing here, same as one that isn't installed at all.
     exports <- exports_of(state)[[ctx$namespace]]
-    if (is.null(exports)) {
+    if (is.null(exports) && isNamespaceLoaded(ctx$namespace)) {
       exports <- tryCatch(getNamespaceExports(ctx$namespace), error = function(e) character())
     }
+    exports <- exports %||% character()
     exports <- sort(unique(exports))
     names <- exports[startsWith(exports, prefix)]
     too_long <- length(names) > 500
@@ -121,6 +138,36 @@ fallback_completions <- function(state, ctx, base = base_names()) {
     list(name = n, kind = kind, notebook = n %in% nb_hits)
   })
   list(token = ctx$token, items = items, too_long = too_long)
+}
+
+#' The worker's `complete` reply (`list(token, items, too_long)`) adjusted
+#' so its item names line up with `ctx$start`/`ctx$token`.
+#'
+#' `utils:::.completeToken()` sets its own `token` to everything the
+#' completer matched up to the cursor -- after `$`/`@` or inside a quoted
+#' path that includes the receiver (`"df$m"`, `"p@slot"`, `"sub/fi"`), not
+#' just the part `completion_context()` would offer to replace. Its
+#' `items` are prefixed the same way (`"df$mpg"`, `"p@slotx"`,
+#' `"sub/file.R"`). `ctx$start` already points past that receiver (at
+#' `ctx$token`'s own start, e.g. after the `$`), so inserting an
+#' unstripped name at `ctx$start` would duplicate it (`df$` + `df$mpg`).
+#' When the worker's token is longer than `ctx$token` and ends with it,
+#' the extra lead (`"df$"`, `"p@"`, `"sub/"`) is stripped from every name
+#' so what's inserted starts exactly where `ctx$start` says it does. A
+#' plain completion (worker token identical to `ctx$token`) is returned
+#' unchanged.
+worker_completion_items <- function(ctx, reply) {
+  wtoken <- reply$token %||% ""
+  ctoken <- ctx$token %||% ""
+  lead <- nchar(wtoken) - nchar(ctoken)
+  if (lead <= 0 || !endsWith(wtoken, ctoken)) return(reply)
+
+  prefix <- substr(wtoken, 1, lead)
+  items <- lapply(reply$items %||% list(), function(it) {
+    if (startsWith(it$name, prefix)) it$name <- substr(it$name, lead + 1, nchar(it$name))
+    it
+  })
+  list(token = ctx$token, items = items, too_long = isTRUE(reply$too_long))
 }
 
 #' Pluto's `complete_result` reply: `list(start, stop, results, too_long)`.
@@ -216,10 +263,15 @@ help_reply_html <- function(reply) {
 #' `name` in `package` (or, when `NULL`, in base, stats, utils, graphics,
 #' grDevices or methods -- the server's own R, same version as the
 #' worker). `NULL` when no such function exists; no fallback for a
-#' notebook or other package's function, which would need R to load it.
+#' notebook or other package's function, which would need R to load it --
+#' `asNamespace()` loads an unloaded package as a side effect, so every
+#' candidate is skipped unless it's already loaded (always true of the
+#' six default packages above; an explicit, unloaded `package` offers
+#' nothing rather than being loaded just to answer a signature query).
 signature_fallback <- function(name, package = NULL) {
   pkgs <- if (!is.null(package)) package else c("base", "stats", "utils", "graphics", "grDevices", "methods")
   for (p in pkgs) {
+    if (!isNamespaceLoaded(p)) next
     fn <- tryCatch(get0(name, envir = asNamespace(p), inherits = FALSE), error = function(e) NULL)
     if (is.function(fn)) return(format_signature(name, fn))
   }

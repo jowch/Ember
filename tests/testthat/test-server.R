@@ -839,7 +839,7 @@ test_that("ember_render_plot clamps width/height/res and re-renders through a re
 
 # ---- Editor services (ui-2.md, 4) -------------------------------------------
 
-test_that("complete in safe preview replies from the fallback within handle_message(); with an idle worker, df$ completes to df$mpg (56)", {
+test_that("complete in safe preview replies from the fallback within handle_message(); with an idle worker, df$ offers mpg (not df$mpg: start/stop already skip the $, and the worker's own 'df$mpg' token/item name is stripped to match, worker_completion_items()) (56)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("df <- mtcars")))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
@@ -863,15 +863,23 @@ test_that("complete in safe preview replies from the fallback within handle_mess
   handle_message(server, ws, wire("complete", notebook_id = id, query = "df$", query_full = "df$"))
   deadline <- Sys.time() + 10
   found <- FALSE
+  reply_msg <- NULL
   while (!found && Sys.time() < deadline) {
     later::run_now(timeout = 1)
     results <- Filter(function(m) identical(m$type, "complete_result"), ws$messages)
     if (length(results) > 0) {
-      names <- vapply(results[[length(results)]]$message$results, `[[`, character(1), 1)
-      found <- "df$mpg" %in% names
+      reply_msg <- results[[length(results)]]$message
+      names <- vapply(reply_msg$results, `[[`, character(1), 1)
+      found <- "mpg" %in% names
     }
   }
   expect_true(found)
+  # The range inserting "mpg" at [start, stop) over "df$" gives "df$mpg",
+  # not "df$df$mpg" (the worker's own token/items for a `$` completion
+  # include the receiver, "df$mpg"; completion_reply()'s start/stop already
+  # point past the "$", so an unstripped name would duplicate it).
+  expect_identical(reply_msg$start, nchar("df$", type = "bytes"))
+  expect_false("df$mpg" %in% vapply(reply_msg$results, `[[`, character(1), 1))
 })
 
 test_that("docs: preview mean needs R running, a notebook-defined f shows its code, and a worker shows the rewritten help page (57)", {

@@ -719,7 +719,7 @@ handlers <- list(
       return(invisible(NULL))
     }
     worker_query(hub$nb, list(type = "complete", line = ctx$line, cursor = ctx$cursor), function(reply) {
-      items <- if (!is.null(reply)) reply else fallback_completions(st, ctx)
+      items <- if (!is.null(reply)) worker_completion_items(ctx, reply) else fallback_completions(st, ctx)
       send(cl, reply_message(req, "complete_result", completion_reply(ctx, items)))
     })
   },

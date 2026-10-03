@@ -19,6 +19,29 @@ test_that("completion_context() (49)", {
   expect_null(ctx3$namespace)
 })
 
+test_that("completion_context() start is a byte offset into the whole query, not just the last line", {
+  # "x <- 1\nme": the token is on line 2, after a first line of 7 bytes
+  # ("x <- 1") plus the newline.
+  ctx <- completion_context("x <- 1\nme")
+  expect_identical(ctx$token, "me")
+  expect_identical(ctx$start, nchar("x <- 1\n", type = "bytes"))
+
+  # A trailing newline must not drop the (empty) last line: the token
+  # being completed is on a fresh, empty line right after it, not back on
+  # the previous line.
+  ctx2 <- completion_context("x <- 1\n")
+  expect_identical(ctx2$line, "")
+  expect_identical(ctx2$token, "")
+  expect_identical(ctx2$start, nchar("x <- 1\n", type = "bytes"))
+
+  # Non-ASCII on an earlier line: its UTF-8 byte length (not character
+  # count) must be what's added to the offset.
+  ctx3 <- completion_context("y <- 'é'\nme")
+  expect_identical(ctx3$token, "me")
+  expect_identical(nchar("é", type = "bytes"), 2L)
+  expect_identical(ctx3$start, nchar("y <- 'é'\n", type = "bytes"))
+})
+
 test_that("the fallback offers nothing after $ or @, where only the worker knows the fields", {
   for (q in c("df$", "df$m", "obj@", "x <- df $ ")) {
     ctx <- completion_context(q)
@@ -60,6 +83,36 @@ test_that("fallback_completions() (50)", {
   r3 <- fallback_completions(st2, list(token = "", namespace = "bigpkg"))
   expect_true(r3$too_long)
   expect_length(r3$items, 500)
+})
+
+test_that("worker_completion_items() strips the worker's $/@/path prefix so names match ctx$start", {
+  ctx <- completion_context("df$m")
+  expect_identical(ctx$token, "m")
+  reply <- list(token = "df$m", items = list(list(name = "df$mpg", kind = "other", notebook = FALSE)),
+               too_long = FALSE)
+  out <- worker_completion_items(ctx, reply)
+  expect_identical(out$items[[1]]$name, "mpg")
+  expect_identical(out$token, "m")
+
+  ctx2 <- completion_context("p@slot")
+  reply2 <- list(token = "p@slot", items = list(list(name = "p@slotx", kind = "other", notebook = FALSE)),
+                too_long = FALSE)
+  out2 <- worker_completion_items(ctx2, reply2)
+  expect_identical(out2$items[[1]]$name, "slotx")
+
+  ctx3 <- completion_context("x <- \"sub/fi")
+  reply3 <- list(token = "sub/fi", items = list(list(name = "sub/file.R", kind = "path", notebook = FALSE)),
+                too_long = FALSE)
+  out3 <- worker_completion_items(ctx3, reply3)
+  expect_identical(out3$items[[1]]$name, "file.R")
+
+  # A plain completion (no $/@/path receiver): the worker's token equals
+  # ctx$token, so nothing is stripped.
+  ctx4 <- list(token = "fil")
+  reply4 <- list(token = "fil", items = list(list(name = "file", kind = "function", notebook = FALSE)),
+                too_long = FALSE)
+  out4 <- worker_completion_items(ctx4, reply4)
+  expect_identical(out4$items[[1]]$name, "file")
 })
 
 test_that("completion_reply() (51)", {
@@ -112,4 +165,29 @@ test_that("sanitize_help_html() drops scripts, styles, iframes, event handlers a
 test_that("signature_fallback() (55)", {
   expect_match(signature_fallback("lm"), "^lm\\(formula, data")
   expect_null(signature_fallback("my_fun"))
+})
+
+#' Whether `pkg` is installed, without loading it: unlike
+#' `requireNamespace()` (and `testthat::skip_if_not_installed()`, which
+#' calls it), `system.file(package = ...)` only looks the package up on
+#' disk. These tests are about code that must not load a package as a
+#' side effect, so checking "is it installed" must not load it either.
+pkg_installed_unloaded <- function(pkg) {
+  nzchar(system.file(package = pkg)) && !isNamespaceLoaded(pkg)
+}
+
+test_that("fallback_completions() for pkg:: never loads an installed-but-unloaded package", {
+  skip_if_not(pkg_installed_unloaded("boot"), "boot not installed, or already loaded")
+
+  st <- fallback_state()
+  r <- fallback_completions(st, list(token = "", namespace = "boot"))
+  expect_false(isNamespaceLoaded("boot"))
+  expect_length(r$items, 0)
+})
+
+test_that("signature_fallback() for an explicit, unloaded package never loads it", {
+  skip_if_not(pkg_installed_unloaded("codetools"), "codetools not installed, or already loaded")
+
+  expect_null(signature_fallback("findGlobals", package = "codetools"))
+  expect_false(isNamespaceLoaded("codetools"))
 })
