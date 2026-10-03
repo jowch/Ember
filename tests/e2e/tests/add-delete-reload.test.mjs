@@ -44,6 +44,13 @@ test("add + run + delete a cell, then reload: state matches the file", async (t)
 
   const countBefore = await page.locator("pluto-cell").count();
 
+  // The page drops the cell before the server has saved the deletion (about
+  // 100 ms later); a reload inside that window would bring the cell back.
+  const deadline = Date.now() + 15000;
+  while (/41 \+ 1/.test(fs.readFileSync(notebook, "utf8")) && Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+
   await page.reload();
   await page.waitForSelector("pluto-cell", { timeout: 30000 });
   await page.waitForFunction(
