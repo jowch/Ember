@@ -268,18 +268,21 @@ test_that("ember_run_all runs only not-run cells; a fresh one keeps its last_run
 # ---- not_run_ids() excludes cells "Run all" can't run -----------------------
 
 test_that("not_run_ids() excludes cells with their own graph error (ui-3 10)", {
-  s <- fake_state(list(S = cell(""), A = cell("z <- 1"), B = cell("z <- 2"), OK = cell("5")))
+  s <- fake_state(list(S = cell(""), A = cell("z <- 1"), B = cell("z <- 2"), C = cell("z + 1"),
+                       OK = cell("5")))
   r <- boot(s, "OK")
   r <- drive(r$state, wk_done(1, last_token(r), report(), at(10)))
 
   ctx <- view_context(r$state)
   expect_false(is.null(ctx$errors_by_cell[[match("A", ctx$ids)]]))
   expect_false(is.null(ctx$errors_by_cell[[match("B", ctx$ids)]]))
+  expect_null(ctx$errors_by_cell[[match("C", ctx$ids)]])
 
   ids <- not_run_ids(r$state, ctx)
   expect_false("A" %in% ids)
   expect_false("B" %in% ids)
   expect_false("OK" %in% ids)  # already ran
+  expect_true("C" %in% ids)    # a not-run dependent of the graph-error cells still counts
 })
 
 test_that("not_run_ids() counts a not-run dependent of a failed cell (ui-3 10)", {

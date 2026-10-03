@@ -293,7 +293,8 @@ test_that("an error lets a dependent run on its own instead of dropping it from 
   expect_true("B" %in% r$state$pending)
 
   r2 <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "boom")), at(10)))
-  expect_true("B" %in% r$state$pending || "B" %in% sent_cells(r2) || identical(r2$state$worker$running$cell, "B"))
+  expect_equal(last_sent(r2)$cell, "B")
+  expect_false("B" %in% r2$state$pending)
   r3 <- drive(r2$state, wk_done(1, last_token(r2), report(), at(11)))
   expect_equal(r3$state$results$B$status, "ok")
 })
@@ -303,6 +304,8 @@ test_that("a dependent with no result stays not run after an ancestor errors (ui
   r <- boot(s, "A")
   r <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "boom")), at(10)))
   expect_equal(snapshot_of(r$state)$cells$B$status, "not_run")
+  expect_false("B" %in% r$state$pending)
+  expect_false("B" %in% sent_cells(r))
 })
 
 test_that("run_order follows the current graph, not display order alone (42)", {
