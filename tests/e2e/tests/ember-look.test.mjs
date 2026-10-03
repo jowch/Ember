@@ -123,6 +123,13 @@ test("look: markdown cell renders folded, with R tokens in its fenced block (11)
   const renderedText = await page.locator(`${cellSelector("MD")} pluto-output`).innerText();
   assert.match(renderedText, /Rich outputs/);
 
+  // R tokens, not just the raw "```r" fence text: highlight.js actually
+  // tokenized the fenced block's "1 + 1" (a number and an operator -- no
+  // keyword in this fixture, so `.hljs-number` is the real span to expect).
+  // This output isn't affected by the cell's own code-fold state.
+  const hasHighlightToken = await page.locator(`${cellSelector("MD")} pluto-output .hljs-number`).count();
+  assert.ok(hasHighlightToken > 0, "expected the fenced R block to carry a highlight.js token span");
+
   // Unfold: click the fold toggle. The design's check reads the syntax
   // tree's top node through CodeMirror 6's EditorView.findFromDOM, but a
   // freshly unfolded cell first mounts a non-interactive "static fake"

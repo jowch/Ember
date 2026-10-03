@@ -82,12 +82,15 @@ test("offline: rich.R works with every non-local request aborted (18)", async (t
   await page.locator('button.toggle_export[title^="Export"]').click();
   await page.waitForSelector("dialog#export[open]", { timeout: 5000 });
 
-  // Code highlighted as R: the MD cell's fenced R block should carry
-  // highlight.js's R spans once rendered (also covered by markdown.test.mjs);
-  // here we only need *some* `.hljs-keyword` to exist somewhere on the page,
-  // proving highlight.js ran fully offline.
-  await page.waitForFunction(() => document.querySelector(".hljs-keyword") != null, null, { timeout: 10000 })
-    .catch(() => {}); // rich.R's MD cell is folded by default; not fatal if absent here
+  // Code highlighted as R: the MD cell's fenced block (` ```r\n1 + 1\n``` `)
+  // is rendered as output regardless of the cell's own code-fold state (only
+  // the *input* editor folds), so highlight.js's R grammar should have
+  // tagged "1" as a number by now. ("1 + 1" has no keyword, so
+  // `.hljs-keyword` would never appear here -- `.hljs-number` is what this
+  // specific fixture actually produces.)
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.querySelector(".hljs-number") != null,
+    cellSelector("MD"), { timeout: 10000 });
 
   assert.ok(aborted.some((u) => u.includes("mathjax")), "expected MathJax to be the thing aborted");
   assert.deepEqual(failedRequests, []);
@@ -132,13 +135,34 @@ test("offline: each vendored library does its job (19)", async (t) => {
   await page.waitForSelector("dialog#export[open]", { timeout: 5000 });
   await page.keyboard.press("Escape")
 
-  // highlight.js: the fenced R block inside MD is highlighted once unfolded.
-  await page.locator(`${cellSelector("MD")} .foldcode, ${cellSelector("MD")}`).first().click({ trial: true }).catch(() => {});
-  const unfold = page.locator(`${cellSelector("MD")} button.foldcode`);
-  if (await unfold.count() > 0) await unfold.first().click();
+  // highlight.js: the fenced R block inside MD is highlighted. Its output
+  // (unlike its input editor) isn't affected by the cell's code-fold state,
+  // and "1 + 1" has no keyword, so the real tag to expect is `.hljs-number`
+  // (not `.cm-content`, which is just CodeMirror's own editor and would
+  // make this pass even if highlight.js never ran).
   await page.waitForFunction(
-    (sel) => document.querySelector(sel)?.querySelector(".hljs-keyword, .cm-content") != null,
-    cellSelector("MD"), { timeout: 10000 }).catch(() => {});
+    (sel) => document.querySelector(sel)?.querySelector(".hljs-number") != null,
+    cellSelector("MD"), { timeout: 10000 });
+
+  // lodash, semver, DOMPurify: each vendored file is a real ES module
+  // served from the page's own origin, so it can be imported and exercised
+  // directly -- a cheap, real check of the library's own behaviour rather
+  // than just "the module loaded".
+  const libChecks = await page.evaluate(async () => {
+    const [{ default: _ }, { default: semver }, { default: purify }] = await Promise.all([
+      import("./imports/lodash-es.js"),
+      import("./imports/semver-es.js"),
+      import("./imports/DOMPurify.js"),
+    ]);
+    return {
+      lodash: _.last([1, 2, 3]),
+      semver: semver.gt("1.2.0", "1.1.0"),
+      dompurifyStripsScript: !purify.sanitize("<script>window.pwned = true</script><b>ok</b>").includes("<script"),
+    };
+  });
+  assert.equal(libChecks.lodash, 3, "expected lodash's _.last to work");
+  assert.equal(libChecks.semver, true, "expected semver's gt() to work");
+  assert.ok(libChecks.dompurifyStripsScript, "expected DOMPurify to strip a <script> tag");
 
   assertNoProblemsOffline(page);
 });

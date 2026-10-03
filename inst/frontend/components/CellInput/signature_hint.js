@@ -1,4 +1,4 @@
-import { EditorView, StateField, StateEffect, showTooltip, syntaxTree } from "../../imports/CodemirrorPlutoSetup.js"
+import { EditorView, StateField, StateEffect, ViewPlugin, showTooltip, syntaxTree } from "../../imports/CodemirrorPlutoSetup.js"
 
 /**
  * The call the cursor is inside, if any: the innermost `Call` whose
@@ -45,14 +45,19 @@ const render_tooltip = (text) => ({
 
 /**
  * A CodeMirror extension: inside a call's arguments, a tooltip above the
- * line shows its signature (ui-2.md "4d. Signatures"). Debounced 150 ms,
- * cached per `pkg::name`.
+ * line shows its signature (ui-2.md "4d. Signatures"). Debounced 150 ms.
+ *
+ * Only `pkg::name`/`pkg:::name` answers are cached: a package's exports
+ * don't change mid-session. An unqualified name may be a notebook
+ * definition, which can be redefined with different arguments at any time,
+ * so it's requested fresh every time. A `null` answer (worker busy, safe
+ * preview, or the 5s timeout in CellInput.js) is never cached either way,
+ * so the next keystroke or cursor move retries instead of showing nothing
+ * forever.
  * @param {{ request_signature: (q: { name: string, package: string? }) => Promise<string?> }} props
  */
 export function signature_hint({ request_signature }) {
-    let last_key = null
     let cache = new Map()
-    let timer = null
 
     let dispatch_tooltip = (view, pos, text) => {
         view.dispatch({
@@ -60,34 +65,43 @@ export function signature_hint({ request_signature }) {
         })
     }
 
-    let compute = (view) => {
-        let call = call_at_cursor(view.state)
-        if (call == null) {
-            last_key = null
-            dispatch_tooltip(view, 0, null)
-            return
-        }
-        let key = `${call.package ?? ""}::${call.name}`
-        last_key = key
+    let plugin = ViewPlugin.define((view) => {
+        let last_key = null
+        let timer = null
 
-        if (cache.has(key)) {
-            if (last_key === key) dispatch_tooltip(view, call.pos, cache.get(key))
-            return
-        }
-        request_signature({ name: call.name, package: call.package })
-            .then((text) => {
-                cache.set(key, text)
-                if (last_key === key) dispatch_tooltip(view, call.pos, text)
-            })
-            .catch(() => {})
-    }
+        let compute = () => {
+            let call = call_at_cursor(view.state)
+            if (call == null) {
+                last_key = null
+                dispatch_tooltip(view, 0, null)
+                return
+            }
+            let key = `${call.package ?? ""}::${call.name}`
+            last_key = key
 
-    return [
-        signature_tooltip_field,
-        EditorView.updateListener.of((update) => {
-            if (!update.docChanged && !update.selectionSet) return
-            if (timer != null) clearTimeout(timer)
-            timer = setTimeout(() => compute(update.view), 150)
-        }),
-    ]
+            if (cache.has(key)) {
+                dispatch_tooltip(view, call.pos, cache.get(key))
+                return
+            }
+            request_signature({ name: call.name, package: call.package })
+                .then((text) => {
+                    if (call.package != null && text != null) cache.set(key, text)
+                    if (last_key === key) dispatch_tooltip(view, call.pos, text)
+                })
+                .catch(() => {})
+        }
+
+        return {
+            update(update) {
+                if (!update.docChanged && !update.selectionSet) return
+                if (timer != null) clearTimeout(timer)
+                timer = setTimeout(compute, 150)
+            },
+            destroy() {
+                if (timer != null) clearTimeout(timer)
+            },
+        }
+    })
+
+    return [signature_tooltip_field, plugin]
 }

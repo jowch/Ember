@@ -205,7 +205,6 @@ const r_completions_to_cm =
         const is_already_a_global = (text) => text != null && Object.keys(globals).includes(text)
 
         const to_complete_onto = to_complete_full.slice(0, start)
-        const is_field_expression = /[$@]$/.test(to_complete_onto)
 
         const skip_filter = ctx.matchBefore(/~[^\s"]*/) != null
 

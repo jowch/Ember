@@ -7,10 +7,9 @@ import { Logs } from "./Logs.js"
 import { RunArea, useDebouncedTruth } from "./RunArea.js"
 import { cl } from "../common/ClassTable.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
-import { open_pluto_popup } from "../common/open_pluto_popup.js"
 import { SafePreviewOutput } from "./SafePreviewUI.js"
 import { useEventListener } from "../common/useEventListener.js"
-import { t, th } from "../common/lang.js"
+import { t } from "../common/lang.js"
 
 const useCellApi = (node_ref, published_object_keys, pluto_actions) => {
     const [cell_api_ready, set_cell_api_ready] = useState(false)
@@ -30,63 +29,6 @@ const useCellApi = (node_ref, published_object_keys, pluto_actions) => {
     })
 
     return cell_api_ready
-}
-
-/**
- * @param {String} a_cell_id
- * @param {import("./Editor.js").NotebookData} notebook
- * @returns {Array<String>}
- */
-const upstream_of = (a_cell_id, notebook) => Object.values(notebook?.cell_dependencies?.[a_cell_id]?.upstream_cells_map || {}).flatMap((x) => x)
-
-/**
- * @param {String} a_cell_id
- * @param {import("./Editor.js").NotebookData} notebook
- * @param {Function} predicate
- * @param {Set<String>} explored
- * @returns {String | null}
- */
-const find_upstream_of = (a_cell_id, notebook, predicate, explored = new Set([])) => {
-    if (explored.has(a_cell_id)) return null
-    explored.add(a_cell_id)
-
-    if (predicate(a_cell_id)) {
-        return a_cell_id
-    }
-
-    for (let upstream of upstream_of(a_cell_id, notebook)) {
-        const upstream_val = find_upstream_of(upstream, notebook, predicate, explored)
-        if (upstream_val !== null) {
-            return upstream_val
-        }
-    }
-
-    return null
-}
-
-/**
- * @param {String} flag_name
- * @returns {Function}
- */
-const hasTargetBarrier = (flag_name) => {
-    return (a_cell_id, notebook) => {
-        return notebook?.cell_inputs?.[a_cell_id].metadata[flag_name]
-    }
-}
-
-const on_jump = (hasBarrier, pluto_actions, cell_id) => () => {
-    const notebook = pluto_actions.get_notebook() || {}
-    const barrier_cell_id = find_upstream_of(cell_id, notebook, (c) => hasBarrier(c, notebook))
-    if (barrier_cell_id !== null) {
-        window.dispatchEvent(
-            new CustomEvent("cell_focus", {
-                detail: {
-                    cell_id: barrier_cell_id,
-                    line: 0, // 1-based to 0-based index
-                },
-            })
-        )
-    }
 }
 
 /**
@@ -300,8 +242,16 @@ export const Cell = ({
 
     const any_logs = useMemo(() => !_.isEmpty(logs), [logs])
 
-    const skip_as_script_jump = useCallback(on_jump(hasTargetBarrier("skip_as_script"), pluto_actions, cell_id), [pluto_actions, cell_id])
-    const disabled_jump = useCallback(on_jump(hasTargetBarrier("disabled"), pluto_actions, cell_id), [pluto_actions, cell_id])
+    // Ember has no "disabled cell" feature (ui-2.md), so `depends_on_disabled_cells`
+    // here only ever means "blocked by an ancestor's error" (`ember.blocked_by`,
+    // set server-side to the exact cell to jump to) or "stale"; there's nothing
+    // for the stale case to jump to, so the button is a no-op then, same as before.
+    const blocked_by_cell_id = ember?.blocked_by ?? null
+    const upstream_error_jump = useCallback(() => {
+        if (blocked_by_cell_id != null) {
+            window.dispatchEvent(new CustomEvent("cell_focus", { detail: { cell_id: blocked_by_cell_id, line: 0 } }))
+        }
+    }, [blocked_by_cell_id])
 
     return html`
         <pluto-cell
@@ -400,7 +350,8 @@ export const Cell = ({
                 running=${running}
                 code_differs=${class_code_differs}
                 queued=${queued}
-                on_jump=${disabled_jump}
+                on_jump=${upstream_error_jump}
+                jump_title=${upstream_error ? t("t_jump_cell_blocked_by_error") : undefined}
             />
             <button
                 onClick=${() => {
@@ -411,35 +362,6 @@ export const Cell = ({
             >
                 <span></span>
             </button>
-            ${skip_as_script
-                ? html`<div
-                      class="skip_as_script_marker"
-                      title=${t("t_cell_disabled_in_file_tooltip")}
-                      onClick=${(e) => {
-                          open_pluto_popup({
-                              type: "info",
-                              source_element: e.target,
-                              body: th("t_cell_disabled_in_file_explanation"),
-                          })
-                      }}
-                  ></div>`
-                : depends_on_skipped_cells
-                  ? html`<div
-                        class="depends_on_skipped_marker"
-                        title=${t("t_cell_indirectly_disabled_in_file_tooltip")}
-                        onClick=${(e) => {
-                            open_pluto_popup({
-                                type: "info",
-                                source_element: e.target,
-                                body: th("t_cell_indirectly_disabled_in_file_explanation", {
-                                    upstreamLink: html`<span onClick=${skip_as_script_jump} style="cursor: pointer; text-decoration: underline">
-                                        ${t("t_cell_upstreamLink")}</span
-                                    >`,
-                                }),
-                            })
-                        }}
-                    ></div>`
-                  : null}
         </pluto-cell>
     `
 }
