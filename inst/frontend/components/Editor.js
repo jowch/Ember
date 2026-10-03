@@ -965,9 +965,6 @@ all patches: ${JSON.stringify(patches, null, 1)}
             })
 
             this.updateLang()
-
-            this.client.send("complete", { query: "sq" }, { notebook_id: this.state.notebook.notebook_id })
-            this.client.send("complete", { query: "\\sq" }, { notebook_id: this.state.notebook.notebook_id })
         }
 
         const on_connection_status = (val, hopeless) => {

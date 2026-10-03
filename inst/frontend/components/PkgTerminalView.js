@@ -7,12 +7,7 @@ export const IoniconButton = ({ icon, ...kwargs }) => {
 
 const make_spinner_spin = (original_html) => original_html.replaceAll("◐", `<span class="make-me-spin">◐</span>`)
 
-// `hide_button`'s "open in full screen" used to open BigPkgTerminal, a
-// dialog with the same text at a bigger size. Ember's Packages tab
-// (PackagesTab.js) now shows install progress with more detail than that
-// dialog did, so the button (and BigPkgTerminal) are gone; every caller
-// here passes `hide_button = true`.
-const TerminalViewAnsiUp = ({ value, hide_button = true }) => {
+const TerminalViewAnsiUp = ({ value }) => {
     const node_ref = useRef(/** @type {HTMLElement?} */ (null))
 
     const start_time = useRef(Date.now())
