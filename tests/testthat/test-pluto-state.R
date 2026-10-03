@@ -243,15 +243,39 @@ test_that("stale sets ember$stale, not depends_on_disabled_cells (12)", {
   expect_false(cr$depends_on_disabled_cells)
 })
 
-test_that("blocked-by-failure sets depends_on_disabled_cells and ember$blocked_by (12)", {
-  s <- fake_state(list(S = cell(""), A = cell('x <- stop("boom")'), B = cell("y <- x")))
+test_that("an upstream error projects ember$upstream_error, not depends_on_disabled_cells (ui-3 11)", {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("a + 1")))
   r <- boot(s, c("A", "B"))
-  r <- drive(r$state, wk_done(1, last_token(r), report(error = list(message = "boom")), at(10)))
-  v <- snapshot_of(r$state)$cells$B
-  expect_false(is.na(v$blocked_by))
-  cr <- project_cell_result(v)
-  expect_true(cr$depends_on_disabled_cells)
-  expect_equal(cr$ember$blocked_by, v$blocked_by)
+  r <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "boom")), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r),
+                              report(status = "error", error = list(message = "object 'a' not found")), at(11)))
+
+  js <- pluto_state(r$state)$js
+  expect_true(check_wire(js))
+  cr <- js$cell_results$B
+  expect_false(cr$depends_on_disabled_cells)
+  expect_equal(cr$ember$upstream_error, list(list(name = "a", cell = "A")))
+  expect_equal(cr$output$mime, "application/vnd.pluto.stacktrace+object")
+  expect_equal(cr$output$body$msg, "Another cell defining a contains errors.")
+  expect_equal(cr$output$body$stacktrace, list())
+  expect_equal(cr$output$body$plain_error, "Another cell defining a contains errors.\nobject 'a' not found")
+
+  for (id in c("S", "A")) {
+    expect_null(js$cell_results[[id]]$ember$upstream_error)
+  }
+})
+
+test_that("two names in an upstream error join with 'or' (ui-3 11)", {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- 2"), C = cell("a + b")))
+  r <- boot(s, c("A", "B", "C"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "boom a")), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "boom b")), at(11)))
+  r <- drive(r$state, wk_done(1, last_token(r),
+                              report(status = "error", error = list(message = "neither found")), at(12)))
+
+  cr <- pluto_state(r$state)$js$cell_results$C
+  expect_equal(cr$ember$upstream_error, list(list(name = "a", cell = "A"), list(name = "b", cell = "B")))
+  expect_equal(cr$output$body$msg, "Another cell defining a or b contains errors.")
 })
 
 test_that("code that differs from the last run sets ember$code_changed, not depends_on_disabled_cells (12)", {

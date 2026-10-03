@@ -124,7 +124,7 @@ pluto_state <- function(state, previous = NULL) {
 #'
 #' `list(cell = state$cells[[id]], result = state$results[[id]],
 #'       console = <worker$running$console when this cell runs, else NULL>,
-#'       flags = ctx$flags[[id]],   # queued, running, blocked, blocked_by, waiting_for
+#'       flags = ctx$flags[[id]],   # queued, running, waiting_for
 #'       errors = ctx$errors[[id]], # graph errors on this cell: shared within one graph
 #'       allowed = state$allowed)   # sanitize/preview only changes with this
 #'
@@ -144,8 +144,7 @@ cell_key <- function(state, ctx, i) {
   is_running <- !is.null(running) && identical(running$cell, id)
   list(cell = state$cells[[i]], result = ctx$results[[i]],
        is_running = is_running, console = if (is_running) running$console else NULL,
-       queued = ctx$queued[[i]], blocked = ctx$blocked[[i]],
-       blocked_by = ctx$blocked_by[[i]], waiting_for = ctx$waiting[[i]],
+       queued = ctx$queued[[i]], waiting_for = ctx$waiting[[i]],
        errors = ctx$errors_by_cell[[i]], allowed = state$allowed)
 }
 
@@ -164,8 +163,6 @@ key_unchanged <- function(state, ctx, i, prev_key) {
   if (!identical(is_running, prev_key$is_running)) return(FALSE)
   if (!identical(if (is_running) running$console else NULL, prev_key$console)) return(FALSE)
   if (!identical(ctx$queued[[i]], prev_key$queued)) return(FALSE)
-  if (!identical(ctx$blocked[[i]], prev_key$blocked)) return(FALSE)
-  if (!identical(ctx$blocked_by[[i]], prev_key$blocked_by)) return(FALSE)
   if (!identical(ctx$waiting[[i]], prev_key$waiting_for)) return(FALSE)
   if (!identical(ctx$errors_by_cell[[i]], prev_key$errors)) return(FALSE)
   identical(state$allowed, prev_key$allowed)
@@ -186,32 +183,37 @@ project_cell_input <- function(view) {
 #' * `queued`, `running`: the view's.
 #' * `errored`: any error on the view, or status "error"/"interrupted".
 #' * `runtime`: seconds -> nanoseconds as a double, or NULL when not run.
-#' * `depends_on_disabled_cells`: `!is.na(blocked_by)` -- an ancestor's
-#'   failed result blocks this one. Increment 1 also folded "stale" and
-#'   "code changed outside the page" into this one flag (Pluto's only dimmed
-#'   state); increment 2 gives those their own labels (`ember$stale`,
-#'   `ember$code_changed`, below), so this field narrows to what it is named
-#'   for.
-#' * `ember`: `list(stale, code_changed, blocked_by = <id> | NULL)`, from the
-#'   view's `stale`, `code_differs` and `blocked_by` -- all already in
-#'   `cell_key()`'s key (`code_differs` is derived from `cell$code` and
-#'   `result$code`; `blocked_by` is `ctx$blocked_by[[i]]`), so no extra key
-#'   field is needed for it. The page shows a "stale", "code changed" or
-#'   "upstream error" label and dims the output the same way
-#'   `depends_on_disabled_cells` used to for all three (ui-2.md, 5).
+#' * `depends_on_disabled_cells`: always `FALSE` in ui-3's piece 1a (Ember
+#'   has no disabled cell yet, and a failed ancestor no longer blocks its
+#'   dependents); piece 1b fills it for real.
+#' * `ember`: `list(stale, code_changed, upstream_error?)`, from the view's
+#'   `stale` and `code_differs` -- both already in `cell_key()`'s key
+#'   (`code_differs` is derived from `cell$code` and `result$code`).
+#'   `upstream_error` is present only when the last error's kind is
+#'   `"upstream"`, as `as_arr(list(list(name, cell), ...))` from that
+#'   error's `names`/`cells` (also in the key, through `result`). The page
+#'   shows a "stale", "code changed" or "another cell ... contains errors"
+#'   label/message and dims the output the same way `depends_on_disabled_cells`
+#'   used to for all three (ui-2.md, 5).
 #' * `output`: project_output() of the view.
 #' * `logs`: project_logs() of the view's console.
 #' * `published_object_keys = list()`, `depends_on_skipped_cells = FALSE`.
 project_cell_result <- function(view) {
   errored <- length(view$errors) > 0 || view$status %in% c("error", "interrupted")
-  blocked_by <- if (is.na(view$blocked_by)) NULL else view$blocked_by
+  last_error <- if (length(view$errors) > 0) view$errors[[length(view$errors)]] else NULL
+  upstream_error <- if (!is.null(last_error) && identical(last_error$kind, "upstream")) {
+    as_arr(Map(function(n, c) list(name = n, cell = c), last_error$names, last_error$cells))
+  } else {
+    NULL
+  }
+  ember <- c(list(stale = isTRUE(view$stale), code_changed = isTRUE(view$code_differs)),
+            if (!is.null(upstream_error)) list(upstream_error = upstream_error))
   list(cell_id = view$id,
       queued = isTRUE(view$queued), running = isTRUE(view$running),
       errored = errored,
       runtime = if (is.null(view$runtime)) NULL else as.double(view$runtime) * 1e9,
-      depends_on_disabled_cells = !is.null(blocked_by),
-      ember = list(stale = isTRUE(view$stale), code_changed = isTRUE(view$code_differs),
-                  blocked_by = blocked_by),
+      depends_on_disabled_cells = FALSE,
+      ember = ember,
       output = project_output(view),
       logs = project_logs(view$console, view$id),
       published_object_keys = list(), depends_on_skipped_cells = FALSE)
@@ -399,11 +401,13 @@ commonmark_available <- function() requireNamespace("commonmark", quietly = TRUE
 render_markdown <- function(text) commonmark::markdown_html(text %||% "")
 
 #' Join names the way the frontend's rewritten messages read: one name as
-#' is, two with "and", more as a comma list with "and" before the last.
-join_names <- function(names) {
+#' is, two with `conj`, more as a comma list with `conj` before the last.
+#' `conj` is `"and"` for multiple definitions and cycles, `"or"` for an
+#' upstream error (several names could each fix the cell; any one would do).
+join_names <- function(names, conj = "and") {
   if (length(names) <= 1) return(if (length(names) == 0) "" else names)
-  if (length(names) == 2) return(paste(names, collapse = " and "))
-  paste0(paste(names[-length(names)], collapse = ", "), " and ", names[length(names)])
+  if (length(names) == 2) return(paste(names, collapse = paste0(" ", conj, " ")))
+  paste0(paste(names[-length(names)], collapse = ", "), " ", conj, " ", names[length(names)])
 }
 
 #' A stack-trace body: `list(msg, stacktrace, plain_error)`.
@@ -415,6 +419,14 @@ join_names <- function(names) {
 #' error's `fixes` is a further line (ErrorMessage.js is changed to show
 #' those lines as they are instead of Julia's "begin ... end" hint).
 #'
+#' `"upstream"` is its own case: `msg` is "Another cell defining a contains
+#' errors." (names joined with "or": any one of them failing is enough),
+#' `stacktrace` is empty (there is nothing of the engine's own to show), and
+#' `plain_error` is `msg` plus R's own message on a second line, for anyone
+#' who copies it -- unlike every other kind, where `plain_error` is just
+#' `msg` (with `fixes`), because the engine's own `message` already reads
+#' that way.
+#'
 #' `stacktrace`: one frame per traceback call, innermost first:
 #' `list(call, call_short, func, inlined = FALSE, from_c = FALSE, file = "",
 #' path = "", line = -1L, linfo_type = "", url = NULL, source_package =
@@ -422,6 +434,10 @@ join_names <- function(names) {
 #' srcrefs are kept; `file = ""` keeps the frontend from linking frames to
 #' cells.
 project_error <- function(error) {
+  if (identical(error$kind, "upstream")) {
+    msg <- sprintf("Another cell defining %s contains errors.", join_names(error$names, conj = "or"))
+    return(list(msg = msg, stacktrace = list(), plain_error = paste(msg, error$message, sep = "\n")))
+  }
   msg <- switch(error$kind,
     multiple_definitions = sprintf("Multiple definitions for %s", join_names(error$names)),
     cycle = sprintf("Cyclic references among %s.", join_names(error$names)),

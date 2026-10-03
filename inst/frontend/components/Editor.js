@@ -184,7 +184,7 @@ const first_true_key = (obj) => {
  *  precedence_heuristic: number?,
  *  depends_on_disabled_cells: boolean,
  *  depends_on_skipped_cells: boolean,
- *  ember: { stale: boolean, code_changed: boolean, blocked_by: string? },
+ *  ember: { stale: boolean, code_changed: boolean, upstream_error?: {name: string, cell: string}[], disabled_by?: string, can_disable: boolean },
  *  output: {
  *      body: string | Object,
  *      persist_js_state: boolean,

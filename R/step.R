@@ -265,25 +265,6 @@ can_run <- function(state, id) {
   !(id %in% blocked_cells(state$graph))
 }
 
-#' Map id -> id of the ancestor whose last result errored or was
-#' interrupted, for every cell downstream of such a cell. No longer used to
-#' decide whether a cell can run (dependents of a failed cell run anyway);
-#' kept only for `view_context()`'s `blocked_by` field (state.R), which
-#' ui-3's step 4 removes.
-failed_blockers <- function(state) {
-  failed <- Filter(function(fid) {
-    r <- state$results[[fid]]
-    !is.null(r) && r$status %in% c("error", "interrupted")
-  }, names(state$results))
-  out <- list()
-  for (f in failed) {
-    for (d in downstream(state$graph, f, transitive = TRUE)) {
-      if (is.null(out[[d]])) out[[d]] <- f
-    }
-  }
-  out
-}
-
 #' The cells `id` reads from (by a "definition" or "package" edge, not
 #' "setup") whose last result failed or that have a graph error, with the
 #' names read: `list(names = <chr>, cells = <chr, aligned>)`, or `NULL`.

@@ -20,7 +20,6 @@ test_that("snapshot fields are right for every cell status (67)", {
   expect_equal(a$id, "A"); expect_equal(a$index, 2); expect_equal(a$kind, "code")
   expect_false(a$setup); expect_false(a$queued); expect_false(a$running)
   expect_equal(a$status, "ok"); expect_false(a$stale); expect_false(a$code_differs)
-  expect_false(a$blocked)
 
   b <- snap$cells$B
   expect_equal(b$status, "ok"); expect_equal(b$output, out)

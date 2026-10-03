@@ -66,14 +66,9 @@ export const Cell = ({
     inspecting_hidden_code,
 }) => {
     const { show_logs, disabled: running_disabled, skip_as_script } = metadata
-    // Three separate labels where increment 1 only had one dimmed state
-    // (ui-2.md, 5): an upstream failure takes precedence over the other two,
-    // since it is also the only one of the three `depends_on_disabled_cells`
-    // still covers (packages-core.R/pluto-state.R's `blocked_by`).
-    const upstream_error = ember?.blocked_by != null
-    const code_changed = !upstream_error && !!ember?.code_changed
-    const stale = !upstream_error && !code_changed && !!ember?.stale
-    const ember_label = upstream_error ? t("t_ember_label_upstream_error") : code_changed ? t("t_ember_label_code_changed") : stale ? t("t_ember_label_stale") : null
+    const code_changed = !!ember?.code_changed
+    const stale = !code_changed && !!ember?.stale
+    const ember_label = code_changed ? t("t_ember_label_code_changed") : stale ? t("t_ember_label_stale") : null
     let pluto_actions = useContext(PlutoActionsContext)
     // useCallback because pluto_actions.set_doc_query can change value when you go from viewing a static document to connecting (to binder)
     const on_update_doc_query = useCallback((...args) => pluto_actions.set_doc_query(...args), [pluto_actions])
@@ -242,16 +237,15 @@ export const Cell = ({
 
     const any_logs = useMemo(() => !_.isEmpty(logs), [logs])
 
-    // Ember has no "disabled cell" feature (ui-2.md), so `depends_on_disabled_cells`
-    // here only ever means "blocked by an ancestor's error" (`ember.blocked_by`,
-    // set server-side to the exact cell to jump to) or "stale"; there's nothing
-    // for the stale case to jump to, so the button is a no-op then, same as before.
-    const blocked_by_cell_id = ember?.blocked_by ?? null
-    const upstream_error_jump = useCallback(() => {
-        if (blocked_by_cell_id != null) {
-            window.dispatchEvent(new CustomEvent("cell_focus", { detail: { cell_id: blocked_by_cell_id, line: 0 } }))
+    // `ember.disabled_by` is filled once ui-3's Disable cell (piece 1b)
+    // lands; until then this is always a no-op, same as a stale cell with
+    // nothing to jump to.
+    const disabled_by_cell_id = ember?.disabled_by ?? null
+    const disabled_jump = useCallback(() => {
+        if (disabled_by_cell_id != null) {
+            window.dispatchEvent(new CustomEvent("cell_focus", { detail: { cell_id: disabled_by_cell_id, line: 0 } }))
         }
-    }, [blocked_by_cell_id])
+    }, [disabled_by_cell_id])
 
     return html`
         <pluto-cell
@@ -273,7 +267,6 @@ export const Cell = ({
                 depends_on_skipped_cells,
                 stale,
                 code_changed,
-                upstream_error,
                 show_input,
                 shrunk: Object.values(logs).length > 0,
                 hooked_up: output?.has_pluto_hook_features ?? false,
@@ -350,8 +343,7 @@ export const Cell = ({
                 running=${running}
                 code_differs=${class_code_differs}
                 queued=${queued}
-                on_jump=${upstream_error_jump}
-                jump_title=${upstream_error ? t("t_jump_cell_blocked_by_error") : undefined}
+                on_jump=${disabled_jump}
             />
             <button
                 onClick=${() => {

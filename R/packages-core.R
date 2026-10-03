@@ -435,8 +435,8 @@ switch_pending <- function(state) {
 # ---- Which cells wait --------------------------------------------------------
 
 #' Map cell id -> character packages it waits for, for every code cell
-#' that can't run yet, plus their transitive downstream (mapped to the
-#' upstream cell's packages), the way `failed_blockers()` maps failures.
+#' that can't run yet, plus their transitive downstream, mapped to the
+#' upstream cell's packages.
 #'
 #' Cell `c` waits for `p` when `p` is in `cell_packages(graph, c)`, `p` is
 #' not in `active$installed`, and either `p` is in the lock (an install

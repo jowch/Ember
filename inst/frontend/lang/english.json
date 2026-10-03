@@ -25,7 +25,6 @@
     "t_ember_run_all": "Run all",
     "t_ember_label_stale": "stale",
     "t_ember_label_code_changed": "code changed",
-    "t_ember_label_upstream_error": "upstream error",
     "t_ember_safe_preview_plan_none": "Running starts R.",
     "t_ember_safe_preview_plan_install_one": "Running starts R and installs {{count}} package.",
     "t_ember_safe_preview_plan_install_other": "Running starts R and installs {{count}} packages.",
@@ -217,7 +216,6 @@
     "t_interrupt_cell": "Interrupt (Ctrl + Q)",
     "t_save_cell": "Save code without running",
     "t_jump_cell": "This cell depends on a disabled cell",
-    "t_jump_cell_blocked_by_error": "Blocked by an error upstream — go to it",
     "t_run_cell": "Run cell (Shift + Enter)",
     "t_help_about_tab_navigation_inside_cell": "Press <kbd>Esc</kbd> and then <kbd>Tab</kbd> to continue navigation.",
 

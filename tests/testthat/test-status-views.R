@@ -57,16 +57,21 @@ test_that("per-cell ember: stale after a lazy rerun, code_changed after an outsi
   expect_true(js2$cell_results$B$ember$code_changed)
 })
 
-test_that("per-cell ember: blocked_by names the failed ancestor, depends_on_disabled_cells only for it (65)", {
+test_that("per-cell ember: only the dependent that names a failed cell gets upstream_error (ui-3 11)", {
   s <- fake_state(list(S = cell(""), A = cell("1"), ERR = cell("y <- stop('boom')"), C = cell("y + 1")))
   r <- boot(s, c("ERR", "C"))
-  r <- drive(r$state, wk_done(1, last_token(r), report(error = list(message = "boom")), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "boom")), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r),
+                              report(status = "error", error = list(message = "object 'y' not found")), at(11)))
 
   js <- pluto_state(r$state)$js
-  expect_equal(js$cell_results$C$ember$blocked_by, "ERR")
-  expect_true(js$cell_results$C$depends_on_disabled_cells)
-  expect_null(js$cell_results$ERR$ember$blocked_by)
+  expect_equal(js$cell_results$C$ember$upstream_error, list(list(name = "y", cell = "ERR")))
+  expect_false(js$cell_results$C$depends_on_disabled_cells)
+  expect_null(js$cell_results$ERR$ember$upstream_error)
   expect_false(js$cell_results$ERR$depends_on_disabled_cells)
+  for (id in c("S", "A")) {
+    expect_null(js$cell_results[[id]]$ember$upstream_error)
+  }
 })
 
 # ---- 65. worker_usage patches only ember/worker_memory ---------------------
@@ -262,14 +267,14 @@ test_that("ember_run_all runs only not-run cells; a fresh one keeps its last_run
 
 # ---- not_run_ids() excludes cells "Run all" can't run -----------------------
 
-test_that("not_run_ids() excludes cells in a graph error (two cells defining the same name)", {
+test_that("not_run_ids() excludes cells with their own graph error (ui-3 10)", {
   s <- fake_state(list(S = cell(""), A = cell("z <- 1"), B = cell("z <- 2"), OK = cell("5")))
   r <- boot(s, "OK")
   r <- drive(r$state, wk_done(1, last_token(r), report(), at(10)))
 
   ctx <- view_context(r$state)
-  expect_true(ctx$blocked[[match("A", ctx$ids)]])
-  expect_true(ctx$blocked[[match("B", ctx$ids)]])
+  expect_false(is.null(ctx$errors_by_cell[[match("A", ctx$ids)]]))
+  expect_false(is.null(ctx$errors_by_cell[[match("B", ctx$ids)]]))
 
   ids <- not_run_ids(r$state, ctx)
   expect_false("A" %in% ids)
@@ -277,16 +282,28 @@ test_that("not_run_ids() excludes cells in a graph error (two cells defining the
   expect_false("OK" %in% ids)  # already ran
 })
 
-test_that("not_run_ids() excludes a cell blocked by a failed ancestor", {
-  s <- fake_state(list(S = cell(""), A = cell("1"), ERR = cell("y <- stop('boom')"), C = cell("y + 1")))
-  r <- boot(s, c("ERR", "C"))
+test_that("not_run_ids() counts a not-run dependent of a failed cell (ui-3 10)", {
+  s <- fake_state(list(S = cell(""), A = cell("1"), ERR = cell("y <- stop('boom')"), C = cell("y + 1")),
+                  on_cell_change = "lazy")
+  r <- boot(s, "ERR")
   r <- drive(r$state, wk_done(1, last_token(r), report(error = list(message = "boom")), at(10)))
 
   ctx <- view_context(r$state)
-  expect_identical(ctx$blocked_by[[match("C", ctx$ids)]], "ERR")
+  expect_null(ctx$errors_by_cell[[match("C", ctx$ids)]])
   expect_null(r$state$results[["C"]])
 
   ids <- not_run_ids(r$state, ctx)
-  expect_false("C" %in% ids)
-  expect_true("A" %in% ids)  # not run, not blocked: still counted
+  expect_true("C" %in% ids)   # a dependent of a failed cell still runs; it counts
+  expect_true("A" %in% ids)   # not run, not blocked: still counted
+})
+
+test_that("view_context() and the snapshot have no blocked/blocked_by fields (ui-3 10)", {
+  s <- fake_state(list(S = cell(""), A = cell("z <- 1"), B = cell("z <- 2")))
+  r <- boot(s, "A")
+  ctx <- view_context(r$state)
+  expect_null(ctx$blocked)
+  expect_null(ctx$blocked_by)
+  v <- snapshot_of(r$state)$cells$A
+  expect_false("blocked" %in% names(v))
+  expect_false("blocked_by" %in% names(v))
 })

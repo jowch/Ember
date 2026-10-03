@@ -1752,22 +1752,18 @@ pluto-cell.depends_on_disabled_cells > pluto-output,
 pluto-cell.running_disabled > pluto-output,
 pluto-cell.stale > pluto-output,
 pluto-cell.code_changed > pluto-output,
-pluto-cell.upstream_error > pluto-output,
 pluto-cell.depends_on_disabled_cells > pluto-trafficlight,
 pluto-cell.running_disabled > pluto-trafficlight,
 pluto-cell.stale > pluto-trafficlight,
 pluto-cell.code_changed > pluto-trafficlight,
-pluto-cell.upstream_error > pluto-trafficlight,
 pluto-cell.depends_on_disabled_cells > pluto-input .cm-editor,
 pluto-cell.running_disabled > pluto-input .cm-editor,
 pluto-cell.stale > pluto-input .cm-editor,
 pluto-cell.code_changed > pluto-input .cm-editor,
-pluto-cell.upstream_error > pluto-input .cm-editor,
 pluto-cell.depends_on_disabled_cells > pluto-logs-container,
 pluto-cell.running_disabled > pluto-logs-container,
 pluto-cell.stale > pluto-logs-container,
-pluto-cell.code_changed > pluto-logs-container,
-pluto-cell.upstream_error > pluto-logs-container {
+pluto-cell.code_changed > pluto-logs-container {
     opacity: 0.3;
 }
 
@@ -1776,7 +1772,7 @@ pluto-cell.running_disabled > pluto-output {
     background-color: var(--disabled-cell-bg-color);
 }
 
-/* STATUS LABELS (ui-2.md, 5): "stale", "code changed", "upstream error" */
+/* STATUS LABELS (ui-2.md, 5): "stale", "code changed" */
 
 ember-cell-label {
     display: none;
@@ -1794,8 +1790,7 @@ ember-cell-label {
 }
 
 pluto-cell.stale > ember-cell-label,
-pluto-cell.code_changed > ember-cell-label,
-pluto-cell.upstream_error > ember-cell-label {
+pluto-cell.code_changed > ember-cell-label {
     display: inline-block;
 }
 
@@ -1807,11 +1802,6 @@ pluto-cell.stale > ember-cell-label {
 pluto-cell.code_changed > ember-cell-label {
     color: var(--ember-code-changed-label-color);
     background-color: var(--ember-code-changed-label-bg-color);
-}
-
-pluto-cell.upstream_error > ember-cell-label {
-    color: var(--ember-upstream-error-label-color);
-    background-color: var(--ember-upstream-error-label-bg-color);
 }
 
 /* SKIP AS SCRIPT CELLS */

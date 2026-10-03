@@ -473,44 +473,36 @@ export const ErrorMessage = ({ msg, stacktrace, plain_error, cell_id }) => {
             display: () => default_rewriter.display("Error"),
         },
         {
-            pattern: /^UndefVarError: (.*) not defined/,
+            // The engine classifies this (step.R's failed_definers()); the
+            // page only renders `ember.upstream_error`, the names and the
+            // cells they came from.
+            pattern: /^Another cell defining /,
             display: (/** @type{string} */ x) => {
                 const notebook = /** @type{import("./Editor.js").NotebookData?} */ (pluto_actions.get_notebook())
-                const erred_upstreams = get_erred_upstreams(notebook, cell_id)
+                const upstream_error = notebook?.cell_results?.[cell_id]?.ember?.upstream_error ?? []
 
-                // Verify that the UndefVarError is indeed about a variable from an upstream cell.
-                const match = x.match(/UndefVarError: (.*) not defined in (.*).*/)
-                let sym = (match?.[1] ?? "").replaceAll("`", "")
-                let module = (match?.[2] ?? "").replaceAll("`", "").replaceAll(/Main\.var\"workspace#\d+\"/g, "this notebook")
-                const undefvar_is_from_upstream = Object.values(notebook?.cell_dependencies ?? {}).some((map) =>
-                    Object.keys(map.downstream_cells_map).includes(sym)
-                )
-
-                if (Object.keys(erred_upstreams).length === 0 || !undefvar_is_from_upstream) {
-                    if (sym && module) {
-                        return html` <p>UndefVarError: <code>${sym}</code> not defined in ${module}.</p>
-                            <p>${x.replace(/UndefVarError.*\n?/, "")}</p>`
-                    }
+                if (upstream_error.length === 0) {
                     return html`<p>${x}</p>`
                 }
 
-                const symbol_links = Object.keys(erred_upstreams).map((key) => {
+                const symbol_links = upstream_error.map(({ name, cell }) => {
                     const onclick = (ev) => {
                         ev.preventDefault()
-                        const where = document.querySelector(`pluto-cell[id='${erred_upstreams[key]}']`)
+                        const where = document.querySelector(`pluto-cell[id='${cell}']`)
                         where?.scrollIntoView()
                     }
-                    return html`<a href="#" onclick=${onclick}>${key}</a>`
+                    return html`<a href="#" onclick=${onclick}>${name}</a>`
                 })
 
-                const symbol_interp = localized_list_htl(symbol_links, Object.keys(erred_upstreams), { type: "disjunction" })
+                const symbol_interp = localized_list_htl(
+                    symbol_links,
+                    upstream_error.map(({ name }) => name),
+                    { type: "disjunction" }
+                )
 
                 return html`<p><em>${th("t_another_cell_defining_xs_contains_errors", { symbols: symbol_interp })}</em></p>`
             },
-            show_stacktrace: () => {
-                const erred_upstreams = get_erred_upstreams(pluto_actions.get_notebook(), cell_id)
-                return Object.keys(erred_upstreams).length === 0
-            },
+            show_stacktrace: () => false,
         },
         {
             pattern: /^ArgumentError: Package (.*) not found in current path/,
@@ -641,33 +633,3 @@ const Motivation = ({ stacktrace }) => {
     return msg == null ? null : html`<div class="dont-panic">${msg}</div>`
 }
 
-const get_erred_upstreams = (
-    /** @type {import("./Editor.js").NotebookData?} */ notebook,
-    /** @type {string} */ cell_id,
-    /** @type {string[]} */ visited_edges = []
-) => {
-    /** @type {Record<string, string>} */
-    let erred_upstreams = {}
-    if (notebook != null && notebook?.cell_results?.[cell_id]?.errored) {
-        const referenced_variables = Object.keys(notebook.cell_dependencies[cell_id]?.upstream_cells_map ?? {})
-
-        referenced_variables.forEach((key) => {
-            if (!visited_edges.includes(key)) {
-                visited_edges.push(key)
-                const cells_that_define_this_variable = notebook.cell_dependencies[cell_id]?.upstream_cells_map[key] ?? []
-
-                cells_that_define_this_variable.forEach((upstream_cell_id) => {
-                    let upstream_errored_cells = get_erred_upstreams(notebook, upstream_cell_id, visited_edges) ?? {}
-
-                    erred_upstreams = { ...erred_upstreams, ...upstream_errored_cells }
-                    // if upstream got no errors and current cell is errored
-                    // then current cell is responsible for errors
-                    if (Object.keys(upstream_errored_cells).length === 0 && notebook.cell_results[upstream_cell_id]?.errored && upstream_cell_id !== cell_id) {
-                        erred_upstreams[key] = upstream_cell_id
-                    }
-                })
-            }
-        })
-    }
-    return erred_upstreams
-}

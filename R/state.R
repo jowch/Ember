@@ -262,11 +262,9 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 #' `list(cells, process, restart_offered, worker_message, seq)`. Per cell,
 #' an `ember_cell_view`: `id`, `index` (display), `kind`, `code`, `folded`,
 #' `setup`, `queued`, `running`, `status` (`"not_run"`, `"ok"`, `"error"`,
-#' `"interrupted"`), `stale`, `code_differs`, `blocked` (a graph error on
-#' the cell or an ancestor), `blocked_by` (the id of the upstream cell whose
-#' failed result blocks this one, or `NA`; separate from `blocked`, which is
-#' about graph errors), `errors` (graph errors then the run error, each with
-#' `kind`, `message`, `fixes`), `output` (`ember_display` or `NULL`),
+#' `"interrupted"`), `stale`, `code_differs`, `errors` (graph errors then
+#' the run error, each with `kind`, `message`, `fixes`, `names`, and, for an
+#' `"upstream"` run error, `cells`), `output` (`ember_display` or `NULL`),
 #' `console`, `last_run`, `runtime`.
 #'
 #' For the running cell, `console` is what has streamed so far and `output`
@@ -290,8 +288,8 @@ snapshot_of <- function(state) {
 
 #' Everything `snapshot_of()` and `pluto_state()` compute once for the whole
 #' notebook, so no per-cell loop repeats a notebook-wide pass (`%in%` over
-#' every blocked/queued id, `cell_errors()`'s `Filter()` over every graph
-#' error) once per cell: that would make a 2000-cell snapshot or projection
+#' every queued id, `cell_errors()`'s `Filter()` over every graph error)
+#' once per cell: that would make a 2000-cell snapshot or projection
 #' quadratic.
 #'
 #' Every per-cell field here is a plain (unnamed) vector or list in display
@@ -299,20 +297,19 @@ snapshot_of <- function(state) {
 #' 1-based), never `[[id]]`: R's named `[[` is a linear scan over the names,
 #' so at 2000 cells a handful of named lookups per cell (one per field this
 #' used to be keyed by id) cost tens of milliseconds on their own (measured).
-#' Only `fblocked`/`waiting` arrive keyed by id (from `failed_blockers()`/
-#' `waiting_cells()`, which only name the few cells they're about), so they
-#' are re-keyed to position once here, not per cell.
+#' `waiting` arrives keyed by id (from `waiting_cells()`, which only names
+#' the few cells it's about), so it is re-keyed to position once here, not
+#' per cell.
 #'
 #' * `ids`: `names(state$cells)`, fixed once so callers don't call it again.
 #' * `running`: `state$worker$running`, or `NULL`; `running_idx` its cell's
 #'   position in `ids`, or `NA`.
-#' * `queued`, `blocked`: logical, position -> queued (not the running cell)
-#'   or blocked (a graph error on it or an ancestor).
-#' * `blocked_by`: list, position -> the ancestor whose failed result blocks
-#'   it, or `NULL`.
+#' * `queued`: logical, position -> queued (not the running cell).
 #' * `waiting`: list, position -> `waiting_cells()`'s value, or `NULL`.
 #' * `errors_by_cell`: list, position -> the graph errors naming it
 #'   (`cell_errors(graph, id)`'s result), grouped once over `graph$errors`.
+#'   A cell with its own graph error can't run (`can_run()`, step.R); it
+#'   shows that error rather than running at all.
 #' * `results`: list, position -> `state$results[[id]]` or `NULL`, aligned
 #'   once with `match()`: `results` isn't stored in display order (it's
 #'   keyed by id, and holds only cells that have run), so without this a
@@ -328,21 +325,6 @@ view_context <- function(state) {
     vector("list", n)
   } else {
     results[match(ids, names(results))]
-  }
-
-  blocked_direct <- blocked_cells(graph)
-  blocked_down <- unlist(lapply(blocked_direct, function(b) {
-    downstream(graph, b, transitive = TRUE)
-  }), use.names = FALSE)
-  blocked_ids <- union(blocked_direct, blocked_down)
-  blocked <- ids %in% blocked_ids
-
-  fblocked <- failed_blockers(state)
-  blocked_by <- vector("list", n)
-  if (length(fblocked) > 0) {
-    at <- match(names(fblocked), ids)
-    ok <- !is.na(at)
-    blocked_by[at[ok]] <- fblocked[ok]
   }
 
   running <- state$worker$running
@@ -372,8 +354,8 @@ view_context <- function(state) {
   }
 
   list(ids = ids, running = running, running_idx = running_idx,
-      queued = queued, blocked = blocked, blocked_by = blocked_by,
-      waiting = waiting_vec, errors_by_cell = errors_by_cell, results = results)
+      queued = queued, waiting = waiting_vec,
+      errors_by_cell = errors_by_cell, results = results)
 }
 
 #' One cell's `ember_cell_view`, from `state` and the `view_context()` it
@@ -387,12 +369,12 @@ cell_view <- function(state, ctx, i) {
 
   g_errors <- lapply(ctx$errors_by_cell[[i]], function(e) {
     list(kind = e$kind, message = e$message, fixes = e$fixes,
-        names = e$names, traceback = character())
+        names = e$names, cells = character(), traceback = character())
   })
   r_error <- if (!is.null(result) && !is.null(result$error)) {
     list(list(kind = result$error$kind, message = result$error$message,
               fixes = result$error$fixes, names = result$error$names,
-              traceback = result$error$traceback))
+              cells = result$error$cells, traceback = result$error$traceback))
   } else {
     list()
   }
@@ -404,8 +386,6 @@ cell_view <- function(state, ctx, i) {
     status = if (!is.null(result)) result$status else "not_run",
     stale = !is.null(result) && isTRUE(result$stale),
     code_differs = !is.null(result) && !identical(result$code, cell$code),
-    blocked = ctx$blocked[[i]],
-    blocked_by = ctx$blocked_by[[i]] %||% NA_character_,
     errors = c(g_errors, r_error),
     output = if (!is.null(result)) result$output else NULL,
     console = if (is_running) ctx$running$console
@@ -528,11 +508,12 @@ notifications <- function(old, new) {
 #' (server.R). Empty whenever `!state$allowed` (safe preview): nothing has
 #' had a chance to run yet, so there is nothing to offer running.
 #'
-#' A cell `ember_run_all` can't run -- one named in a graph error (or
-#' downstream of one, `ctx$blocked`), or downstream of a failed ancestor
-#' (`ctx$blocked_by`) -- is excluded too: otherwise the bar's count never
-#' reaches zero and "Run all" has nothing left to do about it (the same
-#' two checks `can_run()`, step.R, makes before running a cell).
+#' A cell `ember_run_all` can't run -- one with a graph error of its own
+#' (`ctx$errors_by_cell`) -- is excluded too: otherwise the bar's count
+#' never reaches zero and "Run all" has nothing left to do about it (the
+#' same check `can_run()`, step.R, makes before running a cell). A
+#' dependent of a failed or graph-broken cell still counts: it runs on its
+#' own and "Run all" can bring it to zero.
 not_run_ids <- function(state, ctx) {
   if (!isTRUE(state$allowed)) return(character())
   ids <- ctx$ids
@@ -544,8 +525,7 @@ not_run_ids <- function(state, ctx) {
     if (!is.null(ctx$results[[i]])) next
     if (isTRUE(ctx$queued[[i]])) next
     if (!is.na(ctx$running_idx) && ctx$running_idx == i) next
-    if (isTRUE(ctx$blocked[[i]])) next
-    if (!is.null(ctx$blocked_by[[i]])) next
+    if (!is.null(ctx$errors_by_cell[[i]])) next
     out <- c(out, ids[[i]])
   }
   out
