@@ -271,6 +271,46 @@ parse_marker <- function(line) {
   list(id = id, tags = tags)
 }
 
+#' The default figure size (inches), used when a cell has no `#|` lines or
+#' an invalid one.
+FIGURE_DEFAULT <- list(width = 7.5, height = 5)
+
+#' The figure size a cell asks for with Quarto's comment lines, in inches.
+#' Only the run of `#|` lines at the top of the cell counts (Quarto's
+#' rule; blank lines before it are skipped); a `#|` line further down is
+#' an ordinary comment. Keys `fig-width`/`fig-height` and knitr's
+#' `fig.width`/`fig.height`; other keys (`echo: false`, ...) are ignored.
+#' A value must be a plain number between 0.5 and 30; anything else uses
+#' the default for that side and adds a problem sentence.
+#' @return list(width = <dbl>, height = <dbl>, problems = <chr>)
+cell_figure_size <- function(code) {
+  lines <- strsplit(code, "\n", fixed = TRUE)[[1]]
+  n <- length(lines)
+  i <- 1L
+  while (i <= n && !nzchar(trimws(lines[[i]]))) i <- i + 1L
+
+  out <- list(width = FIGURE_DEFAULT$width, height = FIGURE_DEFAULT$height,
+             problems = character())
+  while (i <= n && grepl("^#\\|", lines[[i]])) {
+    m <- regmatches(lines[[i]],
+                    regexec("^#\\|\\s*(fig[-.](width|height))\\s*:\\s*(.*?)\\s*$",
+                            lines[[i]], perl = TRUE))[[1]]
+    if (length(m) == 4) {
+      side <- m[[3]]
+      value <- suppressWarnings(as.numeric(m[[4]]))
+      if (is.na(value) || value < 0.5 || value > 30) {
+        out$problems <- c(out$problems,
+          sprintf("%s is not a number of inches; using %s.", trimws(lines[[i]]),
+                  format(FIGURE_DEFAULT[[side]], trim = TRUE)))
+      } else {
+        out[[side]] <- value
+      }
+    }
+    i <- i + 1L
+  }
+  out
+}
+
 #' Resolve the display order, fold state, and the `disabled`/`commented`
 #' flags from the "cell order" footer block (or file order when there is
 #' none). Words after the id are read as a set (`folded`, `disabled`,

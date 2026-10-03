@@ -513,3 +513,53 @@ test_that("disabled on the setup cell un-comments the code and clears the flag (
   expect_false(file$cells[["a"]]$disabled)
   expect_true("disabled_setup_cell" %in% problem_kinds(file))
 })
+
+test_that("cell_figure_size(): no #| lines gives the default, 7.5 x 5 (ui-3 62)", {
+  fig <- cell_figure_size("plot(1)")
+  expect_equal(fig$width, 7.5)
+  expect_equal(fig$height, 5)
+  expect_equal(fig$problems, character())
+})
+
+test_that("cell_figure_size(): fig-width and fig-height lines are read (ui-3 62)", {
+  fig <- cell_figure_size("#| fig-width: 8\n#| fig-height: 4\nplot(1)")
+  expect_equal(fig$width, 8)
+  expect_equal(fig$height, 4)
+  expect_equal(fig$problems, character())
+})
+
+test_that("cell_figure_size(): knitr's fig.width key also works (ui-3 62)", {
+  fig <- cell_figure_size("#| fig.width: 6\nplot(1)")
+  expect_equal(fig$width, 6)
+})
+
+test_that("cell_figure_size(): a #| line after a code line is an ordinary comment (ui-3 62)", {
+  fig <- cell_figure_size("plot(1)\n#| fig-width: 3")
+  expect_equal(fig$width, 7.5)
+})
+
+test_that("cell_figure_size(): leading blank lines before the #| run are skipped (ui-3 62)", {
+  fig <- cell_figure_size("\n\n#| fig-width: 6")
+  expect_equal(fig$width, 6)
+})
+
+test_that("cell_figure_size(): a non-numeric value uses the default and reports a problem naming the line (ui-3 62)", {
+  fig <- cell_figure_size("#| fig-width: wide\nplot(1)")
+  expect_equal(fig$width, 7.5)
+  expect_length(fig$problems, 1)
+  expect_match(fig$problems[[1]], "^#\\| fig-width: wide is not a number of inches; using 7.5\\.$")
+})
+
+test_that("cell_figure_size(): a value outside 0.5-30 uses the default and reports a problem (ui-3 62)", {
+  fig <- cell_figure_size("#| fig-width: 0\nplot(1)")
+  expect_equal(fig$width, 7.5)
+  expect_length(fig$problems, 1)
+  expect_match(fig$problems[[1]], "fig-width: 0 is not a number of inches; using 7.5\\.$")
+})
+
+test_that("cell_figure_size(): an unrelated #| key is ignored, with no problem (ui-3 62)", {
+  fig <- cell_figure_size("#| echo: false\nplot(1)")
+  expect_equal(fig$width, 7.5)
+  expect_equal(fig$height, 5)
+  expect_equal(fig$problems, character())
+})

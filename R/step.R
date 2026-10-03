@@ -409,7 +409,9 @@ turn_off <- function(state, ids) {
 #'
 #' `list(type = "run", cell, token, code, role = "setup" | "cell" | "text",
 #' order = <code cell ids in run order>, formulas = graph$analyses[[id]]$formulas,
-#' library = state$packages$active$path)`.
+#' library = state$packages$active$path, fig = cell_figure_size(cell$code))`.
+#' `fig` is the figure size (inches) the cell's `#|` lines ask for (3a);
+#' the worker opens its plot device at that size.
 #' `order` is what the worker rebuilds the search path from (attaching
 #' cells' packages in file order); sending it with every run keeps the
 #' worker converging on the current order without a separate sync. `library`
@@ -431,7 +433,7 @@ run_message <- function(state, id, token) {
       code = if (is_text) inline_code(cell$code) else cell$code,
       role = if (identical(id, state$setup)) "setup" else if (is_text) "text" else "cell",
       order = order, formulas = state$graph$analyses[[id]]$formulas,
-      library = state$packages$active$path)
+      library = state$packages$active$path, fig = cell_figure_size(cell$code))
 }
 
 #' Cells that need to run before `id` can: its transitive upstream that is

@@ -1440,3 +1440,17 @@ test_that("reduce_wk_done() records attached/loaded namespaces even for an off c
   expect_equal(r3$state$exports$mypkg, "f")
   expect_equal(unname(r3$state$worker$loaded["mypkg"]), "1.0.0")
 })
+
+test_that("run_message() carries fig from the cell's current code (ui-3 63)", {
+  s <- fake_state(list(S = cell(""), A = cell("#| fig-width: 8\n#| fig-height: 4\nplot(1)")))
+  r <- boot(s, "A")
+  msg <- last_sent(r)
+  expect_equal(msg$fig$width, 8)
+  expect_equal(msg$fig$height, 4)
+
+  s2 <- fake_state(list(S = cell(""), A = cell("plot(1)")))
+  r2 <- boot(s2, "A")
+  msg2 <- last_sent(r2)
+  expect_equal(msg2$fig$width, 7.5)
+  expect_equal(msg2$fig$height, 5)
+})
