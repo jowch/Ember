@@ -5,10 +5,7 @@ increment gives Ember its own design, decided with the user on the design
 canvas "Ember UI design" (https://claude.ai/artifact/75RiGtFN1AA65gTjDW2dWM).
 Board names below refer to that canvas.
 
-Status: design decisions recorded; implementation not planned yet. Still to
-design before planning: a wording audit of every string in the page,
-accessibility (focus rings, keyboard paths, labels), the Settings and Export
-menus, and a keyboard-shortcuts sheet.
+Status: design complete; implementation not planned yet.
 
 Goals, from the user: Ember has its own identity rather than Pluto's
 appearance, but keeps what Pluto does well. It is comfortable for long
@@ -22,7 +19,9 @@ out of the way of the data, the code and the results.
   Light: page `#f5f6f3`, panel `#fcfcfb`, code `#eceeea`, line `#dce1db`,
   text `#1b201d`, muted `#57605a`, accent teal `#22715f`. Dark: page
   `#151917`, panel `#1b201d`, code `#212723`, line `#2f3631`, text
-  `#dfe5e0`, muted `#9ba59e`, accent `#6cc7b2`. The panel is a step lighter
+  `#dfe5e0`, muted `#9ba59e`, accent `#6cc7b2`. Faint text (hints, "Saved", folder
+  paths) is `#636c65` light and `#88928b` dark, so it passes 4.5 : 1 on every
+  background (board "Round 6 · Accessibility"). The panel is a step lighter
   than the page in dark mode instead of using shadows. The logo stays orange
   (`#e8590c`, `#f07032` on dark).
 - **Type** (boards "Round 2 · Sans-serif candidates", "Serif candidates"):
@@ -48,7 +47,7 @@ out of the way of the data, the code and the results.
 (Board "Round 2 · Cells and status rails".)
 
 - Code looks like the editor: line numbers with comfortable space before the
-  code, Plex Mono, Sage syntax colours.
+  code, Plex Mono (not configurable), Sage syntax colours.
 - **Rail**: Pluto's status bar, flush with the cell's left edge and the full
   height of the cell, always present. Solid, soft colours:
   - grey: nothing happening (up to date, not run, stale or disabled);
@@ -129,7 +128,7 @@ out of the way of the data, the code and the results.
   run" only while something can run, the R status as a button that opens
   Status, icons for Variables, Help and Packages (each opens the panel at that
   tab, or closes it), Export, and ⋯ (Keyboard shortcuts, Settings, Open
-  another notebook).
+  another notebook). See Menus and Settings below.
 - While R is busy: "Running 2 of 5 cells" and Stop.
 - Safe preview is one banner with "Run this notebook", not a label on every
   cell.
@@ -157,6 +156,83 @@ out of the way of the data, the code and the results.
   counts of not-run cells and errors with links; the autorun/lazy setting as
   "When a cell changes: rerun the cells that depend on it / mark them stale
   and let me run them".
+
+## Menus and Settings
+
+(Board "Round 6 · Export menu and Settings".)
+
+- **Export** is a menu under the header's download icon: Download .R file
+  ("The notebook itself. Runs with Rscript."), Download HTML ("One file with
+  every output. Opens offline."), Print or save as PDF. In safe preview the
+  menu says the HTML and PDF will have code but no outputs. It replaces the
+  export banner; "Edit frontmatter" and "Start presentation" go (neither works
+  in Ember today), as does the June message card.
+- **Settings** (per browser; changes apply at once, no reload prompt):
+  Theme (Match system / Light / Dark); Indent with (2 spaces, the default /
+  4 spaces / Tab); Suggest completions as I type; Check spelling in text
+  cells; Tab key in code (Indents / Moves focus); Ask before long runs
+  (seconds, from the last run times); Notify me when a long run finishes;
+  Reset to defaults. Removed: motivational stickers, the custom code font (a
+  user can't know which fonts exist), and the Dark mode row without a
+  control. Autorun or lazy belongs to the notebook file and stays in Status.
+
+## Keyboard shortcuts
+
+(Board "Round 6 · Keyboard shortcuts".)
+
+An in-page sheet from the ⋯ menu, replacing today's alert(). It shows the
+keys for the computer it's on (⌘ and ⌥ on a Mac).
+
+- Running: Shift + Enter run; Ctrl + Enter run and add a cell below;
+  Ctrl + S run every edited cell; Ctrl + Q stop (Ctrl on Mac too).
+- Cells: Alt + ↑/↓ move; Ctrl + click a name to go to its definition;
+  Ctrl + Shift + [ / ] hide or show code; Ctrl + C / V copy or paste selected
+  cells; Backspace deletes selected cells.
+- Editing: Ctrl + Space completions; Ctrl + ] / [ indent and outdent;
+  Tab / Shift + Tab indent and outdent while the Tab setting is Indents;
+  Ctrl + / comment; Ctrl + D next match; undo and redo; Enter on a `#'` line
+  continues it.
+- Moving around: Page Up / Down between cells; Esc leaves the code and keeps
+  the cell selected; Esc then Tab to the next control.
+- **F1 opens R help** for the name at the cursor in the side panel, as in
+  RStudio (today it opens the shortcut list).
+- Ctrl + M ("toggle markdown") is dropped: it is listed today but bound to
+  nothing, and its text is repeated on the two fold lines.
+
+## Accessibility
+
+(Board "Round 6 · Accessibility".)
+
+- One focus ring: 2 px accent outline, 2 px offset, on :focus-visible only.
+  Nothing removes an outline without it (today the Help search box does).
+- Keyboard path: a "Skip to the notebook" link; the header left to right;
+  then cells. In a cell, Esc selects the cell (ringed); ↑/↓ move between
+  cells, Enter edits, Tab reaches the run button, ⋯ and the "+" below. The
+  side panel follows the last cell; Esc closes it and returns focus to its
+  icon. Menus and dialogs take focus, use ↑/↓, Enter and Esc, and return
+  focus to their button; dialogs keep Tab inside.
+- Every icon button has a name matching its tooltip. Colour is never the only
+  signal: a cell's name includes what it defines and its state ("Cell
+  defining fit, error"), chips and errors carry words.
+- One polite announcement when a run you started ends ("Finished: 3 cells",
+  "fit: error"). Inline values read as plain text.
+- Reduced motion: the running rail is solid, menus don't slide. 200% zoom
+  without horizontal scrolling.
+- Every alert() and confirm() becomes an in-page dialog.
+
+## Wording
+
+(Board "Round 6 · Wording", which lists each string's old and new text.)
+
+- Words R users already use (R, traceback, package, Restart R); no Julia or
+  Pluto terms (Pkg, Project.toml, binder, `begin ... end`).
+- Sentence case; no shouting (UNDO), no "!!", no jokes in errors.
+- What happened, then what to do, in one or two sentences.
+- Buttons name their action (Delete, Run, Restart R), not Yes/No; toggles say
+  what the click does (Hide code).
+- Every string goes through the translation file. Unreachable Pluto strings
+  (binder, pluto.land, Project.toml editor, language picker, AI helpers,
+  rewriters for Julia-only error text) are deleted.
 
 ## Dark mode
 
