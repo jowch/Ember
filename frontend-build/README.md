@@ -6,12 +6,18 @@ dialog-polyfill's stylesheet, iframe-resizer's scripts). See docs/ui-2.md,
 "Offline bundle".
 
 ```
-npm install
+npm ci
 npm run build
 ```
 
-`grammar/` must be built first (`npm run build` there), since the CodeMirror
-bundle depends on `grammar/dist/index.js`.
+`npm ci`, not `npm install`: it installs exactly what `package-lock.json`
+pins (including the two GitHub-tag git dependencies), and fails instead of
+silently updating the lockfile if it's out of sync with `package.json` --
+the build output is committed and has to be reproducible from the lockfile
+alone.
+
+`grammar/` must be built first (`npm ci && npm run build` there), since the
+CodeMirror bundle depends on `grammar/dist/index.js`.
 
 `npm run build` rebuilds three things, in `scripts/build.mjs`:
 

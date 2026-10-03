@@ -1,5 +1,12 @@
 # Frontend changes for increment 1
 
+_A historical record of increment 1's plan: `frontend-setup/` below was
+later renamed `frontend-build/`, and increment 2 (docs/ui-2.md, "Offline
+bundle") replaced every CDN module this describes with a vendored,
+content-hashed bundle built by it -- the frontend has no CDN dependency any
+more. Current build instructions live in docs/ui-2.md and
+`frontend-build/README.md`._
+
 Vendor `spikes/server-worker/pluto/frontend` (Pluto v1.0.3, commit 3a7651f)
 into `inst/frontend/` as one commit with no changes, so every later change
 shows as a diff against upstream. Then make only these changes. Julia-only

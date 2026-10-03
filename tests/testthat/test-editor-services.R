@@ -1,8 +1,8 @@
 # Pure unit tests for R/editor-services.R (ui-2.md, "4. Editor services";
-# ui-2-tests.md 49-55 except 52, which lives in test-pluto-state.R next to
+# ui-2-tests.md 50-56 except 53, which lives in test-pluto-state.R next to
 # project_dependencies()'s other tests).
 
-test_that("completion_context() (49)", {
+test_that("completion_context() (50)", {
   ctx <- completion_context("x <- dplyr::fil")
   expect_identical(ctx$namespace, "dplyr")
   expect_identical(ctx$token, "fil")
@@ -42,7 +42,7 @@ fallback_state <- function() {
   )
 }
 
-test_that("fallback_completions() (50)", {
+test_that("fallback_completions() (51)", {
   st <- fallback_state()
   r <- fallback_completions(st, list(token = "fil", namespace = NULL))
   names <- vapply(r$items, `[[`, character(1), "name")
@@ -62,7 +62,7 @@ test_that("fallback_completions() (50)", {
   expect_length(r3$items, 500)
 })
 
-test_that("completion_reply() (51)", {
+test_that("completion_reply() (52)", {
   ctx <- list(token = "fo", start = 5L)
   items <- list(too_long = FALSE, items = list(
     list(name = "formula=", kind = "argument", notebook = FALSE),
@@ -81,7 +81,7 @@ test_that("completion_reply() (51)", {
   expect_false(reply$too_long)
 })
 
-test_that("rewrite_help_links() (53)", {
+test_that("rewrite_help_links() (54)", {
   expect_identical(
     rewrite_help_links('<a href="../../stats/help/sd">sd</a>'),
     '<a href="@ref stats::sd">sd</a>'
@@ -109,7 +109,7 @@ test_that("sanitize_help_html() drops scripts, styles, iframes, event handlers a
   expect_match(clean, "<p>hi</p>", fixed = TRUE)
 })
 
-test_that("signature_fallback() (55)", {
+test_that("signature_fallback() (56)", {
   expect_match(signature_fallback("lm"), "^lm\\(formula, data")
   expect_null(signature_fallback("my_fun"))
 })

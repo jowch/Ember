@@ -40,7 +40,7 @@ async function completion_eventually(page, sel, code, predicate, timeout = 30000
   throw new Error(`completion for ${JSON.stringify(code)} never satisfied the predicate; last labels: ${JSON.stringify(labels)}`);
 }
 
-test("completion: typing me then Ctrl+Space lists mean; after running DF, df$ lists mpg (59)", { timeout: 120000 }, async (t) => {
+test("completion: typing me then Ctrl+Space lists mean; after running DF, df$ lists mpg (60)", { timeout: 120000 }, async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-complete.server.log") });
   const browser = await launchBrowser();
@@ -99,7 +99,7 @@ test("completion: typing me then Ctrl+Space lists mean; after running DF, df$ li
   assertNoProblems(page);
 });
 
-test("completion still works on the notebook's names and base R while a cell runs (59)", async (t) => {
+test("completion still works on the notebook's names and base R while a cell runs (60)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-complete-busy.server.log") });
   const browser = await launchBrowser();
@@ -134,7 +134,7 @@ test("completion still works on the notebook's names and base R while a cell run
   assertNoProblems(page);
 });
 
-test("help: the cursor inside mean( shows Arithmetic Mean; a link loads another page; examples highlight as R (60)", { timeout: 120000 }, async (t) => {
+test("help: the cursor inside mean( shows Arithmetic Mean; a link loads another page; examples highlight as R (61)", { timeout: 120000 }, async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help.server.log") });
   const browser = await launchBrowser();
@@ -184,7 +184,7 @@ test("help: the cursor inside mean( shows Arithmetic Mean; a link loads another 
   assertNoProblems(page);
 });
 
-test("signature: the cursor after lm( shows a tooltip containing formula within 1s (61)", async (t) => {
+test("signature: the cursor after lm( shows a tooltip containing formula within 1s (62)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-signature.server.log") });
   const browser = await launchBrowser();

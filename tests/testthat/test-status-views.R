@@ -1,10 +1,10 @@
 # Tests for piece 5 (ui-2.md, "Status views"): the top-level `ember`
 # projection, per-cell `ember`, worker memory sampling, and the
-# `ember_run_all` request. Covers ui-2-tests.md items 63-69.
+# `ember_run_all` request. Covers ui-2-tests.md items 64-70.
 
 # ---- 63. project_ember(): process, not_run, worker_memory, plan -----------
 
-test_that("project_ember(): process, not_run, worker_memory and plan (63)", {
+test_that("project_ember(): process, not_run, worker_memory and plan (64)", {
   s <- fake_state(list(S = cell(""), A = cell("1"), B = cell("2"), ERR = cell("y <- stop('x')"),
                        LOOP = cell("3"), MD = cell("# hi", kind = "markdown")))
   ctx0 <- view_context(s)
@@ -32,7 +32,7 @@ test_that("project_ember(): process, not_run, worker_memory and plan (63)", {
 
 # ---- 64. Per-cell ember: stale, code_changed, blocked_by -------------------
 
-test_that("per-cell ember: stale after a lazy rerun, code_changed after an outside edit (64)", {
+test_that("per-cell ember: stale after a lazy rerun, code_changed after an outside edit (65)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1")), on_cell_change = "lazy")
   r <- boot(s, c("A", "B"))
   r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
@@ -57,7 +57,7 @@ test_that("per-cell ember: stale after a lazy rerun, code_changed after an outsi
   expect_true(js2$cell_results$B$ember$code_changed)
 })
 
-test_that("per-cell ember: blocked_by names the failed ancestor, depends_on_disabled_cells only for it (64)", {
+test_that("per-cell ember: blocked_by names the failed ancestor, depends_on_disabled_cells only for it (65)", {
   s <- fake_state(list(S = cell(""), A = cell("1"), ERR = cell("y <- stop('boom')"), C = cell("y + 1")))
   r <- boot(s, c("ERR", "C"))
   r <- drive(r$state, wk_done(1, last_token(r), report(error = list(message = "boom")), at(10)))
@@ -71,7 +71,7 @@ test_that("per-cell ember: blocked_by names the failed ancestor, depends_on_disa
 
 # ---- 65. worker_usage patches only ember/worker_memory ---------------------
 
-test_that("a worker_usage change patches only ember/worker_memory; a stale generation is ignored (65)", {
+test_that("a worker_usage change patches only ember/worker_memory; a stale generation is ignored (66)", {
   s <- fake_state(list(S = cell(""), A = cell("1")))
   r <- boot(s, "A")
   r <- drive(r$state, wk_done(1, last_token(r), report(), at(10)))
@@ -92,7 +92,7 @@ test_that("a worker_usage change patches only ember/worker_memory; a stale gener
 
 # ---- 66. ember$packages$rows mirrors packages_view() -----------------------
 
-test_that("ember$packages$rows mirrors packages_view(); an NA version is NULL on the wire (66)", {
+test_that("ember$packages$rows mirrors packages_view(); an NA version is NULL on the wire (67)", {
   s <- fake_state(list(S = cell(""), A = cell("1")))
   s$file$header$extra_packages <- "ggplot2"
   s$packages$problems <- data.frame(kind = "not_found", package = "ggplot2",
@@ -112,7 +112,7 @@ test_that("ember$packages$rows mirrors packages_view(); an NA version is NULL on
 
 # ---- 67. reduce_worker_usage(), notifications(), notebook_snapshot() ------
 
-test_that("reduce_worker_usage() stores the value; notifications() reports it alone (67)", {
+test_that("reduce_worker_usage() stores the value; notifications() reports it alone (68)", {
   s <- fake_state(list(S = cell(""), A = cell("1")))
   r <- boot(s, "A")
   r <- drive(r$state, wk_done(1, last_token(r), report(), at(10)))
@@ -127,7 +127,7 @@ test_that("reduce_worker_usage() stores the value; notifications() reports it al
   expect_false("cell_state" %in% kinds)
 })
 
-test_that("notebook_snapshot() carries worker_memory for the current worker generation only (67)", {
+test_that("notebook_snapshot() carries worker_memory for the current worker generation only (68)", {
   s <- fake_state(list(S = cell(""), A = cell("1")))
   r <- boot(s, "A")
   r <- drive(r$state, wk_done(1, last_token(r), report(), at(10)))
@@ -183,7 +183,7 @@ fake_proc <- function(mb_sequence) {
   })
 }
 
-test_that("sample_worker_memory() reports on a 16 MB/5% move only; an error reports nothing (68)", {
+test_that("sample_worker_memory() reports on a 16 MB/5% move only; an error reports nothing (69)", {
   s <- fake_state(list(S = cell(""), A = cell("1")))
   s$read_only <- TRUE
   s$worker$gen <- 1L
@@ -231,7 +231,7 @@ test_that("maybe_sample_worker_memory() gates sampling to every 2s", {
 
 # ---- 69. ember_run_all: only not-run cells, nothing already fresh ----------
 
-test_that("ember_run_all runs only not-run cells; a fresh one keeps its last_run (69)", {
+test_that("ember_run_all runs only not-run cells; a fresh one keeps its last_run (70)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1"), B = cell("2")),
                                  on_cell_change = "lazy")
   nb <- open_notebook(path)

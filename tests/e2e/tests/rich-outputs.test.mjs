@@ -8,7 +8,7 @@ import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector } from "../browser.mjs";
 
-test("table and print: TBL is a table with 'more', FIT prints text (38)", async (t) => {
+test("table and print: TBL is a table with 'more', FIT prints text (39)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "rich-table.server.log") });
   const browser = await launchBrowser();
@@ -39,7 +39,7 @@ test("table and print: TBL is a table with 'more', FIT prints text (38)", async 
   assertNoProblems(page);
 });
 
-test("tree: LST is a collapsed tree that expands and pages (39)", async (t) => {
+test("tree: LST is a collapsed tree that expands and pages (40)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "rich-tree.server.log") });
   const browser = await launchBrowser();
@@ -64,7 +64,7 @@ test("tree: LST is a collapsed tree that expands and pages (39)", async (t) => {
   assertNoProblems(page);
 });
 
-test("plot: PLT re-renders sharper when the viewport narrows (40)", async (t) => {
+test("plot: PLT re-renders sharper when the viewport narrows (41)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "rich-plot.server.log") });
   const browser = await launchBrowser();
@@ -92,7 +92,7 @@ test("plot: PLT re-renders sharper when the viewport narrows (40)", async (t) =>
   assertNoProblems(page);
 });
 
-test("colours: ANSI's log and output have coloured spans and no visible escape codes (42)", async (t) => {
+test("colours: ANSI's log and output have coloured spans and no visible escape codes (43)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "rich-ansi.server.log") });
   const browser = await launchBrowser();

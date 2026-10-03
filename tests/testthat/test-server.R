@@ -797,9 +797,9 @@ test_that("http_index() escapes a notebook's path into its HTML (review4 10)", {
   expect_match(resp$body, "&#39; onmouseover=&#39;alert(1)&amp;x", fixed = TRUE)
 })
 
-# ---- Rich outputs: dependency files, reshow_cell, ember_render_plot (34-37) --
+# ---- Rich outputs: dependency files, reshow_cell, ember_render_plot (35-38) --
 
-test_that("register_deps() registers inside the library once, refuses outside it, and drop_hub() unregisters per notebook (34)", {
+test_that("register_deps() registers inside the library once, refuses outside it, and drop_hub() unregisters per notebook (35)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1")))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
@@ -861,7 +861,7 @@ test_that("register_deps() registers inside the library once, refuses outside it
   expect_false(exists("x-1.0", envir = server$deps))
 })
 
-test_that("reshow_cell pages a table through a real worker (35)", {
+test_that("reshow_cell pages a table through a real worker (36)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("mtcars")))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
@@ -884,7 +884,7 @@ test_that("reshow_cell pages a table through a real worker (35)", {
   expect_true(got_more)
 })
 
-test_that("ember_render_plot clamps width/height/res and re-renders through a real worker (36)", {
+test_that("ember_render_plot clamps width/height/res and re-renders through a real worker (37)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1"), B = cell("plot(1:10)")))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
@@ -926,7 +926,7 @@ test_that("ember_render_plot clamps width/height/res and re-renders through a re
 
 # ---- Editor services (ui-2.md, 4) -------------------------------------------
 
-test_that("complete in safe preview replies from the fallback within handle_message(); with an idle worker, df$ completes to df$mpg (56)", {
+test_that("complete in safe preview replies from the fallback within handle_message(); with an idle worker, df$ completes to df$mpg (57)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("df <- mtcars")))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
@@ -961,7 +961,7 @@ test_that("complete in safe preview replies from the fallback within handle_mess
   expect_true(found)
 })
 
-test_that("docs: preview mean needs R running, a notebook-defined f shows its code, and a worker shows the rewritten help page (57)", {
+test_that("docs: preview mean needs R running, a notebook-defined f shows its code, and a worker shows the rewritten help page (58)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("f <- function(x) x + 1")))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
@@ -1026,7 +1026,7 @@ test_that("docs: an idle worker that doesn't answer in time says so, not 'needs 
   expect_no_match(r$doc, "Run a cell")
 })
 
-test_that("ember_signature with a worker and without one (58)", {
+test_that("ember_signature with a worker and without one (59)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1")))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
