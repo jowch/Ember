@@ -41,6 +41,11 @@ pluto-input .cm-editor .cm-line {
     padding: 0;
 }
 
+pluto-input .cm-ember-assigned,
+pluto-input .cm-ember-assigned span {
+    color: var(--cm-color-function);
+}
+
 /* ---- Rail (pluto-trafficlight; ui-3.md "Rail") ------------------------- */
 
 pluto-trafficlight {
@@ -1004,7 +1009,6 @@ pluto-input .cm-line.cm-ember-hq-line {
 }
 pluto-input .cm-line.cm-ember-hq-line span {
     color: inherit;
-    font-style: normal;
 }
 pluto-input .cm-line.cm-ember-hq-line .cm-ember-hq {
     color: var(--ember-syn-com);

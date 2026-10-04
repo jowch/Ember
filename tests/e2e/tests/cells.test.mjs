@@ -921,6 +921,53 @@ test("gutter: every code cell shows its line numbers, focused or not, 12px faint
   assertNoProblems(page);
 });
 
+test("syntax: the Cells board's token colours in light and dark, nothing bold or italic", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-syntax.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await page.emulateMedia({ colorScheme: "light" });
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.locator(cellSelector("W")).scrollIntoViewIfNeeded();
+  await page.waitForSelector(`${cellSelector("W")} .cm-editor:not(.cm-ssr-fake)`);
+
+  const tokens = (id) => page.locator(`${cellSelector(id)} .cm-content`).evaluate((el) =>
+    [...el.querySelectorAll(".cm-line span")].filter((s) => s.children.length === 0 && s.textContent.trim() !== "").map((s) => {
+      const c = getComputedStyle(s);
+      return { text: s.textContent, color: c.color, weight: c.fontWeight, style: c.fontStyle };
+    }));
+  const check = async (theme) => {
+    const fn = await tokenColor(page, "--ember-syn-fn");
+    const kw = await tokenColor(page, "--ember-syn-kw");
+    const str = await tokenColor(page, "--ember-syn-str");
+    const num = await tokenColor(page, "--ember-syn-num");
+    const text = await tokenColor(page, "--ember-text");
+    const f = await tokens("F");
+    const w = await tokens("W");
+    const colour = (list, text_, n = 0) => list.filter((tk) => tk.text === text_)[n]?.color;
+    assert.equal(colour(f, "f"), fn, `${theme}: an assigned name in the function colour`);
+    assert.equal(colour(f, "function"), kw, `${theme}: a keyword`);
+    assert.equal(colour(f, "lm"), fn, `${theme}: a call`);
+    assert.equal(colour(f, "data"), text, `${theme}: an argument name is plain`);
+    assert.equal(colour(f, "mpg"), text, `${theme}: a variable is plain`);
+    assert.equal(colour(w, "message"), fn, `${theme}: a call`);
+    assert.equal(colour(w, '"Reading"'), str, `${theme}: a string`);
+    assert.equal(colour(w, "1"), num, `${theme}: a number`);
+    for (const tk of [...f, ...w]) {
+      assert.equal(tk.weight, "400", `${theme}: ${tk.text} is not bold`);
+      assert.equal(tk.style, "normal", `${theme}: ${tk.text} is not italic`);
+    }
+  };
+  await check("light");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark", null, { timeout: 5000 });
+  await check("dark");
+
+  assertNoProblems(page);
+});
+
 test("geometry: the run button sits on the code box's top-left corner and gives way to the \"+\" above it", async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-geometry-run.server.log") });
