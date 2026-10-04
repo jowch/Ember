@@ -625,7 +625,11 @@ test_that("plain-text error pages use Words6's wording (159)", {
   missing <- file.path(tempdir(), "no-such-dir-159", "gone.R")
   resp <- suppressWarnings(http_call(server, fake_req("/open", sprintf("path=%s&secret=s", utils::URLencode(missing, reserved = TRUE)))))
   expect_equal(resp$status, 400L)
-  expect_match(resp$body, paste0("^Couldn't open ", missing, ": .+[^.]\\.$"))
+  prefix <- paste0("Couldn't open ", missing, ": ")
+  expect_true(startsWith(resp$body, prefix))
+  expect_gt(nchar(resp$body), nchar(prefix) + 1L)
+  expect_true(endsWith(resp$body, "."))
+  expect_false(endsWith(resp$body, ".."))
 })
 
 test_that("/open and / refuse the cookie alone; /notebookfile still accepts it (review)", {
