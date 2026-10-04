@@ -393,3 +393,45 @@ test("disabled states: A shows Disabled with no run button; B shows Depends on a
 
   assertNoProblems(page);
 });
+
+// Geometry from the Cells and Insert5 boards (ui-3.md "Cell anatomy",
+// "Run button", "Cell menu", "Adding cells").
+
+const rect = (page, sel) => page.locator(sel).evaluate((el) => {
+  const r = el.getBoundingClientRect();
+  return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
+});
+const near = (actual, expected, what) => assert.ok(Math.abs(actual - expected) < 0.6, `${what}: ${actual}, expected ${expected}`);
+
+test("geometry: 26px between cells; a one-line code box is 7px 12px around 13px/1.65 text, after a 34px gutter", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-geometry-box.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.waitForSelector(`${cellSelector("A")} .cm-editor`);
+
+  const a = await rect(page, cellSelector("A"));
+  const b = await rect(page, cellSelector("B"));
+  near(b.top - a.bottom, 26, "gap between A and B");
+
+  const box = await rect(page, `${cellSelector("A")} .cm-editor`);
+  const gutters = await rect(page, `${cellSelector("A")} .cm-gutters`);
+  near(box.height, 7 + 13 * 1.65 + 7, "one-line code box height");
+  near(gutters.width, 34, "gutter width");
+
+  const content = await page.locator(`${cellSelector("A")} .cm-content`).evaluate((el) => {
+    const cs = getComputedStyle(el);
+    const range = document.createRange();
+    range.selectNodeContents(el.querySelector(".cm-line"));
+    return { padding: cs.padding, fontSize: cs.fontSize, lineHeight: cs.lineHeight, textLeft: range.getBoundingClientRect().left };
+  });
+  assert.equal(content.padding, "7px 12px");
+  assert.equal(content.fontSize, "13px");
+  assert.equal(content.lineHeight, "21.45px");
+  near(content.textLeft - gutters.right, 12, "code text starts 12px right of the gutter");
+
+  assertNoProblems(page);
+});

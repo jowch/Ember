@@ -13,7 +13,7 @@
 /* VARIABLES */
 
 :root {
-    --pluto-cell-spacing: 17px;
+    --pluto-cell-spacing: 26px;
     /* use the value "contextual" to enable contextual ligatures `document.documentElement.style.setProperty('--pluto-operator-ligatures', 'contextual');`
         for julia mono see here: https://cormullion.github.io/pages/2020-07-26-JuliaMono/#contextual_and_stylistic_alternates_and_ligatures */
     --pluto-operator-ligatures: none;
@@ -2094,9 +2094,6 @@ pluto-cell:hover > pluto-output > div::-webkit-scrollbar-thumb {
 
 pluto-input .cm-editor {
     z-index: 20;
-    border-bottom-right-radius: 4px;
-    border: 1px solid var(--normal-cell-color);
-    border-left: none;
 
     /* Make sure that scrolling an editor into view gives some breathing room */
     scroll-margin-block: 20vh;
@@ -2123,11 +2120,6 @@ pluto-cell:not(.show_input) > pluto-input {
 }
 pluto-cell.code_folded.show_input > pluto-input:not(:focus-within) {
     opacity: 0.4;
-}
-
-pluto-cell.code_differs > pluto-input > .cm-editor {
-    border: 1px solid var(--code-differs-cell-color);
-    border-left: none;
 }
 
 /* UI */

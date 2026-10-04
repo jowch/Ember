@@ -3,6 +3,27 @@
    rules here use a class or attribute selector and so outrank editor.css's
    plain-element ones regardless of order. */
 
+/* ---- Code box (ui-3.md "Cell anatomy") --------------------------------- */
+
+pluto-input .cm-editor {
+    border-radius: 0 6px 6px 0;
+}
+pluto-input .cm-editor .cm-gutters {
+    box-sizing: border-box;
+    min-width: 34px;
+}
+pluto-input .cm-editor .cm-content,
+pluto-input .cm-editor .cm-scroller {
+    font-size: 13px;
+    line-height: 1.65;
+}
+pluto-input .cm-editor .cm-content {
+    padding: 7px 12px;
+}
+pluto-input .cm-editor .cm-line {
+    padding: 0;
+}
+
 /* ---- Rail (pluto-trafficlight; ui-3.md "Rail") ------------------------- */
 
 pluto-trafficlight {
