@@ -113,7 +113,6 @@ pluto_state <- function(state, previous = NULL) {
     cell_order = reuse(as_arr(ids), if (!is.null(pj)) pj$cell_order else NULL),
     published_objects = emptymap(), bonds = emptymap(), metadata = emptymap(),
     nbpkg = reuse(project_nbpkg(state), if (!is.null(pj)) pj$nbpkg else NULL),
-    status_tree = reuse(project_status_tree(state), if (!is.null(pj)) pj$status_tree else NULL),
     cell_dependencies = deps,
     cell_execution_order = reuse(as_arr(state$graph$order), if (!is.null(pj)) pj$cell_execution_order else NULL),
     ember = reuse_fields(project_ember(state, ctx), if (!is.null(pj)) pj$ember else NULL))
@@ -568,8 +567,8 @@ join_names <- function(names, conj = "and") {
 #' "Multiple definitions for x and y" and "Cyclic references among a, b."
 #' are built from the error's `names` (the engine's own `message` reads
 #' differently); every other kind uses the engine's `message`. Each of the
-#' error's `fixes` is a further line (ErrorMessage.js is changed to show
-#' those lines as they are instead of Julia's "begin ... end" hint).
+#' error's `fixes` is a further line, which ErrorMessage.js shows under the
+#' first at normal weight.
 #'
 #' `"upstream"` is its own case: `msg` is "Another cell defining a contains
 #' errors." (names joined with "or": any one of them failing is enough),
@@ -819,8 +818,8 @@ project_nbpkg <- function(state) {
 
 #' Ember's own top-level status (ui-2.md, 5): packages, "N cells not run",
 #' the worker's memory, and the plan the safe-preview banner describes.
-#' Pluto's `nbpkg`, `status_tree` and `process_status` stay filled beside
-#' this for Endeavor (project_nbpkg(), project_status_tree(), above).
+#' Pluto's `nbpkg` and `process_status` stay filled beside this
+#' (project_nbpkg(), above); the page still reads both.
 #'
 #' `list(process, worker_memory, not_run, stale, plan, packages)`:
 #'
@@ -942,46 +941,4 @@ project_ember <- function(state, ctx) {
       worker_started_at = if (is.null(state$worker$started_at)) NULL
                           else as.numeric(state$worker$started_at),
       read_only = isTRUE(state$read_only))
-}
-
-#' StatusEntryData for the status tab: root "notebook" with subtasks
-#' "workspace" (the worker starting: success once "ready") and, when the
-#' plan installs anything or an install runs, "pkg" with one subtask per
-#' package (success TRUE when installed, FALSE when failed). `started_at` /
-#' `finished_at` are NULL: the engine records no per-step times, and putting
-#' `state$clock` here would change the tree on every event.
-project_status_tree <- function(state) {
-  business <- function(name, success, subtasks = emptymap()) {
-    list(name = name, success = success, started_at = NULL, finished_at = NULL,
-        subtasks = subtasks)
-  }
-
-  ready <- state$worker$status %in% c("ready", "busy")
-  started <- !identical(state$worker$status, "off")
-  subtasks <- list(workspace = business("workspace", if (started) ready else NULL))
-
-  pv <- packages_view(state)
-  pkgs <- pv$packages
-  touched <- pkgs[pkgs$status %in% c("installed", "installing", "missing", "not_installed", "failed", "not_found"), , drop = FALSE]
-  if (nrow(touched) > 0) {
-    pkg_subtasks <- stats::setNames(lapply(seq_len(nrow(touched)), function(i) {
-      st <- touched$status[i]
-      # "not_installed" only ever appears in a failed library (`status ==
-      # "not_installed"` implies `target_failed`, packages_view()): this
-      # package's own install never ran because another one in the same
-      # library failed, not because it's merely pending, so it is a real
-      # failure here, unlike "missing" (not yet attempted) and
-      # "installing" (in progress), which stay unknown (`NULL`).
-      success <- if (st %in% c("installing", "missing")) NULL else identical(st, "installed")
-      business(touched$name[i], success)
-    }), touched$name)
-    pkg_success <- if (any(vapply(pkg_subtasks, function(x) is.null(x$success), logical(1)))) {
-      NULL
-    } else {
-      all(vapply(pkg_subtasks, function(x) isTRUE(x$success), logical(1)))
-    }
-    subtasks$pkg <- business("pkg", pkg_success, pkg_subtasks)
-  }
-
-  business("notebook", NULL, subtasks)
 }

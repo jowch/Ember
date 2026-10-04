@@ -601,13 +601,15 @@ find_errors <- function(cells, analyses, edges, setup, ids, components,
 
   # cycle: strongly connected components of `edges` (Tarjan over the
   # upstream lists) with more than one cell; one error per component,
-  # names = the edge names inside the component.
+  # names = the edge names inside the component, in display order of the
+  # cells defining them.
   for (comp in components) {
     if (length(comp) <= 1) next
     comp_ord <- ids[ids %in% comp]
-    names_in_comp <- unique(edges$name[edges$from %in% comp & edges$to %in% comp &
-                                          edges$via != "setup"])
-    names_in_comp <- names_in_comp[!is.na(names_in_comp)]
+    inside <- edges[edges$from %in% comp & edges$to %in% comp &
+                      edges$via != "setup" & !is.na(edges$name), , drop = FALSE]
+    inside <- inside[order(match(inside$to, ids)), , drop = FALSE]
+    names_in_comp <- unique(inside$name)
     fix <- if (length(names_in_comp) == 1) {
       sprintf("If %s is a column name, rename the global", names_in_comp)
     } else if (length(names_in_comp) > 1) {

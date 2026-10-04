@@ -197,6 +197,7 @@ const OpenFileField = () => {
             value=${""}
             client=${pluto_actions}
             placeholder=${t("t_ember_start_open_placeholder")}
+            aria_label=${t("t_ember_start_open_file")}
             button_label=${t("t_ember_start_open_button")}
             clear_on_blur=${false}
             readonly=${false}

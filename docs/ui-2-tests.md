@@ -353,4 +353,4 @@ New fixtures:
     banner says it will install that many packages.
 75. Endeavor's fields survive: `window.editor_state.notebook.nbpkg`,
     `status_tree` and `process_status` are present and filled as in
-    increment 1.
+    increment 1. (Increment 3 removed `status_tree`.)

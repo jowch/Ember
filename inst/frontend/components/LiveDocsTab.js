@@ -156,6 +156,7 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
             <button
                 class="ibtn"
                 type="button"
+                title=${t("t_ember_help_back")}
                 aria-label=${t("t_ember_help_back")}
                 disabled=${history_index <= 0}
                 onClick=${() => go_to(history_index - 1)}
@@ -165,6 +166,7 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
             <button
                 class="ibtn"
                 type="button"
+                title=${t("t_ember_help_forward")}
                 aria-label=${t("t_ember_help_forward")}
                 disabled=${history_index >= history.length - 1}
                 onClick=${() => go_to(history_index + 1)}

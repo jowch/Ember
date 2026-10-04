@@ -1,7 +1,6 @@
 import { cl } from "../common/ClassTable.js"
 import { html, useContext, useEffect, useLayoutEffect, useRef, useState } from "../imports/Preact.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
-import { PkgTerminalView } from "./PkgTerminalView.js"
 import _ from "../imports/lodash-es.js"
 import { ansi_to_html } from "../imports/AnsiUp.js"
 import { localized_list_htl, t, th } from "../common/lang.js"
@@ -57,7 +56,11 @@ const first_and_rest = (/** @type {string} */ x, render_first = (/** @type {stri
         : null}`
 }
 
-const symbol_list_rewriter = (/** @type {RegExp} */ pattern, /** @type {string} */ key, /** @type {(what: string) => any} */ make_link) => ({
+const symbol_list_rewriter = (
+    /** @type {RegExp} */ pattern,
+    /** @type {(count: number) => import("../common/lang.js").TranslationKey} */ key_for,
+    /** @type {(what: string) => any} */ make_link
+) => ({
     pattern,
     display: (/** @type {string} */ x) =>
         first_and_rest(x, (line) => {
@@ -65,7 +68,7 @@ const symbol_list_rewriter = (/** @type {RegExp} */ pattern, /** @type {string} 
             if (!match) return html`<${AnsiText} value=${line} />`
             const syms = (match[1] ?? "").replace(/\.$/, "").split(/, | and /)
             const links = syms.map(make_link)
-            return th(key, { symbols: localized_list_htl(links, syms, { type: "conjunction" }) })
+            return th(key_for(syms.length), { count: syms.length, symbols: localized_list_htl(links, syms, { type: "conjunction" }) })
         }),
 })
 
@@ -175,60 +178,13 @@ export const ErrorMessage = ({ msg, stacktrace, plain_error, ember_call = null, 
         display: (/** @type{string} */ x) => first_and_rest(x),
     }
     const rewriters = [
-        {
-            pattern: /syntax: extra token after end of expression/,
-            display: (/** @type{string} */ x) => {
-                const begin_hint = html`<a
-                    href="#"
-                    onClick=${(e) => {
-                        e.preventDefault()
-                        pluto_actions.wrap_remote_cell(cell_id, "begin")
-                    }}
-                    >${th("t_wrap_all_code_in_a_begin_end_block")}</a
-                >`
-                if (x.includes("\n\nBoundaries: ")) {
-                    const boundaries = JSON.parse(x.split("\n\nBoundaries: ")[1] ?? "[]").map((x) => x - 1) // Julia to JS index
-                    const split_hint = html`<p>
-                        <a
-                            href="#"
-                            onClick=${(e) => {
-                                e.preventDefault()
-                                pluto_actions.split_remote_cell(cell_id, boundaries, true)
-                            }}
-                            >${t("t_split_this_cell_into_cells", { count: boundaries.length })}</a
-                        >
-                    </p>`
-                    return html`<p>${t("t_multiple_expressions_in_one_cell")}</p>
-                        <p>${t("t_how_would_you_like_to_fix_it")}</p>
-                        <ul>
-                            <li>${split_hint}</li>
-                            <li>${begin_hint}</li>
-                        </ul>`
-                } else {
-                    return html`<p>${t("t_multiple_expressions_in_one_cell")}</p>
-                        <p>${begin_hint}</p>`
-                }
-            },
-            show_stacktrace: () => false,
-        },
-        {
-            pattern: /LoadError: cannot assign a value to variable workspace#\d+\..+ from module workspace#\d+/,
-            display: () =>
-                html`<p>Tried to reevaluate an <code>include</code> call, this is not supported. You might need to restart this notebook from the main menu.</p>
-                    <p>
-                        For a workaround, use the alternative version of <code>include</code> described here:
-                        <a target="_blank" href="https://github.com/JuliaPluto/Pluto.jl/issues/115#issuecomment-661722426">GH issue 115</a>
-                    </p>
-                    <p>In the future, <code>include</code> will be deprecated, and this will be the default.</p>`,
-        },
-        {
-            pattern: /MethodError: no method matching .*\nClosest candidates are:/,
-            display: (/** @type{string} */ x) => x.split("\n").map((line) => html`<p style="white-space: nowrap;">${line}</p>`),
-        },
-        symbol_list_rewriter(/Cyclic references among (.*)\./, "t_cyclic_references_among", (what) => html`<a href="#${encodeURI(what)}">${what}</a>`),
+        symbol_list_rewriter(
+            /Cyclic references among (.*)\./,
+            (count) => (count === 2 ? "t_cyclic_references_between_two" : "t_cyclic_references_among"),
+            (what) => html`<a href="#${encodeURI(what)}">${what}</a>`),
         symbol_list_rewriter(
             /Multiple definitions for (.*)/,
-            "t_multiple_definitions_for",
+            () => "t_multiple_definitions_for",
             (what) =>
                 html`<a
                     href="#"
@@ -239,11 +195,6 @@ export const ErrorMessage = ({ msg, stacktrace, plain_error, ember_call = null, 
                     >${what}</a
                 >`
         ),
-        {
-            pattern: /^syntax: (.*)$/,
-            display: default_rewriter.display,
-            show_stacktrace: () => false,
-        },
         {
             pattern: /^\s*$/,
             display: () => default_rewriter.display("Error"),
@@ -289,31 +240,6 @@ export const ErrorMessage = ({ msg, stacktrace, plain_error, ember_call = null, 
             note: (/** @type{string} */ x) => {
                 const rest = x.slice(x.indexOf(". ") + 2)
                 return rest.split("#'").flatMap((part, i) => (i === 0 ? [part] : [html`<code>#'</code>`, part]))
-            },
-            show_stacktrace: () => false,
-        },
-        {
-            pattern: /^ArgumentError: Package (.*) not found in current path/,
-            display: (/** @type{string} */ x) => {
-                if (pluto_actions.get_notebook().nbpkg?.enabled === false) {
-                    const rewritten = x
-                        .split("\n")
-                        .map((line) => (line.includes("Pkg.add") ? t("t_package_not_found_manual_pkg_activate_hint") : line))
-                        .join("\n")
-                    return default_rewriter.display(rewritten)
-                }
-
-                const match = x.match(/^ArgumentError: Package (.*) not found in current path/)
-                const package_name = (match?.[1] ?? "").replaceAll("`", "")
-
-                const pkg_terminal_value = pluto_actions.get_notebook()?.nbpkg?.terminal_outputs?.[package_name]
-
-                return html`${th("t_package_could_not_load", { package: package_name })}
-                ${th("t_package_could_not_load_things_you_could_try", { package: package_name })}
-                ${pkg_terminal_value == null
-                    ? null
-                    : html` <p>${t("t_might_find_info_in_pkg_log")}</p>
-                          <${PkgTerminalView} value=${pkg_terminal_value} />`} `
             },
             show_stacktrace: () => false,
         },

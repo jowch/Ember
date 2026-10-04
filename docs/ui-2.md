@@ -21,7 +21,8 @@ Tests are listed in [ui-2-tests.md](ui-2-tests.md).
 - **Pluto's fields stay filled.** Endeavor's page script reads
   `process_status`, `status_tree` and `nbpkg` from `window.editor_state`
   (endeavor/frontend/src/status.ts:20-22, drawer.ts:218). Ember's own data is
-  added beside them, never in their place.
+  added beside them, never in their place. (Increment 3 removed
+  `status_tree`.)
 - **Ember's additions to the frontend object** go in three places only, so
   they are easy to find: a top-level `ember` map (piece 5), a per-cell
   `cell_results[id].ember` map (piece 5), and new fields on
@@ -1029,7 +1030,7 @@ ui-2-tests.md 45-63.
 
 Increment 1 maps Ember's status onto Pluto's Julia-shaped fields
 (docs/ui.md strain 7): packages go into `nbpkg` and `status_tree`
-(pluto-state.R:446-520); "stale", "an ancestor failed" and "code changed
+(pluto-state.R:446-520; increment 3 removed `status_tree`); "stale", "an ancestor failed" and "code changed
 outside the page" all become one dimmed state, `depends_on_disabled_cells`
 (pluto-state.R:203-204). That flag also suppresses the "waiting to run"
 mark while a stale cell is queued (Cell.js:230). design.md asks for a
@@ -1080,7 +1081,7 @@ Per cell, `cell_results[id].ember = list(stale, code_changed, blocked_by =
 <id> | NULL)`, from the view (`stale`, `code_differs`, `blocked_by`), all
 already in the cell key. `depends_on_disabled_cells` becomes `blocked_by`
 only. Pluto's `nbpkg`, `status_tree` and `process_status` are still filled
-for Endeavor. (`blocked_by` and this `depends_on_disabled_cells` rule are
+for Endeavor (`status_tree` until increment 3 removed it). (`blocked_by` and this `depends_on_disabled_cells` rule are
 replaced in increment 3, piece 1.)
 
 **Worker memory.**

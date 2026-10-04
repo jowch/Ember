@@ -21,8 +21,7 @@
        CSS and CodeMirror) are in ember-forms.css: both this page and the
        start page load that file, and neither should define them twice. */
 
-    --custom-code-font-stack: "";
-    --code-font-stack: var(--julia-mono-font-stack); /* Will be overriden later */
+    --code-font-stack: var(--ember-code-font);
 }
 
 /* GENERAL PAGE LAYOUT */
@@ -107,7 +106,7 @@ pluto-notebook {
     display: block;
     background: var(--main-bg-color);
 
-    --code-font-stack: var(--custom-code-font-stack), var(--julia-mono-font-stack);
+    --code-font-stack: var(--ember-code-font);
 }
 
 /* STANDARD HTML ELEMENTS */
@@ -543,174 +542,6 @@ header#pluto-nav {
     font-size: 0.8rem;
 }
 
-header#pluto-nav.show_export {
-    --header-height: 9.3rem;
-    position: sticky;
-    top: 0;
-    transform: translateY(var(--header-height));
-}
-
-#pluto-nav:not(.show_export) dialog#export {
-    translate: 0 -2px;
-}
-
-dialog#export {
-    position: absolute;
-    display: block;
-    top: 0;
-    width: 100%;
-    height: var(--header-height);
-    background: var(--export-bg-color);
-    color: var(--export-color);
-    transform: translateY(calc(-100% - 1px));
-    /* overlay: none !important; */
-    overflow: visible;
-    margin: 0;
-    padding: 0;
-    max-width: none;
-    max-height: none;
-    border: none;
-}
-dialog#export::before {
-    content: "";
-    position: absolute;
-    bottom: 100%;
-    left: 0;
-    right: 0;
-    height: 100px;
-    background: inherit;
-}
-dialog.pride#export {
-    background: linear-gradient(
-        80deg,
-        hsl(0deg 43.55% 26.63%),
-        hsl(30deg 50.05% 37.86%),
-        hsl(55deg 49.41% 34.19%),
-        hsl(140deg 12.48% 45.98%),
-        hsl(220deg 35.66% 38.34%),
-        hsl(280deg 30.8% 32.11%)
-    );
-}
-dialog#export::after {
-    transform: translateY(2px);
-    content: "";
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    height: 2px;
-    width: 100%;
-    pointer-events: none;
-    background: var(--header-bg-color);
-}
-dialog.pride#export::after {
-    --c1: hsl(51.39deg 89.27% 68.71%);
-    --c2: hsl(281.12deg 68.59% 80.75%);
-    --c3: var(--c1);
-    --c4: hsl(0deg 0% 84.61%);
-    --c5: hsl(334.67deg 58.4% 75.81%);
-    --c6: hsl(204.67deg 41.19% 68.46%);
-    --c7: hsl(41deg 70.19% 37.26%);
-    --c8: hsl(0deg 0% 26.02%);
-    background: repeating-linear-gradient(
-        to right,
-        var(--c1) 0%,
-        var(--c1) 12.5%,
-        var(--c2) 12.5%,
-        var(--c2) 25%,
-        var(--c3) 25%,
-        var(--c3) 37.5%,
-        var(--c4) 37.5%,
-        var(--c4) 50%,
-        var(--c5) 50%,
-        var(--c5) 62.5%,
-        var(--c6) 62.5%,
-        var(--c6) 75%,
-        var(--c7) 75%,
-        /* black */ var(--c7) 87.5%,
-        var(--c8) 87.5%,
-        /* white */ var(--c8) 100%
-    );
-}
-dialog#export div#container {
-    flex-direction: row;
-    display: flex;
-    max-width: 1000px;
-    padding-inline-end: 10em;
-    margin: 0 auto;
-    position: relative;
-    height: var(--header-height);
-}
-header dialog#export div#container {
-    /* to prevent the div from taking up horizontal page when the export pane is closed. On small screen this causes overscroll on the right. */
-    overflow-x: hidden;
-}
-header.show_export dialog#export div#container {
-    overflow-x: auto;
-}
-a.export_card {
-    margin: 20px 5px;
-    flex: 0 0 auto;
-    width: var(--size, 14.5em);
-    border: 5px solid transparent;
-    background: var(--export-card-bg-color);
-    border-radius: 8px;
-    color: var(--export-card-title-color);
-    box-shadow: 0px 2px 10px var(--export-card-shadow-color);
-    text-decoration: none;
-    overflow: hidden;
-}
-div.export_title {
-    align-self: center;
-    flex: 0 0 auto;
-    border-radius: 8px;
-    text-orientation: sideways-right;
-    /* Not supported by Chrome: */
-    /* writing-mode: sideways-lr; */
-    writing-mode: vertical-rl;
-    transform: rotate(180deg);
-    font-weight: 700;
-    font-size: 1rem;
-    max-width: var(--header-height);
-    padding-inline: 0.5em;
-    text-align: center;
-}
-a.export_card header {
-    margin-block: 0px;
-    font-family: var(--ember-prose-font-stack);
-    /* font-family: system-ui; */
-    font-feature-settings: "lnum", "pnum";
-    font-size: 17px;
-}
-a.export_card section {
-    color: var(--export-card-text-color);
-    font-weight: 500;
-    /* font-family: system-ui; */
-    /* font-size: 14px; */
-    padding: 3px;
-    text-overflow: ellipsis;
-    overflow: hidden;
-}
-dialog#export .export_small_btns {
-    display: flex;
-    flex-direction: row;
-    padding: 0.9em;
-    border-radius: 0.9em;
-    position: absolute;
-    inset-inline-end: 0.8em;
-    top: 0em;
-    background: var(--export-bg-color);
-}
-dialog#export .pride_message {
-    flex: 1 0 auto;
-    align-self: center;
-    margin-inline-start: 32ch;
-}
-dialog#export .pride_message p {
-    margin: 0;
-    padding: 0.2ch 1ch;
-    background: black;
-    transform: rotate(3deg);
-}
 pluto-editor.static_preview button.toggle_export {
     display: none;
 }
@@ -764,233 +595,25 @@ pluto-editor.static_preview button.toggle_export {
     background-image: url("./img/icons/build-outline.svg");
 }
 
-dialog.export-html-dialog {
-    max-width: 22rem;
-    border-radius: 0.6rem;
-    border: none;
-    background: var(--main-bg-color);
-    box-shadow: 0px 2px 30px #0000005c;
-    padding: 0;
-    font-family: var(--system-ui-font-stack);
-}
-
-dialog.export-html-dialog > div.ple-option {
-    padding: 1.4em 1.4em;
-}
-
-dialog.export-html-dialog > div.ple-or {
-    height: 0;
-    padding: 0 1.4em;
-    text-align: center;
-    font-weight: 700;
-    color: var(--pluto-output-color);
-    line-height: 0;
-    transform: translateY(-1px);
-}
-
-dialog.export-html-dialog > div.ple-or span {
-    background: var(--plutoland-or-bg-color);
-    padding: 0.2em 0.5em;
-    border-radius: 0.4em;
-}
-
-dialog.export-html-dialog > div {
-    padding: 1em;
-}
-
-dialog.export-html-dialog a {
-    color: inherit;
-    text-decoration-color: currentcolor;
-}
-
-dialog.export-html-dialog p {
-    margin: 0;
-}
-
-dialog.export-html-dialog > .ple-download > p {
-    color: var(--pluto-output-color);
-}
-
-dialog.export-html-dialog .ple-bigbutton-container {
-    display: grid;
-    place-items: center;
-    padding: 2em 0.5em 1em 0.5em;
-}
-
-dialog.export-html-dialog :is(.ple-bigbutton, .ple-plutoland-phase) {
-    display: block;
-    padding: 0.8em 1.2em;
-    border: none;
-    border-radius: 0.4em;
-    background: var(--plutoland-bigbutton-bg-color);
-    box-shadow: 0px 1px 10px #00000033;
-    text-decoration: none;
-    text-align: center;
-    color: var(--black);
-}
-
-dialog.export-html-dialog a.ple-plutoland-url {
-    font-family: var(--ember-code-font);
-    font-size: 0.7em;
-    font-weight: 700;
-    text-overflow: clip;
-    overflow: hidden;
-    white-space: nowrap;
-    background: var(--plutoland-url-bg);
-    color: var(--plutoland-url-fg);
-    padding: 0.2em 0.4em;
-    border-radius: 0.3em;
-    display: inline-block;
-}
-
-dialog.export-html-dialog .ple-plutoland-url-container {
-    margin-top: 1em;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 0.5em;
-}
-
-dialog.export-html-dialog > div.ple-plutoland {
-    background: #3c4c59;
-    color: white;
-    box-shadow: inset 0px 0px 47px #00000030;
-}
-
-dialog.export-html-dialog > div.final button {
-    cursor: pointer;
-}
-
-dialog.psettings {
-    border-radius: 0.7rem;
-    width: min(34rem, 90vw);
-    background: var(--settings-bg-color);
-    color: var(--pluto-output-color);
-}
-dialog.psettings::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 7.1em;
-    background: var(--settings-header-bg-color);
-    z-index: -1;
-}
-
-.psettings label {
-    display: flex;
-    flex-direction: row;
-    gap: 1em;
-    justify-content: space-between;
-    flex-wrap: nowrap;
-    cursor: pointer;
-    padding: 1em 0.7em;
-    border-radius: 0.7rem;
-    align-items: center;
-}
-
-.big-list-of-settings {
-    display: flex;
-    flex-direction: column;
-    gap: 2rem;
-}
-
-.psettings input[type="checkbox"] {
-    font-size: 26px;
-    width: 20px;
-    height: 20px;
-    flex: 0 0 auto;
-    /* scale: 1.7; */
-}
-
-.psettings label:hover {
-    background: var(--shoulder-hover-bg-color);
-}
-
-.psettings :is(h4, p) {
-    margin: 0;
-}
-
-.psettings :is(h1, h2, h4) {
-    color: var(--pluto-output-h-color);
-}
-
-.psettings h1 {
-    margin-block-start: 1rem;
-    margin-block-end: 0rem;
-    font-size: 3rem;
-}
-.psettings h2 {
-    margin-block-start: 5rem;
-    margin-block-end: 1rem;
-    font-size: 2rem;
-}
-.psettings .description-2 {
-    color: var(--settings-p2-color);
-    margin-top: 0.7em;
-}
-
 dialog.confirm-before-long-runtime {
-    color: var(--pluto-output-color);
+    width: min(360px, calc(100vw - 32px));
+    padding: 20px;
+    border: 1px solid var(--ember-line);
     border-radius: 10px;
-    max-width: 37ch;
-    background: var(--confirm-runtime-bg);
+    box-shadow: var(--ember-shadow);
+    background: var(--ember-panel);
+    color: var(--ember-text);
+    font-family: var(--ember-ui-font);
     bottom: 0.8rem;
     left: 0.8rem;
     top: auto;
     right: auto;
-    box-shadow: 0 0 20px #00000059;
 }
 
-.confirm-before-long-runtime p.bonus-info {
-    font-size: 0.9em;
-    margin-block-end: 2rem;
-    padding: 1em 1.2em;
-    background: var(--confirm-runtime-bonus-bg);
-    border-radius: 3px;
-    border-inline-start: 3px solid var(--confirm-runtime-bonus-border);
-}
-
-.confirm-before-long-runtime .final button {
-    padding: 0.5em 0.9em;
-    border: 2px solid var(--confirm-runtime-button-border);
-    background: var(--confirm-runtime-button-bg);
-    font-weight: bold;
-}
-
-.confirm-before-long-runtime .final button.final-yes {
-    background: var(--confirm-runtime-yes-bg);
-    color: var(--confirm-runtime-yes-color);
-    border-color: var(--confirm-runtime-yes-border);
-    position: relative;
-    overflow: hidden;
-}
-
-.confirm-before-long-runtime .final button.final-yes:not(:focus-within) kbd {
-    opacity: 0;
-}
-
-.confirm-before-long-runtime .final button kbd {
-    opacity: 0.8;
-    font-size: 0.8em;
-}
-
-.confirm-before-long-runtime .final button.final-yes.will-auto-accept::before {
-    content: "";
-    display: block;
-    background: var(--confirm-runtime-yes-progress);
-    translate: calc(var(--auto-click-progress) * 100% - 100%) 0%;
-    left: 0;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    position: absolute;
-}
-
-.confirm-before-long-runtime .final button.final-yes span {
-    translate: 0 0;
-    display: inline-block;
+.confirm-before-long-runtime p {
+    margin: 0 0 16px;
+    font-size: 13.5px;
+    line-height: 1.5;
 }
 
 nav#at_the_top {
@@ -1078,34 +701,6 @@ div.desktop_picker span {
     cursor: pointer;
 }
 
-button.toggle_export,
-.export_small_btns button {
-    border: none;
-    background: none;
-    cursor: pointer;
-    opacity: 0.5;
-}
-button.toggle_export span,
-.export_small_btns button span {
-    display: block;
-    content: " " !important;
-    background-size: 25px 25px;
-    height: 25px;
-    width: 25px;
-}
-
-dialog#export button.toggle_export span {
-    background-image: url("./img/icons/close-outline.svg");
-    filter: invert(1);
-}
-dialog#export button.toggle_frontmatter_edit span {
-    background-image: url("./img/icons/newspaper-outline.svg");
-    filter: invert(1);
-}
-dialog#export button.toggle_presentation span {
-    background-image: url("./img/icons/easel-outline.svg");
-    filter: invert(1);
-}
 nav#at_the_top:after {
     margin-left: auto;
     align-self: center;
@@ -1149,7 +744,6 @@ nav#at_the_top:after {
 
 pluto-editor.nbpkg_restart_recommended > header#pluto-nav,
 pluto-editor.nbpkg_restart_required > header#pluto-nav,
-pluto-editor.binder.loading > header#pluto-nav,
 pluto-editor.process_dead > header#pluto-nav,
 pluto-editor.disconnected > header#pluto-nav {
     position: sticky;
@@ -1171,9 +765,6 @@ pluto-editor.loading > header#pluto-nav {
 }
 pluto-editor.disconnected > header#pluto-nav {
     background-color: var(--disconnected-header-color);
-}
-pluto-editor.binder.loading > header#pluto-nav {
-    background-color: var(--binder-loading-header-color);
 }
 
 /* Header contents (ui-3.md, Header; ui-3-plan.md piece 5 step 6): the
@@ -1498,15 +1089,6 @@ nav#at_the_top .ember-menu {
     z-index: 70;
 }
 
-.ember-shortcuts-list {
-    display: inline-block;
-    text-align: left;
-    white-space: pre-wrap;
-    font-family: var(--ember-code-font);
-    font-size: 12.5px;
-    line-height: 1.6;
-}
-
 #ember-packages-tab {
     font-family: var(--sans-serif-font-stack);
     padding: 0.5em 1em;
@@ -1729,20 +1311,6 @@ loading-bar {
     z-index: 12000;
     animation: move-background 2s ease-in-out infinite;
 }
-loading-bar.slow {
-    transition:
-        width cubic-bezier(0.14, 0.71, 0, 0.99) 10s,
-        opacity linear 0.5s;
-}
-@media (prefers-reduced-motion) {
-    loading-bar {
-        transition: none;
-    }
-}
-
-pluto-editor.binder.loading #binder_spinners {
-    opacity: 0.25;
-}
 
 @keyframes move-background {
     0% {
@@ -1775,7 +1343,6 @@ pluto-editor.binder.loading #binder_spinners {
     /* background: #7b77ff12; */
     box-shadow: inset 0px 0px 20px 20px #919bff2b;
 }
-
 
 .outline-frame-actions-container {
     position: fixed;
@@ -1986,11 +1553,6 @@ pluto-output:not(.rich_output) > div > pre {
     display: flex;
 }
 
-.bonds_disabled:where(.offer_binder, .offer_local) bond {
-    opacity: 0.6;
-    filter: grayscale(1);
-}
-
 @keyframes fadeintext {
     from {
         color: transparent;
@@ -2043,14 +1605,47 @@ pluto-cell.depends_on_skipped_cells pluto-input .cm-editor {
 
 /* SELECTION */
 
-pluto-cell.selected {
-    background: var(--selected-cell-bg-color);
-    border-radius: 0 3px 3px 0;
+.skip-link {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    z-index: 2000;
+    padding: 8px 14px;
+    border-radius: 7px;
+    background: var(--ember-panel);
+    color: var(--ember-accent);
+    font: 500 14px var(--ember-ui-font);
+    box-shadow: var(--ember-shadow);
+    text-decoration: none;
+}
+.skip-link:not(:focus) {
+    clip-path: inset(50%);
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    white-space: nowrap;
 }
 
-pluto-cell.selected > pluto-input > div.cm-editor,
-pluto-cell.selected > pluto-output {
-    opacity: 0.7;
+.ember-visually-hidden {
+    position: absolute;
+    clip-path: inset(50%);
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+/* The code box fills the cell, so the selection is a band around it. */
+pluto-cell.selected {
+    box-shadow: 0 0 0 4px var(--selected-cell-bg-color);
+    border-radius: 6px;
+}
+
+pluto-cell.selected:focus-visible {
+    outline: 2px solid var(--ember-focus-ring);
+    outline-offset: 2px;
+    box-shadow: none;
 }
 
 main {
@@ -2130,12 +1725,10 @@ pluto-cell.code_folded.show_input > pluto-input:not(:focus-within) {
 
 /* UI */
 
-button.floating_back_button,
 .overlay-button button,
 pluto-cell > button,
 pluto-input > button,
-pluto-shoulder > button,
-nav#slide_controls > button {
+pluto-shoulder > button {
     position: absolute;
     margin: 0px;
     padding: 1px;
@@ -2230,8 +1823,6 @@ pluto-input > button > span {
         /* to make it feel smooth: */
         transition: opacity 0.25s ease-in-out;
     }
-    .export_small_btns button,
-    button.toggle_export,
     button.start_stop_recording,
     pluto-cell:hover > button,
     pluto-cell:focus-within > button,
@@ -2243,8 +1834,6 @@ pluto-input > button > span {
         opacity: 0.6;
         transition: opacity 0.25s ease-in-out;
     }
-    .export_small_btns button:hover,
-    button.toggle_export:hover,
     button.start_stop_recording:hover,
     .overlay-button button:hover,
     pluto-cell > button:hover,
@@ -2330,158 +1919,6 @@ pluto-cell.code_folded.show_input:focus-within > pluto-input > .preview_hidden_c
     display: block;
 }
 
-/* AI Context */
-
-pluto-popup.ai-context > div {
-    background: var(--ai-gradient-bg);
-    box-shadow: 0 0 3rem #00000061;
-}
-
-.ai-context-container {
-    padding: 0.2rem;
-}
-
-.ai-context-container h2 {
-    margin: 0 0 0.5rem 0;
-    font-size: 1.2rem;
-    color: var(--pluto-output-h-color);
-}
-
-.ai-context-intro {
-    margin: 0.5rem 0;
-    font-size: 0.9rem;
-    color: var(--pluto-output-color);
-}
-
-.ai-context-question-input {
-    width: 100%;
-    padding: 8px 12px;
-    margin: 8px 0;
-    border: 3px solid transparent;
-    border-radius: 4px;
-    font-size: 0.95em;
-    background: var(--main-bg-color);
-    transition: border-color 0.2s;
-}
-
-.ai-context-question-input:focus,
-.ai-context-question-input:not(:placeholder-shown) {
-    outline: none;
-    border-color: var(--overlay-button-border);
-}
-
-.ai-context-question-input::placeholder {
-    color: var(--pluto-input-color);
-    opacity: 0.6;
-}
-
-.ai-context-prompt-container {
-    position: relative;
-    margin-top: 1rem;
-    border-radius: 6px;
-    box-shadow: 0 2px 11px #0000001f;
-    background: var(--ai-prompt-bg);
-}
-
-.ai-context-prompt {
-    max-height: 15ch;
-    overflow-y: auto;
-    padding: 0.5rem;
-    line-height: 1.5;
-}
-
-.ai-context-prompt pre {
-    margin: 0;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    font-family: inherit;
-    font-size: 0.5rem;
-}
-
-.ai-context-container .copy-button {
-    position: absolute;
-    bottom: 0.5rem;
-    right: 0.5rem;
-    padding: 0.5rem 1rem;
-    background: var(--white);
-    border: 3px solid var(--overlay-button-border);
-    border-radius: 0.7rem;
-    color: var(--black);
-    font-size: 0.9rem;
-    font-weight: bold;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    /* box-shadow: 0 1px 10px #0000001a; */
-}
-
-.ai-context-container .copy-button.copied {
-    /* color: var(--pluto-output-bg); */
-}
-
-/* PKG UI */
-
-pkg-status-mark {
-    width: 1em;
-    height: 1em;
-    margin: 0px 0.6em 0px 0.2em;
-    display: inline-block;
-}
-pluto-editor.nbpkg_disabled pkg-status-mark:not(.disable_pkg) {
-    display: none;
-}
-
-pkg-status-mark > button {
-    margin: 0px;
-    padding: 0px;
-    border: none;
-    background: none;
-    cursor: context-menu;
-    position: relative;
-    top: -0.2em;
-
-    /* background: rgba(127, 176, 76, 0.24);
-    border: 3px solid rgba(84, 182, 237, 0);
-    border-radius: 5px; */
-}
-
-pkg-status-mark > button > span::after {
-    display: inline-block;
-    content: " " !important;
-    background-size: 1.5em;
-    height: 1.5em;
-    width: 1.5em;
-
-    background-image: url("./img/icons/time-outline.svg");
-    opacity: 0.3;
-    filter: var(--image-filters);
-}
-
-pkg-status-mark.installed > button > span::after {
-    background-image: url("./img/icons/checkmark-outline.svg");
-    /* background-image: url("./img/icons/cloud-done-outline.svg"); */
-    filter: var(--image-filters);
-}
-pkg-status-mark.busy > button > span::after {
-    background-image: url("./img/icons/sync-outline.svg");
-    animation: loadspin 3s ease-in-out infinite;
-    filter: var(--image-filters);
-}
-pkg-status-mark.not_found > button > span::after {
-    background-image: url("./img/icons/cloud-offline-outline.svg");
-    opacity: 0.6;
-    filter: var(--image-filters);
-}
-pkg-status-mark.will_be_installed > button > span::after {
-    background-image: url("./img/icons/cloud-download-outline.svg");
-    opacity: 0.6;
-    filter: var(--image-filters);
-}
-pkg-status-mark.disable_pkg > button > span::after {
-    background-image: url("./img/icons/chatbox-ellipses-outline.svg");
-    opacity: 0.6;
-    filter: var(--image-filters);
-}
-
 pluto-popup {
     display: block;
     position: absolute;
@@ -2546,120 +1983,8 @@ pluto-popup.warn > * {
     border-color: var(--pluto-logs-warn-accent-color);
 }
 
-pluto-popup code.auto_disabled_variable {
-    font-family: var(--julia-mono-font-stack);
-    font-size: 0.8rem;
-    font-variant-ligatures: none;
-}
-
-pluto-popup > pkg-popup {
-    background: var(--pkg-popup-bg);
-    border: 3px solid var(--pkg-popup-border-color);
-}
-
-pkg-popup.busy {
-    border: 3px solid hsl(282deg 31% 62%);
-}
-
-pkg-version {
-    font-family: var(--ember-code-font);
-    font-size: 0.75rem;
-    color: var(--pkg-version-color);
-}
-
-pkg-popup .pkg-buttons {
-    float: right;
-    /* position: absolute; */
-    /* right: 0px; */
-    /* bottom: 0px; */
-    display: inline-flex;
-    height: 1em;
-    flex-direction: row;
-}
-
 .ionicon {
     filter: var(--image-filters);
-}
-
-.package-name .ionicon {
-    margin-bottom: -0.1ch;
-}
-
-a.stdout-info img,
-pkg-popup .pkg-buttons img {
-    filter: var(--image-filters);
-    width: 17px;
-}
-
-a.stdout-info,
-pkg-popup .pkg-buttons > * {
-    display: block;
-    height: 17px;
-    font-size: 14px;
-    padding: 3px;
-    box-sizing: content-box;
-    background: var(--pkg-popup-buttons-bg-color);
-    border-radius: 10px;
-    z-index: 52;
-    margin-left: -4px;
-}
-
-pkg-popup .toggle-terminal {
-    right: 20px;
-}
-
-.pkg-time-estimate {
-    font-size: 0.8em;
-    margin: 0.5em 0em;
-    padding: 0.5em 0.5em;
-    background: var(--pluto-logs-warn-color);
-    border-radius: 0.5em;
-}
-
-pkg-terminal {
-    position: relative;
-    display: block;
-    /* width: 20rem; */
-    cursor: text;
-    margin-top: 6px;
-    background: var(--pkg-terminal-bg-color);
-    color: white;
-    border-radius: 6px;
-    border: 3px solid var(--pkg-terminal-border-color);
-    padding: 3px;
-}
-
-pkg-terminal > .scroller {
-    max-height: 10rem;
-    overflow-y: auto;
-    padding: 4px;
-    width: 100%;
-}
-
-body pkg-terminal:not(.asdf) pre:not(.asdf) {
-    white-space: pre-wrap;
-    word-break: break-all;
-    font-size: 0.6rem;
-    font-family: var(--ember-code-font);
-    font-variant-ligatures: none;
-    margin: 0;
-    color: inherit;
-    background: none;
-}
-
-pkg-terminal .make-me-spin {
-    display: inline-block;
-    animation: identifier-spin 1s linear infinite;
-    transform-origin: 50% 59%;
-    animation-delay: var(--animation-delay);
-}
-
-pkg-popup pkg-terminal {
-    display: none;
-}
-
-pkg-popup.showterminal pkg-terminal {
-    display: block;
 }
 
 @keyframes loadspin {
@@ -2678,46 +2003,6 @@ pkg-popup.showterminal pkg-terminal {
     100% {
         transform: rotate(360deg);
     }
-}
-
-button.open-big-terminal {
-    position: absolute;
-    right: 0.1em;
-    bottom: 0.2em;
-    background: none;
-    border: none;
-}
-
-button.open-big-terminal::after {
-    content: "";
-    display: inline-block;
-    background-image: url("./img/icons/expand-outline.svg");
-    filter: invert(1);
-    width: 1em;
-    height: 1em;
-    background-size: 1em;
-    cursor: pointer;
-}
-
-dialog.big-pkg-terminal {
-    border: none;
-    border-radius: 8px;
-    box-shadow: 0 0 31px #0000007a;
-    background: var(--pkg-terminal-bg-color);
-}
-
-dialog.big-pkg-terminal > div {
-    display: flex;
-    flex-direction: column;
-}
-dialog.big-pkg-terminal button {
-    place-self: end;
-    margin-top: 1em;
-}
-
-dialog.big-pkg-terminal pkg-terminal > .scroller {
-    max-height: calc(100vh - 9em);
-    max-width: 91ch;
 }
 
 pluto-cell.code_folded.show_input > pluto-input:not(:focus-within) {
@@ -2847,9 +2132,6 @@ pluto-helpbox .live-docs-searchbox input {
 }
 pluto-helpbox .live-docs-searchbox.notfound input {
     color: var(--helpbox-notfound-search-color);
-}
-pluto-helpbox .live-docs-searchbox input:focus {
-    outline: none;
 }
 
 /* NOTE */
@@ -3026,51 +2308,6 @@ pluto-helpbox .live-docs-searchbox input:focus {
     font-size: 1.1em;
 }
 
-.notify-when-done {
-    position: absolute;
-    bottom: 0.3em;
-    right: 0;
-    left: 0;
-
-    font-family: var(--system-ui-font-stack);
-    font-weight: bold;
-    font-size: 0.8rem;
-    transition: opacity 0.2s;
-    display: flex;
-    justify-content: center;
-    opacity: 0;
-    user-select: none;
-}
-
-.notify-when-done.visible {
-    opacity: 1;
-}
-
-.notify-when-done.visible label {
-    cursor: pointer;
-}
-
-.notify-when-done label {
-    display: flex;
-    align-items: center;
-    background: var(--process-notify-bg);
-    padding: 0.3em 0.6em;
-    border-radius: 1000px;
-    box-shadow: 0px 3px 5px #0000003b;
-}
-
-.notify-when-done label::before {
-    content: "";
-    display: inline-block;
-    width: 1em;
-    height: 1em;
-    background-image: url("./img/icons/notifications-outline.svg");
-    background-size: contain;
-    filter: var(--image-filters);
-    margin-bottom: -0.2em;
-    margin-right: 0.3em;
-}
-
 header#pluto-nav .desktop_picker_group button {
     margin: 0px;
     background: var(--footer-filepicker-focus-color);
@@ -3084,25 +2321,6 @@ header#pluto-nav .desktop_picker_group button {
     height: auto;
     font-size: 0.75rem;
     flex-shrink: 0;
-}
-
-/* LANGUAGE PICKER */
-
-.psettings select {
-    background: var(--white);
-    border: 2px solid var(--footer-input-border-color);
-    border-radius: 3px;
-    padding: 2px 4px;
-    font-family: inherit;
-    font-size: 0.8em;
-    color: var(--footer-color);
-    cursor: pointer;
-    font-family: var(--system-ui-font-stack);
-}
-
-.psettings select:focus {
-    outline: 2px solid var(--footer-filepicker-focus-color);
-    outline-offset: 1px;
 }
 
 /* UNDO DELETED CELL */
@@ -3154,61 +2372,6 @@ nav#undo_delete.hidden {
     pluto-cell.shrunk {
         /* max-width: calc(100% - 100px); */
     }
-}
-
-/* PRESENTATION MODE */
-
-body.presentation pluto-output h1,
-body.presentation pluto-output h2 {
-    margin-top: 100vh;
-}
-body.presentation pluto-notebook {
-    padding-bottom: 100vh;
-}
-body.presentation #helpbox-wrapper {
-    display: none !important;
-}
-
-nav#slide_controls {
-    display: none;
-}
-body.presentation nav#slide_controls {
-    display: flex;
-    position: fixed;
-    bottom: 0px;
-    right: 0px;
-    z-index: 100;
-}
-
-nav#slide_controls > button {
-    position: static;
-    padding: 5px;
-}
-
-button.floating_back_button > span::after,
-nav#slide_controls > button > span::after {
-    content: " " !important;
-    display: block;
-    height: 30px;
-    width: 30px;
-    background-size: 30px 30px;
-}
-button.floating_back_button > span::after,
-nav#slide_controls > button.prev > span::after {
-    background-image: url("./img/icons/arrow-back-outline.svg");
-    filter: var(--image-filters);
-}
-nav#slide_controls > button.next > span::after {
-    background-image: url("./img/icons/arrow-forward-outline.svg");
-    filter: var(--image-filters);
-}
-
-button.floating_back_button {
-    display: flex;
-    position: fixed;
-    z-index: 1000;
-    left: 1em;
-    top: 1em;
 }
 
 /* CODEMIRROR HINTS */
@@ -3369,7 +2532,7 @@ pluto-input .cm-editor .cm-content {
     color: var(--cm-color-editor-text);
 }
 .cm-editor.cm-focused:not(.__) {
-    outline: unset;
+    outline: none;
 }
 
 .cm-editor .cm-gutter {
@@ -3456,8 +2619,7 @@ li.completion_keyword_argument .cm-completionLabel {
 }
 
 .cm-completionIcon-c_Any::before,
-pluto-output > assignee,
-pluto-popup code.auto_disabled_variable {
+pluto-output > assignee {
     color: var(--cm-color-variable) !important;
     font-weight: 700;
 }
@@ -3562,125 +2724,6 @@ pluto-cell.hooked_up > pluto-output {
     border-color: var(--pluto-cell-force-color);
 }
 
-.fm-table {
-    display: grid;
-    grid-template-columns: auto 1fr min-content;
-    gap: 0.3em 1em;
-}
-
-/* Frontmatter input and Project.toml editor */
-
-.pluto-modal {
-    font-family: var(--system-ui-font-stack);
-    width: min(31rem, 90vw);
-    border-radius: 1.8em;
-    padding: 1.3em 1.9em;
-    border: none;
-    box-shadow: 0 0 55px #00000052;
-    position: fixed;
-}
-
-.pluto-modal-dark {
-    color: var(--export-color);
-    background: var(--export-bg-color);
-}
-.pluto-modal-dark h1 {
-    color: white;
-    font-weight: 900;
-    margin-block-start: 0.3em;
-}
-
-.pluto-modal-dark :is(a) {
-    color: var(--export-color);
-    text-decoration-color: var(--export-color);
-}
-
-.pluto-modal button {
-    cursor: pointer;
-    border-radius: 0.5em;
-    font-weight: 500;
-}
-
-.pluto-modal-dark button {
-    background-color: var(--frontmatter-button-bg-color);
-    border: 2px solid var(--frontmatter-button-bg-color);
-}
-
-.pluto-modal-dark button:hover {
-    border-color: var(--frontmatter-input-border-color);
-}
-
-.pluto-modal-dark input {
-    background-color: var(--frontmatter-input-bg-color);
-    border-radius: 0.5em;
-    border: 2px solid var(--frontmatter-input-border-color);
-    padding: 0.3em 0.5em;
-}
-.pluto-modal-dark label {
-    font-weight: 500;
-}
-
-.pluto-modal .final {
-    display: flex;
-    margin-top: 1rem;
-    justify-content: flex-end;
-    gap: 0.5em;
-}
-
-.pluto-frontmatter .card-preview {
-    background: var(--white);
-    padding: 1.2rem 1.1rem;
-    margin: 1rem 0;
-    box-shadow: inset 0px 0px 15px -4px #00000054;
-    border-radius: 1rem;
-}
-
-.pluto-frontmatter .card-preview > h2 {
-    margin-block-start: 0;
-    color: var(--black);
-}
-
-.pluto-frontmatter input:invalid {
-    outline-color: red;
-    border-color: red;
-}
-
-.pluto-frontmatter rbl-tag-input {
-    color: var(--black);
-}
-
-.pluto-frontmatter .deletefield {
-    color: var(--export-color);
-    background-color: transparent;
-    border-width: 0;
-    align-self: stretch;
-    margin-left: -1em;
-}
-
-.pluto-frontmatter .addentry {
-    grid-column: 1/3;
-    margin-top: 0.5em;
-}
-
-.pluto-frontmatter fieldset {
-    grid-column: 1/4;
-}
-
-.pluto-frontmatter .final {
-    margin-top: 2rem;
-}
-
-.pluto-project_toml {
-    width: min(45rem, 90vw);
-}
-
-.pluto-project_toml .cm-editor {
-    font-family: var(--julia-mono-font-stack);
-    margin-block-end: 2rem;
-    border: 2px solid;
-    border-radius: 0.3em;
-}
-
 /*  Styles for markdown copy Button*/
 .markdown-code-block-button {
     position: relative;
@@ -3764,111 +2807,8 @@ pluto-output:hover pluto-header-id-copy:hover {
 }
 
 /* Show button when focused */
-pluto-header-id-copy:focus {
+pluto-header-id-copy:focus-visible {
     opacity: 1;
-    outline: 2px solid var(--black);
-    outline-offset: 2px;
-}
-
-.fix-with-ai {
-    display: inline-flex;
-    gap: 8px;
-    align-items: center;
-}
-
-.fix-with-ai button {
-    font-family: var(--system-ui-font-stack);
-    font-size: 0.8rem;
-    font-weight: 500;
-    padding: 4px 12px;
-    border-radius: 6px;
-    border: none;
-    color: var(--black);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: var(--ai-gradient-bg);
-    transition: background 0.3s ease;
-}
-
-.fix-with-ai button::before {
-    content: "";
-    display: inline-block;
-    width: 1.2em;
-    height: 1.2em;
-    background-size: contain;
-    filter: var(--image-filters);
-    transition: background-image 0.3s ease;
-}
-
-.fix-with-ai button::before {
-    background-image: url("./img/icons/sparkles.svg");
-}
-
-.fix-with-ai-loading button {
-    background: linear-gradient(135deg, rgba(65, 105, 225, 0.1), rgba(147, 112, 219, 0.1));
-}
-
-.fix-with-ai-loading button::before {
-    background-image: url("./img/icons/sync-outline.svg");
-    animation: identifier-spin 1s linear infinite;
-}
-
-.fix-with-ai-success button {
-    background: rgb(89 174 87 / 22%);
-}
-
-.fix-with-ai-success button::before {
-    background-image: url("./img/icons/caret-forward-circle-outline.svg");
-}
-
-.fix-with-ai button.reject-ai-fix {
-    background: rgba(231, 71, 71, 0.228);
-}
-
-.fix-with-ai button.reject-ai-fix::before {
-    background-image: url("./img/icons/close-outline.svg");
-}
-
-.ai-permission-prompt {
-    padding: 0.2em;
-}
-
-.ai-permission-prompt h3 {
-    margin-top: 0;
-    margin-bottom: 1rem;
-}
-/* 
-.ai-permission-prompt p {
-    margin-bottom: 1.5rem;
-    line-height: 1.4;
-} */
-
-.ai-permission-prompt .ask-next-time {
-    display: flex;
-    gap: 0.5ch;
-    margin-bottom: 1em;
-}
-
-.ai-permission-prompt .button-group {
-    display: flex;
-    gap: 0.75rem;
-}
-
-.ai-permission-prompt button {
-    padding: 0.5rem 1rem;
-    border-radius: 4px;
-    border: 1px solid var(--pluto-output-color);
-    background: var(--white);
-    color: var(--black);
-    cursor: pointer;
-    font-size: 0.9rem;
-}
-
-.ai-permission-prompt button.accept {
-    background: var(--black);
-    color: var(--white);
 }
 
 /* Shared dialogs (common/dialogs.js) and menus (common/useMenu.js). */
@@ -3898,6 +2838,289 @@ pluto-header-id-copy:focus {
     flex-direction: column;
     gap: 16px;
     padding: 20px;
+}
+
+.ember-dialog-title-note {
+    font-size: 12.5px;
+    font-weight: 400;
+    color: var(--ember-muted);
+}
+
+/* Keyboard shortcuts (components/ShortcutsSheet.js), from board Keys6. */
+
+.ember-dialog.ember-shortcuts {
+    width: min(1030px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px);
+    background: var(--ember-panel);
+    color: var(--ember-text);
+    font-family: var(--ember-ui-font);
+}
+
+.ember-shortcuts .ember-dialog-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 4px 12px;
+    padding: 18px 24px 0;
+    font-size: 17px;
+    font-weight: 600;
+}
+
+.ember-shortcuts .ember-dialog-body {
+    padding: 0 24px 22px;
+}
+
+.ember-shortcuts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 40px;
+}
+
+.ember-shortcuts-group h3 {
+    margin: 0;
+    padding: 12px 0 4px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ember-muted);
+}
+
+.ember-shortcuts-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 150px;
+    gap: 10px;
+    align-items: center;
+    padding: 5px 0;
+    border-top: 1px solid var(--ember-line);
+    font-size: 13px;
+}
+
+.ember-shortcuts-keys {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.ember-shortcuts kbd {
+    font-family: var(--ember-code-font);
+    font-size: 11.5px;
+    font-weight: 400;
+    letter-spacing: normal;
+    line-height: 1;
+    padding: 4px 6px;
+    border: 1px solid var(--ember-line);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    background: var(--ember-page);
+    color: var(--ember-text);
+    box-shadow: none;
+}
+
+@media (max-width: 720px) {
+    .ember-shortcuts-grid {
+        grid-template-columns: 1fr;
+        gap: 0;
+    }
+    .ember-shortcuts-row {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+}
+
+/* Settings (components/Settings.js), from board Menus6. */
+
+.ember-dialog.psettings {
+    width: min(562px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px);
+    background: var(--ember-panel);
+    color: var(--ember-text);
+    font-family: var(--ember-ui-font);
+}
+
+.psettings .ember-dialog-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    padding: 16px 22px 4px;
+    font-size: 17px;
+    font-weight: 600;
+}
+
+.psettings .ember-dialog-body {
+    gap: 0;
+    padding: 0;
+}
+
+.ember-settings-section {
+    display: flex;
+    flex-direction: column;
+    padding: 4px 22px 10px;
+}
+
+.ember-settings-section h3 {
+    margin: 12px 0 4px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ember-muted);
+}
+
+.ember-settings-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 16px;
+    align-items: center;
+    padding: 9px 0;
+    border-top: 1px solid var(--ember-line);
+}
+
+.ember-settings-section h3 + .ember-settings-row {
+    border-top: 0;
+}
+
+.ember-settings-row b {
+    display: block;
+    font-size: 13.5px;
+    font-weight: 500;
+}
+
+.ember-settings-row small {
+    display: block;
+    margin-top: 2px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--ember-muted);
+}
+
+.ember-settings-blocked {
+    display: block;
+    color: var(--ember-amber);
+}
+
+.ember-settings-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ember-settings-unit {
+    font-size: 12.5px;
+    color: var(--ember-muted);
+}
+
+.ember-seg {
+    display: inline-flex;
+    border: 1px solid var(--ember-line);
+    border-radius: 7px;
+    background: var(--ember-page);
+}
+
+.ember-seg button {
+    font: inherit;
+    font-size: 12.5px;
+    padding: 5px 10px;
+    color: var(--ember-muted);
+    background: transparent;
+    border: 0;
+    border-left: 1px solid var(--ember-line);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.ember-seg button:first-child {
+    border-left: 0;
+    border-radius: 6px 0 0 6px;
+}
+
+.ember-seg button:last-child {
+    border-radius: 0 6px 6px 0;
+}
+
+.ember-seg button[aria-checked="true"] {
+    background: var(--ember-panel);
+    color: var(--ember-text);
+    font-weight: 600;
+    box-shadow: inset 0 -2px 0 var(--ember-accent);
+}
+
+.ember-seg button:focus-visible {
+    outline: 2px solid var(--ember-focus-ring);
+    outline-offset: 2px;
+}
+
+.ember-switch {
+    position: relative;
+    display: block;
+    width: 32px;
+    height: 18px;
+    padding: 0;
+    border: 0;
+    border-radius: 9px;
+    background: var(--ember-line);
+    cursor: pointer;
+}
+
+.ember-switch::after {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+}
+
+.ember-switch[aria-checked="true"] {
+    background: var(--ember-accent);
+}
+
+.ember-switch[aria-checked="true"]::after {
+    left: 16px;
+}
+
+.ember-seconds {
+    width: 64px;
+    height: 28px;
+    box-sizing: border-box;
+    padding: 0 9px;
+    border: 1px solid var(--ember-line);
+    border-radius: 6px;
+    background: var(--ember-page);
+    color: var(--ember-text);
+    font-family: var(--ember-code-font);
+    font-size: 12.5px;
+    text-align: right;
+    -moz-appearance: textfield;
+}
+
+.ember-seconds::-webkit-inner-spin-button,
+.ember-seconds::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+:is(.ember-switch, .ember-seconds):focus-visible {
+    outline: 2px solid var(--ember-focus-ring);
+    outline-offset: 2px;
+}
+
+.ember-settings-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 22px 16px;
+    border-top: 1px solid var(--ember-line);
+}
+
+.ember-btn.ember-settings-reset {
+    padding: 0;
+    border-color: transparent;
+    background: transparent;
+    color: var(--ember-muted);
 }
 
 .ember-menuitem:focus-visible {
@@ -3933,6 +3156,16 @@ pluto-header-id-copy:focus {
     cursor: pointer;
 }
 
+a.ember-menuitem {
+    box-sizing: border-box;
+    text-decoration: none;
+}
+
+.ember-export-menu {
+    width: 300px;
+    max-width: calc(100vw - 32px);
+}
+
 .ember-menuitem:hover,
 .ember-menuitem:focus {
     background: var(--ember-menu-hover-bg);
@@ -3954,8 +3187,8 @@ pluto-header-id-copy:focus {
     align-items: flex-start;
     font-size: 12.5px;
     line-height: 1.4;
-    color: var(--pluto-logs-warn-accent-color);
-    background: var(--pluto-logs-warn-color);
+    color: var(--ember-amber);
+    background: var(--ember-amber-bg);
     border-radius: 5px;
     padding: 8px 10px;
     margin: 2px 0 4px;

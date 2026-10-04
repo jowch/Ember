@@ -1,4 +1,4 @@
-import { trailingslash } from "./Binder.js"
+import { trailingslash } from "./URLTools.js"
 import { plutohash_arraybuffer, debounced_promises, base64url_arraybuffer } from "./PlutoHash.js"
 import { pack, unpack } from "./MsgPack.js"
 import immer from "../imports/immer.js"

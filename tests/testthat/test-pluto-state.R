@@ -15,7 +15,7 @@ test_that("a fresh notebook projects a complete, wire-clean NotebookData (6)", {
   for (f in c("pluto_version", "julia_version", "notebook_id", "path", "shortpath",
              "in_temp_dir", "process_status", "last_save_time", "last_hot_reload_time",
              "cell_inputs", "cell_results", "cell_order", "published_objects", "bonds",
-             "metadata", "nbpkg", "status_tree", "cell_dependencies", "cell_execution_order")) {
+             "metadata", "nbpkg", "cell_dependencies", "cell_execution_order")) {
     expect_true(f %in% names(js), info = f)
   }
   expect_equal(js$process_status, "waiting_for_permission")

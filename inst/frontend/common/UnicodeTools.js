@@ -28,20 +28,7 @@ export const splice_utf8 = (original, startindex_utf8, endindex_utf8, replacemen
     return td.decode(result_enc)
 }
 
-export const slice_utf8 = (original, startindex_utf8, endindex_utf8) => {
-    // JS uses UTF-16 for internal representation of strings, e.g.
-    // "e".length == 1, "é".length == 1, "🐶".length == 2
-
-    // Julia uses UTF-8, e.g.
-    // ncodeunits("e") == 1, ncodeunits("é") == 2, ncodeunits("🐶") == 4
-    //     length("e") == 1,     length("é") == 1,     length("🐶") == 1
-
-    const original_enc = te.encode(original)
-    return td.decode(original_enc.slice(startindex_utf8, endindex_utf8))
-}
-
 console.assert(splice_utf8("e é 🐶 is a dog", 5, 9, "hannes ❤") === "e é hannes ❤ is a dog")
-console.assert(slice_utf8("e é 🐶 is a dog", 5, 9) === "🐶")
 
 // get this by running commit fd78c36f from https://github.com/fonsp/Pluto.jl/pull/3271
 // and manually add greek characters, see https://en.wikipedia.org/wiki/Unicode_subscripts_and_superscripts

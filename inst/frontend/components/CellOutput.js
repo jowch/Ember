@@ -31,6 +31,7 @@ import { SafePreviewSanitizeMessage } from "./SafePreviewUI.js"
 import lodashLibrary from "../imports/lodash-es.js"
 import { t } from "../common/lang.js"
 import { get_settings } from "./Settings.js"
+import { load_mathjax } from "../common/SetupMathJax.js"
 
 const prettyAssignee = (assignee) =>
     assignee && assignee.startsWith("const ") ? html`<span style="color: var(--cm-color-keyword)">const</span> ${assignee.slice(6)}` : assignee
@@ -38,10 +39,6 @@ const prettyAssignee = (assignee) =>
 export class CellOutput extends Component {
     constructor() {
         super()
-        this.state = {
-            output_changed_once: false,
-        }
-
         this.old_height = 0
         // @ts-ignore Is there a way to use the latest DOM spec?
         this.resize_observer = new ResizeObserver((entries) => {
@@ -83,12 +80,6 @@ export class CellOutput extends Component {
         )
     }
 
-    componentDidUpdate(old_props) {
-        if (this.props.last_run_timestamp !== old_props.last_run_timestamp) {
-            this.setState({ output_changed_once: true })
-        }
-    }
-
     componentDidMount() {
         this.resize_observer.observe(this.base)
     }
@@ -113,9 +104,6 @@ export class CellOutput extends Component {
                 })}
                 translate=${allow_translate}
                 mime=${this.props.mime}
-                aria-live=${this.state.output_changed_once ? "polite" : "off"}
-                aria-atomic="true"
-                aria-relevant="all"
                 aria-label=${this.props.text_cell
                     ? t("t_aria_label_text_cell")
                     : this.props.rootassignee == null
@@ -253,7 +241,7 @@ export const OutputBody = ({ mime, body, cell_id, persist_js_state = false, last
             return html``
             break
         default:
-            return html`<pre title="Something went wrong displaying this object">🛑</pre>`
+            return html`<pre title=${t("t_output_show_failed")}>🛑</pre>`
             break
     }
 }
@@ -634,7 +622,10 @@ export let RawHTMLContainer = ({ body, className = "", persist_js_state = false,
             }
         }
 
-        if (sanitize_html) return
+        if (sanitize_html) {
+            typeset_tex(container)
+            return
+        }
 
         let scripts_in_shadowroots = Array.from(container.querySelectorAll("template[shadowroot]")).flatMap((template) => {
             // @ts-ignore
@@ -778,7 +769,7 @@ export const generateCopyHeaderIdButton = (/** @type {HTMLHeadingElement} */ hea
 
         const is_localhost_hostname = (hostname) => hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0"
         if (
-            (!launch_params || (launch_params.disable_ui && launch_params.notebook_id == null && launch_params.pluto_server_url == null)) &&
+            (!launch_params || (launch_params.disable_ui && launch_params.notebook_id == null)) &&
             !is_localhost_hostname(root.hostname)
         ) {
             url_to_copy = `${root.href}${url_to_copy}`
@@ -823,18 +814,18 @@ const ANSIUpContents = ({ body }) => {
     return html`<pre class="no-block"><code ref=${node_ref}></code></pre>`
 }
 
-function apply_enhanced_markup_features(container, pluto_actions) {
-    // Convert LaTeX to svg
-    // @ts-ignore
-    if (window.MathJax?.typeset != undefined) {
-        try {
+function typeset_tex(container) {
+    const tex = container.querySelectorAll(".tex")
+    if (tex.length > 0) {
+        load_mathjax()
             // @ts-ignore
-            window.MathJax.typeset(container.querySelectorAll(".tex"))
-        } catch (err) {
-            console.info("Failed to typeset TeX:")
-            console.info(err)
-        }
+            .then(() => window.MathJax.typesetPromise([...tex]))
+            .catch((err) => console.info("Failed to typeset TeX:", err))
     }
+}
+
+function apply_enhanced_markup_features(container, pluto_actions) {
+    typeset_tex(container)
 
     // Apply syntax highlighting
     try {

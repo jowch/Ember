@@ -168,7 +168,7 @@ test_that("a two-cell cycle is one error naming both names", {
   errs <- Filter(function(e) e$kind == "cycle", g$errors)
   expect_length(errs, 1)
   expect_equal(errs[[1]]$cells, c("A", "B"))
-  expect_setequal(errs[[1]]$names, c("a", "b"))
+  expect_equal(errs[[1]]$names, c("a", "b"))
 })
 
 test_that("a three-cell cycle is one error naming all three cells", {
@@ -180,6 +180,7 @@ test_that("a three-cell cycle is one error naming all three cells", {
   errs <- Filter(function(e) e$kind == "cycle", g$errors)
   expect_length(errs, 1)
   expect_equal(errs[[1]]$cells, c("A", "B", "C"))
+  expect_equal(errs[[1]]$names, c("a", "b", "c"))
 })
 
 test_that("the setup cell can be part of a cycle", {

@@ -8,7 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, openNotebook, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector } from "../browser.mjs";
 
 test('safe preview: "Run this notebook" allows execution and runs every cell (120)', async (t) => {
   const notebook = tempNotebook();
@@ -40,4 +40,8 @@ test('safe preview: "Run this notebook" allows execution and runs every cell (12
   assert.equal(await banner.count(), 0, "the banner is gone once execution is allowed");
   const body_after = await page.locator("body").innerText();
   assert.doesNotMatch(body_after, /not executed/);
+
+  // The run it started is announced once it ends; ERR is the cell that fails.
+  await page.waitForFunction(() => document.querySelector("#ember-run-status").textContent === "A cell: error", null, { timeout: 30000 });
+  assertNoProblems(page);
 });

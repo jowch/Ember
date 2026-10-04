@@ -41,6 +41,8 @@ test("add + run + delete a cell, then reload: state matches the file", async (t)
   await page.locator(`${newSel} button.input_context_menu`).click();
   await page.locator(`${newSel} button.delete`).click();
   await page.waitForFunction((id) => !document.getElementById(id), newCellId, { timeout: 10000 });
+  await page.waitForSelector("nav#undo_delete:not(.hidden)", { timeout: 5000 });
+  assert.equal((await page.locator("nav#undo_delete").innerText()).trim(), "Cell deleted · Undo");
 
   const countBefore = await page.locator("pluto-cell").count();
 

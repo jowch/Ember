@@ -5,7 +5,6 @@ import { get_selected_doc_from_state } from "./LiveDocsFromCursor.js"
 import { cl } from "../../common/ClassTable.js"
 import { open_bottom_right_panel } from "../BottomRightPanel.js"
 import { GlobalDefinitionsFacet } from "./go_to_definition_plugin.js"
-import { get_settings } from "../Settings.js"
 
 // R's string node names (rHighlight in codemirror-ember-setup.js): not
 // mixedParsers.js's STRING_NODE_NAMES, which is Julia's set (for `md"""`
@@ -49,8 +48,8 @@ let open_docs_if_autocomplete_is_open_command = (cm) => {
     return false
 }
 
-const pluto_autocomplete_keymap = [
-    ...(get_settings().CM_TAB_KEY_FOR_INDENT ? [{ key: "Tab", run: tab_completion_command }] : []),
+const pluto_autocomplete_keymap = (/** @type {boolean} */ tab_completes) => [
+    ...(tab_completes ? [{ key: "Tab", run: tab_completion_command }] : []),
     { key: "?", run: open_docs_if_autocomplete_is_open_command },
 ]
 
@@ -303,8 +302,10 @@ const global_variables_completion =
  * @param {(query: string) => void} props.on_update_doc_query
  * @param {() => { [uuid: string] : String[]}} props.request_unsubmitted_global_definitions
  * @param {string} props.cell_id
+ * @param {boolean} props.activate_on_typing
+ * @param {boolean} props.tab_completes
  */
-export let pluto_autocomplete = ({ request_autocomplete, on_update_doc_query, request_unsubmitted_global_definitions, cell_id }) => {
+export let pluto_autocomplete = ({ request_autocomplete, on_update_doc_query, request_unsubmitted_global_definitions, cell_id, activate_on_typing, tab_completes }) => {
     let last_query = null
     let last_result = null
     /**
@@ -325,7 +326,7 @@ export let pluto_autocomplete = ({ request_autocomplete, on_update_doc_query, re
 
     return [
         autocompletion({
-            activateOnTyping: get_settings().CM_AUTOCOMPLETE_ON_TYPE,
+            activateOnTyping: activate_on_typing,
             override: [
                 global_variables_completion(request_unsubmitted_global_definitions, cell_id),
                 r_completions_to_cm(memoize_last_request_autocomplete),
@@ -338,7 +339,7 @@ export let pluto_autocomplete = ({ request_autocomplete, on_update_doc_query, re
 
         update_docs_from_autocomplete_selection(on_update_doc_query),
 
-        keymap.of(pluto_autocomplete_keymap),
+        keymap.of(pluto_autocomplete_keymap(tab_completes)),
         keymap.of(completionKeymap),
     ]
 }

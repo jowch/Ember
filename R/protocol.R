@@ -198,7 +198,7 @@ pluto_schema <- function() {
     maps = c(
       "", "cell_inputs", "cell_inputs/*", "cell_inputs/*/metadata",
       "cell_results", "cell_results/*", "cell_results/*/output",
-      "published_objects", "bonds", "metadata", "nbpkg", "status_tree",
+      "published_objects", "bonds", "metadata", "nbpkg",
       "cell_dependencies", "cell_dependencies/*",
       "cell_dependencies/*/downstream_cells_map",
       "cell_dependencies/*/upstream_cells_map",

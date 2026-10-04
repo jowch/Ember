@@ -4,11 +4,10 @@ import { t } from "../common/lang.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { useMenu } from "../common/useMenu.js"
 import { use_run_progress } from "../common/use_run_progress.js"
-import { FlameLogo, VariablesIcon, HelpIcon, PackagesIcon, ExportIcon, SidePanelIcon, MoreIcon } from "../common/Icons.js"
+import { FlameLogo, VariablesIcon, HelpIcon, PackagesIcon, SidePanelIcon, MoreIcon } from "../common/Icons.js"
+import { ExportMenu, export_items, use_print_title } from "./ExportMenu.js"
 import { open_bottom_right_panel } from "./BottomRightPanel.js"
 import { is_desktop, open_main_menu } from "./DesktopInterface.js"
-import { tell } from "../common/dialogs.js"
-import { keyboard_shortcuts_body } from "../common/KeyboardShortcuts.js"
 
 /** The page's own secret, read back out of its URL, as StartPage.js does. */
 const page_secret = () => new URLSearchParams(window.location.search).get("secret") ?? ""
@@ -73,13 +72,14 @@ export const use_r_status = ({ connected, notebook }) => {
  * notebook: import("./Editor.js").NotebookData,
  * connected: boolean,
  * code_differs: boolean,
- * on_toggle_export: () => void,
+ * export_links: import("./ExportMenu.js").ExportLinks,
+ * print_title: string,
  * on_open_move: () => void,
  * on_run_all: () => void,
  * on_interrupt: () => void,
  * }} props
  */
-export const Header = ({ notebook, connected, code_differs, on_toggle_export, on_open_move, on_run_all, on_interrupt }) => {
+export const Header = ({ notebook, connected, code_differs, export_links, print_title, on_open_move, on_run_all, on_interrupt }) => {
     const [open_tab, set_open_tab] = useState(/** @type {import("./BottomRightPanel.js").PanelTabName} */ (null))
     const last_tab_ref = useRef(/** @type {"variables"|"docs"|"packages"|"process"} */ ("docs"))
 
@@ -99,12 +99,16 @@ export const Header = ({ notebook, connected, code_differs, on_toggle_export, on
     const status = use_r_status({ connected, notebook })
     const not_run = notebook.ember?.not_run ?? 0
 
-    const { button_props, menu_props, item_props, close, is_open } = useMenu({ count: narrow ? 4 : 3 })
+    use_print_title(print_title)
+
+    const { button_props, menu_props, item_props, close, is_open } = useMenu({ count: narrow ? 6 : 3 })
 
     return html`
         <nav id="at_the_top">
             <a
                 href="./"
+                title=${t("t_ember_start_my_notebooks")}
+                aria-label=${t("t_ember_start_my_notebooks")}
                 onClick=${(e) => {
                     if (is_desktop()) {
                         e.preventDefault()
@@ -138,6 +142,7 @@ export const Header = ({ notebook, connected, code_differs, on_toggle_export, on
                       <button
                           class="ibtn"
                           type="button"
+                          title=${t("t_ember_side_panel")}
                           aria-label=${t("t_ember_side_panel")}
                           aria-pressed=${open_tab != null}
                           onClick=${() => toggle(open_tab ?? last_tab_ref.current)}
@@ -150,6 +155,7 @@ export const Header = ({ notebook, connected, code_differs, on_toggle_export, on
                           <button
                               class=${cl({ ibtn: true, on: open_tab === "variables" })}
                               type="button"
+                              title=${t("t_panel_variables")}
                               aria-label=${t("t_panel_variables")}
                               aria-pressed=${open_tab === "variables"}
                               onClick=${() => toggle("variables")}
@@ -159,6 +165,7 @@ export const Header = ({ notebook, connected, code_differs, on_toggle_export, on
                           <button
                               class=${cl({ ibtn: true, on: open_tab === "docs" })}
                               type="button"
+                              title=${t("t_panel_docs")}
                               aria-label=${t("t_panel_docs")}
                               aria-pressed=${open_tab === "docs"}
                               onClick=${() => toggle("docs")}
@@ -168,6 +175,7 @@ export const Header = ({ notebook, connected, code_differs, on_toggle_export, on
                           <button
                               class=${cl({ ibtn: true, on: open_tab === "packages" })}
                               type="button"
+                              title=${t("t_panel_packages")}
                               aria-label=${t("t_panel_packages")}
                               aria-pressed=${open_tab === "packages"}
                               onClick=${() => toggle("packages")}
@@ -175,12 +183,10 @@ export const Header = ({ notebook, connected, code_differs, on_toggle_export, on
                               <${PackagesIcon} />
                           </button>
                       </nav>
-                      <button class="ibtn" type="button" aria-label=${t("t_ember_export")} onClick=${on_toggle_export}>
-                          <${ExportIcon} />
-                      </button>
+                      <${ExportMenu} links=${export_links} />
                   `}
             <div style="position: relative">
-                <button class=${cl({ ibtn: true, on: is_open })} type="button" aria-label=${t("t_ember_more")} ...${button_props}>
+                <button class=${cl({ ibtn: true, on: is_open })} type="button" title=${t("t_ember_more")} aria-label=${t("t_ember_more")} ...${button_props}>
                     <${MoreIcon} />
                 </button>
                 ${is_open &&
@@ -192,7 +198,7 @@ export const Header = ({ notebook, connected, code_differs, on_toggle_export, on
                             ...${item_props(0)}
                             onClick=${() => {
                                 close()
-                                tell({ title: t("t_ember_keyboard_shortcuts"), body: keyboard_shortcuts_body() })
+                                window.dispatchEvent(new CustomEvent("ember open shortcuts"))
                             }}
                         >
                             ${t("t_ember_keyboard_shortcuts")}
@@ -208,21 +214,9 @@ export const Header = ({ notebook, connected, code_differs, on_toggle_export, on
                         >
                             ${t("t_settings_title")}
                         </button>
-                        ${narrow
-                            ? html`<button
-                                  type="button"
-                                  class="ember-menuitem"
-                                  ...${item_props(2)}
-                                  onClick=${() => {
-                                      close()
-                                      on_toggle_export()
-                                  }}
-                              >
-                                  ${t("t_ember_export")}
-                              </button>`
-                            : null}
+                        ${narrow ? [html`<div class="ember-menu-sep"></div>`, ...export_items({ links: export_links, item_props, first_index: 2, note_on_items: true, close })] : null}
                         <div class="ember-menu-sep"></div>
-                        <a class="ember-menuitem" href=${`./?secret=${page_secret()}`} ...${item_props(narrow ? 3 : 2)}>
+                        <a class="ember-menuitem" href=${`./?secret=${page_secret()}`} ...${item_props(narrow ? 5 : 2)}>
                             ${t("t_ember_open_another_notebook")}
                         </a>
                     </div>

@@ -2,7 +2,7 @@ import { html, useEffect, useState, useContext, useRef, useMemo } from "../impor
 import { cl } from "../common/ClassTable.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { is_mac_keyboard } from "../common/KeyboardShortcuts.js"
-import { t, th } from "../common/lang.js"
+import { t } from "../common/lang.js"
 
 const nbsp = "\u00A0"
 const await_focus = () =>
@@ -51,15 +51,12 @@ export const Preamble = ({ any_code_differs, last_update_time, last_hot_reload_t
     }, [connected])
 
     useEffect(() => {
-        console.log("Hottt", last_hot_reload_time, old_enough)
         if (old_enough) {
             set_reload_state("reloaded_from_file")
-            console.log("set state")
 
             await_focus().then(() => {
                 reload_timeout_ref.current = setTimeout(() => {
                     set_reload_state("")
-                    console.log("reset state")
                 }, 8000)
             })
             return () => clear_timeout(reload_timeout_ref?.current)
@@ -95,7 +92,7 @@ export const Preamble = ({ any_code_differs, last_update_time, last_hot_reload_t
               : reload_state === "reloaded_from_file"
                 ? html`
                       <div id="saveall-container" class="overlay-button ${state}">
-                          <span>${th("t_file_change_detected")}${nbsp}<span class="saved-icon pluto-icon"></span></span>
+                          <span>${t("t_file_change_detected")}${nbsp}<span class="saved-icon pluto-icon"></span></span>
                       </div>
                   `
                 : null}

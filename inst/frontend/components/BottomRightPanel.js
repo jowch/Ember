@@ -8,8 +8,6 @@ import { VariablesTab } from "./VariablesTab.js"
 import { useMyClockIsAheadBy } from "../common/clock_sync.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { t } from "../common/lang.js"
-import { NotifyWhenDone } from "./NotifyWhenDone.js"
-import { get_settings } from "./Settings.js"
 
 /**
  * @typedef PanelTabName
@@ -45,6 +43,7 @@ const TABS = /** @type {const} */ ([
 export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, notebook, connected, sanitize_html = true, on_restart }) => {
     const container_ref = useRef()
     const focus_docs_on_open_ref = useRef(false)
+    const opener_ref = useRef(/** @type {HTMLElement?} */ (null))
     const [open_tab, set_open_tab] = useState(/** @type { PanelTabName} */ (null))
     const hidden = open_tab == null
 
@@ -53,16 +52,24 @@ export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, noteboo
         "open_bottom_right_panel",
         (/** @type {CustomEvent} */ e) => {
             focus_docs_on_open_ref.current = e.detail === "docs"
+            const active = /** @type {HTMLElement?} */ (document.activeElement)
+            if (e.detail != null && !container_ref.current?.contains(active)) opener_ref.current = active != null && active !== document.body ? active : null
             set_open_tab(e.detail)
         },
         [set_open_tab]
     )
 
-    const status = notebook.status_tree
+    const on_keydown = (/** @type {KeyboardEvent} */ e) => {
+        if (e.key !== "Escape" || e.defaultPrevented || hidden) return
+        e.preventDefault()
+        open_bottom_right_panel(null)
+        opener_ref.current?.focus()
+    }
+
     const my_clock_is_ahead_by = useMyClockIsAheadBy({ connected })
 
     return html`
-        <aside id="helpbox-wrapper" class=${cl({ open: !hidden })} ref=${container_ref}>
+        <aside id="helpbox-wrapper" class=${cl({ open: !hidden })} ref=${container_ref} onKeyDown=${on_keydown}>
             <pluto-helpbox class=${cl({ hidden, [`helpbox-${open_tab}`]: open_tab != null })}>
                 <header translate=${false} role="tablist" aria-label=${t("t_panel_tablist")}>
                     ${TABS.map(
@@ -95,9 +102,6 @@ export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, noteboo
                             : open_tab === "process"
                               ? html`<${StatusTab} notebook=${notebook} connected=${connected} my_clock_is_ahead_by=${my_clock_is_ahead_by} on_restart=${on_restart} />`
                               : null}
-                    ${get_settings().ALWAYS_NOTIFY_LONG_BUSY
-                        ? html`<div style="display: none" aria-hidden="true"><${NotifyWhenDone} status=${status} /></div>`
-                        : null}
                 </section>
             </pluto-helpbox>
         </aside>

@@ -134,8 +134,8 @@ test("Packages tab lists a missing package and the preview banner names the inst
   assertNoProblems(page);
 });
 
-// 74. Endeavor's Pluto-shaped fields survive.
-test("Endeavor's nbpkg, status_tree and process_status stay filled (75)", async (t) => {
+// 75. The Pluto-shaped fields the page still reads survive; status_tree, which nothing reads, is gone.
+test("nbpkg and process_status stay filled; status_tree is gone (75)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "status-74.server.log") });
   const browser = await launchBrowser();
@@ -149,7 +149,7 @@ test("Endeavor's nbpkg, status_tree and process_status stay filled (75)", async 
     return { nbpkg: nb?.nbpkg, status_tree: nb?.status_tree, process_status: nb?.process_status };
   });
   assert.ok(fields.nbpkg != null, "nbpkg is present");
-  assert.ok(fields.status_tree != null, "status_tree is present");
+  assert.equal(fields.status_tree, undefined, "status_tree is not projected");
   assert.equal(typeof fields.process_status, "string");
 
   assertNoProblems(page);

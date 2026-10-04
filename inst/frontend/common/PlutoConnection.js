@@ -354,26 +354,6 @@ export const create_pluto_connection = async ({
     client.send = batched_updates(send)
 
     const connect = async () => {
-        let update_url_with_binder_token = async () => {
-            try {
-                const on_a_binder_server = window.location.href.includes("binder")
-                if (!on_a_binder_server) return
-                const url = new URL(window.location.href)
-                const response = await fetch("possible_binder_token_please")
-                if (!response.ok) {
-                    return
-                }
-                const possible_binder_token = await response.text()
-                if (possible_binder_token !== "" && url.searchParams.get("token") !== possible_binder_token) {
-                    url.searchParams.set("token", possible_binder_token)
-                    history.replaceState({}, "", url.toString())
-                }
-            } catch (error) {
-                console.warn("Error while setting binder url:", error)
-            }
-        }
-        update_url_with_binder_token()
-
         try {
             ws_connection = await create_ws_connection(String(ws_address), {
                 on_message: (update) => {

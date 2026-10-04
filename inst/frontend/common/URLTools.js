@@ -1,3 +1,5 @@
+export const trailingslash = (/** @type {string} */ s) => (s.endsWith("/") ? s : s + "/")
+
 export const with_query_params = (/** @type {String | URL} */ url_str, /** @type {Record<string,string | null | undefined>} */ params) => {
     const fake_base = "http://delete-me.com/"
     const url = new URL(url_str, fake_base)

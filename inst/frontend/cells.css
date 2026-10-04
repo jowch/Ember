@@ -90,10 +90,8 @@ pluto-cell[data-rail="err"] > pluto-trafficlight {
     background: var(--ember-rail-err);
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    pluto-cell[data-rail="run"] > pluto-trafficlight {
-        animation: ember-rail-pulse 1.6s ease-in-out infinite;
-    }
+pluto-cell[data-rail="run"] > pluto-trafficlight {
+    animation: ember-rail-pulse 1.6s ease-in-out infinite;
 }
 
 @keyframes ember-rail-pulse {
@@ -236,13 +234,25 @@ ember-runtime {
     transition: opacity 0.15s ease-in-out;
 }
 
+/* Shown while typing in the code, while the cell's menu is open, or on the
+   button Tab reached; a selected cell (focus on pluto-cell itself) shows
+   neither (board A11y6). */
+pluto-cell:has(.cm-editor.cm-focused, div.input_context_menu[role="menu"]) :is(button.ember-run, button.input_context_menu),
+pluto-cell :is(button.ember-run, button.input_context_menu):focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+pluto-cell:has(.cm-editor.cm-focused) ember-runtime {
+    opacity: 1;
+}
+
 @media (hover: hover) {
-    pluto-cell:is(:hover, :focus-within) button.ember-run,
-    pluto-cell:is(:hover, :focus-within) button.input_context_menu {
+    pluto-cell:hover button.ember-run,
+    pluto-cell:hover button.input_context_menu {
         opacity: 1;
         pointer-events: auto;
     }
-    pluto-cell:is(:hover, :focus-within) ember-runtime {
+    pluto-cell:hover ember-runtime {
         opacity: 1;
     }
     /* The gap above belongs to this cell's .before "+", whose circle the
@@ -250,17 +260,6 @@ ember-runtime {
     pluto-cell:has(> button.add_cell.before:hover) button.ember-run {
         opacity: 0;
         pointer-events: none;
-    }
-}
-
-@media (hover: none) {
-    pluto-cell:focus-within button.ember-run,
-    pluto-cell:focus-within button.input_context_menu {
-        opacity: 1;
-        pointer-events: auto;
-    }
-    pluto-cell:focus-within ember-runtime {
-        opacity: 1;
     }
 }
 

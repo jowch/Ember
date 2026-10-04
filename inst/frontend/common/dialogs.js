@@ -14,14 +14,23 @@ let next_dialog_id = 1
  * opened, saved explicitly because browsers differ on restoring it
  * themselves.
  *
+ * `title_note` is a short line beside the title, not part of the dialog's
+ * name.
+ *
+ * `described` says the body gives an element the `describedby_id` it is
+ * passed, so the dialog can point `aria-describedby` at it.
+ *
  * @param {{
  *   title?: string,
+ *   title_note?: string,
+ *   class_name?: string,
  *   on_close: () => void,
  *   role?: "dialog" | "alertdialog",
+ *   described?: boolean,
  *   render: (ctx: { close: () => void, describedby_id: string }) => import("../imports/Preact.js").ReactElement,
  * }} props
  */
-export const Dialog = ({ title, on_close, role = "dialog", render: render_body }) => {
+export const Dialog = ({ title, title_note, class_name, on_close, role = "dialog", described = false, render: render_body }) => {
     const [dialog_ref, open, close, _toggle] = useDialog()
     const opener_ref = useRef(/** @type {Element?} */ (null))
     const ids_ref = useRef(/** @type {{ title: string, body: string }?} */ (null))
@@ -60,12 +69,13 @@ export const Dialog = ({ title, on_close, role = "dialog", render: render_body }
         }
         dialog_el?.addEventListener("click", handle_backdrop_click)
 
+        // showModal() focuses an autofocus element itself; without one it
+        // would focus the first control, and a later focus() would move it.
+        const first = dialog_el?.querySelector(".primary") ?? dialog_el?.querySelector("button, input, textarea, select, a[href]")
+        first?.setAttribute("autofocus", "")
         open()
-        requestAnimationFrame(() => {
-            const el = dialog_el?.querySelector(".primary") ?? dialog_el?.querySelector("button, input, textarea, select, a[href]")
-            // @ts-ignore
-            el?.focus?.()
-        })
+        // @ts-ignore
+        first?.focus?.()
 
         return () => {
             dialog_el?.removeEventListener("close", handle_close)
@@ -75,13 +85,18 @@ export const Dialog = ({ title, on_close, role = "dialog", render: render_body }
 
     return html`
         <dialog
-            class="ember-dialog"
+            class=${class_name == null ? "ember-dialog" : `ember-dialog ${class_name}`}
             ref=${dialog_ref}
             role=${role}
             aria-labelledby=${title != null ? ids_ref.current.title : undefined}
-            aria-describedby=${ids_ref.current.body}
+            aria-describedby=${described ? ids_ref.current.body : undefined}
         >
-            ${title != null ? html`<header id=${ids_ref.current.title} class="ember-dialog-title">${title}</header>` : null}
+            ${title != null
+                ? html`<header class="ember-dialog-title">
+                      <span id=${ids_ref.current.title}>${title}</span>
+                      ${title_note != null ? html`<span class="ember-dialog-title-note">${title_note}</span>` : null}
+                  </header>`
+                : null}
             <div class="ember-dialog-body">${render_body({ close, describedby_id: ids_ref.current.body })}</div>
         </dialog>
     `
@@ -107,7 +122,7 @@ const DialogHost = () => {
 
     const current = items[0]
     if (current == null) return null
-    return html`<${Dialog} key=${current.id} title=${current.title} role=${current.role} on_close=${current.on_close} render=${current.render} />`
+    return html`<${Dialog} key=${current.id} title=${current.title} role=${current.role} described=${true} on_close=${current.on_close} render=${current.render} />`
 }
 
 const dequeue = (/** @type {{ id: number }} */ item) => {

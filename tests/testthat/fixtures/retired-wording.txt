@@ -1,0 +1,54 @@
+Enter cell code...
+Interrupt (Ctrl + Q)
+Add cell (Ctrl + Enter)
+Show/hide code
+This cell is disabled.
+Enable this cell to run the code
+This cell depends on a disabled cell
+Blocked by an error upstream
+UNDO
+has been disabled because it also defined
+Show stack trace
+Stack trace
+Error message from
+Combine all definitions into a single reactive cell
+begin ... end
+Don't panic
+beep boop
+Oopsie
+please refresh your browser
+Error copying cell output
+cells not run
+Running cells...
+Restart notebook
+Process exited
+Process status
+Workspace setup
+Analysing
+Pkg.instantiate
+Pkg.resolve
+Writing Project.toml
+Updating package registry
+Pkg is currently busy
+Did you make a typo?
+Loading binder
+might take
+Confirm?
+Tip: You can edit multiple cells
+notebook ready
+steps completed
+Are you sure? Will move
+Failed to move file
+Remove from recent notebooks
+This does not delete the notebook file
+Save notebook...
+File change detected
+Search docs...
+Welcome to Help
+This browser window is too small
+Not checked yet
+Checking the library...
+Export...
+Static HTML
+You are reading and editing this file without running R code
+This table has no rows

@@ -178,7 +178,7 @@
 
     /*pluto cell styling*/
     --disabled-cell-bg-color: var(--ember-dis-bg);
-    --selected-cell-bg-color: rgb(42 115 205 / 78%);
+    --selected-cell-bg-color: rgb(108 199 178 / 35%);
     --hover-scrollbar-color-1: rgba(0, 0, 0, 0.15);
     --hover-scrollbar-color-2: rgba(0, 0, 0, 0.05);
     --skip-as-script-background-color: #888;
@@ -317,7 +317,7 @@
     --cm-color-bracket: var(--ember-text);
     --cm-color-matchingBracket: var(--ember-text);
     --cm-color-matchingBracket-bg: #c58c237a;
-    --cm-color-placeholder-text: rgb(255 255 255 / 20%);
+    --cm-color-placeholder-text: var(--ember-faint);
     --cm-color-clickable-underline: #5d5f70;
 
     /* Mixed parsers */

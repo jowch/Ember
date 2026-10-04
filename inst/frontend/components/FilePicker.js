@@ -47,6 +47,7 @@ export const set_cm_value = (/** @type{EditorView} */ cm, /** @type {string} */ 
  *  suggest_new_file?: {base: String},
  *  button_label: String,
  *  placeholder: String,
+ *  aria_label: String,
  *  on_submit: (new_path: String) => Promise<void>,
  *  on_desktop_submit?: () => Promise<void>,
  *  client: import("../common/PlutoConnection.js").PlutoConnection,
@@ -54,7 +55,7 @@ export const set_cm_value = (/** @type{EditorView} */ cm, /** @type {string} */ 
  *  readonly: Boolean,
  * }} props
  */
-export const FilePicker = ({ value, readonly, suggest_new_file, button_label, placeholder, on_submit, on_desktop_submit, client, clear_on_blur }) => {
+export const FilePicker = ({ value, readonly, suggest_new_file, button_label, placeholder, aria_label, on_submit, on_desktop_submit, client, clear_on_blur }) => {
     const [current_value, set_current_value] = useState(value)
 
     const [url_value, set_url_value] = useState("")
@@ -231,28 +232,26 @@ export const FilePicker = ({ value, readonly, suggest_new_file, button_label, pl
                                       mac: "Cmd-Shift-Enter",
                                       run: keyMapSubmit,
                                   },
-                                  ...(get_settings().CM_TAB_KEY_FOR_INDENT
-                                      ? [
-                                            {
-                                                key: "Tab",
-                                                run: (cm) => {
-                                                    // If there is autocomplete open, accept that
-                                                    if (assert_not_null(accept_autocomplete_command).run(cm)) {
-                                                        // and request the next ones
-                                                        request_path_completions()
-                                                        return true
-                                                    }
-                                                    // Else, activate it (possibly)
-                                                    return request_path_completions()
-                                                },
-                                            },
-                                        ]
-                                      : []),
+                                  {
+                                      key: "Tab",
+                                      run: (cm) => {
+                                          if (!get_settings().CM_TAB_KEY_FOR_INDENT) return false
+                                          // If there is autocomplete open, accept that
+                                          if (assert_not_null(accept_autocomplete_command).run(cm)) {
+                                              // and request the next ones
+                                              request_path_completions()
+                                              return true
+                                          }
+                                          // Else, activate it (possibly)
+                                          return request_path_completions()
+                                      },
+                                  },
                               ]),
                               keymap.of(completionKeymap),
                           ],
 
                     Placeholder(placeholder),
+                    EditorView.contentAttributes.of({ "aria-label": aria_label }),
                     tab_help_plugin,
                 ],
             }),

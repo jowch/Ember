@@ -927,7 +927,8 @@ Endeavor also relies on the page. Its injected script reads Pluto's DOM hooks
 variables, the `window.editor_state` object, CodeMirror 6's internals for
 inline diffs, and the URLs `/edit?id=…&secret=…`, `/notebookfile` and
 `/notebookexport`. The fork keeps all of these and keeps CodeMirror 6; the
-Julia-shaped parts of the state (`nbpkg`, the package log in `status_tree`)
+Julia-shaped parts of the state (`nbpkg`, and the package log in
+`status_tree` until increment 3 removed it)
 change, and Endeavor's per-backend page adapter handles them. Cell and
 notebook IDs are full 36-character UUIDs.
 

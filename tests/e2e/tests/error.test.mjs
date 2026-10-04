@@ -6,7 +6,7 @@ import { test } from "node:test";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector, setCellCode } from "../browser.mjs";
 
 test("error: stop('boom') shows the error element with its message", async (t) => {
   const notebook = tempNotebook();
@@ -41,5 +41,31 @@ test("error: a parse error shows its message and line, and no traceback", async 
   assert.equal(await page.locator(`${box} > header > p.ember-error-where`).innerText(), "Error · line 1");
   assert.equal(await page.locator(`${box} > section`).count(), 0);
 
+  assertNoProblems(page);
+});
+
+test("error: a name defined twice and a cycle are worded for R users (Words6)", async (t) => {
+  const notebook = tempNotebook();
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "error-graph.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const message = (id) => page.locator(`${cellSelector(id)} jlerror.ember > header > p:first-child`);
+
+  await setCellCode(page, "ERR", "x <- 2");
+  await page.keyboard.press("Shift+Enter");
+  await page.waitForFunction((sel) => /more than one cell/.test(document.querySelector(sel)?.innerText ?? ""),
+    `${cellSelector("ERR")} jlerror`, { timeout: 20000 });
+  assert.equal((await message("ERR").innerText()).split("\n")[0], "x is defined in more than one cell. Keep one, or put them in one cell.");
+
+  await setCellCode(page, "ERR", "y <- z");
+  await page.keyboard.press("Shift+Enter");
+  await setCellCode(page, "LOOP", "z <- y");
+  await page.keyboard.press("Shift+Enter");
+  await page.waitForFunction((sel) => /each other/.test(document.querySelector(sel)?.innerText ?? ""),
+    `${cellSelector("LOOP")} jlerror`, { timeout: 20000 });
+  assert.equal((await message("LOOP").innerText()).split("\n")[0], "y and z depend on each other, so neither can run.");
   assertNoProblems(page);
 });

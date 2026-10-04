@@ -23,10 +23,6 @@ export const parse_launch_params = () => {
         //@ts-ignore
         isolated_cell_ids: url_params.has("isolated_cell_id") ? url_params.getAll("isolated_cell_id") : window.pluto_isolated_cell_ids,
         //@ts-ignore
-        binder_url: url_params.get("binder_url") ?? window.pluto_binder_url,
-        //@ts-ignore
-        pluto_server_url: url_params.get("pluto_server_url") ?? window.pluto_pluto_server_url,
-        //@ts-ignore
         slider_server_url: url_params.get("slider_server_url") ?? window.pluto_slider_server_url,
         //@ts-ignore
         recording_url: url_params.get("recording_url") ?? window.pluto_recording_url,

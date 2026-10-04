@@ -38,3 +38,17 @@ test("runCell on a cell below an 800px window actually runs it", async (t) => {
 
   assertNoProblems(page);
 });
+
+test("the off-screen placeholder's code is not spellchecked or translated", async (t) => {
+  const notebook = tempNotebook("many-cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "offscreen-fake.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const attrs = await page.locator(`${cellSelector("C30")} .cm-editor.cm-ssr-fake .cm-content`).evaluate((el) =>
+    [el.getAttribute("spellcheck"), el.getAttribute("translate"), el.spellcheck, el.translate]);
+  assert.deepEqual(attrs, ["false", "no", false, false]);
+  assertNoProblems(page);
+});

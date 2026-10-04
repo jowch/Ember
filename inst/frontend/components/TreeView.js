@@ -274,16 +274,6 @@ const EmptyCols = ({ colspan = 999 }) =>
         </tr>
     </thead>`
 
-const EmptyRows = ({ colspan = 999 }) =>
-    html`<tr class="empty">
-        <td colspan=${colspan}>
-            <div>
-                <div>⌀</div>
-                <small>${t("t_table_no_rows")}</small>
-            </div>
-        </td>
-    </tr>`
-
 /** "32 rows × 11 columns" from `ember_size`; older statefiles have `ember_dims`, already in words. */
 const table_size_words = (body) => {
     const size = body.ember_size
@@ -325,15 +315,13 @@ export const TableView = ({ mime, body, cell_id, persist_js_state, sanitize_html
               </thead>`
 
     const tbody = html`<tbody>
-        ${rows.length !== 0
-            ? rows.map((row, i) => {
-                  const na = body.ember_na?.[i] ?? []
-                  return html`<tr>
-                      <th>${row[0]}</th>
-                      ${row[1].filter((x) => x !== "more").map((x, j) => html`<td class=${na.includes(j) ? "na" : ""}>${cell_output(x)}</td>`)}
-                  </tr>`
-              })
-            : html`<${EmptyRows} colspan=${colspan} />`}
+        ${rows.map((row, i) => {
+            const na = body.ember_na?.[i] ?? []
+            return html`<tr>
+                <th>${row[0]}</th>
+                ${row[1].filter((x) => x !== "more").map((x, j) => html`<td class=${na.includes(j) ? "na" : ""}>${cell_output(x)}</td>`)}
+            </tr>`
+        })}
     </tbody>`
 
     return html`<div class="ember-table" ref=${node_ref}>

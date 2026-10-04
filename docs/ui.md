@@ -152,7 +152,8 @@ engine made with `notifications(old, new)`.
 
 So consecutive projections share memory the way consecutive engine states
 do, and `fb_diff` meets pointer-equal subtrees. The mapping decisions (MIME
-table, errors, logs, process status, `nbpkg`, `status_tree`) each sit in one
+table, errors, logs, process status, `nbpkg`, `status_tree`, which increment 3
+removed) each sit in one
 function with its table in the doc comment.
 
 **Edits are compared, not interpreted.** `pluto_edits(before, patches)`
@@ -235,8 +236,8 @@ engine owns. These are the places it strains, and what each costs:
    comparisons, about a microsecond per cell) and diffs per client. At 2000
    cells during "Run all" that is a few ms per flush and at most 33 flushes
    a second: under 10% of a core, to be measured (TESTS.md 4).
-7. **Julia-shaped fields.** `nbpkg` and `status_tree` are filled from
-   `packages_view()`, and the "restart recommended" banner carries the
+7. **Julia-shaped fields.** `nbpkg` and `status_tree` (removed in
+   increment 3) are filled from `packages_view()`, and the "restart recommended" banner carries the
    interrupt's restart offer. That is a mapping by meaning onto Pluto's
    names. It is documented in one place and replaced by Ember's own views in
    increment 2.

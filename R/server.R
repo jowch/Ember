@@ -624,7 +624,7 @@ on_update_notebook <- function(server, cl, hub, req) {
   if (is.null(hub)) {
     server$counter <- server$counter + 1L
     send(cl, diff_message(req$notebook_id, server$counter, list(), req,
-                          thumbs_down("no such notebook")))
+                          thumbs_down(NOT_OPEN_TEXT)))
     return(invisible(NULL))
   }
   updates <- req$body$updates
@@ -1318,6 +1318,9 @@ origin_ok <- function(server, req) {
   TRUE
 }
 
+NOT_OPEN_TEXT <- "This notebook isn't open in Ember."
+REFUSED_TEXT <- "Ember didn't accept this request; open the link Ember printed when it started."
+
 http_text <- function(status, body, content_type = "text/plain; charset=utf-8", headers = list()) {
   list(status = status, headers = utils::modifyList(list("Content-Type" = content_type), headers),
       body = body)
@@ -1340,7 +1343,7 @@ html_escape <- function(x) {
 http_edit <- function(server, req) {
   q <- parse_query_string(req$QUERY_STRING)
   hub <- if (!is.null(q$id)) mget(q$id, envir = server$hubs, ifnotfound = list(NULL))[[1]] else NULL
-  if (is.null(hub)) return(http_text(404L, "no such notebook"))
+  if (is.null(hub)) return(http_text(404L, NOT_OPEN_TEXT))
   body <- read_file_utf8(file.path(server$frontend, "editor.html"))
   # `Path=/`, not the request's own path: behind a proxy that strips its
   # path prefix before forwarding (see http_open()'s doc), this process
@@ -1386,7 +1389,7 @@ http_open <- function(server, req) {
   q <- parse_query_string(req$QUERY_STRING)
   if (is.null(q$path) || !nzchar(q$path)) return(http_text(400L, "missing path"))
   id <- tryCatch(open_or_find(server, q$path), error = function(e) e)
-  if (inherits(id, "error")) return(http_text(400L, paste("could not open:", conditionMessage(id))))
+  if (inherits(id, "error")) return(http_text(400L, sprintf("Couldn't open %s: %s.", q$path, sub("\\.$", "", conditionMessage(id)))))
   list(status = 302L, headers = list("Location" = relative_edit_url(server, id)), body = "")
 }
 
@@ -1395,7 +1398,7 @@ http_open <- function(server, req) {
 http_notebookfile <- function(server, req) {
   q <- parse_query_string(req$QUERY_STRING)
   hub <- if (!is.null(q$id)) mget(q$id, envir = server$hubs, ifnotfound = list(NULL))[[1]] else NULL
-  if (is.null(hub)) return(http_text(404L, "no such notebook"))
+  if (is.null(hub)) return(http_text(404L, NOT_OPEN_TEXT))
   state <- notebook_state(hub$nb)
   text <- format_notebook(notebook_file_of(state))
   http_text(200L, text, "text/plain; charset=utf-8",
@@ -1406,7 +1409,7 @@ http_notebookfile <- function(server, req) {
 http_notebookexport <- function(server, req) {
   q <- parse_query_string(req$QUERY_STRING)
   hub <- if (!is.null(q$id)) mget(q$id, envir = server$hubs, ifnotfound = list(NULL))[[1]] else NULL
-  if (is.null(hub)) return(http_text(404L, "no such notebook"))
+  if (is.null(hub)) return(http_text(404L, NOT_OPEN_TEXT))
   http_text(200L, export_html(notebook_state(hub$nb)), "text/html; charset=utf-8")
 }
 
@@ -1436,10 +1439,10 @@ http_start <- function(server, req) {
 QUERY_SECRET_ONLY_PATHS <- c("/open", "/")
 
 http_call <- function(server, req) {
-  if (!origin_ok(server, req)) return(http_text(403L, "forbidden"))
+  if (!origin_ok(server, req)) return(http_text(403L, REFUSED_TEXT))
   strict <- isTRUE(req$PATH_INFO %in% QUERY_SECRET_ONLY_PATHS)
   ok <- if (strict) secret_query_ok(server, req) else secret_ok(server, req)
-  if (!ok) return(http_text(403L, "forbidden"))
+  if (!ok) return(http_text(403L, REFUSED_TEXT))
   switch(req$PATH_INFO,
     "/edit" = http_edit(server, req),
     "/open" = http_open(server, req),

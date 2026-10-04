@@ -3,7 +3,6 @@ import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { html, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "../imports/Preact.js"
 
 import { Cell } from "./Cell.js"
-import { get_settings } from "./Settings.js"
 import { EmptyNotebookHints } from "./EmptyNotebookHints.js"
 
 export const nbpkg_fingerprint = (nbpkg) => (nbpkg == null ? [null] : Object.entries(nbpkg).flat())
@@ -198,22 +197,6 @@ export const Notebook = ({
         }
     }, [cell_outputs_delayed])
 
-    // Left unset (not "monospace") when there's no custom font: `--code-font-stack`
-    // (editor.css) lists this before the real fallback (IBM Plex Mono), and
-    // "monospace" is a valid generic family that would win outright and hide
-    // it. Setting the property to a bare empty value here would be worse,
-    // not better -- a custom-property substitution producing nothing still
-    // leaves its comma behind ("var(--custom-code-font-stack), var(--julia-mono-font-stack)"
-    // becomes ", IBM Plex Mono, ..."), which is an invalid font-family value
-    // overall and falls back to the browser's serif default, not the next
-    // item -- so the property is omitted from this element's inline style
-    // instead, leaving editor.css's own :root default (the quoted empty
-    // string, a legal if useless family name that lets the list move on) in
-    // effect.
-    let custom_font = get_settings().CUSTOM_CODE_FONT_STACK
-    custom_font = custom_font.replace(/'",/g, "").trim()
-    const custom_font_style = custom_font === "" ? "" : `--custom-code-font-stack: ${custom_font};`
-
     // A real new notebook (new_notebook(), R/api.R) has an empty setup
     // cell plus one empty code cell, not one cell, so this checks every
     // cell rather than cell_order.length.
@@ -231,7 +214,6 @@ export const Notebook = ({
         <pluto-notebook
             id=${notebook.notebook_id}
             class=${is_empty_notebook ? "ember-empty-notebook" : ""}
-            style=${custom_font_style}
         >
             ${notebook.cell_order
                 .filter((_, i) => !(cell_outputs_delayed && i > render_cell_outputs_minimum))

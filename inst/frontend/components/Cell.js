@@ -24,10 +24,12 @@ const format_stale_chip = (notebook, cell_id) => {
     if (names.length === 0) return t("t_chip_stale")
     const shown = names.slice(0, 3)
     const rest = names.length - shown.length
-    const parts = rest > 0 ? [...shown, t("t_n_more", { count: rest })] : shown
-    const joined = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} ${t("t_and")} ${parts[parts.length - 1]}`
-    return t("t_chip_stale_names", { names: joined })
+    return t("t_chip_stale_names", { names: join_names(rest > 0 ? [...shown, t("t_n_more", { count: rest })] : shown) })
 }
+
+/** "x", "x and y", "x, y and z". */
+const join_names = (/** @type {string[]} */ parts) =>
+    parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} ${t("t_and")} ${parts[parts.length - 1]}`
 
 const useCellApi = (node_ref, published_object_keys, pluto_actions) => {
     const [cell_api_ready, set_cell_api_ready] = useState(false)
@@ -87,7 +89,6 @@ export const Cell = ({
     const code_changed = !!ember?.code_changed
     const stale = !code_changed && !!ember?.stale
     let pluto_actions = useContext(PlutoActionsContext)
-    // useCallback because pluto_actions.set_doc_query can change value when you go from viewing a static document to connecting (to binder)
     const on_update_doc_query = useCallback((...args) => pluto_actions.set_doc_query(...args), [pluto_actions])
     const on_focus_neighbor = useCallback((...args) => pluto_actions.focus_on_neighbor(...args), [pluto_actions])
     const on_change = useCallback((val) => pluto_actions.set_local_cell(cell_id, val), [cell_id, pluto_actions])
@@ -293,11 +294,17 @@ export const Cell = ({
         }, 300)
     }
     const was_text_open = useRef(false)
+    const select_on_close = useRef(false)
     useLayoutEffect(() => {
         const was_open = was_text_open.current
         was_text_open.current = text_open
         if (!text_open) {
             if (!was_open) return
+            if (select_on_close.current) {
+                select_on_close.current = false
+                pluto_actions.select_cell(cell_id)
+                return
+            }
             const active = document.activeElement
             if (active == null || active === document.body || node_ref.current?.contains(active)) text_output()?.focus({ preventScroll: true })
             return
@@ -312,9 +319,36 @@ export const Cell = ({
         })
         return () => cancelAnimationFrame(frame)
     }, [text_open])
+    // Keys on the selected cell itself (Esc in its code selects it).
+    const on_cell_keydown = (/** @type {KeyboardEvent} */ e) => {
+        const cell = node_ref.current
+        if (e.target !== cell || cell == null || !selected || e.ctrlKey || e.metaKey || e.altKey) return false
+        if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey) {
+            const order = pluto_actions.get_notebook().cell_order
+            const next = order[order.indexOf(cell_id) + (e.key === "ArrowUp" ? -1 : 1)]
+            if (next != null) pluto_actions.select_cell(next)
+        } else if (e.key === "Enter" && !e.shiftKey) {
+            const content = /** @type {HTMLElement?} */ (cell.querySelector("pluto-input .cm-editor:not(.cm-ssr-fake) .cm-content"))
+            if (content != null && content.getClientRects().length > 0) content.focus()
+            else if (kind === "markdown") set_text_open(true)
+            else window.dispatchEvent(new CustomEvent("cell_focus", { detail: { cell_id, line: 0, ch: 0 } }))
+        } else if (e.key === "Tab" && !e.shiftKey) {
+            // The code comes first in the DOM; from the selected cell, Tab
+            // goes on past it to the run button and the menu.
+            const next = /** @type {HTMLElement?} */ (cell.querySelector("pluto-input button.ember-run, pluto-input button.input_context_menu"))
+            if (next == null) return false
+            next.focus()
+        } else {
+            return false
+        }
+        e.preventDefault()
+        return true
+    }
     const on_text_keydown = (e) => {
-        if (e.defaultPrevented) return
+        if (e.defaultPrevented || on_cell_keydown(e)) return
         if (e.key === "Escape" && text_open && (cell_input_local?.code ?? code) === code) {
+            e.preventDefault()
+            select_on_close.current = true
             set_text_open(false)
         } else if (e.key === "Enter" && kind === "markdown" && !disable_input && e.target === text_output() && !(e.shiftKey || e.ctrlKey || e.metaKey || e.altKey)) {
             e.preventDefault()
@@ -389,6 +423,26 @@ export const Cell = ({
               ? { icon: ClockIcon, text: format_stale_chip(pluto_actions.get_notebook(), cell_id) }
               : null
 
+    const cell_state =
+        running_disabled || depends_on_disabled_cells
+            ? "t_cell_state_disabled"
+            : running
+              ? "t_cell_state_running"
+              : queued || waiting_to_run
+                ? "t_cell_state_queued"
+                : class_code_differs || code_changed
+                  ? "t_cell_state_edited"
+                  : errored
+                    ? "t_cell_state_error"
+                    : stale
+                      ? "t_cell_state_stale"
+                      : not_run_yet
+                        ? "t_cell_state_not_run"
+                        : null
+    const cell_name =
+        (kind === "markdown" ? t("t_cell_name_text") : variables.length > 0 ? t("t_cell_name", { defines: join_names(variables) }) : t("t_cell_name_none")) +
+        (cell_state == null ? "" : `, ${t(cell_state)}`)
+
     return html`
         <pluto-cell
             key=${cell_key}
@@ -418,6 +472,9 @@ export const Cell = ({
             })}
             data-rail=${rail}
             id=${cell_id}
+            tabindex="-1"
+            role="group"
+            aria-label=${cell_name}
             onClick=${on_text_click}
             onKeyDown=${on_text_keydown}
         >

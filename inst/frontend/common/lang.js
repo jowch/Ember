@@ -100,16 +100,16 @@ const getLanguage = _.memoize((to_search) => {
     return "en"
 }, JSON.stringify)
 
-/** Format a duration in seconds as "5 seconds" or "2 minutes". */
+/** Format a duration in seconds as "5 sec" or "2 min". */
 export const pretty_long_time = (/** @type {number} */ sec) => {
     const min = sec / 60
-    const sec_r = Math.ceil(sec)
+    const sec_r = Math.max(1, Math.round(sec))
     const min_r = Math.round(min)
 
     if (sec < 60) {
-        return new Intl.NumberFormat(getCurrentLanguage(), { style: "unit", unit: "second", unitDisplay: "long" }).format(sec_r)
+        return new Intl.NumberFormat(getCurrentLanguage(), { style: "unit", unit: "second", unitDisplay: "short" }).format(sec_r)
     } else {
-        return new Intl.NumberFormat(getCurrentLanguage(), { style: "unit", unit: "minute", unitDisplay: "long" }).format(min_r)
+        return new Intl.NumberFormat(getCurrentLanguage(), { style: "unit", unit: "minute", unitDisplay: "short" }).format(min_r)
     }
 }
 
