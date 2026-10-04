@@ -54,6 +54,7 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
         package: null,
         from_cursor: false,
         loading: false,
+        waiting: false,
     })
     let update_state = (mutation) => set_state(immer((state) => mutation(state)))
 
@@ -105,15 +106,17 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
         })
         Promise.race([
             observablehq.Promises.delay(2000, false),
-            pluto_actions.send("docs", { query: new_query.replace(/^\?/, "") }, { notebook_id: notebook.notebook_id }).then((u) => {
+            pluto_actions.send("docs", { query: new_query.replace(/^\?/, ""), all_packages: !from_cursor }, { notebook_id: notebook.notebook_id }).then((u) => {
                 if (u.message.status === "⌛") {
                     // R couldn't answer yet (busy, not started, or slow). The
                     // query only changes when the cursor moves, so ask again.
+                    // The reply is a message about R, not a page for this
+                    // query, so it never becomes shown_query or a history entry.
                     if (u.message.doc != null) {
                         update_state((state) => {
-                            state.shown_query = new_query
                             state.body = u.message.doc
-                            state.package = u.message.package ?? null
+                            state.package = null
+                            state.waiting = true
                         })
                     }
                     clearTimeout(retry_timer.current)
@@ -128,6 +131,9 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
                     // An empty `doc` is a real "not found" (help_reply_html(),
                     // R/editor-services.R, from a worker help_lookup() with
                     // nothing matching): not a page to show or add to history.
+                    update_state((state) => {
+                        state.waiting = false
+                    })
                     if (u.message.doc) {
                         update_state((state) => {
                             state.shown_query = new_query
@@ -149,7 +155,7 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
         () => html`<${RawHTMLContainer} body=${state.body} sanitize_html=${sanitize_html} sanitize_html_message=${false} />`,
         [state.body, sanitize_html]
     )
-    let no_docs_found = state.loading === false && state.searched_query !== "" && state.searched_query !== state.shown_query
+    let no_docs_found = state.loading === false && !state.waiting && state.searched_query !== "" && state.searched_query !== state.shown_query
 
     return html`
         <div class="ember-help-bar">
@@ -195,11 +201,10 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
                 ></input>
             </div>
         </div>
-        <section ref=${(ref) => ref != null && post_process_doc_node(ref, on_update_doc_query)}>
+        <section class="ember-help-page" ref=${(ref) => ref != null && post_process_doc_node(ref, on_update_doc_query)}>
             ${state.package != null && state.from_cursor
                 ? html`<p class="ember-help-package">${t("t_ember_help_follows_cursor", { package: state.package })}</p>`
                 : null}
-            <h1><code>${state.shown_query}</code></h1>
             ${docs_element}
         </section>
     `

@@ -811,7 +811,9 @@ handlers <- list(
   },
 
   #' A notebook-defined name (no `pkg::`): its defining cell's code, from
-  #' `state` alone. Otherwise the worker if idle (`help_reply_html()`
+  #' `state` alone. `all_packages` (a typed search) lets the worker look
+  #' beyond attached packages; the cursor only finds names the session can
+  #' see. Otherwise the worker if idle (`help_reply_html()`
   #' rewrites its page's cross-reference links, or lists the packages when
   #' several match); a busy or absent worker, or an idle one that didn't
   #' answer in time, answers with a page saying so, with status `HOURGLASS`
@@ -837,7 +839,9 @@ handlers <- list(
     # "was idle, but didn't answer inside the timeout" -- only the caller,
     # here, still knows which one it was by the time the callback runs.
     was_idle <- worker_is_idle(hub$nb)
-    worker_query(hub$nb, list(type = "help", topic = parsed$name, package = parsed$package), function(reply) {
+    help_msg <- list(type = "help", topic = parsed$name, package = parsed$package,
+                     all_packages = isTRUE(req$body$all_packages))
+    worker_query(hub$nb, help_msg, function(reply) {
       if (!is.null(reply)) {
         doc <- help_reply_html(reply)
         # `package` NULL when ambiguous (reply$matches non-empty): the page

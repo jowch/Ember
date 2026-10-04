@@ -1375,6 +1375,21 @@ test_that("help() (45)", {
   expect_setequal(pkgs, c("base", "graphics"))
 })
 
+test_that("help() searches installed but unattached packages only when all_packages is TRUE", {
+  skip_if_not(nzchar(system.file(package = "codetools")), "codetools not installed")
+  h <- worker_harness()
+  on.exit(h$close())
+
+  h$send(list(type = "help", id = 1L, topic = "findGlobals", package = NULL))
+  m <- h$receive()
+  expect_false(m$found)
+
+  h$send(list(type = "help", id = 2L, topic = "findGlobals", package = NULL, all_packages = TRUE))
+  m2 <- h$receive()
+  expect_true(m2$found)
+  expect_identical(m2$package, "codetools")
+})
+
 test_that("signature() (46)", {
   h <- worker_harness()
   on.exit(h$close())

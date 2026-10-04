@@ -227,7 +227,7 @@ handle_next <- function() {
       send(list(type = "completions", id = msg$id, token = r$token, items = r$items, too_long = r$too_long))
     },
     help = {
-      r <- help_lookup(msg$topic, msg$package)
+      r <- help_lookup(msg$topic, msg$package, isTRUE(msg$all_packages))
       send(list(type = "help_page", id = msg$id, found = r$found, topic = r$topic,
                package = r$package, html = r$html, matches = r$matches))
     },
@@ -2027,21 +2027,24 @@ complete_line <- function(line, cursor) {
 
 #' `utils::help()`, called through `do.call()` because it quotes its first
 #' argument (so a plain `help(topic)` can't take a variable). `package`
-#' `NULL` searches attached packages first, then (only if none match) every
-#' installed package. Several matches (the same topic in more than one
+#' `NULL` searches attached packages first, then, only if none match and
+#' `all_packages` is `TRUE` (a search typed in the Help box, not the cursor
+#' moving), every installed package. Several matches (the same topic in more than one
 #' package): no page is rendered, `matches` lists each `pkg::topic` for the
 #' server to offer as links. One match: `.getHelpFile()` reads the parsed
 #' Rd, `Rd2HTML()` renders it to a temp file (`dynamic = TRUE`, so
 #' cross-reference links are the short `../../pkg/help/topic` form the
 #' server's `rewrite_help_links()` expects), and only the `<body>` is
 #' returned -- the page already has its own `<html>`/`<head>`.
-help_lookup <- function(topic, package) {
+help_lookup <- function(topic, package, all_packages = FALSE) {
   tryCatch({
     matches <- if (!is.null(package)) {
       do.call(utils::help, list(topic, package = package, help_type = "text"))
     } else {
       found <- do.call(utils::help, list(topic, help_type = "text"))
-      if (length(found) == 0) found <- do.call(utils::help, list(topic, help_type = "text", try.all.packages = TRUE))
+      if (length(found) == 0 && all_packages) {
+        found <- do.call(utils::help, list(topic, help_type = "text", try.all.packages = TRUE))
+      }
       found
     }
     if (length(matches) == 0) {

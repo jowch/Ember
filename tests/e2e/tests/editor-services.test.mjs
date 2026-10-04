@@ -230,8 +230,11 @@ test("help: the cursor inside mean( shows Arithmetic Mean; a link loads another 
   assert.equal(await link.count(), 1, "mean's help page has a See Also link");
   await link.click();
   await page.waitForFunction(
-    (prev) => !document.querySelector("#helpbox-wrapper h1 code")?.innerText.includes(prev),
-    "mean", { timeout: 15000 });
+    (prev) => {
+      const title = document.querySelector("#helpbox-wrapper .ember-help-page h2")?.innerText;
+      return title != null && title !== prev;
+    },
+    "Arithmetic Mean", { timeout: 15000 });
 
   assertNoProblems(page);
 });

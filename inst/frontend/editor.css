@@ -2288,6 +2288,129 @@ pluto-helpbox .live-docs-searchbox.notfound input {
     border-bottom: 1px solid var(--helpbox-search-border-color);
 }
 
+/* One help page (board Panel3, "Help"). */
+.ember-help-page {
+    padding: 14px 16px;
+    min-width: 0;
+}
+/* Rd2HTML (R >= 4.4) wraps the page in <div class="container"><main>,
+   which the editor's own `main` rules would size and offset like the
+   notebook column. */
+.ember-help-page .container,
+.ember-help-page main {
+    display: block;
+    flex: none;
+    width: auto;
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    position: static;
+    align-self: auto;
+    cursor: auto;
+}
+.helpbox-docs > section .ember-help-page p.ember-help-package {
+    margin: 0 0 12px;
+    font-family: var(--ember-ui-font);
+    font-size: 12px;
+    line-height: 1.4;
+}
+.helpbox-docs > section .ember-help-page h2 {
+    margin: 0 0 12px;
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.3;
+}
+.helpbox-docs > section .ember-help-page h3 {
+    margin: 18px 0 8px;
+    font-size: 13px;
+    font-weight: 600;
+}
+.helpbox-docs > section .ember-help-page p,
+.helpbox-docs > section .ember-help-page li {
+    margin: 0 0 8px;
+    font-family: var(--ember-prose-font);
+    font-size: 14.5px;
+    line-height: 1.55;
+}
+.helpbox-docs > section .ember-help-page :is(p, li, td, dd) code {
+    padding: 0;
+    background: none;
+    font-family: var(--ember-code-font);
+    font-size: 12px;
+}
+.helpbox-docs > section .ember-help-page pre {
+    margin: 0 0 8px;
+    padding: 8px 10px;
+    border: none;
+    border-radius: 6px;
+    background: var(--ember-code);
+    font-family: var(--ember-code-font);
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.helpbox-docs > section .ember-help-page pre code {
+    background: none;
+    font-size: 12px;
+    line-height: inherit;
+}
+/* Arguments (and \value items): name, then description. */
+.helpbox-docs > section .ember-help-page table[role="presentation"],
+.helpbox-docs > section .ember-help-page table[role="presentation"] > tbody {
+    display: block;
+    margin: 0 0 8px;
+}
+.helpbox-docs > section .ember-help-page table[role="presentation"] tr {
+    display: grid;
+    grid-template-columns: 90px minmax(0, 1fr);
+    gap: 10px;
+    margin-bottom: 6px;
+}
+.helpbox-docs > section .ember-help-page table[role="presentation"] td {
+    display: block;
+    padding: 0;
+    border: none;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    font-family: var(--ember-prose-font);
+    font-size: 14px;
+    line-height: 1.45;
+}
+.helpbox-docs > section .ember-help-page table[role="presentation"] td p {
+    margin: 0 0 4px;
+    font-size: 14px;
+    line-height: 1.45;
+}
+.helpbox-docs > section .ember-help-page table[role="presentation"] td:first-child code {
+    font-size: 12px;
+}
+.ember-help-page img {
+    max-width: 100%;
+}
+.helpbox-docs > section .ember-help-page a {
+    color: var(--ember-accent);
+}
+/* A notebook function (notebook_definition_doc(), R/editor-services.R). */
+.helpbox-docs > section .ember-help-page p.ember-def-sig {
+    margin: 0 0 12px;
+}
+.helpbox-docs > section .ember-help-page p.ember-def-sig code {
+    font-size: 13px;
+    font-weight: 500;
+}
+.helpbox-docs > section .ember-help-page p.ember-def-where {
+    font-family: var(--ember-ui-font);
+    font-size: 13px;
+    color: var(--ember-muted);
+}
+.helpbox-docs > section .ember-help-page details summary {
+    font-size: 13px;
+    color: var(--ember-muted);
+    cursor: pointer;
+    margin-bottom: 6px;
+}
+
 .pluto-docs-binding {
     margin: 0.5em;
     padding: 1em;
@@ -2414,35 +2537,52 @@ nav#undo_delete.hidden {
     display: none;
 }
 
+/* The completion list and its info pane, drawn like Ember's menus (board
+   Menus6, the cell menu in cells.css). */
+.cm-editor .cm-tooltip.cm-tooltip-autocomplete,
+.cm-editor .cm-tooltip.cm-completionInfo {
+    border: 1px solid var(--ember-line);
+    border-radius: 6px;
+    box-shadow: var(--ember-shadow);
+    background: var(--ember-panel);
+    color: var(--ember-text);
+}
+.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul {
+    padding: 4px;
+    font-family: var(--ember-code-font);
+}
 .cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li {
-    /* this is the line height rounded to an integer to prevent jiggle */
-    height: 16px;
-    overflow-y: hidden;
-    /* font-size: 16px; */
-    line-height: 16px;
-    border-radius: 3px;
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    padding: 4px 10px;
+    font-size: 12.5px;
+    line-height: 18px;
+    border-radius: 4px;
+    color: var(--ember-text);
 }
-pluto-input .cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li {
-    height: unset;
-}
-
 .cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
-    color: var(--cm-color-editor-li-aria-selected);
-    background: var(--cm-color-editor-li-aria-selected-bg);
+    color: var(--ember-text);
+    background: var(--ember-active);
 }
 .cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionLabel {
     border-color: transparent;
 }
 .cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li .cm-completionDetail {
-    float: right;
-    margin-right: 0.5em;
-    font-size: 0.8em;
-    font-family: var(--code-font-stack);
+    margin-left: auto;
+    font-family: var(--ember-ui-font);
+    font-size: 11.5px;
     font-style: normal;
+    color: var(--ember-faint);
+}
+.cm-editor .cm-tooltip.cm-completionInfo {
+    padding: 8px 10px;
+    font-family: var(--ember-ui-font);
+    font-size: 12.5px;
 }
 
 .cm-editor .cm-tooltip.cm-tooltip-autocomplete li.c_notexported {
-    color: var(--cm-color-editor-li-notexported);
+    color: var(--ember-muted);
 }
 
 .cm-editor .cm-completionIcon {
@@ -2477,8 +2617,7 @@ Based on "Paraíso (Light)" by Jan T. Sott:
 }
 
 [data-pluto-variable],
-[data-pluto-variable]:hover,
-.cm-editor .cm-tooltip.cm-tooltip-autocomplete li.c_from_notebook .cm-completionLabel {
+[data-pluto-variable]:hover {
     font-weight: bold;
     text-decoration: underline;
     text-decoration-color: var(--cm-color-clickable-underline);
@@ -2513,9 +2652,11 @@ pluto-editor:not(.disable_ui) [data-ctrl-down="true"][data-pluto-variable]:hover
     text-shadow: 0 0 #af5bc3;
 }
 
+/* Lines the label up with the typed text: the list's border and padding
+   plus the item's own padding. */
 .cm-tooltip.cm-tooltip-autocomplete {
     padding: 0;
-    margin-left: -1.5em;
+    margin-left: -15px;
     background: var(--autocomplete-menu-bg-color);
 }
 
@@ -2524,11 +2665,14 @@ pluto-input .cm-editor .cm-scroller {
 }
 
 pluto-input .cm-editor .cm-content,
-pluto-input .cm-editor .cm-scroller,
-.cm-editor .cm-tooltip-autocomplete .cm-completionLabel {
+pluto-input .cm-editor .cm-scroller {
     font-family: var(--code-font-stack) !important;
     font-variant-ligatures: none;
     font-size: 0.8rem;
+}
+.cm-editor .cm-tooltip-autocomplete .cm-completionLabel {
+    font-family: var(--ember-code-font);
+    font-variant-ligatures: none;
 }
 
 pluto-input .cm-editor .cm-content {
@@ -2625,10 +2769,6 @@ pluto-cell.errored > pluto-input > .cm-editor .cm-lineNumbers .cm-gutterElement:
     color: var(--cm-color-keyword);
 }
 
-li.completion_keyword_argument .cm-completionLabel {
-    font-style: italic;
-    font-weight: bold;
-}
 .cm-completionIcon-completion_keyword_argument::before {
     color: var(--cm-color-literal);
 }
