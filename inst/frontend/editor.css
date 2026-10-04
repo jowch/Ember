@@ -1502,6 +1502,15 @@ nav#at_the_top .ember-menu {
     z-index: 70;
 }
 
+.ember-shortcuts-list {
+    display: inline-block;
+    text-align: left;
+    white-space: pre-wrap;
+    font-family: var(--ember-code-font);
+    font-size: 12.5px;
+    line-height: 1.6;
+}
+
 #ember-packages-tab {
     font-family: var(--sans-serif-font-stack);
     padding: 0.5em 1em;

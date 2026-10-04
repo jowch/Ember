@@ -393,5 +393,5 @@ test_that("alert()/confirm() calls remain only in Settings.js (1), ExportBanner.
   }
   counts <- counts[order(names(counts))]
 
-  expect_equal(counts, list("Editor.js" = 1L, "ExportBanner.js" = 2L, "Settings.js" = 1L))
+  expect_equal(counts, list("ExportBanner.js" = 2L, "Settings.js" = 1L))
 })

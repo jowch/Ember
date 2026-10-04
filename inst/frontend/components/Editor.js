@@ -19,15 +19,7 @@ import { ExportBanner } from "./ExportBanner.js"
 import { Popup } from "./Popup.js"
 
 import { slice_utf8 } from "../common/UnicodeTools.js"
-import {
-    has_ctrl_or_cmd_pressed,
-    ctrl_or_cmd_name,
-    is_mac_keyboard,
-    in_textarea_or_input,
-    and,
-    control_name,
-    alt_or_options_name,
-} from "../common/KeyboardShortcuts.js"
+import { has_ctrl_or_cmd_pressed, is_mac_keyboard, in_textarea_or_input, keyboard_shortcuts_body } from "../common/KeyboardShortcuts.js"
 import { PlutoActionsContext, PlutoBondsContext, PlutoJSInitializingContext, SetWithEmptyCallback } from "../common/PlutoContext.js"
 import { BackendLaunchPhase } from "../common/Binder.js"
 import { setup_mathjax } from "../common/SetupMathJax.js"
@@ -1349,37 +1341,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                 // On mac "cmd+shift+?" is used by chrome, so that is why this needs to be ctrl as well on mac
                 // Also pressing "ctrl+shift" on mac causes the key to show up as "/", this madness
                 // I hope we can find a better solution for this later - Dral
-
-                const fold_prefix = is_mac_keyboard ? `⌥${and}⌘` : `Ctrl${and}Shift`
-
-                const or = t("t_key_or")
-
-                alert(
-                    `
-⇧${and}Enter:   ${t("t_key_run")}
-${ctrl_or_cmd_name}${and}Enter:   ${t("t_key_run_add")}
-${ctrl_or_cmd_name}${and}S:   ${t("t_key_submit_all_changes")}
-Delete ${or} Backspace:   ${t("t_key_delete_or_backspace")}
-
-PageUp ${or} fn${and}↑:   ${t("t_key_page_up")}
-PageDown ${or} fn${and}↓:   ${t("t_key_page_down")}
-${control_name}${and}click:   ${t("t_key_ctrl_click")}
-${alt_or_options_name}${and}↑:   ${t("t_key_alt_up")}
-${alt_or_options_name}${and}↓:   ${t("t_key_alt_down")}
-
-${control_name}${and}/:   ${t("t_key_ctrl_slash")}
-${control_name}${and}M:   ${t("t_key_ctrl_m")}
-${fold_prefix}${and}[:   ${t("t_key_ctrl_m")}
-${fold_prefix}${and}]:   ${t("t_key_ctrl_m")}
-${control_name}${and}Q:   ${t("t_key_ctrl_q")}
-
-${t("t_key_selection_description")}
-${ctrl_or_cmd_name}${and}C:   ${t("t_key_ctrl_c")}
-${ctrl_or_cmd_name}${and}X:   ${t("t_key_ctrl_x")}
-${ctrl_or_cmd_name}${and}V:   ${t("t_key_ctrl_v")}
-
-${t("t_key_autosave_description")}`
-                )
+                tell({ title: t("t_ember_keyboard_shortcuts"), body: keyboard_shortcuts_body() })
                 e.preventDefault()
             } else if (e.key === "Escape") {
                 this.setState({
