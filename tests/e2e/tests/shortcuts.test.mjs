@@ -85,6 +85,7 @@ test("shortcuts: the sheet opens from ⋯ with this computer's keys, Esc closes 
   await page.keyboard.press("Control+Shift+Slash");
   await page.waitForTimeout(300);
   assert.equal(await page.locator("dialog[open]").count(), 0, "neither F1 nor Ctrl + ? opens a dialog");
+  assert.equal(await page.locator("#helpbox-wrapper.open").count(), 1, "F1 outside a cell opens Help");
   assertNoProblems(page);
 
   const mac = await pageOn(browser, "MacIntel");

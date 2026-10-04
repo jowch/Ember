@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, runCell } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, runCell, setCellCode } from "../browser.mjs";
 import { AxeBuilder } from "@axe-core/playwright";
 
 /** Every visible button, menu item and link inside `scope` whose name is
@@ -86,8 +86,12 @@ test("cell names and one announcement per run (168)", async (t) => {
   await runCell(page, "ERR");
   await page.waitForFunction(() => document.querySelector("#ember-run-status").textContent === "A cell: error", null, { timeout: 30000 });
 
+  await setCellCode(page, "ERR", 'fit <- stop("bad")');
+  await page.keyboard.press("Shift+Enter");
+  await page.waitForFunction(() => document.querySelector("#ember-run-status").textContent === "fit: error", null, { timeout: 30000 });
+
   const labels = await page.evaluate(() => Object.fromEntries(["A", "ERR", "MD"].map((id) => [id, document.getElementById(id).getAttribute("aria-label")])));
-  assert.ok(labels.ERR.endsWith(", error"), labels.ERR);
+  assert.equal(labels.ERR, "Cell defining fit, error");
   assert.ok(labels.A.startsWith("Cell defining x"), labels.A);
   assert.equal(labels.MD, "Text cell");
   assert.equal(await page.locator(`${cellSelector("A")}`).getAttribute("role"), "group");
