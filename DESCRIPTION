@@ -12,6 +12,6 @@ License: MIT + file LICENSE
 Copyright: See inst/COPYRIGHTS.
 Encoding: UTF-8
 Depends: R (>= 4.1.0)
-Imports: httpuv, jsonlite, later, processx, RcppMsgPack, renv, stats, utils
-Suggests: commonmark, htmltools, knitr, testthat (>= 3.0.0)
+Imports: commonmark, httpuv, jsonlite, later, processx, RcppMsgPack, renv, stats, utils
+Suggests: htmltools, knitr, testthat (>= 3.0.0)
 Config/testthat/edition: 3

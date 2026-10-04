@@ -59,11 +59,6 @@ test_that("text_body strips the #' prefix", {
   expect_equal(text_body("#' Hi\n#'\n#' There"), c("Hi", "", "There"))
 })
 
-test_that("render_markdown falls back to escaped <pre> without commonmark", {
-  testthat::local_mocked_bindings(commonmark_available = function() FALSE)
-  expect_equal(render_markdown("<b>hi</b>"), "<pre>&lt;b&gt;hi&lt;/b&gt;</pre>")
-})
-
 test_that("line_inline_matches finds spans on one line with their positions", {
   mm <- line_inline_matches("The average is `r round(mean(x), 1)` mpg.")
   expect_equal(mm$exprs, "round(mean(x), 1)")

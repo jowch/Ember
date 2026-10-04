@@ -110,13 +110,12 @@ test_that("output mapping: one case per row of the precedence table (9)", {
   o <- project_output(fake_view(output = new_display("image/svg+xml", "<svg/>", "x")))
   expect_equal(o$mime, "image/svg+xml"); expect_equal(o$body, "<svg/>")
 
-  # markdown output, with commonmark
-  skip_if_not_installed("commonmark")
+  # markdown output
   o <- project_output(fake_view(output = new_display("text/markdown", "# h", "h")))
   expect_equal(o$mime, "text/html")
   expect_match(o$body, "<h1>h</h1>")
 
-  # markdown cell (kind, not mime), with commonmark
+  # markdown cell (kind, not mime)
   o <- project_output(fake_view(kind = "markdown", code = "**bold**"))
   expect_equal(o$mime, "text/html")
   expect_match(o$body, "<strong>bold</strong>")
@@ -145,13 +144,6 @@ test_that("output mapping: one case per row of the precedence table (9)", {
   # no output
   o <- project_output(fake_view())
   expect_equal(o$mime, "text/plain"); expect_equal(o$body, "")
-})
-
-test_that("markdown falls back to text/plain without commonmark (9)", {
-  local_mocked_bindings(commonmark_available = function() FALSE)
-  o <- project_output(fake_view(kind = "markdown", code = "# h"))
-  expect_equal(o$mime, "text/plain")
-  expect_equal(o$body, "# h")
 })
 
 # ---- Inline values: project_text() via project_output() (48) ----------------
@@ -183,12 +175,6 @@ test_that("project_output() of a text cell: with and without inline values, code
                        cells = character(), traceback = character()))))
   expect_equal(o_err$mime, "application/vnd.pluto.stacktrace+object")
   expect_true(check_wire(o_err))
-
-  local_mocked_bindings(commonmark_available = function() FALSE)
-  o_plain <- project_output(fake_view(kind = "markdown", code = code, output = out_ok))
-  expect_equal(o_plain$mime, "text/plain")
-  expect_equal(o_plain$body, "Half of it is 10.5.")
-  expect_true(check_wire(o_plain))
 })
 
 test_that("project_text() matches spans line by line, never across a line break (review)", {

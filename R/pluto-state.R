@@ -285,7 +285,7 @@ project_cell_result <- function(view, known_ids = NULL) {
 #' | text/html                    | text/html                                | data, with dependency `<link>`/`<script>` tags prepended (3d) |
 #' | image/png                    | image/png                                | data (raw -> msgpack bin)  |
 #' | image/svg+xml                | image/svg+xml                            | data                       |
-#' | text/markdown (and a text cell without values) | text/html if commonmark is installed in the server's library, else text/plain | rendered / text |
+#' | text/markdown (and a text cell without values) | text/html | rendered |
 #' | application/vnd.ember.table  | application/vnd.pluto.table+object       | project_table(data)        |
 #' | application/vnd.ember.tree   | application/vnd.pluto.tree+object        | project_tree(data)         |
 #' | text/latex, anything else    | text/plain                                | `text` (the print() form)  |
@@ -332,8 +332,7 @@ project_output <- function(view, known_ids = NULL) {
     "text/html" = wrap("text/html", paste0(project_dep_tags(out$deps), out$data)),
     "image/png" = wrap("image/png", out$data),
     "image/svg+xml" = wrap("image/svg+xml", out$data),
-    "text/markdown" = if (commonmark_available()) wrap("text/html", render_markdown(out$data))
-                      else wrap("text/plain", out$data),
+    "text/markdown" = wrap("text/html", render_markdown(out$data)),
     "application/vnd.ember.table" = wrap("application/vnd.pluto.table+object", project_table(out$data)),
     "application/vnd.ember.tree" = wrap("application/vnd.pluto.tree+object", project_tree(out$data)),
     wrap("text/plain", out$text))
@@ -355,9 +354,6 @@ project_output <- function(view, known_ids = NULL) {
 #' `<span class="ember-inline">html-escaped value</span>` once rendered as
 #' HTML, so a value is never itself interpreted as markup (ui-3.md,
 #' Accessibility: "inline values read as plain text").
-#'
-#' Without commonmark: `text/plain`, with the values (without values, the
-#' spans) put in as plain text -- no tokens, no escaping, no `<span>`.
 project_text <- function(view, wrap) {
   body_lines <- text_body(view$code)
   body <- paste(body_lines, collapse = "\n")
@@ -368,10 +364,7 @@ project_text <- function(view, wrap) {
   } else {
     NULL
   }
-  if (is.null(values)) {
-    if (commonmark_available()) return(wrap("text/html", render_markdown(body)))
-    return(wrap("text/plain", body))
-  }
+  if (is.null(values)) return(wrap("text/html", render_markdown(body)))
 
   # Marked line by line with replace_inline_matches() (text-cells.R), not
   # a single sub() over the whole multi-line body: `[^`]+` in
@@ -389,11 +382,6 @@ project_text <- function(view, wrap) {
   }, character(1), USE.NAMES = FALSE)
   marked <- paste(marked_lines, collapse = "\n")
 
-  if (!commonmark_available()) {
-    plain <- marked
-    for (k in seq_along(tokens)) plain <- sub(tokens[[k]], values[[k]], plain, fixed = TRUE)
-    return(wrap("text/plain", plain))
-  }
   rendered <- render_markdown(marked)
   for (k in seq_along(tokens)) {
     rendered <- replace_inline_token(rendered, tokens[[k]], values[[k]])

@@ -151,14 +151,8 @@ text_body <- function(code) {
   vapply(lines, function(l) sub("^#+'[ ]?", "", l), character(1), USE.NAMES = FALSE)
 }
 
-#' `TRUE` when the commonmark package can be used to render markdown. A
-#' `Suggests` dependency, not `Imports`: the server runs without it.
-commonmark_available <- function() requireNamespace("commonmark", quietly = TRUE)
-
-#' Markdown to HTML with commonmark, or escaped `<pre>` text without it. The
-#' one renderer for text cells and function docs.
+#' Markdown to HTML with commonmark. The one renderer for text cells and
+#' function docs.
 render_markdown <- function(text) {
-  text <- text %||% ""
-  if (commonmark_available()) return(commonmark::markdown_html(text))
-  sprintf("<pre>%s</pre>", html_escape(text))
+  commonmark::markdown_html(text %||% "")
 }
