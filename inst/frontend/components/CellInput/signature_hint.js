@@ -103,5 +103,14 @@ export function signature_hint({ request_signature }) {
         }
     })
 
-    return [signature_tooltip_field, plugin]
+    // design-gaps.md, "Argument tooltips stay on screen": the plugin above
+    // only recomputes on a doc or selection change, so a tooltip shown while
+    // the cursor was in a call stays up after the cursor (and the mouse)
+    // leave the cell entirely -- it has nothing to tell it to go. A blur
+    // closes it outright, rather than waiting for the next edit elsewhere.
+    let close_on_blur = EditorView.domEventHandlers({
+        blur: (event, view) => dispatch_tooltip(view, 0, null),
+    })
+
+    return [signature_tooltip_field, plugin, close_on_blur]
 }

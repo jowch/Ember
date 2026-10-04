@@ -175,6 +175,34 @@ test("Endeavor's hooks after piece 6a (extends ui-2-tests.md 12) (152)", async (
   assertNoProblems(page);
 });
 
+test("argument tooltips close when the cursor leaves their cell (design-gaps.md, alongside 152)", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-tooltip.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.innerText.includes("2"),
+    cellSelector("B") + " pluto-output", { timeout: 20000 });
+
+  await page.locator(`${cellSelector("A")} .cm-content`).click();
+  await page.keyboard.press("End");
+  await page.keyboard.type("; mean(", { delay: 10 });
+  await page.waitForSelector(".cm-ember-signature-tooltip", { timeout: 5000 });
+
+  // Clicking into a different cell moves the cursor out of A entirely:
+  // the tooltip must not be left floating over B.
+  await page.locator(`${cellSelector("B")} .cm-content`).click();
+  await page.waitForFunction(
+    () => document.querySelector(".cm-ember-signature-tooltip") == null,
+    null, { timeout: 2000 });
+
+  assertNoProblems(page);
+});
+
 test("empty notebook: placeholder and hints show, and typing removes them (151)", async (t) => {
   // Not a notebook made fresh from the start page: new_notebook() (R/api.R)
   // gives that one a setup cell plus this one, two cells, so
