@@ -126,17 +126,41 @@ close_notebook <- function(nb) {
 #' left pointing at a path nothing can write: the UI server's
 #' on_update_notebook() relies on this to keep a bad move from being
 #' followed by a save loop, shell.R's save_if_changed()).
+#'
+#' Two cases are not "already exists": a `path` that normalizes to the
+#' notebook's own current path does nothing at all (no dispatch, no file
+#' operation -- the dialog's Save with nothing changed, or Folder's
+#' "Change..." round-tripping the same value) and is not an error either;
+#' and a rename that only changes case (`"a.R"` to `"A.R"`) in the same
+#' folder is let through even though `file.exists()` already says `TRUE`
+#' on a case-insensitive filesystem (macOS, Windows) -- there, a
+#' same-folder path differing only in case can only ever be the same
+#' directory entry, never a distinct file, so it is never a real conflict.
 #' @export
 move_notebook <- function(nb, path) {
   if (!is_absolute_path(path)) {
     stop(refused(sprintf("%s is not an absolute path", path)))
   }
-  target <- normalizePath(path, mustWork = FALSE, winslash = "/")
-  if (file.exists(target)) {
+  # The folder is normalised, but `basename(path)` is kept exactly as
+  # given, not run through `normalizePath()`: on a case-insensitive,
+  # case-preserving filesystem (macOS, Windows), `normalizePath()`
+  # resolves an *existing* path to its real on-disk case regardless of
+  # the case asked for, which would make `target` and `current` compare
+  # `identical()` even for a genuine case-only rename request ("a.R" to
+  # "A.R") and silently turn it into a no-op.
+  target_dir <- normalizePath(dirname(path), mustWork = FALSE, winslash = "/")
+  target <- file.path(target_dir, basename(path))
+  current <- normalizePath(notebook_state(nb)$path, mustWork = FALSE, winslash = "/")
+  if (identical(target, current)) {
+    return(target)
+  }
+  case_only_rename <- identical(tolower(target), tolower(current)) &&
+    identical(dirname(target), dirname(current))
+  if (file.exists(target) && !case_only_rename) {
     stop(refused(sprintf("%s already exists", target)))
   }
-  if (!dir.exists(dirname(target))) {
-    stop(refused(sprintf("the folder %s does not exist", dirname(target))))
+  if (!dir.exists(target_dir)) {
+    stop(refused(sprintf("the folder %s does not exist", target_dir)))
   }
   dispatch(nb, ev_move(target, at = Sys.time()))
 }

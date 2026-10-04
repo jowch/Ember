@@ -9,7 +9,7 @@ import { t } from "../common/lang.js"
  * the server's `completepath` request (`ember_dirs_only: true`), Up/Down
  * to move through the matches, Enter to accept the highlighted one, Esc
  * to close the list without closing whatever this field is part of.
- * Shared by MoveDialog and, piece 5, the start page's New notebook.
+ * Shared by MoveDialog and the start page's New notebook.
  *
  * @param {{
  *   id: string,

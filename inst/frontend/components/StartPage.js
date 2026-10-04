@@ -156,6 +156,7 @@ const OpenRow = ({ notebook, on_changed }) => {
 const RecentRow = ({ notebook, on_changed }) => {
     const pluto_actions = useContext(PlutoActionsContext)
     const [forgetting, set_forgetting] = useState(false)
+    const [error, set_error] = useState(/** @type {string?} */ (null))
 
     const forget = async () => {
         set_forgetting(true)
@@ -163,17 +164,26 @@ const RecentRow = ({ notebook, on_changed }) => {
         on_changed(response.message)
     }
 
-    return html`<li class="ember-start-row">
-        <a class="ember-start-name" href="#" onClick=${(/** @type {MouseEvent} */ e) => {
-            e.preventDefault()
-            pluto_actions.send("ember_open_notebook", { path: notebook.path }).then((response) => {
-                if (response.message.url != null) window.location.href = response.message.url
-            })
-        }}>${notebook.name}</a>
-        <span class="ember-start-folder mono">${notebook.folder}</span>
-        <button type="button" class="ember-link-btn ember-start-forget" disabled=${forgetting} title=${t("t_ember_start_forget_title")} onClick=${forget}>
-            ${t("t_ember_start_forget")}
-        </button>
+    const open = async (/** @type {MouseEvent} */ e) => {
+        e.preventDefault()
+        set_error(null)
+        const response = await pluto_actions.send("ember_open_notebook", { path: notebook.path })
+        if (response.message.error != null) {
+            set_error(response.message.error)
+        } else {
+            window.location.href = response.message.url
+        }
+    }
+
+    return html`<li class="ember-start-row ember-start-row-wrap">
+        <div class="ember-start-row-main">
+            <a class="ember-start-name" href="#" onClick=${open}>${notebook.name}</a>
+            <span class="ember-start-folder mono">${notebook.folder}</span>
+            <button type="button" class="ember-link-btn ember-start-forget" disabled=${forgetting} title=${t("t_ember_start_forget_title")} onClick=${forget}>
+                ${t("t_ember_start_forget")}
+            </button>
+        </div>
+        ${error != null && html`<p class="ember-dialog-text ember-dialog-error ember-start-row-error">${error}</p>`}
     </li>`
 }
 

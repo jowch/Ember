@@ -55,7 +55,7 @@ serve <- function(paths = character(), port = 0L, secret = random_secret(32),
   first_url <- NULL
   for (p in paths) {
     nb <- open_notebook(p)
-    url <- host_notebook(server, nb, owned = TRUE)
+    url <- host_notebook(server, nb, owned = TRUE, remember = TRUE)
     if (is.null(first_url)) first_url <- url
   }
 
@@ -196,9 +196,16 @@ print.ember_server_handle <- function(x, ...) {
 #'   changes.
 #' @param owned `TRUE` when the server opened it and should close it on stop
 #'   or on the page's "shut down"; a host's notebooks are the host's to close.
+#' @param remember Internal: add this notebook's path to the recent-
+#'   notebooks list (recent.R). Used only by this package's own
+#'   browser-facing call sites (the start page, `/open`, the initial
+#'   paths given to `serve()`/`start_server()`) -- a host calling
+#'   `host_notebook()` through the R API, Endeavor's own default, never
+#'   sets this, so a notebook it drives never shows up in another Ember
+#'   server's start page as something the user opened themselves.
 #' @return The notebook's edit URL (with the secret), for the host to show.
 #' @export
-host_notebook <- function(server, nb, owned = FALSE) {
+host_notebook <- function(server, nb, owned = FALSE, remember = FALSE) {
   id <- notebook_state(nb)$id
   existing <- mget(id, envir = server$hubs, ifnotfound = list(NULL))[[1]]
   if (!is.null(existing)) return(edit_url(server, id))
@@ -208,13 +215,14 @@ host_notebook <- function(server, nb, owned = FALSE) {
   hub$nb <- nb
   hub$proj <- NULL
   hub$owned <- isTRUE(owned)
+  hub$remember <- isTRUE(remember)
   hub$due <- FALSE
   hub$last_flush <- Sys.time() - 1
   hub$path <- notebook_state(nb)$path
   hub$unsubscribe <- on_notebook_event(nb, function(note) on_note(server, hub, note))
   assign(id, hub, envir = server$hubs)
   register_deps_for_cells(server, hub, names(notebook_state(nb)$cells))
-  tryCatch(remember_notebook(hub$path), error = function(e) NULL)
+  if (hub$remember) tryCatch(remember_notebook(hub$path), error = function(e) NULL)
   edit_url(server, id)
 }
 
@@ -232,9 +240,11 @@ stop_server <- function(server) { server$stopped <- TRUE; invisible(NULL) }
 #'   (the folder this process was in when the server started; the start
 #'   page's default Folder for a new notebook).
 #' * `hubs`: environment, notebook id -> hub (environment: `nb`, `proj`
-#'   (`ember_pluto_state` or NULL), `owned`, `due` (a flush is scheduled),
-#'   `last_flush` (time), `path` (the notebook's path as of the last
-#'   `on_note()`, to notice a move; set at `host_notebook()`), `unsubscribe`).
+#'   (`ember_pluto_state` or NULL), `owned`, `remember` (recent.R gets
+#'   this notebook's opens and moves; `host_notebook()`'s `remember`
+#'   argument), `due` (a flush is scheduled), `last_flush` (time), `path`
+#'   (the notebook's path as of the last `on_note()`, to notice a move;
+#'   set at `host_notebook()`), `unsubscribe`).
 #' * `clients`: environment, client id -> client (environment: `id`, `ws`
 #'   (anything with `$send(raw)`), `notebook_id` (set by connect), `sent`
 #'   (the frontend object as this client has it, or NULL before its first
@@ -508,17 +518,22 @@ register_deps_for_cells <- function(server, hub, ids) {
 #' projection per window rather than one per worker message; a request
 #' handler's own flush clears `due` and the scheduled one finds nothing.
 #' `notebook_shut_down` flushes once more (process_status "no_process") and
-#' removes the hub. Every call also checks `hub$path` against the
-#' notebook's current path (set at `host_notebook()`) and, when they
-#' differ -- a move or rename, from the browser, the R API or Endeavor --
-#' calls `remember_notebook(new, replaces = old)`, wrapped in `tryCatch`
-#' (recent.R): a read-only home folder must never break hosting.
+#' removes the hub. When `hub$remember` is set (`host_notebook()`'s
+#' `remember` argument), every call also checks `hub$path` against the
+#' notebook's current path and, when they differ (a move or rename) calls
+#' `remember_notebook(new, replaces = old)`, wrapped in `tryCatch`
+#' (recent.R): a read-only home folder must never break hosting. A hub
+#' opened through the R API with no `remember` never does this, even
+#' across a move: it isn't in the recent list to begin with, and a host
+#' driving its own notebook shouldn't make it appear there either.
 on_note <- function(server, hub, note) {
   new_path <- notebook_state(hub$nb)$path
   if (!identical(new_path, hub$path)) {
     old_path <- hub$path
     hub$path <- new_path
-    tryCatch(remember_notebook(new_path, replaces = old_path), error = function(e) NULL)
+    if (isTRUE(hub$remember)) {
+      tryCatch(remember_notebook(new_path, replaces = old_path), error = function(e) NULL)
+    }
   }
   if (identical(note$kind, "cell_state")) {
     register_deps_for_cells(server, hub, note$cells %||% character())
@@ -833,7 +848,7 @@ handlers <- list(
     send(cl, reply_message(req, "all_registered_package_names", list(results = list())))
   },
 
-  #' `FolderField`'s completion (and, piece 5, `FilePicker`'s): folder
+  #' `FolderField`'s completion (and `FilePicker`'s, on the start page): folder
   #' entries matching what was typed, from `complete_path()`
   #' (notebook-files.R). No hub needed; a path is as visible as this
   #' secret already lets R run.
@@ -944,8 +959,7 @@ handlers <- list(
   #' The Packages tab's Update button, and an install failure card's
   #' Update (PackagesTab.js): preview today's snapshot with `apply =
   #' TRUE`, so `schedule_packages()` applies it itself once ready unless a
-  #' loaded package would restart (ui-3-plan.md, "Update to today's
-  #' snapshot"). Local time, as the first resolution's "today"
+  #' loaded package would restart. Local time, as the first resolution's "today"
   #' (packages-core.R). No reply; the page watches `packages.update`.
   ember_update_packages = function(server, cl, hub, req) {
     if (is.null(hub)) return(invisible(NULL))
@@ -982,11 +996,19 @@ handlers <- list(
   ember_move_notebook = function(server, cl, hub, req) {
     if (is.null(hub)) return(invisible(NULL))
     b <- req$body
+    # Any error, not only `ember_refused`: MoveDialog's Save awaits this
+    # reply, so an unanticipated failure here must still answer with
+    # `{error}` rather than let handle_message()'s own tryCatch swallow it
+    # silently and leave the dialog waiting forever.
     result <- tryCatch({
       target <- notebook_target_path(b$name, b$folder)
-      move_notebook(hub$nb, target)
-      list(path = target)
-    }, ember_refused = function(e) list(error = conditionMessage(e)))
+      # Not `target`: move_notebook() can return a differently-spelled
+      # path (its folder normalised, symlinks resolved) than what was
+      # asked for, and the reply should name the same path
+      # `notebook_state()`/the next diff's `path`/`shortpath` now do.
+      moved <- move_notebook(hub$nb, target)
+      list(path = moved)
+    }, error = function(e) list(error = conditionMessage(e)))
     send(cl, reply_message(req, "ember_move_notebook", result))
     flush_clients(server, hub)
   },
@@ -1003,12 +1025,20 @@ handlers <- list(
   #' `{error}`.
   ember_new_notebook = function(server, cl, hub, req) {
     b <- req$body
+    nb <- NULL
     result <- tryCatch({
       target <- notebook_target_path(b$name, b$folder)
       nb <- new_notebook(target)
-      host_notebook(server, nb, owned = TRUE)
+      host_notebook(server, nb, owned = TRUE, remember = TRUE)
       list(url = relative_edit_url(server, notebook_state(nb)$id))
-    }, error = function(e) list(error = conditionMessage(e)))
+    }, error = function(e) {
+      # new_notebook() already wrote the file and started a session by
+      # the time host_notebook() could fail (an id collision, say); leaked
+      # otherwise, since nothing else ever closes a session this request
+      # never got around to handing to the server.
+      if (!is.null(nb)) tryCatch(close_notebook(nb), error = function(e2) NULL)
+      list(error = conditionMessage(e))
+    })
     send(cl, reply_message(req, "ember_new_notebook", result))
   },
 
@@ -1033,7 +1063,7 @@ handlers <- list(
 #' The `ember_start_page` reply: `start_dir` and the default new-notebook
 #' name, every hosted notebook under `open`, and every remembered path not
 #' already open and still on disk under `recent`. Folders are shown with
-#' `home_relative_folder()`, as the board does.
+#' `home_relative_folder()`.
 start_page_reply <- function(server) {
   ids <- ls(server$hubs)
   open <- lapply(ids, function(id) {
@@ -1044,8 +1074,13 @@ start_page_reply <- function(server) {
         process = snap$process, worker_memory = snap$worker_memory,
         owned = isTRUE(hub$owned))
   })
-  open_paths <- vapply(open, function(o) o$path, character(1))
-  recent_paths <- Filter(function(p) !(p %in% open_paths) && file.exists(p), read_recent())
+  # Normalised on both sides: a hosted notebook's `snap$path` isn't
+  # necessarily in the same spelling `remember_notebook()` stored it in
+  # (one came from whatever opened it, the other from
+  # `normalize_recent_path()`), and comparing the raw strings would show
+  # an open notebook under both `open` and `recent`.
+  open_paths <- vapply(open, function(o) normalize_recent_path(o$path), character(1))
+  recent_paths <- Filter(function(p) !(normalize_recent_path(p) %in% open_paths) && file.exists(p), read_recent())
   recent <- lapply(recent_paths, function(p) {
     list(path = p, name = basename(p), folder = home_relative_folder(dirname(p)))
   })
@@ -1303,7 +1338,7 @@ open_or_find <- function(server, path) {
     if (identical(normalizePath(notebook_state(hub$nb)$path, mustWork = FALSE), norm)) return(id)
   }
   nb <- open_notebook(path)
-  host_notebook(server, nb, owned = TRUE)
+  host_notebook(server, nb, owned = TRUE, remember = TRUE)
   notebook_state(nb)$id
 }
 

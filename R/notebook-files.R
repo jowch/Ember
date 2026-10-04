@@ -9,16 +9,22 @@
 #' A notebook file path from what a person typed.
 #'
 #' `name` is trimmed; ".R" is appended unless it already ends in ".R" or
-#' ".r"; a `name` that is empty, "." or ".." or contains "/" or "\\" is
-#' refused. `folder` has "~" expanded, must be an absolute, existing,
-#' writable (`file.access(folder, 2) == 0`) folder.
+#' ".r"; a `name` that is empty, "." or ".." or that contains "/", "\\",
+#' a control character or one of Windows' reserved characters
+#' (`<>:"|?*`) is refused. `folder` has "~" expanded and any trailing
+#' slash removed (so a folder typed or stored with one doesn't double up
+#' against `name`), must be an absolute, existing, writable
+#' (`file.access(folder, 2) == 0`) folder.
 #'
 #' @return The target path, or stops with an `ember_refused` condition
 #'   whose message is the reason, worded as the page shows it.
 notebook_target_path <- function(name, folder) {
   name <- trimws(name %||% "")
   folder <- path.expand(folder %||% "")
-  if (!nzchar(name) || identical(name, ".") || identical(name, "..") || grepl("[/\\\\]", name)) {
+  folder_trimmed <- sub("[/\\\\]+$", "", folder)
+  if (nzchar(folder_trimmed)) folder <- folder_trimmed
+  if (!nzchar(name) || identical(name, ".") || identical(name, "..") ||
+      grepl("[/\\\\[:cntrl:]]", name) || grepl('[<>:"|?*]', name, fixed = FALSE)) {
     stop(refused(sprintf("\"%s\" is not a valid name", name)))
   }
   if (!grepl("\\.[Rr]$", name)) name <- paste0(name, ".R")
@@ -43,14 +49,17 @@ notebook_target_path <- function(name, folder) {
 #' only folders. At most 200 results, alphabetical.
 #'
 #' @return `list(start, stop, results)`, the shape Pluto's own protocol
-#'   uses: `start` is the 0-based byte offset in `query` right after its
-#'   last "/" (0 when there is none) and `stop` is `query`'s byte length,
-#'   together the span a chosen result replaces; `results` is a character
-#'   vector.
+#'   uses: `start` is the 0-based UTF-8 byte offset in `query` right after
+#'   its last "/" or "\\" (0 when there is neither) and `stop` is
+#'   `query`'s byte length, together the span a chosen result replaces --
+#'   bytes, not characters, because the frontend (FolderField.js,
+#'   FilePicker.js) runs both through `utf8index_to_ut16index()` to place
+#'   them in CodeMirror's UTF-16 string, the same convention Pluto's own
+#'   `completepath` protocol uses. `results` is a character vector.
 complete_path <- function(query, dirs_only = FALSE) {
   query <- query %||% ""
-  slashes <- gregexpr("/", query, fixed = TRUE)[[1]]
-  last_slash <- if (identical(slashes[1], -1L)) 0L else max(slashes)
+  seps <- gregexpr("[/\\\\]", query)[[1]]
+  last_slash <- if (identical(seps[1], -1L)) 0L else max(seps)
   dir <- if (last_slash > 0L) substr(query, 1L, last_slash) else "."
   partial <- substr(query, last_slash + 1L, nchar(query))
 
@@ -70,7 +79,8 @@ complete_path <- function(query, dirs_only = FALSE) {
   results <- sort(labeled[keep])
   if (length(results) > 200) results <- results[seq_len(200)]
 
-  list(start = last_slash, stop = nchar(query, type = "bytes"), results = as.list(results))
+  start_bytes <- nchar(substr(query, 1L, last_slash), type = "bytes")
+  list(start = start_bytes, stop = nchar(query, type = "bytes"), results = as.list(results))
 }
 
 #' The first unused name in `dir`: "notebook.R", then "notebook-2.R",

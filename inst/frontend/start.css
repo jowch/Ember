@@ -61,6 +61,22 @@ body {
     border-bottom: 1px solid var(--ember-border);
 }
 
+.ember-start-row-wrap {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+}
+
+.ember-start-row-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.ember-start-row-error {
+    font-size: 12.5px;
+}
+
 .ember-start-list > li:last-child {
     border-bottom: none;
 }

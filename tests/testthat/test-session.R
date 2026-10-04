@@ -130,6 +130,50 @@ test_that("move_notebook() refuses a relative path (review4 2)", {
   expect_true(file.exists(path))
 })
 
+test_that("move_notebook() to the notebook's own current path is a no-op, not an 'already exists' refusal", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+
+  result <- move_notebook(nb, path)
+  expect_equal(result, normalizePath(path, mustWork = FALSE, winslash = "/"))
+  expect_equal(notebook_state(nb)$path, path)
+  expect_true(file.exists(path))
+})
+
+test_that("move_notebook() allows a case-only rename in the same folder (case-insensitive filesystems)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+
+  dir <- dirname(path)
+  cased_target <- file.path(dir, toupper(basename(path)))
+  skip_if(identical(basename(path), toupper(basename(path))),
+         "the fixture's name has no letters to case-swap")
+
+  # The folder is normalised (tempdir()'s own "/var" -> "/private/var"
+  # symlink on macOS, say); the file name is kept exactly as given, which
+  # is the whole point of this test (move_notebook()'s doc).
+  expected <- file.path(normalizePath(dir, mustWork = FALSE, winslash = "/"), basename(cased_target))
+
+  if (file.exists(cased_target) && !identical(cased_target, path)) {
+    # Case-insensitive filesystem (macOS, Windows): file.exists() already
+    # says the differently-cased target exists -- it's this same file --
+    # and the rename must be let through rather than refused.
+    result <- move_notebook(nb, cased_target)
+    expect_equal(notebook_state(nb)$path, expected)
+    expect_true(file.exists(cased_target))
+  } else {
+    # Case-sensitive filesystem (most Linux): the differently-cased target
+    # is a genuinely different, nonexistent path, and the move is an
+    # ordinary rename.
+    result <- move_notebook(nb, cased_target)
+    expect_equal(notebook_state(nb)$path, expected)
+    expect_true(file.exists(cased_target))
+    expect_false(file.exists(path))
+  }
+})
+
 test_that("move_notebook() while R is running keeps the worker and getwd() follows it (ui-3 91)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1")))
   nb <- open_notebook(path)
@@ -142,7 +186,10 @@ test_that("move_notebook() while R is running keeps the worker and getwd() follo
   dir.create(new_dir)
   new_path <- file.path(new_dir, basename(path))
   move_notebook(nb, new_path)
-  expect_equal(notebook_state(nb)$path, new_path)
+  # The folder is normalised (symlinks resolved); the name is kept as
+  # given.
+  expected <- file.path(normalizePath(new_dir, mustWork = FALSE, winslash = "/"), basename(path))
+  expect_equal(notebook_state(nb)$path, expected)
 
   res <- edit_notebook(nb, insert_cell(2, "getwd()"))
   new_id <- res$inserted[[1]]

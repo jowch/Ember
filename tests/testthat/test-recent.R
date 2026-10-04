@@ -50,6 +50,46 @@ test_that("read_recent(): a missing file reads as character()", {
   })
 })
 
+test_that("remember_notebook()/forget_notebook(): paths are normalised, so a trailing slash or a '.' segment is the same entry", {
+  with_recent_dir({
+    dir <- tempfile("ember-test-recent-norm-")
+    dir.create(dir)
+    plain <- file.path(dir, "a.R")
+    writeLines("# x", plain)
+    with_trailing_slash <- file.path(paste0(dir, "/"), "a.R")
+    with_dot <- file.path(dir, ".", "a.R")
+
+    remember_notebook(with_trailing_slash)
+    expect_equal(read_recent(), normalizePath(plain, mustWork = FALSE))
+
+    remember_notebook(with_dot)
+    expect_equal(read_recent(), normalizePath(plain, mustWork = FALSE), label = "still one entry, not two")
+
+    forget_notebook(with_trailing_slash)
+    expect_equal(read_recent(), character())
+  })
+})
+
+test_that("remember_notebook(): 'replaces' matches even when spelled differently than the stored entry", {
+  with_recent_dir({
+    dir <- tempfile("ember-test-recent-replaces-")
+    dir.create(dir)
+    old_plain <- file.path(dir, "old.R")
+    writeLines("# x", old_plain)
+
+    remember_notebook(old_plain)
+    remember_notebook(file.path(dir, "new.R"), replaces = file.path(paste0(dir, "/"), "old.R"))
+    expect_equal(read_recent(), normalizePath(file.path(dir, "new.R"), mustWork = FALSE))
+  })
+})
+
+test_that("write_recent(): drops any path containing a newline or carriage return", {
+  with_recent_dir({
+    write_recent(c("/a.R", "/b\nad.R", "/c\rad.R", "/d.R"))
+    expect_equal(read_recent(), c("/a.R", "/d.R"))
+  })
+})
+
 test_that("remember_notebook(): an unwritable data folder gives no error", {
   skip_on_os("windows")
   if (identical(Sys.info()[["effective_user"]], "root") || Sys.getenv("USER") == "root") {

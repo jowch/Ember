@@ -67,8 +67,8 @@ export const MoveDialog = ({ path, shortpath, on_close }) => {
     />`
 }
 
-/** The folder part of a path, forward-slash only (as Ember's own paths are on the wire). */
+/** The folder part of a path: the server's own paths use "/" (as Ember's wire format does), but a Windows path typed into the folder field uses "\\". */
 const dirname = (/** @type {string} */ path) => {
-    const i = path.lastIndexOf("/")
+    const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"))
     return i < 0 ? path : path.slice(0, i)
 }

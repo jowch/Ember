@@ -1179,13 +1179,45 @@ test_that("ember_move_notebook refuses an existing name, then moves and patches 
 
   handle_message(server, ws, wire("ember_move_notebook", notebook_id = id, name = "renamed", folder = folder))
   r2 <- move_replies()
-  new_path <- file.path(folder, "renamed.R")
+  # The folder is normalised (symlinks resolved) by move_notebook(); the
+  # name is kept as given.
+  new_path <- file.path(normalizePath(folder, mustWork = FALSE, winslash = "/"), "renamed.R")
   expect_equal(r2[[length(r2)]]$message$path, new_path)
   expect_false(file.exists(path))
   expect_true(file.exists(new_path))
   expect_equal(notebook_state(nb)$path, new_path)
   expect_equal(ws$page()$path, new_path)
   expect_equal(ws$page()$shortpath, "renamed.R")
+})
+
+# ---- Recent list: only what the browser opened, not the R API ------------
+
+test_that("host_notebook() through the R API leaves the recent file untouched; /open and the start page add to it", {
+  dir <- tempfile("ember-start-remember-")
+  dir.create(dir)
+  server <- new_server("s", throttle = 0)
+  server$start_dir <- dir
+
+  # Endeavor's own call shape: host_notebook(server, nb), no `remember`.
+  api_path <- write_session_notebook(list(S = cell(""), A = cell("1")), dir = dir)
+  api_nb <- open_notebook(api_path)
+  on.exit(close_notebook(api_nb), add = TRUE)
+  host_notebook(server, api_nb)
+  expect_false(normalize_recent_path(api_path) %in% read_recent())
+
+  # Still untouched after a move through the R API: a host-driven
+  # notebook never joins the recent list, not even on a path change.
+  moved_path <- file.path(dir, "moved.R")
+  move_notebook(api_nb, moved_path)
+  expect_false(normalize_recent_path(moved_path) %in% read_recent())
+  expect_false(normalize_recent_path(api_path) %in% read_recent())
+
+  # open_or_find() (the /open route and the start page's "Open a file"/
+  # recent rows) always remembers.
+  browser_path <- write_session_notebook(list(S = cell(""), A = cell("1")), dir = dir)
+  id <- open_or_find(server, browser_path)
+  on.exit(close_notebook(get(id, envir = server$hubs)$nb), add = TRUE)
+  expect_true(normalize_recent_path(browser_path) %in% read_recent())
 })
 
 # ---- The start page: ember_start_page, ember_new_notebook, ----------------
@@ -1208,7 +1240,7 @@ test_that("ember_new_notebook replies a url starting edit?id=, hosts the file as
   hub <- get(ls(server$hubs)[1], envir = server$hubs)
   expect_true(isTRUE(hub$owned))
   on.exit(close_notebook(hub$nb), add = TRUE)
-  expect_true(target %in% read_recent())
+  expect_true(normalize_recent_path(target) %in% read_recent())
 
   handle_message(server, ws, wire("ember_new_notebook", name = "fit", folder = dir))
   r2 <- ws$last()
@@ -1246,9 +1278,9 @@ test_that("ember_start_page lists a hosted notebook under open and a remembered,
   expect_true(isTRUE(reply$open[[1]]$owned))
 
   recent_paths <- vapply(reply$recent, function(r) r$path, character(1))
-  expect_true(closed_path %in% recent_paths)
-  expect_false(open_path %in% recent_paths)
-  expect_false(missing_path %in% recent_paths)
+  expect_true(normalize_recent_path(closed_path) %in% recent_paths)
+  expect_false(normalize_recent_path(open_path) %in% recent_paths)
+  expect_false(normalize_recent_path(missing_path) %in% recent_paths)
 })
 
 test_that("ember_forget_recent removes the path and replies the refreshed start-page list", {

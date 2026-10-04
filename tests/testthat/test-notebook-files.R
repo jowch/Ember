@@ -36,6 +36,23 @@ test_that("notebook_target_path(): names, extensions and refusals (ui-3 86)", {
               file.path(home_target_dir, "fit.R"))
 })
 
+test_that("notebook_target_path(): a trailing slash on the folder never doubles up against the name", {
+  folder <- tempfile("ember-target-trailing-")
+  dir.create(folder)
+  with_slash <- notebook_target_path("fit", paste0(folder, "/"))
+  without_slash <- notebook_target_path("fit", folder)
+  expect_equal(with_slash, without_slash)
+  expect_equal(with_slash, file.path(folder, "fit.R"))
+})
+
+test_that("notebook_target_path(): refuses control characters and Windows' reserved characters in the name", {
+  folder <- tempfile("ember-target-chars-")
+  dir.create(folder)
+  for (bad_name in c("fit\nfit", "fit\tfit", "fit<x", "fit>x", "fit:x", 'fit"x', "fit|x", "fit?x", "fit*x")) {
+    expect_error(notebook_target_path(bad_name, folder), class = "ember_refused", info = bad_name)
+  }
+})
+
 test_that("complete_path(): prefix match, dirs_only, hidden entries, byte offsets (ui-3 88)", {
   dir <- tempfile("ember-complete-")
   dir.create(dir)
@@ -58,6 +75,47 @@ test_that("complete_path(): prefix match, dirs_only, hidden entries, byte offset
   r_hidden <- complete_path(".h")
   expect_equal(unlist(r_hidden$results), ".hidden")
   expect_equal(r_hidden$start, 0L)
+})
+
+test_that("complete_path(): start/stop are UTF-8 byte offsets, not character offsets (non-ASCII folder)", {
+  # "José" is 4 characters but 5 bytes in UTF-8 ("é" takes 2):
+  # a folder name where byte and character offsets disagree, so a test
+  # using only ASCII paths (like the one above) can't tell `start` being
+  # computed in characters apart from it being computed in bytes, which
+  # is what the frontend (FolderField.js, FilePicker.js) actually needs --
+  # both run `start`/`stop` through `utf8index_to_ut16index()`, the same
+  # convention Pluto's own completepath protocol uses.
+  parent <- tempfile("ember-complete-nonascii-")
+  dir <- file.path(parent, "José")
+  dir.create(dir, recursive = TRUE)
+  writeLines("", file.path(dir, "a.R"))
+
+  query <- file.path(dir, "a")
+  r <- complete_path(query)
+  expect_equal(unlist(r$results), "a.R")
+  expect_equal(r$start, nchar(dir, type = "bytes") + 1L)
+  expect_false(r$start == nchar(dir) + 1L, info = "byte and character offsets really do differ here")
+  expect_equal(r$stop, nchar(query, type = "bytes"))
+})
+
+test_that("complete_path(): a backslash also separates the folder from the typed part (Windows paths)", {
+  # Backslash is an ordinary filename character on POSIX, so a folder
+  # literally named "sub\\" (ending in one) can exist here too, letting
+  # this run without actually being on Windows: what's under test is
+  # complete_path()'s own separator regex, not the OS.
+  parent <- tempfile("ember-complete-backslash-")
+  dir.create(parent)
+  sub <- file.path(parent, "sub\\")
+  dir.create(sub)
+  writeLines("", file.path(sub, "a.R"))
+
+  old_wd <- getwd()
+  setwd(parent)
+  on.exit(setwd(old_wd), add = TRUE)
+
+  r <- complete_path("sub\\a")
+  expect_equal(unlist(r$results), "a.R")
+  expect_equal(r$start, nchar("sub\\", type = "bytes"))
 })
 
 test_that("first_free_notebook_name(): notebook.R, then notebook-2.R, notebook-3.R, ...", {
