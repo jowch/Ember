@@ -289,8 +289,8 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 #' `list(cells, process, restart_offered, worker_message, seq)`. Per cell,
 #' an `ember_cell_view`: `id`, `index` (display), `kind`, `code`, `folded`,
 #' `setup`, `queued`, `running`, `status` (`"not_run"`, `"ok"`, `"error"`,
-#' `"interrupted"`), `stale`, `code_differs`, `errors` (graph errors then
-#' the run error, each with `kind`, `message`, `fixes`, `names`, and, for an
+#' `"interrupted"`), `stale`, `code_differs`, `errors` (graph errors, or
+#' else the run error, each with `kind`, `message`, `fixes`, `names`, and, for an
 #' `"upstream"` run error, `cells`; a plain "error" also carries `call`,
 #' `line`, `deep` and `frames`, as `new_run_error()` documents),
 #' `output` (`ember_display` or `NULL`),
@@ -440,7 +440,9 @@ cell_view <- function(state, ctx, i) {
     list(kind = e$kind, message = e$message, fixes = e$fixes,
         names = e$names, cells = character(), traceback = character())
   })
-  r_error <- if (!is.null(result) && !is.null(result$error)) {
+  # A cell with a graph error can't run, so any run error it holds is from
+  # before the graph error and would hide it (the page shows the last error).
+  r_error <- if (length(g_errors) == 0 && !is.null(result) && !is.null(result$error)) {
     list(list(kind = result$error$kind, message = result$error$message,
               fixes = result$error$fixes, names = result$error$names,
               cells = result$error$cells, traceback = result$error$traceback,
