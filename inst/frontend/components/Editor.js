@@ -1318,8 +1318,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
     }
 
     updateLang() {
-        const lang = this.state.notebook.metadata?.frontmatter?.language
-        document.documentElement.lang = lang ?? getCurrentLanguage()
+        document.documentElement.lang = getCurrentLanguage()
         document.documentElement.dir = getWritingDirection()
     }
 
@@ -1361,10 +1360,6 @@ all patches: ${JSON.stringify(patches, null, 1)}
         }
         if (!this.state.initializing) {
             setup_mathjax()
-        }
-
-        if (old_state.notebook.metadata?.frontmatter?.language !== new_state.notebook.metadata?.frontmatter?.language) {
-            this.updateLang()
         }
     }
 
@@ -1446,7 +1441,6 @@ all patches: ${JSON.stringify(patches, null, 1)}
                                 safe_preview: status.process_waiting_for_permission,
                             }}
                             print_title=${
-                                this.state.notebook.metadata?.frontmatter?.title ??
                                 new URLSearchParams(window.location.search).get("name") ??
                                 this.state.notebook.shortpath
                             }

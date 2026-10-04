@@ -1827,8 +1827,7 @@ pluto-cell.code_folded.show_input > pluto-input:not(:focus-within) {
 .overlay-button button,
 pluto-cell > button,
 pluto-input > button,
-pluto-shoulder > button,
-nav#slide_controls > button {
+pluto-shoulder > button {
     position: absolute;
     margin: 0px;
     padding: 1px;
@@ -2777,51 +2776,6 @@ nav#undo_delete.hidden {
     }
 }
 
-/* PRESENTATION MODE */
-
-body.presentation pluto-output h1,
-body.presentation pluto-output h2 {
-    margin-top: 100vh;
-}
-body.presentation pluto-notebook {
-    padding-bottom: 100vh;
-}
-body.presentation #helpbox-wrapper {
-    display: none !important;
-}
-
-nav#slide_controls {
-    display: none;
-}
-body.presentation nav#slide_controls {
-    display: flex;
-    position: fixed;
-    bottom: 0px;
-    right: 0px;
-    z-index: 100;
-}
-
-nav#slide_controls > button {
-    position: static;
-    padding: 5px;
-}
-
-nav#slide_controls > button > span::after {
-    content: " " !important;
-    display: block;
-    height: 30px;
-    width: 30px;
-    background-size: 30px 30px;
-}
-nav#slide_controls > button.prev > span::after {
-    background-image: url("./img/icons/arrow-back-outline.svg");
-    filter: var(--image-filters);
-}
-nav#slide_controls > button.next > span::after {
-    background-image: url("./img/icons/arrow-forward-outline.svg");
-    filter: var(--image-filters);
-}
-
 /* CODEMIRROR HINTS */
 
 .cm-editor .cm-tooltip {
@@ -3236,49 +3190,6 @@ pluto-cell.hooked_up > pluto-output {
     margin-top: 1rem;
     justify-content: flex-end;
     gap: 0.5em;
-}
-
-.pluto-frontmatter .card-preview {
-    background: var(--white);
-    padding: 1.2rem 1.1rem;
-    margin: 1rem 0;
-    box-shadow: inset 0px 0px 15px -4px #00000054;
-    border-radius: 1rem;
-}
-
-.pluto-frontmatter .card-preview > h2 {
-    margin-block-start: 0;
-    color: var(--black);
-}
-
-.pluto-frontmatter input:invalid {
-    outline-color: red;
-    border-color: red;
-}
-
-.pluto-frontmatter rbl-tag-input {
-    color: var(--black);
-}
-
-.pluto-frontmatter .deletefield {
-    color: var(--export-color);
-    background-color: transparent;
-    border-width: 0;
-    align-self: stretch;
-    margin-left: -1em;
-}
-
-.pluto-frontmatter .addentry {
-    grid-column: 1/3;
-    margin-top: 0.5em;
-}
-
-.pluto-frontmatter fieldset {
-    grid-column: 1/4;
-}
-
-.pluto-frontmatter .final {
-    margin-top: 2rem;
 }
 
 .pluto-project_toml {
