@@ -27,7 +27,9 @@ test("open: loads every cell with safe preview, R highlighting, no console error
   // class names (e.g. "μr") rather than static ones like ".cm-keyword";
   // any styled token span beyond the empty-line placeholder is evidence the
   // R grammar tokenized and highlighted the code (not just plain text).
-  const highlighted = await page.locator("pluto-cell .cm-content span[class]:not(.cm-placeholder)").count();
+  const tokens = page.locator("pluto-cell .cm-content span[class]:not(.cm-placeholder)");
+  await tokens.first().waitFor({ timeout: 10000 });
+  const highlighted = await tokens.count();
   assert.ok(highlighted > 0, "R code is syntax-highlighted (styled CodeMirror token spans exist)");
 
   assertNoProblems(page);
