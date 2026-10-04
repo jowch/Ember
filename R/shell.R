@@ -874,7 +874,7 @@ as_display <- function(b) {
     plot  = b$data,
     table = list(names = b$names, types = b$types, nrow = b$nrow, ncol = b$ncol,
                 row_labels = b$row_labels, rows = b$rows,
-                more_rows = b$more_rows, more_cols = b$more_cols, na = b$na),
+                more_rows = b$more_rows, more_cols = b$more_cols, na = b[["na", exact = TRUE]]),
     tree  = b$tree,
     b[!(names(b) %in% c("kind", "mime", "text", "truncated"))]
   )

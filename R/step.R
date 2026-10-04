@@ -1259,11 +1259,10 @@ reduce_wk_done <- function(state, event) {
         new_run_error(kind, message = msg, traceback = err$traceback %||% character(),
                       line = error_line, call = error_call)
       } else {
-        # A code cell's error carries its own call/line/deep/frames
-        # straight from the worker's report; a text cell's (just above)
-        # come from its inline span instead, since the worker's own
-        # call/line are about the whole cell's code, not the one
-        # `` `r expr` `` span.
+        # Only reached for a code cell: a text cell's call/line always
+        # come from its inline span (just above), since the worker's own
+        # call/line describe the whole cell's code, not the one
+        # `` `r expr` `` span that failed.
         new_run_error(kind, message = msg, traceback = err$traceback %||% character(),
                       call = err$call, line = err$line, deep = isTRUE(err$deep),
                       frames = err$frames %||% list())
