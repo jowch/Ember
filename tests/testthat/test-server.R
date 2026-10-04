@@ -1297,8 +1297,8 @@ test_that("ember_forget_recent removes the path and replies the refreshed start-
   handle_message(server, ws, wire("ember_forget_recent", path = path))
   reply <- ws$last()$message
   recent_paths <- vapply(reply$recent, function(r) r$path, character(1))
-  expect_false(path %in% recent_paths)
-  expect_false(path %in% read_recent())
+  expect_false(normalize_recent_path(path) %in% vapply(recent_paths, normalize_recent_path, character(1)))
+  expect_false(normalize_recent_path(path) %in% read_recent())
 })
 
 test_that("ember_open_notebook finds an already-open notebook and opens a closed one, both replying a url starting edit?id=; a bad path refuses", {

@@ -63,10 +63,10 @@ test_that("remember_notebook()/forget_notebook(): paths are normalised, so a tra
     with_dot <- file.path(dir, ".", "a.R")
 
     remember_notebook(with_trailing_slash)
-    expect_equal(read_recent(), normalizePath(plain, mustWork = FALSE))
+    expect_equal(read_recent(), np(plain))
 
     remember_notebook(with_dot)
-    expect_equal(read_recent(), normalizePath(plain, mustWork = FALSE), label = "still one entry, not two")
+    expect_equal(read_recent(), np(plain), label = "still one entry, not two")
 
     forget_notebook(with_trailing_slash)
     expect_equal(read_recent(), character())
