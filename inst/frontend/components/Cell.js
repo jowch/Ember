@@ -295,11 +295,17 @@ export const Cell = ({
         }, 300)
     }
     const was_text_open = useRef(false)
+    const select_on_close = useRef(false)
     useLayoutEffect(() => {
         const was_open = was_text_open.current
         was_text_open.current = text_open
         if (!text_open) {
             if (!was_open) return
+            if (select_on_close.current) {
+                select_on_close.current = false
+                pluto_actions.select_cell(cell_id)
+                return
+            }
             const active = document.activeElement
             if (active == null || active === document.body || node_ref.current?.contains(active)) text_output()?.focus({ preventScroll: true })
             return
@@ -342,6 +348,8 @@ export const Cell = ({
     const on_text_keydown = (e) => {
         if (e.defaultPrevented || on_cell_keydown(e)) return
         if (e.key === "Escape" && text_open && (cell_input_local?.code ?? code) === code) {
+            e.preventDefault()
+            select_on_close.current = true
             set_text_open(false)
         } else if (e.key === "Enter" && kind === "markdown" && !disable_input && e.target === text_output() && !(e.shiftKey || e.ctrlKey || e.metaKey || e.altKey)) {
             e.preventDefault()

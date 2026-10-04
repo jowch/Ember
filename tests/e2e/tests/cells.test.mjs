@@ -811,7 +811,7 @@ test("figures: no border, background or filter in either theme; at most the colu
   assertNoProblems(page);
 });
 
-test("text cells: serif text with tinted values that copy as plain text; click or Tab + Enter opens the source, #' continues, Esc and Shift + Enter close it and focus the text (150)", async (t) => {
+test("text cells: serif text with tinted values that copy as plain text; click or Tab + Enter opens the source, #' continues, Esc closes it and selects the cell, Shift + Enter closes it and focuses the text (150)", async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-text.server.log") });
   const browser = await launchBrowser();
@@ -877,7 +877,9 @@ test("text cells: serif text with tinted values that copy as plain text; click o
 
   await page.keyboard.press("Escape");
   await closes("Esc closes the unchanged source");
-  assert.equal(await textFocused(), true, "after Esc, focus is on the text");
+  await page.waitForFunction((sel) => document.activeElement === document.querySelector(sel), cell, { timeout: 5000 }).catch(() => {});
+  assert.deepEqual(await page.evaluate((sel) => [document.activeElement === document.querySelector(sel), window.editor_state.selected_cells], cell),
+    [true, ["TXT"]], "after Esc, the cell is focused and selected");
 
   // Keyboard: Tab reaches the text, Enter opens its source.
   await page.locator(`${cell} > button.add_cell.before`).evaluate((el) => el.focus());

@@ -511,7 +511,7 @@ export class Editor extends Component {
                 const delta = before_or_after == "before" ? 0 : 1
                 return await this.actions.add_remote_cell_at(index + delta, code)
             },
-            confirm_delete_multiple: async (cell_ids) => {
+            confirm_delete_multiple: async (cell_ids, /** @type {(() => void)?} */ after_delete = null) => {
                 if (
                     cell_ids.length <= 1 ||
                     (await ask({
@@ -554,6 +554,7 @@ export class Editor extends Component {
                             }
                             notebook.cell_order = notebook.cell_order.filter((cell_id) => !cell_ids.includes(cell_id))
                         })
+                        after_delete?.()
                         await this.client.send("run_multiple_cells", { cells: [] }, { notebook_id: this.state.notebook.notebook_id })
                     }
                 }
@@ -1127,8 +1128,20 @@ all patches: ${JSON.stringify(patches, null, 1)}
         this.delete_selected = () => {
             const active = /** @type {HTMLElement?} */ (document.activeElement)
             const typing = active != null && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable)
-            if (this.state.selected_cells.length > 0 && !typing) {
-                this.actions.confirm_delete_multiple(this.state.selected_cells)
+            const ids = this.state.selected_cells
+            if (ids.length > 0 && !typing) {
+                const order = this.state.notebook.cell_order
+                const indices = ids.map((id) => order.indexOf(id))
+                const kept = (id) => !ids.includes(id)
+                const neighbor =
+                    order.slice(Math.max(...indices) + 1).find(kept) ??
+                    order
+                        .slice(0, Math.max(0, Math.min(...indices)))
+                        .reverse()
+                        .find(kept)
+                this.actions.confirm_delete_multiple(ids, () => {
+                    if (neighbor != null) this.actions.select_cell(neighbor)
+                })
                 return true
             }
         }
@@ -1187,8 +1200,17 @@ all patches: ${JSON.stringify(patches, null, 1)}
             }, 100)
         })
 
+        // A cell's editor handles its own Shift+Enter, Alt+arrows and fold
+        // keys, and a selection would make the document act on them again.
+        document.addEventListener("focusin", (e) => {
+            if (this.state.selected_cells.length > 0 && e.target instanceof Element && e.target.closest("pluto-cell .cm-editor") != null) {
+                this.setState({ selected_cells: [] })
+            }
+        })
+
         document.addEventListener("keydown", (e) => {
             set_ctrl_down(has_ctrl_or_cmd_pressed(e))
+            const in_editor = e.defaultPrevented || (e.target instanceof Element && e.target.closest(".cm-editor") != null)
             // if (e.defaultPrevented) {
             //     return
             // }
@@ -1206,22 +1228,24 @@ all patches: ${JSON.stringify(patches, null, 1)}
                 }
                 e.preventDefault()
             } else if (["BracketLeft", "BracketRight"].includes(e.code) && (is_mac_keyboard ? e.altKey && e.metaKey : e.ctrlKey && e.shiftKey)) {
-                this.fold_selected(e.code === "BracketLeft")
+                if (!in_editor) this.fold_selected(e.code === "BracketLeft")
             } else if (e.key === "Backspace" || e.key === "Delete") {
                 if (this.delete_selected()) {
                     e.preventDefault()
                 }
             } else if (e.key === "Enter" && e.shiftKey) {
-                this.run_selected()
-                e.preventDefault()
+                if (!in_editor) {
+                    this.run_selected()
+                    e.preventDefault()
+                }
             } else if (e.key === "ArrowUp" && e.altKey) {
-                this.move_selected(e, -1)
+                if (!in_editor) this.move_selected(e, -1)
             } else if (e.key === "ArrowDown" && e.altKey) {
-                this.move_selected(e, 1)
+                if (!in_editor) this.move_selected(e, 1)
             } else if (e.key === "F1") {
                 open_bottom_right_panel("docs")
                 e.preventDefault()
-            } else if (e.key === "Escape" && !e.defaultPrevented) {
+            } else if (e.key === "Escape" && !e.defaultPrevented && !(e.target instanceof Element && e.target.matches("pluto-cell"))) {
                 this.setState({
                     selected_cells: [],
                 })
@@ -1503,7 +1527,9 @@ all patches: ${JSON.stringify(patches, null, 1)}
                                     notebook.cell_order = [...notebook.cell_order.slice(0, index), cell.cell_id, ...notebook.cell_order.slice(index, Infinity)]
                                 }
                             }).then(() => {
-                                this.actions.set_and_run_multiple(rd.map(({ cell }) => cell.cell_id))
+                                const ids = rd.map(({ cell }) => cell.cell_id)
+                                this.setState({ selected_cells: ids }, () => document.getElementById(ids[0])?.focus({ preventScroll: true }))
+                                this.actions.set_and_run_multiple(ids)
                             })
                         }}
                     />
