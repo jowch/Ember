@@ -21,6 +21,7 @@ export function apply_theme() {
     const set = () => {
         const theme = resolve_theme(get_settings().THEME ?? DEFAULT_SETTINGS.THEME)
         document.documentElement.setAttribute("data-theme", theme)
+        document.getElementById("ember-theme-color")?.setAttribute("content", theme === "dark" ? "#1b201d" : "#fcfcfb")
         window.dispatchEvent(new CustomEvent("ember theme change", { detail: { theme } }))
     }
     set()

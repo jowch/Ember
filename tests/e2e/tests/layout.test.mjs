@@ -2,11 +2,9 @@
 // panel": the 720 px column, the sticky header shell, and the panel's three
 // responsive modes. docs/ui-3-tests.md 110-114.
 //
-// 111-113 open the panel with `open_bottom_right_panel()` directly (the
-// same event Endeavor's drawer and, from piece 5's "Header contents" step
-// on, the header's own icons send) rather than clicking a header icon:
-// this step builds the panel's frame, not the header buttons that will
-// normally open it.
+// 112-113 open the panel with `open_bottom_right_panel()` directly (the
+// same event Endeavor's drawer and the header's own icons send); 111
+// clicks the header icons themselves, since that's the normal way in.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -43,11 +41,9 @@ test("layout: the 720px column and sticky header at 1440x900 (110)", async (t) =
   assertNoProblems(page);
 });
 
-// 114. No horizontal scroll at 640 x 800 (the mobile column breakpoint;
-// side-panel-open isn't exercised here since piece 5's side panel frame,
-// which this piece doesn't yet build, is what the panel-open half of this
-// scenario needs).
-test("layout: no horizontal scroll at 640x800 (114)", async (t) => {
+// 114. No horizontal scroll at 640 x 800 (the mobile column breakpoint),
+// with the panel closed or open.
+test("layout: no horizontal scroll at 640x800, closed or open (114)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "layout-114.server.log") });
   const browser = await launchBrowser();
@@ -57,15 +53,21 @@ test("layout: no horizontal scroll at 640x800 (114)", async (t) => {
   await page.setViewportSize({ width: 640, height: 800 });
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  assert.ok(overflow <= 1, `expected no horizontal scroll, got ${overflow}px of overflow`);
+  const overflow_closed = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  assert.ok(overflow_closed <= 1, `expected no horizontal scroll closed, got ${overflow_closed}px of overflow`);
+
+  await open_panel(page, "variables");
+  await page.waitForSelector("#helpbox-wrapper.open");
+  const overflow_open = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+  assert.ok(overflow_open <= 1, `expected no horizontal scroll open, got ${overflow_open}px of overflow`);
 
   assertNoProblems(page);
 });
 
 const open_panel = (page, tab) => page.evaluate((t) => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: t })), tab);
 
-// 111. Docked (>= 1240px): the panel sits in the free space; main doesn't move.
+// 111. Docked (>= 1240px): the panel sits in the free space; main doesn't
+// move. Opened and closed by clicking the header's own icons.
 test("layout: the side panel docks at 1440x900 without moving main (111)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "layout-111.server.log") });
@@ -78,23 +80,27 @@ test("layout: the side panel docks at 1440x900 without moving main (111)", async
 
   const main_before = await page.locator("main").boundingBox();
 
-  await open_panel(page, "variables");
+  const variables_icon = page.locator('header#pluto-nav button[aria-label="Variables"]');
+  await variables_icon.click();
   await page.waitForSelector("#helpbox-wrapper.open");
   const panel = await page.locator("#helpbox-wrapper").boundingBox();
   assert.ok(Math.abs(panel.width - 400) <= 1, `expected panel width ~= 400, got ${panel.width}`);
   assert.ok(Math.abs(panel.x + panel.width - 1440) <= 1, `expected panel at the right edge, got x=${panel.x} width=${panel.width}`);
+  assert.equal(await variables_icon.getAttribute("aria-pressed"), "true", "the icon shows as pressed while its tab is open");
 
   const main_after = await page.locator("main").boundingBox();
   assert.deepEqual(main_after, main_before, "main must not move when the panel docks");
   assert.ok(main_after.x + main_after.width <= panel.x + 1, "main and the panel must not overlap");
 
-  await open_panel(page, null);
+  // Clicking Variables again closes the panel (the same tab was already showing).
+  await variables_icon.click();
   await page.waitForSelector("#helpbox-wrapper:not(.open)", { state: "attached" });
+  assert.equal(await variables_icon.getAttribute("aria-pressed"), "false");
 
-  await open_panel(page, "docs");
+  await page.locator('header#pluto-nav button[aria-label="Help"]').click();
   await page.waitForSelector("#helpbox-wrapper.open");
   assert.equal(await page.locator('[role="tab"][aria-selected="true"]').innerText(), "Help");
-  await open_panel(page, "packages");
+  await page.locator('header#pluto-nav button[aria-label="Packages"]').click();
   assert.equal(await page.locator('#helpbox-wrapper.open').count(), 1, "still one panel");
   assert.equal(await page.locator('[role="tab"][aria-selected="true"]').innerText(), "Packages");
 
@@ -139,6 +145,12 @@ test("layout: the side panel opens as a bottom sheet at 390x844 (113)", async (t
   const page = await newPage(browser);
   await page.setViewportSize({ width: 390, height: 844 });
   await openNotebook(page, server.origin, server.secret, notebook);
+
+  // Below 641px the three panel icons collapse into one "Side panel" icon.
+  assert.equal(await page.locator('header#pluto-nav button[aria-label="Side panel"]').count(), 1);
+  assert.equal(await page.locator('header#pluto-nav button[aria-label="Variables"]').count(), 0);
+  assert.equal(await page.locator('header#pluto-nav button[aria-label="Help"]').count(), 0);
+  assert.equal(await page.locator('header#pluto-nav button[aria-label="Packages"]').count(), 0);
 
   await open_panel(page, "variables");
   await page.waitForSelector("#helpbox-wrapper.open");

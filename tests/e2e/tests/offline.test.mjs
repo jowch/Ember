@@ -183,18 +183,26 @@ test("offline: the three bundled fonts load with no network request leaving loca
 
   await openNotebook(page, server.origin, server.secret, notebook);
 
+  // document.fonts.check() returns true whenever the browser would fall
+  // back to *some* font for the given spec, even with no matching
+  // @font-face loaded -- load() actually resolves faces, and only
+  // succeeds (a non-empty array of FontFace, each "loaded") if a real
+  // @font-face matched and its file fetched.
   const checks = await page.evaluate(async () => {
-    await document.fonts.ready;
+    const load = async (spec) => {
+      const faces = await document.fonts.load(spec);
+      return faces.length > 0 && faces.every((f) => f.status === "loaded");
+    };
     return {
-      figtree: document.fonts.check("16px Figtree"),
-      sourceSerif: document.fonts.check("16px 'Source Serif 4'"),
-      plexMono: document.fonts.check("13px 'IBM Plex Mono'"),
+      figtree: await load("16px Figtree"),
+      sourceSerif: await load("16px 'Source Serif 4'"),
+      plexMono: await load("13px 'IBM Plex Mono'"),
     };
   });
 
-  assert.equal(checks.figtree, true, "expected Figtree to be a loadable font");
-  assert.equal(checks.sourceSerif, true, "expected Source Serif 4 to be a loadable font");
-  assert.equal(checks.plexMono, true, "expected IBM Plex Mono to be a loadable font");
+  assert.equal(checks.figtree, true, "expected Figtree to actually load");
+  assert.equal(checks.sourceSerif, true, "expected Source Serif 4 to actually load");
+  assert.equal(checks.plexMono, true, "expected IBM Plex Mono to actually load");
   assert.ok(aborted.every((u) => /mathjax/.test(u)), `expected no non-MathJax request to leave localhost: ${aborted}`);
 
   assertNoProblemsOffline(page);

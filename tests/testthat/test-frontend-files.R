@@ -124,12 +124,7 @@ test_that("every name in pluto-css-variables.txt is defined in both themes (6)",
 
 test_that("pluto and endeavor CSS variables are defined in both themes with no media query (105)", {
   dir <- frontend_dir()
-  # endeavor-css-variables.txt's own two non-colour names (--pluto-cell-spacing,
-  # --sans-serif-font-stack) are set in editor.css/ember-forms.css, not the
-  # theme files -- they don't vary by theme, so they don't belong here; the
-  # e2e "Endeavor's DOM hooks" test resolves the full fixture against the
-  # live page instead. The three cell colours do belong, and are already in
-  # pluto-css-variables.txt.
+  # endeavor-css-variables.txt's two non-colour names live outside the theme files; the e2e "Endeavor's DOM hooks" test covers the full fixture.
   names <- readLines(testthat::test_path("fixtures", "pluto-css-variables.txt"))
   names <- names[nzchar(names)]
 
@@ -266,10 +261,9 @@ test_that("fonts.css names a file under fonts/ for each bundled family, and OFL 
   }
 
   copyrights_path <- system.file("COPYRIGHTS", package = "ember")
-  if (nzchar(copyrights_path)) {
-    copyrights <- readChar(copyrights_path, file.info(copyrights_path)$size)
-    for (fam in families) expect_true(grepl(fam, copyrights, fixed = TRUE), info = fam)
-  }
+  expect_true(nzchar(copyrights_path), info = "installed COPYRIGHTS not found")
+  copyrights <- readChar(copyrights_path, file.info(copyrights_path)$size)
+  for (fam in families) expect_true(grepl(fam, copyrights, fixed = TRUE), info = fam)
 })
 
 # ---- 107. No hard-coded monospace/system-ui font-family -------------------

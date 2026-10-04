@@ -7,14 +7,14 @@
 
     <meta name="pluto-insertion-spot-meta">
 
-    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#fcfcfb">
-    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1b201d">
+    <meta name="theme-color" id="ember-theme-color" content="#fcfcfb">
     <meta name="color-scheme" content="light dark">
 
-    <!-- Sets <html data-theme="light"|"dark"> before any stylesheet loads,
-         so the first paint is already in the right theme (ui-3-plan.md,
-         "Theme switching"). common/theme.js does the same on every later
-         switch; kept in sync with get_settings()'s THEME reading. -->
+    <!-- Sets <html data-theme="light"|"dark"> and the theme-color meta
+         before any stylesheet loads, so the first paint is already in the
+         right theme (ui-3-plan.md, "Theme switching"). common/theme.js
+         does the same on every later switch; kept in sync with
+         get_settings()'s THEME reading. -->
     <script>
         (function () {
             var theme = "system";
@@ -27,6 +27,8 @@
                 theme = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
             }
             document.documentElement.setAttribute("data-theme", theme);
+            var meta = document.getElementById("ember-theme-color");
+            if (meta) meta.setAttribute("content", theme === "dark" ? "#1b201d" : "#fcfcfb");
         })();
     </script>
 

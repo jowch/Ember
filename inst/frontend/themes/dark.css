@@ -103,7 +103,7 @@
     --error-color: 240, 138, 128;
     --normal-cell-color: var(--ember-rail-idle);
     --dark-normal-cell-color: rgba(var(--normal-cell), 0.4);
-    --selected-cell-color: color-mix(in srgb, var(--ember-accent) 50%, transparent);
+    --selected-cell-color: color-mix(in srgb, var(--ember-accent) 40%, transparent);
     --code-differs-cell-color: var(--ember-rail-due);
     --error-cell-color: var(--ember-rail-err);
     --bright-error-cell-color: rgba(var(--error-color), 0.9);
