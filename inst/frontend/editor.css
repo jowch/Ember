@@ -1038,6 +1038,18 @@ pluto-editor.disconnected > header#pluto-nav {
     border-radius: 50%;
     display: block;
     flex-shrink: 0;
+    transition: background-color 0.15s ease-in-out;
+}
+
+/* Run states appear once they have lasted 250 ms (common/useSettled.js);
+   this short fade keeps them from snapping in. */
+.ember-fade-in {
+    animation: ember-fade-in 0.15s ease-out;
+}
+@keyframes ember-fade-in {
+    from {
+        opacity: 0;
+    }
 }
 .ember-dot-faint {
     background: var(--ember-faint);

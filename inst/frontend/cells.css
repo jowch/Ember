@@ -58,7 +58,9 @@ pluto-trafficlight {
     border-radius: 4px 0 0 4px;
     pointer-events: none;
     background: var(--ember-rail-idle);
-    transition: background-color 0.15s ease-in-out;
+    transition:
+        background-color 0.15s ease-in-out,
+        opacity 0.15s ease-in-out;
 }
 
 pluto-cell[data-rail="run"] > pluto-trafficlight {
@@ -455,6 +457,7 @@ ember-chip {
     font-size: 12px;
     font-weight: 500;
     line-height: 1.5;
+    animation: ember-fade-in 0.15s ease-out;
 }
 ember-chip .ember-chip-icon {
     display: inline-flex;
