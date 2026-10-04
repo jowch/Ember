@@ -62,6 +62,8 @@
     "t_cell_name": "Cell defining {{defines}}",
     "t_cell_name_none": "Cell",
     "t_cell_name_text": "Text cell",
+    "t_cell_editor_code": "R code",
+    "t_cell_editor_text": "Text",
     "t_cell_state_error": "error",
     "t_cell_state_running": "running",
     "t_cell_state_queued": "queued",

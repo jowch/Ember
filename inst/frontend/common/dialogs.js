@@ -17,16 +17,20 @@ let next_dialog_id = 1
  * `title_note` is a short line beside the title, not part of the dialog's
  * name.
  *
+ * `described` says the body gives an element the `describedby_id` it is
+ * passed, so the dialog can point `aria-describedby` at it.
+ *
  * @param {{
  *   title?: string,
  *   title_note?: string,
  *   class_name?: string,
  *   on_close: () => void,
  *   role?: "dialog" | "alertdialog",
+ *   described?: boolean,
  *   render: (ctx: { close: () => void, describedby_id: string }) => import("../imports/Preact.js").ReactElement,
  * }} props
  */
-export const Dialog = ({ title, title_note, class_name, on_close, role = "dialog", render: render_body }) => {
+export const Dialog = ({ title, title_note, class_name, on_close, role = "dialog", described = false, render: render_body }) => {
     const [dialog_ref, open, close, _toggle] = useDialog()
     const opener_ref = useRef(/** @type {Element?} */ (null))
     const ids_ref = useRef(/** @type {{ title: string, body: string }?} */ (null))
@@ -84,7 +88,7 @@ export const Dialog = ({ title, title_note, class_name, on_close, role = "dialog
             ref=${dialog_ref}
             role=${role}
             aria-labelledby=${title != null ? ids_ref.current.title : undefined}
-            aria-describedby=${ids_ref.current.body}
+            aria-describedby=${described ? ids_ref.current.body : undefined}
         >
             ${title != null
                 ? html`<header class="ember-dialog-title">
@@ -117,7 +121,7 @@ const DialogHost = () => {
 
     const current = items[0]
     if (current == null) return null
-    return html`<${Dialog} key=${current.id} title=${current.title} role=${current.role} on_close=${current.on_close} render=${current.render} />`
+    return html`<${Dialog} key=${current.id} title=${current.title} role=${current.role} described=${true} on_close=${current.on_close} render=${current.render} />`
 }
 
 const dequeue = (/** @type {{ id: number }} */ item) => {

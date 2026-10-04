@@ -317,7 +317,7 @@
     --cm-color-bracket: var(--ember-text);
     --cm-color-matchingBracket: var(--ember-text);
     --cm-color-matchingBracket-bg: #c58c237a;
-    --cm-color-placeholder-text: rgb(255 255 255 / 20%);
+    --cm-color-placeholder-text: var(--ember-faint);
     --cm-color-clickable-underline: #5d5f70;
 
     /* Mixed parsers */

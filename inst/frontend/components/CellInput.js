@@ -292,6 +292,7 @@ export const CellInput = ({
     notebook_id_ref.current = notebook_id
     const kind_ref = useRef(kind)
     kind_ref.current = kind
+    const editor_label = t(kind === "markdown" ? "t_cell_editor_text" : "t_cell_editor_code")
 
     const newcm_ref = useRef(/** @type {EditorView?} */ (null))
     const dom_node_ref = useRef(/** @type {HTMLElement?} */ (null))
@@ -360,7 +361,10 @@ export const CellInput = ({
                 }),
                 // After the autocomplete keymap, whose Tab accepts a completion first.
                 keymap.of(settings.CM_TAB_KEY_FOR_INDENT ? [{ key: "Tab", run: keyMapTab, shift: indentLess }] : []),
-                EditorView.contentAttributes.of({ spellcheck: String(settings.CM_SPELLCHECK && kind === "markdown") }),
+                EditorView.contentAttributes.of({
+                    "spellcheck": String(settings.CM_SPELLCHECK && kind === "markdown"),
+                    "aria-label": editor_label,
+                }),
             ],
             [settings.CM_INDENT_UNIT, settings.CM_AUTOCOMPLETE_ON_TYPE, settings.CM_TAB_KEY_FOR_INDENT, settings.CM_SPELLCHECK, kind]
         )
@@ -844,7 +848,7 @@ export const CellInput = ({
 
     return html`
         <pluto-input ref=${dom_node_ref} class="CodeMirror" translate=${false}>
-            ${show_static_fake ? (show_input ? html`<${StaticCodeMirrorFaker} value=${remote_code} />` : null) : null}
+            ${show_static_fake ? (show_input ? html`<${StaticCodeMirrorFaker} value=${remote_code} label=${editor_label} />` : null) : null}
             ${running_disabled || depends_on_disabled_cells
                 ? null
                 : html`<${RunButton} running=${running} queued=${queued} runtime=${runtime} on_run=${on_run} on_interrupt=${on_interrupt} />`}
@@ -977,7 +981,7 @@ const generate_fake_deco_indent_text = (width) => {
     return " ".repeat(max_indent_ch) + "⇥ ".repeat(Math.floor(left / 4)) + " ".repeat(left % 4)
 }
 
-const StaticCodeMirrorFaker = ({ value }) => {
+const StaticCodeMirrorFaker = ({ value, label }) => {
     const tab_size = 4
     const lines = value.split("\n").map((line, i) => {
         const { text: indent_text, width: indent_width } = get_leading_indent(line, tab_size)
@@ -1010,6 +1014,7 @@ const StaticCodeMirrorFaker = ({ value }) => {
                     style="tab-size: 4;"
                     class="cm-content cm-lineWrapping"
                     role="textbox"
+                    aria-label=${label}
                     aria-multiline="true"
                     aria-autocomplete="list"
                 >

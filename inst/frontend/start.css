@@ -167,6 +167,10 @@ body {
     font-size: 13.5px;
 }
 
+.ember-start-open-file pluto-filepicker .cm-placeholder {
+    color: var(--ember-faint);
+}
+
 .ember-start-open-file pluto-filepicker button {
     font: inherit;
     font-size: 13px;

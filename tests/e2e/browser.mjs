@@ -33,7 +33,10 @@ export async function launchBrowser() {
  * error, or an unexpected dialog — the same signals browser3.mjs collects
  * by hand, surfaced here as thrown errors instead of a printed list. */
 export async function newPage(browser) {
-  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  // An explicit context, not browser.newPage(): axe's analyze() opens a
+  // second page in the same context, which a newPage() context refuses.
+  const context = await browser.newContext({ viewport: { width: 1200, height: 800 } });
+  const page = await context.newPage();
   const problems = [];
   page.on("console", (m) => { if (m.type() === "error") problems.push("console: " + m.text()); });
   page.on("pageerror", (e) => problems.push("pageerror: " + e.message));
