@@ -29,6 +29,12 @@ Sys.sleep(3)
 # %% id=NEVER
 3 + 3
 
+# %% id=NA
+data.frame(a = c(1, NA), b = c("x", NA))
+
+# %% id=VEC
+list(a = 1, long = 1:100, sub = list(c = "x"))
+
 # /// cell order
 # S
 # A
@@ -38,4 +44,6 @@ Sys.sleep(3)
 # TOP
 # LOOP
 # NEVER
+# NA
+# VEC
 # ///

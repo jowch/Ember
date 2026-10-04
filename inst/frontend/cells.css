@@ -662,6 +662,175 @@ ol.ember-tb > li > code {
     white-space: nowrap;
 }
 
+/* ---- Tables and trees (ui-3.md "Outputs"; ui-3-plan.md 6.5) ------------ */
+
+.ember-table {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding-top: 2px;
+}
+pluto-output table.pluto-table {
+    border: none;
+    border-collapse: collapse;
+    margin: 0;
+    font-family: var(--ember-ui-font);
+    font-size: 13px;
+    line-height: normal;
+    color: var(--ember-text);
+}
+pluto-output table.pluto-table > thead {
+    border: none;
+}
+pluto-output table.pluto-table th,
+pluto-output table.pluto-table td {
+    padding: 3px 14px 3px 0;
+    text-align: right;
+    white-space: pre;
+    background: none;
+}
+pluto-output table.pluto-table tr.schema-names th {
+    padding: 4px 14px 2px 0;
+    font-family: var(--ember-code-font);
+    font-weight: 600;
+}
+pluto-output table.pluto-table tr.schema-names th.ember-table-size {
+    font-family: var(--ember-ui-font);
+    font-weight: 500;
+    color: var(--ember-muted);
+}
+pluto-output table.pluto-table tr.schema-types th {
+    padding: 0 14px 4px 0;
+    border-bottom: 1px solid var(--ember-line);
+    font-family: var(--ember-code-font);
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--ember-faint);
+}
+pluto-output table.pluto-table th:first-child,
+pluto-output table.pluto-table td:first-child {
+    text-align: left;
+}
+pluto-output table.pluto-table > tbody th {
+    font-weight: 400;
+}
+pluto-output table.pluto-table > tbody td {
+    font-family: var(--ember-code-font);
+    font-size: 13px;
+}
+pluto-output table.pluto-table > tbody td.na {
+    color: var(--ember-faint);
+}
+pluto-output table.pluto-table > tbody tr:hover {
+    background: none;
+}
+pluto-output table.pluto-table > tbody tr:hover > * {
+    background: var(--ember-hover);
+}
+pluto-output table.pluto-table tr.empty td {
+    text-align: center;
+    color: var(--ember-muted);
+}
+pluto-output table.pluto-table tr.empty div {
+    display: flex;
+    flex-flow: column nowrap;
+    align-items: center;
+}
+.ember-table-more {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 18px;
+}
+button.ember-show-more {
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--ember-accent);
+    font-family: var(--ember-ui-font);
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+}
+button.ember-show-more[aria-busy="true"] {
+    color: var(--ember-muted);
+    cursor: progress;
+}
+
+/* pluto-output's flex row would otherwise keep the tree at its widest
+   line instead of wrapping a long value at the column's width. */
+pluto-output > div:has(> pluto-tree.ember-tree) {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+pluto-tree.ember-tree,
+pluto-tree.ember-tree pluto-tree.ember-tree {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+    font-family: var(--ember-code-font);
+    font-size: 13px;
+    line-height: normal;
+    color: var(--ember-text);
+    white-space: normal;
+    cursor: auto;
+}
+.ember-tree-items {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding-left: 18px;
+}
+.ember-tree-row {
+    display: grid;
+    grid-template-columns: 16px 70px minmax(0, 1fr);
+    gap: 6px;
+    align-items: baseline;
+}
+button.ember-tree-toggle {
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+button.ember-tree-root > .ember-tree-what {
+    grid-column: span 2;
+}
+.ember-tree-disc {
+    color: var(--ember-faint);
+}
+.ember-tree-key {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.ember-tree-what {
+    font-family: var(--ember-ui-font);
+    color: var(--ember-muted);
+}
+.ember-tree-value {
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.ember-tree-value pre {
+    font-size: inherit;
+    white-space: pre-wrap;
+}
+.ember-vector-count {
+    font-family: var(--ember-ui-font);
+    font-size: 11px;
+    color: var(--ember-faint);
+}
+.ember-tree-more {
+    padding-left: 22px;
+}
+
 /* ---- Not shown in a static export or an isolated cell ------------------ */
 
 pluto-editor.disable_ui button.ember-run,

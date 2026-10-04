@@ -4,7 +4,7 @@ import DOMPurify from "../imports/DOMPurify.js"
 import { ansi_to_html } from "../imports/AnsiUp.js"
 
 import { ErrorMessage, ParseError } from "./ErrorMessage.js"
-import { TreeView, TableView, ReactDOMElement } from "./TreeView.js"
+import { TreeView, TableView, ReactDOMElement, VectorView } from "./TreeView.js"
 import { EmberPlot } from "./EmberPlot.js"
 
 import {
@@ -208,6 +208,8 @@ export const OutputBody = ({ mime, body, cell_id, persist_js_state = false, last
         case "application/vnd.pluto.table+object":
             return html`<${TableView} cell_id=${cell_id} body=${body} persist_js_state=${persist_js_state} sanitize_html=${sanitize_html} />`
             break
+        case "application/vnd.ember.vector+object":
+            return html`<div><${VectorView} body=${body} /></div>`
         case "application/vnd.pluto.parseerror+object":
             return html`<div><${ParseError} cell_id=${cell_id} last_run_timestamp=${last_run_timestamp} ...${body} /></div>`
             break

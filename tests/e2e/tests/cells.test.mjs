@@ -633,6 +633,71 @@ test("disabled states: A shows Disabled with no run button; B shows Depends on a
   assertNoProblems(page);
 });
 
+// runCell's click can miss a cell near the window's bottom edge, under the
+// footer, and then Shift + Enter runs nothing.
+const runShown = async (page, id) => {
+  await page.locator(cellSelector(id)).scrollIntoViewIfNeeded();
+  await runCell(page, id);
+};
+
+test("outputs: a table's size, types, NA cells and Show more; a list tree; printed text with no box (146)", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const rich = tempNotebook("rich.R");
+  const server = await startServer([notebook, rich], { logFile: path.join(artifactsDir(), "cells-outputs.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  for (const id of ["NA", "VEC"]) await runShown(page, id);
+
+  const na = cellSelector("NA");
+  await page.waitForSelector(`${na} table.pluto-table`, { timeout: 30000 });
+  assert.equal(await page.locator(`${na} th.ember-table-size`).innerText(), "2 rows × 2 columns");
+  assert.deepEqual(await page.locator(`${na} tr.schema-types th`).allInnerTexts(), ["", "dbl", "chr"]);
+  assert.deepEqual(await page.locator(`${na} td.na`).allInnerTexts(), ["NA", "NA"]);
+  assert.equal(await computed(page, `${na} td.na >> nth=0`, "color"), await tokenColor(page, "--ember-faint"));
+  assert.equal(await computed(page, `${na} tbody tr:first-child td >> nth=0`, "color"), await tokenColor(page, "--ember-text"));
+  assert.equal(await page.locator(`${na} button.ember-show-more`).count(), 0, "no Show more for a table shown whole");
+
+  const vec = cellSelector("VEC");
+  await page.waitForSelector(`${vec} pluto-tree.ember-tree`, { timeout: 30000 });
+  const root = page.locator(vec).getByRole("button", { name: "list of 3", exact: true });
+  assert.equal(await root.getAttribute("aria-expanded"), "true", "the root starts open");
+  const sub = page.locator(vec).getByRole("button", { name: "sub list of 1", exact: true });
+  assert.equal(await sub.getAttribute("aria-expanded"), "false", "a nested list starts collapsed");
+  const long = page.locator(`${vec} .ember-tree-row`).filter({ has: page.locator(".ember-tree-key", { hasText: /^long$/ }) });
+  assert.equal(await long.locator(".ember-tree-value").innerText(), "1 2 3 4 5 6 7 8 9 10 … int, 100 values");
+  assert.equal(await long.locator(".ember-vector-count").innerText(), "int, 100 values");
+  await sub.click();
+  assert.equal(await sub.getAttribute("aria-expanded"), "true");
+  assert.deepEqual(await page.locator(`${vec} pluto-tree.ember-tree pluto-tree.ember-tree > .ember-tree-items > .ember-tree-row`).allInnerTexts(), ["c\nx"]);
+  await root.click();
+  assert.equal(await page.locator(`${vec} .ember-tree-items`).count(), 0, "the root collapses");
+
+  await openNotebook(page, server.origin, server.secret, rich);
+  for (const id of ["DF", "TBL", "FIT"]) await runShown(page, id);
+  const tbl = cellSelector("TBL");
+  await page.waitForSelector(`${tbl} table.pluto-table`, { timeout: 30000 });
+  assert.equal(await page.locator(`${tbl} th.ember-table-size`).innerText(), "32 rows × 11 columns");
+  assert.equal(await page.locator(`${tbl} table.pluto-table tbody tr`).count(), 10, "no in-table \"more\" row");
+  assert.equal(await page.locator(`${tbl} tr.schema-names th`).count(), 9, "the size cell and 8 columns, no in-table \"more\" column");
+  await page.locator(tbl).getByRole("button", { name: "Show 3 more columns", exact: true }).waitFor();
+  await page.locator(tbl).getByRole("button", { name: "Show 22 more rows", exact: true }).click();
+  // The worker adds 60 rows per click; mtcars has 32.
+  await page.waitForFunction(
+    (sel) => document.querySelectorAll(`${sel} table.pluto-table tbody tr`).length === 32,
+    tbl, { timeout: 10000 });
+  assert.equal(await page.locator(`${tbl} button.ember-show-more`).allInnerTexts().then((x) => x.join("|")), "Show 3 more columns");
+
+  const fit = `${cellSelector("FIT")} pluto-output pre`;
+  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("Coefficients"), fit, { timeout: 20000 });
+  assert.equal(await computed(page, fit, "backgroundColor"), "rgba(0, 0, 0, 0)");
+  assert.equal(await computed(page, fit, "paddingLeft"), "0px");
+
+  assertNoProblems(page);
+});
+
 // Geometry from the Cells and Insert5 boards (ui-3.md "Cell anatomy",
 // "Run button", "Cell menu", "Adding cells").
 

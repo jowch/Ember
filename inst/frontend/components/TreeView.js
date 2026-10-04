@@ -5,6 +5,7 @@ import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { is_noop_action } from "../common/SliderServerClient.js"
 import { t } from "../common/lang.js"
+import { cl } from "../common/ClassTable.js"
 import { SafePreviewSanitizeMessage } from "./SafePreviewUI.js"
 
 // this is different from OutputBody because:
@@ -31,6 +32,8 @@ export const SimpleOutputBody = ({ mime, body, cell_id, persist_js_state, saniti
         case "application/vnd.pluto.tree+object":
             return html`<${TreeView} cell_id=${cell_id} body=${body} persist_js_state=${persist_js_state} sanitize_html=${sanitize_html} />`
             break
+        case "application/vnd.ember.vector+object":
+            return html`<${VectorView} body=${body} />`
         default:
             return OutputBody({ mime, body, cell_id, persist_js_state, sanitize_html, last_run_timestamp: null })
             break
@@ -102,7 +105,88 @@ const actions_show_more = ({ pluto_actions, cell_id, node_ref, objectid, dim }) 
     return actions.reshow_cell(cell_id ?? node_ref.current.closest("pluto-cell").id, objectid, dim)
 }
 
-export const TreeView = ({ mime, body, cell_id, persist_js_state, sanitize_html = true }) => {
+/** A long atomic vector: its first values, then "… int, 100 values". */
+export const VectorView = ({ body }) =>
+    html`<span class="ember-vector"
+        >${(body.values ?? []).map((v) => String(v).trim()).join(" ")} … <span class="ember-vector-count"
+            >${t("t_vector_values", { type: body.type_sum, count: body.length })}</span
+        ></span
+    >`
+
+/** A "Show N more…" text button that asks R for more, busy until the body it belongs to changes. */
+const ShowMore = ({ label, on_click, body }) => {
+    const [loading, set_loading] = useState(false)
+    useEffect(() => set_loading(false), [body])
+    return html`<button
+        type="button"
+        class="ember-show-more"
+        aria-busy=${loading ? "true" : "false"}
+        onClick=${() => {
+            if (loading) return
+            set_loading(true)
+            Promise.resolve(on_click()).catch(() => set_loading(false))
+        }}
+    >
+        ${label}
+    </button>`
+}
+
+const RListLeaf = ({ pair, cell_id, persist_js_state, sanitize_html }) => {
+    const [body, mime] = pair
+    if (mime === "text/plain") return html`<span class="ember-tree-text">${body}</span>`
+    return html`<${SimpleOutputBody} cell_id=${cell_id} mime=${mime} body=${body} persist_js_state=${persist_js_state} sanitize_html=${sanitize_html} />`
+}
+
+/**
+ * An R list (`type: "r_list"`): a row with a disclosure, its key and "list
+ * of N", then, when open, one row per item and "Show N more". The root
+ * (`item_key` null) starts open, nested lists closed.
+ */
+const RListTree = ({ body, item_key = null, cell_id, persist_js_state, sanitize_html }) => {
+    const pluto_actions = useContext(PlutoActionsContext)
+    const node_ref = useRef(/** @type {HTMLElement?} */ (null))
+    const is_root = item_key == null
+    const [open, set_open] = useState(is_root)
+    const elements = body.elements ?? []
+    const items = elements.filter((r) => r !== "more")
+    const length = body.ember_length ?? items.length
+    const n_more = Math.max(0, length - items.length)
+    const can_load = !is_noop_action(pluto_actions?.reshow_cell) && cell_id !== "cell_id_not_known"
+
+    return html`<pluto-tree class=${cl({ "r_list": true, "ember-tree": true, "collapsed": !open })} ref=${node_ref}>
+        <button type="button" class=${cl({ "ember-tree-row": true, "ember-tree-toggle": true, "ember-tree-root": is_root })} aria-expanded=${open ? "true" : "false"} onClick=${() => set_open(!open)}>
+            <span class="ember-tree-disc" aria-hidden="true">${open ? "▾" : "▸"}</span>
+            ${is_root ? null : html`<span class="ember-tree-key">${item_key}</span>`}
+            <span class="ember-tree-what">${t("t_list_of", { count: length })}</span>
+        </button>
+        ${open
+            ? html`<div class="ember-tree-items">
+                  ${items.map(([key, pair]) =>
+                      pair[1] === "application/vnd.pluto.tree+object" && pair[0]?.type === "r_list"
+                          ? html`<${RListTree} body=${pair[0]} item_key=${key} cell_id=${cell_id} persist_js_state=${persist_js_state} sanitize_html=${sanitize_html} />`
+                          : html`<div class="ember-tree-row">
+                                <span class="ember-tree-disc"></span>
+                                <span class="ember-tree-key">${key}</span>
+                                <span class="ember-tree-value"><${RListLeaf} pair=${pair} cell_id=${cell_id} persist_js_state=${persist_js_state} sanitize_html=${sanitize_html} /></span>
+                            </div>`
+                  )}
+                  ${n_more > 0 && can_load
+                      ? html`<div class="ember-tree-more">
+                            <${ShowMore}
+                                body=${body}
+                                label=${t("t_show_more_items", { count: n_more })}
+                                on_click=${() => actions_show_more({ pluto_actions, cell_id, node_ref, objectid: body.objectid, dim: 1 })}
+                            />
+                        </div>`
+                      : null}
+              </div>`
+            : null}
+    </pluto-tree>`
+}
+
+export const TreeView = (props) => (props.body?.type === "r_list" ? html`<${RListTree} ...${props} />` : html`<${PlutoTreeView} ...${props} />`)
+
+const PlutoTreeView = ({ mime, body, cell_id, persist_js_state, sanitize_html = true }) => {
     let pluto_actions = useContext(PlutoActionsContext)
     const node_ref = useRef(/** @type {HTMLElement?} */ (null))
 
@@ -176,15 +260,6 @@ export const TreeView = ({ mime, body, cell_id, persist_js_state, sanitize_html 
                     >${body.elements.map((r) => html`<p-r><p-k>${r[0]}</p-k><p-v>${mimepair_output(r[1])}</p-v></p-r>`)}</pluto-tree-items
                 >`
             break
-        case "r_list":
-            // Like "NamedTuple", but an unnamed item (r[0] === "") omits
-            // the key instead of showing an empty one (ui-2.md, 3c).
-            inner = html`<${prefix} prefix=${body.prefix} prefix_short=${body.prefix_short} /><pluto-tree-items class=${body.type}
-                    >${body.elements.map((r) =>
-                        r === "more" ? more : html`<p-r>${r[0] === "" ? "" : html`<p-k>${r[0]}</p-k>`}<p-v>${mimepair_output(r[1])}</p-v></p-r>`
-                    )}</pluto-tree-items
-                >`
-            break
     }
 
     return html`<pluto-tree class="collapsed ${body.type}" onclick=${onclick} ref=${node_ref}>${inner}</pluto-tree>`
@@ -209,54 +284,69 @@ const EmptyRows = ({ colspan = 999 }) =>
         </td>
     </tr>`
 
+/** "32 rows × 11 columns" from `ember_size`; older statefiles have `ember_dims`, already in words. */
+const table_size_words = (body) => {
+    const size = body.ember_size
+    if (size == null) return body.ember_dims ?? ""
+    return t("t_table_size", { rows: t("t_table_rows", { count: size[0] }), columns: t("t_table_columns", { count: size[1] }) })
+}
+
 export const TableView = ({ mime, body, cell_id, persist_js_state, sanitize_html }) => {
     let pluto_actions = useContext(PlutoActionsContext)
     const node_ref = useRef(null)
 
-    const mimepair_output = (pair) =>
-        html`<${SimpleOutputBody} cell_id=${cell_id} mime=${pair[1]} body=${pair[0]} persist_js_state=${persist_js_state} sanitize_html=${sanitize_html} />`
-    const more = (dim) =>
-        html`<${More}
-            on_click_more=${() =>
-                actions_show_more({
-                    pluto_actions,
-                    cell_id,
-                    node_ref,
-                    objectid: body.objectid,
-                    dim,
-                })}
-        />`
-    // More than the columns, not big enough to break Firefox (https://bugzilla.mozilla.org/show_bug.cgi?id=675417)
-    const maxcolspan = 3 + (body?.schema?.names?.length ?? 1)
+    const cell_output = (pair) =>
+        pair[1] === "text/plain"
+            ? pair[0]
+            : html`<${SimpleOutputBody} cell_id=${cell_id} mime=${pair[1]} body=${pair[0]} persist_js_state=${persist_js_state} sanitize_html=${sanitize_html} />`
+    const show_more = (dim, label) =>
+        html`<${ShowMore} body=${body} label=${label} on_click=${() => actions_show_more({ pluto_actions, cell_id, node_ref, objectid: body.objectid, dim })} />`
+
+    const names = (body?.schema?.names ?? []).filter((x) => x !== "more")
+    const types = (body?.schema?.types ?? []).filter((x) => x !== "more")
+    const rows = (body?.rows ?? []).filter((x) => x !== "more")
+    const more_rows = body.ember_size?.[2] ?? 0
+    const more_cols = body.ember_size?.[3] ?? 0
+    const can_load = !is_noop_action(pluto_actions?.reshow_cell) && cell_id !== "cell_id_not_known"
+    const colspan = 1 + names.length
+
     const thead =
-        (body?.schema?.names?.length ?? 0) === 0
-            ? html`<${EmptyCols} colspan=${maxcolspan} />`
+        names.length === 0
+            ? html`<${EmptyCols} colspan=${colspan} />`
             : html`<thead>
                   <tr class="schema-names">
-                      ${[body.ember_dims ?? "", ...body.schema.names].map((x) => html`<th>${x === "more" ? more(2) : x}</th>`)}
+                      <th class="ember-table-size">${table_size_words(body)}</th>
+                      ${names.map((x) => html`<th>${x}</th>`)}
                   </tr>
                   <tr class="schema-types">
-                      ${["", ...body.schema.types].map((x) => html`<th>${x === "more" ? null : x}</th>`)}
+                      <th></th>
+                      ${types.map((x) => html`<th>${String(x).replace(/^<(.*)>$/, "$1")}</th>`)}
                   </tr>
               </thead>`
 
     const tbody = html`<tbody>
-        ${(body.rows?.length ?? 0) !== 0
-            ? body.rows.map(
-                  (row) =>
-                      html`<tr>
-                          ${row === "more"
-                              ? html`<td class="pluto-tree-more-td" colspan=${maxcolspan}>${more(1)}</td>`
-                              : html`<th>${row[0]}</th>
-                                    ${row[1].map((x) => html`<td><div>${x === "more" ? null : mimepair_output(x)}</div></td>`)}`}
-                      </tr>`
-              )
-            : html`<${EmptyRows} colspan=${maxcolspan} />`}
+        ${rows.length !== 0
+            ? rows.map((row, i) => {
+                  const na = body.ember_na?.[i] ?? []
+                  return html`<tr>
+                      <th>${row[0]}</th>
+                      ${row[1].filter((x) => x !== "more").map((x, j) => html`<td class=${na.includes(j) ? "na" : ""}>${cell_output(x)}</td>`)}
+                  </tr>`
+              })
+            : html`<${EmptyRows} colspan=${colspan} />`}
     </tbody>`
 
-    return html`<table class="pluto-table" ref=${node_ref}>
-        ${thead}${tbody}
-    </table>`
+    return html`<div class="ember-table" ref=${node_ref}>
+        <table class="pluto-table">
+            ${thead}${tbody}
+        </table>
+        ${can_load && (more_rows > 0 || more_cols > 0)
+            ? html`<div class="ember-table-more">
+                  ${more_rows > 0 ? show_more(1, t("t_show_more_rows", { count: more_rows })) : null}
+                  ${more_cols > 0 ? show_more(2, t("t_show_more_cols", { count: more_cols })) : null}
+              </div>`
+            : null}
+    </div>`
 }
 
 export let ReactDOMElement = ({ cell_id, tag, attributes, children, persist_js_state = false, sanitize_html = true }) => {
