@@ -63,6 +63,19 @@ test_that("earlier_visible_values_to_console", {
   expect_identical(r$console[[1]]$text, "[1] 1")
 })
 
+test_that("a warning raised inside a function carries its call; a message carries none (ui-3-tests 130)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "g <- function() warning('careful')\ng()\nmessage('m')")
+  expect_identical(r$console[[1]]$kind, "warning")
+  expect_identical(r$console[[1]]$call, "g()")
+  expect_identical(r$console[[2]]$kind, "message")
+  expect_null(r$console[[2]][["call", exact = TRUE]])
+
+  r2 <- run_and_wait(h, "b", 2L, "warning('top-level')")
+  expect_null(r2$console[[1]][["call", exact = TRUE]])
+})
+
 test_that("error_with_traceback", {
   h <- worker_harness()
   on.exit(h$close())

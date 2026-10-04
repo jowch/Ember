@@ -647,14 +647,22 @@ project_parse_error <- function(error, code) {
 #' (stdout: the frontend joins consecutive ones), "Info" (message) or
 #' "Warn" (warning). Built so a growing console gives a list whose prefix is
 #' identical to the previous one: fb_diff() then sends only the new items.
+#'
+#' `ember = list(call = item$call)` is added only when the worker's item
+#' carries a `call` (a warning raised inside a function); an item with
+#' none -- every message, and a warning with no call -- gets no `ember`
+#' field at all.
 project_logs <- function(console, cell_id) {
   level_of <- function(kind) switch(kind, stdout = "LogLevel(-555)",
                                     message = "Info", warning = "Warn", "Info")
   lapply(seq_along(console), function(i) {
     item <- console[[i]]
-    list(id = sprintf("%s_%d", cell_id, i), cell_id = cell_id,
-        level = level_of(item$kind), msg = arr(item$text, "text/plain"),
-        file = "", line = -1L, kwargs = list())
+    entry <- list(id = sprintf("%s_%d", cell_id, i), cell_id = cell_id,
+                  level = level_of(item$kind), msg = arr(item$text, "text/plain"),
+                  file = "", line = -1L, kwargs = list())
+    call <- item[["call", exact = TRUE]]
+    if (!is.null(call)) entry$ember <- list(call = call)
+    entry
   })
 }
 

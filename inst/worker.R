@@ -1209,7 +1209,10 @@ console_collector <- function(cell, token) {
                                           # able to pop our diversion
   sink(self$out, type = "output")
 
-  add_item <- function(kind, text) {
+  # `call` is the deparsed call behind a warning item (one line), kept
+  # only when set -- a message item, or a warning with none, carries no
+  # `call` key at all, rather than an explicit NULL.
+  add_item <- function(kind, text, call = NULL) {
     if (self$capped) return(invisible())
     self$total <- self$total + nchar(text, type = "bytes")
     if (self$total > self$limit) {
@@ -1219,7 +1222,7 @@ console_collector <- function(cell, token) {
       send(list(type = "console", cell = cell, token = token, item = item))
       return(invisible())
     }
-    item <- list(kind = kind, text = text)
+    item <- if (is.null(call)) list(kind = kind, text = text) else list(kind = kind, text = text, call = call)
     self$items[[length(self$items) + 1]] <- item
     send(list(type = "console", cell = cell, token = token, item = item))
   }
@@ -1239,7 +1242,16 @@ console_collector <- function(cell, token) {
   }
 
   self$message <- function(m) { flush_stdout(); add_item("message", conditionMessage(m)) }
-  self$warning <- function(w) { flush_stdout(); add_item("warning", conditionMessage(w)) }
+  self$warning <- function(w) {
+    flush_stdout()
+    call <- conditionCall(w)
+    call_text <- if (is.null(call)) NULL else paste(deparse(call), collapse = " ")
+    # A bare top-level warning() carries the eval loop's own call, not
+    # anything the notebook wrote (the same case `run_cell()`'s error
+    # handler nulls out); treated as no call at all.
+    if (identical(call_text, "eval(exprs[[k]], globalenv())")) call_text <- NULL
+    add_item("warning", conditionMessage(w), call = call_text)
+  }
   self$print <- function(v) {
     flush_stdout()
     txt <- paste(utils::capture.output(eval_in_notebook(quote(print(v)), v)), collapse = "\n")
