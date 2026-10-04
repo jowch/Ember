@@ -12,7 +12,8 @@ done; clear out ticked items at each release.
 - [ ] Listeners run on the server thread after every dispatch; a `cell_state` storm during "Run all" on a 2000-cell notebook isn't measured — missing
 - [ ] The session polls on `later`'s global loop, shared with whatever else the host process runs; a host callback that blocks stalls the poll. Decide whether to use a private loop — missing
 
-- [ ] An idle notebook with a worker uses about 6% of a CPU core, because the shell polls every 5 ms while a worker exists (seen on leftover test servers: 28 CPU-minutes over 8 hours each). Back off while nothing is pending, or wait on the socket instead of polling — improvised
+- [x] An idle notebook with a worker used about 6% of a CPU core, because the shell polled every 5 ms while a worker existed. The poll now runs at 5 ms only while the shell waits on the worker, and at 250 ms otherwise (R/shell.R, `poll_interval()`) — improvised
+- [ ] Replace the worker poll with a push: register the worker socket with `later::later_fd()` so a callback runs when it is readable, and keep only a slow timer for process exit and file watching. Base R connections don't expose their file descriptor, so the worker link would move to a socket library that does (e.g. nanonext); check Windows support first. Wanted long term: even the 250 ms idle poll is waste — improvised
 
 ## Worker
 
