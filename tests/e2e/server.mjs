@@ -58,6 +58,20 @@ export function tempNotebook(name = "basic.R") {
  * since the exact wording isn't an R-level API this depends on. */
 const BIND_FAILURE_RE = /address already in use|eaddrinuse/i;
 
+/** Every server child this test process started that hasn't exited yet,
+ * killed when node exits: a test that fails or times out before its
+ * `stop()` would otherwise leave its R process running. */
+const liveChildren = new Set();
+process.on("exit", () => {
+  for (const child of liveChildren) {
+    try { child.kill("SIGKILL"); } catch { /* already gone */ }
+  }
+});
+// A signal ends the process without "exit" unless something handles it.
+for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]]) {
+  process.once(signal, () => process.exit(code));
+}
+
 async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd }) {
   const rscript = process.env.EMBER_RSCRIPT ?? "Rscript";
   const quoted = notebookPaths.map((p) => JSON.stringify(p)).join(", ");
@@ -82,6 +96,13 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
     // (start-page.test.mjs) can pin it to a fixture folder instead.
     cwd,
   });
+  liveChildren.add(child);
+  child.on("exit", () => liveChildren.delete(child));
+  // Unreferenced so a test file whose test failed before `stop()` still
+  // lets node exit, which kills the child through the "exit" handler.
+  child.unref();
+  child.stdout.unref();
+  child.stderr.unref();
 
   let buffer = "";
   const append = (chunk) => {
@@ -119,8 +140,17 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
     secret: SECRET,
     child,
     log: () => buffer,
+    /** SIGTERM, then SIGKILL if the child is still alive 2 s later.
+     * Resolves once it has exited. */
     stop() {
-      try { child.kill("SIGTERM"); } catch { /* already gone */ }
+      if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          try { child.kill("SIGKILL"); } catch { /* already gone */ }
+        }, 2000);
+        child.once("exit", () => { clearTimeout(timer); resolve(); });
+        try { child.kill("SIGTERM"); } catch { clearTimeout(timer); resolve(); }
+      });
     },
   };
 }
