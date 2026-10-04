@@ -78,7 +78,7 @@ test_that("complete_path(): prefix match, dirs_only, hidden entries, byte offset
 })
 
 test_that("complete_path(): start/stop are UTF-8 byte offsets, not character offsets (non-ASCII folder)", {
-  # "José" is 4 characters but 5 bytes in UTF-8 ("é" takes 2):
+  # "Jos\u00e9" is 4 characters but 5 bytes in UTF-8 ("\u00e9" takes 2):
   # a folder name where byte and character offsets disagree, so a test
   # using only ASCII paths (like the one above) can't tell `start` being
   # computed in characters apart from it being computed in bytes, which
@@ -86,7 +86,7 @@ test_that("complete_path(): start/stop are UTF-8 byte offsets, not character off
   # both run `start`/`stop` through `utf8index_to_ut16index()`, the same
   # convention Pluto's own completepath protocol uses.
   parent <- tempfile("ember-complete-nonascii-")
-  dir <- file.path(parent, "José")
+  dir <- file.path(parent, "Jos\u00e9")
   dir.create(dir, recursive = TRUE)
   writeLines("", file.path(dir, "a.R"))
 

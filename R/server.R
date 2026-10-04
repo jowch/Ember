@@ -580,7 +580,7 @@ send <- function(client, msg) {
 
 #' Handle one websocket message from `ws`. Every request type the v1.0.3
 #' editor sends is in `handlers`; an unknown type is logged and dropped.
-#' A handler that fails is logged and, for update_notebook, answered 👎.
+#' A handler that fails is logged and, for update_notebook, answered "\U0001F44E".
 handle_message <- function(server, ws, raw) {
   req <- tryCatch(parse_request(raw), ember_bad_request = function(e) {
     message("ember: dropping malformed request: ", conditionMessage(e))
@@ -610,7 +610,7 @@ handle_message <- function(server, ws, raw) {
   invisible(NULL)
 }
 
-#' `list(update_went_well = "👎", why_not = why, should_i_tell_the_user = TRUE)`.
+#' `list(update_went_well = "\U0001F44E", why_not = why, should_i_tell_the_user = TRUE)`.
 thumbs_down <- function(why) {
   list(update_went_well = THUMBS_DOWN, why_not = why, should_i_tell_the_user = TRUE)
 }
@@ -697,7 +697,7 @@ on_run <- function(server, cl, hub, req) {
 #'
 #' | type                          | here                                                            |
 #' |-------------------------------|-----------------------------------------------------------------|
-#' | connect                       | cl$notebook_id <- id if hosted; reply "👋" {notebook_exists, session_options, version_info} |
+#' | connect                       | cl$notebook_id <- id if hosted; reply "\U0001F44B" {notebook_exists, session_options, version_info} |
 #' | ping                          | reply "pong"                                                    |
 #' | current_time                  | reply "current_time" {time}                                    |
 #' | update_notebook               | see on_update_notebook()                                        |
@@ -728,7 +728,7 @@ on_run <- function(server, cl, hub, req) {
 #' | ember_set_mode                 | {mode}: "autorun" or "lazy", else refused; refused when read-only. set_cell_change_mode(nb, mode); flush. No reply |
 #' | request_js_link_response, nbpkg_available_versions, nbpkg_get_project_toml, nbpkg_set_project_toml, pkg_update | Julia-only; their UI is disabled in the frontend. Logged, no reply |
 #'
-#' Replies use the reply type Pluto uses for each (connect "👋", ping
+#' Replies use the reply type Pluto uses for each (connect "\U0001F44B", ping
 #' "pong", ...); the frontend matches replies by request_id, not type.
 handlers <- list(
   connect = function(server, cl, hub, req) {

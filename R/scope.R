@@ -68,15 +68,15 @@ top_scope <- function(acc) {
 #' created), or `NULL` to mean the cell's own top-level definitions. This
 #' is the scope one level further out than `home` itself, because a read
 #' inside a function is never resolved by that *same* function's own later
-#' locals — R already looked it up and found nothing there by the time the
-#' assignment runs — only by whatever the *enclosing* scope eventually
+#' locals -- R already looked it up and found nothing there by the time the
+#' assignment runs -- only by whatever the *enclosing* scope eventually
 #' defines (`clean <- function() { data <- na.omit(data) }` reads the
 #' global `data`, never its own local one, no matter how the walker orders
 #' things). `home`'s own `deferred` list instead collects reads escaping a
 #' function nested *inside* it (`g <- function() { h <- function(n) if (n
 #' > 0) h(n - 1); h(3) }`: `h`'s self-reference has `defer_target ==
 #' g_scope`, checked against `g_scope$names` once `g`'s whole body is
-#' walked, in `finish_function_scope()` — which is what keeps a locally
+#' walked, in `finish_function_scope()` -- which is what keeps a locally
 #' recursive function from referencing itself, the same rule the top level
 #' already applies to the cell's own definitions, one level down).
 #'

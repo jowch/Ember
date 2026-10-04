@@ -16,7 +16,7 @@ PLUTO_VERSION <- "v1.0.3"
 #' Two constant metadata objects, shared by every cell input with that
 #' `disabled` value, so cells with the same value are the same R object in
 #' every projection. Ember supports only `metadata.disabled`; a client
-#' that changes another key gets 👎 (see pluto_edits()).
+#' that changes another key gets "\U0001F44E" (see pluto_edits()).
 CELL_METADATA <- list(disabled = FALSE, show_logs = TRUE, skip_as_script = FALSE)
 CELL_METADATA_DISABLED <- list(disabled = TRUE, show_logs = TRUE, skip_as_script = FALSE)
 

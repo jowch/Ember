@@ -329,9 +329,9 @@ run_cell <- function(msg) {
              globals = list())
 
   # `dev`/`console` are closed here (not just at their normal point of use
-  # below) so an interrupt landing anywhere in this function — including
+  # below) so an interrupt landing anywhere in this function -- including
   # after the cell's code finished, while display or bookkeeping is still
-  # running — can never leave a sink or a device open. Once the bookkeeping
+  # running -- can never leave a sink or a device open. Once the bookkeeping
   # block below (wrapped in `uninterrupted()`) has closed them itself,
   # it sets these back to NULL so this doesn't try to close them twice.
   dev <- NULL
@@ -411,7 +411,7 @@ run_cell <- function(msg) {
       error   = function(e) {
         # `sys.calls()` here always ends with this handler's own frame
         # (it's the currently executing call), so it's dropped
-        # unconditionally rather than matched by text — the fix for a
+        # unconditionally rather than matched by text -- the fix for a
         # classed condition (stop(<condition object>), as every
         # rlang/cli error raises) whose signalling never passes through
         # the simpleError dispatch helpers the text patterns below catch.
@@ -433,8 +433,8 @@ run_cell <- function(msg) {
         call <- conditionCall(e)
         if (!is.null(call) && identical(call, quote(original(...)))) {
           # The real loadNamespace()/library()/require() built its own
-          # error's call from *its* caller, which — from inside our
-          # wrapper — is the wrapper's own `original(...)` line, not the
+          # error's call from *its* caller, which -- from inside our
+          # wrapper -- is the wrapper's own `original(...)` line, not the
           # line the notebook wrote (e.g. `library(notapkg)`). Report the
           # frame just above it instead, which is exactly that line: our
           # wrapper's `sys.call()` always returns the call as the
@@ -1032,7 +1032,7 @@ install_traces <- function() {
       # attaching, whether or not attaching it was a no-op because it was
       # already on the path (a plain search() diff would miss that case,
       # and so would wrongly drop the package from the desired path on
-      # the next rebuild — see the note at attach_requests's use).
+      # the next rebuild -- see the note at attach_requests's use).
       if (attachable && !is.null(running) && !is.null(pe)) {
         after_search <- packages_on_search(search())
         resolved <- resolve_attach_name(pe, char_only, call_env, before_search, after_search)
@@ -1355,7 +1355,7 @@ read_png <- function(path) {
 #' parent is baseenv() (see the file header), never globalenv(). Calling
 #' `print(value)` directly from one of them resolves the generic fine, but
 #' UseMethod()'s method search starts from the calling frame and walks its
-#' lexical parents — which for a worker frame never reaches globalenv(), so
+#' lexical parents -- which for a worker frame never reaches globalenv(), so
 #' a `print.myclass` the notebook defined is invisible to it (measured:
 #' confirmed with a plain `environment(f) <- e; f()` repro, not just
 #' reasoning about scoping rules). Evaluating the call itself in

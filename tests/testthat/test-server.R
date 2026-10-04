@@ -1580,7 +1580,7 @@ test_that("docs: a busy worker answers with an hourglass, so the help panel asks
 
   handle_message(server, ws, wire("docs", notebook_id = id, query = "mean"))
   r <- ws$last()$message
-  expect_identical(r$status, "⌛")
+  expect_identical(r$status, "\u231b")
   expect_match(r$doc, "busy running a cell")
 })
 

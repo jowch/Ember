@@ -23,7 +23,7 @@ LINES <- c(
   "         ^~~~~~~~~~~~~~~~",
   "1 error generated.",
   "make: *** [brokenpkg.o] Error 1",
-  "ERROR: compilation failed for package ‘brokenpkg’",
+  "ERROR: compilation failed for package \u2018brokenpkg\u2019",
   "* removing '/tmp/does-not-exist/brokenpkg'",
   "Error: failed to install \"brokenpkg\"",
   "Execution halted"

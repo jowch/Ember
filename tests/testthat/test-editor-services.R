@@ -36,10 +36,10 @@ test_that("completion_context() start is a byte offset into the whole query, not
 
   # Non-ASCII on an earlier line: its UTF-8 byte length (not character
   # count) must be what's added to the offset.
-  ctx3 <- completion_context("y <- 'é'\nme")
+  ctx3 <- completion_context("y <- '\u00e9'\nme")
   expect_identical(ctx3$token, "me")
-  expect_identical(nchar("é", type = "bytes"), 2L)
-  expect_identical(ctx3$start, nchar("y <- 'é'\n", type = "bytes"))
+  expect_identical(nchar("\u00e9", type = "bytes"), 2L)
+  expect_identical(ctx3$start, nchar("y <- '\u00e9'\n", type = "bytes"))
 })
 
 test_that("the fallback offers nothing after $ or @, where only the worker knows the fields", {

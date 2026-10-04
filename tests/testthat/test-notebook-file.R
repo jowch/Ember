@@ -87,8 +87,8 @@ test_that("round_trip_lost_markdown_tag: a [markdown] fixture loses the tag but 
 # ---- Generated round trips ---------------------------------------------------
 
 random_text_line <- function() {
-  sample(c("x <- 1", "y <- 2 + 3", "f(a, b)", "héllo wörld",
-          "emoji \U0001F389\U0001F600", "z <- \"quoted\"", "中文测试",
+  sample(c("x <- 1", "y <- 2 + 3", "f(a, b)", "h\u00e9llo w\u00f6rld",
+          "emoji \U0001F389\U0001F600", "z <- \"quoted\"", "\u4e2d\u6587\u6d4b\u8bd5",
           "result <- x + y", "for (i in 1:3) print(i)"), 1)
 }
 
