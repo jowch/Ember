@@ -1,5 +1,6 @@
 # Package calls (library/box/qualified calls), source() following,
-# data()/assign(), glue interpolation, and quoting calls.
+# data()/assign(), glue and str_interp interpolation, get-family literal
+# names, and quoting calls.
 
 #' `library(x)`, `require("x")`, `pacman::p_load(a, b)`, `requireNamespace`.
 #'
@@ -208,6 +209,172 @@ glue_segments <- function(s, open = "{", close = "}") {
     }
   }
   segs
+}
+
+#' `str_interp()`/`stringr::str_interp()`: the `string` argument (first
+#' positional, or named `string`) is a template whose `${expr}` and
+#' `$[fmt]{expr}` segments are parsed and walked as code, same design as
+#' `walk_glue_call()` -- a cell that only uses another cell's variable
+#' inside the template still gets the edge. The second argument, `env`
+#' (named, or the second positional), is ordinary code: str_interp()'s
+#' interpolation only ever touches its `string` argument.
+walk_str_interp_call <- function(e, scope, acc, name, arg_pids = NULL) {
+  args <- as.list(e)[-1]
+  if (is.null(arg_pids)) arg_pids <- rep(list(NA_integer_), length(args))
+  nms <- names2(args)
+
+  string_idx <- NA_integer_
+  if ("string" %in% nms) {
+    string_idx <- which(nms == "string")[1]
+  } else {
+    unnamed <- which(nms == "")
+    if (length(unnamed) >= 1) string_idx <- unnamed[1]
+  }
+
+  for (i in seq_along(args)) {
+    a <- args[[i]]
+    if (missing_arg(a)) next
+    is_string <- !is.na(string_idx) && i == string_idx
+    if (is_string && is.character(a) && length(a) == 1) {
+      str_pid <- arg_pids[[i]]
+      for (seg in str_interp_segments(a)) {
+        parsed <- tryCatch(parse(text = seg), error = function(e) NULL)
+        if (is.null(parsed)) next
+        for (k in seq_along(parsed)) walk_expr(parsed[[k]], scope, acc, str_pid)
+      }
+    } else {
+      walk_expr(a, scope, acc, arg_pids[[i]])
+    }
+  }
+}
+
+#' The code inside each `${...}` / `$[fmt]{...}` segment of a `str_interp`
+#' template, as character strings to be parsed. `$[fmt]` carries a sprintf
+#' conversion spec (`.2f`) that isn't code and is discarded; only the
+#' `{...}` body is returned, brace-balanced so a nested `{` in the
+#' expression (`${if (x) 1 else 2}`'s own braces, if any) doesn't close the
+#' segment early. A `$` not followed by `{` or by a well-formed `[...]{`
+#' is a plain character, not a template start, and malformed syntax (no
+#' closing `}`, no `{` after `[...]`) stops scanning that `$` and falls
+#' back to treating it as literal -- never an error, same as the rest of
+#' the walker.
+str_interp_segments <- function(s) {
+  n <- nchar(s)
+  segs <- character()
+  find_close_brace <- function(start) {
+    depth <- 1L
+    j <- start
+    while (j <= n) {
+      ch <- substr(s, j, j)
+      if (identical(ch, "{")) {
+        depth <- depth + 1L
+      } else if (identical(ch, "}")) {
+        depth <- depth - 1L
+        if (depth == 0L) return(j)
+      }
+      j <- j + 1L
+    }
+    NA_integer_
+  }
+  i <- 1L
+  while (i <= n) {
+    if (identical(substr(s, i, i), "$") && i < n) {
+      nxt <- substr(s, i + 1L, i + 1L)
+      if (identical(nxt, "{")) {
+        close <- find_close_brace(i + 2L)
+        if (!is.na(close)) {
+          segs <- c(segs, substr(s, i + 2L, close - 1L))
+          i <- close + 1L
+          next
+        }
+      } else if (identical(nxt, "[")) {
+        bracket_pos <- regexpr("]", substr(s, i + 2L, n), fixed = TRUE)[1]
+        if (bracket_pos != -1) {
+          close_bracket <- i + 1L + bracket_pos
+          if (close_bracket < n && identical(substr(s, close_bracket + 1L, close_bracket + 1L), "{")) {
+            close <- find_close_brace(close_bracket + 2L)
+            if (!is.na(close)) {
+              segs <- c(segs, substr(s, close_bracket + 2L, close - 1L))
+              i <- close + 1L
+              next
+            }
+          }
+        }
+      }
+    }
+    i <- i + 1L
+  }
+  segs
+}
+
+#' `get(x)`, `get0(x)`, `exists(x)`, `dynGet(x)` and `mget(x)`: when `x`
+#' (the first argument, or named `x`) is a string literal -- or, for
+#' `mget`, a `c("a", "b")` of literals -- and no `envir`/`pos` argument is
+#' given, and `inherits` isn't literally `FALSE`, each name is recorded as
+#' a reference and the `untracked_read` note is dropped: the cell no
+#' longer reads untrackably, it reads specific globals (`exists()` counts
+#' too, even though it only tests presence, not value: whether the name
+#' exists still depends on the defining cell having run). Anything else
+#' (a computed name, or an `envir`/`pos`/`inherits = FALSE` argument)
+#' leaves the call exactly as before: the `untracked_read` note, and its
+#' arguments walked as ordinary code.
+walk_get_family_call <- function(e, scope, acc, name, arg_pids = NULL, head_pos = function() NULL) {
+  args <- as.list(e)[-1]
+  if (is.null(arg_pids)) arg_pids <- rep(list(NA_integer_), length(args))
+  nms <- names2(args)
+
+  disqualified <- any(nms %in% c("envir", "pos"))
+  if (!disqualified && "inherits" %in% nms) {
+    v <- args[[which(nms == "inherits")[1]]]
+    if (is.logical(v) && length(v) == 1 && !is.na(v) && !isTRUE(v)) disqualified <- TRUE
+  }
+
+  x_idx <- NA_integer_
+  if ("x" %in% nms) {
+    x_idx <- which(nms == "x")[1]
+  } else {
+    unnamed <- which(nms == "")
+    if (length(unnamed) >= 1) x_idx <- unnamed[1]
+  }
+
+  resolved <- NULL
+  if (!disqualified && !is.na(x_idx) && !missing_arg(args[[x_idx]])) {
+    resolved <- get_family_literal_names(args[[x_idx]])
+  }
+
+  if (is.null(resolved)) {
+    record_note(acc, "untracked_read", name, head_pos())
+  } else {
+    x_pos <- pd_position(acc, arg_pids[[x_idx]])
+    for (nm in resolved) record_read(acc, scope, nm, pos = x_pos)
+  }
+
+  for (i in seq_along(args)) {
+    a <- args[[i]]
+    if (missing_arg(a)) next
+    if (!is.null(resolved) && !is.na(x_idx) && i == x_idx) next
+    walk_expr(a, scope, acc, arg_pids[[i]])
+  }
+}
+
+#' The literal name(s) in a get-family call's `x` argument: the string
+#' itself, or, for `mget(c("a", "b"))`, every element of a `c(...)` call
+#' whose arguments are all string literals. `NULL` when `x` isn't one of
+#' these shapes (a variable, a computed name, a mixed `c(...)`).
+get_family_literal_names <- function(a) {
+  if (is.character(a) && length(a) == 1 && !is.na(a)) return(a)
+  if (is.call(a) && is.symbol(a[[1]]) && identical(as.character(a[[1]]), "c")) {
+    subs <- as.list(a)[-1]
+    if (length(subs) == 0) return(NULL)
+    out <- character(length(subs))
+    for (i in seq_along(subs)) {
+      s <- subs[[i]]
+      if (missing_arg(s) || !is.character(s) || length(s) != 1 || is.na(s)) return(NULL)
+      out[i] <- s
+    }
+    return(out)
+  }
+  NULL
 }
 
 #' `box::use(dplyr[mutate, filter], ./helpers)`. Best-effort: a bare or

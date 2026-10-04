@@ -241,3 +241,87 @@ test_that("glue_data()'s first argument is data, not a template", {
   expect_setequal(refs(a), c("glue_data", "df", "col"))
 })
 
+test_that("str_interp()'s ${...} segments are references, bare and qualified", {
+  a <- read_cell("str_interp('Hello, ${hello}!')")
+  expect_setequal(refs(a), c("str_interp", "hello"))
+
+  b <- read_cell("stringr::str_interp('Hello, ${hello}!')")
+  expect_setequal(refs(b), "hello")
+  expect_setequal(b$packages$name, "stringr")
+})
+
+test_that("str_interp()'s $[fmt]{...} keeps only the expression, not the format", {
+  a <- read_cell("str_interp('Val: $[.2f]{y}')")
+  expect_setequal(refs(a), c("str_interp", "y"))
+})
+
+test_that("str_interp()'s env argument is ordinary code, not a template", {
+  a <- read_cell("str_interp('${hello}', env = e)")
+  expect_setequal(refs(a), c("str_interp", "hello", "e"))
+})
+
+test_that("a malformed str_interp template doesn't error", {
+  a <- read_cell("str_interp('${unclosed')")
+  expect_setequal(refs(a), "str_interp")
+
+  b <- read_cell("str_interp('$[bad')")
+  expect_setequal(refs(b), "str_interp")
+})
+
+test_that("get('x') resolves to a reference and drops the untracked_read note", {
+  a <- read_cell('get("x")')
+  expect_setequal(refs(a), c("get", "x"))
+  expect_equal(nrow(a$notes), 0)
+})
+
+test_that("get(computed name) keeps the untracked_read note", {
+  a <- read_cell('get(paste0("fit_", i))')
+  expect_setequal(refs(a), c("get", "paste0", "i"))
+  expect_equal(a$notes$kind, "untracked_read")
+})
+
+test_that("get('x', envir = e): an envir argument blocks resolution", {
+  a <- read_cell('get("x", envir = e)')
+  expect_setequal(refs(a), c("get", "e"))
+  expect_false("x" %in% refs(a))
+  expect_equal(a$notes$kind, "untracked_read")
+})
+
+test_that("exists('y', inherits = FALSE) keeps the note", {
+  a <- read_cell('exists("y", inherits = FALSE)')
+  expect_setequal(refs(a), "exists")
+  expect_equal(a$notes$kind, "untracked_read")
+})
+
+test_that("exists('y') resolves like get(), even though it only tests presence", {
+  a <- read_cell('exists("y")')
+  expect_setequal(refs(a), c("exists", "y"))
+  expect_equal(nrow(a$notes), 0)
+})
+
+test_that("mget(c('a', 'b')) resolves every literal name", {
+  a <- read_cell('mget(c("a", "b"))')
+  expect_setequal(refs(a), c("mget", "a", "b"))
+  expect_equal(nrow(a$notes), 0)
+})
+
+test_that("mget(c('a', paste0('b'))) is not fully literal, keeps the note", {
+  a <- read_cell('mget(c("a", paste0("b")))')
+  expect_false("a" %in% refs(a))
+  expect_equal(a$notes$kind, "untracked_read")
+})
+
+test_that("eval() is untouched by the get-family literal-name rule", {
+  a <- read_cell('eval(parse(text = "1 + 1"))')
+  expect_equal(a$notes$kind, "untracked_read")
+})
+
+test_that("a cell using str_interp() gets a definition edge on the cell defining the name", {
+  A <- read_cell('hello <- "world"')
+  B <- read_cell('stringr::str_interp("Hello, ${hello}!")')
+  g <- build_test_graph(list(A = A, B = B), setup = "A")
+  expect_true("A" %in% upstream(g, "B"))
+  expect_true(any(g$edges$from == "B" & g$edges$to == "A" &
+                    g$edges$name == "hello" & g$edges$via == "definition"))
+})
+

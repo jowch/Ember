@@ -40,9 +40,27 @@ setting_functions <- list(
 #'
 #' The cell gets an `untracked_read` note. `eval` is listed because
 #' `eval(parse(text = ...))` is the common form; a plain `eval(quote(x))`
-#' also gets the note, which is the cheap side of the tradeoff.
+#' also gets the note, which is the cheap side of the tradeoff. `eval`,
+#' `evalq` and `eval.parent` always get the note: resolving their argument
+#' statically isn't attempted.
+#'
+#' `get`, `get0`, `exists`, `mget` and `dynGet` (the `get_family_functions`,
+#' below) are different: when the name argument resolves to a literal (or,
+#' for `mget`, a literal `c(...)` of names) and no `envir`/`pos`/`inherits =
+#' FALSE` argument says otherwise, each name is recorded as a reference
+#' instead, and the note is dropped -- the cell no longer reads
+#' untrackably, it reads a specific global. A non-literal name
+#' (`get(paste0("fit_", i))`) keeps the note, same as before.
 untracked_reads <- c("get", "get0", "mget", "exists", "dynGet",
                      "eval", "evalq", "eval.parent")
+
+#' The subset of `untracked_reads` whose name argument is checked for a
+#' literal before falling back to the plain `untracked_read` note.
+get_family_functions <- c("get", "get0", "exists", "mget", "dynGet")
+
+is_get_family <- function(name) {
+  name %in% get_family_functions
+}
 
 #' Calls whose arguments are code, not references.
 #'
@@ -63,6 +81,17 @@ glue_functions <- c("glue", "glue_data", "str_glue")
 #' family is matched by prefix instead of listing each one.
 is_glue_function <- function(name) {
   name %in% glue_functions || startsWith(name, "cli_")
+}
+
+#' `stringr::str_interp()`'s own interpolation syntax: `${expr}` and
+#' `$[fmt]{expr}` (`fmt` a sprintf conversion spec, not code). Its first
+#' argument (`string`, positional or named) is the template; same glue
+#' design gap, different syntax, so it gets its own table instead of
+#' joining `glue_functions`.
+str_interp_functions <- c("str_interp")
+
+is_str_interp_function <- function(name) {
+  name %in% str_interp_functions
 }
 
 #' Assignment operators, each with the side that names the target.
@@ -114,6 +143,16 @@ ignored_names <- c(".", ".Random.seed", "T", "F", "TRUE", "FALSE", "NULL",
 #' Is `name` a `..N` positional lambda pronoun (`..1`, `..2`, `..42`, ...)?
 is_dot_dot_name <- function(name) {
   grepl("^\\.\\.[0-9]+$", name)
+}
+
+#' Is `name` a data.table `..` prefixed name (`..cols`, `..x`), used inside
+#' a `[` call's `j`/`by`/`i` position to mean "look this up outside the
+#' data.table frame, as a global"? `...` (R's dots) and `..1`/`..2`/... (the
+#' positional pronoun above) start with the same two dots but aren't this:
+#' the two dots must be followed by a name-start character (a letter, or a
+#' dot not itself followed by a digit), not a digit or the end of the name.
+is_dotdot_prefixed_name <- function(name) {
+  grepl("^\\.\\.([A-Za-z]|\\.[^0-9])", name) && !identical(name, "...")
 }
 
 #' Is `name` private to its cell?
