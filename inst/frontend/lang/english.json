@@ -33,6 +33,7 @@
     "t_ember_packages_versions_as_of": "Versions as of",
     "t_ember_packages_r_version": "R version",
     "t_ember_packages_update_checking": "Checking today's versions…",
+    "t_ember_packages_already_up_to_date": "Already up to date",
     "t_ember_packages_update_failed": "Couldn't get today's versions: {{reason}}",
     "t_ember_packages_update_restart_question": "Updating changes {{names}}, which R has loaded. R will restart and cells will need to run again.",
     "t_ember_packages_library_status_unknown": "Not checked yet",

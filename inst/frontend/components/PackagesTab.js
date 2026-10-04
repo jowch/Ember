@@ -1,11 +1,11 @@
-import { html, useState, useContext } from "../imports/Preact.js"
+import { html, useState, useContext, useEffect, useRef } from "../imports/Preact.js"
 import { t } from "../common/lang.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 
 /**
  * The sentence under a failure card's title, built from `kind`/`package`/
- * `detail`/`version` and `packages$r_version` -- R sends no prose
- * (ui-3-plan.md, "4. Notebooks and packages from the browser"). `rows` is
+ * `detail`/`version` and `packages$r_version` -- R sends no prose.
+ * `rows` is
  * `packages.rows`, used to look up a named dependency's own locked
  * version for the "dependency" sentence.
  *
@@ -35,7 +35,7 @@ const failure_sentence = (failure, rows, r_version) => {
 }
 
 /**
- * One failed package's card ("ui-3-plan.md": title, a sentence depending
+ * One failed package's card: title, a sentence depending
  * on `kind`, then Update (build failures), Try again (downloads) and
  * Show the error (always). `ember_update_packages` and `ember_run_all`
  * are plain requests (server.R); neither is this component's to answer.
@@ -77,20 +77,52 @@ const InstallFailureCard = ({ failure, rows, r_version, log }) => {
 /**
  * The header's Update button and, once `update` fills in, what it found:
  * "Checking…" while fetching, the in-tab restart question when applying
- * would restart a loaded package (ui-3-plan.md, "Update to today's
- * snapshot"; the engine applies the update itself when nothing would
- * restart, so the page never has to ask then), or the failure sentence.
+ * would restart a loaded package (the engine applies the update itself
+ * when nothing would restart, so the page never has to ask then), or
+ * the failure sentence. When the engine applies a no-restart update on
+ * its own, `update` goes straight from "checking" to `null` with nothing
+ * in between (the wire never shows an intermediate "ready": the proposal
+ * is applied and cleared in the same step) -- including when there was
+ * nothing to change at all, which would otherwise look to someone who
+ * just clicked Update like nothing happened. `justFinished` tracks that
+ * transition locally and shows a short "Already up to date" note for it,
+ * unless the library went on to install something (a real update).
  *
- * @param {{ update: import("./Editor.js").EmberPackagesUpdate? }} props
+ * @param {{ update: import("./Editor.js").EmberPackagesUpdate?, library_status: string }} props
  */
-const PackagesUpdate = ({ update }) => {
+const PackagesUpdate = ({ update, library_status }) => {
     const pluto_actions = useContext(PlutoActionsContext)
+    const [justFinished, set_just_finished] = useState(false)
+    const was_checking_ref = useRef(false)
+
+    useEffect(() => {
+        if (update?.status === "checking") {
+            was_checking_ref.current = true
+            set_just_finished(false)
+        } else if (was_checking_ref.current && update == null) {
+            was_checking_ref.current = false
+            if (library_status !== "installing" && library_status !== "missing") {
+                set_just_finished(true)
+                const timer = setTimeout(() => set_just_finished(false), 4000)
+                return () => clearTimeout(timer)
+            }
+        } else if (update != null) {
+            was_checking_ref.current = false
+        }
+    }, [update, library_status])
 
     return html`
         <div class="ember-packages-update">
-            <button onClick=${() => pluto_actions.ember_update_packages()}>${t("t_ember_update_packages")}</button>
+            <button
+                onClick=${() => {
+                    set_just_finished(false)
+                    pluto_actions.ember_update_packages()
+                }}
+            >
+                ${t("t_ember_update_packages")}
+            </button>
             ${update == null
-                ? null
+                ? justFinished && html`<span class="ember-packages-update-noop">${t("t_ember_packages_already_up_to_date")}</span>`
                 : update.status === "checking"
                 ? html`<span class="ember-packages-update-checking">${t("t_ember_packages_update_checking")}</span>`
                 : update.status === "failed"
@@ -109,7 +141,7 @@ const PackagesUpdate = ({ update }) => {
 }
 
 /**
- * The "Packages" tab (ui-2.md, 5; ui-3-plan.md, piece 4): the snapshot
+ * The "Packages" tab (ui-2.md, 5): the snapshot
  * date and R version, the library's install status, a card per install
  * failure, and one row per locked or not-found package. Reads
  * `notebook.ember.packages` (project_ember(), pluto-state.R); `nbpkg`
@@ -133,7 +165,7 @@ export const PackagesTab = ({ packages }) => {
                           <dd>${r_version}</dd>`
                     : null}
             </dl>
-            <${PackagesUpdate} update=${update ?? null} />
+            <${PackagesUpdate} update=${update ?? null} library_status=${library.status} />
             <p class="ember-packages-library-status ember-packages-library-${library.status}">
                 ${t(`t_ember_packages_library_status_${library.status}`)}
                 ${library.progress != null ? ` (${library.progress.done}/${library.progress.total})` : ""}

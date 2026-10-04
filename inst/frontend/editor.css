@@ -1068,7 +1068,6 @@ nav#at_the_top > div.desktop_picker_group span {
     overflow: hidden;
 }
 
-nav#at_the_top > pluto-filepicker,
 nav#at_the_top > div.desktop_picker_group {
     width: 210px;
     flex-grow: 1;
@@ -1076,7 +1075,6 @@ nav#at_the_top > div.desktop_picker_group {
     flex-direction: row;
 }
 
-nav#at_the_top > pluto-filepicker .cm-editor,
 div.desktop_picker_group span {
     height: calc(1rem + 4px + 4px + 4px);
     display: inline-block;
@@ -1095,63 +1093,9 @@ div.desktop_picker_group span {
     border-start-end-radius: 0;
 }
 
-nav#at_the_top > pluto-filepicker.value_different .cm-editor {
-    border-color: var(--code-differs-cell-color);
-}
-
-nav#at_the_top > pluto-filepicker .cm-editor .cm-content {
-    padding-inline-end: 4ch;
-}
-
-pluto-filepicker .cm-scroller {
-    scrollbar-width: none; /* Firefox */
-}
-pluto-filepicker .cm-scroller::-webkit-scrollbar {
-    display: none; /* Safari and Chrome */
-}
-
-pluto-filepicker button,
 div.desktop_picker button {
     cursor: pointer;
     height: auto;
-}
-
-pluto-filepicker button:disabled {
-    cursor: not-allowed;
-}
-
-header#pluto-nav pluto-filepicker button {
-    margin: 0px;
-    background: var(--footer-filepicker-focus-color);
-    border-radius: 0 3px 3px 0;
-    border: 3px solid var(--footer-filepicker-focus-color);
-    color: var(--footer-filepicker-button-color);
-    /* border: none; */
-    font-family: inherit;
-    font-weight: 600;
-    height: auto;
-    font-size: 0.75rem;
-}
-
-pluto-filepicker.suggest_button button {
-    outline: 4px solid var(--nav-filepicker-suggest-color);
-    animation: pulse-outline 3s ease-in-out infinite;
-}
-
-@media (prefers-reduced-motion) {
-    pluto-filepicker.suggest_button button {
-        animation: none;
-    }
-}
-
-@keyframes pulse-outline {
-    0%,
-    50% {
-        outline-offset: 0px;
-    }
-    25% {
-        outline-offset: 4px;
-    }
 }
 
 /* .desktop_picker button {
@@ -1222,41 +1166,24 @@ nav#at_the_top:after {
 }
 
 @media (any-pointer: fine) {
-    nav#at_the_top > pluto-filepicker:not(.value_different) .cm-editor,
     nav#at_the_top > div.desktop_picker_group span {
         border: 2px solid transparent;
         border-inline-end: none;
         transition: border 0.15s ease-in-out;
     }
-    nav#at_the_top > pluto-filepicker:not(.value_different) button,
     nav#at_the_top > div.desktop_picker_group button {
         opacity: 0;
         transition: opacity 0.15s ease-in-out;
     }
-    header:hover > nav#at_the_top > pluto-filepicker:not(.value_different) .cm-editor,
-    header:focus-within > nav#at_the_top > pluto-filepicker:not(.value_different) .cm-editor,
     header:hover > nav#at_the_top > div.desktop_picker_group span,
     header:focus-within > nav#at_the_top > div.desktop_picker_group span {
         border: 2px solid var(--footer-input-border-color);
         border-inline-end: none;
     }
-    header:hover > nav#at_the_top > pluto-filepicker:not(.value_different) button,
-    header:focus-within > nav#at_the_top > pluto-filepicker:not(.value_different) button,
     header:hover > nav#at_the_top > div.desktop_picker_group button,
     header:focus-within > nav#at_the_top > div.desktop_picker_group button {
         opacity: 1;
     }
-}
-
-pluto-editor.binder > header#pluto-nav > nav#at_the_top > pluto-filepicker > * {
-    display: none;
-}
-pluto-editor.binder > header#pluto-nav > nav#at_the_top > pluto-filepicker > a {
-    display: block;
-    font-size: 16px;
-    font-family: var(--julia-mono-font-stack);
-    opacity: 0.8;
-    text-decoration: none;
 }
 
 pluto-editor.nbpkg_restart_recommended > header#pluto-nav,
@@ -1405,7 +1332,8 @@ nav#at_the_top > #process_status:empty {
     margin: 0 0 0.8em 0;
 }
 
-.ember-packages-update-checking {
+.ember-packages-update-checking,
+.ember-packages-update-noop {
     opacity: 0.7;
 }
 
@@ -3691,7 +3619,6 @@ footer input {
     border-inline-end: none;
 }
 
-header#pluto-nav pluto-filepicker button,
 header#pluto-nav .desktop_picker_group button,
 footer button {
     margin: 0px;
@@ -4905,8 +4832,8 @@ jlerror.syntax-error > header {
 }
 
 /* The header's file-name button (MoveDialog.js), the MoveDialog form and
- * its shared FolderField (also used, piece 5, by the start page). Piece 5
- * places and styles the button itself to match board Move5; this is the
+ * its shared FolderField (also used by the start page). A later restyle
+ * places and styles the button itself to match the design; this is the
  * minimum so it isn't a bare, unstyled <button>. */
 
 #ember-file-name {
