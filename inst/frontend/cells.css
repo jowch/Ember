@@ -664,10 +664,14 @@ ol.ember-tb > li > code {
 
 /* ---- Tables and trees (ui-3.md "Outputs"; ui-3-plan.md 6.5) ------------ */
 
+pluto-output > .ember-table {
+    flex: 1 1 auto;
+    min-width: 0;
+}
 .ember-table {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
+    align-items: stretch;
     gap: 8px;
     padding-top: 2px;
 }
@@ -739,6 +743,7 @@ pluto-output table.pluto-table tr.empty div {
 }
 .ember-table-more {
     display: flex;
+    align-self: flex-start;
     flex-wrap: wrap;
     gap: 4px 18px;
 }
