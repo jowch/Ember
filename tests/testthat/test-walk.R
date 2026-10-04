@@ -126,12 +126,12 @@ test_that("$ and @ read only the object, never the field or slot name", {
   expect_false("b" %in% refs(a))
 })
 
-test_that("get() is untracked and does not create a reference to its argument", {
+test_that("get('thing') resolves to a reference; eval() stays untracked", {
   a <- read_cell('v <- get("thing"); eval(parse(text = s))')
   expect_setequal(defs(a), "v")
-  expect_setequal(refs(a), c("get", "eval", "parse", "s"))
+  expect_setequal(refs(a), c("get", "thing", "eval", "parse", "s"))
   expect_setequal(a$notes$kind, "untracked_read")
-  expect_setequal(a$notes$detail, c("get", "eval"))
+  expect_setequal(a$notes$detail, "eval")
 })
 
 test_that("options(digits = 3) is a setting; options() and options(\"digits\") are reads", {
@@ -210,6 +210,31 @@ test_that("g <- function(m) apply(m[, 1:2], 1, sum): empty arg under a call is s
   expect_setequal(refs(a), c("apply", "[", ":", "sum"))
 })
 
+test_that("dt[, ..cols] reads the global cols, not the symbol ..cols", {
+  a <- read_cell("dt[, ..cols]")
+  expect_setequal(refs(a), c("[", "dt", "cols"))
+  expect_false("..cols" %in% refs(a))
+})
+
+test_that("dt[, ..cols, with = FALSE] still reads cols", {
+  a <- read_cell("dt[, ..cols, with = FALSE]")
+  expect_setequal(refs(a), c("[", "dt", "cols"))
+})
+
+test_that("a ..x in the by position also reads the stripped name", {
+  a <- read_cell("dt[, .N, by = ..grp]")
+  expect_true("grp" %in% refs(a))
+  expect_false("..grp" %in% refs(a))
+})
+
+test_that("...and ..1 inside a [ call are not stripped: they're not ..name", {
+  a <- read_cell("f <- function(...) dt[, ...]")
+  expect_false("" %in% refs(a))
+
+  b <- read_cell("f <- function(...) dt[, ..1]")
+  expect_false("1" %in% refs(b))
+})
+
 test_that("switch(x, a = , b = 1): an empty alternative value is skipped", {
   a <- read_cell("f <- function() switch(x, a = , b = 1)")
   expect_setequal(defs(a), "f")
@@ -236,10 +261,10 @@ test_that("top-level withr::local_options(...) is a setting", {
   expect_setequal(a$packages$name, "withr")
 })
 
-test_that("base::get(\"x\") gets the untracked_read note, and base is used", {
+test_that("base::get(\"x\") resolves x as a reference, and base is used", {
   a <- read_cell('base::get("x")')
-  expect_equal(a$notes$kind, "untracked_read")
-  expect_equal(a$notes$detail, "get")
+  expect_equal(nrow(a$notes), 0)
+  expect_setequal(refs(a), "x")
   expect_setequal(a$packages$name, "base")
   expect_false(a$packages$attached)
 })
@@ -324,14 +349,14 @@ test_that("local_options(list(digits = 3)): the head and its argument are refere
   expect_setequal(refs(a), c("local_options", "list"))
 })
 
-test_that("get('x') and exists('x'): the head is a reference alongside the note", {
+test_that("get('x') and exists('x'): the head and the resolved name are both references", {
   a <- read_cell("get('x')")
-  expect_setequal(refs(a), "get")
-  expect_equal(a$notes$detail, "get")
+  expect_setequal(refs(a), c("get", "x"))
+  expect_equal(nrow(a$notes), 0)
 
   b <- read_cell("exists('x')")
-  expect_setequal(refs(b), "exists")
-  expect_equal(b$notes$detail, "exists")
+  expect_setequal(refs(b), c("exists", "x"))
+  expect_equal(nrow(b$notes), 0)
 })
 
 test_that("local({ x <- 1; x }): local itself is a reference, x stays private", {

@@ -86,8 +86,17 @@ a$formulas[[1]]$columns  # "y" "x"
 
 **Files.** `R/rules.R` holds the tables the design calls "the engine's
 rules": attach functions, setting functions, untrackable reads, formula
-operators, ignored names, glue functions. Changing a rule is one edit in one
-file, which is what "rare and announced" needs. Reading one cell is
+operators, ignored names, glue and `str_interp` functions. Changing a rule
+is one edit in one file, which is what "rare and announced" needs. Three of
+these rules exist so a cell that only touches another cell's variable
+indirectly still gets the edge: `glue()`/`str_glue()`/cli's `cli_*`
+functions and `stringr::str_interp()` have their string-literal arguments
+parsed as templates (`"{...}"`, `"${...}"`/`"$[fmt]{...}"`) and walked as
+code; `get()`, `get0()`, `exists()`, `mget()` and `dynGet()` resolve a
+literal name argument (with no `envir`/`pos`/`inherits = FALSE`) to a
+reference on that name instead of just the `untracked_read` note; and
+inside a `[` call, a `..name` symbol (data.table's escape to the calling
+frame) reads the global `name`, not the symbol `..name` itself. Reading one cell is
 `R/analysis.R` (the result type and `read_cell()`), `R/scope.R`,
 `R/walk.R`, `R/walk-formula.R`, `R/walk-calls.R` and `R/positions.R`.
 Everything across cells is `R/graph.R` (building) and `R/queries.R`.

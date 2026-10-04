@@ -155,6 +155,11 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
     walk_glue_call(e, scope, acc, name, arg_pids)
     return(invisible())
   }
+  if (is_str_interp_function(name)) {
+    maybe_record_name_read()
+    walk_str_interp_call(e, scope, acc, name, arg_pids)
+    return(invisible())
+  }
   if (name %in% attach_functions) {
     maybe_record_name_read()
     walk_package_call(e, scope, acc, attached = TRUE, name = name, arg_pids = arg_pids)
@@ -193,8 +198,12 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
   }
   if (name %in% untracked_reads) {
     maybe_record_name_read()
-    record_note(acc, "untracked_read", name, head_pos())
-    walk_call_args(e, scope, acc, arg_pids)
+    if (is_get_family(name)) {
+      walk_get_family_call(e, scope, acc, name, arg_pids, head_pos)
+    } else {
+      record_note(acc, "untracked_read", name, head_pos())
+      walk_call_args(e, scope, acc, arg_pids)
+    }
     return(invisible())
   }
   if (name %in% literal_definers) {
@@ -550,8 +559,9 @@ extract_target_pid <- function(pd, raw_target, raw_target_pid) {
 #' Walk a call's arguments: decide which is the formula and which is the
 #' data (by a named `data =` argument, or a second unnamed argument on a
 #' `formula_data_positional` function), send `~` arguments to
-#' `walk_formula`, everything else to `walk_expr`. Argument names are never
-#' reads.
+#' `walk_formula`, a bare `..name` argument of a `[` call (data.table's
+#' `i`/`j`/`by` positions) to a reference on the stripped name, everything
+#' else to `walk_expr`. Argument names are never reads.
 walk_call_args <- function(e, scope, acc, arg_pids = NULL) {
   head <- e[[1]]
   bare_fn <- bare_call_name(head)
@@ -559,6 +569,7 @@ walk_call_args <- function(e, scope, acc, arg_pids = NULL) {
   args <- as.list(e)[-1]
   if (is.null(arg_pids)) arg_pids <- rep(list(NA_integer_), length(args))
   nms <- names2(args)
+  is_bracket_call <- identical(bare_fn, "[")
 
   has_data <- FALSE
   data_expr <- NULL
@@ -583,7 +594,10 @@ walk_call_args <- function(e, scope, acc, arg_pids = NULL) {
   for (i in seq_along(args)) {
     a <- args[[i]]
     if (missing_arg(a)) next
-    if (is.call(a) && is.symbol(a[[1]]) && identical(as.character(a[[1]]), "~")) {
+    if (is_bracket_call && is.symbol(a) && is_dotdot_prefixed_name(as.character(a))) {
+      stripped <- substr(as.character(a), 3, nchar(as.character(a)))
+      record_read(acc, scope, stripped, pos = pd_position(acc, arg_pids[[i]]))
+    } else if (is.call(a) && is.symbol(a[[1]]) && identical(as.character(a[[1]]), "~")) {
       site <- formula_site(acc$index, acc$line, fn_display, data_text, character())
       walk_formula(a, scope, acc, has_data, site, arg_pids[[i]])
     } else {

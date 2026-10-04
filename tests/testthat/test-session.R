@@ -578,8 +578,12 @@ test_that("a dependent of a failed cell runs on its own and reruns once the ance
 })
 
 test_that("disabling a cell removes it from R; Rscript on the saved file still runs; enabling reruns its dependent (ui-3 35)", {
+  # H's exists() passes envir = globalenv() so it stays untracked (reader
+  # rule: a literal exists() name with an envir argument isn't resolved):
+  # H must probe R's actual state after disabling A, not get marked off by
+  # a dependency on A and skip running altogether.
   cells <- list(S = cell(""), A = cell("x <- 1; library(tools)"), B = cell("x + 1"),
-               H = cell('c(exists("x"), "package:tools" %in% search())'))
+               H = cell('c(exists("x", envir = globalenv()), "package:tools" %in% search())'))
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)

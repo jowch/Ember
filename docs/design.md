@@ -231,7 +231,9 @@ from it); the error suggests renaming the global.
 
 **Code inside strings and lambdas.** glue and cli interpolate `{…}` in
 strings (`glue("{total} of {n}")`, `cli_alert("{n} files")`), so the
-expression in each segment is read as code; `{{` is an escape. A one-sided
+expression in each segment is read as code; `{{` is an escape. stringr's
+`str_interp()` is read the same way for its `${...}` and `$[fmt]{...}`
+segments. A one-sided
 formula passed to a function that isn't a model function (purrr's
 `~ { v <- .x * 2; v + 1 }`) is a lambda: it is read as a function body with
 its own locals, not by the formula rule. Both were found by the corpus test
@@ -256,9 +258,12 @@ with `identical()`, which returns at once for an object that wasn't replaced.
   notebook opened without running still orders its cells correctly.
 - `.Random.seed` is skipped; see the random-numbers decision.
 
-Reads can't be watched this way. `get()`, `mget()`, `exists()` and
-`eval(parse())` run normally, and the engine shows a note that it can't track
-them.
+Reads can't be watched this way. A literal name is read statically:
+`get("x")`, `exists("x")` and `mget(c("a", "b"))` reference those globals,
+and data.table's `dt[, ..cols]` references `cols`. A computed name
+(`get(paste0("fit_", i))`), a call with `envir` or `pos`, and
+`eval(parse())` run normally, and the engine shows a note that it can't
+track them.
 
 **Code in other files.** `source("helpers.R")` with a literal path is read
 like part of the cell:
