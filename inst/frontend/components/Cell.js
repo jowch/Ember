@@ -11,6 +11,7 @@ import { useEventListener } from "../common/useEventListener.js"
 import { t, th } from "../common/lang.js"
 import { CircleIcon, ClockIcon, SlashCircleIcon } from "../common/Icons.js"
 import { stale_names } from "../common/stale_names.js"
+import { useSettled, wait_for_on } from "../common/useSettled.js"
 import { EditorSelection, EditorView } from "../imports/CodemirrorPlutoSetup.js"
 
 /**
@@ -30,6 +31,11 @@ const format_stale_chip = (notebook, cell_id) => {
 /** "x", "x and y", "x, y and z". */
 const join_names = (/** @type {string[]} */ parts) =>
     parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} ${t("t_and")} ${parts[parts.length - 1]}`
+
+const is_busy_rail = (/** @type {string} */ rail) => rail === "run" || rail === "queued"
+/** A run shows on the rail only once it has lasted SETTLE_MS; one already
+ * shown moves from queued to running at once. */
+const is_starting_to_run = (/** @type {string} */ rail, /** @type {string} */ shown) => is_busy_rail(rail) && !is_busy_rail(shown)
 
 const useCellApi = (node_ref, published_object_keys, pluto_actions) => {
     const [cell_api_ready, set_cell_api_ready] = useState(false)
@@ -87,7 +93,7 @@ export const Cell = ({
 }) => {
     const { show_logs, disabled: running_disabled, skip_as_script } = metadata
     const code_changed = !!ember?.code_changed
-    const stale = !code_changed && !!ember?.stale
+    const stale = useSettled(!code_changed && !!ember?.stale, wait_for_on)
     let pluto_actions = useContext(PlutoActionsContext)
     const on_update_doc_query = useCallback((...args) => pluto_actions.set_doc_query(...args), [pluto_actions])
     const on_focus_neighbor = useCallback((...args) => pluto_actions.focus_on_neighbor(...args), [pluto_actions])
@@ -208,6 +214,17 @@ export const Cell = ({
         "set_waiting_to_run_smart",
         (e) => {
             if (e.detail.cell_ids.includes(cell_id)) set_waiting_to_run(should_set_waiting_to_run_ref.current)
+        },
+        [cell_id, set_waiting_to_run]
+    )
+    // From here the server's own queued/running flags are current, including
+    // for a cell it won't run (a text cell with no inline code), whose
+    // flags never change and so never clear waiting_to_run above.
+    useEventListener(
+        window,
+        "ember_run_acknowledged",
+        (e) => {
+            if (e.detail.cell_ids.includes(cell_id)) set_waiting_to_run(false)
         },
         [cell_id, set_waiting_to_run]
     )
@@ -378,26 +395,31 @@ export const Cell = ({
     // The rail's colour (ui-3.md, "Rail"): running, queued, edited, error,
     // idle, in that precedence -- an edited cell that also has an error
     // shows amber, because the error belongs to code that has since changed.
-    const rail = running
-        ? "run"
-        : queued || waiting_to_run
-          ? "queued"
-          : class_code_differs || code_changed
-            ? "due"
-            : errored
-              ? "err"
-              : "idle"
+    const rail = useSettled(
+        running
+            ? "run"
+            : queued || waiting_to_run
+              ? "queued"
+              : class_code_differs || code_changed
+                ? "due"
+                : errored
+                  ? "err"
+                  : "idle",
+        is_starting_to_run
+    )
 
-    const not_run_yet =
+    const not_run_yet_now =
         no_output_yet &&
         !running &&
         !queued &&
+        !waiting_to_run &&
         code.trim() !== "" &&
         !process_waiting_for_permission &&
         kind !== "markdown" &&
         !running_disabled &&
         !depends_on_disabled_cells &&
         !errored
+    const not_run_yet = useSettled(not_run_yet_now, wait_for_on)
 
     // depends_on_disabled_cells is also true on the disabled cell itself, so
     // running_disabled is checked first.
@@ -426,13 +448,13 @@ export const Cell = ({
     const cell_state =
         running_disabled || depends_on_disabled_cells
             ? "t_cell_state_disabled"
-            : running
+            : rail === "run"
               ? "t_cell_state_running"
-              : queued || waiting_to_run
+              : rail === "queued"
                 ? "t_cell_state_queued"
-                : class_code_differs || code_changed
+                : rail === "due"
                   ? "t_cell_state_edited"
-                  : errored
+                  : rail === "err"
                     ? "t_cell_state_error"
                     : stale
                       ? "t_cell_state_stale"

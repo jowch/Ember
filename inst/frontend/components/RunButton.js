@@ -4,6 +4,7 @@ import _ from "../imports/lodash-es.js"
 import { t } from "../common/lang.js"
 import { cl } from "../common/ClassTable.js"
 import { PlayIcon } from "../common/Icons.js"
+import { useSettled, wait_for_on } from "../common/useSettled.js"
 
 /**
  * The code box's run/stop button (ui-3.md, "Run button"). A 26 px accent
@@ -14,8 +15,8 @@ import { PlayIcon } from "../common/Icons.js"
 export const RunButton = ({ running, queued, runtime, on_run, on_interrupt }) => {
     const local_time_running_ms = useMillisSinceTruthy(running)
     const local_time_running_ns = local_time_running_ms == null ? null : 1e6 * local_time_running_ms
-    const busy = running || queued
-    const shown_ns = running ? (local_time_running_ns ?? runtime) : runtime
+    const busy = useSettled(running || queued, wait_for_on)
+    const shown_ns = running && busy ? (local_time_running_ns ?? runtime) : runtime
 
     return html`
         <button

@@ -157,7 +157,10 @@ test("run/stop button and run time (141)", async (t) => {
   await page.waitForSelector(`${cellSelector("LOOP")}.running`, { timeout: 15000 });
   await page.hover(cellSelector("LOOP"));
   const stopButton = page.locator(`${cellSelector("LOOP")} button.ember-run`);
-  assert.equal(await stopButton.getAttribute("aria-label"), "Stop (Ctrl + Q)");
+  // Stop shows once the run has lasted 250 ms (common/useSettled.js).
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.getAttribute("aria-label") === "Stop (Ctrl + Q)",
+    `${cellSelector("LOOP")} button.ember-run`, { timeout: 5000 });
   await stopButton.click();
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("Interrupted"),

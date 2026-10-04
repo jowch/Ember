@@ -615,6 +615,7 @@ export class Editor extends Component {
                         })
                     )
                     await this.client.send("run_multiple_cells", { cells: cell_ids }, { notebook_id: this.state.notebook.notebook_id })
+                    window.dispatchEvent(new CustomEvent("ember_run_acknowledged", { detail: { cell_ids } }))
                     return true
                 }
                 return false

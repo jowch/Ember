@@ -4,6 +4,7 @@ import { t } from "../common/lang.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { useMenu } from "../common/useMenu.js"
 import { use_run_progress } from "../common/use_run_progress.js"
+import { useSettled } from "../common/useSettled.js"
 import { FlameLogo, VariablesIcon, HelpIcon, PackagesIcon, SidePanelIcon, MoreIcon } from "../common/Icons.js"
 import { ExportMenu, export_items, use_print_title } from "./ExportMenu.js"
 import { open_bottom_right_panel } from "./BottomRightPanel.js"
@@ -27,15 +28,22 @@ const use_narrow = (/** @type {number} */ max_width) => {
 
 /**
  * The R status dot/words (ui-3.md, Header): shared between the header
- * button and the Status tab (ui-3-plan.md piece 5's "Status tab").
+ * button and the Status tab (ui-3-plan.md piece 5's "Status tab"). A run
+ * shows only once it has lasted SETTLE_MS (useSettled.js).
  *
  * @param {{ connected: boolean, notebook: import("./Editor.js").NotebookData }} props
  * @returns {{ dot: "faint"|"accent"|"run"|"red"|"amber", words: string, title: string?, busy?: boolean }}
  */
 export const use_r_status = ({ connected, notebook }) => {
-    // Called unconditionally, before the `!connected` early return: hooks
-    // must run in the same order on every render.
     const { n, i } = use_run_progress(notebook)
+    return useSettled(r_status({ connected, notebook, n, i }), (status, shown) => !!status.busy && !shown.busy)
+}
+
+/**
+ * @param {{ connected: boolean, notebook: import("./Editor.js").NotebookData, n: number, i: number }} props
+ * @returns {{ dot: "faint"|"accent"|"run"|"red"|"amber", words: string, title: string?, busy?: boolean }}
+ */
+const r_status = ({ connected, notebook, n, i }) => {
     if (!connected) return { dot: "faint", words: t("t_ember_r_status_not_connected"), title: null }
     const process = notebook.ember?.process
     switch (process) {
@@ -97,7 +105,7 @@ export const Header = ({ notebook, connected, code_differs, export_links, print_
 
     const narrow = use_narrow(640)
     const status = use_r_status({ connected, notebook })
-    const not_run = notebook.ember?.not_run ?? 0
+    const not_run = useSettled(notebook.ember?.not_run ?? 0, (count, shown) => count > shown)
 
     use_print_title(print_title)
 
@@ -122,7 +130,7 @@ export const Header = ({ notebook, connected, code_differs, export_links, print_
             ${code_differs || !connected ? null : html`<span class="ember-saved">${t("t_ember_saved")}</span>`}
             <div class="ember-header-spacer"></div>
             ${not_run > 0
-                ? html`<button class="ember-btn" type="button" title=${t("t_ember_run_not_run_title", { count: not_run })} onClick=${on_run_all}>
+                ? html`<button class="ember-btn ember-fade-in" type="button" title=${t("t_ember_run_not_run_title", { count: not_run })} onClick=${on_run_all}>
                       ${t("t_ember_run_not_run", { count: not_run })}
                   </button>`
                 : null}
@@ -136,7 +144,7 @@ export const Header = ({ notebook, connected, code_differs, export_links, print_
                 <span class=${`ember-dot ember-dot-${status.dot}`} aria-hidden="true"></span>
                 <span class="ember-r-status-words">${status.words}</span>
             </button>
-            ${status.busy ? html`<button class="ember-btn" type="button" onClick=${on_interrupt}>${t("t_stop")}</button>` : null}
+            ${status.busy ? html`<button class="ember-btn ember-fade-in" type="button" onClick=${on_interrupt}>${t("t_stop")}</button>` : null}
             ${narrow
                 ? html`
                       <button

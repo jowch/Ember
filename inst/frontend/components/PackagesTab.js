@@ -60,14 +60,18 @@ const InstallFailureCard = ({ failure, rows, r_version, log }) => {
             <div class="ember-install-failure-actions">
                 ${can_update
                     ? html`<button
+                          type="button"
+                          class="ember-btn primary"
                           title=${t("t_ember_install_failed_update_hint")}
                           onClick=${() => pluto_actions.ember_update_packages()}
                       >
                           ${t("t_ember_update_packages")}
                       </button>`
                     : null}
-                ${can_retry ? html`<button onClick=${() => pluto_actions.ember_run_all()}>${t("t_ember_try_again")}</button>` : null}
-                <button onClick=${() => set_show_error(!show_error)}>${t("t_ember_show_the_error")}</button>
+                ${can_retry
+                    ? html`<button type="button" class="ember-btn" onClick=${() => pluto_actions.ember_run_all()}>${t("t_ember_try_again")}</button>`
+                    : null}
+                <button type="button" class="ember-btn" onClick=${() => set_show_error(!show_error)}>${t("t_ember_show_the_error")}</button>
             </div>
             ${show_error ? html`<pre class="ember-install-failure-log">${log}</pre>` : null}
         </div>
@@ -114,6 +118,8 @@ const PackagesUpdate = ({ update, library_status }) => {
     return html`
         <div class="ember-packages-update">
             <button
+                type="button"
+                class="ember-btn"
                 onClick=${() => {
                     set_just_finished(false)
                     pluto_actions.ember_update_packages()
@@ -132,8 +138,10 @@ const PackagesUpdate = ({ update, library_status }) => {
                 : update.restart.length > 0
                 ? html`<div class="ember-packages-update-question">
                       <p>${t("t_ember_packages_update_restart_question", { names: update.restart.join(", ") })}</p>
-                      <button onClick=${() => pluto_actions.ember_apply_update(update.date)}>${t("t_ember_update_packages")}</button>
-                      <button onClick=${() => pluto_actions.ember_cancel_update()}>${t("t_cancel")}</button>
+                      <button type="button" class="ember-btn primary" onClick=${() => pluto_actions.ember_apply_update(update.date)}>
+                          ${t("t_ember_update_packages")}
+                      </button>
+                      <button type="button" class="ember-btn" onClick=${() => pluto_actions.ember_cancel_update()}>${t("t_cancel")}</button>
                   </div>`
                 : null}
         </div>
@@ -147,7 +155,7 @@ const PackageStatus = ({ row }) => {
     if (row.status === "installed") return html`<span class="ember-pill ember-pill-accent">${text}</span>`
     if (row.status === "failed" || row.status === "not_found") return html`<span class="ember-pill ember-pill-red">${text}</span>`
     if (row.status === "installing") {
-        return html`<div class="ember-package-installing">
+        return html`<div class="ember-package-progress-status">
             <span>${text}</span>
             <div class="ember-package-progress ember-package-progress-indeterminate"></div>
         </div>`

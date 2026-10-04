@@ -1038,6 +1038,18 @@ pluto-editor.disconnected > header#pluto-nav {
     border-radius: 50%;
     display: block;
     flex-shrink: 0;
+    transition: background-color 0.15s ease-in-out;
+}
+
+/* Run states appear once they have lasted 250 ms (common/useSettled.js);
+   this short fade keeps them from snapping in. */
+.ember-fade-in {
+    animation: ember-fade-in 0.15s ease-out;
+}
+@keyframes ember-fade-in {
+    from {
+        opacity: 0;
+    }
 }
 .ember-dot-faint {
     background: var(--ember-faint);
@@ -1141,13 +1153,13 @@ nav#at_the_top .ember-menu {
     background: var(--ember-red-bg);
     color: var(--ember-red);
 }
-.ember-package-installing {
+.ember-package-progress-status {
     display: flex;
     flex-direction: column;
     gap: 4px;
     align-items: flex-start;
 }
-.ember-package-installing span {
+.ember-package-progress-status span {
     font-size: 12px;
     color: var(--ember-muted);
 }
@@ -1213,9 +1225,15 @@ nav#at_the_top .ember-menu {
 
 .ember-packages-update {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     gap: 0.6em;
-    margin: 0 0 0.8em 0;
+}
+
+/* Panel3's smaller .btn, for the side panel's buttons. */
+#ember-packages-tab .ember-btn {
+    height: 30px;
+    padding: 0 10px;
+    font-size: 12.5px;
 }
 
 .ember-packages-update-checking,
@@ -1262,7 +1280,8 @@ nav#at_the_top .ember-menu {
 
 .ember-install-failure-actions {
     display: flex;
-    gap: 0.5em;
+    flex-wrap: wrap;
+    gap: 6px;
 }
 
 .ember-install-failure-log {
@@ -1815,9 +1834,11 @@ pluto-input > button > span {
     pointer-events: none;
 }
 
+/* Not pluto-input's buttons: cells.css shows and hides the run button and
+   the cell menu, and these rules' 0.6 would outrank it on a cell with focus
+   inside it but not in its code. */
 @media screen and (any-pointer: fine) {
     pluto-cell > button,
-    pluto-input > button,
     pluto-shoulder > button {
         opacity: 0;
         /* to make it feel smooth: */
@@ -1826,8 +1847,6 @@ pluto-input > button > span {
     button.start_stop_recording,
     pluto-cell:hover > button,
     pluto-cell:focus-within > button,
-    pluto-cell:hover > pluto-input > button,
-    pluto-cell:focus-within > pluto-input > button,
     pluto-cell:hover > pluto-shoulder > button,
     pluto-cell:focus-within > pluto-shoulder > button,
     :where(pluto-editor.inspecting_hidden_code) pluto-cell > pluto-shoulder > button {
@@ -1837,7 +1856,6 @@ pluto-input > button > span {
     button.start_stop_recording:hover,
     .overlay-button button:hover,
     pluto-cell > button:hover,
-    pluto-cell > pluto-input > button:hover,
     pluto-cell > pluto-shoulder > button:hover {
         opacity: 1;
         /* to make it feel snappy: */
@@ -1846,17 +1864,14 @@ pluto-input > button > span {
 }
 
 @media screen and (pointer: coarse) {
-    pluto-input > button,
     pluto-shoulder > button {
         opacity: 0.25;
         transition: opacity 0.25s ease-in-out;
     }
-    pluto-cell:focus-within > pluto-input > button,
     pluto-cell:focus-within > pluto-shoulder > button {
         opacity: 0.6;
         transition: opacity 0.25s ease-in-out;
     }
-    pluto-cell > pluto-input > button:focus-within,
     pluto-cell > button:focus-within,
     pluto-cell > pluto-shoulder > button:focus-within {
         opacity: 1;
