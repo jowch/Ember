@@ -219,6 +219,29 @@ test_that("Ember's Sage tokens meet WCAG 4.5:1 text contrast (106)", {
   }
 })
 
+# ---- 137. Contrast, piece 6's tokens ---------------------------------------
+
+test_that("piece 6's chip, error, warning, ANSI and wash tokens meet WCAG 4.5:1 (137)", {
+  dir <- frontend_dir()
+
+  for (theme in c("light.css", "dark.css")) {
+    theme_path <- file.path(dir, "themes", theme)
+    text <- readChar(theme_path, file.info(theme_path)$size)
+
+    expect_gte(contrast_ratio(read_token(text, "chip-stale-text"), read_token(text, "chip-stale-bg")), 4.5, label = theme)
+    expect_gte(contrast_ratio(read_token(text, "chip-dis-text"), read_token(text, "chip-dis-bg")), 4.5, label = theme)
+    expect_gte(contrast_ratio(read_token(text, "red"), read_token(text, "err-bg")), 4.5, label = theme)
+    expect_gte(contrast_ratio(read_token(text, "warn-text"), read_token(text, "due-bg")), 4.5, label = theme)
+    expect_gte(contrast_ratio(read_token(text, "faint"), read_token(text, "wash")), 4.5, label = theme)
+    expect_gte(contrast_ratio(read_token(text, "muted"), read_token(text, "dis-bg")), 4.5, label = theme)
+
+    for (colour in c("ansi-red", "ansi-green", "ansi-yellow", "ansi-blue", "ansi-magenta", "ansi-cyan")) {
+      expect_gte(contrast_ratio(read_token(text, colour), read_token(text, "page")), 4.5, label = paste(theme, colour))
+      expect_gte(contrast_ratio(read_token(text, colour), read_token(text, "code")), 4.5, label = paste(theme, colour))
+    }
+  }
+})
+
 # ---- 7. Credits ------------------------------------------------------------
 
 test_that("inst/COPYRIGHTS and DESCRIPTION credit Pluto.jl (7)", {

@@ -49,6 +49,32 @@
     --ember-panel-shadow: -10px 0 30px rgba(0, 0, 0, 0.55);
     --ember-scrim: rgba(0, 0, 0, 0.5);
 
+    /* Piece 6: cells and outputs (ui-3-plan.md 6.1). */
+    --ember-warn-text: #e6c46f;
+    --ember-chip-stale-bg: #352d1b;
+    --ember-chip-stale-line: #58492a;
+    --ember-chip-stale-text: #dcb35a;
+    --ember-chip-dis-bg: #262b27;
+    --ember-chip-dis-text: #a0aaa2;
+
+    /* ansi_up's palette (ansi-colors.css); see light.css's comment. */
+    --ansi-black: var(--ember-text);
+    --ansi-red: var(--ember-ansi-red);
+    --ansi-green: var(--ember-ansi-green);
+    --ansi-yellow: var(--ember-ansi-yellow);
+    --ansi-blue: var(--ember-ansi-blue);
+    --ansi-magenta: var(--ember-ansi-magenta);
+    --ansi-cyan: var(--ember-ansi-cyan);
+    --ansi-white: var(--ember-muted);
+    --ansi-bright-black: var(--ember-faint);
+    --ansi-bright-red: var(--ember-ansi-red);
+    --ansi-bright-green: var(--ember-ansi-green);
+    --ansi-bright-yellow: var(--ember-ansi-yellow);
+    --ansi-bright-blue: var(--ember-ansi-blue);
+    --ansi-bright-magenta: var(--ember-ansi-magenta);
+    --ansi-bright-cyan: var(--ember-ansi-cyan);
+    --ansi-bright-white: var(--ember-muted);
+
     /* Shared dialogs and menus (piece 7a); see light.css's comment. */
     --ember-dialog-shadow: var(--ember-shadow);
     --ember-dialog-backdrop: var(--ember-scrim);
