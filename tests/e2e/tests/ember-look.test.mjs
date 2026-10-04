@@ -91,6 +91,9 @@ test("look: cell menu has only Delete/Copy output/Disable cell; no feedback form
     (sel) => document.querySelector(sel)?.innerText.includes("55"),
     cellSelector("B") + " pluto-output", { timeout: 20000 });
 
+  // The ⋯ trigger only takes clicks while its cell is hovered or
+  // focused (cells.css; it's otherwise pointer-events: none, hidden).
+  await page.hover(cellSelector("B"));
   await page.locator(`${cellSelector("B")} button.input_context_menu`).click();
   const menuItems = await page.locator(`${cellSelector("B")} .input_context_menu ul li button`).evaluateAll(
     (btns) => btns.map((b) => b.className));

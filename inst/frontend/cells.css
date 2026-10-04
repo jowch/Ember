@@ -178,7 +178,12 @@ ember-runtime {
 }
 
 button.ember-run,
-button.input_context_menu,
+button.input_context_menu {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease-in-out;
+}
+
 ember-runtime {
     opacity: 0;
     transition: opacity 0.15s ease-in-out;
@@ -186,7 +191,10 @@ ember-runtime {
 
 @media (hover: hover) {
     pluto-cell:is(:hover, :focus-within) button.ember-run,
-    pluto-cell:is(:hover, :focus-within) button.input_context_menu,
+    pluto-cell:is(:hover, :focus-within) button.input_context_menu {
+        opacity: 1;
+        pointer-events: auto;
+    }
     pluto-cell:is(:hover, :focus-within) ember-runtime {
         opacity: 1;
     }
@@ -194,7 +202,10 @@ ember-runtime {
 
 @media (hover: none) {
     pluto-cell:focus-within button.ember-run,
-    pluto-cell:focus-within button.input_context_menu,
+    pluto-cell:focus-within button.input_context_menu {
+        opacity: 1;
+        pointer-events: auto;
+    }
     pluto-cell:focus-within ember-runtime {
         opacity: 1;
     }
