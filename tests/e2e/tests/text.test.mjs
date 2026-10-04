@@ -16,8 +16,7 @@ test("text: inline values render once the notebook runs; a bad one shows its own
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  await page.locator(".safe-preview button").click();
-  await page.getByText("run this notebook", { exact: false }).click();
+  await page.locator("#ember-safe-preview button").click();
 
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("Half of it is 10.5."),
@@ -44,8 +43,7 @@ test("text: a dependent text cell updates when its ancestor runs, without itself
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  await page.locator(".safe-preview button").click();
-  await page.getByText("run this notebook", { exact: false }).click();
+  await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("Half of it is 10.5."),
     cellSelector("T") + " pluto-output", { timeout: 20000 });

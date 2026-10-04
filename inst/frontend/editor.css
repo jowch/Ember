@@ -1154,7 +1154,6 @@ nav#at_the_top:after {
 pluto-editor.nbpkg_restart_recommended > header#pluto-nav,
 pluto-editor.nbpkg_restart_required > header#pluto-nav,
 pluto-editor.binder.loading > header#pluto-nav,
-pluto-editor.process_waiting_for_permission > header#pluto-nav,
 pluto-editor.process_dead > header#pluto-nav,
 pluto-editor.disconnected > header#pluto-nav {
     position: sticky;
@@ -1170,9 +1169,6 @@ pluto-editor.nbpkg_restart_required > header#pluto-nav {
 }
 pluto-editor.process_dead > header#pluto-nav {
     background-color: var(--dead-process-header-color);
-}
-pluto-editor.process_waiting_for_permission > header#pluto-nav {
-    background-color: var(--restart-recc-header-color);
 }
 pluto-editor.loading > header#pluto-nav {
     background-color: var(--loading-header-color);
@@ -1215,6 +1211,33 @@ pluto-editor.binder.loading > header#pluto-nav {
     cursor: pointer;
     white-space: nowrap;
     flex-shrink: 0;
+}
+.ember-btn.primary {
+    background: var(--ember-accent);
+    border-color: var(--ember-accent);
+    color: var(--ember-on-accent);
+}
+
+/* Safe preview banner (ui-3.md, Header; ui-3-plan.md piece 5's "Safe
+   preview banner"): one bar under the header, replacing the page outline
+   and its info popup. */
+#ember-safe-preview {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 20px;
+    background: var(--ember-accent-bg);
+    border-bottom: 1px solid var(--ember-line);
+    color: var(--ember-text);
+    font-family: var(--ember-ui-font);
+}
+#ember-safe-preview svg {
+    flex-shrink: 0;
+    color: var(--ember-accent);
+}
+#ember-safe-preview span {
+    flex-grow: 1;
+    font-size: 14px;
 }
 
 #ember-r-status {
@@ -1298,43 +1321,14 @@ nav#at_the_top .ibtn.on {
     color: var(--ember-text);
 }
 
-.ember-menu {
+/* The ... menu's position and item layout reuse piece 7a's shared
+   .ember-menu/.ember-menuitem/.ember-menu-sep (further down this file):
+   only the trigger button's position needs a header-specific rule. */
+nav#at_the_top .ember-menu {
     position: absolute;
     right: 0;
     top: 44px;
-    width: 240px;
-    background: var(--ember-panel);
-    border: 1px solid var(--ember-line);
-    border-radius: 8px;
-    box-shadow: var(--ember-shadow);
-    padding: 4px;
-    display: flex;
-    flex-direction: column;
     z-index: 70;
-}
-.ember-menu-item {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font: inherit;
-    font-size: 13px;
-    color: var(--ember-text);
-    background: transparent;
-    border: 0;
-    border-radius: 5px;
-    padding: 7px 10px;
-    text-align: left;
-    cursor: pointer;
-    text-decoration: none;
-}
-.ember-menu-item:hover,
-.ember-menu-item:focus-visible {
-    background: var(--ember-hover);
-}
-.ember-menu-sep {
-    height: 1px;
-    background: var(--ember-line);
-    margin: 4px 2px;
 }
 
 #ember-packages-tab {
@@ -1526,10 +1520,6 @@ pluto-editor.binder.loading #binder_spinners {
     box-sizing: border-box;
 }
 
-pluto-editor.process_waiting_for_permission > .outline-frame.safe-preview {
-    border-bottom: 12px solid var(--restart-recc-header-color);
-}
-
 .outline-frame.playback {
     opacity: 1;
     position: absolute;
@@ -1549,11 +1539,6 @@ pluto-editor.process_waiting_for_permission > .outline-frame.safe-preview {
     display: flex;
     flex-direction: row;
     flex-wrap: wrap;
-}
-
-.outline-frame-actions-container.safe-preview {
-    top: auto;
-    bottom: 4px;
 }
 
 .outline-frame-actions-container > .overlay-button {
@@ -1582,25 +1567,6 @@ div.recording-playback {
 }
 div.recording-playback audio {
     width: 100%;
-}
-
-.safe-preview-info {
-    color: var(--black);
-    font-family: var(--system-ui-font-stack);
-    font-weight: 700;
-    background: var(--white);
-    border: 3px solid var(--restart-recc-accent-color);
-    padding: 0.3em 0.8em;
-    border-radius: 0.8em;
-}
-.safe-preview-info > span {
-    display: flex;
-    /* flex-direction: row; */
-}
-.safe-preview-info button {
-    background: none;
-    border: none;
-    cursor: pointer;
 }
 
 .safe-preview-output {

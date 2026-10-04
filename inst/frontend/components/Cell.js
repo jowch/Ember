@@ -7,7 +7,6 @@ import { Logs } from "./Logs.js"
 import { RunArea, useDebouncedTruth } from "./RunArea.js"
 import { cl } from "../common/ClassTable.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
-import { SafePreviewOutput } from "./SafePreviewUI.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { t } from "../common/lang.js"
 
@@ -296,7 +295,7 @@ export const Cell = ({
             </pluto-shoulder>
             <pluto-trafficlight></pluto-trafficlight>
             ${code_not_trusted_yet
-                ? html`<${SafePreviewOutput} />`
+                ? null
                 : cell_api_ready
                   ? html`<${CellOutput} errored=${errored} ...${output} ember_figure=${ember?.figure} sanitize_html=${sanitize_html} cell_id=${cell_id} />`
                   : html``}

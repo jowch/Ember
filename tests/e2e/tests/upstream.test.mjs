@@ -31,8 +31,7 @@ test("upstream: a dependent names the failed cell and links to it; an unrelated 
   await page.setViewportSize({ width: 1200, height: 500 });
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  await page.locator(".safe-preview button").click();
-  await page.getByText("run this notebook", { exact: false }).click();
+  await page.locator("#ember-safe-preview button").click();
 
   await page.waitForSelector(`${cellSelector("A")} jlerror`, { timeout: 20000 });
   const a_text = await page.locator(`${cellSelector("A")} jlerror`).innerText();

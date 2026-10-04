@@ -117,7 +117,7 @@ test("export: an htmlwidget's dependency files are inlined and run (20)", {
 
   // htmltools needs installing into the notebook's own library: accept the
   // safe-preview prompt before running, as packages.R's scenario does.
-  await livePage.locator(".safe-preview button").click();
+  await livePage.locator("#ember-safe-preview button").click();
 
   await runCell(livePage, "WIDGET");
   await livePage.waitForSelector(`${cellSelector("WIDGET")} #widget-marker`, { timeout: 120000 });

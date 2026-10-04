@@ -19,8 +19,7 @@ test("disable cell: toggling off then on, with the file and classes surviving a 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  await page.locator(".safe-preview button").click();
-  await page.getByText("run this notebook", { exact: false }).click();
+  await page.locator("#ember-safe-preview button").click();
 
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("2"),

@@ -61,8 +61,7 @@ test("look: no requests to external calling-home servers; no Fix with AI (9)", a
   page.on("request", (req) => { try { requestedHosts.push(new URL(req.url()).hostname); } catch { /* ignore */ } });
 
   await openNotebook(page, server.origin, server.secret, notebook);
-  await page.locator(".safe-preview button").click();
-  await page.getByText("run this notebook", { exact: false }).click();
+  await page.locator("#ember-safe-preview button").click();
   await page.waitForSelector(`${cellSelector("PARSE")} jlerror.syntax-error`, { timeout: 20000 });
 
   const blocked = ["plutojl.org", "fonsp.com", "openai.com", "gstatic.com", "api.github.com"];
@@ -87,8 +86,7 @@ test("look: cell menu has only Delete/Copy output/Disable cell; no feedback form
 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
-  await page.locator(".safe-preview button").click();
-  await page.getByText("run this notebook", { exact: false }).click();
+  await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("55"),
     cellSelector("B") + " pluto-output", { timeout: 20000 });
@@ -126,9 +124,8 @@ test("look: markdown cell renders folded, with R tokens in its fenced block (11)
   assert.ok(previewFolded, "MD is folded in safe preview");
   assert.match(await page.locator(`${cellSelector("MD")} pluto-output`).innerText(), /Rich outputs/);
 
-  await page.locator(".safe-preview button").click();
-  await page.getByText("run this notebook", { exact: false }).click();
-  await page.waitForFunction(() => document.querySelectorAll(".safe-preview-info").length === 0, null, { timeout: 20000 });
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForFunction(() => document.querySelectorAll("#ember-safe-preview").length === 0, null, { timeout: 20000 });
 
   const isFolded = await page.locator(cellSelector("MD")).evaluate((el) => el.classList.contains("code_folded"));
   assert.ok(isFolded, "MD starts folded");

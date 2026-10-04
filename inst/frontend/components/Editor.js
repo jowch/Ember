@@ -1560,8 +1560,6 @@ ${t("t_key_autosave_description")}`
                 </${PlutoActionsContext.Provider}>
             `
         }
-        const warn_about_untrusted_code = this.client.session_options?.security?.warn_about_untrusted_code ?? true
-
         const restart = async () => {
             await this.client.send(
                 "restart_process",
@@ -1621,9 +1619,7 @@ ${t("t_key_autosave_description")}`
                     html`<${MoveDialog} path=${notebook.path} shortpath=${notebook.shortpath} on_close=${() => this.setState({ move_dialog_open: false })} />`}
                     <${SafePreviewUI}
                         process_waiting_for_permission=${status.process_waiting_for_permission}
-                        risky_file_source=${notebook.metadata?.risky_file_source}
                         restart=${restart}
-                        warn_about_untrusted_code=${warn_about_untrusted_code}
                         plan=${notebook.ember?.plan}
                     />
                     <${ConfirmBeforeLongRuntime} />

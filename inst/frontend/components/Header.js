@@ -183,12 +183,12 @@ export const Header = ({ notebook, connected, code_differs, on_toggle_export, on
                 ${is_open &&
                 html`
                     <div class="ember-menu" ...${menu_props}>
-                        <button type="button" class="ember-menu-item" ...${item_props(0)} onClick=${() => close()}>
+                        <button type="button" class="ember-menuitem" ...${item_props(0)} onClick=${() => close()}>
                             ${t("t_ember_keyboard_shortcuts")}
                         </button>
                         <button
                             type="button"
-                            class="ember-menu-item"
+                            class="ember-menuitem"
                             ...${item_props(1)}
                             onClick=${() => {
                                 close()
@@ -200,7 +200,7 @@ export const Header = ({ notebook, connected, code_differs, on_toggle_export, on
                         ${narrow
                             ? html`<button
                                   type="button"
-                                  class="ember-menu-item"
+                                  class="ember-menuitem"
                                   ...${item_props(2)}
                                   onClick=${() => {
                                       close()
@@ -211,7 +211,7 @@ export const Header = ({ notebook, connected, code_differs, on_toggle_export, on
                               </button>`
                             : null}
                         <div class="ember-menu-sep"></div>
-                        <a class="ember-menu-item" href=${`./?secret=${page_secret()}`} ...${item_props(narrow ? 3 : 2)}>
+                        <a class="ember-menuitem" href=${`./?secret=${page_secret()}`} ...${item_props(narrow ? 3 : 2)}>
                             ${t("t_ember_open_another_notebook")}
                         </a>
                     </div>

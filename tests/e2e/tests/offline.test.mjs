@@ -63,7 +63,12 @@ test("offline: rich.R works with every non-local request aborted (18)", async (t
 
   await openNotebook(page, server.origin, server.secret, notebook);
   await runCell(page, "DF");
-  await page.waitForSelector(`${cellSelector("DF")} pluto-output`, { timeout: 20000 });
+  // `df <- mtcars` is an assignment: its own output is invisible (zero
+  // size), so waiting for `pluto-output` to be *visible* would depend on
+  // pixels that are never there. Wait for the run to finish instead.
+  await page.waitForFunction(
+    () => window.editor_state?.notebook?.cell_results?.DF?.output?.last_run_timestamp > 0,
+    null, { timeout: 20000 });
 
   // `df <- ...` is an assignment (an invisible result, same as the
   // fixture's own code): editing it to a bare expression instead makes the

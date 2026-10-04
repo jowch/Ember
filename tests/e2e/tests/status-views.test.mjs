@@ -78,8 +78,7 @@ test('lazy.R: editing A shows B as "stale", running B clears it (73)', async (t)
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  await page.locator(".safe-preview button").click();
-  await page.getByText("run this notebook", { exact: false }).click();
+  await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("2"),
     cellSelector("B") + " pluto-output", { timeout: 30000 });
@@ -113,9 +112,9 @@ test("Packages tab lists a missing package and the preview banner names the inst
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  await page.locator(".safe-preview button").click();
+  await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(
-    () => /installs \d+ packages?/.test(document.querySelector(".safe-preview-info")?.innerText ?? document.body.innerText),
+    () => /installs \d+ packages?/.test(document.querySelector("#ember-safe-preview")?.innerText ?? document.body.innerText),
     null, { timeout: 10000 }).catch(() => {});
   const bannerText = await page.locator("body").innerText();
   assert.match(bannerText, /installs \d+ packages?/);
