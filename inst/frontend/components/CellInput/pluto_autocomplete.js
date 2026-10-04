@@ -142,12 +142,23 @@ const identifier_char_before_cursor = /[\p{L}\p{N}._]$/u
  * CodeMirror would never ask the source again. */
 const identifier_token = /^[\p{L}\p{N}._]*$/u
 
+/** Inside a `#` comment or a `#'` text line. The line test covers a
+ * comment-only line before the parser has reached it. */
+const in_comment = (/** @type {autocomplete.CompletionContext} */ ctx) => {
+    if (/^\s*#/.test(ctx.state.doc.lineAt(ctx.pos).text)) return true
+    for (let n = syntaxTree(ctx.state).resolveInner(ctx.pos, -1); n != null; n = n.parent) {
+        if (n.name === "Comment") return true
+    }
+    return false
+}
+
 const not_explicit_and_too_boring = (/** @type {autocomplete.CompletionContext} */ ctx) => {
     if (ctx.explicit) return false
     // Not ":" alone: "pkg::" and "pkg:::" must keep completing.
     if (ctx.matchBefore(/[\s=)+\-/,*'(;\[\]{}"]$/)) return true
     if (ctx.matchBefore(/[^:]:$/)) return true
-    if (ctx.tokenBefore(["IntegerLiteral", "FloatLiteral", "LineComment", "BlockComment"]) != null) return true
+    if (ctx.tokenBefore(["IntegerLiteral", "FloatLiteral"]) != null) return true
+    if (in_comment(ctx)) return true
     if (ctx.tokenBefore([...R_STRING_NODE_NAMES]) != null) return true
     return false
 }
