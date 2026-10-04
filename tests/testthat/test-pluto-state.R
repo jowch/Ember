@@ -299,6 +299,16 @@ test_that("console items map to Pluto's log levels, in order (11)", {
   expect_equal(logs[[1]]$msg, list("a", "text/plain"))
 })
 
+test_that("project_logs(): a warning with a call gives ember$call; an item without one has no ember field (ui-3-tests 136)", {
+  console <- list(list(kind = "warning", text = "careful", call = "g()"),
+                  list(kind = "warning", text = "top-level"),
+                  list(kind = "message", text = "m"))
+  logs <- project_logs(console, "A")
+  expect_identical(logs[[1]]$ember, list(call = "g()"))
+  expect_false("ember" %in% names(logs[[2]]))
+  expect_false("ember" %in% names(logs[[3]]))
+})
+
 test_that("a running cell's growing console gives an add patch, not a replace (11)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1")))
   r <- boot(s, "A")
