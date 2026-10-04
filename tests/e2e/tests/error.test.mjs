@@ -65,6 +65,6 @@ test("error: a name defined twice and a cycle are worded for R users (Words6)", 
   await setCellCode(page, "LOOP", "z <- y");
   await page.keyboard.press("Shift+Enter");
   await page.waitForFunction((sel) => /each other/.test(document.querySelector(sel)?.innerText ?? ""),
-    `${cellSelector("ERR")} jlerror`, { timeout: 20000 });
-  assert.match((await message("ERR").innerText()).split("\n")[0], /^(y and z|z and y) depend on each other, so neither can run\.$/);
+    `${cellSelector("LOOP")} jlerror`, { timeout: 20000 });
+  assert.match((await message("LOOP").innerText()).split("\n")[0], /^(y and z|z and y) depend on each other, so neither can run\.$/);
 });

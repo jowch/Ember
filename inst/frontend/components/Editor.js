@@ -17,7 +17,6 @@ import { UndoDelete } from "./UndoDelete.js"
 import { Scroller } from "./Scroller.js"
 import { Popup } from "./Popup.js"
 
-import { slice_utf8 } from "../common/UnicodeTools.js"
 import { has_ctrl_or_cmd_pressed, is_mac_keyboard, in_textarea_or_input } from "../common/KeyboardShortcuts.js"
 import { PlutoActionsContext, PlutoBondsContext, PlutoJSInitializingContext, SetWithEmptyCallback } from "../common/PlutoContext.js"
 import { BackendLaunchPhase } from "../common/Binder.js"
@@ -38,9 +37,7 @@ import { MoveDialog } from "./MoveDialog.js"
 import { with_query_params } from "../common/URLTools.js"
 import { ConfirmBeforeLongRuntime, maybe_abort_long_runtime } from "./ConfirmBeforeLongRuntime.js"
 import { RunTracker, run_started } from "./RunTracker.js"
-import { detect_indent_unit, indent_unit_of_setting } from "./CellInput/detect_indent_unit.js"
-import { Text } from "../imports/CodemirrorPlutoSetup.js"
-import { get_settings, Settings } from "./Settings.js"
+import { Settings } from "./Settings.js"
 import { ShortcutsSheet } from "./ShortcutsSheet.js"
 
 // This is imported asynchronously - uncomment for development
@@ -508,68 +505,6 @@ export class Editor extends Component {
                         ...notebook.cell_order.slice(index, Infinity),
                     ]
                 })
-            },
-            wrap_remote_cell: async (cell_id, block_start = "begin", block_end = "end") => {
-                const cell = this.state.notebook.cell_inputs[cell_id]
-                if (!cell) return
-                const unit = detect_indent_unit(Text.of(cell.code.split("\n")), indent_unit_of_setting(get_settings().CM_INDENT_UNIT))
-                const new_code = `${block_start}\n${unit}${cell.code.replace(/\n/g, `\n${unit}`)}\n${block_end}`
-
-                await this.setStatePromise(
-                    immer((/** @type {EditorState} */ state) => {
-                        state.cell_inputs_local[cell_id] = {
-                            code: new_code,
-                        }
-                    })
-                )
-                await this.actions.set_and_run_multiple([cell_id])
-            },
-            split_remote_cell: async (cell_id, boundaries, submit = false) => {
-                const cell = this.state.notebook.cell_inputs[cell_id]
-                if (!cell) return
-                const old_code = cell.code
-                const padded_boundaries = [0, ...boundaries]
-                /** @type {Array<String>} */
-                const parts = boundaries.map((b, i) => slice_utf8(old_code, padded_boundaries[i], b).trim()).filter((x) => x !== "")
-                /** @type {Array<CellInputData>} */
-                const cells_to_add = parts.map((code) => {
-                    return {
-                        cell_id: uuidv4(),
-                        code: code,
-                        code_folded: false,
-                        metadata: {
-                            ...DEFAULT_CELL_METADATA,
-                        },
-                    }
-                })
-
-                this.setState(
-                    immer((/** @type {EditorState} */ state) => {
-                        for (let cell of cells_to_add) {
-                            state.cell_inputs_local[cell.cell_id] = cell
-                        }
-                    })
-                )
-                await update_notebook((notebook) => {
-                    // delete the old cell
-                    delete notebook.cell_inputs[cell_id]
-
-                    // add the new ones
-                    for (let cell of cells_to_add) {
-                        notebook.cell_inputs[cell.cell_id] = cell
-                    }
-                    notebook.cell_order = notebook.cell_order.flatMap((c) => {
-                        if (cell_id === c) {
-                            return cells_to_add.map((x) => x.cell_id)
-                        } else {
-                            return [c]
-                        }
-                    })
-                })
-
-                if (submit) {
-                    await this.actions.set_and_run_multiple(cells_to_add.map((x) => x.cell_id))
-                }
             },
             interrupt_remote: (cell_id) => {
                 // TODO Make this cooler
