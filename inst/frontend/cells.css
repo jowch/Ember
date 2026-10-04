@@ -118,6 +118,11 @@ pluto-cell[data-rail="due"] > pluto-input .cm-gutters {
     background: var(--ember-due-bg);
 }
 
+/* Outputs start 12px right of the rail. */
+pluto-cell > pluto-output {
+    padding-left: 12px;
+}
+
 /* ---- Run/stop button and run-time chip (ui-3.md "Run button", "Run-time
    chip") ------------------------------------------------------------------ */
 
@@ -410,7 +415,7 @@ ember-chip {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    margin: 0 0 6px 0;
+    margin: 2px 0 6px 12px;
     padding: 2px 10px 2px 8px;
     border-radius: 999px;
     font-family: var(--ember-ui-font);
@@ -426,6 +431,11 @@ ember-chip .ember-chip-icon {
 ember-chip a {
     color: inherit;
     text-decoration: underline;
+}
+
+/* No output follows: the chip sits 12px above the code box. */
+pluto-cell.no_output_yet > ember-chip {
+    margin-bottom: 12px;
 }
 
 pluto-cell.not_run_yet > ember-chip {
@@ -488,10 +498,6 @@ pluto-cell.running_disabled > pluto-output,
 pluto-cell.depends_on_disabled_cells > pluto-output {
     filter: grayscale(1);
     opacity: 0.32;
-}
-pluto-cell.running_disabled > pluto-output,
-pluto-cell.depends_on_disabled_cells > pluto-output {
-    background: var(--ember-wash);
 }
 pluto-cell.running_disabled > pluto-input .cm-editor {
     background: var(--ember-dis-bg);
