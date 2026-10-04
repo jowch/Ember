@@ -564,9 +564,12 @@ test("errors: where it happened, a traceback outermost first, labelled by origin
 
   // Board Outputs4 / Cells: a red-tinted box flush with the rail and joined
   // to the code box, whose top-right corner goes square.
-  const box = await rect(page, err);
-  const cell = await rect(page, cellSelector("ERR"));
-  const code = await rect(page, `${cellSelector("ERR")} .cm-editor`);
+  // One evaluate, so all three come from the same frame: focusing F
+  // smooth-scrolls the page, and separate reads can straddle a scroll step.
+  const { box, cell, code } = await page.locator(cellSelector("ERR")).evaluate((el) => {
+    const r = (e) => { const b = e.getBoundingClientRect(); return { left: b.left, top: b.top, right: b.right, bottom: b.bottom }; };
+    return { box: r(el.querySelector("jlerror")), cell: r(el), code: r(el.querySelector(".cm-editor")) };
+  });
   near(box.left, cell.left, "the box starts at the rail");
   near(box.right, code.right, "the box is as wide as the code box");
   near(code.top, box.bottom, "the box is joined to the code box");
