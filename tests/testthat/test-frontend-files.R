@@ -414,9 +414,9 @@ test_that("the installed frontend is under 3 MB and THIRD-PARTY.txt matches COPY
   expect_equal(missing, character(0))
 })
 
-# ---- 78. alert()/confirm() only where piece 7 has not replaced them yet ----
+# ---- 78. no alert()/confirm() calls are left ----
 
-test_that("alert()/confirm() calls remain only in Settings.js (1) (78)", {
+test_that("no alert()/confirm() calls remain (78)", {
   dir <- frontend_dir()
   js <- frontend_files(dir)
   js <- js[grepl("\\.js$", js)]
@@ -439,7 +439,7 @@ test_that("alert()/confirm() calls remain only in Settings.js (1) (78)", {
     n <- length(regmatches(text, gregexpr(call_re, text, perl = TRUE))[[1]])
     if (n > 0) counts[[basename(f)]] <- n
   }
-  counts <- counts[order(names(counts))]
+  counts <- counts[sort(names(counts))]
 
-  expect_equal(counts, list("Settings.js" = 1L))
+  expect_equal(counts, list())
 })

@@ -1,165 +1,80 @@
-import { html, useEffect, useMemo, useState } from "../imports/Preact.js"
+import { html, useEffect, useState } from "../imports/Preact.js"
 import _ from "../imports/lodash-es.js"
 
 //@ts-ignore
 import { useDialog } from "../common/useDialog.js"
 import { useEventListener } from "../common/useEventListener.js"
-import { t, th, pretty_long_time } from "../common/lang.js"
+import { t, pretty_long_time } from "../common/lang.js"
 import { downstream_recursive } from "../common/SliderServerClient.js"
-import { and, ctrl_or_cmd_name } from "../common/KeyboardShortcuts.js"
-import { useMillisSinceTruthy } from "./RunButton.js"
-import { cl } from "../common/ClassTable.js"
 import { get_settings } from "./Settings.js"
-
-const auto_accept_after_seconds = 20
 
 /**
  * @typedef ConfirmEventData
- * @property {string[]} cell_ids
- * @property {number} num_dependencies
- * @property {number} time
+ * @property {number} count cells that would rerun, roots included
+ * @property {number} time their runtimes last time, in seconds
  * @property {(result: boolean) => void} on_result
  */
 
 /**
+ * Ask before a run whose cells took longer than the setting's seconds last
+ * time (Settings: Ask before long runs). True when the person cancels.
  *
  * @param {import("./Editor.js").NotebookData} notebook
  * @param {string[]} cell_ids
  * @returns {Promise<boolean>}
  */
 export const maybe_abort_long_runtime = async (notebook, cell_ids) => {
-    const include_roots = true
+    const settings = get_settings()
+    if (!settings.CONFIRM_LONG_RUNTIMES) return false
 
-    const found_downstream = downstream_recursive(notebook.cell_dependencies, cell_ids, { recursive: true })[include_roots ? "union" : "difference"](
-        new Set(cell_ids)
-    )
+    const found = downstream_recursive(notebook.cell_dependencies, cell_ids, { recursive: true }).union(new Set(cell_ids))
+    const total_runtime = _.sum([...found].map((id) => (notebook.cell_results[id]?.runtime ?? 0) / 1e9))
+    if (total_runtime <= settings.CONFIRM_LONG_RUNTIMES_SECONDS) return false
 
-    const runtimes = [...found_downstream].map((id) => (notebook.cell_results[id]?.runtime ?? 0) / 1e9)
-
-    const total_runtime = _.sum(runtimes)
-    console.log({ total_runtime, threshold: get_settings().CONFIRM_LONG_RUNTIMES_SECONDS, settings: get_settings() })
-    if (total_runtime > get_settings().CONFIRM_LONG_RUNTIMES_SECONDS) {
-        const confirmed = await new Promise((resolve) => {
-            window.dispatchEvent(
-                new CustomEvent("confirm before long runtime", {
-                    detail: /** @type {ConfirmEventData} */ ({
-                        cell_ids,
-                        num_dependencies: found_downstream.difference(new Set(cell_ids)).size,
-                        time: total_runtime,
-                        on_result: (result) => resolve(result),
-                    }),
-                })
-            )
-        })
-        return !confirmed
-    }
-
-    return false
+    const confirmed = await new Promise((resolve) => {
+        window.dispatchEvent(
+            new CustomEvent("confirm before long runtime", {
+                detail: /** @type {ConfirmEventData} */ ({ count: found.size, time: total_runtime, on_result: resolve }),
+            })
+        )
+    })
+    return !confirmed
 }
 
-/**
- * @template T
- * @param {T[]} arr
- */
-const pickrandom = (arr) => /** @type {T} */ (arr[Math.floor(Math.random() * arr.length)])
-
-/**
- * @param {{
- * }} props
- * */
-export const ConfirmBeforeLongRuntime = ({}) => {
+export const ConfirmBeforeLongRuntime = () => {
     const [dialog_ref, open, close, _toggle, currently_open] = useDialog()
-    const [open_event_detail, set_open_event_detail] = useState(/** @type {ConfirmEventData | undefined} */ (undefined))
-    const [will_auto_accept, set_will_auto_accept] = useState(true)
-
-    const { cell_ids, num_dependencies, time, on_result } = open_event_detail ?? {}
-    const send_result = (result) => {
-        if (typeof on_result === "function") {
-            on_result(result)
-        }
-    }
-
-    useEffect(() => {
-        const reduced_motion = window.matchMedia("(prefers-reduced-motion: reduce)").matches
-        set_will_auto_accept(!reduced_motion)
-    }, [open_event_detail])
-
-    useEventListener(
-        document,
-        "focusout",
-        () => {
-            set_will_auto_accept(false)
-        },
-        [set_will_auto_accept]
-    )
+    const [detail, set_detail] = useState(/** @type {ConfirmEventData | undefined} */ (undefined))
 
     useEventListener(
         window,
         "confirm before long runtime",
         (/** @type {CustomEvent} */ e) => {
-            set_open_event_detail(e.detail)
+            set_detail(e.detail)
             open()
         },
-        [open, set_open_event_detail]
+        [open, set_detail]
     )
 
+    // Esc, Cancel and Run all close the dialog; only Run answers first, so
+    // this is a no-op after it.
     useEffect(() => {
-        // If the dialog gets closed (e.g. by the user pressing Esc)
-        if (!currently_open && typeof on_result === "function") {
-            on_result(false)
-        }
+        if (!currently_open) detail?.on_result(false)
     }, [currently_open])
 
-    const open_time = (useMillisSinceTruthy(currently_open) ?? 0) / 1e3
-
-    if (will_auto_accept && open_time > auto_accept_after_seconds) {
-        send_result(true)
-        close()
-    }
-
-    const _has_deps = (num_dependencies ?? 0) > 0
-    const _has_single_root = cell_ids?.length === 1
-
-    const possible_hints = /** @type {("t_confirm_run_many_cells_bonus_a")[]} */ (
-        Object.entries({
-            t_confirm_run_many_cells_bonus_a: _has_single_root && _has_deps,
-        })
-            .filter(([_, condition]) => condition)
-            .map(([key]) => key)
-    )
-
-    const current_hint = useMemo(() => pickrandom(possible_hints), [open_event_detail])
-
-    return html`<dialog ref=${dialog_ref} class="pluto-modal confirm-before-long-runtime">
-        <div class="ple-download ple-option">
-            <p>
-                ${th(cell_ids?.length === 1 ? "t_confirm_run_many_cells_single_root" : "t_confirm_run_many_cells_multiple_roots", {
-                    roots: cell_ids?.length ?? 0,
-                    count: num_dependencies ?? 0,
-                    time: html`<strong style="white-space: nowrap">${pretty_long_time(time ?? 0)}</strong>`,
-                })}
-            </p>
-            ${possible_hints.length > 0
-                ? html`<p class="bonus-info">
-                      ${th(current_hint, {
-                          submit_all_changes: html`<kbd>${ctrl_or_cmd_name}</kbd>${and}<kbd>S</kbd>`,
-                      })}
-                  </p>`
-                : null}
-        </div>
-        <div class="final">
-            <button class="final-no" onClick=${close} aria-label=${t("t_no")}>${th("t_no_key", { key: html`<kbd aria-hidden="true">Esc</kbd>` })}</button>
+    return html`<dialog ref=${dialog_ref} class="confirm-before-long-runtime" aria-describedby="ember-long-run-text">
+        <p id="ember-long-run-text">${t("t_confirm_long_run", { count: detail?.count ?? 0, time: pretty_long_time(detail?.time ?? 0) })}</p>
+        <div class="ember-dialog-actions">
+            <button type="button" class="ember-btn" onClick=${close}>${t("t_cancel")}</button>
             <button
-                style="--auto-click-progress: ${will_auto_accept ? open_time / (auto_accept_after_seconds * 0.8) : 0}"
-                class=${cl({ "final-yes": true, "will-auto-accept": will_auto_accept })}
+                type="button"
+                class="ember-btn primary"
                 autofocus
                 onClick=${() => {
-                    send_result(true)
+                    detail?.on_result(true)
                     close()
                 }}
-                aria-label=${t("t_yes")}
             >
-                <span> ${th("t_yes_key", { key: html`<kbd aria-hidden="true">Enter</kbd>` })} </span>
+                ${t("t_run")}
             </button>
         </div>
     </dialog>`

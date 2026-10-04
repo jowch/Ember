@@ -37,7 +37,7 @@ import { getCurrentLanguage, getWritingDirection, t, th } from "../common/lang.j
 import { MoveDialog } from "./MoveDialog.js"
 import { with_query_params } from "../common/URLTools.js"
 import { ConfirmBeforeLongRuntime, maybe_abort_long_runtime } from "./ConfirmBeforeLongRuntime.js"
-import { detect_indent_unit } from "./CellInput/detect_indent_unit.js"
+import { detect_indent_unit, indent_unit_of_setting } from "./CellInput/detect_indent_unit.js"
 import { Text } from "../imports/CodemirrorPlutoSetup.js"
 import { get_settings, Settings } from "./Settings.js"
 
@@ -508,7 +508,7 @@ export class Editor extends Component {
             wrap_remote_cell: async (cell_id, block_start = "begin", block_end = "end") => {
                 const cell = this.state.notebook.cell_inputs[cell_id]
                 if (!cell) return
-                const unit = detect_indent_unit(Text.of(cell.code.split("\n")), get_settings().CM_INDENT_UNIT === "tab" ? "\t" : "    ")
+                const unit = detect_indent_unit(Text.of(cell.code.split("\n")), indent_unit_of_setting(get_settings().CM_INDENT_UNIT))
                 const new_code = `${block_start}\n${unit}${cell.code.replace(/\n/g, `\n${unit}`)}\n${block_end}`
 
                 await this.setStatePromise(

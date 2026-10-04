@@ -60,14 +60,14 @@ import { assert_not_null, timeout_promise } from "../common/PlutoConnection.js"
 import { LastFocusWasForcedEffect, tab_help_plugin } from "./CellInput/tab_help_plugin.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { moveLineDown } from "../imports/CodemirrorPlutoSetup.js"
-import { detect_indent_unit } from "./CellInput/detect_indent_unit.js"
+import { detect_indent_unit, indent_unit_of_setting } from "./CellInput/detect_indent_unit.js"
 import { t } from "../common/lang.js"
 import { tell } from "../common/dialogs.js"
 import { useMenu } from "../common/useMenu.js"
 import { RunButton } from "./RunButton.js"
 import { alt_or_options_name } from "../common/KeyboardShortcuts.js"
 import { MoreIcon } from "../common/Icons.js"
-import { get_settings } from "./Settings.js"
+import { DEFAULT_SETTINGS, get_settings } from "./Settings.js"
 import { highlightKwargsPlugin } from "./CellInput/highlight_kwargs.js"
 import { hash_quote_continue, hash_quote_highlight } from "./CellInput/text_cell.js"
 import { highlight_assigned } from "./CellInput/highlight_assigned.js"
@@ -187,11 +187,45 @@ export const LastRemoteCodeSetTimeFacet = Facet.define({
     compare: _.isEqual,
 })
 
-// Per-cell detected indent unit ("\t" or "    "). Re-detected on every doc change.
-const indentUnitField = StateField.define({
-    create: (state) => detect_indent_unit(state.doc, get_settings().CM_INDENT_UNIT === "tab" ? "\t" : "    "),
-    update: (value, tr) => (tr.docChanged ? detect_indent_unit(tr.state.doc, value) : value),
+/** The `CM_INDENT_UNIT` setting's unit, used where a cell's own code shows none. */
+const IndentFallback = Facet.define({
+    combine: (values) => values[0] ?? indent_unit_of_setting(DEFAULT_SETTINGS.CM_INDENT_UNIT),
 })
+
+const indentUnitField = StateField.define({
+    create: (state) => detect_indent_unit(state.doc, state.facet(IndentFallback)),
+    update: (value, tr) =>
+        tr.docChanged || tr.startState.facet(IndentFallback) !== tr.state.facet(IndentFallback)
+            ? detect_indent_unit(tr.state.doc, tr.state.facet(IndentFallback))
+            : value,
+})
+
+const accept_autocomplete_command = autocomplete.completionKeymap.find((keybinding) => keybinding.key === "Enter")
+const keyMapTab = (/** @type {EditorView} */ cm) => {
+    // I think this only gets called when we are not in an autocomplete situation, otherwise `tab_completion_command` is called. I think it only happens when you have a selection.
+
+    if (cm.state.readOnly) {
+        return false
+    }
+    // This will return true if the autocomplete select popup is open
+    if (accept_autocomplete_command?.run?.(cm)) {
+        return true
+    }
+
+    const anySelect = cm.state.selection.ranges.some((r) => !r.empty)
+    if (anySelect) {
+        return indentMore(cm)
+    } else {
+        const unit = cm.state.facet(indentUnit)
+        cm.dispatch(
+            cm.state.changeByRange((selection) => ({
+                range: EditorSelection.cursor(selection.from + unit.length),
+                changes: { from: selection.from, to: selection.to, insert: unit },
+            }))
+        )
+        return true
+    }
+}
 
 let line_and_ch_to_cm6_position = (/** @type {import("../imports/CodemirrorPlutoSetup.js").Text} */ doc, { line, ch }) => {
     let line_object = doc.line(_.clamp(line + 1, 1, doc.lines))
@@ -285,6 +319,50 @@ export const CellInput = ({
         }, [on_change])
     )
 
+    // Settings apply to open editors at once: one compartment holds every
+    // extension that reads them.
+    const [settings, set_settings] = useState(get_settings)
+    useEventListener(window, "ember settings changed", () => set_settings(get_settings()), [])
+    let settings_compartment = useCompartment(
+        newcm_ref,
+        useMemo(
+            () => [
+                IndentFallback.of(indent_unit_of_setting(settings.CM_INDENT_UNIT)),
+                pluto_autocomplete({
+                    request_autocomplete: async ({ query_full }) => {
+                        let response = await timeout_promise(
+                            pluto_actions.send("complete", { query_full }, { notebook_id: notebook_id_ref.current }),
+                            5000
+                        ).catch(console.warn)
+                        if (!response) return null
+
+                        let { message } = response
+
+                        return {
+                            start: utf8index_to_ut16index(query_full, message.start),
+                            stop: utf8index_to_ut16index(query_full, message.stop),
+                            results: message.results,
+                            too_long: message.too_long,
+                        }
+                    },
+                    on_update_doc_query,
+                    // Notebook names a cell doesn't read yet still show (the
+                    // engine's downstream_cells_map has an empty array, not a
+                    // missing entry, ui-2.md 4): there is no separate
+                    // "unsubmitted local definition" concept for R.
+                    request_unsubmitted_global_definitions: () => ({}),
+                    cell_id,
+                    activate_on_typing: settings.CM_AUTOCOMPLETE_ON_TYPE,
+                    tab_completes: settings.CM_TAB_KEY_FOR_INDENT,
+                }),
+                // After the autocomplete keymap, whose Tab accepts a completion first.
+                keymap.of(settings.CM_TAB_KEY_FOR_INDENT ? [{ key: "Tab", run: keyMapTab, shift: indentLess }] : []),
+                EditorView.contentAttributes.of({ spellcheck: String(settings.CM_SPELLCHECK && kind === "markdown") }),
+            ],
+            [settings.CM_INDENT_UNIT, settings.CM_AUTOCOMPLETE_ON_TYPE, settings.CM_TAB_KEY_FOR_INDENT, settings.CM_SPELLCHECK, kind]
+        )
+    )
+
     const [show_static_fake_state, set_show_static_fake] = useState(!skip_static_fake)
 
     const show_static_fake_excuses_ref = useRef(false)
@@ -362,32 +440,6 @@ export const CellInput = ({
             return true
         }
 
-        let accept_autocomplete_command = autocomplete.completionKeymap.find((keybinding) => keybinding.key === "Enter")
-        let keyMapTab = (/** @type {EditorView} */ cm) => {
-            // I think this only gets called when we are not in an autocomplete situation, otherwise `tab_completion_command` is called. I think it only happens when you have a selection.
-
-            if (cm.state.readOnly) {
-                return false
-            }
-            // This will return true if the autocomplete select popup is open
-            if (accept_autocomplete_command?.run?.(cm)) {
-                return true
-            }
-
-            const anySelect = cm.state.selection.ranges.some((r) => !r.empty)
-            if (anySelect) {
-                return indentMore(cm)
-            } else {
-                const unit = cm.state.facet(indentUnit)
-                cm.dispatch(
-                    cm.state.changeByRange((selection) => ({
-                        range: EditorSelection.cursor(selection.from + unit.length),
-                        changes: { from: selection.from, to: selection.to, insert: unit },
-                    }))
-                )
-                return true
-            }
-        }
         const keyMapDelete = (/** @type {EditorView} */ cm) => {
             if (cm.state.facet(EditorState.readOnly)) {
                 return false
@@ -459,7 +511,6 @@ export const CellInput = ({
             { key: "Shift-Enter", run: keyMapSubmit },
             { key: "Ctrl-Enter", mac: "Cmd-Enter", run: keyMapRun },
             { key: "Ctrl-Enter", run: keyMapRun },
-            ...(get_settings().CM_TAB_KEY_FOR_INDENT ? [{ key: "Tab", run: keyMapTab, shift: indentLess }] : []),
             // TODO Move Delete and backspace to cell movement plugin
             { key: "Delete", run: keyMapDelete },
             { key: "Ctrl-Delete", run: keyMapDelete },
@@ -586,31 +637,7 @@ export const CellInput = ({
                     // would misread `#' ## Title` as an R comment followed
                     // by a markdown heading instead of one text line.
                     r(),
-                    pluto_autocomplete({
-                        request_autocomplete: async ({ query_full }) => {
-                            let response = await timeout_promise(
-                                pluto_actions.send("complete", { query_full }, { notebook_id: notebook_id_ref.current }),
-                                5000
-                            ).catch(console.warn)
-                            if (!response) return null
-
-                            let { message } = response
-
-                            return {
-                                start: utf8index_to_ut16index(query_full, message.start),
-                                stop: utf8index_to_ut16index(query_full, message.stop),
-                                results: message.results,
-                                too_long: message.too_long,
-                            }
-                        },
-                        on_update_doc_query,
-                        // Notebook names a cell doesn't read yet still show (the
-                        // engine's downstream_cells_map has an empty array, not a
-                        // missing entry, ui-2.md 4): there is no separate
-                        // "unsubmitted local definition" concept for R.
-                        request_unsubmitted_global_definitions: () => ({}),
-                        cell_id,
-                    }),
+                    settings_compartment,
 
                     tooltips({ position: "absolute" }),
                     signature_hint({
@@ -636,8 +663,6 @@ export const CellInput = ({
                     placeholder(t("t_cell_input_placeholder")),
                     hash_quote_continue,
                     hash_quote_highlight,
-
-                    EditorView.contentAttributes.of({ spellcheck: String(get_settings().CM_SPELLCHECK) }),
 
                     EditorView.lineWrapping,
                     awesome_line_wrapping,

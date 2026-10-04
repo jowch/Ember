@@ -21,8 +21,7 @@
        CSS and CodeMirror) are in ember-forms.css: both this page and the
        start page load that file, and neither should define them twice. */
 
-    --custom-code-font-stack: "";
-    --code-font-stack: var(--julia-mono-font-stack); /* Will be overriden later */
+    --code-font-stack: var(--ember-code-font);
 }
 
 /* GENERAL PAGE LAYOUT */
@@ -107,7 +106,7 @@ pluto-notebook {
     display: block;
     background: var(--main-bg-color);
 
-    --code-font-stack: var(--custom-code-font-stack), var(--julia-mono-font-stack);
+    --code-font-stack: var(--ember-code-font);
 }
 
 /* STANDARD HTML ELEMENTS */
@@ -693,136 +692,25 @@ dialog.export-html-dialog > div.final button {
     cursor: pointer;
 }
 
-dialog.psettings {
-    border-radius: 0.7rem;
-    width: min(34rem, 90vw);
-    background: var(--settings-bg-color);
-    color: var(--pluto-output-color);
-}
-dialog.psettings::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 7.1em;
-    background: var(--settings-header-bg-color);
-    z-index: -1;
-}
-
-.psettings label {
-    display: flex;
-    flex-direction: row;
-    gap: 1em;
-    justify-content: space-between;
-    flex-wrap: nowrap;
-    cursor: pointer;
-    padding: 1em 0.7em;
-    border-radius: 0.7rem;
-    align-items: center;
-}
-
-.big-list-of-settings {
-    display: flex;
-    flex-direction: column;
-    gap: 2rem;
-}
-
-.psettings input[type="checkbox"] {
-    font-size: 26px;
-    width: 20px;
-    height: 20px;
-    flex: 0 0 auto;
-    /* scale: 1.7; */
-}
-
-.psettings label:hover {
-    background: var(--shoulder-hover-bg-color);
-}
-
-.psettings :is(h4, p) {
-    margin: 0;
-}
-
-.psettings :is(h1, h2, h4) {
-    color: var(--pluto-output-h-color);
-}
-
-.psettings h1 {
-    margin-block-start: 1rem;
-    margin-block-end: 0rem;
-    font-size: 3rem;
-}
-.psettings h2 {
-    margin-block-start: 5rem;
-    margin-block-end: 1rem;
-    font-size: 2rem;
-}
-.psettings .description-2 {
-    color: var(--settings-p2-color);
-    margin-top: 0.7em;
-}
-
 dialog.confirm-before-long-runtime {
-    color: var(--pluto-output-color);
+    width: min(360px, calc(100vw - 32px));
+    padding: 20px;
+    border: 1px solid var(--ember-line);
     border-radius: 10px;
-    max-width: 37ch;
-    background: var(--confirm-runtime-bg);
+    box-shadow: var(--ember-shadow);
+    background: var(--ember-panel);
+    color: var(--ember-text);
+    font-family: var(--ember-ui-font);
     bottom: 0.8rem;
     left: 0.8rem;
     top: auto;
     right: auto;
-    box-shadow: 0 0 20px #00000059;
 }
 
-.confirm-before-long-runtime p.bonus-info {
-    font-size: 0.9em;
-    margin-block-end: 2rem;
-    padding: 1em 1.2em;
-    background: var(--confirm-runtime-bonus-bg);
-    border-radius: 3px;
-    border-inline-start: 3px solid var(--confirm-runtime-bonus-border);
-}
-
-.confirm-before-long-runtime .final button {
-    padding: 0.5em 0.9em;
-    border: 2px solid var(--confirm-runtime-button-border);
-    background: var(--confirm-runtime-button-bg);
-    font-weight: bold;
-}
-
-.confirm-before-long-runtime .final button.final-yes {
-    background: var(--confirm-runtime-yes-bg);
-    color: var(--confirm-runtime-yes-color);
-    border-color: var(--confirm-runtime-yes-border);
-    position: relative;
-    overflow: hidden;
-}
-
-.confirm-before-long-runtime .final button.final-yes:not(:focus-within) kbd {
-    opacity: 0;
-}
-
-.confirm-before-long-runtime .final button kbd {
-    opacity: 0.8;
-    font-size: 0.8em;
-}
-
-.confirm-before-long-runtime .final button.final-yes.will-auto-accept::before {
-    content: "";
-    display: block;
-    background: var(--confirm-runtime-yes-progress);
-    translate: calc(var(--auto-click-progress) * 100% - 100%) 0%;
-    left: 0;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    position: absolute;
-}
-
-.confirm-before-long-runtime .final button.final-yes span {
-    translate: 0 0;
-    display: inline-block;
+.confirm-before-long-runtime p {
+    margin: 0 0 16px;
+    font-size: 13.5px;
+    line-height: 1.5;
 }
 
 nav#at_the_top {
@@ -2886,25 +2774,6 @@ header#pluto-nav .desktop_picker_group button {
     flex-shrink: 0;
 }
 
-/* LANGUAGE PICKER */
-
-.psettings select {
-    background: var(--white);
-    border: 2px solid var(--footer-input-border-color);
-    border-radius: 3px;
-    padding: 2px 4px;
-    font-family: inherit;
-    font-size: 0.8em;
-    color: var(--footer-color);
-    cursor: pointer;
-    font-family: var(--system-ui-font-stack);
-}
-
-.psettings select:focus {
-    outline: 2px solid var(--footer-filepicker-focus-color);
-    outline-offset: 1px;
-}
-
 /* UNDO DELETED CELL */
 
 nav#undo_delete {
@@ -3698,6 +3567,204 @@ pluto-header-id-copy:focus {
     flex-direction: column;
     gap: 16px;
     padding: 20px;
+}
+
+.ember-dialog-title-note {
+    font-size: 12.5px;
+    font-weight: 400;
+    color: var(--ember-muted);
+}
+
+/* Settings (components/Settings.js), from board Menus6. */
+
+.ember-dialog.psettings {
+    width: min(562px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px);
+    background: var(--ember-panel);
+    color: var(--ember-text);
+    font-family: var(--ember-ui-font);
+}
+
+.psettings .ember-dialog-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    padding: 16px 22px 4px;
+    font-size: 17px;
+    font-weight: 600;
+}
+
+.psettings .ember-dialog-body {
+    gap: 0;
+    padding: 0;
+}
+
+.ember-settings-section {
+    display: flex;
+    flex-direction: column;
+    padding: 4px 22px 10px;
+}
+
+.ember-settings-section h3 {
+    margin: 12px 0 4px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ember-muted);
+}
+
+.ember-settings-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 16px;
+    align-items: center;
+    padding: 9px 0;
+    border-top: 1px solid var(--ember-line);
+}
+
+.ember-settings-section h3 + .ember-settings-row {
+    border-top: 0;
+}
+
+.ember-settings-row b {
+    display: block;
+    font-size: 13.5px;
+    font-weight: 500;
+}
+
+.ember-settings-row small {
+    display: block;
+    margin-top: 2px;
+    font-size: 12px;
+    line-height: 1.4;
+    color: var(--ember-muted);
+}
+
+.ember-settings-blocked {
+    display: block;
+    color: var(--ember-amber);
+}
+
+.ember-settings-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.ember-settings-unit {
+    font-size: 12.5px;
+    color: var(--ember-muted);
+}
+
+.ember-seg {
+    display: inline-flex;
+    border: 1px solid var(--ember-line);
+    border-radius: 7px;
+    overflow: hidden;
+    background: var(--ember-page);
+}
+
+.ember-seg button {
+    font: inherit;
+    font-size: 12.5px;
+    padding: 5px 10px;
+    color: var(--ember-muted);
+    background: transparent;
+    border: 0;
+    border-left: 1px solid var(--ember-line);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.ember-seg button:first-child {
+    border-left: 0;
+}
+
+.ember-seg button[aria-checked="true"] {
+    background: var(--ember-panel);
+    color: var(--ember-text);
+    font-weight: 600;
+    box-shadow: inset 0 -2px 0 var(--ember-accent);
+}
+
+.ember-seg button:focus-visible {
+    outline: 2px solid var(--ember-focus-ring);
+    outline-offset: -2px;
+}
+
+.ember-switch {
+    position: relative;
+    display: block;
+    width: 32px;
+    height: 18px;
+    padding: 0;
+    border: 0;
+    border-radius: 9px;
+    background: var(--ember-line);
+    cursor: pointer;
+}
+
+.ember-switch::after {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+}
+
+.ember-switch[aria-checked="true"] {
+    background: var(--ember-accent);
+}
+
+.ember-switch[aria-checked="true"]::after {
+    left: 16px;
+}
+
+.ember-seconds {
+    width: 64px;
+    height: 28px;
+    box-sizing: border-box;
+    padding: 0 9px;
+    border: 1px solid var(--ember-line);
+    border-radius: 6px;
+    background: var(--ember-page);
+    color: var(--ember-text);
+    font-family: var(--ember-code-font);
+    font-size: 12.5px;
+    text-align: right;
+    -moz-appearance: textfield;
+}
+
+.ember-seconds::-webkit-inner-spin-button,
+.ember-seconds::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+:is(.ember-switch, .ember-seconds):focus-visible {
+    outline: 2px solid var(--ember-focus-ring);
+    outline-offset: 2px;
+}
+
+.ember-settings-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 22px 16px;
+    border-top: 1px solid var(--ember-line);
+}
+
+.ember-btn.ember-settings-reset {
+    padding: 0;
+    border-color: transparent;
+    background: transparent;
+    color: var(--ember-muted);
 }
 
 .ember-menuitem:focus-visible {

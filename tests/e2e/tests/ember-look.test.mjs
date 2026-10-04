@@ -226,11 +226,8 @@ test("look: with no custom code font set, cm-content renders in IBM Plex Mono, n
   await openNotebook(page, server.origin, server.secret, notebook);
 
   // getComputedStyle's font-family is the whole specified list, not the
-  // one family actually rendering -- --custom-code-font-stack's unset
-  // value is the quoted empty string (editor.css's :root default, a
-  // legal placeholder that intentionally matches nothing), so the first
-  // *meaningful* family is what matters here, not literally the first
-  // entry.
+  // one family actually rendering, so the first named family is what
+  // matters here.
   const families = await page.locator(`${cellSelector("B")} .cm-content`).evaluate((el) => {
     return getComputedStyle(el).fontFamily.split(",").map((f) => f.trim().replace(/^["']|["']$/g, ""));
   });

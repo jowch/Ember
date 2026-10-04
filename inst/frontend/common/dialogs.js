@@ -14,14 +14,19 @@ let next_dialog_id = 1
  * opened, saved explicitly because browsers differ on restoring it
  * themselves.
  *
+ * `title_note` is a short line beside the title, not part of the dialog's
+ * name.
+ *
  * @param {{
  *   title?: string,
+ *   title_note?: string,
+ *   class_name?: string,
  *   on_close: () => void,
  *   role?: "dialog" | "alertdialog",
  *   render: (ctx: { close: () => void, describedby_id: string }) => import("../imports/Preact.js").ReactElement,
  * }} props
  */
-export const Dialog = ({ title, on_close, role = "dialog", render: render_body }) => {
+export const Dialog = ({ title, title_note, class_name, on_close, role = "dialog", render: render_body }) => {
     const [dialog_ref, open, close, _toggle] = useDialog()
     const opener_ref = useRef(/** @type {Element?} */ (null))
     const ids_ref = useRef(/** @type {{ title: string, body: string }?} */ (null))
@@ -75,13 +80,18 @@ export const Dialog = ({ title, on_close, role = "dialog", render: render_body }
 
     return html`
         <dialog
-            class="ember-dialog"
+            class=${class_name == null ? "ember-dialog" : `ember-dialog ${class_name}`}
             ref=${dialog_ref}
             role=${role}
             aria-labelledby=${title != null ? ids_ref.current.title : undefined}
             aria-describedby=${ids_ref.current.body}
         >
-            ${title != null ? html`<header id=${ids_ref.current.title} class="ember-dialog-title">${title}</header>` : null}
+            ${title != null
+                ? html`<header class="ember-dialog-title">
+                      <span id=${ids_ref.current.title}>${title}</span>
+                      ${title_note != null ? html`<span class="ember-dialog-title-note">${title_note}</span>` : null}
+                  </header>`
+                : null}
             <div class="ember-dialog-body">${render_body({ close, describedby_id: ids_ref.current.body })}</div>
         </dialog>
     `
