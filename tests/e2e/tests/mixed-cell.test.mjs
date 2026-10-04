@@ -17,7 +17,10 @@ test("mixed cell: shows the mixed error and a Split button; clicking it splits t
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  await setCellCode(page, "B", "#' A note.\nsum(x)");
+  // Enter on a #' line starts the next with "#' ", which the Backspaces remove.
+  await setCellCode(page, "B", "#' A note.\n");
+  for (let i = 0; i < 3; i++) await page.keyboard.press("Backspace");
+  await page.keyboard.type("sum(x)", { delay: 2 });
   // Shift+Enter both commits the edit and allows execution; B can't
   // actually run (its own graph error), so it just shows the error.
   await runCell(page, "B");

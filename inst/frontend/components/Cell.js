@@ -11,6 +11,7 @@ import { useEventListener } from "../common/useEventListener.js"
 import { t, th } from "../common/lang.js"
 import { CircleIcon, ClockIcon, SlashCircleIcon } from "../common/Icons.js"
 import { stale_names } from "../common/stale_names.js"
+import { EditorSelection, EditorView } from "../imports/CodemirrorPlutoSetup.js"
 
 /**
  * The "Stale" chip's text: "Stale" alone when no names are known, else
@@ -179,9 +180,20 @@ export const Cell = ({
         if (!inspecting_hidden_code) set_inspecting_hidden_code_here(false)
     }, [inspecting_hidden_code])
 
+    // A text cell's source, opened by clicking its text. Page state only,
+    // not the fold flag, so reading the source doesn't rewrite the file.
+    const [text_open, set_text_open] = useState(false)
+
     // during the initial page load, force_hide_input === true, so that cell outputs render fast, and codemirrors are loaded after
     let show_input =
-        !force_hide_input && (code_not_trusted_yet || errored || class_code_differs || cm_forced_focus != null || !code_folded || inspecting_hidden_code_here)
+        !force_hide_input &&
+        (code_not_trusted_yet ||
+            errored ||
+            class_code_differs ||
+            cm_forced_focus != null ||
+            !code_folded ||
+            inspecting_hidden_code_here ||
+            (kind === "markdown" && text_open))
 
     const [line_heights, set_line_heights] = useState([15])
     const node_ref = useRef(/** @type {HTMLElement?} */ (null))
@@ -204,6 +216,7 @@ export const Cell = ({
         pluto_actions.confirm_delete_multiple(pluto_actions.get_selected_cells(cell_id, selected))
     }, [pluto_actions, selected, cell_id])
     const on_submit = useCallback(async () => {
+        set_text_open(false)
         if (!disable_input_ref.current) {
             return await pluto_actions.set_and_run_multiple([cell_id])
         }
@@ -258,6 +271,30 @@ export const Cell = ({
         },
         [pluto_actions, cell_id, on_submit, process_waiting_for_permission]
     )
+
+    const on_text_click = (e) => {
+        if (kind !== "markdown" || text_open || disable_input) return
+        const output = e.target.closest("pluto-output")
+        if (output == null || output.parentElement !== node_ref.current) return
+        if (e.target.closest("a, button") || !(window.getSelection()?.isCollapsed ?? true)) return
+        set_text_open(true)
+    }
+    useLayoutEffect(() => {
+        if (!text_open) return
+        const dom = node_ref.current?.querySelector("pluto-input .cm-editor")
+        const view = dom == null ? null : EditorView.findFromDOM(/** @type {HTMLElement} */ (dom))
+        if (view == null) return
+        view.focus()
+        // The editor was hidden until now; a selection set before CodeMirror
+        // has measured it (a frame or two) doesn't stick.
+        let frame = requestAnimationFrame(() => {
+            frame = requestAnimationFrame(() => view.dispatch({ selection: EditorSelection.cursor(view.state.doc.length), scrollIntoView: true }))
+        })
+        return () => cancelAnimationFrame(frame)
+    }, [text_open])
+    const on_text_keydown = (e) => {
+        if (e.key === "Escape" && !e.defaultPrevented && text_open && (cell_input_local?.code ?? code) === code) set_text_open(false)
+    }
 
     const any_logs = useMemo(() => !_.isEmpty(logs), [logs])
 
@@ -354,6 +391,8 @@ export const Cell = ({
             })}
             data-rail=${rail}
             id=${cell_id}
+            onClick=${on_text_click}
+            onKeyDown=${on_text_keydown}
         >
             ${variables.map((name) => html`<span id=${encodeURI(name)} />`)}
             <button
@@ -392,7 +431,7 @@ export const Cell = ({
                 cm_forced_focus=${cm_forced_focus}
                 set_cm_forced_focus=${set_cm_forced_focus}
                 show_input=${show_input}
-                skip_static_fake=${is_first_cell}
+                skip_static_fake=${is_first_cell || (kind === "markdown" && text_open)}
                 on_submit=${on_submit}
                 on_delete=${on_delete}
                 on_add_after=${on_add_after}

@@ -42,6 +42,11 @@ data.frame(a = c(1, NA), b = c("x", NA))
 # %% id=VEC
 list(a = 1, long = 1:100, sub = list(c = "x"))
 
+# %% id=TXT
+#' ## Results
+#'
+#' One more than x is `r x + 1`, as [the docs](https://example.com/) say.
+
 # /// cell order
 # S
 # A
@@ -54,4 +59,5 @@ list(a = 1, long = 1:100, sub = list(c = "x"))
 # W
 # NA
 # VEC
+# TXT folded
 # ///

@@ -912,6 +912,93 @@ pluto-editor.disable_ui pluto-cell.not_run_yet > ember-chip {
     display: none;
 }
 
+/* ---- Text cells (ui-3.md "Text cells"; ui-3-plan.md 6.8) -------------- */
+
+pluto-cell.text_cell > pluto-output {
+    padding-top: 2px;
+    font-family: var(--ember-prose-font);
+    font-size: 16px;
+    line-height: 1.6;
+    color: var(--ember-text);
+}
+pluto-cell.text_cell > pluto-output > .raw-html-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+pluto-cell.text_cell > pluto-output > .raw-html-wrapper > * {
+    margin: 0;
+}
+pluto-cell.text_cell > pluto-output :is(h1, h2, h3, h4, h5, h6) {
+    margin: 0;
+    border: none;
+    font-family: inherit;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--ember-text);
+}
+pluto-cell.text_cell > pluto-output h1 {
+    font-size: 26px;
+}
+pluto-cell.text_cell > pluto-output h2 {
+    font-size: 22px;
+}
+pluto-cell.text_cell > pluto-output h3 {
+    font-size: 18px;
+}
+pluto-cell.text_cell > pluto-output :is(h4, h5, h6) {
+    font-size: 16px;
+}
+pluto-cell.text_cell > pluto-output p {
+    margin: 0;
+    font-size: inherit;
+    line-height: inherit;
+    word-spacing: normal;
+}
+pluto-cell.text_cell > pluto-output a {
+    color: var(--ember-accent);
+}
+
+/* Background only: copying the text gives the plain value. */
+pluto-output .ember-inline {
+    background: var(--ember-accent-bg);
+    border-radius: 4px;
+    padding: 0 4px;
+}
+
+/* Not faded as a folded code cell's open source is (editor.css). */
+pluto-cell.text_cell.code_folded.show_input > pluto-input:not(:focus-within) {
+    opacity: 1;
+}
+pluto-cell.text_cell.show_input > pluto-input .cm-editor {
+    box-shadow: 0 0 0 1px var(--ember-line);
+}
+/* A text cell's source is folded by design, so the folded code cell's
+   "hidden code" note (editor.css) doesn't apply. */
+pluto-editor pluto-cell.text_cell.code_folded.show_input > pluto-input > div.preview_hidden_code_info {
+    display: none;
+}
+
+/* The R grammar reads a `#'` line as a comment; text_cell.js marks the
+   line and its parts so they take these colours instead. */
+pluto-input .cm-line.cm-ember-hq-line {
+    color: var(--ember-text);
+}
+pluto-input .cm-line.cm-ember-hq-line span {
+    color: inherit;
+    font-style: normal;
+}
+pluto-input .cm-line.cm-ember-hq-line .cm-ember-hq {
+    color: var(--ember-syn-com);
+}
+pluto-input .cm-line.cm-ember-hq-line :is(.cm-ember-md-h, .cm-ember-md-b) {
+    color: var(--ember-syn-kw);
+}
+pluto-input .cm-line.cm-ember-hq-line .cm-ember-r {
+    color: var(--ember-ansi-cyan);
+}
+
 /* ---- Figures (ui-3.md "Figures") --------------------------------------- */
 
 /* A plot shows exactly as R drew it, in either theme. */

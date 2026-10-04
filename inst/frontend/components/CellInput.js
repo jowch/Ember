@@ -69,6 +69,7 @@ import { alt_or_options_name } from "../common/KeyboardShortcuts.js"
 import { MoreIcon } from "../common/Icons.js"
 import { get_settings } from "./Settings.js"
 import { highlightKwargsPlugin } from "./CellInput/highlight_kwargs.js"
+import { hash_quote_continue, hash_quote_highlight } from "./CellInput/text_cell.js"
 import { is_dark_theme } from "../common/theme.js"
 
 // @ts-ignore
@@ -626,6 +627,8 @@ export const CellInput = ({
                     }),
                     keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, ...foldKeymap]),
                     placeholder(t("t_cell_input_placeholder")),
+                    hash_quote_continue,
+                    hash_quote_highlight,
 
                     EditorView.contentAttributes.of({ spellcheck: String(get_settings().CM_SPELLCHECK) }),
 

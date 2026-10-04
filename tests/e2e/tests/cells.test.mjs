@@ -781,6 +781,68 @@ test("figures: no border, background or filter in either theme; at most the colu
   assertNoProblems(page);
 });
 
+test("text cells: serif text with tinted values that copy as plain text; click opens the source, #' continues, Shift + Enter closes (150)", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-text.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await page.emulateMedia({ colorScheme: "light" });
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await runShown(page, "A");
+  const cell = cellSelector("TXT");
+  const out = `${cell} > pluto-output`;
+  const editor = `${cell} pluto-input .cm-editor`;
+  const isOpen = () => page.locator(cell).evaluate((el) => el.classList.contains("show_input"));
+  await page.locator(cell).scrollIntoViewIfNeeded();
+  assert.equal(await isOpen(), false, "a text cell starts with its source hidden");
+
+  // Keep the link's navigation from leaving the page; the cell still sees the click.
+  await page.evaluate(() => document.addEventListener("click", (e) => { if (e.target.closest("a")) e.preventDefault(); }, true));
+  await page.locator(`${out} a`).click();
+  assert.equal(await isOpen(), false, "clicking a link doesn't open the source");
+
+  await page.locator(`${out} h2`).click();
+  await page.locator(editor).waitFor({ state: "visible", timeout: 5000 });
+  assert.equal(await page.locator(`${editor} .cm-ember-md-h`).innerText(), "## Results");
+  assert.equal(await page.locator(`${cell} .preview_hidden_code_info`).isVisible(), false, "no hidden-code note on an open text cell");
+  assert.equal(await computed(page, `${editor} .cm-ember-md-h`, "color"), await tokenColor(page, "--ember-syn-kw"));
+  assert.equal(await computed(page, `${editor} .cm-ember-r`, "color"), await tokenColor(page, "--ember-ansi-cyan"));
+  await page.keyboard.press("Escape");
+  assert.equal(await isOpen(), false, "Esc closes the unchanged source");
+
+  await page.locator(`${out} p`).click({ position: { x: 5, y: 5 } });
+  await page.locator(editor).waitFor({ state: "visible", timeout: 5000 });
+  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, editor, { timeout: 5000 });
+  const source = () => page.locator(editor).evaluate((el) => el.CodeMirror.getValue().split("\n"));
+  const before = await source();
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  const after = await source();
+  assert.equal(after.length, before.length + 1, "Enter adds one line");
+  assert.deepEqual(after.filter((line) => line === "#' "), ["#' "], "the new line starts with #' and a space");
+  await page.keyboard.press("Shift+Enter");
+  await page.waitForFunction((sel) => !document.querySelector(sel).classList.contains("show_input"), cell, { timeout: 5000 });
+
+  const inline = `${out} span.ember-inline`;
+  await page.waitForFunction((sel) => document.querySelector(sel)?.textContent === "2", inline, { timeout: 30000 });
+  assert.match(await computed(page, `${out} h2`, "fontFamily"), /^"Source Serif 4"/);
+  assert.equal(await computed(page, inline, "backgroundColor"), await tokenColor(page, "--ember-accent-bg"));
+  const pseudo = await page.locator(inline).evaluate((el) => [getComputedStyle(el, "::before").content, getComputedStyle(el, "::after").content]);
+  assert.deepEqual(pseudo, ["none", "none"]);
+  const copied = await page.locator(`${out} p`).evaluate((p) => {
+    const range = document.createRange();
+    range.selectNodeContents(p);
+    getSelection().removeAllRanges();
+    getSelection().addRange(range);
+    return getSelection().toString();
+  });
+  assert.equal(copied, "One more than x is 2, as the docs say.");
+
+  assertNoProblems(page);
+});
+
 // Geometry from the Cells and Insert5 boards (ui-3.md "Cell anatomy",
 // "Run button", "Cell menu", "Adding cells").
 

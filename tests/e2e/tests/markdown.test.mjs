@@ -18,7 +18,8 @@ test("markdown: editing and running a text cell renders the new text", async (t)
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  await setCellCode(page, "MD", "#' # Changed\n#'\n#' New text.");
+  // Enter on a #' line starts the next with "#' ".
+  await setCellCode(page, "MD", "#' # Changed\n\nNew text.");
   await runCell(page, "MD");
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("Changed"),
