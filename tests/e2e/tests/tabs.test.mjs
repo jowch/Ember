@@ -4,6 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
+import fs from "node:fs";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, setCellCode, cellSelector } from "../browser.mjs";
 
@@ -114,7 +115,13 @@ test("Help tab: back/forward over the queries shown (122)", async (t) => {
     () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Fitting Linear Models"),
     null, { timeout: 15000 });
 
-  await page.locator("#live-docs-search").fill("mean");
+  // One key at a time (not .fill(), which sets the value in one shot): a
+  // history entry must come only from the final, successful "mean" reply,
+  // not from every partial keystroke along the way ("m", "me", "mea").
+  const search = page.locator("#live-docs-search");
+  await search.click();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+  await search.pressSequentially("mean", { delay: 30 });
   await page.waitForFunction(
     () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Arithmetic Mean"),
     null, { timeout: 15000 });
@@ -128,6 +135,51 @@ test("Help tab: back/forward over the queries shown (122)", async (t) => {
   await page.waitForFunction(
     () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Arithmetic Mean"),
     null, { timeout: 15000 });
+
+  assertNoProblems(page);
+});
+
+// 117 (Status tab part; the header portion is header.test.mjs). lazy.R
+// opens with "Mark them stale..." checked; switching to "Rerun..." and
+// reloading keeps it checked and removes the file's on_cell_change line;
+// Version starts with "4." and a Started time is shown.
+test("Status tab: the autorun/lazy radio reflects and sets on_cell_change; Version and Started show (117)", async (t) => {
+  const notebook = tempNotebook("lazy.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "tabs-117.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await runCell(page, "A");
+  await page.waitForFunction(
+    () => window.editor_state?.notebook?.cell_results?.A?.output?.last_run_timestamp > 0,
+    null, { timeout: 30000 });
+
+  await open_panel(page, "process");
+  await page.waitForSelector("#helpbox-wrapper.open");
+
+  const lazy_radio = page.locator('#ember-status-tab input[name="ember-on-cell-change"]').nth(1);
+  const autorun_radio = page.locator('#ember-status-tab input[name="ember-on-cell-change"]').nth(0);
+  await page.waitForFunction(() => document.querySelectorAll('#ember-status-tab input[name="ember-on-cell-change"]')[1]?.checked === true);
+  assert.ok(await lazy_radio.isChecked(), "lazy.R opens with \"Mark them stale...\" checked");
+
+  const status_text = await page.locator("#ember-status-tab").innerText();
+  assert.match(status_text, /R 4\./, "Version starts with \"4.\"");
+  assert.match(status_text, /just now|\d+ minutes? ago/, "a Started time is shown");
+
+  await autorun_radio.check();
+  await page.waitForFunction(() => document.querySelectorAll('#ember-status-tab input[name="ember-on-cell-change"]')[0]?.checked === true);
+
+  await page.reload();
+  await page.waitForSelector("pluto-cell", { timeout: 30000 });
+  await open_panel(page, "process");
+  await page.waitForSelector("#helpbox-wrapper.open");
+  await page.waitForFunction(() => document.querySelectorAll('#ember-status-tab input[name="ember-on-cell-change"]')[0]?.checked === true);
+  assert.ok(await autorun_radio.isChecked(), "the choice survives a reload");
+
+  const file_text = fs.readFileSync(notebook, "utf8");
+  assert.doesNotMatch(file_text, /on_cell_change/, "the file has no on_cell_change line once it's back to the default");
 
   assertNoProblems(page);
 });

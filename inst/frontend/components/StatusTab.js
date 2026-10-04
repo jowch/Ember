@@ -2,7 +2,7 @@ import { html, useContext, useEffect, useState } from "../imports/Preact.js"
 
 import { prettytime, useMillisSinceTruthy } from "./RunArea.js"
 import { scroll_cell_into_view } from "./Scroller.js"
-import { r_status } from "./Header.js"
+import { use_r_status } from "./Header.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { t } from "../common/lang.js"
 
@@ -38,16 +38,21 @@ const useStartedAgo = (/** @type {number?} */ started_at, /** @type {number} */ 
  *
  * @param {{
  * notebook: import("./Editor.js").NotebookData,
+ * connected: boolean,
  * my_clock_is_ahead_by: number,
  * on_restart: () => void,
  * }} props
  */
-export const StatusTab = ({ notebook, my_clock_is_ahead_by, on_restart }) => {
+export const StatusTab = ({ notebook, connected, my_clock_is_ahead_by, on_restart }) => {
     const pluto_actions = useContext(PlutoActionsContext)
-    const status = r_status({ connected: true, notebook })
+    const status = use_r_status({ connected, notebook })
     const busy = notebook.ember?.process === "busy"
 
-    const local_running_ms = useMillisSinceTruthy(busy)
+    // The running cell's own start (ui-3-plan.md piece 5's "Status tab"),
+    // not just "R is busy": two cells back to back without R ever going
+    // idle in between must not add up as one continuous run.
+    const running_id = notebook.cell_order.find((id) => notebook.cell_results[id]?.running)
+    const local_running_ms = useMillisSinceTruthy(running_id ?? false)
     const running_seconds = local_running_ms == null ? null : local_running_ms / 1000
 
     const started_ago = useStartedAgo(notebook.ember?.worker_started_at ?? null, my_clock_is_ahead_by)
@@ -56,11 +61,12 @@ export const StatusTab = ({ notebook, my_clock_is_ahead_by, on_restart }) => {
 
     const cells = notebook.cell_order.length
     const not_run = notebook.ember?.not_run ?? 0
-    const errored_entry = Object.values(notebook.cell_results).find((c) => c.errored)
-    const errors = Object.values(notebook.cell_results).filter((c) => c.errored).length
+    const errored_id = notebook.cell_order.find((id) => notebook.cell_results[id]?.errored)
+    const errors = notebook.cell_order.filter((id) => notebook.cell_results[id]?.errored).length
 
     const restart = notebook.ember?.plan?.restart ?? []
     const on_cell_change = notebook.ember?.on_cell_change ?? "autorun"
+    const read_only = notebook.ember?.read_only === true
 
     return html`
         <div id="ember-status-tab">
@@ -103,14 +109,14 @@ export const StatusTab = ({ notebook, my_clock_is_ahead_by, on_restart }) => {
                     <span>${t("t_ember_status_errors")}</span>
                     <span class="ember-status-count-link">
                         ${errors}
-                        ${errored_entry != null
-                            ? html`<a href="#" onClick=${(e) => { e.preventDefault(); scroll_cell_into_view(errored_entry.cell_id) }}>${t("t_ember_status_go_to_it")}</a>`
+                        ${errored_id != null
+                            ? html`<a href="#" onClick=${(e) => { e.preventDefault(); scroll_cell_into_view(errored_id) }}>${t("t_ember_status_go_to_it")}</a>`
                             : null}
                     </span>
                 </div>
             </section>
             <div class="ember-status-rule"></div>
-            <fieldset class="ember-status-mode">
+            <fieldset class="ember-status-mode" disabled=${read_only}>
                 <legend class="ember-status-h3">${t("t_ember_status_mode_legend")}</legend>
                 <label class="ember-status-radio">
                     <input

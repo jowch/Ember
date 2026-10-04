@@ -770,6 +770,14 @@ test_that("project_ember(): library$log is set only when failed; check_wire() pa
 
 # ---- 101-102: project_ember()'s on_cell_change/r_version/worker_started_at -
 
+test_that("project_ember(): read_only mirrors state$read_only (101)", {
+  s <- fake_state(list(S = cell("")))
+  expect_false(pluto_state(s)$js$ember$read_only)
+
+  s$read_only <- TRUE
+  expect_true(pluto_state(s)$js$ember$read_only)
+})
+
 test_that("project_ember(): on_cell_change, r_version and worker_started_at track the header and the running worker (101)", {
   s <- fake_state(list(S = cell("")))
   js0 <- pluto_state(s)$js
@@ -806,4 +814,31 @@ test_that("a worker restart clears worker_started_at until the next hello (102)"
 
   r3 <- drive(r2$state, wk_hello(r2$state$worker$gen, list(r_version = "4.6.1"), at(5)))
   expect_equal(pluto_state(r3$state)$js$ember$worker_started_at, 5)
+})
+
+test_that("the worker exiting or failing to start clears worker_started_at and r_version (102)", {
+  s <- fake_state(list(S = cell("")))
+  r <- drive(s, ev_run("S", at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(r_version = "4.6.1"), at(3)))
+  js1 <- pluto_state(r$state)$js
+  expect_equal(js1$ember$worker_started_at, 3)
+  expect_equal(js1$ember$r_version, "4.6.1")
+
+  r2 <- drive(r$state, wk_exited(1, 1L, "boom", at(4)))
+  expect_null(r2$state$worker$started_at)
+  expect_null(r2$state$worker$info)
+  js2 <- pluto_state(r2$state)$js
+  expect_null(js2$ember$worker_started_at)
+  expect_null(js2$ember$r_version)
+
+  # A worker that reported a version, then a *next* generation that never
+  # sends hello (fails to start): the previous generation's r_version must
+  # not leak into the new one's "stopped" projection.
+  r3 <- drive(r2$state, ev_run("S", at(5)))
+  gen2 <- r3$state$worker$gen
+  r4 <- drive(r3$state, wk_failed(gen2, "no Rscript", at(6)))
+  expect_null(r4$state$worker$started_at)
+  expect_null(r4$state$worker$info)
+  js4 <- pluto_state(r4$state)$js
+  expect_null(js4$ember$worker_started_at)
+  expect_null(js4$ember$r_version)
 })

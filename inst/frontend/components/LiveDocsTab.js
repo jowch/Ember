@@ -31,23 +31,20 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
     let [history_index, set_history_index] = useState(-1)
     let navigating_ref = useRef(false)
 
-    useEffect(() => {
-        if (navigating_ref.current) {
-            navigating_ref.current = false
-            return
-        }
-        if (desired_doc_query == null || !/[^\s]/.test(desired_doc_query)) return
-        if (history[history_index] === desired_doc_query) return
-        set_history((h) => [...h.slice(0, history_index + 1), desired_doc_query])
-        set_history_index((i) => i + 1)
-    }, [desired_doc_query])
-
     let go_to = (/** @type {number} */ i) => {
         if (i < 0 || i >= history.length) return
         navigating_ref.current = true
+        explicit_ref.current = true
         set_history_index(i)
         on_update_doc_query(history[i])
     }
+
+    // Set by this component's own explicit actions (typing in the search
+    // box, Back/Forward) right before they change desired_doc_query, so
+    // fetch_docs() can tell those apart from the cursor just moving: the
+    // "{{package}} . follows the cursor" line (ui-3-plan.md piece 5's
+    // "Help tab") only makes sense for the latter.
+    let explicit_ref = useRef(false)
 
     // This is all in a single state object so that we can update multiple field simultaneously
     let [state, set_state] = useState({
@@ -55,9 +52,24 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
         searched_query: null,
         body: t("t_live_docs_body"),
         package: null,
+        from_cursor: false,
         loading: false,
     })
     let update_state = (mutation) => set_state(immer((state) => mutation(state)))
+
+    // An entry only when a docs reply actually succeeds (shown_query
+    // changes), not on every keystroke in desired_doc_query: typing
+    // "mean" one key at a time must add one history entry, not four.
+    useEffect(() => {
+        if (state.shown_query == null) return
+        if (navigating_ref.current) {
+            navigating_ref.current = false
+            return
+        }
+        if (history[history_index] === state.shown_query) return
+        set_history((h) => [...h.slice(0, history_index + 1), state.shown_query])
+        set_history_index((i) => i + 1)
+    }, [state.shown_query])
 
     useEffect(() => {
         if (state.loading) {
@@ -84,9 +96,12 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
     useEffect(() => () => clearTimeout(retry_timer.current), [])
 
     let fetch_docs = (new_query) => {
+        const from_cursor = !explicit_ref.current
+        explicit_ref.current = false
         update_state((state) => {
             state.loading = true
             state.searched_query = new_query
+            state.from_cursor = from_cursor
         })
         Promise.race([
             observablehq.Promises.delay(2000, false),
@@ -110,11 +125,16 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
                     return false
                 }
                 if (u.message.status === "👍") {
-                    update_state((state) => {
-                        state.shown_query = new_query
-                        state.body = u.message.doc
-                        state.package = u.message.package ?? null
-                    })
+                    // An empty `doc` is a real "not found" (help_reply_html(),
+                    // R/editor-services.R, from a worker help_lookup() with
+                    // nothing matching): not a page to show or add to history.
+                    if (u.message.doc) {
+                        update_state((state) => {
+                            state.shown_query = new_query
+                            state.body = u.message.doc
+                            state.package = u.message.package ?? null
+                        })
+                    }
                     return true
                 }
             }),
@@ -164,14 +184,19 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
                     id="live-docs-search"
                     placeholder=${t("t_live_docs_search_placeholder")}
                     ref=${live_doc_search_ref}
-                    onInput=${(e) => on_update_doc_query(e.target.value)}
+                    onInput=${(e) => {
+                        explicit_ref.current = true
+                        on_update_doc_query(e.target.value)
+                    }}
                     value=${desired_doc_query}
                     type="search"
                 ></input>
             </div>
         </div>
         <section ref=${(ref) => ref != null && post_process_doc_node(ref, on_update_doc_query)}>
-            ${state.package != null ? html`<p class="ember-help-package">${t("t_ember_help_follows_cursor", { package: state.package })}</p>` : null}
+            ${state.package != null && state.from_cursor
+                ? html`<p class="ember-help-package">${t("t_ember_help_follows_cursor", { package: state.package })}</p>`
+                : null}
             <h1><code>${state.shown_query}</code></h1>
             ${docs_element}
         </section>

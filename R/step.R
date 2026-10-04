@@ -1035,6 +1035,10 @@ reduce_wk_failed <- function(state, event) {
   state$worker$status <- "stopped"
   state$worker$running <- NULL
   state$worker$exit <- list(status = NA_integer_, message = event$message)
+  # No hello ever arrived for this generation, but a previous one may have
+  # left `started_at`/`info` (r_version) behind; a stopped R shows neither.
+  state$worker$started_at <- NULL
+  state$worker$info <- NULL
   state$pending <- character()
   # No process ever started: whatever `loaded` recorded belongs to a worker
   # that no longer exists, and would otherwise look like a conflict against
@@ -1407,6 +1411,10 @@ reduce_wk_exited <- function(state, event) {
   state$worker$running <- NULL
   state$worker$restart_offered <- FALSE
   state$worker$exit <- list(status = event$status, message = event$message)
+  # The process that answered `started_at`/`info` (r_version) is gone; a
+  # stopped R shows neither.
+  state$worker$started_at <- NULL
+  state$worker$info <- NULL
   # A fresh worker has nothing loaded; leaving the old process's `loaded`
   # here would make the next worker's actual (empty) namespace set look
   # like a version conflict the moment it reports anything, restarting it
