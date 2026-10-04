@@ -833,12 +833,16 @@ test('"+": each gap\'s live button is the lower cell\'s .before, and the last ce
     return b ? `${b.closest("pluto-cell").id} ${b.className}` : null;
   }, [x, y]);
 
+  // elementFromPoint only sees the viewport.
+  const show = (id) => page.locator(cellSelector(id)).evaluate((el) => el.scrollIntoView({ block: "center" }));
   for (let i = 1; i < ids.length; i++) {
+    await show(ids[i]);
     const above = await rect(page, cellSelector(ids[i - 1]));
     const below = await rect(page, cellSelector(ids[i]));
     assert.equal(await owner(above.left + 300, (above.bottom + below.top) / 2), `${ids[i]} add_cell before`, `gap above ${ids[i]}`);
   }
   const last = ids[ids.length - 1];
+  await show(last);
   const lastRect = await rect(page, cellSelector(last));
   assert.equal(await owner(lastRect.left + 300, lastRect.bottom + 13), `${last} add_cell after`, "below the last cell");
 
