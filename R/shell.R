@@ -172,6 +172,37 @@ enqueue <- function(nb, event) {
 
 schedule_poll <- function(nb, interval = 0.005) {
   nb$poll_cancel <- later::later(function() poll(nb), interval)
+  nb$poll_interval <- interval
+  invisible(NULL)
+}
+
+#' Seconds until the next poll: fast while the shell is waiting on the
+#' worker (connecting, starting, running, a pending cell or query, bytes
+#' half-read, or anything sent or received in the last second), slow when
+#' nothing is outstanding, since the worker speaks almost only in reply.
+poll_interval <- function(nb, now = Sys.time()) {
+  if (is.null(nb$proc)) return(0.5)
+  st <- nb$state
+  waiting <- is.null(nb$con) ||
+    !identical(st$worker$status, "ready") ||
+    !is.null(st$worker$running) ||
+    length(st$pending) > 0 ||
+    length(ls(nb$queries, all.names = TRUE)) > 0 ||
+    nb$rx$n > 0 ||
+    (!is.null(nb$last_io) && as.numeric(now - nb$last_io, units = "secs") < 1)
+  if (waiting) 0.005 else 0.25
+}
+
+#' Note worker traffic, and bring a slow poll forward so the reply is read
+#' within one fast tick. Inside `poll()` the poll reschedules itself on the
+#' way out, so it is left alone there.
+note_worker_io <- function(nb) {
+  nb$last_io <- Sys.time()
+  if (!isTRUE(nb$in_poll) && !is.null(nb$poll_cancel) &&
+      isTRUE(nb$poll_interval > 0.005)) {
+    cancel_poll(nb)
+    schedule_poll(nb, 0.005)
+  }
   invisible(NULL)
 }
 
@@ -322,11 +353,13 @@ run_effect <- function(nb, fx) {
     interrupt = {
       if (identical(nb$proc_gen, fx$gen) && !is.null(nb$proc)) {
         tryCatch(nb$proc$interrupt(), error = function(e) NULL)
+        note_worker_io(nb)
       }
     },
     send = {
       if (identical(nb$proc_gen, fx$gen) && !is.null(nb$con)) {
         tryCatch(write_frame(nb$con, fx$msg), error = function(e) NULL)
+        note_worker_io(nb)
       }
     },
     timer = {
@@ -509,6 +542,7 @@ start_worker_process <- function(nb, fx) {
   nb$out_tail <- ""
   nb$con <- NULL
   nb$rx <- list(chunks = list(), n = 0L)
+  note_worker_io(nb)
   # A new generation's memory starts from nothing known: comparing its first
   # sample against the old worker's last-reported RSS would compare two
   # different processes' numbers against each other, and could skip
@@ -610,6 +644,7 @@ worker_query <- function(nb, msg, callback, timeout = 0.8) {
   msg$id <- id
   assign(key, callback, envir = nb$queries)
   ok <- tryCatch({ write_frame(nb$con, msg); TRUE }, error = function(e) FALSE)
+  if (ok) note_worker_io(nb)
   if (!ok) {
     rm(list = key, envir = nb$queries)
     callback(NULL)
@@ -648,10 +683,13 @@ fail_pending_queries <- function(nb) {
   invisible(NULL)
 }
 
-#' The poll, every 5 ms while a worker exists, every 500 ms otherwise.
+#' The poll, at the interval `poll_interval()` picks: 5 ms while the shell
+#' waits on the worker, 250 ms with an idle worker, 500 ms with none.
 #' File watching is checked at most every 500 ms regardless of the poll
 #' interval, so a busy worker doesn't make it noisier.
 poll <- function(nb) {
+  nb$in_poll <- TRUE
+  on.exit(nb$in_poll <- FALSE)
   tryCatch(poll_jobs(nb), error = function(e) NULL)
   # `poll_jobs()` only enqueues (an index fetch or an install may finish with
   # no worker involved at all, e.g. safe preview): without a worker message
@@ -672,6 +710,7 @@ poll <- function(nb) {
     repeat {
       chunk <- tryCatch(readBin(nb$con, "raw", 65536), error = function(e) raw(0))
       if (length(chunk) == 0) break
+      nb$last_io <- Sys.time()
       nb$rx$chunks[[length(nb$rx$chunks) + 1]] <- chunk
       nb$rx$n <- nb$rx$n + length(chunk)
     }
@@ -742,8 +781,7 @@ poll <- function(nb) {
     if (length(changed) > 0) dispatch(nb, ev_files_read(changed, at = Sys.time()))
   }
 
-  interval <- if (!is.null(nb$proc)) 0.005 else 0.5
-  schedule_poll(nb, interval)
+  schedule_poll(nb, poll_interval(nb))
   invisible(NULL)
 }
 

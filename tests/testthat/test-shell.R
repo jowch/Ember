@@ -232,3 +232,65 @@ test_that("as_display() keeps a table's NA cells", {
             more_rows = 0L, more_cols = 0L, na = list(integer(), c(1L, 2L)))
   expect_identical(as_display(b)$data$na, list(integer(), c(1L, 2L)))
 })
+
+#' A handle with just the fields poll_interval() and note_worker_io() read.
+idle_handle <- function() {
+  nb <- new.env(parent = emptyenv())
+  nb$proc <- "a worker"
+  nb$con <- "a socket"
+  nb$state <- list(worker = list(status = "ready", running = NULL), pending = character())
+  nb$queries <- new.env(parent = emptyenv())
+  nb$rx <- list(chunks = list(), n = 0L)
+  nb$last_io <- NULL
+  nb
+}
+
+test_that("poll_interval() is slow with an idle worker and fast while waiting on it", {
+  now <- Sys.time()
+  nb <- idle_handle()
+  expect_equal(poll_interval(nb, now), 0.25)
+
+  nb$proc <- NULL
+  expect_equal(poll_interval(nb, now), 0.5)
+
+  waits <- list(
+    connecting = function(nb) nb$con <- NULL,
+    starting = function(nb) nb$state$worker$status <- "starting",
+    running = function(nb) nb$state$worker$running <- list(cell = "a"),
+    pending = function(nb) nb$state$pending <- "a",
+    query = function(nb) assign("1", identity, envir = nb$queries),
+    half_read = function(nb) nb$rx$n <- 3L,
+    recent_io = function(nb) nb$last_io <- now - 0.5
+  )
+  for (w in names(waits)) {
+    nb <- idle_handle()
+    waits[[w]](nb)
+    expect_equal(poll_interval(nb, now), 0.005, info = w)
+  }
+
+  nb <- idle_handle()
+  nb$last_io <- now - 2
+  expect_equal(poll_interval(nb, now), 0.25)
+})
+
+test_that("worker traffic brings a slow poll forward, but not from inside the poll", {
+  nb <- idle_handle()
+  fired <- 0L
+  nb$poll_cancel <- function() fired <<- fired + 1L
+  nb$poll_interval <- 0.25
+  local_mocked_bindings(schedule_poll = function(nb, interval) {
+    nb$poll_interval <- interval
+    nb$poll_cancel <- function() NULL
+  })
+
+  nb$in_poll <- TRUE
+  note_worker_io(nb)
+  expect_equal(fired, 0L)
+  expect_equal(nb$poll_interval, 0.25)
+
+  nb$in_poll <- FALSE
+  note_worker_io(nb)
+  expect_equal(fired, 1L)
+  expect_equal(nb$poll_interval, 0.005)
+  expect_false(is.null(nb$last_io))
+})
