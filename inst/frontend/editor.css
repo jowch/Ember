@@ -2373,6 +2373,9 @@ pluto-helpbox .live-docs-searchbox.notfound input {
 .ember-help-page img {
     max-width: 100%;
 }
+.helpbox-docs > section .ember-help-page a {
+    color: var(--ember-accent);
+}
 /* A notebook function (notebook_definition_doc(), R/editor-services.R). */
 .helpbox-docs > section .ember-help-page p.ember-def-sig {
     margin: 0 0 12px;
