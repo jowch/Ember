@@ -66,5 +66,6 @@ test("error: a name defined twice and a cycle are worded for R users (Words6)", 
   await page.keyboard.press("Shift+Enter");
   await page.waitForFunction((sel) => /each other/.test(document.querySelector(sel)?.innerText ?? ""),
     `${cellSelector("LOOP")} jlerror`, { timeout: 20000 });
-  assert.match((await message("LOOP").innerText()).split("\n")[0], /^(y and z|z and y) depend on each other, so neither can run\.$/);
+  assert.equal((await message("LOOP").innerText()).split("\n")[0], "y and z depend on each other, so neither can run.");
+  assertNoProblems(page);
 });
