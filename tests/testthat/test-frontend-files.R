@@ -414,34 +414,101 @@ test_that("the installed frontend is under 3 MB and THIRD-PARTY.txt matches COPY
   expect_equal(missing, character(0))
 })
 
-# ---- 78. no alert()/confirm() calls are left ----
+# ---- 153-157. Piece 7's wording and deletions ----
 
-test_that("no alert()/confirm() calls remain (78)", {
-  dir <- frontend_dir()
-  js <- frontend_files(dir)
-  js <- js[grepl("\\.js$", js)]
+#' The page's own `.js` files (not the vendored `imports/`), each read with
+#' its comments stripped, named by their path under `dir`.
+own_js_sources <- function(dir) {
+  files <- frontend_files(dir)
+  files <- files[grepl("\\.js$", files) & !grepl("/imports/", files, fixed = TRUE)]
+  texts <- vapply(files, function(f) strip_comments(readChar(f, file.info(f)$size, useBytes = TRUE), "js"),
+                  character(1))
+  names(texts) <- substring(files, nchar(dir) + 2)
+  texts
+}
 
-  # Matches alert(/confirm( plain, as window.alert(/window.confirm(,
-  # bracket-indexed (window["alert"](), and through optional chaining
-  # (confirm?.(), so a dodge around the plain form wouldn't slip past.
+english_keys <- function(dir) {
+  jsonlite::fromJSON(file.path(dir, "lang", "english.json"), simplifyVector = FALSE)
+}
+
+test_that("no alert(), confirm() or prompt() call in the page's own code (153)", {
+  # Matches the plain call, window.x(, window["x"]( and x?.(, so a dodge
+  # around the plain form wouldn't slip past.
   call_re <- paste0(
-    "\\bwindow\\[[\"'](?:alert|confirm)[\"']\\]\\s*\\(",
-    "|\\bwindow\\.(?:alert|confirm)\\s*\\(",
-    "|\\b(?:alert|confirm)\\s*\\?\\.\\s*\\(",
-    "|\\b(?:alert|confirm)\\s*\\("
+    "\\bwindow\\[[\"'](?:alert|confirm|prompt)[\"']\\]\\s*\\(",
+    "|\\bwindow\\.(?:alert|confirm|prompt)\\s*\\(",
+    "|\\b(?:alert|confirm|prompt)\\s*\\?\\.\\s*\\(",
+    "|\\b(?:alert|confirm|prompt)\\s*\\("
   )
+  texts <- own_js_sources(frontend_dir())
+  hits <- names(texts)[grepl(call_re, texts, perl = TRUE)]
+  expect_equal(hits, character(0))
+  expect_true(grepl(call_re, 'x(); window.confirm("y")', perl = TRUE))
+  expect_false(grepl(call_re, "reload_prompt()", perl = TRUE))
+})
 
-  counts <- list()
-  for (f in js) {
-    text <- tryCatch(readChar(f, file.info(f)$size, useBytes = TRUE), error = function(e) NA_character_)
-    if (is.na(text)) next
-    text <- strip_comments(text, "js")
-    n <- length(regmatches(text, gregexpr(call_re, text, perl = TRUE))[[1]])
-    if (n > 0) counts[[basename(f)]] <- n
+test_that("every translation key is used, and every t()/th() literal is a key (154)", {
+  dir <- frontend_dir()
+  keys <- names(english_keys(dir))
+  sources <- frontend_files(dir)
+  sources <- sources[grepl("\\.(js|html)$", sources) & !grepl("/imports/", sources, fixed = TRUE)]
+  text <- paste(vapply(sources, function(f) readChar(f, file.info(f)$size, useBytes = TRUE), character(1)),
+                collapse = "\n")
+  literals <- unique(regmatches(text, gregexpr("(?<=[\"'`])t_[A-Za-z0-9_]+(?=[\"'`])", text, perl = TRUE))[[1]])
+
+  base <- sub("_(zero|one|other)$", "", keys)
+  computed <- grepl("^(t_ember_packages_status_|t_ember_packages_library_status_|t_status_names)", keys) |
+    keys %in% c("t_language_direction", "t_time_format_unit_override")
+  unused <- keys[!(keys %in% literals | base %in% literals | computed)]
+  expect_equal(unused, character(0))
+
+  calls <- unique(regmatches(text, gregexpr("\\bth?\\(\\s*[\"'`]t_[A-Za-z0-9_]+(?=[\"'`])", text, perl = TRUE))[[1]])
+  calls <- sub("^th?\\(\\s*[\"'`]", "", calls)
+  expect_true(length(calls) > 100)
+  expect_equal(setdiff(calls, c(keys, base)), character(0))
+})
+
+test_that("no retired Pluto or Julia wording is left (155)", {
+  dir <- frontend_dir()
+  retired <- readLines(testthat::test_path("fixtures", "retired-wording.txt"), encoding = "UTF-8")
+  retired <- retired[nzchar(retired)]
+  values <- unlist(english_keys(dir), use.names = FALSE)
+  texts <- c(stats::setNames(values, rep("lang/english.json", length(values))), own_js_sources(dir))
+
+  hits <- character(0)
+  for (r in retired) {
+    found <- grepl(r, texts, fixed = TRUE)
+    if (any(found)) hits <- c(hits, paste0(r, " in ", paste(unique(names(texts)[found]), collapse = ", ")))
   }
-  counts <- counts[sort(names(counts))]
+  expect_equal(hits, character(0))
 
-  expect_equal(counts, list())
+  server_path <- test_path("..", "..", "R", "server.R")
+  if (!file.exists(server_path)) skip("R/server.R not found from the tests directory")
+  server <- paste(readLines(server_path, warn = FALSE), collapse = "\n")
+  for (old in c('"no such notebook"', '"could not open:"', '"forbidden"')) {
+    expect_false(grepl(old, server, fixed = TRUE), label = old)
+  }
+})
+
+test_that("no hard-coded English in title, aria-label or placeholder attributes (156)", {
+  texts <- own_js_sources(frontend_dir())
+  texts <- texts[grepl("^(components|common)/", names(texts))]
+  attr_re <- "(title|aria-label|placeholder)=\"[A-Za-z]"
+  hits <- names(texts)[grepl(attr_re, texts, perl = TRUE)]
+  expect_equal(hits, character(0))
+  expect_true(grepl(attr_re, 'html`<pre title="Something">`', perl = TRUE))
+})
+
+test_that("Pluto's export banner, binder, notifier and Julia leftovers are gone (157)", {
+  dir <- frontend_dir()
+  for (f in c("components/ExportBanner.js", "common/Binder.js", "components/NotifyWhenDone.js")) {
+    expect_false(file.exists(file.path(dir, f)), label = f)
+  }
+  texts <- own_js_sources(dir)
+  for (word in c("binder_url", "frontmatter", "window.present", "begin ... end",
+                 "MOTIVATIONAL_STICKERS", "CUSTOM_CODE_FONT_STACK")) {
+    expect_equal(names(texts)[grepl(word, texts, fixed = TRUE)], character(0), label = word)
+  }
 })
 
 # ---- 158. One focus ring ----
