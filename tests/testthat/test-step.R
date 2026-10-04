@@ -1562,3 +1562,43 @@ test_that("reduce_move() tells a ready/busy worker to chdir; an off one needs no
   expect_equal(send_fx5$msg$to, "/elsewhere")
   expect_equal(r5$state$worker$wd, "/elsewhere")
 })
+
+# ---- A failed install lets waiting cells run (schedule()) ------------------
+
+test_that("after a failed install, a cell waiting on the package runs instead of going silent", {
+  # `cli` is only in the lock (so waiting_cells() holds "A" on it): a real
+  # check_library/install_done round trip that fails, same as a renv
+  # install actually failing, rather than poking `target$status` directly
+  # (ev_run()'s "I want this to work now" retry, reduce_run(), would
+  # otherwise immediately flip a hand-set "failed" back to "missing").
+  lock <- new_lock(name = "cli", version = "3.6.0", source = "CRAN")
+  s <- fake_state(list(S = cell(""), A = cell("library(cli)")), lock = lock)
+  key <- s$packages$target$key
+
+  r <- drive(s, ev_run("A", at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(), at(3)))
+  r <- drive(r$state, ev_library_checked(key, NULL, at(4)))
+  tok <- r$state$packages$install$token
+  r <- drive(r$state, ev_install_done(tok, key, NULL, "install failed", character(), at(5),
+                                      failures = data.frame(package = "cli", kind = "build_error",
+                                                            detail = "boom", stringsAsFactors = FALSE)))
+  expect_equal(r$state$packages$target$status, "failed")
+  r <- drive(r$state, wk_done(r$state$worker$gen, r$state$worker$running$token, report(), at(6)))
+  # Without the fix, schedule() drops "A" from pending here and nothing runs.
+  expect_equal(r$state$worker$running$cell, "A")
+
+  r2 <- drive(r$state, wk_done(r$state$worker$gen, r$state$worker$running$token, report(
+    error = list(message = "there is no package called 'cli'", package = "cli")), at(7)))
+  err <- r2$state$results$A$error
+  expect_equal(err$kind, "missing_package")
+  expect_match(err$message, "its install may have failed")
+})
+
+test_that("missing_package_error() for a locked, uninstalled package points at the install failure", {
+  lock <- new_lock(name = "cli", version = "3.6.0", source = "CRAN")
+  s <- fake_state(list(S = cell(""), A = cell("library(cli)")), lock = lock)
+  s$packages$target$status <- "failed"
+
+  out <- missing_package_error(s, "cli")
+  expect_equal(out$error$kind, "missing_package")
+  expect_match(out$error$message, "there is no package called 'cli'; its install may have failed")
+})

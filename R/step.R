@@ -223,10 +223,10 @@ schedule <- function(state) {
   id <- NULL
   waiting <- waiting_cells(state)
   # A target library that failed can never bring in the packages these
-  # cells are waiting for; drop them from `pending` instead of leaving them
-  # queued forever (packages-core.R, waiting_cells()).
+  # cells are waiting for; let them run anyway so the worker reports the
+  # missing-package error (packages-core.R, missing_package_error()) instead
+  # of leaving them queued forever with no result.
   if (identical(state$packages$target$status, "failed") && length(waiting) > 0) {
-    state$pending <- setdiff(state$pending, names(waiting))
     waiting <- list()
   }
   repeat {

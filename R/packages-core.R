@@ -604,8 +604,10 @@ switch_pending <- function(state) {
 #' the problem row explains why.
 #'
 #' `schedule()` skips waiting cells but keeps them in `pending`, so they run
-#' the moment the library is ready. When the target library fails, they are
-#' dropped from `pending` instead, and their view shows the failure.
+#' the moment the library is ready. When the target library fails, they run
+#' anyway: the worker raises `packageNotFoundError` and
+#' `missing_package_error()`'s "in the lock, not installed" branch attaches
+#' the error, so their view shows the failure too.
 waiting_cells <- function(state) {
   p <- state$packages
   # Cheap check first: no cell in the notebook names any package at all
