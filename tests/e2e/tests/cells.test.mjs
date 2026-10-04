@@ -14,6 +14,12 @@ const rect = (page, sel) => page.locator(sel).evaluate((el) => {
   const r = el.getBoundingClientRect();
   return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
 });
+// Several rects in one round trip, so a scroll between reads can't skew
+// their differences.
+const rects = (page, sels) => page.evaluate((sels) => Object.fromEntries(Object.entries(sels).map(([k, sel]) => {
+  const r = document.querySelector(sel).getBoundingClientRect();
+  return [k, { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height }];
+})), sels);
 const near = (actual, expected, what) => assert.ok(Math.abs(actual - expected) < 0.6, `${what}: ${actual}, expected ${expected}`);
 
 // A theme token as the browser computes it, for comparing with a computed
@@ -216,14 +222,15 @@ test('"+": hovering the gap shows the line and circle without moving cells; clic
   await openNotebook(page, server.origin, server.secret, notebook);
 
   const addBeforeB = page.locator(`${cellSelector("B")} button.add_cell.before`);
-  const beforeTop = (await page.locator(cellSelector("B")).boundingBox()).y;
+  const pageTop = (sel) => page.evaluate((sel) => document.querySelector(sel).getBoundingClientRect().top + window.scrollY, sel);
+  const beforeTop = await pageTop(cellSelector("B"));
 
   await addBeforeB.hover();
   await page.waitForFunction(
     (sel) => getComputedStyle(document.querySelector(sel).querySelector("span")).opacity > 0,
     `${cellSelector("B")} button.add_cell.before`, { timeout: 5000 });
 
-  const afterTop = (await page.locator(cellSelector("B")).boundingBox()).y;
+  const afterTop = await pageTop(cellSelector("B"));
   assert.equal(beforeTop, afterTop, "hovering the \"+\" doesn't move B");
 
   const cellCountBefore = await page.locator("pluto-cell").count();
@@ -536,9 +543,15 @@ test("errors: where it happened, a traceback outermost first, labelled by origin
 
   const n = await page.evaluate(() => window.editor_state.notebook.cell_results.ERR.output.body.stacktrace.length);
   assert.ok(n >= 4, `the traceback has the notebook and stats calls (${n})`);
-  assert.equal(await page.locator(`${err} ol.ember-tb`).count(), 0, "the traceback starts collapsed");
+  const tbState = () => page.evaluate((sel) => {
+    const button = document.querySelector(sel);
+    const list = document.getElementById(button.getAttribute("aria-controls"));
+    return { expanded: button.getAttribute("aria-expanded"), list: list?.matches("ol.ember-tb") ?? false, shown: list != null && list.getClientRects().length > 0, above: list != null && (button.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 };
+  }, `${err} button.ember-tb-toggle`);
+  assert.deepEqual(await tbState(), { expanded: "false", list: true, shown: false, above: true }, "the traceback starts collapsed; the toggle controls the list below it");
   await page.getByRole("button", { name: `Show traceback (${n} calls)`, exact: true }).click();
   await page.getByRole("button", { name: "Hide traceback", exact: true }).waitFor({ timeout: 5000 });
+  assert.deepEqual(await tbState(), { expanded: "true", list: true, shown: true, above: true }, "open: aria-expanded and the list shows");
 
   const frames = await page.locator(`${err} ol.ember-tb > li`).evaluateAll((lis) => lis.map((li) => ({
     n: li.querySelector(".ember-tb-n").innerText,
@@ -730,7 +743,7 @@ test("console: a muted message, a warning with its call, and ANSI colours from t
   assertNoProblems(page);
 });
 
-test("figures: no border, background or filter in either theme; at most the column wide; fig-width 4 is 384px (148)", async (t) => {
+test("figures: no border, background or filter in either theme; at most the column wide; a default plot is 708px, 14px above the code; fig-width 4 is 384px (148)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-figures.server.log") });
   const browser = await launchBrowser();
@@ -742,6 +755,27 @@ test("figures: no border, background or filter in either theme; at most the colu
   const img = `${cellSelector("PLT")} pluto-output img`;
   await runCell(page, "PLT");
   await page.waitForFunction((sel) => document.querySelector(sel)?.naturalWidth > 0, img, { timeout: 30000 });
+
+  // Outputs4/Cells: `.out` is padded 2px 0 0 12px, so a default plot fills
+  // the 708px the Cells board draws its figure at, 14px above the code box;
+  // a printed output sits 12px above it and an empty one adds nothing.
+  const underOutput = (id) => page.evaluate((sel) => {
+    const cell = document.querySelector(sel);
+    const out = cell.querySelector(":scope > pluto-output");
+    const last = [...out.querySelectorAll("img, pre")].pop() ?? out;
+    const code = cell.querySelector("pluto-input .cm-editor").getBoundingClientRect();
+    return {
+      padding: getComputedStyle(out).padding,
+      width: out.querySelector("img")?.getBoundingClientRect().width ?? null,
+      gap: Math.round((code.top - last.getBoundingClientRect().bottom) * 10) / 10,
+    };
+  }, cellSelector(id));
+  assert.deepEqual(await underOutput("PLT"), { padding: "2px 0px 0px 12px", width: 708, gap: 14 }, "a default plot");
+  for (const id of ["DF", "FIT"]) await runCell(page, id);
+  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("Coefficients"), `${cellSelector("FIT")} > pluto-output`, { timeout: 30000 }).catch(() => {});
+  assert.deepEqual(await underOutput("FIT"), { padding: "2px 0px 0px 12px", width: null, gap: 12 }, "printed text");
+  const df = await underOutput("DF");
+  assert.equal(df.gap, 0, "an empty output adds no gap above the code");
 
   const look = () => page.locator(img).evaluate((el) => {
     const s = getComputedStyle(el);
@@ -777,7 +811,7 @@ test("figures: no border, background or filter in either theme; at most the colu
   assertNoProblems(page);
 });
 
-test("text cells: serif text with tinted values that copy as plain text; click opens the source, #' continues, Shift + Enter closes (150)", async (t) => {
+test("text cells: serif text with tinted values that copy as plain text; click or Tab + Enter opens the source, #' continues, Esc and Shift + Enter close it and focus the text (150)", async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-text.server.log") });
   const browser = await launchBrowser();
@@ -791,13 +825,38 @@ test("text cells: serif text with tinted values that copy as plain text; click o
   const out = `${cell} > pluto-output`;
   const editor = `${cell} pluto-input .cm-editor`;
   const isOpen = () => page.locator(cell).evaluate((el) => el.classList.contains("show_input"));
+  // A click opens the source once the double-click interval has passed, so
+  // "didn't open" is only known after that.
+  const staysClosed = async (what) => {
+    await page.waitForTimeout(700);
+    assert.equal(await isOpen(), false, what);
+  };
+  const closes = async (what) => {
+    await page.waitForFunction((sel) => !document.querySelector(sel).classList.contains("show_input"), cell, { timeout: 5000 }).catch(() => {});
+    assert.equal(await isOpen(), false, what);
+  };
+  const textFocused = () => page.evaluate((sel) => document.activeElement === document.querySelector(sel), out);
   await page.locator(cell).scrollIntoViewIfNeeded();
   assert.equal(await isOpen(), false, "a text cell starts with its source hidden");
 
   // Keep the link's navigation from leaving the page; the cell still sees the click.
   await page.evaluate(() => document.addEventListener("click", (e) => { if (e.target.closest("a")) e.preventDefault(); }, true));
   await page.locator(`${out} a`).click();
-  assert.equal(await isOpen(), false, "clicking a link doesn't open the source");
+  await staysClosed("clicking a link doesn't open the source");
+
+  const p = await page.locator(`${out} p`).boundingBox();
+  await page.mouse.move(p.x + 2, p.y + p.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(p.x + 120, p.y + p.height / 2, { steps: 5 });
+  await page.mouse.up();
+  assert.ok((await page.evaluate(() => getSelection().toString())).length > 5, "the drag selected text");
+  await staysClosed("selecting text by dragging doesn't open the source");
+
+  // A click inside the dragged selection would keep it until mouseup.
+  await page.evaluate(() => getSelection().removeAllRanges());
+  await page.locator(`${out} p`).dblclick({ position: { x: 12, y: p.height / 2 } });
+  await staysClosed("double-clicking a word doesn't open the source");
+  assert.equal(await page.evaluate(() => getSelection().toString().trim()), "One", "the double click selected the word");
 
   await page.locator(`${out} h2`).click();
   await page.locator(editor).waitFor({ state: "visible", timeout: 5000 });
@@ -805,13 +864,37 @@ test("text cells: serif text with tinted values that copy as plain text; click o
   assert.equal(await page.locator(`${cell} .preview_hidden_code_info`).isVisible(), false, "no hidden-code note on an open text cell");
   assert.equal(await computed(page, `${editor} .cm-ember-md-h`, "color"), await tokenColor(page, "--ember-syn-kw"));
   assert.equal(await computed(page, `${editor} .cm-ember-r`, "color"), await tokenColor(page, "--ember-ansi-cyan"));
+  const source = () => page.locator(editor).evaluate((el) => el.CodeMirror.getValue().split("\n"));
+  const original = await source();
+
+  // Enter at the start of a #' line is a plain Enter.
+  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, editor, { timeout: 5000 });
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowUp" : "Control+Home");
+  await page.keyboard.press("Enter");
+  assert.deepEqual((await source()).slice(0, 2), ["", "#' ## Results"], "Enter in column 0 adds an empty line above, with no #'");
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+z" : "Control+z");
+  assert.deepEqual(await source(), original, "undone");
+
   await page.keyboard.press("Escape");
-  assert.equal(await isOpen(), false, "Esc closes the unchanged source");
+  await closes("Esc closes the unchanged source");
+  assert.equal(await textFocused(), true, "after Esc, focus is on the text");
+
+  // Keyboard: Tab reaches the text, Enter opens its source.
+  await page.locator(`${cell} > button.add_cell.before`).evaluate((el) => el.focus());
+  for (let i = 0; i < 5 && !(await textFocused()); i++) await page.keyboard.press("Tab");
+  assert.equal(await textFocused(), true, "Tab reaches the text");
+  assert.deepEqual(await page.locator(out).evaluate((el) => [el.tabIndex, el.getAttribute("role"), el.getAttribute("aria-label")]),
+    [0, "group", "Text cell. Press Enter to edit its source."]);
+  await page.keyboard.press("Enter");
+  await page.locator(editor).waitFor({ state: "visible", timeout: 5000 });
+  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, editor, { timeout: 5000 });
+  assert.deepEqual(await source(), original, "Enter on the text opens it without typing a newline");
+  await page.keyboard.press("Escape");
+  await closes("Esc closes it again");
 
   await page.locator(`${out} p`).click({ position: { x: 5, y: 5 } });
   await page.locator(editor).waitFor({ state: "visible", timeout: 5000 });
   await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, editor, { timeout: 5000 });
-  const source = () => page.locator(editor).evaluate((el) => el.CodeMirror.getValue().split("\n"));
   const before = await source();
   await page.keyboard.press("End");
   await page.keyboard.press("Enter");
@@ -819,7 +902,8 @@ test("text cells: serif text with tinted values that copy as plain text; click o
   assert.equal(after.length, before.length + 1, "Enter adds one line");
   assert.deepEqual(after.filter((line) => line === "#' "), ["#' "], "the new line starts with #' and a space");
   await page.keyboard.press("Shift+Enter");
-  await page.waitForFunction((sel) => !document.querySelector(sel).classList.contains("show_input"), cell, { timeout: 5000 });
+  await closes("Shift + Enter closes the source");
+  assert.equal(await textFocused(), true, "after Shift + Enter, focus is on the text");
 
   const inline = `${out} span.ember-inline`;
   await page.waitForFunction((sel) => document.querySelector(sel)?.textContent === "2", inline, { timeout: 30000 });
@@ -853,12 +937,10 @@ test("geometry: 26px between cells; a one-line code box is 7px 12px around 13px/
   await openNotebook(page, server.origin, server.secret, notebook);
   await page.waitForSelector(`${cellSelector("A")} .cm-editor`);
 
-  const a = await rect(page, cellSelector("A"));
-  const b = await rect(page, cellSelector("B"));
+  const { a, b, box, gutters } = await rects(page, {
+    a: cellSelector("A"), b: cellSelector("B"), box: `${cellSelector("A")} .cm-editor`, gutters: `${cellSelector("A")} .cm-gutters`,
+  });
   near(b.top - a.bottom, 26, "gap between A and B");
-
-  const box = await rect(page, `${cellSelector("A")} .cm-editor`);
-  const gutters = await rect(page, `${cellSelector("A")} .cm-gutters`);
   near(box.height, 7 + 13 * 1.65 + 7, "one-line code box height");
   near(gutters.width, 34, "gutter width");
 
@@ -866,12 +948,13 @@ test("geometry: 26px between cells; a one-line code box is 7px 12px around 13px/
     const cs = getComputedStyle(el);
     const range = document.createRange();
     range.selectNodeContents(el.querySelector(".cm-line"));
-    return { padding: cs.padding, fontSize: cs.fontSize, lineHeight: cs.lineHeight, textLeft: range.getBoundingClientRect().left };
+    const gutterRight = el.closest(".cm-editor").querySelector(".cm-gutters").getBoundingClientRect().right;
+    return { padding: cs.padding, fontSize: cs.fontSize, lineHeight: cs.lineHeight, textGap: range.getBoundingClientRect().left - gutterRight };
   });
   assert.equal(content.padding, "7px 12px");
   assert.equal(content.fontSize, "13px");
   assert.equal(content.lineHeight, "21.45px");
-  near(content.textLeft - gutters.right, 12, "code text starts 12px right of the gutter");
+  near(content.textGap, 12, "code text starts 12px right of the gutter");
 
   assertNoProblems(page);
 });
@@ -975,8 +1058,7 @@ test("geometry: the run button sits on the code box's top-left corner and gives 
   await page.hover(`${cellSelector("A")} .cm-content`);
   const run = page.locator(`${cellSelector("A")} button.ember-run`);
   await page.waitForFunction((el) => getComputedStyle(el).opacity === "1", await run.elementHandle(), { timeout: 5000 });
-  const box = await rect(page, `${cellSelector("A")} .cm-editor`);
-  const button = await rect(page, `${cellSelector("A")} button.ember-run`);
+  const { box, button } = await rects(page, { box: `${cellSelector("A")} .cm-editor`, button: `${cellSelector("A")} button.ember-run` });
   near(button.left - box.left, -15, "run button left");
   near(button.top - box.top, -13, "run button top");
 
@@ -987,17 +1069,16 @@ test("geometry: the run button sits on the code box's top-left corner and gives 
   await page.waitForFunction((el) => getComputedStyle(el).opacity === "0", await run.elementHandle(), { timeout: 5000 });
 
   // Insert5: the circle is centred on the gap, its left edge 11px left of the rail.
-  const c = await rect(page, circle);
-  const rail = await rect(page, `${cellSelector("A")} > pluto-trafficlight`);
-  near(c.left - rail.left, -11, "circle left");
-  near(c.top + c.height / 2, strip.top + strip.height / 2, "circle centre");
-
   // The circle's lower half is where the run button would be: it must be
   // the "+" that takes a click there.
-  const hit = await page.evaluate(([x, y]) => {
-    const el = document.elementFromPoint(x, y);
-    return el?.closest("button")?.className ?? null;
-  }, [c.left + c.width / 2, c.bottom - 3]);
+  const { c, rail, gap, hit } = await page.evaluate(([circle, railSel, stripSel]) => {
+    const c = document.querySelector(circle).getBoundingClientRect();
+    const strip = document.querySelector(stripSel).getBoundingClientRect();
+    const hit = document.elementFromPoint(c.left + c.width / 2, c.bottom - 3)?.closest("button")?.className ?? null;
+    return { c: c.toJSON(), rail: document.querySelector(railSel).getBoundingClientRect().toJSON(), gap: strip.top + strip.height / 2, hit };
+  }, [circle, `${cellSelector("A")} > pluto-trafficlight`, `${cellSelector("A")} button.add_cell.before`]);
+  near(c.left - rail.left, -11, "circle left");
+  near(c.top + c.height / 2, gap, "circle centre");
   assert.equal(hit, "add_cell before");
 
   assertNoProblems(page);
@@ -1018,23 +1099,24 @@ test('"+": each gap\'s live button is the lower cell\'s .before, and the last ce
     assert.equal(await page.locator(`${cellSelector(id)} > button.add_cell.after`).count(), 1, `${id} keeps .after`);
   }
 
-  const owner = (x, y) => page.evaluate(([x, y]) => {
-    const b = document.elementFromPoint(x, y)?.closest("button.add_cell");
+  // Who takes a click `dx` right of `upper`'s left edge: halfway down the
+  // gap to `lower`, or `dy` below `upper` when there is no `lower`.
+  const owner = (upper, lower, dx, dy) => page.evaluate(([upper, lower, dx, dy]) => {
+    const above = document.querySelector(upper).getBoundingClientRect();
+    const y = lower == null ? above.bottom + dy : (above.bottom + document.querySelector(lower).getBoundingClientRect().top) / 2;
+    const b = document.elementFromPoint(above.left + dx, y)?.closest("button.add_cell");
     return b ? `${b.closest("pluto-cell").id} ${b.className}` : null;
-  }, [x, y]);
+  }, [upper, lower, dx, dy]);
 
   // elementFromPoint only sees the viewport.
   const show = (id) => page.locator(cellSelector(id)).evaluate((el) => el.scrollIntoView({ block: "center" }));
   for (let i = 1; i < ids.length; i++) {
     await show(ids[i]);
-    const above = await rect(page, cellSelector(ids[i - 1]));
-    const below = await rect(page, cellSelector(ids[i]));
-    assert.equal(await owner(above.left + 300, (above.bottom + below.top) / 2), `${ids[i]} add_cell before`, `gap above ${ids[i]}`);
+    assert.equal(await owner(cellSelector(ids[i - 1]), cellSelector(ids[i]), 300, 0), `${ids[i]} add_cell before`, `gap above ${ids[i]}`);
   }
   const last = ids[ids.length - 1];
   await show(last);
-  const lastRect = await rect(page, cellSelector(last));
-  assert.equal(await owner(lastRect.left + 300, lastRect.bottom + 13), `${last} add_cell after`, "below the last cell");
+  assert.equal(await owner(cellSelector(last), null, 300, 13), `${last} add_cell after`, "below the last cell");
 
   assertNoProblems(page);
 });

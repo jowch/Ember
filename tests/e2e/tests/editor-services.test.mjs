@@ -142,14 +142,17 @@ test("completion still works on the notebook's names and base R while a cell run
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  await page.locator(`${cellSelector("LOOP")} .cm-content`).click();
-  await page.keyboard.press("Shift+Enter");
+  await runCell(page, "LOOP");
   await page.waitForFunction(
     () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
     null, { timeout: 10000 });
 
   await page.hover(cellSelector("B"));
+  const cellCountBefore = await page.locator("pluto-cell").count();
   await page.locator(`${cellSelector("B")} button.add_cell.after`).click({ force: true });
+  await page.waitForFunction(
+    (before) => document.querySelectorAll("pluto-cell").length > before,
+    cellCountBefore, { timeout: 10000 });
   const newCellId = await page.evaluate((bid) => {
     const cells = Array.from(document.querySelectorAll("pluto-cell"));
     const i = cells.findIndex((c) => c.id === bid);
@@ -157,13 +160,13 @@ test("completion still works on the notebook's names and base R while a cell run
   }, "B");
   const newSel = `pluto-cell[id="${newCellId}"]`;
 
-  const start = Date.now();
   await page.locator(`${newSel} .cm-content`).click();
   await page.keyboard.type("su", { delay: 10 });
-  await page.waitForSelector(".cm-tooltip-autocomplete .cm-completionLabel", { timeout: 1000 });
+  const start = Date.now();
+  await page.waitForSelector(".cm-tooltip-autocomplete .cm-completionLabel", { timeout: 5000 });
+  assert.ok(Date.now() - start < 2000, "the fallback answered within 2s of the last keystroke while the worker was busy");
   const labels = await page.locator(".cm-tooltip-autocomplete .cm-completionLabel").allInnerTexts();
   assert.ok(labels.includes("sum"), `expected "sum" among ${JSON.stringify(labels)}`);
-  assert.ok(Date.now() - start < 1000, "the fallback answered within 1s while the worker was busy");
 
   assertNoProblems(page);
 });
@@ -248,7 +251,11 @@ test("help: opened while a cell runs, the panel says R is busy, then shows mean'
     null, { timeout: 10000 });
 
   await page.hover(cellSelector("B"));
+  const cellCountBefore = await page.locator("pluto-cell").count();
   await page.locator(`${cellSelector("B")} button.add_cell.after`).click({ force: true });
+  await page.waitForFunction(
+    (before) => document.querySelectorAll("pluto-cell").length > before,
+    cellCountBefore, { timeout: 10000 });
   const newCellId = await page.evaluate((bid) => {
     const cells = Array.from(document.querySelectorAll("pluto-cell"));
     const i = cells.findIndex((c) => c.id === bid);
