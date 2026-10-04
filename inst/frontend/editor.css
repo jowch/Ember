@@ -3701,11 +3701,6 @@ pluto-input .cm-editor .cm-content {
     /* height: auto; */
 }
 
-pluto-cell.code_differs > pluto-input > .cm-editor .cm-gutters {
-    /* background: hsla(46, 70%, 88%, 1); */
-    background-color: var(--cm-color-code-differs-gutters);
-}
-
 /* We show a small dot instead of line number, until you hover. */
 .cm-editor .cm-lineNumbers .cm-gutterElement {
     color: transparent;

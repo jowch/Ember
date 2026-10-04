@@ -87,22 +87,24 @@ pluto-cell[data-rail="err"] > pluto-trafficlight {
 ember-rail-tip {
     display: none;
     position: absolute;
-    left: 0;
-    top: -26px;
+    /* 10px right of the rail, which sits at left: -4px. */
+    left: 6px;
+    top: -4px;
     z-index: 40;
     font-family: var(--ember-ui-font);
     font-size: 11px;
     font-weight: 500;
     white-space: nowrap;
-    padding: 3px 8px;
+    padding: 2px 7px;
     border-radius: 5px;
     border: 1px solid var(--ember-line);
     background: var(--ember-panel);
-    color: var(--ember-text);
+    color: var(--ember-muted);
+    box-shadow: 0 1px 3px rgba(20, 28, 22, 0.08);
     pointer-events: none;
 }
 
-pluto-cell[data-rail="due"]:is(:hover, :focus-within) > ember-rail-tip {
+pluto-cell[data-rail="due"] > pluto-trafficlight:hover ~ ember-rail-tip {
     display: block;
 }
 
@@ -446,8 +448,6 @@ pluto-cell.not_run_yet > ember-chip {
     color: var(--ember-muted);
 }
 
-/* Stale and disabled/depends-on-disabled both keep the old output below
-   the chip, greyed on a wash joined to the code box. */
 pluto-cell.stale > ember-chip {
     background: var(--ember-chip-stale-bg);
     border: 1px solid var(--ember-chip-stale-line);
@@ -460,11 +460,55 @@ pluto-cell.depends_on_disabled_cells > ember-chip {
     color: var(--ember-chip-dis-text);
 }
 
+/* Stale: the old output, then the chip, on one wash joined to the code
+   box. The wash is a grid item behind both rather than a wrapper, because
+   Endeavor selects pluto-output as a direct child of pluto-cell. */
+pluto-cell.stale {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "out" "chip" "split" "in" "logs";
+}
+pluto-cell.stale::before {
+    content: "";
+    grid-column: 1;
+    grid-row: out-start / chip-end;
+    background: var(--ember-wash);
+    border-radius: 0 6px 0 0;
+}
+pluto-cell.stale:not(.show_input)::before {
+    border-radius: 0 6px 6px 0;
+}
+pluto-cell.stale > pluto-output {
+    grid-area: out;
+    padding: 10px 14px 0;
+    background: transparent;
+}
+pluto-cell.stale > ember-chip {
+    grid-area: chip;
+    justify-self: start;
+    margin: 8px 14px 10px;
+}
+pluto-cell.stale > button.ember-split {
+    grid-area: split;
+}
+pluto-cell.stale > pluto-input {
+    grid-area: in;
+}
+pluto-cell.stale > pluto-logs-container {
+    grid-area: logs;
+}
+pluto-cell.stale > pluto-input .cm-editor {
+    border-top-right-radius: 0;
+}
+
 pluto-cell.stale > pluto-output,
 pluto-cell.running_disabled > pluto-output,
 pluto-cell.depends_on_disabled_cells > pluto-output {
     filter: grayscale(1);
     opacity: 0.32;
+}
+pluto-cell.running_disabled > pluto-output,
+pluto-cell.depends_on_disabled_cells > pluto-output {
     background: var(--ember-wash);
 }
 pluto-cell.running_disabled > pluto-input .cm-editor {

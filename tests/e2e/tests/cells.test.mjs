@@ -10,7 +10,32 @@ import { tmpdir } from "node:os";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector } from "../browser.mjs";
 
-test("rail: idle before running, amber when edited, red on error (140)", async (t) => {
+const rect = (page, sel) => page.locator(sel).evaluate((el) => {
+  const r = el.getBoundingClientRect();
+  return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
+});
+const near = (actual, expected, what) => assert.ok(Math.abs(actual - expected) < 0.6, `${what}: ${actual}, expected ${expected}`);
+
+// A theme token as the browser computes it, for comparing with a computed
+// background.
+const tokenColor = (page, name) => page.evaluate((name) => {
+  const probe = document.createElement("div");
+  probe.style.backgroundColor = `var(${name})`;
+  document.body.append(probe);
+  const color = getComputedStyle(probe).backgroundColor;
+  probe.remove();
+  return color;
+}, name);
+const computed = (page, sel, prop) => page.locator(sel).evaluate((el, prop) => getComputedStyle(el)[prop], prop);
+// The rail's colour transitions, so wait for it to arrive before comparing.
+const settledStyle = async (page, sel, prop, expected, what = `${sel} ${prop}`) => {
+  await page.waitForFunction(
+    ([sel, prop, expected]) => getComputedStyle(document.querySelector(sel))[prop] === expected,
+    [sel, prop, expected], { timeout: 2000 }).catch(() => {});
+  assert.equal(await computed(page, sel, prop), expected, what);
+};
+
+test("rail: idle before running, amber when edited, red on error, blue while running or queued (140)", async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-rail.server.log") });
   const browser = await launchBrowser();
@@ -18,9 +43,12 @@ test("rail: idle before running, amber when edited, red on error (140)", async (
 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
+  const rail = (id) => `${cellSelector(id)} > pluto-trafficlight`;
 
-  for (const id of ["S", "A", "B", "ERR", "LOOP"]) {
+  const idle = await tokenColor(page, "--ember-rail-idle");
+  for (const id of ["S", "A", "B", "ERR", "LOOP", "NEVER"]) {
     assert.equal(await page.locator(cellSelector(id)).getAttribute("data-rail"), "idle", `${id} starts idle`);
+    assert.equal(await computed(page, rail(id), "backgroundColor"), idle, `${id}'s rail is --ember-rail-idle`);
   }
 
   await page.locator(`${cellSelector("B")} .cm-content`).click();
@@ -28,15 +56,46 @@ test("rail: idle before running, amber when edited, red on error (140)", async (
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.getAttribute("data-rail") === "due",
     cellSelector("B"), { timeout: 10000 });
+  await settledStyle(page, rail("B"), "backgroundColor", await tokenColor(page, "--ember-rail-due"));
+  await settledStyle(page, `${cellSelector("B")} .cm-gutters`, "backgroundColor", await tokenColor(page, "--ember-due-bg"));
 
-  await page.hover(`${cellSelector("B")} pluto-trafficlight`);
-  await page.waitForSelector(`${cellSelector("B")} ember-rail-tip`, { state: "visible", timeout: 5000 });
-  assert.match(await page.locator(`${cellSelector("B")} ember-rail-tip`).innerText(), /Shift \+ Enter/);
+  // The tip belongs to the rail alone: not to hovering or focusing the
+  // rest of the cell.
+  const tip = page.locator(`${cellSelector("B")} ember-rail-tip`);
+  await page.locator(`${cellSelector("A")} .cm-content`).click();
+  await page.hover(`${cellSelector("B")} .cm-content`);
+  assert.equal(await tip.isVisible(), false, "no tip while hovering B's code");
+  await page.hover(rail("B"));
+  await tip.waitFor({ state: "visible", timeout: 5000 });
+  assert.equal(await tip.innerText(), "Press Shift + Enter to run this cell");
+  await page.locator(`${cellSelector("B")} .cm-content`).click();
+  assert.equal(await tip.isVisible(), false, "no tip once the pointer leaves the rail, with B focused");
 
   await runCell(page, "ERR");
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.getAttribute("data-rail") === "err",
     cellSelector("ERR"), { timeout: 15000 });
+  await settledStyle(page, rail("ERR"), "backgroundColor", await tokenColor(page, "--ember-rail-err"));
+
+  await setCellCode(page, "LOOP", "Sys.sleep(8)");
+  await page.keyboard.press("Shift+Enter");
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.getAttribute("data-rail") === "run",
+    cellSelector("LOOP"), { timeout: 15000 });
+  await runCell(page, "NEVER");
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.getAttribute("data-rail") === "queued",
+    cellSelector("NEVER"), { timeout: 5000 });
+  const blue = await tokenColor(page, "--ember-rail-run");
+  await settledStyle(page, rail("LOOP"), "backgroundColor", blue);
+  await settledStyle(page, rail("NEVER"), "backgroundColor", blue);
+  assert.equal(await computed(page, rail("NEVER"), "opacity"), "0.4");
+
+  assert.equal(await computed(page, rail("LOOP"), "animationName"), "ember-rail-pulse");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  assert.equal(await computed(page, rail("LOOP"), "animationName"), "none", "a running rail is solid under reduced motion");
+  assert.equal(await computed(page, rail("LOOP"), "opacity"), "1");
+  assert.equal(await page.locator(cellSelector("LOOP")).getAttribute("data-rail"), "run", "LOOP still running");
 
   assertNoProblems(page);
 });
@@ -386,6 +445,22 @@ test('chips: "Stale · x changed" after an upstream edit in lazy mode, with a gr
     cellSelector("B") + " ember-chip", { timeout: 10000 });
   assert.equal(await page.locator(`${cellSelector("B")} pluto-output`).evaluate((el) => getComputedStyle(el).filter), "grayscale(1)");
 
+  // Board "Cells": output, then chip, both on one full-strength wash that
+  // runs down to the code box, whose top-right corner goes square.
+  const out = await rect(page, `${cellSelector("B")} > pluto-output`);
+  const chip = await rect(page, `${cellSelector("B")} > ember-chip`);
+  const code = await rect(page, `${cellSelector("B")} .cm-editor`);
+  assert.ok(chip.top >= out.bottom, `chip (${chip.top}) under the output (${out.bottom})`);
+  const wash = await page.locator(cellSelector("B")).evaluate((el) => {
+    const s = getComputedStyle(el, "::before");
+    return { bg: s.backgroundColor, height: parseFloat(s.height), radius: s.borderRadius };
+  });
+  assert.equal(wash.bg, await tokenColor(page, "--ember-wash"));
+  near(wash.height, code.top - out.top, "the wash spans output and chip, down to the code box");
+  assert.equal(wash.radius, "0px 6px 0px 0px");
+  assert.equal(await computed(page, `${cellSelector("B")} > pluto-output`, "backgroundColor"), "rgba(0, 0, 0, 0)", "the faded output has no background of its own");
+  assert.equal(await computed(page, `${cellSelector("B")} .cm-editor`, "borderTopRightRadius"), "0px");
+
   assertNoProblems(page);
 });
 
@@ -427,11 +502,6 @@ test("disabled states: A shows Disabled with no run button; B shows Depends on a
 // Geometry from the Cells and Insert5 boards (ui-3.md "Cell anatomy",
 // "Run button", "Cell menu", "Adding cells").
 
-const rect = (page, sel) => page.locator(sel).evaluate((el) => {
-  const r = el.getBoundingClientRect();
-  return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
-});
-const near = (actual, expected, what) => assert.ok(Math.abs(actual - expected) < 0.6, `${what}: ${actual}, expected ${expected}`);
 
 test("geometry: 26px between cells; a one-line code box is 7px 12px around 13px/1.65 text, after a 34px gutter", async (t) => {
   const notebook = tempNotebook("cells.R");
