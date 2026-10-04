@@ -23,10 +23,16 @@ test("look: logo, title and body text say Ember, not Pluto/Julia (8)", async (t)
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  assert.match(await page.locator("img#logo-big").getAttribute("src"), /img\/logo\.svg$/);
-  assert.match(await page.locator("img#logo-small").getAttribute("src"), /img\/favicon\.svg$/);
-  const altBig = await page.locator("img#logo-big").getAttribute("alt");
-  assert.equal(altBig, "Ember");
+  // 124: the header's logo is an inline SVG, drawn in --ember-logo, not
+  // img#logo-big/img#logo-small (those stay for exports and the start page).
+  const fill = await page.locator("header#pluto-nav h1 svg").evaluate((el) => getComputedStyle(el.querySelector("g")).fill);
+  assert.equal(fill, "rgb(232, 89, 12)");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark", null, { timeout: 5000 });
+  const darkFill = await page.locator("header#pluto-nav h1 svg").evaluate((el) => getComputedStyle(el.querySelector("g")).fill);
+  assert.equal(darkFill, "rgb(240, 112, 50)");
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "light", null, { timeout: 5000 });
 
   assert.match(await page.title(), /^basic\.R — Ember$/);
 
@@ -98,6 +104,9 @@ test("look: cell menu has only Delete/Copy output/Disable cell; no feedback form
   }
 
   assert.equal(await page.locator("form#feedback").count(), 0, "no feedback form on the page");
+  // 125: the footer (Settings/FAQ links) is gone; Settings lives in the
+  // header's ⋯ menu now.
+  assert.equal(await page.locator("footer").count(), 0, "no footer element");
 
   assertNoProblems(page);
 });

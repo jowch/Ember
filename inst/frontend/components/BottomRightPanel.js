@@ -60,8 +60,6 @@ export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, noteboo
     const status = notebook.status_tree
     const my_clock_is_ahead_by = useMyClockIsAheadBy({ connected })
 
-    const select = (/** @type {PanelTabName} */ tab) => set_open_tab(open_tab === tab ? null : tab)
-
     return html`
         <aside id="helpbox-wrapper" class=${cl({ open: !hidden })} ref=${container_ref}>
             <pluto-helpbox class=${cl({ hidden, [`helpbox-${open_tab}`]: open_tab != null })}>
@@ -73,7 +71,7 @@ export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, noteboo
                                 type="button"
                                 role="tab"
                                 aria-selected=${open_tab === tab}
-                                onClick=${() => select(tab)}
+                                onClick=${() => open_bottom_right_panel(tab)}
                             >
                                 ${t(label_key)}
                             </button>
@@ -102,7 +100,7 @@ export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, noteboo
                 </section>
             </pluto-helpbox>
         </aside>
-        ${hidden ? null : html`<div class="ember-scrim" onClick=${() => set_open_tab(null)} aria-hidden="true"></div>`}
+        ${hidden ? null : html`<div class="ember-scrim" onClick=${() => open_bottom_right_panel(null)} aria-hidden="true"></div>`}
     `
 }
 

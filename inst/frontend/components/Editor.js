@@ -39,13 +39,10 @@ import { HijackExternalLinksToOpenInNewTab } from "./HackySideStuff/HijackExtern
 import { get_environment } from "../common/Environment.js"
 import { ProcessStatus } from "../common/ProcessStatus.js"
 import { SafePreviewUI } from "./SafePreviewUI.js"
-import { EmberStatus } from "./EmberStatus.js"
-import { NotRunBar } from "./NotRunBar.js"
+import { Header } from "./Header.js"
 import { open_pluto_popup } from "../common/open_pluto_popup.js"
 import { get_included_external_source } from "../common/external_source.js"
 import { getCurrentLanguage, getWritingDirection, t, th } from "../common/lang.js"
-import { InlineIonicon } from "../common/ClassTable.js"
-import { desktop_version, is_desktop, open_main_menu } from "./DesktopInterface.js"
 import { MoveDialog } from "./MoveDialog.js"
 import { with_query_params } from "../common/URLTools.js"
 import { ConfirmBeforeLongRuntime, maybe_abort_long_runtime } from "./ConfirmBeforeLongRuntime.js"
@@ -121,14 +118,6 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
     // files so widgets work. An export of a notebook in safe preview still is.
     sanitize_html: state.notebook.process_status === ProcessStatus.waiting_for_permission,
 })
-
-const first_true_key = (obj) => {
-    for (let [k, v] of Object.entries(obj)) {
-        if (v) {
-            return k
-        }
-    }
-}
 
 /**
  * @typedef CellMetaData
@@ -327,7 +316,6 @@ const first_true_key = (obj) => {
  * }}
  */
 
-const url_logo_big = get_included_external_source("pluto-logo-big")?.href
 export const url_logo_small = get_included_external_source("pluto-logo-small")?.href
 
 /**
@@ -1548,7 +1536,6 @@ ${t("t_key_autosave_description")}`
         let { export_menu_open, notebook } = this.state
 
         const status = this.cached_status ?? statusmap(this.state, launch_params)
-        const statusval = first_true_key(status)
 
         if (status.isolated_cell_view) {
             return html`
@@ -1584,8 +1571,7 @@ ${t("t_key_autosave_description")}`
                 }
             )
         }
-
-        const restart_button = (text) => html`<a href="#" id="restart-process-button" onClick=${() => restart()}>${text}</a>`
+        window.ember_restart = restart // for debugging and e2e tests, until the Status tab's Restart R button lands
 
         return html`
             ${this.state.disable_ui === false && html`<${HijackExternalLinksToOpenInNewTab} />`}
@@ -1621,64 +1607,15 @@ ${t("t_key_autosave_description")}`
                             open=${export_menu_open}
                             onClose=${() => this.setState({ export_menu_open: false })}
                         />
-                        ${
-                            status.binder
-                                ? html`<div id="binder_spinners">
-                                      <binder-spinner id="ring_1"></binder-spinner>
-                                      <binder-spinner id="ring_2"></binder-spinner>
-                                      <binder-spinner id="ring_3"></binder-spinner>
-                                  </div>`
-                                : null
-                        }
-                        <nav id="at_the_top">
-                            <a
-                                href=${this.state.binder_session_url != null ? `${this.state.binder_session_url}?token=${this.state.binder_session_token}` : "./"}
-                                onClick=${(e) => {
-                                    if (is_desktop()) {
-                                        e.preventDefault()
-                                        open_main_menu()
-                                    }
-                                }}
-                            >
-                                <h1><img id="logo-big" src=${url_logo_big} alt="Ember" /><img id="logo-small" src=${url_logo_small} aria-hidden="true" /></h1>
-                            </a>
-                            ${
-                                this.state.extended_components.CustomHeader &&
-                                html`<${this.state.extended_components.CustomHeader} notebook_id=${this.state.notebook.notebook_id} />`
-                            }
-                            <div class="flex_grow_1"></div>
-                            ${
-                                this.state.extended_components.CustomHeader == null &&
-                                html`<button id="ember-file-name" type="button" title=${notebook.path} onClick=${() => this.setState({ move_dialog_open: true })}>
-                                    ${notebook.shortpath}
-                                </button>`
-                            }
-                            <div class="flex_grow_2"></div>
-                            <div id="process_status">${
-                                status.binder && status.loading
-                                    ? t("t_process_status_loading_binder")
-                                    : statusval === "disconnected"
-                                      ? t("t_process_status_reconnecting")
-                                      : statusval === "loading"
-                                        ? t("t_process_status_loading")
-                                        : statusval === "nbpkg_restart_required"
-                                          ? th("t_process_restart_action_required", { restart_notebook: restart_button(t("t_process_restart_action")) })
-                                          : statusval === "nbpkg_restart_recommended"
-                                            ? th("t_process_restart_action_recommended", { restart_notebook: restart_button(t("t_process_restart_action")) })
-                                            : statusval === "process_restarting"
-                                              ? th("t_process_restarting")
-                                              : statusval === "process_dead"
-                                                ? th("t_process_exited_restart_action", {
-                                                      restart_action_short: restart_button(t("t_process_restart_action_short")),
-                                                  })
-                                                : statusval === "process_waiting_for_permission"
-                                                  ? restart_button(t("t_process_give_permission_to_run_code"))
-                                                  : null
-                            }</div>
-                            <${EmberStatus} worker_memory=${notebook.ember?.worker_memory} restart=${restart} />
-                            <button class="toggle_export" title=${t("t_export_action_ellipsis")} onClick=${() =>
-                                this.setState({ export_menu_open: !export_menu_open })}><span></span></button>
-                        </nav>
+                        <${Header}
+                            notebook=${notebook}
+                            connected=${this.state.connected}
+                            code_differs=${status.code_differs}
+                            on_toggle_export=${() => this.setState({ export_menu_open: !export_menu_open })}
+                            on_open_move=${() => this.setState({ move_dialog_open: true })}
+                            on_run_all=${() => this.actions.ember_run_all()}
+                            on_interrupt=${() => this.actions.interrupt_remote()}
+                        />
                     </header>
                     ${this.state.move_dialog_open &&
                     html`<${MoveDialog} path=${notebook.path} shortpath=${notebook.shortpath} on_close=${() => this.setState({ move_dialog_open: false })} />`}
@@ -1699,9 +1636,6 @@ ${t("t_key_autosave_description")}`
                             last_hot_reload_time=${notebook.last_hot_reload_time}
                             connected=${this.state.connected}
                         />
-                        ${!this.state.static_preview &&
-                        !this.state.disable_ui &&
-                        html`<${NotRunBar} not_run=${notebook.ember?.not_run ?? 0} />`}
                         <${Notebook}
                             notebook=${notebook}
                             cell_inputs_local=${this.state.cell_inputs_local}
@@ -1773,18 +1707,6 @@ ${t("t_key_autosave_description")}`
                             })
                         }}
                     />
-                    <footer>
-                        <div id="info">
-                            <a class="footer-button" href="javascript:;" target="_self" onClick=${() => window.dispatchEvent(new CustomEvent("pluto open settings"))}>${th(
-                                "t_footer_button_settings",
-                                { icon: InlineIonicon("settings-outline", { inlineMargin: false }) }
-                            )}</a>
-                            <a class="footer-button" href="https://github.com/jowch/Ember#readme" target="_blank">${th("t_footer_button_FAQ", {
-                                icon: InlineIonicon("help-circle-outline", { inlineMargin: false }),
-                            })}</a>
-                            <span class="footer-spacer" style="flex: 1 1 0%; min-width: 5ch;"></span>
-                        </div>
-                    </footer>
                     <${Popup} />
                 </${PlutoJSInitializingContext.Provider}>
                 </${PlutoBondsContext.Provider}>

@@ -29,7 +29,7 @@ test('failing.R: the Packages tab shows a failure card with "Show the error" (99
 
   await runCell(page, "S");
 
-  await page.getByTitle(/Packages/).click();
+  await page.getByRole("button", { name: "Packages" }).click();
   await page.waitForSelector(".ember-install-failure-card", { timeout: 30000 });
 
   const title = await page.locator(".ember-install-failure-title").innerText();

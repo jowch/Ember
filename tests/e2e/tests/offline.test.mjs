@@ -79,7 +79,7 @@ test("offline: rich.R works with every non-local request aborted (18)", async (t
   await page.waitForSelector("dialog.psettings[open]", { timeout: 5000 });
   await page.keyboard.press("Escape");
 
-  await page.locator('button.toggle_export[title^="Export"]').click();
+  await page.locator('header#pluto-nav button[aria-label="Export"]').click();
   await page.waitForSelector("dialog#export[open]", { timeout: 5000 });
 
   // Code highlighted as R: the MD cell's fenced block (` ```r\n1 + 1\n``` `)
@@ -131,7 +131,7 @@ test("offline: each vendored library does its job (19)", async (t) => {
     () => document.querySelector("span.ansi-red-fg") != null, null, { timeout: 20000 });
 
   // dialog-polyfill: the export dialog opens (uses <dialog>, polyfilled where needed).
-  await page.locator('button.toggle_export[title^="Export"]').click();
+  await page.locator('header#pluto-nav button[aria-label="Export"]').click();
   await page.waitForSelector("dialog#export[open]", { timeout: 5000 });
   await page.keyboard.press("Escape")
 

@@ -9,7 +9,10 @@ import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, setCellCode, cellSelector } from "../browser.mjs";
 
-// 70. Header memory, nothing in safe preview.
+// 70. Worker memory: null in safe preview, a number after the first run.
+// (ui-3-plan.md piece 5 moves its display into the Status tab and the
+// Variables footer, test 117/121; this test covers the data, which both
+// of those read from `notebook.ember.worker_memory`.)
 test("header: worker memory shows after the first run, nothing in safe preview (71)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "status-70.server.log") });
@@ -19,12 +22,11 @@ test("header: worker memory shows after the first run, nothing in safe preview (
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  assert.equal(await page.locator("#ember-status").count(), 0, "nothing shown in safe preview");
+  assert.equal(await page.evaluate(() => window.editor_state?.notebook?.ember?.worker_memory ?? null), null, "nothing in safe preview");
 
   await runCell(page, "A");
-  await page.waitForSelector("#ember-status", { timeout: 30000 });
   await page.waitForFunction(
-    () => /R · \d+ MB/.test(document.querySelector("#ember-status")?.innerText ?? ""),
+    () => typeof window.editor_state?.notebook?.ember?.worker_memory === "number",
     null, { timeout: 30000 });
 
   assertNoProblems(page);
@@ -45,18 +47,22 @@ test('"N cells not run" bar counts, grows after a restart, and "Run all" clears 
     (sel) => document.querySelector(sel)?.innerText.includes("55"),
     cellSelector("B") + " pluto-output", { timeout: 30000 });
 
-  // Restart from the header's memory display: every cell, including A and
-  // B, is not run again.
-  await page.waitForSelector("#ember-status-restart", { timeout: 30000 });
-  page.on("dialog", (d) => d.accept());
-  await page.locator("#ember-status-restart").click();
+  // Restart (window.ember_restart, a stand-in for the Status tab's Restart
+  // R button until ui-3-plan.md piece 5's "Tabs" step adds it): every cell,
+  // including A and B, is not run again. Fire-and-forget, like every other
+  // caller: "restart_process" is answered only by the ordinary flush diff
+  // (server.R's flush_clients(server, hub), no `req` to echo back), so the
+  // client's send() promise for it never resolves.
+  await page.evaluate(() => {
+    window.ember_restart()
+  });
   await page.waitForFunction(
-    () => document.querySelector("#ember-not-run-bar")?.innerText.includes("4 cells not run"),
+    () => document.querySelector("header#pluto-nav button.ember-btn")?.innerText.includes("4 not run"),
     null, { timeout: 30000 });
 
-  await page.locator("#ember-not-run-bar button").click();
+  await page.locator("header#pluto-nav button.ember-btn").click();
   await page.waitForFunction(
-    () => document.querySelector("#ember-not-run-bar") == null,
+    () => document.querySelector("header#pluto-nav button.ember-btn") == null,
     null, { timeout: 30000 });
 
   assertNoProblems(page);
@@ -115,7 +121,7 @@ test("Packages tab lists a missing package and the preview banner names the inst
   assert.match(bannerText, /installs \d+ packages?/);
   await page.keyboard.press("Escape");
 
-  await page.getByTitle(/Packages/).click();
+  await page.getByRole("button", { name: "Packages" }).click();
   await page.waitForSelector("#ember-packages-tab .ember-packages-table", { timeout: 10000 });
   const rows = await page.locator("#ember-packages-tab .ember-package-row").count();
   assert.ok(rows > 0, "expected at least one package row");
