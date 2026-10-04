@@ -673,6 +673,13 @@ on_run <- function(server, cl, hub, req) {
 
   requested <- unlist(req$body$cells, use.names = FALSE)
   if (is.null(requested)) requested <- character()
+  # The frontend sets cell_results[id].queued itself before sending this
+  # (Editor.js, set_and_run_multiple), so this client's copy no longer
+  # matches `sent`. NA differs from whatever it set, so the next flush
+  # sends the real value even when the engine's never changed.
+  for (id in intersect(requested, names(cl$sent$cell_results))) {
+    cl$sent$cell_results[[id]]$queued <- NA
+  }
   if (length(requested) > 0) {
     state <- notebook_state(hub$nb)
     cells <- state$cells

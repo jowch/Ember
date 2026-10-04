@@ -41,6 +41,36 @@ test("rail: idle before running, amber when edited, red on error (140)", async (
   assertNoProblems(page);
 });
 
+test("rail: re-running an unchanged cell goes back to idle, not stuck on queued", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-rerun.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForFunction(
+    () => window.editor_state.notebook.cell_results.LOOP?.output?.last_run_timestamp > 0,
+    null, { timeout: 30000 });
+
+  const settled = (sel) => {
+    const el = document.querySelector(sel);
+    return el.getAttribute("data-rail") === "idle" && !el.classList.contains("queued") && !el.classList.contains("running");
+  };
+  for (const id of ["A", "LOOP"]) {
+    await page.waitForFunction(settled, cellSelector(id), { timeout: 10000 });
+    const before = await page.evaluate((id) => window.editor_state.notebook.cell_results[id].output.last_run_timestamp, id);
+    await runCell(page, id);
+    await page.waitForFunction(
+      ([id, before]) => window.editor_state.notebook.cell_results[id].output.last_run_timestamp > before,
+      [id, before], { timeout: 15000 });
+    await page.waitForFunction(settled, cellSelector(id), { timeout: 5000 });
+  }
+
+  assertNoProblems(page);
+});
+
 test("run/stop button and run time (141)", async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-run.server.log") });
