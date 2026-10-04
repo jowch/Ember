@@ -203,3 +203,127 @@ test("empty notebook: placeholder and hints show, and typing removes them (151)"
 
   assertNoProblems(page);
 });
+
+test('chips: "Not run yet" before running, none in safe preview, "Stale" after an upstream edit (144)', async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-safe.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  // Safe preview: B has never run, but it's not shown yet.
+  assert.equal(await page.locator(`${cellSelector("B")} ember-chip`).count(), 0, "no chip in safe preview");
+
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.innerText.includes("2"),
+    cellSelector("B") + " pluto-output", { timeout: 20000 });
+
+  // B just ran: no chip now that it has output.
+  assert.equal(await page.locator(`${cellSelector("B")} ember-chip`).count(), 0);
+
+  assertNoProblems(page);
+});
+
+test('chips: a never-run cell shows "Not run yet" with no output (144)', async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-notrun.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.innerText.includes("2"),
+    cellSelector("B") + " pluto-output", { timeout: 20000 });
+
+  // A fresh cell with code typed but not yet submitted: has never run,
+  // unlike every existing cell in the fixture by now.
+  const cellCountBefore = await page.locator("pluto-cell").count();
+  await page.locator(`${cellSelector("B")} .cm-content`).click();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
+  await page.waitForFunction(
+    (before) => document.querySelectorAll("pluto-cell").length > before,
+    cellCountBefore, { timeout: 15000 });
+  const newCellId = await page.evaluate((bid) => {
+    const cells = Array.from(document.querySelectorAll("pluto-cell"));
+    const i = cells.findIndex((c) => c.id === bid);
+    return cells[i + 1]?.id ?? null;
+  }, "B");
+  const newSel = `pluto-cell[id="${newCellId}"]`;
+
+  await page.locator(`${newSel} .cm-content`).click();
+  await page.keyboard.type("1 + 1", { delay: 2 });
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.classList.contains("not_run_yet"),
+    newSel, { timeout: 10000 });
+  assert.equal(await page.locator(`${newSel} ember-chip`).innerText(), "Not run yet");
+  assert.equal(await page.locator(`${newSel} pluto-output`).innerText(), "");
+
+  assertNoProblems(page);
+});
+
+test('chips: "Stale · x changed" after an upstream edit in lazy mode, with a greyed output (144)', async (t) => {
+  const notebook = tempNotebook("lazy.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-stale.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.innerText.includes("2"),
+    cellSelector("B") + " pluto-output", { timeout: 20000 });
+
+  await setCellCode(page, "A", "x <- 2");
+  await runCell(page, "A");
+  await page.waitForSelector(`${cellSelector("B")}.stale`, { timeout: 20000 });
+  // The chip's text depends on A's own run having landed (its new
+  // last_run_timestamp), which can arrive just after the "stale" class
+  // itself, so wait for the names, not only the class.
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.innerText === "Stale · x changed",
+    cellSelector("B") + " ember-chip", { timeout: 10000 });
+  assert.equal(await page.locator(`${cellSelector("B")} pluto-output`).evaluate((el) => getComputedStyle(el).filter), "grayscale(1)");
+
+  assertNoProblems(page);
+});
+
+test("disabled states: A shows Disabled with no run button; B shows Depends on a disabled cell, and Go to it focuses A (149)", async (t) => {
+  const notebook = tempNotebook("disabled.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-disabled-chips.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.innerText.includes("2"),
+    cellSelector("B") + " pluto-output", { timeout: 20000 });
+
+  await page.hover(cellSelector("A"));
+  await page.locator(`${cellSelector("A")} button.input_context_menu`).click();
+  await page.locator(`${cellSelector("A")} button.disable_cell`).click();
+  await page.waitForSelector(`${cellSelector("A")}.running_disabled`, { timeout: 15000 });
+
+  assert.equal(await page.locator(`${cellSelector("A")} ember-chip`).innerText(), "Disabled");
+  assert.equal(await page.locator(`${cellSelector("A")} button.ember-run`).count(), 0, "no run button on a disabled cell");
+  assert.equal(await page.locator(`${cellSelector("A")} ember-chip`).count(), 1, "no \"Not run yet\" chip either");
+
+  await page.waitForSelector(`${cellSelector("B")}.depends_on_disabled_cells`, { timeout: 15000 });
+  const bChip = page.locator(`${cellSelector("B")} ember-chip`);
+  assert.match(await bChip.innerText(), /Depends on a disabled cell\..*Go to it/s);
+  assert.equal(await page.locator(`${cellSelector("B")} ember-chip`).count(), 1, "B has no \"Not run yet\" chip either");
+
+  await bChip.locator("a").click();
+  await page.waitForFunction(
+    (sel) => document.activeElement?.closest(sel) != null,
+    cellSelector("A"), { timeout: 10000 });
+
+  assertNoProblems(page);
+});

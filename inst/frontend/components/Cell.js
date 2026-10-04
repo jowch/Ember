@@ -8,7 +8,25 @@ import { RunButton, useDebouncedTruth } from "./RunButton.js"
 import { cl } from "../common/ClassTable.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { useEventListener } from "../common/useEventListener.js"
-import { t } from "../common/lang.js"
+import { t, th } from "../common/lang.js"
+import { CircleIcon, ClockIcon, SlashCircleIcon } from "../common/Icons.js"
+import { stale_names } from "../common/stale_names.js"
+
+/**
+ * The "Stale" chip's text: "Stale" alone when no names are known, else
+ * "Stale · x changed" / "Stale · x and y changed" / "Stale ·
+ * x, y and N more changed" (ui-3.md, "Chips": "at most three names, then
+ * 'and N more'").
+ */
+const format_stale_chip = (notebook, cell_id) => {
+    const names = stale_names(notebook, cell_id)
+    if (names.length === 0) return t("t_chip_stale")
+    const shown = names.slice(0, 3)
+    const rest = names.length - shown.length
+    const parts = rest > 0 ? [...shown, `${rest} more`] : shown
+    const joined = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`
+    return t("t_chip_stale_names", { names: joined })
+}
 
 const useCellApi = (node_ref, published_object_keys, pluto_actions) => {
     const [cell_api_ready, set_cell_api_ready] = useState(false)
@@ -273,7 +291,39 @@ export const Cell = ({
               : "idle"
 
     const not_run_yet =
-        no_output_yet && !running && !queued && code.trim() !== "" && !process_waiting_for_permission && kind !== "markdown" && !running_disabled && !depends_on_disabled_cells
+        no_output_yet &&
+        !running &&
+        !queued &&
+        (cell_input_local?.code ?? code).trim() !== "" &&
+        !process_waiting_for_permission &&
+        kind !== "markdown" &&
+        !running_disabled &&
+        !depends_on_disabled_cells
+
+    // ui-3.md, "Chips": at most one shown, in this order. depends_on_disabled_cells
+    // is also true on the disabled cell itself (as in Pluto), so running_disabled
+    // is checked first.
+    const chip = running_disabled
+        ? { icon: SlashCircleIcon, text: t("t_chip_disabled") }
+        : depends_on_disabled_cells
+          ? {
+                icon: SlashCircleIcon,
+                text: th("t_chip_depends_on_disabled", {
+                    link: html`<a
+                        href="#"
+                        onClick=${(e) => {
+                            e.preventDefault()
+                            disabled_jump()
+                        }}
+                        >${t("t_go_to_it")}</a
+                    >`,
+                }),
+            }
+          : not_run_yet
+            ? { icon: CircleIcon, text: t("t_chip_not_run") }
+            : stale
+              ? { icon: ClockIcon, text: format_stale_chip(pluto_actions.get_notebook(), cell_id) }
+              : null
 
     return html`
         <pluto-cell
@@ -335,6 +385,9 @@ export const Cell = ({
                 on_move_up=${on_move_up}
                 on_move_down=${on_move_down}
             />
+            ${chip != null
+                ? html`<ember-chip role="status"><span class="ember-chip-icon" aria-hidden="true"><${chip.icon} /></span><span>${chip.text}</span></ember-chip>`
+                : null}
             ${code_not_trusted_yet
                 ? null
                 : cell_api_ready

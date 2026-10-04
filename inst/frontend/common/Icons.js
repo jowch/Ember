@@ -56,3 +56,11 @@ export const PlayIcon = ({ size = 13 }) => html`
         <path d="M6 4l15 8-15 8z"></path>
     </svg>
 `
+
+// Cell chip icons (ui-3-plan.md 6.3): not-run (circle), stale (clock),
+// disabled (slashed circle).
+export const CircleIcon = ({ size = 12 }) => icon(size, html`<circle cx="12" cy="12" r="8"></circle>`)
+
+export const ClockIcon = ({ size = 12 }) => icon(size, html`<circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path>`)
+
+export const SlashCircleIcon = ({ size = 12 }) => icon(size, html`<circle cx="12" cy="12" r="8"></circle><path d="M7 7l10 10"></path>`)

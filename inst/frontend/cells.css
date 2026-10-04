@@ -381,6 +381,66 @@ div.input_context_menu[role="menu"] li {
     color: var(--ember-red);
 }
 
+/* ---- Chips (ui-3.md "Chips") ------------------------------------------- */
+
+ember-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin: 0 0 6px 0;
+    padding: 2px 10px 2px 8px;
+    border-radius: 999px;
+    font-family: var(--ember-ui-font);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.5;
+}
+ember-chip .ember-chip-icon {
+    display: inline-flex;
+    width: 12px;
+    height: 12px;
+}
+ember-chip a {
+    color: inherit;
+    text-decoration: underline;
+}
+
+/* "Not run yet": no output, so no wash underneath. */
+pluto-cell.not_run_yet > ember-chip {
+    background: var(--ember-panel);
+    border: 1px solid var(--ember-line);
+    color: var(--ember-muted);
+}
+
+/* Stale and disabled/depends-on-disabled both keep the old output below
+   the chip, greyed on a wash joined to the code box. */
+pluto-cell.stale > ember-chip {
+    background: var(--ember-chip-stale-bg);
+    border: 1px solid var(--ember-chip-stale-line);
+    color: var(--ember-chip-stale-text);
+}
+pluto-cell.running_disabled > ember-chip,
+pluto-cell.depends_on_disabled_cells > ember-chip {
+    background: var(--ember-chip-dis-bg);
+    border: 1px solid var(--ember-chip-dis-bg);
+    color: var(--ember-chip-dis-text);
+}
+
+pluto-cell.stale > pluto-output,
+pluto-cell.running_disabled > pluto-output,
+pluto-cell.depends_on_disabled_cells > pluto-output {
+    filter: grayscale(1);
+    opacity: 0.32;
+    background: var(--ember-wash);
+}
+pluto-cell.running_disabled > pluto-input .cm-editor {
+    background: var(--ember-dis-bg);
+}
+pluto-cell.running_disabled > pluto-input .cm-gutters,
+pluto-cell.running_disabled > pluto-input .cm-content {
+    opacity: 0.5;
+}
+
 /* ---- Not shown in a static export or an isolated cell ------------------ */
 
 pluto-editor.disable_ui button.ember-run,

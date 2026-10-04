@@ -136,6 +136,12 @@
     "t_move_down": "Move down",
     "t_stop_cell": "Stop (Ctrl + Q)",
     "t_rail_due_hint": "Press Shift + Enter to run this cell",
+    "t_chip_not_run": "Not run yet",
+    "t_chip_stale": "Stale",
+    "t_chip_stale_names": "Stale · {{names}} changed",
+    "t_chip_disabled": "Disabled",
+    "t_chip_depends_on_disabled": "Depends on a disabled cell. {{link}}",
+    "t_go_to_it": "Go to it",
     
 
     "t_anonymous_function_abbr": "A (mini-)function that is defined without the 'function' keyword, but using -> or 'do'.",

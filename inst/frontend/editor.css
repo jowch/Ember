@@ -2017,32 +2017,6 @@ pluto-display > div {
     display: none;
 }
 
-/* DISABLED CELLS */
-
-pluto-cell.depends_on_disabled_cells > pluto-output,
-pluto-cell.running_disabled > pluto-output,
-pluto-cell.stale > pluto-output,
-pluto-cell.code_changed > pluto-output,
-pluto-cell.depends_on_disabled_cells > pluto-trafficlight,
-pluto-cell.running_disabled > pluto-trafficlight,
-pluto-cell.stale > pluto-trafficlight,
-pluto-cell.code_changed > pluto-trafficlight,
-pluto-cell.depends_on_disabled_cells > pluto-input .cm-editor,
-pluto-cell.running_disabled > pluto-input .cm-editor,
-pluto-cell.stale > pluto-input .cm-editor,
-pluto-cell.code_changed > pluto-input .cm-editor,
-pluto-cell.depends_on_disabled_cells > pluto-logs-container,
-pluto-cell.running_disabled > pluto-logs-container,
-pluto-cell.stale > pluto-logs-container,
-pluto-cell.code_changed > pluto-logs-container {
-    opacity: 0.3;
-}
-
-pluto-cell.running_disabled > pluto-input .cm-editor,
-pluto-cell.running_disabled > pluto-output {
-    background-color: var(--disabled-cell-bg-color);
-}
-
 /* SKIP AS SCRIPT CELLS */
 pluto-cell.skip_as_script .skip_as_script_marker,
 pluto-cell.depends_on_skipped_cells .depends_on_skipped_marker {
