@@ -676,7 +676,7 @@ export const CellInput = ({
                         focus_on_neighbor: ({ cell_delta, line, character }) => on_focus_neighbor(cell_id, cell_delta, line, character),
                     }),
                     keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, ...foldKeymap]),
-                    // Low, so completion, the signature hint and search close on Esc first.
+                    // Low, so an open completion list closes on Esc first.
                     Prec.low(
                         keymap.of([
                             {
@@ -1006,10 +1006,10 @@ const StaticCodeMirrorFaker = ({ value, label }) => {
                     <div class="cm-gutter cm-lineNumbers"></div>
                 </div>
                 <div
-                    spellcheck="false"
+                    spellcheck=${false}
                     autocorrect="off"
                     autocapitalize="off"
-                    translate="no"
+                    translate=${false}
                     contenteditable="false"
                     style="tab-size: 4;"
                     class="cm-content cm-lineWrapping"
