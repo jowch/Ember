@@ -465,6 +465,13 @@ test_that("a parse error's graph error carries the real line, not always 1", {
   expect_equal(errs[[1]]$lines$line, 3L)
 })
 
+test_that("a parse error at the end of input stays on the cell's last line", {
+  a <- read_cell("x <- (\n")
+  expect_equal(a$parse_error$line, 1L)
+  a <- read_cell("y <- 1\nx <- (\n\n")
+  expect_equal(a$parse_error$line, 2L)
+})
+
 # ---- Disable cell (ui-3 20-23) -----------------------------------------------
 
 test_that("a disabled definer drops out of multiple_definitions; its reader resolves to the other (ui-3 20)", {

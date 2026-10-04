@@ -213,7 +213,7 @@ read_cell_in <- function(code, read_file, file, stack) {
                      error = function(e) e)
   if (inherits(exprs, "condition")) {
     return(new_cell_analysis(code,
-                              parse_error = parse_error_from_condition(exprs)))
+                              parse_error = parse_error_from_condition(exprs, code)))
   }
   acc <- new_accumulator(read_file, file, stack)
   raw_pd <- getParseData(exprs)
@@ -235,13 +235,17 @@ read_cell_in <- function(code, read_file, file, stack) {
   finish(acc, code)
 }
 
-parse_error_from_condition <- function(cond) {
+parse_error_from_condition <- function(cond, code) {
   msg <- conditionMessage(cond)
   first_line <- strsplit(msg, "\n", fixed = TRUE)[[1]][1]
   m <- regmatches(first_line,
                    regexec("^<text>:([0-9]+):([0-9]+): (.*)$", first_line))[[1]]
   if (length(m) == 4) {
-    list(message = m[4], line = as.integer(m[2]), column = as.integer(m[3]))
+    # "unexpected end of input" is reported on the line after a trailing
+    # newline, which the cell doesn't show.
+    n_lines <- max(1L, length(strsplit(sub("\n+$", "", code), "\n")[[1]]))
+    list(message = m[4], line = min(as.integer(m[2]), n_lines),
+         column = as.integer(m[3]))
   } else {
     list(message = msg, line = NA_integer_, column = NA_integer_)
   }
