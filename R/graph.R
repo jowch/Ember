@@ -503,7 +503,7 @@ find_errors <- function(cells, analyses, edges, setup, ids, components,
     if (!is.null(pe)) {
       errors[[length(errors) + 1]] <- new_graph_error(
         kind = "parse", cells = id, names = character(), lines = NULL,
-        message = sprintf("%s has a syntax error: %s", id, pe$message),
+        message = sprintf("Syntax error: %s", pe$message),
         fixes = character())
     }
   }
