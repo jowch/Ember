@@ -332,8 +332,14 @@ failed_definers <- function(state, id) {
 #' so an edit alone never touches the worker (engine.md, Decisions: "an edit
 #' never runs anything"), and so it is idempotent (nothing to drop once a
 #' graph error's result has already been cleared).
-drop_graph_error_results <- function(state) {
+#'
+#' `ids` limits it to those cells. `reduce_run()` passes the cells it was
+#' asked to run: a run request is not an edit, and once it is made the
+#' cell's code is what was submitted, so a cell with a graph error shows
+#' only the error, not `code_differs` against an earlier run's code.
+drop_graph_error_results <- function(state, ids = NULL) {
   blocked <- blocked_cells(state$graph)
+  if (!is.null(ids)) blocked <- intersect(blocked, ids)
   stale_results <- Filter(function(id) !is.null(state$results[[id]]), blocked)
   effects <- list()
   for (id in stale_results) {
@@ -829,8 +835,10 @@ reduce_run <- function(state, event) {
   skipped <- union(off_ids, Filter(function(id) !can_run(state, id), want))
   to_add <- setdiff(want, skipped)
   state$pending <- union(state$pending, to_add)
+  dg <- drop_graph_error_results(state, on_ids)
+  state <- dg$state
   reply <- list(accepted = TRUE, queued = run_order(state$graph, state$pending), skipped = skipped)
-  list(state = state, effects = list(), reply = reply)
+  list(state = state, effects = dg$effects, reply = reply)
 }
 
 #' Interrupt.

@@ -46,6 +46,50 @@ test_that("editing a cell that ran shows code_differs and keeps the output (23)"
   expect_equal(v$output, out)
 })
 
+test_that("running a cell whose code has a parse error shows only the error, not code_differs", {
+  id <- "ca1b0a64-d117-466f-898a-8603bbc24e75"
+  cells <- list(S = cell(""))
+  cells[[id]] <- cell("x <- 1")
+  r <- boot(fake_state(cells), id)
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+
+  r <- drive(r$state, ev_apply(list(op_set_code(id, "x <- (.3,.6)")), at(11)))
+  expect_true(snapshot_of(r$state)$cells[[id]]$code_differs)
+
+  r <- drive(r$state, ev_run(id, at(12)))
+  expect_equal(r$reply$skipped, id)
+  v <- snapshot_of(r$state)$cells[[id]]
+  expect_false(v$code_differs)
+  expect_length(v$errors, 1)
+  expect_equal(v$errors[[1]]$kind, "parse")
+  expect_equal(v$errors[[1]]$message, "Syntax error: unexpected ','")
+  drops <- Filter(function(e) identical(e$type, "send") && identical(e$msg$type, "drop_globals"),
+                  r$effects)
+  expect_equal(vapply(drops, function(e) e$msg$cell, character(1)), id)
+})
+
+test_that("running a cell with a cycle, double definition or mixed text clears code_differs; an unrun edit keeps it", {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- 1"),
+                       C = cell("c <- 1"), D = cell("d <- 1")))
+  r <- boot(s, c("A", "B", "C", "D"))
+  for (n in c("a", "b", "c", "d")) {
+    r <- drive(r$state, wk_done(1, last_token(r), report(created = n), at(10)))
+  }
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "a <- b"), op_set_code("B", "b <- a"),
+                                    op_set_code("C", "d <- 2"),
+                                    op_set_code("D", "#' hi\nd <- 1")), at(20)))
+  kinds <- function(v) vapply(v$errors, function(e) e$kind, character(1))
+  snap <- snapshot_of(r$state)$cells
+  expect_true(all(vapply(snap[c("A", "B", "C", "D")], function(v) v$code_differs, logical(1))))
+
+  r <- drive(r$state, ev_run(c("A", "C", "D"), at(21)))
+  snap <- snapshot_of(r$state)$cells
+  expect_false(snap$A$code_differs); expect_equal(kinds(snap$A), "cycle")
+  expect_false(snap$C$code_differs); expect_equal(kinds(snap$C), "multiple_definitions")
+  expect_false(snap$D$code_differs); expect_true("mixed_text" %in% kinds(snap$D))
+  expect_true(snap$B$code_differs)
+})
+
 test_that("apply is atomic: a bad `expected` refuses the whole batch (24)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("y <- 2"), C = cell("z <- 3")))
   r <- drive(s, ev_apply(list(
