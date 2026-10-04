@@ -209,6 +209,35 @@ test("look: Endeavor's DOM hooks are present (12)", async (t) => {
   assertNoProblems(page);
 });
 
+// With no custom code font set (the default), the code box must actually
+// show Ember's own font (IBM Plex Mono), not fall back to the browser's
+// bare "monospace" generic (Notebook.js used to substitute the literal
+// string "monospace" for an empty setting, which beat the real fallback).
+test("look: with no custom code font set, cm-content renders in IBM Plex Mono, not plain monospace", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "ember-look-font.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  // getComputedStyle's font-family is the whole specified list, not the
+  // one family actually rendering -- --custom-code-font-stack's unset
+  // value is the quoted empty string (editor.css's :root default, a
+  // legal placeholder that intentionally matches nothing), so the first
+  // *meaningful* family is what matters here, not literally the first
+  // entry.
+  const families = await page.locator(`${cellSelector("B")} .cm-content`).evaluate((el) => {
+    return getComputedStyle(el).fontFamily.split(",").map((f) => f.trim().replace(/^["']|["']$/g, ""));
+  });
+  const firstMeaningful = families.find((f) => f !== "");
+  assert.notEqual(firstMeaningful.toLowerCase(), "monospace", "the first real font family is not the bare generic");
+  assert.equal(firstMeaningful, "IBM Plex Mono");
+
+  assertNoProblems(page);
+});
+
 // 123. Endeavor's panel hooks: #helpbox-wrapper, pluto-helpbox > header,
 // #live-docs-search once Help is open; open_bottom_right_panel(null) closes
 // it; header#pluto-nav and main pluto-notebook still exist.

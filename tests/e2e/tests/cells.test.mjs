@@ -5,6 +5,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector } from "../browser.mjs";
 
@@ -203,27 +205,79 @@ test("argument tooltips close when the cursor leaves their cell (design-gaps.md,
   assertNoProblems(page);
 });
 
-test("empty notebook: placeholder and hints show, and typing removes them (151)", async (t) => {
-  // Not a notebook made fresh from the start page: new_notebook() (R/api.R)
-  // gives that one a setup cell plus this one, two cells, so
-  // cell_order.length never reaches the 1 this hinges on. This fixture is
-  // the "one cell, nothing typed yet" shape the board actually shows.
-  const notebook = tempNotebook("empty.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-empty.server.log") });
+test("argument tooltips: a reply that arrives after blur (worker busy) doesn't reopen one (design-gaps.md)", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-tooltip-slow.server.log") });
   const browser = await launchBrowser();
   t.after(async () => { await browser.close(); server.stop(); });
 
   const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.innerText.includes("2"),
+    cellSelector("B") + " pluto-output", { timeout: 20000 });
+
+  // Start LOOP (Sys.sleep(3)) running, so the docs request from typing
+  // in A below queues behind a busy worker instead of answering at once.
+  await runCell(page, "LOOP");
+  await page.waitForSelector(`${cellSelector("LOOP")}.running`, { timeout: 15000 });
+
+  await page.locator(`${cellSelector("A")} .cm-content`).click();
+  await page.keyboard.press("End");
+  await page.keyboard.type("; mean(1:3", { delay: 10 });
+  await page.waitForTimeout(300); // past the 150ms debounce: the request is now in flight
+
+  // Move to a different cell well before LOOP (and so the queued
+  // request) can finish.
+  await page.locator(`${cellSelector("B")} .cm-content`).click();
+
+  // Give LOOP, and the request behind it, time to finish and reply.
+  await page.waitForFunction(
+    (sel) => !document.querySelector(sel)?.classList.contains("running"),
+    cellSelector("LOOP"), { timeout: 10000 });
+  await page.waitForTimeout(1000);
+
+  assert.equal(await page.locator(".cm-ember-signature-tooltip").count(), 0, "no tooltip reopened over B");
+
+  assertNoProblems(page);
+});
+
+test("empty notebook: placeholder and hints show, and typing removes them (151)", async (t) => {
+  // A real new notebook (new_notebook(), R/api.R) has two empty cells
+  // (setup, then one code cell), not one -- made through the start page,
+  // like a person actually gets there.
+  const dir = mkdtempSync(path.join(tmpdir(), "ember-e2e-empty-"));
+  const server = await startServer([], { cwd: dir, logFile: path.join(artifactsDir(), "cells-empty.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  // navigator.userAgentData, when present (every Chromium here, including
+  // CI's Linux runners), wins over navigator.platform in is_mac_keyboard
+  // (KeyboardShortcuts.js); both need overriding or the Mac assertion
+  // below only passes by accident of which OS runs the test.
   await page.addInitScript(() => {
     Object.defineProperty(navigator, "platform", { get: () => "MacIntel" });
+    Object.defineProperty(navigator, "userAgentData", { get: () => ({ platform: "macOS" }) });
   });
-  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.goto(server.url);
 
+  await page.locator(".ember-start-new-btn").click();
+  const nameField = page.locator("#ember-start-new-name");
+  await nameField.click();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+  await page.keyboard.type("empty");
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await page.waitForURL(/edit\?id=/, { timeout: 10000 });
+  await page.waitForSelector("pluto-cell", { timeout: 15000 });
+
+  assert.equal(await page.locator("pluto-cell").count(), 2, "a new notebook has a setup cell and one code cell");
   const placeholder = await page.locator("pluto-cell .cm-placeholder").first().innerText();
   assert.equal(placeholder, "Type R code here");
   assert.match(await page.locator("ember-empty-hints").innerText(), /⌘/, "Mac modifier shown in the hints");
 
-  await page.locator("pluto-cell .cm-content").click();
+  await page.locator("pluto-cell:last-of-type .cm-content").click();
   await page.keyboard.type("1 + 1", { delay: 2 });
   await page.waitForFunction(
     () => document.querySelectorAll("ember-empty-hints").length === 0,
@@ -255,7 +309,7 @@ test('chips: "Not run yet" before running, none in safe preview, "Stale" after a
   assertNoProblems(page);
 });
 
-test('chips: a never-run cell shows "Not run yet" with no output (144)', async (t) => {
+test('chips: NEVER (loaded with code, never run) shows "Not run yet" with no output (144)', async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-notrun.server.log") });
   const browser = await launchBrowser();
@@ -263,33 +317,17 @@ test('chips: a never-run cell shows "Not run yet" with no output (144)', async (
 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
-  await page.locator("#ember-safe-preview button").click();
-  await page.waitForFunction(
-    (sel) => document.querySelector(sel)?.innerText.includes("2"),
-    cellSelector("B") + " pluto-output", { timeout: 20000 });
-
-  // A fresh cell with code typed but not yet submitted: has never run,
-  // unlike every existing cell in the fixture by now.
-  const cellCountBefore = await page.locator("pluto-cell").count();
-  await page.locator(`${cellSelector("B")} .cm-content`).click();
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
-  await page.waitForFunction(
-    (before) => document.querySelectorAll("pluto-cell").length > before,
-    cellCountBefore, { timeout: 15000 });
-  const newCellId = await page.evaluate((bid) => {
-    const cells = Array.from(document.querySelectorAll("pluto-cell"));
-    const i = cells.findIndex((c) => c.id === bid);
-    return cells[i + 1]?.id ?? null;
-  }, "B");
-  const newSel = `pluto-cell[id="${newCellId}"]`;
-
-  await page.locator(`${newSel} .cm-content`).click();
-  await page.keyboard.type("1 + 1", { delay: 2 });
+  // Running A alone (not the safe-preview bar's "Run this notebook", which
+  // runs the whole file) starts R without ever reaching NEVER, which has
+  // no connection to A: its code comes straight from the file on disk,
+  // read but not yet run -- the "Not run yet" chip must read that remote
+  // code, not local state, since nothing here has been typed at all.
+  await runCell(page, "A");
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.classList.contains("not_run_yet"),
-    newSel, { timeout: 10000 });
-  assert.equal(await page.locator(`${newSel} ember-chip`).innerText(), "Not run yet");
-  assert.equal(await page.locator(`${newSel} pluto-output`).innerText(), "");
+    cellSelector("NEVER"), { timeout: 20000 });
+  assert.equal(await page.locator(`${cellSelector("NEVER")} ember-chip`).innerText(), "Not run yet");
+  assert.equal(await page.locator(`${cellSelector("NEVER")} pluto-output`).innerText(), "");
 
   assertNoProblems(page);
 });

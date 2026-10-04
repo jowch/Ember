@@ -19,10 +19,14 @@ stop("boom")
 # %% id=LOOP
 Sys.sleep(3)
 
+# %% id=NEVER
+3 + 3
+
 # /// cell order
 # S
 # A
 # B
 # ERR
 # LOOP
+# NEVER
 # ///

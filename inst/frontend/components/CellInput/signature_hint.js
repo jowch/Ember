@@ -1,4 +1,4 @@
-import { EditorView, StateField, StateEffect, ViewPlugin, showTooltip, syntaxTree } from "../../imports/CodemirrorPlutoSetup.js"
+import { StateField, StateEffect, ViewPlugin, showTooltip, syntaxTree } from "../../imports/CodemirrorPlutoSetup.js"
 
 /**
  * The call the cursor is inside, if any: the innermost `Call` whose
@@ -70,6 +70,10 @@ export function signature_hint({ request_signature }) {
         let timer = null
 
         let compute = () => {
+            // A cell can stay busy for a while (CellInput.js's 5s request
+            // timeout); the cursor, and the view's focus, can easily have
+            // moved to a different cell by the time this runs.
+            if (!view.hasFocus) return
             let call = call_at_cursor(view.state)
             if (call == null) {
                 last_key = null
@@ -86,10 +90,28 @@ export function signature_hint({ request_signature }) {
             request_signature({ name: call.name, package: call.package })
                 .then((text) => {
                     if (call.package != null && text != null) cache.set(key, text)
+                    if (!view.hasFocus) return
                     if (last_key === key) dispatch_tooltip(view, call.pos, text)
                 })
                 .catch(() => {})
         }
+
+        // design-gaps.md, "Argument tooltips stay on screen": closing the
+        // tooltip on blur isn't enough on its own -- the debounce timer
+        // from a keystroke just before the blur, or a request_signature
+        // promise already in flight, can still fire afterwards and reopen
+        // it over whatever cell has focus next. Both need cancelling here
+        // too; the view.hasFocus checks above are the second line of
+        // defense for a promise that was in flight before the blur fired.
+        let on_blur = () => {
+            if (timer != null) {
+                clearTimeout(timer)
+                timer = null
+            }
+            last_key = null
+            dispatch_tooltip(view, 0, null)
+        }
+        view.dom.addEventListener("blur", on_blur, true)
 
         return {
             update(update) {
@@ -99,18 +121,10 @@ export function signature_hint({ request_signature }) {
             },
             destroy() {
                 if (timer != null) clearTimeout(timer)
+                view.dom.removeEventListener("blur", on_blur, true)
             },
         }
     })
 
-    // design-gaps.md, "Argument tooltips stay on screen": the plugin above
-    // only recomputes on a doc or selection change, so a tooltip shown while
-    // the cursor was in a call stays up after the cursor (and the mouse)
-    // leave the cell entirely -- it has nothing to tell it to go. A blur
-    // closes it outright, rather than waiting for the next edit elsewhere.
-    let close_on_blur = EditorView.domEventHandlers({
-        blur: (event, view) => dispatch_tooltip(view, 0, null),
-    })
-
-    return [signature_tooltip_field, plugin, close_on_blur]
+    return [signature_tooltip_field, plugin]
 }

@@ -23,8 +23,8 @@ const format_stale_chip = (notebook, cell_id) => {
     if (names.length === 0) return t("t_chip_stale")
     const shown = names.slice(0, 3)
     const rest = names.length - shown.length
-    const parts = rest > 0 ? [...shown, `${rest} more`] : shown
-    const joined = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`
+    const parts = rest > 0 ? [...shown, t("t_n_more", { count: rest })] : shown
+    const joined = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} ${t("t_and")} ${parts[parts.length - 1]}`
     return t("t_chip_stale_names", { names: joined })
 }
 
@@ -294,7 +294,7 @@ export const Cell = ({
         no_output_yet &&
         !running &&
         !queued &&
-        (cell_input_local?.code ?? code).trim() !== "" &&
+        code.trim() !== "" &&
         !process_waiting_for_permission &&
         kind !== "markdown" &&
         !running_disabled &&

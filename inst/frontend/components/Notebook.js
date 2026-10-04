@@ -198,20 +198,41 @@ export const Notebook = ({
         }
     }, [cell_outputs_delayed])
 
+    // Left unset (not "monospace") when there's no custom font: `--code-font-stack`
+    // (editor.css) lists this before the real fallback (IBM Plex Mono), and
+    // "monospace" is a valid generic family that would win outright and hide
+    // it. Setting the property to a bare empty value here would be worse,
+    // not better -- a custom-property substitution producing nothing still
+    // leaves its comma behind ("var(--custom-code-font-stack), var(--julia-mono-font-stack)"
+    // becomes ", IBM Plex Mono, ..."), which is an invalid font-family value
+    // overall and falls back to the browser's serif default, not the next
+    // item -- so the property is omitted from this element's inline style
+    // instead, leaving editor.css's own :root default (the quoted empty
+    // string, a legal if useless family name that lets the list move on) in
+    // effect.
     let custom_font = get_settings().CUSTOM_CODE_FONT_STACK
     custom_font = custom_font.replace(/'",/g, "").trim()
-    custom_font = custom_font == "" ? "monospace" : custom_font
+    const custom_font_style = custom_font === "" ? "" : `--custom-code-font-stack: ${custom_font};`
 
-    const only_cell_id = notebook.cell_order.length === 1 ? notebook.cell_order[0] : null
+    // A real new notebook (new_notebook(), R/api.R) has an empty setup
+    // cell plus one empty code cell, not one cell, so this checks every
+    // cell rather than cell_order.length.
     const is_empty_notebook =
         !disable_input &&
-        only_cell_id != null &&
-        (notebook.cell_inputs[only_cell_id]?.code ?? "") === "" &&
-        (cell_inputs_local[only_cell_id]?.code ?? "") === "" &&
-        (notebook.cell_results[only_cell_id]?.output?.last_run_timestamp ?? 0) === 0
+        notebook.cell_order.length > 0 &&
+        notebook.cell_order.every(
+            (id) =>
+                (notebook.cell_inputs[id]?.code ?? "") === "" &&
+                (cell_inputs_local[id]?.code ?? "") === "" &&
+                (notebook.cell_results[id]?.output?.last_run_timestamp ?? 0) === 0
+        )
 
     return html`
-        <pluto-notebook id=${notebook.notebook_id} style="--custom-code-font-stack: ${custom_font};">
+        <pluto-notebook
+            id=${notebook.notebook_id}
+            class=${is_empty_notebook ? "ember-empty-notebook" : ""}
+            style=${custom_font_style}
+        >
             ${notebook.cell_order
                 .filter((_, i) => !(cell_outputs_delayed && i > render_cell_outputs_minimum))
                 .map(

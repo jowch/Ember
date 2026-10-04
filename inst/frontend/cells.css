@@ -297,7 +297,7 @@ ember-empty-hints kbd {
     border-radius: 4px;
     padding: 0 4px;
 }
-pluto-notebook:has(> pluto-cell:only-of-type) pluto-input .cm-editor {
+pluto-notebook.ember-empty-notebook pluto-input .cm-editor {
     box-shadow: 0 0 0 1px var(--ember-line);
 }
 
