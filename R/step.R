@@ -637,16 +637,18 @@ reduce_apply <- function(state, event) {
   deleted <- character()
   reset_ids <- character()
 
+  # bad's message never names the cell by id (a UUID); op, returned
+  # alongside the reply, already carries op$cell for the caller.
   for (op in ops) {
     bad <- NULL
     if (identical(op$op, "set_code")) {
       if (!(op$cell %in% names(cells))) {
-        bad <- refused(sprintf("unknown cell %s", op$cell), op)
+        bad <- refused("unknown cell", op)
       } else {
         code <- normalise_code(op$code)
         if (!is.null(op$expected) &&
             !identical(normalise_code(op$expected), cells[[op$cell]]$code)) {
-          bad <- refused(sprintf("%s's code has changed", op$cell), op)
+          bad <- refused("code has changed", op)
         } else if (any(grepl("^# %%|^# ///", strsplit(code, "\n", fixed = TRUE)[[1]]))) {
           bad <- refused("code contains a cell or footer marker line", op)
         } else {
@@ -692,7 +694,7 @@ reduce_apply <- function(state, event) {
       }
     } else if (identical(op$op, "delete")) {
       if (!(op$cell %in% names(cells))) {
-        bad <- refused(sprintf("unknown cell %s", op$cell), op)
+        bad <- refused("unknown cell", op)
       } else if (identical(op$cell, state$setup)) {
         bad <- refused("cannot delete the setup cell; empty it instead", op)
       } else {
@@ -701,7 +703,7 @@ reduce_apply <- function(state, event) {
       }
     } else if (identical(op$op, "move")) {
       if (!(op$cell %in% names(cells))) {
-        bad <- refused(sprintf("unknown cell %s", op$cell), op)
+        bad <- refused("unknown cell", op)
       } else if (op$index < 1 || op$index > length(cells)) {
         bad <- refused("index out of range", op)
       } else {
@@ -711,13 +713,13 @@ reduce_apply <- function(state, event) {
       }
     } else if (identical(op$op, "fold")) {
       if (!(op$cell %in% names(cells))) {
-        bad <- refused(sprintf("unknown cell %s", op$cell), op)
+        bad <- refused("unknown cell", op)
       } else {
         cells[[op$cell]]$folded <- isTRUE(op$folded)
       }
     } else if (identical(op$op, "disable")) {
       if (!(op$cell %in% names(cells))) {
-        bad <- refused(sprintf("unknown cell %s", op$cell), op)
+        bad <- refused("unknown cell", op)
       } else if (identical(op$cell, state$setup)) {
         bad <- refused("the setup cell can't be disabled; empty it instead", op)
       } else if (!identical(cells[[op$cell]]$kind, "code")) {
@@ -1102,14 +1104,14 @@ reduce_wk_source <- function(state, event) {
         state$graph$ids)
   }
   clash <- character()
-  owner <- NULL
   for (n in defs) {
-    o <- owner_of(n)
-    if (!is.null(o)) { clash <- n; owner <- o; break }
+    if (!is.null(owner_of(n))) { clash <- n; break }
   }
 
   if (length(clash) > 0) {
-    msg <- sprintf("%s defines %s, which cell %s defines", basename(event$path), clash, owner)
+    # No cell id in the message (cell ids are UUIDs and never belong in
+    # user-facing text): just the name and that another cell defines it.
+    msg <- sprintf("%s defines %s, which another cell already defines", basename(event$path), clash)
     # The worker raises an R error with this exact message when the denial
     # stops the `source()` call; `reduce_wk_done()` matches it against
     # `w$running$refused_source` to report it as `"source_conflict"`

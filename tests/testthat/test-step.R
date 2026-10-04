@@ -513,13 +513,14 @@ test_that("an allowed computed source() learns its definitions (51)", {
   expect_true("z" %in% r2$state$graph$cells$A$definitions)
 })
 
-test_that("a conflicting computed source() is refused, naming the owner (52)", {
+test_that("a conflicting computed source() is refused, naming the clashing name but no cell id (52)", {
   s <- fake_state(list(S = cell(""), B = cell("z <- 1"), A = cell("source(file.path('.', 'h.R'))")))
   r <- boot(s, "A")
   r2 <- drive(r$state, wk_source(1, last_token(r), "h.R", "z <- 2", at(10)))
   reply_msg <- last_sent(r2)
   expect_false(reply_msg$allow)
-  expect_match(reply_msg$message, "B")
+  expect_match(reply_msg$message, "z")
+  expect_no_match(reply_msg$message, "B")
 })
 
 test_that("a sourced file's change invalidates the sourcing cell (53)", {
@@ -1452,8 +1453,12 @@ test_that("disabling refuses the setup cell, a text cell and an unknown id, and 
   r2 <- drive(s, ev_apply(list(op_disable("T")), at(2)))
   expect_equal(r2$reply$message, "text cells can't be disabled")
 
-  r3 <- drive(s, ev_apply(list(op_disable("ghost")), at(3)))
-  expect_true(grepl("unknown cell", r3$reply$message))
+  ghost_id <- "ca1b0a64-d117-466f-898a-8603bbc24e75"
+  r3 <- drive(s, ev_apply(list(op_disable(ghost_id)), at(3)))
+  # No cell id in the message (cell ids are UUIDs and never belong in
+  # user-facing text): exactly "unknown cell", not "unknown cell <id>".
+  expect_equal(r3$reply$message, "unknown cell")
+  expect_no_match(r3$reply$message, ghost_id, fixed = TRUE)
 
   r4 <- drive(s, ev_apply(list(op_fold("A", TRUE), op_disable("S")), at(4)))
   expect_s3_class(r4$reply, "ember_refused")
