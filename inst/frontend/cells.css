@@ -168,6 +168,14 @@ pluto-input {
     z-index: 35;
 }
 
+/* Every pluto-input sits at z-index 35, so a later cell's code box paints
+   over an earlier cell's CodeMirror tooltips (completion, argument hint,
+   lint), which live inside its pluto-input. The input with focus or an
+   open tooltip goes above the others, still under the side panel (50). */
+pluto-input:is(:focus-within, :has(.cm-tooltip)) {
+    z-index: 45;
+}
+
 /* An open cell menu can overflow below a short cell into the next one;
    this is the one time the *whole* cell needs to outrank its neighbour,
    not just something inside it. */
