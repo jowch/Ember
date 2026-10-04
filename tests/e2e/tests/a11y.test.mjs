@@ -110,6 +110,9 @@ test("reduced motion: the running rail is still and the menu doesn't move (170)"
   await runCell(page, "LOOP");
   await page.waitForSelector(`${cellSelector("LOOP")}.running`, { timeout: 30000 });
   const rail = () => page.locator(`${cellSelector("LOOP")} > pluto-trafficlight`).evaluate((el) => getComputedStyle(el).animationName);
+  // The running look is held back 250 ms after the cell starts (useSettled).
+  const deadline = Date.now() + 5000;
+  while ((await rail()) !== "ember-rail-pulse" && Date.now() < deadline) await page.waitForTimeout(50);
   assert.equal(await rail(), "ember-rail-pulse", "the rail pulses without the preference");
 
   await page.emulateMedia({ reducedMotion: "reduce" });
