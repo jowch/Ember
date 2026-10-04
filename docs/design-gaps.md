@@ -77,6 +77,8 @@ done; clear out ticked items at each release.
 - [ ] "Restart R" in the Status tab doesn't tell the run tracker a run started, so a restart that reruns cells isn't announced when it ends (ui-3.md, Accessibility) — improvised
 - [ ] `tests/testthat/fixtures/pluto-css-variables.txt` still requires dead theme variables (`--frontmatter-*`, `--binder-loading-header-color`) that were kept for Pluto/Endeavor compatibility. Ember is now built standalone, so the contract can drop names nothing uses — improvised
 
+- [ ] Flaky on Windows CI: test-server.R test 31 ("interrupt_all sends SIGINT to the running cell") once saw no restart offer within 15 s, then passed on re-run (ci/flame-secret, a frontend-only change). Look at the interrupt grace timer's timing on slow Windows runners if it recurs — improvised
+
 ## Grammar
 
 - [ ] The corpus test reads the gitignored `spikes/corpus/`, so it only runs on one machine. Commit a small corpus or skip when absent — improvised
