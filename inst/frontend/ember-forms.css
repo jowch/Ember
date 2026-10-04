@@ -8,11 +8,20 @@
  * editor.css itself adds. */
 
 :root {
-    /* Kept under its old name for other CSS and for CodeMirror code; it is
-       the system monospace stack, not JuliaMono, which Ember doesn't
-       vendor. Also set in editor.css's own `:root` -- same value, so
-       declaring it again here is harmless on pages that load both. */
-    --system-fonts-mono: ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    /* The bundled fonts' own names (fonts.css's @font-face family), plus
+       every name other CSS and CodeMirror code already reads: both
+       editor.html and start.html load this file, so the tokens live here
+       rather than in editor.css, which only the editor loads. */
+    --ember-ui-font: "Figtree", ui-sans-serif, system-ui, sans-serif;
+    --ember-prose-font: "Source Serif 4", ui-serif, Georgia, serif;
+    --ember-code-font: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+    --sans-serif-font-stack: var(--ember-ui-font);
+    --system-ui-font-stack: var(--ember-ui-font);
+    --lato-ui-font-stack: var(--ember-ui-font);
+    --julia-mono-font-stack: var(--ember-code-font);
+    --roboto-mono-font-stack: var(--ember-code-font);
+    --system-fonts-mono: var(--ember-code-font);
+    --ember-prose-font-stack: var(--ember-prose-font);
 }
 
 .mono {

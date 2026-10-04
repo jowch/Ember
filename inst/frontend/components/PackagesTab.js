@@ -140,10 +140,26 @@ const PackagesUpdate = ({ update, library_status }) => {
     `
 }
 
+/** A status cell per Panel3: a coloured pill for installed/failed, a
+ * progress bar for installing, plain faint text otherwise. */
+const PackageStatus = ({ row }) => {
+    const text = t(`t_ember_packages_status_${row.status}`)
+    if (row.status === "installed") return html`<span class="ember-pill ember-pill-accent">${text}</span>`
+    if (row.status === "failed" || row.status === "not_found") return html`<span class="ember-pill ember-pill-red">${text}</span>`
+    if (row.status === "installing") {
+        return html`<div class="ember-package-installing">
+            <span>${text}</span>
+            <div class="ember-package-progress ember-package-progress-indeterminate"></div>
+        </div>`
+    }
+    return html`<span class="ember-faint-text">${text}</span>`
+}
+
 /**
- * The "Packages" tab (ui-2.md, 5): the snapshot
- * date and R version, the library's install status, a card per install
- * failure, and one row per locked or not-found package. Reads
+ * The "Packages" tab (ui-2.md, 5; ui-3-plan.md, piece 4 and piece 5's
+ * "Packages tab"): "Versions as of <date>" with Update, a description
+ * line, the library's install status, a card per install failure, and
+ * one row per *direct* package (dependencies hidden). Reads
  * `notebook.ember.packages` (project_ember(), pluto-state.R); `nbpkg`
  * stays filled beside it for Endeavor and isn't read here.
  *
@@ -152,20 +168,19 @@ const PackagesUpdate = ({ update, library_status }) => {
 export const PackagesTab = ({ packages }) => {
     if (packages == null) return null
     const { snapshot, r_version, library, rows, update } = packages
+    const direct_rows = rows.filter((row) => row.direct)
 
     return html`
         <div id="ember-packages-tab">
-            <dl class="ember-packages-meta">
-                ${snapshot != null
-                    ? html`<dt>${t("t_ember_packages_versions_as_of")}</dt>
-                          <dd>${snapshot}</dd>`
-                    : null}
-                ${r_version != null
-                    ? html`<dt>${t("t_ember_packages_r_version")}</dt>
-                          <dd>${r_version}</dd>`
-                    : null}
-            </dl>
-            <${PackagesUpdate} update=${update ?? null} library_status=${library.status} />
+            <div class="ember-packages-head">
+                <div class="ember-packages-head-row">
+                    <span class="ember-packages-title">
+                        ${snapshot != null ? `${t("t_ember_packages_versions_as_of")} ${snapshot}` : t("t_ember_packages_library_status_unknown")}
+                    </span>
+                    <${PackagesUpdate} update=${update ?? null} library_status=${library.status} />
+                </div>
+                <span class="ember-packages-description">${t("t_ember_packages_tab_description")}</span>
+            </div>
             <p class="ember-packages-library-status ember-packages-library-${library.status}">
                 ${t(`t_ember_packages_library_status_${library.status}`)}
                 ${library.progress != null ? ` (${library.progress.done}/${library.progress.total})` : ""}
@@ -184,24 +199,22 @@ export const PackagesTab = ({ packages }) => {
                           />`
                       )}
                   </div>`}
-            ${rows.length === 0
+            ${direct_rows.length === 0
                 ? null
                 : html`<table class="ember-packages-table">
                       <thead>
                           <tr>
                               <th>${t("t_ember_packages_column_name")}</th>
                               <th>${t("t_ember_packages_column_version")}</th>
-                              <th>${t("t_ember_packages_column_source")}</th>
                               <th>${t("t_ember_packages_column_status")}</th>
                           </tr>
                       </thead>
                       <tbody>
-                          ${rows.map(
+                          ${direct_rows.map(
                               (row) => html`<tr class="ember-package-row ember-package-${row.status}" key=${row.name}>
-                                  <td>${row.name}</td>
-                                  <td>${row.version ?? "—"}</td>
-                                  <td>${row.source ?? "—"}</td>
-                                  <td title=${row.message ?? ""}>${t(`t_ember_packages_status_${row.status}`)}</td>
+                                  <td class="ember-mono">${row.name}</td>
+                                  <td class="ember-mono">${row.version ?? "—"}</td>
+                                  <td title=${row.message ?? ""}><${PackageStatus} row=${row} /></td>
                               </tr>`
                           )}
                       </tbody>

@@ -63,7 +63,12 @@ test("offline: rich.R works with every non-local request aborted (18)", async (t
 
   await openNotebook(page, server.origin, server.secret, notebook);
   await runCell(page, "DF");
-  await page.waitForSelector(`${cellSelector("DF")} pluto-output`, { timeout: 20000 });
+  // `df <- mtcars` is an assignment: its own output is invisible (zero
+  // size), so waiting for `pluto-output` to be *visible* would depend on
+  // pixels that are never there. Wait for the run to finish instead.
+  await page.waitForFunction(
+    () => window.editor_state?.notebook?.cell_results?.DF?.output?.last_run_timestamp > 0,
+    null, { timeout: 20000 });
 
   // `df <- ...` is an assignment (an invisible result, same as the
   // fixture's own code): editing it to a bare expression instead makes the
@@ -79,7 +84,7 @@ test("offline: rich.R works with every non-local request aborted (18)", async (t
   await page.waitForSelector("dialog.psettings[open]", { timeout: 5000 });
   await page.keyboard.press("Escape");
 
-  await page.locator('button.toggle_export[title^="Export"]').click();
+  await page.locator('header#pluto-nav button[aria-label="Export"]').click();
   await page.waitForSelector("dialog#export[open]", { timeout: 5000 });
 
   // Code highlighted as R: the MD cell's fenced block (` ```r\n1 + 1\n``` `)
@@ -131,7 +136,7 @@ test("offline: each vendored library does its job (19)", async (t) => {
     () => document.querySelector("span.ansi-red-fg") != null, null, { timeout: 20000 });
 
   // dialog-polyfill: the export dialog opens (uses <dialog>, polyfilled where needed).
-  await page.locator('button.toggle_export[title^="Export"]').click();
+  await page.locator('header#pluto-nav button[aria-label="Export"]').click();
   await page.waitForSelector("dialog#export[open]", { timeout: 5000 });
   await page.keyboard.press("Escape")
 
@@ -163,6 +168,42 @@ test("offline: each vendored library does its job (19)", async (t) => {
   assert.equal(libChecks.lodash, 3, "expected lodash's _.last to work");
   assert.equal(libChecks.semver, true, "expected semver's gt() to work");
   assert.ok(libChecks.dompurifyStripsScript, "expected DOMPurify to strip a <script> tag");
+
+  assertNoProblemsOffline(page);
+});
+
+test("offline: the three bundled fonts load with no network request leaving localhost (116)", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "offline-fonts.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  const aborted = blockNonLocal(page);
+
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  // document.fonts.check() returns true whenever the browser would fall
+  // back to *some* font for the given spec, even with no matching
+  // @font-face loaded -- load() actually resolves faces, and only
+  // succeeds (a non-empty array of FontFace, each "loaded") if a real
+  // @font-face matched and its file fetched.
+  const checks = await page.evaluate(async () => {
+    const load = async (spec) => {
+      const faces = await document.fonts.load(spec);
+      return faces.length > 0 && faces.every((f) => f.status === "loaded");
+    };
+    return {
+      figtree: await load("16px Figtree"),
+      sourceSerif: await load("16px 'Source Serif 4'"),
+      plexMono: await load("13px 'IBM Plex Mono'"),
+    };
+  });
+
+  assert.equal(checks.figtree, true, "expected Figtree to actually load");
+  assert.equal(checks.sourceSerif, true, "expected Source Serif 4 to actually load");
+  assert.equal(checks.plexMono, true, "expected IBM Plex Mono to actually load");
+  assert.ok(aborted.every((u) => /mathjax/.test(u)), `expected no non-MathJax request to leave localhost: ${aborted}`);
 
   assertNoProblemsOffline(page);
 });

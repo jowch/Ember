@@ -65,6 +65,7 @@ import { t } from "../common/lang.js"
 import { tell } from "../common/dialogs.js"
 import { get_settings } from "./Settings.js"
 import { highlightKwargsPlugin } from "./CellInput/highlight_kwargs.js"
+import { is_dark_theme } from "../common/theme.js"
 
 // @ts-ignore
 // @ts-ignore
@@ -239,6 +240,10 @@ export const CellInput = ({
     const newcm_ref = useRef(/** @type {EditorView?} */ (null))
     const dom_node_ref = useRef(/** @type {HTMLElement?} */ (null))
     const remote_code_ref = useRef(/** @type {string?} */ (null))
+
+    const [dark_theme, set_dark_theme] = useState(is_dark_theme())
+    useEventListener(window, "ember theme change", () => set_dark_theme(is_dark_theme()), [])
+    let dark_theme_compartment = useCompartment(newcm_ref, EditorView.theme({}, { dark: dark_theme }))
 
     let global_definitions_compartment = useCompartment(newcm_ref, GlobalDefinitionsFacet.of(global_definition_locations))
     let highlighted_line_compartment = useCompartment(newcm_ref, HighlightLineFacet.of(cm_highlighted_line))
@@ -468,12 +473,11 @@ export const CellInput = ({
             }
         })
 
-        const usesDarkTheme = window.matchMedia("(prefers-color-scheme: dark)").matches
         const newcm = (newcm_ref.current = new EditorView({
             state: EditorState.create({
                 doc: local_code,
                 extensions: [
-                    EditorView.theme({}, { dark: usesDarkTheme }),
+                    dark_theme_compartment,
                     // Compartments coming from react state/props
                     highlighted_line_compartment,
                     highlighted_range_compartment,

@@ -23,10 +23,16 @@ test("look: logo, title and body text say Ember, not Pluto/Julia (8)", async (t)
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  assert.match(await page.locator("img#logo-big").getAttribute("src"), /img\/logo\.svg$/);
-  assert.match(await page.locator("img#logo-small").getAttribute("src"), /img\/favicon\.svg$/);
-  const altBig = await page.locator("img#logo-big").getAttribute("alt");
-  assert.equal(altBig, "Ember");
+  // 124: the header's logo is an inline SVG, drawn in --ember-logo, not
+  // img#logo-big/img#logo-small (those stay for exports and the start page).
+  const fill = await page.locator("header#pluto-nav h1 svg").evaluate((el) => getComputedStyle(el.querySelector("g")).fill);
+  assert.equal(fill, "rgb(232, 89, 12)");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark", null, { timeout: 5000 });
+  const darkFill = await page.locator("header#pluto-nav h1 svg").evaluate((el) => getComputedStyle(el.querySelector("g")).fill);
+  assert.equal(darkFill, "rgb(240, 112, 50)");
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "light", null, { timeout: 5000 });
 
   assert.match(await page.title(), /^basic\.R — Ember$/);
 
@@ -55,8 +61,7 @@ test("look: no requests to external calling-home servers; no Fix with AI (9)", a
   page.on("request", (req) => { try { requestedHosts.push(new URL(req.url()).hostname); } catch { /* ignore */ } });
 
   await openNotebook(page, server.origin, server.secret, notebook);
-  await page.locator(".safe-preview button").click();
-  await page.getByText("run this notebook", { exact: false }).click();
+  await page.locator("#ember-safe-preview button").click();
   await page.waitForSelector(`${cellSelector("PARSE")} jlerror.syntax-error`, { timeout: 20000 });
 
   const blocked = ["plutojl.org", "fonsp.com", "openai.com", "gstatic.com", "api.github.com"];
@@ -81,8 +86,7 @@ test("look: cell menu has only Delete/Copy output/Disable cell; no feedback form
 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
-  await page.locator(".safe-preview button").click();
-  await page.getByText("run this notebook", { exact: false }).click();
+  await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("55"),
     cellSelector("B") + " pluto-output", { timeout: 20000 });
@@ -98,6 +102,9 @@ test("look: cell menu has only Delete/Copy output/Disable cell; no feedback form
   }
 
   assert.equal(await page.locator("form#feedback").count(), 0, "no feedback form on the page");
+  // 125: the footer (Settings/FAQ links) is gone; Settings lives in the
+  // header's ⋯ menu now.
+  assert.equal(await page.locator("footer").count(), 0, "no footer element");
 
   assertNoProblems(page);
 });
@@ -117,9 +124,8 @@ test("look: markdown cell renders folded, with R tokens in its fenced block (11)
   assert.ok(previewFolded, "MD is folded in safe preview");
   assert.match(await page.locator(`${cellSelector("MD")} pluto-output`).innerText(), /Rich outputs/);
 
-  await page.locator(".safe-preview button").click();
-  await page.getByText("run this notebook", { exact: false }).click();
-  await page.waitForFunction(() => document.querySelectorAll(".safe-preview-info").length === 0, null, { timeout: 20000 });
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForFunction(() => document.querySelectorAll("#ember-safe-preview").length === 0, null, { timeout: 20000 });
 
   const isFolded = await page.locator(cellSelector("MD")).evaluate((el) => el.classList.contains("code_folded"));
   assert.ok(isFolded, "MD starts folded");
@@ -195,6 +201,32 @@ test("look: Endeavor's DOM hooks are present (12)", async (t) => {
     const empty = names.filter((_, i) => values[i] === "");
     assert.deepEqual(empty, [], `every CSS variable resolves on :root under ${scheme}`);
   }
+
+  assertNoProblems(page);
+});
+
+// 123. Endeavor's panel hooks: #helpbox-wrapper, pluto-helpbox > header,
+// #live-docs-search once Help is open; open_bottom_right_panel(null) closes
+// it; header#pluto-nav and main pluto-notebook still exist.
+test("look: Endeavor's panel hooks are present (123)", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "ember-look-123.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  assert.ok(await page.locator("header#pluto-nav").count() > 0);
+  assert.ok(await page.locator("main pluto-notebook").count() > 0);
+
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
+  await page.waitForSelector("#live-docs-search");
+  assert.ok(await page.locator("#helpbox-wrapper").count() > 0);
+  assert.ok(await page.locator("pluto-helpbox > header").count() > 0);
+
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: null })));
+  await page.waitForSelector("#helpbox-wrapper:not(.open)", { state: "attached" });
 
   assertNoProblems(page);
 });

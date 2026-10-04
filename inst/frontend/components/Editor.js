@@ -19,15 +19,7 @@ import { ExportBanner } from "./ExportBanner.js"
 import { Popup } from "./Popup.js"
 
 import { slice_utf8 } from "../common/UnicodeTools.js"
-import {
-    has_ctrl_or_cmd_pressed,
-    ctrl_or_cmd_name,
-    is_mac_keyboard,
-    in_textarea_or_input,
-    and,
-    control_name,
-    alt_or_options_name,
-} from "../common/KeyboardShortcuts.js"
+import { has_ctrl_or_cmd_pressed, is_mac_keyboard, in_textarea_or_input, keyboard_shortcuts_body } from "../common/KeyboardShortcuts.js"
 import { PlutoActionsContext, PlutoBondsContext, PlutoJSInitializingContext, SetWithEmptyCallback } from "../common/PlutoContext.js"
 import { BackendLaunchPhase } from "../common/Binder.js"
 import { setup_mathjax } from "../common/SetupMathJax.js"
@@ -39,13 +31,10 @@ import { HijackExternalLinksToOpenInNewTab } from "./HackySideStuff/HijackExtern
 import { get_environment } from "../common/Environment.js"
 import { ProcessStatus } from "../common/ProcessStatus.js"
 import { SafePreviewUI } from "./SafePreviewUI.js"
-import { EmberStatus } from "./EmberStatus.js"
-import { NotRunBar } from "./NotRunBar.js"
+import { Header } from "./Header.js"
 import { open_pluto_popup } from "../common/open_pluto_popup.js"
 import { get_included_external_source } from "../common/external_source.js"
 import { getCurrentLanguage, getWritingDirection, t, th } from "../common/lang.js"
-import { InlineIonicon } from "../common/ClassTable.js"
-import { desktop_version, is_desktop, open_main_menu } from "./DesktopInterface.js"
 import { MoveDialog } from "./MoveDialog.js"
 import { with_query_params } from "../common/URLTools.js"
 import { ConfirmBeforeLongRuntime, maybe_abort_long_runtime } from "./ConfirmBeforeLongRuntime.js"
@@ -121,14 +110,6 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
     // files so widgets work. An export of a notebook in safe preview still is.
     sanitize_html: state.notebook.process_status === ProcessStatus.waiting_for_permission,
 })
-
-const first_true_key = (obj) => {
-    for (let [k, v] of Object.entries(obj)) {
-        if (v) {
-            return k
-        }
-    }
-}
 
 /**
  * @typedef CellMetaData
@@ -327,7 +308,6 @@ const first_true_key = (obj) => {
  * }}
  */
 
-const url_logo_big = get_included_external_source("pluto-logo-big")?.href
 export const url_logo_small = get_included_external_source("pluto-logo-small")?.href
 
 /**
@@ -776,6 +756,8 @@ export class Editor extends Component {
                 ),
             ember_run_all: () =>
                 this.client.send("ember_run_all", {}, { notebook_id: this.state.notebook.notebook_id }, false),
+            ember_set_mode: (mode) =>
+                this.client.send("ember_set_mode", { mode }, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_update_packages: () =>
                 this.client.send("ember_update_packages", {}, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_apply_update: (date) =>
@@ -1359,37 +1341,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                 // On mac "cmd+shift+?" is used by chrome, so that is why this needs to be ctrl as well on mac
                 // Also pressing "ctrl+shift" on mac causes the key to show up as "/", this madness
                 // I hope we can find a better solution for this later - Dral
-
-                const fold_prefix = is_mac_keyboard ? `⌥${and}⌘` : `Ctrl${and}Shift`
-
-                const or = t("t_key_or")
-
-                alert(
-                    `
-⇧${and}Enter:   ${t("t_key_run")}
-${ctrl_or_cmd_name}${and}Enter:   ${t("t_key_run_add")}
-${ctrl_or_cmd_name}${and}S:   ${t("t_key_submit_all_changes")}
-Delete ${or} Backspace:   ${t("t_key_delete_or_backspace")}
-
-PageUp ${or} fn${and}↑:   ${t("t_key_page_up")}
-PageDown ${or} fn${and}↓:   ${t("t_key_page_down")}
-${control_name}${and}click:   ${t("t_key_ctrl_click")}
-${alt_or_options_name}${and}↑:   ${t("t_key_alt_up")}
-${alt_or_options_name}${and}↓:   ${t("t_key_alt_down")}
-
-${control_name}${and}/:   ${t("t_key_ctrl_slash")}
-${control_name}${and}M:   ${t("t_key_ctrl_m")}
-${fold_prefix}${and}[:   ${t("t_key_ctrl_m")}
-${fold_prefix}${and}]:   ${t("t_key_ctrl_m")}
-${control_name}${and}Q:   ${t("t_key_ctrl_q")}
-
-${t("t_key_selection_description")}
-${ctrl_or_cmd_name}${and}C:   ${t("t_key_ctrl_c")}
-${ctrl_or_cmd_name}${and}X:   ${t("t_key_ctrl_x")}
-${ctrl_or_cmd_name}${and}V:   ${t("t_key_ctrl_v")}
-
-${t("t_key_autosave_description")}`
-                )
+                tell({ title: t("t_ember_keyboard_shortcuts"), body: keyboard_shortcuts_body() })
                 e.preventDefault()
             } else if (e.key === "Escape") {
                 this.setState({
@@ -1500,6 +1452,12 @@ ${t("t_key_autosave_description")}`
         } else {
             this.connect()
         }
+
+        // The Variables tab's name links (VariablesTab.js): scroll to and
+        // select the cell that defines a variable.
+        window.addEventListener("ember_select_cell", (/** @type {CustomEvent} */ e) => {
+            this.setState({ selected_cells: [e.detail] })
+        })
     }
 
     componentDidUpdate(/** @type {EditorProps} */ old_props, /** @type {EditorState} */ old_state) {
@@ -1546,7 +1504,6 @@ ${t("t_key_autosave_description")}`
         let { export_menu_open, notebook } = this.state
 
         const status = this.cached_status ?? statusmap(this.state, launch_params)
-        const statusval = first_true_key(status)
 
         if (status.isolated_cell_view) {
             return html`
@@ -1571,8 +1528,6 @@ ${t("t_key_autosave_description")}`
                 </${PlutoActionsContext.Provider}>
             `
         }
-        const warn_about_untrusted_code = this.client.session_options?.security?.warn_about_untrusted_code ?? true
-
         const restart = async () => {
             await this.client.send(
                 "restart_process",
@@ -1582,8 +1537,6 @@ ${t("t_key_autosave_description")}`
                 }
             )
         }
-
-        const restart_button = (text) => html`<a href="#" id="restart-process-button" onClick=${() => restart()}>${text}</a>`
 
         return html`
             ${this.state.disable_ui === false && html`<${HijackExternalLinksToOpenInNewTab} />`}
@@ -1619,72 +1572,21 @@ ${t("t_key_autosave_description")}`
                             open=${export_menu_open}
                             onClose=${() => this.setState({ export_menu_open: false })}
                         />
-                        ${
-                            status.binder
-                                ? html`<div id="binder_spinners">
-                                      <binder-spinner id="ring_1"></binder-spinner>
-                                      <binder-spinner id="ring_2"></binder-spinner>
-                                      <binder-spinner id="ring_3"></binder-spinner>
-                                  </div>`
-                                : null
-                        }
-                        <nav id="at_the_top">
-                            <a
-                                href=${this.state.binder_session_url != null ? `${this.state.binder_session_url}?token=${this.state.binder_session_token}` : "./"}
-                                onClick=${(e) => {
-                                    if (is_desktop()) {
-                                        e.preventDefault()
-                                        open_main_menu()
-                                    }
-                                }}
-                            >
-                                <h1><img id="logo-big" src=${url_logo_big} alt="Ember" /><img id="logo-small" src=${url_logo_small} aria-hidden="true" /></h1>
-                            </a>
-                            ${
-                                this.state.extended_components.CustomHeader &&
-                                html`<${this.state.extended_components.CustomHeader} notebook_id=${this.state.notebook.notebook_id} />`
-                            }
-                            <div class="flex_grow_1"></div>
-                            ${
-                                this.state.extended_components.CustomHeader == null &&
-                                html`<button id="ember-file-name" type="button" title=${notebook.path} onClick=${() => this.setState({ move_dialog_open: true })}>
-                                    ${notebook.shortpath}
-                                </button>`
-                            }
-                            <div class="flex_grow_2"></div>
-                            <div id="process_status">${
-                                status.binder && status.loading
-                                    ? t("t_process_status_loading_binder")
-                                    : statusval === "disconnected"
-                                      ? t("t_process_status_reconnecting")
-                                      : statusval === "loading"
-                                        ? t("t_process_status_loading")
-                                        : statusval === "nbpkg_restart_required"
-                                          ? th("t_process_restart_action_required", { restart_notebook: restart_button(t("t_process_restart_action")) })
-                                          : statusval === "nbpkg_restart_recommended"
-                                            ? th("t_process_restart_action_recommended", { restart_notebook: restart_button(t("t_process_restart_action")) })
-                                            : statusval === "process_restarting"
-                                              ? th("t_process_restarting")
-                                              : statusval === "process_dead"
-                                                ? th("t_process_exited_restart_action", {
-                                                      restart_action_short: restart_button(t("t_process_restart_action_short")),
-                                                  })
-                                                : statusval === "process_waiting_for_permission"
-                                                  ? restart_button(t("t_process_give_permission_to_run_code"))
-                                                  : null
-                            }</div>
-                            <${EmberStatus} worker_memory=${notebook.ember?.worker_memory} restart=${restart} />
-                            <button class="toggle_export" title=${t("t_export_action_ellipsis")} onClick=${() =>
-                                this.setState({ export_menu_open: !export_menu_open })}><span></span></button>
-                        </nav>
+                        <${Header}
+                            notebook=${notebook}
+                            connected=${this.state.connected}
+                            code_differs=${status.code_differs}
+                            on_toggle_export=${() => this.setState({ export_menu_open: !export_menu_open })}
+                            on_open_move=${() => this.setState({ move_dialog_open: true })}
+                            on_run_all=${() => this.actions.ember_run_all()}
+                            on_interrupt=${() => this.actions.interrupt_remote()}
+                        />
                     </header>
                     ${this.state.move_dialog_open &&
                     html`<${MoveDialog} path=${notebook.path} shortpath=${notebook.shortpath} on_close=${() => this.setState({ move_dialog_open: false })} />`}
                     <${SafePreviewUI}
                         process_waiting_for_permission=${status.process_waiting_for_permission}
-                        risky_file_source=${notebook.metadata?.risky_file_source}
                         restart=${restart}
-                        warn_about_untrusted_code=${warn_about_untrusted_code}
                         plan=${notebook.ember?.plan}
                     />
                     <${ConfirmBeforeLongRuntime} />
@@ -1697,9 +1599,6 @@ ${t("t_key_autosave_description")}`
                             last_hot_reload_time=${notebook.last_hot_reload_time}
                             connected=${this.state.connected}
                         />
-                        ${!this.state.static_preview &&
-                        !this.state.disable_ui &&
-                        html`<${NotRunBar} not_run=${notebook.ember?.not_run ?? 0} />`}
                         <${Notebook}
                             notebook=${notebook}
                             cell_inputs_local=${this.state.cell_inputs_local}
@@ -1747,10 +1646,9 @@ ${t("t_key_autosave_description")}`
                         desired_doc_query=${this.state.desired_doc_query}
                         on_update_doc_query=${this.actions.set_doc_query}
                         connected=${this.state.connected}
-                        backend_launch_phase=${this.state.backend_launch_phase}
-                        backend_launch_logs=${this.state.backend_launch_logs}
                         notebook=${this.state.notebook}
                         sanitize_html=${status.sanitize_html}
+                        on_restart=${restart}
                     />
                     <${RecentlyDisabledInfo} 
                         recently_auto_disabled_cells=${this.state.recently_auto_disabled_cells}
@@ -1771,18 +1669,6 @@ ${t("t_key_autosave_description")}`
                             })
                         }}
                     />
-                    <footer>
-                        <div id="info">
-                            <a class="footer-button" href="javascript:;" target="_self" onClick=${() => window.dispatchEvent(new CustomEvent("pluto open settings"))}>${th(
-                                "t_footer_button_settings",
-                                { icon: InlineIonicon("settings-outline", { inlineMargin: false }) }
-                            )}</a>
-                            <a class="footer-button" href="https://github.com/jowch/Ember#readme" target="_blank">${th("t_footer_button_FAQ", {
-                                icon: InlineIonicon("help-circle-outline", { inlineMargin: false }),
-                            })}</a>
-                            <span class="footer-spacer" style="flex: 1 1 0%; min-width: 5ch;"></span>
-                        </div>
-                    </footer>
                     <${Popup} />
                 </${PlutoJSInitializingContext.Provider}>
                 </${PlutoBondsContext.Provider}>

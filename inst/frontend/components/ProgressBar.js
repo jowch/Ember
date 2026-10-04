@@ -1,8 +1,8 @@
 import { t } from "../common/lang.js"
-import _ from "../imports/lodash-es.js"
-import { html, useContext, useEffect, useMemo, useState } from "../imports/Preact.js"
+import { html } from "../imports/Preact.js"
 import { useDelayedTruth } from "./BottomRightPanel.js"
 import { scroll_cell_into_view } from "./Scroller.js"
+import { use_run_progress } from "../common/use_run_progress.js"
 
 /**
  * @param {{
@@ -12,27 +12,7 @@ import { scroll_cell_into_view } from "./Scroller.js"
  * }} props
  */
 export const ProgressBar = ({ notebook, backend_launch_phase, status }) => {
-    const [recently_running, set_recently_running] = useState(/** @type {string[]} */ ([]))
-    const [currently_running, set_currently_running] = useState(/** @type {string[]} */ ([]))
-
-    useEffect(
-        () => {
-            const currently = Object.values(notebook.cell_results)
-                .filter((c) => c.running || c.queued)
-                .map((c) => c.cell_id)
-
-            set_currently_running(currently)
-
-            if (currently.length === 0) {
-                // all cells completed
-                set_recently_running([])
-            } else {
-                // add any new running cells to our pile
-                set_recently_running(_.union(currently, recently_running))
-            }
-        },
-        Object.values(notebook.cell_results).map((c) => c.running || c.queued)
-    )
+    const { recently_running, currently_running } = use_run_progress(notebook)
 
     let cell_progress = recently_running.length === 0 ? 0 : 1 - Math.max(0, currently_running.length - 0.3) / recently_running.length
 

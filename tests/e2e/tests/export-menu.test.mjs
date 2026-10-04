@@ -29,11 +29,10 @@ test("export menu: Static HTML downloads a self-contained export", async (t) => 
   // the fix -- see ExportBanner.js) doesn't need a native dialog handled
   // here. newPage()'s dialog handler dismisses any dialog it doesn't
   // expect, which would otherwise look just like "the click did nothing".
-  await page.locator(".safe-preview button").click();
-  await page.getByText("run this notebook", { exact: false }).click();
-  await page.waitForFunction(() => document.querySelectorAll(".safe-preview-info").length === 0, null, { timeout: 20000 });
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForFunction(() => document.querySelectorAll("#ember-safe-preview").length === 0, null, { timeout: 20000 });
 
-  await page.locator('button.toggle_export[title^="Export"]').click();
+  await page.locator('header#pluto-nav button[aria-label="Export"]').click();
   await page.waitForSelector("dialog#export[open]", { timeout: 5000 });
 
   const [download] = await Promise.all([
@@ -59,7 +58,7 @@ test("export menu: Notebook file opens the source in a new tab", async (t) => {
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  await page.locator('button.toggle_export[title^="Export"]').click();
+  await page.locator('header#pluto-nav button[aria-label="Export"]').click();
   await page.waitForSelector("dialog#export[open]", { timeout: 5000 });
 
   const [popup] = await Promise.all([

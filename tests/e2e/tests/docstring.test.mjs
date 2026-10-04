@@ -30,7 +30,7 @@ test("docstring: Help shows a notebook function's signature, doc and a working G
   await page.keyboard.type("clean", { delay: 10 });
   await page.keyboard.press("Escape"); // close any autocomplete popup first
 
-  await page.locator("button.helpbox-docs").click();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
   await page.waitForFunction(
     () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Drop rows with a missing value."),
     null, { timeout: 15000 });

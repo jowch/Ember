@@ -32,11 +32,9 @@ test("delete several cells: in-page dialog, Tab trapped, Esc cancels and restore
   // document.activeElement, not document.body, so the later check that
   // focus comes back to it actually exercises dialogs.js's restore. Its
   // own keydown has no handler, so Backspace still bubbles to Editor's
-  // document-level listener. Two match the selector; one sits off-screen
-  // (print layout) and can't take focus, so this picks the one actually
-  // in the viewport.
+  // document-level listener.
   const beforeEsc = await page.evaluateHandle(() => {
-    const el = [...document.querySelectorAll("button.toggle_export")].find((e) => e.getBoundingClientRect().top >= 0);
+    const el = document.querySelector('header#pluto-nav button[aria-label="Export"]');
     el.focus();
     return el;
   });

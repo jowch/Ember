@@ -1,3 +1,6 @@
 --main-bg-color
 --pluto-cell-spacing
 --sans-serif-font-stack
+--normal-cell-color
+--selected-cell-color
+--code-differs-cell-color

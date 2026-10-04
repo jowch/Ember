@@ -77,11 +77,12 @@ function main_build() {
             fs.writeFileSync(path.join(IMPORTS_DIR, "THIRD-PARTY.txt"), combined + "\n")
         }
 
-        const { hashed } = copyAssets({ frontendDir: FRONTEND })
+        const { hashed, fontFaces } = copyAssets({ frontendDir: FRONTEND })
         for (const name of Object.values(hashed)) keep.add(name)
 
         rewriteShimImports(hashedByBase)
         rewriteVendorAssetReferences(hashed)
+        writeFontsCss(fontFaces)
 
         // Delete hashed files nothing refers to any more.
         for (const existing of fs.readdirSync(VENDOR_DIR)) {
@@ -98,6 +99,22 @@ function main_build() {
 
         console.log(`frontend-build: ${keep.size} files in imports/vendor/`)
     })()
+}
+
+/** Writes inst/frontend/fonts.css: one `@font-face` per bundled font file,
+ * pointing at its content-hashed name in fonts/ (ui-3-plan.md, "Fonts"). */
+function writeFontsCss(fontFaces) {
+    const blocks = fontFaces.map(
+        (f) => `@font-face {
+    font-family: "${f.family}";
+    font-style: ${f.style};
+    font-weight: ${f.weight};
+    font-display: swap;
+    src: url("./fonts/${f.fileName}") format("woff2");
+    unicode-range: ${f.unicodeRange};
+}`
+    )
+    fs.writeFileSync(path.join(FRONTEND, "fonts.css"), blocks.join("\n\n") + "\n")
 }
 
 const ESCAPE_RE = /[.*+?^${}()|[\]\\]/g

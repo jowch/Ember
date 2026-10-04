@@ -1,84 +1,41 @@
-import { t, th } from "../common/lang.js"
-import { open_pluto_popup } from "../common/open_pluto_popup.js"
-import _ from "../imports/lodash-es.js"
+import { t } from "../common/lang.js"
 import { html } from "../imports/Preact.js"
 
 /**
- * What running would do (ui-2.md, 5): `null` installs nothing, otherwise
- * `{ install, restart }` from `notebook.ember.plan` (project_ember(),
+ * What running would do (ui-2.md, 5), when it's worth saying: `null` when
+ * running installs and restarts nothing, otherwise a sentence from
+ * `{ install, restart }` (`notebook.ember.plan`, project_ember(),
  * pluto-state.R / packages_view(), packages-core.R).
  * @param {{ install: number, restart: string[] }?} plan
+ * @returns {string?}
  */
 const plan_text = (plan) => {
-    if (plan == null) return t("t_ember_safe_preview_plan_none")
+    if (plan == null) return null
     if (plan.install > 0) return t("t_ember_safe_preview_plan_install", { count: plan.install })
     if (plan.restart.length > 0) return t("t_ember_safe_preview_plan_restart", { names: plan.restart.join(", ") })
-    return t("t_ember_safe_preview_plan_none")
+    return null
 }
 
-export const SafePreviewUI = ({ process_waiting_for_permission, risky_file_source, restart, warn_about_untrusted_code, plan }) => {
+/**
+ * One banner under the header while nothing has run (ui-3.md, Header;
+ * ui-3-plan.md piece 5's "Safe preview banner"): the sentence from
+ * `plan_text()`, and a primary "Run this notebook" that starts R. Replaces
+ * the page outline and its info popup; no cell shows "not executed"
+ * anymore (Cell.js no longer renders `SafePreviewOutput`).
+ *
+ * @param {{ process_waiting_for_permission: boolean, restart: () => void, plan: { install: number, restart: string[] }? }} props
+ */
+export const SafePreviewUI = ({ process_waiting_for_permission, restart, plan }) => {
+    if (!process_waiting_for_permission) return null
     return html`
-        <div class="outline-frame safe-preview"></div>
-        ${process_waiting_for_permission
-            ? html`<div class="outline-frame-actions-container safe-preview">
-                  <div class="safe-preview-info">
-                      <span
-                          >${t("t_safe_preview")}
-                          <button
-                              onclick=${(e) => {
-                                  open_pluto_popup({
-                                      type: "info",
-                                      big: true,
-                                      should_focus: true,
-                                      body: html`
-                                          <h1>${th("t_safe_preview")}</h1>
-                                          <p>${th("t_safe_preview_body")}</p>
-
-                                          <p>${plan_text(plan)}</p>
-                                          <p>
-                                              ${th("t_safe_preview_run_this_notebook", {
-                                                  run_this_notebook: html`<a
-                                                      href="#"
-                                                      onClick=${(e) => {
-                                                          e.preventDefault()
-                                                          restart()
-                                                          window.dispatchEvent(new CustomEvent("close pluto popup"))
-                                                      }}
-                                                      >${t("t_safe_preview_run_this_notebook_link")}</a
-                                                  >`,
-                                              })}
-                                          </p>
-                                          ${warn_about_untrusted_code
-                                              ? html`
-                                                    <pluto-output translate="yes" class="rich_output"
-                                                        ><div class="markdown">
-                                                            <div class="admonition warning">
-                                                                <p class="admonition-title">${t("t_safe_preview_confirm_warning")}</p>
-                                                                <p>${t("t_safe_preview_confirm_before")}</p>
-                                                                ${risky_file_source == null ? null : html`<p><code>${risky_file_source}</code></pre>`}
-                                                                <p>${t("t_safe_preview_confirm_after")}</p>
-                                                            </div>
-                                                        </div></pluto-output
-                                                    >
-                                                `
-                                              : null}
-                                      `,
-                                  })
-                              }}
-                          >
-                              <span><span class="info-icon pluto-icon"></span></span>
-                          </button>
-                      </span>
-                  </div>
-              </div>`
-            : null}
+        <div id="ember-safe-preview">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+                <path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"></path>
+            </svg>
+            <span>${t("t_ember_safe_preview_banner")}${plan_text(plan) == null ? "" : ` ${plan_text(plan)}`}</span>
+            <button class="ember-btn primary" type="button" onClick=${() => restart()}>${t("t_ember_run_this_notebook")}</button>
+        </div>
     `
-}
-
-export const SafePreviewOutput = () => {
-    return html`<pluto-output class="rich_output"
-        ><div class="safe-preview-output"><span class="offline-icon pluto-icon"></span><span>${th("t_safe_preview_not_executed")}</span></div></pluto-output
-    >`
 }
 
 /** @type {string} */ // Because this is used as innerHTML content, without preact.

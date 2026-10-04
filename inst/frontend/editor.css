@@ -1,6 +1,7 @@
 @charset "UTF-8";
 
 @import url("./imports/vendor/dialog-polyfill-hT0ET4tf.css");
+@import url("./fonts.css");
 
 @import url("./themes/light.css");
 @import url("./themes/dark.css");
@@ -16,21 +17,9 @@
     /* use the value "contextual" to enable contextual ligatures `document.documentElement.style.setProperty('--pluto-operator-ligatures', 'contextual');`
         for julia mono see here: https://cormullion.github.io/pages/2020-07-26-JuliaMono/#contextual_and_stylistic_alternates_and_ligatures */
     --pluto-operator-ligatures: none;
-    --system-fonts-mono: ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-    /* Kept under its old name for other CSS and for CodeMirror code; it is
-       the system monospace stack, not JuliaMono, which Ember doesn't vendor. */
-    --julia-mono-font-stack: var(--system-fonts-mono);
-    --sans-serif-font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
-    --system-ui-font-stack:
-        -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen-Sans, Cantarell, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", system-ui,
-        sans-serif;
-    /* Kept under their old names; both now point at the system stacks
-       instead of the webfonts Ember doesn't vendor. */
-    --lato-ui-font-stack: var(--system-ui-font-stack);
-    --roboto-mono-font-stack: var(--system-fonts-mono);
-    --ember-prose-font-stack: var(--system-ui-font-stack);
-
-    color-scheme: light dark;
+    /* The font tokens (--ember-ui-font etc. and the names kept for other
+       CSS and CodeMirror) are in ember-forms.css: both this page and the
+       start page load that file, and neither should define them twice. */
 
     --custom-code-font-stack: "";
     --code-font-stack: var(--julia-mono-font-stack); /* Will be overriden later */
@@ -39,6 +28,9 @@
 /* GENERAL PAGE LAYOUT */
 html {
     font-size: 16px;
+    /* Jumping to a cell (scroll_cell_into_view, a jump link) lands below
+       the sticky header instead of behind it. */
+    scroll-padding-top: var(--ember-header-height);
 }
 
 * {
@@ -65,9 +57,19 @@ pluto-editor {
     overflow-x: clip;
 }
 
+:root {
+    --ember-column: 720px;
+    --ember-panel-width: 400px;
+    --ember-header-height: 52px;
+    --ember-column-left: clamp(16px, calc((100vw - var(--ember-column)) * 0.17), 120px);
+}
+
 main {
     flex: 1;
-    max-width: calc(700px + 25px + 6px); /* 700px + both paddings */
+    /* 25px and 6px are Pluto's own padding, where the cell's left controls
+       sit; piece 6 removes them when it moves the run button, making the
+       column exactly --ember-column wide. */
+    max-width: calc(var(--ember-column) + 25px + 6px);
     padding-top: 0px;
     padding-bottom: 4rem;
     padding-left: 25px;
@@ -83,17 +85,22 @@ body:has(pluto-editor:not(.disable_ui)) {
     overscroll-behavior: contain;
 }
 
-/* | main=25px+700px+6px=731px | pluto-helpbox=350px - 500px | */
-/* min-width: 731px+ */
-
+/* One column on the left; the side panel (piece 5's "Side panel frame")
+   docks in the free space to its right instead of pushing it over. */
 pluto-editor main {
-    align-self: flex-end;
-    margin-right: max(
-        /* First part: center it */ max(0px, (100% - (700px + 25px + 6px)) / 2),
-        /* Second part: push away from the right to take up all free space */ min((100% - (700px + 25px + 6px)), /* but don't do this more than */ 500px)
-    );
+    align-self: flex-start;
+    margin-left: var(--ember-column-left);
+    margin-right: 0;
     position: relative;
-    margin-left: auto;
+}
+
+@media (max-width: 640px) {
+    pluto-editor main {
+        margin-left: 0;
+        padding-left: 16px;
+        padding-right: 16px;
+        max-width: none;
+    }
 }
 
 pluto-notebook {
@@ -520,10 +527,10 @@ pluto-output details[open] summary {
 /* HEADER */
 
 header#pluto-nav {
-    /* position: absolute;
-    top: 0px; */
+    position: sticky;
+    top: 0;
     width: 100%;
-    min-height: 60px;
+    height: var(--ember-header-height);
     z-index: 60;
     background-color: var(--header-bg-color);
     transform: translateY(0px);
@@ -531,7 +538,7 @@ header#pluto-nav {
         background-color 0.5s ease-in-out,
         transform 0.25s cubic-bezier(0.18, 0.89, 0.49, 1.13);
     border-bottom: solid 1px var(--header-border-color);
-    font-family: var(--roboto-mono-font-stack);
+    font-family: var(--ember-ui-font);
     font-weight: 400;
     font-size: 0.8rem;
 }
@@ -823,7 +830,7 @@ dialog.export-html-dialog :is(.ple-bigbutton, .ple-plutoland-phase) {
 }
 
 dialog.export-html-dialog a.ple-plutoland-url {
-    font-family: monospace, sans-serif;
+    font-family: var(--ember-code-font);
     font-size: 0.7em;
     font-weight: 700;
     text-overflow: clip;
@@ -986,68 +993,26 @@ dialog.confirm-before-long-runtime {
     display: inline-block;
 }
 
-nav#at_the_top h1 {
-    color: var(--nav-h1-text-color);
-    letter-spacing: 2px;
-}
-
 nav#at_the_top {
-    margin: 0 auto;
-    max-width: 1000px;
-    padding-left: 20px;
-    padding-right: 20px;
-    flex-wrap: wrap;
-    min-height: 60px;
+    height: 100%;
     display: flex;
     flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    padding-left: 20px;
+    padding-right: 12px;
     z-index: 100;
 }
 
-nav#at_the_top > * {
-    flex: 0 0 auto;
-    align-self: center;
-    margin: 10px 0px;
-}
-
-nav#at_the_top > .flex_grow_1 {
-    flex-grow: 1;
-}
-nav#at_the_top > .flex_grow_2 {
-    flex-grow: 2;
-}
-
 nav#at_the_top > a {
-    /* margin-right: 5rem; */
+    display: inline-flex;
+    align-items: center;
 }
 
 nav#at_the_top h1 {
-    font-weight: 700;
-    font-size: 1.8rem;
-    display: inline;
+    margin: 0;
+    display: inline-flex;
     border-bottom: none;
-}
-
-nav#at_the_top img#logo-small,
-nav#at_the_top img#logo-big {
-    height: 39px;
-    margin-bottom: -8px;
-    filter: var(--image-filters);
-}
-
-nav#at_the_top img#logo-small {
-    display: none;
-}
-
-@media (max-width: 800px) {
-    nav#at_the_top img#logo-small {
-        display: unset;
-    }
-    nav#at_the_top img#logo-big {
-        display: none;
-    }
-    nav#at_the_top > a {
-        /* margin-right: 1rem; */
-    }
 }
 
 .desktop_picker button {
@@ -1129,10 +1094,6 @@ button.toggle_export span,
     width: 25px;
 }
 
-nav#at_the_top button.toggle_export span {
-    background-image: url("./img/icons/share-outline.svg");
-    filter: var(--image-filters);
-}
 dialog#export button.toggle_export span {
     background-image: url("./img/icons/close-outline.svg");
     filter: invert(1);
@@ -1189,7 +1150,6 @@ nav#at_the_top:after {
 pluto-editor.nbpkg_restart_recommended > header#pluto-nav,
 pluto-editor.nbpkg_restart_required > header#pluto-nav,
 pluto-editor.binder.loading > header#pluto-nav,
-pluto-editor.process_waiting_for_permission > header#pluto-nav,
 pluto-editor.process_dead > header#pluto-nav,
 pluto-editor.disconnected > header#pluto-nav {
     position: sticky;
@@ -1206,9 +1166,6 @@ pluto-editor.nbpkg_restart_required > header#pluto-nav {
 pluto-editor.process_dead > header#pluto-nav {
     background-color: var(--dead-process-header-color);
 }
-pluto-editor.process_waiting_for_permission > header#pluto-nav {
-    background-color: var(--restart-recc-header-color);
-}
 pluto-editor.loading > header#pluto-nav {
     background-color: var(--loading-header-color);
 }
@@ -1219,57 +1176,335 @@ pluto-editor.binder.loading > header#pluto-nav {
     background-color: var(--binder-loading-header-color);
 }
 
-nav#at_the_top > #process_status {
-    font-size: 1rem;
-    font-weight: 500;
-    padding: 5px 10px;
-    margin: 5px;
-    background: var(--nav-process-status-bg-color);
-    color: var(--nav-process-status-color);
-    border-radius: 10px;
-    z-index: 10;
-    margin-left: 1em;
-}
+/* Header contents (ui-3.md, Header; ui-3-plan.md piece 5 step 6): the
+   file name, "Saved", "Run N not run", the R status, the panel icons,
+   Export and the ⋯ menu -- components/Header.js. */
 
-nav#at_the_top > #process_status:empty {
-    display: none;
-}
-
-#ember-status {
-    font-size: 0.85rem;
-    color: var(--ui-button-color);
-    opacity: 0.7;
-    margin-left: 0.5em;
+.ember-saved {
+    color: var(--ember-faint);
+    font-size: 12.5px;
     white-space: nowrap;
 }
-
-#ember-status #ember-status-restart {
-    margin-left: 0.4em;
-    color: inherit;
-    text-decoration: underline;
+@media (max-width: 719px) {
+    .ember-saved {
+        display: none;
+    }
 }
 
-#ember-not-run-bar {
-    font-family: var(--sans-serif-font-stack);
+/* Pushes everything from here on (Run N not run, R status, the panel
+   icons, Export, (dots)) to the right edge: on the file-name button or
+   "Saved" (both conditionally hidden) would leave the group stuck on the
+   left whenever either is absent. */
+.ember-header-spacer {
+    margin-left: auto;
+}
+
+.ember-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ember-text);
+    background: var(--ember-panel);
+    border: 1px solid var(--ember-line);
+    border-radius: 7px;
+    padding: 0 12px;
+    height: 32px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.ember-btn.primary {
+    background: var(--ember-accent);
+    border-color: var(--ember-accent);
+    color: var(--ember-on-accent);
+}
+
+/* Safe preview banner (ui-3.md, Header; ui-3-plan.md piece 5's "Safe
+   preview banner"): one bar under the header, replacing the page outline
+   and its info popup. */
+#ember-safe-preview {
     display: flex;
     align-items: center;
-    justify-content: center;
-    gap: 1em;
-    font-size: 0.9rem;
-    padding: 0.4em 1em;
-    background: var(--nav-process-status-bg-color);
-    color: var(--nav-process-status-color);
+    align-self: stretch;
+    width: 100%;
+    box-sizing: border-box;
+    gap: 14px;
+    padding: 12px 20px;
+    background: var(--ember-accent-bg);
+    border-bottom: 1px solid var(--ember-line);
+    color: var(--ember-text);
+    font-family: var(--ember-ui-font);
+}
+#ember-safe-preview svg {
+    flex-shrink: 0;
+    color: var(--ember-accent);
+}
+#ember-safe-preview span {
+    flex-grow: 1;
+    font-size: 14px;
 }
 
-#ember-not-run-bar button {
-    font-size: inherit;
+/* Status tab (ui-3.md, Side panel; ui-3-plan.md piece 5's "Status tab"). */
+#ember-status-tab {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    font-family: var(--ember-ui-font);
+    color: var(--ember-text);
+}
+.ember-status-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.ember-status-h3 {
+    font-size: 13px;
     font-weight: 600;
-    background: none;
-    border: 1px solid currentColor;
-    border-radius: 1em;
-    padding: 0.1em 0.9em;
+    margin: 0;
+    padding: 0;
+}
+.ember-status-kv {
+    display: grid;
+    grid-template-columns: 110px minmax(0, 1fr);
+    gap: 8px 12px;
+    font-size: 13px;
+}
+.ember-status-kv > span:nth-child(odd) {
+    color: var(--ember-muted);
+}
+.ember-status-state {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.ember-status-buttons {
+    display: flex;
+    gap: 6px;
+}
+.ember-status-hint {
+    font-size: 12.5px;
+    color: var(--ember-muted);
+    line-height: 1.45;
+}
+.ember-status-rule {
+    height: 1px;
+    background: var(--ember-line);
+}
+.ember-status-count-link {
+    display: flex;
+    gap: 10px;
+}
+.ember-status-mode {
+    border: 0;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.ember-status-radio {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    font-size: 13px;
+}
+.ember-status-radio input {
+    margin-top: 2px;
+}
+
+/* Variables tab (ui-3.md, Side panel; ui-3-plan.md piece 5's "Tabs"). */
+#ember-variables-tab {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    font-family: var(--ember-ui-font);
+    color: var(--ember-text);
+}
+.ember-variables-empty {
+    padding: 16px;
+    font-size: 13px;
+    color: var(--ember-muted);
+}
+.ember-variables-filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--ember-line);
+}
+.ember-variables-filter input {
+    width: 100%;
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--ember-line);
+    border-radius: 7px;
+    background: var(--ember-page);
+    color: var(--ember-text);
+    font: inherit;
+    font-size: 13px;
+}
+.ember-variables-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+    table-layout: fixed;
+}
+.ember-variables-table th {
+    font-weight: 500;
+    font-size: 11.5px;
+    color: var(--ember-faint);
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--ember-line);
+}
+.ember-variables-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--ember-line);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+}
+.ember-variables-table th:first-child,
+.ember-variables-table td:first-child {
+    padding-left: 16px;
+}
+.ember-variables-table th:last-child,
+.ember-variables-table td:last-child {
+    padding-right: 16px;
+}
+.ember-variable-row:hover td {
+    background: var(--ember-hover);
+}
+.ember-variable-row.stale td {
+    color: var(--ember-faint);
+}
+.ember-variable-name {
+    color: var(--ember-text);
+    text-decoration: none;
+}
+.ember-variable-row.stale .ember-variable-name {
+    color: var(--ember-faint);
+}
+.ember-variable-row:hover .ember-variable-name {
+    color: var(--ember-accent);
+    text-decoration: underline;
+}
+.ember-variables-str {
+    font-style: italic;
+}
+.ember-variables-footer {
+    margin-top: auto;
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-top: 1px solid var(--ember-line);
+    font-size: 12px;
+    color: var(--ember-muted);
+}
+
+#ember-r-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font: inherit;
+    font-size: 13px;
+    color: var(--ember-muted);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 7px;
+    height: 32px;
+    padding: 0 8px;
+    box-shadow: inset 0 0 0 1px var(--ember-line);
     cursor: pointer;
-    color: inherit;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+@media (max-width: 640px) {
+    #ember-r-status .ember-r-status-words {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+        clip: rect(0 0 0 0);
+    }
+    #ember-r-status {
+        padding: 0;
+        box-shadow: none;
+        width: 20px;
+        height: 20px;
+        justify-content: center;
+    }
+}
+
+.ember-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    display: block;
+    flex-shrink: 0;
+}
+.ember-dot-faint {
+    background: var(--ember-faint);
+}
+.ember-dot-accent {
+    background: var(--ember-accent);
+}
+.ember-dot-run {
+    background: var(--ember-run);
+}
+.ember-dot-red {
+    background: var(--ember-red);
+}
+.ember-dot-amber {
+    background: var(--ember-amber);
+}
+
+nav#at_the_top > .ember-panel-nav {
+    display: flex;
+    gap: 2px;
+    margin: 0;
+}
+
+nav#at_the_top .ibtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: 7px;
+    border: 0;
+    background: transparent;
+    color: var(--ember-muted);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+nav#at_the_top .ibtn.on {
+    background: var(--ember-active);
+    color: var(--ember-text);
+}
+
+/* The ... menu's position and item layout reuse piece 7a's shared
+   .ember-menu/.ember-menuitem/.ember-menu-sep (further down this file):
+   only the trigger button's position needs a header-specific rule. */
+nav#at_the_top .ember-menu {
+    position: absolute;
+    right: 0;
+    top: 44px;
+    z-index: 70;
+}
+
+.ember-shortcuts-list {
+    display: inline-block;
+    text-align: left;
+    white-space: pre-wrap;
+    font-family: var(--ember-code-font);
+    font-size: 12.5px;
+    line-height: 1.6;
 }
 
 #ember-packages-tab {
@@ -1278,15 +1513,84 @@ nav#at_the_top > #process_status:empty {
     overflow: auto;
 }
 
-#ember-packages-tab .ember-packages-meta {
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 0.2em 1em;
+#ember-packages-tab .ember-packages-head {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
     margin: 0 0 0.8em 0;
 }
+#ember-packages-tab .ember-packages-head-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+#ember-packages-tab .ember-packages-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ember-text);
+}
+#ember-packages-tab .ember-packages-description {
+    font-size: 12.5px;
+    color: var(--ember-muted);
+}
 
-#ember-packages-tab .ember-packages-meta dt {
-    opacity: 0.6;
+.ember-mono {
+    font-family: var(--ember-code-font);
+}
+.ember-faint-text {
+    color: var(--ember-faint);
+}
+.ember-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11.5px;
+    font-weight: 500;
+    border-radius: 999px;
+    padding: 1px 8px;
+}
+.ember-pill-accent {
+    background: var(--ember-accent-bg);
+    color: var(--ember-accent);
+}
+.ember-pill-red {
+    background: var(--ember-red-bg);
+    color: var(--ember-red);
+}
+.ember-package-installing {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-start;
+}
+.ember-package-installing span {
+    font-size: 12px;
+    color: var(--ember-muted);
+}
+.ember-package-progress {
+    width: 100px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--ember-code);
+    overflow: hidden;
+}
+.ember-package-progress-indeterminate::after {
+    content: "";
+    display: block;
+    width: 40%;
+    height: 100%;
+    background: var(--ember-run);
+    animation: ember-progress-indeterminate 1.4s ease-in-out infinite;
+}
+@keyframes ember-progress-indeterminate {
+    0% {
+        transform: translateX(-100%);
+    }
+    100% {
+        transform: translateX(250%);
+    }
 }
 
 #ember-packages-tab .ember-packages-library-status {
@@ -1461,10 +1765,6 @@ pluto-editor.binder.loading #binder_spinners {
     box-sizing: border-box;
 }
 
-pluto-editor.process_waiting_for_permission > .outline-frame.safe-preview {
-    border-bottom: 12px solid var(--restart-recc-header-color);
-}
-
 .outline-frame.playback {
     opacity: 1;
     position: absolute;
@@ -1484,11 +1784,6 @@ pluto-editor.process_waiting_for_permission > .outline-frame.safe-preview {
     display: flex;
     flex-direction: row;
     flex-wrap: wrap;
-}
-
-.outline-frame-actions-container.safe-preview {
-    top: auto;
-    bottom: 4px;
 }
 
 .outline-frame-actions-container > .overlay-button {
@@ -1517,25 +1812,6 @@ div.recording-playback {
 }
 div.recording-playback audio {
     width: 100%;
-}
-
-.safe-preview-info {
-    color: var(--black);
-    font-family: var(--system-ui-font-stack);
-    font-weight: 700;
-    background: var(--white);
-    border: 3px solid var(--restart-recc-accent-color);
-    padding: 0.3em 0.8em;
-    border-radius: 0.8em;
-}
-.safe-preview-info > span {
-    display: flex;
-    /* flex-direction: row; */
-}
-.safe-preview-info button {
-    background: none;
-    border: none;
-    cursor: pointer;
 }
 
 .safe-preview-output {
@@ -2661,7 +2937,7 @@ pkg-popup.busy {
 }
 
 pkg-version {
-    font-family: monospace;
+    font-family: var(--ember-code-font);
     font-size: 0.75rem;
     color: var(--pkg-version-color);
 }
@@ -2739,7 +3015,7 @@ body pkg-terminal:not(.asdf) pre:not(.asdf) {
     white-space: pre-wrap;
     word-break: break-all;
     font-size: 0.6rem;
-    font-family: monospace;
+    font-family: var(--ember-code-font);
     font-variant-ligatures: none;
     margin: 0;
     color: inherit;
@@ -2920,184 +3196,95 @@ dropruler {
     transition: top 0.05s;
 }
 
-/* LIVE DOCS */
+/* SIDE PANEL (ui-3.md, "Side panel"; ui-3-plan.md piece 5 step 4) */
 
 #helpbox-wrapper {
     display: none;
-    position: sticky;
-    bottom: 0px;
-    height: 0px;
-    width: 100%;
-    z-index: 50;
 }
-
-@media (min-width: 500px) {
-    #helpbox-wrapper {
-        display: block;
+#helpbox-wrapper.open {
+    display: block;
+    position: fixed;
+    z-index: 50;
+    top: var(--ember-header-height);
+    right: 0;
+    bottom: 0;
+    width: var(--ember-panel-width);
+    background: var(--ember-panel);
+    border-left: 1px solid var(--ember-line);
+}
+@media (max-width: 1239px) {
+    #helpbox-wrapper.open {
+        width: 380px;
+        box-shadow: var(--ember-panel-shadow);
     }
 }
-pluto-helpbox {
-    bottom: 0px;
-    right: 20px;
-    position: absolute;
-    display: flex;
-    flex-direction: column;
-    width: calc(100vw - 50px - (700px + 25px + 6px)); /* compat */
-    width: clamp(300px, calc(100vw - 50px - (700px + 25px + 6px)), 450px);
-    height: 95vh; /* compat */
-    height: min(70vh, 900px);
-    /* overflow: hidden; */
-    background-color: var(--helpbox-bg-color);
-    color: var(--helpbox-text-color);
-    /* border: 2px solid darkgray; */
-    border-right: none;
-    border-bottom: none;
-    border-top-left-radius: 9px;
-    border-top-right-radius: 9px;
-    box-shadow: 0 0 11px 0px var(--helpbox-box-shadow-color);
+@media (max-width: 640px) {
+    #helpbox-wrapper.open {
+        top: auto;
+        left: 0;
+        width: auto;
+        height: min(560px, 70dvh);
+        border-radius: 14px 14px 0 0;
+        border-left: 0;
+        border-top: 1px solid var(--ember-line);
+    }
 }
-pluto-helpbox > section {
-    height: 100%;
-    overflow: auto;
-    padding: 10px;
+
+.ember-scrim {
+    display: none;
+}
+@media (max-width: 640px) {
+    .ember-scrim {
+        display: block;
+        position: fixed;
+        inset: 0;
+        z-index: 49;
+        background: var(--ember-scrim);
+    }
+}
+
+pluto-helpbox {
     display: flex;
     flex-direction: column;
+    height: 100%;
+    font-family: var(--ember-ui-font);
+    color: var(--ember-text);
+}
+pluto-helpbox.hidden {
+    display: none;
 }
 
 pluto-helpbox > header {
     display: flex;
-    padding: 0.6em;
-    background-color: var(--helpbox-header-bg-color);
-    color: var(--helpbox-header-color);
-    font-family: var(--system-ui-font-stack);
-    font-variant-numeric: tabular-nums;
-    font-size: 0.9rem;
-    --border-radius: 0.4em;
+    gap: 18px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--ember-line);
+    flex-shrink: 0;
+}
+pluto-helpbox > header > button.tab {
+    font: inherit;
+    font-size: 13px;
     font-weight: 500;
-    border-top-left-radius: var(--border-radius);
-    border-top-right-radius: var(--border-radius);
-    /* border-top: 4px solid #8a8a8a; */
-    gap: 0.5em;
+    padding: 12px 0 10px;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    background: transparent;
+    color: var(--ember-muted);
+    cursor: pointer;
+}
+pluto-helpbox > header > button.tab.on {
+    color: var(--ember-text);
+    border-bottom-color: var(--ember-accent);
 }
 
-pluto-helpbox > header > button.helpbox-tab-key > .tabicon {
-    /* font-size: 1em; */
-    --size: 1.1em;
-    width: var(--size);
-    height: var(--size);
-    background-size: var(--size);
-    margin-bottom: calc(-0.15 * var(--size));
-    filter: var(--image-filters);
-    margin-inline-end: 0.6em;
-    display: inline-block;
+pluto-helpbox > section {
+    height: 100%;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    min-height: 0;
 }
-pluto-helpbox > header > button.helpbox-docs > .tabicon {
-    background-image: url("./img/icons/search.svg");
-    /* content: "📚 "; */
-}
-
-pluto-helpbox > header > button.helpbox-docs.active > .tabicon {
-    /* content: "📖 "; */
-}
-pluto-helpbox > header > button.helpbox-process > .tabicon {
-    background-image: url("./img/icons/terminal.svg");
-    background-image: url("./img/icons/pulse.svg");
-    /* content: "💻 "; */
-}
-
-pluto-helpbox > header > button.helpbox-packages > .tabicon {
-    background-image: url("./img/icons/cube.svg");
-}
-
-pluto-helpbox > header > button.helpbox-tab-key:disabled > .tabicon {
-    /* display: none; */
-    opacity: 0.5;
-}
-/* 
-button.helpbox-process.helpbox-tab-key::before {
-    content: "";
-    display: block;
-    position: absolute;
-    --offset: -5px;
-    top: var(--offset);
-    right: var(--offset);
-    left: var(--offset);
-    bottom: var(--offset);
-    background: var(--process-busy);
-    border-radius: var(--border-radius);
-    background: linear-gradient(447deg, var(--process-finished), var(--process-finished) 50%, var(--process-busy) 50%, var(--process-busy));
-    background: linear-gradient(
-        447deg,
-        var(--process-busy) 0%,
-        var(--process-busy) 25%,
-        var(--process-finished) 25%,
-        var(--process-finished) 50%,
-        var(--process-busy) 50%,
-        var(--process-busy) 75%,
-        var(--process-finished) 75%,
-        var(--process-finished) 100%
-    );
-    animation: move-bg 5s linear infinite;
-    background-size: 100px auto;
-    z-index: -1;
-    opacity: 0.6;
-} */
-
-/* @keyframes rotate-bg {
-    0% {
-        background: linear-gradient(
-            0deg,
-            var(--process-busy) 0%,
-            var(--process-busy) 20%,
-            var(--process-finished) 20%,
-            var(--process-finished) 40%,
-            var(--process-busy) 40%,
-            var(--process-busy) 60%,
-            var(--process-finished) 60%,
-            var(--process-finished) 80%,
-            var(--process-busy) 80%,
-            var(--process-busy)
-        );
-    }
-    100% {
-        background: linear-gradient(
-            70deg,
-            var(--process-busy) 0%,
-            var(--process-busy) 20%,
-            var(--process-finished) 20%,
-            var(--process-finished) 40%,
-            var(--process-busy) 40%,
-            var(--process-busy) 60%,
-            var(--process-finished) 60%,
-            var(--process-finished) 80%,
-            var(--process-busy) 80%,
-            var(--process-busy)
-        );
-    }
-} */
-/* 
-@keyframes move-bg {
-    0% {
-        background-position-x: 0;
-    }
-    100% {
-        background-position-x: 100px;
-    }
-}
-
-button.helpbox-process.helpbox-tab-key::after {
-    content: "";
-    display: block;
-    position: absolute;
-    top: 0;
-    right: 0;
-    left: 0;
-    bottom: 0;
-    border-radius: var(--border-radius);
-    border: none;
-    background: var(--helpbox-header-tab-bg-color);
-    z-index: -1;
-} */
 
 pluto-helpbox .live-docs-searchbox {
     display: flex;
@@ -3114,7 +3301,7 @@ pluto-helpbox .live-docs-searchbox input {
     border: 3px solid var(--helpbox-search-border-color);
     border-radius: 0.3em;
     background: var(--helpbox-search-bg-color);
-    font-family: var(--julia-mono-font-stack);
+    font-family: var(--ember-code-font);
     font-size: 0.9rem;
 }
 pluto-helpbox .live-docs-searchbox.notfound input {
@@ -3122,96 +3309,6 @@ pluto-helpbox .live-docs-searchbox.notfound input {
 }
 pluto-helpbox .live-docs-searchbox input:focus {
     outline: none;
-}
-
-button.helpbox-tab-key {
-    padding: 0.5em 0.6em;
-    cursor: pointer;
-    font-family: inherit;
-    font-weight: inherit;
-    font-style: inherit;
-    font-size: inherit;
-    font-variant: inherit;
-    border-radius: var(--border-radius);
-    border: none;
-    background: var(--helpbox-header-tab-bg-color);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    /* position: relative; */
-    /* flex: 1 1 auto; */
-    /* z-index: 1; */
-    /* overflow: hidden; */
-}
-
-button.helpbox-tab-key.helpbox-process {
-    margin-inline-end: auto;
-}
-
-button.helpbox-process.busy {
-    outline: 6px solid var(--process-busy);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-    button.helpbox-process.busy {
-        animation: outline-heartbeat 0.8s ease-in infinite;
-        animation-direction: alternate;
-    }
-}
-@keyframes outline-heartbeat {
-    0% {
-        outline-offset: -1px;
-        outline-width: 3px;
-    }
-    100% {
-        outline-offset: 0px;
-        outline-width: 6px;
-    }
-}
-
-button.active.helpbox-tab-key {
-    outline: 3px solid #99afb9;
-    animation: none;
-}
-
-pluto-helpbox > header > button:is(.helpbox-close, .helpbox-popout) {
-    border: none;
-    background: none;
-    cursor: pointer;
-
-    /* for bigger hitbox */
-    margin: -15px;
-    border: 15px solid transparent;
-}
-
-pluto-helpbox > header > button:is(.helpbox-close, .helpbox-popout) > span {
-    display: block;
-    content: " " !important;
-    background-size: 1em 1em;
-    height: 1em;
-    width: 1em;
-    background-image: url("./img/icons/chevron-down-outline.svg");
-    filter: var(--image-filters);
-}
-pluto-helpbox > header > button.helpbox-popout > span {
-    background-image: url("./img/icons/open-outline.svg");
-}
-pluto-helpbox.hidden {
-    height: initial;
-    width: auto;
-}
-pluto-helpbox.hidden > section {
-    display: none;
-}
-
-/* pop out */
-body > pluto-helpbox {
-    position: static;
-    width: auto;
-    height: 100vmax;
-}
-body > pluto-helpbox > header > button:is(.helpbox-close, .helpbox-popout) {
-    display: none;
 }
 
 /* NOTE */
@@ -3263,6 +3360,49 @@ body > pluto-helpbox > header > button:is(.helpbox-close, .helpbox-popout) {
 .helpbox-docs > section h1 {
     font-size: 1.3rem;
     overflow-wrap: anywhere;
+}
+/* ui-3-plan.md piece 5's "Help tab": description and arguments in the
+   prose font; h2/h3 sizes in the UI font (pre/code already use
+   --ember-code-font via --julia-mono-font-stack, remapped in piece 5's
+   "Theme switching" step). */
+.helpbox-docs > section p,
+.helpbox-docs > section dd {
+    font-family: var(--ember-prose-font);
+}
+.helpbox-docs > section h2 {
+    font-size: 20px;
+    font-weight: 600;
+    font-family: var(--ember-ui-font);
+}
+.helpbox-docs > section h3 {
+    font-size: 13px;
+    font-weight: 600;
+    font-family: var(--ember-ui-font);
+}
+.helpbox-docs > section pre,
+.helpbox-docs > section code {
+    background: var(--ember-code);
+}
+
+.ember-help-bar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--ember-line);
+}
+.ember-help-bar .ibtn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+.ember-help-bar .live-docs-searchbox {
+    flex-grow: 1;
+    margin: 0 0 0 6px;
+}
+.ember-help-package {
+    margin: 0;
+    font-size: 12px;
+    color: var(--ember-muted);
 }
 .helpbox-docs > section pre {
     padding: 0.7rem 0.5rem;
@@ -3345,165 +3485,6 @@ body > pluto-helpbox > header > button:is(.helpbox-close, .helpbox-popout) {
     font-size: 1.1em;
 }
 
-/* PROCESS TAB */
-
-pl-status {
-    --status-color: var(--process-undefined);
-    font-family: var(--system-ui-font-stack);
-    font-size: 0.9rem;
-    display: flex;
-    flex-direction: column;
-    border-radius: 0.2em;
-    --indent: 0.7rem;
-    margin-left: var(--indent);
-    border-left: 3px solid transparent;
-    margin-top: 0.4em;
-    overflow: hidden;
-    flex: 0 0 auto;
-}
-
-pl-status::before {
-    flex: 1 2 auto;
-    /* content: ""; */
-    display: inline-block;
-    left: 0;
-    right: 0px;
-    width: 3px;
-    height: 10px;
-    bottom: 3px;
-    top: 3px;
-    background: pink;
-}
-
-pl-status.busy {
-    --status-color: var(--process-busy);
-}
-pl-status.finished {
-    --status-color: var(--process-finished);
-}
-pl-status.failed {
-    --status-color: var(--process-failed);
-}
-
-pl-status.can_open {
-    cursor: auto;
-    border-color: #98989854;
-}
-pl-status.can_open > div {
-    border-top-left-radius: 0;
-    border-bottom-left-radius: 0;
-    cursor: pointer;
-}
-pl-status.can_open.is_open {
-    border-color: var(--status-color);
-}
-
-pl-status[data-depth="0"],
-pl-status[data-depth="1"] {
-    margin-left: 0;
-}
-
-pl-status > div {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    /* margin: 0em 0em 0.4em 0; */
-    padding: 0.2em;
-    background: var(--process-item-bg);
-    border-radius: 0.4em;
-    /* flex: 1 0 auto; */
-}
-
-pl-status > div > .status-icon {
-    content: "";
-    display: inline-block;
-    width: 1em;
-    height: 1em;
-    border-radius: 50%;
-    background-color: var(--status-color);
-    /* border: 3px solid green; */
-    margin: 0em 0.5em;
-    flex: 0 0 auto;
-}
-
-pl-status.busy > div > .status-icon {
-    border: 3px solid transparent;
-    border-right-color: hsl(126deg 30% 60%);
-    border-bottom-color: hsl(126deg 30% 60%);
-    /* border-left-color: hsl(126deg 30% 60%); */
-    animation: identifier-spin 1.7s linear infinite;
-}
-
-@keyframes identifier-spin {
-    0% {
-        transform: rotate(0deg);
-    }
-    100% {
-        transform: rotate(360deg);
-    }
-}
-
-.subprogress-counter {
-    opacity: 0.5;
-    /* font-variant-numeric: tabular-nums; */
-    font-size: 0.8em;
-}
-
-pl-status .status-time {
-    margin-left: auto;
-    /* align-self: end; */
-    padding-right: 0.5em;
-    padding-left: 0.5em;
-    opacity: 0.6;
-    font-size: 0.7rem;
-    font-variant-numeric: tabular-nums;
-}
-
-.discrete-progress-bar {
-    display: flex;
-    flex-direction: row;
-    background: var(--process-item-bg);
-    padding: 3px;
-    border-radius: 4px;
-    gap: 2px;
-    contain: strict;
-    height: 1em;
-    align-items: stretch;
-}
-
-.discrete-progress-bar > div {
-    background: var(--process-undefined);
-    flex: 1 1 auto;
-    border-radius: 2px;
-    /* margin: 0.4px; */
-}
-
-.discrete-progress-bar > div.done {
-    background: var(--process-finished);
-}
-.discrete-progress-bar > div.busy {
-    background: var(--process-busy);
-}
-.discrete-progress-bar > div.failed {
-    background: var(--process-failed);
-}
-
-.discrete-progress-bar.mid {
-    gap: 1px;
-}
-
-.discrete-progress-bar.big {
-    gap: 0px;
-}
-
-pl-status pkg-terminal {
-    margin-left: var(--indent);
-}
-
-pluto-helpbox.helpbox-process > section {
-    padding-bottom: 3.6rem; /* to make space for the notification toggle */
-}
-
 .notify-when-done {
     position: absolute;
     bottom: 0.3em;
@@ -3549,78 +3530,7 @@ pluto-helpbox.helpbox-process > section {
     margin-right: 0.3em;
 }
 
-/* FOOTER */
-
-footer {
-    width: 100%;
-    min-height: 3.5rem;
-    font-family: var(--roboto-mono-font-stack);
-    font-size: 0.75rem;
-    background-color: var(--footer-bg-color);
-    color: var(--footer-color);
-    z-index: 70;
-}
-
-footer form {
-    min-height: 1.5rem;
-    opacity: 1;
-    transition: opacity 5s;
-    display: flex;
-    flex: 0 1 max-content;
-    min-width: 0;
-}
-
-footer form > * {
-    flex: 0 0 auto;
-}
-
-footer form > a,
-footer form > label {
-    align-self: center;
-}
-
-footer form > label {
-    margin-inline-end: 1em;
-    flex: 0 1 auto;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    text-wrap: nowrap;
-}
-
-footer form > a {
-    margin-right: 1em;
-}
-
-footer a {
-    color: var(--footer-atag-color);
-    font-weight: 700;
-    flex: 0 0 auto;
-}
-
-footer a.footer-button {
-    text-decoration: none;
-    background: var(--white);
-    padding: 0.4em 0.9em;
-    border-radius: 0.4em;
-    color: var(--pluto-output-color);
-    font-family: var(--system-ui-font-stack);
-}
-
-footer input {
-    margin: 0px;
-    border: 2px solid var(--footer-input-border-color);
-    background: var(--white);
-    font-family: inherit;
-    font-size: inherit;
-    border-radius: 3px;
-    border-end-end-radius: 0;
-    border-start-end-radius: 0;
-    padding: 3px;
-    border-inline-end: none;
-}
-
-header#pluto-nav .desktop_picker_group button,
-footer button {
+header#pluto-nav .desktop_picker_group button {
     margin: 0px;
     background: var(--footer-filepicker-focus-color);
     border-radius: 3px;
@@ -3628,37 +3538,11 @@ footer button {
     border-end-start-radius: 0;
     border: 3px solid var(--footer-filepicker-focus-color);
     color: var(--footer-filepicker-button-color);
-    /* border: none; */
     font-family: inherit;
     font-weight: 600;
     height: auto;
     font-size: 0.75rem;
     flex-shrink: 0;
-}
-
-footer #info {
-    max-width: 9400px;
-    margin: 0 auto;
-    padding: 1rem;
-    text-align: right;
-    /* height: 1.5rem; */
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 1em;
-}
-
-@media (max-width: 500px) {
-    footer form {
-        display: none;
-    }
-    footer #info {
-        justify-content: flex-start;
-    }
-    footer .footer-spacer {
-        display: none;
-    }
 }
 
 /* LANGUAGE PICKER */
@@ -4006,8 +3890,7 @@ body.presentation pluto-output h2 {
 body.presentation pluto-notebook {
     padding-bottom: 100vh;
 }
-body.presentation #helpbox-wrapper,
-body.presentation footer {
+body.presentation #helpbox-wrapper {
     display: none !important;
 }
 
@@ -4334,11 +4217,9 @@ pluto-popup code.auto_disabled_variable {
     text-shadow: 0 0 8px rgba(0, 0, 0, 0.5);
 }
 
-@media (prefers-color-scheme: dark) {
-    .cm-selectionMatch {
-        background: none !important;
-        text-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
-    }
+:root[data-theme="dark"] .cm-selectionMatch {
+    background: none !important;
+    text-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
 }
 
 .cm-editor .cm-matchingBracket,
@@ -4838,8 +4719,8 @@ jlerror.syntax-error > header {
 
 #ember-file-name {
     font: inherit;
-    font-weight: 500;
-    font-size: 0.8rem;
+    font-weight: 600;
+    font-size: 14px;
     color: var(--nav-filepicker-color);
     background: none;
     border: none;

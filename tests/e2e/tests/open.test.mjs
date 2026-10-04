@@ -20,7 +20,7 @@ test("open: loads every cell with safe preview, R highlighting, no console error
   const cellCount = await page.locator("pluto-cell").count();
   assert.equal(cellCount, 6, "setup + 5 cells from the fixture");
 
-  const bannerVisible = await page.locator(".safe-preview-info").count();
+  const bannerVisible = await page.locator("#ember-safe-preview").count();
   assert.ok(bannerVisible > 0, "the safe-preview banner is shown before execution is allowed");
 
   // CodeMirror 6's default highlighter assigns generated, non-semantic

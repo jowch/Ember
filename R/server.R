@@ -718,6 +718,7 @@ on_run <- function(server, cl, hub, req) {
 #' | ember_new_notebook             | {name, folder}: notebook_target_path() + new_notebook() + host_notebook(owned = TRUE); reply {url} or {error}. No hub |
 #' | ember_open_notebook            | {path}: open_or_find() (shared with /open); reply {url} or {error}. No hub |
 #' | ember_forget_recent            | {path}: forget_notebook(), then the ember_start_page reply. No hub |
+#' | ember_set_mode                 | {mode}: "autorun" or "lazy", else refused; refused when read-only. set_cell_change_mode(nb, mode); flush. No reply |
 #' | request_js_link_response, nbpkg_available_versions, nbpkg_get_project_toml, nbpkg_set_project_toml, pkg_update | Julia-only; their UI is disabled in the frontend. Logged, no reply |
 #'
 #' Replies use the reply type Pluto uses for each (connect "👋", ping
@@ -832,7 +833,10 @@ handlers <- list(
     worker_query(hub$nb, list(type = "help", topic = parsed$name, package = parsed$package), function(reply) {
       if (!is.null(reply)) {
         doc <- help_reply_html(reply)
-        send(cl, reply_message(req, "docs", list(status = THUMBS_UP, doc = doc)))
+        # `package` NULL when ambiguous (reply$matches non-empty): the page
+        # then shows the pkg::topic choices, not one page to attribute.
+        pkg <- if (length(reply$matches %||% list()) > 0) NULL else reply$package
+        send(cl, reply_message(req, "docs", list(status = THUMBS_UP, doc = doc, package = pkg)))
       } else if (was_idle) {
         msg <- "<p>R didn't answer in time. Trying again\u2026</p>"
         send(cl, reply_message(req, "docs", list(status = HOURGLASS, doc = msg)))
@@ -1057,6 +1061,22 @@ handlers <- list(
   ember_forget_recent = function(server, cl, hub, req) {
     forget_notebook(req$body$path)
     send(cl, reply_message(req, "ember_start_page", start_page_reply(server)))
+  },
+
+  #' Status tab's "When a cell changes": autorun or lazy. A refusal (bad
+  #' mode, or read-only) is never thrown at the client, since the frontend
+  #' sends without awaiting a reply.
+  ember_set_mode = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    mode <- req$body$mode
+    tryCatch({
+      if (!(is.character(mode) && length(mode) == 1 && !is.na(mode) && mode %in% c("autorun", "lazy"))) {
+        stop(refused("ember_set_mode: mode must be \"autorun\" or \"lazy\""))
+      }
+      if (isTRUE(notebook_snapshot(hub$nb)$read_only)) stop(refused("read-only notebook"))
+      set_cell_change_mode(hub$nb, mode)
+    }, ember_refused = function(e) message("ember: refused ember_set_mode: ", conditionMessage(e)))
+    flush_clients(server, hub)
   }
 )
 
@@ -1433,10 +1453,11 @@ http_call <- function(server, req) {
 #'   vendored frontend folder -- before `call` ever sees it; see
 #'   `http_start()`). No secret on static files otherwise:
 #'   the frontend's code is not private (Pluto exempts .js/.css too).
-#'   `imports/vendor` is its own, more specific static path (httpuv matches
-#'   the longest prefix): its files are content-hashed, so they get a long,
-#'   immutable cache lifetime; everything else is `no-cache`, so the browser
-#'   revalidates with `If-Modified-Since` (a 304 when unchanged) instead of
+#'   `imports/vendor` and `fonts` are their own, more specific static paths
+#'   (httpuv matches the longest prefix): their files are content-hashed, so
+#'   they get a long, immutable cache lifetime; everything else is
+#'   `no-cache`, so the browser revalidates with `If-Modified-Since` (a 304
+#'   when unchanged) instead of
 #'   assuming a file never changes (docs/ui-2.md, "Offline bundle").
 #' * `call` (R): checks the request's origin (`origin_ok()`) and then the
 #'   secret (query `secret=` or the per-port cookie, `secret_ok()`),
@@ -1459,6 +1480,9 @@ http_app <- function(server) {
     staticPaths = list(
       "/imports/vendor" = httpuv::staticPath(
         file.path(server$frontend, "imports", "vendor"), fallthrough = TRUE,
+        headers = list("Cache-Control" = "public, max-age=31536000, immutable")),
+      "/fonts" = httpuv::staticPath(
+        file.path(server$frontend, "fonts"), fallthrough = TRUE,
         headers = list("Cache-Control" = "public, max-age=31536000, immutable")),
       "/" = httpuv::staticPath(server$frontend, fallthrough = TRUE, indexhtml = FALSE,
                                headers = list("Cache-Control" = "no-cache")),

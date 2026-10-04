@@ -812,6 +812,15 @@ project_nbpkg <- function(state) {
 #'   shows nothing here: its proposal has `apply = FALSE`. `status`
 #'   `"checking"` is the proposal's `"fetching"` (the page's wording, not
 #'   the core's); `message` is set only once `status == "failed"`.
+#' * `on_cell_change`: `state$file$header$on_cell_change`, `"autorun"` or
+#'   `"lazy"`.
+#' * `r_version`, `worker_started_at`: the running worker's own report
+#'   (`state$worker$info$r_version`, `state$worker$started_at`), `NULL`
+#'   before the current worker's `wk_hello`, in safe preview, and once it
+#'   stops (`reduce_wk_exited()`/`reduce_wk_failed()` clear both).
+#' * `read_only`: `isTRUE(state$read_only)`, the same flag
+#'   `notebook_snapshot()` projects -- the page disables the Status tab's
+#'   autorun/lazy radios with it; `ember_set_mode` refuses regardless.
 project_ember <- function(state, ctx) {
   stale <- 0L
   if (isTRUE(state$allowed)) {
@@ -885,7 +894,12 @@ project_ember <- function(state, ctx) {
 
   list(process = process, worker_memory = worker_memory,
       not_run = length(not_run_ids(state, ctx)), stale = stale,
-      plan = plan, packages = packages)
+      plan = plan, packages = packages,
+      on_cell_change = state$file$header$on_cell_change,
+      r_version = state$worker$info$r_version %||% NULL,
+      worker_started_at = if (is.null(state$worker$started_at)) NULL
+                          else as.numeric(state$worker$started_at),
+      read_only = isTRUE(state$read_only))
 }
 
 #' StatusEntryData for the status tab: root "notebook" with subtasks
