@@ -108,20 +108,27 @@ test("Packages tab lists a missing package and the preview banner names the inst
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  await page.locator("#ember-safe-preview button").click();
+  // Read the banner's plan sentence before running anything: clicking
+  // "Run this notebook" starts execution immediately, and the banner (and
+  // its sentence) is gone once process_waiting_for_permission is false.
   await page.waitForFunction(
-    () => /installs \d+ packages?/.test(document.querySelector("#ember-safe-preview")?.innerText ?? document.body.innerText),
-    null, { timeout: 10000 }).catch(() => {});
-  const bannerText = await page.locator("body").innerText();
+    () => /installs \d+ packages?/.test(document.querySelector("#ember-safe-preview")?.innerText ?? ""),
+    null, { timeout: 10000 });
+  const bannerText = await page.locator("#ember-safe-preview").innerText();
   assert.match(bannerText, /installs \d+ packages?/);
-  await page.keyboard.press("Escape");
 
+  // The "missing" status, in safe preview, before anything installs.
   await page.getByRole("button", { name: "Packages", exact: true }).click();
   await page.waitForSelector("#ember-packages-tab .ember-packages-table", { timeout: 10000 });
   const rows = await page.locator("#ember-packages-tab .ember-package-row").count();
   assert.ok(rows > 0, "expected at least one package row");
   const statuses = await page.locator("#ember-packages-tab .ember-package-row td:last-child").allInnerTexts();
   assert.ok(statuses.some((s) => s.includes("missing")));
+
+  // Close the panel first: open, it covers the banner's own button.
+  await page.getByRole("button", { name: "Packages", exact: true }).click();
+  await page.waitForSelector("#helpbox-wrapper:not(.open)", { state: "attached" });
+  await page.locator("#ember-safe-preview button").click();
 
   assertNoProblems(page);
 });

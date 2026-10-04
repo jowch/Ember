@@ -70,7 +70,6 @@
     "t_ember_split": "Split into {{n}} cells",
     "t_ember_label_stale": "stale",
     "t_ember_label_code_changed": "code changed",
-    "t_ember_safe_preview_plan_none": "Running starts R.",
     "t_ember_safe_preview_plan_install_one": "Running starts R and installs {{count}} package.",
     "t_ember_safe_preview_plan_install_other": "Running starts R and installs {{count}} packages.",
     "t_ember_safe_preview_plan_restart": "Running starts R; it will then restart to use a new version of: {{names}}.",

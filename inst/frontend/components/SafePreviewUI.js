@@ -2,16 +2,18 @@ import { t } from "../common/lang.js"
 import { html } from "../imports/Preact.js"
 
 /**
- * What running would do (ui-2.md, 5): `null` installs nothing, otherwise
- * `{ install, restart }` from `notebook.ember.plan` (project_ember(),
+ * What running would do (ui-2.md, 5), when it's worth saying: `null` when
+ * running installs and restarts nothing, otherwise a sentence from
+ * `{ install, restart }` (`notebook.ember.plan`, project_ember(),
  * pluto-state.R / packages_view(), packages-core.R).
  * @param {{ install: number, restart: string[] }?} plan
+ * @returns {string?}
  */
 const plan_text = (plan) => {
-    if (plan == null) return t("t_ember_safe_preview_plan_none")
+    if (plan == null) return null
     if (plan.install > 0) return t("t_ember_safe_preview_plan_install", { count: plan.install })
     if (plan.restart.length > 0) return t("t_ember_safe_preview_plan_restart", { names: plan.restart.join(", ") })
-    return t("t_ember_safe_preview_plan_none")
+    return null
 }
 
 /**
@@ -30,7 +32,7 @@ export const SafePreviewUI = ({ process_waiting_for_permission, restart, plan })
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
                 <path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"></path>
             </svg>
-            <span>${t("t_ember_safe_preview_banner")} ${plan_text(plan)}</span>
+            <span>${t("t_ember_safe_preview_banner")}${plan_text(plan) == null ? "" : ` ${plan_text(plan)}`}</span>
             <button class="ember-btn primary" type="button" onClick=${() => restart()}>${t("t_ember_run_this_notebook")}</button>
         </div>
     `
