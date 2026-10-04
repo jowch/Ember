@@ -31,7 +31,11 @@ test("long runs: the dialog names the rerun, never answers itself, and Cancel ru
 
   const dialog = page.locator("dialog.confirm-before-long-runtime[open]");
   await dialog.waitFor({ timeout: 5000 });
-  assert.equal((await dialog.locator("p").innerText()).trim(), "This reruns 1 cell that took about 8 sec last time.");
+  // LOOP busy-waits 8 s; a slow runner takes longer, so only the shape and a sensible range are fixed.
+  const sentence = (await dialog.locator("p").innerText()).trim();
+  const took = sentence.match(/^This reruns 1 cell that took about (\d+) sec last time\.$/);
+  assert.ok(took != null, `dialog text: ${sentence}`);
+  assert.ok(Number(took[1]) >= 8 && Number(took[1]) <= 15, `took about ${took[1]} sec`);
 
   // The finished-run notification (RunTracker.js) words its time the same way, as board Words6 does.
   const notification = await page.evaluate(async () => {
