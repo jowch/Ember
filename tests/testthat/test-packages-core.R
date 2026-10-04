@@ -728,7 +728,7 @@ test_that("install_failures() on each captured output gives the expected rows; n
   expect_equal(cmp$kind, "compile")
   expect_true(is.na(cmp$detail))
 
-  # R's quotes are ASCII or curly ("‘"/"’") depending on locale;
+  # R's quotes are ASCII or curly ("\u2018"/"\u2019") depending on locale;
   # both parse to the same row.
   cmp_curly <- install_failures(install_output("compile-curly"))
   expect_equal(cmp_curly, cmp)

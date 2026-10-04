@@ -201,11 +201,11 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
 #' run_and_wait()'s simple loop. A bare `repeat { m <- h$receive(5);
 #' expect_false(is.null(m)); if (identical(m$type, "done")) break }`
 #' looks bounded by the 5s read timeout but isn't: `expect_false()`, like
-#' every `expect_*()` (and `testthat::fail()` itself — both just signal a
+#' every `expect_*()` (and `testthat::fail()` itself -- both just signal a
 #' continuable "expectation" condition), records a failure and keeps
 #' going rather than stopping the test, so a worker that never replies
 #' (dead, or an interrupt lost to the host shell's own SIGINT disposition
-#' — see sigint_reset_when_inherited_ignored) makes that loop call
+#' -- see sigint_reset_when_inherited_ignored) makes that loop call
 #' h$receive() forever, hanging the whole test run instead of failing one
 #' test (measured: confirmed `testthat::fail()` alone doesn't stop a
 #' `repeat` either). `stop()` is what actually unwinds out of the test;

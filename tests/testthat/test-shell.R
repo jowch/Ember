@@ -224,3 +224,11 @@ test_that("run_effect(move_file): reports a failure (ev_save_failed) when the ta
   expect_length(nb$inbox, 1)
   expect_equal(nb$inbox[[1]]$type, "save_failed")
 })
+
+test_that("as_display() keeps a table's NA cells", {
+  b <- list(kind = "table", mime = "application/vnd.ember.table", text = "", truncated = FALSE,
+            names = c("a", "b"), types = c("<dbl>", "<chr>"), nrow = 2L, ncol = 2L,
+            row_labels = c("1", "2"), rows = list(c("1", "x"), c("NA", "NA")),
+            more_rows = 0L, more_cols = 0L, na = list(integer(), c(1L, 2L)))
+  expect_identical(as_display(b)$data$na, list(integer(), c(1L, 2L)))
+})

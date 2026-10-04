@@ -8,7 +8,7 @@ import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector } from "../browser.mjs";
 
-test("table and print: TBL is a table with 'more', FIT prints text (39)", async (t) => {
+test("table and print: TBL is a table with Show more buttons under it, FIT prints text (39)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "rich-table.server.log") });
   const browser = await launchBrowser();
@@ -20,11 +20,12 @@ test("table and print: TBL is a table with 'more', FIT prints text (39)", async 
   await runCell(page, "TBL");
   await page.waitForSelector(`${cellSelector("TBL")} table.pluto-table`, { timeout: 20000 });
   const bodyRows = await page.locator(`${cellSelector("TBL")} table.pluto-table tbody tr`).count();
-  assert.equal(bodyRows, 11); // 10 shown rows + a "more" row
+  assert.equal(bodyRows, 10);
   const typesRow = await page.locator(`${cellSelector("TBL")} tr.schema-types`).innerText();
-  assert.match(typesRow, /<dbl>/);
+  assert.match(typesRow, /\bdbl\b/);
+  assert.doesNotMatch(typesRow, /</);
 
-  await page.locator(`${cellSelector("TBL")} .pluto-tree-more-td pluto-tree-more`).click();
+  await page.locator(`${cellSelector("TBL")} .ember-table-more`).getByRole("button", { name: "Show 22 more rows", exact: true }).click();
   await page.waitForFunction(
     (sel) => document.querySelectorAll(`${sel} table.pluto-table tbody tr`).length === 32,
     `${cellSelector("TBL")}`, { timeout: 10000 });
@@ -39,7 +40,7 @@ test("table and print: TBL is a table with 'more', FIT prints text (39)", async 
   assertNoProblems(page);
 });
 
-test("tree: LST is a collapsed tree that expands and pages (40)", async (t) => {
+test("tree: LST's root starts open; a nested list expands and pages (40)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "rich-tree.server.log") });
   const browser = await launchBrowser();
@@ -49,17 +50,21 @@ test("tree: LST is a collapsed tree that expands and pages (40)", async (t) => {
   await openNotebook(page, server.origin, server.secret, notebook);
 
   await runCell(page, "LST");
+  const cell = page.locator(cellSelector("LST"));
   await page.waitForSelector(`${cellSelector("LST")} pluto-tree`, { timeout: 20000 });
-  await page.locator(`${cellSelector("LST")} pluto-tree`).first().click();
-  const text = await page.locator(`${cellSelector("LST")} pluto-tree`).first().innerText();
-  assert.match(text, /a/);
-  assert.match(text, /b/);
-  assert.match(text, /long/);
+  assert.equal(await cell.getByRole("button", { name: "list of 3", exact: true }).getAttribute("aria-expanded"), "true");
+  const keys = await page.locator(`${cellSelector("LST")} pluto-tree > .ember-tree-items`).first().evaluate((items) =>
+    [...items.children].map((c) => c.querySelector(":scope > .ember-tree-key, :scope > .ember-tree-row > .ember-tree-key").innerText));
+  assert.deepEqual(keys, ["a", "b", "long"]);
 
-  const mores = page.locator(`${cellSelector("LST")} pluto-tree-more`);
-  const count = await mores.count();
-  assert.ok(count > 0, "expected a 'more' control for the long sublist");
-  await mores.last().click();
+  // While the cell's code has focus, its argument tooltip (list(...)) sits over the output.
+  await page.evaluate(() => document.activeElement?.blur());
+  const long = cell.getByRole("button", { name: "long list of 100", exact: true });
+  assert.equal(await long.getAttribute("aria-expanded"), "false");
+  await long.click();
+  await cell.getByRole("button", { name: "Show 80 more", exact: true }).click();
+  await cell.getByRole("button", { name: "Show 20 more", exact: true }).waitFor({ timeout: 10000 });
+  assert.equal(await long.getAttribute("aria-expanded"), "true", "the nested list stays open after loading more");
 
   assertNoProblems(page);
 });
@@ -215,7 +220,7 @@ test("plot: a 3x-density tab asks for one redraw at res 288; a 1x tab asks for n
   assertNoProblems(page3);
 });
 
-test("colours: ANSI's log and output have coloured spans and no visible escape codes (43)", async (t) => {
+test("colours: ANSI's log and output have coloured spans from the theme and no visible escape codes (43)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "rich-ansi.server.log") });
   const browser = await launchBrowser();
@@ -225,16 +230,24 @@ test("colours: ANSI's log and output have coloured spans and no visible escape c
   await openNotebook(page, server.origin, server.secret, notebook);
 
   await runCell(page, "ANSI");
-  await page.waitForFunction(
-    (sel) => document.querySelector(sel)?.querySelector("span.ansi-red-fg") != null,
-    `${cellSelector("ANSI")} pluto-logs`, { timeout: 20000 }).catch(async () => {
-      // the console log area's selector may differ; fall back to a broad search
-      await page.waitForFunction(
-        () => document.querySelector("span.ansi-red-fg") != null, null, { timeout: 5000 });
-    });
+  await page.waitForSelector(`${cellSelector("ANSI")} pluto-logs span.ansi-red-fg`, { timeout: 20000 });
+  await page.waitForSelector(`${cellSelector("ANSI")} pluto-output span.ansi-green-fg`, { timeout: 20000 });
 
   const bodyText = await page.locator(cellSelector("ANSI")).innerText();
   assert.doesNotMatch(bodyText, /\x1b/);
+
+  const themed = (sel, token) => page.evaluate(([sel, token]) => {
+    const probe = document.createElement("span");
+    probe.style.color = `var(${token})`;
+    document.body.append(probe);
+    const want = getComputedStyle(probe).color;
+    probe.remove();
+    return [getComputedStyle(document.querySelector(sel)).color, want];
+  }, [sel, token]);
+  const [red, wantRed] = await themed(`${cellSelector("ANSI")} pluto-logs span.ansi-red-fg`, "--ember-ansi-red");
+  assert.equal(red, wantRed);
+  const [green, wantGreen] = await themed(`${cellSelector("ANSI")} pluto-output span.ansi-green-fg`, "--ember-ansi-green");
+  assert.equal(green, wantGreen);
 
   assertNoProblems(page);
 });

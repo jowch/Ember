@@ -329,9 +329,9 @@ run_cell <- function(msg) {
              globals = list())
 
   # `dev`/`console` are closed here (not just at their normal point of use
-  # below) so an interrupt landing anywhere in this function — including
+  # below) so an interrupt landing anywhere in this function -- including
   # after the cell's code finished, while display or bookkeeping is still
-  # running — can never leave a sink or a device open. Once the bookkeeping
+  # running -- can never leave a sink or a device open. Once the bookkeeping
   # block below (wrapped in `uninterrupted()`) has closed them itself,
   # it sets these back to NULL so this doesn't try to close them twice.
   dev <- NULL
@@ -373,7 +373,12 @@ run_cell <- function(msg) {
     text_lines <- if (is_text) strsplit(msg$code, "\n", fixed = TRUE)[[1]] else character()
     inline_values <- character(length(text_lines))
     at <- 0L   # the text line being evaluated; reported as error$span
-    if (!is_text) exprs <- parse(text = msg$code, keep.source = TRUE)
+    # `srcfile = srcfilecopy(msg$cell, msg$code)` stamps the cell's id as
+    # this parse's source file name, so a function defined here carries
+    # it in its own srcref -- `clean_frames()` reads it back to say which
+    # cell defined a traceback call's function.
+    if (!is_text) exprs <- parse(text = msg$code, keep.source = TRUE,
+                                 srcfile = srcfilecopy(msg$cell, msg$code))
     trace_line("eval", msg$cell)
 
     tryCatch(
@@ -390,8 +395,9 @@ run_cell <- function(msg) {
             inline_values[[li]] <- if (r$visible) inline_text(r$value) else ""
           }
         } else {
-          for (e in exprs) {
-            r <- withVisible(eval(e, globalenv()))
+          for (k in seq_along(exprs)) {
+            at <- k   # the top-level expression index; error$line reads its srcref
+            r <- withVisible(eval(exprs[[k]], globalenv()))
             if (r$visible) {
               if (visible) console$print(value)
               value <- r$value
@@ -405,27 +411,30 @@ run_cell <- function(msg) {
       error   = function(e) {
         # `sys.calls()` here always ends with this handler's own frame
         # (it's the currently executing call), so it's dropped
-        # unconditionally rather than matched by text — the fix for a
+        # unconditionally rather than matched by text -- the fix for a
         # classed condition (stop(<condition object>), as every
         # rlang/cli error raises) whose signalling never passes through
         # the simpleError dispatch helpers the text patterns below catch.
         calls <- sys.calls()
         calls <- calls[-length(calls)]
+        # One function object per call, by frame index, kept alongside
+        # `calls` for `clean_frames()` below (sys.function(i) is only
+        # answerable from inside this handler, while the stack is live).
+        fns <- lapply(seq_along(calls), function(i) tryCatch(sys.function(i), error = function(e2) NULL))
         # A frame inside one of install_traces()'s loadNamespace/
         # library/require wrappers (identified by identity against the
         # real function it replaced, not by name: the wrapper always
         # calls it through a local variable named `original`, so by text
         # every such frame deparses identically regardless of which of
         # the three it is).
-        is_original <- vapply(seq_along(calls), function(i) {
-          fn <- tryCatch(sys.function(i), error = function(e2) NULL)
+        is_original <- vapply(fns, function(fn) {
           !is.null(fn) && any(vapply(loader_originals, identical, logical(1), y = fn))
         }, logical(1))
         call <- conditionCall(e)
         if (!is.null(call) && identical(call, quote(original(...)))) {
           # The real loadNamespace()/library()/require() built its own
-          # error's call from *its* caller, which — from inside our
-          # wrapper — is the wrapper's own `original(...)` line, not the
+          # error's call from *its* caller, which -- from inside our
+          # wrapper -- is the wrapper's own `original(...)` line, not the
           # line the notebook wrote (e.g. `library(notapkg)`). Report the
           # frame just above it instead, which is exactly that line: our
           # wrapper's `sys.call()` always returns the call as the
@@ -433,8 +442,38 @@ run_cell <- function(msg) {
           idx <- which(vapply(calls, identical, logical(1), y = call))
           if (length(idx) && idx[1] > 1) call <- calls[[idx[1] - 1]]
         }
-        err <<- list(message = conditionMessage(e), call = call,
-                     traceback = clean_calls(calls[!is_original]),
+        # One line, for the wire and for the "is it the loop's own eval"
+        # and "is it the top-level expression itself" checks below --
+        # deparse() can return more than one element for a long call, and
+        # `deparse_one_line()` also squashes a multi-line call's interior
+        # indentation (`local({ ... })`'s body) to single spaces.
+        call_text <- if (is.null(call)) NULL else deparse_one_line(call)
+        # A bare top-level stop() (or any error raised with call. = FALSE)
+        # leaves `call` as this loop's own eval() line -- `exprs[[k]]` for
+        # a code cell, `line_e` for a text cell -- not anything the
+        # notebook wrote; treated the same as no call at all. That
+        # specific case has nothing worth a traceback either: its one
+        # surviving frame is the failing call itself, already named by
+        # `line`, so `frames` stays empty for it alone (test 127).
+        is_bare_toplevel <- is_loop_eval_text(call_text)
+        if (is_bare_toplevel) call_text <- NULL
+        kept_calls <- calls[!is_original]
+        kept_fns <- fns[!is_original]
+        err_line <- NULL
+        err_deep <- FALSE
+        if (!is_text) {
+          sr <- attr(exprs, "srcref")
+          if (!is.null(sr) && at >= 1 && at <= length(sr)) err_line <- sr[[at]][1]
+          if (!is.null(call_text)) {
+            kept_texts <- vapply(kept_calls, deparse_one_line, character(1))
+            outer_idx <- clean_range(kept_texts)
+            outer_text <- if (length(outer_idx)) kept_texts[[outer_idx[1]]] else NULL
+            toplevel_text <- deparse_one_line(exprs[[at]])
+            err_deep <- !identical(call_text, outer_text) && !identical(call_text, toplevel_text)
+          }
+        }
+        err <<- list(message = conditionMessage(e), call = call_text,
+                     traceback = clean_calls(kept_calls),
                      # `e$package` is set by R's own loadNamespace()/library()
                      # for a packageNotFoundError regardless of locale, so the
                      # server can recognise a missing package without matching
@@ -442,7 +481,16 @@ run_cell <- function(msg) {
                      package = if (inherits(e, "packageNotFoundError")) e$package else NULL,
                      # Which text line (`inline_spans()$line` of the cell's
                      # analysed code) failed, for a text cell only.
-                     span = if (is_text) at else NULL)
+                     span = if (is_text) at else NULL,
+                     line = err_line,
+                     deep = err_deep,
+                     # Frames and traceback always have the same length,
+                     # except for a bare top-level stop() (see
+                     # `is_bare_toplevel` above): nothing the page would
+                     # show beyond the message, which already says
+                     # "Error" then a middle dot then "line n" with no
+                     # call.
+                     frames = if (is_bare_toplevel) list() else clean_frames(kept_calls, kept_fns))
       }),
       interrupt = function(i) rc$status <<- "interrupted",
       error     = function(e) rc$status <<- "error")
@@ -996,7 +1044,7 @@ install_traces <- function() {
       # attaching, whether or not attaching it was a no-op because it was
       # already on the path (a plain search() diff would miss that case,
       # and so would wrongly drop the package from the desired path on
-      # the next rebuild — see the note at attach_requests's use).
+      # the next rebuild -- see the note at attach_requests's use).
       if (attachable && !is.null(running) && !is.null(pe)) {
         after_search <- packages_on_search(search())
         resolved <- resolve_attach_name(pe, char_only, call_env, before_search, after_search)
@@ -1173,7 +1221,10 @@ console_collector <- function(cell, token) {
                                           # able to pop our diversion
   sink(self$out, type = "output")
 
-  add_item <- function(kind, text) {
+  # `call` is the deparsed call behind a warning item (one line), kept
+  # only when set -- a message item, or a warning with none, carries no
+  # `call` key at all, rather than an explicit NULL.
+  add_item <- function(kind, text, call = NULL) {
     if (self$capped) return(invisible())
     self$total <- self$total + nchar(text, type = "bytes")
     if (self$total > self$limit) {
@@ -1183,7 +1234,7 @@ console_collector <- function(cell, token) {
       send(list(type = "console", cell = cell, token = token, item = item))
       return(invisible())
     }
-    item <- list(kind = kind, text = text)
+    item <- if (is.null(call)) list(kind = kind, text = text) else list(kind = kind, text = text, call = call)
     self$items[[length(self$items) + 1]] <- item
     send(list(type = "console", cell = cell, token = token, item = item))
   }
@@ -1203,7 +1254,18 @@ console_collector <- function(cell, token) {
   }
 
   self$message <- function(m) { flush_stdout(); add_item("message", conditionMessage(m)) }
-  self$warning <- function(w) { flush_stdout(); add_item("warning", conditionMessage(w)) }
+  self$warning <- function(w) {
+    flush_stdout()
+    call <- conditionCall(w)
+    call_text <- if (is.null(call)) NULL else deparse_one_line(call)
+    # A bare top-level warning() carries the eval loop's own call, not
+    # anything the notebook wrote (the same case `run_cell()`'s error
+    # handler nulls out); treated as no call at all. Code and text cells
+    # loop over different variables (`exprs[[k]]`, `line_e`), so both
+    # eval() calls are checked.
+    if (is_loop_eval_text(call_text)) call_text <- NULL
+    add_item("warning", conditionMessage(w), call = call_text)
+  }
   self$print <- function(v) {
     flush_stdout()
     txt <- paste(utils::capture.output(eval_in_notebook(quote(print(v)), v)), collapse = "\n")
@@ -1307,7 +1369,7 @@ read_png <- function(path) {
 #' parent is baseenv() (see the file header), never globalenv(). Calling
 #' `print(value)` directly from one of them resolves the generic fine, but
 #' UseMethod()'s method search starts from the calling frame and walks its
-#' lexical parents — which for a worker frame never reaches globalenv(), so
+#' lexical parents -- which for a worker frame never reaches globalenv(), so
 #' a `print.myclass` the notebook defined is invisible to it (measured:
 #' confirmed with a plain `environment(f) <- e; f()` repro, not just
 #' reasoning about scoping rules). Evaluating the call itself in
@@ -1401,7 +1463,8 @@ build_table <- function(value, limits) {
   if (ncol_total == 0) {
     return(list(kind = "table", mime = "application/vnd.ember.table",
                names = character(), types = character(), nrow = nrow_total, ncol = 0L,
-               row_labels = character(), rows = list(), more_rows = 0L, more_cols = 0L))
+               row_labels = character(), rows = list(), more_rows = 0L, more_cols = 0L,
+               na = list()))
   }
   rows_n <- min(limits$rows %||% 10L, nrow_total)
   cols_n <- min(limits$cols %||% 8L, ncol_total)
@@ -1415,6 +1478,16 @@ build_table <- function(value, limits) {
       format_column(col_head)
     }, error = function(e) rep("<error>", rows_n))
   })
+  # NA per shown cell, atomic columns only (a list column, or a matrix/
+  # data.frame column whose own cell isn't one scalar, is never NA here):
+  # in the same per-column tryCatch as `col_values`, so one odd column
+  # can't fail the whole table's NA detection either.
+  col_na <- lapply(seq_len(cols_n), function(i) {
+    tryCatch({
+      col_head <- utils::head(value[[i]], rows_n)
+      if (is.atomic(col_head) && !is.matrix(col_head)) is.na(col_head) else logical(rows_n)
+    }, error = function(e) logical(rows_n))
+  })
   row_labels <- tryCatch({
     rn <- rownames(value)
     if (is.null(rn)) as.character(seq_len(rows_n)) else utils::head(as.character(rn), rows_n)
@@ -1427,11 +1500,15 @@ build_table <- function(value, limits) {
   rows <- lapply(seq_len(rows_n), function(i) {
     vapply(col_values, function(cv) if (length(cv) >= i) cv[i] else "", character(1))
   })
+  na <- lapply(seq_len(rows_n), function(i) {
+    which(vapply(col_na, function(v) length(v) >= i && isTRUE(v[i]), logical(1)))
+  })
 
   list(kind = "table", mime = "application/vnd.ember.table",
       names = names_shown, types = types_shown, nrow = nrow_total, ncol = ncol_total,
       row_labels = row_labels, rows = rows,
-      more_rows = max(0L, nrow_total - rows_n), more_cols = max(0L, ncol_total - cols_n))
+      more_rows = max(0L, nrow_total - rows_n), more_cols = max(0L, ncol_total - cols_n),
+      na = na)
 }
 
 #' A data frame, tibble or data.table: the first `limits$rows` rows and
@@ -1474,6 +1551,27 @@ tree_limit_set <- function(limits, path, value) {
 #' reached yet.
 display_tree_node <- function(x, path, depth, limits, max_depth = 4) {
   if (depth >= max_depth || !identical(class(x), "list")) {
+    # A long plain vector (no class attribute, e.g. not a factor or Date;
+    # not a matrix or array, which has a dim but no class; and unnamed,
+    # since the values alone would silently drop the names) becomes an
+    # expandable leaf of its own: the first 10 formatted values, its type
+    # and its full length, so the page can show "... int, 100 values"
+    # instead of str()'s one-line summary.
+    if (is.atomic(x) && is.null(attr(x, "class")) && is.null(dim(x)) &&
+        is.null(names(x)) && length(x) > 1) {
+      head_x <- utils::head(x, 10)
+      vals <- tryCatch({
+        if (is.character(head_x)) {
+          # format() doesn't quote a character vector; quoted the way
+          # print() shows one.
+          encodeString(head_x, quote = '"')
+        } else {
+          as.character(eval_in_notebook(quote(format(v, trim = TRUE)), head_x))
+        }
+      }, error = function(e) rep("<unprintable>", min(10L, length(x))))
+      return(list(type = "vector", values = vals,
+                 type_sum = gsub("[<>]", "", column_type(x)), length = length(x)))
+    }
     return(list(type = "text", text = leaf_text(x)))
   }
   items_limit <- tree_limit_get(limits, path)$items %||% 20L
@@ -1740,6 +1838,22 @@ render_plot <- function(msg) {
                      size = list(width = px$width, height = px$height, res = px$res)))
 }
 
+#' One line for a call or expression, long-form deparse() output joined
+#' and runs of interior whitespace -- the indentation a multi-line body
+#' such as `local({ ... })` leaves behind -- squashed to single spaces.
+deparse_one_line <- function(x) {
+  gsub("[ \t]+", " ", paste(deparse(x), collapse = " "))
+}
+
+#' `TRUE` for either eval() call the run loop uses to execute a
+#' notebook's own code -- `exprs[[k]]` for a code cell's top-level
+#' expressions, `line_e` for a text cell's per-line expressions -- so a
+#' condition raised with no deeper call (a bare top-level stop() or
+#' warning()) is recognised the same way for both.
+is_loop_eval_text <- function(text) {
+  identical(text, "eval(exprs[[k]], globalenv())") || identical(text, "eval(line_e, globalenv())")
+}
+
 #' Strip the worker's own frames from sys.calls(): everything up to and
 #' including the eval of the cell (above the user's code), and the
 #' condition-dispatch machinery below it (`.handleSimpleError()` and
@@ -1753,19 +1867,63 @@ render_plot <- function(msg) {
 #' the user's own code by matching their deparsed call text alone (a
 #' classed condition's dispatch never goes through the `.handleSimpleError`
 #' family this function still filters for simple conditions).
-clean_calls <- function(calls) {
-  texts <- vapply(calls, function(c) paste(deparse(c), collapse = " "), character(1))
-  start_idx <- which(texts == "eval(e, globalenv())")
+#'
+#' The indices of `calls` (deparsed to `texts`, one line each) that are
+#' the user's own code, shared by `clean_calls()` and `clean_frames()` so
+#' the two always select the same frames in the same order.
+clean_range <- function(texts) {
+  start_idx <- which(vapply(texts, is_loop_eval_text, logical(1)))
   start <- if (length(start_idx)) max(start_idx) + 1L else 1L
-  if (start > length(texts)) return(character())
+  if (start > length(texts)) return(integer())
   tail_idx <- seq.int(start, length(texts))
   internal <- which(startsWith(texts[tail_idx], ".handleSimpleError(") |
                      startsWith(texts[tail_idx], ".handleSimpleCondition(") |
                      startsWith(texts[tail_idx], ".handleSimpleWarning(") |
                      startsWith(texts[tail_idx], ".signalSimpleWarning("))
   end <- if (length(internal)) tail_idx[min(internal)] - 1L else length(texts)
-  if (end < start) return(character())
-  texts[start:end]
+  if (end < start) return(integer())
+  start:end
+}
+
+clean_calls <- function(calls) {
+  texts <- vapply(calls, deparse_one_line, character(1))
+  texts[clean_range(texts)]
+}
+
+#' One frame per element of `clean_calls(calls)`, in the same order
+#' (outermost first): `list(call, package, cell)` for each surviving call,
+#' from the function executing in that frame (`fns[[i]]`, `sys.function(i)`
+#' captured by the caller while the stack was live).
+#'
+#' `package` is `environmentName(topenv(environment(fn)))`, `NULL` for
+#' `"R_GlobalEnv"` (a notebook-defined function); "base" for a primitive. `cell` is that function's
+#' srcref's file name -- the id of the cell that defined it, from
+#' `srcfilecopy(msg$cell, msg$code)` at parse time -- `NULL` when the
+#' function carries no srcref (a package function, normally built without
+#' one).
+clean_frames <- function(calls, fns) {
+  texts <- vapply(calls, deparse_one_line, character(1))
+  idx <- clean_range(texts)
+  lapply(idx, function(i) {
+    fn <- fns[[i]]
+    package <- NULL
+    cell <- NULL
+    if (is.primitive(fn)) {
+      # .Internal(eval()) and other builtins run in a frame of their own
+      # whose function has no environment.
+      package <- "base"
+    } else if (!is.null(fn)) {
+      env <- tryCatch(environment(fn), error = function(e) NULL)
+      if (!is.null(env)) {
+        pkg_name <- tryCatch(environmentName(topenv(env)), error = function(e) "R_GlobalEnv")
+        if (!identical(pkg_name, "R_GlobalEnv")) package <- pkg_name
+      }
+      sr <- attr(fn, "srcref")
+      sf <- if (!is.null(sr)) attr(sr, "srcfile") else NULL
+      if (!is.null(sf) && !is.null(sf$filename) && nzchar(sf$filename)) cell <- sf$filename
+    }
+    list(call = texts[[i]], package = package, cell = cell)
+  })
 }
 
 # ---- Editor services ---------------------------------------------------------

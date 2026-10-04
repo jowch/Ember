@@ -28,7 +28,7 @@ test("upstream: a dependent names the failed cell and links to it; an unrelated 
   const page = await newPage(browser);
   // A short viewport (tall enough for one cell, too short for all 4), so
   // scrolling to the last cell genuinely pushes A off screen.
-  await page.setViewportSize({ width: 1200, height: 500 });
+  await page.setViewportSize({ width: 1200, height: 300 });
   await openNotebook(page, server.origin, server.secret, notebook);
 
   await page.locator("#ember-safe-preview button").click();
@@ -40,12 +40,15 @@ test("upstream: a dependent names the failed cell and links to it; an unrelated 
   await page.waitForSelector(`${cellSelector("B")} jlerror`, { timeout: 20000 });
   const b_error = page.locator(`${cellSelector("B")} jlerror`);
   const b_text = await b_error.innerText();
-  assert.match(b_text, /Another cell defining a contains errors\./);
-  // The upstream error carries no stacktrace, so there is nothing to show
-  // on request; this doesn't check that no traceback exists at all, only
-  // that this error renders with no "Show stack trace" control.
-  assert.equal(await b_error.locator(".stacktrace-waiting-to-view").count(), 0,
-    "no traceback button for an upstream error");
+  assert.equal(b_text, "Another cell defining a contains errors.");
+  assert.equal(await b_error.locator("button").count(), 0, "no traceback button for an upstream error");
+  // Board Cells: the sentence in italic at normal weight, the name a mono
+  // link, upright.
+  const sentence = b_error.locator("header > p:first-child");
+  assert.equal(await sentence.locator("em").evaluate((el) => getComputedStyle(el).fontStyle), "italic");
+  assert.equal(await sentence.evaluate((el) => getComputedStyle(el).fontWeight), "400");
+  assert.equal(await sentence.locator("a").evaluate((el) => getComputedStyle(el).fontStyle), "normal");
+  assert.match(await sentence.locator("a").evaluate((el) => getComputedStyle(el).fontFamily), /^"?IBM Plex Mono/);
 
   const link = b_error.locator("header a", { hasText: "a" });
   assert.equal(await link.count(), 1);

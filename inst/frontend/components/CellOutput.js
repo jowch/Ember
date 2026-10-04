@@ -4,7 +4,7 @@ import DOMPurify from "../imports/DOMPurify.js"
 import { ansi_to_html } from "../imports/AnsiUp.js"
 
 import { ErrorMessage, ParseError } from "./ErrorMessage.js"
-import { TreeView, TableView, ReactDOMElement } from "./TreeView.js"
+import { TreeView, TableView, ReactDOMElement, VectorView } from "./TreeView.js"
 import { EmberPlot } from "./EmberPlot.js"
 
 import {
@@ -67,8 +67,11 @@ export class CellOutput extends Component {
     // A never-run output (a graph error, a text cell's rendered body) can
     // change content while staying at last_run_timestamp 0, so that alone
     // isn't enough to decide whether to update.
-    shouldComponentUpdate({ last_run_timestamp, sanitize_html, mime, body, errored, rootassignee, persist_js_state, has_pluto_hook_features }) {
+    shouldComponentUpdate({ last_run_timestamp, sanitize_html, mime, body, errored, rootassignee, persist_js_state, has_pluto_hook_features, ember_split, on_split, text_cell }) {
         return (
+            text_cell !== this.props.text_cell ||
+            ember_split !== this.props.ember_split ||
+            on_split !== this.props.on_split ||
             last_run_timestamp !== this.props.last_run_timestamp ||
             sanitize_html !== this.props.sanitize_html ||
             mime !== this.props.mime ||
@@ -113,9 +116,14 @@ export class CellOutput extends Component {
                 aria-live=${this.state.output_changed_once ? "polite" : "off"}
                 aria-atomic="true"
                 aria-relevant="all"
-                aria-label=${this.props.rootassignee == null
-                    ? t("t_aria_label_cell_output_unlabeled")
-                    : t("t_aria_label_cell_output_labeled", { variable: this.props.rootassignee })}
+                aria-label=${this.props.text_cell
+                    ? t("t_aria_label_text_cell")
+                    : this.props.rootassignee == null
+                      ? t("t_aria_label_cell_output_unlabeled")
+                      : t("t_aria_label_cell_output_labeled", { variable: this.props.rootassignee })}
+                tabindex=${this.props.text_cell ? "0" : undefined}
+                role=${this.props.text_cell ? "group" : undefined}
+                aria-keyshortcuts=${this.props.text_cell ? "Enter" : undefined}
             >
                 <assignee aria-hidden="true" translate=${false}>${prettyAssignee(this.props.rootassignee)}</assignee>
                 <${OutputBody} ...${this.props} />
@@ -161,7 +169,7 @@ export let PlutoImage = ({ body, mime }) => {
  * sanitize_html?: boolean | string,
  * }} args
  */
-export const OutputBody = ({ mime, body, cell_id, persist_js_state = false, last_run_timestamp, sanitize_html = true, ember_figure = null }) => {
+export const OutputBody = ({ mime, body, cell_id, persist_js_state = false, last_run_timestamp, sanitize_html = true, ember_figure = null, ember_split = null, on_split = undefined }) => {
     // These two arguments might have been passed as strings if OutputBody was used as the custom HTML element <pluto-display>, with string attributes as arguments.
     sanitize_html = sanitize_html !== "false" && sanitize_html !== false
     persist_js_state = persist_js_state === "true" || persist_js_state === true
@@ -206,11 +214,13 @@ export const OutputBody = ({ mime, body, cell_id, persist_js_state = false, last
         case "application/vnd.pluto.table+object":
             return html`<${TableView} cell_id=${cell_id} body=${body} persist_js_state=${persist_js_state} sanitize_html=${sanitize_html} />`
             break
+        case "application/vnd.ember.vector+object":
+            return html`<div><${VectorView} body=${body} /></div>`
         case "application/vnd.pluto.parseerror+object":
             return html`<div><${ParseError} cell_id=${cell_id} last_run_timestamp=${last_run_timestamp} ...${body} /></div>`
             break
         case "application/vnd.pluto.stacktrace+object":
-            return html`<div><${ErrorMessage} cell_id=${cell_id} ...${body} /></div>`
+            return html`<div><${ErrorMessage} cell_id=${cell_id} ember_split=${ember_split} on_split=${on_split} ...${body} /></div>`
             break
         case "application/vnd.pluto.reactdomelement+object":
             return ReactDOMElement({ cell_id, ...body, persist_js_state, sanitize_html })

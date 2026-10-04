@@ -16,7 +16,7 @@ PLUTO_VERSION <- "v1.0.3"
 #' Two constant metadata objects, shared by every cell input with that
 #' `disabled` value, so cells with the same value are the same R object in
 #' every projection. Ember supports only `metadata.disabled`; a client
-#' that changes another key gets 👎 (see pluto_edits()).
+#' that changes another key gets "\U0001F44E" (see pluto_edits()).
 CELL_METADATA <- list(disabled = FALSE, show_logs = TRUE, skip_as_script = FALSE)
 CELL_METADATA_DISABLED <- list(disabled = TRUE, show_logs = TRUE, skip_as_script = FALSE)
 
@@ -80,7 +80,7 @@ pluto_state <- function(state, previous = NULL) {
       old_input  <- if (!is.na(j)) pj$cell_inputs[[j]] else NULL
       old_result <- if (!is.na(j)) pj$cell_results[[j]] else NULL
       inputs[[i]]  <- reuse(project_cell_input(view),  old_input)
-      results[[i]] <- reuse(project_cell_result(view), old_result)
+      results[[i]] <- reuse(project_cell_result(view, ids), old_result)
     }
   }
   names(inputs) <- names(results) <- ids
@@ -230,7 +230,7 @@ project_cell_input <- function(view) {
 #' * `output`: project_output() of the view.
 #' * `logs`: project_logs() of the view's console.
 #' * `published_object_keys = list()`, `depends_on_skipped_cells = FALSE`.
-project_cell_result <- function(view) {
+project_cell_result <- function(view, known_ids = NULL) {
   errored <- length(view$errors) > 0 || view$status %in% c("error", "interrupted")
   last_error <- if (length(view$errors) > 0) view$errors[[length(view$errors)]] else NULL
   upstream_error <- if (!is.null(last_error) && identical(last_error$kind, "upstream")) {
@@ -261,7 +261,7 @@ project_cell_result <- function(view) {
       runtime = if (is.null(view$runtime)) NULL else as.double(view$runtime) * 1e9,
       depends_on_disabled_cells = off,
       ember = ember,
-      output = project_output(view),
+      output = project_output(view, known_ids),
       logs = project_logs(view$console, view$id),
       published_object_keys = list(), depends_on_skipped_cells = FALSE)
 }
@@ -298,7 +298,7 @@ project_cell_result <- function(view) {
 #' `project_text()` -- the one place a text cell without inline values still
 #' takes the early return a code cell never reaches, since it has no
 #' `output` to fall through to.
-project_output <- function(view) {
+project_output <- function(view, known_ids = NULL) {
   last_ts <- if (is.null(view$last_run)) 0 else as.numeric(view$last_run)
   if (!is.null(view$output) && !is.null(view$output$rendered_at)) {
     last_ts <- max(last_ts, as.numeric(view$output$rendered_at))
@@ -316,7 +316,7 @@ project_output <- function(view) {
   }
   if (length(view$errors) > 0) {
     return(wrap("application/vnd.pluto.stacktrace+object",
-               project_error(view$errors[[length(view$errors)]])))
+               project_error(view$errors[[length(view$errors)]], known_ids)))
   }
   if (identical(view$status, "interrupted")) {
     return(wrap("application/vnd.pluto.stacktrace+object",
@@ -495,12 +495,14 @@ project_dep_tags <- function(deps) {
 }
 
 #' Ember's table display as Pluto's table body (TreeView.js:203-262):
-#' `list(objectid = "", ember_dims = "<nrow> x <ncol>",
+#' `list(objectid = "", ember_size = arr(nrow, ncol, more_rows, more_cols),
+#' ember_na = arr(arr(<0-based column>, ...), ...) one per shown row,
 #' schema = list(names = arr(names, "more"?), types = arr(types, "more"?)),
 #' rows = list(arr(label, arr(arr(text, "text/plain"), ..., "more"?)), ...,
 #' "more"?))`. "more" after the names and in each row when `more_cols > 0`;
 #' a final "more" row when `more_rows > 0`. `objectid` `""` is the table
-#' itself (what `reshow_cell` sends back).
+#' itself (what `reshow_cell` sends back). `data$na` is missing for an
+#' older display fixture, read as no NA anywhere.
 project_table <- function(data) {
   names_l <- as.list(data$names)
   types_l <- as.list(data$types)
@@ -514,21 +516,32 @@ project_table <- function(data) {
     arr(data$row_labels[[i]], as_arr(cells))
   })
   if (data$more_rows > 0) rows <- c(rows, list("more"))
-  list(objectid = "", ember_dims = sprintf("%d \u00d7 %d", data$nrow, data$ncol),
+  # `data[["na", exact = TRUE]]`, not `data$na`: partial matching on `$`
+  # would otherwise read `data$names` for a fixture with no `na` field.
+  na_rows <- data[["na", exact = TRUE]] %||% rep(list(integer()), length(data$rows))
+  ember_na <- lapply(na_rows, function(cols) as_arr(as.integer(cols - 1L)))
+  list(objectid = "", ember_size = arr(data$nrow, data$ncol, data$more_rows, data$more_cols),
+      ember_na = as_arr(ember_na),
       schema = list(names = as_arr(names_l), types = as_arr(types_l)),
       rows = as_arr(rows))
 }
 
 #' Pluto's tree body (TreeView.js:105-180): `list(objectid = path, type =
-#' "r_list", prefix = "list", prefix_short = "", elements = list(arr(key,
-#' arr(<body>, <mime>)), ..., "more"?))`. A leaf is `arr(text, "text/plain")`;
-#' a node is `arr(project_tree(node), "application/vnd.pluto.tree+object")`.
-#' `data` is one worker tree node (worker.R, 3c: `list(type, path, length,
-#' named, items, more)`).
+#' "r_list", prefix = "list", prefix_short = "", ember_length = n, elements =
+#' list(arr(key, arr(<body>, <mime>)), ..., "more"?))`. A text leaf is
+#' `arr(text, "text/plain")`; a long-vector leaf is
+#' `arr(list(values, type_sum, length), "application/vnd.ember.vector+object")`
+#' (worker.R's `display_tree_node()`, `type = "vector"`); a node is
+#' `arr(project_tree(node), "application/vnd.pluto.tree+object")`. `data` is
+#' one worker tree node (worker.R, 3c: `list(type, path, length, named,
+#' items, more)`).
 project_tree <- function(data) {
   elements <- lapply(data$items %||% list(), function(it) {
     pair <- if (identical(it$value$type, "text")) {
       arr(it$value$text, "text/plain")
+    } else if (identical(it$value$type, "vector")) {
+      arr(list(values = as_arr(it$value$values), type_sum = it$value$type_sum,
+               length = it$value$length), "application/vnd.ember.vector+object")
     } else {
       arr(project_tree(it$value), "application/vnd.pluto.tree+object")
     }
@@ -536,7 +549,7 @@ project_tree <- function(data) {
   })
   if (!is.null(data$more) && data$more > 0) elements <- c(elements, list("more"))
   list(objectid = data$path, type = "r_list", prefix = "list", prefix_short = "",
-      elements = as_arr(elements))
+      ember_length = data$length, elements = as_arr(elements))
 }
 
 #' Join names the way the frontend's rewritten messages read: one name as
@@ -569,25 +582,46 @@ join_names <- function(names, conj = "and") {
 #' `stacktrace`: one frame per traceback call, innermost first:
 #' `list(call, call_short, func, inlined = FALSE, from_c = FALSE, file = "",
 #' path = "", line = -1L, linfo_type = "", url = NULL, source_package =
-#' NULL, parent_module = NULL)`. R tracebacks have no file and line unless
-#' srcrefs are kept; `file = ""` keeps the frontend from linking frames to
-#' cells.
-project_error <- function(error) {
+#' NULL, parent_module = NULL, ember_cell = NULL)`. R tracebacks have no
+#' file and line unless srcrefs are kept; `file = ""` keeps the frontend
+#' from linking frames to cells. `source_package` and `ember_cell` come
+#' from `error$frames` (worker.R's `clean_frames()`, also innermost last,
+#' same length as `traceback`), read by the matching reversed position.
+#' `ember_cell` is dropped (set to `NULL`) when it isn't one of
+#' `known_ids` -- a frame's srcref file name can be `"<text>"` (a text
+#' cell's per-line parse, which keeps no srcfile), a `source()`d file's
+#' path, or a package built with `keep.source`, none of them a real cell
+#' id. `known_ids = NULL` (the default, every caller but
+#' `project_output()`) skips the check.
+#'
+#' `ember_call`, `ember_line` and `ember_deep` are `error$call`,
+#' `error$line` and `error$deep` -- unset (`NULL`/`FALSE`) for an upstream
+#' error or any kind besides a plain "error", since those have nothing of
+#' the engine's own to show there.
+project_error <- function(error, known_ids = NULL) {
   if (identical(error$kind, "upstream")) {
     msg <- sprintf("Another cell defining %s contains errors.", join_names(error$names, conj = "or"))
-    return(list(msg = msg, stacktrace = list(), plain_error = paste(msg, error$message, sep = "\n")))
+    return(list(msg = msg, stacktrace = list(), plain_error = paste(msg, error$message, sep = "\n"),
+               ember_call = NULL, ember_line = NULL, ember_deep = FALSE))
   }
   msg <- switch(error$kind,
     multiple_definitions = sprintf("Multiple definitions for %s", join_names(error$names)),
     cycle = sprintf("Cyclic references among %s.", join_names(error$names)),
     error$message)
   text <- paste(c(msg, error$fixes), collapse = "\n")
-  stacktrace <- lapply(rev(error$traceback %||% character()), function(call) {
-    list(call = call, call_short = call, func = NULL, inlined = FALSE, from_c = FALSE,
-        file = "", path = "", line = -1L, linfo_type = "", url = NULL,
-        source_package = NULL, parent_module = NULL)
+  rev_traceback <- rev(error$traceback %||% character())
+  rev_frames <- rev(error$frames %||% list())
+  stacktrace <- lapply(seq_along(rev_traceback), function(k) {
+    fr <- if (k <= length(rev_frames)) rev_frames[[k]] else NULL
+    cell <- fr$cell %||% NULL
+    if (!is.null(cell) && !is.null(known_ids) && !(cell %in% known_ids)) cell <- NULL
+    list(call = rev_traceback[[k]], call_short = rev_traceback[[k]], func = NULL,
+        inlined = FALSE, from_c = FALSE, file = "", path = "", line = -1L,
+        linfo_type = "", url = NULL, source_package = fr$package %||% NULL,
+        parent_module = NULL, ember_cell = cell)
   })
-  list(msg = text, stacktrace = stacktrace, plain_error = text)
+  list(msg = text, stacktrace = stacktrace, plain_error = text,
+      ember_call = error$call, ember_line = error$line, ember_deep = isTRUE(error$deep))
 }
 
 #' Parse-error diagnostics: `list(list(message, from, to, line))` from the
@@ -620,14 +654,22 @@ project_parse_error <- function(error, code) {
 #' (stdout: the frontend joins consecutive ones), "Info" (message) or
 #' "Warn" (warning). Built so a growing console gives a list whose prefix is
 #' identical to the previous one: fb_diff() then sends only the new items.
+#'
+#' `ember = list(call = item$call)` is added only when the worker's item
+#' carries a `call` (a warning raised inside a function); an item with
+#' none -- every message, and a warning with no call -- gets no `ember`
+#' field at all.
 project_logs <- function(console, cell_id) {
   level_of <- function(kind) switch(kind, stdout = "LogLevel(-555)",
                                     message = "Info", warning = "Warn", "Info")
   lapply(seq_along(console), function(i) {
     item <- console[[i]]
-    list(id = sprintf("%s_%d", cell_id, i), cell_id = cell_id,
-        level = level_of(item$kind), msg = arr(item$text, "text/plain"),
-        file = "", line = -1L, kwargs = list())
+    entry <- list(id = sprintf("%s_%d", cell_id, i), cell_id = cell_id,
+                  level = level_of(item$kind), msg = arr(item$text, "text/plain"),
+                  file = "", line = -1L, kwargs = list())
+    call <- item[["call", exact = TRUE]]
+    if (!is.null(call)) entry$ember <- list(call = call)
+    entry
   })
 }
 

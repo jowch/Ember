@@ -128,7 +128,7 @@ test_that("output mapping: one case per row of the precedence table (9)", {
   o <- project_output(fake_view(output = new_display("application/vnd.ember.table", table_data, "a table")))
   expect_equal(o$mime, "application/vnd.pluto.table+object")
   expect_equal(o$body$schema$names, list("a", "b"))
-  expect_equal(o$body$ember_dims, "2 × 2")
+  expect_equal(o$body$ember_size, list(2L, 2L, 0L, 0L))
 
   # tree becomes Pluto's tree body
   tree_data <- list(type = "list", path = "", length = 1L, named = TRUE,
@@ -248,6 +248,55 @@ test_that("a run error's stack trace is innermost first with no file/line (10)",
   }
 })
 
+test_that("project_error() adds ember_call/line/deep and frames' source_package/ember_cell, innermost first, without changing today's fields (ui-3-tests 133)", {
+  tb <- c("outer()", "inner()")  # innermost last, as new_run_error() documents
+  frames <- list(list(call = "outer()", package = NULL, cell = "A"),
+                 list(call = "inner()", package = "stats", cell = NULL))
+  err <- new_run_error("error", message = "boom", traceback = tb,
+                       call = "inner()", line = 3L, deep = TRUE, frames = frames)
+  o <- project_error(err)
+  expect_equal(o$ember_call, "inner()")
+  expect_equal(o$ember_line, 3L)
+  expect_equal(o$ember_deep, TRUE)
+  expect_equal(vapply(o$stacktrace, `[[`, character(1), "call"), rev(tb))
+  expect_equal(o$stacktrace[[1]]$source_package, "stats")
+  expect_equal(o$stacktrace[[1]]$ember_cell, NULL)
+  expect_equal(o$stacktrace[[2]]$source_package, NULL)
+  expect_equal(o$stacktrace[[2]]$ember_cell, "A")
+
+  # Without the new fields, every other field is exactly what it was
+  # before this piece.
+  without_new <- lapply(o$stacktrace, function(f) {
+    f[setdiff(names(f), c("source_package", "ember_cell"))]
+  })
+  baseline <- new_run_error("error", message = "boom", traceback = tb)
+  baseline_stacktrace <- project_error(baseline)$stacktrace
+  baseline_without_new <- lapply(baseline_stacktrace, function(f) {
+    f[setdiff(names(f), c("source_package", "ember_cell"))]
+  })
+  expect_equal(without_new, baseline_without_new)
+  expect_equal(o$msg, project_error(baseline)$msg)
+  expect_equal(o$plain_error, project_error(baseline)$plain_error)
+})
+
+test_that("project_error() drops ember_cell when it isn't a known cell id (item 4)", {
+  tb <- c("outer()", "inner()")  # innermost last, as new_run_error() documents
+  frames <- list(list(call = "outer()", package = NULL, cell = "A"),
+                 list(call = "inner()", package = NULL, cell = "<text>"))
+  err <- new_run_error("error", message = "boom", traceback = tb, frames = frames)
+
+  # With no known_ids, every frame's cell passes through unchecked.
+  o_unchecked <- project_error(err)
+  expect_equal(o_unchecked$stacktrace[[1]]$ember_cell, "<text>")
+  expect_equal(o_unchecked$stacktrace[[2]]$ember_cell, "A")
+
+  # "<text>" (a text cell's per-line parse, which keeps no srcfile) isn't
+  # one of the notebook's real cell ids, so it's dropped; "A" is kept.
+  o <- project_error(err, known_ids = c("A", "B"))
+  expect_null(o$stacktrace[[1]]$ember_cell)
+  expect_equal(o$stacktrace[[2]]$ember_cell, "A")
+})
+
 test_that("an interrupted cell shows 'Interrupted' with no frames (10)", {
   v <- fake_view(status = "interrupted")
   o <- project_output(v)
@@ -266,6 +315,16 @@ test_that("console items map to Pluto's log levels, in order (11)", {
               c("LogLevel(-555)", "Info", "Warn"))
   expect_equal(logs[[1]]$cell_id, "A")
   expect_equal(logs[[1]]$msg, list("a", "text/plain"))
+})
+
+test_that("project_logs(): a warning with a call gives ember$call; an item without one has no ember field (ui-3-tests 136)", {
+  console <- list(list(kind = "warning", text = "careful", call = "g()"),
+                  list(kind = "warning", text = "top-level"),
+                  list(kind = "message", text = "m"))
+  logs <- project_logs(console, "A")
+  expect_identical(logs[[1]]$ember, list(call = "g()"))
+  expect_false("ember" %in% names(logs[[2]]))
+  expect_false("ember" %in% names(logs[[3]]))
 })
 
 test_that("a running cell's growing console gives an add patch, not a replace (11)", {
@@ -584,7 +643,7 @@ test_that("project_table() ends names/types/rows in 'more' when truncated, each 
                      more_rows = 22L, more_cols = 3L)
   body <- project_table(table_data)
   expect_equal(body$objectid, "")
-  expect_equal(body$ember_dims, "32 × 11")
+  expect_equal(body$ember_size, list(32L, 11L, 22L, 3L))
   expect_equal(utils::tail(body$schema$names, 1), list("more"))
   expect_equal(utils::tail(body$schema$types, 1), list("more"))
   expect_equal(length(body$schema$names), 9)
@@ -599,6 +658,27 @@ test_that("project_table() ends names/types/rows in 'more' when truncated, each 
   s0 <- fake_state(list(S = cell(""), A = cell("mtcars")))
   js0 <- pluto_state(s0)$js
   expect_true(check_wire(js0))
+})
+
+test_that("project_table(): ember_size and ember_na, one array per row; ember_dims is gone; check_wire() passes (ui-3-tests 134)", {
+  table_data <- list(names = paste0("c", 1:8), types = rep("<dbl>", 8), nrow = 32L, ncol = 11L,
+                     row_labels = as.character(1:10),
+                     rows = lapply(1:10, function(i) paste0("v", i, "_", 1:8)),
+                     more_rows = 22L, more_cols = 3L,
+                     na = c(list(integer()), list(c(2L, 5L)), rep(list(integer()), 8)))
+  body <- project_table(table_data)
+  expect_equal(body$ember_size, list(32L, 11L, 22L, 3L))
+  expect_null(body$ember_dims)
+  expect_equal(length(body$ember_na), 10)
+  expect_equal(body$ember_na[[1]], list())
+  expect_equal(body$ember_na[[2]], list(1L, 4L))
+
+  s0 <- fake_state(list(S = cell(""), A = cell("data.frame(a = c(1, NA), b = c('x', NA))")))
+  js0 <- pluto_state(s0)$js
+  expect_true(check_wire(js0))
+  r1 <- boot(s0, "A")
+  js1 <- pluto_state(r1$state)$js
+  expect_true(check_wire(js1))
 })
 
 test_that("project_tree() nests nodes under vnd.pluto.tree+object, 'more' last, objectid is path (ui-2 29)", {
@@ -618,6 +698,23 @@ test_that("project_tree() nests nodes under vnd.pluto.tree+object, 'more' last, 
   expect_equal(nested[[2]][[2]], "application/vnd.pluto.tree+object")
   expect_equal(nested[[2]][[1]]$objectid, "2")
   expect_equal(utils::tail(body$elements, 1), list("more"))
+})
+
+test_that("project_tree(): ember_length is set; a vector leaf gets the ember.vector+object MIME (ui-3-tests 135)", {
+  node <- list(type = "list", path = "", length = 3L, named = TRUE,
+              items = list(
+                list(key = "a", value = list(type = "text", text = "1")),
+                list(key = "long", value = list(type = "vector", values = as.character(1:10),
+                                               type_sum = "int", length = 100L))
+              ), more = 1L)
+  body <- project_tree(node)
+  expect_equal(body$ember_length, 3L)
+  vector_el <- body$elements[[2]]
+  expect_equal(vector_el[[1]], "long")
+  expect_equal(vector_el[[2]][[2]], "application/vnd.ember.vector+object")
+  expect_equal(vector_el[[2]][[1]]$type_sum, "int")
+  expect_equal(vector_el[[2]][[1]]$length, 100L)
+  expect_equal(vector_el[[2]][[1]]$values, as.list(as.character(1:10)))
 })
 
 # ---- ui-2-tests.md 33: HTML output with widget dependencies -----------------

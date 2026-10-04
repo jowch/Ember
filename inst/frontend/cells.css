@@ -11,6 +11,23 @@ pluto-input .cm-editor {
 pluto-input .cm-editor .cm-gutters {
     box-sizing: border-box;
     min-width: 34px;
+    border-right: none;
+}
+/* Line numbers on every code cell, focused or not, where Pluto shows a dot
+   until hovered (editor.css). */
+pluto-input .cm-editor .cm-gutter.cm-lineNumbers {
+    min-width: 34px;
+}
+pluto-input .cm-editor .cm-lineNumbers .cm-gutterElement {
+    box-sizing: border-box;
+    padding: 0 10px 0 4px;
+    font-size: 12px;
+    /* The code's line height (13px at 1.65), so numbers share its baselines. */
+    line-height: 21.45px;
+    color: var(--cm-color-line-numbers);
+}
+pluto-input .cm-editor .cm-lineNumbers .cm-gutterElement::after {
+    content: none;
 }
 pluto-input .cm-editor .cm-content,
 pluto-input .cm-editor .cm-scroller {
@@ -22,6 +39,11 @@ pluto-input .cm-editor .cm-content {
 }
 pluto-input .cm-editor .cm-line {
     padding: 0;
+}
+
+pluto-input .cm-ember-assigned,
+pluto-input .cm-ember-assigned span {
+    color: var(--cm-color-function);
 }
 
 /* ---- Rail (pluto-trafficlight; ui-3.md "Rail") ------------------------- */
@@ -118,6 +140,23 @@ pluto-cell[data-rail="due"] > pluto-input .cm-gutters {
     background: var(--ember-due-bg);
 }
 
+/* Outputs start 12px right of the rail and span the column (Outputs4's
+   `.out`). The :not() outranks editor.css's 3px for non-rich outputs. */
+pluto-cell:not(.isolated-cell) > pluto-output {
+    padding: 0 0 0 12px;
+}
+pluto-cell:not(.isolated-cell, .errored, .stale) > pluto-output:has(> :not(assignee):not(:empty)) {
+    padding-top: 2px;
+}
+/* 12px above the code box (14px under a figure), only under an output
+   that shows something. */
+pluto-cell.show_input:not(.errored, .stale) > pluto-output:has(> :not(assignee):not(:empty)) {
+    margin-bottom: 12px;
+}
+pluto-cell.show_input:not(.errored, .stale) > pluto-output[mime^="image/"]:has(> :not(assignee):not(:empty)) {
+    margin-bottom: 14px;
+}
+
 /* ---- Run/stop button and run-time chip (ui-3.md "Run button", "Run-time
    chip") ------------------------------------------------------------------ */
 
@@ -127,14 +166,6 @@ pluto-input {
        the "+" strip there (z-index 15). */
     isolation: isolate;
     z-index: 35;
-}
-
-/* button.ember-split (piece 2) is a plain-flow sibling of pluto-input that
-   can visually sit where the code box is; it needs its own z-index to
-   stay above the box it's reporting on, now that the box has one. */
-button.ember-split {
-    position: relative;
-    z-index: 36;
 }
 
 /* An open cell menu can overflow below a short cell into the next one;
@@ -418,7 +449,7 @@ ember-chip {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    margin: 0 0 6px 0;
+    margin: 2px 0 6px 12px;
     padding: 2px 10px 2px 8px;
     border-radius: 999px;
     font-family: var(--ember-ui-font);
@@ -434,6 +465,11 @@ ember-chip .ember-chip-icon {
 ember-chip a {
     color: inherit;
     text-decoration: underline;
+}
+
+/* No output follows: the chip sits 12px above the code box. */
+pluto-cell.no_output_yet > ember-chip {
+    margin-bottom: 12px;
 }
 
 pluto-cell.not_run_yet > ember-chip {
@@ -459,7 +495,7 @@ pluto-cell.depends_on_disabled_cells > ember-chip {
 pluto-cell.stale {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "out" "chip" "split" "in" "logs";
+    grid-template-areas: "out" "chip" "in" "logs";
 }
 pluto-cell.stale::before {
     content: "";
@@ -481,9 +517,6 @@ pluto-cell.stale > ember-chip {
     justify-self: start;
     margin: 8px 14px 10px;
 }
-pluto-cell.stale > button.ember-split {
-    grid-area: split;
-}
 pluto-cell.stale > pluto-input {
     grid-area: in;
 }
@@ -500,16 +533,411 @@ pluto-cell.depends_on_disabled_cells > pluto-output {
     filter: grayscale(1);
     opacity: 0.32;
 }
-pluto-cell.running_disabled > pluto-output,
-pluto-cell.depends_on_disabled_cells > pluto-output {
-    background: var(--ember-wash);
-}
 pluto-cell.running_disabled > pluto-input .cm-editor {
     background: var(--ember-dis-bg);
 }
 pluto-cell.running_disabled > pluto-input .cm-gutters,
 pluto-cell.running_disabled > pluto-input .cm-content {
     opacity: 0.5;
+}
+
+/* ---- Errors (ui-3.md "Errors"; ui-3-plan.md 6.4) ----------------------- */
+
+/* The error box replaces the output and is joined to the code box. */
+pluto-cell.errored > pluto-output {
+    padding: 0;
+    background: transparent;
+}
+pluto-cell.errored.show_input > pluto-input .cm-editor {
+    border-top-right-radius: 0;
+}
+
+jlerror.ember {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 0;
+    padding: 10px 14px;
+    border: none;
+    border-radius: 0 6px 0 0;
+    background: var(--ember-err-bg);
+    font-family: var(--ember-ui-font);
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--ember-text);
+    overflow-wrap: anywhere;
+}
+pluto-cell:not(.show_input) jlerror.ember {
+    border-radius: 0 6px 6px 0;
+}
+jlerror.ember > header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+jlerror.ember > header > p {
+    margin: 0;
+    line-height: inherit;
+}
+jlerror.ember > section {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+jlerror.ember code {
+    font-family: var(--ember-code-font);
+    font-size: inherit;
+    line-height: 1;
+    background: none;
+    padding: 0;
+    color: inherit;
+}
+jlerror.ember a {
+    color: inherit;
+    text-decoration: none;
+}
+jlerror.ember a:hover {
+    text-decoration: underline;
+}
+
+.ember-error-msg {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ember-red);
+    white-space: pre-wrap;
+}
+.ember-error-more {
+    display: block;
+    margin-top: 2px;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--ember-text);
+}
+.ember-error-where {
+    color: var(--ember-muted);
+}
+
+jlerror.ember-upstream .ember-error-msg {
+    font-weight: 400;
+    color: var(--ember-text);
+}
+jlerror.ember-upstream .ember-error-msg a {
+    font-family: var(--ember-code-font);
+    font-style: normal;
+    color: var(--ember-accent);
+    text-decoration: underline;
+}
+
+jlerror.ember-mixed .ember-error-note {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--ember-text);
+}
+jlerror.ember-mixed .ember-error-note code {
+    font-size: 12px;
+}
+
+jlerror.ember > button.ember-split {
+    align-self: flex-start;
+    margin-top: 4px;
+    height: 26px;
+    padding: 0 10px;
+    border: 1px solid var(--ember-line);
+    border-radius: 6px;
+    background: var(--ember-panel);
+    color: var(--ember-text);
+    font-family: var(--ember-ui-font);
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+button.ember-tb-toggle {
+    margin-top: 4px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--ember-muted);
+    font-family: var(--ember-ui-font);
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+ol.ember-tb {
+    align-self: stretch;
+    margin: 6px 0 0;
+    padding: 8px 0 0;
+    border-top: 1px dashed var(--ember-err-line);
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 12px;
+    line-height: 1.25;
+}
+ol.ember-tb[hidden] {
+    display: none;
+}
+ol.ember-tb > li {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    gap: 8px;
+    font-family: var(--ember-code-font);
+    color: var(--ember-faint);
+}
+ol.ember-tb > li.mine {
+    color: var(--ember-text);
+}
+ol.ember-tb > li > .ember-tb-from {
+    font-family: var(--ember-ui-font);
+}
+ol.ember-tb > li > code {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ---- Tables and trees (ui-3.md "Outputs"; ui-3-plan.md 6.5) ------------ */
+
+pluto-output > .ember-table {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.ember-table {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    padding-top: 2px;
+}
+pluto-output table.pluto-table {
+    border: none;
+    border-collapse: collapse;
+    margin: 0;
+    font-family: var(--ember-ui-font);
+    font-size: 13px;
+    line-height: normal;
+    color: var(--ember-text);
+}
+pluto-output table.pluto-table > thead {
+    border: none;
+}
+pluto-output table.pluto-table th,
+pluto-output table.pluto-table td {
+    padding: 3px 14px 3px 0;
+    text-align: right;
+    white-space: pre;
+    background: none;
+}
+pluto-output table.pluto-table tr.schema-names th {
+    padding: 4px 14px 2px 0;
+    font-family: var(--ember-code-font);
+    font-weight: 600;
+}
+pluto-output table.pluto-table tr.schema-names th.ember-table-size {
+    font-family: var(--ember-ui-font);
+    font-weight: 500;
+    color: var(--ember-muted);
+}
+pluto-output table.pluto-table tr.schema-types th {
+    padding: 0 14px 4px 0;
+    border-bottom: 1px solid var(--ember-line);
+    font-family: var(--ember-code-font);
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--ember-faint);
+}
+pluto-output table.pluto-table th:first-child,
+pluto-output table.pluto-table td:first-child {
+    text-align: left;
+}
+pluto-output table.pluto-table > tbody th {
+    font-weight: 400;
+}
+pluto-output table.pluto-table > tbody td {
+    font-family: var(--ember-code-font);
+    font-size: 13px;
+}
+pluto-output table.pluto-table > tbody td.na {
+    color: var(--ember-faint);
+}
+pluto-output table.pluto-table > tbody tr:hover {
+    background: none;
+}
+pluto-output table.pluto-table > tbody tr:hover > * {
+    background: var(--ember-hover);
+}
+pluto-output table.pluto-table tr.empty td {
+    text-align: center;
+    color: var(--ember-muted);
+}
+pluto-output table.pluto-table tr.empty div {
+    display: flex;
+    flex-flow: column nowrap;
+    align-items: center;
+}
+.ember-table-more {
+    display: flex;
+    align-self: flex-start;
+    flex-wrap: wrap;
+    gap: 4px 18px;
+}
+button.ember-show-more {
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--ember-accent);
+    font-family: var(--ember-ui-font);
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+}
+button.ember-show-more[aria-busy="true"] {
+    color: var(--ember-muted);
+    cursor: progress;
+}
+
+/* pluto-output's flex row would otherwise keep the tree at its widest
+   line instead of wrapping a long value at the column's width. */
+pluto-output > div:has(> pluto-tree.ember-tree) {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+pluto-tree.ember-tree,
+pluto-tree.ember-tree pluto-tree.ember-tree {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 3px;
+    font-family: var(--ember-code-font);
+    font-size: 13px;
+    line-height: normal;
+    color: var(--ember-text);
+    white-space: normal;
+    cursor: auto;
+}
+.ember-tree-items {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding-left: 18px;
+}
+.ember-tree-row {
+    display: grid;
+    grid-template-columns: 16px 70px minmax(0, 1fr);
+    gap: 6px;
+    align-items: baseline;
+}
+button.ember-tree-toggle {
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+button.ember-tree-root > .ember-tree-what {
+    grid-column: span 2;
+}
+.ember-tree-disc {
+    color: var(--ember-faint);
+}
+.ember-tree-key {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.ember-tree-what {
+    font-family: var(--ember-ui-font);
+    color: var(--ember-muted);
+}
+.ember-tree-value {
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+.ember-tree-value pre {
+    font-size: inherit;
+    white-space: pre-wrap;
+}
+.ember-vector-count {
+    font-family: var(--ember-ui-font);
+    font-size: 11px;
+    color: var(--ember-faint);
+}
+.ember-tree-more {
+    padding-left: 22px;
+}
+
+/* ---- Printed text and console (ui-3.md "Outputs"; ui-3-plan.md 6.6) --- */
+
+/* Printed text: exactly what R prints, with no box. */
+pluto-output[mime="text/plain"] pre {
+    display: block;
+    margin: 0;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: none;
+    font-family: var(--ember-code-font);
+    font-size: 13px;
+    line-height: 1.55;
+    white-space: pre;
+    word-break: normal;
+}
+pluto-output[mime="text/plain"] pre > code {
+    font-family: inherit;
+    font-size: inherit;
+}
+
+pluto-logs-container {
+    display: block;
+    max-height: 50vh;
+    overflow: auto;
+}
+pluto-logs {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 12px 2px;
+    font-family: var(--ember-code-font);
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--ember-text);
+}
+ember-log {
+    display: block;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+ember-log.message:not(.styled) {
+    color: var(--ember-muted);
+}
+ember-log.warning {
+    margin: 2px 0;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: var(--ember-due-bg);
+}
+ember-log.warning > b {
+    font-weight: 600;
+    color: var(--ember-warn-text);
+}
+ember-log code {
+    font-family: inherit;
+    font-size: inherit;
+    background: none;
+    padding: 0;
+}
+pluto-log-truncated {
+    display: block;
+    font-family: var(--ember-ui-font);
+    font-size: 12px;
+    color: var(--ember-faint);
 }
 
 /* ---- Not shown in a static export or an isolated cell ------------------ */
@@ -519,4 +947,113 @@ pluto-editor.disable_ui button.input_context_menu,
 pluto-editor.disable_ui ember-runtime,
 pluto-editor.disable_ui pluto-cell.not_run_yet > ember-chip {
     display: none;
+}
+
+/* ---- Text cells (ui-3.md "Text cells"; ui-3-plan.md 6.8) -------------- */
+
+pluto-cell.text_cell > pluto-output {
+    padding-top: 2px;
+    font-family: var(--ember-prose-font);
+    font-size: 16px;
+    line-height: 1.6;
+    color: var(--ember-text);
+}
+pluto-cell.text_cell > pluto-output > .raw-html-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 0;
+}
+pluto-cell.text_cell > pluto-output > .raw-html-wrapper > * {
+    margin: 0;
+}
+pluto-cell.text_cell > pluto-output :is(h1, h2, h3, h4, h5, h6) {
+    margin: 0;
+    border: none;
+    font-family: inherit;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--ember-text);
+}
+pluto-cell.text_cell > pluto-output h1 {
+    font-size: 26px;
+}
+pluto-cell.text_cell > pluto-output h2 {
+    font-size: 22px;
+}
+pluto-cell.text_cell > pluto-output h3 {
+    font-size: 18px;
+}
+pluto-cell.text_cell > pluto-output :is(h4, h5, h6) {
+    font-size: 16px;
+}
+pluto-cell.text_cell > pluto-output p {
+    margin: 0;
+    font-size: inherit;
+    line-height: inherit;
+    word-spacing: normal;
+}
+pluto-cell.text_cell > pluto-output a {
+    color: var(--ember-accent);
+}
+pluto-cell.text_cell > pluto-output:focus-visible {
+    outline: 2px solid var(--ember-accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+/* Background only: copying the text gives the plain value. */
+pluto-output .ember-inline {
+    background: var(--ember-accent-bg);
+    border-radius: 4px;
+    padding: 0 4px;
+}
+
+/* Not faded as a folded code cell's open source is (editor.css). */
+pluto-cell.text_cell.code_folded.show_input > pluto-input:not(:focus-within) {
+    opacity: 1;
+}
+pluto-cell.text_cell.show_input > pluto-input .cm-editor {
+    box-shadow: 0 0 0 1px var(--ember-line);
+}
+/* A text cell's source is folded by design, so the folded code cell's
+   "hidden code" note (editor.css) doesn't apply. */
+pluto-editor pluto-cell.text_cell.code_folded.show_input > pluto-input > div.preview_hidden_code_info {
+    display: none;
+}
+
+/* The R grammar reads a `#'` line as a comment; text_cell.js marks the
+   line and its parts so they take these colours instead. */
+pluto-input .cm-line.cm-ember-hq-line {
+    color: var(--ember-text);
+}
+pluto-input .cm-line.cm-ember-hq-line span {
+    color: inherit;
+}
+pluto-input .cm-line.cm-ember-hq-line .cm-ember-hq {
+    color: var(--ember-syn-com);
+}
+pluto-input .cm-line.cm-ember-hq-line :is(.cm-ember-md-h, .cm-ember-md-b) {
+    color: var(--ember-syn-kw);
+}
+pluto-input .cm-line.cm-ember-hq-line .cm-ember-r {
+    color: var(--ember-ansi-cyan);
+}
+
+/* ---- Figures (ui-3.md "Figures") --------------------------------------- */
+
+/* A plot shows exactly as R drew it, in either theme. */
+pluto-output img {
+    max-width: 100%;
+    height: auto;
+    border: none;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+    filter: none;
+}
+/* Inline, a figure would sit on the text baseline with room for
+   descenders under it. */
+pluto-output[mime^="image/"] img {
+    display: block;
 }

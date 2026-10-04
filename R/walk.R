@@ -286,9 +286,9 @@ walk_function <- function(e, scope, acc, pid = NA_integer_) {
   finish_function_scope(inner, acc)
 }
 
-#' Resolve a function (or lambda) scope's deferred reads — reads that
+#' Resolve a function (or lambda) scope's deferred reads -- reads that
 #' escaped a function nested *inside* `inner`, queued here by
-#' `record_read()` via that nested function's own `defer_target` — against
+#' `record_read()` via that nested function's own `defer_target` -- against
 #' `inner`'s own locals now that its whole body has been walked. Whatever
 #' isn't one of `inner`'s own names bubbles further to `inner$defer_target`
 #' (the enclosing function's own `deferred` list), or to the cell's own

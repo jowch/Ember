@@ -20,7 +20,7 @@
 #'   * `ops`: list of `ember_op` for one atomic edit_notebook() call.
 #'   * `move_to`: a new path, or NULL (move_notebook(), not an op).
 #'   * `refusal`: NULL, or one sentence. When set, `ops` is empty and the
-#'     server answers 👎 without calling the engine.
+#'     server answers "\U0001F44E" without calling the engine.
 #' An `ember_pluto_edit`: see `pluto_edits()`'s return value.
 new_pluto_edit <- function(after, ops, move_to = NULL, refusal = NULL) {
   structure(list(after = after, ops = ops, move_to = move_to, refusal = refusal),

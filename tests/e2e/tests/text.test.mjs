@@ -25,8 +25,8 @@ test("text: inline values render once the notebook runs; a bad one shows its own
   assert.equal(span, "10.5");
 
   await page.waitForSelector(`${cellSelector("E")} jlerror`, { timeout: 20000 });
-  const errText = await page.locator(`${cellSelector("E")} jlerror`).innerText();
-  assert.match(errText, /object 'carz' not found/);
+  assert.equal(await page.locator(`${cellSelector("E")} jlerror.ember > header > p:first-child`).innerText(), "object 'carz' not found");
+  assert.match(await page.locator(`${cellSelector("E")} jlerror.ember > header > p.ember-error-where`).innerText(), /· line 1$/);
 
   const otherErrors = await page.locator("pluto-cell:not([id='E']) jlerror").count();
   assert.equal(otherErrors, 0, "no cell besides E shows an error");

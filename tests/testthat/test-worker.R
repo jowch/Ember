@@ -63,6 +63,19 @@ test_that("earlier_visible_values_to_console", {
   expect_identical(r$console[[1]]$text, "[1] 1")
 })
 
+test_that("a warning raised inside a function carries its call; a message carries none (ui-3-tests 130)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "g <- function() warning('careful')\ng()\nmessage('m')")
+  expect_identical(r$console[[1]]$kind, "warning")
+  expect_identical(r$console[[1]]$call, "g()")
+  expect_identical(r$console[[2]]$kind, "message")
+  expect_null(r$console[[2]][["call", exact = TRUE]])
+
+  r2 <- run_and_wait(h, "b", 2L, "warning('top-level')")
+  expect_null(r2$console[[1]][["call", exact = TRUE]])
+})
+
 test_that("error_with_traceback", {
   h <- worker_harness()
   on.exit(h$close())
@@ -70,7 +83,75 @@ test_that("error_with_traceback", {
   expect_identical(r$status, "error")
   expect_identical(r$error$message, "boom")
   expect_identical(r$error$traceback, c("f()", 'stop("boom")'))
-  expect_false(any(grepl("handleSimpleError|run_cell|eval\\(e, globalenv", r$error$traceback)))
+  expect_false(any(grepl("handleSimpleError|run_cell|eval\\(e, globalenv|eval\\(exprs", r$error$traceback)))
+})
+
+test_that("run_cell() on a bare top-level stop(): call/line/deep/frames (ui-3-tests 127)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "TOP", 1L, "1\nstop('boom')")
+  expect_identical(r$status, "error")
+  expect_null(r$error$call)
+  expect_identical(r$error$line, 2L)
+  expect_identical(r$error$deep, FALSE)
+  expect_identical(r$error$frames, list())
+})
+
+test_that("run_cell(): stop(call. = FALSE) through nested calls still gets frames (item 1)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L,
+    "f <- function() stop('x', call. = FALSE)\ng <- function() f()\ng()")
+  expect_identical(r$status, "error")
+  expect_null(r$error$call)
+  expect_identical(length(r$error$frames), length(r$error$traceback))
+  expect_true(length(r$error$frames) >= 2)
+  expect_identical(vapply(r$error$frames, `[[`, character(1), "call"),
+                   r$error$traceback)
+})
+
+test_that("run_cell(): an assignment to a failing call's result isn't deep (item 2)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "f <- function(x) stop('boom')\ny <- f(1)")
+  expect_identical(r$status, "error")
+  expect_identical(r$error$call, "f(1)")
+  expect_identical(r$error$deep, FALSE)
+})
+
+test_that("run_cell(): a notebook function calling lm() with bad data (ui-3-tests 128)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "ERR", 1L, "g <- function(d) lm(y ~ x, data = d); g(1)")
+  expect_identical(r$status, "error")
+  expect_true(startsWith(r$error$call, "model.frame.default("))
+  expect_identical(r$error$deep, TRUE)
+  expect_identical(r$error$line, 1L)
+  expect_identical(r$error$frames[[1]]$cell, "ERR")
+  packages <- vapply(r$error$frames, function(f) f$package %||% "", character(1))
+  expect_true("stats" %in% packages)
+  expect_identical(length(r$error$frames), length(r$error$traceback))
+})
+
+test_that("run_cell(): every frame of lm()'s deep traceback has a package or a cell, the builtin eval() frame included", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "ERR", 1L, "g <- function(d) lm(y ~ x, data = d); g(1)")
+  evals <- Filter(function(f) identical(f$call, "eval(mf, parent.frame())"), r$error$frames)
+  expect_length(evals, 2)
+  expect_identical(vapply(evals, function(f) f$package %||% "", character(1)), c("base", "base"))
+  unlabelled <- Filter(function(f) is.null(f$package) && is.null(f$cell), r$error$frames)
+  expect_identical(unlabelled, list())
+})
+
+test_that("run_cell(): a function defined in cell F, called from cell ERR, keeps its own cell in a frame (ui-3-tests 129)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  run_and_wait(h, "F", 1L, "f <- function(x) stop('bad: ', x)")
+  r <- run_and_wait(h, "ERR", 2L, "f(1)")
+  expect_identical(r$status, "error")
+  frame <- Find(function(f) identical(f$call, "f(1)"), r$error$frames)
+  expect_identical(frame$cell, "F")
 })
 
 test_that("rerun_removes_previous_globals", {
@@ -926,7 +1007,7 @@ test_that("library_error_reports_notebook_call_not_wrapper", {
   on.exit(h$close())
   r <- run_and_wait(h, "a", 1L, "library(notapkg)")
   expect_identical(r$status, "error")
-  expect_identical(deparse(r$error$call), "library(notapkg)")
+  expect_identical(r$error$call, "library(notapkg)")
   expect_false(any(grepl("^original\\(", r$error$traceback)))
 })
 
@@ -1046,20 +1127,27 @@ test_that("display_tree depth, width and leaf text (24)", {
   on.exit(h$close())
   r <- run_and_wait(h, "a", 1L,
     "list(l1 = list(l2 = list(l3 = list(l4 = 1:10))))")
-  # at depth 4 (the 5th level), the value is shown as one-line text
+  # at depth 4 (the 5th level), a longer vector is still its own "vector"
+  # leaf, not str()'s text: the depth limit stops list recursion, not
+  # vector formatting.
   find <- function(node, keys) if (length(keys) == 0) node else find(
     Find(function(it) it$key == keys[1], node$items)$value, keys[-1])
   leaf <- find(r$output$tree, c("l1", "l2", "l3", "l4"))
-  expect_identical(leaf$type, "text")
+  expect_identical(leaf$type, "vector")
 
   r2 <- run_and_wait(h, "b", 2L, "as.list(1:100)")
   expect_identical(length(r2$output$tree$items), 20L)
   expect_identical(r2$output$tree$more, 80L)
   expect_identical(r2$output$tree$items[[1]]$key, "")
 
+  # A length-1 value stays plain text; a longer plain vector becomes its
+  # own "vector" leaf (ui-3-tests 132), not str()'s one-line summary.
   r3 <- run_and_wait(h, "c", 3L, "list(x = 1, y = 1:10)")
   expect_identical(r3$output$tree$items[[1]]$value$text, "1")
-  expect_identical(r3$output$tree$items[[2]]$value$text, " int [1:10] 1 2 3 4 5 6 7 8 9 10")
+  expect_identical(r3$output$tree$items[[2]]$value$type, "vector")
+  expect_identical(r3$output$tree$items[[2]]$value$values, format(1:10, trim = TRUE))
+  expect_identical(r3$output$tree$items[[2]]$value$type_sum, "int")
+  expect_identical(r3$output$tree$items[[2]]$value$length, 10L)
 })
 
 test_that("display_tree treats an NA list name as unnamed text, not a nil key", {
@@ -1069,6 +1157,49 @@ test_that("display_tree treats an NA list name as unnamed text, not a nil key", 
   expect_identical(r$output$tree$items[[1]]$key, "a")
   expect_identical(r$output$tree$items[[2]]$key, "<NA>")
   expect_false(anyNA(vapply(r$output$tree$items, `[[`, character(1), "key")))
+})
+
+test_that("build_table() reports na, per row, atomic columns only (ui-3-tests 131)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "data.frame(a = c(1, NA), b = c('x', NA))")
+  expect_identical(r$output$na, list(integer(), c(1L, 2L)))
+
+  r2 <- run_and_wait(h, "b", 2L, "data.frame(a = 1:2, bad = I(list(1, NA)))")
+  expect_identical(r2$output$na, list(integer(), integer()))
+})
+
+test_that("display_tree_node() on a long vector gives type vector; length 1 and a factor stay text (ui-3-tests 132)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "list(long = 1:100)")
+  item <- r$output$tree$items[[1]]$value
+  expect_identical(item$type, "vector")
+  expect_identical(item$values, format(1:10, trim = TRUE))
+  expect_identical(item$type_sum, "int")
+  expect_identical(item$length, 100L)
+
+  r2 <- run_and_wait(h, "b", 2L, "list(one = 1L, f = factor(c('a', 'b')))")
+  expect_identical(r2$output$tree$items[[1]]$value$type, "text")
+  expect_identical(r2$output$tree$items[[2]]$value$type, "text")
+})
+
+test_that("display_tree_node(): a matrix stays text, character values are quoted, a named vector keeps its names (item 3)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L,
+    "list(m = matrix(1:4, 2), s = letters[1:3], n = c(x = 1, y = 2, z = 3))")
+  items <- r$output$tree$items
+  # A matrix has no class attribute but has dim(): it must stay a text
+  # leaf, not become a vector leaf that drops its shape.
+  expect_identical(items[[1]]$value$type, "text")
+  # Character values are quoted the way print() shows them, not left bare
+  # by format().
+  expect_identical(items[[2]]$value$type, "vector")
+  expect_identical(items[[2]]$value$values, c('"a"', '"b"', '"c"'))
+  # A named vector must not silently lose its names by becoming an
+  # anonymous vector leaf.
+  expect_identical(items[[3]]$value$type, "text")
 })
 
 test_that("more pages a table and a tree, reset on rerun (25)", {
@@ -1346,4 +1477,22 @@ test_that("run_cell(): role text reports the failing line as error$span; earlier
   r2 <- run_and_wait(h, "check", 2L, "y")
   expect_identical(r2$status, "ok")
   expect_identical(r2$output$text, "[1] 1")
+})
+
+test_that("run_cell(): a bare top-level warning() in a text cell carries no call (item 5)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "t", 1L, "warning('x')", role = "text")
+  expect_identical(r$status, "ok")
+  expect_identical(r$console[[1]]$kind, "warning")
+  expect_null(r$console[[1]][["call", exact = TRUE]])
+})
+
+test_that("run_cell(): a text cell's error traceback drops the worker's own eval() frames (item 5)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "t", 1L, "f <- function() stop('boom')\nf()", role = "text")
+  expect_identical(r$status, "error")
+  expect_identical(r$error$traceback, c("f()", 'stop("boom")'))
+  expect_false(any(grepl("line_e|handleSimpleError|eval\\(line_e", r$error$traceback)))
 })

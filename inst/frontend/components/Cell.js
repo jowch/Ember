@@ -11,6 +11,7 @@ import { useEventListener } from "../common/useEventListener.js"
 import { t, th } from "../common/lang.js"
 import { CircleIcon, ClockIcon, SlashCircleIcon } from "../common/Icons.js"
 import { stale_names } from "../common/stale_names.js"
+import { EditorSelection, EditorView } from "../imports/CodemirrorPlutoSetup.js"
 
 /**
  * The "Stale" chip's text: "Stale" alone when no names are known, else
@@ -179,9 +180,20 @@ export const Cell = ({
         if (!inspecting_hidden_code) set_inspecting_hidden_code_here(false)
     }, [inspecting_hidden_code])
 
+    // A text cell's source, opened by clicking its text. Page state only,
+    // not the fold flag, so reading the source doesn't rewrite the file.
+    const [text_open, set_text_open] = useState(false)
+
     // during the initial page load, force_hide_input === true, so that cell outputs render fast, and codemirrors are loaded after
     let show_input =
-        !force_hide_input && (code_not_trusted_yet || errored || class_code_differs || cm_forced_focus != null || !code_folded || inspecting_hidden_code_here)
+        !force_hide_input &&
+        (code_not_trusted_yet ||
+            errored ||
+            class_code_differs ||
+            cm_forced_focus != null ||
+            !code_folded ||
+            inspecting_hidden_code_here ||
+            (kind === "markdown" && text_open))
 
     const [line_heights, set_line_heights] = useState([15])
     const node_ref = useRef(/** @type {HTMLElement?} */ (null))
@@ -204,6 +216,7 @@ export const Cell = ({
         pluto_actions.confirm_delete_multiple(pluto_actions.get_selected_cells(cell_id, selected))
     }, [pluto_actions, selected, cell_id])
     const on_submit = useCallback(async () => {
+        set_text_open(false)
         if (!disable_input_ref.current) {
             return await pluto_actions.set_and_run_multiple([cell_id])
         }
@@ -259,6 +272,57 @@ export const Cell = ({
         [pluto_actions, cell_id, on_submit, process_waiting_for_permission]
     )
 
+    const text_output = () => /** @type {HTMLElement?} */ (node_ref.current?.querySelector(":scope > pluto-output") ?? null)
+    const text_editor_view = () => {
+        const dom = node_ref.current?.querySelector("pluto-input .cm-editor")
+        return dom == null ? null : EditorView.findFromDOM(/** @type {HTMLElement} */ (dom))
+    }
+    // A double click selects a word without opening the source, so a click
+    // opens only once the double-click interval has passed without another.
+    const text_click_timer = useRef(/** @type {ReturnType<typeof setTimeout>?} */ (null))
+    useEffect(() => () => clearTimeout(text_click_timer.current ?? undefined), [])
+    const on_text_click = (e) => {
+        if (kind !== "markdown" || text_open || disable_input) return
+        const output = e.target.closest("pluto-output")
+        if (output == null || output.parentElement !== node_ref.current) return
+        if (e.target.closest("a, button, summary, input, label, select, textarea")) return
+        clearTimeout(text_click_timer.current ?? undefined)
+        if (e.detail > 1 || !(window.getSelection()?.isCollapsed ?? true)) return
+        text_click_timer.current = setTimeout(() => {
+            if (window.getSelection()?.isCollapsed ?? true) set_text_open(true)
+        }, 300)
+    }
+    const was_text_open = useRef(false)
+    useLayoutEffect(() => {
+        const was_open = was_text_open.current
+        was_text_open.current = text_open
+        if (!text_open) {
+            if (!was_open) return
+            const active = document.activeElement
+            if (active == null || active === document.body || node_ref.current?.contains(active)) text_output()?.focus({ preventScroll: true })
+            return
+        }
+        const view = text_editor_view()
+        if (view == null) return
+        view.focus()
+        // The editor was hidden until now; a selection set before CodeMirror
+        // has measured it (a frame or two) doesn't stick.
+        let frame = requestAnimationFrame(() => {
+            frame = requestAnimationFrame(() => view.dispatch({ selection: EditorSelection.cursor(view.state.doc.length), scrollIntoView: true }))
+        })
+        return () => cancelAnimationFrame(frame)
+    }, [text_open])
+    const on_text_keydown = (e) => {
+        if (e.defaultPrevented) return
+        if (e.key === "Escape" && text_open && (cell_input_local?.code ?? code) === code) {
+            set_text_open(false)
+        } else if (e.key === "Enter" && kind === "markdown" && !disable_input && e.target === text_output() && !(e.shiftKey || e.ctrlKey || e.metaKey || e.altKey)) {
+            e.preventDefault()
+            if (text_open) text_editor_view()?.focus()
+            else set_text_open(true)
+        }
+    }
+
     const any_logs = useMemo(() => !_.isEmpty(logs), [logs])
 
     const disabled_by_cell_id = ember?.disabled_by ?? null
@@ -298,7 +362,8 @@ export const Cell = ({
         !process_waiting_for_permission &&
         kind !== "markdown" &&
         !running_disabled &&
-        !depends_on_disabled_cells
+        !depends_on_disabled_cells &&
+        !errored
 
     // depends_on_disabled_cells is also true on the disabled cell itself, so
     // running_disabled is checked first.
@@ -353,6 +418,8 @@ export const Cell = ({
             })}
             data-rail=${rail}
             id=${cell_id}
+            onClick=${on_text_click}
+            onKeyDown=${on_text_keydown}
         >
             ${variables.map((name) => html`<span id=${encodeURI(name)} />`)}
             <button
@@ -379,9 +446,8 @@ export const Cell = ({
             ${code_not_trusted_yet
                 ? null
                 : cell_api_ready
-                  ? html`<${CellOutput} errored=${errored} ...${output} ember_figure=${ember?.figure} sanitize_html=${sanitize_html} cell_id=${cell_id} />`
+                  ? html`<${CellOutput} errored=${errored} ...${output} ember_figure=${ember?.figure} text_cell=${kind === "markdown" && !disable_input} ember_split=${split_n} on_split=${on_split} sanitize_html=${sanitize_html} cell_id=${cell_id} />`
                   : html``}
-            ${split_n != null ? html`<button class="ember-split" onClick=${on_split}>${t("t_ember_split", { n: split_n })}</button>` : null}
             <${CellInput}
                 local_code=${cell_input_local?.code ?? code}
                 remote_code=${code}
@@ -392,7 +458,7 @@ export const Cell = ({
                 cm_forced_focus=${cm_forced_focus}
                 set_cm_forced_focus=${set_cm_forced_focus}
                 show_input=${show_input}
-                skip_static_fake=${is_first_cell}
+                skip_static_fake=${is_first_cell || (kind === "markdown" && text_open)}
                 on_submit=${on_submit}
                 on_delete=${on_delete}
                 on_add_after=${on_add_after}

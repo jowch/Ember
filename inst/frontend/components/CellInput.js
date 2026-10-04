@@ -69,6 +69,8 @@ import { alt_or_options_name } from "../common/KeyboardShortcuts.js"
 import { MoreIcon } from "../common/Icons.js"
 import { get_settings } from "./Settings.js"
 import { highlightKwargsPlugin } from "./CellInput/highlight_kwargs.js"
+import { hash_quote_continue, hash_quote_highlight } from "./CellInput/text_cell.js"
+import { highlight_assigned } from "./CellInput/highlight_assigned.js"
 import { is_dark_theme } from "../common/theme.js"
 
 // @ts-ignore
@@ -77,15 +79,18 @@ window.PLUTO_TOGGLE_CM_SPELLCHECK = () => console.error("Use the Settings menu i
 // @ts-ignore
 window.PLUTO_TOGGLE_CM_AUTOCOMPLETE_ON_TYPE = () => console.error("Use the Settings menu instead.")
 
+// The Cells board's tokens: calls in the function colour, names and
+// argument names plain, nothing bold or italic.
 const common_style_tags = [
-    { tag: tags.comment, color: "var(--cm-color-comment)", fontStyle: "italic", filter: "none" },
+    { tag: tags.comment, color: "var(--cm-color-comment)", filter: "none" },
 
-    { tag: tags.definition(tags.typeName), color: "var(--cm-color-variable)", fontWeight: 700, textShadow: "1px 1px var(--cm-color-typedef-shadow)" },
-    { tag: tags.variableName, color: "var(--cm-color-variable)", fontWeight: 700 },
-    { tag: tags.name, color: "var(--cm-color-variable)", fontWeight: 700 },
-    { tag: tags.propertyName, color: "var(--cm-color-symbol)", fontWeight: 700 },
-    { tag: tags.macroName, color: "var(--cm-color-macro)", fontWeight: 700 },
-    { tag: tags.typeName, filter: "var(--cm-filter-type)", fontWeight: "lighter" },
+    { tag: tags.definition(tags.typeName), color: "var(--cm-color-variable)" },
+    { tag: tags.function(tags.variableName), color: "var(--cm-color-function)" },
+    { tag: tags.variableName, color: "var(--cm-color-variable)" },
+    { tag: tags.name, color: "var(--cm-color-variable)" },
+    { tag: tags.propertyName, color: "var(--cm-color-variable)" },
+    { tag: tags.macroName, color: "var(--cm-color-macro)" },
+    { tag: tags.typeName, filter: "var(--cm-filter-type)" },
     { tag: tags.atom, color: "var(--cm-color-symbol)" },
     { tag: tags.string, color: "var(--cm-color-string)" },
     { tag: tags.special(tags.string), color: "var(--cm-color-command)" },
@@ -516,6 +521,7 @@ export const CellInput = ({
                     lineNumbers(),
                     highlightSpecialChars(),
                     highlightKwargsPlugin(),
+                    highlight_assigned,
                     history(),
                     drawSelection(),
                     EditorState.allowMultipleSelections.of(true),
@@ -545,6 +551,8 @@ export const CellInput = ({
                                 // then it's caused by focusing something other than this cell in the editor.
                                 // in this case, we want to collapse the selection into a single point, for aesthetic reasons.
                                 setTimeout(() => {
+                                    // Focus can come back first, e.g. a text cell reopened from the keyboard.
+                                    if (view.hasFocus) return
                                     view.dispatch({
                                         selection: {
                                             anchor: view.state.selection.main.head,
@@ -626,6 +634,8 @@ export const CellInput = ({
                     }),
                     keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, ...foldKeymap]),
                     placeholder(t("t_cell_input_placeholder")),
+                    hash_quote_continue,
+                    hash_quote_highlight,
 
                     EditorView.contentAttributes.of({ spellcheck: String(get_settings().CM_SPELLCHECK) }),
 
