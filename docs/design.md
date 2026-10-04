@@ -84,16 +84,18 @@ repository depends on them.
   it opens, and its docs only warn to "run notebooks from sources you trust".
 - **Packages detected from the code** (`library()` and friends), installed
   automatically and locked inside the file, as Pluto's package manager does.
-- **`library()` in any cell**, as `using` is in Pluto. The worker keeps the
-  search path in step with the notebook (see
-  [Attached packages](#attached-packages)).
+- **`library()` in any cell**, as `using` is in Pluto, but each package in
+  one cell only. The worker keeps the search path in step with the notebook
+  (see [Attached packages](#attached-packages)).
 - **One definition per global, as in Pluto**, including objects modified in
   a later cell (see [Reading cells](#reading-cells)).
-- **Global settings only in the setup cell**; elsewhere they are an error,
-  with a scoped form for local changes.
+- **No setup cell. A global setting is set in one cell only**, like a
+  global; settings cells run first, and the worker sets the settings for
+  each run. A scoped form (`withr::with_options()`) covers local changes.
+  See [settings-cells.md](settings-cells.md).
 - **Enforce only what the engine needs.** Errors are limited to what keeps
-  the notebook free of hidden state: one definition per global, private
-  dot-names, global settings outside the setup cell. Everything else is
+  the notebook free of hidden state: one definition per global (and per
+  setting and attached package), private dot-names. Everything else is
   plain R. Style advice (`local()` for private work, pipelines or named
   stages, where to put `set.seed()`) goes in the user docs, never in errors.
 - **Assume too many dependencies rather than too few.** An extra edge costs a
@@ -430,14 +432,20 @@ they want, as in marimo's lazy mode; "Run all" regenerates everything.
 changes model fits), `ggplot2::theme_set()`, `Sys.setenv()`, `setwd()` and
 `Sys.setlocale()` change later cells' results without any variable
 connecting them. So does `attach()`, which makes a data frame's columns
-visible to every cell. Global settings go in the setup cell, which every
-cell depends on. Anywhere else they are an error, caught twice:
+visible to every cell. Each setting is treated like a global: any cell may
+set it, but only one cell, and a cell that sets one is a settings cell.
+Settings cells run first and every later cell depends on them; before each
+run the worker sets R's starting values plus the changes of the settings
+cells before it. The design is in [settings-cells.md](settings-cells.md).
+(Ember first had a setup cell that alone could hold settings; that note
+replaces it.) Settings are found twice:
 
 - **When reading the cell:** a top-level call to one of these functions.
 - **After running it:** the worker compares `options()`, environment
   variables, working directory, locale and `search()` (leaving out what the
   notebook's `library()` calls attached) before and after each cell, which
-  also catches changes made inside functions.
+  also catches changes made inside functions. A setting found this way is
+  saved in the file as a learned setting.
 
 Loading a package can change these too: many packages set default options
 in `.onLoad`, and with `library()` allowed in any cell, and `pkg::fn` loading
@@ -446,28 +454,29 @@ a package without one, that happens in ordinary cells (measured: 86 of the
 environment variables). So the worker traces `loadNamespace()`, which every
 load goes through, and `library()`, whose `.onAttach` can add more (openxlsx
 and tidyverse set options only there), and compares the settings before and
-after each. Changes made while loading belong to the package
-and are allowed; `Rscript` makes them too. The rest belong to the cell's code
-and are an error. A package that overwrites a setting the notebook already
-changed gets a note, since in the notebook it may load at a different point
+after each. Changes made while loading belong to the package and are
+allowed; `Rscript` makes them too. The rest belong to the cell's code and
+make it a settings cell. A package that overwrites a setting the notebook
+already changed gets a note, since in the notebook it may load at a different point
 than in the script. In a clean process none of the 199 changed an existing
 option or variable, only added new ones; whether any overwrite a value the
 notebook set is still untested. None changed the working directory or
 locale. RcppArmadillo, rstan and V8 create `.Random.seed` when loaded, which
 the global-environment check already skips.
 
-For a change that should apply to one piece of code, the scoped form is
-allowed: withr's `with_options(list(digits = 3), print(fit))`, `with_envvar`,
+For a change that should apply to one piece of code, use the scoped form:
+withr's `with_options(list(digits = 3), print(fit))`, `with_envvar`,
 `with_dir`, `with_seed`, `local_options()` inside a function. These restore
 the setting when the code finishes, like a Julia `do` block. withr is a common
 CRAN package, detected as a dependency like any other, so the file still runs
-with plain `Rscript`. `par()` needs no rule: each cell draws on its own
+with plain `Rscript`. Base R works too: pass the argument
+(`print(x, digits = 3)`), or set and restore inside `local()` with
+`on.exit(options(op))`. `par()` needs no rule: each cell draws on its own
 device.
 
-**Deleting a cell** removes its variables. **Changing the setup cell**
-resets options, environment variables, working directory and locale to the
-worker's starting values before it reruns, so a deleted setting doesn't
-linger.
+**Deleting a cell** removes its variables and its settings. **Rerunning a
+settings cell** starts from the worker's starting values plus the earlier
+settings cells' changes, so a deleted setting doesn't linger.
 
 **Editor services** run in the worker with base R: completion through
 `utils`'s completion functions (as IRkernel does), help pages through
@@ -476,11 +485,18 @@ functions, so they're tested on each R release.
 
 ### Attached packages
 
-`library()` and `require()` may appear in any cell. This follows Pluto,
-which handles `using` in two steps (`PlutoDependencyExplorer.jl`'s
+`library()` and `require()` may appear in any cell, but each package in one
+cell only. This follows Pluto, which allows `using` in any cell but treats
+`using X` as a definition of `X`, so the same package in two cells is
+"Multiple definitions"; here the error reads "tidyverse is attached in two
+cells" (see [settings-cells.md](settings-cells.md#attaching-a-package-is-a-definition)).
+Overlaps such as `library(tidyverse)` in one cell and `library(ggplot2)` in
+another are allowed: Ember only sees the names written in the code. Pluto
+handles `using` in two steps (`PlutoDependencyExplorer.jl`'s
 `cell_precedence_heuristic`, and `move_vars` in Pluto's `Run.jl`):
 
-- **Cells that attach packages run first**, before other cells.
+- **Cells that attach packages run first**, before other cells (after
+  settings cells).
 - **The search path is rebuilt, not unloaded.** Pluto evaluates each run in a
   new module and repeats only the `using` lines of cells still in the
   notebook, so a deleted `using` stops applying while the package stays
@@ -498,9 +514,9 @@ which handles `using` in two steps (`PlutoDependencyExplorer.jl`'s
   environments, so packages that attach others themselves (`Depends:`, or a
   `library()` call in package code) keep working.
 
-marimo takes a different route that doesn't carry over: an `import` is an
-ordinary definition under the one-definition rule, and `from x import *` is
-an error. `library()` is R's star import.
+marimo also treats an `import` as an ordinary definition under the
+one-definition rule. Its other rule doesn't carry over: `from x import *` is
+an error, and `library()` is R's star import.
 
 ## Performance
 
@@ -788,6 +804,10 @@ load("fits.RData")
   is written with `## ` before each line, so `Rscript` skips it. The
   footer says which (`disabled`, `commented`). A text cell is never
   written this way: its `#'` lines are already comments.
+- There is no setup cell. A `[setup]` tag an older Ember wrote is read and
+  ignored, and the next save drops it. Settings found when a cell ran are
+  kept in a `learned settings` block, written only when non-empty (see
+  [settings-cells.md](settings-cells.md)).
 - Package names aren't repeated in the header; they come from the code,
   except the few in `[extra_packages]` that the code can't reveal.
 - `ember_version` is the Ember version that last saved the file, as Pluto
