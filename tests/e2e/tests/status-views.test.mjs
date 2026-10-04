@@ -116,7 +116,7 @@ test("Packages tab lists a missing package and the preview banner names the inst
   assert.match(bannerText, /installs \d+ packages?/);
   await page.keyboard.press("Escape");
 
-  await page.getByRole("button", { name: "Packages" }).click();
+  await page.getByRole("button", { name: "Packages", exact: true }).click();
   await page.waitForSelector("#ember-packages-tab .ember-packages-table", { timeout: 10000 });
   const rows = await page.locator("#ember-packages-tab .ember-package-row").count();
   assert.ok(rows > 0, "expected at least one package row");
