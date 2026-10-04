@@ -2115,8 +2115,14 @@ pluto-input .cm-editor .cm-line.cm-highlighted-line {
     border-radius: 3px;
 }
 
+/* Folded: only the cell menu stays, since its Show code item is how a
+   folded cell is unfolded. It then sits at the cell's top right. */
 pluto-cell:not(.show_input) > pluto-input {
-    display: none;
+    position: static;
+}
+/* !important: CodeMirror's own theme sets .cm-editor's display with it. */
+pluto-cell:not(.show_input) > pluto-input > :not(.input_context_menu) {
+    display: none !important;
 }
 pluto-cell.code_folded.show_input > pluto-input:not(:focus-within) {
     opacity: 0.4;
@@ -2369,9 +2375,9 @@ pluto-input > .preview_hidden_code_info {
     white-space: nowrap;
 }
 
-pluto-editor:not(.process_waiting_for_permission) pluto-cell.code_folded > pluto-input > .preview_hidden_code_info,
-pluto-cell.inspecting_hidden_code > pluto-input > .preview_hidden_code_info,
-pluto-cell.code_folded:focus-within > pluto-input > .preview_hidden_code_info {
+pluto-editor:not(.process_waiting_for_permission) pluto-cell.code_folded.show_input > pluto-input > .preview_hidden_code_info,
+pluto-cell.inspecting_hidden_code.show_input > pluto-input > .preview_hidden_code_info,
+pluto-cell.code_folded.show_input:focus-within > pluto-input > .preview_hidden_code_info {
     display: block;
 }
 

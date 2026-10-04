@@ -233,6 +233,12 @@ export const CellInput = ({
     runtime,
     on_run,
     on_interrupt,
+    can_disable,
+    set_cell_disabled,
+    code_folded,
+    on_code_fold,
+    on_move_up,
+    on_move_down,
 }) => {
     let pluto_actions = useContext(PlutoActionsContext)
     let [error, set_error] = useState(null)
@@ -653,6 +659,8 @@ export const CellInput = ({
             }),
             parent: dom_node_ref.current,
         }))
+        // EditorView appends; the run button and ⋯ must follow the code in Tab order.
+        dom_node_ref.current.prepend(newcm.dom)
 
         // For use from useDropHandler
         // @ts-ignore
@@ -780,6 +788,17 @@ export const CellInput = ({
             ${running_disabled || depends_on_disabled_cells
                 ? null
                 : html`<${RunButton} running=${running} queued=${queued} runtime=${runtime} on_run=${on_run} on_interrupt=${on_interrupt} />`}
+            <${InputContextMenu}
+                cell_id=${cell_id}
+                on_delete=${on_delete}
+                code_folded=${code_folded}
+                on_code_fold=${on_code_fold}
+                can_disable=${can_disable}
+                running_disabled=${running_disabled}
+                set_cell_disabled=${set_cell_disabled}
+                on_move_up=${on_move_up}
+                on_move_down=${on_move_down}
+            />
             ${PreviewHiddenCode}
         </pluto-input>
     `
@@ -794,7 +813,7 @@ const PreviewHiddenCode = html`<div class="preview_hidden_code_info">${t("t_read
  * click-outside; the DOM hooks (button.input_context_menu,
  * div.input_context_menu) are kept as Pluto named them.
  */
-export const InputContextMenu = ({ cell_id, on_delete, code_folded, on_code_fold, can_disable, running_disabled, set_cell_disabled, on_move_up, on_move_down }) => {
+const InputContextMenu = ({ cell_id, on_delete, code_folded, on_code_fold, can_disable, running_disabled, set_cell_disabled, on_move_up, on_move_down }) => {
     let pluto_actions = useContext(PlutoActionsContext)
 
     const is_copy_output_supported = () => {
@@ -831,26 +850,31 @@ export const InputContextMenu = ({ cell_id, on_delete, code_folded, on_code_fold
     const items = [
         { tag: "hide_code", contents: code_folded ? t("t_show_code") : t("t_hide_code"), onClick: on_code_fold },
         // The class stays disable_cell in both states (test-disabled.test.mjs
-        // (37) selects on it before and after toggling); only the label and
-        // icon change.
+        // (37) selects on it before and after toggling); only the label
+        // changes.
         can_disable
             ? {
                   tag: "disable_cell",
-                  icon_tag: running_disabled ? "enable_cell" : "disable_cell",
                   contents: running_disabled ? t("t_enable_cell") : t("t_disable_cell"),
                   onClick: () => set_cell_disabled(!running_disabled),
               }
             : null,
         is_copy_output_supported() ? { tag: "copy_output", contents: t("t_copy_output_action"), onClick: copy_output } : null,
-        { tag: "move_up", contents: `${t("t_move_up")} (${alt_or_options_name} ↑)`, onClick: on_move_up },
-        { tag: "move_down", contents: `${t("t_move_down")} (${alt_or_options_name} ↓)`, onClick: on_move_down },
+        { tag: "move_up", contents: t("t_move_up"), hint: `${alt_or_options_name} ↑`, onClick: on_move_up },
+        { tag: "move_down", contents: t("t_move_down"), hint: `${alt_or_options_name} ↓`, onClick: on_move_down },
         { tag: "delete", contents: t("t_delete_cell_action"), onClick: on_delete, danger: true },
     ].filter((item) => item != null)
 
     const { button_props, menu_props, item_props, close, is_open } = useMenu({ count: items.length })
 
     return html`
-        <button type="button" class="input_context_menu" title=${t("t_cell_options")} aria-label=${t("t_cell_options")} ...${button_props}>
+        <button
+            type="button"
+            class=${cl({ input_context_menu: true, on: is_open })}
+            title=${t("t_cell_options")}
+            aria-label=${t("t_cell_options")}
+            ...${button_props}
+        >
             <${MoreIcon} size=${16} />
         </button>
         ${is_open &&
@@ -862,8 +886,8 @@ export const InputContextMenu = ({ cell_id, on_delete, code_folded, on_code_fold
                             <li>
                                 <${InputContextMenuItem}
                                     tag=${item.tag}
-                                    icon_tag=${item.icon_tag ?? item.tag}
                                     contents=${item.contents}
+                                    hint=${item.hint}
                                     danger=${!!item.danger}
                                     item_props=${item_props(i)}
                                     onClick=${() => {
@@ -879,9 +903,9 @@ export const InputContextMenu = ({ cell_id, on_delete, code_folded, on_code_fold
     `
 }
 
-const InputContextMenuItem = ({ contents, danger, onClick, item_props, tag, icon_tag }) =>
+const InputContextMenuItem = ({ contents, hint, danger, onClick, item_props, tag }) =>
     html`<button type="button" class=${cl({ "ember-menuitem": true, [tag]: true, "ember-menuitem-danger": danger })} onClick=${onClick} ...${item_props}>
-        <span class=${`${icon_tag} ctx_icon`} />${contents}
+        ${contents}${hint != null ? html`<span class="ember-menuitem-key">${hint}</span>` : null}
     </button>`
 
 const generate_fake_deco_indent_text = (width) => {

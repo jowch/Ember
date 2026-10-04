@@ -509,3 +509,116 @@ test('"+": each gap\'s live button is the lower cell\'s .before, and the last ce
 
   assertNoProblems(page);
 });
+
+test("cell menu: the ⋯ is in pluto-input after the code, on the code box even under an error, and opens on a folded cell", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-geometry-menu-place.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForSelector(`${cellSelector("ERR")}.errored`, { timeout: 20000 });
+
+  assert.equal(await page.locator("pluto-cell > button.input_context_menu").count(), 0);
+  assert.equal(await page.locator("pluto-cell > pluto-input > button.input_context_menu").count(), await page.locator("pluto-cell").count());
+  const order = await page.locator(`${cellSelector("A")} > pluto-input`).evaluate((input) =>
+    [...input.children].map((c) => c.matches(".cm-editor") ? "code" : c.matches("button.ember-run") ? "run" : c.matches("button.input_context_menu") ? "menu" : null).filter(Boolean));
+  assert.deepEqual(order, ["code", "run", "menu"], "Tab reaches the code first, then run, then ⋯");
+
+  await page.hover(`${cellSelector("ERR")} .cm-content`);
+  const box = await rect(page, `${cellSelector("ERR")} .cm-editor`);
+  const more = await rect(page, `${cellSelector("ERR")} button.input_context_menu`);
+  const output = await rect(page, `${cellSelector("ERR")} > pluto-output`);
+  near(box.right - more.right, 6, "⋯ right inset");
+  near(more.top - box.top, 5, "⋯ top inset");
+  assert.ok(more.top >= output.bottom, "the ⋯ is below the error output, not over it");
+
+  await page.hover(cellSelector("B"));
+  await page.locator(`${cellSelector("B")} button.input_context_menu`).click();
+  await page.locator(`${cellSelector("B")} button.hide_code`).click();
+  await page.waitForSelector(`${cellSelector("B")}.code_folded:not(.show_input)`, { timeout: 10000 });
+  assert.equal(await page.locator(`${cellSelector("B")} .cm-editor`).isVisible(), false, "the folded cell's code is hidden");
+
+  await page.hover(cellSelector("B"));
+  await page.locator(`${cellSelector("B")} button.input_context_menu`).click();
+  const showItem = page.locator(`${cellSelector("B")} button.hide_code`);
+  assert.equal(await showItem.innerText(), "Show code");
+  await showItem.click();
+  await page.waitForFunction((sel) => !document.querySelector(sel).classList.contains("code_folded"), cellSelector("B"), { timeout: 10000 });
+  await page.locator(`${cellSelector("B")} .cm-editor`).waitFor({ state: "visible", timeout: 5000 });
+
+  assertNoProblems(page);
+});
+
+test("cell menu: text-only one-line items with a right-aligned key hint, panel and line colours, a 6px-radius trigger that stays on while open", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-geometry-menu-look.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await page.hover(cellSelector("A"));
+  const trigger = page.locator(`${cellSelector("A")} button.input_context_menu`);
+  assert.equal(await trigger.evaluate((el) => getComputedStyle(el).borderRadius), "6px");
+  await trigger.click();
+  assert.match(await trigger.getAttribute("class"), /\bon\b/);
+
+  const menu = page.locator(`${cellSelector("A")} div.input_context_menu[role="menu"]`);
+  const colours = await menu.evaluate((el) => {
+    const probe = document.createElement("div");
+    probe.style.cssText = "border-top: 1px solid var(--ember-line); background: var(--ember-panel)";
+    document.body.append(probe);
+    const want = getComputedStyle(probe);
+    const got = getComputedStyle(el);
+    const r = { border: [got.borderTopColor, want.borderTopColor], background: [got.backgroundColor, want.backgroundColor] };
+    probe.remove();
+    return r;
+  });
+  assert.equal(colours.border[0], colours.border[1], "menu border is --ember-line");
+  assert.equal(colours.background[0], colours.background[1], "menu background is --ember-panel");
+
+  assert.equal(await menu.locator(".ctx_icon, svg, img").count(), 0, "no icons in the items");
+
+  const moveUp = menu.locator("button.move_up");
+  const item = await moveUp.evaluate((el) => {
+    const cs = getComputedStyle(el);
+    const key = el.querySelector(".ember-menuitem-key");
+    const kr = key.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    return {
+      direction: cs.flexDirection, padding: cs.padding, gap: cs.gap, height: r.height,
+      key: key.textContent, keySize: getComputedStyle(key).fontSize, keyRightInset: r.right - kr.right,
+      keyMiddle: kr.top + kr.height / 2 - (r.top + r.height / 2),
+    };
+  });
+  assert.equal(item.direction, "row");
+  assert.equal(item.padding, "7px 10px");
+  assert.equal(item.gap, "10px");
+  near(item.height, 7 + 13 * 1.65 + 7, "item height (Cells board)");
+  assert.match(item.key, /^(Alt|⌥) ↑$/);
+  assert.equal(item.keySize, "11.5px");
+  near(item.keyRightInset, 10, "key hint is right-aligned");
+  near(item.keyMiddle, 0, "key hint on the label's line");
+  assert.equal(await moveUp.evaluate((el) => el.firstChild.textContent.trim()), "Move up");
+
+  // The header's ⋯ menu keeps its stacked title-over-description items.
+  const header = await page.evaluate(() => {
+    const b = document.createElement("button");
+    b.className = "ember-menuitem";
+    document.body.append(b);
+    const cs = getComputedStyle(b);
+    const r = { direction: cs.flexDirection, padding: cs.padding };
+    b.remove();
+    return r;
+  });
+  assert.deepEqual(header, { direction: "column", padding: "8px 10px" });
+
+  await page.keyboard.press("Escape");
+  await page.waitForFunction((el) => !el.classList.contains("on"), await trigger.elementHandle(), { timeout: 5000 });
+
+  assertNoProblems(page);
+});

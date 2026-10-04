@@ -2,7 +2,7 @@ import _ from "../imports/lodash-es.js"
 import { html, useState, useEffect, useMemo, useRef, useContext, useLayoutEffect, useErrorBoundary, useCallback } from "../imports/Preact.js"
 
 import { CellOutput } from "./CellOutput.js"
-import { CellInput, InputContextMenu } from "./CellInput.js"
+import { CellInput } from "./CellInput.js"
 import { Logs } from "./Logs.js"
 import { RunButton, useDebouncedTruth } from "./RunButton.js"
 import { cl } from "../common/ClassTable.js"
@@ -374,17 +374,6 @@ export const Cell = ({
             </pluto-shoulder>
             <pluto-trafficlight></pluto-trafficlight>
             ${rail === "due" ? html`<ember-rail-tip>${t("t_rail_due_hint")}</ember-rail-tip>` : null}
-            <${InputContextMenu}
-                cell_id=${cell_id}
-                on_delete=${on_delete}
-                code_folded=${code_folded}
-                on_code_fold=${on_code_fold}
-                can_disable=${ember?.can_disable ?? false}
-                running_disabled=${running_disabled}
-                set_cell_disabled=${set_cell_disabled}
-                on_move_up=${on_move_up}
-                on_move_down=${on_move_down}
-            />
             ${chip != null
                 ? html`<ember-chip role="status"><span class="ember-chip-icon" aria-hidden="true"><${chip.icon} /></span><span>${chip.text}</span></ember-chip>`
                 : null}
@@ -420,6 +409,12 @@ export const Cell = ({
                 onerror=${remount}
                 running_disabled=${running_disabled}
                 depends_on_disabled_cells=${depends_on_disabled_cells}
+                can_disable=${ember?.can_disable ?? false}
+                set_cell_disabled=${set_cell_disabled}
+                code_folded=${code_folded}
+                on_code_fold=${on_code_fold}
+                on_move_up=${on_move_up}
+                on_move_down=${on_move_down}
                 running=${running}
                 queued=${queued || (waiting_to_run && is_process_ready)}
                 runtime=${runtime}
