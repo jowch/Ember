@@ -200,6 +200,107 @@ ember-runtime {
     }
 }
 
+/* ---- "+" overlay (ui-3.md "Adding cells") ------------------------------ */
+
+/* An absolutely positioned strip exactly spanning the gap (the cell's
+   own margin, --pluto-cell-spacing), so hovering or focusing it draws
+   the line and the circle without moving any cell -- test 143 checks
+   this directly: the strip overlays space that was already there
+   rather than adding its own. button.add_cell.before/.after are
+   duplicated (one per side of the gap) so Endeavor's existing hooks
+   keep working; only one is tabbable per gap (Cell.js's existing
+   tabindex logic). */
+button.add_cell {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: var(--pluto-cell-spacing);
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: pointer;
+    z-index: 15;
+}
+button.add_cell.before {
+    top: calc(-1 * var(--pluto-cell-spacing));
+    /* Every cell but the first has a predecessor whose .after covers
+       the same gap; without this, the two duplicate buttons fight over
+       which one the mouse lands on. Kept for Endeavor and the keyboard
+       (Cell.js's tabindex already singles out the first cell's .before
+       the same way) -- pointer-events only turns off real mouse/touch
+       hover and clicks, not a programmatic .click(). */
+    pointer-events: none;
+}
+pluto-cell:first-of-type > button.add_cell.before {
+    pointer-events: auto;
+}
+button.add_cell.after {
+    bottom: calc(-1 * var(--pluto-cell-spacing));
+}
+button.add_cell::before {
+    content: "";
+    position: absolute;
+    left: 18px;
+    right: 0;
+    top: 50%;
+    height: 1px;
+    background: var(--ember-accent);
+    opacity: 0;
+    transform: translateY(-50%);
+}
+button.add_cell > span {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: var(--ember-page);
+    border: 1px solid var(--ember-accent);
+    opacity: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+button.add_cell > span::after {
+    content: "+";
+    color: var(--ember-accent);
+    font-size: 13px;
+    line-height: 1;
+    font-family: var(--ember-ui-font);
+}
+button.add_cell:is(:hover, :focus-visible)::before {
+    opacity: 0.45;
+}
+button.add_cell:is(:hover, :focus-visible) > span {
+    opacity: 1;
+}
+
+/* ---- Empty notebook (ui-3.md "Empty notebook") ------------------------- */
+
+ember-empty-hints {
+    display: block;
+    margin: 6px 0 0 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 13.5px;
+    color: var(--ember-muted);
+}
+ember-empty-hints kbd {
+    font-family: var(--ember-code-font);
+    font-size: 11.5px;
+    border: 1px solid var(--ember-line);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 0 4px;
+}
+pluto-notebook:has(> pluto-cell:only-of-type) pluto-input .cm-editor {
+    box-shadow: 0 0 0 1px var(--ember-line);
+}
+
 /* The shoulder's fold eye is replaced by the menu's Hide/Show code item;
    the element stays for Endeavor (folded.ts), just not shown. */
 pluto-shoulder > button.foldcode {

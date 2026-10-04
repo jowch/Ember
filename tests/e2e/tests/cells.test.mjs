@@ -1,5 +1,6 @@
-// ui-3-tests.md, piece 6a step 2 (ui-3-plan.md): the rail, the run/stop
-// button and run-time chip, and the cell menu.
+// ui-3-tests.md, piece 6a steps 2-4 (ui-3-plan.md): the rail, the run/stop
+// button and run-time chip, the cell menu, the "+" overlay and the empty
+// notebook's hints.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -111,6 +112,38 @@ test("cell menu: item order, move down, hide code, no Disable on the setup cell 
   assertNoProblems(page);
 });
 
+test('"+": hovering the gap shows the line and circle without moving cells; clicking adds a cell (143)', async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-add.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  const addAfterA = page.locator(`${cellSelector("A")} button.add_cell.after`);
+  const beforeTop = (await page.locator(cellSelector("B")).boundingBox()).y;
+
+  await addAfterA.hover();
+  await page.waitForFunction(
+    (sel) => getComputedStyle(document.querySelector(sel).querySelector("span")).opacity > 0,
+    `${cellSelector("A")} button.add_cell.after`, { timeout: 5000 });
+
+  const afterTop = (await page.locator(cellSelector("B")).boundingBox()).y;
+  assert.equal(beforeTop, afterTop, "hovering the \"+\" doesn't move B");
+
+  const cellCountBefore = await page.locator("pluto-cell").count();
+  await addAfterA.click();
+  await page.waitForFunction(
+    (before) => document.querySelectorAll("pluto-cell").length > before,
+    cellCountBefore, { timeout: 10000 });
+
+  const order = await page.evaluate(() => window.editor_state.notebook.cell_order);
+  assert.equal(order.indexOf("A") + 1 < order.indexOf("B"), true, "the new cell landed between A and B");
+
+  assertNoProblems(page);
+});
+
 test("Endeavor's hooks after piece 6a (extends ui-2-tests.md 12) (152)", async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-hooks.server.log") });
@@ -138,6 +171,35 @@ test("Endeavor's hooks after piece 6a (extends ui-2-tests.md 12) (152)", async (
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.classList.contains("code_differs"),
     cellSelector("B"), { timeout: 10000 });
+
+  assertNoProblems(page);
+});
+
+test("empty notebook: placeholder and hints show, and typing removes them (151)", async (t) => {
+  // Not a notebook made fresh from the start page: new_notebook() (R/api.R)
+  // gives that one a setup cell plus this one, two cells, so
+  // cell_order.length never reaches the 1 this hinges on. This fixture is
+  // the "one cell, nothing typed yet" shape the board actually shows.
+  const notebook = tempNotebook("empty.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-empty.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "platform", { get: () => "MacIntel" });
+  });
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  const placeholder = await page.locator("pluto-cell .cm-placeholder").first().innerText();
+  assert.equal(placeholder, "Type R code here");
+  assert.match(await page.locator("ember-empty-hints").innerText(), /⌘/, "Mac modifier shown in the hints");
+
+  await page.locator("pluto-cell .cm-content").click();
+  await page.keyboard.type("1 + 1", { delay: 2 });
+  await page.waitForFunction(
+    () => document.querySelectorAll("ember-empty-hints").length === 0,
+    null, { timeout: 10000 });
 
   assertNoProblems(page);
 });

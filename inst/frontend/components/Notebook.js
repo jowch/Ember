@@ -4,6 +4,7 @@ import { html, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState
 
 import { Cell } from "./Cell.js"
 import { get_settings } from "./Settings.js"
+import { EmptyNotebookHints } from "./EmptyNotebookHints.js"
 
 export const nbpkg_fingerprint = (nbpkg) => (nbpkg == null ? [null] : Object.entries(nbpkg).flat())
 
@@ -200,6 +201,15 @@ export const Notebook = ({
     let custom_font = get_settings().CUSTOM_CODE_FONT_STACK
     custom_font = custom_font.replace(/'",/g, "").trim()
     custom_font = custom_font == "" ? "monospace" : custom_font
+
+    const only_cell_id = notebook.cell_order.length === 1 ? notebook.cell_order[0] : null
+    const is_empty_notebook =
+        !disable_input &&
+        only_cell_id != null &&
+        (notebook.cell_inputs[only_cell_id]?.code ?? "") === "" &&
+        (cell_inputs_local[only_cell_id]?.code ?? "") === "" &&
+        (notebook.cell_results[only_cell_id]?.output?.last_run_timestamp ?? 0) === 0
+
     return html`
         <pluto-notebook id=${notebook.notebook_id} style="--custom-code-font-stack: ${custom_font};">
             ${notebook.cell_order
@@ -234,6 +244,7 @@ export const Notebook = ({
                             inspecting_hidden_code=${inspecting_hidden_code}
                         />`
                 )}
+            ${is_empty_notebook ? html`<${EmptyNotebookHints} />` : null}
             ${
                 // Waiting for the last deleted cell to be recovered...
                 notebook.cell_order.length === 0 ||

@@ -311,7 +311,8 @@ export const Cell = ({
                     pluto_actions.add_remote_cell(cell_id, "before")
                 }}
                 class="add_cell before"
-                title=${t("t_add_cell", { key: "Ctrl + Enter" })}
+                title=${t("t_add_cell_here")}
+                aria-label=${t("t_add_cell_here")}
                 tabindex=${is_first_cell ? undefined : "-1"}
             >
                 <span></span>
@@ -385,7 +386,8 @@ export const Cell = ({
                     pluto_actions.add_remote_cell(cell_id, "after")
                 }}
                 class="add_cell after"
-                title=${t("t_add_cell", { key: "Ctrl + Enter" })}
+                title=${t("t_add_cell_here")}
+                aria-label=${t("t_add_cell_here")}
             >
                 <span></span>
             </button>
