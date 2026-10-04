@@ -4,7 +4,7 @@ import immer, { applyPatches, produceWithPatches } from "../imports/immer.js"
 import _ from "../imports/lodash-es.js"
 
 import { empty_notebook_state, is_editor_embedded_inside_editor, set_disable_ui_css } from "../editor.js"
-import { create_pluto_connection, ws_address_from_base } from "../common/PlutoConnection.js"
+import { create_pluto_connection } from "../common/PlutoConnection.js"
 import { ask, tell, reload_prompt } from "../common/dialogs.js"
 import { serialize_cells, deserialize_cells, detect_deserializer } from "../common/Serialization.js"
 
@@ -19,7 +19,6 @@ import { Popup } from "./Popup.js"
 
 import { has_ctrl_or_cmd_pressed, is_mac_keyboard, in_textarea_or_input } from "../common/KeyboardShortcuts.js"
 import { PlutoActionsContext, PlutoBondsContext, PlutoJSInitializingContext, SetWithEmptyCallback } from "../common/PlutoContext.js"
-import { BackendLaunchPhase } from "../common/Binder.js"
 import { setup_mathjax } from "../common/SetupMathJax.js"
 import { slider_server_actions, nothing_actions } from "../common/SliderServerClient.js"
 import { ProgressBar } from "./ProgressBar.js"
@@ -73,11 +72,7 @@ const Main = ({ children }) => {
  */
 const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters} */ launch_params) => ({
     disconnected: !(state.connected || state.initializing || state.static_preview),
-    loading:
-        (state.backend_launch_phase != null &&
-            BackendLaunchPhase.wait_for_user < state.backend_launch_phase &&
-            state.backend_launch_phase < BackendLaunchPhase.ready) ||
-        state.initializing,
+    loading: state.initializing,
     process_waiting_for_permission: state.notebook.process_status === ProcessStatus.waiting_for_permission && !state.initializing,
     process_restarting: state.notebook.process_status === ProcessStatus.waiting_to_restart,
     process_dead: state.notebook.process_status === ProcessStatus.no_process || state.notebook.process_status === ProcessStatus.waiting_to_restart,
@@ -96,9 +91,6 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
             (launch_params.slider_server_url != null && (state.slider_server?.connecting || state.slider_server?.interactive))
         )
     ),
-    offer_binder: state.backend_launch_phase === BackendLaunchPhase.wait_for_user && launch_params.binder_url != null,
-    offer_local: state.backend_launch_phase === BackendLaunchPhase.wait_for_user && launch_params.pluto_server_url != null,
-    binder: launch_params.binder_url != null && state.backend_launch_phase != null,
     code_differs: state.notebook.cell_order.some(
         (cell_id) => state.cell_inputs_local[cell_id] != null && state.notebook.cell_inputs[cell_id]?.code !== state.cell_inputs_local[cell_id].code
     ),
@@ -216,8 +208,6 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  *  disable_ui: boolean,
  *  preamble_html: string?,
  *  isolated_cell_ids: string[]?,
- *  binder_url: string?,
- *  pluto_server_url: string?,
  *  slider_server_url: string?,
  *  recording_url: string?,
  *  recording_url_integrity: string?,
@@ -329,10 +319,6 @@ export const url_logo_small = get_included_external_source("pluto-logo-small")?.
  * disable_ui: boolean,
  * static_preview: boolean,
  * inspecting_hidden_code: boolean,
- * backend_launch_phase: ?number,
- * backend_launch_logs: ?string,
- * binder_session_url: ?string,
- * binder_session_token: ?string,
  * refresh_target: ?string,
  * connected: boolean,
  * initializing: boolean,
@@ -368,13 +354,6 @@ export class Editor extends Component {
             disable_ui: launch_params.disable_ui,
             static_preview: launch_params.statefile != null,
             inspecting_hidden_code: false,
-            backend_launch_phase:
-                launch_params.notebookfile != null && (launch_params.binder_url != null || launch_params.pluto_server_url != null)
-                    ? BackendLaunchPhase.wait_for_user
-                    : null,
-            backend_launch_logs: null,
-            binder_session_url: null,
-            binder_session_token: null,
             refresh_target: null,
             connected: false,
             initializing: true,
@@ -841,8 +820,6 @@ all patches: ${JSON.stringify(patches, null, 1)}
 
         const on_update = (update, by_me) => {
             if (this.state.notebook.notebook_id === update.notebook_id) {
-                const show_debugs = launch_params.binder_url != null
-                if (show_debugs) console.debug("on_update", update, by_me)
                 const message = update.message
                 switch (update.type) {
                     case "notebook_diff":
@@ -883,7 +860,6 @@ all patches: ${JSON.stringify(patches, null, 1)}
                         // alert("Something went wrong 🙈\n Try clearing your browser cache and refreshing the page")
                         break
                 }
-                if (show_debugs) console.debug("on_update done")
             } else {
                 // Update for a different notebook, TODO maybe log this as it shouldn't happen
             }
@@ -921,7 +897,6 @@ all patches: ${JSON.stringify(patches, null, 1)}
                 initializing: false,
                 static_preview: false,
                 inspecting_hidden_code: false,
-                backend_launch_phase: this.state.backend_launch_phase == null ? null : BackendLaunchPhase.ready,
             })
 
             this.updateLang()
@@ -969,20 +944,14 @@ all patches: ${JSON.stringify(patches, null, 1)}
         }
 
         this.export_url = (/** @type {string} */ u, /** @type {Record<string, string | null | undefined>=} */ params = {}) =>
-            with_query_params(
-                this.state.binder_session_url == null
-                    ? `./${u}?id=${this.state.notebook.notebook_id}`
-                    : `${this.state.binder_session_url}${u}?id=${this.state.notebook.notebook_id}&token=${this.state.binder_session_token}`,
-                params
-            )
+            with_query_params(`./${u}?id=${this.state.notebook.notebook_id}`, params)
 
         /** @type {import('../common/PlutoConnection').PlutoConnection} */
         this.client = /** @type {import('../common/PlutoConnection').PlutoConnection} */ ({})
 
         this.connect = (/** @type {string | undefined} */ ws_address = undefined) => {
-            const psu = this.props.launch_params.pluto_server_url
             return create_pluto_connection({
-                ws_address: ws_address ?? (psu ? ws_address_from_base(new URL(psu, window.location.href)) : undefined),
+                ws_address: ws_address,
                 on_unrequested_update: on_update,
                 on_connection_status: on_connection_status,
                 on_reconnect: on_reconnect,
@@ -1281,18 +1250,6 @@ all patches: ${JSON.stringify(patches, null, 1)}
                     selected_cells: [],
                 })
             }
-
-            if (this.state.disable_ui && this.state.backend_launch_phase === BackendLaunchPhase.wait_for_user) {
-                // const code = e.key?.charCodeAt(0)
-                if (e.key === "Enter" || e.key?.length === 1) {
-                    if (!document.body.classList.contains("wiggle_binder")) {
-                        document.body.classList.add("wiggle_binder")
-                        setTimeout(() => {
-                            document.body.classList.remove("wiggle_binder")
-                        }, 1000)
-                    }
-                }
-            }
         })
 
         document.addEventListener("copy", (e) => {
@@ -1356,13 +1313,6 @@ all patches: ${JSON.stringify(patches, null, 1)}
                 event.returnValue = ""
             } else {
                 console.warn("unloading 👉 disconnecting websocket")
-                //@ts-ignore
-                if (window.shutdown_binder != null) {
-                    // hmmmm that would also shut down the binder if you refreshed, or if you navigate to the binder session main menu by clicking the pluto logo.
-                    // Let's keep it disabled for now and let the timeout take care of shutting down the binder
-                    // window.shutdown_binder()
-                }
-                // and don't prevent the unload
             }
         })
     }
@@ -1406,11 +1356,6 @@ all patches: ${JSON.stringify(patches, null, 1)}
 
         this.maybe_send_queued_bond_changes()
 
-        if (old_state.backend_launch_phase !== this.state.backend_launch_phase && this.state.backend_launch_phase != null) {
-            const phase = Object.entries(BackendLaunchPhase).find(([k, v]) => v == this.state.backend_launch_phase)?.[0]
-            console.info(`Binder phase: ${phase} at ${new Date().toLocaleTimeString()}`)
-        }
-
         if (old_state.disable_ui !== this.state.disable_ui || old_state.connected !== this.state.connected) {
             this.on_disable_ui()
         }
@@ -1442,7 +1387,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                 <${PlutoActionsContext.Provider} value=${this.actions}>
                     <${PlutoBondsContext.Provider} value=${this.state.notebook.bonds}>
                         <${PlutoJSInitializingContext.Provider} value=${this.js_init_set}>
-                            <${ProgressBar} notebook=${this.state.notebook} backend_launch_phase=${this.state.backend_launch_phase} status=${status}/>
+                            <${ProgressBar} notebook=${this.state.notebook} />
                             <div style="width: 100%">
                                 ${this.state.notebook.cell_order.map(
                                     (cell_id, i) => html`
@@ -1487,21 +1432,8 @@ all patches: ${JSON.stringify(patches, null, 1)}
                         }}
                         >${t("t_skip_to_notebook")}</a
                     >
-                    ${
-                        status.static_preview && status.offer_local
-                            ? html`<button
-                                  title=${t("t_navigate_to_previous_page")}
-                                  onClick=${() => {
-                                      history.back()
-                                  }}
-                                  class="floating_back_button"
-                              >
-                                  <span></span>
-                              </button>`
-                            : null
-                    }
                     <${Scroller} active=${this.state.scroller} />
-                    <${ProgressBar} notebook=${this.state.notebook} backend_launch_phase=${this.state.backend_launch_phase} status=${status}/>
+                    <${ProgressBar} notebook=${this.state.notebook} />
                     <header id="pluto-nav">
                         <${Header}
                             notebook=${notebook}
@@ -1545,7 +1477,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                         <${Notebook}
                             notebook=${notebook}
                             cell_inputs_local=${this.state.cell_inputs_local}
-                            disable_input=${this.state.disable_ui || !this.state.connected /* && this.state.backend_launch_phase == null*/}
+                            disable_input=${this.state.disable_ui || !this.state.connected}
                             last_created_cell=${this.state.last_created_cell}
                             selected_cells=${this.state.selected_cells}
                             is_initializing=${this.state.initializing}

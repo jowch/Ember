@@ -841,7 +841,6 @@ nav#at_the_top:after {
 
 pluto-editor.nbpkg_restart_recommended > header#pluto-nav,
 pluto-editor.nbpkg_restart_required > header#pluto-nav,
-pluto-editor.binder.loading > header#pluto-nav,
 pluto-editor.process_dead > header#pluto-nav,
 pluto-editor.disconnected > header#pluto-nav {
     position: sticky;
@@ -863,9 +862,6 @@ pluto-editor.loading > header#pluto-nav {
 }
 pluto-editor.disconnected > header#pluto-nav {
     background-color: var(--disconnected-header-color);
-}
-pluto-editor.binder.loading > header#pluto-nav {
-    background-color: var(--binder-loading-header-color);
 }
 
 /* Header contents (ui-3.md, Header; ui-3-plan.md piece 5 step 6): the
@@ -1412,14 +1408,6 @@ loading-bar {
     z-index: 12000;
     animation: move-background 2s ease-in-out infinite;
 }
-loading-bar.slow {
-    transition:
-        width cubic-bezier(0.14, 0.71, 0, 0.99) 10s,
-        opacity linear 0.5s;
-}
-pluto-editor.binder.loading #binder_spinners {
-    opacity: 0.25;
-}
 
 @keyframes move-background {
     0% {
@@ -1663,11 +1651,6 @@ pluto-output:not(.rich_output) > div > pre {
     display: flex;
 }
 
-.bonds_disabled:where(.offer_binder, .offer_local) bond {
-    opacity: 0.6;
-    filter: grayscale(1);
-}
-
 @keyframes fadeintext {
     from {
         color: transparent;
@@ -1841,7 +1824,6 @@ pluto-cell.code_folded.show_input > pluto-input:not(:focus-within) {
 
 /* UI */
 
-button.floating_back_button,
 .overlay-button button,
 pluto-cell > button,
 pluto-input > button,
@@ -2824,7 +2806,6 @@ nav#slide_controls > button {
     padding: 5px;
 }
 
-button.floating_back_button > span::after,
 nav#slide_controls > button > span::after {
     content: " " !important;
     display: block;
@@ -2832,7 +2813,6 @@ nav#slide_controls > button > span::after {
     width: 30px;
     background-size: 30px 30px;
 }
-button.floating_back_button > span::after,
 nav#slide_controls > button.prev > span::after {
     background-image: url("./img/icons/arrow-back-outline.svg");
     filter: var(--image-filters);
@@ -2840,14 +2820,6 @@ nav#slide_controls > button.prev > span::after {
 nav#slide_controls > button.next > span::after {
     background-image: url("./img/icons/arrow-forward-outline.svg");
     filter: var(--image-filters);
-}
-
-button.floating_back_button {
-    display: flex;
-    position: fixed;
-    z-index: 1000;
-    left: 1em;
-    top: 1em;
 }
 
 /* CODEMIRROR HINTS */

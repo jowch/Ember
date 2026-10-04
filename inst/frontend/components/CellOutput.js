@@ -765,7 +765,7 @@ export const generateCopyHeaderIdButton = (/** @type {HTMLHeadingElement} */ hea
 
         const is_localhost_hostname = (hostname) => hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0"
         if (
-            (!launch_params || (launch_params.disable_ui && launch_params.notebook_id == null && launch_params.pluto_server_url == null)) &&
+            (!launch_params || (launch_params.disable_ui && launch_params.notebook_id == null)) &&
             !is_localhost_hostname(root.hostname)
         ) {
             url_to_copy = `${root.href}${url_to_copy}`
