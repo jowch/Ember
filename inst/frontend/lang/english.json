@@ -185,6 +185,7 @@
     "t_settings_notify_blocked": "Your browser blocks notifications from this page.",
     "t_settings_reset_defaults": "Reset to defaults",
     "t_settings_done": "Done",
+    "t_confirm_long_run_title": "Run long cells again?",
     "t_confirm_long_run_one": "This reruns {{count}} cell that took about {{time}} last time.",
     "t_confirm_long_run_other": "This reruns {{count}} cells that took about {{time}} last time.",
     "t_run": "Run",

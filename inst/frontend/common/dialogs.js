@@ -69,12 +69,13 @@ export const Dialog = ({ title, title_note, class_name, on_close, role = "dialog
         }
         dialog_el?.addEventListener("click", handle_backdrop_click)
 
+        // showModal() focuses an autofocus element itself; without one it
+        // would focus the first control, and a later focus() would move it.
+        const first = dialog_el?.querySelector(".primary") ?? dialog_el?.querySelector("button, input, textarea, select, a[href]")
+        first?.setAttribute("autofocus", "")
         open()
-        requestAnimationFrame(() => {
-            const el = dialog_el?.querySelector(".primary") ?? dialog_el?.querySelector("button, input, textarea, select, a[href]")
-            // @ts-ignore
-            el?.focus?.()
-        })
+        // @ts-ignore
+        first?.focus?.()
 
         return () => {
             dialog_el?.removeEventListener("close", handle_close)

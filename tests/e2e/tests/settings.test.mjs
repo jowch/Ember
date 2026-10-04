@@ -43,8 +43,16 @@ test("settings: opens from ⋯, traps Tab, applies theme, indent and Tab key liv
   await openNotebook(page, server.origin, server.secret, notebook);
   await page.evaluate(() => { window.__same_page = true; });
 
+  await page.evaluate(() => {
+    window.__dialog_focus = [];
+    document.addEventListener("focusin", (e) => {
+      if (e.target.closest("dialog.psettings") != null) window.__dialog_focus.push(e.target.textContent.trim() || e.target.className);
+    });
+  });
   let dialog = await openSettings(page);
   await page.waitForFunction(() => document.activeElement?.closest("dialog.psettings") != null, null, { timeout: 2000 });
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  assert.deepEqual(await page.evaluate(() => window.__dialog_focus), ["Done"], "the dialog puts focus on Done in one step");
 
   // Chromium rests on <body> for one Tab while wrapping from the last
   // control back to the first; any other element outside fails.
@@ -60,6 +68,13 @@ test("settings: opens from ⋯, traps Tab, applies theme, indent and Tab key liv
   }
   assert.ok(!seen.includes("outside"), `Tab left the dialog: ${seen.join(", ")}`);
   assert.ok(seen.indexOf("radio:Match system", seen.indexOf("Done")) > 0, `Tab came round from Done to the first control: ${seen.join(", ")}`);
+  for (let i = 0; i < 14 && !(await page.evaluate(() => document.activeElement?.getAttribute("role") === "radio")); i++) await page.keyboard.press("Tab");
+  const ring = await page.evaluate(() => {
+    const el = document.activeElement;
+    const s = getComputedStyle(el);
+    return { radio: el.getAttribute("role"), visible: el.matches(":focus-visible"), style: s.outlineStyle, offset: s.outlineOffset };
+  });
+  assert.deepEqual(ring, { radio: "radio", visible: true, style: "solid", offset: "2px" }, "a segment's focus ring sits 2 px out");
 
   const before = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--main-bg-color").trim());
   await pick(dialog, "Theme", "Dark");

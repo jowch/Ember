@@ -61,7 +61,12 @@ export const ConfirmBeforeLongRuntime = () => {
         if (!currently_open) detail?.on_result(false)
     }, [currently_open])
 
-    return html`<dialog ref=${dialog_ref} class="confirm-before-long-runtime" aria-describedby="ember-long-run-text">
+    return html`<dialog
+        ref=${dialog_ref}
+        class="confirm-before-long-runtime"
+        aria-label=${t("t_confirm_long_run_title")}
+        aria-describedby="ember-long-run-text"
+    >
         <p id="ember-long-run-text">${t("t_confirm_long_run", { count: detail?.count ?? 0, time: pretty_long_time(detail?.time ?? 0) })}</p>
         <div class="ember-dialog-actions">
             <button type="button" class="ember-btn" onClick=${close}>${t("t_cancel")}</button>

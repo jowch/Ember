@@ -3015,7 +3015,6 @@ pluto-header-id-copy:focus-visible {
     display: inline-flex;
     border: 1px solid var(--ember-line);
     border-radius: 7px;
-    overflow: hidden;
     background: var(--ember-page);
 }
 
@@ -3033,6 +3032,11 @@ pluto-header-id-copy:focus-visible {
 
 .ember-seg button:first-child {
     border-left: 0;
+    border-radius: 6px 0 0 6px;
+}
+
+.ember-seg button:last-child {
+    border-radius: 0 6px 6px 0;
 }
 
 .ember-seg button[aria-checked="true"] {
@@ -3044,7 +3048,7 @@ pluto-header-id-copy:focus-visible {
 
 .ember-seg button:focus-visible {
     outline: 2px solid var(--ember-focus-ring);
-    outline-offset: -2px;
+    outline-offset: 2px;
 }
 
 .ember-switch {
