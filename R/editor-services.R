@@ -187,7 +187,7 @@ completion_reply <- function(ctx, items) {
   results <- lapply(items$items %||% list(), function(it) {
     kind <- it$kind %||% "other"
     value_type <- if (identical(kind, "function")) "Function" else "Any"
-    completion_type <- switch(kind, argument = "keyword_argument", path = "path", "")
+    completion_type <- switch(kind, argument = "keyword_argument", path = "path", package = "package", "")
     arr(it$name, value_type, TRUE, isTRUE(it$notebook), completion_type, NULL)
   })
   list(start = start, stop = stop, results = as_arr(results), too_long = isTRUE(items$too_long))

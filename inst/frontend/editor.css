@@ -2522,35 +2522,52 @@ nav#undo_delete.hidden {
     display: none;
 }
 
+/* The completion list and its info pane, drawn like Ember's menus (board
+   Menus6, the cell menu in cells.css). */
+.cm-editor .cm-tooltip.cm-tooltip-autocomplete,
+.cm-editor .cm-tooltip.cm-completionInfo {
+    border: 1px solid var(--ember-line);
+    border-radius: 6px;
+    box-shadow: var(--ember-shadow);
+    background: var(--ember-panel);
+    color: var(--ember-text);
+}
+.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul {
+    padding: 4px;
+    font-family: var(--ember-code-font);
+}
 .cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li {
-    /* this is the line height rounded to an integer to prevent jiggle */
-    height: 16px;
-    overflow-y: hidden;
-    /* font-size: 16px; */
-    line-height: 16px;
-    border-radius: 3px;
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    padding: 4px 10px;
+    font-size: 12.5px;
+    line-height: 18px;
+    border-radius: 4px;
+    color: var(--ember-text);
 }
-pluto-input .cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li {
-    height: unset;
-}
-
 .cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] {
-    color: var(--cm-color-editor-li-aria-selected);
-    background: var(--cm-color-editor-li-aria-selected-bg);
+    color: var(--ember-text);
+    background: var(--ember-active);
 }
 .cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li[aria-selected] .cm-completionLabel {
     border-color: transparent;
 }
 .cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > li .cm-completionDetail {
-    float: right;
-    margin-right: 0.5em;
-    font-size: 0.8em;
-    font-family: var(--code-font-stack);
+    margin-left: auto;
+    font-family: var(--ember-ui-font);
+    font-size: 11.5px;
     font-style: normal;
+    color: var(--ember-faint);
+}
+.cm-editor .cm-tooltip.cm-completionInfo {
+    padding: 8px 10px;
+    font-family: var(--ember-ui-font);
+    font-size: 12.5px;
 }
 
 .cm-editor .cm-tooltip.cm-tooltip-autocomplete li.c_notexported {
-    color: var(--cm-color-editor-li-notexported);
+    color: var(--ember-muted);
 }
 
 .cm-editor .cm-completionIcon {
@@ -2585,8 +2602,7 @@ Based on "Paraíso (Light)" by Jan T. Sott:
 }
 
 [data-pluto-variable],
-[data-pluto-variable]:hover,
-.cm-editor .cm-tooltip.cm-tooltip-autocomplete li.c_from_notebook .cm-completionLabel {
+[data-pluto-variable]:hover {
     font-weight: bold;
     text-decoration: underline;
     text-decoration-color: var(--cm-color-clickable-underline);
@@ -2621,9 +2637,11 @@ pluto-editor:not(.disable_ui) [data-ctrl-down="true"][data-pluto-variable]:hover
     text-shadow: 0 0 #af5bc3;
 }
 
+/* Lines the label up with the typed text: the list's border and padding
+   plus the item's own padding. */
 .cm-tooltip.cm-tooltip-autocomplete {
     padding: 0;
-    margin-left: -1.5em;
+    margin-left: -15px;
     background: var(--autocomplete-menu-bg-color);
 }
 
@@ -2632,11 +2650,14 @@ pluto-input .cm-editor .cm-scroller {
 }
 
 pluto-input .cm-editor .cm-content,
-pluto-input .cm-editor .cm-scroller,
-.cm-editor .cm-tooltip-autocomplete .cm-completionLabel {
+pluto-input .cm-editor .cm-scroller {
     font-family: var(--code-font-stack) !important;
     font-variant-ligatures: none;
     font-size: 0.8rem;
+}
+.cm-editor .cm-tooltip-autocomplete .cm-completionLabel {
+    font-family: var(--ember-code-font);
+    font-variant-ligatures: none;
 }
 
 pluto-input .cm-editor .cm-content {
@@ -2733,10 +2754,6 @@ pluto-cell.errored > pluto-input > .cm-editor .cm-lineNumbers .cm-gutterElement:
     color: var(--cm-color-keyword);
 }
 
-li.completion_keyword_argument .cm-completionLabel {
-    font-style: italic;
-    font-weight: bold;
-}
 .cm-completionIcon-completion_keyword_argument::before {
     color: var(--cm-color-literal);
 }

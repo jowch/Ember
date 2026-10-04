@@ -5,6 +5,7 @@ import { get_selected_doc_from_state } from "./LiveDocsFromCursor.js"
 import { cl } from "../../common/ClassTable.js"
 import { open_bottom_right_panel } from "../BottomRightPanel.js"
 import { GlobalDefinitionsFacet } from "./go_to_definition_plugin.js"
+import { t } from "../../common/lang.js"
 
 // R's string node names (rHighlight in codemirror-ember-setup.js): not
 // mixedParsers.js's STRING_NODE_NAMES, which is Julia's set (for `md"""`
@@ -125,8 +126,22 @@ const keyword_completions = sorted_keywords.map((label) => ({
     label,
     apply: label,
     type: "completion_keyword",
+    detail: t("t_completion_kind_keyword"),
     section: section_regular,
 }))
+
+/** The muted label on the right of a completion: what kind of name it is,
+ * when the server says. */
+const completion_kind_label = (/** @type {string} */ completion_type, /** @type {boolean} */ is_from_notebook) =>
+    completion_type === "keyword_argument"
+        ? t("t_completion_kind_argument")
+        : completion_type === "package"
+          ? t("t_completion_kind_package")
+          : completion_type === "path"
+            ? t("t_completion_kind_path")
+            : is_from_notebook
+              ? t("t_completion_kind_notebook")
+              : undefined
 
 /** An R identifier, after the point other characters (an operator, a
  * bracket, whitespace) rule completion out: letters, digits, `.` and `_`
@@ -235,6 +250,7 @@ const r_completions_to_cm =
                             [`completion_${completion_type}`]: true,
                             c_from_notebook: is_from_notebook,
                         }) ?? undefined,
+                    detail: completion_kind_label(completion_type, is_from_notebook),
                     section: section_regular,
                     boost: completion_type === "keyword_argument" ? 7 : undefined,
                 })),
@@ -258,6 +274,7 @@ const map_name_to_global_completions = (name) => ({
     label: name,
     apply: name,
     type: from_notebook_type,
+    detail: t("t_completion_kind_notebook"),
     section: section_regular,
     boost: 1,
 })
@@ -338,6 +355,7 @@ export let pluto_autocomplete = ({ request_autocomplete, on_update_doc_query, re
     return [
         autocompletion({
             activateOnTyping: activate_on_typing,
+            icons: false,
             override: [
                 global_variables_completion(request_unsubmitted_global_definitions, cell_id),
                 r_completions_to_cm(memoize_last_request_autocomplete),

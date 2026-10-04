@@ -120,17 +120,19 @@ test_that("completion_reply() (52)", {
   items <- list(too_long = FALSE, items = list(
     list(name = "formula=", kind = "argument", notebook = FALSE),
     list(name = "foo/", kind = "path", notebook = FALSE),
-    list(name = "foo", kind = "function", notebook = TRUE)
+    list(name = "foo", kind = "function", notebook = TRUE),
+    list(name = "forcats", kind = "package", notebook = FALSE)
   ))
   reply <- completion_reply(ctx, items)
   expect_identical(reply$start, 5L)
   expect_identical(reply$stop, 5L + nchar("fo", type = "bytes"))
-  expect_length(reply$results, 3)
+  expect_length(reply$results, 4)
   for (r in reply$results) expect_length(r, 6)
   expect_identical(reply$results[[1]][[5]], "keyword_argument")
   expect_identical(reply$results[[2]][[5]], "path")
   expect_identical(reply$results[[3]][[2]], "Function")
   expect_identical(reply$results[[3]][[4]], TRUE)
+  expect_identical(reply$results[[4]][[5]], "package")
   expect_false(reply$too_long)
 })
 
