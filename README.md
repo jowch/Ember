@@ -43,17 +43,21 @@ Ember includes a little C code, so installing from source needs a compiler
 
 ## Getting started
 
-Create a notebook and open it in your browser:
+Start Ember and open it in your browser:
 
 ```r
-nb <- ember::new_notebook("analysis.R")
-ember::close_notebook(nb)
-
-srv <- ember::start_server("analysis.R")   # opens the notebook in your browser
+srv <- ember::start_server()
 ```
 
-Click **Run notebook code** to leave safe preview, then write code in the
-cells. Shift+Enter runs a cell. When you're done:
+This opens the start page, which lists your notebooks. Click **New
+notebook**, give it a name and a folder, and it opens. To open a notebook
+you already have, use the start page's file field, or pass the file to
+`start_server("analysis.R")`. From inside a notebook, the flame at the top
+left or ⋯ → **Open another notebook** goes back to the start page.
+
+A notebook you open from a file starts in safe preview: click **Run this
+notebook** to run it. Then write code in the cells. Shift+Enter runs a
+cell, and ⋯ → **Keyboard shortcuts** lists the rest. When you're done:
 
 ```r
 srv$stop()
@@ -74,10 +78,8 @@ ember::run("analysis.R")
 
 ## What's missing
 
-Ember is being built in steps. Not yet available:
-
-- creating a notebook from the browser (use `new_notebook()` for now);
-- interactive inputs, like Pluto's `@bind`.
+Ember is being built in steps. Not yet available: interactive inputs, like
+Pluto's `@bind`.
 
 The full list of known gaps is in [docs/design-gaps.md](docs/design-gaps.md),
 and the design in [docs/design.md](docs/design.md).
