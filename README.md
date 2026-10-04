@@ -49,7 +49,18 @@ Start Ember and open it in your browser:
 srv <- ember::start_server()
 ```
 
-This opens the start page, which lists your notebooks. Click **New
+It opens the start page and prints its link:
+
+```
+Ember is running at http://127.0.0.1:4321/?secret=...
+Stop it by calling $stop() on the returned server, or by quitting R.
+```
+
+The link carries a key that changes each time Ember starts. If a browser
+tab says "This link needs Ember's current key", open the link printed in
+the R console; Ember prints it again when that happens.
+
+The start page lists your notebooks. Click **New
 notebook**, give it a name and a folder, and it opens. To open a notebook
 you already have, use the start page's file field, or pass the file to
 `start_server("analysis.R")`. From inside a notebook, the flame at the top

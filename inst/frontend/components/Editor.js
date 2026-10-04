@@ -307,6 +307,7 @@ export const url_logo_small = get_included_external_source("pluto-logo-small")?.
  * inspecting_hidden_code: boolean,
  * refresh_target: ?string,
  * connected: boolean,
+ * key_refused: boolean,
  * initializing: boolean,
  * scroller: {
  * up: boolean,
@@ -342,6 +343,7 @@ export class Editor extends Component {
             inspecting_hidden_code: false,
             refresh_target: null,
             connected: false,
+            key_refused: false,
             initializing: true,
 
             scroller: {
@@ -932,6 +934,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                 ws_address: ws_address,
                 on_unrequested_update: on_update,
                 on_connection_status: on_connection_status,
+                on_key_refused: () => this.setState({ key_refused: true }),
                 on_reconnect: on_reconnect,
                 connect_metadata: { notebook_id: this.state.notebook.notebook_id },
             }).then(on_establish_connection)
@@ -1431,6 +1434,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                         <${Header}
                             notebook=${notebook}
                             connected=${this.state.connected}
+                            key_refused=${this.state.key_refused}
                             code_differs=${status.code_differs}
                             export_links=${{
                                 file_url: this.export_url("notebookfile"),

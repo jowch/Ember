@@ -4,11 +4,20 @@ import { pack, unpack } from "./MsgPack.js"
 import "./Polyfill.js"
 import { Stack } from "./Stack.js"
 import { with_query_params } from "./URLTools.js"
-import { ask, reload_prompt } from "./dialogs.js"
+import { ask, reload_prompt, tell } from "./dialogs.js"
 import { t } from "./lang.js"
 
 const reconnect_after_close_delay = 500
 const retry_after_connect_failure_delay = 5000
+
+/** The close code Ember's server uses when it refuses this page's secret: `WS_CLOSE_KEY_REFUSED` in R/server.R. */
+const key_refused_close_code = 4403
+
+const is_key_refused = (/** @type {any} */ e) => e instanceof CloseEvent && e.code === key_refused_close_code
+
+/** Ember restarted (a new key) under this open page: retrying with the old key can never succeed. */
+const tell_key_refused = () =>
+    tell({ title: t("t_ember_key_refused_title"), body: t("t_ember_key_refused"), key: "ember-key-refused" })
 
 /**
  * Return a promise that resolves to:
@@ -173,7 +182,7 @@ const create_ws_connection = (address, { on_message, on_socket_close }, timeout_
             console.warn(`Socket did an oopsie - ${e.type}`, new Date().toLocaleTimeString(), "was open:", has_been_open, e)
 
             if (has_been_open) {
-                on_socket_close()
+                on_socket_close(e)
                 try_close_socket_connection(socket)
             } else {
                 reject(e)
@@ -288,6 +297,7 @@ const default_ws_address = () => ws_address_from_base(window.location.href)
  *  on_unrequested_update: (message: PlutoMessage, by_me: boolean) => void,
  *  on_reconnect: () => Promise<boolean>,
  *  on_connection_status: (connection_status: boolean, hopeless: boolean) => void,
+ *  on_key_refused?: () => void,
  *  connect_metadata?: Object,
  *  ws_address?: String,
  * }} options
@@ -297,6 +307,7 @@ export const create_pluto_connection = async ({
     on_unrequested_update,
     on_reconnect,
     on_connection_status,
+    on_key_refused = () => {},
     connect_metadata = {},
     ws_address = default_ws_address(),
 }) => {
@@ -372,8 +383,13 @@ export const create_pluto_connection = async ({
                     }
                     on_unrequested_update(update, by_me)
                 },
-                on_socket_close: async () => {
+                on_socket_close: async (/** @type {CloseEvent=} */ e) => {
                     on_connection_status(false, false)
+                    if (is_key_refused(e)) {
+                        on_key_refused()
+                        tell_key_refused()
+                        return
+                    }
                     if (!auto_reconnect) {
                         console.log("Auto-reconnect is disabled, so we're not reconnecting")
                         on_connection_status(false, true)
@@ -427,6 +443,12 @@ export const create_pluto_connection = async ({
             return u.message
         } catch (ex) {
             console.error("connect() failed", ex)
+            if (is_key_refused(ex)) {
+                on_connection_status(false, false)
+                on_key_refused()
+                tell_key_refused()
+                return {}
+            }
             alert_if_not_authenticated(ws_address, ex).catch(() => null) // No await, we want this to run in the background
             await Promises.delay(retry_after_connect_failure_delay)
             return await connect()
