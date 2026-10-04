@@ -567,8 +567,8 @@ join_names <- function(names, conj = "and") {
 #' "Multiple definitions for x and y" and "Cyclic references among a, b."
 #' are built from the error's `names` (the engine's own `message` reads
 #' differently); every other kind uses the engine's `message`. Each of the
-#' error's `fixes` is a further line (ErrorMessage.js is changed to show
-#' those lines as they are instead of Julia's "begin ... end" hint).
+#' error's `fixes` is a further line, which ErrorMessage.js shows under the
+#' first at normal weight.
 #'
 #' `"upstream"` is its own case: `msg` is "Another cell defining a contains
 #' errors." (names joined with "or": any one of them failing is enough),

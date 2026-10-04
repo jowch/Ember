@@ -51,15 +51,12 @@ export const Preamble = ({ any_code_differs, last_update_time, last_hot_reload_t
     }, [connected])
 
     useEffect(() => {
-        console.log("Hottt", last_hot_reload_time, old_enough)
         if (old_enough) {
             set_reload_state("reloaded_from_file")
-            console.log("set state")
 
             await_focus().then(() => {
                 reload_timeout_ref.current = setTimeout(() => {
                     set_reload_state("")
-                    console.log("reset state")
                 }, 8000)
             })
             return () => clear_timeout(reload_timeout_ref?.current)
