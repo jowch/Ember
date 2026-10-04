@@ -279,6 +279,24 @@ test_that("project_error() adds ember_call/line/deep and frames' source_package/
   expect_equal(o$plain_error, project_error(baseline)$plain_error)
 })
 
+test_that("project_error() drops ember_cell when it isn't a known cell id (item 4)", {
+  tb <- c("outer()", "inner()")  # innermost last, as new_run_error() documents
+  frames <- list(list(call = "outer()", package = NULL, cell = "A"),
+                 list(call = "inner()", package = NULL, cell = "<text>"))
+  err <- new_run_error("error", message = "boom", traceback = tb, frames = frames)
+
+  # With no known_ids, every frame's cell passes through unchecked.
+  o_unchecked <- project_error(err)
+  expect_equal(o_unchecked$stacktrace[[1]]$ember_cell, "<text>")
+  expect_equal(o_unchecked$stacktrace[[2]]$ember_cell, "A")
+
+  # "<text>" (a text cell's per-line parse, which keeps no srcfile) isn't
+  # one of the notebook's real cell ids, so it's dropped; "A" is kept.
+  o <- project_error(err, known_ids = c("A", "B"))
+  expect_null(o$stacktrace[[1]]$ember_cell)
+  expect_equal(o$stacktrace[[2]]$ember_cell, "A")
+})
+
 test_that("an interrupted cell shows 'Interrupted' with no frames (10)", {
   v <- fake_view(status = "interrupted")
   o <- project_output(v)
