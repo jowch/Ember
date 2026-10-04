@@ -595,103 +595,6 @@ pluto-editor.static_preview button.toggle_export {
     background-image: url("./img/icons/build-outline.svg");
 }
 
-dialog.export-html-dialog {
-    max-width: 22rem;
-    border-radius: 0.6rem;
-    border: none;
-    background: var(--main-bg-color);
-    box-shadow: 0px 2px 30px #0000005c;
-    padding: 0;
-    font-family: var(--system-ui-font-stack);
-}
-
-dialog.export-html-dialog > div.ple-option {
-    padding: 1.4em 1.4em;
-}
-
-dialog.export-html-dialog > div.ple-or {
-    height: 0;
-    padding: 0 1.4em;
-    text-align: center;
-    font-weight: 700;
-    color: var(--pluto-output-color);
-    line-height: 0;
-    transform: translateY(-1px);
-}
-
-dialog.export-html-dialog > div.ple-or span {
-    background: var(--plutoland-or-bg-color);
-    padding: 0.2em 0.5em;
-    border-radius: 0.4em;
-}
-
-dialog.export-html-dialog > div {
-    padding: 1em;
-}
-
-dialog.export-html-dialog a {
-    color: inherit;
-    text-decoration-color: currentcolor;
-}
-
-dialog.export-html-dialog p {
-    margin: 0;
-}
-
-dialog.export-html-dialog > .ple-download > p {
-    color: var(--pluto-output-color);
-}
-
-dialog.export-html-dialog .ple-bigbutton-container {
-    display: grid;
-    place-items: center;
-    padding: 2em 0.5em 1em 0.5em;
-}
-
-dialog.export-html-dialog :is(.ple-bigbutton, .ple-plutoland-phase) {
-    display: block;
-    padding: 0.8em 1.2em;
-    border: none;
-    border-radius: 0.4em;
-    background: var(--plutoland-bigbutton-bg-color);
-    box-shadow: 0px 1px 10px #00000033;
-    text-decoration: none;
-    text-align: center;
-    color: var(--black);
-}
-
-dialog.export-html-dialog a.ple-plutoland-url {
-    font-family: var(--ember-code-font);
-    font-size: 0.7em;
-    font-weight: 700;
-    text-overflow: clip;
-    overflow: hidden;
-    white-space: nowrap;
-    background: var(--plutoland-url-bg);
-    color: var(--plutoland-url-fg);
-    padding: 0.2em 0.4em;
-    border-radius: 0.3em;
-    display: inline-block;
-}
-
-dialog.export-html-dialog .ple-plutoland-url-container {
-    margin-top: 1em;
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 0.5em;
-}
-
-dialog.export-html-dialog > div.ple-plutoland {
-    background: #3c4c59;
-    color: white;
-    box-shadow: inset 0px 0px 47px #00000030;
-}
-
-dialog.export-html-dialog > div.final button {
-    cursor: pointer;
-}
-
 dialog.confirm-before-long-runtime {
     width: min(360px, calc(100vw - 32px));
     padding: 20px;
@@ -1441,7 +1344,6 @@ loading-bar {
     box-shadow: inset 0px 0px 20px 20px #919bff2b;
 }
 
-
 .outline-frame-actions-container {
     position: fixed;
     top: 3px;
@@ -1734,7 +1636,6 @@ pluto-cell.depends_on_skipped_cells pluto-input .cm-editor {
     white-space: nowrap;
 }
 
-
 /* The code box fills the cell, so the selection is a band around it. */
 pluto-cell.selected {
     box-shadow: 0 0 0 4px var(--selected-cell-bg-color);
@@ -2018,157 +1919,6 @@ pluto-cell.code_folded.show_input:focus-within > pluto-input > .preview_hidden_c
     display: block;
 }
 
-/* AI Context */
-
-pluto-popup.ai-context > div {
-    background: var(--ai-gradient-bg);
-    box-shadow: 0 0 3rem #00000061;
-}
-
-.ai-context-container {
-    padding: 0.2rem;
-}
-
-.ai-context-container h2 {
-    margin: 0 0 0.5rem 0;
-    font-size: 1.2rem;
-    color: var(--pluto-output-h-color);
-}
-
-.ai-context-intro {
-    margin: 0.5rem 0;
-    font-size: 0.9rem;
-    color: var(--pluto-output-color);
-}
-
-.ai-context-question-input {
-    width: 100%;
-    padding: 8px 12px;
-    margin: 8px 0;
-    border: 3px solid transparent;
-    border-radius: 4px;
-    font-size: 0.95em;
-    background: var(--main-bg-color);
-    transition: border-color 0.2s;
-}
-
-.ai-context-question-input:focus,
-.ai-context-question-input:not(:placeholder-shown) {
-    border-color: var(--overlay-button-border);
-}
-
-.ai-context-question-input::placeholder {
-    color: var(--pluto-input-color);
-    opacity: 0.6;
-}
-
-.ai-context-prompt-container {
-    position: relative;
-    margin-top: 1rem;
-    border-radius: 6px;
-    box-shadow: 0 2px 11px #0000001f;
-    background: var(--ai-prompt-bg);
-}
-
-.ai-context-prompt {
-    max-height: 15ch;
-    overflow-y: auto;
-    padding: 0.5rem;
-    line-height: 1.5;
-}
-
-.ai-context-prompt pre {
-    margin: 0;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    font-family: inherit;
-    font-size: 0.5rem;
-}
-
-.ai-context-container .copy-button {
-    position: absolute;
-    bottom: 0.5rem;
-    right: 0.5rem;
-    padding: 0.5rem 1rem;
-    background: var(--white);
-    border: 3px solid var(--overlay-button-border);
-    border-radius: 0.7rem;
-    color: var(--black);
-    font-size: 0.9rem;
-    font-weight: bold;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    /* box-shadow: 0 1px 10px #0000001a; */
-}
-
-.ai-context-container .copy-button.copied {
-    /* color: var(--pluto-output-bg); */
-}
-
-/* PKG UI */
-
-pkg-status-mark {
-    width: 1em;
-    height: 1em;
-    margin: 0px 0.6em 0px 0.2em;
-    display: inline-block;
-}
-pluto-editor.nbpkg_disabled pkg-status-mark:not(.disable_pkg) {
-    display: none;
-}
-
-pkg-status-mark > button {
-    margin: 0px;
-    padding: 0px;
-    border: none;
-    background: none;
-    cursor: context-menu;
-    position: relative;
-    top: -0.2em;
-
-    /* background: rgba(127, 176, 76, 0.24);
-    border: 3px solid rgba(84, 182, 237, 0);
-    border-radius: 5px; */
-}
-
-pkg-status-mark > button > span::after {
-    display: inline-block;
-    content: " " !important;
-    background-size: 1.5em;
-    height: 1.5em;
-    width: 1.5em;
-
-    background-image: url("./img/icons/time-outline.svg");
-    opacity: 0.3;
-    filter: var(--image-filters);
-}
-
-pkg-status-mark.installed > button > span::after {
-    background-image: url("./img/icons/checkmark-outline.svg");
-    /* background-image: url("./img/icons/cloud-done-outline.svg"); */
-    filter: var(--image-filters);
-}
-pkg-status-mark.busy > button > span::after {
-    background-image: url("./img/icons/sync-outline.svg");
-    animation: loadspin 3s ease-in-out infinite;
-    filter: var(--image-filters);
-}
-pkg-status-mark.not_found > button > span::after {
-    background-image: url("./img/icons/cloud-offline-outline.svg");
-    opacity: 0.6;
-    filter: var(--image-filters);
-}
-pkg-status-mark.will_be_installed > button > span::after {
-    background-image: url("./img/icons/cloud-download-outline.svg");
-    opacity: 0.6;
-    filter: var(--image-filters);
-}
-pkg-status-mark.disable_pkg > button > span::after {
-    background-image: url("./img/icons/chatbox-ellipses-outline.svg");
-    opacity: 0.6;
-    filter: var(--image-filters);
-}
-
 pluto-popup {
     display: block;
     position: absolute;
@@ -2233,120 +1983,8 @@ pluto-popup.warn > * {
     border-color: var(--pluto-logs-warn-accent-color);
 }
 
-pluto-popup code.auto_disabled_variable {
-    font-family: var(--julia-mono-font-stack);
-    font-size: 0.8rem;
-    font-variant-ligatures: none;
-}
-
-pluto-popup > pkg-popup {
-    background: var(--pkg-popup-bg);
-    border: 3px solid var(--pkg-popup-border-color);
-}
-
-pkg-popup.busy {
-    border: 3px solid hsl(282deg 31% 62%);
-}
-
-pkg-version {
-    font-family: var(--ember-code-font);
-    font-size: 0.75rem;
-    color: var(--pkg-version-color);
-}
-
-pkg-popup .pkg-buttons {
-    float: right;
-    /* position: absolute; */
-    /* right: 0px; */
-    /* bottom: 0px; */
-    display: inline-flex;
-    height: 1em;
-    flex-direction: row;
-}
-
 .ionicon {
     filter: var(--image-filters);
-}
-
-.package-name .ionicon {
-    margin-bottom: -0.1ch;
-}
-
-a.stdout-info img,
-pkg-popup .pkg-buttons img {
-    filter: var(--image-filters);
-    width: 17px;
-}
-
-a.stdout-info,
-pkg-popup .pkg-buttons > * {
-    display: block;
-    height: 17px;
-    font-size: 14px;
-    padding: 3px;
-    box-sizing: content-box;
-    background: var(--pkg-popup-buttons-bg-color);
-    border-radius: 10px;
-    z-index: 52;
-    margin-left: -4px;
-}
-
-pkg-popup .toggle-terminal {
-    right: 20px;
-}
-
-.pkg-time-estimate {
-    font-size: 0.8em;
-    margin: 0.5em 0em;
-    padding: 0.5em 0.5em;
-    background: var(--pluto-logs-warn-color);
-    border-radius: 0.5em;
-}
-
-pkg-terminal {
-    position: relative;
-    display: block;
-    /* width: 20rem; */
-    cursor: text;
-    margin-top: 6px;
-    background: var(--pkg-terminal-bg-color);
-    color: white;
-    border-radius: 6px;
-    border: 3px solid var(--pkg-terminal-border-color);
-    padding: 3px;
-}
-
-pkg-terminal > .scroller {
-    max-height: 10rem;
-    overflow-y: auto;
-    padding: 4px;
-    width: 100%;
-}
-
-body pkg-terminal:not(.asdf) pre:not(.asdf) {
-    white-space: pre-wrap;
-    word-break: break-all;
-    font-size: 0.6rem;
-    font-family: var(--ember-code-font);
-    font-variant-ligatures: none;
-    margin: 0;
-    color: inherit;
-    background: none;
-}
-
-pkg-terminal .make-me-spin {
-    display: inline-block;
-    animation: identifier-spin 1s linear infinite;
-    transform-origin: 50% 59%;
-    animation-delay: var(--animation-delay);
-}
-
-pkg-popup pkg-terminal {
-    display: none;
-}
-
-pkg-popup.showterminal pkg-terminal {
-    display: block;
 }
 
 @keyframes loadspin {
@@ -2365,46 +2003,6 @@ pkg-popup.showterminal pkg-terminal {
     100% {
         transform: rotate(360deg);
     }
-}
-
-button.open-big-terminal {
-    position: absolute;
-    right: 0.1em;
-    bottom: 0.2em;
-    background: none;
-    border: none;
-}
-
-button.open-big-terminal::after {
-    content: "";
-    display: inline-block;
-    background-image: url("./img/icons/expand-outline.svg");
-    filter: invert(1);
-    width: 1em;
-    height: 1em;
-    background-size: 1em;
-    cursor: pointer;
-}
-
-dialog.big-pkg-terminal {
-    border: none;
-    border-radius: 8px;
-    box-shadow: 0 0 31px #0000007a;
-    background: var(--pkg-terminal-bg-color);
-}
-
-dialog.big-pkg-terminal > div {
-    display: flex;
-    flex-direction: column;
-}
-dialog.big-pkg-terminal button {
-    place-self: end;
-    margin-top: 1em;
-}
-
-dialog.big-pkg-terminal pkg-terminal > .scroller {
-    max-height: calc(100vh - 9em);
-    max-width: 91ch;
 }
 
 pluto-cell.code_folded.show_input > pluto-input:not(:focus-within) {
@@ -3021,8 +2619,7 @@ li.completion_keyword_argument .cm-completionLabel {
 }
 
 .cm-completionIcon-c_Any::before,
-pluto-output > assignee,
-pluto-popup code.auto_disabled_variable {
+pluto-output > assignee {
     color: var(--cm-color-variable) !important;
     font-weight: 700;
 }
@@ -3127,82 +2724,6 @@ pluto-cell.hooked_up > pluto-output {
     border-color: var(--pluto-cell-force-color);
 }
 
-.fm-table {
-    display: grid;
-    grid-template-columns: auto 1fr min-content;
-    gap: 0.3em 1em;
-}
-
-/* Frontmatter input and Project.toml editor */
-
-.pluto-modal {
-    font-family: var(--system-ui-font-stack);
-    width: min(31rem, 90vw);
-    border-radius: 1.8em;
-    padding: 1.3em 1.9em;
-    border: none;
-    box-shadow: 0 0 55px #00000052;
-    position: fixed;
-}
-
-.pluto-modal-dark {
-    color: var(--export-color);
-    background: var(--export-bg-color);
-}
-.pluto-modal-dark h1 {
-    color: white;
-    font-weight: 900;
-    margin-block-start: 0.3em;
-}
-
-.pluto-modal-dark :is(a) {
-    color: var(--export-color);
-    text-decoration-color: var(--export-color);
-}
-
-.pluto-modal button {
-    cursor: pointer;
-    border-radius: 0.5em;
-    font-weight: 500;
-}
-
-.pluto-modal-dark button {
-    background-color: var(--frontmatter-button-bg-color);
-    border: 2px solid var(--frontmatter-button-bg-color);
-}
-
-.pluto-modal-dark button:hover {
-    border-color: var(--frontmatter-input-border-color);
-}
-
-.pluto-modal-dark input {
-    background-color: var(--frontmatter-input-bg-color);
-    border-radius: 0.5em;
-    border: 2px solid var(--frontmatter-input-border-color);
-    padding: 0.3em 0.5em;
-}
-.pluto-modal-dark label {
-    font-weight: 500;
-}
-
-.pluto-modal .final {
-    display: flex;
-    margin-top: 1rem;
-    justify-content: flex-end;
-    gap: 0.5em;
-}
-
-.pluto-project_toml {
-    width: min(45rem, 90vw);
-}
-
-.pluto-project_toml .cm-editor {
-    font-family: var(--julia-mono-font-stack);
-    margin-block-end: 2rem;
-    border: 2px solid;
-    border-radius: 0.3em;
-}
-
 /*  Styles for markdown copy Button*/
 .markdown-code-block-button {
     position: relative;
@@ -3288,107 +2809,6 @@ pluto-output:hover pluto-header-id-copy:hover {
 /* Show button when focused */
 pluto-header-id-copy:focus-visible {
     opacity: 1;
-}
-
-.fix-with-ai {
-    display: inline-flex;
-    gap: 8px;
-    align-items: center;
-}
-
-.fix-with-ai button {
-    font-family: var(--system-ui-font-stack);
-    font-size: 0.8rem;
-    font-weight: 500;
-    padding: 4px 12px;
-    border-radius: 6px;
-    border: none;
-    color: var(--black);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    background: var(--ai-gradient-bg);
-    transition: background 0.3s ease;
-}
-
-.fix-with-ai button::before {
-    content: "";
-    display: inline-block;
-    width: 1.2em;
-    height: 1.2em;
-    background-size: contain;
-    filter: var(--image-filters);
-    transition: background-image 0.3s ease;
-}
-
-.fix-with-ai button::before {
-    background-image: url("./img/icons/sparkles.svg");
-}
-
-.fix-with-ai-loading button {
-    background: linear-gradient(135deg, rgba(65, 105, 225, 0.1), rgba(147, 112, 219, 0.1));
-}
-
-.fix-with-ai-loading button::before {
-    background-image: url("./img/icons/sync-outline.svg");
-    animation: identifier-spin 1s linear infinite;
-}
-
-.fix-with-ai-success button {
-    background: rgb(89 174 87 / 22%);
-}
-
-.fix-with-ai-success button::before {
-    background-image: url("./img/icons/caret-forward-circle-outline.svg");
-}
-
-.fix-with-ai button.reject-ai-fix {
-    background: rgba(231, 71, 71, 0.228);
-}
-
-.fix-with-ai button.reject-ai-fix::before {
-    background-image: url("./img/icons/close-outline.svg");
-}
-
-.ai-permission-prompt {
-    padding: 0.2em;
-}
-
-.ai-permission-prompt h3 {
-    margin-top: 0;
-    margin-bottom: 1rem;
-}
-/* 
-.ai-permission-prompt p {
-    margin-bottom: 1.5rem;
-    line-height: 1.4;
-} */
-
-.ai-permission-prompt .ask-next-time {
-    display: flex;
-    gap: 0.5ch;
-    margin-bottom: 1em;
-}
-
-.ai-permission-prompt .button-group {
-    display: flex;
-    gap: 0.75rem;
-}
-
-.ai-permission-prompt button {
-    padding: 0.5rem 1rem;
-    border-radius: 4px;
-    border: 1px solid var(--pluto-output-color);
-    background: var(--white);
-    color: var(--black);
-    cursor: pointer;
-    font-size: 0.9rem;
-}
-
-.ai-permission-prompt button.accept {
-    background: var(--black);
-    color: var(--white);
 }
 
 /* Shared dialogs (common/dialogs.js) and menus (common/useMenu.js). */
