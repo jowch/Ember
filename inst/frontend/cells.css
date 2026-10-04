@@ -11,6 +11,23 @@ pluto-input .cm-editor {
 pluto-input .cm-editor .cm-gutters {
     box-sizing: border-box;
     min-width: 34px;
+    border-right: none;
+}
+/* Line numbers on every code cell, focused or not, where Pluto shows a dot
+   until hovered (editor.css). */
+pluto-input .cm-editor .cm-gutter.cm-lineNumbers {
+    min-width: 34px;
+}
+pluto-input .cm-editor .cm-lineNumbers .cm-gutterElement {
+    box-sizing: border-box;
+    padding: 0 10px 0 4px;
+    font-size: 12px;
+    /* The code's line height (13px at 1.65), so numbers share its baselines. */
+    line-height: 21.45px;
+    color: var(--cm-color-line-numbers);
+}
+pluto-input .cm-editor .cm-lineNumbers .cm-gutterElement::after {
+    content: none;
 }
 pluto-input .cm-editor .cm-content,
 pluto-input .cm-editor .cm-scroller {

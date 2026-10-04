@@ -883,6 +883,44 @@ test("geometry: 26px between cells; a one-line code box is 7px 12px around 13px/
   assertNoProblems(page);
 });
 
+test("gutter: every code cell shows its line numbers, focused or not, 12px faint and 10px from the code", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-geometry-gutter.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.locator(cellSelector("W")).scrollIntoViewIfNeeded();
+  const gutter = `${cellSelector("W")} .cm-gutter.cm-lineNumbers`;
+  await page.waitForFunction((sel) => document.querySelectorAll(`${sel} .cm-gutterElement`).length >= 6, gutter, { timeout: 10000 });
+  const faint = await tokenColor(page, "--ember-faint");
+  const numbers = await page.locator(`${gutter} .cm-gutterElement`).evaluateAll((els) => els
+    .filter((el) => el.textContent !== "" && el.style.visibility !== "hidden")
+    .map((el) => {
+      const s = getComputedStyle(el);
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      return {
+        text: el.textContent,
+        color: s.color,
+        fontSize: s.fontSize,
+        after: getComputedStyle(el, "::after").content,
+        rightGap: el.closest(".cm-gutters").getBoundingClientRect().right - range.getBoundingClientRect().right,
+      };
+    }));
+  assert.deepEqual(numbers.map((n) => n.text), ["1", "2", "3", "4", "5"]);
+  for (const n of numbers) {
+    assert.equal(n.color, faint, `line ${n.text} in the faint colour`);
+    assert.equal(n.fontSize, "12px");
+    assert.equal(n.after, "none", `line ${n.text} has no dot`);
+    near(n.rightGap, 10, `line ${n.text} ends 10px left of the code`);
+  }
+  assert.equal(await page.locator(cellSelector("W")).evaluate((el) => el.contains(document.activeElement)), false, "W is not focused");
+
+  assertNoProblems(page);
+});
+
 test("geometry: the run button sits on the code box's top-left corner and gives way to the \"+\" above it", async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-geometry-run.server.log") });
