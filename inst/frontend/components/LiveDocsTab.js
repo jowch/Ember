@@ -201,11 +201,10 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
                 ></input>
             </div>
         </div>
-        <section ref=${(ref) => ref != null && post_process_doc_node(ref, on_update_doc_query)}>
+        <section class="ember-help-page" ref=${(ref) => ref != null && post_process_doc_node(ref, on_update_doc_query)}>
             ${state.package != null && state.from_cursor
                 ? html`<p class="ember-help-package">${t("t_ember_help_follows_cursor", { package: state.package })}</p>`
                 : null}
-            <h1><code>${state.shown_query}</code></h1>
             ${docs_element}
         </section>
     `

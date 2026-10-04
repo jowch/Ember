@@ -352,9 +352,17 @@ sanitize_help_html <- function(html) {
   html
 }
 
+#' Rd2HTML's first element: a `<table>` row reading "topic {pkg}" and "R
+#' Documentation". The Help tab names the package itself. Pure.
+strip_rd_header <- function(html) {
+  sub("(?is)<table\\b[^>]*>\\s*<tr>\\s*<td>[^<]*</td>\\s*<td\\b[^>]*>\\s*R Documentation\\s*</td>\\s*</tr>\\s*</table>",
+      "", html, perl = TRUE)
+}
+
 #' The `docs` reply body for a worker's `help_page` message: the sanitized,
-#' rewritten page, or, when the topic exists in more than one package, a
-#' list of `pkg::topic` links for the user to choose from.
+#' rewritten page without its header row, or, when the topic exists in
+#' more than one package, a list of `pkg::topic` links for the user to
+#' choose from.
 help_reply_html <- function(reply) {
   if (length(reply$matches %||% list()) > 0) {
     items <- vapply(reply$matches, function(m) {
@@ -363,7 +371,7 @@ help_reply_html <- function(reply) {
     }, character(1))
     return(sprintf("<p>More than one package has this topic:</p><ul>%s</ul>", paste(items, collapse = "")))
   }
-  rewrite_help_links(sanitize_help_html(reply$html %||% ""))
+  rewrite_help_links(strip_rd_header(sanitize_help_html(reply$html %||% "")))
 }
 
 #' `formals()` of a base-R function, for the `docs`/`ember_signature`

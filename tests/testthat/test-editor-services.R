@@ -172,6 +172,25 @@ test_that("sanitize_help_html() drops unquoted event handlers and unquoted javas
   expect_match(clean, '<img src=x>', fixed = TRUE)
 })
 
+test_that("help_reply_html() drops Rd2HTML's 'topic {pkg} | R Documentation' header table", {
+  rd <- utils:::.getHelpFile(utils::help("mean", package = "base"))
+  out <- tempfile(fileext = ".html")
+  on.exit(unlink(out))
+  tools::Rd2HTML(rd, out, package = "base", dynamic = TRUE)
+  page <- paste(readLines(out, warn = FALSE), collapse = "\n")
+  expect_match(page, "R Documentation", fixed = TRUE)
+
+  html <- help_reply_html(list(html = page, matches = list()))
+  expect_no_match(html, "R Documentation", fixed = TRUE)
+  expect_no_match(html, "mean {base}", fixed = TRUE)
+  expect_match(html, "<h2>Arithmetic Mean</h2>", fixed = TRUE)
+  # The Arguments table is a different table and stays.
+  expect_match(html, '<table role = "presentation">', fixed = TRUE)
+
+  older <- '<table width="100%" summary="page for lm {stats}"><tr><td>lm {stats}</td><td style="text-align: right;">R Documentation</td></tr></table><h2>T</h2>'
+  expect_identical(help_reply_html(list(html = older)), "<h2>T</h2>")
+})
+
 test_that("signature_fallback() (56)", {
   expect_match(signature_fallback("lm"), "^lm\\(formula, data")
   expect_null(signature_fallback("my_fun"))
