@@ -201,7 +201,7 @@ handle_next <- function() {
       # path would fail the comparison below and never actually chdir,
       # and a resolved `setup_restore`/`settings_start` value would never
       # match an unresolved `from` on a later move.
-      resolve <- function(p) tryCatch(normalizePath(p, mustWork = FALSE), error = function(e) p)
+      resolve <- function(p) tryCatch(normalizePath(p, winslash = "/", mustWork = FALSE), error = function(e) p)
       from <- resolve(msg$from)
       to <- resolve(msg$to)
       # `setwd()` throws if `to` is gone (deleted, or never created, by
@@ -215,7 +215,7 @@ handle_next <- function() {
       settings_start$wd <<- to
       if (!is.null(setup_restore)) {
         setup_restore <<- lapply(setup_restore, function(chg) {
-          if (identical(chg$kind, "wd") && identical(chg$value, from)) chg$value <- to
+          if (identical(chg$kind, "wd") && identical(resolve(chg$value), from)) chg$value <- to
           chg
         })
       }

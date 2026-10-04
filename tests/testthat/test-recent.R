@@ -4,6 +4,9 @@
 # folder for the whole session; each test here points it at its own temp
 # folder instead, so the tests don't interfere with each other.
 
+# What remember_notebook() stores for a path: "D:/a.R" on Windows.
+np <- function(p) normalizePath(p, winslash = "/", mustWork = FALSE)
+
 with_recent_dir <- function(code) {
   dir <- tempfile("ember-test-recent-")
   withr::local_envvar(R_USER_DATA_DIR = dir)
@@ -17,10 +20,10 @@ test_that("remember_notebook(): newest first, no duplicates, replaces (ui-3 87)"
     remember_notebook("/a.R")
     remember_notebook("/b.R")
     remember_notebook("/a.R")
-    expect_equal(read_recent(), c("/a.R", "/b.R"))
+    expect_equal(read_recent(), np(c("/a.R", "/b.R")))
 
     remember_notebook("/c.R", replaces = "/b.R")
-    expect_equal(read_recent(), c("/c.R", "/a.R"))
+    expect_equal(read_recent(), np(c("/c.R", "/a.R")))
   })
 })
 
@@ -29,9 +32,9 @@ test_that("remember_notebook(): at most 50 entries, newest first", {
     for (i in 1:55) remember_notebook(sprintf("/n%02d.R", i))
     recent <- read_recent()
     expect_length(recent, 50)
-    expect_equal(recent[1], "/n55.R")
-    expect_false("/n01.R" %in% recent)
-    expect_false("/n05.R" %in% recent)
+    expect_equal(recent[1], np("/n55.R"))
+    expect_false(np("/n01.R") %in% recent)
+    expect_false(np("/n05.R") %in% recent)
   })
 })
 
@@ -40,7 +43,7 @@ test_that("forget_notebook(): drops the path, leaves the others", {
     remember_notebook("/a.R")
     remember_notebook("/b.R")
     forget_notebook("/a.R")
-    expect_equal(read_recent(), "/b.R")
+    expect_equal(read_recent(), np("/b.R"))
   })
 })
 
@@ -79,7 +82,7 @@ test_that("remember_notebook(): 'replaces' matches even when spelled differently
 
     remember_notebook(old_plain)
     remember_notebook(file.path(dir, "new.R"), replaces = file.path(paste0(dir, "/"), "old.R"))
-    expect_equal(read_recent(), normalizePath(file.path(dir, "new.R"), mustWork = FALSE))
+    expect_equal(read_recent(), np(file.path(dir, "new.R")))
   })
 })
 

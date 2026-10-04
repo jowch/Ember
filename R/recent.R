@@ -39,14 +39,14 @@ write_recent <- function(paths) {
 }
 
 #' `path`, resolved the way every recent-list entry is compared and
-#' stored: `normalizePath(path, mustWork = FALSE)`, so a notebook reached
+#' stored: `normalizePath(path, winslash = "/", mustWork = FALSE)`, so a notebook reached
 #' by two different (but equal) spellings -- a trailing slash, a `.`
 #' segment, a symlink component -- is one entry, not two, and a move's
 #' `replaces` reliably matches what an earlier `remember_notebook()`
 #' stored for the same file. `mustWork = FALSE`: a forgotten or
 #' since-deleted path must still normalize, not error.
 normalize_recent_path <- function(path) {
-  tryCatch(normalizePath(path, mustWork = FALSE), error = function(e) path)
+  tryCatch(normalizePath(path, winslash = "/", mustWork = FALSE), error = function(e) path)
 }
 
 #' Record `path` as the most recently opened notebook. When `replaces` is
