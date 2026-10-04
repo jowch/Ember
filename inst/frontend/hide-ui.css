@@ -14,7 +14,6 @@ pluto-editor.disable_ui:not(.inspecting_hidden_code) pluto-shoulder,
 /* And in any case, hide the shoulder for cells with folded code */
 pluto-editor.disable_ui pluto-cell:not(.code_folded) > pluto-shoulder,
 pluto-editor.disable_ui footer,
-pluto-editor.disable_ui jlerror .doclink,
 pluto-editor.disable_ui .dont-panic,
 pluto-editor.disable_ui #helpbox-wrapper,
 pluto-editor.disable_ui .fix-with-ai {
@@ -35,7 +34,6 @@ pluto-editor.disable_ui .fix-with-ai {
     pluto-editor pluto-input > button,
     pluto-editor pluto-shoulder,
     pluto-editor footer,
-    pluto-editor jlerror .doclink,
     pluto-editor .dont-panic,
     pluto-editor #helpbox-wrapper,
     pluto-editor .fix-with-ai {
