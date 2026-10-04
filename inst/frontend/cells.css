@@ -129,14 +129,6 @@ pluto-input {
     z-index: 35;
 }
 
-/* button.ember-split (piece 2) is a plain-flow sibling of pluto-input that
-   can visually sit where the code box is; it needs its own z-index to
-   stay above the box it's reporting on, now that the box has one. */
-button.ember-split {
-    position: relative;
-    z-index: 36;
-}
-
 /* An open cell menu can overflow below a short cell into the next one;
    this is the one time the *whole* cell needs to outrank its neighbour,
    not just something inside it. */
@@ -459,7 +451,7 @@ pluto-cell.depends_on_disabled_cells > ember-chip {
 pluto-cell.stale {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "out" "chip" "split" "in" "logs";
+    grid-template-areas: "out" "chip" "in" "logs";
 }
 pluto-cell.stale::before {
     content: "";
@@ -480,9 +472,6 @@ pluto-cell.stale > ember-chip {
     grid-area: chip;
     justify-self: start;
     margin: 8px 14px 10px;
-}
-pluto-cell.stale > button.ember-split {
-    grid-area: split;
 }
 pluto-cell.stale > pluto-input {
     grid-area: in;
@@ -510,6 +499,161 @@ pluto-cell.running_disabled > pluto-input .cm-editor {
 pluto-cell.running_disabled > pluto-input .cm-gutters,
 pluto-cell.running_disabled > pluto-input .cm-content {
     opacity: 0.5;
+}
+
+/* ---- Errors (ui-3.md "Errors"; ui-3-plan.md 6.4) ----------------------- */
+
+/* The error box replaces the output and is joined to the code box. */
+pluto-cell.errored > pluto-output {
+    padding: 0;
+    background: transparent;
+}
+pluto-cell.errored.show_input > pluto-input .cm-editor {
+    border-top-right-radius: 0;
+}
+
+jlerror.ember {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 0;
+    padding: 10px 14px;
+    border: none;
+    border-radius: 0 6px 0 0;
+    background: var(--ember-err-bg);
+    font-family: var(--ember-ui-font);
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--ember-text);
+    overflow-wrap: anywhere;
+}
+pluto-cell:not(.show_input) jlerror.ember {
+    border-radius: 0 6px 6px 0;
+}
+jlerror.ember > header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+jlerror.ember > header > p {
+    margin: 0;
+    line-height: inherit;
+}
+jlerror.ember > section {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+jlerror.ember code {
+    font-family: var(--ember-code-font);
+    font-size: inherit;
+    line-height: 1;
+    background: none;
+    padding: 0;
+    color: inherit;
+}
+jlerror.ember a {
+    color: inherit;
+    text-decoration: none;
+}
+jlerror.ember a:hover {
+    text-decoration: underline;
+}
+
+.ember-error-msg {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ember-red);
+    white-space: pre-wrap;
+}
+.ember-error-more {
+    display: block;
+    margin-top: 2px;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--ember-text);
+}
+.ember-error-where {
+    color: var(--ember-muted);
+}
+
+jlerror.ember-upstream .ember-error-msg {
+    font-weight: 400;
+    color: var(--ember-text);
+}
+jlerror.ember-upstream .ember-error-msg a {
+    font-family: var(--ember-code-font);
+    font-style: normal;
+    color: var(--ember-accent);
+    text-decoration: underline;
+}
+
+jlerror.ember-mixed .ember-error-note {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--ember-text);
+}
+jlerror.ember-mixed .ember-error-note code {
+    font-size: 12px;
+}
+
+jlerror.ember > button.ember-split {
+    align-self: flex-start;
+    margin-top: 4px;
+    height: 26px;
+    padding: 0 10px;
+    border: 1px solid var(--ember-line);
+    border-radius: 6px;
+    background: var(--ember-panel);
+    color: var(--ember-text);
+    font-family: var(--ember-ui-font);
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+button.ember-tb-toggle {
+    margin-top: 4px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--ember-muted);
+    font-family: var(--ember-ui-font);
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+ol.ember-tb {
+    align-self: stretch;
+    margin: 6px 0 0;
+    padding: 8px 0 0;
+    border-top: 1px dashed var(--ember-err-line);
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 12px;
+    line-height: 1.25;
+}
+ol.ember-tb > li {
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr) auto;
+    gap: 8px;
+    font-family: var(--ember-code-font);
+    color: var(--ember-faint);
+}
+ol.ember-tb > li.mine {
+    color: var(--ember-text);
+}
+ol.ember-tb > li > .ember-tb-from {
+    font-family: var(--ember-ui-font);
+}
+ol.ember-tb > li > code {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* ---- Not shown in a static export or an isolated cell ------------------ */

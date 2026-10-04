@@ -298,7 +298,8 @@ export const Cell = ({
         !process_waiting_for_permission &&
         kind !== "markdown" &&
         !running_disabled &&
-        !depends_on_disabled_cells
+        !depends_on_disabled_cells &&
+        !errored
 
     // depends_on_disabled_cells is also true on the disabled cell itself, so
     // running_disabled is checked first.
@@ -379,9 +380,8 @@ export const Cell = ({
             ${code_not_trusted_yet
                 ? null
                 : cell_api_ready
-                  ? html`<${CellOutput} errored=${errored} ...${output} ember_figure=${ember?.figure} sanitize_html=${sanitize_html} cell_id=${cell_id} />`
+                  ? html`<${CellOutput} errored=${errored} ...${output} ember_figure=${ember?.figure} ember_split=${split_n} on_split=${on_split} sanitize_html=${sanitize_html} cell_id=${cell_id} />`
                   : html``}
-            ${split_n != null ? html`<button class="ember-split" onClick=${on_split}>${t("t_ember_split", { n: split_n })}</button>` : null}
             <${CellInput}
                 local_code=${cell_input_local?.code ?? code}
                 remote_code=${code}

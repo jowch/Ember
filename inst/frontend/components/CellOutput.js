@@ -67,8 +67,10 @@ export class CellOutput extends Component {
     // A never-run output (a graph error, a text cell's rendered body) can
     // change content while staying at last_run_timestamp 0, so that alone
     // isn't enough to decide whether to update.
-    shouldComponentUpdate({ last_run_timestamp, sanitize_html, mime, body, errored, rootassignee, persist_js_state, has_pluto_hook_features }) {
+    shouldComponentUpdate({ last_run_timestamp, sanitize_html, mime, body, errored, rootassignee, persist_js_state, has_pluto_hook_features, ember_split, on_split }) {
         return (
+            ember_split !== this.props.ember_split ||
+            on_split !== this.props.on_split ||
             last_run_timestamp !== this.props.last_run_timestamp ||
             sanitize_html !== this.props.sanitize_html ||
             mime !== this.props.mime ||
@@ -161,7 +163,7 @@ export let PlutoImage = ({ body, mime }) => {
  * sanitize_html?: boolean | string,
  * }} args
  */
-export const OutputBody = ({ mime, body, cell_id, persist_js_state = false, last_run_timestamp, sanitize_html = true, ember_figure = null }) => {
+export const OutputBody = ({ mime, body, cell_id, persist_js_state = false, last_run_timestamp, sanitize_html = true, ember_figure = null, ember_split = null, on_split = undefined }) => {
     // These two arguments might have been passed as strings if OutputBody was used as the custom HTML element <pluto-display>, with string attributes as arguments.
     sanitize_html = sanitize_html !== "false" && sanitize_html !== false
     persist_js_state = persist_js_state === "true" || persist_js_state === true
@@ -210,7 +212,7 @@ export const OutputBody = ({ mime, body, cell_id, persist_js_state = false, last
             return html`<div><${ParseError} cell_id=${cell_id} last_run_timestamp=${last_run_timestamp} ...${body} /></div>`
             break
         case "application/vnd.pluto.stacktrace+object":
-            return html`<div><${ErrorMessage} cell_id=${cell_id} ...${body} /></div>`
+            return html`<div><${ErrorMessage} cell_id=${cell_id} ember_split=${ember_split} on_split=${on_split} ...${body} /></div>`
             break
         case "application/vnd.pluto.reactdomelement+object":
             return ReactDOMElement({ cell_id, ...body, persist_js_state, sanitize_html })

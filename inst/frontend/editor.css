@@ -4036,12 +4036,6 @@ pluto-header-id-copy:focus {
     outline-offset: 2px;
 }
 
-jlerror.syntax-error > header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
 .fix-with-ai {
     display: inline-flex;
     gap: 8px;
