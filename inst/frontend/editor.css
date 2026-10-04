@@ -1240,6 +1240,166 @@ pluto-editor.binder.loading > header#pluto-nav {
     font-size: 14px;
 }
 
+/* Status tab (ui-3.md, Side panel; ui-3-plan.md piece 5's "Status tab"). */
+#ember-status-tab {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    font-family: var(--ember-ui-font);
+    color: var(--ember-text);
+}
+.ember-status-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.ember-status-h3 {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0;
+    padding: 0;
+}
+.ember-status-kv {
+    display: grid;
+    grid-template-columns: 110px minmax(0, 1fr);
+    gap: 8px 12px;
+    font-size: 13px;
+}
+.ember-status-kv > span:nth-child(odd) {
+    color: var(--ember-muted);
+}
+.ember-status-state {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.ember-status-buttons {
+    display: flex;
+    gap: 6px;
+}
+.ember-status-hint {
+    font-size: 12.5px;
+    color: var(--ember-muted);
+    line-height: 1.45;
+}
+.ember-status-rule {
+    height: 1px;
+    background: var(--ember-line);
+}
+.ember-status-count-link {
+    display: flex;
+    gap: 10px;
+}
+.ember-status-mode {
+    border: 0;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.ember-status-radio {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    font-size: 13px;
+}
+.ember-status-radio input {
+    margin-top: 2px;
+}
+
+/* Variables tab (ui-3.md, Side panel; ui-3-plan.md piece 5's "Tabs"). */
+#ember-variables-tab {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    font-family: var(--ember-ui-font);
+    color: var(--ember-text);
+}
+.ember-variables-empty {
+    padding: 16px;
+    font-size: 13px;
+    color: var(--ember-muted);
+}
+.ember-variables-filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--ember-line);
+}
+.ember-variables-filter input {
+    width: 100%;
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--ember-line);
+    border-radius: 7px;
+    background: var(--ember-page);
+    color: var(--ember-text);
+    font: inherit;
+    font-size: 13px;
+}
+.ember-variables-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+    table-layout: fixed;
+}
+.ember-variables-table th {
+    font-weight: 500;
+    font-size: 11.5px;
+    color: var(--ember-faint);
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--ember-line);
+}
+.ember-variables-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--ember-line);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+}
+.ember-variables-table th:first-child,
+.ember-variables-table td:first-child {
+    padding-left: 16px;
+}
+.ember-variables-table th:last-child,
+.ember-variables-table td:last-child {
+    padding-right: 16px;
+}
+.ember-variable-row:hover td {
+    background: var(--ember-hover);
+}
+.ember-variable-row.stale td {
+    color: var(--ember-faint);
+}
+.ember-variable-name {
+    color: var(--ember-text);
+    text-decoration: none;
+}
+.ember-variable-row.stale .ember-variable-name {
+    color: var(--ember-faint);
+}
+.ember-variable-row:hover .ember-variable-name {
+    color: var(--ember-accent);
+    text-decoration: underline;
+}
+.ember-variables-str {
+    font-style: italic;
+}
+.ember-variables-footer {
+    margin-top: auto;
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-top: 1px solid var(--ember-line);
+    font-size: 12px;
+    color: var(--ember-muted);
+}
+
 #ember-r-status {
     display: flex;
     align-items: center;
@@ -1337,15 +1497,84 @@ nav#at_the_top .ember-menu {
     overflow: auto;
 }
 
-#ember-packages-tab .ember-packages-meta {
-    display: grid;
-    grid-template-columns: max-content 1fr;
-    gap: 0.2em 1em;
+#ember-packages-tab .ember-packages-head {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
     margin: 0 0 0.8em 0;
 }
+#ember-packages-tab .ember-packages-head-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+#ember-packages-tab .ember-packages-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ember-text);
+}
+#ember-packages-tab .ember-packages-description {
+    font-size: 12.5px;
+    color: var(--ember-muted);
+}
 
-#ember-packages-tab .ember-packages-meta dt {
-    opacity: 0.6;
+.ember-mono {
+    font-family: var(--ember-code-font);
+}
+.ember-faint-text {
+    color: var(--ember-faint);
+}
+.ember-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11.5px;
+    font-weight: 500;
+    border-radius: 999px;
+    padding: 1px 8px;
+}
+.ember-pill-accent {
+    background: var(--ember-accent-bg);
+    color: var(--ember-accent);
+}
+.ember-pill-red {
+    background: var(--ember-red-bg);
+    color: var(--ember-red);
+}
+.ember-package-installing {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    align-items: flex-start;
+}
+.ember-package-installing span {
+    font-size: 12px;
+    color: var(--ember-muted);
+}
+.ember-package-progress {
+    width: 100px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--ember-code);
+    overflow: hidden;
+}
+.ember-package-progress-indeterminate::after {
+    content: "";
+    display: block;
+    width: 40%;
+    height: 100%;
+    background: var(--ember-run);
+    animation: ember-progress-indeterminate 1.4s ease-in-out infinite;
+}
+@keyframes ember-progress-indeterminate {
+    0% {
+        transform: translateX(-100%);
+    }
+    100% {
+        transform: translateX(250%);
+    }
 }
 
 #ember-packages-tab .ember-packages-library-status {
@@ -3116,6 +3345,49 @@ pluto-helpbox .live-docs-searchbox input:focus {
     font-size: 1.3rem;
     overflow-wrap: anywhere;
 }
+/* ui-3-plan.md piece 5's "Help tab": description and arguments in the
+   prose font; h2/h3 sizes in the UI font (pre/code already use
+   --ember-code-font via --julia-mono-font-stack, remapped in piece 5's
+   "Theme switching" step). */
+.helpbox-docs > section p,
+.helpbox-docs > section dd {
+    font-family: var(--ember-prose-font);
+}
+.helpbox-docs > section h2 {
+    font-size: 20px;
+    font-weight: 600;
+    font-family: var(--ember-ui-font);
+}
+.helpbox-docs > section h3 {
+    font-size: 13px;
+    font-weight: 600;
+    font-family: var(--ember-ui-font);
+}
+.helpbox-docs > section pre,
+.helpbox-docs > section code {
+    background: var(--ember-code);
+}
+
+.ember-help-bar {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--ember-line);
+}
+.ember-help-bar .ibtn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+.ember-help-bar .live-docs-searchbox {
+    flex-grow: 1;
+    margin: 0 0 0 6px;
+}
+.ember-help-package {
+    margin: 0;
+    font-size: 12px;
+    color: var(--ember-muted);
+}
 .helpbox-docs > section pre {
     padding: 0.7rem 0.5rem;
     -webkit-overflow-scrolling: touch;
@@ -3195,165 +3467,6 @@ pluto-helpbox .live-docs-searchbox input:focus {
 .pluto-docs-binding h5,
 .pluto-docs-binding h6 {
     font-size: 1.1em;
-}
-
-/* PROCESS TAB */
-
-pl-status {
-    --status-color: var(--process-undefined);
-    font-family: var(--system-ui-font-stack);
-    font-size: 0.9rem;
-    display: flex;
-    flex-direction: column;
-    border-radius: 0.2em;
-    --indent: 0.7rem;
-    margin-left: var(--indent);
-    border-left: 3px solid transparent;
-    margin-top: 0.4em;
-    overflow: hidden;
-    flex: 0 0 auto;
-}
-
-pl-status::before {
-    flex: 1 2 auto;
-    /* content: ""; */
-    display: inline-block;
-    left: 0;
-    right: 0px;
-    width: 3px;
-    height: 10px;
-    bottom: 3px;
-    top: 3px;
-    background: pink;
-}
-
-pl-status.busy {
-    --status-color: var(--process-busy);
-}
-pl-status.finished {
-    --status-color: var(--process-finished);
-}
-pl-status.failed {
-    --status-color: var(--process-failed);
-}
-
-pl-status.can_open {
-    cursor: auto;
-    border-color: #98989854;
-}
-pl-status.can_open > div {
-    border-top-left-radius: 0;
-    border-bottom-left-radius: 0;
-    cursor: pointer;
-}
-pl-status.can_open.is_open {
-    border-color: var(--status-color);
-}
-
-pl-status[data-depth="0"],
-pl-status[data-depth="1"] {
-    margin-left: 0;
-}
-
-pl-status > div {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    /* margin: 0em 0em 0.4em 0; */
-    padding: 0.2em;
-    background: var(--process-item-bg);
-    border-radius: 0.4em;
-    /* flex: 1 0 auto; */
-}
-
-pl-status > div > .status-icon {
-    content: "";
-    display: inline-block;
-    width: 1em;
-    height: 1em;
-    border-radius: 50%;
-    background-color: var(--status-color);
-    /* border: 3px solid green; */
-    margin: 0em 0.5em;
-    flex: 0 0 auto;
-}
-
-pl-status.busy > div > .status-icon {
-    border: 3px solid transparent;
-    border-right-color: hsl(126deg 30% 60%);
-    border-bottom-color: hsl(126deg 30% 60%);
-    /* border-left-color: hsl(126deg 30% 60%); */
-    animation: identifier-spin 1.7s linear infinite;
-}
-
-@keyframes identifier-spin {
-    0% {
-        transform: rotate(0deg);
-    }
-    100% {
-        transform: rotate(360deg);
-    }
-}
-
-.subprogress-counter {
-    opacity: 0.5;
-    /* font-variant-numeric: tabular-nums; */
-    font-size: 0.8em;
-}
-
-pl-status .status-time {
-    margin-left: auto;
-    /* align-self: end; */
-    padding-right: 0.5em;
-    padding-left: 0.5em;
-    opacity: 0.6;
-    font-size: 0.7rem;
-    font-variant-numeric: tabular-nums;
-}
-
-.discrete-progress-bar {
-    display: flex;
-    flex-direction: row;
-    background: var(--process-item-bg);
-    padding: 3px;
-    border-radius: 4px;
-    gap: 2px;
-    contain: strict;
-    height: 1em;
-    align-items: stretch;
-}
-
-.discrete-progress-bar > div {
-    background: var(--process-undefined);
-    flex: 1 1 auto;
-    border-radius: 2px;
-    /* margin: 0.4px; */
-}
-
-.discrete-progress-bar > div.done {
-    background: var(--process-finished);
-}
-.discrete-progress-bar > div.busy {
-    background: var(--process-busy);
-}
-.discrete-progress-bar > div.failed {
-    background: var(--process-failed);
-}
-
-.discrete-progress-bar.mid {
-    gap: 1px;
-}
-
-.discrete-progress-bar.big {
-    gap: 0px;
-}
-
-pl-status pkg-terminal {
-    margin-left: var(--indent);
-}
-
-pluto-helpbox.helpbox-process > section {
-    padding-bottom: 3.6rem; /* to make space for the notification toggle */
 }
 
 .notify-when-done {

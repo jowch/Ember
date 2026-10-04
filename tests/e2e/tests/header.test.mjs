@@ -74,12 +74,10 @@ test('header: "Run N not run" counts, and clicking it clears it (119)', async (t
     () => document.querySelector("#ember-r-status .ember-r-status-words")?.innerText === "R ready",
     null, { timeout: 30000 });
 
-  // Fire-and-forget: "restart_process" is answered only by the ordinary
-  // flush diff, never a reply keyed to this request, so its send()
-  // promise never resolves (status-views.test.mjs has the full story).
-  await page.evaluate(() => {
-    window.ember_restart()
-  });
+  // Restart from the Status tab, where the plan puts it.
+  await page.locator("#ember-r-status").click();
+  await page.waitForSelector("#ember-status-restart");
+  await page.locator("#ember-status-restart").click();
   await page.waitForFunction(
     () => document.querySelector("header#pluto-nav button.ember-btn")?.innerText.includes("4 not run"),
     null, { timeout: 30000 });

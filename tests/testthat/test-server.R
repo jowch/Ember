@@ -1486,6 +1486,11 @@ test_that("docs: preview mean needs R running, a notebook-defined f shows its co
   expect_identical(r3$status, "\U0001F44D")
   expect_match(r3$doc, "Arithmetic Mean")
   expect_no_match(r3$doc, "../../base/help", fixed = TRUE)
+  # The Help tab's "{{package}} . follows the cursor" line (ui-3-plan.md
+  # piece 5): the package name the worker's help_page reports, forwarded
+  # alongside doc. NULL for the notebook-defined function above (r2).
+  expect_identical(r3$package, "base")
+  expect_null(r2$package)
 })
 
 test_that("docs: a documented function's cell gives the signature, rendered doc, link and folded code (55)", {

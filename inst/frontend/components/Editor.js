@@ -1490,6 +1490,12 @@ ${t("t_key_autosave_description")}`
         } else {
             this.connect()
         }
+
+        // The Variables tab's name links (VariablesTab.js): scroll to and
+        // select the cell that defines a variable.
+        window.addEventListener("ember_select_cell", (/** @type {CustomEvent} */ e) => {
+            this.setState({ selected_cells: [e.detail] })
+        })
     }
 
     componentDidUpdate(/** @type {EditorProps} */ old_props, /** @type {EditorState} */ old_state) {
@@ -1569,7 +1575,6 @@ ${t("t_key_autosave_description")}`
                 }
             )
         }
-        window.ember_restart = restart // for debugging and e2e tests, until the Status tab's Restart R button lands
 
         return html`
             ${this.state.disable_ui === false && html`<${HijackExternalLinksToOpenInNewTab} />`}
@@ -1679,10 +1684,9 @@ ${t("t_key_autosave_description")}`
                         desired_doc_query=${this.state.desired_doc_query}
                         on_update_doc_query=${this.actions.set_doc_query}
                         connected=${this.state.connected}
-                        backend_launch_phase=${this.state.backend_launch_phase}
-                        backend_launch_logs=${this.state.backend_launch_logs}
                         notebook=${this.state.notebook}
                         sanitize_html=${status.sanitize_html}
+                        on_restart=${restart}
                     />
                     <${RecentlyDisabledInfo} 
                         recently_auto_disabled_cells=${this.state.recently_auto_disabled_cells}

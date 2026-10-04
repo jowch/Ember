@@ -39,9 +39,10 @@ const TABS = /** @type {const} */ ([
  * on_update_doc_query: (query: string?) => void,
  * connected: boolean,
  * sanitize_html?: boolean,
+ * on_restart: () => void,
  * }} props
  */
-export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, notebook, connected, sanitize_html = true }) => {
+export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, notebook, connected, sanitize_html = true, on_restart }) => {
     const container_ref = useRef()
     const focus_docs_on_open_ref = useRef(false)
     const [open_tab, set_open_tab] = useState(/** @type { PanelTabName} */ (null))
@@ -92,7 +93,7 @@ export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, noteboo
                           : open_tab === "packages"
                             ? html`<${PackagesTab} packages=${notebook.ember?.packages} />`
                             : open_tab === "process"
-                              ? html`<${StatusTab} notebook=${notebook} status=${status} my_clock_is_ahead_by=${my_clock_is_ahead_by} />`
+                              ? html`<${StatusTab} notebook=${notebook} my_clock_is_ahead_by=${my_clock_is_ahead_by} on_restart=${on_restart} />`
                               : null}
                     ${get_settings().ALWAYS_NOTIFY_LONG_BUSY && open_tab !== "process"
                         ? html`<div style="display: none" aria-hidden="true"><${NotifyWhenDone} status=${status} /></div>`

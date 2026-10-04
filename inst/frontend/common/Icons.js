@@ -41,6 +41,9 @@ export const ExportIcon = ({ size = 18 }) => icon(size, html`<path d="M12 4v11M7
 
 export const SidePanelIcon = ({ size = 18 }) => icon(size, html`<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 14h18"></path>`)
 
+export const BackIcon = ({ size = 16 }) => icon(size, html`<path d="M15 6l-6 6 6 6"></path>`)
+export const ForwardIcon = ({ size = 16 }) => icon(size, html`<path d="M9 6l6 6-6 6"></path>`)
+
 export const MoreIcon = ({ size = 18 }) => html`
     <svg width=${size} height=${size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
         <circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle>

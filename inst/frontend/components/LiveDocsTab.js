@@ -6,6 +6,7 @@ import { RawHTMLContainer, highlight } from "./CellOutput.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { cl } from "../common/ClassTable.js"
 import { t } from "../common/lang.js"
+import { BackIcon, ForwardIcon } from "../common/Icons.js"
 
 const DOCS_RETRY_MS = 1000
 
@@ -22,11 +23,38 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
     let pluto_actions = useContext(PlutoActionsContext)
     let live_doc_search_ref = useRef(/** @type {HTMLInputElement?} */ (null))
 
+    // Back/forward over every query shown, typed or from the cursor
+    // (ui-3-plan.md piece 5's "Help tab"): `history[history_index]` is
+    // the current one. `navigating_ref` tells the effect below not to
+    // push a new entry for a change it itself caused.
+    let [history, set_history] = useState(/** @type {string[]} */ ([]))
+    let [history_index, set_history_index] = useState(-1)
+    let navigating_ref = useRef(false)
+
+    useEffect(() => {
+        if (navigating_ref.current) {
+            navigating_ref.current = false
+            return
+        }
+        if (desired_doc_query == null || !/[^\s]/.test(desired_doc_query)) return
+        if (history[history_index] === desired_doc_query) return
+        set_history((h) => [...h.slice(0, history_index + 1), desired_doc_query])
+        set_history_index((i) => i + 1)
+    }, [desired_doc_query])
+
+    let go_to = (/** @type {number} */ i) => {
+        if (i < 0 || i >= history.length) return
+        navigating_ref.current = true
+        set_history_index(i)
+        on_update_doc_query(history[i])
+    }
+
     // This is all in a single state object so that we can update multiple field simultaneously
     let [state, set_state] = useState({
         shown_query: null,
         searched_query: null,
         body: t("t_live_docs_body"),
+        package: null,
         loading: false,
     })
     let update_state = (mutation) => set_state(immer((state) => mutation(state)))
@@ -70,6 +98,7 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
                         update_state((state) => {
                             state.shown_query = new_query
                             state.body = u.message.doc
+                            state.package = u.message.package ?? null
                         })
                     }
                     clearTimeout(retry_timer.current)
@@ -84,6 +113,7 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
                     update_state((state) => {
                         state.shown_query = new_query
                         state.body = u.message.doc
+                        state.package = u.message.package ?? null
                     })
                     return true
                 }
@@ -102,26 +132,46 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
     let no_docs_found = state.loading === false && state.searched_query !== "" && state.searched_query !== state.shown_query
 
     return html`
-        <div
-            class=${cl({
-                "live-docs-searchbox": true,
-                "loading": state.loading,
-                "notfound": no_docs_found,
-            })}
-            translate=${false}
-        >
-            <input
-                title=${no_docs_found ? `"${state.searched_query}" not found` : ""}
-                id="live-docs-search"
-                placeholder=${t("t_live_docs_search_placeholder")}
-                ref=${live_doc_search_ref}
-                onInput=${(e) => on_update_doc_query(e.target.value)}
-                value=${desired_doc_query}
-                type="search"
-            ></input>
-            
+        <div class="ember-help-bar">
+            <button
+                class="ibtn"
+                type="button"
+                aria-label=${t("t_ember_help_back")}
+                disabled=${history_index <= 0}
+                onClick=${() => go_to(history_index - 1)}
+            >
+                <${BackIcon} />
+            </button>
+            <button
+                class="ibtn"
+                type="button"
+                aria-label=${t("t_ember_help_forward")}
+                disabled=${history_index >= history.length - 1}
+                onClick=${() => go_to(history_index + 1)}
+            >
+                <${ForwardIcon} />
+            </button>
+            <div
+                class=${cl({
+                    "live-docs-searchbox": true,
+                    "loading": state.loading,
+                    "notfound": no_docs_found,
+                })}
+                translate=${false}
+            >
+                <input
+                    title=${no_docs_found ? `"${state.searched_query}" not found` : ""}
+                    id="live-docs-search"
+                    placeholder=${t("t_live_docs_search_placeholder")}
+                    ref=${live_doc_search_ref}
+                    onInput=${(e) => on_update_doc_query(e.target.value)}
+                    value=${desired_doc_query}
+                    type="search"
+                ></input>
+            </div>
         </div>
         <section ref=${(ref) => ref != null && post_process_doc_node(ref, on_update_doc_query)}>
+            ${state.package != null ? html`<p class="ember-help-package">${t("t_ember_help_follows_cursor", { package: state.package })}</p>` : null}
             <h1><code>${state.shown_query}</code></h1>
             ${docs_element}
         </section>

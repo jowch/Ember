@@ -47,15 +47,11 @@ test('"N cells not run" bar counts, grows after a restart, and "Run all" clears 
     (sel) => document.querySelector(sel)?.innerText.includes("55"),
     cellSelector("B") + " pluto-output", { timeout: 30000 });
 
-  // Restart (window.ember_restart, a stand-in for the Status tab's Restart
-  // R button until ui-3-plan.md piece 5's "Tabs" step adds it): every cell,
-  // including A and B, is not run again. Fire-and-forget, like every other
-  // caller: "restart_process" is answered only by the ordinary flush diff
-  // (server.R's flush_clients(server, hub), no `req` to echo back), so the
-  // client's send() promise for it never resolves.
-  await page.evaluate(() => {
-    window.ember_restart()
-  });
+  // Restart from the Status tab's Restart R button: every cell, including
+  // A and B, is not run again.
+  await page.locator("#ember-r-status").click();
+  await page.waitForSelector("#ember-status-restart");
+  await page.locator("#ember-status-restart").click();
   await page.waitForFunction(
     () => document.querySelector("header#pluto-nav button.ember-btn")?.innerText.includes("4 not run"),
     null, { timeout: 30000 });

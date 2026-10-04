@@ -833,7 +833,10 @@ handlers <- list(
     worker_query(hub$nb, list(type = "help", topic = parsed$name, package = parsed$package), function(reply) {
       if (!is.null(reply)) {
         doc <- help_reply_html(reply)
-        send(cl, reply_message(req, "docs", list(status = THUMBS_UP, doc = doc)))
+        # `package` NULL when ambiguous (reply$matches non-empty): the page
+        # then shows the pkg::topic choices, not one page to attribute.
+        pkg <- if (length(reply$matches %||% list()) > 0) NULL else reply$package
+        send(cl, reply_message(req, "docs", list(status = THUMBS_UP, doc = doc, package = pkg)))
       } else if (was_idle) {
         msg <- "<p>R didn't answer in time. Trying again\u2026</p>"
         send(cl, reply_message(req, "docs", list(status = HOURGLASS, doc = msg)))
