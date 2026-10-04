@@ -22,13 +22,20 @@ test("mixed cell: shows the mixed error and a Split button; clicking it splits t
   // actually run (its own graph error), so it just shows the error.
   await runCell(page, "B");
 
-  await page.waitForSelector(`${cellSelector("B")} jlerror`, { timeout: 15000 });
-  const errorText = await page.locator(`${cellSelector("B")} jlerror`).innerText();
-  assert.match(errorText, /Text and code in one cell/);
+  const box = `${cellSelector("B")} jlerror.ember`;
+  await page.waitForSelector(box, { timeout: 15000 });
+  assert.equal(await page.locator(`${box} > header > p:first-child`).innerText(), "Text and code in one cell");
+  assert.equal(await page.locator(`${box} > header > p.ember-error-note`).innerText(),
+    "A cell is either text (only #' lines) or code. Nothing in it has run.");
+  assert.equal(await page.locator(`${box} > header code`).innerText(), "#'");
+  assert.equal(await page.locator(`${cellSelector("B")} ember-chip`).count(), 0, "no \"Not run yet\" chip on the errored cell");
 
-  const splitButton = page.locator(`${cellSelector("B")} button.ember-split`);
+  // The Split button is inside the error box (board Insert5).
+  const splitButton = page.locator(`${box} > button.ember-split`);
   await splitButton.waitFor({ timeout: 15000 });
-  assert.match(await splitButton.innerText(), /Split into 2 cells/);
+  assert.equal(await splitButton.innerText(), "Split into 2 cells");
+  assert.equal(await page.locator(`${cellSelector("B")} > button.ember-split`).count(), 0);
+  assert.equal(await splitButton.evaluate((el) => el.getBoundingClientRect().height), 26);
 
   const countBefore = await page.locator("pluto-cell").count();
   await splitButton.click();

@@ -430,6 +430,14 @@ test('chips: NEVER (loaded with code, never run) shows "Not run yet" with no out
     cellSelector("NEVER"), { timeout: 20000 });
   assert.equal(await page.locator(`${cellSelector("NEVER")} ember-chip`).innerText(), "Not run yet");
   assert.equal(await page.locator(`${cellSelector("NEVER")} pluto-output`).innerText(), "");
+  // Board Cells: 12px right of the rail and 12px above the code.
+  const neverCell = await rect(page, cellSelector("NEVER"));
+  const neverRail = await rect(page, `${cellSelector("NEVER")} > pluto-trafficlight`);
+  const neverChip = await rect(page, `${cellSelector("NEVER")} > ember-chip`);
+  const neverCode = await rect(page, `${cellSelector("NEVER")} .cm-editor`);
+  near(neverRail.right, neverCell.left, "the rail ends where the cell starts");
+  near(neverChip.left - neverRail.right, 12, "chip to rail");
+  near(neverCode.top - neverChip.bottom, 12, "chip to code");
   assert.equal(await page.locator(`${cellSelector("NEVER")} ember-runtime`).count(), 0, "no run-time chip before a first run");
   await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached", timeout: 15000 });
 
@@ -497,6 +505,85 @@ test('chips: "Stale · x changed" after an upstream edit in lazy mode, with a gr
   assertNoProblems(page);
 });
 
+test("errors: where it happened, a traceback outermost first, labelled by origin; the box joins the code (145)", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-errors.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await runCell(page, "F");
+  await page.waitForFunction(
+    () => window.editor_state.notebook.cell_results.F?.output?.last_run_timestamp > 0,
+    null, { timeout: 30000 });
+  for (const id of ["ERR", "TOP"]) {
+    await runCell(page, id);
+    await page.waitForSelector(`${cellSelector(id)}.errored jlerror.ember`, { timeout: 20000 });
+  }
+
+  const top = `${cellSelector("TOP")} jlerror`;
+  assert.equal(await page.locator(`${top} > header > p:first-child`).innerText(), "boom");
+  assert.equal(await page.locator(`${top} > header > p.ember-error-where`).innerText(), "Error · line 2");
+  assert.equal(await page.locator(`${top} button`).count(), 0, "no traceback button for a top-level stop()");
+  assert.equal(await page.locator(`${cellSelector("TOP")} ember-chip`).count(), 0, "no \"Not run yet\" chip on an errored cell");
+
+  const err = `${cellSelector("ERR")} jlerror`;
+  assert.equal(await page.locator(`${err} > header > p`).count(), 2, "jlerror > header holds the message, then where it happened");
+  assert.equal(await page.locator(`${err} > header > p:first-child`).innerText(), "invalid type (list) for variable 'wt'");
+  assert.equal(await page.locator(`${err} > header > p.ember-error-where`).innerText(), "Error in model.frame.default(…) · called from line 1");
+  assert.equal(await page.locator(`${err} > header code`).innerText(), "model.frame.default(…)");
+
+  const n = await page.evaluate(() => window.editor_state.notebook.cell_results.ERR.output.body.stacktrace.length);
+  assert.ok(n >= 4, `the traceback has the notebook and stats calls (${n})`);
+  assert.equal(await page.locator(`${err} ol.ember-tb`).count(), 0, "the traceback starts collapsed");
+  await page.getByRole("button", { name: `Show traceback (${n} calls)`, exact: true }).click();
+  await page.getByRole("button", { name: "Hide traceback", exact: true }).waitFor({ timeout: 5000 });
+
+  const frames = await page.locator(`${err} ol.ember-tb > li`).evaluateAll((lis) => lis.map((li) => ({
+    n: li.querySelector(".ember-tb-n").innerText,
+    call: li.querySelector("code").innerText,
+    from: li.querySelector(".ember-tb-from").innerText,
+    link: li.querySelector(".ember-tb-from a") != null,
+    color: getComputedStyle(li).color,
+  })));
+  assert.equal(frames.length, n);
+  const text = await tokenColor(page, "--ember-text");
+  const faint = await tokenColor(page, "--ember-faint");
+  assert.notEqual(text, faint);
+  assert.deepEqual(frames[0], { n: "1", call: "g(bad)", from: "this cell, line 1", link: true, color: text }, "outermost first: the call in this cell");
+  assert.match(frames[n - 1].call, /^model\.frame\.default\(/, "innermost last");
+  const fd = frames.find((f) => f.call === "f(d)");
+  assert.deepEqual(fd, { n: "2", call: "f(d)", from: "notebook", link: true, color: text }, "a function from another cell says notebook");
+  const stats = frames.find((f) => f.from === "stats");
+  assert.ok(stats, "a frame is labelled stats");
+  assert.equal(stats.color, faint, "package calls are faint");
+
+  await page.locator(`${err} ol.ember-tb > li:nth-child(2) .ember-tb-from a`).click();
+  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, cellSelector("F"), { timeout: 10000 });
+
+  // Board Outputs4 / Cells: a red-tinted box flush with the rail and joined
+  // to the code box, whose top-right corner goes square.
+  const box = await rect(page, err);
+  const cell = await rect(page, cellSelector("ERR"));
+  const code = await rect(page, `${cellSelector("ERR")} .cm-editor`);
+  near(box.left, cell.left, "the box starts at the rail");
+  near(box.right, code.right, "the box is as wide as the code box");
+  near(code.top, box.bottom, "the box is joined to the code box");
+  assert.equal(await computed(page, err, "backgroundColor"), await tokenColor(page, "--ember-err-bg"));
+  assert.equal(await computed(page, err, "padding"), "10px 14px");
+  assert.equal(await computed(page, err, "borderRadius"), "0px 6px 0px 0px");
+  assert.equal(await computed(page, `${cellSelector("ERR")} .cm-editor`, "borderTopRightRadius"), "0px");
+  const msg = `${err} > header > p:first-child`;
+  assert.equal(await computed(page, msg, "fontSize"), "14px");
+  assert.equal(await computed(page, msg, "fontWeight"), "600");
+  assert.equal(await computed(page, msg, "color"), await tokenColor(page, "--ember-red"));
+  assert.equal(await computed(page, `${err} > header > p.ember-error-where`, "color"), await tokenColor(page, "--ember-muted"));
+  assert.equal(await computed(page, `${err} ol.ember-tb`, "borderTopStyle"), "dashed");
+
+  assertNoProblems(page);
+});
+
 test("disabled states: A shows Disabled with no run button; B shows Depends on a disabled cell, and Go to it focuses A (149)", async (t) => {
   const notebook = tempNotebook("disabled.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-disabled-chips.server.log") });
@@ -509,6 +596,9 @@ test("disabled states: A shows Disabled with no run button; B shows Depends on a
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("2"),
     cellSelector("B") + " pluto-output", { timeout: 20000 });
+
+  const outputLeft = async (id) => (await rect(page, `${cellSelector(id)} > pluto-output pre`)).left - (await rect(page, cellSelector(id))).left;
+  near(await outputLeft("B"), 12, "an output starts 12px right of the rail");
 
   await page.hover(cellSelector("A"));
   await page.locator(`${cellSelector("A")} button.input_context_menu`).click();
@@ -523,6 +613,17 @@ test("disabled states: A shows Disabled with no run button; B shows Depends on a
   const bChip = page.locator(`${cellSelector("B")} ember-chip`);
   assert.match(await bChip.innerText(), /Depends on a disabled cell\..*Go to it/s);
   assert.equal(await page.locator(`${cellSelector("B")} ember-chip`).count(), 1, "B has no \"Not run yet\" chip either");
+
+  // Board Cells: the chip 12px from the rail, then the greyed output with
+  // no wash behind it (the wash is the stale state's).
+  assert.notEqual(await tokenColor(page, "--pluto-output-bg-color"), await tokenColor(page, "--ember-wash"));
+  near(await outputLeft("B"), 12, "B's output to rail");
+  for (const id of ["A", "B"]) {
+    near((await rect(page, `${cellSelector(id)} > ember-chip`)).left - (await rect(page, cellSelector(id))).left, 12, `${id}'s chip to rail`);
+    assert.equal(await computed(page, `${cellSelector(id)} > pluto-output`, "filter"), "grayscale(1)", `${id}'s output is greyed`);
+    assert.equal(await computed(page, `${cellSelector(id)} > pluto-output`, "backgroundColor"), await tokenColor(page, "--pluto-output-bg-color"), `no wash behind ${id}'s output`);
+    assert.equal(await page.locator(cellSelector(id)).evaluate((el) => getComputedStyle(el, "::before").content), "none", `no wash layer on ${id}`);
+  }
 
   await bChip.locator("a").click();
   await page.waitForFunction(

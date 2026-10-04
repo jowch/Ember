@@ -13,7 +13,14 @@ x <- 1
 # %% id=B
 x + 1
 
+# %% id=F
+f <- function(d) lm(mpg ~ wt, data = d)
+
 # %% id=ERR
+bad <- list(mpg = 1, wt = list(1)); g <- function(d) f(d); g(bad)
+
+# %% id=TOP
+y <- 2
 stop("boom")
 
 # %% id=LOOP
@@ -26,7 +33,9 @@ Sys.sleep(3)
 # S
 # A
 # B
+# F
 # ERR
+# TOP
 # LOOP
 # NEVER
 # ///
