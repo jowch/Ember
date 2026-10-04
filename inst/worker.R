@@ -475,7 +475,7 @@ run_cell <- function(msg) {
                      line = err_line,
                      deep = err_deep,
                      # No `call` means nothing to point a traceback frame
-                     # at (the message already says "Error · line n"
+                     # at (the message already says "Error \u00b7 line n"
                      # with no call), so frames stay empty rather than
                      # listing the bare stop() call itself.
                      frames = if (is.null(call_text)) list() else clean_frames(kept_calls, kept_fns))
