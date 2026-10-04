@@ -67,13 +67,19 @@ export function cellSelector(id) { return `pluto-cell[id="${id}"]`; }
 /** Click into a cell's editor and select-all + type new code, the way a
  * person retyping a cell would (CellInput's CodeMirror instance). */
 export async function setCellCode(page, id, code) {
-  const sel = `${cellSelector(id)} .cm-content`;
+  // A cell off screen renders as CellInput.js's StaticCodeMirrorFaker (a
+  // `.cm-editor.cm-ssr-fake` placeholder), swapped for the real CodeMirror
+  // once it scrolls into view; clicking the placeholder loses focus to
+  // <body>.
+  await page.locator(cellSelector(id)).scrollIntoViewIfNeeded();
+  const sel = `${cellSelector(id)} .cm-editor:not(.cm-ssr-fake) .cm-content`;
   await page.locator(sel).click();
   await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
   await page.keyboard.type(code, { delay: 2 });
 }
 
 export async function runCell(page, id) {
-  await page.locator(`${cellSelector(id)} .cm-content`).click();
+  await page.locator(cellSelector(id)).scrollIntoViewIfNeeded();
+  await page.locator(`${cellSelector(id)} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.keyboard.press("Shift+Enter");
 }
