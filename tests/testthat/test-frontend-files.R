@@ -414,9 +414,9 @@ test_that("the installed frontend is under 3 MB and THIRD-PARTY.txt matches COPY
   expect_equal(missing, character(0))
 })
 
-# ---- 78. alert()/confirm() only in the three spots piece 7a leaves native ----
+# ---- 78. alert()/confirm() only where piece 7 has not replaced them yet ----
 
-test_that("alert()/confirm() calls remain only in Settings.js (1), ExportBanner.js (2) and Editor.js (1) (78)", {
+test_that("alert()/confirm() calls remain only in Settings.js (1) (78)", {
   dir <- frontend_dir()
   js <- frontend_files(dir)
   js <- js[grepl("\\.js$", js)]
@@ -441,5 +441,5 @@ test_that("alert()/confirm() calls remain only in Settings.js (1), ExportBanner.
   }
   counts <- counts[order(names(counts))]
 
-  expect_equal(counts, list("ExportBanner.js" = 2L, "Settings.js" = 1L))
+  expect_equal(counts, list("Settings.js" = 1L))
 })

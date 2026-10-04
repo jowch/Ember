@@ -84,8 +84,9 @@ test("offline: rich.R works with every non-local request aborted (18)", async (t
   await page.waitForSelector("dialog.psettings[open]", { timeout: 5000 });
   await page.keyboard.press("Escape");
 
-  await page.locator('header#pluto-nav button[aria-label="Export"]').click();
-  await page.waitForSelector("dialog#export[open]", { timeout: 5000 });
+  await page.locator("header#pluto-nav button.toggle_export").click();
+  await page.waitForSelector('.ember-export-menu[role="menu"]', { timeout: 5000 });
+  await page.keyboard.press("Escape");
 
   // Code highlighted as R: the MD cell's fenced block (` ```r\n1 + 1\n``` `)
   // is rendered as output regardless of the cell's own code-fold state (only
@@ -135,10 +136,10 @@ test("offline: each vendored library does its job (19)", async (t) => {
   await page.waitForFunction(
     () => document.querySelector("span.ansi-red-fg") != null, null, { timeout: 20000 });
 
-  // dialog-polyfill: the export dialog opens (uses <dialog>, polyfilled where needed).
-  await page.locator('header#pluto-nav button[aria-label="Export"]').click();
-  await page.waitForSelector("dialog#export[open]", { timeout: 5000 });
-  await page.keyboard.press("Escape")
+  // dialog-polyfill: the Settings dialog opens (uses <dialog>, polyfilled where needed).
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("pluto open settings")));
+  await page.waitForSelector("dialog.psettings[open]", { timeout: 5000 });
+  await page.keyboard.press("Escape");
 
   // highlight.js: the fenced R block inside MD is highlighted. Its output
   // (unlike its input editor) isn't affected by the cell's code-fold state,

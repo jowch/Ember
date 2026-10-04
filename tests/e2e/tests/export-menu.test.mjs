@@ -1,11 +1,5 @@
-// The Export menu's "Static HTML" card (components/ExportBanner.js): a
-// reviewer found that it dispatched a "open pluto html export" event whose
-// only listener (PlutoLandUpload) is never mounted in Ember, so the click
-// did nothing. The fix makes the card's own link (href=notebookexport_url,
-// download="") do the work natively. This test drives the real menu instead
-// of fetching /notebookexport directly (that path is covered by
-// export.test.mjs), so a regression in the click handler itself would be
-// caught.
+// The header's Export menu (components/ExportMenu.js), tests 161 and 162
+// of docs/ui-3-tests.md.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -15,60 +9,77 @@ import { tmpdir } from "node:os";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook } from "../browser.mjs";
 
-test("export menu: Static HTML downloads a self-contained export", async (t) => {
+async function download(page, name) {
+  const [file] = await Promise.all([
+    page.waitForEvent("download", { timeout: 10000 }),
+    page.getByRole("menuitem", { name, exact: true }).click(),
+  ]);
+  const dir = mkdtempSync(path.join(tmpdir(), "ember-e2e-export-"));
+  const dest = path.join(dir, file.suggestedFilename());
+  await file.saveAs(dest);
+  return { name: file.suggestedFilename(), text: readFileSync(dest, "utf8") };
+}
+
+test("export menu: three items, downloads, Esc returns focus (161)", async (t) => {
   const notebook = tempNotebook("basic.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "export-menu-html.server.log") });
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "export-menu-161.server.log") });
   const browser = await launchBrowser();
   t.after(async () => { await browser.close(); server.stop(); });
 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
-
-  // A freshly opened local notebook starts in safe preview; trust it first
-  // so the Static HTML card's own `warn_if_safe_preview()` confirm (kept by
-  // the fix -- see ExportBanner.js) doesn't need a native dialog handled
-  // here. newPage()'s dialog handler dismisses any dialog it doesn't
-  // expect, which would otherwise look just like "the click did nothing".
   await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(() => document.querySelectorAll("#ember-safe-preview").length === 0, null, { timeout: 20000 });
 
-  await page.locator('header#pluto-nav button[aria-label="Export"]').click();
-  await page.waitForSelector("dialog#export[open]", { timeout: 5000 });
+  const button = page.locator("header#pluto-nav button.toggle_export");
+  await button.click();
+  const menu = page.locator('[role="menu"]');
+  await menu.waitFor({ timeout: 5000 });
+  assert.deepEqual(
+    await menu.locator('[role="menuitem"]').evaluateAll((els) => els.map((el) => el.querySelector(".ember-menuitem-title").textContent)),
+    ["Download .R file", "Download HTML", "Print or save as PDF"]);
+  assert.equal(await menu.locator(".ember-menu-note").count(), 0, "no safe-preview note once the notebook runs");
 
-  const [download] = await Promise.all([
-    page.waitForEvent("download", { timeout: 10000 }),
-    page.locator('dialog#export a.export_card:has-text("Static HTML")').click(),
-  ]);
+  const r = await download(page, "Download .R file");
+  assert.equal(r.name, "basic.R");
+  assert.equal(r.text.split("\n")[0], "### An Ember notebook ###");
+  await menu.waitFor({ state: "detached", timeout: 5000 });
 
-  const dir = mkdtempSync(path.join(tmpdir(), "ember-export-menu-"));
-  const file = path.join(dir, "export.html");
-  await download.saveAs(file);
-  const html = readFileSync(file, "utf8");
-  assert.match(html, /id="ember-modules"/, "expected the downloaded file to be the self-contained export");
+  await button.click();
+  const exported = await download(page, "Download HTML");
+  assert.match(exported.text, /id="ember-modules"/, "expected the self-contained export");
+
+  await button.click();
+  await menu.waitFor({ timeout: 5000 });
+  await page.keyboard.press("Escape");
+  await menu.waitFor({ state: "detached", timeout: 5000 });
+  assert.ok(await button.evaluate((el) => el === document.activeElement), "focus is back on the Export button");
 
   assertNoProblems(page);
 });
 
-test("export menu: Notebook file opens the source in a new tab", async (t) => {
+test("export menu: safe preview shows the note and downloads without asking (162)", async (t) => {
   const notebook = tempNotebook("basic.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "export-menu-file.server.log") });
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "export-menu-162.server.log") });
   const browser = await launchBrowser();
   t.after(async () => { await browser.close(); server.stop(); });
 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
+  await page.locator("#ember-safe-preview").waitFor({ timeout: 10000 });
 
-  await page.locator('header#pluto-nav button[aria-label="Export"]').click();
-  await page.waitForSelector("dialog#export[open]", { timeout: 5000 });
+  await page.locator("header#pluto-nav button.toggle_export").click();
+  const menu = page.locator('[role="menu"]');
+  await menu.waitFor({ timeout: 5000 });
+  assert.equal(
+    (await menu.locator(".ember-menu-note").innerText()).trim(),
+    "This notebook hasn't run, so HTML and PDF have code but no outputs.");
+  assert.deepEqual(
+    await menu.locator(".ember-menuitem-desc").allInnerTexts(),
+    ["The notebook itself. Runs with Rscript.", "Code only, for now.", "Code only, for now."]);
 
-  const [popup] = await Promise.all([
-    page.context().waitForEvent("page", { timeout: 10000 }),
-    page.locator('dialog#export a.export_card:has-text("Notebook file")').click(),
-  ]);
-  await popup.waitForLoadState();
-  const text = await popup.locator("body").innerText();
-  assert.match(text, /# %%/, "expected the notebook file's own cell-boundary marker");
-  await popup.close();
+  const exported = await download(page, "Download HTML");
+  assert.match(exported.text, /id="ember-modules"/);
 
   assertNoProblems(page);
 });

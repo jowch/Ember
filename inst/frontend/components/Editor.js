@@ -15,7 +15,6 @@ import { DropRuler, get_drop_index_for_paste } from "./DropRuler.js"
 import { SelectionArea } from "./SelectionArea.js"
 import { RecentlyDisabledInfo, UndoDelete } from "./UndoDelete.js"
 import { Scroller } from "./Scroller.js"
-import { ExportBanner } from "./ExportBanner.js"
 import { Popup } from "./Popup.js"
 
 import { slice_utf8 } from "../common/UnicodeTools.js"
@@ -343,7 +342,6 @@ export const url_logo_small = get_included_external_source("pluto-logo-small")?.
  * up: boolean,
  * down: boolean,
  * },
- * export_menu_open: boolean,
  * move_dialog_open: boolean,
  * last_created_cell: string | undefined,
  * selected_cells: Array<string>,
@@ -388,7 +386,6 @@ export class Editor extends Component {
                 up: false,
                 down: false,
             },
-            export_menu_open: false,
             move_dialog_open: false,
 
             last_created_cell: undefined,
@@ -1346,7 +1343,6 @@ all patches: ${JSON.stringify(patches, null, 1)}
             } else if (e.key === "Escape") {
                 this.setState({
                     selected_cells: [],
-                    export_menu_open: false,
                 })
             }
 
@@ -1501,7 +1497,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
 
     render() {
         const { launch_params } = this.props
-        let { export_menu_open, notebook } = this.state
+        let { notebook } = this.state
 
         const status = this.cached_status ?? statusmap(this.state, launch_params)
 
@@ -1558,25 +1554,22 @@ all patches: ${JSON.stringify(patches, null, 1)}
                     }
                     <${Scroller} active=${this.state.scroller} />
                     <${ProgressBar} notebook=${this.state.notebook} backend_launch_phase=${this.state.backend_launch_phase} status=${status}/>
-                    <header id="pluto-nav" className=${export_menu_open ? "show_export" : ""}>
-                        <${ExportBanner}
-                            notebook_id=${this.state.notebook.notebook_id}
+                    <header id="pluto-nav">
+                        <${Header}
+                            notebook=${notebook}
+                            connected=${this.state.connected}
+                            code_differs=${status.code_differs}
+                            export_links=${{
+                                file_url: this.export_url("notebookfile"),
+                                html_url: this.export_url("notebookexport", { offline_bundle: "true" }),
+                                file_name: (notebook.path ?? "").split(/[\\/]/).pop() || notebook.shortpath,
+                                safe_preview: status.process_waiting_for_permission,
+                            }}
                             print_title=${
                                 this.state.notebook.metadata?.frontmatter?.title ??
                                 new URLSearchParams(window.location.search).get("name") ??
                                 this.state.notebook.shortpath
                             }
-                            notebookfile_url=${this.export_url("notebookfile")}
-                            notebookexport_url=${this.export_url("notebookexport", { offline_bundle: "true" })}
-                            process_waiting_for_permission=${status.process_waiting_for_permission}
-                            open=${export_menu_open}
-                            onClose=${() => this.setState({ export_menu_open: false })}
-                        />
-                        <${Header}
-                            notebook=${notebook}
-                            connected=${this.state.connected}
-                            code_differs=${status.code_differs}
-                            on_toggle_export=${() => this.setState({ export_menu_open: !export_menu_open })}
                             on_open_move=${() => this.setState({ move_dialog_open: true })}
                             on_run_all=${() => this.actions.ember_run_all()}
                             on_interrupt=${() => this.actions.interrupt_remote()}

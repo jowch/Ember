@@ -39,6 +39,13 @@ export const PackagesIcon = ({ size = 18 }) => icon(
 
 export const ExportIcon = ({ size = 18 }) => icon(size, html`<path d="M12 4v11M7 10l5 5 5-5M5 20h14"></path>`)
 
+export const WarningIcon = ({ size = 14 }) => html`
+    <svg width=${size} height=${size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" style="flex-shrink: 0; margin-top: 2px">
+        <path d="M12 3l10 18H2z"></path>
+        <path d="M12 10v5M12 18v.01"></path>
+    </svg>
+`
+
 export const SidePanelIcon = ({ size = 18 }) => icon(size, html`<rect x="3" y="4" width="18" height="16" rx="2"></rect><path d="M3 14h18"></path>`)
 
 export const BackIcon = ({ size = 16 }) => icon(size, html`<path d="M15 6l-6 6 6 6"></path>`)
