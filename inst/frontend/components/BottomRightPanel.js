@@ -16,6 +16,45 @@ import { t } from "../common/lang.js"
 
 export const open_bottom_right_panel = (/** @type {PanelTabName} */ tab) => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: tab }))
 
+/** The width from which the panel docks beside the column (editor.css's 1239px query). */
+const DOCKED_QUERY = "(min-width: 1240px)"
+
+const read_stored = (/** @type {string} */ key) => {
+    try {
+        return localStorage.getItem(key)
+    } catch (e) {
+        return null
+    }
+}
+const write_stored = (/** @type {string} */ key, /** @type {string} */ value) => {
+    try {
+        localStorage.setItem(key, value)
+    } catch (e) {}
+}
+
+/**
+ * The tab this browser last had open, else Variables.
+ * @returns {Exclude<PanelTabName, null>}
+ */
+export const last_panel_tab = () => {
+    const tab = read_stored("ember_panel_tab")
+    return tab === "variables" || tab === "docs" || tab === "packages" || tab === "process" ? tab : "variables"
+}
+
+/** @type {PanelTabName | undefined} */
+let load_tab = undefined
+
+/**
+ * The tab open when the page loads: the last one used, if the panel fits
+ * docked and the viewer didn't close it last time; otherwise none.
+ * Computed once, so the header and the panel start out agreeing.
+ * @returns {PanelTabName}
+ */
+export const initial_panel_tab = () => {
+    if (load_tab === undefined) load_tab = window.matchMedia(DOCKED_QUERY).matches && read_stored("ember_panel_open") !== "false" ? last_panel_tab() : null
+    return load_tab
+}
+
 const TABS = /** @type {const} */ ([
     ["variables", "t_panel_variables"],
     ["docs", "t_panel_docs"],
@@ -44,7 +83,7 @@ export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, noteboo
     const container_ref = useRef()
     const focus_docs_on_open_ref = useRef(false)
     const opener_ref = useRef(/** @type {HTMLElement?} */ (null))
-    const [open_tab, set_open_tab] = useState(/** @type { PanelTabName} */ (null))
+    const [open_tab, set_open_tab] = useState(initial_panel_tab)
     const hidden = open_tab == null
 
     useEventListener(
@@ -54,6 +93,8 @@ export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, noteboo
             focus_docs_on_open_ref.current = e.detail === "docs"
             const active = /** @type {HTMLElement?} */ (document.activeElement)
             if (e.detail != null && !container_ref.current?.contains(active)) opener_ref.current = active != null && active !== document.body ? active : null
+            write_stored("ember_panel_open", String(e.detail != null))
+            if (e.detail != null) write_stored("ember_panel_tab", e.detail)
             set_open_tab(e.detail)
         },
         [set_open_tab]
