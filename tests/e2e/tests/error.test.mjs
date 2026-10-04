@@ -69,3 +69,42 @@ test("error: a name defined twice and a cycle are worded for R users (Words6)", 
   assert.equal((await message("LOOP").innerText()).split("\n")[0], "y and z depend on each other, so neither can run.");
   assertNoProblems(page);
 });
+
+test("error: running broken code in a cell that ran shows only the error, not edited, and no cell id", async (t) => {
+  const notebook = tempNotebook();
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "error-parse-run.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await page.hover(cellSelector("B"));
+  await page.locator(`${cellSelector("B")} button.add_cell.after`).click({ force: true });
+  const id = await page.evaluate(() => {
+    const cells = Array.from(document.querySelectorAll("pluto-cell"));
+    return cells[cells.findIndex((c) => c.id === "B") + 1]?.id ?? null;
+  });
+  assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-/);
+  const cell = cellSelector(id);
+
+  await page.locator(`${cell} .cm-content`).click();
+  await page.keyboard.type("41 + 1", { delay: 2 });
+  await page.keyboard.press("Shift+Enter");
+  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("42"),
+    `${cell} pluto-output`, { timeout: 20000 });
+
+  await setCellCode(page, id, "barplot(table(sample(1:3, size=1000, replace=TRUE, prob=(.30,.60,.10))))");
+  await page.waitForSelector(`${cell}.code_differs`, { timeout: 10000 });
+  await page.keyboard.press("Shift+Enter");
+
+  const box = `${cell} jlerror.ember.syntax-error`;
+  await page.waitForSelector(box, { timeout: 20000 });
+  // The edit reaches the server before the run request, and in between the
+  // cell is briefly errored and edited at once.
+  await page.waitForSelector(`${cell}.errored:not(.code_differs):not(.code_changed)`, { timeout: 10000 });
+  assert.equal(await page.locator(`${box} > header > p:first-child`).innerText(), "Syntax error: unexpected ','");
+  assert.doesNotMatch(await page.locator(box).innerText(), /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/);
+  assert.equal(await page.locator(`${box} > header > p.ember-error-where`).innerText(), "Error · line 1");
+  assertNoProblems(page);
+});

@@ -348,6 +348,24 @@ test_that("stale sets ember$stale, not depends_on_disabled_cells (12)", {
   expect_false(cr$depends_on_disabled_cells)
 })
 
+test_that("a run cell with a parse error projects as errored, not code_changed, with no cell id in the message", {
+  id <- "ca1b0a64-d117-466f-898a-8603bbc24e75"
+  cells <- list(S = cell(""))
+  cells[[id]] <- cell("x <- 1")
+  r <- boot(fake_state(cells), id)
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+  r <- drive(r$state, ev_apply(list(op_set_code(id, "x <- (.3,.6)")), at(11)),
+             ev_run(id, at(12)))
+
+  cr <- pluto_state(r$state)$js$cell_results[[id]]
+  expect_true(cr$errored)
+  expect_false(cr$ember$code_changed)
+  expect_equal(cr$output$mime, "application/vnd.pluto.parseerror+object")
+  diags <- cr$output$body$diagnostics
+  expect_length(diags, 1)
+  expect_equal(diags[[1]]$message, "Syntax error: unexpected ','")
+})
+
 test_that("project_cell_result(): ember$split for a mixed_text cell, NULL for a text cell (49)", {
   s <- fake_state(list(S = cell(""), M = cell("#' a\nx <- 1"), T = cell("#' hi", kind = "markdown")))
   vm <- snapshot_of(s)$cells$M

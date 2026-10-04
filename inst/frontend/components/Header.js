@@ -31,19 +31,20 @@ const use_narrow = (/** @type {number} */ max_width) => {
  * button and the Status tab (ui-3-plan.md piece 5's "Status tab"). A run
  * shows only once it has lasted SETTLE_MS (useSettled.js).
  *
- * @param {{ connected: boolean, notebook: import("./Editor.js").NotebookData }} props
+ * @param {{ connected: boolean, key_refused?: boolean, notebook: import("./Editor.js").NotebookData }} props
  * @returns {{ dot: "faint"|"accent"|"run"|"red"|"amber", words: string, title: string?, busy?: boolean }}
  */
-export const use_r_status = ({ connected, notebook }) => {
+export const use_r_status = ({ connected, key_refused = false, notebook }) => {
     const { n, i } = use_run_progress(notebook)
-    return useSettled(r_status({ connected, notebook, n, i }), (status, shown) => !!status.busy && !shown.busy)
+    return useSettled(r_status({ connected, key_refused, notebook, n, i }), (status, shown) => !!status.busy && !shown.busy)
 }
 
 /**
- * @param {{ connected: boolean, notebook: import("./Editor.js").NotebookData, n: number, i: number }} props
+ * @param {{ connected: boolean, key_refused: boolean, notebook: import("./Editor.js").NotebookData, n: number, i: number }} props
  * @returns {{ dot: "faint"|"accent"|"run"|"red"|"amber", words: string, title: string?, busy?: boolean }}
  */
-const r_status = ({ connected, notebook, n, i }) => {
+const r_status = ({ connected, key_refused, notebook, n, i }) => {
+    if (!connected && key_refused) return { dot: "red", words: t("t_ember_r_status_key_refused"), title: t("t_ember_key_refused") }
     if (!connected) return { dot: "faint", words: t("t_ember_r_status_not_connected"), title: null }
     const process = notebook.ember?.process
     switch (process) {
@@ -79,6 +80,7 @@ const r_status = ({ connected, notebook, n, i }) => {
  * @param {{
  * notebook: import("./Editor.js").NotebookData,
  * connected: boolean,
+ * key_refused?: boolean,
  * code_differs: boolean,
  * export_links: import("./ExportMenu.js").ExportLinks,
  * print_title: string,
@@ -87,7 +89,7 @@ const r_status = ({ connected, notebook, n, i }) => {
  * on_interrupt: () => void,
  * }} props
  */
-export const Header = ({ notebook, connected, code_differs, export_links, print_title, on_open_move, on_run_all, on_interrupt }) => {
+export const Header = ({ notebook, connected, key_refused = false, code_differs, export_links, print_title, on_open_move, on_run_all, on_interrupt }) => {
     const [open_tab, set_open_tab] = useState(initial_panel_tab)
     const last_tab_ref = useRef(last_panel_tab())
 
@@ -104,7 +106,7 @@ export const Header = ({ notebook, connected, code_differs, export_links, print_
     const toggle = (/** @type {import("./BottomRightPanel.js").PanelTabName} */ tab) => open_bottom_right_panel(open_tab === tab ? null : tab)
 
     const narrow = use_narrow(640)
-    const status = use_r_status({ connected, notebook })
+    const status = use_r_status({ connected, key_refused, notebook })
     const not_run = useSettled(notebook.ember?.not_run ?? 0, (count, shown) => count > shown)
 
     use_print_title(print_title)

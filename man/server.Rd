@@ -73,11 +73,16 @@ leave this \code{FALSE}.}
 \code{serve()} returns, invisibly, once \code{stop_server()} has been called from a
 callback; it never returns on its own.
 
-\code{start_server()} returns an \code{ember_server_handle}: an environment with
+\code{start_server()} prints the link to open (the notebook's, given a
+\code{path}; otherwise the start page's) as a message, and returns, invisibly,
+an \code{ember_server_handle}: an environment with
 \code{url} (the server's base URL, including \code{?secret=}), \code{open(path)} (opens a
 notebook through \verb{/open} and returns its edit URL, invisibly),
-\code{stop()} (kills the child process; its worker processes die with it), and
-\code{process} (the \pkg{processx} handle).
+\code{stop()} (kills the child process; its worker processes die with it),
+\code{output} (the child process's recent output lines), and
+\code{process} (the \pkg{processx} handle). While the child runs, a browser
+that asks for a page without the current key gets the link printed again
+in this console.
 
 \code{host_notebook()} returns the notebook's edit URL (with the secret). If
 the server already hosts that notebook, nothing changes and the same URL

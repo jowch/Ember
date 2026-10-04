@@ -92,13 +92,16 @@ serve <- function(paths = character(), port = 0L, secret = random_secret(32),
 #' @param timeout Seconds to wait for the child to listen.
 #' @param allowed_hosts `Host` names (with or without `:<port>`) to accept
 #'   besides loopback, for a reverse proxy; see `serve()`'s doc.
-#' @return An `ember_server_handle`: an environment with
+#' @return Invisibly (start_server() prints the link itself, as a
+#'   message), an `ember_server_handle`: an environment with
 #'   * `url`: the server's base URL including `?secret=`;
 #'   * `open(path)`: opens a notebook in the browser through `/open`, the
 #'     same route a bookmark uses, and returns its edit URL invisibly. The
 #'     browser does the opening; this R session needs no channel to the
 #'     child beyond HTTP;
 #'   * `stop()`: kills the child (its workers die with it);
+#'   * `output`: the child's most recent output lines (at most
+#'     `CHILD_OUTPUT_KEEP`), read by `watch_child()`;
 #'   * `process`: the processx handle (`cleanup = TRUE`, `supervise = TRUE`:
 #'     the child goes when this session does).
 #' `allowed_hosts` joined for `EMBER_ALLOWED_HOSTS`, split back by
@@ -132,10 +135,12 @@ start_server <- function(path = NULL, port = 0L, open = interactive(), timeout =
 
   deadline <- Sys.time() + timeout
   url <- NULL
+  output <- character()
   repeat {
     proc$poll_io(200)
     for (ln in proc$read_output_lines()) {
       if (startsWith(ln, "ember: listening on ")) url <- sub("^ember: listening on ", "", ln)
+      else output <- c(output, ln)
     }
     if (!is.null(url)) break
     if (!proc$is_alive()) {
@@ -153,6 +158,8 @@ start_server <- function(path = NULL, port = 0L, open = interactive(), timeout =
   handle <- new.env(parent = emptyenv())
   handle$url <- url
   handle$process <- proc
+  handle$output <- utils::tail(output, CHILD_OUTPUT_KEEP)
+  handle$stopped <- FALSE
   handle$open <- function(path) {
     full_path <- normalizePath(path, mustWork = TRUE)
     qs <- sprintf("path=%s&secret=%s", utils::URLencode(full_path, reserved = TRUE), secret)
@@ -167,25 +174,62 @@ start_server <- function(path = NULL, port = 0L, open = interactive(), timeout =
     invisible(edit)
   }
   handle$stop <- function() {
+    handle$stopped <- TRUE
     if (proc$is_alive()) proc$kill()
     invisible(NULL)
   }
   class(handle) <- "ember_server_handle"
 
-  if (isTRUE(open)) {
-    if (!is.null(path)) {
-      edit <- handle$open(path)
-      utils::browseURL(edit)
-    } else {
-      utils::browseURL(handle$url)
-    }
+  link <- if (!is.null(path)) handle$open(path) else handle$url
+  message(started_text(link, path))
+  watch_child(handle)
+  if (isTRUE(open)) utils::browseURL(link)
+  invisible(handle)
+}
+
+#' What start_server() prints once the child listens. With a `path`, only
+#' the notebook's own link: the start page is one click away from it (the
+#' flame), and two links would leave the reader to work out which to open.
+started_text <- function(link, path = NULL) {
+  first <- if (is.null(path)) {
+    sprintf("Ember is running at %s", link)
+  } else {
+    sprintf("Ember has %s open at %s", basename(path), link)
   }
-  handle
+  paste0(first, "\nStop it by calling $stop() on the returned server, or by quitting R.")
+}
+
+#' How many of the child's output lines an `ember_server_handle` keeps.
+CHILD_OUTPUT_KEEP <- 1000L
+
+#' Read the child's output every `interval` seconds while it runs, through
+#' later, so it happens whenever the console is idle: reprint the link
+#' when the child reports a request refused for its key (`KEY_HINT_LINE`,
+#' see `note_key_refused()`), and keep every other line in `handle$output`.
+#' Reading also keeps the pipe drained, so the child never blocks writing
+#' to a full one.
+watch_child <- function(handle, interval = 0.5) {
+  poll <- function() {
+    if (isTRUE(handle$stopped) || !handle$process$is_alive()) return(invisible(NULL))
+    for (ln in handle$process$read_output_lines()) {
+      if (startsWith(ln, KEY_HINT_LINE)) {
+        message(KEY_HINT, handle$url)
+      } else {
+        handle$output <- utils::tail(c(handle$output, ln), CHILD_OUTPUT_KEEP)
+      }
+    }
+    later::later(poll, interval)
+  }
+  later::later(poll, interval)
 }
 
 #' @export
 print.ember_server_handle <- function(x, ...) {
-  cat(sprintf("<ember_server> %s\n", x$url))
+  if (x$process$is_alive()) {
+    cat(sprintf("<ember_server> running at %s\n", x$url))
+  } else {
+    cat(sprintf("<ember_server> stopped (was at %s)\n", x$url))
+  }
   invisible(x)
 }
 
@@ -1341,6 +1385,94 @@ html_escape <- function(x) {
   gsub("'", "&#39;", x, fixed = TRUE)
 }
 
+#' Browser pages that answer a missing or stale secret with
+#' `key_refused_page()` rather than `REFUSED_TEXT`.
+KEY_PAGE_PATHS <- c("/", "/edit", "/open")
+
+KEY_PAGE_TITLE <- "This link needs Ember's current key"
+KEY_PAGE_TEXT <- c(
+  "The link you opened is missing Ember's key, or has a key from an earlier session. Ember makes a new key each time it starts, so links and tabs from before a restart stop working.",
+  "To get in, open the link Ember just printed in the R console where it is running.",
+  "If that console is closed, start Ember again with <code>ember::start_server()</code> and open the link it prints.")
+
+#' What the server prints, and start_server() reprints, when a page is
+#' refused for its key (`note_key_refused()`). `KEY_HINT_LINE` is the
+#' child's line `watch_child()` looks for.
+KEY_HINT <- "A browser asked for Ember without its key. Open: "
+KEY_HINT_LINE <- paste0("ember: ", KEY_HINT)
+KEY_HINT_EVERY_S <- 5
+
+#' The websocket close code for a refused secret, so the editor can tell
+#' it from a dropped connection; common/PlutoConnection.js has the same
+#' number.
+WS_CLOSE_KEY_REFUSED <- 4403L
+
+#' The 403 page for `KEY_PAGE_PATHS`. Takes nothing from the request: the
+#' requested path and query (which may carry an old secret) never reach
+#' the page. Colours are Ember's tokens (frontend/themes/*.css); the page
+#' can't use those files, which pick a theme only once editor.html's
+#' script has set `data-theme`.
+key_refused_page <- function() {
+  paras <- paste0("<p>", KEY_PAGE_TEXT, "</p>", collapse = "\n")
+  body <- paste0('<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>Ember: link needs a new key</title>
+<link rel="icon" type="image/svg+xml" href="./img/favicon.svg">
+<link rel="stylesheet" href="./fonts.css">
+<style>
+:root { --page: #f5f6f3; --panel: #fcfcfb; --line: #dce1db; --text: #1b201d; --muted: #57605a; --code: #eceeea; }
+@media (prefers-color-scheme: dark) {
+  :root { --page: #151917; --panel: #1b201d; --line: #2f3631; --text: #dfe5e0; --muted: #9ba59e; --code: #212723; }
+}
+html, body { margin: 0; background: var(--page); color: var(--text); }
+body { font: 16px/1.55 "Figtree", ui-sans-serif, system-ui, sans-serif; }
+main { max-width: 520px; margin: 12vh auto 48px; padding: 28px 32px; box-sizing: border-box;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+.brand { display: flex; align-items: center; gap: 8px; margin-bottom: 20px; font-weight: 600; font-size: 18px; }
+.brand img { width: 24px; height: 24px; }
+h1 { font-size: 20px; font-weight: 600; margin: 0 0 12px; }
+p { margin: 0 0 12px; }
+p:first-of-type { color: var(--muted); }
+p:last-child { margin-bottom: 0; }
+code { font: 14px "IBM Plex Mono", ui-monospace, monospace; background: var(--code); padding: 1px 5px; border-radius: 4px; }
+@media (max-width: 560px) { main { margin: 24px 16px; padding: 22px 20px; } }
+</style>
+</head>
+<body>
+<main>
+<div class="brand"><img src="./img/favicon.svg" alt="">Ember</div>
+<h1>', KEY_PAGE_TITLE, '</h1>
+', paras, '
+</main>
+</body>
+</html>
+')
+  http_text(403L, body, "text/html; charset=utf-8", list("Cache-Control" = "no-store"))
+}
+
+#' Print `KEY_HINT` and the working link, at most once every
+#' `KEY_HINT_EVERY_S` seconds so a tab retrying in a loop can't flood the
+#' console. Run from `serve()` directly, this reaches the console it runs
+#' in; under start_server(), the child's stdout goes to `watch_child()`,
+#' which reprints it in the user's console.
+note_key_refused <- function(server) {
+  # A server from new_server() alone, never bound to a port, has no link.
+  if (is.null(server$port)) return(invisible(NULL))
+  now <- Sys.time()
+  last <- server$key_hint_at
+  if (!is.null(last) && as.numeric(difftime(now, last, units = "secs")) < KEY_HINT_EVERY_S) {
+    return(invisible(NULL))
+  }
+  server$key_hint_at <- now
+  cat(KEY_HINT_LINE, server_url(server), "\n", sep = "")
+  invisible(NULL)
+}
+
 #' `GET /edit?id=` -> editor.html, with the secret cookie set (so the page's
 #' own plain navigations, `/notebookfile` and `/notebookexport`, can rely on
 #' the cookie alone; the websocket never does, see `secret_ok_ws()`).
@@ -1446,7 +1578,11 @@ http_call <- function(server, req) {
   if (!origin_ok(server, req)) return(http_text(403L, REFUSED_TEXT))
   strict <- isTRUE(req$PATH_INFO %in% QUERY_SECRET_ONLY_PATHS)
   ok <- if (strict) secret_query_ok(server, req) else secret_ok(server, req)
-  if (!ok) return(http_text(403L, REFUSED_TEXT))
+  if (!ok) {
+    if (!isTRUE(req$PATH_INFO %in% KEY_PAGE_PATHS)) return(http_text(403L, REFUSED_TEXT))
+    note_key_refused(server)
+    return(key_refused_page())
+  }
   switch(req$PATH_INFO,
     "/edit" = http_edit(server, req),
     "/open" = http_open(server, req),
@@ -1480,7 +1616,8 @@ http_call <- function(server, req) {
 #' * `onWSOpen`: checks the same origin, and the secret in the URL's query
 #'   string only (`secret_ok_ws()`; see its doc for why the cookie that
 #'   satisfies `call` above isn't accepted here). Either failing closes the
-#'   socket before any handler is set. Otherwise `ws$onMessage(...)` inside
+#'   socket before any handler is set; a refused secret closes it with
+#'   `WS_CLOSE_KEY_REFUSED`. Otherwise `ws$onMessage(...)` inside
 #'   tryCatch (log, never throw into httpuv), and `ws$onClose` drops the
 #'   clients on that socket.
 http_app <- function(server) {
@@ -1504,8 +1641,13 @@ http_app <- function(server) {
       "/start.html" = httpuv::excludeStaticPath()
     ),
     onWSOpen = function(ws) {
-      if (!origin_ok(server, ws$request) || !secret_ok_ws(server, ws$request)) {
+      if (!origin_ok(server, ws$request)) {
         ws$close()
+        return(invisible(NULL))
+      }
+      if (!secret_ok_ws(server, ws$request)) {
+        note_key_refused(server)
+        ws$close(WS_CLOSE_KEY_REFUSED, "key")
         return(invisible(NULL))
       }
       ws$onMessage(function(binary, message) {
