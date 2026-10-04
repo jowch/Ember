@@ -831,6 +831,73 @@ button.ember-tree-root > .ember-tree-what {
     padding-left: 22px;
 }
 
+/* ---- Printed text and console (ui-3.md "Outputs"; ui-3-plan.md 6.6) --- */
+
+/* Printed text: exactly what R prints, with no box. */
+pluto-output[mime="text/plain"] pre {
+    display: block;
+    margin: 0;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: none;
+    font-family: var(--ember-code-font);
+    font-size: 13px;
+    line-height: 1.55;
+    white-space: pre;
+    word-break: normal;
+}
+pluto-output[mime="text/plain"] pre > code {
+    font-family: inherit;
+    font-size: inherit;
+}
+
+pluto-logs-container {
+    display: block;
+    max-height: 50vh;
+    overflow: auto;
+}
+pluto-logs {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px 12px 2px;
+    font-family: var(--ember-code-font);
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--ember-text);
+}
+ember-log {
+    display: block;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+ember-log.message:not(.styled) {
+    color: var(--ember-muted);
+}
+ember-log.warning {
+    margin: 2px 0;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: var(--ember-due-bg);
+}
+ember-log.warning > b {
+    font-weight: 600;
+    color: var(--ember-warn-text);
+}
+ember-log code {
+    font-family: inherit;
+    font-size: inherit;
+    background: none;
+    padding: 0;
+}
+pluto-log-truncated {
+    display: block;
+    font-family: var(--ember-ui-font);
+    font-size: 12px;
+    color: var(--ember-faint);
+}
+
 /* ---- Not shown in a static export or an isolated cell ------------------ */
 
 pluto-editor.disable_ui button.ember-run,

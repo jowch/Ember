@@ -698,6 +698,42 @@ test("outputs: a table's size, types, NA cells and Show more; a list tree; print
   assertNoProblems(page);
 });
 
+test("console: a muted message, a warning with its call, and ANSI colours from the theme (147)", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-console.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await page.emulateMedia({ colorScheme: "light" });
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await runShown(page, "W");
+  const logs = `${cellSelector("W")} pluto-logs`;
+  await page.waitForSelector(`${logs} ember-log.stdout`, { timeout: 30000 });
+
+  assert.deepEqual(
+    await page.locator(`${logs} > ember-log`).evaluateAll((els) => els.map((el) => [el.className, el.innerText])),
+    [["message", "Reading"], ["warning", "Warning in h(): careful"], ["stdout", "ok grey"]]);
+  assert.equal(await computed(page, `${logs} > ember-log.message`, "color"), await tokenColor(page, "--ember-muted"));
+  assert.equal(await computed(page, `${logs} > ember-log.stdout`, "color"), await tokenColor(page, "--ember-text"));
+  assert.equal(await page.locator(`${logs} > ember-log.warning > b`).innerText(), "Warning");
+  assert.equal(await page.locator(`${logs} > ember-log.warning > code`).innerText(), "h()");
+  assert.equal(await computed(page, `${logs} > ember-log.warning`, "backgroundColor"), await tokenColor(page, "--ember-due-bg"));
+  assert.equal(await computed(page, `${logs} > ember-log.warning > b`, "color"), await tokenColor(page, "--ember-warn-text"));
+
+  // \033[38;5;246m is a 256-colour code: it gets a base colour's class, not an inline rgb().
+  assert.equal(await page.locator(`${logs} span.ansi-bright-black-fg`).innerText(), "grey");
+  assert.equal(await page.locator(`${logs} [style*="rgb("]`).count(), 0);
+  const green = `${logs} span.ansi-green-fg`;
+  assert.equal(await computed(page, green, "color"), "rgb(43, 122, 75)");
+
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark", null, { timeout: 5000 });
+  assert.equal(await computed(page, green, "color"), "rgb(134, 209, 159)");
+
+  assertNoProblems(page);
+});
+
 // Geometry from the Cells and Insert5 boards (ui-3.md "Cell anatomy",
 // "Run button", "Cell menu", "Adding cells").
 

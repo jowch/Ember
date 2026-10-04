@@ -220,7 +220,7 @@ test("plot: a 3x-density tab asks for one redraw at res 288; a 1x tab asks for n
   assertNoProblems(page3);
 });
 
-test("colours: ANSI's log and output have coloured spans and no visible escape codes (43)", async (t) => {
+test("colours: ANSI's log and output have coloured spans from the theme and no visible escape codes (43)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "rich-ansi.server.log") });
   const browser = await launchBrowser();
@@ -230,16 +230,24 @@ test("colours: ANSI's log and output have coloured spans and no visible escape c
   await openNotebook(page, server.origin, server.secret, notebook);
 
   await runCell(page, "ANSI");
-  await page.waitForFunction(
-    (sel) => document.querySelector(sel)?.querySelector("span.ansi-red-fg") != null,
-    `${cellSelector("ANSI")} pluto-logs`, { timeout: 20000 }).catch(async () => {
-      // the console log area's selector may differ; fall back to a broad search
-      await page.waitForFunction(
-        () => document.querySelector("span.ansi-red-fg") != null, null, { timeout: 5000 });
-    });
+  await page.waitForSelector(`${cellSelector("ANSI")} pluto-logs span.ansi-red-fg`, { timeout: 20000 });
+  await page.waitForSelector(`${cellSelector("ANSI")} pluto-output span.ansi-green-fg`, { timeout: 20000 });
 
   const bodyText = await page.locator(cellSelector("ANSI")).innerText();
   assert.doesNotMatch(bodyText, /\x1b/);
+
+  const themed = (sel, token) => page.evaluate(([sel, token]) => {
+    const probe = document.createElement("span");
+    probe.style.color = `var(${token})`;
+    document.body.append(probe);
+    const want = getComputedStyle(probe).color;
+    probe.remove();
+    return [getComputedStyle(document.querySelector(sel)).color, want];
+  }, [sel, token]);
+  const [red, wantRed] = await themed(`${cellSelector("ANSI")} pluto-logs span.ansi-red-fg`, "--ember-ansi-red");
+  assert.equal(red, wantRed);
+  const [green, wantGreen] = await themed(`${cellSelector("ANSI")} pluto-output span.ansi-green-fg`, "--ember-ansi-green");
+  assert.equal(green, wantGreen);
 
   assertNoProblems(page);
 });
