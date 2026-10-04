@@ -187,3 +187,40 @@ test_that("random_port() doesn't touch .Random.seed either (review4 3)", {
   expect_identical(get(".Random.seed", envir = .GlobalEnv), seed_before)
   expect_true(p >= 20000L && p <= 59999L)
 })
+
+# ---- move_file effect: copy + unlink fallback when rename fails -----------
+
+test_that("run_effect(move_file): an ordinary same-filesystem move still just works", {
+  from <- tempfile("ember-move-from-")
+  writeLines("content", from)
+  to <- tempfile("ember-move-to-")
+  on.exit(unlink(c(from, to)), add = TRUE)
+
+  nb <- new.env(parent = emptyenv())
+  nb$inbox <- list()
+  run_effect(nb, fx_move_file(from, to))
+
+  expect_false(file.exists(from))
+  expect_true(file.exists(to))
+  expect_equal(readLines(to), "content")
+  expect_length(nb$inbox, 0)
+})
+
+test_that("run_effect(move_file): reports a failure (ev_save_failed) when the target can't be written at all", {
+  # Neither file.rename() nor the copy + unlink fallback can succeed
+  # against a parent folder that doesn't exist -- a real failure of both
+  # paths, with no mocking needed.
+  from <- tempfile("ember-move-from2-")
+  writeLines("content", from)
+  to <- file.path(tempfile("ember-move-to2-missing-parent-"), "nb.R")
+  on.exit(unlink(from), add = TRUE)
+
+  nb <- new.env(parent = emptyenv())
+  nb$inbox <- list()
+  run_effect(nb, fx_move_file(from, to))
+
+  expect_true(file.exists(from), info = "the original is left in place when both the rename and the copy fail")
+  expect_false(file.exists(to))
+  expect_length(nb$inbox, 1)
+  expect_equal(nb$inbox[[1]]$type, "save_failed")
+})

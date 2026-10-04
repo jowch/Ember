@@ -855,4 +855,14 @@ test_that("reduce_install_done() writes one install_failed row per failed packag
   expect_equal(v2$packages$status[v2$packages$name == "rlang"], "failed")
   expect_equal(v2$packages$status[v2$packages$name == "broom"], "not_installed")
   expect_equal(length(v2$library$failures$needed_by[[1]]), 0)
+
+  # project_status_tree()'s "pkg" subtasks: "not_installed" is a real
+  # failure (the whole library failed, so broom's own install never even
+  # ran), not "pending" -- unlike "missing" (not yet attempted), it must
+  # not show as still-unknown in the Status tab.
+  tree <- project_status_tree(rf_noidx$state)
+  pkg_subtasks <- tree$subtasks$pkg$subtasks
+  expect_false(isTRUE(pkg_subtasks$broom$success))
+  expect_false(is.null(pkg_subtasks$broom$success))
+  expect_false(isTRUE(pkg_subtasks$rlang$success))
 })

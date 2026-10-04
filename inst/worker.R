@@ -204,7 +204,14 @@ handle_next <- function() {
       resolve <- function(p) tryCatch(normalizePath(p, mustWork = FALSE), error = function(e) p)
       from <- resolve(msg$from)
       to <- resolve(msg$to)
-      if (identical(resolve(getwd()), from)) setwd(to)
+      # `setwd()` throws if `to` is gone (deleted, or never created, by
+      # the time this message is handled); nothing in handle_next()
+      # catches an error that escapes here, so an uncaught one would kill
+      # the worker over what the move's own form already warns can
+      # happen (a relative read's folder changing underneath a running
+      # notebook). The baseline still moves to `to`, matching a notebook
+      # that did `setwd()` itself before the folder went away.
+      if (identical(resolve(getwd()), from)) tryCatch(setwd(to), error = function(e) NULL)
       settings_start$wd <<- to
       if (!is.null(setup_restore)) {
         setup_restore <<- lapply(setup_restore, function(chg) {

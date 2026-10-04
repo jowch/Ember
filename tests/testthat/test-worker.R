@@ -161,6 +161,27 @@ test_that("chdir moves getwd() and the baseline; a setup setwd() survives it (89
   expect_identical(r3$output$text, sprintf('[1] "%s"', f2))
 })
 
+test_that("chdir to a folder that no longer exists doesn't kill the worker", {
+  h <- worker_harness()
+  on.exit(h$close())
+  f0 <- normalizePath(getwd(), winslash = "/")
+  gone <- tempfile("ember-chdir-gone-")  # never created
+
+  # setwd() would throw here (the target doesn't exist); handle_next()
+  # has no catch of its own, so an uncaught error escaping from inside
+  # the chdir case used to be fatal to the worker.
+  h$send(list(type = "chdir", from = f0, to = gone))
+  r <- run_and_wait(h, "x", 1L, "1 + 1")
+  expect_identical(r$status, "ok")
+  expect_identical(r$output$text, "[1] 2")
+
+  # The live wd is unchanged (setwd() never ran, the folder still
+  # doesn't exist): a notebook that didn't call setwd() itself keeps
+  # working from where it already was.
+  r2 <- run_and_wait(h, "y", 2L, "getwd()")
+  expect_identical(r2$output$text, sprintf('[1] "%s"', f0))
+})
+
 test_that("package_load_changes_allowed", {
   flib <- fixture_lib()
   h <- worker_harness(extra_libs = flib)

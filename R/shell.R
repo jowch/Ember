@@ -340,8 +340,24 @@ run_effect <- function(nb, fx) {
       }
       enqueue(nb, ev_files_read(files, at = Sys.time()))
     },
+    # `file.rename()` fails across filesystems (a different volume, a
+    # bind-mounted folder) without throwing -- it just returns `FALSE`,
+    # which the previous version of this effect never checked, silently
+    # leaving the file at `fx$from` while `state$path` had already moved
+    # on to `fx$to`. Falling back to copy + unlink covers that case; if
+    # the copy fails too (the target is read-only, out of space), the
+    # move is reported as a problem rather than leaving the mismatch
+    # between `state$path` and the file's real location unexplained.
     move_file = {
-      tryCatch(file.rename(fx$from, fx$to), error = function(e) NULL)
+      moved <- tryCatch(suppressWarnings(file.rename(fx$from, fx$to)), error = function(e) FALSE)
+      if (!isTRUE(moved)) {
+        copied <- tryCatch(suppressWarnings(file.copy(fx$from, fx$to, overwrite = FALSE)), error = function(e) FALSE)
+        if (isTRUE(copied)) {
+          tryCatch(unlink(fx$from), error = function(e) NULL)
+        } else {
+          enqueue(nb, ev_save_failed("could not move the notebook file", at = Sys.time()))
+        }
+      }
     },
     close = {
       nb$closing <- TRUE

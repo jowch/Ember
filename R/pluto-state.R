@@ -910,7 +910,13 @@ project_status_tree <- function(state) {
   if (nrow(touched) > 0) {
     pkg_subtasks <- stats::setNames(lapply(seq_len(nrow(touched)), function(i) {
       st <- touched$status[i]
-      success <- if (st %in% c("installing", "missing", "not_installed")) NULL else identical(st, "installed")
+      # "not_installed" only ever appears in a failed library (`status ==
+      # "not_installed"` implies `target_failed`, packages_view()): this
+      # package's own install never ran because another one in the same
+      # library failed, not because it's merely pending, so it is a real
+      # failure here, unlike "missing" (not yet attempted) and
+      # "installing" (in progress), which stay unknown (`NULL`).
+      success <- if (st %in% c("installing", "missing")) NULL else identical(st, "installed")
       business(touched$name[i], success)
     }), touched$name)
     pkg_success <- if (any(vapply(pkg_subtasks, function(x) is.null(x$success), logical(1)))) {
