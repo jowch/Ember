@@ -312,8 +312,33 @@ export const Cell = ({
         })
         return () => cancelAnimationFrame(frame)
     }, [text_open])
+    // Keys on the selected cell itself (Esc in its code selects it).
+    const on_cell_keydown = (/** @type {KeyboardEvent} */ e) => {
+        const cell = node_ref.current
+        if (e.target !== cell || cell == null || !selected || e.ctrlKey || e.metaKey || e.altKey) return false
+        if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.shiftKey) {
+            const order = pluto_actions.get_notebook().cell_order
+            const next = order[order.indexOf(cell_id) + (e.key === "ArrowUp" ? -1 : 1)]
+            if (next != null) pluto_actions.select_cell(next)
+        } else if (e.key === "Enter" && !e.shiftKey) {
+            const content = /** @type {HTMLElement?} */ (cell.querySelector("pluto-input .cm-editor:not(.cm-ssr-fake) .cm-content"))
+            if (content != null && content.getClientRects().length > 0) content.focus()
+            else if (kind === "markdown") set_text_open(true)
+            else window.dispatchEvent(new CustomEvent("cell_focus", { detail: { cell_id, line: 0, ch: 0 } }))
+        } else if (e.key === "Tab" && !e.shiftKey) {
+            // The code comes first in the DOM; from the selected cell, Tab
+            // goes on past it to the run button and the menu.
+            const next = /** @type {HTMLElement?} */ (cell.querySelector("pluto-input button.ember-run, pluto-input button.input_context_menu"))
+            if (next == null) return false
+            next.focus()
+        } else {
+            return false
+        }
+        e.preventDefault()
+        return true
+    }
     const on_text_keydown = (e) => {
-        if (e.defaultPrevented) return
+        if (e.defaultPrevented || on_cell_keydown(e)) return
         if (e.key === "Escape" && text_open && (cell_input_local?.code ?? code) === code) {
             set_text_open(false)
         } else if (e.key === "Enter" && kind === "markdown" && !disable_input && e.target === text_output() && !(e.shiftKey || e.ctrlKey || e.metaKey || e.altKey)) {
@@ -418,6 +443,8 @@ export const Cell = ({
             })}
             data-rail=${rail}
             id=${cell_id}
+            tabindex="-1"
+            role="group"
             onClick=${on_text_click}
             onKeyDown=${on_text_keydown}
         >

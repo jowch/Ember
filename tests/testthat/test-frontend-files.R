@@ -443,3 +443,30 @@ test_that("no alert()/confirm() calls remain (78)", {
 
   expect_equal(counts, list())
 })
+
+# ---- 158. One focus ring ----
+
+#' The selectors of every CSS rule in `dir` (outside imports/) whose body
+#' matches `body_re`.
+css_rules_matching <- function(dir, body_re) {
+  css <- frontend_files(dir)
+  css <- css[grepl("\\.css$", css) & !grepl("/imports/", css, fixed = TRUE)]
+  found <- character(0)
+  for (f in css) {
+    text <- strip_comments(readChar(f, file.info(f)$size, useBytes = TRUE), "css")
+    rules <- regmatches(text, gregexpr("[^{}]+\\{[^{}]*\\}", text, perl = TRUE))[[1]]
+    for (r in rules) {
+      body <- sub("^[^{]*\\{", "", r)
+      if (grepl(body_re, body, perl = TRUE)) found <- c(found, trimws(sub("\\{.*", "", r)))
+    }
+  }
+  found
+}
+
+test_that("only the output and the focused editor drop their outline; :focus-visible draws the ring (158)", {
+  dir <- frontend_dir()
+  none <- css_rules_matching(dir, "outline(-style)?\\s*:\\s*(none|0|unset)\\s*(;|!|\\})")
+  expect_setequal(none, c("pluto-output:focus", ".cm-editor.cm-focused:not(.__)"))
+  ring <- css_rules_matching(dir, "outline\\s*:\\s*2px solid")
+  expect_true(":focus-visible" %in% ring)
+})

@@ -187,7 +187,7 @@
 
     /*pluto cell styling*/
     --disabled-cell-bg-color: var(--ember-dis-bg);
-    --selected-cell-bg-color: rgba(40, 78, 189, 0.24);
+    --selected-cell-bg-color: var(--ember-accent-bg);
     --hover-scrollbar-color-1: rgba(0, 0, 0, 0.15);
     --hover-scrollbar-color-2: rgba(0, 0, 0, 0.05);
     --skip-as-script-background-color: #ccc;

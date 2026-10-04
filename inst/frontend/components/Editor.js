@@ -424,6 +424,10 @@ export class Editor extends Component {
                     })
                 )
             },
+            select_cell: (cell_id) => {
+                this.setState({ selected_cells: [cell_id] }, () => document.getElementById(cell_id)?.focus({ preventScroll: true }))
+                document.getElementById(cell_id)?.scrollIntoView({ block: "nearest" })
+            },
             focus_on_neighbor: (cell_id, delta, line = delta === -1 ? Infinity : -1, ch = 0) => {
                 const i = this.state.notebook.cell_order.indexOf(cell_id)
                 const new_i = i + delta
@@ -1244,7 +1248,9 @@ all patches: ${JSON.stringify(patches, null, 1)}
             )
         }
         this.delete_selected = () => {
-            if (this.state.selected_cells.length > 0) {
+            const active = /** @type {HTMLElement?} */ (document.activeElement)
+            const typing = active != null && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable)
+            if (this.state.selected_cells.length > 0 && !typing) {
                 this.actions.confirm_delete_multiple(this.state.selected_cells)
                 return true
             }
@@ -1338,7 +1344,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
             } else if (e.key === "F1") {
                 open_bottom_right_panel("docs")
                 e.preventDefault()
-            } else if (e.key === "Escape") {
+            } else if (e.key === "Escape" && !e.defaultPrevented) {
                 this.setState({
                     selected_cells: [],
                 })
@@ -1537,6 +1543,18 @@ all patches: ${JSON.stringify(patches, null, 1)}
             <${PlutoActionsContext.Provider} value=${this.actions}>
                 <${PlutoBondsContext.Provider} value=${this.state.notebook.bonds}>
                     <${PlutoJSInitializingContext.Provider} value=${this.js_init_set}>
+                    <a
+                        class="skip-link"
+                        href="#"
+                        onClick=${(e) => {
+                            e.preventDefault()
+                            const first = document.querySelector("pluto-notebook > pluto-cell")
+                            const targets = [first?.querySelector("pluto-input .cm-editor:not(.cm-ssr-fake) .cm-content"), first?.querySelector(":scope > pluto-output[tabindex]"), first]
+                            const target = /** @type {HTMLElement?} */ (targets.find((el) => el != null && el.getClientRects().length > 0) ?? null)
+                            target?.focus()
+                        }}
+                        >${t("t_skip_to_notebook")}</a
+                    >
                     ${
                         status.static_preview && status.offer_local
                             ? html`<button

@@ -66,6 +66,7 @@
     "t_ember_more": "More",
     "t_ember_side_panel": "Side panel",
     "t_ember_keyboard_shortcuts": "Keyboard shortcuts",
+    "t_skip_to_notebook": "Skip to the notebook",
     "t_ember_open_another_notebook": "Open another notebook",
     "t_ember_split": "Split into {{n}} cells",
     "t_ember_safe_preview_plan_install_one": "Running starts R and installs {{count}} package.",

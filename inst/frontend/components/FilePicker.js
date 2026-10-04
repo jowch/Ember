@@ -231,23 +231,20 @@ export const FilePicker = ({ value, readonly, suggest_new_file, button_label, pl
                                       mac: "Cmd-Shift-Enter",
                                       run: keyMapSubmit,
                                   },
-                                  ...(get_settings().CM_TAB_KEY_FOR_INDENT
-                                      ? [
-                                            {
-                                                key: "Tab",
-                                                run: (cm) => {
-                                                    // If there is autocomplete open, accept that
-                                                    if (assert_not_null(accept_autocomplete_command).run(cm)) {
-                                                        // and request the next ones
-                                                        request_path_completions()
-                                                        return true
-                                                    }
-                                                    // Else, activate it (possibly)
-                                                    return request_path_completions()
-                                                },
-                                            },
-                                        ]
-                                      : []),
+                                  {
+                                      key: "Tab",
+                                      run: (cm) => {
+                                          if (!get_settings().CM_TAB_KEY_FOR_INDENT) return false
+                                          // If there is autocomplete open, accept that
+                                          if (assert_not_null(accept_autocomplete_command).run(cm)) {
+                                              // and request the next ones
+                                              request_path_completions()
+                                              return true
+                                          }
+                                          // Else, activate it (possibly)
+                                          return request_path_completions()
+                                      },
+                                  },
                               ]),
                               keymap.of(completionKeymap),
                           ],

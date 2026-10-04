@@ -41,6 +41,7 @@ import {
     Facet,
     StateField,
     tooltips,
+    Prec,
 } from "../imports/CodemirrorPlutoSetup.js"
 
 import { r } from "../imports/CodemirrorPlutoSetup.js"
@@ -289,6 +290,8 @@ export const CellInput = ({
 
     const notebook_id_ref = useRef(notebook_id)
     notebook_id_ref.current = notebook_id
+    const kind_ref = useRef(kind)
+    kind_ref.current = kind
 
     const newcm_ref = useRef(/** @type {EditorView?} */ (null))
     const dom_node_ref = useRef(/** @type {HTMLElement?} */ (null))
@@ -669,6 +672,19 @@ export const CellInput = ({
                         focus_on_neighbor: ({ cell_delta, line, character }) => on_focus_neighbor(cell_id, cell_delta, line, character),
                     }),
                     keymap.of([...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, ...foldKeymap]),
+                    // Low, so completion, the signature hint and search close on Esc first.
+                    Prec.low(
+                        keymap.of([
+                            {
+                                key: "Escape",
+                                run: () => {
+                                    if (kind_ref.current === "markdown") return false
+                                    pluto_actions.select_cell(cell_id)
+                                    return true
+                                },
+                            },
+                        ])
+                    ),
                     placeholder(t("t_cell_input_placeholder")),
                     hash_quote_continue,
                     hash_quote_highlight,
