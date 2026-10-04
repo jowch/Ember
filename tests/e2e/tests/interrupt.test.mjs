@@ -21,7 +21,7 @@ test("interrupt: a long-running cell is stopped shortly after clicking stop", as
   await page.waitForTimeout(500);   // give it a moment to be truly inside the loop
 
   const t0 = Date.now();
-  await page.locator(`${cellSelector("LOOP")} pluto-runarea.interrupt button.runcell`).click();
+  await page.locator(`${cellSelector("LOOP")} button.ember-run.busy`).click();
   await page.waitForSelector(`${cellSelector("LOOP")}:not(.running)`, { timeout: 15000 });
   const elapsed = Date.now() - t0;
   assert.ok(elapsed < 10000, `interrupted within 10s (was ${elapsed}ms)`);

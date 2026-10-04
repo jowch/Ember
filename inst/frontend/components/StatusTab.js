@@ -1,6 +1,7 @@
 import { html, useContext, useEffect, useState } from "../imports/Preact.js"
 
-import { prettytime, useMillisSinceTruthy } from "./RunArea.js"
+import { prettytime } from "../common/prettytime.js"
+import { useMillisSinceTruthy } from "./RunButton.js"
 import { scroll_cell_into_view } from "./Scroller.js"
 import { use_r_status } from "./Header.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"

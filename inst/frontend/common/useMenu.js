@@ -20,6 +20,13 @@ export const useMenu = ({ count }) => {
     const button_ref = useRef(/** @type {HTMLElement?} */ (null))
     const menu_ref = useRef(/** @type {HTMLElement?} */ (null))
     const item_refs = useRef(/** @type {Array<HTMLElement?>} */ ([]))
+    // Read inside the window listeners below instead of closing over
+    // `is_open` directly: with many menus on the page (one per cell), a
+    // listener that only re-subscribes when its own `is_open` changes can
+    // miss the window's unrelated re-renders landing in between, and fire
+    // with a stale value. The ref is always current.
+    const is_open_ref = useRef(false)
+    is_open_ref.current = is_open
 
     const focus_item = (/** @type {number} */ i) => {
         set_active_index(i)
@@ -44,12 +51,25 @@ export const useMenu = ({ count }) => {
         window,
         "pointerdown",
         (/** @type {PointerEvent} */ e) => {
-            if (!is_open) return
+            if (!is_open_ref.current) return
             // @ts-ignore
             if (menu_ref.current?.contains(e.target) || button_ref.current?.contains(e.target)) return
             close()
         },
-        [is_open, close]
+        [close]
+    )
+
+    // A window-level fallback for Escape, not just the menu's own onKeyDown:
+    // an unrelated re-render elsewhere on the page (a cell's status ticking
+    // over, say) can take focus off an item between keydown and bubbling,
+    // so the per-item handler below isn't the only way out.
+    useEventListener(
+        window,
+        "keydown",
+        (/** @type {KeyboardEvent} */ e) => {
+            if (is_open_ref.current && e.key === "Escape") close()
+        },
+        [close]
     )
 
     const button_props = {

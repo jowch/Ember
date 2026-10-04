@@ -242,6 +242,27 @@ test_that("piece 6's chip, error, warning, ANSI and wash tokens meet WCAG 4.5:1 
   }
 })
 
+# ---- 138. RunArea and ember-cell-label are gone ----------------------------
+
+test_that("RunArea.js and ember-cell-label are gone; cells.css is wired in (138)", {
+  dir <- frontend_dir()
+
+  expect_false(file.exists(file.path(dir, "components", "RunArea.js")))
+  expect_true(file.exists(file.path(dir, "components", "RunButton.js")))
+
+  js_files <- Filter(function(f) endsWith(f, ".js"), frontend_files(dir))
+  for (f in js_files) {
+    text <- strip_comments(readChar(f, file.info(f)$size, useBytes = TRUE), "js")
+    expect_false(grepl("RunArea\\.js", text, fixed = TRUE), info = f)
+    expect_false(grepl("ember-cell-label", text, fixed = TRUE), info = f)
+  }
+
+  all_styles_path <- file.path(dir, "all-styles.css")
+  all_styles_text <- readChar(all_styles_path, file.info(all_styles_path)$size)
+  expect_true(grepl('@import url\\("\\./cells\\.css"\\)', all_styles_text))
+  expect_true(file.exists(file.path(dir, "cells.css")))
+})
+
 # ---- 7. Credits ------------------------------------------------------------
 
 test_that("inst/COPYRIGHTS and DESCRIPTION credit Pluto.jl (7)", {

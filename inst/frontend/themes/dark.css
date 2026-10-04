@@ -183,10 +183,6 @@
     --hover-scrollbar-color-2: rgba(0, 0, 0, 0.05);
     --skip-as-script-background-color: #888;
     --depends-on-skip-as-script-background-color: #666;
-    --ember-stale-label-color: rgb(190, 190, 190);
-    --ember-stale-label-bg-color: rgba(255, 255, 255, 0.12);
-    --ember-code-changed-label-color: var(--ember-amber);
-    --ember-code-changed-label-bg-color: var(--ember-amber-bg);
     --ember-upstream-error-label-color: var(--ember-red);
     --ember-upstream-error-label-bg-color: var(--ember-red-bg);
 

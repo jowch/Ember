@@ -7,7 +7,7 @@ import { useEventListener } from "../common/useEventListener.js"
 import { t, th, pretty_long_time } from "../common/lang.js"
 import { downstream_recursive } from "../common/SliderServerClient.js"
 import { and, ctrl_or_cmd_name } from "../common/KeyboardShortcuts.js"
-import { useMillisSinceTruthy } from "./RunArea.js"
+import { useMillisSinceTruthy } from "./RunButton.js"
 import { cl } from "../common/ClassTable.js"
 import { get_settings } from "./Settings.js"
 

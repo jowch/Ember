@@ -2,9 +2,9 @@ import _ from "../imports/lodash-es.js"
 import { html, useState, useEffect, useMemo, useRef, useContext, useLayoutEffect, useErrorBoundary, useCallback } from "../imports/Preact.js"
 
 import { CellOutput } from "./CellOutput.js"
-import { CellInput } from "./CellInput.js"
+import { CellInput, InputContextMenu } from "./CellInput.js"
 import { Logs } from "./Logs.js"
-import { RunArea, useDebouncedTruth } from "./RunArea.js"
+import { RunButton, useDebouncedTruth } from "./RunButton.js"
 import { cl } from "../common/ClassTable.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { useEventListener } from "../common/useEventListener.js"
@@ -67,7 +67,6 @@ export const Cell = ({
     const { show_logs, disabled: running_disabled, skip_as_script } = metadata
     const code_changed = !!ember?.code_changed
     const stale = !code_changed && !!ember?.stale
-    const ember_label = code_changed ? t("t_ember_label_code_changed") : stale ? t("t_ember_label_stale") : null
     let pluto_actions = useContext(PlutoActionsContext)
     // useCallback because pluto_actions.set_doc_query can change value when you go from viewing a static document to connecting (to binder)
     const on_update_doc_query = useCallback((...args) => pluto_actions.set_doc_query(...args), [pluto_actions])
@@ -206,6 +205,13 @@ export const Cell = ({
     const on_add_after = useCallback(() => {
         return pluto_actions.add_remote_cell(cell_id, "after")
     }, [pluto_actions, cell_id, selected])
+    // Same arithmetic as CellInput.js's Alt+Up/Down keymap (keyMapMoveLine).
+    const on_move_up = useCallback(() => {
+        pluto_actions.move_remote_cells([cell_id], pluto_actions.get_notebook().cell_order.indexOf(cell_id) - 1)
+    }, [pluto_actions, cell_id])
+    const on_move_down = useCallback(() => {
+        pluto_actions.move_remote_cells([cell_id], pluto_actions.get_notebook().cell_order.indexOf(cell_id) + 2)
+    }, [pluto_actions, cell_id])
     const on_code_fold = useCallback(() => {
         if (inspecting_hidden_code) {
             set_inspecting_hidden_code_here(!inspecting_hidden_code_here)
@@ -249,6 +255,26 @@ export const Cell = ({
         pluto_actions.ember_split_cell(cell_id, code)
     }, [pluto_actions, cell_id, code])
 
+    const on_interrupt = useCallback(() => {
+        pluto_actions.interrupt_remote(cell_id)
+    }, [pluto_actions, cell_id])
+
+    // The rail's colour (ui-3.md, "Rail"): running, queued, edited, error,
+    // idle, in that precedence -- an edited cell that also has an error
+    // shows amber, because the error belongs to code that has since changed.
+    const rail = running
+        ? "run"
+        : queued || waiting_to_run
+          ? "queued"
+          : class_code_differs || code_changed
+            ? "due"
+            : errored
+              ? "err"
+              : "idle"
+
+    const not_run_yet =
+        no_output_yet && !running && !queued && code.trim() !== "" && !process_waiting_for_permission && kind !== "markdown" && !running_disabled && !depends_on_disabled_cells
+
     return html`
         <pluto-cell
             key=${cell_key}
@@ -273,10 +299,12 @@ export const Cell = ({
                 shrunk: Object.values(logs).length > 0,
                 hooked_up: output?.has_pluto_hook_features ?? false,
                 no_output_yet,
+                not_run_yet,
+                text_cell: kind === "markdown",
             })}
+            data-rail=${rail}
             id=${cell_id}
         >
-            ${ember_label != null ? html`<ember-cell-label>${ember_label}</ember-cell-label>` : null}
             ${variables.map((name) => html`<span id=${encodeURI(name)} />`)}
             <button
                 onClick=${() => {
@@ -289,11 +317,23 @@ export const Cell = ({
                 <span></span>
             </button>
             <pluto-shoulder draggable="true" title=${t("t_drag_to_move_cell")}>
-                <button onClick=${on_code_fold} class="foldcode" title=${t("t_show_hide_code")}>
+                <button onClick=${on_code_fold} class="foldcode" title=${code_folded ? t("t_show_code") : t("t_hide_code")}>
                     <span></span>
                 </button>
             </pluto-shoulder>
             <pluto-trafficlight></pluto-trafficlight>
+            ${rail === "due" ? html`<ember-rail-tip>${t("t_rail_due_hint")}</ember-rail-tip>` : null}
+            <${InputContextMenu}
+                cell_id=${cell_id}
+                on_delete=${on_delete}
+                code_folded=${code_folded}
+                on_code_fold=${on_code_fold}
+                can_disable=${ember?.can_disable ?? false}
+                running_disabled=${running_disabled}
+                set_cell_disabled=${set_cell_disabled}
+                on_move_up=${on_move_up}
+                on_move_down=${on_move_down}
+            />
             ${code_not_trusted_yet
                 ? null
                 : cell_api_ready
@@ -324,9 +364,13 @@ export const Cell = ({
                 cm_highlighted_range=${cm_highlighted_range}
                 cm_diagnostics=${cm_diagnostics}
                 onerror=${remount}
-                can_disable=${ember?.can_disable ?? false}
                 running_disabled=${running_disabled}
-                set_cell_disabled=${set_cell_disabled}
+                depends_on_disabled_cells=${depends_on_disabled_cells}
+                running=${running}
+                queued=${queued || (waiting_to_run && is_process_ready)}
+                runtime=${runtime}
+                on_run=${on_run}
+                on_interrupt=${on_interrupt}
             />
             ${show_logs && cell_api_ready
                 ? html`<${Logs}
@@ -336,21 +380,6 @@ export const Cell = ({
                       sanitize_html=${sanitize_html}
                   />`
                 : null}
-            <${RunArea}
-                cell_id=${cell_id}
-                running_disabled=${running_disabled}
-                depends_on_disabled_cells=${depends_on_disabled_cells}
-                on_run=${on_run}
-                on_interrupt=${() => {
-                    pluto_actions.interrupt_remote(cell_id)
-                }}
-                set_cell_disabled=${set_cell_disabled}
-                runtime=${runtime}
-                running=${running}
-                code_differs=${class_code_differs}
-                queued=${queued}
-                on_jump=${disabled_jump}
-            />
             <button
                 onClick=${() => {
                     pluto_actions.add_remote_cell(cell_id, "after")

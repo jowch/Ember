@@ -63,6 +63,10 @@ import { moveLineDown } from "../imports/CodemirrorPlutoSetup.js"
 import { detect_indent_unit } from "./CellInput/detect_indent_unit.js"
 import { t } from "../common/lang.js"
 import { tell } from "../common/dialogs.js"
+import { useMenu } from "../common/useMenu.js"
+import { RunButton } from "./RunButton.js"
+import { alt_or_options_name } from "../common/KeyboardShortcuts.js"
+import { MoreIcon } from "../common/Icons.js"
 import { get_settings } from "./Settings.js"
 import { highlightKwargsPlugin } from "./CellInput/highlight_kwargs.js"
 import { is_dark_theme } from "../common/theme.js"
@@ -222,9 +226,13 @@ export const CellInput = ({
     cm_highlighted_range,
     global_definition_locations,
     cm_diagnostics,
-    can_disable,
     running_disabled,
-    set_cell_disabled,
+    depends_on_disabled_cells,
+    running,
+    queued,
+    runtime,
+    on_run,
+    on_interrupt,
 }) => {
     let pluto_actions = useContext(PlutoActionsContext)
     let [error, set_error] = useState(null)
@@ -769,18 +777,9 @@ export const CellInput = ({
     return html`
         <pluto-input ref=${dom_node_ref} class="CodeMirror" translate=${false}>
             ${show_static_fake ? (show_input ? html`<${StaticCodeMirrorFaker} value=${remote_code} />` : null) : null}
-            <${InputContextMenu}
-                on_delete=${on_delete}
-                cell_id=${cell_id}
-                run_cell=${on_submit}
-                get_current_code=${() => {
-                    let cm = newcm_ref.current
-                    return cm == null ? "" : getValue6(cm)
-                }}
-                can_disable=${can_disable}
-                running_disabled=${running_disabled}
-                set_cell_disabled=${set_cell_disabled}
-            />
+            ${running_disabled || depends_on_disabled_cells
+                ? null
+                : html`<${RunButton} running=${running} queued=${queued} runtime=${runtime} on_run=${on_run} on_interrupt=${on_interrupt} />`}
             ${PreviewHiddenCode}
         </pluto-input>
     `
@@ -788,32 +787,16 @@ export const CellInput = ({
 
 const PreviewHiddenCode = html`<div class="preview_hidden_code_info">${t("t_reading_hidden_code")}</div>`
 
-const InputContextMenu = ({ on_delete, cell_id, run_cell, get_current_code, can_disable, running_disabled, set_cell_disabled }) => {
-    const timeout = useRef(null)
+/**
+ * The cell menu (ui-3.md, "Cell menu"): Hide/Show code, Disable/Enable
+ * cell, Copy output, Move up, Move down, a separator, Delete cell. Built
+ * on useMenu.js (piece 7a), which gives it arrow-key navigation, Esc and
+ * click-outside; the DOM hooks (button.input_context_menu,
+ * div.input_context_menu) are kept as Pluto named them.
+ */
+export const InputContextMenu = ({ cell_id, on_delete, code_folded, on_code_fold, can_disable, running_disabled, set_cell_disabled, on_move_up, on_move_down }) => {
     let pluto_actions = useContext(PlutoActionsContext)
-    const [open, setOpenState] = useState(false)
-    const button_ref = useRef(/** @type {HTMLButtonElement?} */ (null))
-    const list_ref = useRef(/** @type {HTMLButtonElement?} */ (null))
 
-    const prevously_focused_element_ref = useRef(/** @type {Element?} */ (null))
-    const setOpen = (val) => {
-        if (val) {
-            prevously_focused_element_ref.current = document.activeElement
-        }
-        setOpenState(val)
-    }
-    useLayoutEffect(() => {
-        if (open) {
-            list_ref.current?.querySelector("button")?.focus()
-        } else {
-            let e = prevously_focused_element_ref.current
-            if (e instanceof HTMLElement) e.focus()
-        }
-    }, [open])
-
-    const mouseenter = () => {
-        if (timeout.current) clearTimeout(timeout.current)
-    }
     const is_copy_output_supported = () => {
         let notebook = /** @type{import("./Editor.js").NotebookData?} */ (pluto_actions.get_notebook())
         let cell_result = notebook?.cell_results?.[cell_id]
@@ -845,97 +828,61 @@ const InputContextMenu = ({ on_delete, cell_id, run_cell, get_current_code, can_
             })
     }
 
-    useEventListener(
-        window,
-        "keydown",
-        (/** @type {KeyboardEvent} */ e) => {
-            if (e.key === "Escape") {
-                setOpen(false)
-            }
-        },
-        []
-    )
+    const items = [
+        { tag: "hide_code", contents: code_folded ? t("t_show_code") : t("t_hide_code"), onClick: on_code_fold },
+        // The class stays disable_cell in both states (test-disabled.test.mjs
+        // (37) selects on it before and after toggling); only the label and
+        // icon change.
+        can_disable
+            ? {
+                  tag: "disable_cell",
+                  icon_tag: running_disabled ? "enable_cell" : "disable_cell",
+                  contents: running_disabled ? t("t_enable_cell") : t("t_disable_cell"),
+                  onClick: () => set_cell_disabled(!running_disabled),
+              }
+            : null,
+        is_copy_output_supported() ? { tag: "copy_output", contents: t("t_copy_output_action"), onClick: copy_output } : null,
+        { tag: "move_up", contents: `${t("t_move_up")} (${alt_or_options_name} ↑)`, onClick: on_move_up },
+        { tag: "move_down", contents: `${t("t_move_down")} (${alt_or_options_name} ↓)`, onClick: on_move_down },
+        { tag: "delete", contents: t("t_delete_cell_action"), onClick: on_delete, danger: true },
+    ].filter((item) => item != null)
+
+    const { button_props, menu_props, item_props, close, is_open } = useMenu({ count: items.length })
 
     return html`
-        <button
-            onClick=${(e) => {
-                setOpen(!open)
-            }}
-            class=${cl({
-                input_context_menu: true,
-                open,
-            })}
-            title="Actions"
-            ref=${button_ref}
-        >
-            <span class="icon"></span>
+        <button type="button" class="input_context_menu" title=${t("t_cell_options")} aria-label=${t("t_cell_options")} ...${button_props}>
+            <${MoreIcon} size=${16} />
         </button>
-        <div
-            class=${cl({
-                input_context_menu: true,
-                open,
-            })}
-            ref=${list_ref}
-            onfocusout=${(e) => {
-                const li_focused = list_ref.current?.matches(":focus-within") || list_ref.current?.contains(e.relatedTarget)
-
-                if (
-                    !li_focused ||
-                    // or the focus is on the list itself
-                    e.relatedTarget === list_ref.current
-                )
-                    setOpen(false)
-            }}
-        >
-            ${open
-                ? html`<ul onMouseenter=${mouseenter}>
-                      <${InputContextMenuItem}
-                          tag="delete"
-                          contents=${t("t_delete_cell_action")}
-                          title=${t("t_delete_cell_action")}
-                          onClick=${on_delete}
-                          setOpen=${setOpen}
-                      />
-
-                      ${is_copy_output_supported()
-                          ? html`<${InputContextMenuItem}
-                                tag="copy_output"
-                                contents=${t("t_copy_output_action")}
-                                title=${t("t_copy_output_action_description")}
-                                onClick=${copy_output}
-                                setOpen=${setOpen}
-                            />`
-                          : null}
-
-                      ${can_disable
-                          ? html`<${InputContextMenuItem}
-                                tag="disable_cell"
-                                contents=${running_disabled ? t("t_enable_cell") : t("t_disable_cell")}
-                                title=${running_disabled ? t("t_enable_cell") : t("t_disable_cell")}
-                                onClick=${() => set_cell_disabled(!running_disabled)}
-                                setOpen=${setOpen}
-                            />`
-                          : null}
-                  </ul>`
-                : html``}
-        </div>
+        ${is_open &&
+        html`
+            <div class="input_context_menu" ...${menu_props}>
+                <ul>
+                    ${items.map(
+                        (item, i) => html`${item.tag === "delete" ? html`<li class="ember-menu-sep" role="separator"></li>` : null}
+                            <li>
+                                <${InputContextMenuItem}
+                                    tag=${item.tag}
+                                    icon_tag=${item.icon_tag ?? item.tag}
+                                    contents=${item.contents}
+                                    danger=${!!item.danger}
+                                    item_props=${item_props(i)}
+                                    onClick=${() => {
+                                        close()
+                                        item.onClick()
+                                    }}
+                                />
+                            </li>`
+                    )}
+                </ul>
+            </div>
+        `}
     `
 }
 
-const InputContextMenuItem = ({ contents, title, onClick, setOpen, tag }) =>
-    html`<li>
-        <button
-            tabindex="0"
-            title=${title}
-            onClick=${(e) => {
-                setOpen(false)
-                onClick(e)
-            }}
-            class=${tag}
-        >
-            <span class=${`${tag} ctx_icon`} />${contents}
-        </button>
-    </li>`
+const InputContextMenuItem = ({ contents, danger, onClick, item_props, tag, icon_tag }) =>
+    html`<button type="button" class=${cl({ "ember-menuitem": true, [tag]: true, "ember-menuitem-danger": danger })} onClick=${onClick} ...${item_props}>
+        <span class=${`${icon_tag} ctx_icon`} />${contents}
+    </button>`
 
 const generate_fake_deco_indent_text = (width) => {
     const tab_size = 4

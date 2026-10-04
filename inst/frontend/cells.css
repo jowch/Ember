@@ -1,0 +1,289 @@
+/* Cells and outputs (ui-3.md, "Cells", "Outputs"; ui-3-plan.md piece 6).
+   Imported after editor.css, so its rules win on equal specificity; most
+   rules here use a class or attribute selector and so outrank editor.css's
+   plain-element ones regardless of order. */
+
+/* ---- Rail (pluto-trafficlight; ui-3.md "Rail") ------------------------- */
+
+pluto-trafficlight {
+    position: absolute;
+    left: -4px;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    margin-right: 0;
+    border-radius: 4px 0 0 4px;
+    pointer-events: none;
+    background: var(--ember-rail-idle);
+    transition: background-color 0.15s ease-in-out;
+}
+
+pluto-cell[data-rail="run"] > pluto-trafficlight {
+    background: var(--ember-rail-run);
+}
+
+pluto-cell[data-rail="queued"] > pluto-trafficlight {
+    background: var(--ember-rail-run);
+    opacity: 0.4;
+}
+
+pluto-cell[data-rail="due"] > pluto-trafficlight {
+    background: var(--ember-rail-due);
+    pointer-events: auto;
+}
+
+/* A 12px hover target for the amber rail's tip, without widening the bar
+   itself (which stays 4px so cells don't shift). */
+pluto-cell[data-rail="due"] > pluto-trafficlight::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: -8px;
+    top: 0;
+    bottom: 0;
+}
+
+pluto-cell[data-rail="err"] > pluto-trafficlight {
+    background: var(--ember-rail-err);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+    pluto-cell[data-rail="run"] > pluto-trafficlight {
+        animation: ember-rail-pulse 1.6s ease-in-out infinite;
+    }
+}
+
+@keyframes ember-rail-pulse {
+    0%,
+    100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.45;
+    }
+}
+
+ember-rail-tip {
+    display: none;
+    position: absolute;
+    left: 0;
+    top: -26px;
+    z-index: 40;
+    font-family: var(--ember-ui-font);
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+    padding: 3px 8px;
+    border-radius: 5px;
+    border: 1px solid var(--ember-line);
+    background: var(--ember-panel);
+    color: var(--ember-text);
+    pointer-events: none;
+}
+
+pluto-cell[data-rail="due"]:is(:hover, :focus-within) > ember-rail-tip {
+    display: block;
+}
+
+/* The edited code box: inset outline and tinted gutter (ui-3.md's rail
+   table, "edited, not run" row). */
+pluto-cell[data-rail="due"] > pluto-input .cm-editor {
+    outline: 1px solid var(--ember-due-line);
+    outline-offset: -1px;
+}
+pluto-cell[data-rail="due"] > pluto-input .cm-gutters {
+    background: var(--ember-due-bg);
+}
+
+/* ---- Run/stop button and run-time chip (ui-3.md "Run button", "Run-time
+   chip") ------------------------------------------------------------------ */
+
+pluto-input {
+    position: relative;
+    /* Lets this code box beat its own cell's "+"/shoulder buttons
+       (editor.css, z-index 30), needed for the run button, which sits on
+       top of the code box by design. isolation scopes that to this cell
+       alone: without it, winning locally would also win against a
+       *different* cell's "+" strip, wherever the two happen to overlap
+       on screen. */
+    isolation: isolate;
+    z-index: 35;
+}
+
+/* button.ember-split (piece 2) is a plain-flow sibling of pluto-input that
+   can visually sit where the code box is; it needs its own z-index to
+   stay above the box it's reporting on, now that the box has one. */
+button.ember-split {
+    position: relative;
+    z-index: 36;
+}
+
+/* An open cell menu can overflow below a short cell into the next one;
+   this is the one time the *whole* cell needs to outrank its neighbour,
+   not just something inside it. */
+pluto-cell:has(> div.input_context_menu[role="menu"]) {
+    z-index: 50;
+}
+
+button.ember-run {
+    position: absolute;
+    /* ui-3.md puts this at the code box's top-left corner, overlapping
+       the rail (left: -15px; top: -13px). The gap above still belongs to
+       editor.css's "+" button (margin-top around -20px, piece 6a step 3's
+       to redo), so for now the run button stays inside the code box's own
+       edge instead of contesting that same pixel strip for clicks. */
+    left: 4px;
+    top: 4px;
+    z-index: 40;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    background: var(--ember-accent);
+    color: var(--ember-on-accent);
+    padding: 0;
+}
+
+button.ember-run.busy {
+    width: 26px;
+    height: 26px;
+    background: var(--ember-rail-run);
+}
+
+.ember-run-stop {
+    display: block;
+    width: 10px;
+    height: 10px;
+    background: var(--ember-on-accent);
+}
+
+ember-runtime {
+    position: absolute;
+    right: 8px;
+    bottom: -9px;
+    z-index: 40;
+    font-family: var(--ember-ui-font);
+    font-size: 10.5px;
+    font-weight: 500;
+    color: var(--ember-muted);
+    background: var(--ember-panel);
+    border: 1px solid var(--ember-line);
+    border-radius: 999px;
+    padding: 1px 8px;
+    white-space: nowrap;
+}
+
+button.ember-run,
+button.input_context_menu,
+ember-runtime {
+    opacity: 0;
+    transition: opacity 0.15s ease-in-out;
+}
+
+@media (hover: hover) {
+    pluto-cell:is(:hover, :focus-within) button.ember-run,
+    pluto-cell:is(:hover, :focus-within) button.input_context_menu,
+    pluto-cell:is(:hover, :focus-within) ember-runtime {
+        opacity: 1;
+    }
+}
+
+@media (hover: none) {
+    pluto-cell:focus-within button.ember-run,
+    pluto-cell:focus-within button.input_context_menu,
+    pluto-cell:focus-within ember-runtime {
+        opacity: 1;
+    }
+}
+
+/* The shoulder's fold eye is replaced by the menu's Hide/Show code item;
+   the element stays for Endeavor (folded.ts), just not shown. */
+pluto-shoulder > button.foldcode {
+    display: none;
+}
+
+/* ---- Cell menu (ui-3.md "Cell menu") ----------------------------------- */
+
+button.input_context_menu {
+    position: absolute;
+    right: 6px;
+    top: 5px;
+    z-index: 40;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: none;
+    background: transparent;
+    color: var(--ember-muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+}
+button.input_context_menu:hover {
+    background: var(--ember-hover);
+}
+
+div.input_context_menu[role="menu"] {
+    position: absolute;
+    right: 6px;
+    top: 34px;
+    z-index: 1400;
+    width: 200px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border: 1px solid var(--ember-border);
+    border-radius: 8px;
+    box-shadow: var(--ember-dialog-shadow);
+    background: var(--header-bg-color);
+    font-family: var(--ember-ui-font);
+    font-size: 13px;
+}
+
+div.input_context_menu[role="menu"] ul {
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+div.input_context_menu[role="menu"] li {
+    list-style: none;
+}
+
+.ember-menuitem {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    font: inherit;
+    text-align: left;
+    color: var(--pluto-output-color);
+    background: transparent;
+    border: none;
+    border-radius: 5px;
+    padding: 7px 8px;
+    cursor: pointer;
+}
+.ember-menuitem:hover,
+.ember-menuitem:focus {
+    background: var(--ember-menu-hover-bg);
+}
+.ember-menuitem-danger {
+    color: var(--ember-red);
+}
+
+/* ---- Not shown in a static export or an isolated cell ------------------ */
+
+pluto-editor.disable_ui button.ember-run,
+pluto-editor.disable_ui button.input_context_menu,
+pluto-editor.disable_ui ember-runtime {
+    display: none;
+}

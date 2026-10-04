@@ -1,0 +1,143 @@
+// ui-3-tests.md, piece 6a step 2 (ui-3-plan.md): the rail, the run/stop
+// button and run-time chip, and the cell menu.
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import path from "node:path";
+import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector } from "../browser.mjs";
+
+test("rail: idle before running, amber when edited, red on error (140)", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-rail.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  for (const id of ["S", "A", "B", "ERR", "LOOP"]) {
+    assert.equal(await page.locator(cellSelector(id)).getAttribute("data-rail"), "idle", `${id} starts idle`);
+  }
+
+  await page.locator(`${cellSelector("B")} .cm-content`).click();
+  await page.keyboard.type(" ", { delay: 2 });
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.getAttribute("data-rail") === "due",
+    cellSelector("B"), { timeout: 10000 });
+
+  await page.hover(`${cellSelector("B")} pluto-trafficlight`);
+  await page.waitForSelector(`${cellSelector("B")} ember-rail-tip`, { state: "visible", timeout: 5000 });
+  assert.match(await page.locator(`${cellSelector("B")} ember-rail-tip`).innerText(), /Shift \+ Enter/);
+
+  await runCell(page, "ERR");
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.getAttribute("data-rail") === "err",
+    cellSelector("ERR"), { timeout: 15000 });
+
+  assertNoProblems(page);
+});
+
+test("run/stop button and run time (141)", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-run.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await page.hover(cellSelector("A"));
+  const runButton = page.locator(`${cellSelector("A")} button.ember-run`);
+  assert.equal(await runButton.getAttribute("aria-label"), "Run cell (Shift + Enter)");
+  await runButton.click();
+  await page.waitForFunction(
+    (sel) => /^\d+(\.\d+)? s$|min/.test(document.querySelector(sel)?.innerText ?? ""),
+    cellSelector("A") + " ember-runtime", { timeout: 15000 });
+
+  await runCell(page, "LOOP");
+  await page.waitForSelector(`${cellSelector("LOOP")}.running`, { timeout: 15000 });
+  await page.hover(cellSelector("LOOP"));
+  const stopButton = page.locator(`${cellSelector("LOOP")} button.ember-run`);
+  assert.equal(await stopButton.getAttribute("aria-label"), "Stop (Ctrl + Q)");
+  await stopButton.click();
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.innerText.includes("Interrupted"),
+    cellSelector("LOOP") + " pluto-output", { timeout: 15000 });
+
+  assertNoProblems(page);
+});
+
+test("cell menu: item order, move down, hide code, no Disable on the setup cell (142)", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-menu.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await page.hover(cellSelector("S"));
+  await page.locator(`${cellSelector("S")} button.input_context_menu`).click();
+  assert.equal(await page.locator(`${cellSelector("S")} button.input_context_menu`).getAttribute("aria-label"), "Cell options");
+  assert.equal(await page.locator(`${cellSelector("S")} button.disable_cell`).count(), 0, "the setup cell's menu has no Disable cell");
+  await page.keyboard.press("Escape");
+
+  await page.hover(cellSelector("A"));
+  await page.locator(`${cellSelector("A")} button.input_context_menu`).click();
+  const tags = await page.locator(`${cellSelector("A")} div.input_context_menu[role="menu"] button[role="menuitem"]`).evaluateAll(
+    (btns) => btns.map((b) => b.className.split(" ").find((c) => !["ember-menuitem", "ember-menuitem-danger", ""].includes(c))));
+  assert.deepEqual(tags, ["hide_code", "disable_cell", "move_up", "move_down", "delete"]);
+  await page.keyboard.press("Escape");
+
+  await page.locator(`${cellSelector("A")} button.input_context_menu`).click();
+  await page.locator(`${cellSelector("A")} button.move_down`).click();
+  await page.waitForFunction(
+    () => {
+      const order = window.editor_state.notebook.cell_order;
+      return order.indexOf("A") > order.indexOf("B");
+    },
+    null, { timeout: 10000 });
+
+  await page.hover(cellSelector("B"));
+  await page.locator(`${cellSelector("B")} button.input_context_menu`).click();
+  const hideItem = page.locator(`${cellSelector("B")} button.hide_code`);
+  assert.equal(await hideItem.innerText(), "Hide code");
+  await hideItem.click();
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.classList.contains("code_folded"),
+    cellSelector("B"), { timeout: 10000 });
+
+  assertNoProblems(page);
+});
+
+test("Endeavor's hooks after piece 6a (extends ui-2-tests.md 12) (152)", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-hooks.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForSelector(`${cellSelector("A")} > pluto-output`, { state: "attached", timeout: 15000 });
+
+  assert.ok(await page.locator(`${cellSelector("A")} > pluto-trafficlight`).count() > 0);
+  assert.ok(await page.locator(`${cellSelector("A")} > pluto-output`).count() > 0);
+  assert.ok(await page.locator(`${cellSelector("A")} pluto-shoulder > button.foldcode`).count() > 0);
+  assert.ok(await page.locator(`${cellSelector("A")} button.add_cell.before`).count() > 0);
+  assert.ok(await page.locator(`${cellSelector("A")} button.add_cell.after`).count() > 0);
+
+  await setCellCode(page, "A", "x <- 1");
+  await runCell(page, "ERR");
+  await page.waitForSelector(`${cellSelector("ERR")}.errored`, { timeout: 15000 });
+  assert.ok(await page.locator(`${cellSelector("ERR")} jlerror > header`).count() > 0);
+
+  await page.locator(`${cellSelector("B")} .cm-content`).click();
+  await page.keyboard.type(" ", { delay: 2 });
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.classList.contains("code_differs"),
+    cellSelector("B"), { timeout: 10000 });
+
+  assertNoProblems(page);
+});

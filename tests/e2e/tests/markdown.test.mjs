@@ -36,8 +36,16 @@ test("markdown: a new cell typed as `#' ...` becomes a folded text cell", async 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  await page.hover(cellSelector("B"));
-  await page.locator(`${cellSelector("B")} button.add_cell.after`).click({ force: true });
+  // Ctrl/Cmd+Enter runs B and adds a cell below, rather than clicking the
+  // "+" strip: it overlaps the next cell's run button by design
+  // (ui-3-plan.md's "Overlay '+' and drag" risk, settled in piece 6a step
+  // 3), so a raw click there is exactly the ambiguous spot to avoid.
+  const cellCountBefore = await page.locator("pluto-cell").count();
+  await page.locator(`${cellSelector("B")} .cm-content`).click();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
+  await page.waitForFunction(
+    (before) => document.querySelectorAll("pluto-cell").length > before,
+    cellCountBefore, { timeout: 15000 });
 
   const newCellId = await page.evaluate((bid) => {
     const cells = Array.from(document.querySelectorAll("pluto-cell"));

@@ -2043,38 +2043,6 @@ pluto-cell.running_disabled > pluto-output {
     background-color: var(--disabled-cell-bg-color);
 }
 
-/* STATUS LABELS (ui-2.md, 5): "stale", "code changed" */
-
-ember-cell-label {
-    display: none;
-    position: absolute;
-    top: 2px;
-    right: 28px;
-    z-index: 20;
-    font-family: var(--sans-serif-font-stack);
-    font-size: 0.7rem;
-    line-height: 1.6;
-    padding: 0 0.5em;
-    border-radius: 1em;
-    pointer-events: none;
-    opacity: 0.85;
-}
-
-pluto-cell.stale > ember-cell-label,
-pluto-cell.code_changed > ember-cell-label {
-    display: inline-block;
-}
-
-pluto-cell.stale > ember-cell-label {
-    color: var(--ember-stale-label-color);
-    background-color: var(--ember-stale-label-bg-color);
-}
-
-pluto-cell.code_changed > ember-cell-label {
-    color: var(--ember-code-changed-label-color);
-    background-color: var(--ember-code-changed-label-bg-color);
-}
-
 /* SKIP AS SCRIPT CELLS */
 pluto-cell.skip_as_script .skip_as_script_marker,
 pluto-cell.depends_on_skipped_cells .depends_on_skipped_marker {
@@ -2276,149 +2244,6 @@ pluto-cell.code_folded:not(.inspecting_hidden_code) > pluto-shoulder > button > 
     filter: var(--image-filters);
 }
 
-/* TRAFFIC LIGHT */
-
-pluto-trafficlight {
-    /* --patternHeight is derived from the pattern length (16px) div sin(45deg) = 16px * sqrt(2)  */
-    --patternHeight: 22.62741699797px;
-    box-sizing: content-box;
-    margin-right: -1px; /* fix a visual glitch of imperfect alignment */
-    width: 4px;
-    position: absolute;
-    left: -4px;
-    top: 0px;
-    bottom: 0px;
-    pointer-events: none;
-    border-top-left-radius: 4px;
-    border-bottom-left-radius: 4px;
-    border-left-color: var(--normal-cell-color);
-    background: var(--normal-cell-color);
-    overflow: hidden;
-}
-
-pluto-trafficlight::after {
-    content: "";
-    /* Calc needs units everywhere to work */
-    top: calc(0px - 10 * var(--patternHeight));
-    left: 0;
-    width: 100%;
-    height: calc(100% + 10 * var(--patternHeight));
-    position: absolute;
-    opacity: 0;
-}
-
-/*
- * This class will toggle animation.
- * Other classes will make animation visible with opacity (which is CHEAP?)
- * 
- */
-pluto-cell.activate_animation pluto-trafficlight::after {
-    animation: 10s linear 0s infinite running scrollbackground;
-}
-
-/* in ascending order of severity: */
-/* we need the :not(.___) to fix our CSS selector specificity when `pluto-editor.disable_ui` */
-pluto-editor:not(.___) pluto-cell.code_folded > pluto-trafficlight {
-    background: none;
-}
-
-@media screen and (any-pointer: fine) {
-    pluto-editor:not(.disable_ui) pluto-cell:hover > pluto-trafficlight {
-        background: var(--normal-cell-color);
-    }
-}
-
-pluto-editor:not(.___) pluto-cell:focus-within > pluto-trafficlight {
-    border-left-width: 4px;
-    border-left-style: solid;
-    margin-left: -4px;
-    background-clip: padding-box;
-    background-color: var(--normal-cell-color);
-}
-
-pluto-editor:not(.___) pluto-cell.selected > pluto-trafficlight {
-    background: var(--selected-cell-color);
-    border-left-color: var(--selected-cell-color);
-    background-clip: padding-box;
-}
-
-pluto-editor:not(.___) pluto-cell.code_differs > pluto-trafficlight {
-    background: var(--code-differs-cell-color);
-    border-left-color: var(--code-differs-cell-color);
-    background-clip: padding-box;
-}
-
-pluto-editor:not(.___) pluto-cell.errored > pluto-trafficlight {
-    background: var(--error-cell-color);
-    border-left-color: var(--error-cell-color);
-    background-clip: padding-box;
-}
-
-pluto-editor:not(.___) pluto-cell.queued > pluto-trafficlight::after {
-    background: repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0), rgba(0, 0, 0, 0) 8px, var(--normal-cell-color) 8px, var(--normal-cell-color) 16px);
-    background-clip: padding-box;
-    /* [1]
-    Queued, Running, Errored are really fast changing props.
-    We make sure to on-off the gradients with opacity and not toggle the animation
-    (Which is running all this time)
-    Make sure the browser won't skip creating a stacking context
-    https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Positioning/Understanding_z_index/The_stacking_context
-    https://www.w3.org/TR/css-color-3/#transparency
-    */
-    opacity: 0.99;
-    background-size: 4px var(--patternHeight);
-    animation-duration: 20s;
-}
-
-pluto-editor:not(.___) pluto-cell.running > pluto-trafficlight::after {
-    background: repeating-linear-gradient(
-        -45deg,
-        var(--normal-cell-color),
-        var(--normal-cell-color) 8px,
-        var(--dark-normal-cell-color) 8px,
-        var(--dark-normal-cell-color) 16px
-    );
-    background-clip: content-box;
-    opacity: 0.99; /* [1] */
-    background-size: 4px var(--patternHeight);
-}
-
-pluto-editor:not(.___) pluto-cell.queued.errored > pluto-trafficlight::after {
-    background: repeating-linear-gradient(
-        -45deg,
-        var(--light-error-cell-color),
-        var(--light-error-cell-color) 8px,
-        var(--bright-error-cell-color) 8px,
-        var(--bright-error-cell-color) 16px
-    );
-    background-clip: content-box;
-    opacity: 0.99; /* [1] */
-    background-size: 4px var(--patternHeight); /* 16 * sqrt(2) */
-}
-
-pluto-editor:not(.___) pluto-cell.running.errored > pluto-trafficlight::after {
-    background: repeating-linear-gradient(
-        -45deg,
-        var(--light-error-cell-color),
-        var(--light-error-cell-color) 8px,
-        var(--bright-error-cell-color) 8px,
-        var(--bright-error-cell-color) 16px
-    );
-    background-clip: content-box;
-    opacity: 0.99; /* [1] */
-    background-size: 4px var(--patternHeight); /* 16 * sqrt(2) */
-}
-
-/* Define --patternHeight for this keyframes animation to work! */
-@keyframes scrollbackground {
-    0% {
-        transform: translate(0px, 0px);
-    }
-    100% {
-        transform: translate(0, calc(10 * var(--patternHeight)));
-    }
-}
-
 /* BUTTONS */
 
 pluto-cell > button > span,
@@ -2533,83 +2358,9 @@ pluto-cell > button.add_cell > span::after {
     filter: var(--image-filters);
 }
 
-pluto-input > .input_context_menu ul {
-    margin: 0;
-    padding: 0px;
-    border-radius: 6px;
-    display: grid;
-    grid-template-columns: max-content;
-    border: 1px solid var(--input-context-menu-border-color);
-    background-color: var(--input-context-menu-bg-color);
-}
-
 pluto-input {
     position: relative;
     display: block;
-}
-pluto-input > div.input_context_menu {
-    left: 100%;
-    top: -8px;
-    position: absolute;
-    z-index: 1400;
-}
-@media screen and (min-width: 921px) {
-    pluto-input > div.input_context_menu {
-        left: calc(100% - 3px);
-    }
-}
-@media screen and (max-width: 920px) {
-    pluto-input > div.input_context_menu {
-        right: 0px;
-        left: unset;
-        z-index: 1401;
-    }
-}
-
-pluto-input > .input_context_menu li {
-    list-style: none;
-    margin-block-end: 0px;
-    display: flex;
-    align-items: stretch;
-    flex-direction: column;
-}
-pluto-input > .input_context_menu li button {
-    font-family: var(--system-ui-font-stack);
-    font-size: 0.9rem;
-    margin-block-end: 0px;
-    color: var(--input-context-menu-li-color);
-    position: relative;
-    padding: 8px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    border-radius: 2px;
-    cursor: pointer;
-    background: none;
-    border: none;
-}
-.input_context_menu li:last-child {
-    border-bottom-left-radius: 6px;
-    border-bottom-right-radius: 6px;
-}
-.input_context_menu li:first-child {
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
-}
-
-.input_context_menu li.coming_soon {
-    color: var(--input-context-menu-soon-color);
-}
-.input_context_menu li.coming_soon:hover {
-    cursor: not-allowed;
-    background-color: var(--input-context-menu-hover-bg-color);
-}
-
-.input_context_menu li:hover {
-    transition-property: background-color;
-    transition-duration: 200ms;
-    background-color: var(--input-context-menu-hover-bg-color);
 }
 
 .ctx_icon,
@@ -2659,20 +2410,18 @@ pluto-input > .input_context_menu li button {
     background-image: url("./img/icons/chatbubble-ellipses-outline.svg");
 }
 
-pluto-input > button.input_context_menu {
-    /* top: 3px; */
-    /* left: -26px; */
-    right: 0px;
-    padding: 5px;
+.ctx_icon.hide_code {
+    background-image: url("./img/icons/eye-off-outline.svg");
 }
-
-pluto-input > .input_context_menu.open {
-    opacity: 1;
+.ctx_icon.show_code {
+    background-image: url("./img/icons/eye-outline.svg");
 }
-
-pluto-input > .input_context_menu span.icon::after {
-    background-image: url("./img/icons/ellipsis-horizontal-circle-outline.svg");
-    filter: var(--image-filters);
+.ctx_icon.move_up {
+    background-image: url("./img/icons/arrow-up-circle-outline.svg");
+}
+.ctx_icon.move_down {
+    background-image: url("./img/icons/arrow-up-circle-outline.svg");
+    transform: rotate(180deg);
 }
 
 pluto-input > .preview_hidden_code_info {
@@ -3095,92 +2844,8 @@ dialog.big-pkg-terminal pkg-terminal > .scroller {
     max-width: 91ch;
 }
 
-/* RUNAREA */
-
-pluto-runarea {
-    margin-right: 3px;
-    display: block;
-    height: 17px;
-    position: absolute;
-    right: 0px;
-    min-width: 75px;
-    background-color: var(--pluto-runarea-bg-color);
-    /* border: 2px solid hsla(0, 0%, 0%, 0.1); */
-    border-bottom-left-radius: 5px;
-    border-bottom-right-radius: 5px;
-    border-top: none;
-    /* One less than z-index for pluto-input .cm-editor.
-       Otherwise it gets on top of the tooltips */
-    z-index: 19;
-}
-
-pluto-runarea > span {
-    display: inline-block;
-    position: absolute;
-    top: 1px;
-    left: 22px;
-    width: 45px;
-
-    font-family: var(--roboto-mono-font-stack);
-    font-size: 0.6em;
-    font-style: italic;
-    color: var(--pluto-runarea-span-color);
-    text-align: center;
-}
-
-pluto-runarea > button.runcell {
-    top: -1px;
-    left: 1px;
-}
-
-pluto-runarea > button.runcell > span::after {
-    background-image: url("./img/icons/caret-forward-circle-outline.svg");
-    filter: var(--image-filters);
-}
-
-pluto-runarea.interrupt > button.runcell > span::after {
-    background-image: url("./img/icons/stop-circle-outline.svg");
-    filter: var(--image-filters);
-}
-
-pluto-runarea.jump > button.runcell > span::after {
-    background-image: url("./img/icons/arrow-redo-circle-outline.svg");
-    filter: var(--image-filters);
-}
-pluto-runarea.save > button.runcell > span::after {
-    background-image: url("./img/icons/chevron-forward-circle-outline.svg");
-    filter: var(--image-filters);
-}
-
-pluto-cell:not(.show_input) > pluto-runarea {
-    display: none;
-}
 pluto-cell.code_folded.show_input > pluto-input:not(:focus-within) {
     opacity: 0.4;
-}
-
-pluto-cell:focus-within > pluto-runarea,
-pluto-cell.code_differs > pluto-runarea {
-    opacity: 100%;
-}
-
-pluto-cell.code_differs > pluto-runarea > button {
-    animation-name: 👀;
-    animation-duration: 4s;
-    animation-iteration-count: infinite;
-}
-
-@keyframes 👀 {
-    0%,
-    80%,
-    100% {
-        transform: scale(1);
-        opacity: 50%;
-    }
-    90% {
-        transform: scale(1.2);
-        opacity: 100%;
-    }
 }
 
 /* DRAG DROP */
@@ -4282,15 +3947,6 @@ pluto-cell.hooked_up > pluto-input .cm-editor {
     border-width: 2px;
     border-left: none;
     border-top: none;
-}
-
-pluto-cell.hooked_up > pluto-runarea {
-    opacity: 1;
-    background-color: var(--pluto-cell-force-color);
-}
-
-pluto-cell.hooked_up > pluto-runarea > span {
-    color: #0000004f;
 }
 
 pluto-cell.hooked_up > pluto-output {

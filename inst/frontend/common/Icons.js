@@ -49,3 +49,10 @@ export const MoreIcon = ({ size = 18 }) => html`
         <circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle>
     </svg>
 `
+
+// components/RunButton.js's play icon (ui-3-plan.md 6.2).
+export const PlayIcon = ({ size = 13 }) => html`
+    <svg width=${size} height=${size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M6 4l15 8-15 8z"></path>
+    </svg>
+`

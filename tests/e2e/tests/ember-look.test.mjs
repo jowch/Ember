@@ -147,7 +147,11 @@ test("look: markdown cell renders folded, with R tokens in its fenced block (11)
   // promoted within this headless run, independent of cell kind -- so this
   // checks the same fact (markdown source, fenced R block, vs. a code
   // cell's bare R) through the rendered text instead.
-  await page.locator(`${cellSelector("MD")} button.foldcode`).click();
+  // The fold eye is hidden now (ui-3-plan.md piece 6a): Hide/Show code
+  // moved to the cell menu, which still toggles the same code_folded flag.
+  await page.hover(cellSelector("MD"));
+  await page.locator(`${cellSelector("MD")} button.input_context_menu`).click();
+  await page.locator(`${cellSelector("MD")} button.hide_code`).click();
   const mdSource = await page.locator(`${cellSelector("MD")} .cm-content`).innerText();
   assert.match(mdSource, /```r/, "the unfolded source keeps the fenced R block");
   assert.match(mdSource, /1 \+ 1/);
