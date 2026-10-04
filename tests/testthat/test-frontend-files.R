@@ -253,8 +253,18 @@ test_that("RunArea.js and ember-cell-label are gone; cells.css is wired in (138)
   js_files <- Filter(function(f) endsWith(f, ".js"), frontend_files(dir))
   for (f in js_files) {
     text <- strip_comments(readChar(f, file.info(f)$size, useBytes = TRUE), "js")
-    expect_false(grepl("RunArea\\.js", text, fixed = TRUE), info = f)
+    expect_false(grepl("RunArea.js", text, fixed = TRUE), info = f)
     expect_false(grepl("ember-cell-label", text, fixed = TRUE), info = f)
+  }
+
+  # Excludes themes/: light.css and dark.css still carry Pluto's own
+  # --pluto-runarea-bg-color/--pluto-runarea-span-color variable names,
+  # kept (as every Pluto variable name in those two files is) even
+  # though nothing points at them now.
+  css_files <- Filter(function(f) endsWith(f, ".css") && !grepl("/themes/", f, fixed = TRUE), frontend_files(dir))
+  for (f in css_files) {
+    text <- strip_comments(readChar(f, file.info(f)$size, useBytes = TRUE), "css")
+    expect_false(grepl("pluto-runarea", text, fixed = TRUE), info = f)
   }
 
   all_styles_path <- file.path(dir, "all-styles.css")

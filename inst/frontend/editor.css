@@ -2136,7 +2136,6 @@ button.floating_back_button,
 .overlay-button button,
 pluto-cell > button,
 pluto-input > button,
-pluto-runarea > button,
 pluto-shoulder > button,
 nav#slide_controls > button {
     position: absolute;
@@ -2228,9 +2227,7 @@ pluto-input > button > span {
 @media screen and (any-pointer: fine) {
     pluto-cell > button,
     pluto-input > button,
-    pluto-runarea > button,
-    pluto-shoulder > button,
-    pluto-cell > pluto-runarea {
+    pluto-shoulder > button {
         opacity: 0;
         /* to make it feel smooth: */
         transition: opacity 0.25s ease-in-out;
@@ -2242,7 +2239,6 @@ pluto-input > button > span {
     pluto-cell:focus-within > button,
     pluto-cell:hover > pluto-input > button,
     pluto-cell:focus-within > pluto-input > button,
-    pluto-cell > pluto-runarea > button,
     pluto-cell:hover > pluto-shoulder > button,
     pluto-cell:focus-within > pluto-shoulder > button,
     :where(pluto-editor.inspecting_hidden_code) pluto-cell > pluto-shoulder > button {
@@ -2255,9 +2251,7 @@ pluto-input > button > span {
     .overlay-button button:hover,
     pluto-cell > button:hover,
     pluto-cell > pluto-input > button:hover,
-    pluto-cell > pluto-runarea > button:hover,
-    pluto-cell > pluto-shoulder > button:hover,
-    pluto-cell:hover > pluto-runarea {
+    pluto-cell > pluto-shoulder > button:hover {
         opacity: 1;
         /* to make it feel snappy: */
         transition: opacity 0.05s ease-in-out;
@@ -2271,16 +2265,13 @@ pluto-input > button > span {
         transition: opacity 0.25s ease-in-out;
     }
     pluto-cell:focus-within > pluto-input > button,
-    pluto-cell:focus-within > pluto-runarea,
     pluto-cell:focus-within > pluto-shoulder > button {
         opacity: 0.6;
         transition: opacity 0.25s ease-in-out;
     }
     pluto-cell > pluto-input > button:focus-within,
     pluto-cell > button:focus-within,
-    pluto-cell > pluto-input > button:focus-within pluto-cell > pluto-runarea > button:focus-within,
-    pluto-cell > pluto-shoulder > button:focus-within,
-    pluto-cell > pluto-runarea {
+    pluto-cell > pluto-shoulder > button:focus-within {
         opacity: 1;
         /* to make it feel snappy: */
         transition: opacity 0.05s ease-in-out;
