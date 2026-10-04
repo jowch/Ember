@@ -911,3 +911,16 @@ pluto-editor.disable_ui ember-runtime,
 pluto-editor.disable_ui pluto-cell.not_run_yet > ember-chip {
     display: none;
 }
+
+/* ---- Figures (ui-3.md "Figures") --------------------------------------- */
+
+/* A plot shows exactly as R drew it, in either theme. */
+pluto-output img {
+    max-width: 100%;
+    height: auto;
+    border: none;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+    filter: none;
+}

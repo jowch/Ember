@@ -734,6 +734,53 @@ test("console: a muted message, a warning with its call, and ANSI colours from t
   assertNoProblems(page);
 });
 
+test("figures: no border, background or filter in either theme; at most the column wide; fig-width 4 is 384px (148)", async (t) => {
+  const notebook = tempNotebook("rich.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-figures.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await page.emulateMedia({ colorScheme: "light" });
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const img = `${cellSelector("PLT")} pluto-output img`;
+  await runShown(page, "PLT");
+  await page.waitForFunction((sel) => document.querySelector(sel)?.naturalWidth > 0, img, { timeout: 30000 });
+
+  const look = () => page.locator(img).evaluate((el) => {
+    const s = getComputedStyle(el);
+    const output = el.closest("pluto-output");
+    const os = getComputedStyle(output);
+    const column = output.clientWidth - parseFloat(os.paddingLeft) - parseFloat(os.paddingRight);
+    return {
+      border: [s.borderTopWidth, s.borderRightWidth, s.borderBottomWidth, s.borderLeftWidth].join(" "),
+      radius: s.borderTopLeftRadius,
+      background: [s.backgroundColor, s.backgroundImage].join(" "),
+      filter: s.filter,
+      boxShadow: s.boxShadow,
+      fits: el.getBoundingClientRect().width <= column + 0.5,
+    };
+  });
+  const plain = { border: "0px 0px 0px 0px", radius: "0px", background: "rgba(0, 0, 0, 0) none", filter: "none", boxShadow: "none", fits: true };
+  assert.deepEqual(await look(), plain, "light");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark", null, { timeout: 5000 });
+  assert.deepEqual(await look(), plain, "dark");
+  await page.setViewportSize({ width: 390, height: 800 });
+  assert.equal((await look()).fits, true, "fits a phone-width column");
+  await page.setViewportSize({ width: 1280, height: 800 });
+
+  await setCellCode(page, "FIG", "#| fig-width: 4\n#| fig-height: 3\nplot(1:10)");
+  await page.keyboard.press("Shift+Enter");
+  const fig = `${cellSelector("FIG")} pluto-output img`;
+  await page.waitForFunction(
+    (sel) => { const el = document.querySelector(sel); return el?.naturalWidth > 0 && Math.abs(el.getBoundingClientRect().width - 384) < 1; },
+    fig, { timeout: 30000 }).catch(() => {});
+  assert.equal(Math.round(await page.locator(fig).evaluate((el) => el.getBoundingClientRect().width)), 384);
+
+  assertNoProblems(page);
+});
+
 // Geometry from the Cells and Insert5 boards (ui-3.md "Cell anatomy",
 // "Run button", "Cell menu", "Adding cells").
 
