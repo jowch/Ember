@@ -1827,9 +1827,11 @@ pluto-input > button > span {
     pointer-events: none;
 }
 
+/* Not pluto-input's buttons: cells.css shows and hides the run button and
+   the cell menu, and these rules' 0.6 would outrank it on a cell with focus
+   inside it but not in its code. */
 @media screen and (any-pointer: fine) {
     pluto-cell > button,
-    pluto-input > button,
     pluto-shoulder > button {
         opacity: 0;
         /* to make it feel smooth: */
@@ -1838,8 +1840,6 @@ pluto-input > button > span {
     button.start_stop_recording,
     pluto-cell:hover > button,
     pluto-cell:focus-within > button,
-    pluto-cell:hover > pluto-input > button,
-    pluto-cell:focus-within > pluto-input > button,
     pluto-cell:hover > pluto-shoulder > button,
     pluto-cell:focus-within > pluto-shoulder > button,
     :where(pluto-editor.inspecting_hidden_code) pluto-cell > pluto-shoulder > button {
@@ -1849,7 +1849,6 @@ pluto-input > button > span {
     button.start_stop_recording:hover,
     .overlay-button button:hover,
     pluto-cell > button:hover,
-    pluto-cell > pluto-input > button:hover,
     pluto-cell > pluto-shoulder > button:hover {
         opacity: 1;
         /* to make it feel snappy: */
@@ -1858,17 +1857,14 @@ pluto-input > button > span {
 }
 
 @media screen and (pointer: coarse) {
-    pluto-input > button,
     pluto-shoulder > button {
         opacity: 0.25;
         transition: opacity 0.25s ease-in-out;
     }
-    pluto-cell:focus-within > pluto-input > button,
     pluto-cell:focus-within > pluto-shoulder > button {
         opacity: 0.6;
         transition: opacity 0.25s ease-in-out;
     }
-    pluto-cell > pluto-input > button:focus-within,
     pluto-cell > button:focus-within,
     pluto-cell > pluto-shoulder > button:focus-within {
         opacity: 1;
