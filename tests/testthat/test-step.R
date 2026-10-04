@@ -1172,6 +1172,39 @@ test_that("all_code_cells_ran() excludes an off cell, so the footer source still
   expect_length(r$state$footer_sources, 0)
 })
 
+test_that("every cell in a cycle shows the cycle error, over a stale run error, and none runs", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- z"), B = cell("y <- 1")))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(status = "error",
+                              error = list(message = "object 'z' not found")), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(11)))
+  expect_equal(r$state$results$A$status, "error")
+
+  r2 <- drive(r$state, ev_apply(list(op_set_code("B", "y <- x + 1"),
+                                     op_set_code("A", "x <- y + 1")), at(20)),
+              ev_run(c("A", "B"), at(21)))
+  expect_equal(sent_cells(r2), character())
+  expect_setequal(r2$reply$skipped, c("A", "B"))
+  for (id in c("A", "B")) {
+    v <- snapshot_of(r2$state)$cells[[id]]
+    expect_equal(vapply(v$errors, function(e) e$kind, ""), "cycle")
+    expect_match(project_output(v)$body$msg, "^Cyclic references among")
+  }
+})
+
+test_that("two cells inserted as a cycle both show the cycle error and neither runs", {
+  s <- fake_state(list(S = cell("")))
+  a <- "11111111-1111-4111-8111-111111111111"
+  b <- "22222222-2222-4222-8222-222222222222"
+  r <- drive(s, ev_apply(list(op_insert(a, 2, "x <- y + 1"), op_insert(b, 3, "y <- x + 1")), at(1)),
+             ev_run(c(a, b), at(2)))
+  expect_setequal(r$reply$skipped, c(a, b))
+  for (id in c(a, b)) {
+    v <- snapshot_of(r$state)$cells[[id]]
+    expect_equal(vapply(v$errors, function(e) e$kind, ""), "cycle")
+  }
+})
+
 # ---- ui-3, piece 1: errors flow downstream (docs/ui-3-tests.md) -----------
 
 test_that("autorun: a failed ancestor's effects are drop_globals then the dependent's run (ui-3 1)", {
