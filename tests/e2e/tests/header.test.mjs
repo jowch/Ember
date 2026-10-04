@@ -169,3 +169,23 @@ test("header: the R status button's accessible name is the state words, at every
 
   assertNoProblems(page);
 });
+
+test("header: the flame goes back to the start page, which lists the open notebook", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "header-flame.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  const [resp] = await Promise.all([
+    page.waitForNavigation(),
+    page.locator("nav#at_the_top > a").first().click(),
+  ]);
+  assert.equal(resp.status(), 200, "the start page accepts the flame's link");
+  await page.locator(".ember-start-row").first().waitFor({ state: "visible", timeout: 10000 });
+  assert.ok(await page.locator('a[href*="edit?id="]').count() > 0, "the open notebook is listed");
+
+  assertNoProblems(page);
+});

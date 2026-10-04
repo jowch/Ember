@@ -106,7 +106,7 @@ export const Header = ({ notebook, connected, code_differs, export_links, print_
     return html`
         <nav id="at_the_top">
             <a
-                href="./"
+                href=${`./?secret=${page_secret()}`}
                 title=${t("t_ember_start_my_notebooks")}
                 aria-label=${t("t_ember_start_my_notebooks")}
                 onClick=${(e) => {
