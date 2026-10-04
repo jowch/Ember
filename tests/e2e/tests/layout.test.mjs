@@ -12,7 +12,9 @@ import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook } from "../browser.mjs";
 
-// 110. The column at a wide (1440 x 900) viewport; the header's own shell.
+// 110. The column at a wide (1440 x 900) viewport, where the panel starts
+// open: the column sits just left of the 400 px panel and its 32 px gap.
+// The header's own shell.
 test("layout: the 720px column and sticky header at 1440x900 (110)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "layout-110.server.log") });
@@ -25,7 +27,7 @@ test("layout: the 720px column and sticky header at 1440x900 (110)", async (t) =
 
   const main = await page.locator("main").boundingBox();
   assert.ok(main, "expected a main box");
-  assert.ok(Math.abs(main.x - 120) <= 1, `expected main.x ~= 120, got ${main.x}`);
+  assert.ok(Math.abs(main.x - (1440 - 432 - 751)) <= 1, `expected main.x ~= 257, got ${main.x}`);
   assert.ok(Math.abs(main.width - (720 + 31)) <= 1, `expected main.width ~= 751, got ${main.width}`);
 
   const header = page.locator("header#pluto-nav");
@@ -66,9 +68,10 @@ test("layout: no horizontal scroll at 640x800, closed or open (114)", async (t) 
 
 const open_panel = (page, tab) => page.evaluate((t) => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: t })), tab);
 
-// 111. Docked (>= 1240px): the panel sits in the free space; main doesn't
-// move. Opened and closed by clicking the header's own icons.
-test("layout: the side panel docks at 1440x900 without moving main (111)", async (t) => {
+// 111. Docked (>= 1240px): the panel starts open on Variables; closing it
+// centres main, and opening it moves main left just enough to clear it.
+// Closed and opened by clicking the header's own icons.
+test("layout: the side panel docks at 1440x900 and main clears it (111)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "layout-111.server.log") });
   const browser = await launchBrowser();
@@ -78,24 +81,27 @@ test("layout: the side panel docks at 1440x900 without moving main (111)", async
   await page.setViewportSize({ width: 1440, height: 900 });
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  const main_before = await page.locator("main").boundingBox();
-
   const variables_icon = page.locator('header#pluto-nav button[aria-label="Variables"]');
-  await variables_icon.click();
   await page.waitForSelector("#helpbox-wrapper.open");
   const panel = await page.locator("#helpbox-wrapper").boundingBox();
   assert.ok(Math.abs(panel.width - 400) <= 1, `expected panel width ~= 400, got ${panel.width}`);
   assert.ok(Math.abs(panel.x + panel.width - 1440) <= 1, `expected panel at the right edge, got x=${panel.x} width=${panel.width}`);
   assert.equal(await variables_icon.getAttribute("aria-pressed"), "true", "the icon shows as pressed while its tab is open");
+  const main_open = await page.locator("main").boundingBox();
+  assert.ok(main_open.x + main_open.width <= panel.x - 32 + 1, "main clears the panel by the gap");
 
-  const main_after = await page.locator("main").boundingBox();
-  assert.deepEqual(main_after, main_before, "main must not move when the panel docks");
-  assert.ok(main_after.x + main_after.width <= panel.x + 1, "main and the panel must not overlap");
+  const main_x_settles_at = (x) =>
+    page.waitForFunction((x) => Math.abs(document.querySelector("main").getBoundingClientRect().x - x) <= 1, x, { timeout: 2000 });
 
-  // Clicking Variables again closes the panel (the same tab was already showing).
+  // Clicking Variables closes the panel (its tab was showing); main centres.
   await variables_icon.click();
   await page.waitForSelector("#helpbox-wrapper:not(.open)", { state: "attached" });
   assert.equal(await variables_icon.getAttribute("aria-pressed"), "false");
+  await main_x_settles_at((1440 - 751) / 2);
+
+  await variables_icon.click();
+  await page.waitForSelector("#helpbox-wrapper.open");
+  await main_x_settles_at(main_open.x);
 
   await page.locator('header#pluto-nav button[aria-label="Help"]').click();
   await page.waitForSelector("#helpbox-wrapper.open");
@@ -119,7 +125,7 @@ test("layout: the side panel slides over at 1100x800 (112)", async (t) => {
   await openNotebook(page, server.origin, server.secret, notebook);
 
   const main_before = await page.locator("main").boundingBox();
-  assert.ok(Math.abs(main_before.x - 64) <= 1, `expected main.x ~= 64, got ${main_before.x}`);
+  assert.ok(Math.abs(main_before.x - (1100 - 751) / 2) <= 1, `expected main centred at x ~= 174.5, got ${main_before.x}`);
 
   await open_panel(page, "variables");
   await page.waitForSelector("#helpbox-wrapper.open");

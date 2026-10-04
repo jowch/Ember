@@ -7,7 +7,7 @@ import { use_run_progress } from "../common/use_run_progress.js"
 import { useSettled } from "../common/useSettled.js"
 import { FlameLogo, VariablesIcon, HelpIcon, PackagesIcon, SidePanelIcon, MoreIcon } from "../common/Icons.js"
 import { ExportMenu, export_items, use_print_title } from "./ExportMenu.js"
-import { open_bottom_right_panel } from "./BottomRightPanel.js"
+import { open_bottom_right_panel, initial_panel_tab, last_panel_tab } from "./BottomRightPanel.js"
 import { is_desktop, open_main_menu } from "./DesktopInterface.js"
 
 /** The page's own secret, read back out of its URL, as StartPage.js does. */
@@ -88,8 +88,8 @@ const r_status = ({ connected, notebook, n, i }) => {
  * }} props
  */
 export const Header = ({ notebook, connected, code_differs, export_links, print_title, on_open_move, on_run_all, on_interrupt }) => {
-    const [open_tab, set_open_tab] = useState(/** @type {import("./BottomRightPanel.js").PanelTabName} */ (null))
-    const last_tab_ref = useRef(/** @type {"variables"|"docs"|"packages"|"process"} */ ("docs"))
+    const [open_tab, set_open_tab] = useState(initial_panel_tab)
+    const last_tab_ref = useRef(last_panel_tab())
 
     useEventListener(
         window,

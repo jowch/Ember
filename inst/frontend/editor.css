@@ -60,7 +60,7 @@ pluto-editor {
     --ember-column: 720px;
     --ember-panel-width: 400px;
     --ember-header-height: 52px;
-    --ember-column-left: clamp(16px, calc((100vw - var(--ember-column)) * 0.17), 120px);
+    --ember-panel-gap: 32px;
 }
 
 main {
@@ -84,13 +84,20 @@ body:has(pluto-editor:not(.disable_ui)) {
     overscroll-behavior: contain;
 }
 
-/* One column on the left; the side panel (piece 5's "Side panel frame")
-   docks in the free space to its right instead of pushing it over. */
+/* The column is centred. With the side panel docked, it moves left only as
+   far as it must to clear the panel, as Pluto's main does for live docs. */
 pluto-editor main {
+    --ember-main-free: calc(100% - (var(--ember-column) + 25px + 6px));
     align-self: flex-start;
-    margin-left: var(--ember-column-left);
-    margin-right: 0;
+    margin-left: auto;
+    margin-right: max(0px, var(--ember-main-free) / 2);
     position: relative;
+    transition: margin-right 0.18s ease;
+}
+@media screen and (min-width: 1240px) {
+    pluto-editor:not(.disable_ui):has(#helpbox-wrapper.open) main {
+        margin-right: max(var(--ember-main-free) / 2, min(var(--ember-main-free), var(--ember-panel-width) + var(--ember-panel-gap)));
+    }
 }
 
 @media (max-width: 640px) {
@@ -828,6 +835,11 @@ pluto-editor.disconnected > header#pluto-nav {
     border-bottom: 1px solid var(--ember-line);
     color: var(--ember-text);
     font-family: var(--ember-ui-font);
+}
+@media screen and (min-width: 1240px) {
+    pluto-editor:not(.disable_ui):has(#helpbox-wrapper.open) #ember-safe-preview {
+        padding-right: calc(var(--ember-panel-width) + 20px);
+    }
 }
 #ember-safe-preview svg {
     flex-shrink: 0;

@@ -37,11 +37,14 @@ out of the way of the data, the code and the results.
 
 (Boards "Wide", "Laptop", "Phone".)
 
-- One left-aligned reading column about 720 px wide, sized for prose line
+- One centred reading column about 720 px wide, sized for prose line
   length, as Pluto does. Outputs sit above the code that made them.
-- The side panel docks in the free space on the right when the window is
-  wide, so opening it never moves the notebook. Below roughly 1200 px it
+- The side panel docks on the right when the window is wide, and the column
+  moves left only as far as it needs to clear it, as Pluto's does for live
+  docs; on very wide windows it stays centred. Below roughly 1240 px it
   slides over the notebook; on a phone it is a sheet from the bottom.
+- The panel starts open on Variables where it fits docked; each browser
+  remembers whether the viewer closed it and which tab they last used.
 
 ## Cells
 
