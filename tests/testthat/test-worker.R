@@ -111,6 +111,17 @@ test_that("run_cell(): a notebook function calling lm() with bad data (ui-3-test
   expect_identical(length(r$error$frames), length(r$error$traceback))
 })
 
+test_that("run_cell(): every frame of lm()'s deep traceback has a package or a cell, the builtin eval() frame included", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "ERR", 1L, "g <- function(d) lm(y ~ x, data = d); g(1)")
+  evals <- Filter(function(f) identical(f$call, "eval(mf, parent.frame())"), r$error$frames)
+  expect_length(evals, 2)
+  expect_identical(vapply(evals, function(f) f$package %||% "", character(1)), c("base", "base"))
+  unlabelled <- Filter(function(f) is.null(f$package) && is.null(f$cell), r$error$frames)
+  expect_identical(unlabelled, list())
+})
+
 test_that("run_cell(): a function defined in cell F, called from cell ERR, keeps its own cell in a frame (ui-3-tests 129)", {
   h <- worker_harness()
   on.exit(h$close())

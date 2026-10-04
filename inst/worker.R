@@ -1854,7 +1854,7 @@ clean_calls <- function(calls) {
 #' captured by the caller while the stack was live).
 #'
 #' `package` is `environmentName(topenv(environment(fn)))`, `NULL` for
-#' `"R_GlobalEnv"` (a notebook-defined function). `cell` is that function's
+#' `"R_GlobalEnv"` (a notebook-defined function); "base" for a primitive. `cell` is that function's
 #' srcref's file name -- the id of the cell that defined it, from
 #' `srcfilecopy(msg$cell, msg$code)` at parse time -- `NULL` when the
 #' function carries no srcref (a package function, normally built without
@@ -1866,7 +1866,11 @@ clean_frames <- function(calls, fns) {
     fn <- fns[[i]]
     package <- NULL
     cell <- NULL
-    if (!is.null(fn)) {
+    if (is.primitive(fn)) {
+      # .Internal(eval()) and other builtins run in a frame of their own
+      # whose function has no environment.
+      package <- "base"
+    } else if (!is.null(fn)) {
       env <- tryCatch(environment(fn), error = function(e) NULL)
       if (!is.null(env)) {
         pkg_name <- tryCatch(environmentName(topenv(env)), error = function(e) "R_GlobalEnv")
