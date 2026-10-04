@@ -49,7 +49,7 @@ done; clear out ticked items at each release.
 - [x] Replace Pluto's logo and name in the page with Ember's own (with the theme, increment 2) — missing
 - [x] Credit the Pluto.jl authors as copyright holders of the vendored frontend in DESCRIPTION or inst/COPYRIGHTS before any CRAN release — missing
 
-- [ ] No way to create a notebook from the browser: the index page lists hosted notebooks only. Today it is `new_notebook()` in R, then `start_server()` — missing
+- [x] No way to create a notebook from the browser: the index page lists hosted notebooks only. Today it is `new_notebook()` in R, then `start_server()` — missing
 - [x] The cell menu still offers Pluto's "ask AI", and the footer's feedback form still shows (inert: nothing is sent) — improvised
 
 - [ ] Coloured console output (cli, crayon) sits on the log box's dark brown background, where red text is hard to read; the ANSI colours need values chosen for that background, or a lighter box — improvised
@@ -79,6 +79,13 @@ done; clear out ticked items at each release.
 - [ ] `tests/testthat/fixtures/pluto-css-variables.txt` still requires dead theme variables (`--frontmatter-*`, `--binder-loading-header-color`) that were kept for Pluto/Endeavor compatibility. Ember is now built standalone, so the contract can drop names nothing uses — improvised
 
 - [ ] Flaky on Windows CI: test-server.R test 31 ("interrupt_all sends SIGINT to the running cell") once saw no restart offer within 15 s, then passed on re-run (ci/flame-secret, a frontend-only change). Look at the interrupt grace timer's timing on slow Windows runners if it recurs — improvised
+
+- [ ] Packages tab against Panel3: the failure card has a plain border where the board's is red-tinted; the table header and status pills differ a little; the Status tab's Interrupt and Restart buttons are 32 px, the board's 30 px. `ember-forms.css` and `editor.css` both define `.ember-btn` with different padding and colours — improvised
+- [ ] When a never-run cell starts running, the "Not run yet" chip goes and the output arrives about 60 ms later, so the layout moves twice; keep the chip's space until the output arrives. Cmd+Enter on an unchanged cell briefly sets it waiting to run (the 250 ms delay hides it) — improvised
+- [ ] Help panel against Panel3: R's own "Description" heading still shows; the search field lacks the board's icon, 30 px height and page background; See Also is R's paragraph, not a row of links — improvised
+- [ ] Help page links: R's footer (`00Index.html`) and "Run examples" (`../Example/...`) aren't rewritten, so they leave the page or break; a link clicked inside a help page is labelled "follows the cursor" — improvised
+- [ ] The signature tooltip above the line catches clicks meant for the line under it — improvised
+- [ ] `not_explicit_and_too_boring` (live docs) checks Julia's number node names (`IntegerLiteral`, `FloatLiteral`); R's parser calls it `Number`, so the check never fires — improvised
 
 ## Grammar
 
