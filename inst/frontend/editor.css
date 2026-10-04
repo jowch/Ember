@@ -2290,7 +2290,6 @@ pluto-input {
     display: block;
 }
 
-.ctx_icon,
 .icon {
     --size: 17px;
     width: var(--size);
@@ -2299,56 +2298,6 @@ pluto-input {
     background-size: var(--size) var(--size);
     background-position: center;
     margin-inline-end: calc(var(--size) / 3);
-}
-.ctx_icon {
-    filter: var(--image-filters);
-}
-.ctx_icon.show_logs {
-    background-image: url("./img/icons/document-text-outline.svg");
-}
-
-.ctx_icon.hide_logs {
-    background-image: url("./img/icons/document-text-outline.svg");
-}
-.ctx_icon.enable_cell {
-    background-image: url("./img/icons/caret-forward-circle-outline.svg");
-}
-
-.ctx_icon.disable_cell {
-    background-image: url("./img/icons/ban-outline.svg");
-    background-size: 15px;
-    background-repeat: no-repeat;
-}
-.ctx_icon.delete {
-    background-image: url("./img/icons/close-circle-outline.svg");
-}
-.ctx_icon.run_as_script {
-    background-image: url("./img/icons/document-lock-outline.svg");
-}
-.ctx_icon.skip_as_script {
-    background-image: url("./img/icons/document-text-outline.svg");
-}
-
-.ctx_icon.copy_output {
-    background-image: url("./img/icons/copy-outline.svg");
-}
-
-.ctx_icon.ask_ai {
-    background-image: url("./img/icons/chatbubble-ellipses-outline.svg");
-}
-
-.ctx_icon.hide_code {
-    background-image: url("./img/icons/eye-off-outline.svg");
-}
-.ctx_icon.show_code {
-    background-image: url("./img/icons/eye-outline.svg");
-}
-.ctx_icon.move_up {
-    background-image: url("./img/icons/arrow-up-circle-outline.svg");
-}
-.ctx_icon.move_down {
-    background-image: url("./img/icons/arrow-up-circle-outline.svg");
-    transform: rotate(180deg);
 }
 
 pluto-input > .preview_hidden_code_info {
