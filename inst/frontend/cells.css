@@ -123,12 +123,8 @@ pluto-cell[data-rail="due"] > pluto-input .cm-gutters {
 
 pluto-input {
     position: relative;
-    /* Lets this code box beat its own cell's "+"/shoulder buttons
-       (editor.css, z-index 30), needed for the run button, which sits on
-       top of the code box by design. isolation scopes that to this cell
-       alone: without it, winning locally would also win against a
-       *different* cell's "+" strip, wherever the two happen to overlap
-       on screen. */
+    /* The run button overhangs the gap above, so the box must stack over
+       the "+" strip there (z-index 15). */
     isolation: isolate;
     z-index: 35;
 }
@@ -309,7 +305,6 @@ button.add_cell:is(:hover, :focus-visible) > span {
 /* ---- Empty notebook (ui-3.md "Empty notebook") ------------------------- */
 
 ember-empty-hints {
-    display: block;
     margin: 6px 0 0 16px;
     display: flex;
     flex-direction: column;
@@ -422,7 +417,7 @@ div.input_context_menu[role="menu"] .ember-menuitem-danger {
 ember-chip {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    gap: 6px;
     margin: 0 0 6px 0;
     padding: 2px 10px 2px 8px;
     border-radius: 999px;
@@ -441,7 +436,6 @@ ember-chip a {
     text-decoration: underline;
 }
 
-/* "Not run yet": no output, so no wash underneath. */
 pluto-cell.not_run_yet > ember-chip {
     background: var(--ember-panel);
     border: 1px solid var(--ember-line);
@@ -460,8 +454,7 @@ pluto-cell.depends_on_disabled_cells > ember-chip {
     color: var(--ember-chip-dis-text);
 }
 
-/* Stale: the old output, then the chip, on one wash joined to the code
-   box. The wash is a grid item behind both rather than a wrapper, because
+/* The wash is a grid item behind the output and chip, not a wrapper:
    Endeavor selects pluto-output as a direct child of pluto-cell. */
 pluto-cell.stale {
     display: grid;
@@ -523,6 +516,7 @@ pluto-cell.running_disabled > pluto-input .cm-content {
 
 pluto-editor.disable_ui button.ember-run,
 pluto-editor.disable_ui button.input_context_menu,
-pluto-editor.disable_ui ember-runtime {
+pluto-editor.disable_ui ember-runtime,
+pluto-editor.disable_ui pluto-cell.not_run_yet > ember-chip {
     display: none;
 }

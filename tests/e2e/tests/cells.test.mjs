@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector } from "../browser.mjs";
@@ -199,6 +199,9 @@ test("cell menu: item order, move down, hide code, no Disable on the setup cell 
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.classList.contains("code_folded"),
     cellSelector("B"), { timeout: 10000 });
+  await page.hover(cellSelector("B"));
+  await page.locator(`${cellSelector("B")} button.input_context_menu`).click();
+  assert.equal(await page.locator(`${cellSelector("B")} button.hide_code`).innerText(), "Show code");
 
   assertNoProblems(page);
 });
@@ -262,6 +265,16 @@ test("Endeavor's hooks after piece 6a (extends ui-2-tests.md 12) (152)", async (
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.classList.contains("code_differs"),
     cellSelector("B"), { timeout: 10000 });
+
+  await page.waitForFunction(
+    (sel) => !document.querySelector(sel)?.matches(".running, .queued"),
+    cellSelector("NEVER"), { timeout: 15000 });
+  await setCellCode(page, "LOOP", "Sys.sleep(8)");
+  await page.keyboard.press("Shift+Enter");
+  await page.waitForSelector(`${cellSelector("LOOP")}.running`, { timeout: 15000 });
+  await runCell(page, "NEVER");
+  await page.waitForSelector(`${cellSelector("NEVER")}.queued:not(.running)`, { timeout: 5000 });
+  assert.equal(await page.locator(`${cellSelector("LOOP")}.running`).count(), 1, "LOOP still running while NEVER waits");
 
   assertNoProblems(page);
 });
@@ -417,6 +430,26 @@ test('chips: NEVER (loaded with code, never run) shows "Not run yet" with no out
     cellSelector("NEVER"), { timeout: 20000 });
   assert.equal(await page.locator(`${cellSelector("NEVER")} ember-chip`).innerText(), "Not run yet");
   assert.equal(await page.locator(`${cellSelector("NEVER")} pluto-output`).innerText(), "");
+  assert.equal(await page.locator(`${cellSelector("NEVER")} ember-runtime`).count(), 0, "no run-time chip before a first run");
+  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached", timeout: 15000 });
+
+  const formatted = await page.evaluate(async () => {
+    const src = document.querySelector('script[src$="editor.js"]').src;
+    const { format_runtime } = await import(new URL("components/RunButton.js", src).href);
+    return [0.04, 9.994, 9.996, 12.4, 59.4, 59.996, 63.2, 119.7, 120].map((s) => format_runtime(s * 1e9));
+  });
+  assert.deepEqual(formatted, ["0.04 s", "9.99 s", "10 s", "12 s", "59 s", "1 min", "1 min 3 s", "2 min", "2 min"]);
+
+  // A static export (disable_ui) shows no "Not run yet" chip.
+  const id = new URL(page.url()).searchParams.get("id");
+  const res = await fetch(`${server.origin}notebookexport?id=${id}&secret=${server.secret}`);
+  assert.equal(res.status, 200);
+  const file = path.join(mkdtempSync(path.join(tmpdir(), "ember-e2e-export-")), "cells.html");
+  writeFileSync(file, await res.text(), "utf8");
+  const exported = await newPage(browser);
+  await exported.goto(`file://${file}`);
+  await exported.waitForSelector(`pluto-editor.disable_ui ${cellSelector("NEVER")}.not_run_yet`, { state: "attached", timeout: 15000 });
+  assert.equal(await exported.locator(`${cellSelector("NEVER")} ember-chip`).isVisible(), false, "no \"Not run yet\" chip in an export");
 
   assertNoProblems(page);
 });

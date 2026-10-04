@@ -15,6 +15,7 @@ export const RunButton = ({ running, queued, runtime, on_run, on_interrupt }) =>
     const local_time_running_ms = useMillisSinceTruthy(running)
     const local_time_running_ns = local_time_running_ms == null ? null : 1e6 * local_time_running_ms
     const busy = running || queued
+    const shown_ns = running ? (local_time_running_ns ?? runtime) : runtime
 
     return html`
         <button
@@ -23,9 +24,9 @@ export const RunButton = ({ running, queued, runtime, on_run, on_interrupt }) =>
             title=${busy ? t("t_stop_cell") : t("t_run_cell")}
             aria-label=${busy ? t("t_stop_cell") : t("t_run_cell")}
         >
-            ${busy ? html`<span class="ember-run-stop"></span>` : html`<${PlayIcon} size=${13} />`}
+            ${busy ? html`<span class="ember-run-stop"></span>` : html`<${PlayIcon} size=${12} />`}
         </button>
-        <ember-runtime>${format_runtime(running ? (local_time_running_ns ?? runtime) : runtime)}</ember-runtime>
+        ${shown_ns == null ? null : html`<ember-runtime>${format_runtime(shown_ns)}</ember-runtime>`}
     `
 }
 
@@ -34,14 +35,12 @@ export const RunButton = ({ running, queued, runtime, on_run, on_interrupt }) =>
  * minute, "1 min 3 s" at or above it. Exported for the e2e test.
  */
 export const format_runtime = (time_ns) => {
-    if (time_ns == null) return "---"
     const total_s = time_ns / 1e9
-    if (total_s < 60) {
-        const digits = total_s < 10 ? 2 : 0
-        return `${total_s.toFixed(digits)} s`
-    }
-    const mins = Math.floor(total_s / 60)
-    const secs = Math.round(total_s - mins * 60)
+    if (total_s < 9.995) return `${total_s.toFixed(2)} s`
+    const whole_s = Math.round(total_s)
+    if (whole_s < 60) return `${whole_s} s`
+    const mins = Math.floor(whole_s / 60)
+    const secs = whole_s % 60
     return secs === 0 ? `${mins} min` : `${mins} min ${secs} s`
 }
 

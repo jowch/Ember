@@ -300,9 +300,8 @@ export const Cell = ({
         !running_disabled &&
         !depends_on_disabled_cells
 
-    // ui-3.md, "Chips": at most one shown, in this order. depends_on_disabled_cells
-    // is also true on the disabled cell itself (as in Pluto), so running_disabled
-    // is checked first.
+    // depends_on_disabled_cells is also true on the disabled cell itself, so
+    // running_disabled is checked first.
     const chip = running_disabled
         ? { icon: SlashCircleIcon, text: t("t_chip_disabled") }
         : depends_on_disabled_cells

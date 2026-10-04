@@ -82,14 +82,15 @@ test('lazy.R: editing A shows B as "stale", running B clears it (73)', async (t)
   await setCellCode(page, "A", "x <- 2");
   await runCell(page, "A");
 
-  // The chip itself (ui-3-plan.md piece 6a step 4) replaces ember-cell-label;
-  // until then, the "stale" class is the check.
-  await page.waitForSelector(`${cellSelector("B")}.stale`, { timeout: 30000 });
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.innerText === "Stale · x changed",
+    cellSelector("B") + " > ember-chip", { timeout: 30000 });
+  assert.equal(await page.locator(`${cellSelector("B")} ember-cell-label`).count(), 0);
 
   await runCell(page, "B");
   await page.waitForFunction(
-    (sel) => !document.querySelector(sel)?.classList.contains("stale"),
-    cellSelector("B"), { timeout: 30000 });
+    (sel) => document.querySelector(sel) == null,
+    cellSelector("B") + " > ember-chip", { timeout: 30000 });
 
   assertNoProblems(page);
 });
