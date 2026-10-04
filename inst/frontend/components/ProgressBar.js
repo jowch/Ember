@@ -12,7 +12,7 @@ import { use_run_progress } from "../common/use_run_progress.js"
  * }} props
  */
 export const ProgressBar = ({ notebook, backend_launch_phase, status }) => {
-    const { recently_running, currently_running } = use_run_progress(notebook)
+    const { i, n, recently_running, currently_running } = use_run_progress(notebook)
 
     let cell_progress = recently_running.length === 0 ? 0 : 1 - Math.max(0, currently_running.length - 0.3) / recently_running.length
 
@@ -35,10 +35,7 @@ export const ProgressBar = ({ notebook, backend_launch_phase, status }) => {
 
     const title = binder_loading
         ? t("t_process_status_loading_binder")
-        : t("t_process_running_cells", {
-              done: recently_running.length - currently_running.length,
-              total: recently_running.length,
-          })
+        : t("t_ember_r_status_busy", { i, n })
 
     return html`<loading-bar
         class=${binder_loading ? "slow" : "fast"}

@@ -13,7 +13,7 @@ import { Notebook } from "./Notebook.js"
 import { BottomRightPanel, open_bottom_right_panel } from "./BottomRightPanel.js"
 import { DropRuler, get_drop_index_for_paste } from "./DropRuler.js"
 import { SelectionArea } from "./SelectionArea.js"
-import { RecentlyDisabledInfo, UndoDelete } from "./UndoDelete.js"
+import { UndoDelete } from "./UndoDelete.js"
 import { Scroller } from "./Scroller.js"
 import { Popup } from "./Popup.js"
 
@@ -328,7 +328,6 @@ export const url_logo_small = get_included_external_source("pluto-logo-small")?.
  * cell_inputs_local: { [uuid: string]: { code: String } },
  * desired_doc_query: ?String,
  * recently_deleted: ?Array<{ index: number, cell: CellInputData }>,
- * recently_auto_disabled_cells: Record<string,[string,string]>,
  * last_update_time: number,
  * disable_ui: boolean,
  * static_preview: boolean,
@@ -367,7 +366,6 @@ export class Editor extends Component {
             cell_inputs_local: {},
             desired_doc_query: null,
             recently_deleted: [],
-            recently_auto_disabled_cells: {},
             last_update_time: 0,
 
             disable_ui: launch_params.disable_ui,
@@ -715,13 +713,7 @@ export class Editor extends Component {
                             }
                         })
                     )
-                    const result = await this.client.send("run_multiple_cells", { cells: cell_ids }, { notebook_id: this.state.notebook.notebook_id })
-                    const { disabled_cells } = result.message
-                    if (Object.entries(disabled_cells).length > 0) {
-                        await this.setStatePromise({
-                            recently_auto_disabled_cells: disabled_cells,
-                        })
-                    }
+                    await this.client.send("run_multiple_cells", { cells: cell_ids }, { notebook_id: this.state.notebook.notebook_id })
                     return true
                 }
                 return false
@@ -1665,10 +1657,6 @@ all patches: ${JSON.stringify(patches, null, 1)}
                         notebook=${this.state.notebook}
                         sanitize_html=${status.sanitize_html}
                         on_restart=${restart}
-                    />
-                    <${RecentlyDisabledInfo} 
-                        recently_auto_disabled_cells=${this.state.recently_auto_disabled_cells}
-                        notebook=${this.state.notebook}
                     />
                     <${UndoDelete}
                         recently_deleted=${this.state.recently_deleted}

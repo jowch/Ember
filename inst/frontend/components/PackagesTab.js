@@ -175,17 +175,19 @@ export const PackagesTab = ({ packages }) => {
             <div class="ember-packages-head">
                 <div class="ember-packages-head-row">
                     <span class="ember-packages-title">
-                        ${snapshot != null ? `${t("t_ember_packages_versions_as_of")} ${snapshot}` : t("t_ember_packages_library_status_unknown")}
+                        ${snapshot != null ? `${t("t_ember_packages_versions_as_of")} ${snapshot}` : t("t_panel_packages")}
                     </span>
                     <${PackagesUpdate} update=${update ?? null} library_status=${library.status} />
                 </div>
                 <span class="ember-packages-description">${t("t_ember_packages_tab_description")}</span>
             </div>
-            <p class="ember-packages-library-status ember-packages-library-${library.status}">
-                ${t(`t_ember_packages_library_status_${library.status}`)}
-                ${library.progress != null ? ` (${library.progress.done}/${library.progress.total})` : ""}
-                ${library.message != null ? html`<br /><span class="ember-packages-library-message">${library.message}</span>` : null}
-            </p>
+            ${library.status === "unknown"
+                ? null
+                : html`<p class="ember-packages-library-status ember-packages-library-${library.status}">
+                      ${t(`t_ember_packages_library_status_${library.status}`)}
+                      ${library.progress != null ? ` (${library.progress.done}/${library.progress.total})` : ""}
+                      ${library.message != null ? html`<br /><span class="ember-packages-library-message">${library.message}</span>` : null}
+                  </p>`}
             ${library.failures.length === 0
                 ? null
                 : html`<div class="ember-install-failure-cards">

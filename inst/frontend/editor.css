@@ -3403,10 +3403,8 @@ pluto-output:hover pluto-header-id-copy:hover {
 }
 
 /* Show button when focused */
-pluto-header-id-copy:focus {
+pluto-header-id-copy:focus-visible {
     opacity: 1;
-    outline: 2px solid var(--black);
-    outline-offset: 2px;
 }
 
 .fix-with-ai {

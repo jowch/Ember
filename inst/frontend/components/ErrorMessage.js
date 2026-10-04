@@ -57,7 +57,11 @@ const first_and_rest = (/** @type {string} */ x, render_first = (/** @type {stri
         : null}`
 }
 
-const symbol_list_rewriter = (/** @type {RegExp} */ pattern, /** @type {string} */ key, /** @type {(what: string) => any} */ make_link) => ({
+const symbol_list_rewriter = (
+    /** @type {RegExp} */ pattern,
+    /** @type {(count: number) => import("../common/lang.js").TranslationKey} */ key_for,
+    /** @type {(what: string) => any} */ make_link
+) => ({
     pattern,
     display: (/** @type {string} */ x) =>
         first_and_rest(x, (line) => {
@@ -65,7 +69,7 @@ const symbol_list_rewriter = (/** @type {RegExp} */ pattern, /** @type {string} 
             if (!match) return html`<${AnsiText} value=${line} />`
             const syms = (match[1] ?? "").replace(/\.$/, "").split(/, | and /)
             const links = syms.map(make_link)
-            return th(key, { symbols: localized_list_htl(links, syms, { type: "conjunction" }) })
+            return th(key_for(syms.length), { count: syms.length, symbols: localized_list_htl(links, syms, { type: "conjunction" }) })
         }),
 })
 
@@ -225,10 +229,13 @@ export const ErrorMessage = ({ msg, stacktrace, plain_error, ember_call = null, 
             pattern: /MethodError: no method matching .*\nClosest candidates are:/,
             display: (/** @type{string} */ x) => x.split("\n").map((line) => html`<p style="white-space: nowrap;">${line}</p>`),
         },
-        symbol_list_rewriter(/Cyclic references among (.*)\./, "t_cyclic_references_among", (what) => html`<a href="#${encodeURI(what)}">${what}</a>`),
+        symbol_list_rewriter(
+            /Cyclic references among (.*)\./,
+            (count) => (count === 2 ? "t_cyclic_references_between_two" : "t_cyclic_references_among"),
+            (what) => html`<a href="#${encodeURI(what)}">${what}</a>`),
         symbol_list_rewriter(
             /Multiple definitions for (.*)/,
-            "t_multiple_definitions_for",
+            () => "t_multiple_definitions_for",
             (what) =>
                 html`<a
                     href="#"

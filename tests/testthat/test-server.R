@@ -609,6 +609,25 @@ test_that("/open opens (or reuses) the notebook and redirects to its edit URL (h
   for (hub in mget(ls(server$hubs), envir = server$hubs)) close_notebook(hub$nb)
 })
 
+test_that("plain-text error pages use Words6's wording (159)", {
+  server <- new_server("s", throttle = 0)
+  server$port <- 40011L
+
+  resp <- http_call(server, fake_req("/notebookfile", "id=nope&secret=s"))
+  expect_equal(resp$status, 404L)
+  expect_equal(resp$body, "This notebook isn't open in Ember.")
+
+  resp <- http_call(server, fake_req("/notebookfile", "id=nope&secret=s",
+                                     origin = "http://127.0.0.1:9999", host = "127.0.0.1:40011"))
+  expect_equal(resp$status, 403L)
+  expect_equal(resp$body, "Ember didn't accept this request; open the link Ember printed when it started.")
+
+  missing <- file.path(tempdir(), "no-such-dir-159", "gone.R")
+  resp <- suppressWarnings(http_call(server, fake_req("/open", sprintf("path=%s&secret=s", utils::URLencode(missing, reserved = TRUE)))))
+  expect_equal(resp$status, 400L)
+  expect_match(resp$body, paste0("^Couldn't open ", missing, ": .+[^.]\\.$"))
+})
+
 test_that("/open and / refuse the cookie alone; /notebookfile still accepts it (review)", {
   # A page on another port of 127.0.0.1 gets the cookie attached to any
   # request automatically (cookie_name()'s doc) but can't read or set the

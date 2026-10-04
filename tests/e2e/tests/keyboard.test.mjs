@@ -62,8 +62,18 @@ test("keyboard path: skip link, Esc selects the cell, arrows, Enter, Tab to run,
   assert.equal(f.cell, order[1]);
   assert.ok(f.cm_content, "Enter puts focus in the selected cell's code");
 
+  // Board A11y6: run and ⋯ show while typing and on the button Tab reaches, not on a selected cell.
+  await page.mouse.move(0, 0);
+  const controls = (want) => page.waitForFunction(([id, want]) => {
+    const cell = document.querySelector(`pluto-cell[id="${id}"]`);
+    const shown = (sel) => getComputedStyle(cell.querySelector(sel)).opacity === "1";
+    return JSON.stringify([shown("button.ember-run"), shown("button.input_context_menu")]) === JSON.stringify(want);
+  }, [order[1], want], { timeout: 3000 });
+  await controls([true, true]);
   await page.keyboard.press("Escape");
+  await controls([false, false]);
   await page.keyboard.press("Tab");
+  await controls([true, false]);
   f = await focused(page);
   assert.deepEqual([f.tag, f.cell, f.label], ["button", order[1], "Run cell (Shift + Enter)"]);
 

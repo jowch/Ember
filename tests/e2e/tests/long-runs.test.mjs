@@ -31,7 +31,15 @@ test("long runs: the dialog names the rerun, never answers itself, and Cancel ru
 
   const dialog = page.locator("dialog.confirm-before-long-runtime[open]");
   await dialog.waitFor({ timeout: 5000 });
-  assert.equal((await dialog.locator("p").innerText()).trim(), "This reruns 1 cell that took about 8 seconds last time.");
+  assert.equal((await dialog.locator("p").innerText()).trim(), "This reruns 1 cell that took about 8 sec last time.");
+
+  // The finished-run notification (RunTracker.js) words its time the same way, as board Words6 does.
+  const notification = await page.evaluate(async () => {
+    const src = document.querySelector('script[src$="editor.js"]').src;
+    const { t, pretty_long_time } = await import(new URL("common/lang.js", src).href);
+    return [t("t_run_notif_title", { file: "analysis.R" }), t("t_run_notif_body", { count: 5, time: pretty_long_time(185) })];
+  });
+  assert.deepEqual(notification, ["analysis.R finished", "5 cells ran in 3 min"]);
 
   await page.waitForTimeout(25000);
   assert.equal(await dialog.count(), 1, "still open after 25 s");

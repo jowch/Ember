@@ -240,7 +240,7 @@ export const OutputBody = ({ mime, body, cell_id, persist_js_state = false, last
             return html``
             break
         default:
-            return html`<pre title="Something went wrong displaying this object">🛑</pre>`
+            return html`<pre title=${t("t_output_show_failed")}>🛑</pre>`
             break
     }
 }
