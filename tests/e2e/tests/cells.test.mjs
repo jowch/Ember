@@ -636,13 +636,6 @@ test("disabled states: A shows Disabled with no run button; B shows Depends on a
   assertNoProblems(page);
 });
 
-// runCell's click can miss a cell near the window's bottom edge, under the
-// footer, and then Shift + Enter runs nothing.
-const runShown = async (page, id) => {
-  await page.locator(cellSelector(id)).scrollIntoViewIfNeeded();
-  await runCell(page, id);
-};
-
 test("outputs: a table's size, types, NA cells and Show more; a list tree; printed text with no box (146)", async (t) => {
   const notebook = tempNotebook("cells.R");
   const rich = tempNotebook("rich.R");
@@ -652,7 +645,7 @@ test("outputs: a table's size, types, NA cells and Show more; a list tree; print
 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
-  for (const id of ["NA", "VEC"]) await runShown(page, id);
+  for (const id of ["NA", "VEC"]) await runCell(page, id);
 
   const na = cellSelector("NA");
   await page.waitForSelector(`${na} table.pluto-table`, { timeout: 30000 });
@@ -679,7 +672,7 @@ test("outputs: a table's size, types, NA cells and Show more; a list tree; print
   assert.equal(await page.locator(`${vec} .ember-tree-items`).count(), 0, "the root collapses");
 
   await openNotebook(page, server.origin, server.secret, rich);
-  for (const id of ["DF", "TBL", "FIT"]) await runShown(page, id);
+  for (const id of ["DF", "TBL", "FIT"]) await runCell(page, id);
   const tbl = cellSelector("TBL");
   await page.waitForSelector(`${tbl} table.pluto-table`, { timeout: 30000 });
   assert.equal(await page.locator(`${tbl} th.ember-table-size`).innerText(), "32 rows × 11 columns");
@@ -710,7 +703,7 @@ test("console: a muted message, a warning with its call, and ANSI colours from t
   const page = await newPage(browser);
   await page.emulateMedia({ colorScheme: "light" });
   await openNotebook(page, server.origin, server.secret, notebook);
-  await runShown(page, "W");
+  await runCell(page, "W");
   const logs = `${cellSelector("W")} pluto-logs`;
   await page.waitForSelector(`${logs} ember-log.stdout`, { timeout: 30000 });
 
@@ -747,7 +740,7 @@ test("figures: no border, background or filter in either theme; at most the colu
   await page.emulateMedia({ colorScheme: "light" });
   await openNotebook(page, server.origin, server.secret, notebook);
   const img = `${cellSelector("PLT")} pluto-output img`;
-  await runShown(page, "PLT");
+  await runCell(page, "PLT");
   await page.waitForFunction((sel) => document.querySelector(sel)?.naturalWidth > 0, img, { timeout: 30000 });
 
   const look = () => page.locator(img).evaluate((el) => {
@@ -793,7 +786,7 @@ test("text cells: serif text with tinted values that copy as plain text; click o
   const page = await newPage(browser);
   await page.emulateMedia({ colorScheme: "light" });
   await openNotebook(page, server.origin, server.secret, notebook);
-  await runShown(page, "A");
+  await runCell(page, "A");
   const cell = cellSelector("TXT");
   const out = `${cell} > pluto-output`;
   const editor = `${cell} pluto-input .cm-editor`;
