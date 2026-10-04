@@ -229,6 +229,110 @@ test("offline: an output with TeX is what requests MathJax", async (t) => {
   assertNoProblemsOffline(page);
 });
 
+/** Served in place of MathJax 3 from its CDN: it counts, on each element,
+ * how often it was asked to typeset it. */
+const FAKE_MATHJAX = `
+window.MathJax.version = "3.2.2";
+window.MathJax.typesetPromise = (els) => {
+  for (const el of els) el.dataset.typeset = String(Number(el.dataset.typeset ?? 0) + 1);
+  return Promise.resolve();
+};
+window.MathJax.startup.promise = Promise.resolve();
+`;
+
+test("TeX: typeset in safe preview, and again in the output the run renders", async (t) => {
+  const notebook = tempNotebook("tex.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "offline-tex-typeset.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  const fetched = [];
+  await page.route("**/*", (route) => {
+    const url = new URL(route.request().url());
+    if (url.hostname === "127.0.0.1") return route.continue();
+    if (url.hostname === "cdn.jsdelivr.net" && url.pathname.includes("mathjax")) {
+      fetched.push(url.href);
+      return route.fulfill({ contentType: "text/javascript", body: FAKE_MATHJAX });
+    }
+    return route.abort();
+  });
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const tex = `${cellSelector("T")} pluto-output .tex`;
+  await page.waitForSelector(`${tex}[data-typeset="1"]`, { timeout: 20000 });
+
+  await page.locator(tex).evaluate((el) => { el.__before_run = true; });
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForFunction((sel) => {
+    const el = document.querySelector(sel);
+    return el != null && el.__before_run !== true && el.dataset.typeset === "1";
+  }, tex, { timeout: 30000 });
+  assert.equal(fetched.length, 1, `MathJax is fetched once: ${fetched}`);
+  assertNoProblems(page);
+});
+
+test("TeX: after MathJax fails to load, a later output with TeX tries again", async (t) => {
+  const notebook = tempNotebook("tex.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "offline-tex-retry.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  const fetched = [];
+  await page.route("**/*", (route) => {
+    const url = new URL(route.request().url());
+    if (url.hostname === "127.0.0.1") return route.continue();
+    if (url.hostname === "cdn.jsdelivr.net" && url.pathname.includes("mathjax")) {
+      fetched.push(url.href);
+      if (fetched.length === 1) return route.abort();
+      return route.fulfill({ contentType: "text/javascript", body: FAKE_MATHJAX });
+    }
+    return route.abort();
+  });
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const tex = `${cellSelector("T")} pluto-output .tex`;
+  await page.waitForSelector(tex, { timeout: 20000 });
+  await page.waitForTimeout(500);
+  assert.equal(fetched.length, 1);
+  assert.equal(await page.locator(tex).getAttribute("data-typeset"), null, "nothing typeset while MathJax can't load");
+
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForSelector(`${tex}[data-typeset="1"]`, { timeout: 30000 });
+  assert.equal(fetched.length, 2);
+  assertNoProblemsOffline(page);
+});
+
+test("TeX: MathJax 2 in place of 3 fails quietly, and the next output with TeX loads nothing more", async (t) => {
+  const notebook = tempNotebook("tex.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "offline-tex-mj2.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  const fetched = [];
+  await page.route("**/*", (route) => {
+    const url = new URL(route.request().url());
+    if (url.hostname === "127.0.0.1") return route.continue();
+    if (url.hostname === "cdn.jsdelivr.net" && url.pathname.includes("mathjax")) {
+      fetched.push(url.href);
+      return route.fulfill({ contentType: "text/javascript", body: `window.MathJax = { version: "2.7.9", Hub: {} };` });
+    }
+    return route.abort();
+  });
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const tex = `${cellSelector("T")} pluto-output .tex`;
+  await page.waitForSelector(tex, { timeout: 20000 });
+  await page.waitForTimeout(500);
+  assert.equal(fetched.length, 1);
+
+  await page.locator(tex).evaluate((el) => { el.__before_run = true; });
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForFunction((sel) => document.querySelector(sel)?.__before_run === undefined, tex, { timeout: 30000 });
+  await page.waitForTimeout(500);
+  assert.equal(fetched.length, 1, "with MathJax 2 on the page, no second MathJax is loaded");
+  assertNoProblems(page);
+});
+
 test("cache: a hashed vendor file is served from cache on a second fetch (21)", async (t) => {
   // Not page.reload() + counting page.on("request") events: attaching a
   // request/response listener keeps Playwright's CDP Network domain

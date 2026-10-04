@@ -4,21 +4,22 @@ import { get_included_external_source } from "./external_source.js"
 /** @type {Promise<void>?} */
 let loading = null
 
-/** Load MathJax from its CDN the first time it is needed; later calls return the same promise. */
+/** Load MathJax from its CDN the first time it is needed; later calls return the same promise, until a load fails. */
 export const load_mathjax = () => {
-    loading ??= new Promise((resolve, reject) => setup_mathjax(resolve, reject))
+    loading ??= new Promise((resolve, reject) => setup_mathjax(resolve, reject)).catch((err) => {
+        loading = null
+        throw err
+    })
     return loading
 }
 
 const setup_mathjax = (resolve, reject) => {
     const deprecated = () =>
-        console.error(
-            "Pluto.jl: Pluto loads MathJax 3 globally, but a MathJax 2 function was called. The two version can not be used together on the same web page."
-        )
-    const twowasloaded = () =>
-        console.error(
-            "Pluto.jl: MathJax 2 is already loaded in this page, but Pluto wants to load MathJax 3. Packages that import MathJax 2 in their html display will break Pluto's ability to render latex."
-        )
+        console.error("Ember loads MathJax 3 for TeX in outputs, but an output called a MathJax 2 function. The two versions can't be used on the same page.")
+    // @ts-ignore
+    if (window.MathJax != null && window.MathJax.startup == null) {
+        return reject(new Error("An output loaded MathJax 2, so Ember can't load MathJax 3 to show TeX."))
+    }
 
     // @ts-ignore
     window.MathJax = {
@@ -80,13 +81,15 @@ const setup_mathjax = (resolve, reject) => {
 
     const script = document.createElement("script")
     script.addEventListener("load", () => {
-        if (window["MathJax"]?.version !== "3.2.2") {
-            twowasloaded()
-        }
         // @ts-ignore
-        window.MathJax.startup.promise.then(resolve, reject)
+        const promise = window.MathJax?.startup?.promise
+        if (promise == null) return reject(new Error("An output loaded MathJax 2, so Ember can't load MathJax 3 to show TeX."))
+        promise.then(resolve, reject)
     })
-    script.addEventListener("error", () => reject(new Error("MathJax failed to load")))
+    script.addEventListener("error", () => {
+        script.remove()
+        reject(new Error("MathJax failed to load"))
+    })
     script.crossOrigin = src.crossOrigin
     script.integrity = src.integrity
     script.src = src.href
