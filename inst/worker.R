@@ -1437,7 +1437,8 @@ build_table <- function(value, limits) {
   if (ncol_total == 0) {
     return(list(kind = "table", mime = "application/vnd.ember.table",
                names = character(), types = character(), nrow = nrow_total, ncol = 0L,
-               row_labels = character(), rows = list(), more_rows = 0L, more_cols = 0L))
+               row_labels = character(), rows = list(), more_rows = 0L, more_cols = 0L,
+               na = list()))
   }
   rows_n <- min(limits$rows %||% 10L, nrow_total)
   cols_n <- min(limits$cols %||% 8L, ncol_total)
@@ -1451,6 +1452,16 @@ build_table <- function(value, limits) {
       format_column(col_head)
     }, error = function(e) rep("<error>", rows_n))
   })
+  # NA per shown cell, atomic columns only (a list column, or a matrix/
+  # data.frame column whose own cell isn't one scalar, is never NA here):
+  # in the same per-column tryCatch as `col_values`, so one odd column
+  # can't fail the whole table's NA detection either.
+  col_na <- lapply(seq_len(cols_n), function(i) {
+    tryCatch({
+      col_head <- utils::head(value[[i]], rows_n)
+      if (is.atomic(col_head) && !is.matrix(col_head)) is.na(col_head) else logical(rows_n)
+    }, error = function(e) logical(rows_n))
+  })
   row_labels <- tryCatch({
     rn <- rownames(value)
     if (is.null(rn)) as.character(seq_len(rows_n)) else utils::head(as.character(rn), rows_n)
@@ -1463,11 +1474,15 @@ build_table <- function(value, limits) {
   rows <- lapply(seq_len(rows_n), function(i) {
     vapply(col_values, function(cv) if (length(cv) >= i) cv[i] else "", character(1))
   })
+  na <- lapply(seq_len(rows_n), function(i) {
+    which(vapply(col_na, function(v) length(v) >= i && isTRUE(v[i]), logical(1)))
+  })
 
   list(kind = "table", mime = "application/vnd.ember.table",
       names = names_shown, types = types_shown, nrow = nrow_total, ncol = ncol_total,
       row_labels = row_labels, rows = rows,
-      more_rows = max(0L, nrow_total - rows_n), more_cols = max(0L, ncol_total - cols_n))
+      more_rows = max(0L, nrow_total - rows_n), more_cols = max(0L, ncol_total - cols_n),
+      na = na)
 }
 
 #' A data frame, tibble or data.table: the first `limits$rows` rows and
@@ -1510,6 +1525,16 @@ tree_limit_set <- function(limits, path, value) {
 #' reached yet.
 display_tree_node <- function(x, path, depth, limits, max_depth = 4) {
   if (depth >= max_depth || !identical(class(x), "list")) {
+    # A long plain vector (no class attribute, e.g. not a factor or Date)
+    # becomes an expandable leaf of its own: the first 10 formatted
+    # values, its type and its full length, so the page can show
+    # "... int, 100 values" instead of str()'s one-line summary.
+    if (is.atomic(x) && is.null(attr(x, "class")) && length(x) > 1) {
+      vals <- tryCatch(as.character(eval_in_notebook(quote(format(v)), utils::head(x, 10))),
+                       error = function(e) rep("<unprintable>", min(10L, length(x))))
+      return(list(type = "vector", values = vals,
+                 type_sum = gsub("[<>]", "", column_type(x)), length = length(x)))
+    }
     return(list(type = "text", text = leaf_text(x)))
   }
   items_limit <- tree_limit_get(limits, path)$items %||% 20L

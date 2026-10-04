@@ -1081,20 +1081,27 @@ test_that("display_tree depth, width and leaf text (24)", {
   on.exit(h$close())
   r <- run_and_wait(h, "a", 1L,
     "list(l1 = list(l2 = list(l3 = list(l4 = 1:10))))")
-  # at depth 4 (the 5th level), the value is shown as one-line text
+  # at depth 4 (the 5th level), a longer vector is still its own "vector"
+  # leaf, not str()'s text: the depth limit stops list recursion, not
+  # vector formatting.
   find <- function(node, keys) if (length(keys) == 0) node else find(
     Find(function(it) it$key == keys[1], node$items)$value, keys[-1])
   leaf <- find(r$output$tree, c("l1", "l2", "l3", "l4"))
-  expect_identical(leaf$type, "text")
+  expect_identical(leaf$type, "vector")
 
   r2 <- run_and_wait(h, "b", 2L, "as.list(1:100)")
   expect_identical(length(r2$output$tree$items), 20L)
   expect_identical(r2$output$tree$more, 80L)
   expect_identical(r2$output$tree$items[[1]]$key, "")
 
+  # A length-1 value stays plain text; a longer plain vector becomes its
+  # own "vector" leaf (ui-3-tests 132), not str()'s one-line summary.
   r3 <- run_and_wait(h, "c", 3L, "list(x = 1, y = 1:10)")
   expect_identical(r3$output$tree$items[[1]]$value$text, "1")
-  expect_identical(r3$output$tree$items[[2]]$value$text, " int [1:10] 1 2 3 4 5 6 7 8 9 10")
+  expect_identical(r3$output$tree$items[[2]]$value$type, "vector")
+  expect_identical(r3$output$tree$items[[2]]$value$values, format(1:10))
+  expect_identical(r3$output$tree$items[[2]]$value$type_sum, "int")
+  expect_identical(r3$output$tree$items[[2]]$value$length, 10L)
 })
 
 test_that("display_tree treats an NA list name as unnamed text, not a nil key", {
@@ -1104,6 +1111,31 @@ test_that("display_tree treats an NA list name as unnamed text, not a nil key", 
   expect_identical(r$output$tree$items[[1]]$key, "a")
   expect_identical(r$output$tree$items[[2]]$key, "<NA>")
   expect_false(anyNA(vapply(r$output$tree$items, `[[`, character(1), "key")))
+})
+
+test_that("build_table() reports na, per row, atomic columns only (ui-3-tests 131)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "data.frame(a = c(1, NA), b = c('x', NA))")
+  expect_identical(r$output$na, list(integer(), c(1L, 2L)))
+
+  r2 <- run_and_wait(h, "b", 2L, "data.frame(a = 1:2, bad = I(list(1, NA)))")
+  expect_identical(r2$output$na, list(integer(), integer()))
+})
+
+test_that("display_tree_node() on a long vector gives type vector; length 1 and a factor stay text (ui-3-tests 132)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "list(long = 1:100)")
+  item <- r$output$tree$items[[1]]$value
+  expect_identical(item$type, "vector")
+  expect_identical(item$values, format(1:10))
+  expect_identical(item$type_sum, "int")
+  expect_identical(item$length, 100L)
+
+  r2 <- run_and_wait(h, "b", 2L, "list(one = 1L, f = factor(c('a', 'b')))")
+  expect_identical(r2$output$tree$items[[1]]$value$type, "text")
+  expect_identical(r2$output$tree$items[[2]]$value$type, "text")
 })
 
 test_that("more pages a table and a tree, reset on rerun (25)", {

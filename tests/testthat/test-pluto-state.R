@@ -128,7 +128,7 @@ test_that("output mapping: one case per row of the precedence table (9)", {
   o <- project_output(fake_view(output = new_display("application/vnd.ember.table", table_data, "a table")))
   expect_equal(o$mime, "application/vnd.pluto.table+object")
   expect_equal(o$body$schema$names, list("a", "b"))
-  expect_equal(o$body$ember_dims, "2 × 2")
+  expect_equal(o$body$ember_size, list(2L, 2L, 0L, 0L))
 
   # tree becomes Pluto's tree body
   tree_data <- list(type = "list", path = "", length = 1L, named = TRUE,
@@ -615,7 +615,7 @@ test_that("project_table() ends names/types/rows in 'more' when truncated, each 
                      more_rows = 22L, more_cols = 3L)
   body <- project_table(table_data)
   expect_equal(body$objectid, "")
-  expect_equal(body$ember_dims, "32 × 11")
+  expect_equal(body$ember_size, list(32L, 11L, 22L, 3L))
   expect_equal(utils::tail(body$schema$names, 1), list("more"))
   expect_equal(utils::tail(body$schema$types, 1), list("more"))
   expect_equal(length(body$schema$names), 9)
@@ -630,6 +630,27 @@ test_that("project_table() ends names/types/rows in 'more' when truncated, each 
   s0 <- fake_state(list(S = cell(""), A = cell("mtcars")))
   js0 <- pluto_state(s0)$js
   expect_true(check_wire(js0))
+})
+
+test_that("project_table(): ember_size and ember_na, one array per row; ember_dims is gone; check_wire() passes (ui-3-tests 134)", {
+  table_data <- list(names = paste0("c", 1:8), types = rep("<dbl>", 8), nrow = 32L, ncol = 11L,
+                     row_labels = as.character(1:10),
+                     rows = lapply(1:10, function(i) paste0("v", i, "_", 1:8)),
+                     more_rows = 22L, more_cols = 3L,
+                     na = c(list(integer()), list(c(2L, 5L)), rep(list(integer()), 8)))
+  body <- project_table(table_data)
+  expect_equal(body$ember_size, list(32L, 11L, 22L, 3L))
+  expect_null(body$ember_dims)
+  expect_equal(length(body$ember_na), 10)
+  expect_equal(body$ember_na[[1]], list())
+  expect_equal(body$ember_na[[2]], list(1L, 4L))
+
+  s0 <- fake_state(list(S = cell(""), A = cell("data.frame(a = c(1, NA), b = c('x', NA))")))
+  js0 <- pluto_state(s0)$js
+  expect_true(check_wire(js0))
+  r1 <- boot(s0, "A")
+  js1 <- pluto_state(r1$state)$js
+  expect_true(check_wire(js1))
 })
 
 test_that("project_tree() nests nodes under vnd.pluto.tree+object, 'more' last, objectid is path (ui-2 29)", {
@@ -649,6 +670,23 @@ test_that("project_tree() nests nodes under vnd.pluto.tree+object, 'more' last, 
   expect_equal(nested[[2]][[2]], "application/vnd.pluto.tree+object")
   expect_equal(nested[[2]][[1]]$objectid, "2")
   expect_equal(utils::tail(body$elements, 1), list("more"))
+})
+
+test_that("project_tree(): ember_length is set; a vector leaf gets the ember.vector+object MIME (ui-3-tests 135)", {
+  node <- list(type = "list", path = "", length = 3L, named = TRUE,
+              items = list(
+                list(key = "a", value = list(type = "text", text = "1")),
+                list(key = "long", value = list(type = "vector", values = as.character(1:10),
+                                               type_sum = "int", length = 100L))
+              ), more = 1L)
+  body <- project_tree(node)
+  expect_equal(body$ember_length, 3L)
+  vector_el <- body$elements[[2]]
+  expect_equal(vector_el[[1]], "long")
+  expect_equal(vector_el[[2]][[2]], "application/vnd.ember.vector+object")
+  expect_equal(vector_el[[2]][[1]]$type_sum, "int")
+  expect_equal(vector_el[[2]][[1]]$length, 100L)
+  expect_equal(vector_el[[2]][[1]]$values, as.list(as.character(1:10)))
 })
 
 # ---- ui-2-tests.md 33: HTML output with widget dependencies -----------------

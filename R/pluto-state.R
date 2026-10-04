@@ -495,12 +495,15 @@ project_dep_tags <- function(deps) {
 }
 
 #' Ember's table display as Pluto's table body (TreeView.js:203-262):
-#' `list(objectid = "", ember_dims = "<nrow> x <ncol>",
+#' `list(objectid = "", ember_size = arr(nrow, ncol, more_rows, more_cols),
+#' ember_na = arr(arr(<0-based column>, ...), ...) one per shown row,
 #' schema = list(names = arr(names, "more"?), types = arr(types, "more"?)),
 #' rows = list(arr(label, arr(arr(text, "text/plain"), ..., "more"?)), ...,
 #' "more"?))`. "more" after the names and in each row when `more_cols > 0`;
 #' a final "more" row when `more_rows > 0`. `objectid` `""` is the table
-#' itself (what `reshow_cell` sends back).
+#' itself (what `reshow_cell` sends back). `ember_size` replaces the older
+#' `ember_dims` (a words-already-joined string); `data$na` is missing for
+#' an older display fixture, read as no NA anywhere.
 project_table <- function(data) {
   names_l <- as.list(data$names)
   types_l <- as.list(data$types)
@@ -514,21 +517,32 @@ project_table <- function(data) {
     arr(data$row_labels[[i]], as_arr(cells))
   })
   if (data$more_rows > 0) rows <- c(rows, list("more"))
-  list(objectid = "", ember_dims = sprintf("%d \u00d7 %d", data$nrow, data$ncol),
+  # `data[["na", exact = TRUE]]`, not `data$na`: partial matching on `$`
+  # would otherwise read `data$names` for a fixture with no `na` field.
+  na_rows <- data[["na", exact = TRUE]] %||% rep(list(integer()), length(data$rows))
+  ember_na <- lapply(na_rows, function(cols) as_arr(as.integer(cols - 1L)))
+  list(objectid = "", ember_size = arr(data$nrow, data$ncol, data$more_rows, data$more_cols),
+      ember_na = as_arr(ember_na),
       schema = list(names = as_arr(names_l), types = as_arr(types_l)),
       rows = as_arr(rows))
 }
 
 #' Pluto's tree body (TreeView.js:105-180): `list(objectid = path, type =
-#' "r_list", prefix = "list", prefix_short = "", elements = list(arr(key,
-#' arr(<body>, <mime>)), ..., "more"?))`. A leaf is `arr(text, "text/plain")`;
-#' a node is `arr(project_tree(node), "application/vnd.pluto.tree+object")`.
-#' `data` is one worker tree node (worker.R, 3c: `list(type, path, length,
-#' named, items, more)`).
+#' "r_list", prefix = "list", prefix_short = "", ember_length = n, elements =
+#' list(arr(key, arr(<body>, <mime>)), ..., "more"?))`. A text leaf is
+#' `arr(text, "text/plain")`; a long-vector leaf is
+#' `arr(list(values, type_sum, length), "application/vnd.ember.vector+object")`
+#' (worker.R's `display_tree_node()`, `type = "vector"`); a node is
+#' `arr(project_tree(node), "application/vnd.pluto.tree+object")`. `data` is
+#' one worker tree node (worker.R, 3c: `list(type, path, length, named,
+#' items, more)`).
 project_tree <- function(data) {
   elements <- lapply(data$items %||% list(), function(it) {
     pair <- if (identical(it$value$type, "text")) {
       arr(it$value$text, "text/plain")
+    } else if (identical(it$value$type, "vector")) {
+      arr(list(values = as_arr(it$value$values), type_sum = it$value$type_sum,
+               length = it$value$length), "application/vnd.ember.vector+object")
     } else {
       arr(project_tree(it$value), "application/vnd.pluto.tree+object")
     }
@@ -536,7 +550,7 @@ project_tree <- function(data) {
   })
   if (!is.null(data$more) && data$more > 0) elements <- c(elements, list("more"))
   list(objectid = data$path, type = "r_list", prefix = "list", prefix_short = "",
-      elements = as_arr(elements))
+      ember_length = data$length, elements = as_arr(elements))
 }
 
 #' Join names the way the frontend's rewritten messages read: one name as
