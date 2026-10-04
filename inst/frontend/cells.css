@@ -148,13 +148,8 @@ pluto-cell:has(> div.input_context_menu[role="menu"]) {
 
 button.ember-run {
     position: absolute;
-    /* ui-3.md puts this at the code box's top-left corner, overlapping
-       the rail (left: -15px; top: -13px). The gap above still belongs to
-       editor.css's "+" button (margin-top around -20px, piece 6a step 3's
-       to redo), so for now the run button stays inside the code box's own
-       edge instead of contesting that same pixel strip for clicks. */
-    left: 4px;
-    top: 4px;
+    left: -15px;
+    top: -13px;
     z-index: 40;
     width: 26px;
     height: 26px;
@@ -166,6 +161,7 @@ button.ember-run {
     cursor: pointer;
     background: var(--ember-accent);
     color: var(--ember-on-accent);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
     padding: 0;
 }
 
@@ -219,6 +215,12 @@ ember-runtime {
     pluto-cell:is(:hover, :focus-within) ember-runtime {
         opacity: 1;
     }
+    /* The gap above belongs to this cell's .before "+", whose circle the
+       run button would cover. */
+    pluto-cell:has(> button.add_cell.before:hover) button.ember-run {
+        opacity: 0;
+        pointer-events: none;
+    }
 }
 
 @media (hover: none) {
@@ -234,17 +236,14 @@ ember-runtime {
 
 /* ---- "+" overlay (ui-3.md "Adding cells") ------------------------------ */
 
-/* An absolutely positioned strip exactly spanning the gap (the cell's
-   own margin, --pluto-cell-spacing), so hovering or focusing it draws
-   the line and the circle without moving any cell -- test 143 checks
-   this directly: the strip overlays space that was already there
-   rather than adding its own. button.add_cell.before/.after are
-   duplicated (one per side of the gap) so Endeavor's existing hooks
-   keep working; only one is tabbable per gap (Cell.js's existing
-   tabindex logic). */
+/* A strip over the gap (the cell's margin), so showing the line and circle
+   moves nothing. Each gap has two buttons, the next cell's .before and
+   this cell's .after; Endeavor (prompt.ts) hangs its pill on .before and
+   styles .before:hover, so .before takes the pointer and .after only does
+   below the last cell. */
 button.add_cell {
     position: absolute;
-    left: 0;
+    left: -15px;
     right: 0;
     height: var(--pluto-cell-spacing);
     margin: 0;
@@ -256,24 +255,18 @@ button.add_cell {
 }
 button.add_cell.before {
     top: calc(-1 * var(--pluto-cell-spacing));
-    /* Every cell but the first has a predecessor whose .after covers
-       the same gap; without this, the two duplicate buttons fight over
-       which one the mouse lands on. Kept for Endeavor and the keyboard
-       (Cell.js's tabindex already singles out the first cell's .before
-       the same way) -- pointer-events only turns off real mouse/touch
-       hover and clicks, not a programmatic .click(). */
-    pointer-events: none;
-}
-pluto-cell:first-of-type > button.add_cell.before {
-    pointer-events: auto;
 }
 button.add_cell.after {
     bottom: calc(-1 * var(--pluto-cell-spacing));
+    pointer-events: none;
+}
+pluto-cell:last-of-type > button.add_cell.after {
+    pointer-events: auto;
 }
 button.add_cell::before {
     content: "";
     position: absolute;
-    left: 18px;
+    left: 11px;
     right: 0;
     top: 50%;
     height: 1px;

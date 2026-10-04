@@ -123,19 +123,19 @@ test('"+": hovering the gap shows the line and circle without moving cells; clic
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  const addAfterA = page.locator(`${cellSelector("A")} button.add_cell.after`);
+  const addBeforeB = page.locator(`${cellSelector("B")} button.add_cell.before`);
   const beforeTop = (await page.locator(cellSelector("B")).boundingBox()).y;
 
-  await addAfterA.hover();
+  await addBeforeB.hover();
   await page.waitForFunction(
     (sel) => getComputedStyle(document.querySelector(sel).querySelector("span")).opacity > 0,
-    `${cellSelector("A")} button.add_cell.after`, { timeout: 5000 });
+    `${cellSelector("B")} button.add_cell.before`, { timeout: 5000 });
 
   const afterTop = (await page.locator(cellSelector("B")).boundingBox()).y;
   assert.equal(beforeTop, afterTop, "hovering the \"+\" doesn't move B");
 
   const cellCountBefore = await page.locator("pluto-cell").count();
-  await addAfterA.click();
+  await addBeforeB.click();
   await page.waitForFunction(
     (before) => document.querySelectorAll("pluto-cell").length > before,
     cellCountBefore, { timeout: 10000 });
@@ -432,6 +432,80 @@ test("geometry: 26px between cells; a one-line code box is 7px 12px around 13px/
   assert.equal(content.fontSize, "13px");
   assert.equal(content.lineHeight, "21.45px");
   near(content.textLeft - gutters.right, 12, "code text starts 12px right of the gutter");
+
+  assertNoProblems(page);
+});
+
+test("geometry: the run button sits on the code box's top-left corner and gives way to the \"+\" above it", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-geometry-run.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  // A has no output, so its code box starts at the cell's top, right under
+  // the gap's "+".
+  await page.hover(`${cellSelector("A")} .cm-content`);
+  const run = page.locator(`${cellSelector("A")} button.ember-run`);
+  await page.waitForFunction((el) => getComputedStyle(el).opacity === "1", await run.elementHandle(), { timeout: 5000 });
+  const box = await rect(page, `${cellSelector("A")} .cm-editor`);
+  const button = await rect(page, `${cellSelector("A")} button.ember-run`);
+  near(button.left - box.left, -15, "run button left");
+  near(button.top - box.top, -13, "run button top");
+
+  const strip = await rect(page, `${cellSelector("A")} button.add_cell.before`);
+  await page.mouse.move(strip.left + 300, strip.top + strip.height / 2);
+  const circle = `${cellSelector("A")} button.add_cell.before > span`;
+  await page.waitForFunction((sel) => getComputedStyle(document.querySelector(sel)).opacity === "1", circle, { timeout: 5000 });
+  await page.waitForFunction((el) => getComputedStyle(el).opacity === "0", await run.elementHandle(), { timeout: 5000 });
+
+  // Insert5: the circle is centred on the gap, its left edge 11px left of the rail.
+  const c = await rect(page, circle);
+  const rail = await rect(page, `${cellSelector("A")} > pluto-trafficlight`);
+  near(c.left - rail.left, -11, "circle left");
+  near(c.top + c.height / 2, strip.top + strip.height / 2, "circle centre");
+
+  // The circle's lower half is where the run button would be: it must be
+  // the "+" that takes a click there.
+  const hit = await page.evaluate(([x, y]) => {
+    const el = document.elementFromPoint(x, y);
+    return el?.closest("button")?.className ?? null;
+  }, [c.left + c.width / 2, c.bottom - 3]);
+  assert.equal(hit, "add_cell before");
+
+  assertNoProblems(page);
+});
+
+test('"+": each gap\'s live button is the lower cell\'s .before, and the last cell\'s .after below it (Endeavor)', async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-geometry-plus.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  const ids = await page.evaluate(() => [...document.querySelectorAll("pluto-cell")].map((c) => c.id));
+  for (const id of ids) {
+    assert.equal(await page.locator(`${cellSelector(id)} > button.add_cell.before`).count(), 1, `${id} keeps .before`);
+    assert.equal(await page.locator(`${cellSelector(id)} > button.add_cell.after`).count(), 1, `${id} keeps .after`);
+  }
+
+  const owner = (x, y) => page.evaluate(([x, y]) => {
+    const b = document.elementFromPoint(x, y)?.closest("button.add_cell");
+    return b ? `${b.closest("pluto-cell").id} ${b.className}` : null;
+  }, [x, y]);
+
+  for (let i = 1; i < ids.length; i++) {
+    const above = await rect(page, cellSelector(ids[i - 1]));
+    const below = await rect(page, cellSelector(ids[i]));
+    assert.equal(await owner(above.left + 300, (above.bottom + below.top) / 2), `${ids[i]} add_cell before`, `gap above ${ids[i]}`);
+  }
+  const last = ids[ids.length - 1];
+  const lastRect = await rect(page, cellSelector(last));
+  assert.equal(await owner(lastRect.left + 300, lastRect.bottom + 13), `${last} add_cell after`, "below the last cell");
 
   assertNoProblems(page);
 });
