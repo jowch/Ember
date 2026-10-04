@@ -130,18 +130,6 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  */
 
 /**
- * @typedef StatusEntryData
- * @type {{
- *   name: string,
- *   success?: boolean,
- *   started_at: number?,
- *   finished_at: number?,
- *   timing?: "remote" | "local",
- *   subtasks: Record<string,StatusEntryData>,
- * }}
- */
-
-/**
  * @typedef CellResultData
  * @type {{
  *  cell_id: string,
@@ -291,7 +279,6 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  *  bonds: BondValuesDict,
  *  nbpkg: NotebookPkgData?,
  *  metadata: object,
- *  status_tree: StatusEntryData?,
  *  ember: EmberData,
  * }}
  */
@@ -707,8 +694,6 @@ export class Editor extends Component {
         const apply_notebook_patches = (patches, /** @type {NotebookData?} */ old_state = null, get_reverse_patches = false) =>
             new Promise((resolve) => {
                 if (patches.length !== 0) {
-                    const should_ignore_patch_error = (/** @type {string} */ failing_path) => failing_path.startsWith("status_tree")
-
                     let _copy_of_patches,
                         reverse_of_patches = []
                     this.setState(
@@ -733,9 +718,7 @@ export class Editor extends Component {
                                 const failing_path = String(exception).match(".*'(.*)'.*")?.[1]?.replace(/\//gi, ".") ?? String(exception)
                                 const path_value = _.get(this.state.notebook, failing_path, "Not Found")
                                 console.log(String(exception).match(".*'(.*)'.*")?.[1]?.replace(/\//gi, ".") ?? exception, failing_path, typeof failing_path)
-                                const ignore = should_ignore_patch_error(failing_path)
-
-                                ;(ignore ? console.log : console.error)(
+                                console.error(
                                     `#######################**************************########################
 PlutoError: StateOutOfSync: Failed to apply patches.
 Please report this: https://github.com/JuliaPluto/Pluto.jl/issues adding the info below:
@@ -757,9 +740,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                                     console.log(path, _.get(this.state.notebook, path, "Not Found"))
                                 }
 
-                                if (ignore) {
-                                    console.info("Safe to ignore this patch failure...")
-                                } else if (this.state.connected) {
+                                if (this.state.connected) {
                                     console.error("Trying to recover: Refetching notebook...")
                                     this.client.send(
                                         "reset_shared_state",
@@ -842,11 +823,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                         const set_waiting = () => {
                             let from_update = message?.response?.update_went_well != null
                             let is_just_acknowledgement = from_update && message.patches.length === 0
-                            let is_relevant_for_bonds = message.patches.some(({ path }) => path.length === 0 || path[0] !== "status_tree")
-
-                            // console.debug("Received patches!", is_just_acknowledgement, is_relevant_for_bonds, message.patches, message.response)
-
-                            if (!is_just_acknowledgement && is_relevant_for_bonds) {
+                            if (!is_just_acknowledgement) {
                                 this.waiting_for_bond_to_trigger_execution = false
                             }
                         }

@@ -68,7 +68,6 @@ export const empty_notebook_state = ({ notebook_id }) => ({
     published_objects: {},
     bonds: {},
     nbpkg: null,
-    status_tree: null,
 })
 
 /**
