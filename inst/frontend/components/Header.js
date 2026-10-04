@@ -8,8 +8,6 @@ import { FlameLogo, VariablesIcon, HelpIcon, PackagesIcon, SidePanelIcon, MoreIc
 import { ExportMenu, export_items, use_print_title } from "./ExportMenu.js"
 import { open_bottom_right_panel } from "./BottomRightPanel.js"
 import { is_desktop, open_main_menu } from "./DesktopInterface.js"
-import { tell } from "../common/dialogs.js"
-import { keyboard_shortcuts_body } from "../common/KeyboardShortcuts.js"
 
 /** The page's own secret, read back out of its URL, as StartPage.js does. */
 const page_secret = () => new URLSearchParams(window.location.search).get("secret") ?? ""
@@ -194,7 +192,7 @@ export const Header = ({ notebook, connected, code_differs, export_links, print_
                             ...${item_props(0)}
                             onClick=${() => {
                                 close()
-                                tell({ title: t("t_ember_keyboard_shortcuts"), body: keyboard_shortcuts_body() })
+                                window.dispatchEvent(new CustomEvent("ember open shortcuts"))
                             }}
                         >
                             ${t("t_ember_keyboard_shortcuts")}

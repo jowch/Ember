@@ -520,6 +520,15 @@ export const CellInput = ({
             { key: "Alt-ArrowDown", run: (x) => keyMapMoveLine(x, 1) },
             { key: "Ctrl-Shift-[", mac: "Cmd-Alt-[", run: (x) => keyMapFold(x, true) },
             { key: "Ctrl-Shift-]", mac: "Cmd-Alt-]", run: (x) => keyMapFold(x, false) },
+            {
+                key: "F1",
+                run: (/** @type {EditorView} */ cm) => {
+                    const query = get_selected_doc_from_state(cm.state)
+                    if (query != null) on_update_doc_query(query)
+                    open_bottom_right_panel("docs")
+                    return true
+                },
+            },
             mod_d_command,
         ]
 

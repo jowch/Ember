@@ -1190,15 +1190,6 @@ nav#at_the_top .ember-menu {
     z-index: 70;
 }
 
-.ember-shortcuts-list {
-    display: inline-block;
-    text-align: left;
-    white-space: pre-wrap;
-    font-family: var(--ember-code-font);
-    font-size: 12.5px;
-    line-height: 1.6;
-}
-
 #ember-packages-tab {
     font-family: var(--sans-serif-font-stack);
     padding: 0.5em 1em;
@@ -3573,6 +3564,87 @@ pluto-header-id-copy:focus {
     font-size: 12.5px;
     font-weight: 400;
     color: var(--ember-muted);
+}
+
+/* Keyboard shortcuts (components/ShortcutsSheet.js), from board Keys6. */
+
+.ember-dialog.ember-shortcuts {
+    width: min(1030px, calc(100vw - 32px));
+    max-height: calc(100vh - 32px);
+    background: var(--ember-panel);
+    color: var(--ember-text);
+    font-family: var(--ember-ui-font);
+}
+
+.ember-shortcuts .ember-dialog-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 4px 12px;
+    padding: 18px 24px 0;
+    font-size: 17px;
+    font-weight: 600;
+}
+
+.ember-shortcuts .ember-dialog-body {
+    padding: 0 24px 22px;
+}
+
+.ember-shortcuts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 40px;
+}
+
+.ember-shortcuts-group h3 {
+    margin: 0;
+    padding: 12px 0 4px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ember-muted);
+}
+
+.ember-shortcuts-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 150px;
+    gap: 10px;
+    align-items: center;
+    padding: 5px 0;
+    border-top: 1px solid var(--ember-line);
+    font-size: 13px;
+}
+
+.ember-shortcuts-keys {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.ember-shortcuts kbd {
+    font-family: var(--ember-code-font);
+    font-size: 11.5px;
+    font-weight: 400;
+    letter-spacing: normal;
+    line-height: 1;
+    padding: 4px 6px;
+    border: 1px solid var(--ember-line);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    background: var(--ember-page);
+    color: var(--ember-text);
+    box-shadow: none;
+}
+
+@media (max-width: 720px) {
+    .ember-shortcuts-grid {
+        grid-template-columns: 1fr;
+        gap: 0;
+    }
+    .ember-shortcuts-row {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
 }
 
 /* Settings (components/Settings.js), from board Menus6. */

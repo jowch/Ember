@@ -10,7 +10,7 @@ import { serialize_cells, deserialize_cells, detect_deserializer } from "../comm
 
 import { Preamble } from "./Preamble.js"
 import { Notebook } from "./Notebook.js"
-import { BottomRightPanel } from "./BottomRightPanel.js"
+import { BottomRightPanel, open_bottom_right_panel } from "./BottomRightPanel.js"
 import { DropRuler, get_drop_index_for_paste } from "./DropRuler.js"
 import { SelectionArea } from "./SelectionArea.js"
 import { RecentlyDisabledInfo, UndoDelete } from "./UndoDelete.js"
@@ -18,7 +18,7 @@ import { Scroller } from "./Scroller.js"
 import { Popup } from "./Popup.js"
 
 import { slice_utf8 } from "../common/UnicodeTools.js"
-import { has_ctrl_or_cmd_pressed, is_mac_keyboard, in_textarea_or_input, keyboard_shortcuts_body } from "../common/KeyboardShortcuts.js"
+import { has_ctrl_or_cmd_pressed, is_mac_keyboard, in_textarea_or_input } from "../common/KeyboardShortcuts.js"
 import { PlutoActionsContext, PlutoBondsContext, PlutoJSInitializingContext, SetWithEmptyCallback } from "../common/PlutoContext.js"
 import { BackendLaunchPhase } from "../common/Binder.js"
 import { setup_mathjax } from "../common/SetupMathJax.js"
@@ -40,6 +40,7 @@ import { ConfirmBeforeLongRuntime, maybe_abort_long_runtime } from "./ConfirmBef
 import { detect_indent_unit, indent_unit_of_setting } from "./CellInput/detect_indent_unit.js"
 import { Text } from "../imports/CodemirrorPlutoSetup.js"
 import { get_settings, Settings } from "./Settings.js"
+import { ShortcutsSheet } from "./ShortcutsSheet.js"
 
 // This is imported asynchronously - uncomment for development
 // import environment from "../common/Environment.js"
@@ -1334,11 +1335,8 @@ all patches: ${JSON.stringify(patches, null, 1)}
                 this.move_selected(e, -1)
             } else if (e.key === "ArrowDown" && e.altKey) {
                 this.move_selected(e, 1)
-            } else if ((e.key === "?" && has_ctrl_or_cmd_pressed(e)) || e.key === "F1") {
-                // On mac "cmd+shift+?" is used by chrome, so that is why this needs to be ctrl as well on mac
-                // Also pressing "ctrl+shift" on mac causes the key to show up as "/", this madness
-                // I hope we can find a better solution for this later - Dral
-                tell({ title: t("t_ember_keyboard_shortcuts"), body: keyboard_shortcuts_body() })
+            } else if (e.key === "F1") {
+                open_bottom_right_panel("docs")
                 e.preventDefault()
             } else if (e.key === "Escape") {
                 this.setState({
@@ -1584,6 +1582,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                     />
                     <${ConfirmBeforeLongRuntime} />
                     <${Settings} />
+                    <${ShortcutsSheet} />
                     ${this.props.preamble_element}
                     <${Main}>
                         <${Preamble}
