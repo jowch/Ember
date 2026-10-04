@@ -31,6 +31,7 @@ import { SafePreviewSanitizeMessage } from "./SafePreviewUI.js"
 import lodashLibrary from "../imports/lodash-es.js"
 import { t } from "../common/lang.js"
 import { get_settings } from "./Settings.js"
+import { load_mathjax } from "../common/SetupMathJax.js"
 
 const prettyAssignee = (assignee) =>
     assignee && assignee.startsWith("const ") ? html`<span style="color: var(--cm-color-keyword)">const</span> ${assignee.slice(6)}` : assignee
@@ -621,7 +622,10 @@ export let RawHTMLContainer = ({ body, className = "", persist_js_state = false,
             }
         }
 
-        if (sanitize_html) return
+        if (sanitize_html) {
+            typeset_tex(container)
+            return
+        }
 
         let scripts_in_shadowroots = Array.from(container.querySelectorAll("template[shadowroot]")).flatMap((template) => {
             // @ts-ignore
@@ -810,18 +814,18 @@ const ANSIUpContents = ({ body }) => {
     return html`<pre class="no-block"><code ref=${node_ref}></code></pre>`
 }
 
-function apply_enhanced_markup_features(container, pluto_actions) {
-    // Convert LaTeX to svg
-    // @ts-ignore
-    if (window.MathJax?.typeset != undefined) {
-        try {
+function typeset_tex(container) {
+    const tex = container.querySelectorAll(".tex")
+    if (tex.length > 0) {
+        load_mathjax()
             // @ts-ignore
-            window.MathJax.typeset(container.querySelectorAll(".tex"))
-        } catch (err) {
-            console.info("Failed to typeset TeX:")
-            console.info(err)
-        }
+            .then(() => window.MathJax.typesetPromise([...tex]))
+            .catch((err) => console.info("Failed to typeset TeX:", err))
     }
+}
+
+function apply_enhanced_markup_features(container, pluto_actions) {
+    typeset_tex(container)
 
     // Apply syntax highlighting
     try {

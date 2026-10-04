@@ -54,7 +54,7 @@ done; clear out ticked items at each release.
 
 - [x] Self-contained exports, and a browser with no internet: bundle the frontend's third-party libraries (MathJax aside) and serve the bundle always, with content-hashed names and long cache headers so a slow tunnel carries it once — missing
 
-- [ ] The page requests MathJax from the CDN after every load, even with no TeX on it; offline that is one failed request and a console error (exports included). Load it only when a cell has TeX (planned: ui-3-plan.md, piece 7) — improvised
+- [x] The page requested MathJax from the CDN after every load, even with no TeX on it; offline that was one failed request and a console error (exports included). Now it loads the first time an output contains TeX (an element with class `tex`), safe preview included (ui-3-plan.md, piece 7) — improvised
 - [x] Argument tooltips stay on screen after the cursor leaves the cell (seen with `plot(` and `cat(` hints floating over later cells; planned: ui-3-plan.md, piece 6a) — missing
 - [ ] Go-to-definition and variable links in the editor (ui-2.md piece 4e, cut from increment 2). Pluto's Julia `ScopeStateField` stays wired until it has an R replacement — missing
 - [ ] Undo after deleting a disabled cell brings it back enabled: `order_ops()` re-inserts with code only (pluto-edits.R:157-158) (ui-3-plan.md, piece 1) — improvised

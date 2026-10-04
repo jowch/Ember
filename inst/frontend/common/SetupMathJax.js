@@ -1,14 +1,16 @@
 import "../imports/RequestIdleCallbackPolyfill.js"
 import { get_included_external_source } from "./external_source.js"
 
-let setup_done = false
+/** @type {Promise<void>?} */
+let loading = null
 
-export const setup_mathjax = () => {
-    if (setup_done) {
-        return
-    }
-    setup_done = true
+/** Load MathJax from its CDN the first time it is needed; later calls return the same promise. */
+export const load_mathjax = () => {
+    loading ??= new Promise((resolve, reject) => setup_mathjax(resolve, reject))
+    return loading
+}
 
+const setup_mathjax = (resolve, reject) => {
     const deprecated = () =>
         console.error(
             "Pluto.jl: Pluto loads MathJax 3 globally, but a MathJax 2 function was called. The two version can not be used together on the same web page."
@@ -25,7 +27,7 @@ export const setup_mathjax = () => {
             processHtmlClass: "tex",
         },
         startup: {
-            typeset: true, // because we load MathJax asynchronously
+            typeset: false,
             ready: () => {
                 // @ts-ignore
                 window.MathJax.startup.defaultReady()
@@ -73,27 +75,20 @@ export const setup_mathjax = () => {
         },
     }
 
-    requestIdleCallback(
-        () => {
-            console.log("Loading mathjax!!")
-            const src = get_included_external_source("MathJax-script")
-            if (!src) throw new Error("Could not find mathjax source")
+    const src = get_included_external_source("MathJax-script")
+    if (!src) return reject(new Error("Could not find mathjax source"))
 
-            const script = document.createElement("script")
-            script.addEventListener("load", () => {
-                console.log("MathJax loaded!")
-                if (window["MathJax"]?.version !== "3.2.2") {
-                    twowasloaded()
-                }
-            })
-            script.crossOrigin = src.crossOrigin
-            script.integrity = src.integrity
-            script.src = src.href
-            document.head.append(script)
-        },
-        { timeout: 2000 }
-    )
+    const script = document.createElement("script")
+    script.addEventListener("load", () => {
+        if (window["MathJax"]?.version !== "3.2.2") {
+            twowasloaded()
+        }
+        // @ts-ignore
+        window.MathJax.startup.promise.then(resolve, reject)
+    })
+    script.addEventListener("error", () => reject(new Error("MathJax failed to load")))
+    script.crossOrigin = src.crossOrigin
+    script.integrity = src.integrity
+    script.src = src.href
+    document.head.append(script)
 }
-
-// @ts-ignore
-window.__pluto_setup_mathjax = setup_mathjax

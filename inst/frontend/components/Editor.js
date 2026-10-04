@@ -19,7 +19,6 @@ import { Popup } from "./Popup.js"
 
 import { has_ctrl_or_cmd_pressed, is_mac_keyboard, in_textarea_or_input } from "../common/KeyboardShortcuts.js"
 import { PlutoActionsContext, PlutoBondsContext, PlutoJSInitializingContext, SetWithEmptyCallback } from "../common/PlutoContext.js"
-import { setup_mathjax } from "../common/SetupMathJax.js"
 import { slider_server_actions, nothing_actions } from "../common/SliderServerClient.js"
 import { ProgressBar } from "./ProgressBar.js"
 import { NonCellOutput } from "./NonCellOutput.js"
@@ -1334,9 +1333,6 @@ all patches: ${JSON.stringify(patches, null, 1)}
 
         if (old_state.disable_ui !== this.state.disable_ui || old_state.connected !== this.state.connected) {
             this.on_disable_ui()
-        }
-        if (!this.state.initializing) {
-            setup_mathjax()
         }
     }
 

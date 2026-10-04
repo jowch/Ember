@@ -1,7 +1,8 @@
 // Piece 2 (docs/ui-2.md, "Offline bundle"), scenarios 18, 19, 21 of
 // docs/ui-2-tests.md: the page works with no network but to the server
-// itself (MathJax aside), every vendored library does its job, and a
-// second load re-uses the browser's cache for the hashed vendor files.
+// itself, every vendored library does its job, and a second load re-uses
+// the browser's cache for the hashed vendor files. MathJax is requested
+// from its CDN only once an output contains TeX (ui-3-plan.md, piece 7).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -98,7 +99,7 @@ test("offline: rich.R works with every non-local request aborted (18)", async (t
     (sel) => document.querySelector(sel)?.querySelector(".hljs-number") != null,
     cellSelector("MD"), { timeout: 10000 });
 
-  assert.ok(aborted.some((u) => u.includes("mathjax")), "expected MathJax to be the thing aborted");
+  assert.deepEqual(aborted, [], "expected no request to leave the machine");
   assert.deepEqual(failedRequests, []);
   assert.ok(iconResponses.length > 0, "expected at least one local icon request");
   assert.ok(iconResponses.every((s) => s === 200), `expected all icon requests to succeed: ${iconResponses}`);
@@ -204,8 +205,27 @@ test("offline: the three bundled fonts load with no network request leaving loca
   assert.equal(checks.figtree, true, "expected Figtree to actually load");
   assert.equal(checks.sourceSerif, true, "expected Source Serif 4 to actually load");
   assert.equal(checks.plexMono, true, "expected IBM Plex Mono to actually load");
-  assert.ok(aborted.every((u) => /mathjax/.test(u)), `expected no non-MathJax request to leave localhost: ${aborted}`);
+  assert.deepEqual(aborted, [], "expected no request to leave the machine");
 
+  assertNoProblemsOffline(page);
+});
+
+test("offline: an output with TeX is what requests MathJax", async (t) => {
+  const notebook = tempNotebook("tex.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "offline-tex.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  const aborted = blockNonLocal(page);
+  const mathjax = page.waitForRequest((r) => r.url().includes("mathjax"), { timeout: 30000 });
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await page.waitForSelector(`${cellSelector("T")} pluto-output .tex`, { timeout: 20000 });
+  await mathjax;
+
+  assert.equal(aborted.length, 1, `expected exactly one request to leave the machine: ${aborted}`);
+  assert.match(aborted[0], /mathjax/);
   assertNoProblemsOffline(page);
 });
 
