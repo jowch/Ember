@@ -103,7 +103,7 @@ const getLanguage = _.memoize((to_search) => {
 /** Format a duration in seconds as "5 seconds" or "2 minutes". */
 export const pretty_long_time = (/** @type {number} */ sec) => {
     const min = sec / 60
-    const sec_r = Math.ceil(sec)
+    const sec_r = Math.max(1, Math.round(sec))
     const min_r = Math.round(min)
 
     if (sec < 60) {

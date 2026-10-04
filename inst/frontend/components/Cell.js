@@ -24,10 +24,12 @@ const format_stale_chip = (notebook, cell_id) => {
     if (names.length === 0) return t("t_chip_stale")
     const shown = names.slice(0, 3)
     const rest = names.length - shown.length
-    const parts = rest > 0 ? [...shown, t("t_n_more", { count: rest })] : shown
-    const joined = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} ${t("t_and")} ${parts[parts.length - 1]}`
-    return t("t_chip_stale_names", { names: joined })
+    return t("t_chip_stale_names", { names: join_names(rest > 0 ? [...shown, t("t_n_more", { count: rest })] : shown) })
 }
+
+/** "x", "x and y", "x, y and z". */
+const join_names = (/** @type {string[]} */ parts) =>
+    parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} ${t("t_and")} ${parts[parts.length - 1]}`
 
 const useCellApi = (node_ref, published_object_keys, pluto_actions) => {
     const [cell_api_ready, set_cell_api_ready] = useState(false)
@@ -414,6 +416,26 @@ export const Cell = ({
               ? { icon: ClockIcon, text: format_stale_chip(pluto_actions.get_notebook(), cell_id) }
               : null
 
+    const cell_state =
+        running_disabled || depends_on_disabled_cells
+            ? "t_cell_state_disabled"
+            : running
+              ? "t_cell_state_running"
+              : queued || waiting_to_run
+                ? "t_cell_state_queued"
+                : class_code_differs || code_changed
+                  ? "t_cell_state_edited"
+                  : errored
+                    ? "t_cell_state_error"
+                    : stale
+                      ? "t_cell_state_stale"
+                      : not_run_yet
+                        ? "t_cell_state_not_run"
+                        : null
+    const cell_name =
+        (kind === "markdown" ? t("t_cell_name_text") : variables.length > 0 ? t("t_cell_name", { defines: join_names(variables) }) : t("t_cell_name_none")) +
+        (cell_state == null ? "" : `, ${t(cell_state)}`)
+
     return html`
         <pluto-cell
             key=${cell_key}
@@ -445,6 +467,7 @@ export const Cell = ({
             id=${cell_id}
             tabindex="-1"
             role="group"
+            aria-label=${cell_name}
             onClick=${on_text_click}
             onKeyDown=${on_text_keydown}
         >

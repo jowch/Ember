@@ -37,6 +37,7 @@ import { getCurrentLanguage, getWritingDirection, t, th } from "../common/lang.j
 import { MoveDialog } from "./MoveDialog.js"
 import { with_query_params } from "../common/URLTools.js"
 import { ConfirmBeforeLongRuntime, maybe_abort_long_runtime } from "./ConfirmBeforeLongRuntime.js"
+import { RunTracker, run_started } from "./RunTracker.js"
 import { detect_indent_unit, indent_unit_of_setting } from "./CellInput/detect_indent_unit.js"
 import { Text } from "../imports/CodemirrorPlutoSetup.js"
 import { get_settings, Settings } from "./Settings.js"
@@ -603,6 +604,7 @@ export class Editor extends Component {
                     }
                     notebook.cell_order = [...notebook.cell_order.slice(0, index), id, ...notebook.cell_order.slice(index, Infinity)]
                 })
+                if (code.trim() !== "") run_started()
                 await this.client.send("run_multiple_cells", { cells: [id] }, { notebook_id: this.state.notebook.notebook_id })
                 return id
             },
@@ -681,6 +683,7 @@ export class Editor extends Component {
                     if (await maybe_abort_long_runtime(this.state.notebook, cell_ids)) {
                         return false
                     }
+                    run_started()
 
                     window.dispatchEvent(
                         new CustomEvent("set_waiting_to_run_smart", {
@@ -756,8 +759,10 @@ export class Editor extends Component {
                     { notebook_id: this.state.notebook.notebook_id },
                     false
                 ),
-            ember_run_all: () =>
-                this.client.send("ember_run_all", {}, { notebook_id: this.state.notebook.notebook_id }, false),
+            ember_run_all: () => {
+                run_started()
+                return this.client.send("ember_run_all", {}, { notebook_id: this.state.notebook.notebook_id }, false)
+            },
             ember_set_mode: (mode) =>
                 this.client.send("ember_set_mode", { mode }, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_update_packages: () =>
@@ -1599,6 +1604,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                         plan=${notebook.ember?.plan}
                     />
                     <${ConfirmBeforeLongRuntime} />
+                    <${RunTracker} notebook=${notebook} />
                     <${Settings} />
                     <${ShortcutsSheet} />
                     ${this.props.preamble_element}

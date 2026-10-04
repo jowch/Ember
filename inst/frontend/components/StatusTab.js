@@ -142,13 +142,3 @@ export const StatusTab = ({ notebook, connected, my_clock_is_ahead_by, on_restar
     `
 }
 
-/**
- * @param {import("./Editor.js").StatusEntryData} status
- */
-export const is_finished = (status) => status.finished_at != null
-
-/**
- * @param {import("./Editor.js").StatusEntryData} status
- * @returns {number}
- */
-export const total_done = (status) => Object.values(status.subtasks).reduce((total, status) => total + total_done(status), is_finished(status) ? 1 : 0)

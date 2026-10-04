@@ -38,10 +38,6 @@ const prettyAssignee = (assignee) =>
 export class CellOutput extends Component {
     constructor() {
         super()
-        this.state = {
-            output_changed_once: false,
-        }
-
         this.old_height = 0
         // @ts-ignore Is there a way to use the latest DOM spec?
         this.resize_observer = new ResizeObserver((entries) => {
@@ -83,12 +79,6 @@ export class CellOutput extends Component {
         )
     }
 
-    componentDidUpdate(old_props) {
-        if (this.props.last_run_timestamp !== old_props.last_run_timestamp) {
-            this.setState({ output_changed_once: true })
-        }
-    }
-
     componentDidMount() {
         this.resize_observer.observe(this.base)
     }
@@ -113,9 +103,6 @@ export class CellOutput extends Component {
                 })}
                 translate=${allow_translate}
                 mime=${this.props.mime}
-                aria-live=${this.state.output_changed_once ? "polite" : "off"}
-                aria-atomic="true"
-                aria-relevant="all"
                 aria-label=${this.props.text_cell
                     ? t("t_aria_label_text_cell")
                     : this.props.rootassignee == null

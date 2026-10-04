@@ -107,6 +107,8 @@ export const Header = ({ notebook, connected, code_differs, export_links, print_
         <nav id="at_the_top">
             <a
                 href="./"
+                title=${t("t_ember_start_my_notebooks")}
+                aria-label=${t("t_ember_start_my_notebooks")}
                 onClick=${(e) => {
                     if (is_desktop()) {
                         e.preventDefault()
@@ -140,6 +142,7 @@ export const Header = ({ notebook, connected, code_differs, export_links, print_
                       <button
                           class="ibtn"
                           type="button"
+                          title=${t("t_ember_side_panel")}
                           aria-label=${t("t_ember_side_panel")}
                           aria-pressed=${open_tab != null}
                           onClick=${() => toggle(open_tab ?? last_tab_ref.current)}
@@ -152,6 +155,7 @@ export const Header = ({ notebook, connected, code_differs, export_links, print_
                           <button
                               class=${cl({ ibtn: true, on: open_tab === "variables" })}
                               type="button"
+                              title=${t("t_panel_variables")}
                               aria-label=${t("t_panel_variables")}
                               aria-pressed=${open_tab === "variables"}
                               onClick=${() => toggle("variables")}
@@ -161,6 +165,7 @@ export const Header = ({ notebook, connected, code_differs, export_links, print_
                           <button
                               class=${cl({ ibtn: true, on: open_tab === "docs" })}
                               type="button"
+                              title=${t("t_panel_docs")}
                               aria-label=${t("t_panel_docs")}
                               aria-pressed=${open_tab === "docs"}
                               onClick=${() => toggle("docs")}
@@ -170,6 +175,7 @@ export const Header = ({ notebook, connected, code_differs, export_links, print_
                           <button
                               class=${cl({ ibtn: true, on: open_tab === "packages" })}
                               type="button"
+                              title=${t("t_panel_packages")}
                               aria-label=${t("t_panel_packages")}
                               aria-pressed=${open_tab === "packages"}
                               onClick=${() => toggle("packages")}
@@ -180,7 +186,7 @@ export const Header = ({ notebook, connected, code_differs, export_links, print_
                       <${ExportMenu} links=${export_links} />
                   `}
             <div style="position: relative">
-                <button class=${cl({ ibtn: true, on: is_open })} type="button" aria-label=${t("t_ember_more")} ...${button_props}>
+                <button class=${cl({ ibtn: true, on: is_open })} type="button" title=${t("t_ember_more")} aria-label=${t("t_ember_more")} ...${button_props}>
                     <${MoreIcon} />
                 </button>
                 ${is_open &&

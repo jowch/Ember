@@ -90,10 +90,8 @@ pluto-cell[data-rail="err"] > pluto-trafficlight {
     background: var(--ember-rail-err);
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    pluto-cell[data-rail="run"] > pluto-trafficlight {
-        animation: ember-rail-pulse 1.6s ease-in-out infinite;
-    }
+pluto-cell[data-rail="run"] > pluto-trafficlight {
+    animation: ember-rail-pulse 1.6s ease-in-out infinite;
 }
 
 @keyframes ember-rail-pulse {

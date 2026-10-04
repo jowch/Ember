@@ -8,8 +8,6 @@ import { VariablesTab } from "./VariablesTab.js"
 import { useMyClockIsAheadBy } from "../common/clock_sync.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { t } from "../common/lang.js"
-import { NotifyWhenDone } from "./NotifyWhenDone.js"
-import { get_settings } from "./Settings.js"
 
 /**
  * @typedef PanelTabName
@@ -68,7 +66,6 @@ export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, noteboo
         opener_ref.current?.focus()
     }
 
-    const status = notebook.status_tree
     const my_clock_is_ahead_by = useMyClockIsAheadBy({ connected })
 
     return html`
@@ -105,9 +102,6 @@ export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, noteboo
                             : open_tab === "process"
                               ? html`<${StatusTab} notebook=${notebook} connected=${connected} my_clock_is_ahead_by=${my_clock_is_ahead_by} on_restart=${on_restart} />`
                               : null}
-                    ${get_settings().ALWAYS_NOTIFY_LONG_BUSY
-                        ? html`<div style="display: none" aria-hidden="true"><${NotifyWhenDone} status=${status} /></div>`
-                        : null}
                 </section>
             </pluto-helpbox>
         </aside>
