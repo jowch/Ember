@@ -70,7 +70,42 @@ test_that("error_with_traceback", {
   expect_identical(r$status, "error")
   expect_identical(r$error$message, "boom")
   expect_identical(r$error$traceback, c("f()", 'stop("boom")'))
-  expect_false(any(grepl("handleSimpleError|run_cell|eval\\(e, globalenv", r$error$traceback)))
+  expect_false(any(grepl("handleSimpleError|run_cell|eval\\(e, globalenv|eval\\(exprs", r$error$traceback)))
+})
+
+test_that("run_cell() on a bare top-level stop(): call/line/deep/frames (ui-3-tests 127)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "TOP", 1L, "1\nstop('boom')")
+  expect_identical(r$status, "error")
+  expect_null(r$error$call)
+  expect_identical(r$error$line, 2L)
+  expect_identical(r$error$deep, FALSE)
+  expect_identical(r$error$frames, list())
+})
+
+test_that("run_cell(): a notebook function calling lm() with bad data (ui-3-tests 128)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "ERR", 1L, "g <- function(d) lm(y ~ x, data = d); g(1)")
+  expect_identical(r$status, "error")
+  expect_true(startsWith(r$error$call, "model.frame.default("))
+  expect_identical(r$error$deep, TRUE)
+  expect_identical(r$error$line, 1L)
+  expect_identical(r$error$frames[[1]]$cell, "ERR")
+  packages <- vapply(r$error$frames, function(f) f$package %||% "", character(1))
+  expect_true("stats" %in% packages)
+  expect_identical(length(r$error$frames), length(r$error$traceback))
+})
+
+test_that("run_cell(): a function defined in cell F, called from cell ERR, keeps its own cell in a frame (ui-3-tests 129)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  run_and_wait(h, "F", 1L, "f <- function(x) stop('bad: ', x)")
+  r <- run_and_wait(h, "ERR", 2L, "f(1)")
+  expect_identical(r$status, "error")
+  frame <- Find(function(f) identical(f$call, "f(1)"), r$error$frames)
+  expect_identical(frame$cell, "F")
 })
 
 test_that("rerun_removes_previous_globals", {
@@ -926,7 +961,7 @@ test_that("library_error_reports_notebook_call_not_wrapper", {
   on.exit(h$close())
   r <- run_and_wait(h, "a", 1L, "library(notapkg)")
   expect_identical(r$status, "error")
-  expect_identical(deparse(r$error$call), "library(notapkg)")
+  expect_identical(r$error$call, "library(notapkg)")
   expect_false(any(grepl("^original\\(", r$error$traceback)))
 })
 

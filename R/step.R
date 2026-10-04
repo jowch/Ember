@@ -1255,9 +1255,18 @@ reduce_wk_done <- function(state, event) {
       error <- if (!is.null(fd)) {
         new_run_error("upstream", message = msg, traceback = err$traceback %||% character(),
                       names = fd$names, cells = fd$cells)
-      } else {
+      } else if (!is.null(err$span)) {
         new_run_error(kind, message = msg, traceback = err$traceback %||% character(),
                       line = error_line, call = error_call)
+      } else {
+        # A code cell's error carries its own call/line/deep/frames
+        # straight from the worker's report; a text cell's (just above)
+        # come from its inline span instead, since the worker's own
+        # call/line are about the whole cell's code, not the one
+        # `` `r expr` `` span.
+        new_run_error(kind, message = msg, traceback = err$traceback %||% character(),
+                      call = err$call, line = err$line, deep = isTRUE(err$deep),
+                      frames = err$frames %||% list())
       }
     }
   } else {

@@ -569,25 +569,38 @@ join_names <- function(names, conj = "and") {
 #' `stacktrace`: one frame per traceback call, innermost first:
 #' `list(call, call_short, func, inlined = FALSE, from_c = FALSE, file = "",
 #' path = "", line = -1L, linfo_type = "", url = NULL, source_package =
-#' NULL, parent_module = NULL)`. R tracebacks have no file and line unless
-#' srcrefs are kept; `file = ""` keeps the frontend from linking frames to
-#' cells.
+#' NULL, parent_module = NULL, ember_cell = NULL)`. R tracebacks have no
+#' file and line unless srcrefs are kept; `file = ""` keeps the frontend
+#' from linking frames to cells. `source_package` and `ember_cell` come
+#' from `error$frames` (worker.R's `clean_frames()`, also innermost last,
+#' same length as `traceback`), read by the matching reversed position.
+#'
+#' `ember_call`, `ember_line` and `ember_deep` are `error$call`,
+#' `error$line` and `error$deep` -- unset (`NULL`/`FALSE`) for an upstream
+#' error or any kind besides a plain "error", since those have nothing of
+#' the engine's own to show there.
 project_error <- function(error) {
   if (identical(error$kind, "upstream")) {
     msg <- sprintf("Another cell defining %s contains errors.", join_names(error$names, conj = "or"))
-    return(list(msg = msg, stacktrace = list(), plain_error = paste(msg, error$message, sep = "\n")))
+    return(list(msg = msg, stacktrace = list(), plain_error = paste(msg, error$message, sep = "\n"),
+               ember_call = NULL, ember_line = NULL, ember_deep = FALSE))
   }
   msg <- switch(error$kind,
     multiple_definitions = sprintf("Multiple definitions for %s", join_names(error$names)),
     cycle = sprintf("Cyclic references among %s.", join_names(error$names)),
     error$message)
   text <- paste(c(msg, error$fixes), collapse = "\n")
-  stacktrace <- lapply(rev(error$traceback %||% character()), function(call) {
-    list(call = call, call_short = call, func = NULL, inlined = FALSE, from_c = FALSE,
-        file = "", path = "", line = -1L, linfo_type = "", url = NULL,
-        source_package = NULL, parent_module = NULL)
+  rev_traceback <- rev(error$traceback %||% character())
+  rev_frames <- rev(error$frames %||% list())
+  stacktrace <- lapply(seq_along(rev_traceback), function(k) {
+    fr <- if (k <= length(rev_frames)) rev_frames[[k]] else NULL
+    list(call = rev_traceback[[k]], call_short = rev_traceback[[k]], func = NULL,
+        inlined = FALSE, from_c = FALSE, file = "", path = "", line = -1L,
+        linfo_type = "", url = NULL, source_package = fr$package %||% NULL,
+        parent_module = NULL, ember_cell = fr$cell %||% NULL)
   })
-  list(msg = text, stacktrace = stacktrace, plain_error = text)
+  list(msg = text, stacktrace = stacktrace, plain_error = text,
+      ember_call = error$call, ember_line = error$line, ember_deep = isTRUE(error$deep))
 }
 
 #' Parse-error diagnostics: `list(list(message, from, to, line))` from the

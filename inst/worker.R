@@ -373,7 +373,12 @@ run_cell <- function(msg) {
     text_lines <- if (is_text) strsplit(msg$code, "\n", fixed = TRUE)[[1]] else character()
     inline_values <- character(length(text_lines))
     at <- 0L   # the text line being evaluated; reported as error$span
-    if (!is_text) exprs <- parse(text = msg$code, keep.source = TRUE)
+    # `srcfile = srcfilecopy(msg$cell, msg$code)` stamps the cell's id as
+    # this parse's source file name, so a function defined here carries
+    # it in its own srcref -- `clean_frames()` reads it back to say which
+    # cell defined a traceback call's function.
+    if (!is_text) exprs <- parse(text = msg$code, keep.source = TRUE,
+                                 srcfile = srcfilecopy(msg$cell, msg$code))
     trace_line("eval", msg$cell)
 
     tryCatch(
@@ -390,8 +395,9 @@ run_cell <- function(msg) {
             inline_values[[li]] <- if (r$visible) inline_text(r$value) else ""
           }
         } else {
-          for (e in exprs) {
-            r <- withVisible(eval(e, globalenv()))
+          for (k in seq_along(exprs)) {
+            at <- k   # the top-level expression index; error$line reads its srcref
+            r <- withVisible(eval(exprs[[k]], globalenv()))
             if (r$visible) {
               if (visible) console$print(value)
               value <- r$value
@@ -411,14 +417,17 @@ run_cell <- function(msg) {
         # the simpleError dispatch helpers the text patterns below catch.
         calls <- sys.calls()
         calls <- calls[-length(calls)]
+        # One function object per call, by frame index, kept alongside
+        # `calls` for `clean_frames()` below (sys.function(i) is only
+        # answerable from inside this handler, while the stack is live).
+        fns <- lapply(seq_along(calls), function(i) tryCatch(sys.function(i), error = function(e2) NULL))
         # A frame inside one of install_traces()'s loadNamespace/
         # library/require wrappers (identified by identity against the
         # real function it replaced, not by name: the wrapper always
         # calls it through a local variable named `original`, so by text
         # every such frame deparses identically regardless of which of
         # the three it is).
-        is_original <- vapply(seq_along(calls), function(i) {
-          fn <- tryCatch(sys.function(i), error = function(e2) NULL)
+        is_original <- vapply(fns, function(fn) {
           !is.null(fn) && any(vapply(loader_originals, identical, logical(1), y = fn))
         }, logical(1))
         call <- conditionCall(e)
@@ -433,8 +442,28 @@ run_cell <- function(msg) {
           idx <- which(vapply(calls, identical, logical(1), y = call))
           if (length(idx) && idx[1] > 1) call <- calls[[idx[1] - 1]]
         }
-        err <<- list(message = conditionMessage(e), call = call,
-                     traceback = clean_calls(calls[!is_original]),
+        # One line, for the wire and for the "is it the loop's own eval"
+        # and "is it the top-level expression itself" checks below --
+        # deparse() can return more than one element for a long call.
+        call_text <- if (is.null(call)) NULL else paste(deparse(call), collapse = " ")
+        # A bare top-level stop() (or any error raised with call. = FALSE)
+        # leaves `call` as this loop's own `eval(exprs[[k]], globalenv())`
+        # line, not anything the notebook wrote; treated the same as no
+        # call at all.
+        if (identical(call_text, "eval(exprs[[k]], globalenv())")) call_text <- NULL
+        kept_calls <- calls[!is_original]
+        kept_fns <- fns[!is_original]
+        err_line <- NULL
+        err_deep <- FALSE
+        if (!is_text) {
+          sr <- attr(exprs, "srcref")
+          if (!is.null(sr) && at >= 1 && at <= length(sr)) err_line <- sr[[at]][1]
+          if (!is.null(call_text)) {
+            err_deep <- !identical(call_text, paste(deparse(exprs[[at]]), collapse = " "))
+          }
+        }
+        err <<- list(message = conditionMessage(e), call = call_text,
+                     traceback = clean_calls(kept_calls),
                      # `e$package` is set by R's own loadNamespace()/library()
                      # for a packageNotFoundError regardless of locale, so the
                      # server can recognise a missing package without matching
@@ -442,7 +471,14 @@ run_cell <- function(msg) {
                      package = if (inherits(e, "packageNotFoundError")) e$package else NULL,
                      # Which text line (`inline_spans()$line` of the cell's
                      # analysed code) failed, for a text cell only.
-                     span = if (is_text) at else NULL)
+                     span = if (is_text) at else NULL,
+                     line = err_line,
+                     deep = err_deep,
+                     # No `call` means nothing to point a traceback frame
+                     # at (the message already says "Error · line n"
+                     # with no call), so frames stay empty rather than
+                     # listing the bare stop() call itself.
+                     frames = if (is.null(call_text)) list() else clean_frames(kept_calls, kept_fns))
       }),
       interrupt = function(i) rc$status <<- "interrupted",
       error     = function(e) rc$status <<- "error")
@@ -1753,19 +1789,58 @@ render_plot <- function(msg) {
 #' the user's own code by matching their deparsed call text alone (a
 #' classed condition's dispatch never goes through the `.handleSimpleError`
 #' family this function still filters for simple conditions).
-clean_calls <- function(calls) {
-  texts <- vapply(calls, function(c) paste(deparse(c), collapse = " "), character(1))
-  start_idx <- which(texts == "eval(e, globalenv())")
+#' The indices of `calls` (deparsed to `texts`, one line each) that are
+#' the user's own code, shared by `clean_calls()` and `clean_frames()` so
+#' the two always select the same frames in the same order.
+clean_range <- function(texts) {
+  start_idx <- which(texts == "eval(exprs[[k]], globalenv())")
   start <- if (length(start_idx)) max(start_idx) + 1L else 1L
-  if (start > length(texts)) return(character())
+  if (start > length(texts)) return(integer())
   tail_idx <- seq.int(start, length(texts))
   internal <- which(startsWith(texts[tail_idx], ".handleSimpleError(") |
                      startsWith(texts[tail_idx], ".handleSimpleCondition(") |
                      startsWith(texts[tail_idx], ".handleSimpleWarning(") |
                      startsWith(texts[tail_idx], ".signalSimpleWarning("))
   end <- if (length(internal)) tail_idx[min(internal)] - 1L else length(texts)
-  if (end < start) return(character())
-  texts[start:end]
+  if (end < start) return(integer())
+  start:end
+}
+
+clean_calls <- function(calls) {
+  texts <- vapply(calls, function(c) paste(deparse(c), collapse = " "), character(1))
+  texts[clean_range(texts)]
+}
+
+#' One frame per element of `clean_calls(calls)`, in the same order
+#' (outermost first): `list(call, package, cell)` for each surviving call,
+#' from the function executing in that frame (`fns[[i]]`, `sys.function(i)`
+#' captured by the caller while the stack was live).
+#'
+#' `package` is `environmentName(topenv(environment(fn)))`, `NULL` for
+#' `"R_GlobalEnv"` (a notebook-defined function). `cell` is that function's
+#' srcref's file name -- the id of the cell that defined it, from
+#' `srcfilecopy(msg$cell, msg$code)` at parse time -- `NULL` when the
+#' function carries no srcref (a package function, normally built without
+#' one).
+clean_frames <- function(calls, fns) {
+  texts <- vapply(calls, function(c) paste(deparse(c), collapse = " "), character(1))
+  idx <- clean_range(texts)
+  lapply(idx, function(i) {
+    fn <- fns[[i]]
+    package <- NULL
+    cell <- NULL
+    if (!is.null(fn)) {
+      env <- tryCatch(environment(fn), error = function(e) NULL)
+      if (!is.null(env)) {
+        pkg_name <- tryCatch(environmentName(topenv(env)), error = function(e) "R_GlobalEnv")
+        if (!identical(pkg_name, "R_GlobalEnv")) package <- pkg_name
+      }
+      sr <- attr(fn, "srcref")
+      sf <- if (!is.null(sr)) attr(sr, "srcfile") else NULL
+      if (!is.null(sf) && !is.null(sf$filename) && nzchar(sf$filename)) cell <- sf$filename
+    }
+    list(call = texts[[i]], package = package, cell = cell)
+  })
 }
 
 # ---- Editor services ---------------------------------------------------------

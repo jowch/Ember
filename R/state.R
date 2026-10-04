@@ -238,16 +238,24 @@ new_result <- function(code, status, output, console, error, started_at,
 #' changed options, env vars, wd, locale or the search path outside the
 #' setup cell), `"source_conflict"` (a computed `source()` was refused),
 #' `"worker_exited"`. `message`, `traceback` (character, innermost last),
-#' `names`, `fixes` as on `ember_graph_error`. `call`/`line` are set only
-#' for a text cell's inline expression that errored (the `` `r expr` ``
-#' text and its line in the cell, from `inline_spans()`); a later increment
-#' can fill them for code cells too and show "Error in `call` \u00b7 line n".
+#' `names`, `fixes` as on `ember_graph_error`. `call`/`line` are set for a
+#' text cell's inline expression that errored (the `` `r expr` `` text and
+#' its line in the cell, from `inline_spans()`) and, for a code cell's
+#' plain "error", from the worker's own report (`call` is `NULL` when R
+#' gives none or it is the worker's own top-level eval). `deep` is TRUE
+#' when `call` is not the cell's failing top-level expression itself
+#' ("called from line n", rather than the expression's own call). `frames`
+#' is the worker's `clean_frames()` list, outermost first, one per
+#' `traceback` call kept for display; empty when `call` is `NULL`, since
+#' there's then nothing to point a traceback frame at.
 new_run_error <- function(kind, message, traceback = character(),
                           names = character(), fixes = character(),
-                          cells = character(), call = NULL, line = NULL) {
+                          cells = character(), call = NULL, line = NULL,
+                          deep = FALSE, frames = list()) {
   structure(list(kind = kind, message = message, traceback = traceback,
                  names = names, fixes = fixes, cells = cells,
-                 call = call, line = line), class = "ember_run_error")
+                 call = call, line = line, deep = deep, frames = frames),
+            class = "ember_run_error")
 }
 
 #' A cell's displayed output, as the worker built it.
@@ -283,7 +291,9 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 #' `setup`, `queued`, `running`, `status` (`"not_run"`, `"ok"`, `"error"`,
 #' `"interrupted"`), `stale`, `code_differs`, `errors` (graph errors then
 #' the run error, each with `kind`, `message`, `fixes`, `names`, and, for an
-#' `"upstream"` run error, `cells`), `output` (`ember_display` or `NULL`),
+#' `"upstream"` run error, `cells`; a plain "error" also carries `call`,
+#' `line`, `deep` and `frames`, as `new_run_error()` documents),
+#' `output` (`ember_display` or `NULL`),
 #' `console`, `last_run`, `runtime`, `disabled` (the user's own choice),
 #' `disabled_by` (the disabled cell a dependent is off because of, `NA`
 #' otherwise -- including for the disabled cell itself), `variables`
@@ -434,7 +444,8 @@ cell_view <- function(state, ctx, i) {
     list(list(kind = result$error$kind, message = result$error$message,
               fixes = result$error$fixes, names = result$error$names,
               cells = result$error$cells, traceback = result$error$traceback,
-              call = result$error$call, line = result$error$line))
+              call = result$error$call, line = result$error$line,
+              deep = result$error$deep, frames = result$error$frames))
   } else {
     list()
   }

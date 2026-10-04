@@ -248,6 +248,37 @@ test_that("a run error's stack trace is innermost first with no file/line (10)",
   }
 })
 
+test_that("project_error() adds ember_call/line/deep and frames' source_package/ember_cell, innermost first, without changing today's fields (ui-3-tests 133)", {
+  tb <- c("outer()", "inner()")  # innermost last, as new_run_error() documents
+  frames <- list(list(call = "outer()", package = NULL, cell = "A"),
+                 list(call = "inner()", package = "stats", cell = NULL))
+  err <- new_run_error("error", message = "boom", traceback = tb,
+                       call = "inner()", line = 3L, deep = TRUE, frames = frames)
+  o <- project_error(err)
+  expect_equal(o$ember_call, "inner()")
+  expect_equal(o$ember_line, 3L)
+  expect_equal(o$ember_deep, TRUE)
+  expect_equal(vapply(o$stacktrace, `[[`, character(1), "call"), rev(tb))
+  expect_equal(o$stacktrace[[1]]$source_package, "stats")
+  expect_equal(o$stacktrace[[1]]$ember_cell, NULL)
+  expect_equal(o$stacktrace[[2]]$source_package, NULL)
+  expect_equal(o$stacktrace[[2]]$ember_cell, "A")
+
+  # Without the new fields, every other field is exactly what it was
+  # before this piece.
+  without_new <- lapply(o$stacktrace, function(f) {
+    f[setdiff(names(f), c("source_package", "ember_cell"))]
+  })
+  baseline <- new_run_error("error", message = "boom", traceback = tb)
+  baseline_stacktrace <- project_error(baseline)$stacktrace
+  baseline_without_new <- lapply(baseline_stacktrace, function(f) {
+    f[setdiff(names(f), c("source_package", "ember_cell"))]
+  })
+  expect_equal(without_new, baseline_without_new)
+  expect_equal(o$msg, project_error(baseline)$msg)
+  expect_equal(o$plain_error, project_error(baseline)$plain_error)
+})
+
 test_that("an interrupted cell shows 'Interrupted' with no frames (10)", {
   v <- fake_view(status = "interrupted")
   o <- project_output(v)

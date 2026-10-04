@@ -204,6 +204,28 @@ test_that("update_notebook to a text cell, then running it: kind markdown, folde
   expect_match(page$cell_results[[a]]$output$body, "<h1>Title</h1>", fixed = TRUE)
 })
 
+test_that("running a failing cell flushes ember_call/ember_line and a stacktrace frame's source_package (ui-3-tests 139)", {
+  path <- write_session_notebook(list(S = cell(""),
+    ERR = cell("g <- function(d) lm(y ~ x, data = d); g(1)")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list("ERR")))
+  expect_true(wait_for(nb, timeout = 20))
+
+  body <- ws$page()$cell_results[["ERR"]]$output$body
+  expect_true(startsWith(body$ember_call, "model.frame.default("))
+  expect_equal(body$ember_line, 1L)
+  expect_true(body$stacktrace[[1]]$source_package %in% c("stats", "base"))
+})
+
 # ---- ember_split_cell (53) -----------------------------------------------
 
 test_that("ember_split_cell splits a mixed cell; stale code or a non-mixed cell is a no-op (53)", {
