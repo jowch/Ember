@@ -4,17 +4,23 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { readFileSync, mkdtempSync } from "node:fs";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook } from "../browser.mjs";
 
-async function download(page, name) {
+/** A temp folder for the test's downloads, removed when the test ends. */
+function downloadsDir(t) {
+  const dir = mkdtempSync(path.join(tmpdir(), "ember-e2e-export-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
+
+async function download(page, dir, name) {
   const [file] = await Promise.all([
     page.waitForEvent("download", { timeout: 10000 }),
     page.getByRole("menuitem", { name, exact: true }).click(),
   ]);
-  const dir = mkdtempSync(path.join(tmpdir(), "ember-e2e-export-"));
   const dest = path.join(dir, file.suggestedFilename());
   await file.saveAs(dest);
   return { name: file.suggestedFilename(), text: readFileSync(dest, "utf8") };
@@ -25,6 +31,7 @@ test("export menu: three items, downloads, Esc returns focus (161)", async (t) =
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "export-menu-161.server.log") });
   const browser = await launchBrowser();
   t.after(async () => { await browser.close(); server.stop(); });
+  const downloads = downloadsDir(t);
 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
@@ -40,13 +47,13 @@ test("export menu: three items, downloads, Esc returns focus (161)", async (t) =
     ["Download .R file", "Download HTML", "Print or save as PDF"]);
   assert.equal(await menu.locator(".ember-menu-note").count(), 0, "no safe-preview note once the notebook runs");
 
-  const r = await download(page, "Download .R file");
+  const r = await download(page, downloads, "Download .R file");
   assert.equal(r.name, "basic.R");
   assert.equal(r.text.split("\n")[0], "### An Ember notebook ###");
   await menu.waitFor({ state: "detached", timeout: 5000 });
 
   await button.click();
-  const exported = await download(page, "Download HTML");
+  const exported = await download(page, downloads, "Download HTML");
   assert.match(exported.text, /id="ember-modules"/, "expected the self-contained export");
 
   await button.click();
@@ -63,6 +70,7 @@ test("export menu: safe preview shows the note and downloads without asking (162
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "export-menu-162.server.log") });
   const browser = await launchBrowser();
   t.after(async () => { await browser.close(); server.stop(); });
+  const downloads = downloadsDir(t);
 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
@@ -78,8 +86,19 @@ test("export menu: safe preview shows the note and downloads without asking (162
     await menu.locator(".ember-menuitem-desc").allInnerTexts(),
     ["The notebook itself. Runs with Rscript.", "Code only, for now.", "Code only, for now."]);
 
-  const exported = await download(page, "Download HTML");
+  const exported = await download(page, downloads, "Download HTML");
   assert.match(exported.text, /id="ember-modules"/);
 
+  // On a phone the items are in ⋯, which isn't about exporting, so each item points at the note.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.waitForSelector(".ember-menu .ember-menu-note", { timeout: 5000 });
+  const described = await page.evaluate(() =>
+    [...document.querySelectorAll('.ember-menu a.ember-menuitem[aria-labelledby^="ember-export"]')].map((a) => a.getAttribute("aria-describedby")));
+  assert.deepEqual(described, [
+    "ember-export-r-desc ember-export-note",
+    "ember-export-html-desc ember-export-note",
+    "ember-export-print-desc ember-export-note",
+  ]);
   assertNoProblems(page);
 });

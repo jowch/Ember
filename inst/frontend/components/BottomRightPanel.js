@@ -53,7 +53,7 @@ export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, noteboo
         (/** @type {CustomEvent} */ e) => {
             focus_docs_on_open_ref.current = e.detail === "docs"
             const active = /** @type {HTMLElement?} */ (document.activeElement)
-            if (e.detail != null && active != null && active !== document.body && !container_ref.current?.contains(active)) opener_ref.current = active
+            if (e.detail != null && !container_ref.current?.contains(active)) opener_ref.current = active != null && active !== document.body ? active : null
             set_open_tab(e.detail)
         },
         [set_open_tab]

@@ -89,7 +89,6 @@ export const Cell = ({
     const code_changed = !!ember?.code_changed
     const stale = !code_changed && !!ember?.stale
     let pluto_actions = useContext(PlutoActionsContext)
-    // useCallback because pluto_actions.set_doc_query can change value when you go from viewing a static document to connecting (to binder)
     const on_update_doc_query = useCallback((...args) => pluto_actions.set_doc_query(...args), [pluto_actions])
     const on_focus_neighbor = useCallback((...args) => pluto_actions.focus_on_neighbor(...args), [pluto_actions])
     const on_change = useCallback((val) => pluto_actions.set_local_cell(cell_id, val), [cell_id, pluto_actions])

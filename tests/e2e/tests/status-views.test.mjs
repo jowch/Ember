@@ -134,7 +134,7 @@ test("Packages tab lists a missing package and the preview banner names the inst
   assertNoProblems(page);
 });
 
-// 74. The Pluto-shaped fields the page still reads survive; status_tree, which nothing reads, is gone.
+// 75. The Pluto-shaped fields the page still reads survive; status_tree, which nothing reads, is gone.
 test("nbpkg and process_status stay filled; status_tree is gone (75)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "status-74.server.log") });

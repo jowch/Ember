@@ -214,7 +214,7 @@ export const Header = ({ notebook, connected, code_differs, export_links, print_
                         >
                             ${t("t_settings_title")}
                         </button>
-                        ${narrow ? [html`<div class="ember-menu-sep"></div>`, ...export_items({ links: export_links, item_props, first_index: 2, close })] : null}
+                        ${narrow ? [html`<div class="ember-menu-sep"></div>`, ...export_items({ links: export_links, item_props, first_index: 2, note_on_items: true, close })] : null}
                         <div class="ember-menu-sep"></div>
                         <a class="ember-menuitem" href=${`./?secret=${page_secret()}`} ...${item_props(narrow ? 5 : 2)}>
                             ${t("t_ember_open_another_notebook")}

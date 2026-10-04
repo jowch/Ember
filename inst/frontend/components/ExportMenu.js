@@ -21,10 +21,10 @@ const space_clicks = (/** @type {KeyboardEvent} */ e) => {
     }
 }
 
-/** Props for one item: named by its title alone, described by the line under it. */
-const item = (/** @type {string} */ id, /** @type {string} */ title, /** @type {string} */ description) => ({
+/** Props for one item: named by its title alone, described by the line under it and, if `note`, the safe-preview note. */
+const item = (/** @type {string} */ id, /** @type {string} */ title, /** @type {string} */ description, /** @type {boolean} */ note) => ({
     "aria-labelledby": `${id}-title`,
-    "aria-describedby": `${id}-desc`,
+    "aria-describedby": note ? `${id}-desc ember-export-note` : `${id}-desc`,
     children: html`
         <span class="ember-menuitem-title" id=${`${id}-title`}>${title}</span>
         <span class="ember-menuitem-desc" id=${`${id}-desc`}>${description}</span>
@@ -34,17 +34,20 @@ const item = (/** @type {string} */ id, /** @type {string} */ title, /** @type {
 /**
  * The three export items, and the safe-preview note before them. Shared by
  * the Export menu and the narrow header's ⋯ menu, which takes the items
- * from `first_index` on.
+ * from `first_index` on. The Export menu itself is described by the note;
+ * in the ⋯ menu, `note_on_items` has each item described by it instead.
  *
  * @param {{
  *   links: ExportLinks,
  *   item_props: (i: number) => Record<string, any>,
  *   first_index?: number,
+ *   note_on_items?: boolean,
  *   close: () => void,
  * }} props
  */
-export const export_items = ({ links, item_props, first_index = 0, close }) => {
+export const export_items = ({ links, item_props, first_index = 0, note_on_items = false, close }) => {
     const { file_url, html_url, file_name, safe_preview } = links
+    const note = safe_preview && note_on_items
     const code_only = t("t_export_code_only")
     return [
         safe_preview
@@ -58,7 +61,7 @@ export const export_items = ({ links, item_props, first_index = 0, close }) => {
             href=${file_url}
             download=${file_name}
             ...${item_props(first_index)}
-            ...${item("ember-export-r", t("t_export_download_r"), t("t_export_download_r_description"))}
+            ...${item("ember-export-r", t("t_export_download_r"), t("t_export_download_r_description"), note)}
             onClick=${() => close()}
             onKeyDown=${space_clicks}
         />`,
@@ -67,7 +70,7 @@ export const export_items = ({ links, item_props, first_index = 0, close }) => {
             href=${html_url}
             download=""
             ...${item_props(first_index + 1)}
-            ...${item("ember-export-html", t("t_export_download_html"), safe_preview ? code_only : t("t_export_download_html_description"))}
+            ...${item("ember-export-html", t("t_export_download_html"), safe_preview ? code_only : t("t_export_download_html_description"), note)}
             onClick=${() => close()}
             onKeyDown=${space_clicks}
         />`,
@@ -75,7 +78,7 @@ export const export_items = ({ links, item_props, first_index = 0, close }) => {
             class="ember-menuitem"
             href="#"
             ...${item_props(first_index + 2)}
-            ...${item("ember-export-print", t("t_export_print"), safe_preview ? code_only : t("t_export_print_description"))}
+            ...${item("ember-export-print", t("t_export_print"), safe_preview ? code_only : t("t_export_print_description"), note)}
             onClick=${(/** @type {MouseEvent} */ e) => {
                 e.preventDefault()
                 close()
