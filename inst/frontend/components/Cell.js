@@ -272,17 +272,37 @@ export const Cell = ({
         [pluto_actions, cell_id, on_submit, process_waiting_for_permission]
     )
 
+    const text_output = () => /** @type {HTMLElement?} */ (node_ref.current?.querySelector(":scope > pluto-output") ?? null)
+    const text_editor_view = () => {
+        const dom = node_ref.current?.querySelector("pluto-input .cm-editor")
+        return dom == null ? null : EditorView.findFromDOM(/** @type {HTMLElement} */ (dom))
+    }
+    // A double click selects a word without opening the source, so a click
+    // opens only once the double-click interval has passed without another.
+    const text_click_timer = useRef(/** @type {ReturnType<typeof setTimeout>?} */ (null))
+    useEffect(() => () => clearTimeout(text_click_timer.current ?? undefined), [])
     const on_text_click = (e) => {
         if (kind !== "markdown" || text_open || disable_input) return
         const output = e.target.closest("pluto-output")
         if (output == null || output.parentElement !== node_ref.current) return
-        if (e.target.closest("a, button") || !(window.getSelection()?.isCollapsed ?? true)) return
-        set_text_open(true)
+        if (e.target.closest("a, button, summary, input, label, select, textarea")) return
+        clearTimeout(text_click_timer.current ?? undefined)
+        if (e.detail > 1 || !(window.getSelection()?.isCollapsed ?? true)) return
+        text_click_timer.current = setTimeout(() => {
+            if (window.getSelection()?.isCollapsed ?? true) set_text_open(true)
+        }, 300)
     }
+    const was_text_open = useRef(false)
     useLayoutEffect(() => {
-        if (!text_open) return
-        const dom = node_ref.current?.querySelector("pluto-input .cm-editor")
-        const view = dom == null ? null : EditorView.findFromDOM(/** @type {HTMLElement} */ (dom))
+        const was_open = was_text_open.current
+        was_text_open.current = text_open
+        if (!text_open) {
+            if (!was_open) return
+            const active = document.activeElement
+            if (active == null || active === document.body || node_ref.current?.contains(active)) text_output()?.focus({ preventScroll: true })
+            return
+        }
+        const view = text_editor_view()
         if (view == null) return
         view.focus()
         // The editor was hidden until now; a selection set before CodeMirror
@@ -293,7 +313,14 @@ export const Cell = ({
         return () => cancelAnimationFrame(frame)
     }, [text_open])
     const on_text_keydown = (e) => {
-        if (e.key === "Escape" && !e.defaultPrevented && text_open && (cell_input_local?.code ?? code) === code) set_text_open(false)
+        if (e.defaultPrevented) return
+        if (e.key === "Escape" && text_open && (cell_input_local?.code ?? code) === code) {
+            set_text_open(false)
+        } else if (e.key === "Enter" && kind === "markdown" && !disable_input && e.target === text_output() && !(e.shiftKey || e.ctrlKey || e.metaKey || e.altKey)) {
+            e.preventDefault()
+            if (text_open) text_editor_view()?.focus()
+            else set_text_open(true)
+        }
     }
 
     const any_logs = useMemo(() => !_.isEmpty(logs), [logs])
@@ -419,7 +446,7 @@ export const Cell = ({
             ${code_not_trusted_yet
                 ? null
                 : cell_api_ready
-                  ? html`<${CellOutput} errored=${errored} ...${output} ember_figure=${ember?.figure} ember_split=${split_n} on_split=${on_split} sanitize_html=${sanitize_html} cell_id=${cell_id} />`
+                  ? html`<${CellOutput} errored=${errored} ...${output} ember_figure=${ember?.figure} text_cell=${kind === "markdown" && !disable_input} ember_split=${split_n} on_split=${on_split} sanitize_html=${sanitize_html} cell_id=${cell_id} />`
                   : html``}
             <${CellInput}
                 local_code=${cell_input_local?.code ?? code}

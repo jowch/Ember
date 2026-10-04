@@ -164,6 +164,7 @@
     "t_tb_notebook": "notebook",
     "t_aria_label_cell_output_unlabeled": "Result of unlabeled cell:",
     "t_aria_label_cell_output_labeled": "Result of variable {{variable}}:",
+    "t_aria_label_text_cell": "Text cell. Press Enter to edit its source.",
     "t_package_could_not_load": "<p>The package <strong>{{package}}</strong> could not load because it failed to initialize.</p><p>That's not nice! Things you could try:</p>",
     "t_package_could_not_load_things_you_could_try": "<ul><li>Restart the notebook.</li><li>Try a different R version.</li><li>Contact the developers of {{package}} about this error.</li></ul>",
     "t_might_find_info_in_pkg_log": "You might find useful information in the package installation log:",

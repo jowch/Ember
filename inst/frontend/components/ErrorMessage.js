@@ -113,22 +113,21 @@ const Traceback = ({ stacktrace, line, cell_id }) => {
         return frame.source_package ?? ""
     }
 
+    const list_id = `ember-tb-${cell_id}`
     return html`<section>
-        <button type="button" class="ember-tb-toggle" aria-expanded=${open ? "true" : "false"} onClick=${() => set_open(!open)}>
+        <button type="button" class="ember-tb-toggle" aria-expanded=${open ? "true" : "false"} aria-controls=${list_id} onClick=${() => set_open(!open)}>
             <span aria-hidden="true">${open ? "▾ " : "▸ "}</span>${open ? t("t_hide_traceback") : t("t_show_traceback", { count: frames.length })}
         </button>
-        ${open
-            ? html`<ol class="ember-tb">
-                  ${frames.map((frame, i) => {
-                      const call = frame.call.replace(/\s*\n\s*/g, " ")
-                      return html`<li class=${cl({ mine: i === 0 || frame.ember_cell != null })}>
-                          <span class="ember-tb-n">${i + 1}</span>
-                          <code title=${call}>${call}</code>
-                          <span class="ember-tb-from">${from_label(frame, i)}</span>
-                      </li>`
-                  })}
-              </ol>`
-            : null}
+        <ol class="ember-tb" id=${list_id} hidden=${!open}>
+            ${frames.map((frame, i) => {
+                const call = frame.call.replace(/\s*\n\s*/g, " ")
+                return html`<li class=${cl({ mine: i === 0 || frame.ember_cell != null })}>
+                    <span class="ember-tb-n">${i + 1}</span>
+                    <code title=${call}>${call}</code>
+                    <span class="ember-tb-from">${from_label(frame, i)}</span>
+                </li>`
+            })}
+        </ol>
     </section>`
 }
 

@@ -3,8 +3,9 @@ import { Decoration, EditorSelection, Prec, ViewPlugin, autocomplete, keymap } f
 const hash_quote_re = /^(\s*)#'/
 
 /**
- * Enter on a line starting `#'` (after optional spaces) starts the next
- * line with `#' ` at the same indent (ui-3.md, "Text cells").
+ * Enter after the `#'` of a line starting `#'` (after optional spaces)
+ * starts the next line with `#' ` at the same indent (ui-3.md, "Text
+ * cells"). With the cursor at or before the prefix, Enter is plain Enter.
  */
 export const hash_quote_continue = Prec.high(
     keymap.of([
@@ -16,8 +17,12 @@ export const hash_quote_continue = Prec.high(
                 // keymap's, so it steps aside while a completion is open.
                 if (autocomplete.completionStatus(state) === "active") return false
                 if (state.readOnly || state.selection.ranges.some((r) => !r.empty)) return false
-                const lines = state.selection.ranges.map((r) => state.doc.lineAt(r.head))
-                if (!lines.every((line) => hash_quote_re.test(line.text))) return false
+                const after_prefix = (head) => {
+                    const line = state.doc.lineAt(head)
+                    const m = line.text.match(hash_quote_re)
+                    return m != null && head - line.from >= m[0].length
+                }
+                if (!state.selection.ranges.every((r) => after_prefix(r.head))) return false
                 view.dispatch(
                     state.changeByRange((range) => {
                         const indent = /** @type {RegExpMatchArray} */ (state.doc.lineAt(range.head).text.match(hash_quote_re))[1]

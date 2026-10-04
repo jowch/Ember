@@ -551,6 +551,8 @@ export const CellInput = ({
                                 // then it's caused by focusing something other than this cell in the editor.
                                 // in this case, we want to collapse the selection into a single point, for aesthetic reasons.
                                 setTimeout(() => {
+                                    // Focus can come back first, e.g. a text cell reopened from the keyboard.
+                                    if (view.hasFocus) return
                                     view.dispatch({
                                         selection: {
                                             anchor: view.state.selection.main.head,

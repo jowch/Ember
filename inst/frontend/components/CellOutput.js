@@ -67,8 +67,9 @@ export class CellOutput extends Component {
     // A never-run output (a graph error, a text cell's rendered body) can
     // change content while staying at last_run_timestamp 0, so that alone
     // isn't enough to decide whether to update.
-    shouldComponentUpdate({ last_run_timestamp, sanitize_html, mime, body, errored, rootassignee, persist_js_state, has_pluto_hook_features, ember_split, on_split }) {
+    shouldComponentUpdate({ last_run_timestamp, sanitize_html, mime, body, errored, rootassignee, persist_js_state, has_pluto_hook_features, ember_split, on_split, text_cell }) {
         return (
+            text_cell !== this.props.text_cell ||
             ember_split !== this.props.ember_split ||
             on_split !== this.props.on_split ||
             last_run_timestamp !== this.props.last_run_timestamp ||
@@ -115,9 +116,14 @@ export class CellOutput extends Component {
                 aria-live=${this.state.output_changed_once ? "polite" : "off"}
                 aria-atomic="true"
                 aria-relevant="all"
-                aria-label=${this.props.rootassignee == null
-                    ? t("t_aria_label_cell_output_unlabeled")
-                    : t("t_aria_label_cell_output_labeled", { variable: this.props.rootassignee })}
+                aria-label=${this.props.text_cell
+                    ? t("t_aria_label_text_cell")
+                    : this.props.rootassignee == null
+                      ? t("t_aria_label_cell_output_unlabeled")
+                      : t("t_aria_label_cell_output_labeled", { variable: this.props.rootassignee })}
+                tabindex=${this.props.text_cell ? "0" : undefined}
+                role=${this.props.text_cell ? "group" : undefined}
+                aria-keyshortcuts=${this.props.text_cell ? "Enter" : undefined}
             >
                 <assignee aria-hidden="true" translate=${false}>${prettyAssignee(this.props.rootassignee)}</assignee>
                 <${OutputBody} ...${this.props} />
