@@ -88,6 +88,7 @@ done; clear out ticked items at each release.
 - [ ] Endeavor's Present, Record and Frontmatter actions (actions.ts:1-5, 155-159) do nothing on Ember pages; hide them there — improvised
 - [ ] Graph edges gain `via = "disabled"` (a reader of a name only a disabled cell defines; ui-3-plan.md, piece 1). Check that Endeavor's graph queries treat it as an edge to a cell that doesn't run — missing
 - [ ] Endeavor hides the header's old file picker (frontend/src/theme.ts:295, `nav#at_the_top > pluto-filepicker`) so renaming/moving isn't offered inside it; Ember's header now has a file-name button `#ember-file-name` opening the Rename or move dialog, which that rule no longer matches, so it shows inside Endeavor until Endeavor's CSS targets `#ember-file-name` (decided: Endeavor adapts) — missing. Keep the button's id stable.
+- [ ] Ember's side panel (`#helpbox-wrapper.open`) now has a fixed width (400px docked, 380px slide-over). Endeavor's docs drawer (frontend/src/drawer.ts:83-85) sets `left: 0; right: 0` but no width, so the docs show in a 400px strip; Endeavor adds `width: auto` to that rule (decided: Endeavor adapts) — missing
 
 ## Packaging and CI
 
