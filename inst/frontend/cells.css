@@ -140,9 +140,21 @@ pluto-cell[data-rail="due"] > pluto-input .cm-gutters {
     background: var(--ember-due-bg);
 }
 
-/* Outputs start 12px right of the rail. */
-pluto-cell > pluto-output {
-    padding-left: 12px;
+/* Outputs start 12px right of the rail and span the column (Outputs4's
+   `.out`). The :not() outranks editor.css's 3px for non-rich outputs. */
+pluto-cell:not(.isolated-cell) > pluto-output {
+    padding: 0 0 0 12px;
+}
+pluto-cell:not(.isolated-cell, .errored, .stale) > pluto-output:has(> :not(assignee):not(:empty)) {
+    padding-top: 2px;
+}
+/* 12px above the code box (14px under a figure), only under an output
+   that shows something. */
+pluto-cell.show_input:not(.errored, .stale) > pluto-output:has(> :not(assignee):not(:empty)) {
+    margin-bottom: 12px;
+}
+pluto-cell.show_input:not(.errored, .stale) > pluto-output[mime^="image/"]:has(> :not(assignee):not(:empty)) {
+    margin-bottom: 14px;
 }
 
 /* ---- Run/stop button and run-time chip (ui-3.md "Run button", "Run-time
@@ -1039,4 +1051,9 @@ pluto-output img {
     background: none;
     box-shadow: none;
     filter: none;
+}
+/* Inline, a figure would sit on the text baseline with room for
+   descenders under it. */
+pluto-output[mime^="image/"] img {
+    display: block;
 }
