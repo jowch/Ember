@@ -6,6 +6,7 @@ done; clear out ticked items at each release.
 
 ## Engine
 
+- [ ] Replace the setup cell with settings cells ([settings-cells.md](settings-cells.md)) — missing
 - [ ] Graph rebuild after an edit is whole-notebook: 30 ms at 100 cells, 64 ms at 500, 590 ms at 2000, spread across `notebook_graph()` with no single hot spot — improvised
 - [ ] Learned references (formula columns that weren't in the data) aren't saved in the footer, so the edge they add is lost on reopen until the cell reruns — missing
 - [ ] `library()` inside a function body counts as attaching, so a function that attaches conditionally always makes its cell run first — improvised
