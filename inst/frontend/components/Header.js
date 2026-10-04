@@ -7,6 +7,8 @@ import { use_run_progress } from "../common/use_run_progress.js"
 import { FlameLogo, VariablesIcon, HelpIcon, PackagesIcon, ExportIcon, SidePanelIcon, MoreIcon } from "../common/Icons.js"
 import { open_bottom_right_panel } from "./BottomRightPanel.js"
 import { is_desktop, open_main_menu } from "./DesktopInterface.js"
+import { tell } from "../common/dialogs.js"
+import { keyboard_shortcuts_body } from "../common/KeyboardShortcuts.js"
 
 /** The page's own secret, read back out of its URL, as StartPage.js does. */
 const page_secret = () => new URLSearchParams(window.location.search).get("secret") ?? ""
@@ -31,7 +33,7 @@ const use_narrow = (/** @type {number} */ max_width) => {
  * @param {{ connected: boolean, notebook: import("./Editor.js").NotebookData }} props
  * @returns {{ dot: "faint"|"accent"|"run"|"red"|"amber", words: string, title: string?, busy?: boolean }}
  */
-export const r_status = ({ connected, notebook }) => {
+export const use_r_status = ({ connected, notebook }) => {
     // Called unconditionally, before the `!connected` early return: hooks
     // must run in the same order on every render.
     const { n, i } = use_run_progress(notebook)
@@ -94,7 +96,7 @@ export const Header = ({ notebook, connected, code_differs, on_toggle_export, on
     const toggle = (/** @type {import("./BottomRightPanel.js").PanelTabName} */ tab) => open_bottom_right_panel(open_tab === tab ? null : tab)
 
     const narrow = use_narrow(640)
-    const status = r_status({ connected, notebook })
+    const status = use_r_status({ connected, notebook })
     const not_run = notebook.ember?.not_run ?? 0
 
     const { button_props, menu_props, item_props, close, is_open } = useMenu({ count: narrow ? 4 : 3 })
@@ -114,6 +116,7 @@ export const Header = ({ notebook, connected, code_differs, on_toggle_export, on
             </a>
             <button id="ember-file-name" type="button" title=${notebook.path} onClick=${on_open_move}>${notebook.shortpath}</button>
             ${code_differs || !connected ? null : html`<span class="ember-saved">${t("t_ember_saved")}</span>`}
+            <div class="ember-header-spacer"></div>
             ${not_run > 0
                 ? html`<button class="ember-btn" type="button" title=${t("t_ember_run_not_run_title", { count: not_run })} onClick=${on_run_all}>
                       ${t("t_ember_run_not_run", { count: not_run })}
@@ -123,7 +126,7 @@ export const Header = ({ notebook, connected, code_differs, on_toggle_export, on
                 id="ember-r-status"
                 type="button"
                 title=${status.title ?? status.words}
-                aria-label=${t("t_ember_r_status_open_title")}
+                aria-label=${status.title ?? status.words}
                 onClick=${() => toggle("process")}
             >
                 <span class=${`ember-dot ember-dot-${status.dot}`} aria-hidden="true"></span>
@@ -183,7 +186,15 @@ export const Header = ({ notebook, connected, code_differs, on_toggle_export, on
                 ${is_open &&
                 html`
                     <div class="ember-menu" ...${menu_props}>
-                        <button type="button" class="ember-menuitem" ...${item_props(0)} onClick=${() => close()}>
+                        <button
+                            type="button"
+                            class="ember-menuitem"
+                            ...${item_props(0)}
+                            onClick=${() => {
+                                close()
+                                tell({ title: t("t_ember_keyboard_shortcuts"), body: keyboard_shortcuts_body() })
+                            }}
+                        >
                             ${t("t_ember_keyboard_shortcuts")}
                         </button>
                         <button

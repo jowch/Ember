@@ -1195,6 +1195,14 @@ pluto-editor.binder.loading > header#pluto-nav {
     }
 }
 
+/* Pushes everything from here on (Run N not run, R status, the panel
+   icons, Export, (dots)) to the right edge: on the file-name button or
+   "Saved" (both conditionally hidden) would leave the group stuck on the
+   left whenever either is absent. */
+.ember-header-spacer {
+    margin-left: auto;
+}
+
 .ember-btn {
     display: inline-flex;
     align-items: center;
@@ -4703,8 +4711,8 @@ jlerror.syntax-error > header {
 
 #ember-file-name {
     font: inherit;
-    font-weight: 500;
-    font-size: 0.8rem;
+    font-weight: 600;
+    font-size: 14px;
     color: var(--nav-filepicker-color);
     background: none;
     border: none;

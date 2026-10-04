@@ -41,7 +41,6 @@
     "t_ember_r_status_busy": "Running {{i}} of {{n}} cells",
     "t_ember_r_status_stopped": "R stopped",
     "t_ember_r_status_restart_title": "Restart R to use the new versions of: {{names}}",
-    "t_ember_r_status_open_title": "Open Status",
     "t_ember_status_r": "R",
     "t_ember_status_state": "State",
     "t_ember_memory_value": "{{mb}} MB",

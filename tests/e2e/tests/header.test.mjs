@@ -120,3 +120,52 @@ test("header: the ⋯ menu opens, navigates and closes by keyboard (126)", async
 
   assertNoProblems(page);
 });
+
+// Header geometry: at 1440px the right-hand group (R status, the panel
+// icons, Export, ⋯) sits against the right edge, not packed left next to
+// the file name (a regression once "Saved" and "Run N not run" are both
+// absent/hidden, since nothing else pushed the group right).
+test("header: the right-hand group is pushed to the right edge at 1440px", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "header-geometry.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  const nav = await page.locator("nav#at_the_top").boundingBox();
+  const more = await page.locator('header#pluto-nav button[aria-label="More"]').boundingBox();
+  assert.ok(nav.x + nav.width - (more.x + more.width) < 24, "the ⋯ button sits near the right edge of the header");
+
+  assertNoProblems(page);
+});
+
+// The R status button's accessible name is the state words themselves
+// ("R ready"), not a generic "Open Status" -- matching its title, and the
+// same at every width, including the phone dot-only layout.
+test("header: the R status button's accessible name is the state words, at every width", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "header-r-status-name.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.waitForFunction(
+    () => document.querySelector("#ember-r-status .ember-r-status-words")?.innerText === "R not started",
+    null, { timeout: 15000 });
+
+  const wide_button = page.locator("#ember-r-status");
+  assert.equal(await wide_button.getAttribute("aria-label"), "R not started");
+  assert.equal(await wide_button.getAttribute("title"), "R not started");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const phone_button = page.locator("#ember-r-status");
+  assert.equal(await phone_button.getAttribute("aria-label"), "R not started");
+  assert.equal(await phone_button.getAttribute("title"), "R not started");
+
+  assertNoProblems(page);
+});
