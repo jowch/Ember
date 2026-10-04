@@ -444,13 +444,19 @@ run_cell <- function(msg) {
         }
         # One line, for the wire and for the "is it the loop's own eval"
         # and "is it the top-level expression itself" checks below --
-        # deparse() can return more than one element for a long call.
-        call_text <- if (is.null(call)) NULL else paste(deparse(call), collapse = " ")
+        # deparse() can return more than one element for a long call, and
+        # `deparse_one_line()` also squashes a multi-line call's interior
+        # indentation (`local({ ... })`'s body) to single spaces.
+        call_text <- if (is.null(call)) NULL else deparse_one_line(call)
         # A bare top-level stop() (or any error raised with call. = FALSE)
-        # leaves `call` as this loop's own `eval(exprs[[k]], globalenv())`
-        # line, not anything the notebook wrote; treated the same as no
-        # call at all.
-        if (identical(call_text, "eval(exprs[[k]], globalenv())")) call_text <- NULL
+        # leaves `call` as this loop's own eval() line -- `exprs[[k]]` for
+        # a code cell, `line_e` for a text cell -- not anything the
+        # notebook wrote; treated the same as no call at all. That
+        # specific case has nothing worth a traceback either: its one
+        # surviving frame is the failing call itself, already named by
+        # `line`, so `frames` stays empty for it alone (test 127).
+        is_bare_toplevel <- is_loop_eval_text(call_text)
+        if (is_bare_toplevel) call_text <- NULL
         kept_calls <- calls[!is_original]
         kept_fns <- fns[!is_original]
         err_line <- NULL
@@ -459,7 +465,11 @@ run_cell <- function(msg) {
           sr <- attr(exprs, "srcref")
           if (!is.null(sr) && at >= 1 && at <= length(sr)) err_line <- sr[[at]][1]
           if (!is.null(call_text)) {
-            err_deep <- !identical(call_text, paste(deparse(exprs[[at]]), collapse = " "))
+            kept_texts <- vapply(kept_calls, deparse_one_line, character(1))
+            outer_idx <- clean_range(kept_texts)
+            outer_text <- if (length(outer_idx)) kept_texts[[outer_idx[1]]] else NULL
+            toplevel_text <- deparse_one_line(exprs[[at]])
+            err_deep <- !identical(call_text, outer_text) && !identical(call_text, toplevel_text)
           }
         }
         err <<- list(message = conditionMessage(e), call = call_text,
@@ -474,11 +484,13 @@ run_cell <- function(msg) {
                      span = if (is_text) at else NULL,
                      line = err_line,
                      deep = err_deep,
-                     # No `call` means nothing to point a traceback frame
-                     # at (the message already says "Error \u00b7 line n"
-                     # with no call), so frames stay empty rather than
-                     # listing the bare stop() call itself.
-                     frames = if (is.null(call_text)) list() else clean_frames(kept_calls, kept_fns))
+                     # Frames and traceback always have the same length,
+                     # except for a bare top-level stop() (see
+                     # `is_bare_toplevel` above): nothing the page would
+                     # show beyond the message, which already says
+                     # "Error" then a middle dot then "line n" with no
+                     # call.
+                     frames = if (is_bare_toplevel) list() else clean_frames(kept_calls, kept_fns))
       }),
       interrupt = function(i) rc$status <<- "interrupted",
       error     = function(e) rc$status <<- "error")
@@ -1245,11 +1257,13 @@ console_collector <- function(cell, token) {
   self$warning <- function(w) {
     flush_stdout()
     call <- conditionCall(w)
-    call_text <- if (is.null(call)) NULL else paste(deparse(call), collapse = " ")
+    call_text <- if (is.null(call)) NULL else deparse_one_line(call)
     # A bare top-level warning() carries the eval loop's own call, not
     # anything the notebook wrote (the same case `run_cell()`'s error
-    # handler nulls out); treated as no call at all.
-    if (identical(call_text, "eval(exprs[[k]], globalenv())")) call_text <- NULL
+    # handler nulls out); treated as no call at all. Code and text cells
+    # loop over different variables (`exprs[[k]]`, `line_e`), so both
+    # eval() calls are checked.
+    if (is_loop_eval_text(call_text)) call_text <- NULL
     add_item("warning", conditionMessage(w), call = call_text)
   }
   self$print <- function(v) {
@@ -1537,13 +1551,24 @@ tree_limit_set <- function(limits, path, value) {
 #' reached yet.
 display_tree_node <- function(x, path, depth, limits, max_depth = 4) {
   if (depth >= max_depth || !identical(class(x), "list")) {
-    # A long plain vector (no class attribute, e.g. not a factor or Date)
-    # becomes an expandable leaf of its own: the first 10 formatted
-    # values, its type and its full length, so the page can show
-    # "... int, 100 values" instead of str()'s one-line summary.
-    if (is.atomic(x) && is.null(attr(x, "class")) && length(x) > 1) {
-      vals <- tryCatch(as.character(eval_in_notebook(quote(format(v)), utils::head(x, 10))),
-                       error = function(e) rep("<unprintable>", min(10L, length(x))))
+    # A long plain vector (no class attribute, e.g. not a factor or Date;
+    # not a matrix or array, which has a dim but no class; and unnamed,
+    # since the values alone would silently drop the names) becomes an
+    # expandable leaf of its own: the first 10 formatted values, its type
+    # and its full length, so the page can show "... int, 100 values"
+    # instead of str()'s one-line summary.
+    if (is.atomic(x) && is.null(attr(x, "class")) && is.null(dim(x)) &&
+        is.null(names(x)) && length(x) > 1) {
+      head_x <- utils::head(x, 10)
+      vals <- tryCatch({
+        if (is.character(head_x)) {
+          # format() doesn't quote a character vector; quoted the way
+          # print() shows one.
+          encodeString(head_x, quote = '"')
+        } else {
+          as.character(eval_in_notebook(quote(format(v, trim = TRUE)), head_x))
+        }
+      }, error = function(e) rep("<unprintable>", min(10L, length(x))))
       return(list(type = "vector", values = vals,
                  type_sum = gsub("[<>]", "", column_type(x)), length = length(x)))
     }
@@ -1813,6 +1838,22 @@ render_plot <- function(msg) {
                      size = list(width = px$width, height = px$height, res = px$res)))
 }
 
+#' One line for a call or expression, long-form deparse() output joined
+#' and runs of interior whitespace -- the indentation a multi-line body
+#' such as `local({ ... })` leaves behind -- squashed to single spaces.
+deparse_one_line <- function(x) {
+  gsub("[ \t]+", " ", paste(deparse(x), collapse = " "))
+}
+
+#' `TRUE` for either eval() call the run loop uses to execute a
+#' notebook's own code -- `exprs[[k]]` for a code cell's top-level
+#' expressions, `line_e` for a text cell's per-line expressions -- so a
+#' condition raised with no deeper call (a bare top-level stop() or
+#' warning()) is recognised the same way for both.
+is_loop_eval_text <- function(text) {
+  identical(text, "eval(exprs[[k]], globalenv())") || identical(text, "eval(line_e, globalenv())")
+}
+
 #' Strip the worker's own frames from sys.calls(): everything up to and
 #' including the eval of the cell (above the user's code), and the
 #' condition-dispatch machinery below it (`.handleSimpleError()` and
@@ -1826,11 +1867,12 @@ render_plot <- function(msg) {
 #' the user's own code by matching their deparsed call text alone (a
 #' classed condition's dispatch never goes through the `.handleSimpleError`
 #' family this function still filters for simple conditions).
+#'
 #' The indices of `calls` (deparsed to `texts`, one line each) that are
 #' the user's own code, shared by `clean_calls()` and `clean_frames()` so
 #' the two always select the same frames in the same order.
 clean_range <- function(texts) {
-  start_idx <- which(texts == "eval(exprs[[k]], globalenv())")
+  start_idx <- which(vapply(texts, is_loop_eval_text, logical(1)))
   start <- if (length(start_idx)) max(start_idx) + 1L else 1L
   if (start > length(texts)) return(integer())
   tail_idx <- seq.int(start, length(texts))
@@ -1844,7 +1886,7 @@ clean_range <- function(texts) {
 }
 
 clean_calls <- function(calls) {
-  texts <- vapply(calls, function(c) paste(deparse(c), collapse = " "), character(1))
+  texts <- vapply(calls, deparse_one_line, character(1))
   texts[clean_range(texts)]
 }
 
@@ -1860,7 +1902,7 @@ clean_calls <- function(calls) {
 #' function carries no srcref (a package function, normally built without
 #' one).
 clean_frames <- function(calls, fns) {
-  texts <- vapply(calls, function(c) paste(deparse(c), collapse = " "), character(1))
+  texts <- vapply(calls, deparse_one_line, character(1))
   idx <- clean_range(texts)
   lapply(idx, function(i) {
     fn <- fns[[i]]
