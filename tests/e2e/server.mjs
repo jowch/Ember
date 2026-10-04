@@ -72,15 +72,15 @@ for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]]) {
   process.once(signal, () => process.exit(code));
 }
 
-async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd }) {
+async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port: fixedPort, secret = SECRET }) {
   const rscript = process.env.EMBER_RSCRIPT ?? "Rscript";
   const quoted = notebookPaths.map((p) => JSON.stringify(p)).join(", ");
-  const port = await freePort();
+  const port = fixedPort ?? await freePort();
   // Set before `ember::serve()` starts: `installer_script()` (R/library.R)
   // reads the option when `library.R` builds each install's command, so it
   // must already be set the first time a notebook tries to install.
   const prelude = installerScript ? `options(ember.installer_script = ${JSON.stringify(installerScript)}); ` : "";
-  const expr = `${prelude}ember::serve(paths = c(${quoted}), port = ${port}, secret = ${JSON.stringify(SECRET)})`;
+  const expr = `${prelude}ember::serve(paths = c(${quoted}), port = ${port}, secret = ${JSON.stringify(secret)})`;
 
   // tools::R_user_dir("ember", "data") (recent.R's recent-notebooks file)
   // honours this environment variable: each server gets its own temp
@@ -137,7 +137,8 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   return {
     url,
     origin: new URL(url).origin + "/",
-    secret: SECRET,
+    secret,
+    port,
     child,
     log: () => buffer,
     /** SIGTERM, then SIGKILL if the child is still alive 2 s later.
@@ -161,13 +162,16 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
  * moments apart, and whichever's child binds second loses. Any other
  * failure (a real startup error, a timeout) is not retried -- it means
  * something actually wrong, not a race, and retrying would only hide it
- * behind a slower, equally failing attempt. */
+ * behind a slower, equally failing attempt.
+ *
+ * `port` and `secret` pin what the server uses, for a test that restarts
+ * a server at the same address with a new secret. */
 export async function startServer(notebookPaths, opts = {}) {
-  const { timeoutMs = 30000, logFile, retries = 3, installerScript, cwd } = opts;
+  const { timeoutMs = 30000, logFile, retries = 3, installerScript, cwd, port, secret } = opts;
   let lastErr;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      return await startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd });
+      return await startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port, secret });
     } catch (err) {
       if (!err.bindFailure || attempt === retries) throw err;
       lastErr = err;

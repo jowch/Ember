@@ -674,11 +674,15 @@ test_that("a websocket opened without the secret is closed before any handler is
 
   app <- http_app(server)
   closed <- FALSE
-  ws <- list(request = fake_req("/", ""), close = function() closed <<- TRUE,
+  close_code <- NULL
+  ws <- list(request = fake_req("/", ""),
+            close = function(code = 1000L, reason = "") { closed <<- TRUE; close_code <<- code },
             onMessage = function(f) stop("should not be reached without the secret"),
             onClose = function(f) stop("should not be reached without the secret"))
   app$onWSOpen(ws)
   expect_true(closed)
+  # The code the editor reads as "Ember restarted" (PlutoConnection.js).
+  expect_equal(close_code, 4403L)
 })
 
 # ---- review4 item 1: the secret cookie must not open a websocket; Origin/Host --
@@ -698,10 +702,10 @@ test_that("a websocket opened with only the ember_secret cookie (no ?secret=) is
   app <- http_app(server)
   closed <- FALSE
   ws <- list(request = fake_req("/", "", cookie = "ember_secret_40001=s"),
-            close = function() closed <<- TRUE,
+            close = function(...) closed <<- TRUE,
             onMessage = function(f) stop("should not be reached"),
             onClose = function(f) stop("should not be reached"))
-  app$onWSOpen(ws)
+  expect_output(app$onWSOpen(ws), "without its key")
   expect_true(closed)
 })
 
@@ -754,7 +758,7 @@ test_that("http_call() and onWSOpen() refuse a mismatched Origin (review4 1)", {
   app <- http_app(server)
   closed <- FALSE
   ws <- list(request = fake_req("/", "secret=s", origin = "http://127.0.0.1:9999"),
-            close = function() closed <<- TRUE, onMessage = function(f) NULL, onClose = function(f) NULL)
+            close = function(...) closed <<- TRUE, onMessage = function(f) NULL, onClose = function(f) NULL)
   app$onWSOpen(ws)
   expect_true(closed)
 })
@@ -960,6 +964,56 @@ test_that("GET /?secret= serves start.html with the cookie; without the secret i
 
   denied <- http_call(server, fake_req("/"))
   expect_equal(denied$status, 403L)
+})
+
+# ---- A page asked for without the key, or with an old one ------------------
+
+test_that("a page without the right key gets the key page, which echoes nothing from the request (key page)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("the-real-secret", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+
+  pages <- list(c("/", ""), c("/", "secret=an-old-secret"),
+                c("/edit", sprintf("id=%s", id)), c("/edit", sprintf("id=%s&secret=an-old-secret", id)),
+                c("/open", sprintf("path=%s", utils::URLencode(path, reserved = TRUE))))
+  for (p in pages) {
+    resp <- http_call(server, fake_req(p[1], p[2]))
+    label <- paste0(p[1], "?", p[2])
+    expect_equal(resp$status, 403L, label = label)
+    expect_equal(resp$headers[["Content-Type"]], "text/html; charset=utf-8", label = label)
+    expect_match(resp$body, "This link needs Ember's current key", fixed = TRUE, label = label)
+    expect_match(resp$body, "Ember makes a new key each time it starts", fixed = TRUE, label = label)
+    expect_match(resp$body, "open the link Ember just printed in the R console", fixed = TRUE, label = label)
+    expect_match(resp$body, "ember::start_server()", fixed = TRUE, label = label)
+    for (secret_or_path in c("the-real-secret", "an-old-secret", id, basename(path), "secret=")) {
+      expect_false(grepl(secret_or_path, resp$body, fixed = TRUE), label = paste(label, secret_or_path))
+    }
+  }
+
+  # Routes a script fetches, not a person, keep the plain-text answer.
+  for (r in c("/notebookfile", "/notebookexport")) {
+    resp <- http_call(server, fake_req(r, sprintf("id=%s", id)))
+    expect_equal(resp$status, 403L, label = r)
+    expect_equal(resp$headers[["Content-Type"]], "text/plain; charset=utf-8", label = r)
+  }
+})
+
+test_that("a refused page prints the working link, at most once every few seconds (key page)", {
+  server <- new_server("the-real-secret", throttle = 0)
+  server$port <- 40009L
+  expect_output(http_call(server, fake_req("/edit", "id=x")),
+                "A browser asked for Ember without its key. Open: http://127.0.0.1:40009/?secret=the-real-secret",
+                fixed = TRUE)
+  expect_silent(http_call(server, fake_req("/")))
+
+  server$key_hint_at <- Sys.time() - 60
+  expect_output(http_call(server, fake_req("/")), "without its key", fixed = TRUE)
+  # A script's route never prints it.
+  server$key_hint_at <- NULL
+  expect_silent(http_call(server, fake_req("/notebookfile", "id=x")))
 })
 
 # ---- Remote use: a stable default port -----------------------------------
@@ -1655,8 +1709,15 @@ test_that("start_server() returns a working handle, and stop() ends the child (s
   }
 
   path <- write_session_notebook(list(S = cell(""), A = cell("1")))
-  handle <- start_server(path, open = FALSE, timeout = 30)
+  started <- NULL
+  expect_message(
+    started <- withVisible(start_server(path, open = FALSE, timeout = 30)),
+    sprintf("^Ember has %s open at http://127\\.0\\.0\\.1:[1-9][0-9]*/edit\\?id=[^&]+&secret=[^ \n]+\nStop it by calling \\$stop\\(\\) on the returned server, or by quitting R\\.",
+            gsub(".", "\\.", basename(path), fixed = TRUE)))
+  handle <- started$value
   on.exit(try(handle$stop(), silent = TRUE), add = TRUE)
+  expect_false(started$visible)
+  expect_output(print(handle), "<ember_server> running at http://127.0.0.1:", fixed = TRUE)
 
   # [1-9][0-9]* (not a bare "0"): port = 0 must resolve to a real port
   # (httpuv::startServer()'s own getPort() doesn't report it; see
@@ -1667,6 +1728,41 @@ test_that("start_server() returns a working handle, and stop() ends the child (s
   handle$stop()
   handle$process$wait(5000)
   expect_false(handle$process$is_alive())
+  expect_output(print(handle), "<ember_server> stopped (was at http://127.0.0.1:", fixed = TRUE)
+})
+
+test_that("start_server() prints its link, and prints it again when a browser asks without the key (start_server)", {
+  skip_on_cran()
+
+  ember_lib <- file.path(tempdir(), "ember-self-lib")
+  if (dir.exists(file.path(ember_lib, "ember"))) {
+    old_r_libs_user <- Sys.getenv("R_LIBS_USER", unset = NA)
+    Sys.setenv(R_LIBS_USER = paste(c(ember_lib, Sys.getenv("R_LIBS_USER")), collapse = .Platform$path.sep))
+    on.exit({
+      if (is.na(old_r_libs_user)) Sys.unsetenv("R_LIBS_USER") else Sys.setenv(R_LIBS_USER = old_r_libs_user)
+    }, add = TRUE)
+  }
+
+  handle <- NULL
+  expect_message(
+    handle <- start_server(port = pick_free_port(), open = FALSE, timeout = 30),
+    "^Ember is running at http://127\\.0\\.0\\.1:[1-9][0-9]*/\\?secret=[^ \n]+\nStop it by")
+  on.exit(try(handle$stop(), silent = TRUE), add = TRUE)
+  port <- as.integer(sub("^http://[^:]+:([0-9]+)/.*$", "\\1", handle$url))
+
+  resp <- http_get_raw("127.0.0.1", port, "/edit?id=gone&secret=an-old-secret")
+  expect_equal(resp$status, 403L)
+  expect_equal(resp$headers[["content-type"]], "text/html; charset=utf-8")
+
+  seen <- character()
+  deadline <- Sys.time() + 10
+  while (length(seen) == 0 && Sys.time() < deadline) {
+    withCallingHandlers(later::run_now(0.2), message = function(m) {
+      seen <<- c(seen, conditionMessage(m))
+      invokeRestart("muffleMessage")
+    })
+  }
+  expect_equal(seen, paste0("A browser asked for Ember without its key. Open: ", handle$url, "\n"))
 })
 
 # ---- Cache headers: immutable for hashed vendor files, no-cache for the ----
@@ -1689,7 +1785,7 @@ test_that("serve() answers hashed vendor files immutable and everything else no-
   # after an on.exit `stop()`) has been flaky under the full suite's
   # timing, landing this test on a leftover process instead of its own.
   path <- write_session_notebook(list(S = cell(""), A = cell("1")))
-  handle <- start_server(path, port = pick_free_port(), open = FALSE, timeout = 30)
+  handle <- suppressMessages(start_server(path, port = pick_free_port(), open = FALSE, timeout = 30))
   on.exit(try(handle$stop(), silent = TRUE), add = TRUE)
 
   m <- regmatches(handle$url, regexec("^http://127\\.0\\.0\\.1:([0-9]+)/\\?secret=(.*)$", handle$url))[[1]]
