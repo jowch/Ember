@@ -208,8 +208,35 @@ test_that("a parse error gives parseerror+object with one diagnostic on the righ
   o <- project_output(v)
   expect_equal(o$mime, "application/vnd.pluto.parseerror+object")
   expect_equal(length(o$body$diagnostics), 1)
-  expect_true(o$body$diagnostics[[1]]$line >= 1)
+  # The syntax error is on line 2 (an unexpected assignment right after
+  # "x <-"); the diagnostic must land there, not always on line 1.
+  expect_equal(o$body$diagnostics[[1]]$line, 2L)
   expect_true(check_wire(o))
+})
+
+test_that("a private-name error projects with no cell id in its message (10)", {
+  owner_id <- "ca1b0a64-d117-466f-898a-8603bbc24e75"
+  reader_id <- "e2f5c0a1-8a8e-4e8e-9a0e-1a2b3c4d5e6f"
+  cells <- setNames(list(cell(".tmp <- 1"), cell("print(.tmp)")), c(owner_id, reader_id))
+  s <- fake_state(cells, setup = owner_id)
+  v <- snapshot_of(s)$cells[[reader_id]]
+  o <- project_output(v)
+  expect_equal(o$mime, "application/vnd.pluto.stacktrace+object")
+  expect_no_match(o$body$msg, owner_id, fixed = TRUE)
+  expect_no_match(o$body$msg, reader_id, fixed = TRUE)
+  expect_match(o$body$msg, ".tmp", fixed = TRUE)
+})
+
+test_that("a cycle error projects with no cell id in its message (10)", {
+  id_a <- "ca1b0a64-d117-466f-898a-8603bbc24e75"
+  id_b <- "e2f5c0a1-8a8e-4e8e-9a0e-1a2b3c4d5e6f"
+  cells <- setNames(list(cell("a <- 1\nb"), cell("b <- 1\na")), c(id_a, id_b))
+  s <- fake_state(cells, setup = id_a)
+  v <- snapshot_of(s)$cells[[id_a]]
+  o <- project_output(v)
+  expect_equal(o$mime, "application/vnd.pluto.stacktrace+object")
+  expect_no_match(o$body$msg, id_a, fixed = TRUE)
+  expect_no_match(o$body$msg, id_b, fixed = TRUE)
 })
 
 test_that("a multiple-definitions error message starts right, with fixes on separate lines (10)", {

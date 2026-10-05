@@ -114,6 +114,20 @@ test_that("using another cell's private name is an error with no edge", {
   expect_false(any(g$edges$from == "B" & g$edges$to == "A" & g$edges$via == "definition"))
 })
 
+test_that("a private-name error's message has no cell id, only the private name", {
+  owner_id <- "ca1b0a64-d117-466f-898a-8603bbc24e75"
+  reader_id <- "e2f5c0a1-8a8e-4e8e-9a0e-1a2b3c4d5e6f"
+  g <- build_test_graph(setNames(
+    list(fake_cell(code = "owner", defs = ".tmp"),
+        fake_cell(code = "reader", refs = ".tmp")),
+    c(owner_id, reader_id)
+  ), setup = owner_id)
+  err <- Filter(function(e) e$kind == "private_name", g$errors)
+  expect_length(err, 1)
+  expect_no_match(err[[1]]$message, owner_id, fixed = TRUE)
+  expect_match(err[[1]]$message, ".tmp", fixed = TRUE)
+})
+
 # ---- Global settings ---------------------------------------------------------
 
 test_that("a setting call outside the setup cell is an error", {
@@ -181,6 +195,21 @@ test_that("a three-cell cycle is one error naming all three cells", {
   expect_length(errs, 1)
   expect_equal(errs[[1]]$cells, c("A", "B", "C"))
   expect_equal(errs[[1]]$names, c("a", "b", "c"))
+})
+
+test_that("a cycle's message names the variables, not the cell ids", {
+  id_a <- "ca1b0a64-d117-466f-898a-8603bbc24e75"
+  id_b <- "e2f5c0a1-8a8e-4e8e-9a0e-1a2b3c4d5e6f"
+  g <- build_test_graph(setNames(
+    list(fake_cell(code = "a", defs = "a", refs = "b"),
+        fake_cell(code = "b", defs = "b", refs = "a")),
+    c(id_a, id_b)
+  ), setup = id_a)
+  errs <- Filter(function(e) e$kind == "cycle", g$errors)
+  expect_length(errs, 1)
+  expect_no_match(errs[[1]]$message, id_a, fixed = TRUE)
+  expect_no_match(errs[[1]]$message, id_b, fixed = TRUE)
+  expect_match(errs[[1]]$message, "a, b", fixed = TRUE)
 })
 
 test_that("the setup cell can be part of a cycle", {
@@ -423,6 +452,24 @@ test_that("a cell with a parse error keeps its setup edge and has no definitions
   errs <- Filter(function(e) e$kind == "parse", g$errors)
   expect_length(errs, 1)
   expect_equal(errs[[1]]$cells, "B")
+})
+
+test_that("a parse error's graph error carries the real line, not always 1", {
+  g <- build_test_graph(list(
+    A = fake_cell(code = "A"),
+    B = fake_cell(code = "B", parse_error = list(message = "unexpected ','",
+                                                 line = 3L, column = 5L))
+  ), setup = "A")
+  errs <- Filter(function(e) e$kind == "parse", g$errors)
+  expect_length(errs, 1)
+  expect_equal(errs[[1]]$lines$line, 3L)
+})
+
+test_that("a parse error at the end of input stays on the cell's last line", {
+  a <- read_cell("x <- (\n")
+  expect_equal(a$parse_error$line, 1L)
+  a <- read_cell("y <- 1\nx <- (\n\n")
+  expect_equal(a$parse_error$line, 2L)
 })
 
 # ---- Disable cell (ui-3 20-23) -----------------------------------------------

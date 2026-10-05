@@ -292,7 +292,9 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 #' `"interrupted"`), `stale`, `code_differs`, `errors` (graph errors, or
 #' else the run error, each with `kind`, `message`, `fixes`, `names`, and, for an
 #' `"upstream"` run error, `cells`; a plain "error" also carries `call`,
-#' `line`, `deep` and `frames`, as `new_run_error()` documents),
+#' `line`, `deep` and `frames`, as `new_run_error()` documents; a graph
+#' error of kind `"parse"` also carries `lines`, for `project_parse_error()`
+#' (pluto-state.R) to put the diagnostic on the real line),
 #' `output` (`ember_display` or `NULL`),
 #' `console`, `last_run`, `runtime`, `disabled` (the user's own choice),
 #' `disabled_by` (the disabled cell a dependent is off because of, `NA`
@@ -438,7 +440,8 @@ cell_view <- function(state, ctx, i) {
 
   g_errors <- lapply(ctx$errors_by_cell[[i]], function(e) {
     list(kind = e$kind, message = e$message, fixes = e$fixes,
-        names = e$names, cells = character(), traceback = character())
+        names = e$names, cells = character(), traceback = character(),
+        lines = e$lines)
   })
   # A cell with a graph error can't run, so any run error it holds is from
   # before the graph error and would hide it (the page shows the last error).

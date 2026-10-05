@@ -497,12 +497,17 @@ find_errors <- function(cells, analyses, edges, setup, ids, components,
                         disabled = character()) {
   errors <- list()
 
-  # parse: analyses[[id]]$parse_error non-NULL.
+  # parse: analyses[[id]]$parse_error non-NULL. lines carries pe$line
+  # through to project_parse_error() (pluto-state.R) so the diagnostic
+  # lands on the real line instead of always line 1.
   for (id in ids) {
     pe <- analyses[[id]]$parse_error
     if (!is.null(pe)) {
       errors[[length(errors) + 1]] <- new_graph_error(
-        kind = "parse", cells = id, names = character(), lines = NULL,
+        kind = "parse", cells = id, names = character(),
+        lines = if (!is.null(pe$line) && !is.na(pe$line)) {
+          data.frame(line = pe$line)
+        },
         message = sprintf("Syntax error: %s", pe$message),
         fixes = character())
     }
@@ -548,9 +553,10 @@ find_errors <- function(cells, analyses, edges, setup, ids, components,
   }
 
   # private_name: reference n of b with is_private_name(n) and some other
-  # cell defining n; cells = b; message names the defining cell. Built from
-  # a name -> owning ids lookup (one pass over private names) instead of
-  # testing every id against every private reference.
+  # cell defining n; cells = b. The message names no cell (cell ids are
+  # UUIDs and never belong in user-facing text), only the private name.
+  # Built from a name -> owning ids lookup (one pass over private names)
+  # instead of testing every id against every private reference.
   private_owner_map <- list()
   for (id in ids) {
     if (id %in% disabled) next
@@ -566,7 +572,7 @@ find_errors <- function(cells, analyses, edges, setup, ids, components,
       if (length(owners) == 0) next
       errors[[length(errors) + 1]] <- new_graph_error(
         kind = "private_name", cells = b, names = n, lines = NULL,
-        message = sprintf("%s is private to %s.", n, paste(owners, collapse = ", ")),
+        message = sprintf("%s is private to the cell that defines it.", n),
         fixes = sprintf("Drop the dot: %s", sub("^\\.", "", n)))
     }
   }
@@ -618,10 +624,17 @@ find_errors <- function(cells, analyses, edges, setup, ids, components,
     } else {
       character()
     }
+    cycle_msg <- if (length(names_in_comp) > 0) {
+      sprintf("%s form a cycle.", paste(names_in_comp, collapse = ", "))
+    } else {
+      # No named edge inside the component (every link is a bare
+      # for/setup dependency): name no cell (cell ids are UUIDs and
+      # never belong in user-facing text).
+      "These cells form a cycle."
+    }
     errors[[length(errors) + 1]] <- new_graph_error(
       kind = "cycle", cells = comp_ord, names = names_in_comp, lines = NULL,
-      message = sprintf("%s form a cycle.", paste(comp_ord, collapse = ", ")),
-      fixes = fix)
+      message = cycle_msg, fixes = fix)
   }
 
   errors
