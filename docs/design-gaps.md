@@ -84,6 +84,10 @@ done; clear out ticked items at each release.
 - [ ] When a never-run cell starts running, the "Not run yet" chip goes and the output arrives about 60 ms later, so the layout moves twice; keep the chip's space until the output arrives. Cmd+Enter on an unchanged cell briefly sets it waiting to run (the 250 ms delay hides it) — improvised
 - [ ] Help panel against Panel3: R's own "Description" heading still shows; the search field lacks the board's icon, 30 px height and page background; See Also is R's paragraph, not a row of links — improvised
 - [ ] Help page links: R's footer (`00Index.html`) and "Run examples" (`../Example/...`) aren't rewritten, so they leave the page or break; a link clicked inside a help page is labelled "follows the cursor" — improvised
+- [ ] `start_server()` checks the server's output every 0.5 s from the user's R session to reprint the link; on macOS and Linux it should wait on the pipe with `later::later_fd()` instead (Windows pipes don't work with it, so keep a slower poll there) — improvised
+- [ ] Dialogs opened with `ask()`/`tell()` (reload, lost connection, "Ember restarted") show in the browser's default serif font: `.ember-dialog` is attached outside the editor and has no `font-family` — improvised
+- [ ] After the server refuses a stale key, the Status tab still says "Reconnecting"; the header says "Ember restarted". Pass `key_refused` through BottomRightPanel.js — improvised
+- [ ] A tab left open across a restart that lands on a different port keeps retrying with "Reconnecting", since nothing at its address refuses it — improvised
 - [ ] The signature tooltip above the line catches clicks meant for the line under it — improvised
 - [ ] `not_explicit_and_too_boring` (live docs) checks Julia's number node names (`IntegerLiteral`, `FloatLiteral`); R's parser calls it `Number`, so the check never fires — improvised
 
