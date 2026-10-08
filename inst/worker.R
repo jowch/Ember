@@ -152,17 +152,26 @@ main <- function() {
   options(cli.num_colors = 256L, crayon.enabled = TRUE, crayon.colors = 256L)
   # So `library(` completion includes installed package names (complete_line()).
   tryCatch(utils::rc.settings(ipck = TRUE), error = function(e) NULL)
-  send(list(type = "hello", secret = Sys.getenv("EMBER_SECRET"),
-            pid = Sys.getpid(), r_version = R.version.string,
-            lib_paths = .libPaths(), loaded = loaded_namespace_versions()))
+  secret <- Sys.getenv("EMBER_SECRET")
   Sys.unsetenv("EMBER_SECRET")      # cells must not see it
   settings_base <<- snapshot_settings()
   # An interrupt that arrives between cells (late, or while a message is
   # read) has nothing to stop: it is resumed where it landed. While a cell
-  # runs, run_cell()'s own handlers are nearer and catch it first.
-  repeat {
-    withCallingHandlers(handle_next(), interrupt = ignore_interrupt)
-  }
+  # runs, run_cell()'s own handlers are nearer and catch it first. The
+  # hello is sent under the same handler, with nothing left to do between
+  # it and the loop: the server may interrupt as soon as it has the hello,
+  # and an interrupt that reaches top level ends Rscript (about 1 in 4
+  # tries of test-worker.R's interrupt_between_runs_swallowed when the
+  # settings snapshot above still ran after the hello).
+  withCallingHandlers({
+    send(list(type = "hello", secret = secret,
+              pid = Sys.getpid(), r_version = R.version.string,
+              lib_paths = .libPaths(), loaded = loaded_namespace_versions()))
+    # This frame stays on the stack while every cell runs, so a cell
+    # walking sys.frames() would find the secret here.
+    rm(secret)
+    repeat handle_next()
+  }, interrupt = ignore_interrupt)
 }
 
 #' Continue after an interrupt as if it hadn't happened. R offers a

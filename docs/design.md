@@ -279,8 +279,9 @@ like part of the cell:
   calls from packages, and sends the resolved path to the engine before the
   file's code runs. The engine parses the file, rejects it if it defines a
   name another cell defines, removes the cell's old definitions, then lets
-  `source` proceed. Before the first run, the last path recorded in the
-  footer stands in. This happens silently; the user sees no note.
+  `source` proceed. Before the cell's first run, the paths the footer's
+  `learned sources` block records for that cell stand in, until the cell
+  runs again. This happens silently; the user sees no note.
 - The notebook's footer records each sourced file's path and hash, so a
   changed or missing helper is reported on open. The helper's code stays in
   its own file; the notebook alone is no longer the whole record, and the
@@ -374,7 +375,10 @@ The rule is wrong when a formula mixes a data frame with a global vector
 (`lm(y ~ x + z, data = df)`, `z` not a column), and it errs towards a missing
 edge. So after the cell runs, the worker checks that each name taken as a
 column is in `names()` of the data frame the function received; if one
-isn't, the engine adds the edge and shows a note.
+isn't, the engine adds the edge and shows a note. The footer's `learned
+references` block records these names, so the edge is there when the
+notebook is opened without running. Editing the cell drops them, as it
+drops learned settings; the next run's check finds them again.
 
 In Julia, StatsModels' `@formula` always treats terms as columns, so Pluto
 needs no such rule.
@@ -859,6 +863,16 @@ load("fits.RData")
   ignored, and the next save drops it. Settings found when a cell ran are
   kept in a `learned settings` block, written only when non-empty (see
   [settings-cells.md](settings-cells.md)).
+- What the engine learned when cells ran is kept in `learned` blocks, one
+  line per cell (the id, then its words), each written only when
+  non-empty: `learned definitions` (names the cell created that the code
+  doesn't show), `learned references` (formula terms that weren't columns
+  of the data), `learned settings`, and `learned sources` (the computed
+  `source()` paths the cell read; their hashes are in `sourced files`). A
+  word with a space, quote or backslash is written as a quoted string. A
+  file without these blocks reads as having nothing learned; a computed
+  path in `sourced files` that no `learned sources` line claims stands in
+  for every cell until all of them have run.
 - Package names aren't repeated in the header; they come from the code,
   except the few in `[extra_packages]` that the code can't reveal.
 - `ember_version` is the Ember version that last saved the file, as Pluto
