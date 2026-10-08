@@ -637,15 +637,18 @@ test_that("a one-cell change at 2000 cells stays fast when every cell has a resu
     expect_identical(p2$js$cell_results[[id]], p1$js$cell_results[[id]], info = id)
   }
 
-  # So with results it should cost about twice what it does without (the
-  # results themselves are compared and projected): the quadratic lookup
-  # made it some thirty-five times as much.
-  y <- perf_projection(2000)
+  # Ten times the cells, every one with a result, should cost about ten
+  # times as much (about 8x here: fixed costs weigh more at 200). The
+  # quadratic lookup (2 s at 2000 cells, so about 20 ms at 200) made it
+  # about 60x. Timed against the
+  # same notebook at 200 cells rather than against one without results,
+  # whose cost differs by platform (2.5x here, 8x on Windows CI).
+  y <- perf_projection(200, results = TRUE)
   r <- time_ratio(function() pluto_state(s2, p1), function() pluto_state(y$state, y$previous),
-                  inner_a = 3L, inner_b = 3L)
-  cat(sprintf("\n[timing] pluto_state() at 2000 cells, one changed: %.1f ms with every result, %.1f ms with none (%.2fx)\n",
+                  inner_a = 3L, inner_b = 20L)
+  cat(sprintf("\n[timing] pluto_state(), every cell has a result, one changed: 2000 cells %.1f ms, 200 cells %.2f ms (%.1fx)\n",
               r$a * 1000, r$b * 1000, r$ratio))
-  expect_lt(r$ratio, 8)
+  expect_lt(r$ratio, 30)
   expect_lt(r$a, 0.5)
 })
 
