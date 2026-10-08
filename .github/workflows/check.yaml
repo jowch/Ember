@@ -87,7 +87,7 @@ jobs:
       - working-directory: tests/e2e
         run: npm ci
       - working-directory: tests/e2e
-        run: npx playwright install --with-deps chromium
+        run: npx playwright-core install --with-deps chromium
       - working-directory: tests/e2e
         run: npm test
       - name: Upload server logs and screenshots on failure
