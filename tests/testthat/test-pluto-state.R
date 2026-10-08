@@ -969,3 +969,11 @@ test_that("the worker exiting or failing to start clears worker_started_at and r
   expect_null(js4$ember$worker_started_at)
   expect_null(js4$ember$r_version)
 })
+
+test_that("project_error() gives a setting or package conflict's cells, so the page links the other (review)", {
+  err <- list(kind = "setting_conflict", message = "digits is set in two cells.",
+              fixes = "Keep one", cells = c("A", "B"))
+  o <- project_error(err)
+  expect_equal(o$ember_cells, list("A", "B"))
+  expect_null(project_error(list(kind = "error", message = "boom"))$ember_cells)
+})

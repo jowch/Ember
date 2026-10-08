@@ -579,12 +579,16 @@ run_cell <- function(msg) {
       for (d in settings_diffs) {
         key <- list(kind = d$kind, name = d$name)
         if (!any(vapply(touched, identical, logical(1), y = key))) touched[[length(touched) + 1]] <<- key
-        # ggplot2 wasn't loaded when the baseline was taken: the theme it
-        # had before the first theme_set() is the one to go back to.
+        # The starting theme normally comes from ggplot2's own load
+        # (settings_by_code()); if that load wasn't seen, ggplot2's default.
         if (identical(d$kind, "theme") && is.null(settings_base$theme))
-          settings_base$theme <<- d$before
+          settings_base$theme <<- get("theme_grey", envir = asNamespace("ggplot2"))()
       }
+      # The server reads only kind and name (and a search diff's entries);
+      # a theme's values are whole ggplot2 objects, which the server
+      # process would have to unserialize, so they stay here.
       rc$settings <- lapply(settings_diffs, function(d) {
+        if (identical(d$kind, "theme")) return(list(kind = "theme", name = "theme"))
         list(kind = d$kind, name = d$name, before = d$before, after = d$after)
       })
 
@@ -857,9 +861,11 @@ diff_settings <- function(before, after) {
     diffs <- c(diffs, list(list(kind = "wd", name = "wd", before = before$wd, after = after$wd)))
   if (!identical(before$search, after$search))
     diffs <- c(diffs, list(list(kind = "search", name = "search", before = before$search, after = after$search)))
-  # Only a theme change while ggplot2 was loaded on both sides: loading it
-  # isn't setting a theme.
-  if (!is.null(before$theme) && !is.null(after$theme) && !identical(before$theme, after$theme))
+  # ggplot2 loading takes the theme from NULL to its default. Inside a
+  # package load that is the load's own change (settings_by_code() makes it
+  # part of the starting values), so a `library(ggplot2); theme_set(...)`
+  # cell still shows its theme_set(). Unloading (to NULL) is no change.
+  if (!is.null(after$theme) && !identical(before$theme, after$theme))
     diffs <- c(diffs, list(list(kind = "theme", name = "theme", before = before$theme, after = after$theme)))
   diffs
 }

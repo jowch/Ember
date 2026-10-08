@@ -130,9 +130,11 @@ step <- function(state, event) {
   newly_off <- setdiff(names(r$state$graph$off), names(state$graph$off))
   to <- if (length(newly_off) > 0) turn_off(r$state, newly_off) else list(state = r$state, effects = list())
   # A settings cell that stops being in effect without running (disabled,
-  # or off because something it reads was) leaves later results computed
-  # under its settings: mark them stale through the old graph's edges.
-  lost <- intersect(state$graph$settings, newly_off)
+  # off because something it reads was, edited so it sets nothing, deleted,
+  # or blocked by a new conflict) leaves later results computed under its
+  # settings: mark them stale through the old graph's edges, which the new
+  # graph no longer has.
+  lost <- setdiff(effective_settings(state$graph), effective_settings(to$state$graph))
   if (length(lost) > 0) to$state <- stale_after_settings(to$state, state$graph, lost)
   pk <- schedule_packages(to$state, old = state)
   s <- schedule(pk$state)
@@ -350,7 +352,8 @@ drop_graph_error_results <- function(state, ids = NULL) {
   for (id in stale_results) {
     old <- state$results[[id]]
     state$results[[id]] <- NULL
-    state <- invalidate_dependents(state, id, old$defined, queue = FALSE)
+    state <- invalidate_dependents(state, id, old$defined, queue = FALSE,
+                                   was_setting = isTRUE(old$setting))
     if (state$worker$status %in% c("starting", "ready", "busy")) {
       effects <- c(effects, list(fx_send(state$worker$gen, list(type = "drop_globals", cell = id))))
     }
@@ -475,6 +478,13 @@ settings_in_effect <- function(state, id) {
   }, before[before %in% g$settings])
 }
 
+#' The settings cells whose settings a later cell can run under: not off
+#' and without a graph error of their own (`settings_in_effect()` also
+#' drops one whose last run failed).
+effective_settings <- function(g) {
+  setdiff(g$settings, union(names(g$off), blocked_cells(g)))
+}
+
 #' Mark stale every result downstream of `ids` in `old_graph` (the graph
 #' before the event that took those settings cells out of effect), without
 #' queueing anything.
@@ -541,6 +551,12 @@ is_fresh <- function(state, id) {
 #' without running" (an interrupt) leaves a cell correctly stale with no
 #' extra code.
 #'
+#' `was_setting`: the cell's last run was as a settings cell. Then every
+#' later cell in the run order counts as a dependent too, whether or not the
+#' cell still sets anything: a later result was computed under its settings,
+#' and an edit that removed them also removed the setting edges (the same
+#' reason `names` covers removed definitions).
+#'
 #' `queue = FALSE` is for an edit (including delete): engine.md's Decisions
 #' say an edit never runs anything, in either mode, so deleting a cell marks
 #' its dependents stale without adding them to `pending` even in autorun.
@@ -551,8 +567,13 @@ is_fresh <- function(state, id) {
 #' keep the graph from before an edit, because what matters is what the
 #' worker's globals came from, which `results[[id]]$defined` records
 #' directly.
-invalidate_dependents <- function(state, id, names, queue = TRUE) {
+invalidate_dependents <- function(state, id, names, queue = TRUE,
+                                  was_setting = isTRUE(state$results[[id]]$setting)) {
   dependents <- downstream(state$graph, id, transitive = TRUE)
+  if (was_setting) {
+    pos <- match(id, state$graph$order)
+    if (!is.na(pos)) dependents <- union(dependents, state$graph$order[-seq_len(pos)])
+  }
   if (length(names) > 0) {
     readers <- Filter(function(cid) {
       !identical(cid, id) && length(intersect(names, state$graph$cells[[cid]]$references)) > 0
@@ -1362,7 +1383,11 @@ reduce_wk_done <- function(state, event) {
   cur_settings <- state$graph$learned$settings[[id]] %||% character()
   learned_settings <- union(cur_settings, setdiff(reported_keys, known_keys))
   settings_changed <- !setequal(cur_settings, learned_settings)
-  settings_found <- setting_label(setdiff(reported_keys, known_keys))
+  # The run-time note is for a cell that becomes a settings cell by this
+  # run, so it shows once; one already a settings cell (in its code, e.g. a
+  # computed `options(op)`, or learned before) already has its setting edges.
+  settings_found <- if (id %in% state$graph$settings) character()
+                    else setting_label(setdiff(reported_keys, known_keys))
   if (defs_changed || refs_changed || settings_changed) {
     state$graph <- graph_learn(state$graph, id,
                                definitions = if (defs_changed) learned_defs else NULL,
@@ -1381,7 +1406,7 @@ reduce_wk_done <- function(state, event) {
                        started_at = w$running$started_at, runtime = runtime,
                        defined = report$created %||% character(),
                        variables = if (identical(status, "ok")) report$globals %||% list() else list(),
-                       settings_found = settings_found)
+                       settings_found = settings_found, setting = id %in% state$graph$settings)
   state$results[[id]] <- result
   if (length(state$footer_sources) && all_code_cells_ran(state)) {
     state$footer_sources <- character()

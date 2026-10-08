@@ -755,10 +755,15 @@ test_that("a disabled cell is excluded from cycle, private_name and global_setti
   expect_length(Filter(function(e) e$kind == "parse", g_parse$errors), 1)
 
   g_setting <- build_test_graph(list(
-    S = fake_cell(code = "S"),
-    A = fake_cell(code = "A", settings = "options")
+    S = fake_cell(code = "S", settings = c(options = "option:digits")),
+    A = fake_cell(code = "A", settings = c(options = "option:digits"))
   ), disabled = "A")
-  expect_length(Filter(function(e) e$kind == "global_setting", g_setting$errors), 0)
+  expect_length(Filter(function(e) e$kind == "setting_conflict", g_setting$errors), 0)
+  g_setting_on <- build_test_graph(list(
+    S = fake_cell(code = "S", settings = c(options = "option:digits")),
+    A = fake_cell(code = "A", settings = c(options = "option:digits"))
+  ))
+  expect_length(Filter(function(e) e$kind == "setting_conflict", g_setting_on$errors), 1)
 
   g_mixed <- build_test_graph(list(
     S = fake_cell(code = "S"),

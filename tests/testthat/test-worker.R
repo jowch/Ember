@@ -241,6 +241,32 @@ test_that("an option a package sets when it loads survives the reset before each
   expect_identical(r2$output$text, "[1] 7")
 })
 
+test_that("library(ggplot2) and theme_set() in one cell: the theme is that cell's setting (review)", {
+  skip_if_not_installed("ggplot2")
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "t", 1L, "library(ggplot2); theme_set(theme_minimal(base_size = 21))", timeout = 30)
+  expect_identical(r$status, "ok")
+  kinds <- vapply(r$settings, function(d) d$kind, character(1))
+  expect_true("theme" %in% kinds)
+  # Theme values stay in the worker; the server gets only the key.
+  theme_diff <- r$settings[[match("theme", kinds)]]
+  expect_null(theme_diff$after)
+  on <- run_and_wait(h, "c", 2L, "ggplot2::theme_get()$text$size", settings = "t")
+  expect_identical(on$output$text, "[1] 21")
+  off <- run_and_wait(h, "c", 3L, "ggplot2::theme_get()$text$size")
+  expect_identical(off$output$text, "[1] 11")
+  # A later change to the cell keeps ggplot2's default as the baseline.
+  run_and_wait(h, "t", 4L, "library(ggplot2); theme_set(theme_bw(base_size = 15))", settings = character())
+  off2 <- run_and_wait(h, "c", 5L, "ggplot2::theme_get()$text$size")
+  expect_identical(off2$output$text, "[1] 11")
+  on2 <- run_and_wait(h, "c", 6L, "ggplot2::theme_get()$text$size", settings = "t")
+  expect_identical(on2$output$text, "[1] 15")
+  # A cell that only loads ggplot2 sets nothing.
+  r2 <- run_and_wait(h, "l", 7L, "library(ggplot2)")
+  expect_false("theme" %in% vapply(r2$settings, function(d) d$kind, character(1)))
+})
+
 test_that("ggplot2's theme is a setting the worker resets and reapplies", {
   skip_if_not_installed("ggplot2")
   h <- worker_harness()

@@ -68,13 +68,14 @@ call doesn't say (a computed name). One row per key, so
 | `setwd(...)`, `withr::local_dir(...)` | `wd` |
 | `Sys.setlocale(...)`, `withr::local_locale(...)` | `locale` |
 | `theme_set(...)` | `theme` |
-| `attach(survey)`, `attach("survey")`, `attach(x, name = "s")` | `attach:survey`, `attach:survey`, `attach:s` |
-| `attach(read.csv(f))` (no name) | `NA` |
+| `attach(survey)`, `attach("survey.rda")`, `attach(x, name = "s")` | `attach:survey`, `attach:file:survey.rda`, `attach:s` |
+| `attach(read.csv(f))` (no name) | `attach:read.csv(f)` |
 | `withr::local_options(digits = 3)`, `local_options(list(digits = 3))`, `local_options(.new = list(...))` | `option:digits` |
 | `withr::local_envvar(TZ = "UTC")`, `local_envvar(c(TZ = "UTC"))` | `env:TZ` |
 
-`attach(x)` with no `name` takes R's own default, `deparse1(substitute(what))`,
-which is the symbol's name or the literal string.
+`attach(x)` with no `name` takes R's own search-path name: `file:<path>` for
+a saved image given as a string, else `deparse1(substitute(what))`, so the
+key matches the entry the worker sees on `search()`.
 
 A new helper in R/walk-calls.R, `setting_keys(name, e)`, returns the keys
 for one call; `dispatch_call_by_name()` (R/walk.R:173-197) records one row

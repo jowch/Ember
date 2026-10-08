@@ -319,12 +319,15 @@ finish_function_scope <- function(inner, acc) {
 
 #' `local(expr)`: a new local scope.
 #'
-#' Definitions inside are private to the block. Settings calls, `source()`
-#' and `data()` inside still count as reached from the top level (their
-#' effect, or their following, is global) no matter how many `local()`s
-#' they're nested in: gated on `!in_function(scope)`, not on the scope
-#' being literally `"top"`. A `local(expr, envir = e)` form is treated the
-#' same; the design accepts the extra edge.
+#' Definitions inside are private to the block. `source()` and `data()`
+#' inside still count as reached from the top level (their following is
+#' global) no matter how many `local()`s they're nested in: gated on
+#' `!in_function(scope)`, not on the scope being literally `"top"`.
+#' Settings calls inside don't count (`in_function_or_local()`):
+#' `local({ op <- options(...); on.exit(options(op)); ... })` is the scoped
+#' form (settings-cells.md, Calls inside `local()`). A
+#' `local(expr, envir = e)` form is treated the same; the design accepts
+#' the extra edge.
 walk_local <- function(e, scope, acc, arg_pids = NULL) {
   args <- as.list(e)[-1]
   if (length(args) == 0) return(invisible())

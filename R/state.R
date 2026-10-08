@@ -224,11 +224,12 @@ new_worker_state <- function() {
 #'   otherwise. Shown once, on this run's result.
 new_result <- function(code, status, output, console, error, started_at,
                        runtime, defined, stale = FALSE, variables = list(),
-                       settings_found = character()) {
+                       settings_found = character(), setting = FALSE) {
   structure(list(code = code, status = status, output = output,
                  console = console, error = error, started_at = started_at,
                  runtime = runtime, defined = defined, stale = stale,
-                 variables = variables, settings_found = settings_found),
+                 variables = variables, settings_found = settings_found,
+                 setting = setting),
             class = "ember_result")
 }
 
@@ -442,9 +443,11 @@ cell_view <- function(state, ctx, i) {
   is_running <- !is.na(ctx$running_idx) && ctx$running_idx == i
 
   g_errors <- lapply(ctx$errors_by_cell[[i]], function(e) {
+    # A conflict names its cells, so the page can link the other one.
+    conflict <- e$kind %in% c("setting_conflict", "package_conflict")
     list(kind = e$kind, message = e$message, fixes = e$fixes,
-        names = e$names, cells = character(), traceback = character(),
-        lines = e$lines)
+        names = e$names, cells = if (conflict) e$cells else character(),
+        traceback = character(), lines = e$lines)
   })
   # A cell with a graph error can't run, so any run error it holds is from
   # before the graph error and would hide it (the page shows the last error).

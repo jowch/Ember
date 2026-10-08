@@ -485,6 +485,16 @@ test_that("a setting found at run time makes a settings cell, not an error (47, 
   expect_equal(r4$state$graph$settings, character())
 })
 
+test_that("a computed options(op) cell is already a settings cell: no run-time note (review)", {
+  s <- fake_state(list(A = cell("options(op)"), B = cell("x <- 1")))
+  expect_equal(s$graph$settings, "A")
+  r <- boot(s, "A")
+  digits <- list(list(kind = "option", name = "digits", before = 7, after = 3))
+  r <- drive(r$state, wk_done(1, last_token(r), report(settings = digits), at(10)))
+  expect_equal(r$state$results$A$settings_found, character())
+  expect_equal(r$state$graph$learned$settings, list(A = "option:digits"))
+})
+
 test_that("two cells found at run time to set one option get setting_conflict", {
   s <- fake_state(list(A = cell("f()"), B = cell("g()")))
   digits <- list(list(kind = "option", name = "digits", before = 7, after = 3))
@@ -532,6 +542,46 @@ test_that("disabling or deleting a settings cell marks the cells after it stale"
   expect_equal(r2$state$pending, character())
   r3 <- drive(r$state, ev_apply(list(op_delete("S")), at(12)))
   expect_true(r3$state$results$A$stale)
+})
+
+test_that("editing the setting out of a settings cell marks later cells stale, and running it queues them in autorun (review)", {
+  for (mode in c("lazy", "autorun")) {
+    s <- fake_state(list(S = cell("options(digits = 3); y <- 1"), A = cell("x <- 1")), on_cell_change = mode)
+    r <- boot(s, "A")
+    r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(10)))
+    r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(11)))
+    expect_false(r$state$results$A$stale)
+    expect_true(r$state$results$S$setting)
+
+    # The edit alone: A was computed under S's digits, which no cell sets now.
+    r2 <- drive(r$state, ev_apply(list(op_set_code("S", "y <- 1")), at(12)))
+    expect_equal(r2$state$graph$settings, character())
+    expect_true(r2$state$results$A$stale, info = mode)
+    expect_equal(r2$state$pending, character())
+
+    # Running S: the last run was as a settings cell, so A counts as its
+    # dependent though no setting edge is left.
+    r3 <- drive(r2$state, ev_run("S", at(13)))
+    expect_equal(last_sent(r3)$cell, "S")
+    r3 <- drive(r3$state, wk_done(1, last_token(r3), report(created = "y"), at(14)))
+    expect_true(r3$state$results$A$stale, info = mode)
+    if (mode == "autorun") expect_equal(last_sent(r3)$cell, "A") else expect_equal(r3$state$pending, character())
+    expect_false(r3$state$results$S$setting)
+  }
+})
+
+test_that("a settings cell newly blocked by a setting_conflict marks later cells stale (review)", {
+  s <- fake_state(list(S = cell("options(digits = 3)"), A = cell("x <- 1"), B = cell("y <- 2")),
+                  on_cell_change = "lazy")
+  r <- boot(s, "B")
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(11)))
+  r <- drive(r$state, ev_run("A", at(12)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(13)))
+  expect_false(r$state$results$B$stale)
+  r2 <- drive(r$state, ev_apply(list(op_set_code("A", "options(digits = 4)")), at(14)))
+  expect_true("S" %in% blocked_cells(r2$state$graph))
+  expect_true(r2$state$results$B$stale)
 })
 
 test_that("lazy mode: running a settings cell marks later cells stale and queues nothing", {

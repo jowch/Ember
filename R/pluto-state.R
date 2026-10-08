@@ -590,6 +590,9 @@ join_names <- function(names, conj = "and") {
 #' id. `known_ids = NULL` (the default, every caller but
 #' `project_output()`) skips the check.
 #'
+#' `ember_cells` is a conflict's cells (`setting_conflict`,
+#' `package_conflict`), so the page links the other one; `NULL` otherwise.
+#'
 #' `ember_call`, `ember_line` and `ember_deep` are `error$call`,
 #' `error$line` and `error$deep` -- unset (`NULL`/`FALSE`) for an upstream
 #' error or any kind besides a plain "error", since those have nothing of
@@ -598,7 +601,7 @@ project_error <- function(error, known_ids = NULL) {
   if (identical(error$kind, "upstream")) {
     msg <- sprintf("Another cell defining %s contains errors.", join_names(error$names, conj = "or"))
     return(list(msg = msg, stacktrace = list(), plain_error = paste(msg, error$message, sep = "\n"),
-               ember_call = NULL, ember_line = NULL, ember_deep = FALSE))
+               ember_call = NULL, ember_line = NULL, ember_deep = FALSE, ember_cells = NULL))
   }
   msg <- switch(error$kind,
     multiple_definitions = sprintf("Multiple definitions for %s", join_names(error$names)),
@@ -617,7 +620,8 @@ project_error <- function(error, known_ids = NULL) {
         parent_module = NULL, ember_cell = cell)
   })
   list(msg = text, stacktrace = stacktrace, plain_error = text,
-      ember_call = error$call, ember_line = error$line, ember_deep = isTRUE(error$deep))
+      ember_call = error$call, ember_line = error$line, ember_deep = isTRUE(error$deep),
+      ember_cells = if (error$kind %in% c("setting_conflict", "package_conflict")) as.list(error$cells) else NULL)
 }
 
 #' Parse-error diagnostics: `list(list(message, from, to, line))` from the

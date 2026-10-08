@@ -1,7 +1,7 @@
 # Settings cells
 
-_Design, 2026-10-04. Replaces the setup cell. Not built yet; see
-[design-gaps.md](design-gaps.md)._
+_Design, 2026-10-04. Replaces the setup cell. Built; the plan is
+[settings-cells-plan.md](settings-cells-plan.md)._
 
 ## Summary
 

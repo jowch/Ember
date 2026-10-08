@@ -38,7 +38,7 @@ const settings_chip = (/** @type {{name: string, found: string}[]} */ settings) 
     const names = settings.map((s) => s.name)
     const shown = names.slice(0, 3)
     const rest = names.length - shown.length
-    const joined = join_names(rest > 0 ? [...shown, t("t_n_more", { count: rest })] : shown)
+    const joined = (rest > 0 ? [...shown, t("t_n_more", { count: rest })] : shown).join(", ")
     const found = settings.some((s) => s.found === "run")
     return {
         icon: SlidersIcon,
