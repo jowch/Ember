@@ -8,7 +8,7 @@ done; clear out ticked items at each release.
 
 - [x] Replace the setup cell with settings cells ([settings-cells.md](settings-cells.md)) — missing
 - [ ] Graph rebuild after an edit is whole-notebook: 30 ms at 100 cells, 64 ms at 500, 590 ms at 2000, spread across `notebook_graph()` with no single hot spot — improvised
-- [ ] Learned references (formula columns that weren't in the data) aren't saved in the footer, so the edge they add is lost on reopen until the cell reruns — missing
+- [x] Learned references (formula columns that weren't in the data) aren't saved in the footer, so the edge they add is lost on reopen until the cell reruns — missing. Built in #9: a "learned references" footer block, dropped when the cell's code changes
 - [ ] Learned definitions (names a cell defined through `load()`, `assign()` and the like, found when it ran) survive a change to the cell's code and are saved in the footer, so a stale one could in principle hold a dependency cycle that no edit, run or reopen clears. #9 drops learned references on a code change for this reason, but left definitions alone: they order `load()`/`assign()` cells before anything runs, so dropping them on edit changes behavior. Decide whether they drop too (#9 review, round 2) — improvised
 - [x] `library()` inside a function body counts as attaching, so a function that attaches conditionally always makes its cell run first — improvised. Now it uses the package without attaching it (test-walk.R)
 - [x] Method dispatch isn't an edge: a cell defining `print.foo` defines the name `print.foo`, but a cell that prints a `foo` reads only `print`, so editing the method doesn't rerun it — missing. Built in #6: S3 methods, `setMethod()` and `registerS3method()` are keyed by (generic, class), with an edge on the bare generic name (test-methods.R). Left out:
@@ -36,7 +36,7 @@ done; clear out ticked items at each release.
 ## File format
 
 - [ ] Converter tests need saved example files from each released format; only format 1 exists — missing
-- [ ] Computed `source()` paths in the footer don't record which cell sourced them; they stand in for all cells until every code cell has run — improvised
+- [x] Computed `source()` paths in the footer don't record which cell sourced them; they stand in for all cells until every code cell has run — improvised. Built in #9: a "learned sources" footer block ties each path to its cell; only paths in a file written before that block fall back to standing in for all cells
 
 ## Packages (build step 3)
 
