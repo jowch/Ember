@@ -785,7 +785,12 @@ summarise_globals <- function(names) {
     # computing -- or worth spending any of the shared budget on.
     private <- startsWith(name, ".")
     remaining <- budget - (proc.time()[["elapsed"]] - t0)
-    out[[name]] <- summarise_one(name, remaining, type_only = private || remaining <= 0)
+    # The time limit can fire just past summarise_one()'s own tryCatch
+    # (R checks it at odd points after a slow method returns), so one
+    # name's late timeout costs that name its value, not every name's.
+    out[[name]] <- tryCatch(
+      summarise_one(name, remaining, type_only = private || remaining <= 0),
+      error = function(e) summarise_one(name, 0, type_only = TRUE))
   }
   out
 }

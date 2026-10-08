@@ -216,8 +216,10 @@ test_that("a settings cell rerun starts from the baseline, and a deleted one sto
   r <- run_and_wait(h, "b", 3L, 'getOption("foo")', settings = "s")
   expect_identical(r$output$text, "NULL")
 
-  sub <- normalizePath(tempfile("ember-wd-"), winslash = "/", mustWork = FALSE)
+  sub <- tempfile("ember-wd-")
   dir.create(file.path(sub, "data"), recursive = TRUE)
+  # After creating it, so macOS resolves /var to /private/var like getwd() does.
+  sub <- normalizePath(sub, winslash = "/")
   run_and_wait(h, "w", 4L, sprintf("setwd(%s)", deparse(sub)))
   run_and_wait(h, "w2", 5L, 'setwd("data")', settings = "w")
   # Rerun with the same context: lands in data again, not data/data.
