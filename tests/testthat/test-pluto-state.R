@@ -836,7 +836,7 @@ test_that("CELL_METADATA_DISABLED, depends_on_disabled_cells, disabled_by and ca
   expect_false(p1$js$cell_results$A$ember$stale)
   expect_false(p1$js$cell_results$B$ember$stale)
 
-  expect_false(p1$js$cell_results$S$ember$can_disable)
+  expect_true(p1$js$cell_results$S$ember$can_disable)  # no cell is special (settings-cells.md)
   expect_false(p1$js$cell_results$T$ember$can_disable)
   expect_true(p1$js$cell_results$A$ember$can_disable)
   expect_true(p1$js$cell_results$B$ember$can_disable)

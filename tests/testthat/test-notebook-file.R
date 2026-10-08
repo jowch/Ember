@@ -438,7 +438,7 @@ header_lines <- function() {
 }
 
 test_that("a disabled cell's code lines are each written with '## ' (ui-3 15)", {
-  text <- paste(c(header_lines(), "# %% id=a [setup]", "0", "",
+  text <- paste(c(header_lines(), "# %% id=a", "0", "",
                "# %% id=b", "## x <- 1", "##", "##   y", "## # note",
                "## #' not text", "## #| fig-width: 4", "## ##", "## %% 2", "",
                "# /// cell order", "# a", "# b disabled", "# ///", ""), collapse = "\n")
@@ -451,7 +451,7 @@ test_that("a disabled cell's code lines are each written with '## ' (ui-3 15)", 
 })
 
 test_that("folded and disabled both appear on the footer line, folded first (ui-3 15)", {
-  text <- paste(c(header_lines(), "# %% id=a [setup]", "0", "",
+  text <- paste(c(header_lines(), "# %% id=a", "0", "",
                "# %% id=b", "## x <- 1", "",
                "# /// cell order", "# a", "# b folded disabled", "# ///", ""), collapse = "\n")
   file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
@@ -461,7 +461,7 @@ test_that("folded and disabled both appear on the footer line, folded first (ui-
 })
 
 test_that("a commented '%% 2' or '/// x' line inside a disabled cell makes no extra cell or footer block (ui-3 16)", {
-  text <- paste(c(header_lines(), "# %% id=a [setup]", "0", "",
+  text <- paste(c(header_lines(), "# %% id=a", "0", "",
                "# %% id=b", "## %% 2", "## /// x", "",
                "# /// cell order", "# a", "# b disabled", "# ///", ""), collapse = "\n")
   file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
@@ -471,7 +471,7 @@ test_that("a commented '%% 2' or '/// x' line inside a disabled cell makes no ex
 })
 
 test_that("a commented cell reads back with its exact code and disabled = FALSE (ui-3 17)", {
-  text <- paste("# %% id=a [setup]", "0", "",
+  text <- paste("# %% id=a", "0", "",
                "# %% id=b", "## x + 1", "",
                "# /// cell order", "# a", "# b commented", "# ///", "", sep = "\n")
   file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
@@ -481,7 +481,7 @@ test_that("a commented cell reads back with its exact code and disabled = FALSE 
 })
 
 test_that("a line without '##' in a disabled cell is kept as is, with problem uncommented_line (ui-3 18)", {
-  text <- paste("# %% id=a [setup]", "0", "",
+  text <- paste("# %% id=a", "0", "",
                "# %% id=b", "## x <- 1", "y <- 2", "",
                "# /// cell order", "# a", "# b disabled", "# ///", "", sep = "\n")
   file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
@@ -492,7 +492,7 @@ test_that("a line without '##' in a disabled cell is kept as is, with problem un
 })
 
 test_that("several uncommented lines in one disabled cell give one problem row, not one per line (review)", {
-  text <- paste("# %% id=a [setup]", "0", "",
+  text <- paste("# %% id=a", "0", "",
                "# %% id=b", "y <- 2", "z <- 3", "",
                "# /// cell order", "# a", "# b disabled", "# ///", "", sep = "\n")
   file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
@@ -502,7 +502,7 @@ test_that("several uncommented lines in one disabled cell give one problem row, 
 })
 
 test_that("disabled on a text cell gives disabled_text_cell and the cell unchanged (ui-3 18)", {
-  text <- paste("# %% id=a [setup]", "0", "",
+  text <- paste("# %% id=a", "0", "",
                "# %% id=b [markdown]", "#' hello", "",
                "# /// cell order", "# a", "# b disabled", "# ///", "", sep = "\n")
   file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
@@ -515,7 +515,7 @@ test_that("a disabled cell whose un-commented code is only #' lines also gets di
   # No [markdown] tag: the cell was written (or hand-edited) as disabled
   # code whose content, once un-commented, turns out to be pure text --
   # main's Ember once allowed disabling a text cell this way.
-  text <- paste("# %% id=a [setup]", "0", "",
+  text <- paste("# %% id=a", "0", "",
                "# %% id=d", "## #' hello", "",
                "# /// cell order", "# a", "# d disabled", "# ///", "", sep = "\n")
   file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
