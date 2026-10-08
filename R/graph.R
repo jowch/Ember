@@ -1,5 +1,5 @@
-# The notebook graph: a pure function of the cells, the setup cell, the
-# package exports, and what the worker has learned. Rebuilt whole on every
+# The notebook graph: a pure function of the cells, the package exports,
+# the disabled cells, and what the worker has learned. Rebuilt whole on every
 # change; only cells whose code changed are re-read.
 
 # ---- Result type -----------------------------------------------------------
@@ -10,36 +10,43 @@
 #'
 #' * `ids`: cell ids in display order. Every named list below is keyed by
 #'   these ids, in this order.
-#' * `setup`: the setup cell's id.
+#' * `settings`: ids of the settings cells, in display order: enabled
+#'   cells with a static or learned setting (settings-cells.md). They run
+#'   first, and every later cell depends on them.
 #' * `analyses`: `ember_cell_analysis` per cell (the cache for the next
 #'   build).
 #' * `learned`: `list(definitions = <id -> character>, references = <id ->
-#'   character>)`: what the worker reported, exactly as given. The caller
+#'   character>, settings = <id -> character>)`: what the worker reported,
+#'   exactly as given (settings as keys, `setting_keys()`). The caller
 #'   owns this; the graph carries it so `notebook_graph(previous = g)` can
 #'   keep it.
 #' * `exports`: the package exports the graph was built with.
 #' * `cells`: per cell, `list(definitions, learned, references, packages,
-#'   attaches, settings, private)`: the resolved view the adapter reports.
-#'   `definitions` are the public names the cell defines (static plus
-#'   learned); `private` its dot-names; `attaches` the packages it puts on
-#'   the search path.
+#'   attaches, settings, setting_keys, private)`: the resolved view the
+#'   adapter reports. `definitions` are the public names the cell defines
+#'   (static plus learned); `private` its dot-names; `attaches` the
+#'   packages it puts on the search path; `settings` the analysis's
+#'   settings rows; `setting_keys` a data frame `key`, `found` (`"code"`
+#'   or `"run"`) of the settings it sets, static first.
 #' * `edges`: data frame `from`, `to`, `name`, `via`: `from` depends on
 #'   `to`. `via` is `"definition"` (`to` defines `name`), `"package"` (`to`
 #'   attaches a package exporting `name`), `"disabled"` (`to` is a disabled
 #'   cell that defines or attaches `name`, and no enabled cell does),
-#'   `"setup"` (`to` is the setup cell; `name` is `NA`). One row per (from,
-#'   to, name).
+#'   `"setting"` (`to` is a settings cell before `from` in the run order;
+#'   `name` is that cell's first setting, as `setting_label()` shows it, or
+#'   `NA` when none is known yet). One row per (from, to, name).
 #' * `disabled`: character ids of disabled cells, as given to
 #'   `notebook_graph()`. Disabled cells are still fully analysed and keep
 #'   their own edges to what they read; they just satisfy no other cell's
 #'   reference (`resolve_edges()`), so they count towards nothing else's
 #'   `find_errors()` rule but `parse`.
 #' * `off`: named character, off cell id -> the disabled cell it comes
-#'   from (itself, for a disabled cell). See `compute_off()`.
+#'   from (itself, for a disabled cell). See `compute_off()`. Setting edges
+#'   don't carry it: a settings cell that is off is just not in effect.
 #' * `upstream`, `downstream`: `id -> character` of direct neighbours, in
 #'   display order, derived from `edges` at build time (including
-#'   `"disabled"` edges: a disabled cell is ordered, and its dependents
-#'   found, like any other).
+#'   `"disabled"` and `"setting"` edges: a disabled cell is ordered, and
+#'   its dependents found, like any other).
 #' * `order`: every cell id, in run order (see `run_order()`).
 #' * `errors`: list of `ember_graph_error`.
 #' * `reread`: ids whose analysis was computed in this build rather than
@@ -53,11 +60,11 @@
 #'
 #' Invariants: no edge from a cell to itself; `upstream[[a]]` contains `b` iff `downstream[[b]]` contains
 #' `a`; `order` is a permutation of `ids`; a cell with a `parse` error has
-#' no definitions and no references but keeps its setup edge.
-new_graph <- function(ids, setup, analyses, learned, exports, cells, edges,
+#' no definitions and no references but keeps its setting edges.
+new_graph <- function(ids, settings, analyses, learned, exports, cells, edges,
                       disabled, off, upstream, downstream, order, errors,
                       reread, read_file = NULL) {
-  structure(list(ids = ids, setup = setup, analyses = analyses,
+  structure(list(ids = ids, settings = settings, analyses = analyses,
                  learned = learned, exports = exports, cells = cells,
                  edges = edges, disabled = disabled, off = off,
                  upstream = upstream, downstream = downstream,
@@ -69,10 +76,12 @@ new_graph <- function(ids, setup, analyses, learned, exports, cells, edges,
 #' A graph-level error.
 #'
 #' `kind` is one of `"parse"`, `"multiple_definitions"`, `"cycle"`,
-#' `"private_name"`, `"global_setting"`, `"mixed_text"` (a cell mixing `#'`
-#' lines and code; text-cells.R's `is_mixed()`). `cells` are the ids the error is
-#' reported on (all of them can't run). `names` are the globals involved
-#' (empty for `parse` and `global_setting`). `lines` is a data frame `cell`,
+#' `"private_name"`, `"setting_conflict"` (one setting set in two cells),
+#' `"package_conflict"` (one package attached in two cells),
+#' `"mixed_text"` (a cell mixing `#'` lines and code; text-cells.R's
+#' `is_mixed()`). `cells` are the ids the error is reported on (all of
+#' them can't run). `names` are the globals, settings or packages involved
+#' (empty for `parse`). `lines` is a data frame `cell`,
 #' `line` pointing at the responsible lines where known. `message` is one
 #' sentence for the UI; `fixes` a character vector of suggested fixes, in
 #' the wording the design gives:
@@ -83,8 +92,10 @@ new_graph <- function(ids, setup, analyses, learned, exports, cells, edges,
 #' * private name used elsewhere: "Drop the dot: x".
 #' * cycle through a name only read inside call arguments: "If x is a
 #'   column name, rename the global".
-#' * global setting: "Move it to the setup cell, or use withr::with_options()
-#'   for one piece of code".
+#' * setting in two cells: "Set it in one cell, or use
+#'   withr::with_options() to change it for one piece of code" (the scoped
+#'   function by kind; `setting_fix()`).
+#' * package in two cells: "Keep one library(pkg) and remove the other".
 new_graph_error <- function(kind, cells, names = character(),
                             lines = NULL, message, fixes = character()) {
   structure(list(kind = kind, cells = cells, names = names,
@@ -118,14 +129,13 @@ reuse_analysis <- function(prev, code, read_file) {
 #' @param cells Named character vector, cell id -> code, in display order.
 #'   Markdown cells are passed as empty strings (or left out); they take
 #'   part in the order and nothing else.
-#' @param setup The setup cell's id. Default: the first cell. Every other
-#'   cell depends on it.
 #' @param exports Named list, package name -> character vector of exported
 #'   names (`getNamespaceExports()`), for the packages that are installed.
 #'   A package not in the list contributes no edges.
 #' @param learned `list(definitions = <id -> character>, references = <id ->
-#'   character>)` from the footer and from formula checks; `NULL` means
-#'   none. Ids not in `cells` are dropped.
+#'   character>, settings = <id -> character>)` from the footer, the
+#'   formula checks and the worker's settings reports; `NULL` means none.
+#'   Ids not in `cells` are dropped.
 #' @param disabled Character ids of disabled cells (the user's choice; see
 #'   `disable_cell()`). Ids not in `cells` are dropped. Disabled cells are
 #'   analysed like any other, but satisfy no other cell's reference
@@ -140,7 +150,7 @@ reuse_analysis <- function(prev, code, read_file) {
 #'
 #' The build is deterministic and idempotent: the same inputs give an
 #' identical graph, with or without `previous`.
-notebook_graph <- function(cells, setup = names(cells)[1], exports = list(),
+notebook_graph <- function(cells, exports = list(),
                            learned = NULL, disabled = character(),
                            previous = NULL, read_file = NULL) {
   ids <- names(cells)
@@ -148,14 +158,15 @@ notebook_graph <- function(cells, setup = names(cells)[1], exports = list(),
       any(duplicated(ids))) {
     stop("cells must be a named character vector with unique, non-empty names")
   }
-  if (!isTRUE(setup %in% ids)) stop("setup must be one of the cell ids")
   disabled <- intersect(disabled, ids)
 
   if (is.null(learned)) learned <- list()
   if (is.null(learned$definitions)) learned$definitions <- list()
   if (is.null(learned$references)) learned$references <- list()
+  if (is.null(learned$settings)) learned$settings <- list()
   learned$definitions <- learned$definitions[names(learned$definitions) %in% ids]
   learned$references <- learned$references[names(learned$references) %in% ids]
+  learned$settings <- learned$settings[names(learned$settings) %in% ids]
 
   # 1. analyses: reuse previous$analyses[[id]] when code and sourced files
   #    are unchanged; else read_cell(code, read_file). reread <- the rest.
@@ -176,33 +187,14 @@ notebook_graph <- function(cells, setup = names(cells)[1], exports = list(),
   # 2. cells: the resolved, per-cell view.
   cells_resolved <- resolve_cells(analyses, learned, ids)
 
-  # 3. edges: resolve_edges(cells, setup, exports, disabled).
-  edges <- resolve_edges(cells_resolved, setup, exports, ids, disabled)
+  # 3. edges: resolve_edges(cells, exports, disabled). Setting edges come
+  #    after the order (step 6).
+  edges <- resolve_edges(cells_resolved, exports, ids, disabled)
 
-  # upstream/downstream from edges, in display order. Grouped with split()
-  # (one pass over the edge rows) rather than a per-row union(), which
-  # rescans the growing neighbour vector on every edge; and ordered by a
-  # precomputed rank rather than `ids[ids %in% x]`, which would rescan all
-  # of `ids` for every one of the ids instead of just each id's neighbours.
-  upstream_list <- setNames(vector("list", length(ids)), ids)
-  downstream_list <- setNames(vector("list", length(ids)), ids)
-  for (id in ids) {
-    upstream_list[[id]] <- character()
-    downstream_list[[id]] <- character()
-  }
-  if (nrow(edges) > 0) {
-    up_groups <- split(edges$to, edges$from)
-    down_groups <- split(edges$from, edges$to)
-    for (f in names(up_groups)) upstream_list[[f]] <- unique(up_groups[[f]])
-    for (t in names(down_groups)) downstream_list[[t]] <- unique(down_groups[[t]])
-  }
+  # upstream/downstream from edges, in display order.
   rank <- setNames(seq_along(ids), ids)
-  for (id in ids) {
-    u <- upstream_list[[id]]
-    if (length(u) > 0) upstream_list[[id]] <- u[order(rank[u])]
-    d <- downstream_list[[id]]
-    if (length(d) > 0) downstream_list[[id]] <- d[order(rank[d])]
-  }
+  upstream_list <- neighbour_lists(ids, rank, edges$from, edges$to)
+  downstream_list <- neighbour_lists(ids, rank, edges$to, edges$from)
 
   # Strongly connected components of the dependency graph, computed once and
   # shared by compute_order (which cells can't force an order onto one
@@ -225,8 +217,8 @@ notebook_graph <- function(cells, setup = names(cells)[1], exports = list(),
     scc_components(ids, upstream_no_disabled)
   }
 
-  # 4. errors: find_errors(cells, analyses, edges, setup, ids, disabled).
-  errors <- find_errors(cells_resolved, analyses, edges, setup, ids, error_components, disabled)
+  # 4. errors: find_errors(cells, analyses, edges, ids, disabled).
+  errors <- find_errors(cells_resolved, analyses, edges, ids, error_components, disabled)
 
   # off: disabled cells and everything downstream of them.
   off <- compute_off(ids, disabled, downstream_list)
@@ -236,9 +228,25 @@ notebook_graph <- function(cells, setup = names(cells)[1], exports = list(),
   for (i in seq_along(components)) comp_of[components[[i]]] <- i
   attaches_list <- setNames(lapply(ids, function(id) cells_resolved[[id]]$attaches), ids)
   is_markdown <- setNames(vapply(ids, function(id) grepl("^\\s*$", analyses[[id]]$code), logical(1)), ids)
-  order <- compute_order(ids, setup, upstream_list, attaches_list, comp_of, is_markdown)
+  settings <- ids[vapply(ids, function(id) {
+    !(id %in% disabled) && nrow(cells_resolved[[id]]$setting_keys) > 0
+  }, logical(1))]
+  order <- compute_order(ids, settings, upstream_list, attaches_list, comp_of, is_markdown)
 
-  new_graph(ids = ids, setup = setup, analyses = analyses, learned = learned,
+  # 6. setting edges: every non-markdown cell to each settings cell before
+  #    it in the order. They agree with the order by construction, so they
+  #    are added after the cycle check and change nothing above; they do
+  #    change upstream/downstream (staleness, what runs first).
+  if (length(settings) > 0) {
+    setting_edges <- setting_edges_of(order, settings, cells_resolved, is_markdown)
+    if (nrow(setting_edges) > 0) {
+      edges <- rbind(edges, setting_edges)
+      upstream_list <- neighbour_lists(ids, rank, edges$from, edges$to)
+      downstream_list <- neighbour_lists(ids, rank, edges$to, edges$from)
+    }
+  }
+
+  new_graph(ids = ids, settings = settings, analyses = analyses, learned = learned,
             exports = exports, cells = cells_resolved, edges = edges,
             disabled = disabled, off = off,
             upstream = upstream_list, downstream = downstream_list,
@@ -276,17 +284,23 @@ compute_off <- function(ids, disabled, downstream_list) {
 #' `definitions` replaces the learned definitions of `cell` (the worker
 #' reports the full set after each run, so a name that stopped appearing
 #' drops out); `references` replaces its learned references (the formula
-#' check's missing columns). `NULL` leaves that part as it was. Returns a
+#' check's missing columns); `settings` replaces its learned setting keys
+#' (`character()` drops them). `NULL` leaves that part as it was. Returns a
 #' new graph built with `previous = graph`, so nothing is re-read.
 #'
-#' The caller persists `graph$learned$definitions` in the footer.
-graph_learn <- function(graph, cell, definitions = NULL, references = NULL) {
+#' The caller persists `graph$learned$definitions` and
+#' `graph$learned$settings` in the footer.
+graph_learn <- function(graph, cell, definitions = NULL, references = NULL,
+                        settings = NULL) {
   learned <- graph$learned
   if (!is.null(definitions)) learned$definitions[[cell]] <- definitions
   if (!is.null(references)) learned$references[[cell]] <- references
+  if (!is.null(settings)) {
+    learned$settings[[cell]] <- if (length(settings) > 0) settings else NULL
+  }
   cells <- setNames(vapply(graph$ids, function(id) graph$analyses[[id]]$code,
                             character(1)), graph$ids)
-  notebook_graph(cells, setup = graph$setup, exports = graph$exports,
+  notebook_graph(cells, exports = graph$exports,
                  learned = learned, disabled = graph$disabled,
                  previous = graph, read_file = graph$read_file)
 }
@@ -300,6 +314,8 @@ resolve_cells <- function(analyses, learned, ids) {
     if (is.null(learned_defs)) learned_defs <- character()
     learned_refs <- learned$references[[id]]
     if (is.null(learned_refs)) learned_refs <- character()
+    learned_settings <- learned$settings[[id]]
+    if (is.null(learned_settings)) learned_settings <- character()
 
     defs_all <- unique(c(definitions_of(a), learned_defs))
     private <- defs_all[is_private_name(defs_all)]
@@ -311,6 +327,7 @@ resolve_cells <- function(analyses, learned, ids) {
                         references = references,
                         packages = unique(a$packages$name),
                         attaches = attaches, settings = a$settings,
+                        setting_keys = setting_keys_of(a$settings, learned_settings),
                         private = private)
   }
   cells
@@ -331,16 +348,14 @@ resolve_cells <- function(analyses, learned, ids) {
 #'    definer, which is why rules 3-4 come after this one, not before.
 #' 3. else disabled cells (other than `b`) whose public definitions include
 #'    `n`: one edge each, via "disabled" -- what `b` would read if they
-#'    were enabled. Skipped when `b` is the setup cell: a name only a
-#'    disabled cell would provide is left unresolved there, the same as
-#'    any other unknown name, rather than ever marking the setup cell
-#'    itself off (which would take the whole notebook with it).
+#'    were enabled.
 #' 4. else disabled cells (other than `b`) attaching such a package: one
-#'    edge each, via "disabled". Also skipped for the setup cell.
+#'    edge each, via "disabled".
 #' A disabled cell's own references resolve the same way (rules 1-4 look at
 #' the target's status, not `b`'s), so it keeps edges to what it reads.
-#' Every cell other than `setup` gets an edge to `setup`, via "setup".
-resolve_edges <- function(cells, setup, exports, ids, disabled = character()) {
+#' Setting edges are added later, once the order is known
+#' (`setting_edges_of()`).
+resolve_edges <- function(cells, exports, ids, disabled = character()) {
   # Four lookup tables, each built in one pass so the whole function is
   # linear in (total definitions + total exports + total references)
   # instead of the reference-times-cells cost of testing every id against
@@ -389,7 +404,6 @@ resolve_edges <- function(cells, setup, exports, ids, disabled = character()) {
   ref_edges <- lapply(ids, function(b) {
     refs <- cells[[b]]$references
     if (length(refs) == 0) return(NULL)
-    is_setup <- identical(b, setup)
     parts <- lapply(refs, function(n) {
       definers <- definer_lookup[[n]]
       if (!is.null(definers)) definers <- definers[definers != b]
@@ -405,7 +419,6 @@ resolve_edges <- function(cells, setup, exports, ids, disabled = character()) {
         return(list(from = rep(b, length(provider_ids)), to = provider_ids,
                     name = rep(n, length(provider_ids)), via = rep("package", length(provider_ids))))
       }
-      if (is_setup) return(NULL)
       disabled_definers <- disabled_definer_lookup[[n]]
       if (!is.null(disabled_definers)) disabled_definers <- disabled_definers[disabled_definers != b]
       if (length(disabled_definers) > 0) {
@@ -434,12 +447,7 @@ resolve_edges <- function(cells, setup, exports, ids, disabled = character()) {
   name <- unlist(lapply(ref_edges, `[[`, "name"), use.names = FALSE)
   via <- unlist(lapply(ref_edges, `[[`, "via"), use.names = FALSE)
 
-  non_setup <- ids[ids != setup]
-  from <- c(from, non_setup)
-  to <- c(to, rep(setup, length(non_setup)))
-  name <- c(name, rep(NA_character_, length(non_setup)))
-  via <- c(via, rep("setup", length(non_setup)))
-
+  if (is.null(from)) from <- to <- name <- via <- character()
   data.frame(from = from, to = to, name = name, via = via, stringsAsFactors = FALSE)
 }
 
@@ -490,10 +498,10 @@ scc_components <- function(ids, adjacency) {
 
 #' All graph errors. `disabled` cells count towards no rule but `parse`
 #' (the user still sees that their code is broken): they define nothing for
-#' `multiple_definitions`, own no private name for `private_name`, are
-#' skipped by `global_setting`, and the cycle check (via `components`) has
+#' `multiple_definitions`, own no private name for `private_name`, set or
+#' attach nothing for the two conflict rules, and the cycle check (via `components`) has
 #' already had their edges to and from other cells excluded by the caller.
-find_errors <- function(cells, analyses, edges, setup, ids, components,
+find_errors <- function(cells, analyses, edges, ids, components,
                         disabled = character()) {
   errors <- list()
 
@@ -577,27 +585,62 @@ find_errors <- function(cells, analyses, edges, setup, ids, components,
     }
   }
 
-  # global_setting: cells[[id]]$settings non-empty and id != setup.
+  # setting_conflict: one setting key in two or more enabled cells, static
+  # or learned (settings-cells.md, "One cell per setting"). A disabled cell
+  # sets nothing here, as it defines nothing above.
+  setter_map <- list()
   for (id in ids) {
-    if (identical(id, setup) || id %in% disabled) next
-    settings <- cells[[id]]$settings
-    if (is.null(settings) || nrow(settings) == 0) next
-    fns <- unique(settings$fn)
+    if (id %in% disabled) next
+    for (k in cells[[id]]$setting_keys$key) setter_map[[k]] <- union(setter_map[[k]], id)
+  }
+  for (k in names(setter_map)) {
+    setters <- setter_map[[k]]
+    if (length(setters) <= 1) next
+    lines_df <- do.call(rbind, lapply(setters, function(id) {
+      rows <- analyses[[id]]$settings
+      ln <- rows$line[!is.na(rows$setting) & rows$setting == k]
+      if (length(ln) == 0) ln <- NA_integer_
+      data.frame(cell = id, line = ln, stringsAsFactors = FALSE)
+    }))
+    label <- setting_label(k)
     errors[[length(errors) + 1]] <- new_graph_error(
-      kind = "global_setting", cells = id, names = character(), lines = NULL,
-      message = sprintf("%s changes a global setting outside the setup cell.",
-                        paste(fns, collapse = ", ")),
-      fixes = "Move it to the setup cell, or use withr::with_options() for one piece of code")
+      kind = "setting_conflict", cells = setters, names = label, lines = lines_df,
+      message = sprintf("%s is set in %s cells.", label, count_word(length(setters))),
+      fixes = setting_fix(k))
   }
 
-  # mixed_text: a non-setup cell mixing #' lines and code (text-cells.R's
+  # package_conflict: one package attached at the top level of two or more
+  # enabled cells (settings-cells.md, "Attaching a package is a
+  # definition"). Only literal names count: `attaches` never holds a
+  # computed one, nor a package attached inside a function body.
+  attacher_map <- list()
+  for (id in ids) {
+    if (id %in% disabled) next
+    for (p in cells[[id]]$attaches) attacher_map[[p]] <- union(attacher_map[[p]], id)
+  }
+  for (p in names(attacher_map)) {
+    attachers <- attacher_map[[p]]
+    if (length(attachers) <= 1) next
+    lines_df <- do.call(rbind, lapply(attachers, function(id) {
+      rows <- analyses[[id]]$packages
+      ln <- rows$line[rows$name == p & rows$attached]
+      if (length(ln) == 0) ln <- NA_integer_
+      data.frame(cell = id, line = ln, stringsAsFactors = FALSE)
+    }))
+    errors[[length(errors) + 1]] <- new_graph_error(
+      kind = "package_conflict", cells = attachers, names = p, lines = lines_df,
+      message = sprintf("%s is attached in %s cells.", p, count_word(length(attachers))),
+      fixes = sprintf("Keep one library(%s) and remove the other", p))
+  }
+
+  # mixed_text: a cell mixing #' lines and code (text-cells.R's
   # is_mixed()) is "code" (cell_kind()), so it stays a graph node here, but
   # nothing in it has run: fixes = character() because the fix is the
   # Split button (ember$split, pluto-state.R), not a wording suggestion.
   # A text cell's analysed code has no #' lines (code_of()), so only code
   # cells can ever match.
   for (id in ids) {
-    if (identical(id, setup) || id %in% disabled) next
+    if (id %in% disabled) next
     if (!is_mixed(analyses[[id]]$code)) next
     errors[[length(errors) + 1]] <- new_graph_error(
       kind = "mixed_text", cells = id, names = character(), lines = NULL,
@@ -613,7 +656,7 @@ find_errors <- function(cells, analyses, edges, setup, ids, components,
     if (length(comp) <= 1) next
     comp_ord <- ids[ids %in% comp]
     inside <- edges[edges$from %in% comp & edges$to %in% comp &
-                      edges$via != "setup" & !is.na(edges$name), , drop = FALSE]
+                      edges$via != "setting" & !is.na(edges$name), , drop = FALSE]
     inside <- inside[order(match(inside$to, ids)), , drop = FALSE]
     names_in_comp <- unique(inside$name)
     fix <- if (length(names_in_comp) == 1) {
@@ -628,7 +671,7 @@ find_errors <- function(cells, analyses, edges, setup, ids, components,
       sprintf("%s form a cycle.", paste(names_in_comp, collapse = ", "))
     } else {
       # No named edge inside the component (every link is a bare
-      # for/setup dependency): name no cell (cell ids are UUIDs and
+      # for dependency): name no cell (cell ids are UUIDs and
       # never belong in user-facing text).
       "These cells form a cycle."
     }
@@ -645,7 +688,7 @@ find_errors <- function(cells, analyses, edges, setup, ids, components,
 #' A topological order that keeps display order wherever the edges allow
 #' it, with package-attaching cells before the rest:
 #'
-#' 1. emit(setup)
+#' 1. for each settings cell, in display order: emit(cell)
 #' 2. for each cell attaching a package, in display order: emit(cell)
 #' 3. for each cell in display order: emit(cell)
 #'
@@ -681,7 +724,7 @@ find_errors <- function(cells, analyses, edges, setup, ids, components,
 #' `a`'s name gives run order `s a b` for the code cells (pass 2 pulls `a`
 #' and `b` ahead of `md1`/`md2`); anchoring reinserts `md1` before `a` and
 #' `md2` before `b`, for `s md1 a md2 b`.
-compute_order <- function(ids, setup, upstream, attaches, comp_of, is_markdown) {
+compute_order <- function(ids, settings, upstream, attaches, comp_of, is_markdown) {
   # anchor[[id]]: for a markdown id, the next non-markdown id in display
   # order (NA if none). Computed with one backward pass over `ids`.
   anchor <- setNames(rep(NA_character_, length(ids)), ids)
@@ -724,9 +767,106 @@ compute_order <- function(ids, setup, upstream, attaches, comp_of, is_markdown) 
     }
   }
 
-  emit(setup)
+  for (id in settings) emit(id)
   for (id in ids) if (!isTRUE(is_markdown[[id]]) && length(attaches[[id]]) > 0) emit(id)
   for (id in ids) if (!isTRUE(is_markdown[[id]])) emit(id)
   for (id in ids) if (isTRUE(is_markdown[[id]]) && !isTRUE(emitted_flag[[id]])) place(id)
   emitted
+}
+
+# ---- Settings cells -------------------------------------------------------
+
+#' A cell's setting keys: its static keys (the analysis's `settings` rows
+#' with a known key), then learned ones it doesn't already have, as a data
+#' frame `key`, `found` (`"code"` or `"run"`). A cell whose only setting
+#' call has a computed name gets one row with `key = NA` until the worker
+#' reports the names, so it is a settings cell from the start
+#' (settings-cells.md, "Computed names"); `NA` never conflicts.
+setting_keys_of <- function(settings, learned) {
+  static <- unique(settings$setting[!is.na(settings$setting)])
+  run <- setdiff(learned, static)
+  keys <- c(static, run)
+  found <- c(rep("code", length(static)), rep("run", length(run)))
+  if (length(keys) == 0 && nrow(settings) > 0) {
+    keys <- NA_character_
+    found <- "code"
+  }
+  data.frame(key = as.character(keys), found = found, stringsAsFactors = FALSE)
+}
+
+#' A setting key as the page shows it: `option:digits` -> `digits`,
+#' `env:TZ` -> `TZ`, `attach:survey` -> `attach(survey)`; `wd`, `locale`
+#' and `theme` as they are.
+setting_label <- function(key) {
+  vapply(key, function(k) {
+    if (is.na(k)) return(NA_character_)
+    if (startsWith(k, "option:")) return(substring(k, 8))
+    if (startsWith(k, "env:")) return(substring(k, 5))
+    if (startsWith(k, "attach:")) return(sprintf("attach(%s)", substring(k, 8)))
+    k
+  }, character(1), USE.NAMES = FALSE)
+}
+
+#' The fix for a setting set in two cells: the scoped form for its kind.
+setting_fix <- function(key) {
+  kind <- sub(":.*$", "", key)
+  label <- setting_label(key)
+  switch(kind,
+    option = "Set it in one cell, or use withr::with_options() to change it for one piece of code",
+    env = "Set it in one cell, or use withr::with_envvar() to change it for one piece of code",
+    wd = "Set it in one cell, or use withr::with_dir() to change it for one piece of code",
+    locale = "Set it in one cell, or use withr::with_locale() to change it for one piece of code",
+    theme = "Set it in one cell, or add the theme to the plot (p + theme_minimal())",
+    attach = sprintf("Attach it in one cell, or use with(%s, ...) or %s$col",
+                     substring(key, 8), substring(key, 8)),
+    "Set it in one cell")
+}
+
+#' "two", "three", ... for small counts, else the number.
+count_word <- function(n) {
+  words <- c("one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+  if (n >= 1 && n <= length(words)) words[[n]] else as.character(n)
+}
+
+#' Setting edges: each non-markdown cell to every settings cell before it
+#' in `order`, one row per (from, to), `via = "setting"`, named by that
+#' settings cell's first known setting (`setting_label()`).
+setting_edges_of <- function(order, settings, cells, is_markdown) {
+  from <- character()
+  to <- character()
+  name <- character()
+  seen <- character()
+  for (id in order) {
+    if (isTRUE(is_markdown[[id]])) next
+    if (length(seen) > 0) {
+      from <- c(from, rep(id, length(seen)))
+      to <- c(to, seen)
+    }
+    if (id %in% settings) seen <- c(seen, id)
+  }
+  labels <- vapply(settings, function(s) {
+    keys <- cells[[s]]$setting_keys$key
+    keys <- keys[!is.na(keys)]
+    if (length(keys) == 0) NA_character_ else setting_label(keys[[1]])
+  }, character(1))
+  name <- unname(labels[to])
+  data.frame(from = from, to = to, name = if (length(to)) name else character(),
+             via = rep("setting", length(from)), stringsAsFactors = FALSE)
+}
+
+#' Neighbour lists from parallel edge vectors: `key[i]` -> `value[i]`,
+#' every id present (empty when it has none), each list unique and in
+#' display order (`rank`). Grouped with split() (one pass over the edge
+#' rows) rather than a per-row union(), which rescans the growing vector on
+#' every edge.
+neighbour_lists <- function(ids, rank, key, value) {
+  out <- setNames(rep(list(character()), length(ids)), ids)
+  if (length(key) > 0) {
+    groups <- split(value, key)
+    for (k in names(groups)) {
+      v <- unique(groups[[k]])
+      out[[k]] <- v[order(rank[v])]
+    }
+  }
+  out
 }

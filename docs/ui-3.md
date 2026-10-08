@@ -78,7 +78,7 @@ out of the way of the data, the code and the results.
   is a small chip on the code's bottom-right corner, also on hover or focus.
 - **Cell menu** (⋯ at the code's top right, in the interface font): Hide
   code, Disable cell, Copy output, Move up, Move down, Delete cell.
-- **Disable cell** (any code cell but the setup cell): the cell and the
+- **Disable cell** (any code cell): the cell and the
   cells that depend on it stop running, keep their last output dimmed, and
   their variables are removed from R. A disabled cell does not count as
   defining its variables (as Pluto): disabling one of two cells that define

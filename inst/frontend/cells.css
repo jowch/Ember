@@ -482,6 +482,22 @@ pluto-cell.no_output_yet > ember-chip {
     margin-bottom: 12px;
 }
 
+/* A settings cell's chip, when no state chip takes the slot. */
+ember-chip.settings {
+    background: var(--ember-panel);
+    border: 1px solid var(--ember-line);
+    color: var(--ember-muted);
+}
+
+/* The one-line note on the run that found a setting. */
+ember-settings-note {
+    display: block;
+    margin: 2px 0 6px 12px;
+    font-family: var(--ember-ui-font);
+    font-size: 12px;
+    color: var(--ember-muted);
+}
+
 pluto-cell.not_run_yet > ember-chip {
     background: var(--ember-panel);
     border: 1px solid var(--ember-line);

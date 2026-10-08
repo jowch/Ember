@@ -5,7 +5,7 @@
 # snapshot = "2026-01-01"
 # ///
 
-# %% id=S [setup]
+# %% id=S
 
 # %% id=T
 #' Euler: <span class="tex">$e^{i\pi} + 1 = 0$</span>

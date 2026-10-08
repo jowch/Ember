@@ -229,6 +229,9 @@ test("colours: ANSI's log and output have coloured spans from the theme and no v
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
+  // S defines print.ansi_demo. S3 dispatch isn't an edge, so S has to run
+  // first by hand (it used to be the setup cell, which always ran first).
+  await runCell(page, "S");
   await runCell(page, "ANSI");
   await page.waitForSelector(`${cellSelector("ANSI")} pluto-logs span.ansi-red-fg`, { timeout: 20000 });
   await page.waitForSelector(`${cellSelector("ANSI")} pluto-output span.ansi-green-fg`, { timeout: 20000 });

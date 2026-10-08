@@ -70,4 +70,6 @@ export const CircleIcon = ({ size = 12 }) => icon(size, html`<circle cx="12" cy=
 
 export const ClockIcon = ({ size = 12 }) => icon(size, html`<circle cx="12" cy="12" r="8"></circle><path d="M12 8v4l3 2"></path>`)
 
+export const SlidersIcon = ({ size = 12 }) => icon(size, html`<path d="M4 7h10M18 7h2M4 17h4M12 17h8"></path><circle cx="16" cy="7" r="2"></circle><circle cx="10" cy="17" r="2"></circle>`)
+
 export const SlashCircleIcon = ({ size = 12 }) => icon(size, html`<circle cx="12" cy="12" r="8"></circle><path d="M7 7l10 10"></path>`)

@@ -197,9 +197,8 @@ export const Notebook = ({
         }
     }, [cell_outputs_delayed])
 
-    // A real new notebook (new_notebook(), R/api.R) has an empty setup
-    // cell plus one empty code cell, not one cell, so this checks every
-    // cell rather than cell_order.length.
+    // A real new notebook (new_notebook(), R/api.R) has one empty code
+    // cell; every cell is checked so a notebook emptied by hand counts too.
     const is_empty_notebook =
         !disable_input &&
         notebook.cell_order.length > 0 &&

@@ -44,7 +44,6 @@ write_toy_notebook <- function(snapshot = "2026-09-01", dir = NULL) {
     dir <- tempfile("ember-nb-")
     dir.create(dir, recursive = TRUE)
   }
-  setup_id <- "S"
   cell_id <- "A"
   cells <- list(S = list(code = "", kind = "code", folded = FALSE),
                A = list(code = "library(toyA)\ntoyA_hello()", kind = "code", folded = FALSE))
@@ -52,7 +51,7 @@ write_toy_notebook <- function(snapshot = "2026-09-01", dir = NULL) {
                        r_version = paste(R.version$major, R.version$minor, sep = "."),
                        snapshot = snapshot)
   file <- new_notebook_file(
-    header = header, cells = cells, setup = setup_id, run_order = names(cells),
+    header = header, cells = cells, run_order = names(cells),
     learned = list(),
     sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
     lock = empty_lock(), extra_blocks = list(), format = ember_format)
@@ -242,7 +241,7 @@ test_that("[net] a notebook with library(dplyr) at a fixed past date resolves, i
                        r_version = paste(R.version$major, R.version$minor, sep = "."),
                        snapshot = "2026-06-01")  # after R 4.6.0: binaries exist
   file <- new_notebook_file(
-    header = header, cells = cells, setup = "S", run_order = names(cells), learned = list(),
+    header = header, cells = cells, run_order = names(cells), learned = list(),
     sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
     lock = empty_lock(), extra_blocks = list(), format = ember_format)
   path <- file.path(dir, "nb.R")
@@ -278,7 +277,7 @@ write_broken_notebook <- function(dir = NULL) {
                        snapshot = "2026-09-01")
   lock <- parse_lock_lines("brokenpkg 0.1.0 CRAN")$lock
   file <- new_notebook_file(
-    header = header, cells = cells, setup = "S", run_order = "S", learned = list(),
+    header = header, cells = cells, run_order = "S", learned = list(),
     sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
     lock = lock, extra_blocks = list(), format = ember_format)
   path <- file.path(dir, "nb.R")

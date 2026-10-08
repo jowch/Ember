@@ -23,25 +23,27 @@ cell <- function(code = "", kind = c("code", "markdown"), folded = FALSE,
 
 #' An `ember_notebook_file` built straight from cells, without going through
 #' `parse_notebook()`.
-fake_file <- function(cells, setup = names(cells)[1], on_cell_change = "autorun",
+fake_file <- function(cells, on_cell_change = "autorun",
                       learned = list(), lock = empty_lock(), extra_blocks = list(),
-                      format = 1L, read_only = FALSE) {
+                      format = 1L, read_only = FALSE, learned_settings = list()) {
   new_notebook_file(
     header = new_header(ember_version = "0.1.0", r_version = "4.3.0",
                         snapshot = "2026-01-01", on_cell_change = on_cell_change),
-    cells = cells, setup = setup, run_order = names(cells), learned = learned,
+    cells = cells, run_order = names(cells), learned = learned,
+    learned_settings = learned_settings,
     sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
     lock = lock, extra_blocks = extra_blocks, format = format,
     read_only = read_only, problems = NULL)
 }
 
 #' A fresh session state over `cells` (named list from `cell()`), ready to
-#' drive with events. `S` is the default setup id unless given.
-fake_state <- function(cells, setup = names(cells)[1], on_cell_change = "autorun",
+#' drive with events.
+fake_state <- function(cells, on_cell_change = "autorun",
                        learned = list(), lock = empty_lock(),
-                       options = list(library = NULL), at = 0) {
-  file <- fake_file(cells, setup = setup, on_cell_change = on_cell_change, learned = learned,
-                    lock = lock)
+                       options = list(library = NULL), at = 0,
+                       learned_settings = list()) {
+  file <- fake_file(cells, on_cell_change = on_cell_change, learned = learned,
+                    lock = lock, learned_settings = learned_settings)
   new_state(file, path = "nb.R", id = "n1", options = options, at = at)
 }
 
@@ -103,19 +105,12 @@ sent_cells <- function(result) {
   vapply(sends, function(e) e$msg$cell, character(1))
 }
 
-#' Run `ids`, start and hello the worker, and drain the setup cell's run if
-#' it was queued (every first run queues the setup cell as an unfresh
-#' ancestor of everything, so it always runs before any other cell). Returns
-#' a `drive()` result positioned right after that: the worker is "ready"
-#' and whatever `ids` asked for is next in the queue. `at0` is the first
-#' timestamp used; later events in the test should use `at0 + 10` or more to
-#' leave room.
+#' Run `ids`, start and hello the worker. Returns a `drive()` result
+#' positioned right after that: the worker is busy with the first cell
+#' `ids` needs. `at0` is the first timestamp used; later events in the test
+#' should use `at0 + 10` or more to leave room.
 boot <- function(s, ids, at0 = 1) {
-  r <- drive(s, ev_run(ids, at(at0)), wk_started(1, 99, at(at0 + 1)), wk_hello(1, list(), at(at0 + 2)))
-  if (!is.null(r$state$worker$running) && identical(r$state$worker$running$cell, s$setup)) {
-    r <- drive(r$state, wk_done(1, last_token(r), report(), at(at0 + 3)))
-  }
-  r
+  drive(s, ev_run(ids, at(at0)), wk_started(1, 99, at(at0 + 1)), wk_hello(1, list(), at(at0 + 2)))
 }
 
 #' Op constructors matching the shape `reduce_apply()` expects (ids already
@@ -131,7 +126,7 @@ op_move <- function(cell, index) list(op = "move", cell = cell, index = index)
 op_fold <- function(cell, folded = TRUE) list(op = "fold", cell = cell, folded = folded)
 op_disable <- function(cell, disabled = TRUE) list(op = "disable", cell = cell, disabled = disabled)
 
-#' Build a chain notebook with `n` dependent code cells after a setup cell,
+#' Build a chain notebook with `n` dependent code cells after an empty cell,
 #' for the performance test: `S`, then `c1` (defines `x1`), `c2` (refs `x1`,
 #' defines `x2`), ..., so running the last cell forces the whole chain.
 make_chain_cells <- function(n) {

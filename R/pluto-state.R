@@ -144,8 +144,9 @@ pluto_state <- function(state, previous = NULL) {
 #' plain character vector, so `ctx$disabled_by[[i]]` is always `NA`, never
 #' `NULL`); the cell's own `disabled` flag is already in the key through
 #' `cell`, so only the dependent relationship needs this field.
-#' `can_disable` needs no key field: it depends only on `kind` (in `cell`)
-#' and `setup`, which never changes after open.
+#' `can_disable` needs no key field: it depends only on `kind` (in `cell`).
+#' `settings` is in the key because a sourced file can change what a cell
+#' sets without the cell itself changing.
 cell_key <- function(state, ctx, i) {
   id <- ctx$ids[[i]]
   running <- ctx$running
@@ -154,6 +155,7 @@ cell_key <- function(state, ctx, i) {
        is_running = is_running, console = if (is_running) running$console else NULL,
        queued = ctx$queued[[i]], waiting_for = ctx$waiting[[i]],
        errors = ctx$errors_by_cell[[i]], disabled_by = ctx$disabled_by[[i]],
+       settings = ctx$settings[[i]],
        allowed = state$allowed)
 }
 
@@ -175,6 +177,7 @@ key_unchanged <- function(state, ctx, i, prev_key) {
   if (!identical(ctx$waiting[[i]], prev_key$waiting_for)) return(FALSE)
   if (!identical(ctx$errors_by_cell[[i]], prev_key$errors)) return(FALSE)
   if (!identical(ctx$disabled_by[[i]], prev_key$disabled_by)) return(FALSE)
+  if (!identical(ctx$settings[[i]], prev_key$settings)) return(FALSE)
   identical(state$allowed, prev_key$allowed)
 }
 
@@ -199,7 +202,7 @@ project_cell_input <- function(view) {
 #'   (Pluto's own field, Run.jl:86-91) -- true for a disabled cell itself,
 #'   too.
 #' * `ember`: `list(stale, code_changed, upstream_error?, disabled_by?,
-#'   can_disable, split?, figure?)`, from the view's `stale` and
+#'   can_disable, settings?, settings_found?, split?, figure?)`, from the view's `stale` and
 #'   `code_differs` -- both already in `cell_key()`'s key (`code_differs`
 #'   is derived from `cell$code` and `result$code`). `stale` is
 #'   `isTRUE(view$stale) && !off`: an off cell shows as disabled, not also
@@ -211,7 +214,11 @@ project_cell_input <- function(view) {
 #'   error is an ordinary error box, not a dimmed/labelled cell.
 #'   `disabled_by` is present only for a dependent of a disabled cell
 #'   (absent for the disabled cell itself). `can_disable` is `TRUE` for a
-#'   non-setup code cell. `split` is present, as `length(split_mixed(view$code))`,
+#'   code cell. `settings` is present, as `as_arr(view$settings)`
+#'   (`list(name, found)` per setting), only for a settings cell: the
+#'   chip. `settings_found` is present, as `as_arr()` of names, only on the
+#'   run that found settings the cell wasn't known to set: the one-line
+#'   note. `split` is present, as `length(split_mixed(view$code))`,
 #'   only when `view$errors` has a `mixed_text` error: the Split button's
 #'   label (Cell.js), answered by the `ember_split_cell` request (server.R).
 #'   `figure` is present, as `list(width, height)` inches, only when the
@@ -240,7 +247,7 @@ project_cell_result <- function(view, known_ids = NULL) {
   mixed <- Find(function(e) identical(e$kind, "mixed_text"), view$errors)
   split <- if (!is.null(mixed)) length(split_mixed(view$code)) else NULL
   off <- isTRUE(view$disabled) || !is.na(view$disabled_by)
-  can_disable <- identical(view$kind, "code") && !view$setup
+  can_disable <- identical(view$kind, "code")
   figure <- if (!is.null(view$output) && identical(view$output$mime, "image/png")) {
     fig <- cell_figure_size(view$code)
     list(width = fig$width, height = fig$height)
@@ -251,6 +258,8 @@ project_cell_result <- function(view, known_ids = NULL) {
             if (!is.null(upstream_error)) list(upstream_error = upstream_error),
             if (!is.na(view$disabled_by)) list(disabled_by = view$disabled_by),
             list(can_disable = can_disable),
+            if (length(view$settings) > 0) list(settings = as_arr(view$settings)),
+            if (length(view$settings_found) > 0) list(settings_found = as_arr(view$settings_found)),
             if (!is.null(split)) list(split = split),
             if (!is.null(figure)) list(figure = figure),
             if (length(view$variables) > 0) list(variables = as_arr(view$variables)))
@@ -581,6 +590,9 @@ join_names <- function(names, conj = "and") {
 #' id. `known_ids = NULL` (the default, every caller but
 #' `project_output()`) skips the check.
 #'
+#' `ember_cells` is a conflict's cells (`setting_conflict`,
+#' `package_conflict`), so the page links the other one; `NULL` otherwise.
+#'
 #' `ember_call`, `ember_line` and `ember_deep` are `error$call`,
 #' `error$line` and `error$deep` -- unset (`NULL`/`FALSE`) for an upstream
 #' error or any kind besides a plain "error", since those have nothing of
@@ -589,7 +601,7 @@ project_error <- function(error, known_ids = NULL) {
   if (identical(error$kind, "upstream")) {
     msg <- sprintf("Another cell defining %s contains errors.", join_names(error$names, conj = "or"))
     return(list(msg = msg, stacktrace = list(), plain_error = paste(msg, error$message, sep = "\n"),
-               ember_call = NULL, ember_line = NULL, ember_deep = FALSE))
+               ember_call = NULL, ember_line = NULL, ember_deep = FALSE, ember_cells = NULL))
   }
   msg <- switch(error$kind,
     multiple_definitions = sprintf("Multiple definitions for %s", join_names(error$names)),
@@ -608,7 +620,8 @@ project_error <- function(error, known_ids = NULL) {
         parent_module = NULL, ember_cell = cell)
   })
   list(msg = text, stacktrace = stacktrace, plain_error = text,
-      ember_call = error$call, ember_line = error$line, ember_deep = isTRUE(error$deep))
+      ember_call = error$call, ember_line = error$line, ember_deep = isTRUE(error$deep),
+      ember_cells = if (error$kind %in% c("setting_conflict", "package_conflict")) as.list(error$cells) else NULL)
 }
 
 #' Parse-error diagnostics: `list(list(message, from, to, line))` from the
@@ -667,9 +680,10 @@ project_logs <- function(console, cell_id) {
 #'
 #' From `graph$edges` (`from` depends on `to` through `name`): a cell's
 #' upstream map is name -> arr(cells it reads that name from), its downstream
-#' map name -> arr(cells reading a name it defines or exports). Setup edges
-#' (name NA) are left out; package edges are kept under the exported name.
-#' `precedence_heuristic` is 5L for a cell that attaches packages, else 9L
+#' map name -> arr(cells reading a name it defines or exports). Setting
+#' edges are left out (they read no name); package edges are kept under the
+#' exported name. `precedence_heuristic` is 3L for a settings cell, 5L for
+#' a cell that attaches packages, else 9L
 #' (Pluto's "runs early" hint, display only).
 #'
 #' Built only when the graph object changed; each cell's entry goes through
@@ -679,7 +693,7 @@ project_logs <- function(console, cell_id) {
 project_dependencies <- function(graph, previous) {
   ids <- graph$ids
   edges <- graph$edges
-  e <- if (is.null(edges) || nrow(edges) == 0) edges else edges[!is.na(edges$name), , drop = FALSE]
+  e <- if (is.null(edges) || nrow(edges) == 0) edges else edges[!is.na(edges$name) & edges$via != "setting", , drop = FALSE]
   up_groups <- if (!is.null(e) && nrow(e) > 0) split(e, e$from) else list()
   down_groups <- if (!is.null(e) && nrow(e) > 0) split(e, e$to) else list()
 
@@ -713,7 +727,8 @@ project_dependencies <- function(graph, previous) {
     list(cell_id = id,
         downstream_cells_map = with_every_definition(id, name_map(down_groups[[id]], "from")),
         upstream_cells_map = name_map(up_groups[[id]], "to"),
-        precedence_heuristic = if (length(graph$cells[[id]]$attaches) > 0) 5L else 9L)
+        precedence_heuristic = if (id %in% graph$settings) 3L
+                               else if (length(graph$cells[[id]]$attaches) > 0) 5L else 9L)
   }), ids)
   if (is.null(previous)) return(entries)
   stats::setNames(lapply(ids, function(id) reuse(entries[[id]], previous[[id]])), ids)

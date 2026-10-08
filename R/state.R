@@ -46,12 +46,11 @@ exports_of <- function(state) {
 #'   (character, one line per package, verbatim), `extra_blocks`, `format`
 #'   (the format the file was read in).
 #' * `cells`: named list, id -> `list(code, kind, folded, disabled)`, in
-#'   display order. `kind` is always `cell_kind(code, setup = <is this the
-#'   setup cell>)` (text-cells.R): `"code"` or `"markdown"` ("text", in
+#'   display order. `kind` is always `cell_kind(code)` (text-cells.R):
+#'   `"code"` or `"markdown"` ("text", in
 #'   ui-3.md's words -- the field keeps Pluto's name). The names are the
 #'   display order; there is no separate order field. `disabled` is the
 #'   user's choice (`disable_cell()`); always `FALSE` for a markdown cell.
-#' * `setup`: the setup cell's id. Always a code cell in `cells`.
 #' * `files`: named list, path -> `list(text, hash)`, the sourced files as
 #'   last read (`text = NA` when the file is missing). The graph reads
 #'   sourced files only from here, so building it stays pure.
@@ -89,15 +88,14 @@ exports_of <- function(state) {
 #' * `next_token`: integer, the next run token.
 #'
 #' Invariants (checked by `check_state()` in tests after every step):
-#' * `graph` is `notebook_graph(code_of(cells), setup, exports,
+#' * `graph` is `notebook_graph(code_of(cells), exports,
 #'   graph$learned, read_file = reader_of(files))` for the current fields:
-#'   every step that changes `cells`, `setup`, `exports` or `files` rebuilds
+#'   every step that changes `cells`, `exports` or `files` rebuilds
 #'   it with `previous = graph` (`rebuild_graph()` in step.R) and nothing
 #'   else assigns it.
 #' * `pending` holds only code cells in `cells`, and never the running cell
 #'   unless it was asked for again while running.
 #' * `results` holds only ids in `cells`.
-#' * `setup` names a code cell in `cells`.
 #' * `worker$running` is not `NULL` iff `worker$status == "busy"`.
 #' * `!allowed` implies `worker$status == "off"`, `pending` and `results`
 #'   empty.
@@ -122,10 +120,10 @@ new_state <- function(file, path, id, options, at) {
   # and skip filling in the real `r`.
   if (is.null(options[["r"]])) options$r <- default_r_info()
   cells <- file$cells
-  setup <- file$setup
   files <- list()
-  learned <- list(definitions = file$learned, references = list())
-  graph <- notebook_graph(code_of(cells), setup = setup, exports = list(),
+  learned <- list(definitions = file$learned, references = list(),
+                  settings = file$learned_settings %||% list())
+  graph <- notebook_graph(code_of(cells), exports = list(),
                           learned = learned, disabled = disabled_ids(cells),
                           read_file = reader_of(files))
 
@@ -160,7 +158,7 @@ new_state <- function(file, path, id, options, at) {
     problems = file$problems,
     file = list(header = file$header, lock = file$lock,
                extra_blocks = file$extra_blocks, format = file$format),
-    cells = cells, setup = setup, files = files, computed_sources = list(),
+    cells = cells, files = files, computed_sources = list(),
     footer_sources = footer_sources,
     exports = list(), graph = graph, options = options, packages = packages,
     allowed = FALSE, closed = FALSE, worker = new_worker_state(),
@@ -220,12 +218,18 @@ new_worker_state <- function() {
 #'   worker's `globals` report (worker.R's `summarise_globals()`), or
 #'   `list()` for a run that isn't "ok": its globals are about to be
 #'   dropped (`drop_globals`).
+#' * `settings_found`: the settings (as `setting_label()` shows them) this
+#'   run found that the cell wasn't known to set, so it became a settings
+#'   cell (settings-cells.md, Settings found at run time); `character()`
+#'   otherwise. Shown once, on this run's result.
 new_result <- function(code, status, output, console, error, started_at,
-                       runtime, defined, stale = FALSE, variables = list()) {
+                       runtime, defined, stale = FALSE, variables = list(),
+                       settings_found = character(), setting = FALSE) {
   structure(list(code = code, status = status, output = output,
                  console = console, error = error, started_at = started_at,
                  runtime = runtime, defined = defined, stale = stale,
-                 variables = variables),
+                 variables = variables, settings_found = settings_found,
+                 setting = setting),
             class = "ember_result")
 }
 
@@ -234,9 +238,7 @@ new_result <- function(code, status, output, console, error, started_at,
 #' `kind`: `"error"` (R signalled one), `"upstream"` (a cell this one reads
 #' from failed or has a graph error; `names`/`cells` say which names and
 #' which cells, aligned), `"multiple_definitions"` (the cell changed or
-#' removed another cell's global), `"global_setting"` (the cell's own code
-#' changed options, env vars, wd, locale or the search path outside the
-#' setup cell), `"source_conflict"` (a computed `source()` was refused),
+#' removed another cell's global), `"source_conflict"` (a computed `source()` was refused),
 #' `"worker_exited"`. `message`, `traceback` (character, innermost last),
 #' `names`, `fixes` as on `ember_graph_error`. `call`/`line` are set for a
 #' text cell's inline expression that errored (the `` `r expr` `` text and
@@ -288,7 +290,9 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 #'
 #' `list(cells, process, restart_offered, worker_message, seq)`. Per cell,
 #' an `ember_cell_view`: `id`, `index` (display), `kind`, `code`, `folded`,
-#' `setup`, `queued`, `running`, `status` (`"not_run"`, `"ok"`, `"error"`,
+#' `settings` (`list(name, found)` per setting the cell sets, `found` being
+#' `"code"` or `"run"`; empty for an ordinary cell), `settings_found` (the
+#' last result's, `character()` when none), `queued`, `running`, `status` (`"not_run"`, `"ok"`, `"error"`,
 #' `"interrupted"`), `stale`, `code_differs`, `errors` (graph errors, or
 #' else the run error, each with `kind`, `message`, `fixes`, `names`, and, for an
 #' `"upstream"` run error, `cells`; a plain "error" also carries `call`,
@@ -407,10 +411,18 @@ view_context <- function(state) {
     }
   }
 
+  # Same sentinel as errors_by_cell: NULL for the many cells that set
+  # nothing, so the per-cell key check is one lookup, not a function call.
+  settings <- vector("list", n)
+  for (sid in graph$settings) {
+    at <- match(sid, ids)
+    if (!is.na(at)) settings[[at]] <- cell_settings_view(graph, sid)
+  }
+
   list(ids = ids, running = running, running_idx = running_idx,
       queued = queued, waiting = waiting_vec,
       errors_by_cell = errors_by_cell, off = off, disabled_by = disabled_by,
-      results = results)
+      settings = settings, results = results)
 }
 
 #' `result$variables` as a list of `list(name, type, value, kind)`, sorted
@@ -439,9 +451,11 @@ cell_view <- function(state, ctx, i) {
   is_running <- !is.na(ctx$running_idx) && ctx$running_idx == i
 
   g_errors <- lapply(ctx$errors_by_cell[[i]], function(e) {
+    # A conflict names its cells, so the page can link the other one.
+    conflict <- e$kind %in% c("setting_conflict", "package_conflict")
     list(kind = e$kind, message = e$message, fixes = e$fixes,
-        names = e$names, cells = character(), traceback = character(),
-        lines = e$lines)
+        names = e$names, cells = if (conflict) e$cells else character(),
+        traceback = character(), lines = e$lines)
   })
   # A cell with a graph error can't run, so any run error it holds is from
   # before the graph error and would hide it (the page shows the last error).
@@ -457,7 +471,8 @@ cell_view <- function(state, ctx, i) {
 
   structure(list(
     id = id, index = i, kind = cell$kind, code = cell$code,
-    folded = isTRUE(cell$folded), setup = identical(id, state$setup),
+    folded = isTRUE(cell$folded), settings = ctx$settings[[i]] %||% list(),
+    settings_found = if (!is.null(result)) result$settings_found %||% character() else character(),
     queued = ctx$queued[[i]], running = is_running,
     status = if (!is.null(result)) result$status else "not_run",
     stale = !is.null(result) && isTRUE(result$stale),
@@ -482,9 +497,9 @@ is_idle <- function(snapshot) {
 
 #' The file this state would write: an `ember_notebook_file` (notebook.R).
 #'
-#' Cells in display order with fold state, setup id, the graph's run order
-#' (the order cells are written in), learned definitions from
-#' `graph$learned$definitions`, sourced-file hashes from `files` for every
+#' Cells in display order with fold state, the graph's run order (the
+#' order cells are written in), learned definitions and settings from
+#' `graph$learned`, sourced-file hashes from `files` for every
 #' literal and computed `source()` path, the lock and header unchanged.
 #' The header's `ember_version` is the running Ember's.
 notebook_file_of <- function(state) {
@@ -510,6 +525,8 @@ notebook_file_of <- function(state) {
 
   learned <- state$graph$learned$definitions
   learned <- learned[vapply(learned, length, integer(1)) > 0]
+  learned_settings <- state$graph$learned$settings %||% list()
+  learned_settings <- learned_settings[vapply(learned_settings, length, integer(1)) > 0]
 
   # Off code cells that aren't themselves disabled are written commented
   # out too: the disabled cells carry their own `disabled` flag instead,
@@ -520,8 +537,9 @@ notebook_file_of <- function(state) {
     !isTRUE(state$cells[[id]]$disabled) && identical(state$cells[[id]]$kind, "code")
   }, off_ids)
 
-  new_notebook_file(header = header, cells = state$cells, setup = state$setup,
+  new_notebook_file(header = header, cells = state$cells,
                     run_order = state$graph$order, learned = learned,
+                    learned_settings = learned_settings,
                     sourced = sourced, lock = state$file$lock,
                     extra_blocks = state$file$extra_blocks,
                     format = state$file$format, read_only = state$read_only,
@@ -554,8 +572,7 @@ notifications <- function(old, new) {
     identical(old$pending, new$pending) &&
     identical(old$worker, new$worker) &&
     identical(old$graph, new$graph) &&
-    identical(old$allowed, new$allowed) &&
-    identical(old$setup, new$setup)
+    identical(old$allowed, new$allowed)
   if (!quick_same) {
     old_views <- snapshot_of(old)$cells
     new_views <- snapshot_of(new)$cells
@@ -649,6 +666,25 @@ code_of <- function(cells) {
          character(1))
 }
 
+#' The settings one cell sets, for its view: `list(name, found)` per key
+#' the graph knows (`setting_keys_of()`), named as `setting_label()` shows
+#' them. A computed-only settings cell (no name known yet) shows the
+#' function instead (`options`). Empty for an ordinary cell, and for a
+#' disabled one, which sets nothing.
+cell_settings_view <- function(graph, id) {
+  if (!(id %in% graph$settings)) return(list())
+  keys <- graph$cells[[id]]$setting_keys
+  lapply(seq_len(nrow(keys)), function(i) {
+    name <- if (is.na(keys$key[[i]])) {
+      fns <- unique(graph$cells[[id]]$settings$fn)
+      if (length(fns) > 0) fns[[1]] else "settings"
+    } else {
+      setting_label(keys$key[[i]])
+    }
+    list(name = name, found = keys$found[[i]])
+  })
+}
+
 #' Disabled ids for `notebook_graph()`, in display order.
 disabled_ids <- function(cells) {
   names(cells)[vapply(cells, function(c) isTRUE(c$disabled), logical(1))]
@@ -658,7 +694,7 @@ disabled_ids <- function(cells) {
 check_state <- function(state) {
   problems <- character()
 
-  expected <- notebook_graph(code_of(state$cells), setup = state$setup,
+  expected <- notebook_graph(code_of(state$cells),
                              exports = exports_of(state), learned = state$graph$learned,
                              disabled = disabled_ids(state$cells),
                              previous = state$graph, read_file = reader_of(state$files))
@@ -687,13 +723,8 @@ check_state <- function(state) {
     problems <- c(problems, "results has ids not in cells")
   }
 
-  setup_cell <- state$cells[[state$setup]]
-  if (is.null(setup_cell) || !identical(setup_cell$kind, "code")) {
-    problems <- c(problems, "setup is not a code cell")
-  }
-
   bad_kind <- Filter(function(id) {
-    !identical(state$cells[[id]]$kind, cell_kind(state$cells[[id]]$code, setup = identical(id, state$setup)))
+    !identical(state$cells[[id]]$kind, cell_kind(state$cells[[id]]$code))
   }, names(state$cells))
   if (length(bad_kind) > 0) problems <- c(problems, "kind is not cell_kind(code)")
 

@@ -4,9 +4,9 @@
 # (worker_harness()'s $receive()), never Sys.sleep polling.
 
 run_msg <- function(cell, token, code, role = "cell", order = character(), formulas = list(),
-                    library = NULL, fig = NULL) {
+                    library = NULL, fig = NULL, settings = character()) {
   list(type = "run", cell = cell, token = token, code = code, role = role,
-       order = order, formulas = formulas, library = library, fig = fig)
+       order = order, settings = settings, formulas = formulas, library = library, fig = fig)
 }
 
 #' Run code in a fresh harness and return the `done` report. Fails the
@@ -189,7 +189,7 @@ test_that("active_binding_not_forced", {
   expect_identical(check$output$text, "[1] 0")
 })
 
-test_that("options_change_reported_and_reverted", {
+test_that("an options change is reported, and applies only where its cell is in effect", {
   h <- worker_harness()
   on.exit(h$close())
   r <- run_and_wait(h, "a", 1L, "options(digits = 3)")
@@ -199,20 +199,90 @@ test_that("options_change_reported_and_reverted", {
   expect_identical(r$settings[[1]]$name, "digits")
   expect_identical(r$settings[[1]]$before, 7L)
   expect_identical(r$settings[[1]]$after, 3L)
-  check <- run_and_wait(h, "b", 2L, 'getOption("digits")')
-  expect_identical(check$output$text, "[1] 7")
+  # In effect: the server lists "a" before "b".
+  with_a <- run_and_wait(h, "b", 2L, 'getOption("digits")', settings = "a")
+  expect_identical(with_a$output$text, "[1] 3")
+  expect_length(with_a$settings, 0)
+  # Not in effect (b runs before a, or a is disabled): back to the baseline.
+  without <- run_and_wait(h, "b", 3L, 'getOption("digits")')
+  expect_identical(without$output$text, "[1] 7")
 })
 
-test_that("setup_settings_reset_on_rerun", {
+test_that("a settings cell rerun starts from the baseline, and a deleted one stops applying", {
   h <- worker_harness()
   on.exit(h$close())
-  run_and_wait(h, "setup", 1L, "options(foo = 1)", role = "setup")
-  run_and_wait(h, "setup", 2L, "1", role = "setup")
-  r <- run_and_wait(h, "b", 3L, 'getOption("foo")')
+  run_and_wait(h, "s", 1L, "options(foo = 1)")
+  run_and_wait(h, "s", 2L, "1")
+  r <- run_and_wait(h, "b", 3L, 'getOption("foo")', settings = "s")
   expect_identical(r$output$text, "NULL")
+
+  sub <- tempfile("ember-wd-")
+  dir.create(file.path(sub, "data"), recursive = TRUE)
+  # After creating it, so macOS resolves /var to /private/var like getwd() does.
+  sub <- normalizePath(sub, winslash = "/")
+  run_and_wait(h, "w", 4L, sprintf("setwd(%s)", deparse(sub)))
+  run_and_wait(h, "w2", 5L, 'setwd("data")', settings = "w")
+  # Rerun with the same context: lands in data again, not data/data.
+  r2 <- run_and_wait(h, "w2", 6L, 'setwd("data"); getwd()', settings = "w")
+  expect_identical(r2$output$text, sprintf('[1] "%s/data"', sub))
+
+  run_and_wait(h, "o", 7L, "options(bar = 2)")
+  h$send(list(type = "remove_cell", cell = "o", order = character()))
+  r3 <- run_and_wait(h, "c", 8L, 'getOption("bar")', settings = "o")
+  expect_identical(r3$output$text, "NULL")
 })
 
-test_that("chdir moves getwd() and the baseline; a setup setwd() survives it (89)", {
+test_that("an option a package sets when it loads survives the reset before each run", {
+  h <- worker_harness(extra_libs = fixture_lib())
+  on.exit(h$close())
+  run_and_wait(h, "s", 1L, "options(digits = 3)")
+  run_and_wait(h, "l", 2L, "library(emberfix1)", settings = "s")
+  r <- run_and_wait(h, "c", 3L, 'getOption("emberfix_load_opt")', settings = "l")
+  expect_identical(r$output$text, '[1] "fix1-load"')
+  r2 <- run_and_wait(h, "c", 4L, 'getOption("digits")', settings = "l")
+  expect_identical(r2$output$text, "[1] 7")
+})
+
+test_that("library(ggplot2) and theme_set() in one cell: the theme is that cell's setting (review)", {
+  skip_if_not_installed("ggplot2")
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "t", 1L, "library(ggplot2); theme_set(theme_minimal(base_size = 21))", timeout = 30)
+  expect_identical(r$status, "ok")
+  kinds <- vapply(r$settings, function(d) d$kind, character(1))
+  expect_true("theme" %in% kinds)
+  # Theme values stay in the worker; the server gets only the key.
+  theme_diff <- r$settings[[match("theme", kinds)]]
+  expect_null(theme_diff$after)
+  on <- run_and_wait(h, "c", 2L, "ggplot2::theme_get()$text$size", settings = "t")
+  expect_identical(on$output$text, "[1] 21")
+  off <- run_and_wait(h, "c", 3L, "ggplot2::theme_get()$text$size")
+  expect_identical(off$output$text, "[1] 11")
+  # A later change to the cell keeps ggplot2's default as the baseline.
+  run_and_wait(h, "t", 4L, "library(ggplot2); theme_set(theme_bw(base_size = 15))", settings = character())
+  off2 <- run_and_wait(h, "c", 5L, "ggplot2::theme_get()$text$size")
+  expect_identical(off2$output$text, "[1] 11")
+  on2 <- run_and_wait(h, "c", 6L, "ggplot2::theme_get()$text$size", settings = "t")
+  expect_identical(on2$output$text, "[1] 15")
+  # A cell that only loads ggplot2 sets nothing.
+  r2 <- run_and_wait(h, "l", 7L, "library(ggplot2)")
+  expect_false("theme" %in% vapply(r2$settings, function(d) d$kind, character(1)))
+})
+
+test_that("ggplot2's theme is a setting the worker resets and reapplies", {
+  skip_if_not_installed("ggplot2")
+  h <- worker_harness()
+  on.exit(h$close())
+  run_and_wait(h, "l", 1L, "loadNamespace('ggplot2')", timeout = 30)
+  r <- run_and_wait(h, "t", 2L, "ggplot2::theme_set(ggplot2::theme_minimal(base_size = 21))")
+  expect_true(any(vapply(r$settings, function(d) identical(d$kind, "theme"), logical(1))))
+  on <- run_and_wait(h, "c", 3L, "ggplot2::theme_get()$text$size", settings = "t")
+  expect_identical(on$output$text, "[1] 21")
+  off <- run_and_wait(h, "c", 4L, "ggplot2::theme_get()$text$size")
+  expect_identical(off$output$text, "[1] 11")
+})
+
+test_that("chdir moves getwd() and the baseline; a settings cell's setwd() survives it (89)", {
   h <- worker_harness()
   on.exit(h$close())
   new_dir <- function(prefix) {
@@ -228,18 +298,22 @@ test_that("chdir moves getwd() and the baseline; a setup setwd() survives it (89
   expect_identical(r$output$text, sprintf('[1] "%s"', f1))
 
   elsewhere <- new_dir("ember-chdir-elsewhere-")
-  run_and_wait(h, "setup", 2L, sprintf("setwd(%s)", deparse(elsewhere)), role = "setup")
+  run_and_wait(h, "s", 2L, sprintf("setwd(%s)", deparse(elsewhere)))
+  dir.create(file.path(f1, "data"))
+  run_and_wait(h, "d", 3L, sprintf("setwd(%s)", deparse(file.path(f1, "data"))))
 
-  # The notebook moves again while the setup cell's own setwd() is still
-  # in effect: the live wd (elsewhere) is left alone, but the baseline a
-  # setup rerun would go back to (f1) is updated to the new folder.
+  # The notebook moves: a settings cell's setwd() outside the notebook's
+  # folder is kept as it is, one inside it moves with the notebook, and the
+  # baseline moves to the new folder.
   f2 <- new_dir("ember-chdir-f2-")
+  dir.create(file.path(f2, "data"))
   h$send(list(type = "chdir", from = f1, to = f2))
-  r2 <- run_and_wait(h, "y", 3L, "getwd()")
+  r2 <- run_and_wait(h, "y", 4L, "getwd()", settings = "s")
   expect_identical(r2$output$text, sprintf('[1] "%s"', elsewhere))
-
-  r3 <- run_and_wait(h, "setup", 4L, "getwd()", role = "setup")
-  expect_identical(r3$output$text, sprintf('[1] "%s"', f2))
+  r3 <- run_and_wait(h, "y", 5L, "getwd()", settings = "d")
+  expect_identical(r3$output$text, sprintf('[1] "%s/data"', f2))
+  r4 <- run_and_wait(h, "y", 6L, "getwd()")
+  expect_identical(r4$output$text, sprintf('[1] "%s"', f2))
 })
 
 test_that("chdir to a folder that no longer exists doesn't kill the worker", {
@@ -889,7 +963,7 @@ test_that("interrupt_during_display_still_completes_bookkeeping", {
   expect_identical(check$output$text,
     paste(utils::capture.output(print(c(sinks = 1L, devices = 1L))), collapse = "\n"))
 
-  # the option b changed was reverted (b wasn't the setup cell)
+  # the option b changed doesn't apply where b isn't in effect
   check2 <- run_and_wait(h, "d", 4L, 'getOption("digits")')
   expect_identical(check2$output$text, "[1] 7")
 })
@@ -1045,16 +1119,16 @@ test_that("library(notapkg) reports error$package regardless of locale (68)", {
   h <- worker_harness()
   on.exit(h$close())
 
-  # Changing LC_MESSAGES in the setup cell is kept (not reverted, unlike a
-  # plain cell); if the locale isn't installed on this machine, skip rather
+  # Changing LC_MESSAGES in a settings cell applies to the cells it is in
+  # effect for; if the locale isn't installed on this machine, skip rather
   # than fail on an environment difference.
-  set_locale <- run_and_wait(h, "setup", 1L, 'Sys.setlocale("LC_MESSAGES", "fr_FR.UTF-8")', role = "setup")
+  set_locale <- run_and_wait(h, "setup", 1L, 'Sys.setlocale("LC_MESSAGES", "fr_FR.UTF-8")')
   if (identical(set_locale$status, "error") ||
       !identical(set_locale$output$text, '[1] "fr_FR.UTF-8"')) {
     skip("fr_FR.UTF-8 locale not available on this machine")
   }
 
-  r <- run_and_wait(h, "a", 2L, "library(notapkg)")
+  r <- run_and_wait(h, "a", 2L, "library(notapkg)", settings = "setup")
   expect_identical(r$status, "error")
   expect_identical(r$error$package, "notapkg")
 })

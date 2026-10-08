@@ -18,7 +18,7 @@ test("open: loads every cell with safe preview, R highlighting, no console error
   await openNotebook(page, server.origin, server.secret, notebook);
 
   const cellCount = await page.locator("pluto-cell").count();
-  assert.equal(cellCount, 6, "setup + 5 cells from the fixture");
+  assert.equal(cellCount, 6, "the 6 cells from the fixture");
 
   const bannerVisible = await page.locator("#ember-safe-preview").count();
   assert.ok(bannerVisible > 0, "the safe-preview banner is shown before execution is allowed");

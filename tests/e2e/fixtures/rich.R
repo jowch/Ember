@@ -5,7 +5,7 @@
 # snapshot = "2026-01-01"
 # ///
 
-# %% id=S [setup]
+# %% id=S
 print.ansi_demo <- function(x, ...) {
   cat("\033[32mgreen\033[39m\n")
   invisible(x)

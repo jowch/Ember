@@ -17,7 +17,7 @@ Ember is shaped differently, and these constraints decide the design:
   `ember_state` per notebook, changed only by `step()`. The UI must not
   become a second copy that can disagree with it (brief, scope 2).
 - Edits must go through `edit_notebook()`, which is atomic and can refuse
-  (the `expected` check, the setup cell, read-only files). Endeavor's agent
+  (the `expected` check, read-only files). Endeavor's agent
   edits the same notebook through the same call.
 - Diffs are cheap only when each new object is made from the previous one,
   so unchanged parts are the same R objects (spike: 0.95 ms per changed

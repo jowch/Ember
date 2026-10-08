@@ -960,8 +960,7 @@ handlers <- list(
   #' cell doesn't exist or is off (a disabled cell or one of its
   #' dependents), `code` is out of date (the button was clicked against a
   #' copy the cell has since moved past), or the cell has no mixed_text
-  #' graph error (which already excludes the setup cell and a disabled
-  #' one). Nothing runs; the edit alone is enough to clear the error on
+  #' graph error (which already excludes a disabled one). Nothing runs; the edit alone is enough to clear the error on
   #' the first piece.
   ember_split_cell = function(server, cl, hub, req) {
     if (is.null(hub)) return(invisible(NULL))

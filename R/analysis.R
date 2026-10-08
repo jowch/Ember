@@ -39,12 +39,13 @@
 #'   qualified call (`pkg::fn(...)`) always records `pkg` here, even when
 #'   `fn` is itself an attach/setting/source/etc. function handled by the
 #'   same rule as its unqualified form (see `dispatch_call_by_name()`).
-#' * `settings`: data frame `fn`, `line`, `col`, `end_col`: top-level calls
-#'   to a global setting function (see `setting_functions`), positioned at
-#'   the function name token (for `pkg::fn(...)`, `fn`'s own token, not
-#'   `pkg`'s). Top-level means not inside a function definition;
-#'   `local({ options(...) })` counts, and so does `pkg::fn(...)` when `fn`
-#'   is a setting function.
+#' * `settings`: data frame `fn`, `setting`, `line`, `col`, `end_col`:
+#'   top-level calls to a global setting function (see
+#'   `setting_functions`), positioned at the function name token (for
+#'   `pkg::fn(...)`, `fn`'s own token, not `pkg`'s), one row per setting
+#'   key the call names (`setting_keys()`; `NA` when computed). Top-level
+#'   means not inside a function definition or a `local()` block;
+#'   `pkg::fn(...)` counts when `fn` is a setting function.
 #' * `formulas`: list of `formula_site` (see below): each formula that was
 #'   read with the column rule, for the worker to check after the run.
 #' * `sourced`: data frame `path`, `text`, `found`: literal `source()` paths
@@ -101,7 +102,7 @@ empty_packages <- function() {
              stringsAsFactors = FALSE)
 }
 empty_settings <- function() {
-  data.frame(fn = character(), line = integer(), col = integer(),
+  data.frame(fn = character(), setting = character(), line = integer(), col = integer(),
              end_col = integer(), stringsAsFactors = FALSE)
 }
 empty_sourced <- function() {
@@ -303,7 +304,7 @@ finish <- function(acc, code) {
   row.names(pkgs) <- NULL
 
   settings <- rbind_all(setting_rows_to_df(acc$setting_rows), acc$extra_settings)
-  if (nrow(settings) > 0) settings <- settings[!duplicated(settings[c("fn", "line", "col")]), , drop = FALSE]
+  if (nrow(settings) > 0) settings <- settings[!duplicated(settings[c("fn", "setting", "line", "col")]), , drop = FALSE]
   row.names(settings) <- NULL
 
   sourced <- rbind_all(sourced_rows_to_df(acc$sourced_rows), acc$extra_sourced)
@@ -370,6 +371,7 @@ setting_rows_to_df <- function(rows) {
   if (length(rows) == 0) return(empty_settings())
   data.frame(
     fn = vapply(rows, `[[`, character(1), "fn"),
+    setting = vapply(rows, `[[`, character(1), "setting"),
     line = vapply(rows, `[[`, integer(1), "line"),
     col = vapply(rows, `[[`, integer(1), "col"),
     end_col = vapply(rows, `[[`, integer(1), "end_col"),

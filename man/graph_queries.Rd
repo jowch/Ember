@@ -86,8 +86,7 @@ ids) followed by its errors, and returns \code{x} invisibly.
 }
 \examples{
 g <- notebook_graph(
-  cells = c(a = "x <- 1", b = "y <- x + 1"),
-  setup = "a"
+  cells = c(a = "x <- 1", b = "y <- x + 1")
 )
 upstream(g, "b")
 downstream(g, "a", transitive = TRUE)

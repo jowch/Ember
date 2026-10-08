@@ -3,9 +3,8 @@
 # (helper-core.R) folds `step()` over synthetic events and checks
 # `check_state()` after each one.
 #
-# Every notebook's setup cell is itself an unfresh ancestor the first time
-# anything runs, so `boot()` (helper-core.R) drains it before a test's own
-# cells are exercised.
+# Most fixtures start with an empty cell `S`, kept from when every notebook
+# had a setup cell: an empty cell has no edges, so it changes nothing.
 #
 # Covers engine-tests.md items 21-66 ("Core: editing", "Core: scheduling",
 # "Core: interrupt, restart, crashes").
@@ -118,11 +117,11 @@ test_that("a non-UUID insert id is refused (review4 item 6)", {
   expect_equal(names(r$state$cells), c("S", "A"))
 })
 
-test_that("deleting the setup cell is refused (26)", {
-  s <- fake_state(list(S = cell(""), A = cell("x <- 1")))
+test_that("deleting the first cell is allowed: no cell is special (26, settings-cells.md)", {
+  s <- fake_state(list(S = cell("options(digits = 3)"), A = cell("x <- 1")))
   r <- drive(s, ev_apply(list(op_delete("S")), at(1)))
-  expect_true(inherits(r$reply, "ember_refused"))
-  expect_identical(r$state, at_clock(s, 1))
+  expect_false(inherits(r$reply, "ember_refused"))
+  expect_equal(names(r$state$cells), "A")
 })
 
 test_that("code containing a marker line is refused (27)", {
@@ -132,16 +131,16 @@ test_that("code containing a marker line is refused (27)", {
 })
 
 test_that("move and fold change display order and fold, not run order (28)", {
-  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("y <- x")))
+  s <- fake_state(list(A = cell("x <- 1"), B = cell("y <- x")))
   before_order <- s$graph$order
-  r <- drive(s, ev_apply(list(op_move("B", 2), op_fold("A", TRUE)), at(1)))
-  expect_equal(names(r$state$cells), c("S", "B", "A"))
+  r <- drive(s, ev_apply(list(op_move("B", 1), op_fold("A", TRUE)), at(1)))
+  expect_equal(names(r$state$cells), c("B", "A"))
   expect_true(r$state$cells$A$folded)
   expect_equal(r$state$graph$order, before_order)  # A->B edge still forces A first
 })
 
 test_that("deleting a run cell removes its variables and invalidates readers (29)", {
-  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("y <- x")))
+  s <- fake_state(list(A = cell("x <- 1"), B = cell("y <- x")))
   r <- boot(s, NULL)
   expect_equal(last_sent(r)$cell, "A")
   r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
@@ -159,7 +158,7 @@ test_that("deleting a run cell removes its variables and invalidates readers (29
 })
 
 test_that("set_code of a run code cell to text folds it, drops the result, emits remove_cell, and marks readers stale (43)", {
-  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("y <- x")))
+  s <- fake_state(list(A = cell("x <- 1"), B = cell("y <- x")))
   r <- boot(s, NULL)
   r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
   r <- drive(r$state, wk_done(1, last_token(r), report(), at(11)))
@@ -203,7 +202,7 @@ test_that("forget_run() marks the currently running cell discard when its own id
 })
 
 test_that("a cell that read a removed name is still invalidated on rerun (30)", {
-  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("y <- x")))
+  s <- fake_state(list(A = cell("x <- 1"), B = cell("y <- x")))
   r <- boot(s, NULL)
   r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
   r <- drive(r$state, wk_done(1, last_token(r), report(), at(11)))
@@ -328,7 +327,7 @@ test_that("a graph error blocks only the cell itself, not its dependents (ui-3 7
   expect_setequal(r1$reply$skipped, c("A", "A2"))
 
   r2 <- drive(r1$state, wk_started(1, 99, at(3)), wk_hello(1, list(), at(4)))
-  expect_equal(last_sent(r2)$cell, "S")   # the setup cell runs first
+  expect_equal(last_sent(r2)$cell, "S")   # run all: the empty first cell is first in the order
   r3 <- drive(r2$state, wk_done(1, last_token(r2), report(), at(5)))
   expect_equal(last_sent(r3)$cell, "C")   # A and A2 are blocked; C is not
 })
@@ -449,33 +448,151 @@ test_that("changing a foreign global is a multiple_definitions run error (46)", 
   }, logical(1))))
 })
 
-test_that("a setting change outside setup is an error; inside setup it isn't (47)", {
-  # Also written so static reading can't see it (a literal options() call on
-  # a non-setup cell is already a graph-level global_setting error, which
-  # would block the cell from ever running); this exercises the run-level
-  # check built from the worker's report instead.
-  s <- fake_state(list(S = cell(""), A = cell("eval(parse(text = \"options(digits = 3)\"))")))
-  settings <- list(list(kind = "options", name = "digits", before = 7, after = 3))
+test_that("a setting found at run time makes a settings cell, not an error (47, settings-cells.md)", {
+  # Written so static reading can't see it; this exercises the learned
+  # settings built from the worker's report.
+  s <- fake_state(list(S = cell(""), B = cell("y <- 2"),
+                       A = cell("eval(parse(text = \"options(digits = 3)\"))")))
+  settings <- list(list(kind = "option", name = "digits", before = 7, after = 3))
 
-  r <- boot(s, "A")
-  r2 <- drive(r$state, wk_done(1, last_token(r), report(settings = settings), at(10)))
-  expect_equal(r2$state$results$A$error$kind, "global_setting")
-  # ui-3 8: the server's own run errors drop the failed cell's globals too.
-  expect_true(any(vapply(r2$effects, function(e) {
-    identical(e$type, "send") && identical(e$msg$type, "drop_globals") && identical(e$msg$cell, "A")
-  }, logical(1))))
+  r <- boot(s, c("B", "A"))
+  expect_equal(last_sent(r)$cell, "B")
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(10)))
+  expect_equal(last_sent(r)$cell, "A")
+  r2 <- drive(r$state, wk_done(1, last_token(r), report(settings = settings), at(11)))
+  expect_null(r2$state$results$A$error)
+  expect_equal(r2$state$results$A$status, "ok")
+  expect_equal(r2$state$graph$learned$settings, list(A = "option:digits"))
+  expect_equal(r2$state$graph$settings, "A")
+  expect_equal(r2$state$results$A$settings_found, "digits")
+  expect_equal(snapshot_of(r2$state)$cells$A$settings, list(list(name = "digits", found = "run")))
+  # B now comes after A and depends on it: stale, and (autorun) rerun.
+  expect_equal(r2$state$graph$order[r2$state$graph$order != "S"], c("A", "B"))
+  expect_true(r2$state$results$B$stale)
+  expect_equal(last_sent(r2)$cell, "B")
+  expect_equal(last_sent(r2)$settings, "A")
 
-  r3 <- drive(s, ev_run("S", at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(), at(3)))
-  expect_equal(last_sent(r3)$cell, "S")
-  r4 <- drive(r3$state, wk_done(1, last_token(r3), report(settings = settings), at(4)))
-  expect_null(r4$state$results$S$error)
+  # A second run that changes nothing keeps the learned setting.
+  r3 <- drive(r2$state, wk_done(1, last_token(r2), report(created = "y"), at(12)),
+              ev_run("A", at(13)))
+  r3 <- drive(r3$state, wk_done(1, last_token(r3), report(), at(14)))
+  expect_equal(r3$state$graph$learned$settings, list(A = "option:digits"))
+  expect_equal(r3$state$results$A$settings_found, character())
+
+  # Editing the cell drops it.
+  r4 <- drive(r3$state, ev_apply(list(op_set_code("A", "1")), at(15)))
+  expect_length(r4$state$graph$learned$settings, 0)
+  expect_equal(r4$state$graph$settings, character())
 })
 
-test_that("the setup cell's run message has role setup (48)", {
-  s <- fake_state(list(S = cell(""), A = cell("x <- 1")))
-  r <- drive(s, ev_run("S", at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(), at(3)))
-  expect_equal(last_sent(r)$cell, "S")
-  expect_equal(last_sent(r)$role, "setup")
+test_that("a computed options(op) cell is already a settings cell: no run-time note (review)", {
+  s <- fake_state(list(A = cell("options(op)"), B = cell("x <- 1")))
+  expect_equal(s$graph$settings, "A")
+  r <- boot(s, "A")
+  digits <- list(list(kind = "option", name = "digits", before = 7, after = 3))
+  r <- drive(r$state, wk_done(1, last_token(r), report(settings = digits), at(10)))
+  expect_equal(r$state$results$A$settings_found, character())
+  expect_equal(r$state$graph$learned$settings, list(A = "option:digits"))
+})
+
+test_that("two cells found at run time to set one option get setting_conflict", {
+  s <- fake_state(list(A = cell("f()"), B = cell("g()")))
+  digits <- list(list(kind = "option", name = "digits", before = 7, after = 3))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(settings = digits), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(settings = digits), at(11)))
+  err <- Filter(function(e) e$kind == "setting_conflict", r$state$graph$errors)
+  expect_length(err, 1)
+  expect_setequal(err[[1]]$cells, c("A", "B"))
+})
+
+test_that("the run message has role cell and the settings cells in effect before the cell (48)", {
+  s <- fake_state(list(S1 = cell("options(digits = 3)"), S2 = cell("Sys.setenv(TZ = 'UTC')"),
+                       D = cell("n <- 1"), S3 = cell("options(scipen = n)"),
+                       S4 = cell("options(width = 60)"), A = cell("x <- 1")))
+  r <- drive(s, ev_apply(list(op_disable("S4")), at(0)))
+  r <- boot(r$state, "A")
+  expect_equal(last_sent(r)$cell, "S1")
+  expect_equal(last_sent(r)$role, "cell")
+  expect_equal(last_sent(r)$settings, character())
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(10)))
+  expect_equal(last_sent(r)$cell, "S2")
+  expect_equal(last_sent(r)$settings, "S1")
+  # S2 fails: it is no longer in effect for the cells after it.
+  r <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "no")), at(11)))
+  expect_equal(last_sent(r)$cell, "D")
+  expect_equal(last_sent(r)$settings, "S1")
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "n"), at(12)))
+  expect_equal(last_sent(r)$cell, "S3")
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(13)))
+  expect_equal(last_sent(r)$cell, "A")
+  # S4 is disabled, S2 failed: neither is in effect.
+  expect_equal(last_sent(r)$settings, c("S1", "S3"))
+})
+
+test_that("disabling or deleting a settings cell marks the cells after it stale", {
+  s <- fake_state(list(S = cell("options(digits = 3)"), A = cell("x <- 1")), on_cell_change = "lazy")
+  r <- boot(s, "A")
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(11)))
+  expect_false(r$state$results$A$stale)
+  r2 <- drive(r$state, ev_apply(list(op_disable("S")), at(12)))
+  expect_false(inherits(r2$reply, "ember_refused"))
+  expect_true(r2$state$results$A$stale)
+  expect_equal(r2$state$pending, character())
+  r3 <- drive(r$state, ev_apply(list(op_delete("S")), at(12)))
+  expect_true(r3$state$results$A$stale)
+})
+
+test_that("editing the setting out of a settings cell marks later cells stale, and running it queues them in autorun (review)", {
+  for (mode in c("lazy", "autorun")) {
+    s <- fake_state(list(S = cell("options(digits = 3); y <- 1"), A = cell("x <- 1")), on_cell_change = mode)
+    r <- boot(s, "A")
+    r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(10)))
+    r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(11)))
+    expect_false(r$state$results$A$stale)
+    expect_true(r$state$results$S$setting)
+
+    # The edit alone: A was computed under S's digits, which no cell sets now.
+    r2 <- drive(r$state, ev_apply(list(op_set_code("S", "y <- 1")), at(12)))
+    expect_equal(r2$state$graph$settings, character())
+    expect_true(r2$state$results$A$stale, info = mode)
+    expect_equal(r2$state$pending, character())
+
+    # Running S: the last run was as a settings cell, so A counts as its
+    # dependent though no setting edge is left.
+    r3 <- drive(r2$state, ev_run("S", at(13)))
+    expect_equal(last_sent(r3)$cell, "S")
+    r3 <- drive(r3$state, wk_done(1, last_token(r3), report(created = "y"), at(14)))
+    expect_true(r3$state$results$A$stale, info = mode)
+    if (mode == "autorun") expect_equal(last_sent(r3)$cell, "A") else expect_equal(r3$state$pending, character())
+    expect_false(r3$state$results$S$setting)
+  }
+})
+
+test_that("a settings cell newly blocked by a setting_conflict marks later cells stale (review)", {
+  s <- fake_state(list(S = cell("options(digits = 3)"), A = cell("x <- 1"), B = cell("y <- 2")),
+                  on_cell_change = "lazy")
+  r <- boot(s, "B")
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(11)))
+  r <- drive(r$state, ev_run("A", at(12)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(13)))
+  expect_false(r$state$results$B$stale)
+  r2 <- drive(r$state, ev_apply(list(op_set_code("A", "options(digits = 4)")), at(14)))
+  expect_true("S" %in% blocked_cells(r2$state$graph))
+  expect_true(r2$state$results$B$stale)
+})
+
+test_that("lazy mode: running a settings cell marks later cells stale and queues nothing", {
+  s <- fake_state(list(S = cell("options(digits = 3)"), A = cell("x <- 1")), on_cell_change = "lazy")
+  r <- boot(s, "A")
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(11)))
+  r <- drive(r$state, ev_run("S", at(12)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(13)))
+  expect_true(r$state$results$A$stale)
+  expect_equal(r$state$pending, character())
 })
 
 test_that("attached exports from a report add a package edge (49)", {
@@ -816,13 +933,13 @@ test_that("a dependent's own missing_package or source_conflict kind is not rewr
   expect_equal(err$names, "brokenpkg")
 })
 
-test_that("only a setup edge between two cells never gives an upstream error (ui-3 4d)", {
-  s <- fake_state(list(S = cell("stop('setup boom')"), A = cell("1")))
+test_that("only a setting edge between two cells never gives an upstream error (ui-3 4d)", {
+  s <- fake_state(list(S = cell("options(digits = 3); stop('setup boom')"), A = cell("1")))
   r <- drive(s, ev_run("A", at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(), at(3)))
   expect_equal(last_sent(r)$cell, "S")
 
   r1 <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "setup boom")), at(4)))
-  expect_equal(last_sent(r1)$cell, "A")   # A's only edge to S is the setup edge
+  expect_equal(last_sent(r1)$cell, "A")   # A's only edge to S is a setting edge
   r2 <- drive(r1$state, wk_done(1, last_token(r1), report(status = "error", error = list(message = "A boom")), at(5)))
   expect_equal(r2$state$results$A$error$kind, "error")
 })
@@ -992,7 +1109,7 @@ test_that("an insert op containing a marker line is refused, like set_code (item
   expect_identical(r$state, at_clock(s, 1))
 })
 
-test_that("notifications catch a graph-only change (quick check now includes graph/allowed/setup)", {
+test_that("notifications catch a graph-only change (quick check now includes graph/allowed)", {
   s <- fake_state(list(S = cell(""), A = cell("source('h.R')"), B = cell("f <- 2")))
   r1 <- drive(s, ev_files_read(list(h.R = list(text = "x <- 1", hash = "md5:1")), at(1)))
   r2 <- drive(r1$state, ev_files_read(list(h.R = list(text = "f <- function() 1", hash = "md5:2")), at(2)))
@@ -1082,7 +1199,7 @@ test_that("cell_view()'s variables is sorted, leaves out dot-names, and empty af
   expect_equal(snapshot_of(r2$state)$cells$A$variables, list())
 })
 
-test_that("a done with status error, or an ok done the server turns into a global_setting error, stores no variables (ui-3 70)", {
+test_that("a done with status error, or an ok done the server turns into an error, stores no variables (ui-3 70)", {
   s <- fake_state(list(S = cell(""), A = cell("a <- 1")))
   r <- boot(s, "A")
   r <- drive(r$state, wk_done(1, last_token(r),
@@ -1092,13 +1209,13 @@ test_that("a done with status error, or an ok done the server turns into a globa
                               at(10)))
   expect_equal(snapshot_of(r$state)$cells$A$variables, list())
 
-  s2 <- fake_state(list(S = cell(""), A = cell("1")))
+  s2 <- fake_state(list(S = cell("x <- 1"), A = cell("1")))
   r2 <- boot(s2, "A")
   r2 <- drive(r2$state, wk_done(1, last_token(r2),
-                                report(settings = list(list(kind = "option", name = "digits", before = 7, after = 2)),
+                                report(changed = "x",
                                        globals = list(x = list(type = "numeric", value = "1", kind = "value"))),
                                 at(10)))
-  expect_equal(r2$state$results$A$error$kind, "global_setting")
+  expect_equal(r2$state$results$A$error$kind, "multiple_definitions")
   expect_equal(snapshot_of(r2$state)$cells$A$variables, list())
 })
 
@@ -1182,15 +1299,8 @@ test_that("a denied computed source() reports run error kind source_conflict", {
   expect_equal(r3$state$results$A$error$message, msg)
 })
 
-test_that("check_state() catches a non-code setup cell", {
-  s <- fake_state(list(S = cell("", kind = "markdown"), A = cell("x <- 1")), setup = "A")
-  bad <- s
-  bad$setup <- "S"
-  expect_error(check_state(bad), "setup is not a code cell")
-})
-
 test_that("a computed path from the footer stands in until every code cell has run", {
-  file <- fake_file(list(S = cell(""), A = cell("source(p)")))
+  file <- fake_file(list(A = cell("source(p)")))
   file$sourced <- data.frame(path = "gen/h.R", hash = "md5:abc", stringsAsFactors = FALSE)
   s <- new_state(file, path = "nb.R", id = "n1", options = list(library = NULL), at = 0)
   expect_identical(s$footer_sources, "gen/h.R")
@@ -1204,7 +1314,7 @@ test_that("a computed path from the footer stands in until every code cell has r
 })
 
 test_that("all_code_cells_ran() excludes an off cell, so the footer source still clears (review)", {
-  file <- fake_file(list(S = cell(""), A = cell("source(p)"), B = cell("x <- 1", disabled = TRUE)))
+  file <- fake_file(list(A = cell("source(p)"), B = cell("x <- 1", disabled = TRUE)))
   file$sourced <- data.frame(path = "gen/h.R", hash = "md5:abc", stringsAsFactors = FALSE)
   s <- new_state(file, path = "nb.R", id = "n1", options = list(library = NULL), at = 0)
   expect_identical(s$footer_sources, "gen/h.R")
@@ -1443,12 +1553,11 @@ test_that("disabling the running cell still sends remove_cell; its later done is
               list())
 })
 
-test_that("disabling refuses the setup cell, a text cell and an unknown id, and refuses the whole batch (ui-3 29)", {
+test_that("disabling refuses a text cell and an unknown id, and refuses the whole batch (ui-3 29)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1"), T = cell("#' hi", kind = "markdown")))
 
   r <- drive(s, ev_apply(list(op_disable("S")), at(1)))
-  expect_s3_class(r$reply, "ember_refused")
-  expect_equal(r$reply$message, "the setup cell can't be disabled; empty it instead")
+  expect_false(inherits(r$reply, "ember_refused"))
 
   r2 <- drive(s, ev_apply(list(op_disable("T")), at(2)))
   expect_equal(r2$reply$message, "text cells can't be disabled")
@@ -1460,7 +1569,7 @@ test_that("disabling refuses the setup cell, a text cell and an unknown id, and 
   expect_equal(r3$reply$message, "unknown cell")
   expect_no_match(r3$reply$message, ghost_id, fixed = TRUE)
 
-  r4 <- drive(s, ev_apply(list(op_fold("A", TRUE), op_disable("S")), at(4)))
+  r4 <- drive(s, ev_apply(list(op_fold("A", TRUE), op_disable("T")), at(4)))
   expect_s3_class(r4$reply, "ember_refused")
   expect_false(isTRUE(unname(r4$state$cells$A$folded)))
 })
@@ -1654,7 +1763,7 @@ test_that("after a failed install, a cell waiting on the package runs instead of
   # (ev_run()'s "I want this to work now" retry, reduce_run(), would
   # otherwise immediately flip a hand-set "failed" back to "missing").
   lock <- new_lock(name = "cli", version = "3.6.0", source = "CRAN")
-  s <- fake_state(list(S = cell(""), A = cell("library(cli)")), lock = lock)
+  s <- fake_state(list(A = cell("library(cli)")), lock = lock)
   key <- s$packages$target$key
 
   r <- drive(s, ev_run("A", at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(), at(3)))
@@ -1664,7 +1773,6 @@ test_that("after a failed install, a cell waiting on the package runs instead of
                                       failures = data.frame(package = "cli", kind = "build_error",
                                                             detail = "boom", stringsAsFactors = FALSE)))
   expect_equal(r$state$packages$target$status, "failed")
-  r <- drive(r$state, wk_done(r$state$worker$gen, r$state$worker$running$token, report(), at(6)))
   # Without the fix, schedule() drops "A" from pending here and nothing runs.
   expect_equal(r$state$worker$running$cell, "A")
 

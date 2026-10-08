@@ -6,7 +6,7 @@
 # future_key = "value"
 # ///
 
-# %% id=setup [setup]
+# %% id=setup
 1 + 1
 
 # /// cell order

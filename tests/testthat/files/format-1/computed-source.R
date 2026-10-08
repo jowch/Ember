@@ -5,7 +5,7 @@
 # snapshot = "2026-09-01"
 # ///
 
-# %% id=setup [setup]
+# %% id=setup
 d <- "helpers"
 
 # %% id=a

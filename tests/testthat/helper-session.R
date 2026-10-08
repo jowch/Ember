@@ -13,7 +13,7 @@ write_file_exact <- function(path, text) {
 
 #' Build a canonical notebook file from `cell()`s (helper-core.R) and write
 #' it to disk. Returns the path.
-write_session_notebook <- function(cells, setup = names(cells)[1],
+write_session_notebook <- function(cells,
                                    on_cell_change = "autorun",
                                    dir = NULL, snapshot = "2026-01-01") {
   if (is.null(dir)) {
@@ -24,7 +24,7 @@ write_session_notebook <- function(cells, setup = names(cells)[1],
                        r_version = paste(R.version$major, R.version$minor, sep = "."),
                        snapshot = snapshot, on_cell_change = on_cell_change)
   file <- new_notebook_file(
-    header = header, cells = cells, setup = setup, run_order = names(cells),
+    header = header, cells = cells, run_order = names(cells),
     learned = list(),
     sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
     lock = empty_lock(), extra_blocks = list(), format = ember_format)

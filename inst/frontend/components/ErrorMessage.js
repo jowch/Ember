@@ -165,12 +165,13 @@ export const ParseError = ({ cell_id, diagnostics, last_run_timestamp }) => {
  * @param {string?} [props.ember_call]
  * @param {number?} [props.ember_line]
  * @param {boolean} [props.ember_deep]
+ * @param {string[]?} [props.ember_cells] A setting or package conflict's cells, this one included.
  * @param {number?} [props.ember_split] The Split button's cell count, for a cell mixing text and code.
  * @param {() => void} [props.on_split]
  * @param {string} props.cell_id
  * @returns {any}
  */
-export const ErrorMessage = ({ msg, stacktrace, plain_error, ember_call = null, ember_line = null, ember_deep = false, ember_split = null, on_split, cell_id }) => {
+export const ErrorMessage = ({ msg, stacktrace, plain_error, ember_call = null, ember_line = null, ember_deep = false, ember_cells = null, ember_split = null, on_split, cell_id }) => {
     let pluto_actions = useContext(PlutoActionsContext)
 
     const default_rewriter = {
@@ -195,6 +196,22 @@ export const ErrorMessage = ({ msg, stacktrace, plain_error, ember_call = null, 
                     >${what}</a
                 >`
         ),
+        {
+            // graph.R's setting_conflict / package_conflict: the setting or
+            // package links to the other cell, as "Multiple definitions" does.
+            pattern: /^.+ is (set|attached) in .+ cells\./,
+            display: (/** @type{string} */ x) =>
+                first_and_rest(x, (line) => {
+                    const others = (ember_cells ?? []).filter((c) => c !== cell_id)
+                    const m = line.match(/^(.+?)( is (?:set|attached) in .+)$/)
+                    if (others.length === 0 || !m) return html`<${AnsiText} value=${line} />`
+                    const onclick = (ev) => {
+                        ev.preventDefault()
+                        document.querySelector(`pluto-cell[id='${others[0]}']`)?.scrollIntoView()
+                    }
+                    return html`<a href="#" onclick=${onclick}>${m[1]}</a>${m[2]}`
+                }),
+        },
         {
             pattern: /^\s*$/,
             display: () => default_rewriter.display("Error"),

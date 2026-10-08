@@ -319,7 +319,7 @@ test_that("eval() is untouched by the get-family literal-name rule", {
 test_that("a cell using str_interp() gets a definition edge on the cell defining the name", {
   A <- read_cell('hello <- "world"')
   B <- read_cell('stringr::str_interp("Hello, ${hello}!")')
-  g <- build_test_graph(list(A = A, B = B), setup = "A")
+  g <- build_test_graph(list(A = A, B = B))
   expect_true("A" %in% upstream(g, "B"))
   expect_true(any(g$edges$from == "B" & g$edges$to == "A" &
                     g$edges$name == "hello" & g$edges$via == "definition"))

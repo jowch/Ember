@@ -18,7 +18,7 @@ test_that("snapshot fields are right for every cell status (67)", {
   snap <- snapshot_of(r$state)
   a <- snap$cells$A
   expect_equal(a$id, "A"); expect_equal(a$index, 2); expect_equal(a$kind, "code")
-  expect_false(a$setup); expect_false(a$queued); expect_false(a$running)
+  expect_equal(a$settings, list()); expect_false(a$queued); expect_false(a$running)
   expect_equal(a$status, "ok"); expect_false(a$stale); expect_false(a$code_differs)
 
   b <- snap$cells$B
@@ -27,8 +27,9 @@ test_that("snapshot fields are right for every cell status (67)", {
   md <- snap$cells$Md
   expect_equal(md$kind, "markdown"); expect_equal(md$status, "not_run")
 
-  s2 <- snapshot_of(s)
-  expect_true(s2$cells$S$setup)
+  s2 <- snapshot_of(fake_state(list(S = cell("options(digits = 3)\nSys.setenv(TZ = 'UTC')"))))
+  expect_equal(s2$cells$S$settings, list(list(name = "digits", found = "code"),
+                                          list(name = "TZ", found = "code")))
 })
 
 test_that("the running cell's snapshot shows the streamed console (68)", {
@@ -87,7 +88,6 @@ test_that("notebook_file_of() round-trips the fields of a fake state (73)", {
   s <- fake_state(list(S = cell("s <- 1"), A = cell("a <- 1"), B = cell("b <- a")))
   f <- notebook_file_of(s)
   expect_equal(f$cells, s$cells)
-  expect_equal(f$setup, s$setup)
   expect_equal(f$run_order, s$graph$order)
   expect_equal(f$lock, s$file$lock)
 })
@@ -153,7 +153,7 @@ test_that("an unrelated edit shares unchanged parts of the state (identical())",
 })
 
 test_that("one step on a 2000-cell notebook stays well under 50ms", {
-  # An event that doesn't touch `cells`/`setup`/`exports`/`files` never
+  # An event that doesn't touch `cells`/`exports`/`files` never
   # rebuilds the graph (rebuild_graph() is only called from the handlers
   # that change one of those); this is the common case while a notebook is
   # running (a cell finishing, console output, a timer). Rebuilding 2000
@@ -161,7 +161,7 @@ test_that("one step on a 2000-cell notebook stays well under 50ms", {
   # measured here.
   cells <- list(S = cell(""))
   for (i in 1:2000) cells[[sprintf("c%d", i)]] <- cell(sprintf("x%d <- %d", i, i))
-  s <- fake_state(cells, setup = "S")
+  s <- fake_state(cells)
   r <- drive(s, ev_run(NULL, at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(), at(3)))
 
   times <- numeric(20)

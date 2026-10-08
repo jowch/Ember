@@ -237,7 +237,7 @@ test_that("maybe_sample_worker_memory() gates sampling to every 2s", {
 # ---- 69. ember_run_all: only not-run cells, nothing already fresh ----------
 
 test_that("ember_run_all runs only not-run cells; a fresh one keeps its last_run (70)", {
-  path <- write_session_notebook(list(S = cell(""), A = cell("1"), B = cell("2")),
+  path <- write_session_notebook(list(A = cell("1"), B = cell("2")),
                                  on_cell_change = "lazy")
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
@@ -245,7 +245,7 @@ test_that("ember_run_all runs only not-run cells; a fresh one keeps its last_run
   host_notebook(server, nb)
   id <- notebook_state(nb)$id
   cells <- names(notebook_state(nb)$cells)
-  a <- cells[2]; b <- cells[3]
+  a <- cells[1]; b <- cells[2]
 
   ws <- fake_socket()
   handle_message(server, ws, wire("connect", notebook_id = id))
@@ -259,7 +259,7 @@ test_that("ember_run_all runs only not-run cells; a fresh one keeps its last_run
   expect_true(wait_for(nb, timeout = 20))
 
   snap <- notebook_snapshot(nb)
-  not_run <- Filter(function(c) identical(c$status, "not_run") && !c$setup, snap$cells)
+  not_run <- Filter(function(c) identical(c$status, "not_run"), snap$cells)
   expect_length(not_run, 0)
   expect_identical(notebook_state(nb)$results[[a]]$started_at, a_started)
   expect_false(is.null(notebook_state(nb)$results[[b]]))

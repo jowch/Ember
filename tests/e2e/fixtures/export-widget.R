@@ -5,7 +5,7 @@
 # snapshot = "2026-09-01"
 # ///
 
-# %% id=S [setup]
+# %% id=S
 
 # %% id=WIDGET
 dep_dir <- file.path(.libPaths()[1], "embertestdep")

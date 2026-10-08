@@ -27,8 +27,8 @@ test("disable cell: toggling off then on, with the file and classes surviving a 
 
   await page.hover(cellSelector("S"));
   await page.locator(`${cellSelector("S")} button.input_context_menu`).click();
-  assert.equal(await page.locator(`${cellSelector("S")} button.disable_cell`).count(), 0,
-    "the setup cell's menu has no disable item");
+  assert.equal(await page.locator(`${cellSelector("S")} button.disable_cell`).count(), 1,
+    "the first cell's menu has a disable item: no cell is special");
   await page.keyboard.press("Escape");
 
   await page.hover(cellSelector("A"));

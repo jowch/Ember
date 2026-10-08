@@ -115,7 +115,9 @@ run <- function(path, repos = ember_repos(), cache = cache_dir(), echo = TRUE) {
   text <- read_file_utf8(path)
   file <- parse_notebook(text, new_id = uuid)
 
-  graph <- notebook_graph(code_of(file$cells), setup = file$setup,
+  graph <- notebook_graph(code_of(file$cells),
+                          learned = list(definitions = file$learned,
+                                         settings = file$learned_settings),
                           disabled = disabled_ids(file$cells))
   wanted <- wanted_packages(graph, file$header)
   locked_names <- if (is.null(file$lock$entries) || nrow(file$lock$entries) == 0) {

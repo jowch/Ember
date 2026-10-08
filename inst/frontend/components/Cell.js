@@ -9,7 +9,7 @@ import { cl } from "../common/ClassTable.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { t, th } from "../common/lang.js"
-import { CircleIcon, ClockIcon, SlashCircleIcon } from "../common/Icons.js"
+import { CircleIcon, ClockIcon, SlashCircleIcon, SlidersIcon } from "../common/Icons.js"
 import { stale_names } from "../common/stale_names.js"
 import { useSettled, wait_for_on } from "../common/useSettled.js"
 import { EditorSelection, EditorView } from "../imports/CodemirrorPlutoSetup.js"
@@ -26,6 +26,26 @@ const format_stale_chip = (notebook, cell_id) => {
     const shown = names.slice(0, 3)
     const rest = names.length - shown.length
     return t("t_chip_stale_names", { names: join_names(rest > 0 ? [...shown, t("t_n_more", { count: rest })] : shown) })
+}
+
+/**
+ * A settings cell's chip (settings-cells.md, "In the page"): "Setting ·
+ * digits", or "Settings · digits, wd" for more than one, at most three
+ * names, then "and N more". The hover says what a settings cell does,
+ * and that a setting was found at run time when one was.
+ */
+const settings_chip = (/** @type {{name: string, found: string}[]} */ settings) => {
+    const names = settings.map((s) => s.name)
+    const shown = names.slice(0, 3)
+    const rest = names.length - shown.length
+    const joined = (rest > 0 ? [...shown, t("t_n_more", { count: rest })] : shown).join(", ")
+    const found = settings.some((s) => s.found === "run")
+    return {
+        icon: SlidersIcon,
+        kind: "settings",
+        text: t(names.length === 1 ? "t_chip_setting" : "t_chip_settings", { names: joined }),
+        title: t("t_chip_settings_hover") + (found ? ` ${t("t_chip_settings_found_hover")}` : ""),
+    }
 }
 
 /** "x", "x and y", "x, y and z". */
@@ -443,7 +463,10 @@ export const Cell = ({
             ? { icon: CircleIcon, text: t("t_chip_not_run") }
             : stale
               ? { icon: ClockIcon, text: format_stale_chip(pluto_actions.get_notebook(), cell_id) }
-              : null
+              : (ember?.settings?.length ?? 0) > 0
+                ? settings_chip(ember.settings)
+                : null
+    const settings_found = ember?.settings_found ?? []
 
     const cell_state =
         running_disabled || depends_on_disabled_cells
@@ -520,7 +543,10 @@ export const Cell = ({
             <pluto-trafficlight></pluto-trafficlight>
             ${rail === "due" ? html`<ember-rail-tip>${t("t_rail_due_hint")}</ember-rail-tip>` : null}
             ${chip != null
-                ? html`<ember-chip role="status"><span class="ember-chip-icon" aria-hidden="true"><${chip.icon} /></span><span>${chip.text}</span></ember-chip>`
+                ? html`<ember-chip role="status" class=${chip.kind ?? ""} title=${chip.title}><span class="ember-chip-icon" aria-hidden="true"><${chip.icon} /></span><span>${chip.text}</span></ember-chip>`
+                : null}
+            ${settings_found.length > 0
+                ? html`<ember-settings-note role="status">${t("t_settings_found_note", { names: join_names(settings_found) })}</ember-settings-note>`
                 : null}
             ${code_not_trusted_yet
                 ? null

@@ -42,7 +42,7 @@ test("reverse proxy: a notebook opens and a cell runs through a path prefix on a
   assert.ok(page.url().startsWith(proxiedOrigin + "edit"), "stayed under the proxy's prefix: " + page.url());
 
   const cellCount = await page.locator("pluto-cell").count();
-  assert.equal(cellCount, 6, "setup + 5 cells from the fixture, loaded entirely through the proxy");
+  assert.equal(cellCount, 6, "the 6 cells from the fixture, loaded entirely through the proxy");
 
   await runCell(page, "B");
   await page.waitForFunction(

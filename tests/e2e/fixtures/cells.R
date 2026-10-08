@@ -5,7 +5,7 @@
 # snapshot = "2026-01-01"
 # ///
 
-# %% id=S [setup]
+# %% id=S
 
 # %% id=A
 x <- 1

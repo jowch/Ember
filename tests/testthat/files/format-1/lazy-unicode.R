@@ -12,7 +12,7 @@
 # ragg
 # ///
 
-# %% id=setup [setup]
+# %% id=setup
 library(dplyr)
 
 # %% id=calc
