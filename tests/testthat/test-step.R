@@ -1347,6 +1347,47 @@ test_that("a learned reference is saved, so its edge survives a reopen without r
   expect_equal(s2$graph$order, r$state$graph$order)
 })
 
+test_that("editing a cell drops its learned references, so a stale one can't hold it in a cycle (review)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"),
+                       B = cell("fit <- lm(y ~ x, data = df)"), C = cell("q <- 1")),
+                  on_cell_change = "lazy")
+  r <- boot(s, "B")
+  r <- drive(r$state, wk_done(1, last_token(r), report(formula_misses = "x"), at(10)))
+  expect_equal(r$state$graph$learned$references$B, "x")
+
+  # Move x into C, which reads B's fit: B <-> C is a real cycle while B
+  # uses x. Editing B so it doesn't must break it without running B.
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "z <- 1"),
+                                    op_set_code("C", "x <- predict(fit)")), at(20)))
+  expect_true("C" %in% r$state$graph$upstream$B)
+  expect_true("B" %in% r$state$graph$upstream$C)
+  r <- drive(r$state, ev_apply(list(op_set_code("B", "fit <- lm(y ~ w, data = df)")), at(30)))
+  expect_null(r$state$graph$learned$references$B)
+  expect_false("C" %in% r$state$graph$upstream$B)
+
+  # Nor does the reopened file bring it back.
+  s2 <- reopen(r$state)
+  expect_null(s2$graph$learned$references$B)
+  expect_false("C" %in% s2$graph$upstream$B)
+})
+
+test_that("an edit that leaves the code as it was keeps the learned references", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("lm(y ~ x, data = df)")))
+  r <- boot(s, "B")
+  r <- drive(r$state, wk_done(1, last_token(r), report(formula_misses = "x"), at(10)))
+  r <- drive(r$state, ev_apply(list(op_set_code("B", "lm(y ~ x, data = df)"), op_fold("B", TRUE)), at(20)))
+  expect_equal(r$state$graph$learned$references$B, "x")
+})
+
+test_that("a learned sources line naming a path with no hash is not seeded (review)", {
+  file <- fake_file(list(A = cell("source(p)")))
+  file$sourced <- data.frame(path = "gen/h.R", hash = "md5:abc", stringsAsFactors = FALSE)
+  file$learned_sources <- list(A = c("gen/h.R", "gen/gone.R"))
+  s <- new_state(file, path = "nb.R", id = "n1", options = list(library = NULL), at = 0)
+  expect_equal(s$computed_sources, list(A = "gen/h.R"))
+  expect_false("gen/gone.R" %in% watched_files(s))
+})
+
 test_that("a computed source() path is saved with the cell that sourced it", {
   s <- fake_state(list(S = cell(""), A = cell("source(p)"), B = cell("y <- 1")))
   s$path <- "/proj/nb.R"

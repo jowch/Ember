@@ -377,7 +377,8 @@ edge. So after the cell runs, the worker checks that each name taken as a
 column is in `names()` of the data frame the function received; if one
 isn't, the engine adds the edge and shows a note. The footer's `learned
 references` block records these names, so the edge is there when the
-notebook is opened without running.
+notebook is opened without running. Editing the cell drops them, as it
+drops learned settings; the next run's check finds them again.
 
 In Julia, StatsModels' `@formula` always treats terms as columns, so Pluto
 needs no such rule.

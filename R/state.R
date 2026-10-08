@@ -146,10 +146,15 @@ new_state <- function(file, path, id, options, at) {
   # it. Only a path no cell claims (a file written before that block
   # existed) falls back to `footer_sources`.
   computed_sources <- file$learned_sources %||% list()
+  # Only paths "sourced files" has a hash for, the rule
+  # `notebook_file_of()` writes by: a line naming any other path (a hand
+  # edit) is dropped rather than watched with nothing to compare against.
+  sourced <- file$sourced
+  hashed <- if (is.null(sourced)) character() else sourced$path
+  computed_sources <- lapply(computed_sources, function(ps) intersect(ps, hashed))
   computed_sources <- computed_sources[names(computed_sources) %in% names(cells) &
                                          vapply(computed_sources, length, integer(1)) > 0]
   claimed <- unlist(computed_sources, use.names = FALSE)
-  sourced <- file$sourced
   footer_sources <- character()
   if (!is.null(sourced) && nrow(sourced) > 0) {
     literal <- unique(unlist(lapply(graph$analyses, function(a) {
