@@ -711,25 +711,21 @@ test_that("check_state() holds after every step across a full packages lifecycle
 # ---- Performance (09) -------------------------------------------------------
 
 # Times packages_view() itself, which is what regressed: one data frame per
-# lock row took 19.5 ms at 150 packages, the column-wise version 1.5 ms. The
-# bound leaves room for slow CI machines and still catches the old way.
-test_that("packages_view() is built column-wise: under 8 ms at 150 packages", {
-  n <- 150
-  nm <- sprintf("pkg%03d", seq_len(n))
-  lock <- new_lock(nm, rep("1.0.0", n), rep("CRAN", n))
-  cells <- c(list(S = cell("")),
-            setNames(lapply(seq_len(200), function(i) {
-              cell(sprintf("library(%s)\nx%d <- %d", nm[(i %% n) + 1], i, i))
-            }), sprintf("c%d", 1:200)))
-  s <- pkg_state(cells, lock = lock)
-  r <- drive(s, ev_open(at(1)))
-  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, manifest(lock_versions(lock)), at(2)))
-  st <- r$state
-
-  times <- vapply(1:20, function(i) system.time(packages_view(st))[["elapsed"]], numeric(1))
-  ms <- stats::median(times) * 1000
-  cat(sprintf("\n[timing] packages_view() at 150 packages: median %.1f ms\n", ms))
-  expect_lt(ms, 8)
+# lock row took 19.5 ms at 150 packages, the column-wise version 1.5 ms.
+# Timed against the same call at ten times the packages rather than a
+# fixed budget (helper-perf.R): built column-wise, the per-row work is
+# vectorised and fixed costs dominate, so 1500 packages cost a few times
+# 150; one data frame per row costs ten times as much.
+test_that("packages_view() is built column-wise: 1500 packages cost a few times 150", {
+  small <- perf_packages(150)
+  big <- perf_packages(1500)
+  r <- time_ratio(function() packages_view(big), function() packages_view(small),
+                  samples = 11L, inner_a = 5L, inner_b = 10L)
+  cat(sprintf("\n[timing] packages_view(): 1500 packages %.1f ms, 150 packages %.1f ms (%.1fx)\n",
+              r$a * 1000, r$b * 1000, r$ratio))
+  expect_lt(r$ratio, 6)
+  # Backstop: about 1.5 ms on a cloud container.
+  expect_lt(r$b, 0.03)
 })
 
 # ---- Install failures (piece 4, step 1) -------------------------------------

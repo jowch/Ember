@@ -173,48 +173,26 @@ test_that("diffing an object against an equal one gives no patches", {
   expect_identical(fb_diff(x, y), list())
 })
 
-# A synthetic 2000-cell notebook-shaped object, built the same way bench4.R
-# did in the spike: each cell carries ~170 B of code and a ~1 KB text
-# output. pluto-state.R's real builder isn't this file's to drive, but
-# fb_diff()'s cost depends only on shape and size, not on where the shape
-# comes from.
-big_notebook <- function(n) {
-  ids <- sprintf("cell_%05d", seq_len(n))
-  code <- paste(rep("x", 170), collapse = "")
-  body <- paste(rep("y", 1024), collapse = "")
-  metadata <- list(disabled = FALSE, show_logs = TRUE, skip_as_script = FALSE)
-  inputs <- setNames(lapply(ids, function(id) {
-    list(cell_id = id, code = code, code_folded = FALSE, metadata = metadata)
-  }), ids)
-  results <- setNames(lapply(ids, function(id) {
-    list(cell_id = id, depends_on_disabled_cells = FALSE,
-         output = list(body = body, mime = "text/plain", rootassignee = NULL,
-                       last_run_timestamp = 0, persist_js_state = FALSE,
-                       has_pluto_hook_features = FALSE),
-         published_object_keys = list(), queued = FALSE, running = FALSE,
-         errored = FALSE, runtime = 0, logs = list(), depends_on_skipped_cells = FALSE)
-  }), ids)
-  list(cell_inputs = inputs, cell_results = results, cell_order = as.list(ids))
-}
-
-test_that("fb_diff of a 2000-cell state with one changed cell is well under 10 ms", {
-  n <- 2000
-  old <- big_notebook(n)
-  new <- old
-  changed_id <- names(new$cell_results)[1000]
-  new$cell_results[[changed_id]] <- new$cell_results[[changed_id]]
-  new$cell_results[[changed_id]]$running <- TRUE
-  new$cell_results[[changed_id]]$output$body <- "changed"
-
-  times <- vapply(1:10, function(i) system.time(fb_diff(old, new))[["elapsed"]], numeric(1))
-  ms <- stats::median(times) * 1000
-  cat(sprintf("\n[timing] fb_diff() at 2000 cells, one changed: median %.2f ms\n", ms))
-
-  patches <- fb_diff(old, new)
+test_that("fb_diff of a 2000-cell state with one changed cell grows linearly with the cells", {
+  x <- perf_diff_pair(2000)
+  patches <- fb_diff(x$old, x$new)
   touched <- vapply(patches, function(p) p$path[[2]], "")
-  expect_equal(unique(touched), changed_id)
-  expect_identical(fb_apply_all(old, patches), new)
-  expect_lt(ms, 10)
+  expect_equal(unique(touched), x$changed_id)
+  expect_identical(fb_apply_all(x$old, patches), x$new)
+
+  # Timed against the same diff at 200 cells, not a fixed budget
+  # (helper-perf.R). The walk visits every cell once, so ten times the
+  # cells is about nine times the cost here; a lookup by name inside that
+  # walk (`new[[name]]` rather than the one match() per map) made it about
+  # forty.
+  y <- perf_diff_pair(200)
+  r <- time_ratio(function() fb_diff(x$old, x$new), function() fb_diff(y$old, y$new),
+                  inner_a = 10L, inner_b = 100L)
+  cat(sprintf("\n[timing] fb_diff(), one changed: 2000 cells %.2f ms, 200 cells %.3f ms (%.1fx)\n",
+              r$a * 1000, r$b * 1000, r$ratio))
+  expect_lt(r$ratio, 20)
+  # Backstop: about 3 ms on a cloud container.
+  expect_lt(r$a, 0.05)
 })
 
 # ---- 5. parse_request() refusals ----------------------------------------

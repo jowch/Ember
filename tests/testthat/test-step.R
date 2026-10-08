@@ -869,16 +869,23 @@ test_that("shutdown kills the worker and closes; later events are no-ops (66)", 
 # a computed-`source()` footer fix, a learned-definitions fix, an insert-op
 # validation gap, and several lower-severity reducer fixes.
 
-test_that("running all of a 2000-cell chain stays well under 1s (item 4)", {
+test_that("running all of a 2000-cell chain grows about linearly, not with the square (item 4)", {
   # Before the fix, `reduce_run()` called `unfresh_ancestors()` (a full
   # `upstream(..., transitive = TRUE)` walk) once per requested id, making
-  # "run all" quadratic: 0.58s at 500 cells, 22s at 2000. `upstream_of_set()`
-  # does one walk for the whole requested set instead.
-  s <- fake_state(make_chain_cells(2000))
-  t <- system.time(r <- step(s, ev_run(NULL, at(1))))[["elapsed"]]
-  cat(sprintf("\n[timing] ev_run(NULL) on a 2000-cell chain: %.2f s\n", t))
-  expect_lt(t, 1)
-  expect_equal(length(r$reply$skipped), 0)
+  # "run all" quadratic: 0.58s at 500 cells, 22s at 2000 (38x for 4x the
+  # cells). `upstream_of_set()` does one walk for the whole requested set
+  # instead: about 6.5x here. Timed against the 500-cell chain rather than
+  # a fixed budget (helper-perf.R).
+  big <- fake_state(make_chain_cells(2000))
+  small <- fake_state(make_chain_cells(500))
+  r <- time_ratio(function() step(big, ev_run(NULL, at(1))), function() step(small, ev_run(NULL, at(1))),
+                  samples = 3L, inner_b = 4L)
+  cat(sprintf("\n[timing] ev_run(NULL): 2000-cell chain %.2f s, 500-cell chain %.3f s (%.1fx)\n",
+              r$a, r$b, r$ratio))
+  expect_lt(r$ratio, 16)
+  # Backstop: about 0.25 s on a cloud container.
+  expect_lt(r$a, 5)
+  expect_equal(length(step(big, ev_run(NULL, at(1)))$reply$skipped), 0)
 })
 
 test_that("requesting a dependent re-queues its failed ancestor; it runs once the ancestor fails again (ui-3 3)", {
