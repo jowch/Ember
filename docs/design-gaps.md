@@ -10,7 +10,11 @@ done; clear out ticked items at each release.
 - [ ] Graph rebuild after an edit is whole-notebook: 30 ms at 100 cells, 64 ms at 500, 590 ms at 2000, spread across `notebook_graph()` with no single hot spot — improvised
 - [ ] Learned references (formula columns that weren't in the data) aren't saved in the footer, so the edge they add is lost on reopen until the cell reruns — missing
 - [x] `library()` inside a function body counts as attaching, so a function that attaches conditionally always makes its cell run first — improvised. Now it uses the package without attaching it (test-walk.R)
-- [ ] Method dispatch isn't an edge: a cell defining `print.foo` defines the name `print.foo`, but a cell that prints a `foo` reads only `print`, so editing the method doesn't rerun it. `setMethod()`, `setClass()` and `registerS3method()` define no name at all (nothing in R/ reads them). Pluto links a method-defining cell to every cell that names the bare generic, errors only on a duplicate signature, and leaves implicit display out (a `@test_broken` there); marimo tracks no methods. For Ember: key a method by (generic, class), add an edge on the bare generic name, error only on a duplicate pair, and leave autoprint out unless display can re-render without rerunning — missing
+- [x] Method dispatch isn't an edge: a cell defining `print.foo` defines the name `print.foo`, but a cell that prints a `foo` reads only `print`, so editing the method doesn't rerun it — missing. Built in #6: S3 methods, `setMethod()` and `registerS3method()` are keyed by (generic, class), with an edge on the bare generic name (test-methods.R). Left out:
+  - [ ] Autoprint gets no edge, as in Pluto: a cell that only prints a `foo` doesn't rerun when `print.foo`, `format.foo` or `show` changes. Possible follow-up: re-render the cached output when such a method changes — missing
+  - [ ] Group generics (`Ops.money`, `Math.interval`) aren't tracked; members such as `+.money` are — missing
+  - [ ] `$` methods — missing
+  - [ ] `setClass()`, `setValidity()` and `setReplaceMethod()` — missing
 - [ ] Listeners run on the server thread after every dispatch; a `cell_state` storm during "Run all" on a 2000-cell notebook isn't measured — missing
 - [ ] The session polls on `later`'s global loop, shared with whatever else the host process runs; a host callback that blocks stalls the poll. Decide whether to use a private loop — missing
 
