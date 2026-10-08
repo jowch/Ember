@@ -386,3 +386,20 @@ test_that("editing a setMethod signature removes the old method", {
   run_cells(nb, "U", wait = TRUE, timeout = 20)
   expect_equal(snap_view(notebook_snapshot(nb), "U")$output$text, '[1] "no method"')
 })
+
+test_that("rerunning one registerS3method cell keeps another cell's method on a notebook generic", {
+  cells <- list(S = cell(""),
+                G = cell("area <- function(s) UseMethod('area')"),
+                A = cell("registerS3method('area', 'sq', function(s) s$w^2)"),
+                B = cell("registerS3method('area', 'ci', function(s) 3 * s$r^2)"),
+                U = cell("area(structure(list(w = 2), class = 'sq')) + area(structure(list(r = 1), class = 'ci'))"))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, wait = TRUE, timeout = 30)
+  expect_equal(snap_view(notebook_snapshot(nb), "U")$output$text, "[1] 7")
+  edit_notebook(nb, set_code("A", "registerS3method('area', 'sq', function(s) s$w^3)"))
+  run_cells(nb, "A", wait = TRUE, timeout = 30)
+  run_cells(nb, "U", wait = TRUE, timeout = 30)
+  expect_equal(snap_view(notebook_snapshot(nb), "U")$output$text, "[1] 11")
+})

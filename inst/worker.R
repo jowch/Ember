@@ -766,11 +766,15 @@ snapshot_globals <- function(names) {
 
 #' Compare globals after a run with the references kept before.
 #'
-#' `before` is a `snapshot_globals()` result. `.Random.seed` is skipped.
+#' `before` is a `snapshot_globals()` result. `.Random.seed` is skipped,
+#' and so is `.__S3MethodsTable__.`: `registerS3method()` creates it for a
+#' notebook generic, but it holds every cell's methods, so no cell owns it
+#' (each registration is undone by key in `undo_registrations()`).
 #' Active bindings are compared by binding (the function), not value.
 compare_globals <- function(before_names, before) {
-  now <- setdiff(ls(globalenv(), all.names = TRUE), ".Random.seed")
-  before_names <- setdiff(before_names, ".Random.seed")
+  unowned <- c(".Random.seed", ".__S3MethodsTable__.")
+  now <- setdiff(ls(globalenv(), all.names = TRUE), unowned)
+  before_names <- setdiff(before_names, unowned)
   created <- setdiff(now, before_names)
   removed <- setdiff(before_names, now)
   common <- intersect(before_names, now)
