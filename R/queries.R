@@ -66,10 +66,11 @@ blocked_cells <- function(graph) {
 #' Everything the adapter reports for one cell in one list.
 #'
 #' `list(definitions, learned, references, packages, attaches, upstream,
-#' downstream, errors, notes, formulas)`: the static definitions and the
+#' downstream, errors, notes, formulas, methods)`: the static definitions and the
 #' learned ones separately (the design's snapshot shows both), references,
-#' packages, direct neighbours, the cell's errors, and the analysis's notes
-#' (what the engine couldn't track) so the UI can show them.
+#' packages, direct neighbours, the cell's errors, the analysis's notes
+#' (what the engine couldn't track) so the UI can show them, and the
+#' methods the cell defines (`resolve_methods()`).
 #'
 #' `cells[[id]]$definitions` (used for edges and the multiple-definitions
 #' rule) is static plus learned, as documented on `ember_graph`; here,
@@ -82,7 +83,7 @@ cell_summary <- function(graph, id) {
       references = c$references, packages = a$packages,
       attaches = c$attaches, upstream = graph$upstream[[id]],
       downstream = graph$downstream[[id]], errors = cell_errors(graph, id),
-      notes = a$notes, formulas = a$formulas)
+      notes = a$notes, formulas = a$formulas, methods = c$methods)
 }
 
 #' Cells to rerun (or mark stale) after an edit, in run order.

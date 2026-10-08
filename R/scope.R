@@ -37,6 +37,9 @@ new_accumulator <- function(read_file, file, stack) {
   acc$extra_settings <- list()
   acc$extra_sourced <- list()
   acc$extra_notes <- list()
+  acc$method_rows <- list()
+  acc$no_formals <- character()
+  acc$extra_methods <- list()
   acc
 }
 
@@ -253,6 +256,16 @@ record_setting <- function(acc, fn, setting = NA_character_, pos = NULL) {
   if (is.null(pos)) pos <- fallback_pos(acc)
   acc$setting_rows[[length(acc$setting_rows) + 1]] <-
     list(fn = fn, setting = setting, line = pos$line, col = pos$col, end_col = pos$end_col)
+}
+
+#' A method registered by a call (`registerS3method()`, `setMethod()`);
+#' methods defined by name (`print.foo <- function`) are found in
+#' `finish()` from the definitions instead.
+record_method <- function(acc, generic, signature, form, pos = NULL) {
+  if (is.null(pos)) pos <- fallback_pos(acc)
+  acc$method_rows[[length(acc$method_rows) + 1]] <-
+    list(generic = generic, signature = signature, form = form, line = pos$line,
+         col = pos$col, end_col = pos$end_col, file = acc$file)
 }
 
 #' `pos` is `NULL` (falls back, `col`/`end_col` `NA`) for a note with no
