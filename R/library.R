@@ -84,7 +84,7 @@ index_rds_path <- function(key, cache = cache_dir()) {
 #' its own label with no special case here.
 index_label_of_key <- function(key) {
   kind <- strsplit(key, "/", fixed = TRUE)[[1]][1]
-  switch(kind, cran = "CRAN", bioc = "Bioc", kind)
+  if (kind %in% names(bioc_kinds)) "Bioc" else switch(kind, cran = "CRAN", kind)
 }
 
 #' The parsed index for `key`, or `NULL` when it isn't on disk yet.

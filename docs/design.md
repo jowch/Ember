@@ -653,11 +653,15 @@ Package Manager.
 packages depend on Bioconductor ones (WGCNA needs `impute` and `GO.db`);
 Bioconductor doesn't reuse CRAN package names, so the two don't clash. Its
 packages are versioned by release, not by date, and each release supports
-one R minor version. So `bioc_version` goes in the header only once the lock
-holds a Bioconductor package, directly or as a dependency. It is set to the
-release matching the notebook's R, Bioconductor packages resolve from that
-release, and the engine warns if the CRAN snapshot date falls outside the
-release's window, since those combinations were never tested together. A
+one R minor version (and each R minor version gets two releases). So
+`bioc_version` goes in the header only once the lock holds a Bioconductor
+package, directly or as a dependency. It is set to the latest release for
+the notebook's R that was out at the snapshot date, Bioconductor packages
+resolve from that release, and the engine warns if the CRAN snapshot date
+falls outside the release's window, since those combinations were never
+tested together. A release has three repositories, software, annotation
+data (`GO.db`, `org.Hs.eg.db`) and experiment data, and all three are
+sources. Their indexes are fetched only when a name isn't on CRAN. A
 CRAN-only notebook carries no Bioconductor pin and no tie to an R version.
 
 **Large installs ask first.** Annotation and genome packages

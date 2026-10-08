@@ -37,7 +37,9 @@ done; clear out ticked items at each release.
 - [x] Detection from the code, the lock, installs with renv into per-notebook libraries — missing
 - [x] Exports of installed packages for the graph before a cell attaches them — missing
 - [x] Moving to a date ("update all", "move to date D") and `clean()` — missing
-- [ ] Bioconductor: `bioc_version`, its index keys, the release that matches the notebook's R and date, the date-window warning, an R minor version change with a Bioconductor pin (increment 2 in packages.md). Starts with the renv-with-Bioconductor spike (Spikes) — missing
+- [x] Bioconductor: `bioc_version`, its index keys (software, annotation, experiment), the release that matches the notebook's R and date, the date-window warning (packages.md, "Bioconductor") — missing
+- [ ] Bioconductor: an R minor version change with a Bioconductor pin keeps the pin and only warns (`bioc_r_version`); design.md ("R itself") wants the engine to say the new release updates every Bioconductor package before recording it — missing
+- [ ] Bioconductor: never installed for real. The renv-with-Bioconductor spike (Spikes) and the opt-in network test 76 are still to run; renv is trusted to find an annotation package in `BioCann` though the lock entry prefers `BioCsoft` (lock.R, checked in renv 1.0.3's code only) — missing
 - [ ] GitHub sources: `[sources]` as one-row indexes (increment 2) — missing
 - [ ] Install consent for large downloads, from the install plan's download size (increment 2) — missing
 - [ ] Compiler check before an install that builds from source (increment 2) — missing
@@ -45,7 +47,7 @@ done; clear out ticked items at each release.
 - [ ] Disk use of the per-notebook libraries (increment 2) — missing
 - [ ] Per-package update and pin, with CRAN release dates from crandb (increment 3) — missing
 - [ ] A snapshot date from before the running R was released has no binaries for it, so packages build from source, and old versions may not compile on the new R (cli from 2024 on R 4.6: `Rf_findVar` removed). Detect it before installing and explain (increment 2's install plan) — missing
-- [ ] A failed install reports only "install failed, status 1" with an empty log: the installer's output (renv's and the compiler's errors) never reaches the session, so the reason is invisible in the page and in `notebook_snapshot()` — missing
+- [x] A failed install reports only "install failed, status 1" with an empty log: the installer's output (renv's and the compiler's errors) never reaches the session, so the reason is invisible in the page and in `notebook_snapshot()` — missing. Built in c764563: the installer's output is kept and `install_failures()` parses it (test-packages-session.R, 90)
 - [ ] `renv` is in Imports but used only by the installer script, so R CMD check notes it as not imported — improvised
 - [ ] Indexes are cached forever because a dated index never changes (resolve.R:84-88), but today's can: PPM may publish today's snapshot after the first fetch, so updating to today twice on one day can miss packages released later that day. Harmless, since the lock pins what was chosen; the cache could skip writing an index dated today (ui-3-plan.md, piece 4) — improvised
 

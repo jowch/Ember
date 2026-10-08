@@ -47,7 +47,7 @@ Increment 1 unless marked (2) or (3).
 23. A recommended package reached as a dependency (Matrix) is locked.
 24. A missing index makes the result incomplete, names the key in `fetch` and returns the lock unchanged.
 25. Mode fresh at a later date moves every version and `lock_diff` lists them.
-26. (2) A name missing from CRAN asks for the Bioconductor index, then resolves there with source `Bioc`.
+26. (2) A name missing from CRAN asks for the Bioconductor indexes, then resolves there with source `Bioc`.
 27. (2) A `[sources]` GitHub entry wins over a CRAN package of the same name.
 
 ## Core: packages in step() (test-packages-core.R, with drive())
@@ -108,6 +108,24 @@ Increment 1 unless marked (2) or (3).
 72. Moving the toy date from the first to the second upgrades toyA, restarts the loaded worker, and the cell reruns on request with 0.2.
 73. The saved file's lock block lists toyA and toyB and round-trips unchanged on reopen.
 74. `ember::run()` on the saved file installs if needed and prints the cell's output with the locked version.
+
+## Bioconductor (increment 2)
+
+In test-resolve.R:
+
+78. Each Bioconductor kind (software, annotation, experiment) has its own key and dated URL, all labelled `Bioc`; `repo_urls` lists the three only with a pin.
+79. The release is the latest one for the running R out by the snapshot date; `needed_repos` is CRAN, then the three Bioconductor keys at the pin or the derived release, and CRAN alone for an R with no known release.
+80. A CRAN package needing an annotation package (`wgcna` -> `GO.db`) resolves it from the annotation repository.
+81. `bioc_problems` flags a release built for another R and a snapshot date outside the release's window.
+
+In test-packages-core.R, with `drive()`:
+
+82. A CRAN-only notebook never fetches a Bioconductor index and carries no pin.
+83. `library(DESeq2)` fetches the three Bioconductor indexes after CRAN's, locks it as `Bioc`, pins the release in the header, and the install gets all four repositories.
+84. Removing the last Bioconductor package drops the pin.
+85. A failed Bioconductor index leaves the name `not_found` with an `index_unavailable` row, and is refetched only when the wanted set changes.
+86. A pinned release is kept on another R and flagged `bioc_r_version`; an R with no known release fetches no Bioconductor index.
+87. A date move keeps Bioconductor packages at the new date's release, and fails rather than dropping them when a Bioconductor index can't be fetched.
 
 ## Network, opt-in
 

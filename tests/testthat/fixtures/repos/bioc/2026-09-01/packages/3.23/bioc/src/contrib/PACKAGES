@@ -1,0 +1,19 @@
+Package: S4Vectors
+Version: 0.48.0
+Depends: R (>= 4.0.0), methods
+NeedsCompilation: yes
+
+Package: DESeq2
+Version: 1.50.0
+Depends: S4Vectors (>= 0.23.18)
+Imports: cli
+NeedsCompilation: yes
+
+Package: AnnotationDbi
+Version: 1.72.0
+Imports: S4Vectors
+NeedsCompilation: no
+
+Package: impute
+Version: 1.84.0
+NeedsCompilation: yes

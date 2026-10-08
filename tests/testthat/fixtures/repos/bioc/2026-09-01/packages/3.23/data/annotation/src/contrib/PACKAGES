@@ -1,0 +1,4 @@
+Package: GO.db
+Version: 3.22.0
+Depends: AnnotationDbi (>= 1.71.1)
+NeedsCompilation: no

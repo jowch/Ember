@@ -256,10 +256,11 @@ install_failures <- function(lines) {
 #'   slot's own message; `NULL` otherwise.
 new_proposal <- function(date, status = "fetching", lock = NULL, changes = NULL,
                          problems = NULL, for_wanted = NULL, apply = FALSE,
-                         restart = character(), message = NULL) {
+                         restart = character(), message = NULL,
+                         bioc_version = NA_character_) {
   structure(list(date = date, status = status, lock = lock, changes = changes,
                  problems = problems, for_wanted = for_wanted, apply = apply,
-                 restart = restart, message = message),
+                 restart = restart, message = message, bioc_version = bioc_version),
             class = "ember_proposal")
 }
 
@@ -369,11 +370,18 @@ schedule_packages <- function(state, old) {
         # behaves the same either way.
         state$file$header$snapshot <- format(state$clock, "%Y-%m-%d")
       }
-      needed <- needed_repos(state$file$header)
-      to_fetch <- Filter(function(k) {
+      needed <- needed_repos(state$file$header, state$options$r)
+      # Only CRAN's index is fetched up front; the Bioconductor keys after
+      # it are fetched when `resolve_lock()` asks for them (a name CRAN
+      # lacks). A later key that failed is retried, like CRAN's, once the
+      # wanted set changes; until then it is left out of `needed`, so its
+      # names resolve as not found instead of waiting on it forever.
+      refetch <- function(k) {
         slot <- p$indexes[[k]]
-        is.null(slot) || (identical(slot$status, "failed") && !setequal(slot$wanted %||% character(), wanted))
-      }, needed)
+        identical(slot$status, "failed") && !setequal(slot$wanted %||% character(), wanted)
+      }
+      to_fetch <- Filter(function(k) is.null(p$indexes[[k]]) || refetch(k), needed[1])
+      to_fetch <- c(to_fetch, Filter(refetch, needed[-1]))
       for (k in to_fetch) {
         p$indexes[[k]] <- new_index_slot("fetching")
         effects <- c(effects, list(fx_fetch_index(k, repo_url(state$options$repos, k))))
@@ -381,14 +389,18 @@ schedule_packages <- function(state, old) {
       if (length(to_fetch) == 0 && length(needed) > 0) {
         first <- p$indexes[[needed[[1]]]]
         if (!is.null(first) && identical(first$status, "ready")) {
-          loaded_idx <- Filter(Negate(is.null), lapply(p$indexes, function(s) s$index))
-          res <- resolve_lock(wanted, state$file$lock, loaded_idx, needed = needed, mode = "keep")
+          failed <- Filter(function(k) identical(p$indexes[[k]]$status, "failed"), needed[-1])
+          usable <- setdiff(needed, failed)
+          loaded_idx <- Filter(Negate(is.null), lapply(p$indexes[usable], function(s) s$index))
+          res <- resolve_lock(wanted, state$file$lock, loaded_idx, needed = usable, mode = "keep")
           if (isTRUE(res$complete)) {
             state$packages <- p
             state <- set_lock(state, res$lock)
+            state$file$header$bioc_version <- bioc_pin(res$lock, bioc_release_in(needed))
             p <- state$packages
             p$resolved_for <- wanted
-            p$problems <- res$problems
+            p$problems <- rbind(res$problems, failed_index_problems(p$indexes[failed]),
+                                bioc_problems(state$file$header, state$options$r))
           } else {
             for (k in res$fetch) {
               if (is.null(p$indexes[[k]]) || !identical(p$indexes[[k]]$status, "fetching")) {
@@ -411,19 +423,34 @@ schedule_packages <- function(state, old) {
   if (!is.null(state$packages$proposal)) {
     prop <- state$packages$proposal
     wanted <- wanted_packages(state$graph, state$file$header)
-    key <- repo_key("cran", prop$date)
+    # The new date's CRAN key first, then Bioconductor's at the release for
+    # the running R at that date: moving the date moves the release too.
+    # Its indexes are fetched only if CRAN lacks a name, as when resolving.
+    date_header <- state$file$header
+    date_header$snapshot <- prop$date
+    date_header$bioc_version <- NA_character_
+    needed <- needed_repos(date_header, state$options$r)
+    key <- needed[[1]]
     slot <- state$packages$indexes[[key]]
+    failed <- Filter(function(k) identical(state$packages$indexes[[k]]$status, "failed"), needed[-1])
     if (is.null(slot)) {
       state$packages$indexes[[key]] <- new_index_slot("fetching")
       effects <- c(effects, list(fx_fetch_index(key, repo_url(state$options$repos, key))))
+    } else if (identical(slot$status, "ready") && length(failed) > 0 &&
+              !identical(prop$status, "failed")) {
+      # Without the Bioconductor index, its packages would resolve as not
+      # found and silently drop out of the new lock.
+      state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
+        message = failed_index_problems(state$packages$indexes[failed])$message[[1]])
     } else if (identical(slot$status, "ready") &&
               (identical(prop$status, "fetching") || !setequal(prop$for_wanted %||% character(), wanted))) {
-      indexes_loaded <- stats::setNames(list(slot$index), key)
-      res <- resolve_lock(wanted, state$file$lock, indexes_loaded, needed = key, mode = "fresh")
+      indexes_loaded <- Filter(Negate(is.null), lapply(state$packages$indexes[needed], function(s) s$index))
+      res <- resolve_lock(wanted, state$file$lock, indexes_loaded, needed = needed, mode = "fresh")
       if (isTRUE(res$complete)) {
         changes <- lock_diff(state$file$lock, res$lock)
         new_prop <- new_proposal(prop$date, status = "ready", lock = res$lock, changes = changes,
-                                 problems = res$problems, for_wanted = wanted, apply = prop$apply)
+                                 problems = res$problems, for_wanted = wanted, apply = prop$apply,
+                                 bioc_version = bioc_pin(res$lock, bioc_release_in(needed)))
         if (isTRUE(prop$apply)) {
           loaded <- state$worker$loaded %||% character()
           restart_names <- intersect(changes$name, names(loaded))
@@ -505,6 +532,26 @@ set_lock <- function(state, lock) {
     state$packages$target <- new_library_slot(info$key, info$path)
   }
   state
+}
+
+#' The header's `bioc_version` for `lock`: `release` (the one it was
+#' resolved with) while the lock holds a Bioconductor package, `NA` once it
+#' holds none, so a CRAN-only notebook carries no pin and no tie to an R
+#' version.
+bioc_pin <- function(lock, release) {
+  if (any(lock$entries$source == "Bioc")) release else NA_character_
+}
+
+#' One `index_unavailable` row per failed index slot (Bioconductor's,
+#' fetched after CRAN's), naming the index and why it failed.
+failed_index_problems <- function(slots) {
+  out <- empty_package_problems()
+  for (k in names(slots)) {
+    out <- rbind(out, package_problem("index_unavailable", NA_character_, sprintf(
+      "the package index %s could not be fetched: %s", k,
+      slots[[k]]$message %||% "no package index available")))
+  }
+  out
 }
 
 #' Point the worker at the target library once it is ready.
@@ -733,7 +780,7 @@ reduce_install_done <- function(state, event) {
       # are all already fixed by the time this reducer runs.
       if (nrow(tgt$failures) > 0) {
         wanted <- wanted_packages(state$graph, state$file$header)
-        needed <- needed_repos(state$file$header)
+        needed <- needed_repos(state$file$header, state$options$r)
         indexes <- lapply(state$packages$indexes, function(s) s$index)
         tgt$failures$needed_by <- lapply(tgt$failures$package, function(pk) {
           failure_needed_by(pk, wanted, indexes, needed)
@@ -765,17 +812,22 @@ reduce_install_done <- function(state, event) {
 #' A preview of moving the date: `proposal <- new_proposal(date)`;
 #' `schedule_packages()` fetches the index and computes it. Reply: `TRUE`.
 #'
-#' Also drops a `"failed"` index slot for that date's key, if one exists:
+#' Also drops a `"failed"` index slot for that date's keys (CRAN's and
+#' Bioconductor's), if one exists:
 #' the Proposal stage of `schedule_packages()` only fetches a key with no
 #' slot at all, so a failed fetch left in place would never be retried --
 #' the user asking to preview again (the same "I want this to work now" as
 #' `ev_run()` retrying a failed library or index, reduce_run()) is exactly
 #' when a retry belongs.
 reduce_preview_date <- function(state, event) {
-  key <- repo_key("cran", event$date)
-  slot <- state$packages$indexes[[key]]
-  if (!is.null(slot) && identical(slot$status, "failed")) {
-    state$packages$indexes[[key]] <- NULL
+  date_header <- state$file$header
+  date_header$snapshot <- event$date
+  date_header$bioc_version <- NA_character_
+  for (key in needed_repos(date_header, state$options$r)) {
+    slot <- state$packages$indexes[[key]]
+    if (!is.null(slot) && identical(slot$status, "failed")) {
+      state$packages$indexes[[key]] <- NULL
+    }
   }
   state$packages$proposal <- new_proposal(event$date, apply = isTRUE(event$apply))
   list(state = state, effects = list(), reply = TRUE)
@@ -801,6 +853,7 @@ apply_proposal <- function(state) {
   prop <- p$proposal
   wanted <- wanted_packages(state$graph, state$file$header)
   state$file$header$snapshot <- prop$date
+  state$file$header$bioc_version <- prop$bioc_version %||% NA_character_
   state <- set_lock(state, prop$lock)
   state$packages$resolved_for <- wanted
   # The proposal's own resolution already computed `problems` for the new
@@ -808,7 +861,7 @@ apply_proposal <- function(state) {
   # date's `problems` describe a lock that no longer exists the moment this
   # applies, and leaving them in place showed stale complaints (a
   # since-fixed off_date row, say) next to the packages actually in effect.
-  state$packages$problems <- prop$problems
+  state$packages$problems <- rbind(prop$problems, bioc_problems(state$file$header, state$options$r))
   state$packages$proposal <- NULL
   list(state = state, effects = list())
 }
