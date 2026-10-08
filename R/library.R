@@ -269,15 +269,15 @@ ensure_library <- function(lock, repos, r = r_info(), cache = cache_dir(),
 
 # ---- renv's cache layout -------------------------------------------------------
 
-#' Copy into `staging` each lock entry renv left out because the same
-#' version was already installed on another library path. In practice that
-#' is R's own library: a recommended package such as codetools whose locked
-#' version is the one R ships. renv counts it as installed and puts no copy
-#' in the target library, but a notebook's library must hold every lock
-#' entry (packages.md: recommended packages are locked), or the installer's
-#' check stops with `missing_package`. Only an exact version match is
-#' copied. Returns the names copied.
-copy_installed_elsewhere <- function(staging, wanted, lib_paths = .libPaths()) {
+#' Copy into `staging` each lock entry renv left out because R's own
+#' library (`.Library`, or the system site library a distribution uses for
+#' them, `.Library.site`) already has that exact version: a recommended
+#' package such as codetools at the version R ships. renv counts it as
+#' installed and puts no copy in the target library, but a notebook's
+#' library must hold every lock entry (packages.md: recommended packages
+#' are locked), or the installer's check stops with `missing_package`. The
+#' user's own libraries aren't looked in. Returns the names copied.
+copy_from_r_library <- function(staging, wanted, lib_paths = c(.Library, .Library.site)) {
   lib_paths <- setdiff(normalizePath(lib_paths, mustWork = FALSE),
                        normalizePath(staging, mustWork = FALSE))
   copied <- character()
@@ -287,8 +287,8 @@ copy_installed_elsewhere <- function(staging, wanted, lib_paths = .libPaths()) {
       desc <- file.path(lib, pkg, "DESCRIPTION")
       if (!file.exists(desc)) next
       if (!identical(unname(read.dcf(desc, fields = "Version")[1, 1]), unname(wanted[[pkg]]))) next
-      file.copy(file.path(lib, pkg), staging, recursive = TRUE)
-      copied <- c(copied, pkg)
+      # A failed copy leaves the entry missing, which the installer's check reports.
+      if (isTRUE(file.copy(file.path(lib, pkg), staging, recursive = TRUE))) copied <- c(copied, pkg)
       break
     }
   }

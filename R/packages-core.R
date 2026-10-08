@@ -373,15 +373,17 @@ schedule_packages <- function(state, old) {
       needed <- needed_repos(state$file$header, state$options$r)
       # Only CRAN's index is fetched up front; the Bioconductor keys after
       # it are fetched when `resolve_lock()` asks for them (a name CRAN
-      # lacks). A later key that failed is retried, like CRAN's, once the
-      # wanted set changes; until then it is left out of `needed`, so its
-      # names resolve as not found instead of waiting on it forever.
+      # lacks). A later key that failed is retried once the wanted set
+      # changes; until then it is left out of `needed`, so its names
+      # resolve as not found instead of waiting on it forever.
       refetch <- function(k) {
         slot <- p$indexes[[k]]
         identical(slot$status, "failed") && !setequal(slot$wanted %||% character(), wanted)
       }
+      # A later key's failed slot is dropped rather than refetched, so it is
+      # fetched again only if `resolve_lock()` still asks for it.
+      for (k in Filter(refetch, needed[-1])) p$indexes[[k]] <- NULL
       to_fetch <- Filter(function(k) is.null(p$indexes[[k]]) || refetch(k), needed[1])
-      to_fetch <- c(to_fetch, Filter(refetch, needed[-1]))
       for (k in to_fetch) {
         p$indexes[[k]] <- new_index_slot("fetching")
         effects <- c(effects, list(fx_fetch_index(k, repo_url(state$options$repos, k))))
@@ -400,7 +402,9 @@ schedule_packages <- function(state, old) {
             p <- state$packages
             p$resolved_for <- wanted
             p$problems <- rbind(res$problems, failed_index_problems(p$indexes[failed]),
-                                bioc_problems(state$file$header, state$options$r))
+                                bioc_problems(state$file$header, state$options$r),
+                                bioc_unavailable_problem(needed, res$problems, state$file$header,
+                                                         state$options$r))
           } else {
             for (k in res$fetch) {
               if (is.null(p$indexes[[k]]) || !identical(p$indexes[[k]]$status, "fetching")) {
@@ -433,15 +437,26 @@ schedule_packages <- function(state, old) {
     key <- needed[[1]]
     slot <- state$packages$indexes[[key]]
     failed <- Filter(function(k) identical(state$packages$indexes[[k]]$status, "failed"), needed[-1])
+    has_bioc <- any(state$file$lock$entries$source == "Bioc")
+    # Without a Bioconductor index (none fetched, or no release for this R
+    # at that date), the lock's Bioconductor packages would resolve as not
+    # found and silently drop out of the new lock: fail instead. A notebook
+    # with none just resolves without the failed index.
+    drop_message <- if (!has_bioc || identical(prop$status, "failed")) {
+      NULL
+    } else if (is.na(bioc_release_in(needed))) {
+      sprintf(paste("Ember knows no Bioconductor release for R %s at %s; moving there would",
+                    "drop this notebook's Bioconductor packages"), state$options$r$minor, prop$date)
+    } else if (length(failed) > 0) {
+      failed_index_problems(state$packages$indexes[failed])$message[[1]]
+    }
+    needed <- setdiff(needed, failed)
     if (is.null(slot)) {
       state$packages$indexes[[key]] <- new_index_slot("fetching")
       effects <- c(effects, list(fx_fetch_index(key, repo_url(state$options$repos, key))))
-    } else if (identical(slot$status, "ready") && length(failed) > 0 &&
-              !identical(prop$status, "failed")) {
-      # Without the Bioconductor index, its packages would resolve as not
-      # found and silently drop out of the new lock.
+    } else if (identical(slot$status, "ready") && !is.null(drop_message)) {
       state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
-        message = failed_index_problems(state$packages$indexes[failed])$message[[1]])
+                                              message = drop_message)
     } else if (identical(slot$status, "ready") &&
               (identical(prop$status, "fetching") || !setequal(prop$for_wanted %||% character(), wanted))) {
       indexes_loaded <- Filter(Negate(is.null), lapply(state$packages$indexes[needed], function(s) s$index))

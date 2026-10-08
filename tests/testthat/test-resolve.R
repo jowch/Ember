@@ -157,8 +157,8 @@ test_that("the release is the latest one for the running R out by the snapshot d
   expect_equal(bioc_release_for("4.5", "2025-09-01"), "3.21")
   expect_equal(bioc_release_for("4.5", "2025-10-30"), "3.22")
   expect_equal(bioc_release_for("4.5", "2026-09-01"), "3.22")
-  # Before R 4.6's first release: its first release, which bioc_problems() flags.
-  expect_equal(bioc_release_for("4.6", "2026-03-01"), "3.23")
+  # Before R 4.6's first release no dated repository exists yet.
+  expect_true(is.na(bioc_release_for("4.6", "2026-03-01")))
   expect_true(is.na(bioc_release_for("9.9", "2026-09-01")))
   expect_true(is.na(bioc_release_for("4.6", NA_character_)))
 })

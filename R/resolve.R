@@ -97,14 +97,27 @@ bioc_releases <- data.frame(
   stringsAsFactors = FALSE)
 
 #' The Bioconductor release a notebook on R `minor` resolves from at
-#' `date`: the latest release for that R that was out by then. A date
-#' before the first release for that R gets the first one
-#' (`bioc_problems()` warns). `NA` when Ember knows no release for that R.
+#' `date`: the latest release for that R that was out by then. `NA` when
+#' Ember knows no release for that R, or none was out yet at `date` (its
+#' dated repository wouldn't exist); `bioc_unavailable_problem()` says so.
 bioc_release_for <- function(minor, date) {
   rows <- bioc_releases[bioc_releases$r == minor, , drop = FALSE]
   if (nrow(rows) == 0 || is.na(date)) return(NA_character_)
   out <- rows[rows$released <= as.Date(date), , drop = FALSE]
-  if (nrow(out) == 0) rows$version[[1]] else out$version[[nrow(out)]]
+  if (nrow(out) == 0) NA_character_ else out$version[[nrow(out)]]
+}
+
+#' A `bioc_unavailable` row for a notebook with no Bioconductor release to
+#' look in (`needed` holds no Bioconductor key) and a name not found
+#' elsewhere, so "not found in any repository" isn't the only explanation.
+#' None otherwise.
+bioc_unavailable_problem <- function(needed, problems, header, r) {
+  if (!is.na(bioc_release_in(needed)) || !any(problems$kind == "not_found")) {
+    return(empty_package_problems())
+  }
+  package_problem("bioc_unavailable", NA_character_, sprintf(
+    "Ember knows no Bioconductor release for R %s at %s, so Bioconductor packages can't be found",
+    r$minor, header$snapshot))
 }
 
 #' The Bioconductor release a notebook uses: the header's pin when it has
@@ -279,6 +292,8 @@ cell_packages <- function(graph, id) {
 #'   while queue not empty:
 #'     p <- pop(queue); if p in base_packages or p in out: next
 #'     hit <- first index (in `needed` order, loaded only) containing p
+#'     if hit is NULL and any key in `needed` is not in `indexes`:
+#'       fetch += those keys; next
 #'     if p in locked:
 #'       e <- locked[p]
 #'       if hit is NULL or hit's version != e$version:
@@ -286,7 +301,6 @@ cell_packages <- function(graph, id) {
 #'         if hit: problems += off_date(p, e$version, hit$version)
 #'       else deps <- hit's deps
 #'     else if hit is NULL:
-#'       if any key in `needed` is not in `indexes`: fetch += those keys; next
 #'       problems += not_found(p, date); next
 #'     else e <- entry(p, hit$version, hit$label); deps <- hit's deps
 #'     out[p] <- e; queue += deps
@@ -330,6 +344,17 @@ resolve_lock <- function(roots, lock, indexes, needed, mode = c("keep", "fresh")
     hit <- find_in_indexes(p, indexes, needed)
     row <- which(locked$name == p)
 
+    # A name no loaded index has may be in one not fetched yet (Bioconductor's
+    # are fetched only when asked for here): ask for it before deciding,
+    # locked or not.
+    if (is.null(hit)) {
+      missing <- setdiff(needed, names(indexes))
+      if (length(missing) > 0) {
+        fetch <- union(fetch, missing)
+        next
+      }
+    }
+
     if (length(row) == 1) {
       e_version <- locked$version[[row]]
       e_source <- locked$source[[row]]
@@ -362,11 +387,6 @@ resolve_lock <- function(roots, lock, indexes, needed, mode = c("keep", "fresh")
       out_source <- c(out_source, e_source); out_extra <- c(out_extra, e_extra)
       queue <- c(queue, deps)
     } else if (is.null(hit)) {
-      missing <- setdiff(needed, names(indexes))
-      if (length(missing) > 0) {
-        fetch <- union(fetch, missing)
-        next
-      }
       problems <- rbind(problems, package_problem(
         "not_found", p, sprintf("%s was not found in any repository at this date", p)))
     } else {

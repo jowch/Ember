@@ -224,18 +224,23 @@ not.
   each R minor version gets two (spring and autumn). The release is the
   latest one for the running R that was out by the snapshot date
   (`bioc_release_for()`, from the table `bioc_releases` in resolve.R, which
-  gets a row at each release). A date before the first release for that R
-  gets that first release, flagged `bioc_off_date`. An R the table doesn't
-  know has no Bioconductor keys, so its packages are `not_found`.
+  gets a row at each release). An R the table doesn't know, or a date
+  before that R's first release, has no Bioconductor keys: its packages are
+  `not_found`, next to a `bioc_unavailable` row that says why.
 - **Fetched only when needed.** `needed_repos()` is CRAN's key, then the
   three Bioconductor keys. `schedule_packages()` fetches only CRAN's up
   front; `resolve_lock()` asks for the rest through `fetch` when a name
   isn't on CRAN. A CRAN-only notebook never downloads a Bioconductor index;
   a typo costs three index fetches, cached for good like CRAN's.
+- **A locked name no loaded index has** asks for the unloaded keys too,
+  so a reopened notebook whose lock holds Bioconductor packages fetches
+  their indexes when its wanted set changes, rather than reporting each
+  one `not_in_index`.
 - **A failed Bioconductor index** is left out of resolution until the
-  wanted set changes (the rule CRAN's failed index already follows), so
-  its packages resolve as `not_found` next to an `index_unavailable` row
-  naming the index, instead of waiting forever.
+  wanted set changes, so its packages resolve as `not_found` next to an
+  `index_unavailable` row naming the index, instead of waiting forever.
+  Then its slot is dropped rather than refetched, so it is fetched again
+  only if a name still needs it.
 - **The pin.** `header$bioc_version` is set to the release used once the
   lock holds a `Bioc` entry, and cleared when it holds none. A pinned
   release is kept on every later resolution, even on another R; then
@@ -244,9 +249,11 @@ not.
   (from its release to the next).
 - **Moving the date** resolves against the new date's CRAN index and the
   release for the running R at that date, so "update all" moves
-  Bioconductor packages too, and the proposal carries the new pin. If a
-  Bioconductor index for the new date can't be fetched, the proposal
-  fails rather than dropping Bioconductor packages from the lock.
+  Bioconductor packages too, and the proposal carries the new pin. When
+  the lock holds Bioconductor packages and the new date has no usable
+  Bioconductor index (a fetch failed, or Ember knows no release for this R
+  at that date), the proposal fails rather than dropping them from the
+  lock. A notebook without any resolves without the failed index.
 
 Not built: the R-version change flow with a pin (design.md, "R itself"),
 asking before large downloads, compiler and system-library checks.

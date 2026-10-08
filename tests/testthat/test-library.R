@@ -420,7 +420,7 @@ test_that("a lock entry renv skipped because R already has that version is copie
   fake_pkg(system_lib, "lattice", "0.22-6")
 
   wanted <- c(toyA = "0.1", codetools = "0.2-20", lattice = "0.22-7")
-  copied <- copy_installed_elsewhere(staging, wanted, lib_paths = c(staging, system_lib))
+  copied <- copy_from_r_library(staging, wanted, lib_paths = c(staging, system_lib))
 
   expect_equal(copied, "codetools")
   expect_true(file.exists(file.path(staging, "codetools", "DESCRIPTION")))
