@@ -699,7 +699,7 @@ reduce_apply <- function(state, event) {
   inserted <- character()
   deleted <- character()
   reset_ids <- character()
-  learned_settings_dropped <- character()
+  learned_dropped <- character()
 
   # bad's message never names the cell by id (a UUID); op, returned
   # alongside the reply, already carries op$cell for the caller.
@@ -730,8 +730,11 @@ reduce_apply <- function(state, event) {
             reset_ids <- c(reset_ids, op$cell)
           }
           # Learned settings are kept until the cell's code changes
-          # (settings-cells.md, Settings found at run time).
-          if (!identical(code, old_cell$code)) learned_settings_dropped <- c(learned_settings_dropped, op$cell)
+          # (settings-cells.md, Settings found at run time), and so are
+          # learned references: they are about the old code's formulas, and
+          # one kept past an edit can hold the cell in a cycle it can't run
+          # its way out of. The next run's formula check learns them again.
+          if (!identical(code, old_cell$code)) learned_dropped <- c(learned_dropped, op$cell)
           if (kind_different && identical(new_kind, "markdown")) {
             cells[[op$cell]]$disabled <- FALSE
             cells[[op$cell]]$folded <- TRUE
@@ -813,8 +816,10 @@ reduce_apply <- function(state, event) {
 
   state$cells <- cells
   state$file$header <- header
-  dropped <- intersect(learned_settings_dropped, names(state$graph$learned$settings))
-  for (id in dropped) state$graph$learned$settings[[id]] <- NULL
+  for (part in c("settings", "references")) {
+    dropped <- intersect(learned_dropped, names(state$graph$learned[[part]]))
+    for (id in dropped) state$graph$learned[[part]][[id]] <- NULL
+  }
   effects <- list()
   for (id in deleted) {
     fr <- forget_run(state, id)

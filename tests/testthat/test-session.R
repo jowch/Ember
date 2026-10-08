@@ -216,9 +216,11 @@ test_that("a failing save is not retried within one drain, and is retried on the
   # Before the fix, `save_if_changed()` re-enqueued `ev_save_failed` forever
   # within this one drain (the text never changes, so the write is retried
   # every time the event is processed), pinning a core at 100% CPU. This
-  # must return promptly and record the failure exactly once.
+  # must return and record the failure exactly once. The broken version
+  # never returned, so the ceiling only has to be finite: 10 s, not a
+  # budget a slow runner can miss.
   t <- system.time(edit_notebook(nb, set_code("A", "2")))
-  expect_lt(t[["elapsed"]], 2)
+  expect_lt(t[["elapsed"]], 10)
   problems <- notebook_state(nb)$problems
   expect_equal(sum(problems$kind == "save_failed"), 1)
 

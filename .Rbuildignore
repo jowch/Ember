@@ -6,3 +6,4 @@
 ^LICENSE\.md$
 ^\.github$
 ^tests/e2e$
+^bench$

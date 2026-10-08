@@ -152,27 +152,28 @@ test_that("an unrelated edit shares unchanged parts of the state (identical())",
   expect_identical(s$worker, r$state$worker)
 })
 
-test_that("one step on a 2000-cell notebook stays well under 50ms", {
+test_that("a step that touches no cell rebuilds no graph: a small fraction of one that does", {
   # An event that doesn't touch `cells`/`exports`/`files` never
   # rebuilds the graph (rebuild_graph() is only called from the handlers
   # that change one of those); this is the common case while a notebook is
-  # running (a cell finishing, console output, a timer). Rebuilding 2000
+  # running (a cell finishing, console output, a timer). Rebuilding the
   # cells' edges/order/errors from scratch is step 1's (graph.R) cost, not
-  # measured here.
-  cells <- list(S = cell(""))
-  for (i in 1:2000) cells[[sprintf("c%d", i)]] <- cell(sprintf("x%d <- %d", i, i))
-  s <- fake_state(cells)
-  r <- drive(s, ev_run(NULL, at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(), at(3)))
+  # this event's, so the same notebook's one-cell edit is the yardstick:
+  # 3% of it here, and close to all of it if this path ever rebuilds.
+  # (helper-perf.R: why no fixed millisecond budget.)
+  st <- perf_running(500)
+  tok <- st$worker$running$token
+  done <- function() step(st, wk_done(1, tok, report(), at(10)))
+  edit <- function() step(st, ev_apply(list(op_set_code("c7", "x7 <- 999")), at(10)))
+  r <- time_ratio(done, edit, samples = 5L, inner_a = 10L)
+  cat(sprintf("\n[timing] step() at 500 cells: no rebuild %.1f ms, with rebuild %.1f ms (%.3f)\n",
+              r$a * 1000, r$b * 1000, r$ratio))
+  expect_lt(r$ratio, 0.25)
 
-  times <- numeric(20)
-  st <- r$state
-  for (i in seq_along(times)) {
-    tok <- st$worker$running$token
-    tt <- system.time(res <- step(st, wk_done(1, tok, report(), at(10 + i))))[["elapsed"]]
-    times[i] <- tt
-    st <- res$state
-  }
-  cat(sprintf("\n[timing] step() on a 2000-cell notebook (no rebuild): median %.1f ms, max %.1f ms\n",
-             stats::median(times) * 1000, max(times) * 1000))
-  expect_lt(stats::median(times), 0.05)
+  # Backstop at the size users hit: about 40 ms on a cloud container.
+  st <- perf_running(2000)
+  tok <- st$worker$running$token
+  big <- time_median(function() step(st, wk_done(1, tok, report(), at(10))), samples = 5L)
+  cat(sprintf("[timing] step() at 2000 cells, no rebuild: median %.1f ms\n", big * 1000))
+  expect_lt(big, 0.5)
 })
