@@ -117,6 +117,7 @@ run <- function(path, repos = ember_repos(), cache = cache_dir(), echo = TRUE) {
 
   graph <- notebook_graph(code_of(file$cells),
                           learned = list(definitions = file$learned,
+                                         references = file$learned_references,
                                          settings = file$learned_settings),
                           disabled = disabled_ids(file$cells))
   wanted <- wanted_packages(graph, file$header)

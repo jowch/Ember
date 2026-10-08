@@ -56,10 +56,12 @@ exports_of <- function(state) {
 #'   sourced files only from here, so building it stays pure.
 #' * `computed_sources`: named list, cell id -> character paths the worker
 #'   reported through `source()` with a computed path on the cell's latest
-#'   run. Cleared for a cell when it starts running or is deleted.
-#' * `footer_sources`: computed paths read from the footer, which doesn't
-#'   say which cell sourced them. They stand in until every code cell has
-#'   run in this worker, after which `computed_sources` is complete.
+#'   run, seeded from the footer's "learned sources" on open. Cleared for a
+#'   cell when it starts running or is deleted.
+#' * `footer_sources`: computed paths in an older file's "sourced files"
+#'   block that no "learned sources" line claims, so no cell is known to
+#'   have sourced them. They stand in until every code cell has run in this
+#'   worker, after which `computed_sources` is complete.
 #' * `exports`: named list, package -> exported names, as the worker
 #'   reported for packages it attached. Kept across restarts.
 #' * `graph`: the `ember_graph` of the current code. Derived: see the
@@ -121,7 +123,8 @@ new_state <- function(file, path, id, options, at) {
   if (is.null(options[["r"]])) options$r <- default_r_info()
   cells <- file$cells
   files <- list()
-  learned <- list(definitions = file$learned, references = list(),
+  learned <- list(definitions = file$learned,
+                  references = file$learned_references %||% list(),
                   settings = file$learned_settings %||% list())
   graph <- notebook_graph(code_of(cells), exports = list(),
                           learned = learned, disabled = disabled_ids(cells),
@@ -137,7 +140,21 @@ new_state <- function(file, path, id, options, at) {
   # `reader_of()` already treats as "missing" either way) only changes what
   # `notebook_file_of()` can write, not what the graph was built from above,
   # so this doesn't disturb the `graph` invariant.
+  #
+  # A computed path the footer's "learned sources" block gives to a cell is
+  # that cell's until it runs again, as if its last run had just reported
+  # it. Only a path no cell claims (a file written before that block
+  # existed) falls back to `footer_sources`.
+  computed_sources <- file$learned_sources %||% list()
+  # Only paths "sourced files" has a hash for, the rule
+  # `notebook_file_of()` writes by: a line naming any other path (a hand
+  # edit) is dropped rather than watched with nothing to compare against.
   sourced <- file$sourced
+  hashed <- if (is.null(sourced)) character() else sourced$path
+  computed_sources <- lapply(computed_sources, function(ps) intersect(ps, hashed))
+  computed_sources <- computed_sources[names(computed_sources) %in% names(cells) &
+                                         vapply(computed_sources, length, integer(1)) > 0]
+  claimed <- unlist(computed_sources, use.names = FALSE)
   footer_sources <- character()
   if (!is.null(sourced) && nrow(sourced) > 0) {
     literal <- unique(unlist(lapply(graph$analyses, function(a) {
@@ -146,7 +163,7 @@ new_state <- function(file, path, id, options, at) {
     for (i in seq_len(nrow(sourced))) {
       p <- sourced$path[[i]]
       files[[p]] <- list(text = NA_character_, hash = sourced$hash[[i]])
-      if (!(p %in% literal)) footer_sources <- union(footer_sources, p)
+      if (!(p %in% c(literal, claimed))) footer_sources <- union(footer_sources, p)
     }
   }
 
@@ -158,7 +175,7 @@ new_state <- function(file, path, id, options, at) {
     problems = file$problems,
     file = list(header = file$header, lock = file$lock,
                extra_blocks = file$extra_blocks, format = file$format),
-    cells = cells, files = files, computed_sources = list(),
+    cells = cells, files = files, computed_sources = computed_sources,
     footer_sources = footer_sources,
     exports = list(), graph = graph, options = options, packages = packages,
     allowed = FALSE, closed = FALSE, worker = new_worker_state(),
@@ -498,8 +515,9 @@ is_idle <- function(snapshot) {
 #' The file this state would write: an `ember_notebook_file` (notebook.R).
 #'
 #' Cells in display order with fold state, the graph's run order (the
-#' order cells are written in), learned definitions and settings from
-#' `graph$learned`, sourced-file hashes from `files` for every
+#' order cells are written in), learned definitions, references and
+#' settings from `graph$learned`, each cell's computed `source()` paths
+#' from `computed_sources`, sourced-file hashes from `files` for every
 #' literal and computed `source()` path, the lock and header unchanged.
 #' The header's `ember_version` is the running Ember's.
 notebook_file_of <- function(state) {
@@ -527,6 +545,12 @@ notebook_file_of <- function(state) {
   learned <- learned[vapply(learned, length, integer(1)) > 0]
   learned_settings <- state$graph$learned$settings %||% list()
   learned_settings <- learned_settings[vapply(learned_settings, length, integer(1)) > 0]
+  learned_references <- state$graph$learned$references %||% list()
+  learned_references <- learned_references[vapply(learned_references, length, integer(1)) > 0]
+  # Only paths the footer has a hash for: the same rule as `sourced` above,
+  # so a "learned sources" line never names a path "sourced files" lacks.
+  learned_sources <- lapply(state$computed_sources, function(ps) intersect(ps, sourced$path))
+  learned_sources <- learned_sources[vapply(learned_sources, length, integer(1)) > 0]
 
   # Off code cells that aren't themselves disabled are written commented
   # out too: the disabled cells carry their own `disabled` flag instead,
@@ -540,6 +564,8 @@ notebook_file_of <- function(state) {
   new_notebook_file(header = header, cells = state$cells,
                     run_order = state$graph$order, learned = learned,
                     learned_settings = learned_settings,
+                    learned_references = learned_references,
+                    learned_sources = learned_sources,
                     sourced = sourced, lock = state$file$lock,
                     extra_blocks = state$file$extra_blocks,
                     format = state$file$format, read_only = state$read_only,

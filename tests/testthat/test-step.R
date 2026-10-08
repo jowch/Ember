@@ -1327,6 +1327,108 @@ test_that("all_code_cells_ran() excludes an off cell, so the footer source still
   expect_length(r$state$footer_sources, 0)
 })
 
+#' Save `state` and open the saved text as a fresh session, as closing
+#' and reopening the notebook would.
+reopen <- function(state) {
+  text <- format_notebook(notebook_file_of(state), state$graph$order)
+  file <- parse_notebook(text, new_id = function() stop("no new ids expected"))
+  new_state(file, path = state$path, id = "n2", options = list(library = NULL), at = 0)
+}
+
+test_that("a learned reference is saved, so its edge survives a reopen without running", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("lm(y ~ x, data = df)")))
+  r <- boot(s, "B")
+  r <- drive(r$state, wk_done(1, last_token(r), report(formula_misses = "x"), at(10)))
+  expect_true("A" %in% r$state$graph$upstream$B)
+
+  s2 <- reopen(r$state)
+  expect_equal(s2$graph$learned$references$B, "x")
+  expect_true("A" %in% s2$graph$upstream$B)
+  expect_equal(s2$graph$order, r$state$graph$order)
+})
+
+test_that("editing a cell drops its learned references, so a stale one can't hold it in a cycle (review)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"),
+                       B = cell("fit <- lm(y ~ x, data = df)"), C = cell("q <- 1")),
+                  on_cell_change = "lazy")
+  r <- boot(s, "B")
+  r <- drive(r$state, wk_done(1, last_token(r), report(formula_misses = "x"), at(10)))
+  expect_equal(r$state$graph$learned$references$B, "x")
+
+  # Move x into C, which reads B's fit: B <-> C is a real cycle while B
+  # uses x. Editing B so it doesn't must break it without running B.
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "z <- 1"),
+                                    op_set_code("C", "x <- predict(fit)")), at(20)))
+  expect_true("C" %in% r$state$graph$upstream$B)
+  expect_true("B" %in% r$state$graph$upstream$C)
+  r <- drive(r$state, ev_apply(list(op_set_code("B", "fit <- lm(y ~ w, data = df)")), at(30)))
+  expect_null(r$state$graph$learned$references$B)
+  expect_false("C" %in% r$state$graph$upstream$B)
+
+  # Nor does the reopened file bring it back.
+  s2 <- reopen(r$state)
+  expect_null(s2$graph$learned$references$B)
+  expect_false("C" %in% s2$graph$upstream$B)
+})
+
+test_that("an edit that leaves the code as it was keeps the learned references", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("lm(y ~ x, data = df)")))
+  r <- boot(s, "B")
+  r <- drive(r$state, wk_done(1, last_token(r), report(formula_misses = "x"), at(10)))
+  r <- drive(r$state, ev_apply(list(op_set_code("B", "lm(y ~ x, data = df)"), op_fold("B", TRUE)), at(20)))
+  expect_equal(r$state$graph$learned$references$B, "x")
+})
+
+test_that("a learned sources line naming a path with no hash is not seeded (review)", {
+  file <- fake_file(list(A = cell("source(p)")))
+  file$sourced <- data.frame(path = "gen/h.R", hash = "md5:abc", stringsAsFactors = FALSE)
+  file$learned_sources <- list(A = c("gen/h.R", "gen/gone.R"))
+  s <- new_state(file, path = "nb.R", id = "n1", options = list(library = NULL), at = 0)
+  expect_equal(s$computed_sources, list(A = "gen/h.R"))
+  expect_false("gen/gone.R" %in% watched_files(s))
+})
+
+test_that("a computed source() path is saved with the cell that sourced it", {
+  s <- fake_state(list(S = cell(""), A = cell("source(p)"), B = cell("y <- 1")))
+  s$path <- "/proj/nb.R"
+  r <- boot(s, "A")
+  tok <- r$state$worker$running$token
+  r <- drive(r$state, wk_source(1, tok, "/proj/gen/h.R", "g <- 1", at(11)),
+             ev_files_read(list("gen/h.R" = list(text = "g <- 1", hash = "md5:abc")), at(12)),
+             wk_done(1, tok, report(created = "g"), at(13)))
+  file <- notebook_file_of(r$state)
+  expect_equal(file$learned_sources, list(A = "gen/h.R"))
+  expect_true("gen/h.R" %in% file$sourced$path)
+
+  # Reopened, A's path is A's again: watched and saved, but no stand-in
+  # for every cell.
+  s2 <- reopen(r$state)
+  expect_equal(s2$computed_sources, list(A = "gen/h.R"))
+  expect_length(s2$footer_sources, 0)
+  expect_true("gen/h.R" %in% watched_files(s2))
+  expect_equal(notebook_file_of(s2)$learned_sources, list(A = "gen/h.R"))
+
+  # Rerunning A without the source() drops the path at once, though B
+  # hasn't run in this worker.
+  r2 <- boot(s2, "A")
+  r2 <- drive(r2$state, wk_done(1, last_token(r2), report(), at(20)))
+  expect_null(r2$state$results$B)
+  expect_false("gen/h.R" %in% watched_files(r2$state))
+  expect_length(notebook_file_of(r2$state)$learned_sources, 0)
+  expect_false("gen/h.R" %in% notebook_file_of(r2$state)$sourced$path)
+})
+
+test_that("a computed source() path of a deleted cell leaves the footer", {
+  file <- fake_file(list(A = cell("source(p)"), B = cell("y <- 1")))
+  file$sourced <- data.frame(path = "gen/h.R", hash = "md5:abc", stringsAsFactors = FALSE)
+  file$learned_sources <- list(A = "gen/h.R")
+  s <- new_state(file, path = "nb.R", id = "n1", options = list(library = NULL), at = 0)
+  expect_equal(s$computed_sources, list(A = "gen/h.R"))
+  r <- drive(s, ev_apply(list(op_delete("A")), at(1)))
+  expect_false("gen/h.R" %in% notebook_file_of(r$state)$sourced$path)
+  expect_length(notebook_file_of(r$state)$learned_sources, 0)
+})
+
 test_that("every cell in a cycle shows the cycle error, over a stale run error, and none runs", {
   s <- fake_state(list(S = cell(""), A = cell("x <- z"), B = cell("y <- 1")))
   r <- boot(s, c("A", "B"))
