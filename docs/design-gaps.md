@@ -6,10 +6,11 @@ done; clear out ticked items at each release.
 
 ## Engine
 
-- [ ] Replace the setup cell with settings cells ([settings-cells.md](settings-cells.md)) — missing
+- [x] Replace the setup cell with settings cells ([settings-cells.md](settings-cells.md)) — missing
 - [ ] Graph rebuild after an edit is whole-notebook: 30 ms at 100 cells, 64 ms at 500, 590 ms at 2000, spread across `notebook_graph()` with no single hot spot — improvised
 - [ ] Learned references (formula columns that weren't in the data) aren't saved in the footer, so the edge they add is lost on reopen until the cell reruns — missing
-- [ ] `library()` inside a function body counts as attaching, so a function that attaches conditionally always makes its cell run first — improvised
+- [x] `library()` inside a function body counts as attaching, so a function that attaches conditionally always makes its cell run first — improvised. Now it uses the package without attaching it (test-walk.R)
+- [ ] Method dispatch isn't an edge: a cell defining `print.foo` defines the name `print.foo`, but a cell that prints a `foo` reads only `print`, so editing the method doesn't rerun it. `setMethod()`, `setClass()` and `registerS3method()` define no name at all (nothing in R/ reads them) — missing
 - [ ] Listeners run on the server thread after every dispatch; a `cell_state` storm during "Run all" on a 2000-cell notebook isn't measured — missing
 - [ ] The session polls on `later`'s global loop, shared with whatever else the host process runs; a host callback that blocks stalls the poll. Decide whether to use a private loop — missing
 
