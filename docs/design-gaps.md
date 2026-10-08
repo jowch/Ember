@@ -37,7 +37,11 @@ done; clear out ticked items at each release.
 - [x] Detection from the code, the lock, installs with renv into per-notebook libraries — missing
 - [x] Exports of installed packages for the graph before a cell attaches them — missing
 - [x] Moving to a date ("update all", "move to date D") and `clean()` — missing
-- [ ] Bioconductor: `bioc_version`, its index keys, the release that matches the notebook's R and date, the date-window warning, an R minor version change with a Bioconductor pin (increment 2 in packages.md). Starts with the renv-with-Bioconductor spike (Spikes) — missing
+- [x] Bioconductor: `bioc_version`, its index keys (software, annotation, experiment), the release that matches the notebook's R and date, the date-window warning (packages.md, "Bioconductor") — missing
+- [ ] Bioconductor: an R minor version change with a Bioconductor pin keeps the pin and only warns (`bioc_r_version`). That is not cosmetic: Package Manager builds a release's binaries only for its own R, so on the new R every Bioconductor package builds from source. design.md ("R itself") wants the engine to say the new release updates every Bioconductor package, and move to it, before recording the new R — missing
+- [ ] Bioconductor's release table (`bioc_releases`, resolve.R) needs a row at each release (3.24 is due in October 2026). Until a row is added, a later date on that R keeps resolving from the previous release, and `bioc_off_date` can't flag it, since the last window runs to now. Reading bioconductor.org's `config.yaml` with the table as the offline fallback would remove the chore, at the cost of a second host to fetch from and cache — improvised
+- [x] Bioconductor: installed for real on R 4.6.1, arm64 macOS: `library(DESeq2)` (52 packages, `DESeq2 1.52.0 Bioc`) and `GO.db` from the annotation repository, both from Package Manager's dated URLs; renv finds an annotation package although its lock record prefers `BioCsoft` — missing
+- [ ] Package Manager's dated Bioconductor URL served no macOS arm64 binary of preprocessCore 1.74.0 (Bioconductor publishes one), so WGCNA built it from source, which failed on a Mac without the matching Fortran runtime (`ld: library 'emutls_w' not found`). Check which Bioconductor binaries PPM serves for macOS, and whether falling back to Bioconductor's own binary repository is worth it — missing
 - [ ] GitHub sources: `[sources]` as one-row indexes (increment 2) — missing
 - [ ] Install consent for large downloads, from the install plan's download size (increment 2) — missing
 - [ ] Compiler check before an install that builds from source (increment 2) — missing
@@ -45,7 +49,7 @@ done; clear out ticked items at each release.
 - [ ] Disk use of the per-notebook libraries (increment 2) — missing
 - [ ] Per-package update and pin, with CRAN release dates from crandb (increment 3) — missing
 - [ ] A snapshot date from before the running R was released has no binaries for it, so packages build from source, and old versions may not compile on the new R (cli from 2024 on R 4.6: `Rf_findVar` removed). Detect it before installing and explain (increment 2's install plan) — missing
-- [ ] A failed install reports only "install failed, status 1" with an empty log: the installer's output (renv's and the compiler's errors) never reaches the session, so the reason is invisible in the page and in `notebook_snapshot()` — missing
+- [x] A failed install reports only "install failed, status 1" with an empty log: the installer's output (renv's and the compiler's errors) never reaches the session, so the reason is invisible in the page and in `notebook_snapshot()` — missing. Built in c764563: the installer's output is kept and `install_failures()` parses it (test-packages-session.R, 90)
 - [ ] `renv` is in Imports but used only by the installer script, so R CMD check notes it as not imported — improvised
 - [ ] Indexes are cached forever because a dated index never changes (resolve.R:84-88), but today's can: PPM may publish today's snapshot after the first fetch, so updating to today twice on one day can miss packages released later that day. Harmless, since the lock pins what was chosen; the cache could skip writing an index dated today (ui-3-plan.md, piece 4) — improvised
 
@@ -129,7 +133,7 @@ done; clear out ticked items at each release.
 - [ ] Release builds ship Ember's own frontend files minified (dev keeps them readable): a release script minifies each file in place, keeping names and layout, before `R CMD build`; CI runs the browser tests against that build too. Say where the readable source is (inst/COPYRIGHTS, the frontend README), in case CRAN asks — missing
 - [ ] Server and worker on Linux and Windows (responsiveness, interrupt, restart) — missing
 - [ ] rig's user-mode R on Windows — missing
-- [ ] rv against renv on Linux and Windows. The Bioconductor part is the first step of the Bioconductor work (Packages) — missing
+- [ ] rv against renv on Linux and Windows. renv with Bioconductor works on macOS (see Packages) — missing
 - [ ] Whether any package overwrites a setting the notebook already set (decides whether the note in Global settings is needed) — missing
 
 ## Interactive inputs (build step 5)
