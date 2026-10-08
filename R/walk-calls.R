@@ -443,6 +443,17 @@ walk_literal_definer <- function(e, scope, acc, name, arg_pids = NULL) {
       if (missing_arg(a)) next
       walk_expr(a, scope, acc, arg_pids[[i]])
     }
+  } else if (identical(name, "setGeneric")) {
+    gen_idx <- which(nms == "name")
+    if (length(gen_idx) == 0) gen_idx <- which(nms == "")
+    if (length(gen_idx) >= 1) {
+      i <- gen_idx[1]
+      a <- args[[i]]
+      if (!missing_arg(a) && is.character(a) && length(a) == 1 && !is.na(a)) {
+        record_top_level_definition(acc, scope, a, "generic", pd_position(acc, arg_pids[[i]]))
+      }
+    }
+    walk_call_args(e, scope, acc, arg_pids)
   } else if (identical(name, "data")) {
     for (i in seq_along(args)) {
       a <- args[[i]]
@@ -475,6 +486,66 @@ walk_literal_definer <- function(e, scope, acc, name, arg_pids = NULL) {
       }
     }
   }
+}
+
+#' `registerS3method("print", "foo", f)`, `.S3method(...)` and
+#' `setMethod("show", "Foo", f)` reached from outside a function body (see
+#' `method_registrars`): a literal generic records a `methods` row of the
+#' registrar's form, with the literal class or signature (`NA` when it is
+#' computed). Every argument is then walked as code, so the method body's
+#' reads are the cell's as usual.
+walk_method_registrar <- function(e, scope, acc, name, arg_pids = NULL) {
+  spec <- method_registrars[[name]]
+  args <- as.list(e)[-1]
+  if (is.null(arg_pids)) arg_pids <- rep(list(NA_integer_), length(args))
+  nms <- names2(args)
+  unnamed <- which(nms == "")
+  arg_index <- function(argname, position) {
+    i <- which(nms == argname)
+    if (length(i) >= 1) return(i[1])
+    # Positional arguments fill the slots the named ones left open.
+    slots <- spec[c("generic", "signature")]
+    open_slots <- names(slots)[!(slots %in% nms)]
+    k <- match(position, open_slots)
+    if (is.na(k) || length(unnamed) < k) NA_integer_ else unnamed[k]
+  }
+  gen_idx <- arg_index(spec[["generic"]], "generic")
+  sig_idx <- arg_index(spec[["signature"]], "signature")
+  generic <- if (!is.na(gen_idx) && !missing_arg(args[[gen_idx]])) args[[gen_idx]] else NULL
+  if (is.character(generic) && length(generic) == 1 && !is.na(generic) && nzchar(generic)) {
+    signature <- if (!is.na(sig_idx) && !missing_arg(args[[sig_idx]])) {
+      literal_signature(args[[sig_idx]])
+    }
+    record_method(acc, generic, if (is.null(signature)) NA_character_ else signature,
+                  spec[["form"]], pd_position(acc, arg_pids[[gen_idx]]))
+  }
+  walk_call_args(e, scope, acc, arg_pids)
+}
+
+#' A literal class or S4 signature as one string, `NULL` when computed:
+#' `"Foo"`, `c("Foo", "Bar")`, `signature("Foo", "Bar")` and
+#' `signature(x = "Foo")` give `"Foo"`, `"Foo,Bar"`, `"Foo,Bar"` and
+#' `"Foo"`. Argument names are dropped: two signatures that differ only in
+#' naming are taken to be the same method.
+literal_signature <- function(a) {
+  if (is.character(a)) {
+    if (length(a) == 0 || anyNA(a)) return(NULL)
+    return(paste(a, collapse = ","))
+  }
+  if (!is.call(a) || !is.symbol(a[[1]]) ||
+      !(as.character(a[[1]]) %in% c("c", "signature"))) {
+    return(NULL)
+  }
+  parts <- as.list(a)[-1]
+  if (length(parts) == 0) return(NULL)
+  out <- character(length(parts))
+  for (j in seq_along(parts)) {
+    if (missing_arg(parts[[j]])) return(NULL)
+    p <- parts[[j]]
+    if (!(is.character(p) && length(p) == 1 && !is.na(p))) return(NULL)
+    out[j] <- p
+  }
+  paste(out, collapse = ",")
 }
 
 #' `source("p.R")` at top scope (or `local()` nested there).
@@ -552,6 +623,7 @@ walk_source <- function(e, scope, acc, arg_pids = NULL) {
   acc$formulas <- c(acc$formulas, sub$formulas)
   acc$extra_sourced[[length(acc$extra_sourced) + 1]] <- sub$sourced
   acc$extra_notes[[length(acc$extra_notes) + 1]] <- sub$notes
+  acc$extra_methods[[length(acc$extra_methods) + 1]] <- sub$methods
   if (nrow(sub$definitions) > 0) {
     bind_names(scope, sub$definitions$name)
   }

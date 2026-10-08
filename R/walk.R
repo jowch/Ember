@@ -217,6 +217,15 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
     }
     return(invisible())
   }
+  if (name %in% names(method_registrars)) {
+    maybe_record_name_read()
+    if (!in_function(scope)) {
+      walk_method_registrar(e, scope, acc, name, arg_pids)
+    } else {
+      walk_call_args(e, scope, acc, arg_pids)
+    }
+    return(invisible())
+  }
   if (identical(name, "source")) {
     maybe_record_name_read()
     if (!in_function(scope)) {
@@ -487,6 +496,12 @@ walk_assignment <- function(e, scope, acc, op, pid = NA_integer_) {
   }
 
   simple_kind <- if (is_function_literal(value)) "function" else "assign"
+  # A function with no arguments can't be an S3 method (dispatch passes the
+  # object), so `print.stats <- function()` is kept out of `methods`.
+  if (identical(simple_kind, "function") && length(value[[2]]) == 0 &&
+      (is.symbol(raw_target) || is.character(raw_target))) {
+    acc$no_formals <- c(acc$no_formals, as.character(raw_target))
+  }
   if (is.symbol(raw_target)) {
     record_definition(acc, scope, as.character(raw_target), simple_kind,
                       pd_position(acc, raw_target_pid))

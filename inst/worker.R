@@ -38,8 +38,9 @@
 #                expression (a text cell's `` `r expr` `` spans, one per
 #                line); the report's `output` is an "inline" display
 #                (values, text, no plot) instead of display_value()'s.
-#   remove_cell  cell, order         drop the cell's globals, display data,
-#                                    and rebuild the search path
+#   remove_cell  cell, order         drop the cell's globals, display data
+#                                    and method registrations, and rebuild
+#                                    the search path
 #   drop_globals cell                drop a failed cell's globals, keeping
 #                                    its attached packages
 #   source_reply allow, message      only while a `source` request waits
@@ -101,6 +102,12 @@ display <- list()      # cell id -> list(value, token, kind, limits, text, trunc
                         # the paging state (table: list(rows, cols); tree:
                         # path -> list(items)). Dropped on rerun or delete
                         # (remove_cell()).
+registrations <- list() # cell id -> list of undo records, one per method its
+                        # last run registered with registerS3method(),
+                        # .S3method() or setMethod() (trace_s3_method(),
+                        # trace_s4_method()); undone by remove_cell()
+undoing <- FALSE        # TRUE while undo_registrations() restores a method,
+                        # so its own setMethod() call isn't recorded
 cell_settings <- list() # cell id -> list(kind, name, after): the settings its own
                         # code changed on its last run, applied again before
                         # each later cell it is in effect for
@@ -637,7 +644,10 @@ run_cell <- function(msg) {
 }
 
 #' Remove a cell's globals and display data (before a rerun, or on delete).
+#' Methods it registered are undone first, while a generic the cell
+#' defined itself still exists to remove them from.
 remove_cell <- function(cell) {
+  undo_registrations(cell)
   globals <- owned[[cell]]
   if (length(globals)) {
     existing <- intersect(globals, ls(globalenv(), all.names = TRUE))
@@ -647,6 +657,90 @@ remove_cell <- function(cell) {
   display[[cell]] <<- NULL
   attached[[cell]] <<- NULL
   cell_settings[[cell]] <<- NULL
+}
+
+# ---- Registered methods ------------------------------------------------------
+
+#' Tracer for registerS3method() (which .S3method() also calls): reads the
+#' traced call's own arguments and records how to undo the registration
+#' for the running cell. A `print.foo <- function` global needs none of
+#' this: removing the global is enough. A registration writes into the
+#' generic's S3 methods table instead, which outlives the cell's globals,
+#' so without an undo a deleted or disabled cell's method would keep
+#' being dispatched to.
+ember_trace_s3_method <- function() {
+  frame <- parent.frame()
+  if (is.null(running) || length(load_stack) > 0 || undoing) return(invisible())
+  tryCatch({
+    genname <- get("genname", envir = frame)
+    class <- get("class", envir = frame)
+    envir <- get("envir", envir = frame)
+    # The table registerS3method() writes to, found as it finds it.
+    defenv <- if (genname %in% c("Math", "Ops", "matrixOps", "Summary", "Complex")) {
+      .BaseNamespaceEnv
+    } else {
+      genfun <- get(genname, envir = envir)
+      if (.isMethodsDispatchOn() && methods::is(genfun, "genericFunction"))
+        genfun <- methods::finalDefaultMethod(genfun@default)
+      if (typeof(genfun) == "closure") environment(genfun) else .BaseNamespaceEnv
+    }
+    key <- paste(genname, class, sep = ".")
+    table <- defenv[[".__S3MethodsTable__."]]
+    had <- !is.null(table) && exists(key, envir = table, inherits = FALSE)
+    old <- if (had) get(key, envir = table, inherits = FALSE) else NULL
+    record_registration(list(kind = "s3", defenv = defenv, key = key, had = had, old = old))
+  }, error = function(e) NULL)
+  invisible()
+}
+
+#' Tracer for methods::setMethod(): records the method that `f` had for
+#' exactly this signature before (`NULL` for none), so the undo can put it
+#' back or remove the new one.
+ember_trace_s4_method <- function() {
+  frame <- parent.frame()
+  if (is.null(running) || length(load_stack) > 0 || undoing) return(invisible())
+  tryCatch({
+    f <- get("f", envir = frame)
+    if (methods::is(f, "genericFunction")) f <- f@generic
+    if (!is.character(f)) return(invisible())
+    signature <- get("signature", envir = frame)
+    old <- tryCatch(methods::getMethod(f, signature, optional = TRUE,
+                                       where = globalenv()),
+                    error = function(e) NULL)
+    record_registration(list(kind = "s4", f = f, signature = signature, old = old))
+  }, error = function(e) NULL)
+  invisible()
+}
+
+record_registration <- function(r) {
+  registrations[[running$cell]] <<- c(registrations[[running$cell]], list(r))
+}
+
+#' Undo a cell's method registrations, newest first, so two registrations
+#' of one method in a cell restore what was there before the first.
+undo_registrations <- function(cell) {
+  regs <- registrations[[cell]]
+  registrations[[cell]] <<- NULL
+  if (length(regs) == 0) return(invisible())
+  undoing <<- TRUE
+  on.exit(undoing <<- FALSE)
+  for (r in rev(regs)) {
+    tryCatch({
+      if (identical(r$kind, "s3")) {
+        table <- r$defenv[[".__S3MethodsTable__."]]
+        if (!is.null(table)) {
+          if (r$had) assign(r$key, r$old, envir = table)
+          else if (exists(r$key, envir = table, inherits = FALSE)) rm(list = r$key, envir = table)
+        }
+      } else if (is.null(r$old)) {
+        suppressMessages(suppressWarnings(
+          methods::removeMethod(r$f, r$signature, where = globalenv())))
+      } else {
+        suppressMessages(methods::setMethod(r$f, r$signature, r$old, where = globalenv()))
+      }
+    }, error = function(e) NULL)
+  }
+  invisible()
 }
 
 #' Remove a failed cell's globals, keeping what it attached to the search
@@ -678,11 +772,15 @@ snapshot_globals <- function(names) {
 
 #' Compare globals after a run with the references kept before.
 #'
-#' `before` is a `snapshot_globals()` result. `.Random.seed` is skipped.
+#' `before` is a `snapshot_globals()` result. `.Random.seed` is skipped,
+#' and so is `.__S3MethodsTable__.`: `registerS3method()` creates it for a
+#' notebook generic, but it holds every cell's methods, so no cell owns it
+#' (each registration is undone by key in `undo_registrations()`).
 #' Active bindings are compared by binding (the function), not value.
 compare_globals <- function(before_names, before) {
-  now <- setdiff(ls(globalenv(), all.names = TRUE), ".Random.seed")
-  before_names <- setdiff(before_names, ".Random.seed")
+  unowned <- c(".Random.seed", ".__S3MethodsTable__.")
+  now <- setdiff(ls(globalenv(), all.names = TRUE), unowned)
+  before_names <- setdiff(before_names, unowned)
   created <- setdiff(now, before_names)
   removed <- setdiff(before_names, now)
   common <- intersect(before_names, now)
@@ -1152,6 +1250,14 @@ install_traces <- function() {
   source_call <- bquote((.(ember_trace_source))())
   trace(base::source, where = base_env, print = FALSE, tracer = source_call)
   trace(sys.source, where = base_env, print = FALSE, tracer = source_call)
+  trace(registerS3method, where = base_env, print = FALSE,
+        tracer = bquote((.(ember_trace_s3_method))()))
+  # methods may not be loaded yet (Rscript loads it, but a bare R might
+  # not); without it there is no setMethod() to trace.
+  if (requireNamespace("methods", quietly = TRUE)) {
+    trace(methods::setMethod, where = asNamespace("methods"), print = FALSE,
+          tracer = bquote((.(ember_trace_s4_method))()))
+  }
   protect_closeall(base_env)
   invisible()
 }
