@@ -38,6 +38,12 @@ test_that("hello_and_secret", {
   r <- run_and_wait(h, "a", 1L, 'Sys.getenv("EMBER_SECRET")')
   expect_identical(r$status, "ok")
   expect_identical(r$output$text, '[1] ""')
+
+  # nor does any frame on the stack while the cell runs (main()'s own
+  # frame stays there for the worker's whole life)
+  r <- run_and_wait(h, "b", 2L, 'unlist(lapply(sys.frames(), function(e) get0("secret", e, inherits = FALSE)))')
+  expect_identical(r$status, "ok")
+  expect_identical(r$output$text, "NULL")
 })
 
 test_that("run_value_and_console_order", {

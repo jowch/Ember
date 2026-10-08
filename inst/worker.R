@@ -167,6 +167,9 @@ main <- function() {
     send(list(type = "hello", secret = secret,
               pid = Sys.getpid(), r_version = R.version.string,
               lib_paths = .libPaths(), loaded = loaded_namespace_versions()))
+    # This frame stays on the stack while every cell runs, so a cell
+    # walking sys.frames() would find the secret here.
+    rm(secret)
     repeat handle_next()
   }, interrupt = ignore_interrupt)
 }

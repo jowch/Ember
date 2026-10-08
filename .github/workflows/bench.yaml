@@ -6,6 +6,16 @@ name: bench
 
 on:
   pull_request:
+    # Only changes that can change the timed code's speed; a docs- or
+    # tests-only PR would spend about ten runner minutes to learn nothing.
+    paths:
+      - 'R/**'
+      - 'inst/**'
+      - 'src/**'
+      - 'DESCRIPTION'
+      - 'bench/**'
+      - 'tests/testthat/helper-perf.R'
+      - 'tests/testthat/helper-core.R'
 
 jobs:
   bench:

@@ -15,9 +15,11 @@
 #
 # An absolute ceiling stays on each as a backstop, set around ten times
 # today's cost. What none of these can see is the same shape getting a
-# constant factor slower (PR #3's chip views: 30 ms to 41 ms at 2000
-# cells). bench/ looks for that, by running these fixtures on a pull
-# request and on its base branch on one machine.
+# constant factor slower (PR #3's chip views: 33 ms to 41 ms at 2000
+# cells). Where that comes from work done once per cell, a test counts the
+# calls instead (test-pluto-state.R); bench/ looks for the rest, by
+# running these fixtures on a pull request and on its base branch on one
+# machine, and flags only slowdowns over 25%.
 
 #' Seconds for `inner` calls of `f()`.
 time_calls <- function(f, inner = 1L) {

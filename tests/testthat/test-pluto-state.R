@@ -622,6 +622,24 @@ test_that("a one-cell change at 2000 cells keeps every other cell's projection i
   expect_lt(g$a, 0.5)
 })
 
+test_that("a one-cell change at 2000 cells builds one cell's key and view, and settings views only for settings cells", {
+  # Counts calls instead of timing them, so it has no noise and catches a
+  # per-cell call that is only a constant factor slower, which neither the
+  # ratios above nor bench/ can see on a shared runner: PR #3 first called
+  # cell_settings_view() once per cell on every projection (2002 calls
+  # here), 41 ms against 33 ms once it was built only for settings cells.
+  x <- perf_projection(2000)
+  counts <- c(cell_key = 0L, cell_view = 0L, cell_settings_view = 0L)
+  counting <- function(name, f) { force(f); function(...) { counts[[name]] <<- counts[[name]] + 1L; f(...) } }
+  local_mocked_bindings(cell_key = counting("cell_key", cell_key),
+                        cell_view = counting("cell_view", cell_view),
+                        cell_settings_view = counting("cell_settings_view", cell_settings_view))
+  pluto_state(x$state, x$previous)
+  expect_equal(counts[["cell_key"]], 1L)
+  expect_equal(counts[["cell_view"]], 1L)
+  expect_equal(counts[["cell_settings_view"]], length(x$state$graph$settings))
+})
+
 test_that("a one-cell change at 2000 cells stays fast when every cell has a result (review4 item 7)", {
   # The quadratic case the bare timing test above didn't catch: with no
   # results at all, `state$results[[id]]` is a named lookup into an empty
