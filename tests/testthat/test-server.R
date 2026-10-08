@@ -371,9 +371,10 @@ test_that("interrupt_all sends SIGINT to the running cell (31)", {
   ws <- fake_socket()
   handle_message(server, ws, wire("connect", notebook_id = id))
   handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
-  handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list("A")))
+  # S loads the library; with no setup cell it only runs when asked.
+  handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list("S", "A")))
 
-  busy <- wait_for(nb, function(s) identical(s$process, "busy"), timeout = 15)
+  busy <- wait_for(nb, function(s) isTRUE(s$cells[[2]]$running), timeout = 15)
   expect_true(busy)
   busy_at <- Sys.time()
   wait_for(nb, function(s) as.numeric(Sys.time() - busy_at, units = "secs") > 1, timeout = 10)
@@ -1369,7 +1370,7 @@ test_that("ember_set_mode refuses a bad mode and a read-only notebook; nothing c
   on.exit(unlink(ro_dir, recursive = TRUE), add = TRUE)
   header <- new_header(ember_version = "99.0.0", r_version = "4.5.1", snapshot = "2026-01-01")
   cells <- list(a = list(code = "1", kind = "code", folded = FALSE))
-  file0 <- new_notebook_file(header = header, cells = cells, setup = "a", run_order = "a",
+  file0 <- new_notebook_file(header = header, cells = cells, run_order = "a",
                              learned = list(),
                              sourced = data.frame(path = character(), hash = character(),
                                                   stringsAsFactors = FALSE),

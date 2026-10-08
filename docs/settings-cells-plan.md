@@ -258,7 +258,7 @@ About 60 changed lines in R/notebook.R, kept to the parts listed in
   parses, and ignores it. The writer stops writing it (R/notebook.R:733).
 - The setup fallback (R/notebook.R:613-624) and its problems
   `no_setup_marker` and `disabled_setup_cell` are removed. A file with no
-  cells gets no invented cell.
+  cells gets one empty cell, since the graph needs at least one.
 - `cell_kind(code)` loses `setup` (R/text-cells.R:19). **Default:** an old
   setup cell whose code is only `#'` lines becomes a text cell; until now
   it was forced to be code.

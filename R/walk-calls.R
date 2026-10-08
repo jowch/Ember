@@ -9,10 +9,15 @@
 #' TRUE`, or a non-literal argument, the cell gets a `computed_package`
 #' note. Other arguments are walked as code.
 walk_package_call <- function(e, scope, acc, attached, name, arg_pids = NULL) {
+  # Inside a function body the package is needed but attaches nothing
+  # statically: the call may never run, and a helper that attaches must not
+  # make its cell an attaching one (design-gaps.md, Engine). The worker
+  # still tracks what it attaches when it does run.
+  attached <- attached && !in_function(scope)
   args <- as.list(e)[-1]
   if (is.null(arg_pids)) arg_pids <- rep(list(NA_integer_), length(args))
   if (identical(name, "p_load")) {
-    walk_attach_args(e, scope, acc, arg_pids)
+    walk_attach_args(e, scope, acc, arg_pids, attached = attached)
     return(invisible())
   }
 
@@ -54,7 +59,7 @@ walk_package_call <- function(e, scope, acc, attached, name, arg_pids = NULL) {
 }
 
 #' Every unnamed argument of `p_load(a, b)` is a package to attach.
-walk_attach_args <- function(e, scope, acc, arg_pids = NULL) {
+walk_attach_args <- function(e, scope, acc, arg_pids = NULL, attached = TRUE) {
   args <- as.list(e)[-1]
   if (is.null(arg_pids)) arg_pids <- rep(list(NA_integer_), length(args))
   for (i in seq_along(args)) {
@@ -62,7 +67,7 @@ walk_attach_args <- function(e, scope, acc, arg_pids = NULL) {
     if (missing_arg(a)) next
     pkgname <- literal_package_name(a)
     if (!is.null(pkgname)) {
-      record_package(acc, pkgname, attached = TRUE)
+      record_package(acc, pkgname, attached = attached)
     } else {
       walk_expr(a, scope, acc, arg_pids[[i]])
     }
@@ -556,4 +561,73 @@ walk_source <- function(e, scope, acc, arg_pids = NULL) {
 names2 <- function(x) {
   n <- names(x)
   if (is.null(n)) rep("", length(x)) else ifelse(is.na(n), "", n)
+}
+
+#' The setting keys one setting call changes (`setting_kinds`, rules.R),
+#' read from its literal arguments: `options(digits = 3, scipen = 999)`
+#' gives `c("option:digits", "option:scipen")`. `NA` stands for a name the
+#' code doesn't say (`options(op)`, `Sys.setenv(.list)`), which the worker
+#' fills in when the cell runs. Never empty.
+setting_keys <- function(name, e) {
+  kind <- setting_kinds[[name]]
+  if (kind %in% c("wd", "locale", "theme")) return(kind)
+  args <- as.list(e)[-1]
+  nms <- names2(args)
+  keep <- !vapply(args, missing_arg, logical(1))
+  args <- args[keep]
+  nms <- nms[keep]
+  # A literal list(a = ...) or c(a = ...): its names, or NA when any
+  # element is unnamed.
+  literal_names <- function(a) {
+    if (is.call(a) && is.symbol(a[[1]]) && as.character(a[[1]]) %in% c("list", "c")) {
+      n <- names2(as.list(a)[-1])
+      if (length(n) > 0 && all(nzchar(n))) return(n)
+    }
+    NA_character_
+  }
+  # A literal string or c("A", "B") of strings: the strings, else NA.
+  literal_strings <- function(a) {
+    if (is.character(a)) return(a)
+    if (is.call(a) && identical(a[[1]], as.name("c"))) {
+      parts <- as.list(a)[-1]
+      if (length(parts) > 0 && all(vapply(parts, function(p) is.character(p) && length(p) == 1, logical(1)))) {
+        return(unlist(parts, use.names = FALSE))
+      }
+    }
+    NA_character_
+  }
+  keys <- if (identical(kind, "attach")) {
+    named <- which(nms == "name")
+    what <- which(nms %in% c("", "what"))
+    if (length(named) > 0) {
+      a <- args[[named[1]]]
+      if (is.character(a) && length(a) == 1) a else NA_character_
+    } else if (length(what) > 0) {
+      a <- args[[what[1]]]
+      # attach()'s own default name: deparse1(substitute(what)), or
+      # "file:<path>" for a saved image given as a string.
+      if (is.character(a) && length(a) == 1) paste0("file:", a) else deparse1(a, backtick = FALSE)
+    } else {
+      NA_character_
+    }
+  } else if (identical(name, "Sys.unsetenv")) {
+    if (length(args) > 0) literal_strings(args[[1]]) else NA_character_
+  } else {
+    # options(), local_options(), Sys.setenv(), local_envvar(): named
+    # arguments are settings; `.new` and unnamed ones hold a list of them.
+    # options("digits") is a read, never reached here with nothing else.
+    control <- c(".local_envir", ".action")
+    out <- character()
+    for (i in seq_along(args)) {
+      if (nms[i] %in% control) next
+      if (nzchar(nms[i]) && !identical(nms[i], ".new")) {
+        out <- c(out, nms[i])
+      } else if (!(identical(name, "options") && is.character(args[[i]]))) {
+        out <- c(out, literal_names(args[[i]]))
+      }
+    }
+    out
+  }
+  if (length(keys) == 0) keys <- NA_character_
+  ifelse(is.na(keys), NA_character_, paste0(kind, ":", keys))
 }

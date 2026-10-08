@@ -96,7 +96,7 @@ walk_qualified_call <- function(e, scope, acc, q, pid = NA_integer_) {
   if (identical(q$pkg, "pacman") && identical(q$fn, "p_load")) {
     record_package(acc, "pacman", attached = FALSE)
     parts <- pd_call_parts(acc$pd, e, pid)
-    walk_attach_args(e, scope, acc, parts$args)
+    walk_attach_args(e, scope, acc, parts$args, attached = !in_function(scope))
   } else if (identical(q$pkg, "box") && identical(q$fn, "use")) {
     record_package(acc, "box", attached = FALSE)
     parts <- pd_call_parts(acc$pd, e, pid)
@@ -192,7 +192,9 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
         }
       }
     }
-    if (is_write && !in_function(scope)) record_setting(acc, name, head_pos())
+    if (is_write && !in_function_or_local(scope)) {
+      for (key in setting_keys(name, e)) record_setting(acc, name, key, head_pos())
+    }
     walk_call_args(e, scope, acc, arg_pids)
     return(invisible())
   }

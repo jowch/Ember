@@ -6,7 +6,7 @@
 # on_cell_change = "lazy"
 # ///
 
-# %% id=S [setup]
+# %% id=S
 
 # %% id=A
 x <- 1

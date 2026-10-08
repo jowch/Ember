@@ -38,7 +38,11 @@ fake_cell <- function(code = "",
   settings_df <- if (length(settings) == 0) {
     empty_settings()
   } else {
-    data.frame(fn = settings, line = seq_along(settings), stringsAsFactors = FALSE)
+    # c(options = "option:digits") names the key; a bare "options" is a
+    # computed name (key NA).
+    data.frame(fn = if (is.null(names(settings))) settings else names(settings),
+               setting = if (is.null(names(settings))) NA_character_ else unname(settings),
+               line = seq_along(settings), stringsAsFactors = FALSE)
   }
   sourced_df <- if (is.null(sourced)) empty_sourced() else sourced
 
@@ -52,13 +56,13 @@ fake_cell <- function(code = "",
 #' without calling `read_cell()`: `notebook_graph()` is given a `previous`
 #' whose `analyses` are exactly these, keyed by the same ids and code, so
 #' every one is reused as-is.
-build_test_graph <- function(analyses, setup = names(analyses)[1],
+build_test_graph <- function(analyses,
                              exports = list(), learned = NULL,
                              disabled = character(), read_file = NULL,
                              previous = NULL) {
   ids <- names(analyses)
   cells <- vapply(ids, function(id) analyses[[id]]$code, character(1))
   if (is.null(previous)) previous <- list(analyses = analyses)
-  notebook_graph(cells, setup = setup, exports = exports, learned = learned,
+  notebook_graph(cells, exports = exports, learned = learned,
                  disabled = disabled, previous = previous, read_file = read_file)
 }

@@ -141,7 +141,7 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  *  precedence_heuristic: number?,
  *  depends_on_disabled_cells: boolean,
  *  depends_on_skipped_cells: boolean,
- *  ember: { stale: boolean, code_changed: boolean, upstream_error?: {name: string, cell: string}[], disabled_by?: string, can_disable: boolean, split?: number },
+ *  ember: { stale: boolean, code_changed: boolean, upstream_error?: {name: string, cell: string}[], disabled_by?: string, can_disable: boolean, settings?: {name: string, found: string}[], settings_found?: string[], split?: number },
  *  output: {
  *      body: string | Object,
  *      persist_js_state: boolean,

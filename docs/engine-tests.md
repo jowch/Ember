@@ -21,13 +21,13 @@ Four layers. Most tests are in the first two and start no process.
 
 1. `parse_canonical_example`: parses the example in design.md and gives the header fields, 4 cells, display order, fold, learned and lock.
 2. `round_trip_byte_stable`: `format_notebook(parse_notebook(x)) == x` for every file in `tests/testthat/files/format-1/`.
-3. `round_trip_generated`: the same for 200 generated notebooks (random code with blank lines inside, markdown with empty lines, folds, unicode, a setup cell anywhere in display order).
+3. `round_trip_generated`: the same for 200 generated notebooks (random code with blank lines inside, markdown with empty lines, folds, unicode).
 4. `cells_written_in_run_order`: a display order that differs from run order writes cells in run order and the display order in the footer.
-5. `setup_marker_read_and_written`: `[setup]` sets `setup`; it is written back on the setup cell only.
-6. `no_setup_marker_first_code_cell`: a file without a marker takes its first code cell and notes `no_setup_marker`.
+5. `setup_tag_ignored`: an older Ember's `[setup]` tag is read and ignored, and the next save drops it. A `learned settings` footer block round-trips.
+6. `old_setup_cell_of_text`: an old setup cell of only `#'` lines is a text cell; an empty one stays an empty code cell.
 7. `markdown_prefix`: `#' ` and a bare `#'` are stripped, and a markdown line without the prefix is kept.
 8. `trailing_blank_lines_normalised`: trailing blank lines in a cell are dropped on parse, and the result is then stable.
-9. `plain_script_opens`: a file with no header and no markers becomes one code cell (the setup cell) and notes `no_header`.
+9. `plain_script_opens`: a file with no header and no markers becomes one code cell and notes `no_header`.
 10. `markers_without_ids`: `# %%` lines without ids (Positron style) get ids from `new_id` and note `bad_id`.
 11. `duplicate_ids_repaired`: the second cell with a repeated id gets a new id and notes `duplicate_id`. The first keeps its id.
 12. `missing_footer`: display order is file order and notes `no_footer`.
@@ -47,7 +47,7 @@ Four layers. Most tests are in the first two and start no process.
 23. `edit_code_differs`: after an edit to a cell that ran, its view has `code_differs = TRUE` and keeps its output.
 24. `apply_atomic_expected_mismatch`: one bad `expected` in a batch of three ops leaves the state `identical()` to before, and the reply is `ember_refused` naming the op.
 25. `apply_insert_ids_from_event`: inserted ids are the ones in the ops, and the reply lists them in op order.
-26. `apply_delete_setup_refused`
+26. `apply_delete_first_cell`: deleting the first cell is allowed; no cell is special.
 27. `apply_marker_line_refused`: code containing `# %% id=x` is refused.
 28. `apply_move_and_fold`: display order and fold change, run order is unaffected, and the file text changes.
 29. `delete_cell_removes_variables`: deleting a cell that ran sends `remove_cell` and drops its result. Its readers become stale, never queued: an edit (including delete) never runs anything, in either mode.
@@ -71,8 +71,8 @@ Four layers. Most tests are in the first two and start no process.
 44. `learned_definitions_from_report`: `created = "fits"` from `load()` becomes a learned definition, and a cell reading `fits` gains the edge and (autorun) runs.
 45. `learned_multiple_definition`: a learned name another cell defines makes a graph error, and both cells are blocked.
 46. `changed_foreign_global_is_error`: `changed = "df"` (owned by another cell) gives a `multiple_definitions` run error with the fix text.
-47. `setting_change_outside_setup_is_error`: a non-empty `settings` on a non-setup cell gives a `global_setting` run error. On the setup cell it gives none.
-48. `setup_runs_with_role_setup`: the run message for the setup cell has `role = "setup"`. In autorun every cell that ran is queued after it.
+47. `settings_found_at_run_time`: a non-empty `settings` report makes the cell a settings cell (learned settings) and shows a note; two cells setting one key give `setting_conflict`.
+48. `run_message_carries_settings`: the run message's `settings` lists the settings cells before the cell in run order that are enabled and didn't fail.
 49. `exports_from_report_add_package_edges`: `attached = list(dplyr = "mutate")` adds an edge to the cell that calls `mutate`.
 50. `formula_misses_become_references`: `formula_misses = "deg"` makes `graph_learn(references = "deg")` and an edge.
 51. `source_request_allowed`: `wk_source` with a file defining a new name replies `allow = TRUE` and learns the name.
@@ -103,7 +103,7 @@ Four layers. Most tests are in the first two and start no process.
 70. `notifications_topology_changed`: listed when the edges change and absent for an edit that keeps them.
 71. `notifications_execution_done`: emitted once, when the queue drains.
 72. `notifications_burst_coalesced`: three events folded into one before/after pair give one `cell_state`.
-73. `file_of_state_round_trips`: `parse_notebook(format_notebook(notebook_file_of(s)))` gives the same cells, setup, order, learned and lock.
+73. `file_of_state_round_trips`: `parse_notebook(format_notebook(notebook_file_of(s)))` gives the same cells, order, learned definitions and settings, and lock.
 74. `opening_does_not_change_text`: for an Ember-written file, `format_notebook(notebook_file_of(new_state(parse(x))))` equals `x`, so opening never writes.
 75. `watched_files_literal_and_computed`
 
@@ -126,8 +126,8 @@ Four layers. Most tests are in the first two and start no process.
 87. `rerun_removes_previous_globals`: a cell defines `x`, its code changes to define `y`, and after the rerun `x` is gone.
 88. `created_changed_removed`: reports the right names. `.Random.seed` is never reported.
 89. `active_binding_not_forced`: `makeActiveBinding` with a counter is not called by the comparison.
-90. `options_change_reported_and_reverted`: `options(digits = 3)` in a non-setup cell is reported and then reverted.
-91. `setup_settings_reset_on_rerun`: the setup cell sets `options(foo = 1)`. After it is edited to set nothing, it reruns and `getOption("foo")` is `NULL`.
+90. `options_change_reported_and_applied_in_context`: `options(digits = 3)` is reported; a later run sees 3 only when that cell is in its `settings`.
+91. `settings_reset_before_each_run`: a settings cell rerun without the call goes back to the starting value; `setwd("data")` rerun doesn't nest; a deleted settings cell stops applying.
 92. `package_load_changes_allowed`: `loadNamespace("tools")` plus a fake package fixture whose `.onLoad` sets an option gives no settings error. The same option set by the cell's code does give one.
 93. `onattach_changes_allowed`: the same with a fixture package that sets an option in `.onAttach`.
 94. `search_path_rebuilt_in_file_order`: two fixture packages that export the same name are attached by two cells. After the cell order changes, masking follows the new order.

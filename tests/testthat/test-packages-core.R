@@ -17,13 +17,13 @@
 
 #' A notebook file with package-related header fields `fake_file()` doesn't
 #' expose (`snapshot`, `extra_packages`, `lock`).
-pkg_file <- function(cells, setup = names(cells)[1], snapshot = "2026-09-01",
+pkg_file <- function(cells, snapshot = "2026-09-01",
                      extra_packages = character(), lock = empty_lock(),
                      on_cell_change = "autorun") {
   new_notebook_file(
     header = new_header(ember_version = "0.1.0", r_version = "4.3.0", snapshot = snapshot,
                         on_cell_change = on_cell_change, extra_packages = extra_packages),
-    cells = cells, setup = setup, run_order = names(cells), learned = list(),
+    cells = cells, run_order = names(cells), learned = list(),
     sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
     lock = lock, extra_blocks = list(), format = 1L, read_only = FALSE, problems = NULL)
 }

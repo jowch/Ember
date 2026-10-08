@@ -82,21 +82,19 @@ open_notebook <- function(path, repos = ember_repos(), cache = cache_dir()) {
 #' Create a new notebook file and open it.
 #'
 #' Writes a file with the current header (ember_version, r_version, today's
-#' snapshot date), one empty setup cell and one empty code cell, then opens
+#' snapshot date) and one empty code cell, then opens
 #' it as `open_notebook()` does. Refuses to overwrite an existing file.
 #' @export
 new_notebook <- function(path, repos = ember_repos(), cache = cache_dir()) {
   if (file.exists(path)) stop(sprintf("ember: %s already exists", path))
-  setup_id <- uuid()
   code_id <- uuid()
   cells <- list()
-  cells[[setup_id]] <- list(code = "", kind = "code", folded = FALSE, disabled = FALSE)
   cells[[code_id]] <- list(code = "", kind = "code", folded = FALSE, disabled = FALSE)
   header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
                        r_version = paste(R.version$major, R.version$minor, sep = "."),
                        snapshot = format(Sys.Date()))
   file <- new_notebook_file(
-    header = header, cells = cells, setup = setup_id, run_order = names(cells),
+    header = header, cells = cells, run_order = names(cells),
     learned = list(),
     sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
     lock = empty_lock(), extra_blocks = list(), format = ember_format)
@@ -171,8 +169,8 @@ move_notebook <- function(nb, path) {
 #'
 #' Edits are staged: they change the code, the graph and the file, never
 #' run anything. Either every op applies or none does: if any `set_code`'s
-#' `expected` differs from the current code, if an id is unknown, if an op
-#' would delete the setup cell, or if code contains a line Ember uses as a
+#' `expected` differs from the current code, if an id is unknown, or if
+#' code contains a line Ember uses as a
 #' cell or footer marker (`# %%`, `# ///`), the whole batch is refused with
 #' an `ember_refused` condition naming the op and the reason.
 #'
@@ -231,8 +229,7 @@ fold_cell <- function(cell, folded = TRUE) {
 }
 #' Disable (or re-enable) a cell: it and every cell that depends on it stop
 #' running, keep their last output dimmed, and lose their globals, as if
-#' deleted. Refused for the setup cell ("empty it instead") and for a text
-#' cell.
+#' deleted. Refused for a text cell.
 #' @export
 disable_cell <- function(cell, disabled = TRUE) {
   structure(list(op = "disable", cell = cell, disabled = disabled), class = "ember_op")

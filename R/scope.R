@@ -114,6 +114,17 @@ fork_scope <- function(scope) {
             home = scope$home, defer_target = scope$defer_target)
 }
 
+#' Inside a function body or a `local()` block, at any depth: where a
+#' settings call is scoped rather than global (settings-cells.md, "Calls
+#' inside `local()`").
+in_function_or_local <- function(scope) {
+  while (!is.null(scope)) {
+    if (scope$kind %in% c("function", "local")) return(TRUE)
+    scope <- scope$parent
+  }
+  FALSE
+}
+
 in_function <- function(scope) {
   while (!is.null(scope)) {
     if (identical(scope$kind, "function")) return(TRUE)
@@ -238,10 +249,10 @@ record_package <- function(acc, name, attached) {
     list(name = name, attached = attached, line = acc$line)
 }
 
-record_setting <- function(acc, fn, pos = NULL) {
+record_setting <- function(acc, fn, setting = NA_character_, pos = NULL) {
   if (is.null(pos)) pos <- fallback_pos(acc)
   acc$setting_rows[[length(acc$setting_rows) + 1]] <-
-    list(fn = fn, line = pos$line, col = pos$col, end_col = pos$end_col)
+    list(fn = fn, setting = setting, line = pos$line, col = pos$col, end_col = pos$end_col)
 }
 
 #' `pos` is `NULL` (falls back, `col`/`end_col` `NA`) for a note with no

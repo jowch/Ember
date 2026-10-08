@@ -4,29 +4,31 @@
 \title{Build and update the dependency graph}
 \description{
 \code{notebook_graph()} builds the whole-notebook dependency graph from the
-cells' code, the setup cell, the installed packages' exports, and whatever
+cells' code, the installed packages' exports, the disabled cells, and whatever
 the worker has learned at run time. It is pure and deterministic: the same
 inputs always give an identical graph. \code{graph_learn()} folds a new fact
-reported by the worker (names it created, or formula columns it read) into
+reported by the worker (names it created, formula columns it read, or
+global settings it changed) into
 a graph, rebuilding only what that fact can change.
 }
 \usage{
-notebook_graph(cells, setup = names(cells)[1], exports = list(),
+notebook_graph(cells, exports = list(),
   learned = NULL, disabled = character(), previous = NULL, read_file = NULL)
 
-graph_learn(graph, cell, definitions = NULL, references = NULL)
+graph_learn(graph, cell, definitions = NULL, references = NULL,
+  settings = NULL)
 }
 \arguments{
 \item{cells}{Named character vector, cell id -> code, in display order.
 Markdown cells are passed as empty strings (or left out); they take part
 in the order and nothing else.}
-\item{setup}{The setup cell's id. Defaults to the first cell. Every other
-cell depends on it.}
 \item{exports}{Named list, package name -> character vector of exported
 names (as from \code{getNamespaceExports()}), for the packages that are
 installed. A package not in the list contributes no edges.}
 \item{learned}{\code{list(definitions = <id -> character>, references = <id ->
-character>)} from the footer and from formula checks; \code{NULL} means none.
+character>, settings = <id -> character>)} from the footer, from formula
+checks and from the settings the worker saw cells change (as keys such as
+\code{"option:digits"}, \code{"env:TZ"}, \code{"wd"}); \code{NULL} means none.
 Ids not in \code{cells} are dropped.}
 \item{disabled}{Character ids of disabled cells (see \code{disable_cell()}).
 Ids not in \code{cells} are dropped. Disabled cells are analysed like any
@@ -45,15 +47,25 @@ files still read the same; everything else is recomputed. Passing
 or \code{NULL} to leave them unchanged.}
 \item{references}{Character vector of names the cell's formulas or dynamic
 code read at run time, or \code{NULL} to leave them unchanged.}
+\item{settings}{Character vector of setting keys the cell changed at run
+time (replaces any previously learned settings for this cell;
+\code{character()} drops them), or \code{NULL} to leave them unchanged.}
 }
 \value{
-Both return an \code{ember_graph}: a list with \code{ids}, \code{setup}, \code{analyses},
+Both return an \code{ember_graph}: a list with \code{ids}, \code{settings} (the settings cells, in display
+order), \code{analyses},
 \code{learned}, \code{exports}, \code{cells} (per-cell resolved view), \code{edges} (a data
 frame of \code{from}, \code{to}, \code{name}, \code{via}), \code{upstream}, \code{downstream}, \code{order}
 (every id in run order), \code{errors} (a list of \code{ember_graph_error}), and
 \code{reread} (ids whose analysis was actually recomputed in this build).
 }
 \details{
+A settings cell (one that changes a global setting, statically or as
+learned) runs first, after the cells it reads, and every later cell
+depends on it through a \code{"setting"} edge. A setting or an attached
+package in two cells is a graph error (\code{setting_conflict},
+\code{package_conflict}).
+
 \code{graph_learn()} rebuilds with \code{previous = graph}, so only the affected
 cell's analysis changes and the rest of the graph is reused. Learned
 definitions take part in the multiple-definitions rule and in edges

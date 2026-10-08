@@ -14,10 +14,6 @@ test_that("cell_kind: code cells", {
   expect_equal(cell_kind("#| fig-width: 8"), "code")
 })
 
-test_that("cell_kind: the setup cell is always code", {
-  expect_equal(cell_kind("#' a", setup = TRUE), "code")
-})
-
 test_that("is_mixed", {
   expect_false(is_mixed("x <- 1"))
   expect_false(is_mixed("#' a\n#' b"))

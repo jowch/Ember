@@ -38,7 +38,8 @@ test_that("parse_canonical_example parses the design.md example", {
 
   expect_equal(length(file$cells), 4)
   expect_equal(names(file$cells), c("setup", "md1", "a", "load1"))
-  expect_equal(file$setup, "setup")
+  expect_null(file$setup)
+  expect_equal(file$learned_settings, list(setup = c("option:digits", "wd")))
 
   expect_true(unname(file$cells[["md1"]]$folded))
   expect_false(file$cells[["a"]]$folded)
@@ -122,14 +123,12 @@ random_notebook_file <- function(new_id) {
   display_order <- sample(cell_ids)
   cells <- cells[display_order]
   code_ids <- cell_ids[kinds == "code"]
-  setup <- sample(code_ids, 1)
   run_order <- sample(cell_ids)
 
-  # A random third of the non-setup code cells disabled, another third
+  # A random third of the code cells disabled, another third
   # commented (ui-3 19): both are written with "## " before each line, so
   # both exercise the same comment/uncomment round trip.
-  other_code <- setdiff(code_ids, setup)
-  shuffled <- sample(other_code)
+  shuffled <- sample(code_ids)
   n_third <- length(shuffled) %/% 3L
   disabled_ids <- shuffled[seq_len(n_third)]
   commented_ids <- shuffled[seq_len(n_third) + n_third]
@@ -138,7 +137,7 @@ random_notebook_file <- function(new_id) {
   header <- new_header(ember_version = "0.1.0", r_version = "4.5.1", snapshot = "2026-09-01",
                        bioc_version = if (stats::runif(1) < 0.3) "3.22" else NA_character_,
                        on_cell_change = if (stats::runif(1) < 0.3) "lazy" else "autorun")
-  new_notebook_file(header = header, cells = cells, setup = setup, run_order = run_order,
+  new_notebook_file(header = header, cells = cells, run_order = run_order,
                     learned = list(),
                     sourced = data.frame(path = character(), hash = character(),
                                          stringsAsFactors = FALSE),
@@ -166,7 +165,7 @@ test_that("cells_written_in_run_order writes cells in run order, display order i
     b = list(code = "y <- 2", kind = "code", folded = FALSE),
     a = list(code = "x <- 1", kind = "code", folded = FALSE)
   )
-  file <- new_notebook_file(header = header, cells = cells, setup = "a",
+  file <- new_notebook_file(header = header, cells = cells,
                             run_order = c("a", "b"), learned = list(),
                             sourced = data.frame(path = character(), hash = character(),
                                                  stringsAsFactors = FALSE),
@@ -179,25 +178,48 @@ test_that("cells_written_in_run_order writes cells in run order, display order i
   expect_equal(lines[which(lines == "# /// cell order") + 2], "# a")
 })
 
-test_that("setup_marker_read_and_written sets setup and writes it back on that cell only", {
-  text <- paste("# %% id=a", "1", "", "# %% id=b [setup]", "2", "",
+test_that("an older Ember's [setup] tag is read, ignored and dropped on save (settings-cells.md)", {
+  text <- paste("# %% id=a", "1", "", "# %% id=b [setup]", "options(digits = 3)", "",
                "# /// cell order", "# a", "# b", "# ///", "", sep = "\n")
   file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
-  expect_equal(file$setup, "b")
+  expect_equal(names(file$cells), c("a", "b"))
+  expect_equal(file$cells[["b"]]$code, "options(digits = 3)")
+  expect_false(any(c("no_setup_marker", "disabled_setup_cell") %in% problem_kinds(file)))
   out <- format_notebook(file)
   lines <- strsplit(out, "\n", fixed = TRUE)[[1]]
-  expect_equal(lines[grepl("^# %% id=b", lines)], "# %% id=b [setup]")
-  expect_equal(lines[grepl("^# %% id=a", lines)], "# %% id=a")
+  expect_equal(lines[grepl("^# %% id=b", lines)], "# %% id=b")
+  expect_false(any(grepl("[setup]", lines, fixed = TRUE)))
 })
 
-test_that("no_setup_marker_first_code_cell takes the first code cell and notes it", {
-  text <- paste("# %% id=md [markdown]", "#' text", "", "# %% id=a", "1", "",
-               "# %% id=b", "2", "", "# /// cell order", "# md", "# a", "# b", "# ///", "",
-               sep = "\n")
+test_that("an old setup cell of only #' lines is a text cell; an empty one stays an empty cell", {
+  text <- paste("# %% id=a [setup]", "#' Notes", "", "# %% id=b", "1", "",
+               "# /// cell order", "# a", "# b", "# ///", "", sep = "\n")
   file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
-  expect_equal(file$setup, "a")
-  expect_true("no_setup_marker" %in% problem_kinds(file))
-  # ui-2-tests.md 4: a markdown cell listed without "folded" opens unfolded.
+  expect_equal(file$cells[["a"]]$kind, "markdown")
+
+  text <- paste("# %% id=a [setup]", "", "# %% id=b", "1", "",
+               "# /// cell order", "# a", "# b", "# ///", "", sep = "\n")
+  file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
+  expect_equal(names(file$cells), c("a", "b"))
+  expect_equal(file$cells[["a"]]$code, "")
+  expect_equal(file$cells[["a"]]$kind, "code")
+})
+
+test_that("learned settings round-trip in their own footer block", {
+  # Headerless (the written text gains a header), so check the footer only.
+  body <- c("# %% id=a", "prep()", "", "# %% id=b", "1", "",
+            "# /// learned settings", "# a option:digits env:TZ", "# ///", "")
+  file <- parse_notebook(paste(body, collapse = "\n"), new_id = new_id_seq(), version = "0.1.0")
+  expect_equal(file$learned_settings, list(a = c("option:digits", "env:TZ")))
+  expect_length(file$extra_blocks, 0)
+  out <- strsplit(format_notebook(file, order = c("a", "b")), "\n")[[1]]
+  expect_identical(tail(out, 3L), c("# /// learned settings", "# a option:digits env:TZ", "# ///"))
+})
+
+test_that("a markdown cell listed without folded opens unfolded (ui-2-tests.md 4)", {
+  text <- paste("# %% id=md [markdown]", "#' text", "", "# %% id=a", "1", "",
+               "# /// cell order", "# md", "# a", "# ///", "", sep = "\n")
+  file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
   expect_false(unname(file$cells[["md"]]$folded))
 })
 
@@ -228,7 +250,6 @@ test_that("plain_script_opens becomes one code cell and notes no_header", {
   file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
   expect_equal(length(file$cells), 1)
   expect_equal(file$cells[[1]]$code, "x <- 1\ny <- 2")
-  expect_equal(file$setup, names(file$cells)[[1]])
   expect_true("no_header" %in% problem_kinds(file))
 })
 
@@ -286,7 +307,7 @@ test_that("unknown_header_keys_kept and footer blocks survive a round trip verba
 test_that("header_optional_fields are written only when set", {
   header <- new_header(ember_version = "0.1.0", r_version = "4.5.1", snapshot = "2026-09-01")
   cells <- list(a = list(code = "1", kind = "code", folded = FALSE))
-  file <- new_notebook_file(header = header, cells = cells, setup = "a", run_order = "a",
+  file <- new_notebook_file(header = header, cells = cells, run_order = "a",
                             learned = list(),
                             sourced = data.frame(path = character(), hash = character(),
                                                  stringsAsFactors = FALSE),
@@ -299,7 +320,7 @@ test_that("header_optional_fields are written only when set", {
   header2 <- new_header(ember_version = "0.1.0", r_version = "4.5.1", snapshot = "2026-09-01",
                         bioc_version = "3.22", sources = c(p = "github:a/b@c"),
                         extra_packages = "svglite")
-  file2 <- new_notebook_file(header = header2, cells = cells, setup = "a", run_order = "a",
+  file2 <- new_notebook_file(header = header2, cells = cells, run_order = "a",
                              learned = list(),
                              sourced = data.frame(path = character(), hash = character(),
                                                   stringsAsFactors = FALSE),
@@ -317,7 +338,7 @@ test_that("toml_strings round-trip quotes, backslashes and spaces", {
   header <- new_header(ember_version = "0.1.0", r_version = "4.5.1", snapshot = "2026-09-01",
                        sources = c(p = odd))
   cells <- list(a = list(code = "1", kind = "code", folded = FALSE))
-  file <- new_notebook_file(header = header, cells = cells, setup = "a", run_order = "a",
+  file <- new_notebook_file(header = header, cells = cells, run_order = "a",
                             learned = list(),
                             sourced = data.frame(path = odd, hash = "md5:abc",
                                                  stringsAsFactors = FALSE),
@@ -332,7 +353,7 @@ test_that("toml_strings round-trip quotes, backslashes and spaces", {
 test_that("newer_version_read_only sets read_only and notes newer_version", {
   header <- new_header(ember_version = "99.0.0", r_version = "4.5.1", snapshot = "2026-09-01")
   cells <- list(a = list(code = "1", kind = "code", folded = FALSE))
-  file0 <- new_notebook_file(header = header, cells = cells, setup = "a", run_order = "a",
+  file0 <- new_notebook_file(header = header, cells = cells, run_order = "a",
                              learned = list(),
                              sourced = data.frame(path = character(), hash = character(),
                                                   stringsAsFactors = FALSE),
@@ -373,7 +394,6 @@ test_that("crlf_read parses \\r\\n text like \\n text", {
   f_crlf <- parse_notebook(crlf, new_id = new_id_seq(), version = "0.1.0")
   expect_equal(f_lf$cells, f_crlf$cells)
   expect_equal(f_lf$header, f_crlf$header)
-  expect_equal(f_lf$setup, f_crlf$setup)
 })
 
 # ---- Review fixes ------------------------------------------------------------
@@ -406,7 +426,7 @@ test_that("a header with no closing marker, ended by a footer block instead of a
                "# /// cell order", "# ///", "", sep = "\n")
   file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
   expect_true("no_header_close" %in% problem_kinds(file))
-  expect_equal(length(file$cells), 1)  # no cell markers at all: a synthetic setup cell
+  expect_equal(length(file$cells), 1)  # no cell markers at all: one empty cell
 })
 
 # ---- Disable cell: file format (ui-3 15-19) ---------------------------------
@@ -505,13 +525,13 @@ test_that("a disabled cell whose un-commented code is only #' lines also gets di
   expect_true("disabled_text_cell" %in% problem_kinds(file))
 })
 
-test_that("disabled on the setup cell un-comments the code and clears the flag (ui-3 18)", {
+test_that("an old setup cell marked disabled stays disabled: no cell is special (settings-cells.md)", {
   text <- paste("# %% id=a [setup]", "## x <- 1", "",
                "# /// cell order", "# a disabled", "# ///", "", sep = "\n")
   file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
   expect_equal(file$cells[["a"]]$code, "x <- 1")
-  expect_false(file$cells[["a"]]$disabled)
-  expect_true("disabled_setup_cell" %in% problem_kinds(file))
+  expect_true(file$cells[["a"]]$disabled)
+  expect_false("disabled_setup_cell" %in% problem_kinds(file))
 })
 
 test_that("cell_figure_size(): no #| lines gives the default, 7.5 x 5 (ui-3 62)", {

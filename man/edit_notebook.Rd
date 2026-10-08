@@ -49,16 +49,15 @@ cell itself, as the browser does. \code{NULL} generates one. A cell of only
 show it.}
 \item{disabled}{\code{TRUE} to disable the cell, \code{FALSE} to re-enable it. A
 disabled cell and every cell that depends on it stop running, keep their
-last output dimmed, and lose their globals, as if deleted; the setup cell
-and text cells can't be disabled.}
+last output dimmed, and lose their globals, as if deleted; text cells
+can't be disabled.}
 }
 \value{
 \code{edit_notebook()} returns, invisibly, a list with \code{inserted} (ids of
 inserted cells, in op order) and \code{seq} (the state's seq after the batch).
 If any op
 in the batch cannot apply (an unknown id, a mismatched \code{expected}, an
-attempt to delete or disable the setup cell, an attempt to disable a text
-cell, or code containing a line Ember reserves as a cell or footer
+attempt to disable a text cell, or code containing a line Ember reserves as a cell or footer
 marker), the whole batch is refused and an \code{ember_refused} condition is
 signalled; none of the ops take effect.
 

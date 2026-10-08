@@ -278,12 +278,12 @@ test_that("interrupting a stuck cell offers a restart after the grace period (11
   so <- compile_stuck_lib()
   skip_if(is.null(so), "could not compile the stuck.c fixture (no compiler available)")
 
-  # dyn.load() happens in the setup cell, run before A: a top-level
-  # statement next to the .Call() gives R a safe point to notice the
-  # interrupt between the two, before the stuck C loop (which never calls
-  # R_CheckUserInterrupt()) is even entered.
-  cells <- list(S = cell(sprintf("dyn.load(%s)", deparse(so))),
-               A = cell('.Call("stuck", 6L)'))
+  # dyn.load() happens in S, which A reads `lib` from so S runs first: a
+  # top-level statement next to the .Call() gives R a safe point to notice
+  # the interrupt between the two, before the stuck C loop (which never
+  # calls R_CheckUserInterrupt()) is even entered.
+  cells <- list(S = cell(sprintf("lib <- dyn.load(%s)", deparse(so))),
+               A = cell('invisible(lib)\n.Call("stuck", 6L)'))
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
@@ -418,9 +418,9 @@ test_that("worker_output_pipe_drained", {
   # the pipe's buffer, bypassing the cell's capture.
   rscript <- deparse(file.path(R.home("bin"), "Rscript"))
   code <- paste0("system2(", rscript, ", c('-e', shQuote('cat(strrep(\"x\", 2e5))'))); 1")
-  edit_notebook(nb, set_code(2, code))
+  edit_notebook(nb, set_code(1, code))
   run_cells(nb, wait = TRUE, timeout = 30)
-  expect_identical(notebook_snapshot(nb)$cells[[2]]$status, "ok")
+  expect_identical(notebook_snapshot(nb)$cells[[1]]$status, "ok")
 })
 
 test_that("clean() never deletes a library an open notebook holds active, through a real open_notebook() (10)", {

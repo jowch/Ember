@@ -17,17 +17,21 @@
 # The worker is a plain loop: receive a message, act, reply. It keeps the
 # notebook's runtime bookkeeping that only the process can know (which
 # globals each cell owns, which packages each cell attached, the settings
-# baseline, display data) and reports facts; it never judges graph rules.
-# The server's core decides what a fact means (a learned definition, a
-# "Multiple definitions" error, a global setting error).
+# baseline and each cell's setting changes, display data) and reports
+# facts; it never judges graph rules. The server's core decides what a
+# fact means (a learned definition or setting, a "Multiple definitions"
+# error).
 #
 # ---- Wire protocol -----------------------------------------------------------
 # Frames both ways: 4-byte big-endian length, then serialize(msg, NULL)
 # (xdr, version 3). msg is a list with `type`.
 #
 # Server -> worker
-#   run          cell, token, code, role ("setup"|"cell"|"text"), order (code
-#                cell ids in run order), formulas (list of formula_site),
+#   run          cell, token, code, role ("cell"|"text"), order (code
+#                cell ids in run order), settings (the settings cells in
+#                effect before this one, in order: their changes are
+#                applied over the baseline first; apply_settings_context()),
+#                formulas (list of formula_site),
 #                fig (list(width, height, problems), inches: the figure
 #                size to open the plot device at).
 #                For role "text", each line of `code` is one inline
@@ -97,11 +101,18 @@ display <- list()      # cell id -> list(value, token, kind, limits, text, trunc
                         # the paging state (table: list(rows, cols); tree:
                         # path -> list(items)). Dropped on rerun or delete
                         # (remove_cell()).
-setup_restore <- NULL  # list(kind, name, value) to put back before setup reruns
+cell_settings <- list() # cell id -> list(kind, name, after): the settings its own
+                        # code changed on its last run, applied again before
+                        # each later cell it is in effect for
+touched <- list()       # every list(kind, name) any cell has changed this session;
+                        # reset to the baseline before each run. Never shrinks.
+search_added <- character()  # every attach() entry any cell has added this session
 running <- NULL        # list(cell, token) during a run (for the source trace)
 deferred <- list()     # messages read while waiting for a source_reply
 load_log <- NULL       # settings changes made inside loadNamespace/library during a run
-settings_start <- NULL # the worker's own settings, snapshotted once at boot
+settings_base <- NULL  # the baseline settings: snapshotted once at boot, then
+                       # every change a package load makes is copied in, so a
+                       # package's own option survives a reset
 load_stack <- list()   # stack of settings snapshots, one per nested loadNamespace/library
 loader_originals <- list()  # the real loadNamespace/library/require functions
                              # install_traces() replaced, kept so tracebacks can drop
@@ -129,16 +140,16 @@ main <- function() {
                            timeout = 60 * 60 * 24 * 365)
   install_traces()
   # Baseline, not a cell's change: a colour terminal under Rscript has these
-  # on, and a setup cell can still change them (a rerun resets to this
+  # on, and a settings cell can still change them (each run resets to this
   # baseline, same as any other setting).
   options(cli.num_colors = 256L, crayon.enabled = TRUE, crayon.colors = 256L)
   # So `library(` completion includes installed package names (complete_line()).
   tryCatch(utils::rc.settings(ipck = TRUE), error = function(e) NULL)
-  settings_start <<- snapshot_settings()
   send(list(type = "hello", secret = Sys.getenv("EMBER_SECRET"),
             pid = Sys.getpid(), r_version = R.version.string,
             lib_paths = .libPaths(), loaded = loaded_namespace_versions()))
   Sys.unsetenv("EMBER_SECRET")      # cells must not see it
+  settings_base <<- snapshot_settings()
   # An interrupt that arrives between cells (late, or while a message is
   # read) has nothing to stop: it is resumed where it landed. While a cell
   # runs, run_cell()'s own handlers are nearer and catch it first.
@@ -199,7 +210,7 @@ handle_next <- function() {
       # which may not be (macOS's /tmp and /var are themselves symlinks).
       # Both sides are resolved once here, or every notebook under such a
       # path would fail the comparison below and never actually chdir,
-      # and a resolved `setup_restore`/`settings_start` value would never
+      # and a resolved `cell_settings`/`settings_base` value would never
       # match an unresolved `from` on a later move.
       resolve <- function(p) tryCatch(normalizePath(p, winslash = "/", mustWork = FALSE), error = function(e) p)
       from <- resolve(msg$from)
@@ -212,13 +223,22 @@ handle_next <- function() {
       # notebook). The baseline still moves to `to`, matching a notebook
       # that did `setwd()` itself before the folder went away.
       if (identical(resolve(getwd()), from)) tryCatch(setwd(to), error = function(e) NULL)
-      settings_start$wd <<- to
-      if (!is.null(setup_restore)) {
-        setup_restore <<- lapply(setup_restore, function(chg) {
-          if (identical(chg$kind, "wd") && identical(resolve(chg$value), from)) chg$value <- to
+      # The baseline and every cell's `setwd()` target move with the
+      # notebook: a folder under the old one is the same folder under the
+      # new one.
+      move_path <- function(p) {
+        rp <- resolve(p)
+        if (identical(rp, from)) return(to)
+        if (startsWith(rp, paste0(from, "/"))) return(paste0(to, substring(rp, nchar(from) + 1L)))
+        p
+      }
+      settings_base$wd <<- move_path(settings_base$wd)
+      cell_settings <<- lapply(cell_settings, function(chgs) {
+        lapply(chgs, function(chg) {
+          if (identical(chg$kind, "wd")) chg$after <- move_path(chg$after)
           chg
         })
-      }
+      })
     },
     more = send(show_more(msg)),
     render = send(render_plot(msg)),
@@ -343,7 +363,7 @@ run_cell <- function(msg) {
   })
 
   tryCatch({
-    # `remove_cell()`/`restore_setup_settings()` must be inside this same
+    # `remove_cell()`/`apply_settings_context()` must be inside this same
     # guarded block, not before it: an interrupt landing in that narrow
     # window (between one cell's "done" and the next cell's code actually
     # starting) is otherwise uncaught, which halts the whole worker process
@@ -351,7 +371,7 @@ run_cell <- function(msg) {
     # interrupts a cell within milliseconds of it starting).
     cell_order <<- msg$order
     remove_cell(msg$cell)
-    if (identical(msg$role, "setup")) restore_setup_settings()
+    apply_settings_context(msg$settings %||% character())
 
     before_names <- ls(globalenv(), all.names = TRUE)
     before <- snapshot_globals(before_names)
@@ -544,14 +564,25 @@ run_cell <- function(msg) {
       settings_diffs <- by_code$settings
       rc$load_notes <- by_code$load_notes
 
-      if (identical(msg$role, "setup")) {
-        setup_restore <<- lapply(settings_diffs, function(d) {
-          list(kind = d$kind, name = d$name, value = d$before)
-        })
-      } else if (length(settings_diffs)) {
-        for (d in settings_diffs) {
-          tryCatch(apply_setting(d$kind, d$name, d$before), error = function(e) NULL)
+      # Kept, not reverted: the next run's apply_settings_context() decides
+      # whether this cell's changes apply (the server sends which settings
+      # cells are in effect), so a cell found to set something at run
+      # time becomes a settings cell instead of an error.
+      cell_settings[[msg$cell]] <<- lapply(settings_diffs, function(d) {
+        if (identical(d$kind, "search")) {
+          search_added <<- union(search_added, setdiff(d$after, d$before))
+          list(kind = "search", name = "search", added = setdiff(d$after, d$before))
+        } else {
+          list(kind = d$kind, name = d$name, after = d$after)
         }
+      })
+      for (d in settings_diffs) {
+        key <- list(kind = d$kind, name = d$name)
+        if (!any(vapply(touched, identical, logical(1), y = key))) touched[[length(touched) + 1]] <<- key
+        # ggplot2 wasn't loaded when the baseline was taken: the theme it
+        # had before the first theme_set() is the one to go back to.
+        if (identical(d$kind, "theme") && is.null(settings_base$theme))
+          settings_base$theme <<- d$before
       }
       rc$settings <- lapply(settings_diffs, function(d) {
         list(kind = d$kind, name = d$name, before = d$before, after = d$after)
@@ -605,6 +636,7 @@ remove_cell <- function(cell) {
   owned[[cell]] <<- NULL
   display[[cell]] <<- NULL
   attached[[cell]] <<- NULL
+  cell_settings[[cell]] <<- NULL
 }
 
 #' Remove a failed cell's globals, keeping what it attached to the search
@@ -790,10 +822,19 @@ snapshot_locale <- function() {
   out
 }
 
+#' ggplot2's current theme, or `NULL` while ggplot2 isn't loaded. ggplot2
+#' keeps the theme in its namespace, so comparing options alone would never
+#' see `theme_set()` (settings-cells.md, Open questions: ggplot2's theme).
+current_theme <- function() {
+  if (!("ggplot2" %in% loadedNamespaces())) return(NULL)
+  tryCatch(get("theme_get", envir = asNamespace("ggplot2"))(), error = function(e) NULL)
+}
+
 #' The global settings, as one comparable value.
 snapshot_settings <- function() {
   list(options = options(), env = as.list(Sys.getenv()), wd = getwd(),
-       locale = snapshot_locale(), search = search_non_package())
+       locale = snapshot_locale(), search = search_non_package(),
+       theme = current_theme())
 }
 
 #' Compare two settings snapshots. Returns list(kind, name, before, after)
@@ -816,6 +857,10 @@ diff_settings <- function(before, after) {
     diffs <- c(diffs, list(list(kind = "wd", name = "wd", before = before$wd, after = after$wd)))
   if (!identical(before$search, after$search))
     diffs <- c(diffs, list(list(kind = "search", name = "search", before = before$search, after = after$search)))
+  # Only a theme change while ggplot2 was loaded on both sides: loading it
+  # isn't setting a theme.
+  if (!is.null(before$theme) && !is.null(after$theme) && !identical(before$theme, after$theme))
+    diffs <- c(diffs, list(list(kind = "theme", name = "theme", before = before$theme, after = after$theme)))
   diffs
 }
 
@@ -827,6 +872,7 @@ get_setting <- function(settings, kind, name) {
     wd = settings$wd,
     locale = settings$locale[[name]],
     search = settings$search,
+    theme = settings$theme,
     NULL)
 }
 
@@ -839,6 +885,7 @@ set_setting <- function(settings, kind, name, value) {
     wd = { settings$wd <- value; settings },
     locale = { settings$locale[[name]] <- value; settings },
     search = { settings$search <- value; settings },
+    theme = { settings$theme <- value; settings },
     settings)
 }
 
@@ -859,6 +906,9 @@ apply_setting <- function(kind, name, value) {
     wd = setwd(value),
     locale = Sys.setlocale(category = name, locale = value),
     search = revert_search(value),
+    theme = if (!is.null(value) && "ggplot2" %in% loadedNamespaces()) {
+      get("theme_set", envir = asNamespace("ggplot2"))(value)
+    },
     NULL)
   invisible()
 }
@@ -888,24 +938,44 @@ settings_by_code <- function(settings0, after, load_log) {
   for (entry in load_log) {
     for (chg in entry$changes) {
       baseline_val <- get_setting(baseline, chg$kind, chg$name)
-      start_val <- get_setting(settings_start, chg$kind, chg$name)
+      start_val <- get_setting(settings_base, chg$kind, chg$name)
       notebook_set <- !identical(baseline_val, start_val)
       if (notebook_set && !identical(baseline_val, chg$after)) {
         notes <- c(notes, sprintf("package %s changed %s %s, which the notebook set",
                                    entry$package, chg$kind, chg$name))
       }
       baseline <- set_setting(baseline, chg$kind, chg$name, chg$after)
+      # A package's own change is part of the starting values from now on.
+      settings_base <<- set_setting(settings_base, chg$kind, chg$name, chg$after)
     }
   }
   list(settings = diff_settings(baseline, after), load_notes = notes)
 }
 
-#' Before the setup cell reruns: put back every setting a previous setup
-#' run changed, to its value before that run.
-restore_setup_settings <- function() {
-  if (is.null(setup_restore)) return(invisible())
-  for (chg in setup_restore) {
-    tryCatch(apply_setting(chg$kind, chg$name, chg$value), error = function(e) NULL)
+#' Before a cell runs (settings-cells.md, What the worker does before each
+#' run): put every setting any cell has changed back to the baseline, then
+#' apply the changes of the settings cells in effect, `ids`, in order.
+#' Settings no cell touched are left alone. `attach()` is best effort:
+#' entries a cell added are detached unless that cell is in `ids`, and
+#' nothing detached is re-attached (its contents are gone).
+apply_settings_context <- function(ids) {
+  for (key in touched) {
+    if (identical(key$kind, "search")) next
+    value <- get_setting(settings_base, key$kind, key$name)
+    tryCatch(apply_setting(key$kind, key$name, value), error = function(e) NULL)
+  }
+  keep <- settings_base$search
+  for (id in ids) {
+    for (chg in cell_settings[[id]] %||% list()) {
+      if (identical(chg$kind, "search")) {
+        keep <- union(keep, chg$added)
+      } else {
+        tryCatch(apply_setting(chg$kind, chg$name, chg$after), error = function(e) NULL)
+      }
+    }
+  }
+  if (length(search_added) > 0) {
+    revert_search(union(keep, setdiff(search_non_package(), search_added)))
   }
   invisible()
 }

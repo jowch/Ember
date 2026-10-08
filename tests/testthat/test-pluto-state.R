@@ -218,7 +218,7 @@ test_that("a private-name error projects with no cell id in its message (10)", {
   owner_id <- "ca1b0a64-d117-466f-898a-8603bbc24e75"
   reader_id <- "e2f5c0a1-8a8e-4e8e-9a0e-1a2b3c4d5e6f"
   cells <- setNames(list(cell(".tmp <- 1"), cell("print(.tmp)")), c(owner_id, reader_id))
-  s <- fake_state(cells, setup = owner_id)
+  s <- fake_state(cells)
   v <- snapshot_of(s)$cells[[reader_id]]
   o <- project_output(v)
   expect_equal(o$mime, "application/vnd.pluto.stacktrace+object")
@@ -231,7 +231,7 @@ test_that("a cycle error projects with no cell id in its message (10)", {
   id_a <- "ca1b0a64-d117-466f-898a-8603bbc24e75"
   id_b <- "e2f5c0a1-8a8e-4e8e-9a0e-1a2b3c4d5e6f"
   cells <- setNames(list(cell("a <- 1\nb"), cell("b <- 1\na")), c(id_a, id_b))
-  s <- fake_state(cells, setup = id_a)
+  s <- fake_state(cells)
   v <- snapshot_of(s)$cells[[id_a]]
   o <- project_output(v)
   expect_equal(o$mime, "application/vnd.pluto.stacktrace+object")
@@ -557,7 +557,7 @@ test_that("nbpkg reflects missing, installing and failed packages, and a restart
 # ---- 14. cell_dependencies ------------------------------------------------------
 
 test_that("cell_dependencies for a three-cell chain (14)", {
-  g <- notebook_graph(c(S = "", A = "x <- 1", B = "y <- x", C = "z <- y"), setup = "S")
+  g <- notebook_graph(c(S = "", A = "x <- 1", B = "y <- x", C = "z <- y"))
   deps <- project_dependencies(g, NULL)
   expect_equal(deps$B$upstream_cells_map$x, list("A"))
   expect_equal(deps$A$downstream_cells_map$x, list("B"))
@@ -565,8 +565,7 @@ test_that("cell_dependencies for a three-cell chain (14)", {
 })
 
 test_that("cell_dependencies for a library() cell uses the exported name (14)", {
-  g <- notebook_graph(c(S = "", A = "library(dplyr)", B = "filter(df, x > 1)"),
-                      setup = "S", exports = list(dplyr = c("filter", "select")))
+  g <- notebook_graph(c(S = "", A = "library(dplyr)", B = "filter(df, x > 1)"), exports = list(dplyr = c("filter", "select")))
   deps <- project_dependencies(g, NULL)
   expect_equal(deps$B$upstream_cells_map$filter, list("A"))
   expect_equal(deps$A$precedence_heuristic, 5L)
@@ -574,15 +573,15 @@ test_that("cell_dependencies for a library() cell uses the exported name (14)", 
 })
 
 test_that("a definition no cell reads is still in its cell's downstream_cells_map, with an empty array (53)", {
-  g <- notebook_graph(c(S = "", A = "x <- 1; unread <- 2"), setup = "S")
+  g <- notebook_graph(c(S = "", A = "x <- 1; unread <- 2"))
   deps <- project_dependencies(g, NULL)
   expect_equal(deps$A$downstream_cells_map$unread, list())
 })
 
 test_that("an edit that changes one cell's references changes only its own and its neighbours' entries (14)", {
-  g1 <- notebook_graph(c(S = "", A = "x <- 1", B = "y <- x", C = "z <- 1"), setup = "S")
+  g1 <- notebook_graph(c(S = "", A = "x <- 1", B = "y <- x", C = "z <- 1"))
   d1 <- project_dependencies(g1, NULL)
-  g2 <- notebook_graph(c(S = "", A = "x <- 1", B = "y <- 2", C = "z <- 1"), setup = "S", previous = g1)
+  g2 <- notebook_graph(c(S = "", A = "x <- 1", B = "y <- 2", C = "z <- 1"), previous = g1)
   d2 <- project_dependencies(g2, d1)
   expect_identical(d2$C, d1$C)
   expect_false(identical(d2$A, d1$A))
@@ -594,7 +593,7 @@ test_that("an edit that changes one cell's references changes only its own and i
 test_that("a one-cell change at 2000 cells keeps every other cell's projection identical(), under 60ms (90 ms before keying by position; CI machines run 24-33 ms)", {
   cells <- list(S = cell(""))
   for (i in 1:2000) cells[[sprintf("c%d", i)]] <- cell(sprintf("x%d <- %d", i, i))
-  s <- fake_state(cells, setup = "S")
+  s <- fake_state(cells)
   p1 <- pluto_state(s)
 
   s2 <- drive(s, ev_apply(list(op_set_code("c7", "x7 <- 999")), at(1)))$state
@@ -620,7 +619,7 @@ test_that("a one-cell change at 2000 cells stays fast when every cell has a resu
   # before view_context() aligned `results` by position with match().
   cells <- list(S = cell(""))
   for (i in 1:2000) cells[[sprintf("c%d", i)]] <- cell(sprintf("x%d <- %d", i, i))
-  s <- fake_state(cells, setup = "S")
+  s <- fake_state(cells)
   s$allowed <- TRUE
   ids <- names(s$cells)
   s$results <- stats::setNames(lapply(ids, function(id) {

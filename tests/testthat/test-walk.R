@@ -154,9 +154,40 @@ test_that("a setting call inside a function body is not caught statically", {
   expect_equal(nrow(a$settings), 0)
 })
 
-test_that("local({ options(...) }) still counts as a top-level setting", {
+test_that("a settings call inside local() doesn't count statically", {
   a <- read_cell("local(options(warn = 2))")
+  expect_equal(nrow(a$settings), 0)
+  b <- read_cell("local({ op <- options(digits = 3); on.exit(options(op)); print(x) })")
+  expect_equal(nrow(b$settings), 0)
+})
+
+test_that("each setting a call names is its own key", {
+  a <- read_cell('options(digits = 3, scipen = 2); Sys.setenv(TZ = "UTC"); Sys.unsetenv("LANG")')
+  expect_setequal(a$settings$setting, c("option:digits", "option:scipen", "env:TZ", "env:LANG"))
+  expect_setequal(read_cell('options(list(warn = 1))')$settings$setting, "option:warn")
+  expect_equal(read_cell("setwd('data')")$settings$setting, "wd")
+  expect_equal(read_cell('Sys.setlocale("LC_ALL", "C")')$settings$setting, "locale")
+  expect_equal(read_cell("ggplot2::theme_set(theme_bw())")$settings$setting, "theme")
+  expect_equal(read_cell("attach(mtcars)")$settings$setting, "attach:mtcars")
+  expect_equal(read_cell('attach(df, name = "d")')$settings$setting, "attach:d")
+})
+
+test_that("a setting whose name is computed is a setting with an unknown key", {
+  a <- read_cell("options(opts)")
   expect_equal(a$settings$fn, "options")
+  expect_true(is.na(a$settings$setting))
+  b <- read_cell("do.call(Sys.setenv, vars)")
+  expect_equal(nrow(b$settings), 0)
+})
+
+test_that("library() inside a function body uses the package but doesn't attach it", {
+  a <- read_cell("f <- function() { library(dplyr); filter(x) }")
+  expect_setequal(a$packages$name, "dplyr")
+  expect_false(any(a$packages$attached))
+  b <- read_cell("library(dplyr)")
+  expect_true(b$packages$attached)
+  c <- read_cell("local(library(dplyr))")
+  expect_true(c$packages$attached)
 })
 
 test_that("withr::with_options is a scoped setting, not a global one", {

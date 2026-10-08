@@ -36,6 +36,17 @@ setting_functions <- list(
   write_only = c("options")
 )
 
+#' The setting each setting function changes, as the key prefix the graph
+#' compares (settings-cells.md, "What counts as a setting"). `option:` and
+#' `env:` keys take the names the call gives (`option:digits`); the rest
+#' are one setting each. `attach` keys are `attach:<name>`, from the
+#' `name` argument or R's own default for it, the first argument's text.
+setting_kinds <- c(options = "option", local_options = "option",
+                   Sys.setenv = "env", Sys.unsetenv = "env",
+                   local_envvar = "env", setwd = "wd", local_dir = "wd",
+                   Sys.setlocale = "locale", local_locale = "locale",
+                   theme_set = "theme", attach = "attach")
+
 #' Functions that read globals in a way static reading can't follow.
 #'
 #' The cell gets an `untracked_read` note. `eval` is listed because

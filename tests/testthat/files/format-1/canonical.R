@@ -10,7 +10,7 @@
 # svglite
 # ///
 
-# %% id=setup [setup]
+# %% id=setup
 library(dplyr)
 library(ggplot2)
 options(digits = 4)
@@ -36,6 +36,9 @@ load("fits.RData")
 # ///
 # /// learned definitions
 # load1 fits
+# ///
+# /// learned settings
+# setup option:digits wd
 # ///
 # /// lock
 # cli 3.6.5 CRAN

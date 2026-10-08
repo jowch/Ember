@@ -18,7 +18,7 @@
 #   # svglite
 #   # ///
 #   <blank>
-#   # %% id=<uuid> [setup]
+#   # %% id=<uuid>
 #   <code lines>
 #   <blank>
 #   # %% id=<uuid>
@@ -29,16 +29,13 @@
 #   # ///
 #   # /// sourced files              (only when non-empty)
 #   # /// learned definitions        (only when non-empty)
+#   # /// learned settings           (only when non-empty)
 #   # /// lock                       (only when non-empty)
 #   # /// <unknown block>            (kept verbatim, in the order read)
 #
-# The setup cell is marked `[setup]` on its marker line. Decided here
-# (step 1's open question): position can't identify it, because cells are
-# written in run order and display order lives in the footer, and a user
-# inserting a cell above the setup cell must not silently move global
-# settings' legal home. A file without any `[setup]` marker (hand-written,
-# or from before this decision) takes its first code cell as the setup
-# cell, and the marker is written on the next save.
+# An older Ember marked a setup cell `[setup]` on its marker line. The tag
+# is read and ignored, and the next save drops it: the setup cell is gone
+# and that cell is an ordinary one (settings-cells.md, Old notebooks).
 
 # ---- Types -------------------------------------------------------------------
 
@@ -47,10 +44,11 @@
 #' * `header`: `ember_header`.
 #' * `cells`: named list id -> `list(code, kind, folded, disabled)` in
 #'   display order.
-#' * `setup`: id.
 #' * `run_order`: ids in the order they appear in the file (the run order
 #'   when Ember wrote it). Informational: the graph recomputes the order.
 #' * `learned`: named list id -> character, from "learned definitions".
+#' * `learned_settings`: named list id -> character setting keys, from
+#'   "learned settings".
 #' * `sourced`: data frame `path`, `hash`.
 #' * `commented`: character ids written with `## ` before each line because
 #'   they are off (a dependent of a disabled cell), as read from the
@@ -65,15 +63,17 @@
 #' * `problems`: data frame `kind`, `detail`: what was repaired. Kinds:
 #'   `"no_header"`, `"no_header_close"`, `"no_footer"`, `"duplicate_id"`,
 #'   `"bad_id"`, `"unknown_order_id"`, `"duplicate_order_id"`,
-#'   `"cell_missing_from_order"`, `"no_setup_marker"`,
+#'   `"cell_missing_from_order"`,
 #'   `"text_before_first_cell"`, `"newer_version"`, `"converted"`,
-#'   `"uncommented_line"`, `"disabled_text_cell"`, `"disabled_setup_cell"`.
-new_notebook_file <- function(header, cells, setup, run_order, learned,
+#'   `"uncommented_line"`, `"disabled_text_cell"`.
+new_notebook_file <- function(header, cells, run_order, learned,
                               sourced, lock, extra_blocks, format,
                               read_only = FALSE, problems = NULL,
-                              commented = character()) {
-  structure(list(header = header, cells = cells, setup = setup,
-                 run_order = run_order, learned = learned, sourced = sourced,
+                              commented = character(),
+                              learned_settings = list()) {
+  structure(list(header = header, cells = cells,
+                 run_order = run_order, learned = learned,
+                 learned_settings = learned_settings, sourced = sourced,
                  lock = lock, extra_blocks = extra_blocks, format = format,
                  read_only = read_only, problems = problems,
                  commented = commented),
@@ -466,7 +466,6 @@ parse_notebook_core <- function(text, new_id) {
   n <- length(lines)
   cells <- list()
   file_order <- character()
-  cell_is_setup <- character()
   footer_blocks <- list()
 
   cur_id <- NULL
@@ -484,7 +483,7 @@ parse_notebook_core <- function(text, new_id) {
   # `disabled` or `commented`, so that pass happens after the whole file is
   # read, below. `tag_markdown` is only the marker's own `[markdown]` tag
   # (for reading an older Ember's file); a cell's real kind is always
-  # `cell_kind()` of its code, resolved once the setup cell is known.
+  # `cell_kind()` of its code.
   flush_cell <- function() {
     if (!is.null(cur_id)) {
       cells[[cur_id]] <<- list(raw = cur_lines, tag_markdown = cur_tag_markdown,
@@ -518,7 +517,6 @@ parse_notebook_core <- function(text, new_id) {
       used_ids <- c(used_ids, id)
       cur_id <- id
       cur_tag_markdown <- "markdown" %in% marker$tags
-      if ("setup" %in% marker$tags) cell_is_setup <- c(cell_is_setup, id)
       cur_lines <- character()
       mode <- "cell"
     } else if (is_footer_open) {
@@ -561,9 +559,8 @@ parse_notebook_core <- function(text, new_id) {
   display_order <- resolved$order
 
   # Un-comment (disabled/commented) or repair a [markdown]-tagged cell's
-  # lines into plain code text, for every cell -- before the setup cell is
-  # known, since the fallback below picks it by the resulting code
-  # (`cell_kind()`), not by the marker's own tag.
+  # lines into plain code text, for every cell; its kind is then
+  # `cell_kind()` of the result, not the marker's own tag.
   codes <- list()
   tentative_disabled <- character()
   file_commented <- character()
@@ -610,30 +607,19 @@ parse_notebook_core <- function(text, new_id) {
     if (is_commented && !is_disabled) file_commented <- c(file_commented, id)
   }
 
-  setup_candidates <- intersect(display_order, cell_is_setup)
-  if (length(setup_candidates) > 0) {
-    setup <- setup_candidates[[1]]
-  } else {
-    code_ids <- display_order[vapply(display_order, function(id) identical(cell_kind(codes[[id]]), "code"), logical(1))]
-    if (length(code_ids) > 0) {
-      setup <- code_ids[[1]]
-    } else {
-      setup <- new_id()
-      codes[[setup]] <- ""
-      display_order <- c(setup, display_order)
-    }
-    problems <- add_problem(problems, "no_setup_marker")
+  # A file with no cells gets one empty code cell: a notebook always has
+  # at least one.
+  if (length(display_order) == 0) {
+    only <- new_id()
+    codes[[only]] <- ""
+    display_order <- only
   }
 
   for (id in display_order) {
     folded <- isTRUE(unname(resolved$folded[id]))
     disabled <- id %in% tentative_disabled
-    if (disabled && identical(id, setup)) {
-      problems <- add_problem(problems, "disabled_setup_cell", id)
-      disabled <- FALSE
-    }
     code <- codes[[id]] %||% ""
-    kind <- cell_kind(code, setup = identical(id, setup))
+    kind <- cell_kind(code)
     # A disabled cell whose un-commented code turns out to be only `#'`
     # lines (main's Ember once allowed disabling text; a hand edit can
     # still write it): the same repair as a `[markdown]`-tagged cell
@@ -648,16 +634,19 @@ parse_notebook_core <- function(text, new_id) {
 
   sourced <- parse_sourced_block(footer_blocks[["sourced files"]])
   learned <- parse_learned_block(footer_blocks[["learned definitions"]], display_order)
+  learned_settings <- parse_learned_block(footer_blocks[["learned settings"]], display_order)
   lock_lines <- footer_blocks[["lock"]]
   if (is.null(lock_lines)) lock_lines <- character()
   lock <- parse_lock_lines(lock_lines)$lock
 
-  known_footer <- c("cell order", "sourced files", "learned definitions", "lock")
+  known_footer <- c("cell order", "sourced files", "learned definitions",
+                    "learned settings", "lock")
   extra_names <- setdiff(names(footer_blocks), known_footer)
   extra_blocks <- footer_blocks[extra_names]
 
-  list(header = header, cells = cells, setup = setup, run_order = file_order,
-      learned = learned, sourced = sourced, lock = lock,
+  list(header = header, cells = cells, run_order = file_order,
+      learned = learned, learned_settings = learned_settings,
+      sourced = sourced, lock = lock,
       extra_blocks = extra_blocks, problems = problems, commented = file_commented)
 }
 
@@ -695,8 +684,9 @@ parse_notebook <- function(text, new_id, version = utils::packageVersion("ember"
     }
   }
 
-  new_notebook_file(header = parsed$header, cells = parsed$cells, setup = parsed$setup,
+  new_notebook_file(header = parsed$header, cells = parsed$cells,
                     run_order = parsed$run_order, learned = parsed$learned,
+                    learned_settings = parsed$learned_settings,
                     sourced = parsed$sourced, lock = parsed$lock,
                     extra_blocks = parsed$extra_blocks, format = file_format,
                     read_only = read_only, problems = problems_to_df(problems),
@@ -747,10 +737,7 @@ format_notebook <- function(file, order = NULL) {
 
   cell_block_lines <- function(id) {
     cell <- file$cells[[id]]
-    tags <- character()
-    if (identical(id, file$setup)) tags <- c(tags, "setup")
-    suffix <- if (length(tags) > 0) paste0(" ", paste(sprintf("[%s]", tags), collapse = " ")) else ""
-    marker <- paste0("# %% id=", id, suffix)
+    marker <- paste0("# %% id=", id)
     body <- if (identical(cell$code, "")) character(0) else strsplit(cell$code, "\n", fixed = TRUE)[[1]]
     # A text cell's code already carries its `#'` prefixes (they are the
     # text, not added here); only a code cell is ever commented out.
@@ -792,6 +779,13 @@ format_notebook <- function(file, order = NULL) {
       paste0("# ", paste(c(id, file$learned[[id]]), collapse = " "))
     }, character(1))
     footer <- c(footer, "# /// learned definitions", lines, "# ///")
+  }
+
+  if (length(file$learned_settings) > 0) {
+    lines <- vapply(names(file$learned_settings), function(id) {
+      paste0("# ", paste(c(id, file$learned_settings[[id]]), collapse = " "))
+    }, character(1))
+    footer <- c(footer, "# /// learned settings", lines, "# ///")
   }
 
   lock_lines <- format_lock_lines(file$lock)

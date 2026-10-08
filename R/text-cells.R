@@ -12,12 +12,11 @@ nonblank_lines <- function(code) {
   lines[!grepl("^\\s*$", lines)]
 }
 
-#' "markdown" when not the setup cell, at least one line is non-blank, and
-#' every non-blank line is a text line. Otherwise "code". A mixed cell is
+#' "markdown" when at least one line is non-blank and every non-blank line
+#' is a text line. Otherwise "code". A mixed cell is
 #' "code", so it stays a graph node and gets the mixed_text graph error.
 #' `#|` lines (cell options) count as code lines: they never start with `#'`.
-cell_kind <- function(code, setup = FALSE) {
-  if (isTRUE(setup)) return("code")
+cell_kind <- function(code) {
   nb <- nonblank_lines(code)
   if (length(nb) == 0) return("code")
   if (all(text_line(nb))) "markdown" else "code"

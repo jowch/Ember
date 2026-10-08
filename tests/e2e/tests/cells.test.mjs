@@ -169,7 +169,7 @@ test("run/stop button and run time (141)", async (t) => {
   assertNoProblems(page);
 });
 
-test("cell menu: item order, move down, hide code, no Disable on the setup cell (142)", async (t) => {
+test("cell menu: item order, move down, hide code, Disable on every code cell (142, settings-cells.md)", async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-menu.server.log") });
   const browser = await launchBrowser();
@@ -181,7 +181,7 @@ test("cell menu: item order, move down, hide code, no Disable on the setup cell 
   await page.hover(cellSelector("S"));
   await page.locator(`${cellSelector("S")} button.input_context_menu`).click();
   assert.equal(await page.locator(`${cellSelector("S")} button.input_context_menu`).getAttribute("aria-label"), "Cell options");
-  assert.equal(await page.locator(`${cellSelector("S")} button.disable_cell`).count(), 0, "the setup cell's menu has no Disable cell");
+  assert.equal(await page.locator(`${cellSelector("S")} button.disable_cell`).count(), 1, "the first cell's menu has Disable cell: no cell is special");
   await page.keyboard.press("Escape");
 
   await page.hover(cellSelector("A"));
@@ -384,7 +384,7 @@ test("empty notebook: placeholder and hints show, and typing removes them (151)"
   await page.waitForURL(/edit\?id=/, { timeout: 10000 });
   await page.waitForSelector("pluto-cell", { timeout: 15000 });
 
-  assert.equal(await page.locator("pluto-cell").count(), 2, "a new notebook has a setup cell and one code cell");
+  assert.equal(await page.locator("pluto-cell").count(), 1, "a new notebook has one empty code cell");
   const placeholder = await page.locator("pluto-cell .cm-placeholder").first().innerText();
   assert.equal(placeholder, "Type R code here");
   assert.match(await page.locator("ember-empty-hints").innerText(), /⌘/, "Mac modifier shown in the hints");

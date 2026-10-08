@@ -129,6 +129,11 @@ step <- function(state, event) {
   # before schedule() sends anything.
   newly_off <- setdiff(names(r$state$graph$off), names(state$graph$off))
   to <- if (length(newly_off) > 0) turn_off(r$state, newly_off) else list(state = r$state, effects = list())
+  # A settings cell that stops being in effect without running (disabled,
+  # or off because something it reads was) leaves later results computed
+  # under its settings: mark them stale through the old graph's edges.
+  lost <- intersect(state$graph$settings, newly_off)
+  if (length(lost) > 0) to$state <- stale_after_settings(to$state, state$graph, lost)
   pk <- schedule_packages(to$state, old = state)
   s <- schedule(pk$state)
   reads <- missing_file_reads(s$state)
@@ -280,16 +285,16 @@ can_run <- function(state, id) {
 }
 
 #' The cells `id` reads from (by a "definition" or "package" edge, not
-#' "setup") whose last result failed or that have a graph error, with the
+#' "setting") whose last result failed or that have a graph error, with the
 #' names read: `list(names = <chr>, cells = <chr, aligned>)`, or `NULL`.
 #' At most one entry per name, keeping the first definer in display order,
 #' so two cells both defining `x` (a graph error) don't repeat "x".
 #'
 #' Only direct edges count: a chain gives a chain of messages, each linking
 #' one step up (as in Pluto), rather than naming the original failure from
-#' every cell downstream of it. The setup edge is left out: an error in the
-#' setup cell has no name to show, so cells failing after it show their own
-#' R error.
+#' every cell downstream of it. Setting edges are left out: a settings
+#' cell's error is not a name the cell read, so cells failing after it show
+#' their own R error.
 #'
 #' A "definition" edge counts when its target's last result errored or
 #' interrupted, or the target has a graph error. A "package" edge counts
@@ -419,9 +424,13 @@ turn_off <- function(state, ids) {
 
 #' The worker's `run` message for `id`. See the protocol in worker.R.
 #'
-#' `list(type = "run", cell, token, code, role = "setup" | "cell" | "text",
-#' order = <code cell ids in run order>, formulas = graph$analyses[[id]]$formulas,
+#' `list(type = "run", cell, token, code, role = "cell" | "text",
+#' order = <code cell ids in run order>, settings = settings_in_effect(state, id),
+#' formulas = graph$analyses[[id]]$formulas,
 #' library = state$packages$active$path, fig = cell_figure_size(cell$code))`.
+#' `settings` are the settings cells whose changes the worker applies before
+#' the cell runs, in order (settings-cells.md, What the worker does before
+#' each run).
 #' `fig` is the figure size (inches) the cell's `#|` lines ask for; the
 #' worker opens its plot device at that size.
 #' `order` is what the worker rebuilds the search path from (attaching
@@ -443,9 +452,42 @@ run_message <- function(state, id, token) {
   is_text <- identical(cell$kind, "markdown")
   list(type = "run", cell = id, token = token,
       code = if (is_text) inline_code(cell$code) else cell$code,
-      role = if (identical(id, state$setup)) "setup" else if (is_text) "text" else "cell",
-      order = order, formulas = state$graph$analyses[[id]]$formulas,
+      role = if (is_text) "text" else "cell",
+      order = order, settings = settings_in_effect(state, id), formulas = state$graph$analyses[[id]]$formulas,
       library = state$packages$active$path, fig = cell_figure_size(cell$code))
+}
+
+#' The settings cells in effect before `id`: settings cells before it in
+#' the run order that aren't off (disabled, or reading from a disabled
+#' cell), have no graph error, and whose last run didn't fail. A settings
+#' cell that hasn't run yet counts; the worker has no changes of its to
+#' apply until it does.
+settings_in_effect <- function(state, id) {
+  g <- state$graph
+  if (length(g$settings) == 0) return(character())
+  pos <- match(id, g$order)
+  before <- g$order[seq_len(pos - 1L)]
+  blocked <- blocked_cells(g)
+  Filter(function(s) {
+    if (s %in% names(g$off) || s %in% blocked) return(FALSE)
+    r <- state$results[[s]]
+    is.null(r) || !(r$status %in% c("error", "interrupted"))
+  }, before[before %in% g$settings])
+}
+
+#' Mark stale every result downstream of `ids` in `old_graph` (the graph
+#' before the event that took those settings cells out of effect), without
+#' queueing anything.
+stale_after_settings <- function(state, old_graph, ids) {
+  for (sid in ids) {
+    for (cid in downstream(old_graph, sid, transitive = TRUE)) {
+      r <- state$results[[cid]]
+      if (is.null(r) || identical(cid, sid)) next
+      r$stale <- TRUE
+      state$results[[cid]] <- r
+    }
+  }
+  state
 }
 
 #' Cells that need to run before `id` can: its transitive upstream that is
@@ -536,7 +578,7 @@ invalidate_dependents <- function(state, id, names, queue = TRUE) {
   state
 }
 
-#' Rebuild the graph after `cells`, `setup`, `exports` or `files` changed.
+#' Rebuild the graph after `cells`, `exports` or `files` changed.
 #' The only place `state$graph` is assigned besides `graph_learn()` calls
 #' in `reduce_wk_done()`/`reduce_wk_source()`.
 #'
@@ -550,7 +592,7 @@ invalidate_dependents <- function(state, id, names, queue = TRUE) {
 #' would advance `seq` and `notifications()` would see the whole state as
 #' changed for no real reason.
 rebuild_graph <- function(state) {
-  new_graph <- notebook_graph(code_of(state$cells), setup = state$setup,
+  new_graph <- notebook_graph(code_of(state$cells),
                               exports = exports_of(state),
                               learned = state$graph$learned,
                               disabled = disabled_ids(state$cells),
@@ -636,6 +678,7 @@ reduce_apply <- function(state, event) {
   inserted <- character()
   deleted <- character()
   reset_ids <- character()
+  learned_settings_dropped <- character()
 
   # bad's message never names the cell by id (a UUID); op, returned
   # alongside the reply, already carries op$cell for the caller.
@@ -653,7 +696,7 @@ reduce_apply <- function(state, event) {
           bad <- refused("code contains a cell or footer marker line", op)
         } else {
           old_cell <- cells[[op$cell]]
-          new_kind <- cell_kind(code, setup = identical(op$cell, state$setup))
+          new_kind <- cell_kind(code)
           new_cell <- list(code = code, kind = new_kind)
           kind_different <- !identical(new_kind, old_cell$kind)
           # A reset is needed whenever the edit changes what running the
@@ -665,6 +708,9 @@ reduce_apply <- function(state, event) {
           if (kind_different || !identical(cell_runs(old_cell), cell_runs(new_cell))) {
             reset_ids <- c(reset_ids, op$cell)
           }
+          # Learned settings are kept until the cell's code changes
+          # (settings-cells.md, Settings found at run time).
+          if (!identical(code, old_cell$code)) learned_settings_dropped <- c(learned_settings_dropped, op$cell)
           if (kind_different && identical(new_kind, "markdown")) {
             cells[[op$cell]]$disabled <- FALSE
             cells[[op$cell]]$folded <- TRUE
@@ -695,8 +741,6 @@ reduce_apply <- function(state, event) {
     } else if (identical(op$op, "delete")) {
       if (!(op$cell %in% names(cells))) {
         bad <- refused("unknown cell", op)
-      } else if (identical(op$cell, state$setup)) {
-        bad <- refused("cannot delete the setup cell; empty it instead", op)
       } else {
         deleted <- c(deleted, op$cell)
         cells[[op$cell]] <- NULL
@@ -720,8 +764,6 @@ reduce_apply <- function(state, event) {
     } else if (identical(op$op, "disable")) {
       if (!(op$cell %in% names(cells))) {
         bad <- refused("unknown cell", op)
-      } else if (identical(op$cell, state$setup)) {
-        bad <- refused("the setup cell can't be disabled; empty it instead", op)
       } else if (!identical(cells[[op$cell]]$kind, "code")) {
         bad <- refused("text cells can't be disabled", op)
       } else {
@@ -750,6 +792,8 @@ reduce_apply <- function(state, event) {
 
   state$cells <- cells
   state$file$header <- header
+  dropped <- intersect(learned_settings_dropped, names(state$graph$learned$settings))
+  for (id in dropped) state$graph$learned$settings[[id]] <- NULL
   effects <- list()
   for (id in deleted) {
     fr <- forget_run(state, id)
@@ -1290,10 +1334,6 @@ reduce_wk_done <- function(state, event) {
         names = changed_removed,
         fixes = sprintf("Move the line into the cell that defines %s, or name the result (%s2 <- ...)",
                         changed_removed[1], changed_removed[1]))
-    } else if (length(report$settings %||% list()) > 0 && !identical(id, state$setup)) {
-      error <- new_run_error("global_setting",
-        message = "This cell changes a global setting outside the setup cell.",
-        fixes = "Move it to the setup cell, or use withr::with_options() for one piece of code")
     }
   }
   status <- if (!is.null(error)) "error" else (report$status %||% "ok")
@@ -1314,23 +1354,34 @@ reduce_wk_done <- function(state, event) {
   # the per-event time budget for no reason.
   defs_changed <- !setequal(cur_defs, learned_defs)
   refs_changed <- !is.null(report$formula_misses) && !setequal(cur_refs, report$formula_misses)
-  if (defs_changed || refs_changed) {
+  # Settings the run changed join the cell's learned settings; a run never
+  # removes one (settings-cells.md: kept until the code changes, so a
+  # conditional `if (big) prep()` doesn't flip the cell on and off).
+  known_keys <- state$graph$cells[[id]]$setting_keys$key
+  reported_keys <- report_setting_keys(report$settings %||% list())
+  cur_settings <- state$graph$learned$settings[[id]] %||% character()
+  learned_settings <- union(cur_settings, setdiff(reported_keys, known_keys))
+  settings_changed <- !setequal(cur_settings, learned_settings)
+  settings_found <- setting_label(setdiff(reported_keys, known_keys))
+  if (defs_changed || refs_changed || settings_changed) {
     state$graph <- graph_learn(state$graph, id,
                                definitions = if (defs_changed) learned_defs else NULL,
-                               references = if (refs_changed) report$formula_misses else NULL)
+                               references = if (refs_changed) report$formula_misses else NULL,
+                               settings = if (settings_changed) learned_settings else NULL)
   }
 
   runtime <- as.numeric(event$at) - as.numeric(w$running$started_at)
   # Variables are kept only for an "ok" result: a run the worker itself
   # reported as failed, or an "ok" one the server turned into an error
-  # above (a changed foreign global, a global setting), has its globals
+  # above (a changed foreign global), has its globals
   # dropped (drop_globals), so the report's summaries are about to be
   # stale.
   result <- new_result(code = w$running$code, status = status, output = report$output,
                        console = w$running$console, error = error,
                        started_at = w$running$started_at, runtime = runtime,
                        defined = report$created %||% character(),
-                       variables = if (identical(status, "ok")) report$globals %||% list() else list())
+                       variables = if (identical(status, "ok")) report$globals %||% list() else list(),
+                       settings_found = settings_found)
   state$results[[id]] <- result
   if (length(state$footer_sources) && all_code_cells_ran(state)) {
     state$footer_sources <- character()
@@ -1361,6 +1412,28 @@ reduce_wk_done <- function(state, event) {
     state <- invalidate_dependents(state, id, report$created %||% character())
   }
   list(state = state, effects = effects, reply = NULL)
+}
+
+#' The setting keys (`setting_keys()`'s form) of the worker's `settings`
+#' report: `option` and `env` changes by name, every locale category as
+#' the one `locale` setting, and each `search` entry the cell added or
+#' removed as `attach:<entry>`.
+report_setting_keys <- function(settings) {
+  keys <- unlist(lapply(settings, function(d) {
+    switch(d$kind,
+      option = paste0("option:", d$name),
+      env = paste0("env:", d$name),
+      wd = "wd",
+      locale = "locale",
+      theme = "theme",
+      search = {
+        changed <- union(setdiff(d$after %||% character(), d$before %||% character()),
+                         setdiff(d$before %||% character(), d$after %||% character()))
+        if (length(changed)) paste0("attach:", changed) else character()
+      },
+      character())
+  }), use.names = FALSE)
+  unique(as.character(keys))
 }
 
 #' Every code cell that can run has an "ok" result in this worker, so every

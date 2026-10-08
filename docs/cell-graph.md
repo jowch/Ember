@@ -35,7 +35,6 @@ g <- notebook_graph(
               `a41e` = "curves <- read.csv('growth.csv')",
               `c93b` = "load('fits.RData')",
               `d7e0` = "fit <- lm(od ~ poly(t, deg), data = curves)"),
-  setup   = "6f1c",
   exports = list(dplyr = getNamespaceExports("dplyr")),
   learned = list(definitions = list(c93b = "fits")),
   read_file = function(path) read_text_or_null(file.path(dir, path))
@@ -47,7 +46,7 @@ g$errors           # list(); each element has kind, cells, names, lines, message
 ```r
 # The server, after the user edits one cell. Only that cell is re-read.
 cells[["d7e0"]] <- new_code
-g2 <- notebook_graph(cells, setup, exports, learned = g$learned,
+g2 <- notebook_graph(cells, exports, learned = g$learned,
                      previous = g, read_file = reader)
 g2$reread                                  # "d7e0"
 to_run <- run_order(g2, union("d7e0", downstream(g2, "d7e0", transitive = TRUE)))
@@ -136,7 +135,7 @@ Rows from a sourced file are appended after the cell's own rows, so source
 order holds within the cell and within each file, not across them.
 
 **`ember_graph`** is a value built whole by `notebook_graph()` from
-`(cells, setup, exports, learned, read_file)`. `previous` only saves work:
+`(cells, exports, learned, disabled, read_file)`. `previous` only saves work:
 an analysis is reused when the code is identical and its sourced files
 read the same. The graph carries the analyses (its own cache) and
 `learned`, so the server keeps one object and hands it back. There is no
@@ -149,10 +148,17 @@ single-source-of-truth: derive, don't sync).
 **Edge resolution** applies R's search order: a global definition wins over
 a package export (a cell defining `filter` shadows dplyr's), and package
 edges exist only when `exports` names the package, so the graph is rebuilt
-with fuller exports once packages install. Every non-setup cell gets a
-setup edge, which is what makes "changing the setup cell reruns
-everything" and "the setup cell can't read other cells' names" both fall
-out of ordinary cycle detection instead of special cases.
+with fuller exports once packages install.
+
+**Settings cells** ([settings-cells.md](settings-cells.md)) are the
+enabled cells that set a global setting, found in the code or learned at
+run time. Each setting is keyed (`option:digits`, `env:TZ`, `wd`,
+`locale`, `theme`, `attach:<name>`) and treated like a definition: two
+cells with the same key show "setting conflict". Once the order is known,
+every later non-text cell gets a `via = "setting"` edge from each settings
+cell before it, so running a settings cell makes everything after it
+stale. These edges are added after the cycle check and the order, so they
+never create a cycle and don't carry `off`.
 
 **Disabled cells** are given to `notebook_graph()` as `disabled`, a set of
 ids. A disabled cell is read and resolved exactly like any other -- it
@@ -162,10 +168,7 @@ only falls back to a disabled definer or attacher (`via = "disabled"`)
 when no enabled cell provides the name, enabled definitions and enabled
 package exports both taking priority over it (the same shadowing order as
 two enabled candidates), and `find_errors()` leaves disabled cells out of
-every rule but `parse`. The setup cell never takes that fallback: a name
-only a disabled cell would provide is left unresolved there, as any other
-unknown name is, rather than ever marking the setup cell itself off (which
-would take the whole notebook with it). `off` is the disabled cells plus
+every rule but `parse`. `off` is the disabled cells plus
 everything downstream of them through any edge (Pluto's
 `depends_on_disabled_cells`): a cell is off exactly when it needs a name
 only an off cell provides. A cycle that only exists through a `"disabled"`
@@ -173,8 +176,8 @@ edge is not reported, since that edge is how a dependent of a disabled
 cell is found, not a real ordering constraint.
 
 **Run order** is a display-order-first topological walk (emit ancestors in
-display order, then the cell), run three times: setup, package-attaching
-cells, everyone. Compared with Kahn's algorithm with a priority queue, it
+display order, then the cell), run three times: settings cells (with their
+ancestors), package-attaching cells, everyone. Compared with Kahn's algorithm with a priority queue, it
 moves a cell only when an edge forces it, which keeps text cells without
 inline values beside their neighbours in the written file (one with an
 inline `` `r expr` `` is an ordinary node instead, since it reads and
@@ -201,8 +204,7 @@ cells to re-read, how cycles are grouped, or how exports shadow.
 What remains exposed on purpose: `read_file` (IO stays outside, per
 boundary-discipline), `exports` (only the server knows what's installed),
 and `learned` (the server persists it). Validation happens once at
-`notebook_graph()`'s boundary (ids unique, setup in ids, learned ids
-filtered); inside, the types are trusted.
+`notebook_graph()`'s boundary (ids unique, learned ids filtered); inside, the types are trusted.
 
 **What it deliberately does not do.** It does not decide what to run: the
 scheduler composes `run_order(g, union(ids, ancestors))`. It does not
@@ -277,11 +279,12 @@ keeps display order unless an edge forces a move.
 
 ## Open questions and risks
 
-- Resolved: the setup cell is marked `[setup]` in the file (see
-  [engine.md](engine.md)), and the walker's speed was measured on the
-  corpus (about 5 ms per file at the median).
-- Still open, tracked in [design-gaps.md](design-gaps.md): `library()`
-  inside a function body, and saving learned references in the footer.
+- Resolved: the setup cell is gone, replaced by settings cells; the
+  walker's speed was measured on the corpus (about 5 ms per file at the
+  median); and `library()` inside a function body uses the package
+  without attaching it.
+- Still open, tracked in [design-gaps.md](design-gaps.md): saving learned
+  references in the footer.
 
 ## Next implementation step
 

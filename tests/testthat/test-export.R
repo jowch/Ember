@@ -96,7 +96,7 @@ read_deps_script <- function(html) {
 #' end-to-end path).
 fake_state_with_shared_dep <- function(n, dep_dir, key = "widgettest-1.0.0") {
   cells <- c(list(S = cell("")), setNames(lapply(seq_len(n), function(i) cell("1")), paste0("W", seq_len(n))))
-  s <- fake_state(cells, setup = "S")
+  s <- fake_state(cells)
   s$allowed <- TRUE
   s$packages$active$path <- dirname(dep_dir)
   s$results <- setNames(lapply(seq_len(n), function(i) {
@@ -153,7 +153,7 @@ test_that("export_html() refuses a dependency dir outside the library (path trav
   marker <- "SECRETMARKERXYZ123"
   writeLines(marker, file.path(outside, "a.js"))
 
-  s <- fake_state(list(S = cell(""), W = cell("1")), setup = "S")
+  s <- fake_state(list(S = cell(""), W = cell("1")))
   s$allowed <- TRUE
   s$packages$active$path <- tempfile("widgetlib-")
   dir.create(s$packages$active$path, recursive = TRUE)

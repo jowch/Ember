@@ -103,7 +103,6 @@ expect_equal(last_sent(r)$cell, "b")
 **Data first.** `ember_state` (state.R) is one immutable list holding everything the server knows about a notebook:
 
 - `cells`: a named list in display order. The names are the order.
-- `setup`
 - `graph`: derived. Invariant: it equals `notebook_graph()` of the other fields.
 - `files`: the sourced files' text, so the graph is built without IO.
 - `exports`
@@ -142,7 +141,7 @@ No event handler starts a run itself. So a learned definition, an edit during a 
 
 - Every choice is canonical, so Ember-written text round-trips byte for byte.
 - Every irregularity becomes a repair plus a `problems` row, so any `.R` file opens.
-- The setup cell is marked `# %% id=… [setup]`, because cells are written in run order and a position can't be trusted. A file with no marker uses its first code cell.
+- There is no setup cell. A `[setup]` tag an older Ember wrote is read and ignored, and the next save drops it. Settings a cell set when it ran (but its code didn't show) are kept in a `learned settings` footer block.
 - A newer `ember_version` opens read-only. An older format goes through text converters and is written in the current format on the next save.
 
 **The worker (inst/worker.R).** It reports facts and never judges. Facts are:
@@ -153,12 +152,12 @@ No event handler starts a run itself. So a learned definition, an edit during a 
 - formula columns missing from the data
 - the display bundle
 
-The core turns those facts into learned definitions, "Multiple definitions" errors and global-setting errors. Rules stay in the server, testable without a process.
+The core turns those facts into learned definitions, learned settings and "Multiple definitions" errors. Rules stay in the server, testable without a process.
 
 Bookkeeping that only the process can do stays in the worker:
 
 - which globals each cell owns
-- the setup cell's settings to restore
+- each settings cell's after-values, and the starting values every touched setting goes back to before a run
 - the search-path rebuild, converging on the `order` sent with every run
 
 It is sourced into an environment whose parent is `baseenv()`, so user globals can't shadow it.
@@ -220,13 +219,19 @@ after each dispatch.
   need it runs normally.
 - **A disabled cell defines nothing; it and its dependents don't run; their
   variables are removed; enabling makes them stale.** `disable_cell()`
-  refuses the setup cell ("empty it instead") and text cells. Turning a
+  refuses text cells. Turning a
   cell off sends `remove_cell`, as for a delete, and the graph excludes it
   from `find_errors()`'s rules but `parse`, so disabling one of two cells
   defining the same name clears "Multiple definitions".
-- **A setting changed outside the setup cell is put back** by the worker
-  and the cell shows the "global setting" error, so later cells never run
-  under it.
+- **A cell that sets a global setting is a settings cell**
+  ([settings-cells.md](settings-cells.md)). Settings cells run first, and
+  every later cell depends on the settings cells before it. Before each
+  run the worker puts every setting any cell changed back to its starting
+  value, then applies the settings cells in effect (the run message's
+  `settings`, in order), so a cell never runs under a setting from a cell
+  after it, a disabled one or a deleted one. Two cells setting the same
+  key show "setting conflict"; two attaching the same package show
+  "package conflict".
 - **Sourced-file hashes are MD5**, computed by the shell from the file
   (`tools::md5sum()` on a path works on every supported R; hashing text in
   memory needs R 4.5). The footer line is `helpers.R md5:<hex>`.
@@ -244,8 +249,8 @@ after each dispatch.
 - We accept recomputing `notifications()` and the file text per drain, guarded by `identical()` short cuts, in exchange for no save or notify calls scattered through handlers.
 - We accept that an edit by itself never runs anything, even in autorun. This matches Pluto (update then run) and Endeavor (apply then run). Autorun means "running a cell reruns its dependents", not "editing runs".
 - We accept storing `stale` rather than deriving it, because it records history the current graph doesn't hold (a removed edge). Running is the only thing that clears it.
-- We accept that a cell whose code broke a rule (changed another cell's global, set an option) is an error even though R ran it fine. The worker reverts a non-setup setting change so later cells don't run under it.
-- We accept the `[setup]` marker as a format addition now, at format 1, in exchange for a setup cell that survives moves and inserts.
+- We accept that a cell whose code broke a rule (changed another cell's global) is an error even though R ran it fine.
+- We accept a reset and reapply of the touched settings before every run, in exchange for each run seeing exactly the settings cells before it.
 
 ## Alternatives considered
 
