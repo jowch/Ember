@@ -674,12 +674,14 @@ test_that("summarise_globals(): a slow method is bounded by its own time limit r
   t0 <- Sys.time()
   r <- run_and_wait(h, "a", 1L, paste(
     "slow <- Sys.Date()",
-    "format.Date <- function(x, ...) { t0 <- Sys.time(); repeat if (as.numeric(Sys.time() - t0) > 5) break; 'slow' }",
-    sep = "\n"), timeout = 8)
+    "format.Date <- function(x, ...) { t0 <- Sys.time(); repeat if (as.numeric(Sys.time() - t0) > 30) break; 'slow' }",
+    sep = "\n"), timeout = 35)
   elapsed <- as.numeric(Sys.time() - t0, units = "secs")
   # A busy R loop, not Sys.sleep(): setTimeLimit() is checked while R code
-  # runs and does not cut a sleep short.
-  expect_lt(elapsed, 4)
+  # runs and does not cut a sleep short. The budget is 0.25 s; the method
+  # runs 30 s unless it is cut short, so 10 s tells the two apart however
+  # slow the runner, where 4 s against a 5 s method did not leave room.
+  expect_lt(elapsed, 10)
   expect_equal(r$globals$slow$kind, "none")
 
   r2 <- run_and_wait(h, "b", 2L, "1 + 1", timeout = 3)
@@ -819,7 +821,9 @@ test_that("interrupt_r_code", {
   r <- wait_for_done(h, timeout = 5)
   elapsed <- as.numeric(Sys.time() - t0, units = "secs")
   expect_identical(r$status, "interrupted")
-  expect_lt(elapsed, 1)
+  # An unheeded interrupt runs the loop its full 10 s (and times out
+  # above), so 3 s still tells them apart with room for a slow runner.
+  expect_lt(elapsed, 3)
 
   check <- run_and_wait(h, "c", 3L, 'c(x, y)')
   expect_identical(check$output$text, "[1] 1 2")

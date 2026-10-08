@@ -590,24 +590,36 @@ test_that("an edit that changes one cell's references changes only its own and i
 
 # ---- Sharing and performance (engine.md, Performance) ---------------------------
 
-test_that("a one-cell change at 2000 cells keeps every other cell's projection identical(), under 60ms (90 ms before keying by position; CI machines run 24-33 ms)", {
-  cells <- list(S = cell(""))
-  for (i in 1:2000) cells[[sprintf("c%d", i)]] <- cell(sprintf("x%d <- %d", i, i))
-  s <- fake_state(cells)
-  p1 <- pluto_state(s)
-
-  s2 <- drive(s, ev_apply(list(op_set_code("c7", "x7 <- 999")), at(1)))$state
-
-  tt <- system.time(p2 <- pluto_state(s2, p1))[["elapsed"]]
-  cat(sprintf("\n[timing] pluto_state() at 2000 cells, one changed cell: %.1f ms\n", tt * 1000))
-
+test_that("a one-cell change at 2000 cells keeps every other cell's projection identical(), and costs a fraction of a full projection", {
+  x <- perf_projection(2000)
+  s2 <- x$state; p1 <- x$previous
+  p2 <- pluto_state(s2, p1)
   for (id in names(s2$cells)) {
     if (identical(id, "c7")) next
     expect_identical(p2$js$cell_inputs[[id]], p1$js$cell_inputs[[id]], info = id)
     expect_identical(p2$js$cell_results[[id]], p1$js$cell_results[[id]], info = id)
   }
   expect_false(identical(p2$js$cell_inputs$c7, p1$js$cell_inputs$c7))
-  expect_lt(tt, 0.06)
+
+  # Timed against the same state projected from scratch, not a fixed
+  # budget (helper-perf.R): about 0.12 of it here. Reusing nothing would be
+  # all of it.
+  r <- time_ratio(function() pluto_state(s2, p1), function() pluto_state(s2), samples = 5L, inner_a = 3L)
+  cat(sprintf("\n[timing] pluto_state() at 2000 cells, one changed cell: %.1f ms, from scratch %.1f ms (%.3f)\n",
+              r$a * 1000, r$b * 1000, r$ratio))
+  expect_lt(r$ratio, 0.35)
+
+  # Ten times the cells should cost at most about ten times as much: a
+  # per-cell lookup by name (90 ms here before keying by position) grows
+  # with the square. About 6x here, as fixed costs weigh more at 200.
+  y <- perf_projection(200)
+  g <- time_ratio(function() pluto_state(s2, p1), function() pluto_state(y$state, y$previous),
+                  inner_a = 3L, inner_b = 20L)
+  cat(sprintf("[timing] pluto_state(), one changed cell: 2000 cells %.1f ms, 200 cells %.2f ms (%.1fx)\n",
+              g$a * 1000, g$b * 1000, g$ratio))
+  expect_lt(g$ratio, 20)
+  # Backstop: about 40 ms on a cloud container.
+  expect_lt(g$a, 0.5)
 })
 
 test_that("a one-cell change at 2000 cells stays fast when every cell has a result (review4 item 7)", {
@@ -617,30 +629,24 @@ test_that("a one-cell change at 2000 cells stays fast when every cell has a resu
   # has run, that same per-cell lookup is a linear scan over a 2000-entry
   # named list, done once per cell per flush -- 0.95ms a cell, ~2s total,
   # before view_context() aligned `results` by position with match().
-  cells <- list(S = cell(""))
-  for (i in 1:2000) cells[[sprintf("c%d", i)]] <- cell(sprintf("x%d <- %d", i, i))
-  s <- fake_state(cells)
-  s$allowed <- TRUE
-  ids <- names(s$cells)
-  s$results <- stats::setNames(lapply(ids, function(id) {
-    list(status = "ok", code = s$cells[[id]]$code,
-        output = list(mime = "text/plain", data = "1", text = "1"), console = list(),
-        started_at = 1, runtime = 0.01, stale = FALSE, error = NULL, defined = character())
-  }), ids)
-  p1 <- pluto_state(s)
-
-  s2 <- drive(s, ev_apply(list(op_set_code("c7", "x7 <- 999")), at(1)))$state
-
-  tt <- system.time(p2 <- pluto_state(s2, p1))[["elapsed"]]
-  cat(sprintf("\n[timing] pluto_state() at 2000 cells, every cell has a result, one changed: %.1f ms\n",
-             tt * 1000))
-
-  for (id in ids) {
+  x <- perf_projection(2000, results = TRUE)
+  s2 <- x$state; p1 <- x$previous
+  p2 <- pluto_state(s2, p1)
+  for (id in names(s2$cells)) {
     if (identical(id, "c7")) next
     expect_identical(p2$js$cell_results[[id]], p1$js$cell_results[[id]], info = id)
   }
-  # Loose enough for slow CI runners (60 ms on Windows), still far below ~2s.
-  expect_lt(tt, 0.5)
+
+  # So with results it should cost about twice what it does without (the
+  # results themselves are compared and projected): the quadratic lookup
+  # made it some thirty-five times as much.
+  y <- perf_projection(2000)
+  r <- time_ratio(function() pluto_state(s2, p1), function() pluto_state(y$state, y$previous),
+                  inner_a = 3L, inner_b = 3L)
+  cat(sprintf("\n[timing] pluto_state() at 2000 cells, one changed: %.1f ms with every result, %.1f ms with none (%.2fx)\n",
+              r$a * 1000, r$b * 1000, r$ratio))
+  expect_lt(r$ratio, 8)
+  expect_lt(r$a, 0.5)
 })
 
 # ---- ui-2-tests.md 1: markdown kind on the wire -----------------------------

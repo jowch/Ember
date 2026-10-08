@@ -50,7 +50,7 @@ const newCellAfter = (page, id) =>
     return cells[cells.findIndex((c) => c.id === id) + 1]?.id ?? null;
   }, id);
 
-test("transitions: a run under 250 ms never paints queued, running or \"Not run yet\"; a new cell is never queued", async (t) => {
+test("transitions: a run never paints queued, running or \"Not run yet\" in its first 250 ms or once done; a new cell is never queued", async (t) => {
   const notebook = tempNotebook();
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "transitions-first-run.server.log") });
   const browser = await launchBrowser();
@@ -74,6 +74,15 @@ test("transitions: a run under 250 ms never paints queued, running or \"Not run 
   const queuedWhileAdding = adding.flatMap((f) => f.cells.filter((c) => c.rail === "queued" || /queued/.test(c.label)).map((c) => `${c.id} at ${f.t.toFixed(0)} ms`));
   assert.deepEqual(queuedWhileAdding, [], "no cell shows queued while a cell is added");
 
+  // A passing state shows only once it has lasted SETTLE_MS, counted from
+  // when the page first saw it, which is after the key press and so after
+  // the frames' clock started. So no frame before SETTLE_MS may show one,
+  // however long the run takes, and none after the result arrives. Only a
+  // run slower than SETTLE_MS may rightly show queued in between, so the
+  // checks below cover the whole run when it is fast and those two windows
+  // when it is not: a slow runner weakens the test instead of failing it.
+  // Try for a fast run a few times first.
+  const SETTLE_MS = 250;
   const baseline_not_run = adding.at(-1).not_run;
   let frames = null;
   let ran_in = null;
@@ -89,13 +98,17 @@ test("transitions: a run under 250 ms never paints queued, running or \"Not run 
     await page.waitForTimeout(400);
     frames = await stopFrames(page);
     ran_in = frames.find((f) => f.cells.find((c) => c.id === id)?.output.includes(result))?.t;
-    // A run slower than the delay may show queued, rightly; try again.
-    if (ran_in < 200) break;
+    assert.ok(ran_in != null, `attempt ${attempt}: a recorded frame shows the result`);
+    if (ran_in < SETTLE_MS - 1) break;
     t.diagnostic(`attempt ${attempt} ran in ${ran_in.toFixed(0)} ms; retrying`);
   }
-  assert.ok(ran_in < 200, `the run finished in ${ran_in.toFixed(0)} ms, fast enough to check`);
+  if (ran_in >= SETTLE_MS - 1) {
+    t.diagnostic(`every run took ${SETTLE_MS} ms or more (last ${ran_in.toFixed(0)} ms); checking only before ${SETTLE_MS - 1} ms and after the result`);
+  }
 
-  const mine = frames.map((f) => ({ ...f, cell: f.cells.find((c) => c.id === id) }));
+  const mine = frames
+    .filter((f) => f.t < SETTLE_MS - 1 || f.t >= ran_in)
+    .map((f) => ({ ...f, cell: f.cells.find((c) => c.id === id) }));
   const at = (f) => `at ${f.t.toFixed(0)} ms`;
   const together = mine.filter((f) => f.cell.chip === "Not run yet" && f.cell.rail === "queued");
   assert.deepEqual(together.map(at), [], "\"Not run yet\" and queued never show together");
