@@ -116,9 +116,91 @@ assignment_ops <- c("<-" = "lhs", "=" = "lhs", "<<-" = "lhs",
 #' argument is a symbol or string, and likewise for each name in a
 #' `list = c(...)` literal vector; a named argument such as `package =`,
 #' `envir =` or `lib.loc =` is never a dataset name and is walked as
-#' ordinary code instead. Other forms are left to the worker, which
-#' compares the global environment before and after the cell.
-literal_definers <- c("assign", "data")
+#' ordinary code instead. `setGeneric("area", ...)` defines `area` (an S4
+#' generic, in the global environment), with kind `"generic"`. Other forms
+#' are left to the worker, which compares the global environment before and
+#' after the cell.
+literal_definers <- c("assign", "data", "setGeneric")
+
+#' Calls that register a method for a generic without defining a global
+#' name. Each entry names the argument holding the generic and the one
+#' holding the class (S3) or signature (S4); either may also be given
+#' positionally, first and second. `form` is the analysis's `methods$form`.
+#' A literal generic makes the call a method definition of it (the graph
+#' adds an edge from every cell that reads the generic); a computed one is
+#' ignored, and a computed class or signature still gives the edge but
+#' can't take part in the duplicate check.
+method_registrars <- list(
+  registerS3method = c(generic = "genname", signature = "class", form = "register"),
+  .S3method = c(generic = "generic", signature = "class", form = "register"),
+  setMethod = c(generic = "f", signature = "signature", form = "s4")
+)
+
+#' Base R's S3 generics: a top-level function named `generic.class` is a
+#' method only when `generic` is one of these, a function or `setGeneric()`
+#' another cell defines, or a name an installed package exports (the graph
+#' checks the last two; see `resolve_methods()`). Without this check every
+#' dotted helper name (`fit.plot <- function() ...`) would feed every cell
+#' that reads its prefix (`fit`), and could close a false cycle.
+#'
+#' The S3 generics of base, stats, utils, graphics, grDevices and methods as
+#' of R 4.6.1 (`utils::isS3stdGeneric()`), the internal and primitive
+#' generics (`?InternalMethods`, `.S3PrimitiveGenerics`), and the members of
+#' the group generics, so `+.money` and `max.interval` count. The group
+#' generics themselves (`Ops.money`, `Math.interval`) are not methods of
+#' any one name and are left out.
+s3_generics <- c(
+  "-", "!", "!=", ".AtNames", ".DollarNames", "[", "[[", "[[<-", "[<-", "*",
+  "/", "&", "%/%", "%%", "^", "+", "<", "<=", "==", ">", ">=", "|", "$",
+  "$<-", "abs", "acos", "acosh", "add1", "aggregate", "AIC", "alias", "all",
+  "all.equal", "anova", "ansari.test", "any", "anyDuplicated", "anyNA",
+  "aperm", "ar.burg", "ar.yw", "Arg", "as.array", "as.call", "as.character",
+  "as.complex", "as.data.frame", "as.Date", "as.dendrogram", "as.dist",
+  "as.double", "as.environment", "as.expression", "as.function", "as.hclust",
+  "as.integer", "as.list", "as.logical", "as.matrix", "as.null",
+  "as.numeric", "as.person", "as.personList", "as.POSIXct", "as.POSIXlt",
+  "as.raster", "as.raw", "as.single", "as.stepfun", "as.table", "as.ts",
+  "as.vector", "asin", "asinh", "atan", "atanh", "barplot", "bartlett.test",
+  "BIC", "biplot", "bitstring", "boxplot", "by", "c", "case.names", "cbind",
+  "cdplot", "ceiling", "chol", "chooseOpsMethod", "close", "coef",
+  "coefficients", "conditionCall", "conditionMessage", "confint", "Conj",
+  "contour", "cooks.distance", "cophenetic", "cor.test", "cos", "cosh",
+  "cospi", "cummax", "cummin", "cumprod", "cumsum", "cut", "cycle", "deltat",
+  "density", "deriv", "deriv3", "determinant", "deviance", "df.residual",
+  "dfbeta", "dfbetas", "dffits", "diff", "diffinv", "digamma", "dim",
+  "dim<-", "dimnames", "dimnames<-", "drop1", "droplevels", "dummy.coef",
+  "duplicated", "edit", "effects", "end", "estVar", "exp", "expm1",
+  "extractAIC", "family", "fitted", "fitted.values", "fligner.test", "floor",
+  "flush", "format", "formula", "free1way", "frequency", "friedman.test",
+  "ftable", "gamma", "getCall", "getDLLRegisteredRoutines", "getInitial",
+  "glyphJust", "hatvalues", "head", "hist", "identify", "Im", "image",
+  "influence", "is.array", "is.finite", "is.infinite", "is.matrix", "is.na",
+  "is.na<-", "is.nan", "is.numeric", "is.unsorted", "isSymmetric", "julian",
+  "kappa", "kernapply", "knots", "kruskal.test", "ks.test", "labels", "lag",
+  "length", "length<-", "levels", "levels<-", "lgamma", "lines", "log",
+  "log10", "log1p", "log2", "logLik", "makepredictcall", "mauchly.test",
+  "max", "mean", "median", "merge", "min", "Mod", "model.frame",
+  "model.matrix", "model.tables", "monthplot", "months", "mood.test",
+  "mosaicplot", "mtfrm", "na.action", "na.contiguous", "na.exclude",
+  "na.fail", "na.omit", "nameOfClass", "names", "names<-", "napredict",
+  "naprint", "naresid", "nchar", "NLSstAsymptotic", "NLSstClosestX",
+  "NLSstLfAsymptote", "NLSstRtAsymptote", "nobs", "open", "pacf", "pairs",
+  "persp", "plot", "points", "ppr", "prcomp", "predict", "preplot", "pretty",
+  "princomp", "print", "prod", "profile", "proj", "prompt", "qqnorm", "qr",
+  "quade.test", "quantile", "quarters", "range", "rbind", "Re", "relevel",
+  "reorder", "rep", "rep_len", "rep.int", "resid", "residuals", "rev",
+  "row.names", "row.names<-", "rowsum", "rstandard", "rstudent", "scale",
+  "screeplot", "se.contrast", "seek", "selfStart", "seq", "seq.int",
+  "sequence", "sigma", "sign", "simulate", "sin", "sinh", "sinpi", "solve",
+  "sort_by", "sortedXyData", "spineplot", "split", "split<-", "sqrt", "SSD",
+  "stack", "start", "str", "stripchart", "subset", "sum", "summary",
+  "sunflowerplot", "t", "t.test", "tail", "tan", "tanh", "tanpi", "terms",
+  "text", "time", "toBibtex", "toLatex", "toString", "transform", "trigamma",
+  "trunc", "truncate", "tsdiag", "tsSmooth", "TukeyHSD", "type.convert",
+  "unique", "units", "units<-", "unlist", "unstack", "update", "upgrade",
+  "var.test", "variable.names", "vcov", "weekdays", "weighted.mean",
+  "weights", "wilcox.test", "window", "window<-", "with", "within", "xtfrm"
+)
 
 #' Formula operators whose every argument is a term.
 #'

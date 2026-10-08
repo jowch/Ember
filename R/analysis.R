@@ -19,8 +19,8 @@
 #'   `file`. `kind` is one of `"assign"` (`x <- v`, `=`, `->`, top-level
 #'   `<<-`), `"replacement"` (`df$col <- v`, `names(x) <- v`, `x %<>% f()`:
 #'   the innermost target), `"for"`, `"function"`, `"call"` (`assign("x",
-#'   v)`, `data(iris)`), `"alias"` (`box::use(dplyr[mutate])` binds
-#'   `mutate`). `file` is `NA` for the cell's own code, else the sourced
+#'   v)`, `data(iris)`), `"generic"` (`setGeneric("area")`), `"alias"`
+#'   (`box::use(dplyr[mutate])` binds `mutate`). `file` is `NA` for the cell's own code, else the sourced
 #'   file's path. Dot-names are included; the graph decides what private
 #'   means. A name defined more than once at distinct positions (rare: e.g.
 #'   `x <- 1; x <- 2` on one line) is one row per position, not
@@ -51,6 +51,16 @@
 #' * `sourced`: data frame `path`, `text`, `found`: literal `source()` paths
 #'   and the contents the reader returned (`NA` when not found). The graph
 #'   compares `text` to decide whether a cached analysis is still valid.
+#' * `methods`: data frame `generic`, `signature`, `form`, `line`, `col`,
+#'   `end_col`, `file`: the methods the cell defines. `form` is `"name"`
+#'   for a top-level function whose name has a dot (`print.foo <-
+#'   function(x, ...)`), one row per way of splitting the name at a dot
+#'   (`as.data.frame.foo` gives `as`, `as.data` and `as.data.frame`, since
+#'   which prefix is a generic is the graph's to decide, in
+#'   `resolve_methods()`); `"register"` for `registerS3method()` and
+#'   `.S3method()`; `"s4"` for `setMethod()`. `signature` is the class (S3)
+#'   or the comma-joined signature (S4), `NA` when computed. Positions are
+#'   the name's token or the generic argument's.
 #' * `notes`: data frame `kind`, `line`, `col`, `end_col`, `detail`. `kind`
 #'   is one of `"untracked_read"` (`get`, `exists`, `eval(parse())`),
 #'   `"computed_source"`, `"computed_package"`, `"missing_file"`,
@@ -79,11 +89,13 @@ new_cell_analysis <- function(code,
                               settings = empty_settings(),
                               formulas = list(),
                               sourced = empty_sourced(),
-                              notes = empty_notes()) {
+                              notes = empty_notes(),
+                              methods = empty_methods()) {
   structure(list(code = code, parse_error = parse_error,
                  definitions = definitions, references = references,
                  packages = packages, settings = settings,
-                 formulas = formulas, sourced = sourced, notes = notes),
+                 formulas = formulas, sourced = sourced, notes = notes,
+                 methods = methods),
             class = "ember_cell_analysis")
 }
 
@@ -108,6 +120,11 @@ empty_settings <- function() {
 empty_sourced <- function() {
   data.frame(path = character(), text = character(), found = logical(),
              stringsAsFactors = FALSE)
+}
+empty_methods <- function() {
+  data.frame(generic = character(), signature = character(), form = character(),
+             line = integer(), col = integer(), end_col = integer(),
+             file = character(), stringsAsFactors = FALSE)
 }
 empty_notes <- function() {
   data.frame(kind = character(), line = integer(), col = integer(),
@@ -276,7 +293,8 @@ expression_line <- function(exprs, i) {
 #' (dropping any the cell defines anywhere at its own top level), drop
 #' ignored names, and de-duplicate.
 finish <- function(acc, code) {
-  defs <- rbind_all(def_rows_to_df(rows_list(acc$def_rows)), acc$extra_defs)
+  own_defs <- def_rows_to_df(rows_list(acc$def_rows))
+  defs <- rbind_all(own_defs, acc$extra_defs)
   row.names(defs) <- NULL
   def_names <- if (nrow(defs) > 0) unique(defs$name) else character()
 
@@ -313,9 +331,54 @@ finish <- function(acc, code) {
   notes <- rbind_all(note_rows_to_df(acc$note_rows), acc$extra_notes)
   row.names(notes) <- NULL
 
+  # A sourced file's name-form methods come in with `extra_methods`, so only
+  # this level's own definitions are split here.
+  methods <- rbind(name_method_rows(own_defs), method_rows_to_df(acc$method_rows))
+  methods <- methods[order(methods$line), , drop = FALSE]
+  methods <- rbind_all(methods, acc$extra_methods)
+  row.names(methods) <- NULL
+
   new_cell_analysis(code, parse_error = NULL, definitions = defs,
                      references = refs, packages = pkgs, settings = settings,
-                     formulas = acc$formulas, sourced = sourced, notes = notes)
+                     formulas = acc$formulas, sourced = sourced, notes = notes,
+                     methods = methods)
+}
+
+#' The `"name"`-form method rows of a cell's own definitions: each
+#' top-level function (kind `"function"`) with a public name that has a
+#' dot, once per dot with a non-empty part on each side. Whether the
+#' prefix is really a generic needs the whole notebook; see
+#' `resolve_methods()`.
+name_method_rows <- function(defs) {
+  defs <- defs[defs$kind == "function" & !is_private_name(defs$name) &
+                 grepl(".", defs$name, fixed = TRUE), , drop = FALSE]
+  if (nrow(defs) == 0) return(empty_methods())
+  rows <- lapply(seq_len(nrow(defs)), function(i) {
+    n <- defs$name[i]
+    dots <- gregexpr(".", n, fixed = TRUE)[[1]]
+    dots <- dots[dots > 1 & dots < nchar(n)]
+    if (length(dots) == 0) return(NULL)
+    data.frame(generic = substring(n, 1, dots - 1), signature = substring(n, dots + 1),
+               form = "name", line = defs$line[i], col = defs$col[i],
+               end_col = defs$end_col[i], file = defs$file[i], stringsAsFactors = FALSE)
+  })
+  rows <- Filter(Negate(is.null), rows)
+  if (length(rows) == 0) return(empty_methods())
+  do.call(rbind, rows)
+}
+
+method_rows_to_df <- function(rows) {
+  if (length(rows) == 0) return(empty_methods())
+  data.frame(
+    generic = vapply(rows, `[[`, character(1), "generic"),
+    signature = vapply(rows, `[[`, character(1), "signature"),
+    form = vapply(rows, `[[`, character(1), "form"),
+    line = vapply(rows, function(r) as.integer(r$line), integer(1)),
+    col = vapply(rows, function(r) as.integer(r$col), integer(1)),
+    end_col = vapply(rows, function(r) as.integer(r$end_col), integer(1)),
+    file = vapply(rows, function(r) as.character(r$file), character(1)),
+    stringsAsFactors = FALSE
+  )
 }
 
 #' Combine a data frame built from this level's own rows with any whole

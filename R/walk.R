@@ -217,6 +217,15 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
     }
     return(invisible())
   }
+  if (name %in% names(method_registrars)) {
+    maybe_record_name_read()
+    if (!in_function(scope)) {
+      walk_method_registrar(e, scope, acc, name, arg_pids)
+    } else {
+      walk_call_args(e, scope, acc, arg_pids)
+    }
+    return(invisible())
+  }
   if (identical(name, "source")) {
     maybe_record_name_read()
     if (!in_function(scope)) {

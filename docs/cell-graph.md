@@ -150,6 +150,24 @@ a package export (a cell defining `filter` shadows dplyr's), and package
 edges exist only when `exports` names the package, so the graph is rebuilt
 with fuller exports once packages install.
 
+**Methods** (design.md, "Methods": the Pluto model) are read per cell into
+the analysis's `methods` rows: every way of splitting a top-level dotted
+function name (`as.data.frame.foo` gives three candidate generics), plus
+literal `registerS3method()`, `.S3method()` and `setMethod()` calls. The
+graph keeps a dotted name's split only when its generic is in
+`s3_generics`, is a function or `setGeneric()` some cell defines, or is a
+package export (`resolve_methods()`). A reference to a generic then gets a
+`via = "method"` edge to each other enabled cell defining a method of it,
+on top of whatever rule resolved the name, unless the referencing cell
+defines a method of that generic itself (so two cells that each add a
+`print` method and call `print()` form no cycle). A registering call also
+reads its generic by the ordinary rules, so `setMethod()` runs after
+`setGeneric()`. The same (generic, class) pair in two cells is a
+`multiple_definitions` error keyed `generic.class` (S3) or
+`generic(signature)` (S4). Method edges don't count towards
+`failed_definers()`: a dependent of a broken method cell still runs, as
+R falls back to another method.
+
 **Settings cells** ([settings-cells.md](settings-cells.md)) are the
 enabled cells that set a global setting, found in the code or learned at
 run time. Each setting is keyed (`option:digits`, `env:TZ`, `wd`,

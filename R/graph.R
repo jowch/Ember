@@ -22,19 +22,22 @@
 #'   keep it.
 #' * `exports`: the package exports the graph was built with.
 #' * `cells`: per cell, `list(definitions, learned, references, packages,
-#'   attaches, settings, setting_keys, private)`: the resolved view the
+#'   attaches, settings, setting_keys, private, methods)`: the resolved view the
 #'   adapter reports. `definitions` are the public names the cell defines
 #'   (static plus learned); `private` its dot-names; `attaches` the
 #'   packages it puts on the search path; `settings` the analysis's
 #'   settings rows; `setting_keys` a data frame `key`, `found` (`"code"`
-#'   or `"run"`) of the settings it sets, static first.
+#'   or `"run"`) of the settings it sets, static first. `methods` the
+#'   methods it defines (`resolve_methods()`): a data frame `generic`,
+#'   `signature`, `form`, `key`, `line`.
 #' * `edges`: data frame `from`, `to`, `name`, `via`: `from` depends on
 #'   `to`. `via` is `"definition"` (`to` defines `name`), `"package"` (`to`
 #'   attaches a package exporting `name`), `"disabled"` (`to` is a disabled
 #'   cell that defines or attaches `name`, and no enabled cell does),
 #'   `"setting"` (`to` is a settings cell before `from` in the run order;
 #'   `name` is that cell's first setting, as `setting_label()` shows it, or
-#'   `NA` when none is known yet). One row per (from, to, name).
+#'   `NA` when none is known yet), `"method"` (`to` defines a method of the
+#'   generic `name`, which `from` reads). One row per (from, to, name).
 #' * `disabled`: character ids of disabled cells, as given to
 #'   `notebook_graph()`. Disabled cells are still fully analysed and keep
 #'   their own edges to what they read; they just satisfy no other cell's
@@ -186,6 +189,7 @@ notebook_graph <- function(cells, exports = list(),
 
   # 2. cells: the resolved, per-cell view.
   cells_resolved <- resolve_cells(analyses, learned, ids)
+  cells_resolved <- resolve_methods(cells_resolved, analyses, exports, ids)
 
   # 3. edges: resolve_edges(cells, exports, disabled). Setting edges come
   #    after the order (step 6).
@@ -328,9 +332,62 @@ resolve_cells <- function(analyses, learned, ids) {
                         packages = unique(a$packages$name),
                         attaches = attaches, settings = a$settings,
                         setting_keys = setting_keys_of(a$settings, learned_settings),
-                        private = private)
+                        private = private, methods = a$methods)
   }
   cells
+}
+
+#' The methods each cell defines, as the graph counts them (the Pluto
+#' model: a method definition defines the (generic, class) pair, and every
+#' cell that reads the generic depends on it).
+#'
+#' `"register"` and `"s4"` rows (`registerS3method()`, `setMethod()`) always
+#' count. A `"name"` row (`print.foo <- function`) counts only when its
+#' generic is in `s3_generics`, is a function or `setGeneric()` some cell
+#' defines (kind `"function"` or `"generic"`), or is a name an installed
+#' package exports; a dotted helper name whose prefix is none of those
+#' (`fit.plot`) is just a function. `key` names the (generic, class) pair
+#' for the duplicate check: `generic.class` for S3 (so `print.foo` and
+#' `registerS3method("print", "foo")` meet), `generic(signature)` for S4,
+#' `NA` when the class or signature is computed. Replaces each cell's
+#' `methods` with the rows that count plus `key`; `file`, `col` and
+#' `end_col` are dropped.
+resolve_methods <- function(cells, analyses, exports, ids) {
+  has <- ids[vapply(ids, function(id) nrow(cells[[id]]$methods) > 0, logical(1))]
+  if (length(has) == 0) {
+    for (id in ids) cells[[id]]$methods <- empty_resolved_methods()
+    return(cells)
+  }
+  # Generics the notebook defines itself: functions and setGeneric() names.
+  user_generics <- unique(unlist(lapply(ids, function(id) {
+    d <- analyses[[id]]$definitions
+    d$name[d$kind %in% c("function", "generic")]
+  }), use.names = FALSE))
+  is_generic <- function(g) {
+    g %in% s3_generics || g %in% user_generics ||
+      any(vapply(exports, function(x) g %in% x, logical(1)))
+  }
+  for (id in ids) {
+    m <- cells[[id]]$methods
+    if (nrow(m) == 0) {
+      cells[[id]]$methods <- empty_resolved_methods()
+      next
+    }
+    keep <- m$form != "name" | vapply(m$generic, is_generic, logical(1))
+    m <- m[keep, , drop = FALSE]
+    key <- ifelse(is.na(m$signature), NA_character_,
+                  ifelse(m$form == "s4", sprintf("%s(%s)", m$generic, m$signature),
+                         paste0(m$generic, ".", m$signature)))
+    cells[[id]]$methods <- data.frame(generic = m$generic, signature = m$signature,
+                                      form = m$form, key = key, line = m$line,
+                                      stringsAsFactors = FALSE)
+  }
+  cells
+}
+
+empty_resolved_methods <- function() {
+  data.frame(generic = character(), signature = character(), form = character(),
+             key = character(), line = integer(), stringsAsFactors = FALSE)
 }
 
 #' Edges from references to the cells that satisfy them.
@@ -353,6 +410,18 @@ resolve_cells <- function(analyses, learned, ids) {
 #'    edge each, via "disabled".
 #' A disabled cell's own references resolve the same way (rules 1-4 look at
 #' the target's status, not `b`'s), so it keeps edges to what it reads.
+#'
+#' Methods (`resolve_methods()`) add to whichever rule matched: for a
+#' reference `n` of `b`, every other enabled cell defining a method of the
+#' generic `n` gets an edge via "method", unless it already has an edge
+#' for `n` or `b` itself defines a method of `n`. That last exception keeps
+#' two cells that each define a `print` method and call `print()` from
+#' forming a cycle: a method for one class doesn't change how the other
+#' class's objects print (inheritance aside). A disabled cell's methods
+#' give no edge, since R falls back to another method without them. A
+#' `registerS3method()` or `setMethod()` call also reads its generic, by
+#' rules 1-4 only, so it runs after the cell that defines the generic
+#' (`setGeneric()`) or attaches the package exporting it.
 #' Setting edges are added later, once the order is known
 #' (`setting_edges_of()`).
 resolve_edges <- function(cells, exports, ids, disabled = character()) {
@@ -390,6 +459,17 @@ resolve_edges <- function(cells, exports, ids, disabled = character()) {
     }
   }
 
+  # generic -> enabled ids defining a method of it, display order. Empty
+  # (and skipped below) for the usual notebook with no methods.
+  method_lookup <- new.env(parent = emptyenv())
+  for (id in ids) {
+    if (id %in% disabled) next
+    for (g in unique(cells[[id]]$methods$generic)) {
+      method_lookup[[g]] <- c(method_lookup[[g]], id)
+    }
+  }
+  has_methods <- length(ls(method_lookup, all.names = TRUE)) > 0
+
   package_providers <- function(n, tbl) {
     pkgs <- name_to_pkgs[[n]]
     if (is.null(pkgs)) return(character())
@@ -403,8 +483,11 @@ resolve_edges <- function(cells, exports, ids, disabled = character()) {
   # one shared vector element by element.
   ref_edges <- lapply(ids, function(b) {
     refs <- cells[[b]]$references
+    m_b <- cells[[b]]$methods
+    own_generics <- unique(m_b$generic)
+    refs <- c(refs, setdiff(unique(m_b$generic[m_b$form != "name"]), refs))
     if (length(refs) == 0) return(NULL)
-    parts <- lapply(refs, function(n) {
+    resolve_ref <- function(n) {
       definers <- definer_lookup[[n]]
       if (!is.null(definers)) definers <- definers[definers != b]
       if (length(definers) > 0) {
@@ -432,6 +515,15 @@ resolve_edges <- function(cells, exports, ids, disabled = character()) {
       disabled_provider_ids <- ids[ids %in% disabled_provider_ids]
       list(from = rep(b, length(disabled_provider_ids)), to = disabled_provider_ids,
           name = rep(n, length(disabled_provider_ids)), via = rep("disabled", length(disabled_provider_ids)))
+    }
+    parts <- lapply(refs, function(n) {
+      res <- resolve_ref(n)
+      if (!has_methods || n %in% own_generics) return(res)
+      m <- method_lookup[[n]]
+      m <- m[m != b & !(m %in% res$to)]
+      if (length(m) == 0) return(res)
+      list(from = c(res$from, rep(b, length(m))), to = c(res$to, m),
+           name = c(res$name, rep(n, length(m))), via = c(res$via, rep("method", length(m))))
     })
     parts <- Filter(Negate(is.null), parts)
     if (length(parts) == 0) return(NULL)
@@ -560,6 +652,35 @@ find_errors <- function(cells, analyses, edges, ids, components,
       message = sprintf("%s is defined in more than one cell.", n), fixes = fix)
   }
 
+  # multiple_definitions of a method: one (generic, class) key in two or
+  # more enabled cells, where at least one of them registers it by a call
+  # (two `print.foo <- function` cells are already caught above, by name).
+  method_map <- list()
+  for (id in ids) {
+    if (id %in% disabled) next
+    m <- cells[[id]]$methods
+    m <- m[!is.na(m$key), , drop = FALSE]
+    for (i in seq_len(nrow(m))) {
+      method_map[[m$key[i]]] <- rbind(method_map[[m$key[i]]],
+                                      data.frame(cell = id, form = m$form[i], generic = m$generic[i],
+                                                 signature = m$signature[i], line = m$line[i],
+                                                 stringsAsFactors = FALSE))
+    }
+  }
+  for (k in names(method_map)) {
+    rows <- method_map[[k]]
+    rows <- rows[!duplicated(rows$cell), , drop = FALSE]
+    if (nrow(rows) <= 1 || all(rows$form == "name")) next
+    named_by <- rows[rows$form != "name", , drop = FALSE][1, ]
+    cls <- gsub(",", ", ", named_by$signature, fixed = TRUE)
+    errors[[length(errors) + 1]] <- new_graph_error(
+      kind = "multiple_definitions", cells = rows$cell, names = k,
+      lines = data.frame(cell = rows$cell, line = rows$line, stringsAsFactors = FALSE),
+      message = sprintf("The %s method for %s is defined in more than one cell.",
+                        named_by$generic, cls),
+      fixes = "Keep the method in one cell and remove the others")
+  }
+
   # private_name: reference n of b with is_private_name(n) and some other
   # cell defining n; cells = b. The message names no cell (cell ids are
   # UUIDs and never belong in user-facing text), only the private name.
@@ -659,13 +780,23 @@ find_errors <- function(cells, analyses, edges, ids, components,
                       edges$via != "setting" & !is.na(edges$name), , drop = FALSE]
     inside <- inside[order(match(inside$to, ids)), , drop = FALSE]
     names_in_comp <- unique(inside$name)
-    fix <- if (length(names_in_comp) == 1) {
-      sprintf("If %s is a column name, rename the global", names_in_comp)
-    } else if (length(names_in_comp) > 1) {
+    # A generic read through a method edge is a function call, never a
+    # column, so it gets the method fix instead of the column one.
+    generics <- unique(inside$name[inside$via == "method"])
+    columns <- setdiff(names_in_comp, generics)
+    fix <- if (length(columns) == 1) {
+      sprintf("If %s is a column name, rename the global", columns)
+    } else if (length(columns) > 1) {
       sprintf("If one of %s is a column name, rename the global",
-              paste(names_in_comp, collapse = ", "))
+              paste(columns, collapse = ", "))
     } else {
       character()
+    }
+    if (length(generics) > 0) {
+      fix <- c(fix, sprintf("Pass what the %s %s needs as an argument, or move %s into a cell of its own",
+                            paste(generics, collapse = ", "),
+                            if (length(generics) == 1) "method" else "methods",
+                            if (length(generics) == 1) "it" else "them"))
     }
     cycle_msg <- if (length(names_in_comp) > 0) {
       sprintf("%s form a cycle.", paste(names_in_comp, collapse = ", "))
