@@ -128,6 +128,7 @@ done; clear out ticked items at each release.
 - [x] LICENSE in R's two-line `YEAR` / `COPYRIGHT HOLDER` form for `MIT + file LICENSE` — missing
 - [x] `R CMD check` clean on macOS — missing
 - [x] CI on macOS, Linux and Windows (`.github/workflows/check.yaml`) — missing
+- [ ] Tests with fixed millisecond budgets fail on slow shared runners with no code cause: on 2026-10-08, two on macOS CI (an e2e run took 230–320 ms against 200 ms) and a 50 ms budget on main in a cloud session. The tight ones: `packages_view()` under 8 ms (test-packages-core.R:732), `fb_diff()` under 10 ms (test-protocol.R:217), `step()` median under 50 ms (test-projections.R:177), `pluto_state()` under 60 ms (test-pluto-state.R:610), and a run under 200 ms after retries (e2e transitions.test.mjs:96). Looser ones (0.5–4 s) in test-pluto-state.R:643, test-session.R:221 and :520, test-step.R:880, test-worker.R:682 and :822, editor-services.test.mjs:167 and :314. Loosen the limits on CI, or check scaling instead of wall time (the same call at 200 and 2000 cells, compared to each other) so a slow runner slows both sides — improvised
 
 ## Spikes still to run
 
