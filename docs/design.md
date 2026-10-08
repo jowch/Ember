@@ -92,7 +92,8 @@ repository depends on them.
 - **No setup cell. A global setting is set in one cell only**, like a
   global; settings cells run first, and the worker sets the settings for
   each run. A scoped form (`withr::with_options()`) covers local changes.
-  See [settings-cells.md](settings-cells.md).
+  See [settings-cells.md](settings-cells.md). Planned: the code still has
+  a setup cell until settings cells are built.
 - **Enforce only what the engine needs.** Errors are limited to what keeps
   the notebook free of hidden state: one definition per global (and per
   setting and attached package), private dot-names. Everything else is
@@ -443,7 +444,8 @@ Settings cells run first and every later cell depends on them; before each
 run the worker sets R's starting values plus the changes of the settings
 cells before it. The design is in [settings-cells.md](settings-cells.md).
 (Ember first had a setup cell that alone could hold settings; that note
-replaces it.) Settings are found twice:
+replaces it. Planned: the code still has the setup cell until settings
+cells are built.) Settings are found twice:
 
 - **When reading the cell:** a top-level call to one of these functions.
 - **After running it:** the worker compares `options()`, environment
@@ -812,7 +814,8 @@ load("fits.RData")
 - There is no setup cell. A `[setup]` tag an older Ember wrote is read and
   ignored, and the next save drops it. Settings found when a cell ran are
   kept in a `learned settings` block, written only when non-empty (see
-  [settings-cells.md](settings-cells.md)).
+  [settings-cells.md](settings-cells.md)). Planned: today's format still
+  writes the `[setup]` tag until settings cells are built.
 - Package names aren't repeated in the header; they come from the code,
   except the few in `[extra_packages]` that the code can't reveal.
 - `ember_version` is the Ember version that last saved the file, as Pluto

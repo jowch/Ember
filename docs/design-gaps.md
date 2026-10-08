@@ -36,7 +36,14 @@ done; clear out ticked items at each release.
 
 - [x] Detection from the code, the lock, installs with renv into per-notebook libraries — missing
 - [x] Exports of installed packages for the graph before a cell attaches them — missing
-- [ ] Per-package update and pin (crandb release dates), Bioconductor, GitHub sources, install consent for large downloads, compiler and system-library checks, disk use (increments 2 and 3 in packages.md); moving to a date and cleanup are built — missing
+- [x] Moving to a date ("update all", "move to date D") and `clean()` — missing
+- [ ] Bioconductor: `bioc_version`, its index keys, the release that matches the notebook's R and date, the date-window warning, an R minor version change with a Bioconductor pin (increment 2 in packages.md). Starts with the renv-with-Bioconductor spike (Spikes) — missing
+- [ ] GitHub sources: `[sources]` as one-row indexes (increment 2) — missing
+- [ ] Install consent for large downloads, from the install plan's download size (increment 2) — missing
+- [ ] Compiler check before an install that builds from source (increment 2) — missing
+- [ ] System-library check before an install (increment 2) — missing
+- [ ] Disk use of the per-notebook libraries (increment 2) — missing
+- [ ] Per-package update and pin, with CRAN release dates from crandb (increment 3) — missing
 - [ ] A snapshot date from before the running R was released has no binaries for it, so packages build from source, and old versions may not compile on the new R (cli from 2024 on R 4.6: `Rf_findVar` removed). Detect it before installing and explain (increment 2's install plan) — missing
 - [ ] A failed install reports only "install failed, status 1" with an empty log: the installer's output (renv's and the compiler's errors) never reaches the session, so the reason is invisible in the page and in `notebook_snapshot()` — missing
 - [ ] `renv` is in Imports but used only by the installer script, so R CMD check notes it as not imported — improvised
@@ -66,11 +73,11 @@ done; clear out ticked items at each release.
 - [x] Remote use behind a path prefix: the `/open` redirect and `/`'s notebook links were absolute (`/edit?...`), so a proxy serving Ember under a prefix like `/s/<id>/p/<port>/` (stripping that prefix before forwarding, the usual model) broke them once the browser followed a link built from the unprefixed path the backend sees. Both are relative now, as Pluto does — missing
 - [ ] Remote use behind a path prefix, without its trailing slash: a request for the bare prefix (`/s/<id>/p/<port>`, no trailing `/`) and one for the prefix with a trailing slash both arrive here as exactly `GET /` once the proxy strips the prefix (checked against `tests/e2e/proxy.mjs`'s `forwardPath()`, which collapses both to `/`) -- this process has no way to tell them apart, since it never learns the prefix at all (the whole reason every URL it builds is relative, not absolute). Every relative edit link this process hands back (`/open`'s redirect, the start page's `ember_new_notebook`/`ember_open_notebook` replies) resolves correctly against the trailing-slash URL but one folder too high against the bare one (a browser resolves a relative URL against its directory, and `.../p/<port>` with no trailing slash has `.../p/` as its directory). Not fixable here: the fix has to be on the proxy's side (redirect the bare prefix to one with a trailing slash before forwarding, which is what a path-prefix-aware proxy like JupyterHub's server proxy already does) — missing
 
-- [ ] Pluto frontend fork, protocol in R, removals, R adaptations, theme — missing
-- [ ] The R grammar wired into CodeMirror — missing
+- [x] Pluto frontend fork, protocol in R, removals, R adaptations, theme — missing
+- [x] The R grammar wired into CodeMirror (`frontend-build/package.json` depends on `@ember/lezer-r`) — missing
 - [x] Rich outputs in the browser: widget files as static paths, table and tree views, terminal colours — missing
 - [x] URL secret — missing
-- [ ] The server finds the notebook from each message's `notebook_id` rather than the one the client connected to, so one page's socket can act on another notebook it names (both need the secret) — improvised
+- [ ] The server finds the notebook from each message's `notebook_id` rather than the one the client connected to, so one page's socket can act on another notebook it names (both need the secret). An access check, not polish: refuse a message whose `notebook_id` isn't the socket's own — missing
 - [ ] The browser tests run against whatever ember Rscript's default library has; they should install the working tree into a temp library themselves — improvised
 - [ ] Intermittent e2e failure: after clicking "run this notebook" in the safe-preview popup, the server sometimes never receives `restart_process`, so nothing runs and the test times out (CI run 37133421678, `lazy.R: editing A shows B as "stale"` (73), waiting for B's "2"). Seen twice in well over 1,000 runs of that scenario, and only under heavy load: once on CI, and once on a 2-CPU Linux VM running three suites at once. Never seen on macOS or with CPU throttling alone. In the traced failure the page was alive (pings answered, render state current, no console errors), the server log showed no `restart_process`, and a second page on the same notebook still showed safe preview. So the server, worker and state sync are fine; the click never sent the request. Still open: whether the click missed the link's handler (the popup closing or moving between Playwright's hit test and the click, e.g. its 0.2 s open transition or a reflow while MathJax or fonts load) or `restart()` (Editor.js) stopped before its `send`; one way it could, an `await update_notebook()` chained behind earlier updates, was removed in ui-3-plan.md piece 7a, so a recurrence would point at the click. Next step: log the popup's close reason and `restart()`'s steps in a test build until a failure shows which one; if it is the click, the test should wait for safe preview to end and click again — missing
 
@@ -99,7 +106,8 @@ done; clear out ticked items at each release.
 ## Integration with Endeavor
 
 - [ ] Endeavor's debug state records page messages by wrapping `window.alert` (src/debug_state.rs `RECORD_ALERTS`); Ember's messages are in-page dialogs now (common/dialogs.js) and never call `alert`, so that list stays empty for Ember. Ember records each dialog in `window.ember_dialogs` (`{title, body, answer}`) and fires an `ember-dialog` event; Endeavor's debug script should read that — missing
-- [ ] The adapter's `run(wait = TRUE)` can't block the server; it needs `on_notebook_event()` or a promise once httpuv is in (step 4) — missing
+- [x] The adapter's `run(wait = TRUE)` can't block the server; it needs `on_notebook_event()` or a promise once httpuv is in (step 4). Built on Ember's side: `on_notebook_event()` (R/api.R) — missing
+- [ ] Check that Endeavor's adapter waits on a run with `run_cells(wait = FALSE)` and `on_notebook_event()`, not `run(wait = TRUE)` — missing
 - [ ] Endeavor's docs still describe Pluto's restart ("then every cell runs") and a snapshot without stale state; update them there — missing
 - [ ] Endeavor takes F1 and Ctrl/Cmd + ? on `window` in the capture phase for its own shortcut sheet (endeavor/frontend/src/actions.ts:161-172), so inside Endeavor F1 never reaches Ember's "R help at the cursor" (ui-3.md, Keyboard shortcuts). Endeavor should let both keys through on Ember pages, or open Ember's sheet from ⋯ instead — missing
 - [ ] Endeavor's overrides follow the system theme (theme.ts:77, 139, 196), not Ember's Theme setting; an Ember set to Dark on a light system shows Endeavor's overrides in light colours. Read `<html data-theme>` instead, or hide the setting inside Endeavor — missing
@@ -121,7 +129,7 @@ done; clear out ticked items at each release.
 - [ ] Release builds ship Ember's own frontend files minified (dev keeps them readable): a release script minifies each file in place, keeping names and layout, before `R CMD build`; CI runs the browser tests against that build too. Say where the readable source is (inst/COPYRIGHTS, the frontend README), in case CRAN asks — missing
 - [ ] Server and worker on Linux and Windows (responsiveness, interrupt, restart) — missing
 - [ ] rig's user-mode R on Windows — missing
-- [ ] rv against renv on Linux and Windows, including Bioconductor — missing
+- [ ] rv against renv on Linux and Windows. The Bioconductor part is the first step of the Bioconductor work (Packages) — missing
 - [ ] Whether any package overwrites a setting the notebook already set (decides whether the note in Global settings is needed) — missing
 
 ## Interactive inputs (build step 5)
