@@ -539,19 +539,28 @@ test_that("the start page's socket may stop a notebook but not act on it (33b)",
   a <- names(notebook_state(nb)$cells)[2]
 
   ws <- fake_socket()
-  handle_message(server, ws, wire("connect"))                 # start.js: no notebook id
+  ed <- fake_socket()
+  handle_message(server, ed, wire("connect", client_id = "c1", notebook_id = id))
+
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", client_id = "c2"))   # start.js: no notebook id
   expect_equal(ws$last()$type, "\U0001F44B")
-  handle_message(server, ws, wire("ember_start_page"))
+  handle_message(server, ws, wire("ember_start_page", client_id = "c2"))
   n_before <- length(ws$messages)
   expect_gt(n_before, 1)
 
-  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
-  handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list(a)))
+  handle_message(server, ws, wire("update_notebook", client_id = "c2", notebook_id = id, updates = list()))
+  handle_message(server, ws, wire("run_multiple_cells", client_id = "c2", notebook_id = id, cells = list(a)))
+  # Nor may it borrow the editor's client id, which would move that client
+  # (and its notebook's diffs) onto the start page's socket.
+  handle_message(server, ws, wire("ping", client_id = "c1"))
   expect_equal(length(ws$messages), n_before)
+  expect_identical(get("c1", envir = server$clients)$ws, ed)
   expect_true(exists(id, envir = server$hubs, inherits = FALSE))
 
   # StartPage.js's Stop button.
-  handle_message(server, ws, wire("shutdown_notebook", notebook_id = id, keep_in_session = FALSE))
+  handle_message(server, ws, wire("shutdown_notebook", client_id = "c2", notebook_id = id,
+                                  keep_in_session = FALSE))
   expect_false(exists(id, envir = server$hubs, inherits = FALSE))
 })
 

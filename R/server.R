@@ -678,11 +678,15 @@ socket_notebook <- function(server, ws) {
 #' notebook (client_for() would move that client, and the other notebook's
 #' diffs, onto this socket).
 #'
-#' A socket whose `connect` named no notebook is the start page's
-#' (start.js). Messages naming no notebook are its whole job, plus one that
-#' names others: `shutdown_notebook`, its rows' Stop button (StartPage.js).
-#' Anything else it sends naming a notebook is refused; a page that wants
-#' to edit one connects to it, as the editor does.
+#' A socket bound to no notebook is the start page's (start.js connects
+#' with no notebook id), or one that hasn't sent `connect` at all; both are
+#' treated alike. Messages naming no notebook are the start page's whole
+#' job, plus one that names others: `shutdown_notebook`, its rows' Stop
+#' button (StartPage.js). Anything else naming a notebook is refused; a
+#' page that wants to edit one connects to it, as the editor does. The
+#' exemption gives nothing the secret doesn't: any socket can bind to any
+#' notebook by connecting to it. This contains each socket to its own
+#' notebook; it is not access control between pages that hold the secret.
 socket_may_act <- function(server, ws, req) {
   own <- socket_notebook(server, ws)
   target <- req$notebook_id
