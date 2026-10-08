@@ -411,10 +411,18 @@ view_context <- function(state) {
     }
   }
 
+  # Same sentinel as errors_by_cell: NULL for the many cells that set
+  # nothing, so the per-cell key check is one lookup, not a function call.
+  settings <- vector("list", n)
+  for (sid in graph$settings) {
+    at <- match(sid, ids)
+    if (!is.na(at)) settings[[at]] <- cell_settings_view(graph, sid)
+  }
+
   list(ids = ids, running = running, running_idx = running_idx,
       queued = queued, waiting = waiting_vec,
       errors_by_cell = errors_by_cell, off = off, disabled_by = disabled_by,
-      results = results)
+      settings = settings, results = results)
 }
 
 #' `result$variables` as a list of `list(name, type, value, kind)`, sorted
@@ -463,7 +471,7 @@ cell_view <- function(state, ctx, i) {
 
   structure(list(
     id = id, index = i, kind = cell$kind, code = cell$code,
-    folded = isTRUE(cell$folded), settings = cell_settings_view(state$graph, id),
+    folded = isTRUE(cell$folded), settings = ctx$settings[[i]] %||% list(),
     settings_found = if (!is.null(result)) result$settings_found %||% character() else character(),
     queued = ctx$queued[[i]], running = is_running,
     status = if (!is.null(result)) result$status else "not_run",

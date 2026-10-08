@@ -155,7 +155,7 @@ cell_key <- function(state, ctx, i) {
        is_running = is_running, console = if (is_running) running$console else NULL,
        queued = ctx$queued[[i]], waiting_for = ctx$waiting[[i]],
        errors = ctx$errors_by_cell[[i]], disabled_by = ctx$disabled_by[[i]],
-       settings = cell_settings_view(state$graph, id),
+       settings = ctx$settings[[i]],
        allowed = state$allowed)
 }
 
@@ -177,7 +177,7 @@ key_unchanged <- function(state, ctx, i, prev_key) {
   if (!identical(ctx$waiting[[i]], prev_key$waiting_for)) return(FALSE)
   if (!identical(ctx$errors_by_cell[[i]], prev_key$errors)) return(FALSE)
   if (!identical(ctx$disabled_by[[i]], prev_key$disabled_by)) return(FALSE)
-  if (!identical(cell_settings_view(state$graph, id), prev_key$settings)) return(FALSE)
+  if (!identical(ctx$settings[[i]], prev_key$settings)) return(FALSE)
   identical(state$allowed, prev_key$allowed)
 }
 
