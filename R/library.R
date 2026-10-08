@@ -269,6 +269,32 @@ ensure_library <- function(lock, repos, r = r_info(), cache = cache_dir(),
 
 # ---- renv's cache layout -------------------------------------------------------
 
+#' Copy into `staging` each lock entry renv left out because the same
+#' version was already installed on another library path. In practice that
+#' is R's own library: a recommended package such as codetools whose locked
+#' version is the one R ships. renv counts it as installed and puts no copy
+#' in the target library, but a notebook's library must hold every lock
+#' entry (packages.md: recommended packages are locked), or the installer's
+#' check stops with `missing_package`. Only an exact version match is
+#' copied. Returns the names copied.
+copy_installed_elsewhere <- function(staging, wanted, lib_paths = .libPaths()) {
+  lib_paths <- setdiff(normalizePath(lib_paths, mustWork = FALSE),
+                       normalizePath(staging, mustWork = FALSE))
+  copied <- character()
+  for (pkg in names(wanted)) {
+    if (file.exists(file.path(staging, pkg, "DESCRIPTION"))) next
+    for (lib in lib_paths) {
+      desc <- file.path(lib, pkg, "DESCRIPTION")
+      if (!file.exists(desc)) next
+      if (!identical(unname(read.dcf(desc, fields = "Version")[1, 1]), unname(wanted[[pkg]]))) next
+      file.copy(file.path(lib, pkg), staging, recursive = TRUE)
+      copied <- c(copied, pkg)
+      break
+    }
+  }
+  copied
+}
+
 #' The renv cache directories the installed packages in `staging` link to,
 #' for the manifest's `cache_entries` (what `clean(cache = TRUE)` may
 #' delete once no library's manifest lists it). `cache_root` is

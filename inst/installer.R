@@ -50,6 +50,8 @@ main <- function(plan_path) {
                   project = project_dir, prompt = FALSE, clean = FALSE),
     message = function(m) invokeRestart("muffleMessage"))
 
+  ember:::copy_installed_elsewhere(plan$staging, wanted)
+
   installed <- character()
   for (pkg in names(wanted)) {
     desc_path <- file.path(plan$staging, pkg, "DESCRIPTION")
