@@ -39,7 +39,8 @@ done; clear out ticked items at each release.
 - [x] Moving to a date ("update all", "move to date D") and `clean()` — missing
 - [x] Bioconductor: `bioc_version`, its index keys (software, annotation, experiment), the release that matches the notebook's R and date, the date-window warning (packages.md, "Bioconductor") — missing
 - [ ] Bioconductor: an R minor version change with a Bioconductor pin keeps the pin and only warns (`bioc_r_version`); design.md ("R itself") wants the engine to say the new release updates every Bioconductor package before recording it — missing
-- [ ] Bioconductor: never installed for real. The renv-with-Bioconductor spike (Spikes) and the opt-in network test 76 are still to run; renv is trusted to find an annotation package in `BioCann` though the lock entry prefers `BioCsoft` (lock.R, checked in renv 1.0.3's code only) — missing
+- [x] Bioconductor: installed for real on R 4.6.1, arm64 macOS: `library(DESeq2)` (52 packages, `DESeq2 1.52.0 Bioc`) and `GO.db` from the annotation repository, both from Package Manager's dated URLs; renv finds an annotation package although its lock record prefers `BioCsoft` — missing
+- [ ] Package Manager's dated Bioconductor URL served no macOS arm64 binary of preprocessCore 1.74.0 (Bioconductor publishes one), so WGCNA built it from source, which failed on a Mac without the matching Fortran runtime (`ld: library 'emutls_w' not found`). Check which Bioconductor binaries PPM serves for macOS, and whether falling back to Bioconductor's own binary repository is worth it — missing
 - [ ] GitHub sources: `[sources]` as one-row indexes (increment 2) — missing
 - [ ] Install consent for large downloads, from the install plan's download size (increment 2) — missing
 - [ ] Compiler check before an install that builds from source (increment 2) — missing
@@ -131,7 +132,7 @@ done; clear out ticked items at each release.
 - [ ] Release builds ship Ember's own frontend files minified (dev keeps them readable): a release script minifies each file in place, keeping names and layout, before `R CMD build`; CI runs the browser tests against that build too. Say where the readable source is (inst/COPYRIGHTS, the frontend README), in case CRAN asks — missing
 - [ ] Server and worker on Linux and Windows (responsiveness, interrupt, restart) — missing
 - [ ] rig's user-mode R on Windows — missing
-- [ ] rv against renv on Linux and Windows. The Bioconductor part is the first step of the Bioconductor work (Packages) — missing
+- [ ] rv against renv on Linux and Windows. renv with Bioconductor works on macOS (see Packages) — missing
 - [ ] Whether any package overwrites a setting the notebook already set (decides whether the note in Global settings is needed) — missing
 
 ## Interactive inputs (build step 5)
