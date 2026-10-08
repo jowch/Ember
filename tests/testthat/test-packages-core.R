@@ -19,10 +19,11 @@
 #' expose (`snapshot`, `extra_packages`, `lock`).
 pkg_file <- function(cells, snapshot = "2026-09-01",
                      extra_packages = character(), lock = empty_lock(),
-                     on_cell_change = "autorun") {
+                     on_cell_change = "autorun", bioc_version = NA_character_) {
   new_notebook_file(
     header = new_header(ember_version = "0.1.0", r_version = "4.3.0", snapshot = snapshot,
-                        on_cell_change = on_cell_change, extra_packages = extra_packages),
+                        bioc_version = bioc_version, on_cell_change = on_cell_change,
+                        extra_packages = extra_packages),
     cells = cells, run_order = names(cells), learned = list(),
     sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
     lock = lock, extra_blocks = list(), format = 1L, read_only = FALSE, problems = NULL)
@@ -63,6 +64,35 @@ effect_types <- function(result) {
 find_effect <- function(result, type) {
   effects <- if (!is.null(result$effects)) result$effects else result
   Find(function(e) identical(e$type, type), effects)
+}
+
+#' A running R that has a Bioconductor release (3.23) in `bioc_releases`.
+r46 <- list(version = "4.6.1", minor = "4.6", platform = "x86_64-pc-linux-gnu")
+
+#' The Bioconductor 3.23 fixture index of `kind`
+#' (fixtures/repos/bioc/2026-09-01/packages/3.23/...), keyed as `release`
+#' at `date`.
+bioc_index <- function(kind, release = "3.23", date = "2026-09-01") {
+  idx <- read_repo_index(testthat::test_path("fixtures", "repos", "bioc", "2026-09-01", "packages",
+                                             "3.23", bioc_kinds[[kind]], "src", "contrib", "PACKAGES"),
+                         key = repo_key(kind, date, release), label = "Bioc")
+  idx
+}
+
+#' Drive `s` through open and CRAN's index at 2026-09-01.
+open_with_cran <- function(s) {
+  r <- drive(s, ev_open(at(1)))
+  drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index("2026-09-01"), at(2)))
+}
+
+#' Deliver each of Bioconductor's three indexes the state is fetching.
+deliver_bioc <- function(state, release = "3.23", date = "2026-09-01", t = 3) {
+  r <- list(state = state, effects = list())
+  for (kind in names(bioc_kinds)) {
+    r <- drive(r$state, ev_index_fetched(repo_key(kind, date, release),
+                                         bioc_index(kind, release, date), at(t)))
+  }
+  r
 }
 
 # ---- Resolving --------------------------------------------------------------
@@ -261,9 +291,11 @@ test_that("a cell downstream of a waiting cell is not sent; an unrelated cell is
 })
 
 test_that("a cell using a not_found package is sent and doesn't wait (43)", {
-  s <- pkg_state(list(S = cell(""), A = cell("library(nosuchpkg)")))
+  s <- pkg_state(list(S = cell(""), A = cell("library(nosuchpkg)")), options = list(r = r46))
   r <- drive(s, ev_open(at(1)))
   r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(2)))
+  # Not on CRAN, so Bioconductor's indexes are looked at too.
+  r <- deliver_bioc(r$state)
   expect_true("not_found" %in% r$state$packages$problems$kind)
 
   r <- boot(r$state, "A", at0 = 10)
@@ -610,9 +642,11 @@ test_that("ev_run also records the running R version in the header when it diffe
 # ---- Snapshot projection --------------------------------------------------------
 
 test_that("packages_view per-package statuses: installed, installing, not_installed, not_found (56)", {
-  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)\nlibrary(nosuchpkg)")))
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)\nlibrary(nosuchpkg)")),
+                 options = list(r = r46))
   r <- drive(s, ev_open(at(1)))
   r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(2)))
+  r <- deliver_bioc(r$state)
   v <- packages_view(r$state)
   expect_setequal(v$packages$status[v$packages$name %in% c("cli", "dplyr", "glue")], "missing")
   expect_true("not_found" %in% v$packages$status)
@@ -855,4 +889,159 @@ test_that("reduce_install_done() writes one install_failed row per failed packag
   expect_equal(v2$packages$status[v2$packages$name == "rlang"], "failed")
   expect_equal(v2$packages$status[v2$packages$name == "broom"], "not_installed")
   expect_equal(length(v2$library$failures$needed_by[[1]]), 0)
+})
+
+# ---- Bioconductor (docs/packages-tests.md, 82-87) ----------------------------
+
+test_that("a CRAN-only notebook never fetches a Bioconductor index and carries no pin (82)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")), options = list(r = r46))
+  r <- open_with_cran(s)
+  expect_false("fetch_index" %in% effect_types(r))
+  expect_equal(r$state$packages$resolved_for, "dplyr")
+  expect_true(is.na(r$state$file$header$bioc_version))
+  expect_false(any(startsWith(names(r$state$packages$indexes), "bioc")))
+})
+
+test_that("library(DESeq2) fetches Bioconductor's indexes after CRAN's, locks it as Bioc and pins the release (83)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46))
+  r <- open_with_cran(s)
+  expect_setequal(vapply(r$effects, function(e) e$key, character(1)),
+                  c("bioc/2026-09-01/3.23", "bioc-ann/2026-09-01/3.23", "bioc-exp/2026-09-01/3.23"))
+  expect_equal(find_effect(r, "fetch_index")$url,
+               "https://packagemanager.posit.co/bioconductor/2026-09-01/packages/3.23/bioc")
+  r <- deliver_bioc(r$state)
+  expect_equal(format_lock_lines(r$state$file$lock),
+               c("DESeq2 1.50.0 Bioc", "S4Vectors 0.48.0 Bioc", "cli 3.6.5 CRAN"))
+  expect_equal(r$state$file$header$bioc_version, "3.23")
+  expect_equal(nrow(r$state$packages$problems), 0)
+  text <- format_notebook(notebook_file_of(r$state))
+  expect_match(text, 'bioc_version = "3.23"', fixed = TRUE)
+  expect_match(text, "# DESeq2 1.50.0 Bioc", fixed = TRUE)
+})
+
+test_that("the install gets CRAN and the three Bioconductor repositories once the lock holds a Bioc package (83)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(wgcna)")), options = list(r = r46))
+  r <- deliver_bioc(open_with_cran(s)$state)
+  expect_true("GO.db" %in% r$state$file$lock$entries$name)
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(4)))
+  r <- drive(r$state, ev_allow(at(5)))
+  inst <- find_effect(r, "install")
+  expect_named(inst$repos, c("CRAN", "BioCsoft", "BioCann", "BioCexp"))
+})
+
+test_that("removing the last Bioconductor package drops the pin (84)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46))
+  r <- deliver_bioc(open_with_cran(s)$state)
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "library(dplyr)")), at(6)))
+  expect_false(any(r$state$file$lock$entries$source == "Bioc"))
+  expect_true(is.na(r$state$file$header$bioc_version))
+})
+
+test_that("a failed Bioconductor index leaves the name not found, says why, and is retried only when the wanted set changes (85)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46))
+  r <- open_with_cran(s)
+  for (kind in names(bioc_kinds)) {
+    r <- drive(r$state, ev_index_failed(repo_key(kind, "2026-09-01", "3.23"), "network down", at(3)))
+  }
+  probs <- r$state$packages$problems
+  expect_true("DESeq2" %in% probs$package[probs$kind == "not_found"])
+  expect_true(any(probs$kind == "index_unavailable" & grepl("network down", probs$message)))
+  expect_equal(effect_types(r), character())
+
+  r2 <- drive(r$state, ev_apply(list(op_set_code("S", "1 + 1")), at(4)))
+  expect_equal(effect_types(r2), character())
+
+  r3 <- drive(r2$state, ev_apply(list(op_set_code("S", "library(viz)")), at(5)))
+  expect_setequal(vapply(r3$effects, function(e) e$key, character(1)),
+                  c("bioc/2026-09-01/3.23", "bioc-ann/2026-09-01/3.23", "bioc-exp/2026-09-01/3.23"))
+
+  # Once the name is fixed to a CRAN one, the failed indexes aren't fetched again.
+  r4 <- drive(r2$state, ev_apply(list(op_set_code("A", "library(dplyr)")), at(5)))
+  expect_false("fetch_index" %in% effect_types(r4))
+  expect_equal(r4$state$packages$resolved_for, "dplyr")
+})
+
+test_that("a reopened notebook with a Bioc lock fetches Bioconductor's indexes when the wanted set changes, not not_in_index (88)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46))
+  locked <- deliver_bioc(open_with_cran(s)$state)$state$file$lock
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46),
+                 lock = locked, bioc_version = "3.23")
+  r <- drive(s, ev_open(at(1)))
+  expect_false("fetch_index" %in% effect_types(r))
+  r <- drive(r$state, ev_apply(list(op_set_code("S", "library(dplyr)")), at(2)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(3)))
+  expect_setequal(vapply(r$effects, function(e) e$key, character(1)),
+                  c("bioc/2026-09-01/3.23", "bioc-ann/2026-09-01/3.23", "bioc-exp/2026-09-01/3.23"))
+  r <- deliver_bioc(r$state, t = 4)
+  expect_false("not_in_index" %in% r$state$packages$problems$kind)
+  expect_true(all(c("DESeq2", "S4Vectors", "dplyr") %in% r$state$file$lock$entries$name))
+  expect_equal(r$state$file$header$bioc_version, "3.23")
+})
+
+test_that("a date move on an R with no known Bioconductor release fails instead of dropping Bioc packages (89)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46))
+  locked <- deliver_bioc(open_with_cran(s)$state)$state$file$lock
+  r47 <- list(version = "4.7.0", minor = "4.7", platform = "x86_64-pc-linux-gnu")
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r47),
+                 lock = locked, bioc_version = "3.23")
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_preview_date("2026-09-30", at(2)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(3)))
+  expect_equal(r$state$packages$proposal$status, "failed")
+  expect_match(r$state$packages$proposal$message, "no Bioconductor release for R 4.7", fixed = TRUE)
+  expect_equal(r$state$file$header$bioc_version, "3.23")
+})
+
+test_that("a failed Bioconductor index doesn't fail a date move for a notebook with no Bioc package (89)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)\nlibrary(nosuchpkg)")),
+                 options = list(r = r46))
+  r <- deliver_bioc(open_with_cran(s)$state)
+  r <- drive(r$state, ev_preview_date("2026-09-30", at(5)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(6)))
+  for (kind in names(bioc_kinds)) {
+    r <- drive(r$state, ev_index_failed(repo_key(kind, "2026-09-30", "3.23"), "network down", at(7)))
+  }
+  expect_equal(r$state$packages$proposal$status, "ready")
+  expect_true("dplyr" %in% r$state$packages$proposal$lock$entries$name)
+})
+
+test_that("a pinned release is kept on another R and flagged; an R with no known release finds no Bioc package (86)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")), options = list(r = r46),
+                 bioc_version = "3.22")
+  r <- open_with_cran(s)
+  expect_equal(r$state$file$header$bioc_version, NA_character_)  # CRAN-only: the pin goes
+
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46),
+                 bioc_version = "3.22")
+  r <- open_with_cran(s)
+  expect_true(all(grepl("/3.22$", vapply(r$effects, function(e) e$key, character(1)))))
+  r <- deliver_bioc(r$state, release = "3.22")
+  expect_equal(r$state$file$header$bioc_version, "3.22")
+  expect_true("bioc_r_version" %in% r$state$packages$problems$kind)
+
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")),
+                 options = list(r = list(version = "9.9.0", minor = "9.9", platform = "x")))
+  r <- open_with_cran(s)
+  expect_false("fetch_index" %in% effect_types(r))
+  expect_true("DESeq2" %in% r$state$packages$problems$package)
+  expect_true("bioc_unavailable" %in% r$state$packages$problems$kind)
+})
+
+test_that("a date move keeps Bioconductor packages, and fails rather than dropping them when its index can't be fetched (87)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46))
+  r <- deliver_bioc(open_with_cran(s)$state)
+  r <- drive(r$state, ev_preview_date("2026-09-30", at(7)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(8)))
+  keys <- vapply(r$effects, function(e) e$key, character(1))
+  expect_true("bioc/2026-09-30/3.23" %in% keys)
+
+  ok <- deliver_bioc(r$state, date = "2026-09-30", t = 9)
+  prop <- ok$state$packages$proposal
+  expect_equal(prop$status, "ready")
+  expect_true(all(c("DESeq2", "S4Vectors") %in% prop$lock$entries$name))
+  expect_equal(prop$bioc_version, "3.23")
+
+  bad <- drive(r$state, ev_index_failed("bioc/2026-09-30/3.23", "network down", at(9)))
+  expect_equal(bad$state$packages$proposal$status, "failed")
+  expect_match(bad$state$packages$proposal$message, "network down", fixed = TRUE)
 })

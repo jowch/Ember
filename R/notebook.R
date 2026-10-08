@@ -130,7 +130,9 @@ format_of <- function(version) {
   sinces <- numeric_version(format_history$since)
   ok <- sinces <= v
   if (!any(ok)) return(format_history$format[[1]])
-  format_history$format[ok][[which.max(sinces[ok])]]
+  # `order()`, not `which.max()`: the latter takes a numeric_version only
+  # from R 4.4.
+  format_history$format[ok][[order(sinces[ok], decreasing = TRUE)[[1]]]]
 }
 
 # ---- TOML strings --------------------------------------------------------------

@@ -84,7 +84,7 @@ index_rds_path <- function(key, cache = cache_dir()) {
 #' its own label with no special case here.
 index_label_of_key <- function(key) {
   kind <- strsplit(key, "/", fixed = TRUE)[[1]][1]
-  switch(kind, cran = "CRAN", bioc = "Bioc", kind)
+  if (kind %in% names(bioc_kinds)) "Bioc" else switch(kind, cran = "CRAN", kind)
 }
 
 #' The parsed index for `key`, or `NULL` when it isn't on disk yet.
@@ -268,6 +268,32 @@ ensure_library <- function(lock, repos, r = r_info(), cache = cache_dir(),
 }
 
 # ---- renv's cache layout -------------------------------------------------------
+
+#' Copy into `staging` each lock entry renv left out because R's own
+#' library (`.Library`, or the system site library a distribution uses for
+#' them, `.Library.site`) already has that exact version: a recommended
+#' package such as codetools at the version R ships. renv counts it as
+#' installed and puts no copy in the target library, but a notebook's
+#' library must hold every lock entry (packages.md: recommended packages
+#' are locked), or the installer's check stops with `missing_package`. The
+#' user's own libraries aren't looked in. Returns the names copied.
+copy_from_r_library <- function(staging, wanted, lib_paths = c(.Library, .Library.site)) {
+  lib_paths <- setdiff(normalizePath(lib_paths, mustWork = FALSE),
+                       normalizePath(staging, mustWork = FALSE))
+  copied <- character()
+  for (pkg in names(wanted)) {
+    if (file.exists(file.path(staging, pkg, "DESCRIPTION"))) next
+    for (lib in lib_paths) {
+      desc <- file.path(lib, pkg, "DESCRIPTION")
+      if (!file.exists(desc)) next
+      if (!identical(unname(read.dcf(desc, fields = "Version")[1, 1]), unname(wanted[[pkg]]))) next
+      # A failed copy leaves the entry missing, which the installer's check reports.
+      if (isTRUE(file.copy(file.path(lib, pkg), staging, recursive = TRUE))) copied <- c(copied, pkg)
+      break
+    }
+  }
+  copied
+}
 
 #' The renv cache directories the installed packages in `staging` link to,
 #' for the manifest's `cache_entries` (what `clean(cache = TRUE)` may

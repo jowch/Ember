@@ -268,6 +268,8 @@ renv_lockfile_of <- function(lock, r, repos) {
     if (identical(source, "CRAN")) {
       list(Package = name, Version = version, Source = "Repository", Repository = "CRAN")
     } else if (identical(source, "Bioc")) {
+      # A preference, not a constraint: renv also looks in the other
+      # repositories listed (BioCann, BioCexp; repo_urls() in resolve.R).
       list(Package = name, Version = version, Source = "Repository", Repository = "BioCsoft")
     } else if (startsWith(source, "github:")) {
       rest <- sub("^github:", "", source)
