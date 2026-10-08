@@ -318,30 +318,37 @@ any name at all. Ember follows Pluto here: a method definition defines the
 the cell that defines the method. Editing a `print.foo` cell reruns, or
 marks stale, every cell that calls `print`. It costs extra reruns (a cell
 printing a data frame reruns too), and an extra edge is the cheap side.
+Method edges are soft, though: one that would close a cycle is dropped.
+Any method whose body reads a global from a cell that happens to call the
+generic (and `+`, `c`, `print` are called nearly everywhere) would
+otherwise block cells that run fine under `Rscript`, which is worse than
+the rerun the dropped edge misses.
 
-- **What counts.** A top-level function named `generic.class` when the
-  generic is one of base R's (a table in `R/rules.R`), a function or
-  `setGeneric()` another cell defines, or a name an installed package
-  exports. A dotted helper with any other prefix (`fit.plot`) is just a
-  function, so it can't close a false cycle through `fit`. Also
+- **What counts.** A top-level function with at least one argument named
+  `generic.class`, when the generic is one of base R's (a table in
+  `R/rules.R`), a function or `setGeneric()` another cell defines, or a
+  name exported by a package some cell attaches or calls with `pkg::`. A
+  dotted helper with any other prefix (`fit.plot`), or with no arguments
+  (`print.stats <- function()`), is just a function. Also
   `registerS3method()`, `.S3method()` and `setMethod()` with a literal
   generic, which always count. `setGeneric("area")` defines `area`.
 - **Many cells, one generic.** Any number of cells may add methods to one
   generic. The same pair in two cells (`print.foo` in one,
   `registerS3method("print", "foo", …)` in another, or two
-  `setMethod("show", "Foo", …)`) is a "Multiple definitions" error. Two
-  cells that each define a `print` method and call `print()` don't depend
-  on each other, so they form no cycle.
+  `setMethod("show", "Foo", …)`) is a "Multiple definitions" error. Of two
+  cells that each define a `print` method and call `print()`, the later
+  depends on the earlier, not both ways.
+- **Removing a method.** The worker undoes a cell's `registerS3method()`
+  and `setMethod()` calls when the cell is removed, disabled or rerun, as
+  it removes the cell's globals, so R falls back to the method that was
+  there before (or none).
 - **Autoprint is not a call.** A value printed only because it is the
   cell's last expression gets no edge to the `print` methods, as in Pluto
   (whose own test for this is marked broken). Otherwise nearly every cell
   with output would rerun on any `print` method edit.
 - **Not covered yet:** group generics (`Ops.money`, `Math.interval`), `$`
   methods (the walker doesn't read `$` as a call), `setClass()`,
-  `setValidity()` and `setReplaceMethod()`, and inheritance between two
-  cells that both add methods to one generic: a cell defining `print.child`
-  and calling `print()` gets no edge to a `print.parent` cell, even when its
-  object would fall back to the parent's method.
+  `setValidity()` and `setReplaceMethod()`.
 
 ### Formulas
 

@@ -344,9 +344,11 @@ resolve_cells <- function(analyses, learned, ids) {
 #' `"register"` and `"s4"` rows (`registerS3method()`, `setMethod()`) always
 #' count. A `"name"` row (`print.foo <- function`) counts only when its
 #' generic is in `s3_generics`, is a function or `setGeneric()` some cell
-#' defines (kind `"function"` or `"generic"`), or is a name an installed
-#' package exports; a dotted helper name whose prefix is none of those
-#' (`fit.plot`) is just a function. `key` names the (generic, class) pair
+#' defines (kind `"function"` or `"generic"`), or is exported by a package
+#' some cell attaches or calls with `pkg::` (not every installed one: with
+#' dplyr merely installed, `filter.outliers` is not a `filter` method); a
+#' dotted helper name whose prefix is none of those (`fit.plot`) is just a
+#' function. `key` names the (generic, class) pair
 #' for the duplicate check: `generic.class` for S3 (so `print.foo` and
 #' `registerS3method("print", "foo")` meet), `generic(signature)` for S4,
 #' `NA` when the class or signature is computed. Replaces each cell's
@@ -355,7 +357,7 @@ resolve_cells <- function(analyses, learned, ids) {
 resolve_methods <- function(cells, analyses, exports, ids) {
   has <- ids[vapply(ids, function(id) nrow(cells[[id]]$methods) > 0, logical(1))]
   if (length(has) == 0) {
-    for (id in ids) cells[[id]]$methods <- empty_resolved_methods()
+    for (id in ids) cells[[id]]$methods <- no_resolved_methods
     return(cells)
   }
   # Generics the notebook defines itself: functions and setGeneric() names.
@@ -363,6 +365,8 @@ resolve_methods <- function(cells, analyses, exports, ids) {
     d <- analyses[[id]]$definitions
     d$name[d$kind %in% c("function", "generic")]
   }), use.names = FALSE))
+  used <- unique(unlist(lapply(ids, function(id) cells[[id]]$packages), use.names = FALSE))
+  exports <- exports[names(exports) %in% used]
   is_generic <- function(g) {
     g %in% s3_generics || g %in% user_generics ||
       any(vapply(exports, function(x) g %in% x, logical(1)))
@@ -370,7 +374,7 @@ resolve_methods <- function(cells, analyses, exports, ids) {
   for (id in ids) {
     m <- cells[[id]]$methods
     if (nrow(m) == 0) {
-      cells[[id]]$methods <- empty_resolved_methods()
+      cells[[id]]$methods <- no_resolved_methods
       next
     }
     keep <- m$form != "name" | vapply(m$generic, is_generic, logical(1))
@@ -385,10 +389,9 @@ resolve_methods <- function(cells, analyses, exports, ids) {
   cells
 }
 
-empty_resolved_methods <- function() {
-  data.frame(generic = character(), signature = character(), form = character(),
-             key = character(), line = integer(), stringsAsFactors = FALSE)
-}
+no_resolved_methods <- data.frame(generic = character(), signature = character(),
+                                  form = character(), key = character(),
+                                  line = integer(), stringsAsFactors = FALSE)
 
 #' Edges from references to the cells that satisfy them.
 #'
@@ -411,17 +414,11 @@ empty_resolved_methods <- function() {
 #' A disabled cell's own references resolve the same way (rules 1-4 look at
 #' the target's status, not `b`'s), so it keeps edges to what it reads.
 #'
-#' Methods (`resolve_methods()`) add to whichever rule matched: for a
-#' reference `n` of `b`, every other enabled cell defining a method of the
-#' generic `n` gets an edge via "method", unless it already has an edge
-#' for `n` or `b` itself defines a method of `n`. That last exception keeps
-#' two cells that each define a `print` method and call `print()` from
-#' forming a cycle: a method for one class doesn't change how the other
-#' class's objects print (inheritance aside). A disabled cell's methods
-#' give no edge, since R falls back to another method without them. A
-#' `registerS3method()` or `setMethod()` call also reads its generic, by
-#' rules 1-4 only, so it runs after the cell that defines the generic
-#' (`setGeneric()`) or attaches the package exporting it.
+#' Method edges (`add_method_edges()`) come after rules 1-4, and are
+#' soft: one is added only where it closes no cycle. A `registerS3method()`
+#' or `setMethod()` call also reads its generic, by rules 1-4 only, so it
+#' runs after the cell that defines the generic (`setGeneric()`) or
+#' attaches the package exporting it.
 #' Setting edges are added later, once the order is known
 #' (`setting_edges_of()`).
 resolve_edges <- function(cells, exports, ids, disabled = character()) {
@@ -484,7 +481,6 @@ resolve_edges <- function(cells, exports, ids, disabled = character()) {
   ref_edges <- lapply(ids, function(b) {
     refs <- cells[[b]]$references
     m_b <- cells[[b]]$methods
-    own_generics <- unique(m_b$generic)
     refs <- c(refs, setdiff(unique(m_b$generic[m_b$form != "name"]), refs))
     if (length(refs) == 0) return(NULL)
     resolve_ref <- function(n) {
@@ -516,16 +512,7 @@ resolve_edges <- function(cells, exports, ids, disabled = character()) {
       list(from = rep(b, length(disabled_provider_ids)), to = disabled_provider_ids,
           name = rep(n, length(disabled_provider_ids)), via = rep("disabled", length(disabled_provider_ids)))
     }
-    parts <- lapply(refs, function(n) {
-      res <- resolve_ref(n)
-      if (!has_methods || n %in% own_generics) return(res)
-      m <- method_lookup[[n]]
-      m <- m[m != b & !(m %in% res$to)]
-      if (length(m) == 0) return(res)
-      list(from = c(res$from, rep(b, length(m))), to = c(res$to, m),
-           name = c(res$name, rep(n, length(m))), via = c(res$via, rep("method", length(m))))
-    })
-    parts <- Filter(Negate(is.null), parts)
+    parts <- Filter(Negate(is.null), lapply(refs, resolve_ref))
     if (length(parts) == 0) return(NULL)
     list(from = unlist(lapply(parts, `[[`, "from"), use.names = FALSE),
         to = unlist(lapply(parts, `[[`, "to"), use.names = FALSE),
@@ -540,7 +527,74 @@ resolve_edges <- function(cells, exports, ids, disabled = character()) {
   via <- unlist(lapply(ref_edges, `[[`, "via"), use.names = FALSE)
 
   if (is.null(from)) from <- to <- name <- via <- character()
-  data.frame(from = from, to = to, name = name, via = via, stringsAsFactors = FALSE)
+  edges <- data.frame(from = from, to = to, name = name, via = via, stringsAsFactors = FALSE)
+  if (has_methods) edges <- add_method_edges(edges, cells, ids, method_lookup)
+  edges
+}
+
+#' Method edges (the Pluto model, design.md "Methods"): a cell reading a
+#' generic depends on each other enabled cell defining a method of it, via
+#' "method", named by the generic.
+#'
+#' They are soft. Every other edge is in place first; then, method cell by
+#' method cell in display order, an edge from reader `b` to method cell `t`
+#' is added only when `t` doesn't already depend on `b`, directly or
+#' through edges added so far. So a method edge never closes a cycle: a
+#' `+.money` method reading `fx` from a cell that also uses `+` keeps the
+#' `fx` edge and drops the `+` one, and of two cells that each define a
+#' `print` method and call `print()`, the later depends on the earlier.
+#' A dropped edge only costs a rerun Ember misses when the method changes;
+#' a cycle would block cells that run fine. One reachability walk per
+#' method cell, and nothing at all for a notebook without methods.
+#'
+#' A disabled cell's methods give no edge (`method_lookup` holds enabled
+#' cells only): the worker undoes a cell's registrations when the cell is
+#' removed, disabled or rerun, so R falls back to another method.
+add_method_edges <- function(edges, cells, ids, method_lookup) {
+  generics <- ls(method_lookup, all.names = TRUE)
+  readers <- new.env(parent = emptyenv())  # generic -> ids reading it
+  for (id in ids) {
+    for (g in intersect(cells[[id]]$references, generics)) readers[[g]] <- c(readers[[g]], id)
+  }
+  upstream <- new.env(parent = emptyenv())
+  for (i in seq_len(nrow(edges))) {
+    upstream[[edges$from[i]]] <- c(upstream[[edges$from[i]]], edges$to[i])
+  }
+  ancestors <- function(t) {
+    seen <- new.env(parent = emptyenv())
+    stack <- t
+    while (length(stack) > 0) {
+      v <- stack[length(stack)]
+      stack <- stack[-length(stack)]
+      for (u in upstream[[v]]) {
+        if (is.null(seen[[u]])) {
+          seen[[u]] <- TRUE
+          stack <- c(stack, u)
+        }
+      }
+    }
+    seen
+  }
+  have <- paste(edges$from, edges$to, edges$name, sep = "\r")
+  method_cells <- ids[ids %in% unique(unlist(mget(generics, envir = method_lookup),
+                                             use.names = FALSE))]
+  from <- to <- name <- character()
+  for (t in method_cells) {
+    anc <- ancestors(t)
+    for (g in unique(cells[[t]]$methods$generic)) {
+      for (b in readers[[g]]) {
+        if (identical(b, t) || !is.null(anc[[b]])) next
+        if (paste(b, t, g, sep = "\r") %in% have) next
+        from <- c(from, b)
+        to <- c(to, t)
+        name <- c(name, g)
+        upstream[[b]] <- c(upstream[[b]], t)
+      }
+    }
+  }
+  if (length(from) == 0) return(edges)
+  rbind(edges, data.frame(from = from, to = to, name = name, via = "method",
+                          stringsAsFactors = FALSE))
 }
 
 #' Strongly connected components of a graph given as an adjacency list
@@ -780,23 +834,13 @@ find_errors <- function(cells, analyses, edges, ids, components,
                       edges$via != "setting" & !is.na(edges$name), , drop = FALSE]
     inside <- inside[order(match(inside$to, ids)), , drop = FALSE]
     names_in_comp <- unique(inside$name)
-    # A generic read through a method edge is a function call, never a
-    # column, so it gets the method fix instead of the column one.
-    generics <- unique(inside$name[inside$via == "method"])
-    columns <- setdiff(names_in_comp, generics)
-    fix <- if (length(columns) == 1) {
-      sprintf("If %s is a column name, rename the global", columns)
-    } else if (length(columns) > 1) {
+    fix <- if (length(names_in_comp) == 1) {
+      sprintf("If %s is a column name, rename the global", names_in_comp)
+    } else if (length(names_in_comp) > 1) {
       sprintf("If one of %s is a column name, rename the global",
-              paste(columns, collapse = ", "))
+              paste(names_in_comp, collapse = ", "))
     } else {
       character()
-    }
-    if (length(generics) > 0) {
-      fix <- c(fix, sprintf("Pass what the %s %s needs as an argument, or move %s into a cell of its own",
-                            paste(generics, collapse = ", "),
-                            if (length(generics) == 1) "method" else "methods",
-                            if (length(generics) == 1) "it" else "them"))
     }
     cycle_msg <- if (length(names_in_comp) > 0) {
       sprintf("%s form a cycle.", paste(names_in_comp, collapse = ", "))

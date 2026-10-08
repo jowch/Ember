@@ -53,8 +53,8 @@
 #'   compares `text` to decide whether a cached analysis is still valid.
 #' * `methods`: data frame `generic`, `signature`, `form`, `line`, `col`,
 #'   `end_col`, `file`: the methods the cell defines. `form` is `"name"`
-#'   for a top-level function whose name has a dot (`print.foo <-
-#'   function(x, ...)`), one row per way of splitting the name at a dot
+#'   for a top-level function with arguments whose name has a dot
+#'   (`print.foo <- function(x, ...)`), one row per way of splitting the name at a dot
 #'   (`as.data.frame.foo` gives `as`, `as.data` and `as.data.frame`, since
 #'   which prefix is a generic is the graph's to decide, in
 #'   `resolve_methods()`); `"register"` for `registerS3method()` and
@@ -90,7 +90,7 @@ new_cell_analysis <- function(code,
                               formulas = list(),
                               sourced = empty_sourced(),
                               notes = empty_notes(),
-                              methods = empty_methods()) {
+                              methods = no_methods) {
   structure(list(code = code, parse_error = parse_error,
                  definitions = definitions, references = references,
                  packages = packages, settings = settings,
@@ -126,6 +126,10 @@ empty_methods <- function() {
              line = integer(), col = integer(), end_col = integer(),
              file = character(), stringsAsFactors = FALSE)
 }
+# Built once: nearly every cell defines no method, and building a data
+# frame per cell costs more than the rest of finishing it.
+no_methods <- empty_methods()
+
 empty_notes <- function() {
   data.frame(kind = character(), line = integer(), col = integer(),
              end_col = integer(), detail = character(),
@@ -333,10 +337,15 @@ finish <- function(acc, code) {
 
   # A sourced file's name-form methods come in with `extra_methods`, so only
   # this level's own definitions are split here.
-  methods <- rbind(name_method_rows(own_defs), method_rows_to_df(acc$method_rows))
-  methods <- methods[order(methods$line), , drop = FALSE]
-  methods <- rbind_all(methods, acc$extra_methods)
-  row.names(methods) <- NULL
+  methods <- no_methods
+  if (length(acc$method_rows) > 0 || length(acc$extra_methods) > 0 ||
+      any(own_defs$kind == "function" & grepl(".", own_defs$name, fixed = TRUE))) {
+    methods <- rbind(name_method_rows(own_defs, acc$no_formals),
+                     method_rows_to_df(acc$method_rows))
+    methods <- methods[order(methods$line), , drop = FALSE]
+    methods <- rbind_all(methods, acc$extra_methods)
+    row.names(methods) <- NULL
+  }
 
   new_cell_analysis(code, parse_error = NULL, definitions = defs,
                      references = refs, packages = pkgs, settings = settings,
@@ -346,13 +355,15 @@ finish <- function(acc, code) {
 
 #' The `"name"`-form method rows of a cell's own definitions: each
 #' top-level function (kind `"function"`) with a public name that has a
-#' dot, once per dot with a non-empty part on each side. Whether the
+#' dot and at least one argument (`no_formals` names the ones without),
+#' once per dot with a non-empty part on each side. Whether the
 #' prefix is really a generic needs the whole notebook; see
 #' `resolve_methods()`.
-name_method_rows <- function(defs) {
+name_method_rows <- function(defs, no_formals = character()) {
   defs <- defs[defs$kind == "function" & !is_private_name(defs$name) &
+                 !(defs$name %in% no_formals) &
                  grepl(".", defs$name, fixed = TRUE), , drop = FALSE]
-  if (nrow(defs) == 0) return(empty_methods())
+  if (nrow(defs) == 0) return(no_methods)
   rows <- lapply(seq_len(nrow(defs)), function(i) {
     n <- defs$name[i]
     dots <- gregexpr(".", n, fixed = TRUE)[[1]]
@@ -363,12 +374,12 @@ name_method_rows <- function(defs) {
                end_col = defs$end_col[i], file = defs$file[i], stringsAsFactors = FALSE)
   })
   rows <- Filter(Negate(is.null), rows)
-  if (length(rows) == 0) return(empty_methods())
+  if (length(rows) == 0) return(no_methods)
   do.call(rbind, rows)
 }
 
 method_rows_to_df <- function(rows) {
-  if (length(rows) == 0) return(empty_methods())
+  if (length(rows) == 0) return(no_methods)
   data.frame(
     generic = vapply(rows, `[[`, character(1), "generic"),
     signature = vapply(rows, `[[`, character(1), "signature"),

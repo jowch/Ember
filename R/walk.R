@@ -496,6 +496,12 @@ walk_assignment <- function(e, scope, acc, op, pid = NA_integer_) {
   }
 
   simple_kind <- if (is_function_literal(value)) "function" else "assign"
+  # A function with no arguments can't be an S3 method (dispatch passes the
+  # object), so `print.stats <- function()` is kept out of `methods`.
+  if (identical(simple_kind, "function") && length(value[[2]]) == 0 &&
+      (is.symbol(raw_target) || is.character(raw_target))) {
+    acc$no_formals <- c(acc$no_formals, as.character(raw_target))
+  }
   if (is.symbol(raw_target)) {
     record_definition(acc, scope, as.character(raw_target), simple_kind,
                       pd_position(acc, raw_target_pid))

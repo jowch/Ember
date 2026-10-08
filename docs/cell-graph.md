@@ -151,22 +151,23 @@ edges exist only when `exports` names the package, so the graph is rebuilt
 with fuller exports once packages install.
 
 **Methods** (design.md, "Methods": the Pluto model) are read per cell into
-the analysis's `methods` rows: every way of splitting a top-level dotted
-function name (`as.data.frame.foo` gives three candidate generics), plus
-literal `registerS3method()`, `.S3method()` and `setMethod()` calls. The
-graph keeps a dotted name's split only when its generic is in
-`s3_generics`, is a function or `setGeneric()` some cell defines, or is a
-package export (`resolve_methods()`). A reference to a generic then gets a
-`via = "method"` edge to each other enabled cell defining a method of it,
-on top of whatever rule resolved the name, unless the referencing cell
-defines a method of that generic itself (so two cells that each add a
-`print` method and call `print()` form no cycle). A registering call also
-reads its generic by the ordinary rules, so `setMethod()` runs after
-`setGeneric()`. The same (generic, class) pair in two cells is a
-`multiple_definitions` error keyed `generic.class` (S3) or
+the analysis's `methods` rows: every way of splitting the name of a
+top-level dotted function with arguments (`as.data.frame.foo` gives three
+candidate generics), plus literal `registerS3method()`, `.S3method()` and
+`setMethod()` calls. The graph keeps a dotted name's split only when its
+generic is in `s3_generics`, is a function or `setGeneric()` some cell
+defines, or is exported by a package some cell attaches or calls with
+`pkg::` (`resolve_methods()`). Once every other edge is in place,
+`add_method_edges()` gives each cell reading a generic a `via = "method"`
+edge to each other enabled cell defining a method of it, but only where the
+edge closes no cycle (method cells in display order, one reachability walk
+each). A registering call also reads its generic by the ordinary rules, so
+`setMethod()` runs after `setGeneric()`. The same (generic, class) pair in
+two cells is a `multiple_definitions` error keyed `generic.class` (S3) or
 `generic(signature)` (S4). Method edges don't count towards
-`failed_definers()`: a dependent of a broken method cell still runs, as
-R falls back to another method.
+`failed_definers()`, and a disabled cell's methods give none: the worker
+undoes a cell's registrations whenever it removes the cell's globals, so R
+falls back to another method.
 
 **Settings cells** ([settings-cells.md](settings-cells.md)) are the
 enabled cells that set a global setting, found in the code or learned at

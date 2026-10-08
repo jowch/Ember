@@ -38,6 +38,7 @@ new_accumulator <- function(read_file, file, stack) {
   acc$extra_sourced <- list()
   acc$extra_notes <- list()
   acc$method_rows <- list()
+  acc$no_formals <- character()
   acc$extra_methods <- list()
   acc
 }
