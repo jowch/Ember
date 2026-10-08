@@ -111,6 +111,19 @@ default_r_info <- function() {
       platform = R.version$platform)
 }
 
+#' The release-list slot a session starts with: `"ready"` from
+#' `options$bioc_releases` (a `parse_bioc_config()` table; tests pass the
+#' fixture copy), `"failed"` when `options$repos` turns the lookup off,
+#' else `"unknown"` until the session meets Bioconductor.
+releases_slot_for <- function(options) {
+  if (!is.null(options$bioc_releases)) return(new_releases_slot("ready", options$bioc_releases))
+  url <- options$repos$bioc_config
+  if (is.null(url) || is.na(url)) {
+    return(new_releases_slot("failed", message = "the release lookup is off (ember_repos(bioc_config = NA))"))
+  }
+  new_releases_slot()
+}
+
 new_state <- function(file, path, id, options, at) {
   if (is.null(options)) options <- list()
   if (is.null(options$grace)) options$grace <- 3
@@ -168,7 +181,8 @@ new_state <- function(file, path, id, options, at) {
   }
 
   wanted <- wanted_packages(graph, file$header)
-  packages <- new_packages_state(file$lock, wanted, options$r, options$cache)
+  packages <- new_packages_state(file$lock, wanted, options$r, options$cache, file$header,
+                                 releases_slot_for(options))
 
   structure(list(
     id = id, path = path, read_only = isTRUE(file$read_only),

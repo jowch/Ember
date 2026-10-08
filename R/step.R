@@ -181,6 +181,8 @@ reduce <- function(state, event) {
     cancel_preview   = reduce_cancel_preview(state, event),
     index_fetched    = reduce_index_fetched(state, event),
     index_failed     = reduce_index_failed(state, event),
+    bioc_releases_fetched = reduce_bioc_releases_fetched(state, event),
+    bioc_releases_failed  = reduce_bioc_releases_failed(state, event),
     library_checked  = reduce_library_checked(state, event),
     install_progress = reduce_install_progress(state, event),
     install_done     = reduce_install_done(state, event),
@@ -893,6 +895,18 @@ reduce_run <- function(state, event) {
   failed_keys <- Filter(function(k) identical(state$packages$indexes[[k]]$status, "failed"),
                         names(state$packages$indexes))
   for (k in failed_keys) state$packages$indexes[[k]] <- NULL
+  # So is Bioconductor's release list, and a Bioconductor move that failed
+  # (an index fetch) is proposed again.
+  if (identical(state$packages$bioc_releases$status, "failed") &&
+      !is.null(state$options$repos$bioc_config) && !is.na(state$options$repos$bioc_config)) {
+    state$packages$bioc_releases <- new_releases_slot()
+    state$packages$resolved_for <- character()  # resolve again with it
+  }
+  prop <- state$packages$proposal
+  if (!is.null(prop) && identical(prop$kind, "bioc") && identical(prop$status, "failed")) {
+    state$packages$proposal <- NULL
+    state$packages$bioc_move_tried <- FALSE
+  }
   runnable_ids <- Filter(function(i) cell_runs(state$cells[[i]]), names(state$cells))
   ids <- event$ids %||% runnable_ids
   ids <- ids[ids %in% names(state$cells)]
@@ -987,6 +1001,9 @@ reduce_shutdown <- function(state, event) {
                      names(state$packages$indexes))
   for (k in fetching) {
     effects <- c(effects, list(fx_cancel_fetch_index(k, repo_url(state$options$repos, k))))
+  }
+  if (identical(state$packages$bioc_releases$status, "fetching")) {
+    effects <- c(effects, list(fx_cancel_fetch_bioc_config(state$options$repos$bioc_config)))
   }
   effects <- c(effects, list(fx_close()))
   state$closed <- TRUE

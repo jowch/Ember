@@ -202,7 +202,7 @@ Behind that sit detection, resolution, index caching, library naming, installs, 
    - `[sources]` GitHub as one-row indexes
    - the install plan job: download size and consent, compilers, system requirements
    - disk use
-   - R minor version change with a Bioconductor pin
+   - R minor version change with a Bioconductor pin: built, see [Bioconductor](#bioconductor)
 3. **Release dates:** crandb, `preview_update()` for per-package update and pinning.
 
 ### Bioconductor
@@ -223,10 +223,23 @@ not.
 - **Which release.** Each release is built for one R minor version, and
   each R minor version gets two (spring and autumn). The release is the
   latest one for the running R that was out by the snapshot date
-  (`bioc_release_for()`, from the table `bioc_releases` in resolve.R, which
-  gets a row at each release). An R the table doesn't know, or a date
-  before that R's first release, has no Bioconductor keys: its packages are
-  `not_found`, next to a `bioc_unavailable` row that says why.
+  (`bioc_release_for()`, from the release list below). An R the list
+  doesn't know, or a date before that R's first release, has no
+  Bioconductor keys: its packages are `not_found`, next to a
+  `bioc_unavailable` row that says why.
+- **The release list** comes from bioconductor.org's `config.yaml`, the
+  map BiocManager reads (`ember_repos(bioc_config)`, parsed by
+  `parse_bioc_config()`); Ember ships no copy, so a new release needs no
+  code change. A session fetches it once, when it first meets
+  Bioconductor (a name CRAN lacks, or a lock holding a `Bioc` entry), and
+  resolution waits for it as for an index. The shell keeps the last list
+  fetched in the cache and reuses it for a day; when a fetch fails it
+  falls back to that copy however old, since releases are only ever
+  added, so a notebook that resolved before still resolves while
+  bioconductor.org is down. With no copy at all, a
+  `bioc_releases_unavailable` row says so, and running asks again. A
+  CRAN-only notebook never fetches it. Tests use a checked-in copy
+  (`fixtures/bioc-config`).
 - **Fetched only when needed.** `needed_repos()` is CRAN's key, then the
   three Bioconductor keys. `schedule_packages()` fetches only CRAN's up
   front; `resolve_lock()` asks for the rest through `fetch` when a name
@@ -243,7 +256,7 @@ not.
   only if a name still needs it.
 - **The pin.** `header$bioc_version` is set to the release used once the
   lock holds a `Bioc` entry, and cleared when it holds none. A pinned
-  release is kept on every later resolution, even on another R; then
+  release is kept on every later resolution; on another R,
   `bioc_r_version` says the release was built for a different R.
   `bioc_off_date` says the snapshot date is outside the release's window
   (from its release to the next).
@@ -251,12 +264,28 @@ not.
   release for the running R at that date, so "update all" moves
   Bioconductor packages too, and the proposal carries the new pin. When
   the lock holds Bioconductor packages and the new date has no usable
-  Bioconductor index (a fetch failed, or Ember knows no release for this R
+  Bioconductor index (a fetch failed, or Bioconductor has no release for this R
   at that date), the proposal fails rather than dropping them from the
   lock. A notebook without any resolves without the failed index.
+- **A new R minor version** (design.md, "R itself"). Package Manager
+  builds a release's binaries only for its own R, so keeping a pin on
+  another R builds every Bioconductor package from source. In safe
+  preview, `bioc_r_version` says where running will move the pin
+  (`bioc_move_target()`: the release for the running R at the notebook's
+  date) and that it updates every Bioconductor package. Running the
+  notebook, which also records the new R, proposes the move
+  (`propose_bioc_move()`, a proposal of kind `"bioc"`): it re-resolves
+  only the Bioconductor packages at the same date (`resolve_lock(mode =
+  "bioc")`, CRAN entries kept) and applies itself, restarting R if a
+  loaded package changes. The old pin's library isn't installed while the
+  move is pending. With no release for the running R at that date, the
+  pin stays and the row says so; moving the date (which moves the pin to
+  that date's release) is the way out. A move whose index can't be
+  fetched keeps the pin, shows a `bioc_move_failed` row, lets the old
+  library install, and is proposed again on the next run.
 
-Not built: the R-version change flow with a pin (design.md, "R itself"),
-asking before large downloads, compiler and system-library checks.
+Not built: asking before large downloads, compiler and system-library
+checks.
 
 ## Where the direction strains
 

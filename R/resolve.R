@@ -10,17 +10,23 @@
 
 #' Where indexes and packages come from: base URLs, without dates.
 #'
-#' `ember_repos(cran, bioc)`. The default is the public Posit Package
-#' Manager; an institution's own Package Manager, or a `file://` folder laid
-#' out the same way, can replace it. The `file://` form is the test seam:
-#' `fixtures/repos/cran/2026-09-01/src/contrib/PACKAGES` is read by exactly
-#' the code that reads PPM, so tests exercise the real path with no network
-#' and no mock (R's own `available.packages()` and renv both accept
-#' `file://` repositories).
+#' `ember_repos(cran, bioc, bioc_config)`. The default is the public Posit
+#' Package Manager; an institution's own Package Manager, or a `file://`
+#' folder laid out the same way, can replace it. The `file://` form is the
+#' test seam: `fixtures/repos/cran/2026-09-01/src/contrib/PACKAGES` is read
+#' by exactly the code that reads PPM, so tests exercise the real path with
+#' no network and no mock (R's own `available.packages()` and renv both
+#' accept `file://` repositories).
+#'
+#' `bioc_config` is where Bioconductor's list of releases comes from
+#' (`parse_bioc_config()`): bioconductor.org's own `config.yaml`, or a
+#' `file://` copy. `NA` turns the lookup off, and with it Bioconductor.
 #' @export
 ember_repos <- function(cran = "https://packagemanager.posit.co/cran",
-                        bioc = "https://packagemanager.posit.co/bioconductor") {
-  structure(list(cran = sub("/+$", "", cran), bioc = sub("/+$", "", bioc)),
+                        bioc = "https://packagemanager.posit.co/bioconductor",
+                        bioc_config = "https://bioconductor.org/config.yaml") {
+  structure(list(cran = sub("/+$", "", cran), bioc = sub("/+$", "", bioc),
+                 bioc_config = bioc_config),
             class = "ember_repos")
 }
 
@@ -83,25 +89,62 @@ repo_urls <- function(repos, header) {
 
 # ---- Bioconductor releases ---------------------------------------------------
 
-#' Bioconductor's releases: each is built for one R minor version, and each
-#' R minor version gets two (spring and autumn). From
-#' https://bioconductor.org/about/release-announcements/; add a row at each
-#' release. `released` is the announcement date.
-bioc_releases <- data.frame(
-  version = c("3.13", "3.14", "3.15", "3.16", "3.17", "3.18", "3.19", "3.20",
-              "3.21", "3.22", "3.23"),
-  r = c("4.1", "4.1", "4.2", "4.2", "4.3", "4.3", "4.4", "4.4", "4.5", "4.5", "4.6"),
-  released = as.Date(c("2021-05-20", "2021-10-27", "2022-04-27", "2022-11-02",
-                       "2023-04-26", "2023-10-25", "2024-05-01", "2024-10-30",
-                       "2025-04-16", "2025-10-30", "2026-04-29")),
-  stringsAsFactors = FALSE)
+#' Bioconductor's releases come from bioconductor.org's own list
+#' (`ember_repos(bioc_config)`, `parse_bioc_config()`): each is built for
+#' one R minor version, and each R minor version gets two (spring and
+#' autumn). Ember ships no copy; a session fetches it when it first meets
+#' Bioconductor, and the shell keeps the last one fetched on disk
+#' (library.R), so a notebook that has resolved before still does while
+#' bioconductor.org is down. `releases` below is that list, a data frame
+#' `version`, `r`, `released` (the announcement date) in release order;
+#' `empty_bioc_releases()` before it arrives.
+empty_bioc_releases <- function() {
+  data.frame(version = character(), r = character(), released = as.Date(character()),
+             stringsAsFactors = FALSE)
+}
+
+#' Bioconductor's release list from the lines of its site's `config.yaml`
+#' (https://bioconductor.org/config.yaml, the file BiocManager reads for
+#' the same purpose): a data frame like `empty_bioc_releases()`, one row per
+#' version that has both an R version (`r_ver_for_bioc_ver`) and a release
+#' date (`release_dates`). The devel version has the former but not yet
+#' the latter, so it is left out until it is released.
+#'
+#' Only those two flat maps are read, line by line, as BiocManager does,
+#' so this needs no YAML parser. A line that doesn't parse is skipped; a
+#' file with neither map gives no rows.
+parse_bioc_config <- function(lines) {
+  section <- function(name) {
+    start <- grep(paste0("^", name, ":"), lines)
+    if (length(start) == 0) return(character())
+    rest <- lines[-seq_len(start[[1]])]
+    # The map ends at the next line that is neither indented, blank nor a
+    # comment: the next top-level key.
+    end <- grep("^[^[:space:]#]", rest)
+    if (length(end) > 0) rest <- rest[seq_len(end[[1]] - 1)]
+    m <- regmatches(rest, regexec(
+      "^[[:space:]]+[\"']?([0-9]+\\.[0-9]+)[\"']?[[:space:]]*:[[:space:]]*[\"']?([^\"'#[:space:]]+)", rest))
+    m <- Filter(function(x) length(x) == 3, m)
+    stats::setNames(vapply(m, `[[`, character(1), 3), vapply(m, `[[`, character(1), 2))
+  }
+  r <- section("r_ver_for_bioc_ver")
+  dates <- section("release_dates")
+  version <- intersect(names(r), names(dates))
+  released <- as.Date(dates[version], format = "%m/%d/%Y")
+  ok <- !is.na(released) & grepl("^[0-9]+\\.[0-9]+$", r[version])
+  out <- data.frame(version = version[ok], r = unname(r[version][ok]), released = unname(released[ok]),
+                    stringsAsFactors = FALSE)
+  out <- out[order(out$released), , drop = FALSE]
+  rownames(out) <- NULL
+  out
+}
 
 #' The Bioconductor release a notebook on R `minor` resolves from at
 #' `date`: the latest release for that R that was out by then. `NA` when
-#' Ember knows no release for that R, or none was out yet at `date` (its
+#' `releases` has no release for that R, or none was out yet at `date` (its
 #' dated repository wouldn't exist); `bioc_unavailable_problem()` says so.
-bioc_release_for <- function(minor, date) {
-  rows <- bioc_releases[bioc_releases$r == minor, , drop = FALSE]
+bioc_release_for <- function(minor, date, releases) {
+  rows <- releases[releases$r == minor, , drop = FALSE]
   if (nrow(rows) == 0 || is.na(date)) return(NA_character_)
   out <- rows[rows$released <= as.Date(date), , drop = FALSE]
   if (nrow(out) == 0) NA_character_ else out$version[[nrow(out)]]
@@ -116,37 +159,60 @@ bioc_unavailable_problem <- function(needed, problems, header, r) {
     return(empty_package_problems())
   }
   package_problem("bioc_unavailable", NA_character_, sprintf(
-    "Ember knows no Bioconductor release for R %s at %s, so Bioconductor packages can't be found",
+    "Bioconductor has no release for R %s at %s, so Bioconductor packages can't be found",
     r$minor, header$snapshot))
 }
 
 #' The Bioconductor release a notebook uses: the header's pin when it has
 #' one, otherwise the one for the running R at the snapshot date.
-bioc_release_of <- function(header, r) {
+bioc_release_of <- function(header, r, releases) {
   if (!is.na(header$bioc_version)) return(header$bioc_version)
-  bioc_release_for(r$minor, header$snapshot)
+  bioc_release_for(r$minor, header$snapshot, releases)
+}
+
+#' Where a pinned notebook moves on the running R (design.md, "R itself"):
+#' the release for `r` at the snapshot date when the pin was built for
+#' another R minor version, since Package Manager builds a release's
+#' binaries only for its own R. `NA` when there is nothing to move (no pin,
+#' a pin `releases` doesn't know, or one built for this R) or nowhere to
+#' move to (no release for this R at that date).
+bioc_move_target <- function(header, r, releases) {
+  pin <- header$bioc_version
+  if (is.na(pin)) return(NA_character_)
+  row <- match(pin, releases$version)
+  if (is.na(row) || identical(releases$r[[row]], r$minor)) return(NA_character_)
+  bioc_release_for(r$minor, header$snapshot, releases)
 }
 
 #' Problems with the header's Bioconductor pin, as `package_problem()`
 #' rows: `"bioc_r_version"` when the release was built for another R than
-#' the running one, `"bioc_off_date"` when the snapshot date falls outside
-#' the release's window (from its release to the next one), since those
-#' CRAN and Bioconductor versions were never tested together. None without
-#' a pin, or for a release Ember doesn't know.
-bioc_problems <- function(header, r) {
+#' the running one (and where running the notebook moves it, if anywhere:
+#' `bioc_move_target()`), `"bioc_off_date"` when the snapshot date falls
+#' outside the release's window (from its release to the next one), since
+#' those CRAN and Bioconductor versions were never tested together. None
+#' without a pin, or for a release `releases` doesn't know.
+bioc_problems <- function(header, r, releases) {
   out <- empty_package_problems()
   v <- header$bioc_version
   if (is.na(v)) return(out)
-  row <- match(v, bioc_releases$version)
+  row <- match(v, releases$version)
   if (is.na(row)) return(out)
-  if (!identical(bioc_releases$r[[row]], r$minor)) {
-    out <- rbind(out, package_problem("bioc_r_version", NA_character_, sprintf(
-      "Bioconductor %s is built for R %s; this is R %s", v, bioc_releases$r[[row]], r$minor)))
+  if (!identical(releases$r[[row]], r$minor)) {
+    target <- bioc_move_target(header, r, releases)
+    then <- if (is.na(target)) {
+      sprintf(paste0("; Bioconductor has no release for R %s at %s, so it stays on %s, ",
+                     "and its packages build from source"), r$minor, header$snapshot, v)
+    } else {
+      sprintf("; running the notebook moves it to Bioconductor %s, which updates every Bioconductor package",
+              target)
+    }
+    out <- rbind(out, package_problem("bioc_r_version", NA_character_, paste0(sprintf(
+      "Bioconductor %s is built for R %s; this is R %s", v, releases$r[[row]], r$minor), then)))
   }
   if (!is.na(header$snapshot)) {
     date <- as.Date(header$snapshot)
-    from <- bioc_releases$released[[row]]
-    to <- if (row < nrow(bioc_releases)) bioc_releases$released[[row + 1]] else as.Date(Inf)
+    from <- releases$released[[row]]
+    to <- if (row < nrow(releases)) releases$released[[row + 1]] else as.Date(Inf)
     if (date < from || date >= to) {
       out <- rbind(out, package_problem("bioc_off_date", NA_character_, sprintf(
         "the snapshot date %s is outside Bioconductor %s's release (%s to %s)", header$snapshot,
@@ -269,7 +335,9 @@ cell_packages <- function(graph, id) {
 #'   fetched yet.
 #' @param mode `"keep"`: entries already in `lock` stay at exactly their
 #'   version (adding a package never moves another one). `"fresh"`: every
-#'   version comes from `indexes` (a date move).
+#'   version comes from `indexes` (a date move). `"bioc"`: CRAN and other
+#'   entries are kept as in `"keep"`, Bioconductor's come from `indexes`
+#'   (a move to another Bioconductor release at the same date).
 #' @return `ember_resolution`:
 #'   * `lock`: the new lock (`lock` itself, untouched, when not `complete`);
 #'   * `complete`: `TRUE` when every name was settled with the indexes at
@@ -315,9 +383,10 @@ cell_packages <- function(graph, id) {
 #'
 #' Cost: one `match()` per name against a sorted 22k vector; a closure of
 #' 100 packages is a few ms (estimate).
-resolve_lock <- function(roots, lock, indexes, needed, mode = c("keep", "fresh")) {
+resolve_lock <- function(roots, lock, indexes, needed, mode = c("keep", "fresh", "bioc")) {
   mode <- match.arg(mode)
-  locked <- if (identical(mode, "keep")) lock$entries else lock$entries[0, ]
+  locked <- switch(mode, keep = lock$entries, fresh = lock$entries[0, ],
+                   bioc = lock$entries[lock$entries$source != "Bioc", , drop = FALSE])
   # Unlike `locked`, `orig` is the previous lock's entries in *every* mode,
   # including "fresh": a date move resolves every package as if it weren't
   # locked (so its version can move), but an entry whose resolved version
@@ -441,12 +510,18 @@ empty_package_problems <- function() {
 #' CRAN (`resolve_lock()` asks for them through `fetch`), so a CRAN-only
 #' notebook never downloads a Bioconductor index. `[sources]` GitHub keys
 #' (later) go first.
-needed_repos <- function(header, r) {
+needed_repos <- function(header, r, releases) {
   cran <- repo_key("cran", header$snapshot)
-  release <- bioc_release_of(header, r)
+  release <- bioc_release_of(header, r, releases)
   if (is.na(release)) return(cran)
   c(cran, vapply(names(bioc_kinds), function(k) repo_key(k, header$snapshot, release),
                  character(1), USE.NAMES = FALSE))
+}
+
+#' `TRUE` for each of `keys` that is one of Bioconductor's.
+is_bioc_key <- function(keys) {
+  vapply(keys, function(k) strsplit(k, "/", fixed = TRUE)[[1]][[1]] %in% names(bioc_kinds),
+         logical(1), USE.NAMES = FALSE)
 }
 
 #' The Bioconductor release a list of repo keys names, or `NA`.

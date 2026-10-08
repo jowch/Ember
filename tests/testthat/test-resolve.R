@@ -130,6 +130,9 @@ bioc_fixture <- function(kind, release = "3.23", date = "2026-09-01") {
     key = repo_key(kind, date, release), label = "Bioc")
 }
 r46 <- list(version = "4.6.1", minor = "4.6", platform = "x86_64-pc-linux-gnu")
+#' Bioconductor's release list as bioconductor.org served it on 2026-10-08.
+rel <- parse_bioc_config(readLines(testthat::test_path("fixtures", "bioc-config", "config.yaml"),
+                                   warn = FALSE))
 header_at <- function(snapshot, bioc_version = NA_character_) {
   new_header(ember_version = "0.1.0", r_version = "4.6.1", snapshot = snapshot,
              bioc_version = bioc_version)
@@ -154,25 +157,25 @@ test_that("repo_urls lists the three Bioconductor repositories only with a pin (
 })
 
 test_that("the release is the latest one for the running R out by the snapshot date (79)", {
-  expect_equal(bioc_release_for("4.5", "2025-09-01"), "3.21")
-  expect_equal(bioc_release_for("4.5", "2025-10-30"), "3.22")
-  expect_equal(bioc_release_for("4.5", "2026-09-01"), "3.22")
+  expect_equal(bioc_release_for("4.5", "2025-09-01", rel), "3.21")
+  expect_equal(bioc_release_for("4.5", "2025-10-30", rel), "3.22")
+  expect_equal(bioc_release_for("4.5", "2026-09-01", rel), "3.22")
   # Before R 4.6's first release no dated repository exists yet.
-  expect_true(is.na(bioc_release_for("4.6", "2026-03-01")))
-  expect_true(is.na(bioc_release_for("9.9", "2026-09-01")))
-  expect_true(is.na(bioc_release_for("4.6", NA_character_)))
+  expect_true(is.na(bioc_release_for("4.6", "2026-03-01", rel)))
+  expect_true(is.na(bioc_release_for("9.9", "2026-09-01", rel)))
+  expect_true(is.na(bioc_release_for("4.6", NA_character_, rel)))
 })
 
 test_that("needed_repos is CRAN, then Bioconductor's three at the pin or the derived release (79)", {
-  expect_equal(needed_repos(header_at("2026-09-01"), r46),
+  expect_equal(needed_repos(header_at("2026-09-01"), r46, rel),
               c("cran/2026-09-01", "bioc/2026-09-01/3.23", "bioc-ann/2026-09-01/3.23",
                 "bioc-exp/2026-09-01/3.23"))
-  expect_equal(needed_repos(header_at("2026-09-01", "3.22"), r46)[[2]], "bioc/2026-09-01/3.22")
-  expect_equal(needed_repos(header_at("2026-09-01"), list(minor = "9.9")), "cran/2026-09-01")
+  expect_equal(needed_repos(header_at("2026-09-01", "3.22"), r46, rel)[[2]], "bioc/2026-09-01/3.22")
+  expect_equal(needed_repos(header_at("2026-09-01"), list(minor = "9.9"), rel), "cran/2026-09-01")
 })
 
 test_that("a name missing from CRAN asks for the Bioconductor indexes, then resolves there with source Bioc (26)", {
-  needed <- needed_repos(header_at("2026-09-01"), r46)
+  needed <- needed_repos(header_at("2026-09-01"), r46, rel)
   r <- resolve_lock("DESeq2", empty_lock(), list("cran/2026-09-01" = idx1), needed = needed)
   expect_false(r$complete)
   expect_equal(r$fetch, needed[-1])
@@ -186,7 +189,7 @@ test_that("a name missing from CRAN asks for the Bioconductor indexes, then reso
 })
 
 test_that("a CRAN package needing an annotation package resolves it from the annotation repository (80)", {
-  needed <- needed_repos(header_at("2026-09-01"), r46)
+  needed <- needed_repos(header_at("2026-09-01"), r46, rel)
   idx <- list(idx1, bioc_fixture("bioc"), bioc_fixture("bioc-ann"), bioc_fixture("bioc-exp"))
   names(idx) <- needed
   r <- resolve_lock("wgcna", empty_lock(), idx, needed = needed)
@@ -197,10 +200,70 @@ test_that("a CRAN package needing an annotation package resolves it from the ann
 })
 
 test_that("bioc_problems flags a release built for another R and a date outside its window (81)", {
-  expect_equal(nrow(bioc_problems(header_at("2026-09-01"), r46)), 0)
-  expect_equal(nrow(bioc_problems(header_at("2026-09-01", "3.23"), r46)), 0)
-  p <- bioc_problems(header_at("2026-09-01", "3.22"), r46)
+  expect_equal(nrow(bioc_problems(header_at("2026-09-01"), r46, rel)), 0)
+  expect_equal(nrow(bioc_problems(header_at("2026-09-01", "3.23"), r46, rel)), 0)
+  p <- bioc_problems(header_at("2026-09-01", "3.22"), r46, rel)
   expect_setequal(p$kind, c("bioc_r_version", "bioc_off_date"))
   expect_match(p$message[p$kind == "bioc_r_version"], "built for R 4.5; this is R 4.6", fixed = TRUE)
-  expect_equal(bioc_problems(header_at("2026-03-01", "3.23"), r46)$kind, "bioc_off_date")
+  expect_equal(bioc_problems(header_at("2026-03-01", "3.23"), r46, rel)$kind, "bioc_off_date")
+})
+
+# ---- Bioconductor's release list ---------------------------------------------
+
+bioc_config_fixture <- function(name) {
+  parse_bioc_config(readLines(testthat::test_path("fixtures", "bioc-config", name), warn = FALSE))
+}
+
+test_that("parse_bioc_config reads released versions with their R and date, not the devel one", {
+  expect_named(rel, c("version", "r", "released"))
+  expect_false("3.24" %in% rel$version)  # devel: an R version but no release date yet
+  expect_equal(rel[rel$version == "3.23", "r"], "4.6")
+  expect_equal(rel[rel$version == "3.23", "released"], as.Date("2026-04-29"))
+  expect_equal(rel[rel$version == "3.13", "released"], as.Date("2021-05-20"))
+  expect_false(is.unsorted(rel$released))
+  expect_equal(tail(bioc_config_fixture("config-3.24.yaml")$version, 1), "3.24")
+  expect_equal(nrow(parse_bioc_config(c("output_dir: output", "versions:", '- "3.23"'))), 0)
+})
+
+test_that("a release Bioconductor adds is picked up from its list, with no code change", {
+  with_324 <- bioc_config_fixture("config-3.24.yaml")
+  expect_equal(bioc_release_for("4.6", "2026-11-02", with_324), "3.24")
+  expect_equal(bioc_release_for("4.6", "2026-11-02", rel), "3.23")
+  expect_equal(bioc_release_for("4.6", "2026-10-28", with_324), "3.23")
+  expect_equal(needed_repos(header_at("2026-11-02"), r46, with_324)[[2]], "bioc/2026-11-02/3.24")
+  # 3.23's window now ends where 3.24 starts.
+  expect_equal(bioc_problems(header_at("2026-11-02", "3.23"), r46, with_324)$kind, "bioc_off_date")
+  # No list yet: no release, no keys, no rows.
+  expect_true(is.na(bioc_release_for("4.6", "2026-09-01", empty_bioc_releases())))
+  expect_equal(needed_repos(header_at("2026-09-01"), r46, empty_bioc_releases()), "cran/2026-09-01")
+})
+
+test_that("bioc_move_target is the running R's release at the snapshot date, when the pin is for another R", {
+  expect_equal(bioc_move_target(header_at("2026-09-01", "3.22"), r46, rel), "3.23")
+  expect_true(is.na(bioc_move_target(header_at("2026-09-01", "3.23"), r46, rel)))
+  expect_true(is.na(bioc_move_target(header_at("2026-09-01"), r46, rel)))
+  expect_true(is.na(bioc_move_target(header_at("2026-09-01", "9.99"), r46, rel)))
+  # R 4.6's first release came after this date: nowhere to move to.
+  expect_true(is.na(bioc_move_target(header_at("2025-06-01", "3.21"), r46, rel)))
+
+  moves <- bioc_problems(header_at("2026-09-01", "3.22"), r46, rel)
+  expect_match(moves$message[moves$kind == "bioc_r_version"],
+               "running the notebook moves it to Bioconductor 3.23, which updates every Bioconductor package",
+               fixed = TRUE)
+  stays <- bioc_problems(header_at("2025-06-01", "3.21"), r46, rel)
+  expect_match(stays$message[stays$kind == "bioc_r_version"],
+               "no release for R 4.6 at 2025-06-01, so it stays on 3.21", fixed = TRUE)
+})
+
+test_that("mode bioc re-resolves Bioconductor packages and keeps everything else locked", {
+  needed <- needed_repos(header_at("2026-09-01", "3.23"), r46, rel)
+  idx <- list(idx1, bioc_fixture("bioc"), bioc_fixture("bioc-ann"), bioc_fixture("bioc-exp"))
+  names(idx) <- needed
+  old <- new_lock(c("DESeq2", "S4Vectors", "cli"), c("1.48.0", "0.46.0", "3.6.4"),
+                  c("Bioc", "Bioc", "CRAN"))
+  r <- resolve_lock("DESeq2", old, idx, needed = needed, mode = "bioc")
+  expect_true(r$complete)
+  expect_equal(format_lock_lines(r$lock),
+               c("DESeq2 1.50.0 Bioc", "S4Vectors 0.48.0 Bioc", "cli 3.6.4 CRAN"))
+  expect_equal(r$problems$kind, "off_date")  # cli: kept, as "keep" would
 })

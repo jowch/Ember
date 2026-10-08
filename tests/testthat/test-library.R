@@ -427,3 +427,47 @@ test_that("a lock entry renv skipped because R already has that version is copie
   # A different version is renv's to install, not ours to copy.
   expect_false(dir.exists(file.path(staging, "lattice")))
 })
+
+# ---- Bioconductor's release list ---------------------------------------------
+
+bioc_config_url <- function(name = "config.yaml") {
+  paste0("file://", normalizePath(testthat::test_path("fixtures", "bioc-config", name)))
+}
+
+test_that("the release-list job fetches, parses and caches bioconductor.org's config.yaml", {
+  cache <- tempfile("ember-bioc-config-test-"); dir.create(cache)
+  url <- bioc_config_url("config-3.24.yaml")
+  expect_null(cached_bioc_config(url, cache))
+  cmd <- bioc_config_fetch_command(url, cache)
+  out <- processx::run(cmd$command, cmd$args, error_on_status = FALSE)
+  expect_identical(out$status, 0L)
+  hit <- cached_bioc_config(url, cache)
+  expect_equal(tail(hit$table$version, 1), "3.24")
+  # Another URL is another cache entry.
+  expect_null(cached_bioc_config(bioc_config_url(), cache))
+})
+
+test_that("a cached release list is used for a day; an older one only as a fallback", {
+  cache <- tempfile("ember-bioc-config-test-"); dir.create(cache)
+  url <- bioc_config_url()
+  fetch_bioc_config_main(url, bioc_config_rds_path(url, cache))
+  expect_false(is.null(cached_bioc_config(url, cache)))
+  path <- bioc_config_rds_path(url, cache)
+  old <- readRDS(path)
+  old$fetched_at <- Sys.time() - 2 * bioc_config_max_age
+  saveRDS(old, path)
+  expect_null(cached_bioc_config(url, cache))
+  expect_equal(cached_bioc_config(url, cache, max_age = Inf)$table, old$table)
+})
+
+test_that("a release-list fetch fails on a missing file and on a file with no releases in it", {
+  cache <- tempfile("ember-bioc-config-test-"); dir.create(cache)
+  missing <- paste0("file://", file.path(cache, "nope.yaml"))
+  expect_error(fetch_bioc_config_main(missing, bioc_config_rds_path(missing, cache)),
+               "could not fetch Bioconductor's release list")
+  other <- paste0("file://", normalizePath(testthat::test_path("fixtures", "repos", "cran", "2026-09-01",
+                                                               "src", "contrib", "PACKAGES")))
+  expect_error(fetch_bioc_config_main(other, bioc_config_rds_path(other, cache)),
+               "no Bioconductor releases found")
+  expect_false(file.exists(bioc_config_rds_path(other, cache)))
+})

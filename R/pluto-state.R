@@ -920,7 +920,7 @@ project_ember <- function(state, ctx) {
   if (is.na(packages$bioc_version)) packages$bioc_version <- NULL
   if (is.na(packages$library$message)) packages$library$message <- NULL
 
-  if (!is.null(pv$proposal) && isTRUE(pv$proposal$apply)) {
+  if (!is.null(pv$proposal) && isTRUE(pv$proposal$apply) && identical(pv$proposal$kind, "date")) {
     ui_status <- switch(pv$proposal$status, fetching = "checking", pv$proposal$status)
     packages$update <- list(date = pv$proposal$date, status = ui_status,
                             restart = as_arr(pv$proposal$restart %||% character()),

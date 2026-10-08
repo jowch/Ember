@@ -430,6 +430,30 @@ run_effect <- function(nb, fx) {
           })
       }
     },
+    fetch_bioc_config = {
+      cache <- nb$state$options$cache
+      hit <- tryCatch(cached_bioc_config(fx$url, cache), error = function(e) NULL)
+      if (!is.null(hit)) {
+        enqueue(nb, ev_bioc_releases_fetched(hit$table, at = Sys.time()))
+      } else {
+        job_start(bioc_config_job_key(fx$url, cache), bioc_config_fetch_command(fx$url, cache), nb,
+          make_progress = function(line) NULL,
+          make_done = function(status, output) {
+            # A failed fetch falls back to the last list fetched, however
+            # old: releases are only ever added, so it still resolves every
+            # notebook it resolved before.
+            max_age <- if (identical(status, 0L)) bioc_config_max_age else Inf
+            hit <- tryCatch(cached_bioc_config(fx$url, cache, max_age = max_age), error = function(e) NULL)
+            if (!is.null(hit)) {
+              ev_bioc_releases_fetched(hit$table, at = Sys.time())
+            } else {
+              ev_bioc_releases_failed(sprintf(paste(
+                "couldn't fetch Bioconductor's release list from %s,",
+                "and there is no copy from an earlier fetch"), fx$url), at = Sys.time())
+            }
+          })
+      }
+    },
     check_library = {
       touch_library(fx$path)
       manifest <- tryCatch(read_library_manifest(fx$path), error = function(e) NULL)
@@ -461,6 +485,9 @@ run_effect <- function(nb, fx) {
     },
     cancel_install = {
       job_leave(fx$path, nb)
+    },
+    cancel_fetch_bioc_config = {
+      job_leave(bioc_config_job_key(fx$url, nb$state$options$cache), nb)
     },
     cancel_fetch_index = {
       job_leave(index_job_key(fx$key, fx$url, nb$state$options$cache), nb)

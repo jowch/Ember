@@ -29,9 +29,17 @@ pkg_file <- function(cells, snapshot = "2026-09-01",
     lock = lock, extra_blocks = list(), format = 1L, read_only = FALSE, problems = NULL)
 }
 
+#' Bioconductor's release list as bioconductor.org served it on 2026-10-08.
+fixture_releases <- function(name = "config.yaml") {
+  parse_bioc_config(readLines(testthat::test_path("fixtures", "bioc-config", name), warn = FALSE))
+}
+
 #' A fresh session state with package-related fields, otherwise like
-#' `fake_state()`.
+#' `fake_state()`. It starts with the fixture release list unless a test
+#' passes its own `repos`; the tests below "Bioconductor's release list"
+#' cover fetching it.
 pkg_state <- function(cells, ..., options = list(), at = 0) {
+  if (is.null(options$repos)) options$bioc_releases <- options$bioc_releases %||% fixture_releases()
   file <- pkg_file(cells, ...)
   new_state(file, path = "nb.R", id = "n1", options = options, at = at)
 }
@@ -984,7 +992,7 @@ test_that("a date move on an R with no known Bioconductor release fails instead 
   r <- drive(r$state, ev_preview_date("2026-09-30", at(2)))
   r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(3)))
   expect_equal(r$state$packages$proposal$status, "failed")
-  expect_match(r$state$packages$proposal$message, "no Bioconductor release for R 4.7", fixed = TRUE)
+  expect_match(r$state$packages$proposal$message, "Bioconductor has no release for R 4.7", fixed = TRUE)
   expect_equal(r$state$file$header$bioc_version, "3.23")
 })
 
@@ -1040,4 +1048,187 @@ test_that("a date move keeps Bioconductor packages, and fails rather than droppi
   bad <- drive(r$state, ev_index_failed("bioc/2026-09-30/3.23", "network down", at(9)))
   expect_equal(bad$state$packages$proposal$status, "failed")
   expect_match(bad$state$packages$proposal$message, "network down", fixed = TRUE)
+})
+
+# ---- Bioconductor's release list -----------------------------------------------
+
+#' Repos with the release-list lookup on and no list yet. The URL only
+#' names the effect: the shell's job is stood in for by
+#' `ev_bioc_releases_fetched/failed`.
+lookup_repos <- ember_repos(bioc_config = "file:///fixtures/config.yaml")
+#' Open with no release list and deliver CRAN's index at `date` (the
+#' 2026-09-30 fixture standing in for any date).
+open_without_list <- function(code, date = "2026-11-02", lock = empty_lock(),
+                              bioc_version = NA_character_) {
+  s <- pkg_state(list(S = cell(""), A = cell(code)), options = list(r = r46, repos = lookup_repos),
+                 snapshot = date, lock = lock, bioc_version = bioc_version)
+  r <- drive(s, ev_open(at(1)))
+  cran <- read_repo_index(testthat::test_path("fixtures", "repos", "cran", "2026-09-30", "src", "contrib",
+                                              "PACKAGES"), key = repo_key("cran", date), label = "CRAN")
+  drive(r$state, ev_index_fetched(repo_key("cran", date), cran, at(2)))
+}
+
+test_that("the first Bioconductor name fetches the release list before any index, and a new release needs no code change", {
+  r <- open_without_list("library(DESeq2)")
+  expect_equal(effect_types(r), "fetch_bioc_config")
+  expect_equal(find_effect(r, "fetch_bioc_config")$url, "file:///fixtures/config.yaml")
+  expect_equal(r$state$packages$bioc_releases$status, "fetching")
+  # Cells naming it wait for the list as they would for an index.
+  expect_equal(waiting_cells(r$state)$A, "DESeq2")
+
+  r <- drive(r$state, ev_bioc_releases_fetched(fixture_releases("config-3.24.yaml"), at(3)))
+  expect_setequal(vapply(r$effects, function(e) e$key, character(1)),
+                  c("bioc/2026-11-02/3.24", "bioc-ann/2026-11-02/3.24", "bioc-exp/2026-11-02/3.24"))
+  r <- deliver_bioc(r$state, release = "3.24", date = "2026-11-02", t = 4)
+  expect_equal(r$state$file$header$bioc_version, "3.24")
+  expect_false("fetch_bioc_config" %in% effect_types(r))  # once a session
+})
+
+test_that("with no release list at all, Bioconductor names are not found and the page says why; run asks again", {
+  r <- open_without_list("library(DESeq2)")
+  msg <- "couldn't fetch Bioconductor's release list from x, and there is no copy from an earlier fetch"
+  r <- drive(r$state, ev_bioc_releases_failed(msg, at(3)))
+  expect_false("fetch_index" %in% effect_types(r))
+  expect_true("DESeq2" %in% r$state$packages$problems$package)
+  view <- packages_view(r$state)
+  expect_equal(view$problems$message[view$problems$kind == "bioc_releases_unavailable"],
+               paste("Bioconductor packages can't be resolved:", msg))
+  expect_false("bioc_unavailable" %in% view$problems$kind)
+
+  r <- drive(r$state, ev_run(NULL, at(4)))
+  expect_true("fetch_bioc_config" %in% effect_types(r))
+})
+
+test_that("a CRAN-only notebook never fetches the release list", {
+  r <- open_without_list("library(dplyr)")
+  expect_false("fetch_bioc_config" %in% effect_types(r))
+  expect_equal(r$state$packages$bioc_releases$status, "unknown")
+})
+
+test_that("bioc_config = NA turns Bioconductor off, and says so", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")),
+                 options = list(r = r46, repos = ember_repos(bioc_config = NA)))
+  r <- open_with_cran(s)
+  expect_false("fetch_bioc_config" %in% effect_types(r))
+  expect_match(packages_view(r$state)$problems$message, "release lookup is off", fixed = TRUE, all = FALSE)
+})
+
+test_that("a reopened Bioc notebook fetches the list at open, and its pin's rows use it", {
+  lock <- new_lock(c("DESeq2", "S4Vectors", "cli"), c("1.50.0", "0.48.0", "3.6.5"),
+                   c("Bioc", "Bioc", "CRAN"))
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), snapshot = "2026-11-02",
+                 options = list(r = r46, repos = lookup_repos), lock = lock, bioc_version = "3.23")
+  r <- drive(s, ev_open(at(1)))
+  expect_equal(effect_types(r), c("fetch_bioc_config", "check_library"))
+  r <- drive(r$state, ev_bioc_releases_fetched(fixture_releases("config-3.24.yaml"), at(2)))
+  expect_true("bioc_off_date" %in% r$state$packages$problems$kind)
+})
+
+test_that("shutdown cancels a release-list fetch in flight", {
+  r <- open_without_list("library(DESeq2)")
+  r <- drive(r$state, ev_shutdown(at(3)))
+  expect_equal(find_effect(r, "cancel_fetch_bioc_config")$url, "file:///fixtures/config.yaml")
+})
+
+# ---- R minor version change with a Bioconductor pin ----------------------------
+
+#' A notebook pinned to Bioconductor 3.22 (R 4.5), opened on R 4.6 at
+#' 2026-09-01. `cli` is locked behind the date's index to show a move
+#' leaves CRAN packages alone.
+pinned_322 <- function(snapshot = "2026-09-01", bioc_version = "3.22") {
+  lock <- new_lock(c("DESeq2", "S4Vectors", "cli"), c("1.48.0", "0.46.0", "3.6.4"),
+                   c("Bioc", "Bioc", "CRAN"))
+  pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46),
+            snapshot = snapshot, lock = lock, bioc_version = bioc_version)
+}
+
+test_that("safe preview says a pin built for another R will move, and moves nothing", {
+  r <- drive(pinned_322(), ev_open(at(1)))
+  probs <- r$state$packages$problems
+  expect_match(probs$message[probs$kind == "bioc_r_version"],
+               "Bioconductor 3.22 is built for R 4.5; this is R 4.6; running the notebook moves it to Bioconductor 3.23",
+               fixed = TRUE)
+  expect_null(r$state$packages$proposal)
+  expect_equal(r$state$file$header$bioc_version, "3.22")
+  expect_false("fetch_index" %in% effect_types(r))
+})
+
+test_that("running on the new R moves the pin and the Bioconductor packages before installing anything", {
+  r <- drive(pinned_322(), ev_open(at(1)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(2)))
+  r <- drive(r$state, ev_allow(at(3)))
+  expect_equal(r$state$file$header$r_version, "4.6.1")
+  expect_equal(r$state$packages$proposal$kind, "bioc")
+  # The old pin's library would build every Bioconductor package from source.
+  expect_false("install" %in% effect_types(r))
+  expect_equal(find_effect(r, "fetch_index")$key, "cran/2026-09-01")
+
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(4)))
+  expect_setequal(vapply(Filter(function(e) identical(e$type, "fetch_index"), r$effects),
+                         function(e) e$key, character(1)),
+                  c("bioc/2026-09-01/3.23", "bioc-ann/2026-09-01/3.23", "bioc-exp/2026-09-01/3.23"))
+  expect_false("install" %in% effect_types(r))
+  r <- deliver_bioc(r$state, t = 5)
+  expect_null(r$state$packages$proposal)
+  expect_equal(r$state$file$header$bioc_version, "3.23")
+  expect_equal(format_lock_lines(r$state$file$lock),
+               c("DESeq2 1.50.0 Bioc", "S4Vectors 0.48.0 Bioc", "cli 3.6.4 CRAN"))
+  expect_false("bioc_r_version" %in% r$state$packages$problems$kind)
+
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(6)))
+  inst <- find_effect(r, "install")
+  expect_match(inst$repos[["BioCsoft"]], "/2026-09-01/packages/3.23/bioc", fixed = TRUE)
+})
+
+test_that("a move that would change a loaded package applies anyway and restarts R once installed", {
+  r <- drive(pinned_322(), ev_open(at(1)), ev_allow(at(2)))
+  r$state$worker$loaded <- c(DESeq2 = "1.48.0")
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(3)))
+  r <- deliver_bioc(r$state, t = 4)
+  expect_null(r$state$packages$proposal)
+  expect_equal(r$state$file$header$bioc_version, "3.23")
+})
+
+test_that("with no release for the new R at the notebook's date, the pin stays and installs as before", {
+  r <- drive(pinned_322(snapshot = "2025-06-01", bioc_version = "3.21"), ev_open(at(1)))
+  probs <- r$state$packages$problems
+  expect_match(probs$message[probs$kind == "bioc_r_version"], "so it stays on 3.21", fixed = TRUE)
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(2)), ev_allow(at(3)))
+  expect_null(r$state$packages$proposal)
+  expect_true("install" %in% effect_types(r))
+  expect_equal(r$state$file$header$bioc_version, "3.21")
+})
+
+test_that("a move whose index can't be fetched keeps the pin, says why, and is retried on run", {
+  r <- drive(pinned_322(), ev_open(at(1)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(2)), ev_allow(at(3)),
+             ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(4)),
+             ev_index_failed("bioc/2026-09-01/3.23", "network down", at(5)))
+  expect_equal(r$state$packages$proposal$status, "failed")
+  expect_equal(r$state$file$header$bioc_version, "3.22")
+  view <- packages_view(r$state)
+  expect_match(view$problems$message[view$problems$kind == "bioc_move_failed"], "network down", fixed = TRUE)
+  # The page's update question is only for date moves.
+  expect_equal(view$proposal$kind, "bioc")
+  # With the move given up, the old pin's library installs as it did before.
+  expect_true("install" %in% effect_types(r))
+
+  r <- drive(r$state, ev_run(NULL, at(6)))
+  expect_equal(r$state$packages$proposal$kind, "bioc")
+  expect_equal(r$state$packages$proposal$status, "fetching")
+})
+
+test_that("a pinned notebook waits for the release list before deciding a move", {
+  lock <- new_lock(c("DESeq2", "S4Vectors"), c("1.50.0", "0.48.0"), c("Bioc", "Bioc"))
+  r47 <- list(version = "4.7.0", minor = "4.7", platform = "x86_64-pc-linux-gnu")
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), snapshot = "2026-11-02",
+                 options = list(r = r47, repos = lookup_repos), lock = lock, bioc_version = "3.23")
+  r <- drive(s, ev_open(at(1)), ev_allow(at(2)))
+  expect_null(r$state$packages$proposal)
+  expect_false("install" %in% effect_types(r))
+  # No release for R 4.7 in the fetched list either: no move, and the install goes ahead.
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(3)),
+             ev_bioc_releases_fetched(fixture_releases("config-3.24.yaml"), at(4)))
+  expect_null(r$state$packages$proposal)
+  expect_true("install" %in% effect_types(r))
 })

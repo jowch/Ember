@@ -36,7 +36,8 @@ clean(max_age = 60, cache = TRUE, dry_run = FALSE, dir = cache_dir(),
       now = Sys.time())
 
 ember_repos(cran = "https://packagemanager.posit.co/cran",
-            bioc = "https://packagemanager.posit.co/bioconductor")
+            bioc = "https://packagemanager.posit.co/bioconductor",
+            bioc_config = "https://bioconductor.org/config.yaml")
 
 cache_dir()
 }
@@ -74,6 +75,11 @@ for tests.}
 defaults are the public Posit Package Manager; an institution's own
 Package Manager, or a \code{file://} folder laid out the same way, can
 replace them.}
+\item{bioc_config}{Where Bioconductor's list of releases comes from, for
+\code{ember_repos()}: bioconductor.org's \code{config.yaml}, or a \code{file://} copy.
+Fetched when a notebook first needs Bioconductor and kept in \code{cache} for
+a day; the last copy fetched is used when a fetch fails. \code{NA} turns the
+lookup off, and with it Bioconductor.}
 }
 \value{
 \code{package_status()} returns a plain list, the same value as

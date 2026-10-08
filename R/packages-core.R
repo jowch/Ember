@@ -38,7 +38,14 @@
 #' * `install`: `NULL` or `list(token, key)`: the one install job this
 #'   session has running. At most one at a time, so two renv processes never
 #'   build libraries for the same notebook at once.
-#' * `proposal`: `NULL` or `ember_proposal` (a date move being previewed).
+#' * `proposal`: `NULL` or `ember_proposal` (a date move being previewed,
+#'   or a pinned notebook moving to the Bioconductor release for the
+#'   running R).
+#' * `bioc_releases`: `ember_releases_slot`, Bioconductor's release list
+#'   as this session knows it.
+#' * `bioc_move_tried`: `TRUE` once this session has proposed moving the
+#'   pin to the running R's release (`propose_bioc_move()`), so a move that
+#'   can't be made isn't proposed again on every event.
 #' * `next_token`: integer, install job tokens.
 #'
 #' Invariants (added to `check_state()`):
@@ -51,7 +58,7 @@
 #'   finishes, its result is ignored, and the next install starts).
 #' * `!allowed` implies `install` is `NULL`: nothing installs in safe
 #'   preview (design.md, Decisions).
-new_packages_state <- function(lock, wanted, r, cache) {
+new_packages_state <- function(lock, wanted, r, cache, header = NULL, releases = new_releases_slot()) {
   empty <- empty_library(r, cache)
   info <- library_for(lock, r, cache)
   target <- if (identical(info$key, empty$key)) {
@@ -64,14 +71,21 @@ new_packages_state <- function(lock, wanted, r, cache) {
                              installed = character(), exports = list())
   locked_names <- if (is.null(lock$entries) || nrow(lock$entries) == 0) character() else lock$entries$name
   resolved_for <- if (all(wanted %in% locked_names)) wanted else character()
+  # A pin built for another R is said at open, in safe preview, before
+  # running the notebook moves it (design.md, "R itself"); resolution
+  # doesn't run at open for a file Ember wrote, so nothing else would. With
+  # the release list still to fetch, `reduce_bioc_releases_fetched()` says it.
+  problems <- if (is.null(header)) empty_package_problems() else bioc_problems(header, r, releases$table)
   structure(list(
     resolved_for = resolved_for,
     indexes = list(),
-    problems = empty_package_problems(),
+    problems = problems,
     target = target,
     active = active,
     install = NULL,
     proposal = NULL,
+    bioc_releases = releases,
+    bioc_move_tried = FALSE,
     next_token = 1L,
     # Seeded with `wanted` itself (not `NULL`), computed by `new_state()`
     # from the same graph and header passed in here: an uninitialised `NULL`
@@ -91,6 +105,19 @@ new_packages_state <- function(lock, wanted, r, cache) {
 new_index_slot <- function(status, index = NULL, message = NULL, wanted = NULL) {
   structure(list(status = status, index = index, message = message, wanted = wanted),
             class = "ember_index_slot")
+}
+
+#' Bioconductor's release list as the session knows it.
+#' `status`: `"unknown"` (not fetched), `"fetching"`, `"ready"` (`table`,
+#' from `parse_bioc_config()`) or `"failed"` (`message`, said as a
+#' `bioc_releases_unavailable` row by `packages_view()`; `table` empty, so
+#' only a pinned notebook still resolves Bioconductor packages). Fetched
+#' when the session first meets Bioconductor, and again after a failure only
+#' when asked to run (`reduce_run()`). `new_state()` starts it `"ready"`
+#' from `options$bioc_releases` when given (tests), and `"failed"` when the
+#' lookup is off (`ember_repos(bioc_config = NA)`).
+new_releases_slot <- function(status = "unknown", table = empty_bioc_releases(), message = NULL) {
+  structure(list(status = status, table = table, message = message), class = "ember_releases_slot")
 }
 
 #' A library as the session sees it. The folder is the shell's; the core
@@ -254,13 +281,21 @@ install_failures <- function(lines) {
 #'   (`state$worker$loaded`) that `changes` would affect.
 #' * `message`: why the fetch failed (`status == "failed"`), the index
 #'   slot's own message; `NULL` otherwise.
+#' * `kind`: `"date"` (the above), or `"bioc"`: a pinned notebook moving to
+#'   the Bioconductor release for the running R at its own date
+#'   (`propose_bioc_move()`). A `"bioc"` move re-resolves only the
+#'   Bioconductor packages (`resolve_lock(mode = "bioc")`), is applied
+#'   even when it restarts R (running the notebook was the consent), holds
+#'   the install of the old pin's library while it is pending, and isn't
+#'   the page's update question (`project_ember()`).
 new_proposal <- function(date, status = "fetching", lock = NULL, changes = NULL,
                          problems = NULL, for_wanted = NULL, apply = FALSE,
                          restart = character(), message = NULL,
-                         bioc_version = NA_character_) {
+                         bioc_version = NA_character_, kind = "date") {
   structure(list(date = date, status = status, lock = lock, changes = changes,
                  problems = problems, for_wanted = for_wanted, apply = apply,
-                 restart = restart, message = message, bioc_version = bioc_version),
+                 restart = restart, message = message, bioc_version = bioc_version,
+                 kind = kind),
             class = "ember_proposal")
 }
 
@@ -281,6 +316,9 @@ ev_cancel_preview <- function(at) event("cancel_preview", at)
 # From the shell's jobs
 ev_index_fetched <- function(key, index, at) event("index_fetched", at, key = key, index = index)
 ev_index_failed  <- function(key, message, at) event("index_failed", at, key = key, message = message)
+#' `table`: `parse_bioc_config()`'s result, as fetched (or cached).
+ev_bioc_releases_fetched <- function(table, at) event("bioc_releases_fetched", at, table = table)
+ev_bioc_releases_failed  <- function(message, at) event("bioc_releases_failed", at, message = message)
 ev_library_checked <- function(key, manifest, at)            # manifest: NULL when absent
   event("library_checked", at, key = key, manifest = manifest)
 ev_install_progress <- function(token, item, at)             # item: list(package, step, done, total)
@@ -293,6 +331,9 @@ ev_install_done <- function(token, key, manifest, message, log, at, failures = e
         message = message, log = log, failures = failures)
 
 fx_fetch_index    <- function(key, url) effect("fetch_index", key = key, url = url)
+#' Fetch Bioconductor's release list from `url` (`ember_repos(bioc_config)`),
+#' or read it from the disk cache when it is less than a day old.
+fx_fetch_bioc_config <- function(url) effect("fetch_bioc_config", url = url)
 fx_check_library  <- function(key, path) effect("check_library", key = key, path = path)
 #' `lock` and `repos` are everything the installer needs; it writes the
 #' renv lockfile itself (lock.R, `renv_lockfile_of()`). `repos` is the
@@ -321,6 +362,7 @@ fx_cancel_install <- function(token, key, path) effect("cancel_install", token =
 #' (`index_job_key()`) needs it and `reduce_shutdown()` can compute it
 #' purely from `state$options$repos`, so the shell doesn't have to.
 fx_cancel_fetch_index <- function(key, url) effect("cancel_fetch_index", key = key, url = url)
+fx_cancel_fetch_bioc_config <- function(url) effect("cancel_fetch_bioc_config", url = url)
 
 # ---- The stage step() runs ---------------------------------------------------
 
@@ -337,6 +379,16 @@ fx_cancel_fetch_index <- function(key, url) effect("cancel_fetch_index", key = k
 schedule_packages <- function(state, old) {
   effects <- list()
   p <- state$packages
+
+  # ---- 0. Bioconductor's release list -------------------------------------
+  # A lock holding Bioconductor packages fetches the list at open: its pin's
+  # window, and whether the pin moves on this R, come from it. Resolution
+  # asks for it below when it first meets Bioconductor.
+  if (lock_has_bioc(state$file$lock) && releases_unsettled(p)) {
+    fr <- fetch_releases(p, state$options)
+    p <- fr$p
+    effects <- c(effects, fr$effects)
+  }
 
   # ---- 1. Resolve --------------------------------------------------------
   # Deviation from the sketch's "cheap check first: skip when graph and
@@ -370,7 +422,8 @@ schedule_packages <- function(state, old) {
         # behaves the same either way.
         state$file$header$snapshot <- format(state$clock, "%Y-%m-%d")
       }
-      needed <- needed_repos(state$file$header, state$options$r)
+      releases <- p$bioc_releases$table
+      needed <- needed_repos(state$file$header, state$options$r, releases)
       # Only CRAN's index is fetched up front; the Bioconductor keys after
       # it are fetched when `resolve_lock()` asks for them (a name CRAN
       # lacks). A later key that failed is retried once the wanted set
@@ -395,14 +448,23 @@ schedule_packages <- function(state, old) {
           usable <- setdiff(needed, failed)
           loaded_idx <- Filter(Negate(is.null), lapply(p$indexes[usable], function(s) s$index))
           res <- resolve_lock(wanted, state$file$lock, loaded_idx, needed = usable, mode = "keep")
-          if (isTRUE(res$complete)) {
+          # Which release `needed` names comes from Bioconductor's list:
+          # fetch it when resolution first meets Bioconductor (a name CRAN
+          # lacks, which without the list has no Bioconductor key to look
+          # in, or a Bioc entry), then resolve again with it.
+          meets_bioc <- needs_bioc(res)
+          if (meets_bioc && releases_unsettled(p)) {
+            fr <- fetch_releases(p, state$options)
+            p <- fr$p
+            effects <- c(effects, fr$effects)
+          } else if (isTRUE(res$complete)) {
             state$packages <- p
             state <- set_lock(state, res$lock)
             state$file$header$bioc_version <- bioc_pin(res$lock, bioc_release_in(needed))
             p <- state$packages
             p$resolved_for <- wanted
             p$problems <- rbind(res$problems, failed_index_problems(p$indexes[failed]),
-                                bioc_problems(state$file$header, state$options$r),
+                                bioc_problems(state$file$header, state$options$r, releases),
                                 bioc_unavailable_problem(needed, res$problems, state$file$header,
                                                          state$options$r))
           } else {
@@ -424,8 +486,11 @@ schedule_packages <- function(state, old) {
   state$packages <- p
 
   # ---- 2. Proposal --------------------------------------------------------
+  state <- propose_bioc_move(state)
   if (!is.null(state$packages$proposal)) {
     prop <- state$packages$proposal
+    is_move <- identical(prop$kind, "bioc")
+    releases <- state$packages$bioc_releases$table
     wanted <- wanted_packages(state$graph, state$file$header)
     # The new date's CRAN key first, then Bioconductor's at the release for
     # the running R at that date: moving the date moves the release too.
@@ -433,7 +498,7 @@ schedule_packages <- function(state, old) {
     date_header <- state$file$header
     date_header$snapshot <- prop$date
     date_header$bioc_version <- NA_character_
-    needed <- needed_repos(date_header, state$options$r)
+    needed <- needed_repos(date_header, state$options$r, releases)
     key <- needed[[1]]
     slot <- state$packages$indexes[[key]]
     failed <- Filter(function(k) identical(state$packages$indexes[[k]]$status, "failed"), needed[-1])
@@ -445,31 +510,47 @@ schedule_packages <- function(state, old) {
     drop_message <- if (!has_bioc || identical(prop$status, "failed")) {
       NULL
     } else if (is.na(bioc_release_in(needed))) {
-      sprintf(paste("Ember knows no Bioconductor release for R %s at %s; moving there would",
+      sprintf(paste("Bioconductor has no release for R %s at %s; moving there would",
                     "drop this notebook's Bioconductor packages"), state$options$r$minor, prop$date)
     } else if (length(failed) > 0) {
       failed_index_problems(state$packages$indexes[failed])$message[[1]]
     }
     needed <- setdiff(needed, failed)
-    if (is.null(slot)) {
+    if (has_bioc && !identical(prop$status, "failed") &&
+        releases_unsettled(state$packages)) {
+      # The release at the new date comes from Bioconductor's list.
+      fr <- fetch_releases(state$packages, state$options)
+      state$packages <- fr$p
+      effects <- c(effects, fr$effects)
+    } else if (is.null(slot)) {
       state$packages$indexes[[key]] <- new_index_slot("fetching")
       effects <- c(effects, list(fx_fetch_index(key, repo_url(state$options$repos, key))))
     } else if (identical(slot$status, "ready") && !is.null(drop_message)) {
       state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
-                                              message = drop_message)
+                                              message = drop_message, kind = prop$kind)
     } else if (identical(slot$status, "ready") &&
               (identical(prop$status, "fetching") || !setequal(prop$for_wanted %||% character(), wanted))) {
       indexes_loaded <- Filter(Negate(is.null), lapply(state$packages$indexes[needed], function(s) s$index))
-      res <- resolve_lock(wanted, state$file$lock, indexes_loaded, needed = needed, mode = "fresh")
-      if (isTRUE(res$complete)) {
+      res <- resolve_lock(wanted, state$file$lock, indexes_loaded, needed = needed,
+                          mode = if (is_move) "bioc" else "fresh")
+      if (needs_bioc(res) && releases_unsettled(state$packages)) {
+        fr <- fetch_releases(state$packages, state$options)
+        state$packages <- fr$p
+        effects <- c(effects, fr$effects)
+      } else if (isTRUE(res$complete)) {
         changes <- lock_diff(state$file$lock, res$lock)
         new_prop <- new_proposal(prop$date, status = "ready", lock = res$lock, changes = changes,
                                  problems = res$problems, for_wanted = wanted, apply = prop$apply,
-                                 bioc_version = bioc_pin(res$lock, bioc_release_in(needed)))
+                                 bioc_version = bioc_pin(res$lock, bioc_release_in(needed)),
+                                 kind = prop$kind)
         if (isTRUE(prop$apply)) {
           loaded <- state$worker$loaded %||% character()
           restart_names <- intersect(changes$name, names(loaded))
-          if (length(restart_names) == 0) {
+          # A Bioconductor move doesn't wait on the page: running the
+          # notebook on this R was the consent, and the page's update
+          # question is about dates. `switch_library()` restarts R once the
+          # new library is ready, as for any other change to a loaded package.
+          if (length(restart_names) == 0 || is_move) {
             state$packages$proposal <- new_prop
             ap <- apply_proposal(state)
             state <- ap$state
@@ -491,7 +572,7 @@ schedule_packages <- function(state, old) {
       }
     } else if (identical(slot$status, "failed")) {
       state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
-                                              message = slot$message)
+                                              message = slot$message, kind = prop$kind)
     }
   }
 
@@ -514,7 +595,8 @@ schedule_packages <- function(state, old) {
   # ---- 4. Install ------------------------------------------------------------
   tgt <- state$packages$target
   if (isTRUE(state$allowed) && !isTRUE(state$read_only) &&
-      identical(tgt$status, "missing") && is.null(state$packages$install)) {
+      identical(tgt$status, "missing") && is.null(state$packages$install) &&
+      !bioc_move_pending(state)) {
     token <- state$packages$next_token
     state$packages$next_token <- token + 1L
     state$packages$install <- list(token = token, key = tgt$key, path = tgt$path)
@@ -531,6 +613,68 @@ schedule_packages <- function(state, old) {
   effects <- c(effects, sw$effects)
 
   list(state = state, effects = effects)
+}
+
+#' `TRUE` when a resolution reached for Bioconductor: it asks for a
+#' Bioconductor index, found a name nowhere it looked, or locked a Bioc entry.
+needs_bioc <- function(res) {
+  any(is_bioc_key(res$fetch)) || any(res$problems$kind == "not_found") ||
+    (isTRUE(res$complete) && lock_has_bioc(res$lock))
+}
+
+#' `TRUE` when `lock` holds a Bioconductor package.
+lock_has_bioc <- function(lock) {
+  !is.null(lock$entries) && any(lock$entries$source == "Bioc")
+}
+
+#' `TRUE` until Bioconductor's release list has been fetched (or has
+#' failed): which release a notebook resolves from, its pin's window and
+#' whether the pin moves on this R all come from it.
+releases_unsettled <- function(p) {
+  p$bioc_releases$status %in% c("unknown", "fetching")
+}
+
+#' Ask the shell for the release list, once: `list(p, effects)`.
+fetch_releases <- function(p, options) {
+  if (identical(p$bioc_releases$status, "fetching")) return(list(p = p, effects = list()))
+  p$bioc_releases$status <- "fetching"
+  list(p = p, effects = list(fx_fetch_bioc_config(options$repos$bioc_config)))
+}
+
+#' Move a pinned notebook to the Bioconductor release for the running R
+#' (design.md, "R itself"): once execution is allowed, which is also when
+#' the new R is recorded (`record_r_version()`), and the pin was built for
+#' another R, propose the move as an applying `"bioc"` proposal at the
+#' notebook's own date. Safe preview has already said so
+#' (`bioc_problems()`'s `bioc_r_version` row names the release it moves to).
+#'
+#' Once a session: a move that fails (an index fetch) isn't proposed again
+#' until `reduce_run()` retries it. None while another proposal is open (a
+#' date move moves the pin itself), while the release list is unsettled,
+#' or when there is no release for this R at that date (the row says so).
+propose_bioc_move <- function(state) {
+  p <- state$packages
+  header <- state$file$header
+  if (!isTRUE(state$allowed) || isTRUE(state$read_only) || !is.null(p$proposal) ||
+      isTRUE(p$bioc_move_tried) || is.na(header$bioc_version) || is.na(header$snapshot) ||
+      !lock_has_bioc(state$file$lock) || releases_unsettled(p)) {
+    return(state)
+  }
+  if (is.na(bioc_move_target(header, state$options$r, p$bioc_releases$table))) return(state)
+  p$proposal <- new_proposal(header$snapshot, apply = TRUE, kind = "bioc")
+  p$bioc_move_tried <- TRUE
+  state$packages <- p
+  state
+}
+
+#' `TRUE` while a Bioconductor move is pending, or the release list that
+#' decides one is being fetched for a notebook that holds Bioconductor
+#' packages: the old pin's library is not installed meanwhile, since on
+#' another R every one of its Bioconductor packages builds from source.
+bioc_move_pending <- function(state) {
+  prop <- state$packages$proposal
+  if (!is.null(prop) && identical(prop$kind, "bioc") && !identical(prop$status, "failed")) return(TRUE)
+  identical(state$packages$bioc_releases$status, "fetching") && lock_has_bioc(state$file$lock)
 }
 
 #' The only writer of `state$file$lock` after open. Resets `target` to the
@@ -687,7 +831,8 @@ waiting_cells <- function(state) {
   }
   wanted <- wanted_packages(state$graph, state$file$header)
   resolving <- !setequal(wanted, p$resolved_for)
-  any_fetching <- any(vapply(p$indexes, function(s) identical(s$status, "fetching"), logical(1)))
+  any_fetching <- any(vapply(p$indexes, function(s) identical(s$status, "fetching"), logical(1))) ||
+    identical(p$bioc_releases$status, "fetching")
 
   runnable_ids <- names(state$cells)[vapply(state$cells, cell_runs, logical(1))]
   direct <- list()
@@ -729,6 +874,36 @@ reduce_index_failed <- function(state, event) {
   wanted <- wanted_packages(state$graph, state$file$header)
   state$packages$indexes[[event$key]] <- new_index_slot("failed", message = event$message, wanted = wanted)
   list(state = state, effects = list(), reply = NULL)
+}
+
+#' The release list arrived, and the pin's problem rows are recomputed
+#' with it. A slot that is not `"fetching"` ignores the event.
+reduce_bioc_releases_fetched <- function(state, event) {
+  slot <- state$packages$bioc_releases
+  if (!identical(slot$status, "fetching")) return(list(state = state, effects = list(), reply = NULL))
+  state$packages$bioc_releases <- new_releases_slot("ready", event$table)
+  state <- refresh_bioc_problems(state)
+  list(state = state, effects = list(), reply = NULL)
+}
+
+#' The release list couldn't be fetched, and the shell had no earlier copy:
+#' Bioconductor packages can't be resolved (`packages_view()` says so)
+#' until running asks again (`reduce_run()`).
+reduce_bioc_releases_failed <- function(state, event) {
+  slot <- state$packages$bioc_releases
+  if (!identical(slot$status, "fetching")) return(list(state = state, effects = list(), reply = NULL))
+  state$packages$bioc_releases <- new_releases_slot("failed", message = event$message)
+  list(state = state, effects = list(), reply = NULL)
+}
+
+#' Replace the `bioc_r_version`/`bioc_off_date` rows of `problems` with
+#' `bioc_problems()` against the current release list.
+refresh_bioc_problems <- function(state) {
+  probs <- state$packages$problems
+  keep <- probs[!(probs$kind %in% c("bioc_r_version", "bioc_off_date")), , drop = FALSE]
+  state$packages$problems <- rbind(keep, bioc_problems(state$file$header, state$options$r,
+                                                       state$packages$bioc_releases$table))
+  state
 }
 
 #' For `target` only (an old key's answer is ignored): manifest present ->
@@ -795,7 +970,7 @@ reduce_install_done <- function(state, event) {
       # are all already fixed by the time this reducer runs.
       if (nrow(tgt$failures) > 0) {
         wanted <- wanted_packages(state$graph, state$file$header)
-        needed <- needed_repos(state$file$header, state$options$r)
+        needed <- needed_repos(state$file$header, state$options$r, state$packages$bioc_releases$table)
         indexes <- lapply(state$packages$indexes, function(s) s$index)
         tgt$failures$needed_by <- lapply(tgt$failures$package, function(pk) {
           failure_needed_by(pk, wanted, indexes, needed)
@@ -838,7 +1013,7 @@ reduce_preview_date <- function(state, event) {
   date_header <- state$file$header
   date_header$snapshot <- event$date
   date_header$bioc_version <- NA_character_
-  for (key in needed_repos(date_header, state$options$r)) {
+  for (key in needed_repos(date_header, state$options$r, state$packages$bioc_releases$table)) {
     slot <- state$packages$indexes[[key]]
     if (!is.null(slot) && identical(slot$status, "failed")) {
       state$packages$indexes[[key]] <- NULL
@@ -876,7 +1051,8 @@ apply_proposal <- function(state) {
   # date's `problems` describe a lock that no longer exists the moment this
   # applies, and leaving them in place showed stale complaints (a
   # since-fixed off_date row, say) next to the packages actually in effect.
-  state$packages$problems <- rbind(prop$problems, bioc_problems(state$file$header, state$options$r))
+  state$packages$problems <- rbind(prop$problems, bioc_problems(state$file$header, state$options$r,
+                                                                 p$bioc_releases$table))
   state$packages$proposal <- NULL
   list(state = state, effects = list())
 }
@@ -1102,7 +1278,22 @@ packages_view <- function(state) {
     proposal <- list(date = p$proposal$date, status = p$proposal$status,
                      changes = p$proposal$changes, problems = p$proposal$problems,
                      apply = isTRUE(p$proposal$apply), restart = p$proposal$restart %||% character(),
-                     message = p$proposal$message)
+                     message = p$proposal$message, kind = p$proposal$kind %||% "date")
+  }
+  # A Bioconductor move that failed isn't the page's update question
+  # (`project_ember()`), so it is said as a problem instead; so is a release
+  # list that couldn't be fetched, which only happens once the notebook has
+  # met Bioconductor.
+  problems <- p$problems
+  if (identical(p$bioc_releases$status, "failed")) {
+    problems <- rbind(problems[problems$kind != "bioc_unavailable", , drop = FALSE],
+                      package_problem("bioc_releases_unavailable", NA_character_, sprintf(
+      "Bioconductor packages can't be resolved: %s", p$bioc_releases$message %||% "no release list")))
+  }
+  if (!is.null(p$proposal) && identical(p$proposal$kind, "bioc") && identical(p$proposal$status, "failed")) {
+    problems <- rbind(problems, package_problem("bioc_move_failed", NA_character_, sprintf(
+      "couldn't move to the Bioconductor release for R %s: %s", state$options$r$minor,
+      p$proposal$message %||% "no package index available")))
   }
 
   missing_n <- sum(packages_df$status %in% c("missing", "not_installed"))
@@ -1122,5 +1313,5 @@ packages_view <- function(state) {
       library = list(status = p$target$status, path = p$target$path,
                     progress = p$target$progress, message = p$target$message,
                     log = p$target$log, failures = failures),
-      packages = packages_df, problems = p$problems, proposal = proposal, plan = plan)
+      packages = packages_df, problems = problems, proposal = proposal, plan = plan)
 }

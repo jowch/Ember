@@ -161,6 +161,71 @@ index_fetch_command <- function(key, url, cache = cache_dir()) {
   list(command = rscript, args = c("--vanilla", "-e", code), env = env)
 }
 
+# ---- Bioconductor's release list ---------------------------------------------
+
+#' Where the parsed release list from `url` is cached: one file per URL
+#' (hashed into its name), since a test or an institution may point
+#' `ember_repos(bioc_config)` somewhere else.
+bioc_config_rds_path <- function(url, cache = cache_dir()) {
+  file.path(cache, "bioc-releases", paste0(hash_text(url), ".rds"))
+}
+
+#' How long a fetched release list is used before it is fetched again.
+#' Bioconductor releases twice a year, so a day is plenty fresh. An older
+#' copy is still used when a fetch fails (shell.R).
+bioc_config_max_age <- 24 * 60 * 60
+
+#' The cached release list for `url`: `list(table, fetched_at)`, or `NULL`
+#' when there is none, or it is older than `max_age` seconds.
+cached_bioc_config <- function(url, cache = cache_dir(), max_age = bioc_config_max_age) {
+  path <- bioc_config_rds_path(url, cache)
+  if (!file.exists(path)) return(NULL)
+  hit <- tryCatch(readRDS(path), error = function(e) NULL)
+  if (is.null(hit) || !is.data.frame(hit$table)) return(NULL)
+  age <- as.numeric(difftime(Sys.time(), hit$fetched_at, units = "secs"))
+  if (is.na(age) || age > max_age) return(NULL)
+  hit
+}
+
+#' Run in a subprocess (`bioc_config_fetch_command()`), as
+#' `fetch_index_main()` is: download `url`, parse it with
+#' `parse_bioc_config()`, and save `list(table, fetched_at)` at a temporary
+#' name, then rename into place. A file that parses to no release at all is
+#' an error, not an empty list: it is not the file Ember expects.
+fetch_bioc_config_main <- function(url, path) {
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  tmp <- tempfile("ember-bioc-config-")
+  ok <- isTRUE(tryCatch({
+    utils::download.file(url, tmp, quiet = TRUE, mode = "wb")
+    TRUE
+  }, error = function(e) FALSE, warning = function(w) FALSE))
+  if (!ok) stop("ember: could not fetch Bioconductor's release list from ", url, call. = FALSE)
+  table <- parse_bioc_config(readLines(tmp, warn = FALSE))
+  if (nrow(table) == 0) stop("ember: no Bioconductor releases found in ", url, call. = FALSE)
+  tmp_rds <- paste0(path, ".tmp-", Sys.getpid())
+  saveRDS(list(table = table, fetched_at = Sys.time()), tmp_rds)
+  if (!file.rename(tmp_rds, path)) unlink(tmp_rds)
+  invisible(NULL)
+}
+
+#' The command that fetches the release list from `url`, as a job; built
+#' the same way as `index_fetch_command()`.
+bioc_config_fetch_command <- function(url, cache = cache_dir()) {
+  path <- bioc_config_rds_path(url, cache)
+  rscript <- file.path(R.home("bin"), "Rscript")
+  code <- paste0(
+    "local({library(ember); ember:::fetch_bioc_config_main(",
+    deparse(url), ", ", deparse(path), ")})")
+  env <- c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep),
+           R_LIBS_USER = "", R_LIBS_SITE = "")
+  list(command = rscript, args = c("--vanilla", "-e", code), env = env)
+}
+
+#' The process-wide job key for fetching the release list from `url` into
+#' `cache`: unlike an index key, it names no date, so it is prefixed to
+#' keep it apart from `index_job_key()`'s.
+bioc_config_job_key <- function(url, cache) paste("bioc-config", url, cache, sep = "\u0001")
+
 # ---- Libraries ---------------------------------------------------------------
 
 #' The manifest of a ready library, or `NULL` when there is no complete
