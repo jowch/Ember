@@ -28,7 +28,9 @@
 #   # /// cell order                 (display order, "folded" after an id)
 #   # ///
 #   # /// sourced files              (only when non-empty)
+#   # /// learned sources            (only when non-empty)
 #   # /// learned definitions        (only when non-empty)
+#   # /// learned references         (only when non-empty)
 #   # /// learned settings           (only when non-empty)
 #   # /// lock                       (only when non-empty)
 #   # /// <unknown block>            (kept verbatim, in the order read)
@@ -47,8 +49,14 @@
 #' * `run_order`: ids in the order they appear in the file (the run order
 #'   when Ember wrote it). Informational: the graph recomputes the order.
 #' * `learned`: named list id -> character, from "learned definitions".
+#' * `learned_references`: named list id -> character, from "learned
+#'   references": the formula columns the worker found missing from the
+#'   data, each a reference of the cell.
 #' * `learned_settings`: named list id -> character setting keys, from
 #'   "learned settings".
+#' * `learned_sources`: named list id -> character paths, from "learned
+#'   sources": the computed `source()` paths each cell read on its last
+#'   run. Their hashes are in `sourced` with every other path.
 #' * `sourced`: data frame `path`, `hash`.
 #' * `commented`: character ids written with `## ` before each line because
 #'   they are off (a dependent of a disabled cell), as read from the
@@ -70,10 +78,14 @@ new_notebook_file <- function(header, cells, run_order, learned,
                               sourced, lock, extra_blocks, format,
                               read_only = FALSE, problems = NULL,
                               commented = character(),
-                              learned_settings = list()) {
+                              learned_settings = list(),
+                              learned_references = list(),
+                              learned_sources = list()) {
   structure(list(header = header, cells = cells,
                  run_order = run_order, learned = learned,
-                 learned_settings = learned_settings, sourced = sourced,
+                 learned_references = learned_references,
+                 learned_settings = learned_settings,
+                 learned_sources = learned_sources, sourced = sourced,
                  lock = lock, extra_blocks = extra_blocks, format = format,
                  read_only = read_only, problems = problems,
                  commented = commented),
@@ -429,17 +441,63 @@ parse_sourced_block <- function(lines) {
   do.call(rbind, rows)
 }
 
-#' Parse the "learned definitions" footer block, filtering to known ids.
+#' Split one line of a learned block into words: runs of non-space, or a
+#' TOML basic string (`toml_string()`) for a word with a space, quote or
+#' backslash in it (a non-syntactic name, a path).
+learned_words <- function(line) {
+  chars <- strsplit(trimws(line), "", fixed = TRUE)[[1]]
+  words <- character()
+  i <- 1L
+  n <- length(chars)
+  while (i <= n) {
+    if (grepl("\\s", chars[[i]])) { i <- i + 1L; next }
+    start <- i
+    if (identical(chars[[i]], "\"")) {
+      i <- i + 1L
+      while (i <= n && !identical(chars[[i]], "\"")) {
+        i <- i + if (identical(chars[[i]], "\\")) 2L else 1L
+      }
+      # An unclosed quote (a hand edit) keeps the rest of the line as is.
+      raw <- paste(chars[start:min(i, n)], collapse = "")
+      words <- c(words, if (i <= n) toml_unquote(raw) else raw)
+      i <- i + 1L
+    } else {
+      while (i <= n && !grepl("\\s", chars[[i]])) i <- i + 1L
+      words <- c(words, paste(chars[start:(i - 1L)], collapse = ""))
+    }
+  }
+  words
+}
+
+#' One word of a learned block line: as is, or quoted when it would not
+#' read back as one word.
+learned_word <- function(x) {
+  if (grepl("[[:space:]\"\\\\]", x) || identical(x, "")) toml_string(x) else x
+}
+
+#' Parse a learned footer block ("learned definitions", "learned
+#' references", "learned settings", "learned sources"): one line per cell,
+#' the id then its words. Ids not in `known_ids` are dropped.
 parse_learned_block <- function(lines, known_ids) {
   learned <- list()
   for (ln in lines) {
-    parts <- strsplit(trimws(ln), "\\s+")[[1]]
-    if (length(parts) == 0 || identical(parts[[1]], "")) next
+    parts <- learned_words(ln)
+    if (length(parts) == 0) next
     id <- parts[[1]]
     if (!(id %in% known_ids)) next
     learned[[id]] <- parts[-1]
   }
   learned
+}
+
+#' The lines of a learned footer block, one per cell in `learned`'s order.
+format_learned_block <- function(name, learned) {
+  if (length(learned) == 0) return(character())
+  lines <- vapply(names(learned), function(id) {
+    words <- vapply(learned[[id]], learned_word, character(1), USE.NAMES = FALSE)
+    paste0("# ", paste(c(id, words), collapse = " "))
+  }, character(1), USE.NAMES = FALSE)
+  c(paste0("# /// ", name), lines, "# ///")
 }
 
 #' Core structural parse: header, cells, footer blocks. Does not apply the
@@ -636,18 +694,22 @@ parse_notebook_core <- function(text, new_id) {
 
   sourced <- parse_sourced_block(footer_blocks[["sourced files"]])
   learned <- parse_learned_block(footer_blocks[["learned definitions"]], display_order)
+  learned_references <- parse_learned_block(footer_blocks[["learned references"]], display_order)
   learned_settings <- parse_learned_block(footer_blocks[["learned settings"]], display_order)
+  learned_sources <- parse_learned_block(footer_blocks[["learned sources"]], display_order)
   lock_lines <- footer_blocks[["lock"]]
   if (is.null(lock_lines)) lock_lines <- character()
   lock <- parse_lock_lines(lock_lines)$lock
 
-  known_footer <- c("cell order", "sourced files", "learned definitions",
+  known_footer <- c("cell order", "sourced files", "learned sources",
+                    "learned definitions", "learned references",
                     "learned settings", "lock")
   extra_names <- setdiff(names(footer_blocks), known_footer)
   extra_blocks <- footer_blocks[extra_names]
 
   list(header = header, cells = cells, run_order = file_order,
-      learned = learned, learned_settings = learned_settings,
+      learned = learned, learned_references = learned_references,
+      learned_settings = learned_settings, learned_sources = learned_sources,
       sourced = sourced, lock = lock,
       extra_blocks = extra_blocks, problems = problems, commented = file_commented)
 }
@@ -689,6 +751,8 @@ parse_notebook <- function(text, new_id, version = utils::packageVersion("ember"
   new_notebook_file(header = parsed$header, cells = parsed$cells,
                     run_order = parsed$run_order, learned = parsed$learned,
                     learned_settings = parsed$learned_settings,
+                    learned_references = parsed$learned_references,
+                    learned_sources = parsed$learned_sources,
                     sourced = parsed$sourced, lock = parsed$lock,
                     extra_blocks = parsed$extra_blocks, format = file_format,
                     read_only = read_only, problems = problems_to_df(problems),
@@ -776,19 +840,11 @@ format_notebook <- function(file, order = NULL) {
     footer <- c(footer, "# /// sourced files", lines, "# ///")
   }
 
-  if (length(file$learned) > 0) {
-    lines <- vapply(names(file$learned), function(id) {
-      paste0("# ", paste(c(id, file$learned[[id]]), collapse = " "))
-    }, character(1))
-    footer <- c(footer, "# /// learned definitions", lines, "# ///")
-  }
-
-  if (length(file$learned_settings) > 0) {
-    lines <- vapply(names(file$learned_settings), function(id) {
-      paste0("# ", paste(c(id, file$learned_settings[[id]]), collapse = " "))
-    }, character(1))
-    footer <- c(footer, "# /// learned settings", lines, "# ///")
-  }
+  footer <- c(footer,
+              format_learned_block("learned sources", file$learned_sources),
+              format_learned_block("learned definitions", file$learned),
+              format_learned_block("learned references", file$learned_references),
+              format_learned_block("learned settings", file$learned_settings))
 
   lock_lines <- format_lock_lines(file$lock)
   if (length(lock_lines) > 0) {

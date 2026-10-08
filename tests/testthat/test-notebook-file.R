@@ -216,6 +216,32 @@ test_that("learned settings round-trip in their own footer block", {
   expect_identical(tail(out, 3L), c("# /// learned settings", "# a option:digits env:TZ", "# ///"))
 })
 
+test_that("learned references and learned sources are read from their own footer blocks", {
+  text <- read_raw("files/format-1/learned-blocks.R")
+  file <- parse_notebook(text, new_id = new_id_seq(), version = "0.1.0")
+  expect_equal(file$learned_references, list(b = c("x", "dose mg")))
+  expect_equal(file$learned_sources, list(a = c("helpers/dyn.R", "helpers/my dyn.R")))
+  expect_equal(file$learned, list(a = "dyn_fit"))
+  expect_length(file$extra_blocks, 0)
+  expect_null(file$problems)
+})
+
+test_that("a learned block quotes a word with a space, quote or backslash, and drops unknown ids", {
+  body <- c("# %% id=a", "1", "",
+            "# /// learned references",
+            "# a plain \"with space\" \"q\\\"uote\" \"back\\\\slash\"",
+            "# gone x", "# ///", "")
+  file <- parse_notebook(paste(body, collapse = "\n"), new_id = new_id_seq(), version = "0.1.0")
+  expect_equal(file$learned_references,
+               list(a = c("plain", "with space", "q\"uote", "back\\slash")))
+  out <- strsplit(format_notebook(file, order = "a"), "\n")[[1]]
+  expect_identical(tail(out, 3L), c("# /// learned references", body[[5]], "# ///"))
+})
+
+test_that("an unclosed quote in a learned block keeps the rest of the line as one word", {
+  expect_identical(learned_words("a \"open x"), c("a", "\"open x"))
+})
+
 test_that("a markdown cell listed without folded opens unfolded (ui-2-tests.md 4)", {
   text <- paste("# %% id=md [markdown]", "#' text", "", "# %% id=a", "1", "",
                "# /// cell order", "# md", "# a", "# ///", "", sep = "\n")
