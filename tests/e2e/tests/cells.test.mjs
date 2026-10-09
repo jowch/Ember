@@ -292,7 +292,7 @@ test("Endeavor's hooks after piece 6a (extends ui-2-tests.md 12) (152)", async (
   assertNoProblems(page);
 });
 
-test("argument tooltips close when the cursor leaves their cell (design-gaps.md, alongside 152)", async (t) => {
+test("argument tooltips close when the cursor leaves their cell (alongside 152)", async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-tooltip.server.log") });
   const browser = await launchBrowser();
@@ -320,7 +320,7 @@ test("argument tooltips close when the cursor leaves their cell (design-gaps.md,
   assertNoProblems(page);
 });
 
-test("argument tooltips: a reply that arrives after blur (worker busy) doesn't reopen one (design-gaps.md)", async (t) => {
+test("argument tooltips: a reply that arrives after blur (worker busy) doesn't reopen one", async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-tooltip-slow.server.log") });
   const browser = await launchBrowser();

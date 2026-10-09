@@ -1,4 +1,4 @@
-// Remote use (docs/design-gaps.md): a reverse proxy puts Ember on a
+// Remote use (README.md): a reverse proxy puts Ember on a
 // different port than the one it's actually listening on, and under a path
 // prefix it knows nothing about (Posit Workbench, JupyterHub's server
 // proxy, VS Code port forwarding all work this way). Two bugs made that
@@ -52,12 +52,12 @@ test("reverse proxy: a notebook opens and a cell runs through a path prefix on a
   assertNoProblems(page);
 });
 
-test("reverse proxy: the bare prefix (no trailing slash) resolves its relative links one level too high (design-gaps.md)", async (t) => {
+test("reverse proxy: the bare prefix (no trailing slash) resolves its relative links one level too high (README.md)", async (t) => {
   // Not fixable in Ember itself: proxy.mjs's forwardPath() collapses both
   // the bare prefix and the prefix with a trailing slash to exactly "/"
   // once forwarded, so this process can't tell which one the browser
   // actually requested (it never learns the prefix at all). This test
-  // demonstrates the gap docs/design-gaps.md records, rather than a bug in
+  // demonstrates the limit README.md describes, rather than a bug in
   // Ember's own output: http_open()'s "Location: edit?id=..." (also what
   // the start page's ember_new_notebook/ember_open_notebook replies carry)
   // is correct relative to a trailing-slash URL, and wrong relative to a

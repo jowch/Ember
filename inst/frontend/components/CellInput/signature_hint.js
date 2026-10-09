@@ -96,7 +96,7 @@ export function signature_hint({ request_signature }) {
                 .catch(() => {})
         }
 
-        // design-gaps.md, "Argument tooltips stay on screen": closing the
+        // Argument tooltips must not stay on screen: closing the
         // tooltip on blur isn't enough on its own -- the debounce timer
         // from a keystroke just before the blur, or a request_signature
         // promise already in flight, can still fire afterwards and reopen

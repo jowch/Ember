@@ -499,7 +499,7 @@ job_leave <- function(key, nb) {
 #' otherwise be the oldest and first evicted: the same shapes
 #' `install_failures()` (packages-core.R) looks for, so a failure near
 #' the start of a long, slow build's output is never dropped before
-#' anything gets a chance to parse it. Not a contract (design-gaps.md):
+#' anything gets a chance to parse it. Not a contract:
 #' widening this list costs nothing and can only keep more, never less.
 JOB_FAILURE_LINE_RE <- "^(ERROR|Error)|install failed|failed to retrieve"
 
@@ -512,12 +512,12 @@ JOB_FAILURE_LINE_RE <- "^(ERROR|Error)|install failed|failed to retrieve"
 #' to `make_progress` and dropped: `make_done` needs the whole run's
 #' output, not only whatever didn't fit in one poll as the unfinished
 #' last line (`job$buf`) -- an install that runs longer than a single
-#' poll interval used to report an empty log on failure (design-gaps.md,
-#' Packages). Bounded at 400 lines, but a line matching
-#' `JOB_FAILURE_LINE_RE` is kept regardless: capping by a plain
-#' `tail(..., 400)` would drop an early failure line from a log that
-#' keeps printing for thousands of lines afterward (a slow, chatty
-#' configure script, say), leaving `install_failures()` nothing to find.
+#' poll interval used to report an empty log on failure. Bounded at 400
+#' lines, but a line matching `JOB_FAILURE_LINE_RE` is kept regardless:
+#' capping by a plain `tail(..., 400)` would drop an early failure line
+#' from a log that keeps printing for thousands of lines afterward (a
+#' slow, chatty configure script, say), leaving `install_failures()`
+#' nothing to find.
 poll_jobs <- function(nb) {
   for (key in ls(jobs, all.names = TRUE)) {
     job <- jobs[[key]]

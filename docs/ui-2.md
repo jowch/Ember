@@ -68,7 +68,7 @@ contact outside servers were never switched off:
   only `init_feedback` (which loads Firebase) is switched off.
 
 Also: a markdown cell shows its source highlighted as R and unfolded
-(design-gaps.md, UI), and the cell menu's "Hide logs" item is still shown
+(the old gap list, UI), and the cell menu's "Hide logs" item is still shown
 although the server refuses `show_logs` (CellInput.js:1065-1073,
 pluto-edits.R:86-88). Pluto.jl's authors are not credited anywhere in the
 package metadata.
@@ -439,7 +439,7 @@ version so its source can be found.
   in place (same names, same layout, so the live page and exports work
   the same way) before `R CMD build`, and CI runs the browser tests
   against that build as well. About 0.7 MB becomes about 0.3 MB.
-  Tracked in design-gaps.md (Packaging and CI); not part of this piece.
+  Tracked in #60; not part of this piece.
 
 ### Tests
 
@@ -705,7 +705,7 @@ widgets it has already rendered.
   at))`. `ev_render` (step.R:46) gains `res = 96`, and `render_png()`
   (api.R:331) passes it.
 - Worker: `render_plot()` uses `msg$res`; the plot display carries `size =
-  list(width, height, res)`. This closes design-gaps' "plot size isn't
+  list(width, height, res)`. This closes the old gap list's "plot size isn't
   reported back".
 - The image's CSS width is its container's width (`max-width: 100%`), so a
   2× image shows sharp at the same layout size.
@@ -778,7 +778,7 @@ ui-2-tests.md 22-44.
 The page asks for completions on every pause in typing and for help when the
 cursor moves, but nothing answers. The server replies to `complete` with
 an empty list (server.R:544-547), `docs` with "not_found" (server.R:553),
-and the help tab is hidden (BottomRightPanel.js:119, 179). design-gaps.md
+and the help tab is hidden (BottomRightPanel.js:119, 179). the old gap list
 says the request kinds exist in the worker and reply "unsupported". They
 don't: the worker's message switch has no editor messages
 (worker.R:143-152), and its "Editor services (later)" note (worker.R:1232)
@@ -1217,7 +1217,7 @@ update and pin in the Packages tab (packages.md increments 2 and 3).
 
 Found while writing this; none is changed by this document.
 
-1. **Editor services** (design-gaps.md, Worker): "the request kinds exist and
+1. **Editor services** (the old gap list, Worker): "the request kinds exist and
    reply 'unsupported'". The worker has no such kinds (worker.R:143-152);
    only the server answers `complete` (empty) and `docs` (not found),
    server.R:544-553. A worker reply type the shell doesn't know would kill

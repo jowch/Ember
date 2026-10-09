@@ -4,7 +4,7 @@ This plans how to build [settings-cells.md](settings-cells.md): the setup
 cell goes away, any cell may change a global setting, and a setting (or an
 attached package) may be set in only one cell. It also folds in the design
 gap "`library()` inside a function body counts as attaching"
-([design-gaps.md](design-gaps.md), Engine), because "attaching is a
+(the gap list, since retired), because "attaching is a
 definition" changes the same code.
 
 It is one branch, built in seven steps. Steps 1 and 2 leave the setup cell
@@ -110,7 +110,7 @@ Two rules count too much:
   "attaching is a definition" that makes
   `load_all <- function() library(dplyr)` conflict with a top-level
   `library(dplyr)` in another cell, and today it already makes the cell
-  run in pass 2 (design-gaps.md, Engine).
+  run in pass 2 (the old gap list, Engine).
 
 ### Shape
 
@@ -481,7 +481,7 @@ test-worker.R (the worker sourced alone):
   cells instead.
 - design.md: remove the "planned" marks the gap-list thread is adding to
   the three "no setup cell" passages.
-- design-gaps.md is owned by another thread: on merge, ask it to tick
+- the old gap list is owned by another thread: on merge, ask it to tick
   "Replace the setup cell" and "`library()` inside a function body".
 
 ### Tests

@@ -866,7 +866,7 @@ test_that("interrupt_r_code", {
 
 test_that("interrupt_between_runs_swallowed", {
   # On Windows the interrupt arrives later than the 0.2 s this test waits,
-  # so it lands in the next cell; tracked in docs/design-gaps.md.
+  # so it lands in the next cell; tracked in #48.
   skip_on_os("windows")
   h <- worker_harness()
   on.exit(h$close())
@@ -980,7 +980,7 @@ test_that("known_attached_packages_never_shrink", {
 
 test_that("interrupt_during_display_still_completes_bookkeeping", {
   # Windows delivers the interrupt through processx's CTRL+C helper, too late
-  # for this test's timing; tracked in docs/design-gaps.md.
+  # for this test's timing; tracked in #48.
   skip_on_os("windows")
   h <- worker_harness()
   on.exit(h$close())
@@ -1009,7 +1009,7 @@ test_that("interrupt_during_display_still_completes_bookkeeping", {
 
 test_that("sigint_during_remove_cell_does_not_crash_worker", {
   # On Windows a late interrupt between cells can still stop the worker;
-  # tracked in docs/design-gaps.md.
+  # tracked in #48.
   skip_on_os("windows")
   h <- worker_harness()
   on.exit(h$close())
