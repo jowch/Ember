@@ -1410,6 +1410,52 @@ test_that("an edit that leaves the code as it was keeps the learned references",
   expect_equal(r$state$graph$learned$references$B, "x")
 })
 
+test_that("editing a cell drops its learned definitions, so a stale one can't hold it in a cycle", {
+  s <- fake_state(list(S = cell(""), A = cell("load('x.rda')"), B = cell("y <- x + 1")),
+                  on_cell_change = "lazy")
+  r <- boot(s, "A")
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+  expect_equal(r$state$graph$learned$definitions$A, "x")
+  expect_true("A" %in% r$state$graph$upstream$B)
+
+  # A no longer defines x and now reads B's y. Kept, the learned x would
+  # make A <-> B a cycle neither cell can run its way out of.
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "load('z.rda'); w <- y")), at(20)))
+  expect_null(r$state$graph$learned$definitions$A)
+  expect_false("A" %in% r$state$graph$upstream$B)
+  expect_true("B" %in% r$state$graph$upstream$A)
+  expect_false(any(vapply(r$state$graph$errors, function(e) identical(e$kind, "cycle"), logical(1))))
+
+  # Nor does the reopened file bring it back.
+  s2 <- reopen(r$state)
+  expect_null(s2$graph$learned$definitions$A)
+  expect_false("A" %in% s2$graph$upstream$B)
+})
+
+test_that("a reader of a definition dropped by an edit still reruns when the cell does", {
+  s <- fake_state(list(S = cell(""), A = cell("load('f.rda')"), B = cell("summary(fits)")))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "fits"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(11)))
+  expect_equal(r$state$results$B$status, "ok")
+
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "load('g.rda')")), at(20)))
+  expect_false("A" %in% r$state$graph$upstream$B)
+  r <- drive(r$state, ev_run("A", at(21)))
+  expect_true(isTRUE(r$state$results$B$stale))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "fits"), at(22)))
+  expect_true("A" %in% r$state$graph$upstream$B)
+  expect_equal(sent_cells(r), "B")
+})
+
+test_that("an edit that leaves the code as it was keeps the learned definitions", {
+  s <- fake_state(list(S = cell(""), A = cell("load('f.rda')"), B = cell("summary(fits)")))
+  r <- boot(s, "A")
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "fits"), at(10)))
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "load('f.rda')"), op_fold("A", TRUE)), at(20)))
+  expect_equal(r$state$graph$learned$definitions$A, "fits")
+})
+
 test_that("a learned sources line naming a path with no hash is not seeded (review)", {
   file <- fake_file(list(A = cell("source(p)")))
   file$sourced <- data.frame(path = "gen/h.R", hash = "md5:abc", stringsAsFactors = FALSE)

@@ -735,9 +735,11 @@ reduce_apply <- function(state, event) {
           }
           # Learned settings are kept until the cell's code changes
           # (settings-cells.md, Settings found at run time), and so are
-          # learned references: they are about the old code's formulas, and
-          # one kept past an edit can hold the cell in a cycle it can't run
-          # its way out of. The next run's formula check learns them again.
+          # learned references and definitions: they are about the old
+          # code, and one kept past an edit can hold the cell in a cycle it
+          # can't run its way out of. The next run learns them again; until
+          # then the readers of what the last run defined are still found
+          # through its result's `defined` (invalidate_dependents()).
           if (!identical(code, old_cell$code)) learned_dropped <- c(learned_dropped, op$cell)
           if (kind_different && identical(new_kind, "markdown")) {
             cells[[op$cell]]$disabled <- FALSE
@@ -820,7 +822,7 @@ reduce_apply <- function(state, event) {
 
   state$cells <- cells
   state$file$header <- header
-  for (part in c("settings", "references")) {
+  for (part in c("settings", "references", "definitions")) {
     dropped <- intersect(learned_dropped, names(state$graph$learned[[part]]))
     for (id in dropped) state$graph$learned[[part]][[id]] <- NULL
   }
