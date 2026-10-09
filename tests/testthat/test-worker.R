@@ -808,6 +808,35 @@ test_that("user_globals_cannot_shadow_worker", {
   expect_identical(r2$output$text, "[1] 2")
 })
 
+test_that("a run says it began before its done", {
+  h <- worker_harness()
+  on.exit(h$close())
+  h$send(run_msg("a", 7L, "1 + 1"))
+  frames <- list()
+  r <- wait_for_done(h, on_frame = function(m) frames[[length(frames) + 1]] <<- m)
+  expect_identical(r$status, "ok")
+  types <- vapply(frames, function(m) m$type, character(1))
+  expect_identical(types[[1]], "running")
+  expect_identical(frames[[1]]$token, 7L)
+})
+
+test_that("an interrupt sent on the running frame stops that run", {
+  # The server sends SIGINT once it has a run's "running" frame
+  # (reduce_wk_running(), step.R), so from that frame on an interrupt must
+  # stop the cell. A "running" sent before run_cell()'s guarded block would
+  # let this one be swallowed: the sleep would then finish "ok". The
+  # timeout only catches a hang.
+  h <- worker_harness()
+  on.exit(h$close())
+  for (i in 1:10) {
+    h$send(run_msg(paste0("c", i), i, "Sys.sleep(5)"))
+    r <- wait_for_done(h, timeout = 30, on_frame = function(m) {
+      if (identical(m$type, "running")) h$process$interrupt()
+    })
+    expect_identical(r$status, "interrupted")
+  }
+})
+
 test_that("interrupt_r_code", {
   h <- worker_harness()
   on.exit(h$close())

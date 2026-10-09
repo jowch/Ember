@@ -750,10 +750,34 @@ test_that("interrupt sends SIGINT, sets a timer, and clears the queue (56)", {
   r <- boot(s, c("A", "B"))
   expect_true(length(r$state$pending) > 0 || !is.null(r$state$worker$running))
 
+  r <- drive(r$state, wk_running(1, r$state$worker$running$token, at(5)))
   r2 <- drive(r$state, ev_interrupt(at(10)))
   expect_equal(r2$state$pending, character())
   expect_true(any(vapply(r2$effects, function(e) identical(e$type, "interrupt"), logical(1))))
   expect_true(any(vapply(r2$effects, function(e) identical(e$type, "timer"), logical(1))))
+})
+
+test_that("an interrupt before the worker began the run is held until it does", {
+  # The worker swallows an interrupt that lands before it began a run (it
+  # can't tell it from a late one for the run before), so SIGINT waits for
+  # the worker's "running".
+  is_sigint <- function(effects) any(vapply(effects, function(e) identical(e$type, "interrupt"), logical(1)))
+  s <- fake_state(list(S = cell(""), A = cell("Sys.sleep(3)")))
+  r <- boot(s, "A")
+  tok <- r$state$worker$running$token
+  r2 <- drive(r$state, ev_interrupt(at(10)))
+  expect_false(is_sigint(r2$effects))
+  expect_true(any(vapply(r2$effects, function(e) identical(e$type, "timer"), logical(1))))
+  expect_identical(r2$state$worker$interrupt$token, tok)
+
+  expect_false(is_sigint(drive(r2$state, wk_running(1, tok + 1L, at(11)))$effects))
+  expect_false(is_sigint(drive(r2$state, wk_running(2, tok, at(11)))$effects))
+  r3 <- drive(r2$state, wk_running(1, tok, at(11)))
+  expect_true(is_sigint(r3$effects))
+  expect_true(r3$state$worker$running$begun)
+
+  # Without an interrupt asked for, the run beginning sends nothing.
+  expect_false(is_sigint(drive(r$state, wk_running(1, tok, at(11)))$effects))
 })
 
 test_that("the grace period offers a restart for the running token (57)", {

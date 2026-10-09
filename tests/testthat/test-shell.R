@@ -73,6 +73,12 @@ test_that("a 20 MB frame in 64 KB chunks is joined once (78)", {
   expect_lt(t_big, t_small * 20 + 0.5)
 })
 
+test_that("a running message becomes wk_running", {
+  ev <- worker_event(list(type = "running", cell = "a", token = 3L), gen = 1L, at = 0)
+  expect_equal(ev$type, "wk_running")
+  expect_equal(ev$token, 3L)
+})
+
 test_that("a message with a missing field becomes wk_failed (79)", {
   ev <- worker_event(list(type = "done", cell = "a"), gen = 1L, at = 0)
   expect_equal(ev$type, "wk_failed")

@@ -311,6 +311,25 @@ test_that("interrupting a stuck cell offers a restart after the grace period (11
   expect_equal(snap_view(snap, "A")$status, "not_run")
 })
 
+test_that("an interrupt sent as a run is dispatched stops that run", {
+  # The interrupt here is dispatched before the worker can have read the
+  # run. A worker swallows an interrupt that lands before it began a run,
+  # so the server holds SIGINT until the worker says it began.
+  cells <- list(S = cell(""), A = cell("x <- 1"), B = cell("Sys.sleep(8)"))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, "A", wait = TRUE, timeout = 15)   # the worker is up
+
+  run_cells(nb, "B", wait = FALSE)
+  interrupt_notebook(nb)
+  # A lost interrupt lets the sleep run to the end and report "ok"; the
+  # timeout only catches a hang.
+  done <- wait_for(nb, function(s) identical(s$process, "ready"), timeout = 30)
+  expect_true(done)
+  expect_equal(snap_view(notebook_snapshot(nb), "B")$status, "interrupted")
+})
+
 test_that("a crashed worker reports worker_exited, and the next run starts a new one (114)", {
   cells <- list(S = cell(""), A = cell("tools::pskill(Sys.getpid())"))
   path <- write_session_notebook(cells)

@@ -153,6 +153,9 @@ test("run/stop button and run time (141)", async (t) => {
     (sel) => /^\d+(\.\d+)? s$|min/.test(document.querySelector(sel)?.innerText ?? ""),
     cellSelector("A") + " ember-runtime", { timeout: 15000 });
 
+  // Long enough that a click landing late still finds it running: a timeout
+  // waiting for "Interrupted" below can then only mean the interrupt was lost.
+  await setCellCode(page, "LOOP", "Sys.sleep(60)");
   await runCell(page, "LOOP");
   await page.waitForSelector(`${cellSelector("LOOP")}.running`, { timeout: 15000 });
   await page.hover(cellSelector("LOOP"));
