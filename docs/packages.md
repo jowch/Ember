@@ -232,14 +232,18 @@ not.
   `parse_bioc_config()`); Ember ships no copy, so a new release needs no
   code change. A session fetches it once, when it first meets
   Bioconductor (a name CRAN lacks, or a lock holding a `Bioc` entry), and
-  resolution waits for it as for an index. The shell keeps the last list
-  fetched in the cache and reuses it for a day; when a fetch fails it
-  falls back to that copy however old, since releases are only ever
-  added, so a notebook that resolved before still resolves while
-  bioconductor.org is down. With no copy at all, a
-  `bioc_releases_unavailable` row says so, and running asks again. A
-  CRAN-only notebook never fetches it. Tests use a checked-in copy
-  (`fixtures/bioc-config`).
+  resolution waits for it as for an index. A list fetched on day F speaks
+  only for snapshot dates up to F, since a release out by a later date may
+  be missing from it (`releases_at()`); a later date asks for it again.
+  The shell keeps the last list fetched in the cache and reuses it for a
+  day if it covers the date asked for; when a fetch fails it falls back to
+  that copy however old. A pinned notebook needs no list to resolve, and
+  an unpinned one at a date the copy covers resolves as before, so both
+  keep working while bioconductor.org is down. An unpinned notebook dated
+  after the copy, or with no copy at all, finds no release rather than
+  silently pinning an older one, and a `bioc_releases_unavailable` row
+  says why; running asks again. A CRAN-only notebook never fetches the
+  list. Tests use a checked-in copy (`fixtures/bioc-config`).
 - **Fetched only when needed.** `needed_repos()` is CRAN's key, then the
   three Bioconductor keys. `schedule_packages()` fetches only CRAN's up
   front; `resolve_lock()` asks for the rest through `fetch` when a name

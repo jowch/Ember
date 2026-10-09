@@ -112,11 +112,13 @@ default_r_info <- function() {
 }
 
 #' The release-list slot a session starts with: `"ready"` from
-#' `options$bioc_releases` (a `parse_bioc_config()` table; tests pass the
-#' fixture copy), `"failed"` when `options$repos` turns the lookup off,
+#' `options$bioc_releases` (a `parse_bioc_config()` table, covering every
+#' date; tests pass the fixture copy), `"failed"` when `options$repos` turns the lookup off,
 #' else `"unknown"` until the session meets Bioconductor.
 releases_slot_for <- function(options) {
-  if (!is.null(options$bioc_releases)) return(new_releases_slot("ready", options$bioc_releases))
+  if (!is.null(options$bioc_releases)) {
+    return(new_releases_slot("ready", options$bioc_releases, fetched = as.Date("9999-12-31")))
+  }
   url <- options$repos$bioc_config
   if (is.null(url) || is.na(url)) {
     return(new_releases_slot("failed", message = "the release lookup is off (ember_repos(bioc_config = NA))"))

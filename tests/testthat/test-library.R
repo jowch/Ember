@@ -435,14 +435,16 @@ bioc_config_url <- function(name = "config.yaml") {
 }
 
 test_that("the release-list job fetches, parses and caches bioconductor.org's config.yaml", {
+  use_installed_ember()
   cache <- tempfile("ember-bioc-config-test-"); dir.create(cache)
   url <- bioc_config_url("config-3.24.yaml")
   expect_null(cached_bioc_config(url, cache))
   cmd <- bioc_config_fetch_command(url, cache)
-  out <- processx::run(cmd$command, cmd$args, error_on_status = FALSE)
+  out <- processx::run(cmd$command, cmd$args, env = cmd$env, error_on_status = FALSE)
   expect_identical(out$status, 0L)
   hit <- cached_bioc_config(url, cache)
   expect_equal(tail(hit$table$version, 1), "3.24")
+  expect_equal(fetched_day(hit), Sys.Date())
   # Another URL is another cache entry.
   expect_null(cached_bioc_config(bioc_config_url(), cache))
 })

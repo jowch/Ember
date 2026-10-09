@@ -433,19 +433,22 @@ run_effect <- function(nb, fx) {
     fetch_bioc_config = {
       cache <- nb$state$options$cache
       hit <- tryCatch(cached_bioc_config(fx$url, cache), error = function(e) NULL)
+      # A copy fetched before the date the core needs may lack a release
+      # out by then: fetch again.
+      if (!is.null(hit) && !is.na(fx$date) && fetched_day(hit) < as.Date(fx$date)) hit <- NULL
       if (!is.null(hit)) {
-        enqueue(nb, ev_bioc_releases_fetched(hit$table, at = Sys.time()))
+        enqueue(nb, ev_bioc_releases_fetched(hit$table, fetched_day(hit), at = Sys.time()))
       } else {
         job_start(bioc_config_job_key(fx$url, cache), bioc_config_fetch_command(fx$url, cache), nb,
           make_progress = function(line) NULL,
           make_done = function(status, output) {
             # A failed fetch falls back to the last list fetched, however
-            # old: releases are only ever added, so it still resolves every
-            # notebook it resolved before.
+            # old: the core uses it only for dates up to the day it was
+            # fetched (`releases_at()`), which it still speaks for.
             max_age <- if (identical(status, 0L)) bioc_config_max_age else Inf
             hit <- tryCatch(cached_bioc_config(fx$url, cache, max_age = max_age), error = function(e) NULL)
             if (!is.null(hit)) {
-              ev_bioc_releases_fetched(hit$table, at = Sys.time())
+              ev_bioc_releases_fetched(hit$table, fetched_day(hit), at = Sys.time())
             } else {
               ev_bioc_releases_failed(sprintf(paste(
                 "couldn't fetch Bioconductor's release list from %s,",

@@ -109,15 +109,23 @@ new_index_slot <- function(status, index = NULL, message = NULL, wanted = NULL) 
 
 #' Bioconductor's release list as the session knows it.
 #' `status`: `"unknown"` (not fetched), `"fetching"`, `"ready"` (`table`,
-#' from `parse_bioc_config()`) or `"failed"` (`message`, said as a
-#' `bioc_releases_unavailable` row by `packages_view()`; `table` empty, so
-#' only a pinned notebook still resolves Bioconductor packages). Fetched
-#' when the session first meets Bioconductor, and again after a failure only
+#' from `parse_bioc_config()`, as it was on the day `fetched`) or
+#' `"failed"` (`message`; `table` empty, so only a pinned notebook still
+#' resolves Bioconductor packages). `asked`: the latest snapshot date a
+#' fetch was asked to cover.
+#'
+#' A list fetched on day F speaks only for snapshot dates up to F: a
+#' release out by a later date may be missing from it (`releases_at()`).
+#' So it is fetched when the session first meets Bioconductor, again when a
+#' later date needs it (`releases_unsettled()`), and after a failure only
 #' when asked to run (`reduce_run()`). `new_state()` starts it `"ready"`
-#' from `options$bioc_releases` when given (tests), and `"failed"` when the
-#' lookup is off (`ember_repos(bioc_config = NA)`).
-new_releases_slot <- function(status = "unknown", table = empty_bioc_releases(), message = NULL) {
-  structure(list(status = status, table = table, message = message), class = "ember_releases_slot")
+#' from `options$bioc_releases` when given (tests; it then covers every
+#' date), and `"failed"` when the lookup is off (`ember_repos(bioc_config
+#' = NA)`).
+new_releases_slot <- function(status = "unknown", table = empty_bioc_releases(), message = NULL,
+                              fetched = as.Date(NA), asked = as.Date(NA)) {
+  structure(list(status = status, table = table, message = message, fetched = fetched, asked = asked),
+            class = "ember_releases_slot")
 }
 
 #' A library as the session sees it. The folder is the shell's; the core
@@ -317,7 +325,10 @@ ev_cancel_preview <- function(at) event("cancel_preview", at)
 ev_index_fetched <- function(key, index, at) event("index_fetched", at, key = key, index = index)
 ev_index_failed  <- function(key, message, at) event("index_failed", at, key = key, message = message)
 #' `table`: `parse_bioc_config()`'s result, as fetched (or cached).
-ev_bioc_releases_fetched <- function(table, at) event("bioc_releases_fetched", at, table = table)
+#' `fetched`: the day that list was fetched, a `Date` (a cached copy's own
+#' day, not today's).
+ev_bioc_releases_fetched <- function(table, fetched, at)
+  event("bioc_releases_fetched", at, table = table, fetched = fetched)
 ev_bioc_releases_failed  <- function(message, at) event("bioc_releases_failed", at, message = message)
 ev_library_checked <- function(key, manifest, at)            # manifest: NULL when absent
   event("library_checked", at, key = key, manifest = manifest)
@@ -332,8 +343,9 @@ ev_install_done <- function(token, key, manifest, message, log, at, failures = e
 
 fx_fetch_index    <- function(key, url) effect("fetch_index", key = key, url = url)
 #' Fetch Bioconductor's release list from `url` (`ember_repos(bioc_config)`),
-#' or read it from the disk cache when it is less than a day old.
-fx_fetch_bioc_config <- function(url) effect("fetch_bioc_config", url = url)
+#' or read it from the disk cache when it is less than a day old and was
+#' fetched no earlier than `date` (the snapshot date it must cover).
+fx_fetch_bioc_config <- function(url, date) effect("fetch_bioc_config", url = url, date = date)
 fx_check_library  <- function(key, path) effect("check_library", key = key, path = path)
 #' `lock` and `repos` are everything the installer needs; it writes the
 #' renv lockfile itself (lock.R, `renv_lockfile_of()`). `repos` is the
@@ -384,8 +396,8 @@ schedule_packages <- function(state, old) {
   # A lock holding Bioconductor packages fetches the list at open: its pin's
   # window, and whether the pin moves on this R, come from it. Resolution
   # asks for it below when it first meets Bioconductor.
-  if (lock_has_bioc(state$file$lock) && releases_unsettled(p)) {
-    fr <- fetch_releases(p, state$options)
+  if (lock_has_bioc(state$file$lock) && releases_unsettled(p, state$file$header$snapshot)) {
+    fr <- fetch_releases(p, state$options, state$file$header$snapshot)
     p <- fr$p
     effects <- c(effects, fr$effects)
   }
@@ -422,8 +434,8 @@ schedule_packages <- function(state, old) {
         # behaves the same either way.
         state$file$header$snapshot <- format(state$clock, "%Y-%m-%d")
       }
-      releases <- p$bioc_releases$table
-      needed <- needed_repos(state$file$header, state$options$r, releases)
+      needed <- needed_repos(state$file$header, state$options$r,
+                             releases_at(p, state$file$header$snapshot))
       # Only CRAN's index is fetched up front; the Bioconductor keys after
       # it are fetched when `resolve_lock()` asks for them (a name CRAN
       # lacks). A later key that failed is retried once the wanted set
@@ -453,8 +465,8 @@ schedule_packages <- function(state, old) {
           # lacks, which without the list has no Bioconductor key to look
           # in, or a Bioc entry), then resolve again with it.
           meets_bioc <- needs_bioc(res)
-          if (meets_bioc && releases_unsettled(p)) {
-            fr <- fetch_releases(p, state$options)
+          if (meets_bioc && releases_unsettled(p, state$file$header$snapshot)) {
+            fr <- fetch_releases(p, state$options, state$file$header$snapshot)
             p <- fr$p
             effects <- c(effects, fr$effects)
           } else if (isTRUE(res$complete)) {
@@ -464,7 +476,7 @@ schedule_packages <- function(state, old) {
             p <- state$packages
             p$resolved_for <- wanted
             p$problems <- rbind(res$problems, failed_index_problems(p$indexes[failed]),
-                                bioc_problems(state$file$header, state$options$r, releases),
+                                bioc_problems(state$file$header, state$options$r, p$bioc_releases$table),
                                 bioc_unavailable_problem(needed, res$problems, state$file$header,
                                                          state$options$r))
           } else {
@@ -490,7 +502,7 @@ schedule_packages <- function(state, old) {
   if (!is.null(state$packages$proposal)) {
     prop <- state$packages$proposal
     is_move <- identical(prop$kind, "bioc")
-    releases <- state$packages$bioc_releases$table
+    releases <- releases_at(state$packages, prop$date)
     wanted <- wanted_packages(state$graph, state$file$header)
     # The new date's CRAN key first, then Bioconductor's at the release for
     # the running R at that date: moving the date moves the release too.
@@ -510,16 +522,16 @@ schedule_packages <- function(state, old) {
     drop_message <- if (!has_bioc || identical(prop$status, "failed")) {
       NULL
     } else if (is.na(bioc_release_in(needed))) {
-      sprintf(paste("Bioconductor has no release for R %s at %s; moving there would",
+      releases_gap_message(state$packages, prop$date) %||% sprintf(paste("Bioconductor has no release for R %s at %s; moving there would",
                     "drop this notebook's Bioconductor packages"), state$options$r$minor, prop$date)
     } else if (length(failed) > 0) {
       failed_index_problems(state$packages$indexes[failed])$message[[1]]
     }
     needed <- setdiff(needed, failed)
     if (has_bioc && !identical(prop$status, "failed") &&
-        releases_unsettled(state$packages)) {
+        releases_unsettled(state$packages, prop$date)) {
       # The release at the new date comes from Bioconductor's list.
-      fr <- fetch_releases(state$packages, state$options)
+      fr <- fetch_releases(state$packages, state$options, prop$date)
       state$packages <- fr$p
       effects <- c(effects, fr$effects)
     } else if (is.null(slot)) {
@@ -533,8 +545,8 @@ schedule_packages <- function(state, old) {
       indexes_loaded <- Filter(Negate(is.null), lapply(state$packages$indexes[needed], function(s) s$index))
       res <- resolve_lock(wanted, state$file$lock, indexes_loaded, needed = needed,
                           mode = if (is_move) "bioc" else "fresh")
-      if (needs_bioc(res) && releases_unsettled(state$packages)) {
-        fr <- fetch_releases(state$packages, state$options)
+      if (needs_bioc(res) && releases_unsettled(state$packages, prop$date)) {
+        fr <- fetch_releases(state$packages, state$options, prop$date)
         state$packages <- fr$p
         effects <- c(effects, fr$effects)
       } else if (isTRUE(res$complete)) {
@@ -627,18 +639,52 @@ lock_has_bioc <- function(lock) {
   !is.null(lock$entries) && any(lock$entries$source == "Bioc")
 }
 
-#' `TRUE` until Bioconductor's release list has been fetched (or has
-#' failed): which release a notebook resolves from, its pin's window and
+#' `TRUE` while Bioconductor's release list can still change what Ember
+#' decides at `date`: it hasn't been fetched (or failed) yet, or the copy at
+#' hand was fetched before `date` and no fetch has been asked to cover
+#' `date` yet. Which release a notebook resolves from, its pin's window and
 #' whether the pin moves on this R all come from it.
-releases_unsettled <- function(p) {
-  p$bioc_releases$status %in% c("unknown", "fetching")
+releases_unsettled <- function(p, date) {
+  slot <- p$bioc_releases
+  if (slot$status %in% c("unknown", "fetching")) return(TRUE)
+  if (!identical(slot$status, "ready") || is.null(date) || is.na(date)) return(FALSE)
+  date <- as.Date(date)
+  date > slot$fetched && (is.na(slot$asked) || date > slot$asked)
 }
 
-#' Ask the shell for the release list, once: `list(p, effects)`.
-fetch_releases <- function(p, options) {
+#' The release list as it speaks for `date`: the table when it was fetched
+#' on or after `date`, else no releases. A list fetched before `date` may
+#' lack a release out by then, and resolving an unpinned notebook from it
+#' would pin the older release for good, so it isn't used for that date
+#' (`releases_gap_message()` says why). A pin needs no list to resolve
+#' (`needed_repos()`).
+releases_at <- function(p, date) {
+  slot <- p$bioc_releases
+  if (!identical(slot$status, "ready")) return(empty_bioc_releases())
+  if (!is.null(date) && !is.na(date) && as.Date(date) > slot$fetched) return(empty_bioc_releases())
+  slot$table
+}
+
+#' Why the release list doesn't speak for `date`, or `NULL` when it does.
+releases_gap_message <- function(p, date) {
+  slot <- p$bioc_releases
+  if (identical(slot$status, "failed")) return(slot$message %||% "no release list")
+  if (identical(slot$status, "ready") && !is.null(date) && !is.na(date) && as.Date(date) > slot$fetched) {
+    return(sprintf(paste("Bioconductor's release list was last fetched on %s, before this notebook's",
+                         "date %s, and couldn't be fetched again"), format(slot$fetched), date))
+  }
+  NULL
+}
+
+#' Ask the shell for the release list covering `date`, once per later date:
+#' `list(p, effects)`. The table at hand stays until the new one arrives.
+fetch_releases <- function(p, options, date) {
   if (identical(p$bioc_releases$status, "fetching")) return(list(p = p, effects = list()))
   p$bioc_releases$status <- "fetching"
-  list(p = p, effects = list(fx_fetch_bioc_config(options$repos$bioc_config)))
+  if (!is.null(date) && !is.na(date)) {
+    p$bioc_releases$asked <- max(p$bioc_releases$asked, as.Date(date), na.rm = TRUE)
+  }
+  list(p = p, effects = list(fx_fetch_bioc_config(options$repos$bioc_config, date %||% NA_character_)))
 }
 
 #' Move a pinned notebook to the Bioconductor release for the running R
@@ -657,10 +703,10 @@ propose_bioc_move <- function(state) {
   header <- state$file$header
   if (!isTRUE(state$allowed) || isTRUE(state$read_only) || !is.null(p$proposal) ||
       isTRUE(p$bioc_move_tried) || is.na(header$bioc_version) || is.na(header$snapshot) ||
-      !lock_has_bioc(state$file$lock) || releases_unsettled(p)) {
+      !lock_has_bioc(state$file$lock) || releases_unsettled(p, header$snapshot)) {
     return(state)
   }
-  if (is.na(bioc_move_target(header, state$options$r, p$bioc_releases$table))) return(state)
+  if (is.na(bioc_move_target(header, state$options$r, releases_at(p, header$snapshot)))) return(state)
   p$proposal <- new_proposal(header$snapshot, apply = TRUE, kind = "bioc")
   p$bioc_move_tried <- TRUE
   state$packages <- p
@@ -881,18 +927,24 @@ reduce_index_failed <- function(state, event) {
 reduce_bioc_releases_fetched <- function(state, event) {
   slot <- state$packages$bioc_releases
   if (!identical(slot$status, "fetching")) return(list(state = state, effects = list(), reply = NULL))
-  state$packages$bioc_releases <- new_releases_slot("ready", event$table)
+  state$packages$bioc_releases <- new_releases_slot("ready", event$table, fetched = as.Date(event$fetched),
+                                                    asked = slot$asked)
   state <- refresh_bioc_problems(state)
   list(state = state, effects = list(), reply = NULL)
 }
 
 #' The release list couldn't be fetched, and the shell had no earlier copy:
 #' Bioconductor packages can't be resolved (`packages_view()` says so)
-#' until running asks again (`reduce_run()`).
+#' until running asks again (`reduce_run()`). A list this session already
+#' had stays, for the dates it covers.
 reduce_bioc_releases_failed <- function(state, event) {
   slot <- state$packages$bioc_releases
   if (!identical(slot$status, "fetching")) return(list(state = state, effects = list(), reply = NULL))
-  state$packages$bioc_releases <- new_releases_slot("failed", message = event$message)
+  state$packages$bioc_releases <- if (!is.na(slot$fetched)) {
+    new_releases_slot("ready", slot$table, fetched = slot$fetched, asked = slot$asked)
+  } else {
+    new_releases_slot("failed", message = event$message, asked = slot$asked)
+  }
   list(state = state, effects = list(), reply = NULL)
 }
 
@@ -970,7 +1022,8 @@ reduce_install_done <- function(state, event) {
       # are all already fixed by the time this reducer runs.
       if (nrow(tgt$failures) > 0) {
         wanted <- wanted_packages(state$graph, state$file$header)
-        needed <- needed_repos(state$file$header, state$options$r, state$packages$bioc_releases$table)
+        needed <- needed_repos(state$file$header, state$options$r,
+                               releases_at(state$packages, state$file$header$snapshot))
         indexes <- lapply(state$packages$indexes, function(s) s$index)
         tgt$failures$needed_by <- lapply(tgt$failures$package, function(pk) {
           failure_needed_by(pk, wanted, indexes, needed)
@@ -1013,7 +1066,7 @@ reduce_preview_date <- function(state, event) {
   date_header <- state$file$header
   date_header$snapshot <- event$date
   date_header$bioc_version <- NA_character_
-  for (key in needed_repos(date_header, state$options$r, state$packages$bioc_releases$table)) {
+  for (key in needed_repos(date_header, state$options$r, releases_at(state$packages, event$date))) {
     slot <- state$packages$indexes[[key]]
     if (!is.null(slot) && identical(slot$status, "failed")) {
       state$packages$indexes[[key]] <- NULL
@@ -1281,14 +1334,16 @@ packages_view <- function(state) {
                      message = p$proposal$message, kind = p$proposal$kind %||% "date")
   }
   # A Bioconductor move that failed isn't the page's update question
-  # (`project_ember()`), so it is said as a problem instead; so is a release
-  # list that couldn't be fetched, which only happens once the notebook has
-  # met Bioconductor.
+  # (`project_ember()`), so it is said as a problem instead. Where an
+  # unpinned notebook found no Bioconductor release (`bioc_unavailable`)
+  # because the release list was missing or too old for its date, that is
+  # the reason given; a CRAN-only or pinned notebook never gets the row.
   problems <- p$problems
-  if (identical(p$bioc_releases$status, "failed")) {
+  gap <- releases_gap_message(p, state$file$header$snapshot)
+  if (!is.null(gap) && any(problems$kind == "bioc_unavailable")) {
     problems <- rbind(problems[problems$kind != "bioc_unavailable", , drop = FALSE],
-                      package_problem("bioc_releases_unavailable", NA_character_, sprintf(
-      "Bioconductor packages can't be resolved: %s", p$bioc_releases$message %||% "no release list")))
+                      package_problem("bioc_releases_unavailable", NA_character_,
+                                      paste("Bioconductor packages can't be resolved:", gap)))
   }
   if (!is.null(p$proposal) && identical(p$proposal$kind, "bioc") && identical(p$proposal$status, "failed")) {
     problems <- rbind(problems, package_problem("bioc_move_failed", NA_character_, sprintf(

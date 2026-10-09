@@ -187,6 +187,11 @@ cached_bioc_config <- function(url, cache = cache_dir(), max_age = bioc_config_m
   hit
 }
 
+#' The local day a cached release list was fetched: it speaks for snapshot
+#' dates up to that day (`releases_at()`, packages-core.R). Snapshot dates
+#' are local days too (`schedule_packages()`).
+fetched_day <- function(hit) as.Date(format(hit$fetched_at, "%Y-%m-%d"))
+
 #' Run in a subprocess (`bioc_config_fetch_command()`), as
 #' `fetch_index_main()` is: download `url`, parse it with
 #' `parse_bioc_config()`, and save `list(table, fetched_at)` at a temporary
