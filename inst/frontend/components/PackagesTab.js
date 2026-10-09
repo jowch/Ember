@@ -31,6 +31,8 @@ const failure_sentence = (failure, rows, r_version) => {
             return t("t_ember_install_failed_download")
         case "unavailable":
             return t("t_ember_install_failed_unavailable")
+        case "system":
+            return t("t_ember_install_failed_system")
         default:
             return t("t_ember_install_failed_other")
     }
@@ -38,7 +40,8 @@ const failure_sentence = (failure, rows, r_version) => {
 
 /**
  * One failed package's card: title, a sentence depending
- * on `kind`, then Update (build failures), Try again (downloads) and
+ * on `kind`, then Update (build failures), Try again (downloads and
+ * packages the repositories didn't list) and
  * Show the error (always). `ember_update_packages` and `ember_run_all`
  * are plain requests (server.R); neither is this component's to answer.
  *
@@ -53,7 +56,9 @@ const InstallFailureCard = ({ failure, rows, r_version, log }) => {
     const pluto_actions = useContext(PlutoActionsContext)
     const [show_error, set_show_error] = useState(false)
     const can_update = failure.kind === "compile" || failure.kind === "configure"
-    const can_retry = failure.kind === "download"
+    // "unavailable" is most often a repository index that couldn't be
+    // read, which can be passing, so it gets Try again too.
+    const can_retry = failure.kind === "download" || failure.kind === "unavailable"
 
     return html`
         <div class="ember-install-failure-card">

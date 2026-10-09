@@ -101,13 +101,27 @@ repo_urls <- function(repos, header) {
 #' `.../packages/3.23/__linux__/noble/bioc`, which Package Manager answers
 #' with a 404, so every Bioconductor package "can't be found" and the
 #' whole install fails. renv leaves a URL that already has a `__x__`
-#' segment alone, so rewriting the Bioconductor ones here is enough; CRAN
-#' is left to renv. `platform` is renv's own name for this system
-#' (`"noble"`, `"rhel9"`, ...); `NULL` (not Linux, or a system renv can't
-#' name) changes nothing, and then renv changes nothing either.
-ppm_binary_repos <- function(urls, platform) {
-  if (is.null(platform) || length(platform) != 1 || is.na(platform) || !nzchar(platform)) return(urls)
-  bioc <- names(urls) %in% bioc_repo_names & !grepl("/__[^_/]+__/", urls)
+#' segment alone, so rewriting the Bioconductor ones here is enough.
+#'
+#' `cran_binary` is what renv's own rewrite made of `urls[["CRAN"]]`
+#' (`renv_ppm_transform()`, in the installer). Bioconductor follows it:
+#' only when renv rewrote CRAN (Linux, Package Manager, binaries for this
+#' platform), only with the platform renv chose, and only for a
+#' Bioconductor URL on the same host as CRAN. Anything else (macOS,
+#' `file://` repositories, an on-prem server without Linux binaries)
+#' changes nothing, and renv changes nothing either.
+ppm_binary_repos <- function(urls, cran_binary) {
+  if (is.null(cran_binary) || length(cran_binary) != 1 || is.na(cran_binary) ||
+      !"CRAN" %in% names(urls)) return(urls)
+  platform <- regmatches(cran_binary, regexec("/__linux__/([^/]+)/", cran_binary))[[1]]
+  if (length(platform) < 2) return(urls)
+  platform <- platform[[2]]
+  host_of <- function(u) sub("^(https?://[^/]+).*$", "\\1", u)
+  cran_host <- host_of(urls[["CRAN"]])
+  bioc <- names(urls) %in% bioc_repo_names &
+    grepl("^https?://", urls) &
+    host_of(urls) == cran_host &
+    !grepl("/__[^_/]+__/", urls)
   urls[bioc] <- sub("/([0-9]{4}-[0-9]{2}-[0-9]{2}/packages/)",
                     paste0("/__linux__/", platform, "/\\1"), urls[bioc])
   urls

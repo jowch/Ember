@@ -262,7 +262,7 @@ test_that("[net] a notebook with library(dplyr) at a fixed past date resolves, i
   expect_equal(notebook_state(nb)$worker$loaded[["dplyr"]], locked_version)
 })
 
-test_that("[net] a notebook with library(S4Vectors) installs Bioconductor binaries from PPM and loads", {
+test_that("[net] a notebook with library(S4Vectors) installs from Bioconductor on PPM and loads", {
   # On Linux, renv's own binary rewrite turned Bioconductor's URL into one
   # Package Manager answers with a 404, so every Bioconductor package
   # failed as "failed to find source" (ppm_binary_repos()).

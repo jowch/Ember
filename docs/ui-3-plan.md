@@ -1574,9 +1574,11 @@ worker message (`chdir`).
   couldn't install"**, then one sentence ("A package it needs, rlang 1.1.6,
   doesn't build on R 4.6.1." / "It doesn't build on R 4.6.1." / "It
   couldn't be downloaded. Check the internet connection." / "It couldn't be
-  found in the package repositories." / "It couldn't be installed. The
-  error says why." for anything else), **Update** ("Updating usually
-  fixes this") for build failures, Try again for downloads, and **Show the
+  found in the package repositories." / "It needs a system library that
+  isn't installed." / "It couldn't be installed. The error says why." for
+  anything else), **Update** ("Updating usually fixes this") for build
+  failures, Try again for downloads and packages the repositories didn't
+  list, and **Show the
   error** for all, which expands the installer's last 200 lines in mono.
   `notebook_snapshot(nb)$packages` carries the same facts.
 

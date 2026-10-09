@@ -116,6 +116,7 @@
     "t_ember_install_failed_configure": "It doesn't build on R {{r_version}}.",
     "t_ember_install_failed_download": "It couldn't be downloaded. Check the internet connection.",
     "t_ember_install_failed_unavailable": "It couldn't be found in the package repositories.",
+    "t_ember_install_failed_system": "It needs a system library that isn't installed.",
     "t_ember_install_failed_other": "It couldn't be installed. The error says why.",
     "t_ember_install_failed_update_hint": "Updating usually fixes this",
     "t_ember_update_packages": "Update",

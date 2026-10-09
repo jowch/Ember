@@ -159,7 +159,9 @@ test_that("repo_urls lists the three Bioconductor repositories only with a pin (
 test_that("ppm_binary_repos() puts Bioconductor's Linux binary segment after the repository root", {
   repos <- ember_repos(cran = "https://ppm.example/cran", bioc = "https://ppm.example/bioconductor")
   urls <- repo_urls(repos, header_at("2026-10-08", "3.23"))
-  out <- ppm_binary_repos(urls, "noble")
+  # What renv's own rewrite makes of the CRAN URL on Linux.
+  cran_binary <- "https://ppm.example/cran/__linux__/noble/2026-10-08"
+  out <- ppm_binary_repos(urls, cran_binary)
   expect_equal(unname(out[["BioCsoft"]]),
               "https://ppm.example/bioconductor/__linux__/noble/2026-10-08/packages/3.23/bioc")
   expect_equal(unname(out[["BioCann"]]),
@@ -168,10 +170,24 @@ test_that("ppm_binary_repos() puts Bioconductor's Linux binary segment after the
               "https://ppm.example/bioconductor/__linux__/noble/2026-10-08/packages/3.23/data/experiment")
   # CRAN is left to renv, whose rewrite is right for it.
   expect_equal(out[["CRAN"]], urls[["CRAN"]])
-  # Not Linux (or a system renv can't name): nothing changes.
-  expect_identical(ppm_binary_repos(urls, NULL), urls)
   # Already rewritten: left alone, as renv itself does.
-  expect_identical(ppm_binary_repos(out, "noble"), out)
+  expect_identical(ppm_binary_repos(out, cran_binary), out)
+})
+
+test_that("ppm_binary_repos() changes nothing where renv didn't rewrite CRAN", {
+  repos <- ember_repos(cran = "https://ppm.example/cran", bioc = "https://ppm.example/bioconductor")
+  urls <- repo_urls(repos, header_at("2026-10-08", "3.23"))
+  # Off Linux, or a server renv found no Linux binaries on: CRAN unchanged.
+  expect_identical(ppm_binary_repos(urls, urls[["CRAN"]]), urls)
+  expect_identical(ppm_binary_repos(urls, NULL), urls)
+
+  # A Bioconductor repository on another host than CRAN, or not over http(s).
+  other <- repo_urls(ember_repos(cran = "https://ppm.example/cran", bioc = "https://bioc.example/bioconductor"),
+                     header_at("2026-10-08", "3.23"))
+  expect_identical(ppm_binary_repos(other, "https://ppm.example/cran/__linux__/noble/2026-10-08"), other)
+  local <- repo_urls(ember_repos(cran = "file:///repos/cran", bioc = "file:///repos/bioconductor"),
+                     header_at("2026-10-08", "3.23"))
+  expect_identical(ppm_binary_repos(local, "file:///repos/cran/__linux__/noble/2026-10-08"), local)
 })
 
 test_that("the release is the latest one for the running R out by the snapshot date (79)", {

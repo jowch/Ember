@@ -176,7 +176,9 @@ install_failure_message <- function(lines, status) {
 #' Which packages an install failed on, and why, from the installer's
 #' output. R's quotes are curly (left/right single quotation marks) or
 #' ASCII depending on locale; both are matched.
-#' -> data.frame(package, kind, detail): kind "compile" ("ERROR:
+#' -> data.frame(package, kind, detail): kind "system" (while a package
+#'    builds from source, a line saying a system library or header is
+#'    missing: `system_patterns` below; detail = that line), "compile" ("ERROR:
 #'    compilation failed for package"), "configure" ("ERROR: configuration
 #'    failed"), "dependency" ("ERROR: dependency 'x' is not available",
 #'    detail = x), "download" (a summary line, or renv's own "error
@@ -221,7 +223,28 @@ install_failures <- function(lines) {
     detail[length(detail) + 1L] <<- d
   }
 
+  # A missing system library shows up between a package's "* installing
+  # *source* package" line and its own ERROR line, in a few unmistakable
+  # shapes: an anticonf message (xml2, curl, openssl), configure's own
+  # "not found", a missing shared object, or gcc's missing header.
+  system_patterns <- c("Configuration failed because .* was not found",
+                       "^configure: error: .*(not found|cannot find)",
+                       "cannot open shared object file",
+                       "fatal error: [^ ]+\\.h: No such file or directory")
+  building <- NA_character_
+
   for (line in lines) {
+    if (grepl("^\\* installing \\*source\\* package '[^']+'", line)) {
+      building <- capture("^\\* installing \\*source\\* package '([^']+)'", line)
+      next
+    }
+    if (!is.na(building) && any(vapply(system_patterns, grepl, logical(1), x = line, ignore.case = TRUE))) {
+      add(building, "system", line)
+      next
+    }
+    if (grepl("^ERROR: [a-z]+ failed for package '[^']+'", line) || grepl("^\\* DONE \\(", line)) {
+      building <- NA_character_
+    }
     if (grepl("^ERROR: compilation failed for package '[^']+'", line)) {
       add(capture("^ERROR: compilation failed for package '([^']+)'", line), "compile", NA_character_)
     } else if (grepl("^ERROR: configuration failed for package '[^']+'", line)) {
@@ -274,8 +297,9 @@ install_failures <- function(lines) {
 
   # One row per package: keep the first (most specific) kind a package
   # was seen with, in the order the loop above checks patterns in
-  # (compile/configure/dependency before the catch-all summary line).
-  kind_rank <- c(compile = 1L, configure = 2L, dependency = 3L, download = 4L,
+  # (system, then compile/configure/dependency, before the catch-all
+  # summary line).
+  kind_rank <- c(system = 0L, compile = 1L, configure = 2L, dependency = 3L, download = 4L,
                  unavailable = 5L, other = 6L)
   df <- data.frame(package = pkg, kind = kind, detail = detail, stringsAsFactors = FALSE)
   df <- df[order(kind_rank[df$kind]), ]
