@@ -1410,7 +1410,7 @@ test_that("an edit that leaves the code as it was keeps the learned references",
   expect_equal(r$state$graph$learned$references$B, "x")
 })
 
-test_that("editing a cell drops its learned definitions, so a stale one can't hold it in a cycle", {
+test_that("an edit drops learned definitions that would hold the cell in a cycle", {
   s <- fake_state(list(S = cell(""), A = cell("load('x.rda')"), B = cell("y <- x + 1")),
                   on_cell_change = "lazy")
   r <- boot(s, "A")
@@ -1424,7 +1424,7 @@ test_that("editing a cell drops its learned definitions, so a stale one can't ho
   expect_null(r$state$graph$learned$definitions$A)
   expect_false("A" %in% r$state$graph$upstream$B)
   expect_true("B" %in% r$state$graph$upstream$A)
-  expect_false(any(vapply(r$state$graph$errors, function(e) identical(e$kind, "cycle"), logical(1))))
+  expect_length(blocked_cells(r$state$graph), 0)
 
   # Nor does the reopened file bring it back.
   s2 <- reopen(r$state)
@@ -1432,20 +1432,37 @@ test_that("editing a cell drops its learned definitions, so a stale one can't ho
   expect_false("A" %in% s2$graph$upstream$B)
 })
 
-test_that("a reader of a definition dropped by an edit still reruns when the cell does", {
+test_that("an edit drops a learned definition another cell now defines", {
+  s <- fake_state(list(S = cell(""), A = cell("load('x.rda')"), B = cell("y <- x + 1")))
+  r <- boot(s, "A")
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+  n1 <- "44444444-4444-4444-8444-444444444444"
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "load('z.rda')"),
+                                    op_insert(n1, 2, "x <- 1")), at(20)))
+  expect_null(r$state$graph$learned$definitions$A)
+  expect_length(blocked_cells(r$state$graph), 0)
+  expect_true(n1 %in% r$state$graph$upstream$B)
+})
+
+test_that("an edit keeps learned definitions that block nothing, so readers still wait for the cell", {
   s <- fake_state(list(S = cell(""), A = cell("load('f.rda')"), B = cell("summary(fits)")))
   r <- boot(s, c("A", "B"))
   r <- drive(r$state, wk_done(1, last_token(r), report(created = "fits"), at(10)))
   r <- drive(r$state, wk_done(1, last_token(r), report(), at(11)))
-  expect_equal(r$state$results$B$status, "ok")
-
   r <- drive(r$state, ev_apply(list(op_set_code("A", "load('g.rda')")), at(20)))
-  expect_false("A" %in% r$state$graph$upstream$B)
-  r <- drive(r$state, ev_run("A", at(21)))
-  expect_true(isTRUE(r$state$results$B$stale))
-  r <- drive(r$state, wk_done(1, last_token(r), report(created = "fits"), at(22)))
-  expect_true("A" %in% r$state$graph$upstream$B)
-  expect_equal(sent_cells(r), "B")
+  expect_equal(r$state$graph$learned$definitions$A, "fits")
+  # Running B runs the edited A first, as running any stale cell does.
+  expect_equal(sent_cells(drive(r$state, ev_run("B", at(21)))), "A")
+})
+
+test_that("an edit keeps learned definitions, so the file is still written in run order", {
+  s <- fake_state(list(S = cell(""), B = cell("summary(fits)"), A = cell("load('f.rda')")))
+  r <- boot(s, "A")
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "fits"), at(10)))
+  expect_equal(r$state$graph$order, c("A", "S", "B"))
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "load('g.rda')")), at(20)))
+  expect_equal(r$state$graph$order, c("A", "S", "B"))
+  expect_equal(reopen(r$state)$graph$order, c("A", "S", "B"))
 })
 
 test_that("an edit that leaves the code as it was keeps the learned definitions", {
