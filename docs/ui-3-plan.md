@@ -31,13 +31,13 @@ restyle comes later.
    panel and its tabs, theme switching.
 8. **Piece 6a, cell chrome**: rail, run/stop, cell menu, "+", chips, empty
    notebook, disabled states; argument tooltips close when the cursor
-   leaves their cell (design-gaps.md).
+   leaves their cell (the old gap list).
 9. **Piece 6b, errors, outputs and text cells**: error box and traceback,
    tables, trees, console, ANSI palette, figures, text-cell editing.
 10. **Piece 7, menus, settings, shortcuts, accessibility, wording**: Export
    menu, Settings, shortcuts sheet, F1, keyboard path, names, wording
    sweep, dead-code deletion; MathJax loaded only when a cell has TeX
-   (design-gaps.md).
+   (the old gap list).
 
 See [Order of implementation](#order-of-implementation) for why.
 
@@ -698,8 +698,7 @@ about 50 lines.
 - **Disabling throws away the dependents' variables**, so a slow dependent
   has to rerun after enabling. Pluto does the same.
 - **Undo delete brings a disabled cell back enabled**: `order_ops()`
-  re-inserts with code only (pluto-edits.R:157-158). Recorded in
-  design-gaps.md.
+  re-inserts with code only (pluto-edits.R:157-158). Tracked in #26.
 - **`##` looks unusual.** Someone who uncomments by hand and leaves a stray
   `#` gets the `uncommented_line` repair at the next open.
 - **Snapshot vs page.** The snapshot's `stale` stays `TRUE` for off cells
@@ -1356,8 +1355,7 @@ message and `done` report gain fields, worker and server in one commit; the
   every page sync and every HTML export: a page with 50 plots grows by a
   few MB.
 - **`render_png()` with a pixel size replaces the stored image**, so the
-  page then shows that image. Unchanged from today; recorded in
-  design-gaps.md.
+  page then shows that image. Unchanged from today; tracked in #28.
 - **Summaries run user code** (`str` and `format` methods) after every
   run. The 0.25 s budget, per-name `tryCatch` and interruptibility bound
   it; a slow `class()` is not bounded.
@@ -1501,7 +1499,7 @@ worker message (`chdir`).
 - **Start page.** `GET /` is a bare `<ul>` of hosted notebooks
   (`http_index()`, server.R:1153-1163): no way to create a notebook, no
   recent list, no "Open a file". Making a notebook means `new_notebook()`
-  in R, then `start_server()` (design-gaps.md, UI);
+  in R, then `start_server()` (the old gap list, UI);
   `start_server(open = TRUE)` with no path opens nothing
   (server.R:171-174).
 - **Recent notebooks** live only in the browser's localStorage
@@ -1522,7 +1520,7 @@ worker message (`chdir`).
 - **Packages Update.** `preview_date()` and `set_date()` exist
   (api-packages.R:41-75), but the page never calls them; the Packages tab
   (PackagesTab.js) only displays.
-- **Install failures** (design-gaps.md, Packages). Reproduced: a notebook
+- **Install failures** (the old gap list, Packages). Reproduced: a notebook
   locking a source package that doesn't compile ends with
   `target$message = "install failed, status 1"` and an empty `target$log`,
   although the installer prints the compiler error and renv's
@@ -1800,7 +1798,7 @@ PackagesTab +90, start.html and css 130. Rd: notebooks.Rd, packages.Rd's
   snapshot after the first fetch, and indexes are cached forever ("a dated
   index never changes", resolve.R:84-88), so updating twice on one day can
   miss packages released later that day. Harmless (the lock pins what was
-  chosen); recorded in design-gaps.md.
+  chosen); tracked in #39.
 - **Concurrent writers to the recent file** can lose an entry; writes are
   atomic, so it is never corrupt. Accepted.
 - **`chdir` and a busy worker.** The message is read after the running
@@ -2342,7 +2340,7 @@ rules and Pluto's logo sizing (editor.css:1005-1060).
   shows docs, then expects the helpbox to fill it. Test 123 covers the
   hooks, not the look; check in Endeavor by eye. Endeavor also follows the
   system theme (theme.ts:77, 139, 196), so an Ember set to Dark on a light
-  system shows Endeavor's overrides in light colours (design-gaps.md).
+  system shows Endeavor's overrides in light colours (#62).
 - **Exports get 310 KB larger.** If it matters, `export_html()` can embed
   only the Latin files (about 160 KB).
 - **Sticky header** covers what Pluto scrolls to the top
@@ -2959,7 +2957,7 @@ to existing tests listed under Piece 6 in the tests file.
   ::after`, `jlerror > .error-header`, `section.stacktrace-waiting-to-view`
   (endeavor cells.ts:24-34, errors.ts:32-43). The elements stay, so nothing
   breaks, but some rules stop matching and its stripes may fight the new
-  rail. That is Endeavor's change (design-gaps.md).
+  rail. That is Endeavor's change (#62).
 - **ansi_up internals.** `palette_256` is not documented API; ansi_up is
   pinned, and test 147 fails if a version drops the property rather than
   the page silently showing inline colours.
@@ -2989,7 +2987,7 @@ to existing tests listed under Piece 6 in the tests file.
 3. "+" overlay and empty-notebook hints (6.2, 6.9): tests 143, 151.
 4. Chips, stale names and the disabled states (6.3, 6.10): tests 144, 149.
 5. Argument tooltips close when the cursor leaves their cell or the cell
-   loses focus (design-gaps.md, "Argument tooltips stay on screen"); an e2e
+   loses focus (the old gap list, "Argument tooltips stay on screen"); an e2e
    check alongside test 152.
 
 **6b**
@@ -3129,7 +3127,7 @@ render (1656-1667) change; `export_menu_open` and `header.show_export` go.
 - Not ported: the desktop-app branch, the pride card, the shapes, Edit
   frontmatter, Start presentation, the close button,
   `WarnForVisisblePasswords` (it checks password inputs inside bonds;
-  Ember has no bonds yet, see design-gaps.md). Old CSS (editor.css:549-704,
+  Ember has no bonds yet, see #36). Old CSS (editor.css:549-704,
   1171-1202, 2178-2193) goes.
 
 piece 5's ⋯ menu changes one item: "Keyboard shortcuts" opens 7d's sheet.
@@ -3223,7 +3221,7 @@ and its Ctrl + ? / F1 handler (Editor.js:1370-1405) go, with `t_key_*`,
 Inside Endeavor, F1 doesn't reach Ember: Endeavor's page script takes F1
 and Ctrl/⌘ + ? on `window` in the capture phase for its own sheet
 (endeavor/frontend/src/actions.ts:161-172). That is an Endeavor change,
-recorded in design-gaps.md.
+tracked in #62.
 
 #### 7e. Keyboard path and focus
 
@@ -3393,7 +3391,7 @@ test-only dependency (never shipped in the package), for test 171.
 
 - **Endeavor's Present, Record and Frontmatter actions**
   (actions.ts:1-5, 155-159) do nothing on Ember pages; they already did
-  nothing, since the listeners were gone (design-gaps.md).
+  nothing, since the listeners were gone (#62).
 - **Esc order in CodeMirror.** If our Esc ran before completion's or the
   search panel's, Esc would stop closing them; `Prec.low` and test 166
   cover it (plus a manual check with the completion list open).
@@ -3420,7 +3418,7 @@ test-only dependency (never shipped in the package), for test 171.
    frontmatter, CSS, unused keys), running the e2e "open" test after each
    batch: tests 153-157, 159.
 5. MathJax loaded only when a cell's output has TeX, so the page makes no
-   CDN request otherwise (design-gaps.md); offline.test.mjs checks that no
+   CDN request otherwise (the old gap list); offline.test.mjs checks that no
    request leaves the machine.
 6. axe: test 171.
 
@@ -3499,5 +3497,5 @@ test-only dependency (never shipped in the package), for test 171.
 Everything the drafts asked has been decided (ui-3.md and the user's
 decisions recorded above). The signature tooltip shows only the
 arguments, also for notebook functions; a docstring is read in Help.
-Nothing is left open. Endeavor follow-ups are listed in design-gaps.md and
+Nothing is left open. Endeavor follow-ups are tracked in #62 and
 are not part of this increment.

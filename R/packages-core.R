@@ -188,7 +188,7 @@ install_failure_message <- function(lines, status) {
 #'    "ERROR:" line earlier in the log, then renv's summary line at the
 #'    end) keeps the most specific kind, in the order above.
 #'
-#' Best effort, not a contract (design-gaps.md): renv's and R's own text
+#' Best effort, not a contract: renv's and R's own text
 #' can change between versions, so an unrecognised failure still shows up
 #' as "other" with whatever its own reason says, rather than being
 #' dropped silently. Captured against real renv 1.3.0/R 4.6.1 output

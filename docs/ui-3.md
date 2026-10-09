@@ -292,7 +292,7 @@ error boxes and the ANSI palette have dark variants. Figures are not themed.
 5. **Notebooks from the browser**: create (name and folder), rename, move;
    a remembered list of recent notebooks with Forget.
 6. **Packages**: Update to today's snapshot from the page; failed installs
-   report the real error (today the log is empty; design-gaps.md).
+   report the real error (today the log is empty).
 7. **Variables**: the worker reports each global's type and a one-line value
    summary, and the engine knows which cell defines it.
 8. **Disable cell**: a `disabled` flag per cell, kept in the cell-order

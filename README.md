@@ -79,6 +79,10 @@ To use it on a remote machine, forward that port over SSH,
 `ssh -L 4321:localhost:4321 server`, and open the address it prints. Behind
 a proxy such as Posit Workbench or JupyterHub, pass the proxy's host name:
 `start_server("analysis.R", allowed_hosts = "workbench.example.org")`.
+A proxy that serves Ember under a path prefix should redirect the bare
+prefix to one with a trailing slash, as JupyterHub's server proxy does:
+Ember never sees the prefix, so its relative links resolve one level too
+high against a URL without that slash.
 
 To run a saved notebook from start to finish outside the browser, with the
 package versions it records:
@@ -92,8 +96,8 @@ ember::run("analysis.R")
 Ember is being built in steps. Not yet available: interactive inputs, like
 Pluto's `@bind`.
 
-The full list of known gaps is in [docs/design-gaps.md](docs/design-gaps.md),
-and the design in [docs/design.md](docs/design.md).
+Known gaps are tracked as [GitHub issues](https://github.com/jowch/Ember/issues),
+labelled P1 to P3 by priority, and the design is in [docs/design.md](docs/design.md).
 
 ## Acknowledgements
 

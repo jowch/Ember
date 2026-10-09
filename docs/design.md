@@ -1031,9 +1031,10 @@ run), and the snapshot has no stale state.
 0. **Spikes**, to run before committing to the design. Done on macOS
    (2026-09-29; results are folded into the sections above): server and
    worker, the frontend stub, rig, rv against renv, and package loading.
-   Still to run: the first three on Linux and Windows; the URL secret; rich
-   outputs in the browser; whether any package overwrites a setting the
-   notebook already set.
+   Since then the URL secret and rich outputs in the browser are built, and
+   the server and worker run on Linux in CI. Still to run: the server and
+   worker, and rig, on Windows (#48, #49); whether any package overwrites a
+   setting the notebook already set (#61).
    - Server and worker: httpuv serving the UI while a worker runs a long
      cell; interrupting a running cell and restarting its worker, on macOS,
      Linux and Windows. Pluto's unmodified frontend talking to a stub R

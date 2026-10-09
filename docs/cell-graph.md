@@ -305,8 +305,9 @@ keeps display order unless an edge forces a move.
   walker's speed was measured on the corpus (about 5 ms per file at the
   median); and `library()` inside a function body uses the package
   without attaching it.
-- Still open, tracked in [design-gaps.md](design-gaps.md): saving learned
-  references in the footer.
+- Also resolved: learned references are saved in the footer (#9), and
+  learned definitions are dropped on an edit when they would block the
+  cell (#15).
 
 ## Next implementation step
 

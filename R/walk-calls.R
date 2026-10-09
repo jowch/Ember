@@ -11,8 +11,8 @@
 walk_package_call <- function(e, scope, acc, attached, name, arg_pids = NULL) {
   # Inside a function body the package is needed but attaches nothing
   # statically: the call may never run, and a helper that attaches must not
-  # make its cell an attaching one (design-gaps.md, Engine). The worker
-  # still tracks what it attaches when it does run.
+  # make its cell an attaching one. The worker still tracks what it
+  # attaches when it does run.
   attached <- attached && !in_function(scope)
   args <- as.list(e)[-1]
   if (is.null(arg_pids)) arg_pids <- rep(list(NA_integer_), length(args))

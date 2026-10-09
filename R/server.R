@@ -1564,7 +1564,8 @@ open_or_find <- function(server, path) {
 #' this process never sees the prefix and can't spell an absolute path
 #' under it; a relative URL is resolved by the browser against *its* own
 #' URL, which does carry the prefix, and lands in the right place either
-#' way (design-gaps.md, "Remote use behind a path prefix").
+#' way. A bare prefix with no trailing slash is the proxy's to redirect
+#' (README, and reverse-proxy.test.mjs).
 relative_edit_url <- function(server, id) sprintf("edit?id=%s&secret=%s", id, server$secret)
 
 #' `GET /open?path=` -> open (or find) the notebook, host it owned, redirect
