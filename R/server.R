@@ -293,6 +293,9 @@ stop_server <- function(server) { server$stopped <- TRUE; invisible(NULL) }
 #'   (anything with `$send(raw)`), `notebook_id` (set by connect), `sent`
 #'   (the frontend object as this client has it, or NULL before its first
 #'   sync)).
+#' * `sockets`: list of `list(ws, notebook_id)`, one per socket whose
+#'   `connect` named a notebook: the socket's own notebook, which every
+#'   later message on it must name (`socket_may_act()`).
 #' * `counter`: integer, +1 per flush (the frontend checks it increases).
 #' * `throttle`: seconds between engine-triggered flushes of one notebook
 #'   (default 0.03). 0 flushes inside the notification, for tests.
@@ -311,6 +314,7 @@ new_server <- function(secret, frontend = system.file("frontend", package = "emb
   server$stopped <- FALSE
   server$hubs <- new.env(parent = emptyenv())
   server$clients <- new.env(parent = emptyenv())
+  server$sockets <- list()
   server$deps <- new.env(parent = emptyenv())
   server$counter <- 0L
   # Where Ember was started: the default Folder for a new notebook (the
@@ -458,6 +462,7 @@ drop_clients_of_ws <- function(server, ws) {
     cl <- mget(id, envir = server$clients, ifnotfound = list(NULL))[[1]]
     if (!is.null(cl) && identical(cl$ws, ws)) rm(list = id, envir = server$clients)
   }
+  server$sockets <- Filter(function(s) !identical(s$ws, ws), server$sockets)
   invisible(NULL)
 }
 
@@ -623,7 +628,9 @@ send <- function(client, msg) {
 # ---- Requests ----------------------------------------------------------------
 
 #' Handle one websocket message from `ws`. Every request type the v1.0.3
-#' editor sends is in `handlers`; an unknown type is logged and dropped.
+#' editor sends is in `handlers`; an unknown type is logged and dropped,
+#' and so is a message for a notebook the socket didn't connect to
+#' (`socket_may_act()`).
 #' A handler that fails is logged and, for update_notebook, answered "\U0001F44E".
 handle_message <- function(server, ws, raw) {
   req <- tryCatch(parse_request(raw), ember_bad_request = function(e) {
@@ -632,17 +639,21 @@ handle_message <- function(server, ws, raw) {
   })
   if (is.null(req)) return(invisible(NULL))
 
-  cl <- client_for(server, req$client_id, ws)
-  cl$.server <- server
-  hub <- if (!is.null(req$notebook_id)) {
-    mget(req$notebook_id, envir = server$hubs, ifnotfound = list(NULL))[[1]]
-  } else NULL
-
   h <- handlers[[req$type]]
   if (is.null(h)) {
     message("ember: unhandled request type: ", req$type)
     return(invisible(NULL))
   }
+  if (!socket_may_act(server, ws, req)) {
+    message("ember: refused ", req$type, " for a notebook this socket isn't connected to")
+    return(invisible(NULL))
+  }
+
+  cl <- client_for(server, req$client_id, ws)
+  cl$.server <- server
+  hub <- if (!is.null(req$notebook_id)) {
+    mget(req$notebook_id, envir = server$hubs, ifnotfound = list(NULL))[[1]]
+  } else NULL
   tryCatch(h(server, cl, hub, req), error = function(e) {
     message("ember: ", req$type, " failed: ", conditionMessage(e))
     if (identical(req$type, "update_notebook") && !is.null(hub)) {
@@ -652,6 +663,44 @@ handle_message <- function(server, ws, raw) {
     }
   })
   invisible(NULL)
+}
+
+#' The notebook `ws` connected to (its first `connect` naming one), or NULL.
+socket_notebook <- function(server, ws) {
+  for (s in server$sockets) if (identical(s$ws, ws)) return(s$notebook_id)
+  NULL
+}
+
+#' May this socket send `req`? The secret lets any page open a socket, but
+#' each socket acts only on its own notebook: the one its first `connect`
+#' named, which this binds. After that, a message naming another notebook
+#' is refused, and so is one using a client id already attached to another
+#' notebook (client_for() would move that client, and the other notebook's
+#' diffs, onto this socket).
+#'
+#' A socket bound to no notebook is the start page's (start.js connects
+#' with no notebook id), or one that hasn't sent `connect` at all; both are
+#' treated alike. Messages naming no notebook are the start page's whole
+#' job, plus one that names others: `shutdown_notebook`, its rows' Stop
+#' button (StartPage.js). Anything else naming a notebook is refused; a
+#' page that wants to edit one connects to it, as the editor does. The
+#' exemption gives nothing the secret doesn't: any socket can bind to any
+#' notebook by connecting to it. This contains each socket to its own
+#' notebook; it is not access control between pages that hold the secret.
+socket_may_act <- function(server, ws, req) {
+  own <- socket_notebook(server, ws)
+  target <- req$notebook_id
+  binds <- identical(req$type, "connect") && is.null(own) && !is.null(target)
+  if (binds) own <- target
+  cl <- mget(req$client_id, envir = server$clients, ifnotfound = list(NULL))[[1]]
+  ok <- if (!is.null(cl$notebook_id) && !identical(cl$notebook_id, own)) FALSE
+        else if (is.null(target)) TRUE
+        else if (is.null(own)) identical(req$type, "shutdown_notebook")
+        else identical(target, own)
+  if (ok && binds) {
+    server$sockets[[length(server$sockets) + 1L]] <- list(ws = ws, notebook_id = target)
+  }
+  ok
 }
 
 #' `list(update_went_well = "\U0001F44E", why_not = why, should_i_tell_the_user = TRUE)`.

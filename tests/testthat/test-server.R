@@ -462,6 +462,118 @@ test_that("a client connected to one notebook never receives another's diffs (33
   expect_equal(length(ws1$messages), n_before)
 })
 
+# ---- 33b. A socket acts only on the notebook it connected to ----------------
+
+test_that("a socket connected to one notebook can't act on another (33b)", {
+  path1 <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  path2 <- write_session_notebook(list(S = cell(""), B = cell("2")))
+  nb1 <- open_notebook(path1); nb2 <- open_notebook(path2)
+  on.exit({ close_notebook(nb1); close_notebook(nb2) }, add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb1); host_notebook(server, nb2, owned = TRUE)
+  id1 <- notebook_state(nb1)$id; id2 <- notebook_state(nb2)$id
+  b <- names(notebook_state(nb2)$cells)[2]
+
+  ws1 <- fake_socket()
+  handle_message(server, ws1, wire("connect", notebook_id = id1))
+  handle_message(server, ws1, wire("update_notebook", notebook_id = id1, updates = list()))
+  n_before <- length(ws1$messages)
+
+  # A second connect can't rebind the socket, so neither it nor anything
+  # after it reaches B: no reply, no edit, no run, no shutdown.
+  handle_message(server, ws1, wire("connect", notebook_id = id2))
+  handle_message(server, ws1, wire("update_notebook", notebook_id = id2, updates = list()))
+  handle_message(server, ws1, wire("update_notebook", notebook_id = id2, updates = list(
+    patch("replace", c("cell_inputs", b, "code"), "stop('owned')"))))
+  handle_message(server, ws1, wire("run_multiple_cells", notebook_id = id2, cells = list(b)))
+  handle_message(server, ws1, wire("shutdown_notebook", notebook_id = id2, keep_in_session = FALSE))
+
+  expect_equal(length(ws1$messages), n_before)
+  expect_equal(notebook_state(nb2)$cells[[b]]$code, "2")
+  expect_true(exists(id2, envir = server$hubs, inherits = FALSE))
+  expect_identical(get("c1", envir = server$clients)$notebook_id, id1)
+
+  # Its own notebook still works.
+  handle_message(server, ws1, wire("ping", notebook_id = id1))
+  expect_equal(ws1$last()$type, "pong")
+})
+
+test_that("a socket can't take over another notebook's client by its id (33b)", {
+  path1 <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  path2 <- write_session_notebook(list(S = cell(""), B = cell("2")))
+  nb1 <- open_notebook(path1); nb2 <- open_notebook(path2)
+  on.exit({ close_notebook(nb1); close_notebook(nb2) }, add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb1); host_notebook(server, nb2)
+  id1 <- notebook_state(nb1)$id; id2 <- notebook_state(nb2)$id
+  b <- names(notebook_state(nb2)$cells)[2]
+
+  ws1 <- fake_socket(); ws2 <- fake_socket()
+  handle_message(server, ws1, wire("connect", client_id = "c1", notebook_id = id1))
+  handle_message(server, ws2, wire("connect", client_id = "c2", notebook_id = id2))
+  handle_message(server, ws2, wire("update_notebook", client_id = "c2", notebook_id = id2, updates = list()))
+  n1 <- length(ws1$messages); n2 <- length(ws2$messages)
+
+  # Naming its own notebook but B's client id would move c2 onto ws1.
+  handle_message(server, ws1, wire("ping", client_id = "c2", notebook_id = id1))
+  expect_identical(get("c2", envir = server$clients)$ws, ws2)
+
+  edit_notebook(nb2, set_code(b, "22"))
+  expect_equal(length(ws1$messages), n1)
+  expect_gt(length(ws2$messages), n2)
+
+  # A reconnect (a new socket, the same client id, the same notebook) still
+  # takes the client over, as before.
+  ws3 <- fake_socket()
+  handle_message(server, ws3, wire("connect", client_id = "c2", notebook_id = id2))
+  expect_identical(get("c2", envir = server$clients)$ws, ws3)
+})
+
+test_that("the start page's socket may stop a notebook but not act on it (33b)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb, owned = TRUE)
+  id <- notebook_state(nb)$id
+  a <- names(notebook_state(nb)$cells)[2]
+
+  ws <- fake_socket()
+  ed <- fake_socket()
+  handle_message(server, ed, wire("connect", client_id = "c1", notebook_id = id))
+
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", client_id = "c2"))   # start.js: no notebook id
+  expect_equal(ws$last()$type, "\U0001F44B")
+  handle_message(server, ws, wire("ember_start_page", client_id = "c2"))
+  n_before <- length(ws$messages)
+  expect_gt(n_before, 1)
+
+  handle_message(server, ws, wire("update_notebook", client_id = "c2", notebook_id = id, updates = list()))
+  handle_message(server, ws, wire("run_multiple_cells", client_id = "c2", notebook_id = id, cells = list(a)))
+  # Nor may it borrow the editor's client id, which would move that client
+  # (and its notebook's diffs) onto the start page's socket.
+  handle_message(server, ws, wire("ping", client_id = "c1"))
+  expect_equal(length(ws$messages), n_before)
+  expect_identical(get("c1", envir = server$clients)$ws, ed)
+  expect_true(exists(id, envir = server$hubs, inherits = FALSE))
+
+  # StartPage.js's Stop button.
+  handle_message(server, ws, wire("shutdown_notebook", client_id = "c2", notebook_id = id,
+                                  keep_in_session = FALSE))
+  expect_false(exists(id, envir = server$hubs, inherits = FALSE))
+})
+
+test_that("closing a socket forgets its notebook (33b)", {
+  server <- new_server("s", throttle = 0)
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = "nb-a"))
+  expect_identical(socket_notebook(server, ws), "nb-a")
+  drop_clients_of_ws(server, ws)
+  expect_null(socket_notebook(server, ws))
+  expect_length(server$sockets, 0)
+})
+
 # ---- 34. A failing send drops its client, others keep receiving -------------
 
 test_that("a socket whose send() errors is dropped; others keep receiving (34)", {
