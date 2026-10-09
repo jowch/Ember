@@ -35,19 +35,31 @@ time_median <- function(f, samples = 9L, inner = 1L) {
   stats::median(vapply(seq_len(samples), function(i) time_calls(f, inner) / inner, numeric(1)))
 }
 
+#' The smallest `inner`, doubling from the given one, for which `inner`
+#' calls of `f()` take at least `min_secs`. Windows' elapsed-time clock
+#' ticks every 10-16 ms, so a sample shorter than that can read as 0.
+calibrate_inner <- function(f, inner = 1L, min_secs = 0.05) {
+  while (time_calls(f, inner) < min_secs && inner < 1e6) inner <- inner * 2L
+  inner
+}
+
 #' Median seconds per call of `a()` and of `b()`, sampled alternately (one
 #' sample of `a`, one of `b`, `samples` times, after a warm-up call of
 #' each), and `ratio = a / b`. `inner_*` repeats a fast call within one
-#' sample so a sample lasts well above the clock's millisecond resolution.
+#' sample; each is raised (calibrate_inner()) until a sample lasts well
+#' above the clock's resolution, which is coarse on Windows.
 time_ratio <- function(a, b, samples = 9L, inner_a = 1L, inner_b = 1L) {
   a(); b()
+  inner_a <- calibrate_inner(a, inner_a)
+  inner_b <- calibrate_inner(b, inner_b)
   ta <- tb <- numeric(samples)
   for (i in seq_len(samples)) {
     ta[i] <- time_calls(a, inner_a) / inner_a
     tb[i] <- time_calls(b, inner_b) / inner_b
   }
   ma <- stats::median(ta); mb <- stats::median(tb)
-  list(a = ma, b = mb, ratio = ma / max(mb, 1e-6))
+  if (!(mb > 0)) stop("time_ratio(): b() timed as 0 s even after calibration")
+  list(a = ma, b = mb, ratio = ma / mb)
 }
 
 #' `S` and `n` independent cells `c1`..`cn` (`x<i> <- <i>`).

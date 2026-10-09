@@ -256,6 +256,11 @@ with `identical()`, which returns at once for an object that wasn't replaced.
   the line where it can.
 - **Definitions learned at run time are recorded in the footer**, so a
   notebook opened without running still orders its cells correctly.
+  Editing the cell keeps them until it runs again, so it still runs before
+  its readers, unless keeping them would block the cell: a cycle, or
+  "Multiple definitions" against a cell that now defines the name. A
+  blocked cell can't run its way out, so then they are dropped, and the
+  next run learns them again.
 - `.Random.seed` is skipped; see the random-numbers decision.
 
 Reads can't be watched this way. A literal name is read statically:

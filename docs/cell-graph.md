@@ -208,7 +208,10 @@ are placed in display order, so the file writer and the scheduler use one
 replaces a cell's learned definitions or learned references and rebuilds
 with `previous = graph`. Learned definitions take part in the
 multiple-definitions rule and in edges exactly like static ones; learned
-references go through the same edge resolution as static references. The
+references go through the same edge resolution as static references. An
+edit to the cell's code drops its learned references, and its learned
+definitions only where keeping them would block it
+(`drop_blocking_learned()`). The
 adapter still sees them apart (`cell_summary()$learned`), because the
 snapshot shows both.
 

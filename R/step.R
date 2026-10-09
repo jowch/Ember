@@ -629,6 +629,31 @@ rebuild_graph <- function(state) {
   state
 }
 
+#' Drop the learned definitions of edited cells that they block.
+#'
+#' A learned definition is kept past an edit: until the cell runs again it
+#' still orders the cell before its readers, so running a reader runs the
+#' edited cell first and the file is written in an order `Rscript` can
+#' run. The one harm a stale one can do is a graph error the cell can't run
+#' its way out of, since a blocked cell never runs: a cycle through a name
+#' the new code no longer defines, or "Multiple definitions" against a cell
+#' that now defines it. So each edited cell that is blocked, and isn't once
+#' its learned definitions are gone, loses them; the next run learns them
+#' again. A second rebuild happens only when an edited cell is blocked.
+drop_blocking_learned <- function(state, edited) {
+  learned <- state$graph$learned$definitions
+  candidates <- intersect(edited[edited %in% names(learned)], blocked_cells(state$graph))
+  if (length(candidates) == 0) return(state)
+  trial <- state
+  for (id in candidates) trial$graph$learned$definitions[[id]] <- NULL
+  trial <- rebuild_graph(trial)
+  freed <- setdiff(candidates, blocked_cells(trial$graph))
+  if (length(freed) == 0) return(state)
+  if (setequal(freed, candidates)) return(trial)
+  for (id in freed) state$graph$learned$definitions[[id]] <- NULL
+  rebuild_graph(state)
+}
+
 #' Ask the shell for sourced files the graph references but `files` lacks.
 #' Returns `list(fx_read_files(paths))` or `list()`.
 missing_file_reads <- function(state) {
@@ -738,6 +763,8 @@ reduce_apply <- function(state, event) {
           # learned references: they are about the old code's formulas, and
           # one kept past an edit can hold the cell in a cycle it can't run
           # its way out of. The next run's formula check learns them again.
+          # Learned definitions are kept unless they block the cell
+          # (drop_blocking_learned(), below).
           if (!identical(code, old_cell$code)) learned_dropped <- c(learned_dropped, op$cell)
           if (kind_different && identical(new_kind, "markdown")) {
             cells[[op$cell]]$disabled <- FALSE
@@ -836,6 +863,7 @@ reduce_apply <- function(state, event) {
     effects <- c(effects, fr$effects)
   }
   state <- rebuild_graph(state)
+  state <- drop_blocking_learned(state, setdiff(learned_dropped, deleted))
   list(state = state, effects = effects,
       reply = list(inserted = inserted, seq = state$seq + 1L))
 }
