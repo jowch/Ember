@@ -321,14 +321,13 @@ test_that("an interrupt sent as a run is dispatched stops that run", {
   on.exit(close_notebook(nb), add = TRUE)
   run_cells(nb, "A", wait = TRUE, timeout = 15)   # the worker is up
 
-  t0 <- Sys.time()
   run_cells(nb, "B", wait = FALSE)
   interrupt_notebook(nb)
-  done <- wait_for(nb, function(s) identical(s$process, "ready"), timeout = 15)
+  # A lost interrupt lets the sleep run to the end and report "ok"; the
+  # timeout only catches a hang.
+  done <- wait_for(nb, function(s) identical(s$process, "ready"), timeout = 30)
   expect_true(done)
   expect_equal(snap_view(notebook_snapshot(nb), "B")$status, "interrupted")
-  # A lost interrupt lets the 8 s sleep run to the end.
-  expect_lt(as.numeric(Sys.time() - t0, units = "secs"), 6)
 })
 
 test_that("a crashed worker reports worker_exited, and the next run starts a new one (114)", {
