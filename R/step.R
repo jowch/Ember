@@ -58,6 +58,7 @@ ev_save_failed <- function(message, at) event("save_failed", at, message = messa
 wk_started  <- function(gen, pid, at) event("wk_started", at, gen = gen, pid = pid)
 wk_failed   <- function(gen, message, at) event("wk_failed", at, gen = gen, message = message)
 wk_hello    <- function(gen, info, at) event("wk_hello", at, gen = gen, info = info)
+wk_running  <- function(gen, token, at) event("wk_running", at, gen = gen, token = token)
 wk_console  <- function(gen, token, item, at)
   event("wk_console", at, gen = gen, token = token, item = item)
 wk_source   <- function(gen, token, path, text, at)
@@ -169,6 +170,7 @@ reduce <- function(state, event) {
     wk_started       = reduce_wk_started(state, event),
     wk_failed        = reduce_wk_failed(state, event),
     wk_hello         = reduce_wk_hello(state, event),
+    wk_running       = reduce_wk_running(state, event),
     wk_console       = reduce_wk_console(state, event),
     wk_source        = reduce_wk_source(state, event),
     wk_done          = reduce_wk_done(state, event),
@@ -269,7 +271,7 @@ schedule <- function(state) {
   state <- invalidate_dependents(state, id, if (!is.null(prev)) prev$defined else character())
   state$worker$status <- "busy"
   state$worker$running <- list(cell = id, token = token, code = state$cells[[id]]$code,
-                               started_at = state$clock, console = list())
+                               started_at = state$clock, console = list(), begun = FALSE)
   list(state = state, effects = c(dg$effects, list(fx_send(state$worker$gen, run_message(state, id, token)))))
 }
 
@@ -913,13 +915,17 @@ reduce_run <- function(state, event) {
   list(state = state, effects = dg$effects, reply = reply)
 }
 
-#' Interrupt.
+#' Interrupt. SIGINT goes only to a run the worker has said it began
+#' (`wk_running`): before that the worker is still reading the run, or
+#' finishing other messages queued ahead of it, and swallows an interrupt
+#' there as a late one for the previous run. So an interrupt asked for
+#' sooner is held, and `reduce_wk_running()` sends it.
 reduce_interrupt <- function(state, event) {
   state$pending <- character()
   effects <- list()
   w <- state$worker
   if (identical(w$status, "busy")) {
-    effects <- list(fx_interrupt(w$gen))
+    if (isTRUE(w$running$begun)) effects <- list(fx_interrupt(w$gen))
     if (is.null(w$interrupt)) {
       state$worker$interrupt <- list(at = state$clock, token = w$running$token)
       effects <- c(effects, list(fx_timer(state$options$grace,
@@ -1144,6 +1150,19 @@ reduce_wk_hello <- function(state, event) {
     effects <- list(fx_send(state$worker$gen, list(type = "chdir", from = state$worker$wd, to = want)))
     state$worker$wd <- want
   }
+  list(state = state, effects = effects, reply = NULL)
+}
+
+#' The worker began the run (gen and token check): send an interrupt asked
+#' for before now (`reduce_interrupt()`).
+reduce_wk_running <- function(state, event) {
+  w <- state$worker
+  if (!eq(event$gen, w$gen) || is.null(w$running) ||
+      !eq(event$token, w$running$token)) {
+    return(list(state = state, effects = list(), reply = NULL))
+  }
+  state$worker$running$begun <- TRUE
+  effects <- if (!is.null(w$interrupt)) list(fx_interrupt(w$gen)) else list()
   list(state = state, effects = effects, reply = NULL)
 }
 

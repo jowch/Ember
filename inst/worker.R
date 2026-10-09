@@ -379,6 +379,10 @@ run_cell <- function(msg) {
   })
 
   tryCatch({
+    # The server sends SIGINT only once it has this (reduce_interrupt(),
+    # step.R): from here to the end of the run an interrupt stops this
+    # cell, while before it, in handle_next(), one is swallowed as late.
+    send(list(type = "running", cell = msg$cell, token = msg$token))
     # `remove_cell()`/`apply_settings_context()` must be inside this same
     # guarded block, not before it: an interrupt landing in that narrow
     # window (between one cell's "done" and the next cell's code actually

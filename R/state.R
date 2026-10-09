@@ -194,10 +194,11 @@ new_state <- function(file, path, id, options, at) {
 #' * `gen`: integer generation, +1 per start. Every worker event carries the
 #'   generation it came from; events from an older generation are ignored,
 #'   which is what makes kill-then-start safe against messages in flight.
-#' * `running`: `NULL` or `list(cell, token, code, started_at, console)`;
-#'   `console` grows as the worker streams console items.
-#' * `interrupt`: `NULL` or `list(at, token)` once SIGINT was sent for that
-#'   run.
+#' * `running`: `NULL` or `list(cell, token, code, started_at, console,
+#'   begun)`; `console` grows as the worker streams console items, and
+#'   `begun` turns `TRUE` when the worker says it began the run.
+#' * `interrupt`: `NULL` or `list(at, token)` once the user interrupted that
+#'   run. SIGINT is sent then, or when the run begins if that is later.
 #' * `restart_offered`: logical.
 #' * `info`: what the hello said (pid, R version, library paths), or `NULL`.
 #' * `exit`: `NULL` or `list(status, message)` from the last exit.

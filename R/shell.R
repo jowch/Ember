@@ -863,6 +863,7 @@ worker_event <- function(msg, gen, at, secret = NULL) {
 
   required <- switch(msg$type,
     hello    = c("secret", "pid"),
+    running  = c("token"),
     console  = c("token", "item"),
     source   = c("token", "path", "text"),
     done     = c("token", "report"),
@@ -884,6 +885,7 @@ worker_event <- function(msg, gen, at, secret = NULL) {
       wk_hello(gen, list(pid = msg$pid, r_version = msg$r_version, lib_paths = msg$lib_paths,
                         loaded = msg$loaded %||% character()), at)
     },
+    running  = wk_running(gen, msg$token, at),
     console  = wk_console(gen, msg$token, msg$item, at),
     source   = wk_source(gen, msg$token, msg$path, msg$text, at),
     done     = {
