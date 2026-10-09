@@ -1137,6 +1137,12 @@ test_that("a list fetched before the notebook's date isn't used for it: no silen
                      "on 2026-10-08, before this notebook's date 2026-11-02, and couldn't be fetched again"))
   # The same copy still speaks for its own day and earlier.
   expect_equal(bioc_release_for("4.6", "2026-10-08", releases_at(r$state$packages, "2026-10-08")), "3.23")
+
+  # Running asks again, and a list that covers the date resolves it.
+  r <- drive(r$state, ev_run(NULL, at(4)))
+  expect_equal(find_effect(r, "fetch_bioc_config")$date, "2026-11-02")
+  r <- drive(r$state, ev_bioc_releases_fetched(fixture_releases("config-3.24.yaml"), as.Date("2026-11-02"), at(5)))
+  expect_true("bioc/2026-11-02/3.24" %in% vapply(r$effects, function(e) e$key %||% "", character(1)))
 })
 
 test_that("a list fetched earlier in the session is fetched again for a later date", {

@@ -897,10 +897,16 @@ reduce_run <- function(state, event) {
   for (k in failed_keys) state$packages$indexes[[k]] <- NULL
   # So is Bioconductor's release list, and a Bioconductor move that failed
   # (an index fetch) is proposed again.
-  if (identical(state$packages$bioc_releases$status, "failed") &&
-      !is.null(state$options$repos$bioc_config) && !is.na(state$options$repos$bioc_config)) {
+  # A list kept from an earlier day after a fetch for a later date failed
+  # (`asked` past `fetched`) is asked again the same way.
+  rel <- state$packages$bioc_releases
+  lookup_on <- !is.null(state$options$repos$bioc_config) && !is.na(state$options$repos$bioc_config)
+  if (lookup_on && identical(rel$status, "failed")) {
     state$packages$bioc_releases <- new_releases_slot()
     state$packages$resolved_for <- character()  # resolve again with it
+  } else if (lookup_on && identical(rel$status, "ready") && !is.na(rel$asked) && rel$asked > rel$fetched) {
+    state$packages$bioc_releases$asked <- rel$fetched
+    state$packages$resolved_for <- character()
   }
   prop <- state$packages$proposal
   if (!is.null(prop) && identical(prop$kind, "bioc") && identical(prop$status, "failed")) {
