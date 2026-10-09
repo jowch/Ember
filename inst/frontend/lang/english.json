@@ -254,7 +254,6 @@
     "t_copy_cells_failed": "Couldn't copy the cells.",
     "t_copy_output_failed": "Couldn't copy the output.",
     "t_output_show_failed": "Ember couldn't show this output.",
-    "t_lost_authentication": "This page lost its connection to Ember. Reload it to reconnect.",
     "t_shortcuts_esc_closes": "Esc closes",
     "t_shortcuts_running": "Running",
     "t_shortcuts_cells": "Cells",

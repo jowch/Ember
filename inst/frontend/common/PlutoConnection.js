@@ -4,7 +4,7 @@ import { pack, unpack } from "./MsgPack.js"
 import "./Polyfill.js"
 import { Stack } from "./Stack.js"
 import { with_query_params } from "./URLTools.js"
-import { ask, reload_prompt, tell } from "./dialogs.js"
+import { reload_prompt, tell } from "./dialogs.js"
 import { t } from "./lang.js"
 
 const reconnect_after_close_delay = 500
@@ -466,15 +466,15 @@ const alert_if_not_authenticated = async (/** @type {string | URL} */ ws_url, ex
             const auth_url = auth_check_url_from_ws(ws_url)
             const response = await fetch(auth_url)
             if (response.status === 403 || response.status === 401) {
+                // Ember's server refuses only a key from an earlier session,
+                // so this is the same restart the socket's own 4403 close
+                // reports. This check can land first: a socket that dropped
+                // while the old server was gone gets its answer from the new
+                // one. Saying the same thing under the same dialog key means
+                // the page shows one "Ember restarted" dialog whichever
+                // arrives first, not a "lost its connection" one as well.
                 if (!is_desktop() || (await is_backend_server_loaded())) {
-                    ask({
-                        body: t("t_lost_authentication"),
-                        actions: [{ label: t("t_reload"), value: "reload", primary: true }],
-                        cancel_value: "cancel",
-                        key: "lost-authentication",
-                    }).then((value) => {
-                        if (value === "reload") location.reload()
-                    })
+                    tell_key_refused()
                 }
             }
         }
