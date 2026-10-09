@@ -771,9 +771,17 @@ test_that("install_failures() on each captured output gives the expected rows; n
   cmp_curly <- install_failures(install_output("compile-curly"))
   expect_equal(cmp_curly, cmp)
 
+  # configure's own "pkg-config not found" is a missing system tool, so
+  # it is "system", not "configure" (whose card says to update).
   cfg <- install_failures(install_output("configure"))
   expect_equal(cfg$package, "brokenpkg")
-  expect_equal(cfg$kind, "configure")
+  expect_equal(cfg$kind, "system")
+  expect_equal(cfg$detail, "configure: error: pkg-config not found")
+
+  cfg_plain <- install_failures(c("* installing *source* package 'brokenpkg' ...",
+                                 "configure: error: C compiler cannot create executables",
+                                 "ERROR: configuration failed for package 'brokenpkg'"))
+  expect_equal(cfg_plain$kind, "configure")
 
   dep <- install_failures(install_output("dependency"))
   expect_equal(dep$package, "broom")
@@ -784,7 +792,21 @@ test_that("install_failures() on each captured output gives the expected rows; n
   expect_equal(dl$package, "brokenpkg")
   expect_equal(dl$kind, "download")
 
-  oth <- install_failures(install_output("other"))
+  # "configure: error: libxml2 not found" with no ERROR line of its own:
+  # still the system library it names.
+  sys_lib <- install_failures(install_output("other"))
+  expect_equal(sys_lib$package, "brokenpkg")
+  expect_equal(sys_lib$kind, "system")
+  expect_equal(sys_lib$detail, "configure: error: libxml2 not found")
+
+  # The anticonf block xml2, curl and openssl print, then the generic
+  # "configuration failed": "system", from the anticonf line.
+  anticonf <- install_failures(install_output("system-anticonf"))
+  expect_equal(anticonf$package, "xml2")
+  expect_equal(anticonf$kind, "system")
+  expect_match(anticonf$detail, "^Configuration failed because libxml-2.0 was not found")
+
+  oth <- install_failures(c("- brokenpkg: install failed", "Error: failed to install \"brokenpkg\""))
   expect_equal(oth$package, "brokenpkg")
   expect_equal(oth$kind, "other")
   expect_match(oth$detail, "^Error: failed to install")
@@ -837,7 +859,34 @@ test_that("install_failures(): renv's other real summary wordings (no 'package' 
   no_binary <- install_failures(c(
     "- [brokenpkg]: failed to find binary for 'brokenpkg 0.1.0' in package repositories"))
   expect_equal(no_binary$package, "brokenpkg")
-  expect_equal(no_binary$kind, "other")
+  expect_equal(no_binary$kind, "unavailable")
+})
+
+test_that("install_failures() on a real Bioconductor restore whose repository index 404'd", {
+  # Captured verbatim (the installer's last 200 lines, as the session
+  # keeps them) from DESeq2 + ggplot2 at 2026-10-08 on Linux, before
+  # ppm_binary_repos(): renv rewrote the Bioconductor URLs into a form
+  # Package Manager doesn't serve, couldn't read their index, and then
+  # reported each Bioconductor package as "failed to find source". None of
+  # that is a missing system library.
+  real <- install_failures(install_output("real-renv-bioc-404"))
+  expect_equal(nrow(real), 14)
+  expect_true("DESeq2" %in% real$package)
+  expect_equal(unique(real$kind), "unavailable")
+  expect_equal(real$detail[real$package == "DESeq2"],
+              "failed to find source for 'DESeq2 1.52.0' in package repositories")
+})
+
+test_that("install_failures(): a system-library line counts only while its package builds", {
+  lines <- c("* installing *source* package 'a' ...",
+            "/usr/bin/ld: libgdal.so.30: cannot open shared object file: No such file or directory",
+            "ERROR: compilation failed for package 'a'",
+            "configure: error: libfoo not found",
+            "- [b]: install failed")
+  r <- install_failures(lines)
+  expect_equal(r$kind[r$package == "a"], "system")
+  # The stray line after a's ERROR line isn't b's: b never started building.
+  expect_equal(r$kind[r$package == "b"], "other")
 })
 
 test_that("install_failures(): one row per package, keeping the most specific kind", {

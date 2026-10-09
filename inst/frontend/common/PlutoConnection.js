@@ -4,7 +4,7 @@ import { pack, unpack } from "./MsgPack.js"
 import "./Polyfill.js"
 import { Stack } from "./Stack.js"
 import { with_query_params } from "./URLTools.js"
-import { ask, reload_prompt, tell } from "./dialogs.js"
+import { reload_prompt, tell } from "./dialogs.js"
 import { t } from "./lang.js"
 
 const reconnect_after_close_delay = 500
@@ -449,8 +449,22 @@ export const create_pluto_connection = async ({
                 tell_key_refused()
                 return {}
             }
-            alert_if_not_authenticated(ws_address, ex).catch(() => null) // No await, we want this to run in the background
-            await Promises.delay(retry_after_connect_failure_delay)
+            // The key check runs alongside the retry delay, not before it,
+            // so a check that hangs never holds up the retry. If it finds
+            // the key refused before the delay is up, that is the same
+            // restart as a 4403 close: say so and stop retrying.
+            const refused = await Promise.race([
+                key_check_refused(ws_address, ex)
+                    .catch(() => false)
+                    .then((r) => (r ? true : new Promise(() => {}))),
+                Promises.delay(retry_after_connect_failure_delay).then(() => false),
+            ])
+            if (refused) {
+                on_connection_status(false, false)
+                on_key_refused()
+                tell_key_refused()
+                return {}
+            }
             return await connect()
         }
     }
@@ -460,23 +474,16 @@ export const create_pluto_connection = async ({
     return /** @type {PlutoConnection} */ (client)
 }
 
-const alert_if_not_authenticated = async (/** @type {string | URL} */ ws_url, ex) => {
-    if (ex instanceof CloseEvent) {
-        if (ex.code === 1006) {
-            const auth_url = auth_check_url_from_ws(ws_url)
-            const response = await fetch(auth_url)
-            if (response.status === 403 || response.status === 401) {
-                if (!is_desktop() || (await is_backend_server_loaded())) {
-                    ask({
-                        body: t("t_lost_authentication"),
-                        actions: [{ label: t("t_reload"), value: "reload", primary: true }],
-                        cancel_value: "cancel",
-                        key: "lost-authentication",
-                    }).then((value) => {
-                        if (value === "reload") location.reload()
-                    })
-                }
-            }
-        }
-    }
+/**
+ * Whether a connection that failed with 1006 did so because the server
+ * refuses this page's key. Ember's server refuses only a key from an
+ * earlier session, so this is the same restart a 4403 close reports. It
+ * can arrive first: a socket that dropped while the old server was gone
+ * gets its answer from the new one.
+ */
+const key_check_refused = async (/** @type {string | URL} */ ws_url, ex) => {
+    if (!(ex instanceof CloseEvent) || ex.code !== 1006) return false
+    const response = await fetch(auth_check_url_from_ws(ws_url))
+    if (response.status !== 403 && response.status !== 401) return false
+    return !is_desktop() || (await is_backend_server_loaded())
 }

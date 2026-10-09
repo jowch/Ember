@@ -6,6 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
+import http from "node:http";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, openNotebook, assertNoProblems } from "../browser.mjs";
 
@@ -82,4 +83,41 @@ test("key page: an editor tab open across a restart says Ember restarted and sto
   const after_refusal = sockets;
   await page.waitForTimeout(3000);
   assert.equal(sockets, after_refusal, "no further reconnect attempts once the key was refused");
+});
+
+// The race the test above can hit: a socket that drops while the old
+// server is gone fails with 1006, and the page's key check then reaches a
+// server that refuses the old key. Here a stand-in holds the port in
+// exactly that state: every request gets 403, every websocket upgrade is
+// dropped. The page must still say Ember restarted, in the dialog and the
+// header, and stop retrying -- not show "lost its connection" and keep
+// opening sockets every few seconds.
+test("key page: a refused key check while the socket can't connect says Ember restarted and stops retrying", async (t) => {
+  const notebook = tempNotebook();
+  const logFile = path.join(artifactsDir(), "key-page-check-refused.server.log");
+  const first = await startServer([notebook], { logFile, secret: "first-session-secret" });
+  let standIn = null;
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); first.stop(); standIn?.close(); });
+
+  const page = await newPage(browser);
+  let sockets = 0;
+  page.on("websocket", () => { sockets += 1; });
+  await openNotebook(page, first.origin, first.secret, notebook);
+
+  await first.stop();
+  standIn = http.createServer((req, res) => { res.writeHead(403); res.end(); });
+  standIn.on("upgrade", (req, socket) => socket.destroy());
+  await new Promise((resolve) => standIn.listen(first.port, "127.0.0.1", resolve));
+
+  const dialog = page.getByRole("alertdialog");
+  await dialog.waitFor({ timeout: 30000 });
+  assert.match(await dialog.innerText(), /Ember restarted, so this page's key no longer works/);
+  await page.locator("#ember-r-status", { hasText: "Ember restarted" }).waitFor({ timeout: 30000 });
+
+  // Longer than the page's retry delay after a failed connect (5 s).
+  const after_refusal = sockets;
+  await page.waitForTimeout(7000);
+  assert.equal(sockets, after_refusal, "no further reconnect attempts once the key check was refused");
+  assert.equal(await page.getByRole("alertdialog").count(), 1, "one dialog, not a lost-connection one as well");
 });

@@ -42,7 +42,9 @@ ember_repos <- function(cran = "https://packagemanager.posit.co/cran",
 #' BSgenome.*), `"bioc-exp/..."` -> `.../data/experiment`.
 #' The path below the dated root (src/contrib, bin/macosx/contrib/4.6, ...)
 #' is left to R and renv: R 4.6 moved macOS binaries and both found them
-#' (spikes/packages, section 1).
+#' (spikes/packages, section 1). Linux binaries live elsewhere, under a
+#' `__linux__/<platform>` segment; the installer puts Bioconductor's there
+#' itself (`ppm_binary_repos()`).
 repo_key <- function(kind, date, bioc_version = NULL) {
   date <- format(as.Date(date), "%Y-%m-%d")
   if (kind %in% names(bioc_kinds)) {
@@ -85,6 +87,44 @@ repo_urls <- function(repos, header) {
     }
   }
   out
+}
+
+#' `repo_urls()` as the installer hands them to renv on Linux, where
+#' Package Manager serves binaries under `__linux__/<platform>/` placed
+#' right after the repository's root: `<cran>/__linux__/noble/<date>` and
+#' `<bioc>/__linux__/noble/<date>/packages/3.23/bioc`.
+#'
+#' renv makes that rewrite itself (`RENV_CONFIG_PPM_ENABLED`), but it
+#' inserts the segment before the URL's last path component, which is
+#' right for CRAN's `<cran>/<date>` and wrong for Bioconductor's
+#' `<bioc>/<date>/packages/3.23/bioc`: it asks for
+#' `.../packages/3.23/__linux__/noble/bioc`, which Package Manager answers
+#' with a 404, so every Bioconductor package "can't be found" and the
+#' whole install fails. renv leaves a URL that already has a `__x__`
+#' segment alone, so rewriting the Bioconductor ones here is enough.
+#'
+#' `cran_binary` is what renv's own rewrite made of `urls[["CRAN"]]`
+#' (`renv_ppm_transform()`, in the installer). Bioconductor follows it:
+#' only when renv rewrote CRAN (Linux, Package Manager, binaries for this
+#' platform), only with the platform renv chose, and only for a
+#' Bioconductor URL on the same host as CRAN. Anything else (macOS,
+#' `file://` repositories, an on-prem server without Linux binaries)
+#' changes nothing, and renv changes nothing either.
+ppm_binary_repos <- function(urls, cran_binary) {
+  if (is.null(cran_binary) || length(cran_binary) != 1 || is.na(cran_binary) ||
+      !"CRAN" %in% names(urls)) return(urls)
+  platform <- regmatches(cran_binary, regexec("/__linux__/([^/]+)/", cran_binary))[[1]]
+  if (length(platform) < 2) return(urls)
+  platform <- platform[[2]]
+  host_of <- function(u) sub("^(https?://[^/]+).*$", "\\1", u)
+  cran_host <- host_of(urls[["CRAN"]])
+  bioc <- names(urls) %in% bioc_repo_names &
+    grepl("^https?://", urls) &
+    host_of(urls) == cran_host &
+    !grepl("/__[^_/]+__/", urls)
+  urls[bioc] <- sub("/([0-9]{4}-[0-9]{2}-[0-9]{2}/packages/)",
+                    paste0("/__linux__/", platform, "/\\1"), urls[bioc])
+  urls
 }
 
 # ---- Bioconductor releases ---------------------------------------------------

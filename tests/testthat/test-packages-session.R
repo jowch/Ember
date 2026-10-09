@@ -262,6 +262,43 @@ test_that("[net] a notebook with library(dplyr) at a fixed past date resolves, i
   expect_equal(notebook_state(nb)$worker$loaded[["dplyr"]], locked_version)
 })
 
+test_that("[net] a notebook with library(S4Vectors) installs from Bioconductor on PPM and loads", {
+  # On Linux, renv's own binary rewrite turned Bioconductor's URL into one
+  # Package Manager answers with a 404, so every Bioconductor package
+  # failed as "failed to find source" (ppm_binary_repos()).
+  skip_if_not(identical(Sys.getenv("EMBER_TEST_NETWORK"), "1"),
+             "set EMBER_TEST_NETWORK=1 to run the opt-in network test")
+
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  dir <- tempfile("ember-nb-")
+  dir.create(dir, recursive = TRUE)
+  cells <- list(A = list(code = "library(S4Vectors)\npackageVersion(\"S4Vectors\")",
+                        kind = "code", folded = FALSE))
+  header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
+                       r_version = paste(R.version$major, R.version$minor, sep = "."),
+                       snapshot = "2026-10-08")
+  file <- new_notebook_file(
+    header = header, cells = cells, run_order = names(cells), learned = list(),
+    sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
+    lock = empty_lock(), extra_blocks = list(), format = ember_format)
+  path <- file.path(dir, "nb.R")
+  write_atomic(path, format_notebook(file))
+
+  nb <- open_notebook(path, repos = ember_repos(), cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  res <- run_cells(nb, wait = TRUE, timeout = 600)
+  expect_false(res$timed_out)
+
+  status <- package_status(nb)
+  expect_equal(status$library$status, "ready")
+  row <- status$packages$name == "S4Vectors"
+  expect_equal(status$packages$source[row], "Bioc")
+  expect_equal(status$packages$status[row], "installed")
+  expect_match(snap_view(notebook_snapshot(nb), "A")$output$text,
+               status$packages$version[row], fixed = TRUE)
+})
+
 # ---- 90: the empty-log regression, with the failing-installer fixture ------
 
 #' A notebook naming `brokenpkg`, already locked (no index needed: the

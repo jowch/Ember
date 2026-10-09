@@ -176,11 +176,16 @@ install_failure_message <- function(lines, status) {
 #' Which packages an install failed on, and why, from the installer's
 #' output. R's quotes are curly (left/right single quotation marks) or
 #' ASCII depending on locale; both are matched.
-#' -> data.frame(package, kind, detail): kind "compile" ("ERROR:
+#' -> data.frame(package, kind, detail): kind "system" (while a package
+#'    builds from source, a line saying a system library or header is
+#'    missing: `system_patterns` below; detail = that line), "compile" ("ERROR:
 #'    compilation failed for package"), "configure" ("ERROR: configuration
 #'    failed"), "dependency" ("ERROR: dependency 'x' is not available",
 #'    detail = x), "download" (a summary line, or renv's own "error
-#'    downloading"/"failed to retrieve", naming the package), "other"
+#'    downloading"/"failed to retrieve", naming the package),
+#'    "unavailable" (renv's summary line saying "failed to find source"
+#'    or "binary for 'pkg version' in package repositories"; detail = that
+#'    reason), "other"
 #'    (renv's summary line, `- [pkg]: <reason>` or `- pkg: <reason>`,
 #'    with none of the above; detail = the reason, or the first `ERROR`
 #'    line when the reason itself says only "install failed"). One row
@@ -218,7 +223,28 @@ install_failures <- function(lines) {
     detail[length(detail) + 1L] <<- d
   }
 
+  # A missing system library shows up between a package's "* installing
+  # *source* package" line and its own ERROR line, in a few unmistakable
+  # shapes: an anticonf message (xml2, curl, openssl), configure's own
+  # "not found", a missing shared object, or gcc's missing header.
+  system_patterns <- c("Configuration failed because .* was not found",
+                       "^configure: error: .*(not found|cannot find)",
+                       "cannot open shared object file",
+                       "fatal error: [^ ]+\\.h: No such file or directory")
+  building <- NA_character_
+
   for (line in lines) {
+    if (grepl("^\\* installing \\*source\\* package '[^']+'", line)) {
+      building <- capture("^\\* installing \\*source\\* package '([^']+)'", line)
+      next
+    }
+    if (!is.na(building) && any(vapply(system_patterns, grepl, logical(1), x = line, ignore.case = TRUE))) {
+      add(building, "system", line)
+      next
+    }
+    if (grepl("^ERROR: [a-z]+ failed for package '[^']+'", line) || grepl("^\\* DONE \\(", line)) {
+      building <- NA_character_
+    }
     if (grepl("^ERROR: compilation failed for package '[^']+'", line)) {
       add(capture("^ERROR: compilation failed for package '([^']+)'", line), "compile", NA_character_)
     } else if (grepl("^ERROR: configuration failed for package '[^']+'", line)) {
@@ -250,6 +276,13 @@ install_failures <- function(lines) {
       reason <- trimws(sub(name_pattern, "", line))
       if (grepl("retriev|download", reason, ignore.case = TRUE)) {
         add(name, "download", NA_character_)
+      } else if (grepl("^failed to find (source|binary) for ", reason, ignore.case = TRUE)) {
+        # renv found no such version in any repository it could read: the
+        # version isn't there, or (more often) the repository's own index
+        # couldn't be read at all ("renv was unable to query available
+        # packages", earlier in the log). Either way not a download or a
+        # build problem, and nothing the package itself needs.
+        add(name, "unavailable", reason)
       } else {
         # Not `detail <-`: that name is already the accumulator vector
         # `add()` appends to, and a plain `<-` inside this loop (no new
@@ -264,8 +297,10 @@ install_failures <- function(lines) {
 
   # One row per package: keep the first (most specific) kind a package
   # was seen with, in the order the loop above checks patterns in
-  # (compile/configure/dependency before the catch-all summary line).
-  kind_rank <- c(compile = 1L, configure = 2L, dependency = 3L, download = 4L, other = 5L)
+  # (system, then compile/configure/dependency, before the catch-all
+  # summary line).
+  kind_rank <- c(system = 0L, compile = 1L, configure = 2L, dependency = 3L, download = 4L,
+                 unavailable = 5L, other = 6L)
   df <- data.frame(package = pkg, kind = kind, detail = detail, stringsAsFactors = FALSE)
   df <- df[order(kind_rank[df$kind]), ]
   df <- df[!duplicated(df$package), ]

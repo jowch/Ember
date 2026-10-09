@@ -33,7 +33,17 @@ main <- function(plan_path) {
   wanted <- ember:::lock_versions(lock)
   total <- length(wanted)
 
-  lf <- ember:::renv_lockfile_of(lock, plan$r, plan$repos)
+  # renv's own Linux binary rewrite gets Bioconductor's URLs wrong
+  # (`ppm_binary_repos()`), so they go in already rewritten, following
+  # what renv's rewrite makes of the CRAN URL. `renv_ppm_transform` is
+  # renv internal: if it is renamed, this falls back to the 404, and the
+  # `[net]` S4Vectors test in test-packages-session.R is what catches it.
+  cran_binary <- tryCatch(
+    unname(utils::getFromNamespace("renv_ppm_transform", "renv")(plan$repos[["CRAN"]])),
+    error = function(e) NULL)
+  repos <- ember:::ppm_binary_repos(plan$repos, cran_binary)
+
+  lf <- ember:::renv_lockfile_of(lock, plan$r, repos)
   lockfile_tmp <- tempfile("ember-lockfile-", fileext = ".json")
   renv::lockfile_write(lf, file = lockfile_tmp)
 
@@ -44,7 +54,7 @@ main <- function(plan_path) {
   cat(sprintf("EMBER-PROGRESS 0 %d - restore\n", total))
   flush(stdout())
 
-  options(repos = plan$repos)
+  options(repos = repos)
   withCallingHandlers(
     renv::restore(lockfile = lockfile_tmp, library = plan$staging,
                   project = project_dir, prompt = FALSE, clean = FALSE),
