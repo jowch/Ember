@@ -135,8 +135,14 @@ test_that("two installs of one key racing in two processes leave one library and
       "created = Sys.time()); ",
       "ember:::finish_library(", deparse(staging), ", ", deparse(path), ", manifest)")
   }
+  # load_all() sets DEVTOOLS_LOAD while it loads ember's imports, and renv's
+  # .onLoad then deletes and rebuilds renv.so inside the installed renv
+  # package. Two children doing that at once can find it missing, and the
+  # load fails with "The package renv is required". RENV_EXT_ENABLED=FALSE
+  # skips the rebuild; renv falls back to its R implementations.
   procs <- lapply(stagings, function(st) {
     processx::process$new(rscript, c("--vanilla", "-e", race_code(st)),
+                          env = c("current", RENV_EXT_ENABLED = "FALSE"),
                           stdout = "|", stderr = "2>&1")
   })
 
