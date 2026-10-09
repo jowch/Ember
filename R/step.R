@@ -919,7 +919,10 @@ reduce_run <- function(state, event) {
 #' (`wk_running`): before that the worker is still reading the run, or
 #' finishing other messages queued ahead of it, and swallows an interrupt
 #' there as a late one for the previous run. So an interrupt asked for
-#' sooner is held, and `reduce_wk_running()` sends it.
+#' sooner is held, and `reduce_wk_running()` sends it. The grace period
+#' still counts from the click, not from the SIGINT, on purpose: what the
+#' user waits on is the click, and a run that never begins needs the offer
+#' to restart all the same.
 reduce_interrupt <- function(state, event) {
   state$pending <- character()
   effects <- list()

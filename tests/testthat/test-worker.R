@@ -820,6 +820,24 @@ test_that("a run says it began before its done", {
   expect_identical(frames[[1]]$token, 7L)
 })
 
+test_that("an interrupt sent on the running frame stops that run", {
+  # The server sends SIGINT once it has a run's "running" frame
+  # (reduce_wk_running(), step.R), so from that frame on an interrupt must
+  # stop the cell. A "running" sent before run_cell()'s guarded block would
+  # let this one be swallowed and the 5 s sleep run out.
+  h <- worker_harness()
+  on.exit(h$close())
+  for (i in 1:10) {
+    t0 <- Sys.time()
+    h$send(run_msg(paste0("c", i), i, "Sys.sleep(5)"))
+    r <- wait_for_done(h, timeout = 10, on_frame = function(m) {
+      if (identical(m$type, "running")) h$process$interrupt()
+    })
+    expect_identical(r$status, "interrupted")
+    expect_lt(as.numeric(Sys.time() - t0, units = "secs"), 2)
+  }
+})
+
 test_that("interrupt_r_code", {
   h <- worker_harness()
   on.exit(h$close())
