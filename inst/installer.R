@@ -33,7 +33,16 @@ main <- function(plan_path) {
   wanted <- ember:::lock_versions(lock)
   total <- length(wanted)
 
-  lf <- ember:::renv_lockfile_of(lock, plan$r, plan$repos)
+  # renv's own Linux binary rewrite gets Bioconductor's URLs wrong
+  # (`ppm_binary_repos()`), so they go in already rewritten. The platform
+  # is renv's own lookup (NULL off Linux), so both rewrites agree on it.
+  platform <- if (identical(Sys.info()[["sysname"]], "Linux")) {
+    tryCatch(utils::getFromNamespace("renv_ppm_platform", "renv")(),
+             error = function(e) NULL)
+  }
+  repos <- ember:::ppm_binary_repos(plan$repos, platform)
+
+  lf <- ember:::renv_lockfile_of(lock, plan$r, repos)
   lockfile_tmp <- tempfile("ember-lockfile-", fileext = ".json")
   renv::lockfile_write(lf, file = lockfile_tmp)
 
@@ -44,7 +53,7 @@ main <- function(plan_path) {
   cat(sprintf("EMBER-PROGRESS 0 %d - restore\n", total))
   flush(stdout())
 
-  options(repos = plan$repos)
+  options(repos = repos)
   withCallingHandlers(
     renv::restore(lockfile = lockfile_tmp, library = plan$staging,
                   project = project_dir, prompt = FALSE, clean = FALSE),

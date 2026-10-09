@@ -180,7 +180,10 @@ install_failure_message <- function(lines, status) {
 #'    compilation failed for package"), "configure" ("ERROR: configuration
 #'    failed"), "dependency" ("ERROR: dependency 'x' is not available",
 #'    detail = x), "download" (a summary line, or renv's own "error
-#'    downloading"/"failed to retrieve", naming the package), "other"
+#'    downloading"/"failed to retrieve", naming the package),
+#'    "unavailable" (renv's summary line saying "failed to find source"
+#'    or "binary for 'pkg version' in package repositories"; detail = that
+#'    reason), "other"
 #'    (renv's summary line, `- [pkg]: <reason>` or `- pkg: <reason>`,
 #'    with none of the above; detail = the reason, or the first `ERROR`
 #'    line when the reason itself says only "install failed"). One row
@@ -250,6 +253,13 @@ install_failures <- function(lines) {
       reason <- trimws(sub(name_pattern, "", line))
       if (grepl("retriev|download", reason, ignore.case = TRUE)) {
         add(name, "download", NA_character_)
+      } else if (grepl("^failed to find (source|binary) for ", reason, ignore.case = TRUE)) {
+        # renv found no such version in any repository it could read: the
+        # version isn't there, or (more often) the repository's own index
+        # couldn't be read at all ("renv was unable to query available
+        # packages", earlier in the log). Either way not a download or a
+        # build problem, and nothing the package itself needs.
+        add(name, "unavailable", reason)
       } else {
         # Not `detail <-`: that name is already the accumulator vector
         # `add()` appends to, and a plain `<-` inside this loop (no new
@@ -265,7 +275,8 @@ install_failures <- function(lines) {
   # One row per package: keep the first (most specific) kind a package
   # was seen with, in the order the loop above checks patterns in
   # (compile/configure/dependency before the catch-all summary line).
-  kind_rank <- c(compile = 1L, configure = 2L, dependency = 3L, download = 4L, other = 5L)
+  kind_rank <- c(compile = 1L, configure = 2L, dependency = 3L, download = 4L,
+                 unavailable = 5L, other = 6L)
   df <- data.frame(package = pkg, kind = kind, detail = detail, stringsAsFactors = FALSE)
   df <- df[order(kind_rank[df$kind]), ]
   df <- df[!duplicated(df$package), ]

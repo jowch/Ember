@@ -42,7 +42,9 @@ ember_repos <- function(cran = "https://packagemanager.posit.co/cran",
 #' BSgenome.*), `"bioc-exp/..."` -> `.../data/experiment`.
 #' The path below the dated root (src/contrib, bin/macosx/contrib/4.6, ...)
 #' is left to R and renv: R 4.6 moved macOS binaries and both found them
-#' (spikes/packages, section 1).
+#' (spikes/packages, section 1). Linux binaries live elsewhere, under a
+#' `__linux__/<platform>` segment; the installer puts Bioconductor's there
+#' itself (`ppm_binary_repos()`).
 repo_key <- function(kind, date, bioc_version = NULL) {
   date <- format(as.Date(date), "%Y-%m-%d")
   if (kind %in% names(bioc_kinds)) {
@@ -85,6 +87,30 @@ repo_urls <- function(repos, header) {
     }
   }
   out
+}
+
+#' `repo_urls()` as the installer hands them to renv on Linux, where
+#' Package Manager serves binaries under `__linux__/<platform>/` placed
+#' right after the repository's root: `<cran>/__linux__/noble/<date>` and
+#' `<bioc>/__linux__/noble/<date>/packages/3.23/bioc`.
+#'
+#' renv makes that rewrite itself (`RENV_CONFIG_PPM_ENABLED`), but it
+#' inserts the segment before the URL's last path component, which is
+#' right for CRAN's `<cran>/<date>` and wrong for Bioconductor's
+#' `<bioc>/<date>/packages/3.23/bioc`: it asks for
+#' `.../packages/3.23/__linux__/noble/bioc`, which Package Manager answers
+#' with a 404, so every Bioconductor package "can't be found" and the
+#' whole install fails. renv leaves a URL that already has a `__x__`
+#' segment alone, so rewriting the Bioconductor ones here is enough; CRAN
+#' is left to renv. `platform` is renv's own name for this system
+#' (`"noble"`, `"rhel9"`, ...); `NULL` (not Linux, or a system renv can't
+#' name) changes nothing, and then renv changes nothing either.
+ppm_binary_repos <- function(urls, platform) {
+  if (is.null(platform) || length(platform) != 1 || is.na(platform) || !nzchar(platform)) return(urls)
+  bioc <- names(urls) %in% bioc_repo_names & !grepl("/__[^_/]+__/", urls)
+  urls[bioc] <- sub("/([0-9]{4}-[0-9]{2}-[0-9]{2}/packages/)",
+                    paste0("/__linux__/", platform, "/\\1"), urls[bioc])
+  urls
 }
 
 # ---- Bioconductor releases ---------------------------------------------------

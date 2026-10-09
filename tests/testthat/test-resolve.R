@@ -156,6 +156,24 @@ test_that("repo_urls lists the three Bioconductor repositories only with a pin (
               c("CRAN", "BioCsoft", "BioCann", "BioCexp"))
 })
 
+test_that("ppm_binary_repos() puts Bioconductor's Linux binary segment after the repository root", {
+  repos <- ember_repos(cran = "https://ppm.example/cran", bioc = "https://ppm.example/bioconductor")
+  urls <- repo_urls(repos, header_at("2026-10-08", "3.23"))
+  out <- ppm_binary_repos(urls, "noble")
+  expect_equal(unname(out[["BioCsoft"]]),
+              "https://ppm.example/bioconductor/__linux__/noble/2026-10-08/packages/3.23/bioc")
+  expect_equal(unname(out[["BioCann"]]),
+              "https://ppm.example/bioconductor/__linux__/noble/2026-10-08/packages/3.23/data/annotation")
+  expect_equal(unname(out[["BioCexp"]]),
+              "https://ppm.example/bioconductor/__linux__/noble/2026-10-08/packages/3.23/data/experiment")
+  # CRAN is left to renv, whose rewrite is right for it.
+  expect_equal(out[["CRAN"]], urls[["CRAN"]])
+  # Not Linux (or a system renv can't name): nothing changes.
+  expect_identical(ppm_binary_repos(urls, NULL), urls)
+  # Already rewritten: left alone, as renv itself does.
+  expect_identical(ppm_binary_repos(out, "noble"), out)
+})
+
 test_that("the release is the latest one for the running R out by the snapshot date (79)", {
   expect_equal(bioc_release_for("4.5", "2025-09-01", rel), "3.21")
   expect_equal(bioc_release_for("4.5", "2025-10-30", rel), "3.22")

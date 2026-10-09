@@ -29,6 +29,8 @@ const failure_sentence = (failure, rows, r_version) => {
             return t("t_ember_install_failed_configure", { r_version: r_version ?? "" })
         case "download":
             return t("t_ember_install_failed_download")
+        case "unavailable":
+            return t("t_ember_install_failed_unavailable")
         default:
             return t("t_ember_install_failed_other")
     }
@@ -194,7 +196,9 @@ export const PackagesTab = ({ packages }) => {
                 : html`<p class="ember-packages-library-status ember-packages-library-${library.status}">
                       ${t(`t_ember_packages_library_status_${library.status}`)}
                       ${library.progress != null ? ` (${library.progress.done}/${library.progress.total})` : ""}
-                      ${library.message != null ? html`<br /><span class="ember-packages-library-message">${library.message}</span>` : null}
+                      ${library.message != null && library.failures.length === 0
+                          ? html`<br /><span class="ember-packages-library-message">${library.message}</span>`
+                          : null}
                   </p>`}
             ${library.failures.length === 0
                 ? null

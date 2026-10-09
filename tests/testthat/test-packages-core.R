@@ -837,7 +837,22 @@ test_that("install_failures(): renv's other real summary wordings (no 'package' 
   no_binary <- install_failures(c(
     "- [brokenpkg]: failed to find binary for 'brokenpkg 0.1.0' in package repositories"))
   expect_equal(no_binary$package, "brokenpkg")
-  expect_equal(no_binary$kind, "other")
+  expect_equal(no_binary$kind, "unavailable")
+})
+
+test_that("install_failures() on a real Bioconductor restore whose repository index 404'd", {
+  # Captured verbatim (the installer's last 200 lines, as the session
+  # keeps them) from DESeq2 + ggplot2 at 2026-10-08 on Linux, before
+  # ppm_binary_repos(): renv rewrote the Bioconductor URLs into a form
+  # Package Manager doesn't serve, couldn't read their index, and then
+  # reported each Bioconductor package as "failed to find source". None of
+  # that is a missing system library.
+  real <- install_failures(install_output("real-renv-bioc-404"))
+  expect_equal(nrow(real), 14)
+  expect_true("DESeq2" %in% real$package)
+  expect_equal(unique(real$kind), "unavailable")
+  expect_equal(real$detail[real$package == "DESeq2"],
+              "failed to find source for 'DESeq2 1.52.0' in package repositories")
 })
 
 test_that("install_failures(): one row per package, keeping the most specific kind", {
