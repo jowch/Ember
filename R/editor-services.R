@@ -57,10 +57,13 @@ base_names <- local({
       exported <- unlist(lapply(pkgs, function(p) {
         tryCatch(getNamespaceExports(p), error = function(e) character())
       }), use.names = FALSE)
+      # The datasets are lazy data, not exports, so `getNamespaceExports()`
+      # leaves them out.
+      datasets <- tryCatch(ls(getNamespaceInfo("datasets", "lazydata")), error = function(e) character())
       reserved <- c("if", "else", "repeat", "while", "function", "for", "next", "break",
                    "TRUE", "FALSE", "NULL", "Inf", "NaN", "NA", "NA_integer_",
                    "NA_real_", "NA_character_", "NA_complex_", "in", "...")
-      cache <<- sort(unique(c(ls(baseenv(), all.names = FALSE), exported, reserved)))
+      cache <<- sort(unique(c(ls(baseenv(), all.names = FALSE), exported, datasets, reserved)))
     }
     cache
   }
