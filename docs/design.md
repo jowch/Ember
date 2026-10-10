@@ -407,7 +407,10 @@ The worker runs each cell in the global environment:
 **Which values a cell shows** follows Pluto: the value of the cell's last
 top-level expression is its output. When that expression is an assignment
 (`<-`, `=` or `->`), the assigned value is shown even though R returns it
-invisibly, so `cars <- mtcars` shows the table. Any other invisible value
+invisibly, so `cars <- mtcars` shows the table. As in Pluto, the value is
+the right-hand side: `df$z <- df$x * 2` shows the new column, not `df`. A
+plot the cell drew still wins over an assigned value, so `h <- hist(x)`
+shows the histogram. Any other invisible value
 shows nothing: `invisible()`, `library()`, a function that returns
 invisibly. So `invisible(x <- big)`, or a last line of `invisible()`, is
 how a cell hides its output (Pluto's trailing `;` has no meaning in R).

@@ -88,6 +88,19 @@ test_that("a last-line assignment is the output; other invisible last lines show
   expect_null(r$output)
   r <- run_and_wait(h, "g", 7L, "g <<- 6", order = c("a", "b", "c", "d", "e", "f", "g"))
   expect_null(r$output)
+  r <- run_and_wait(h, "i", 8L, "v <- w <- 7", order = c("a", "b", "c", "d", "e", "f", "g", "i"))
+  expect_identical(r$output$text, "[1] 7")
+  r <- run_and_wait(h, "j", 9L, "n <- NULL", order = c("a", "b", "c", "d", "e", "f", "g", "i", "j"))
+  expect_identical(r$output$text, "NULL")
+})
+
+test_that("a plot drawn before a last-line assignment is the output, not the assigned value", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "hh <- hist(c(1, 2, 2, 3))")
+  expect_identical(r$output$kind, "plot")
+  r <- run_and_wait(h, "b", 2L, "plot(1:10)\nn <- 5", order = c("a", "b"))
+  expect_identical(r$output$kind, "plot")
 })
 
 test_that("an earlier visible value goes to the console when the last line is invisible", {

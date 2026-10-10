@@ -408,6 +408,7 @@ run_cell <- function(msg) {
 
     value <- NULL
     visible <- FALSE
+    assigned <- FALSE   # the last expression is an assignment shown although invisible
     err <- NULL
     is_text <- identical(msg$role, "text")
     text_lines <- if (is_text) strsplit(msg$code, "\n", fixed = TRUE)[[1]] else character()
@@ -446,7 +447,8 @@ run_cell <- function(msg) {
               if (r$visible) console$print(r$value)
             } else {
               value <- r$value
-              visible <- r$visible || shows_assignment(exprs[[k]], r$value)
+              visible <- r$visible
+              assigned <- !r$visible && shows_assignment(exprs[[k]], r$value)
             }
           }
         }
@@ -565,6 +567,11 @@ run_cell <- function(msg) {
                 truncated = FALSE)
           } else if (visible) {
             display_value(value, msg$cell, msg$token, dev, console)
+          } else if (assigned) {
+            # A plot the cell drew wins over the assigned value
+            # (`h <- hist(x)` shows the histogram, not its breaks).
+            display_plot(msg$cell, msg$token, dev) %||%
+              display_value(value, msg$cell, msg$token, dev, console)
           } else {
             display_plot(msg$cell, msg$token, dev)
           }
