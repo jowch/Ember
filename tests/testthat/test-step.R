@@ -1996,6 +1996,34 @@ test_that("after a failed install, a cell waiting on the package runs instead of
   expect_match(err$message, "its install may have failed")
 })
 
+test_that("while a package installs, a cell calling its functions waits for it instead of failing first (#67)", {
+  # Before dplyr is installed its exports are unknown, so B has no edge to
+  # A. B's `summarise` resolves to nothing, so B waits for dplyr with A;
+  # C reads only base R and a dataset, so it still runs.
+  lock <- new_lock(name = "dplyr", version = "1.1.4", source = "CRAN")
+  s <- fake_state(list(A = cell("library(dplyr)"), B = cell("x <- summarise(mtcars, m = mean(mpg))"),
+                       C = cell("n <- nrow(mtcars)")), lock = lock)
+  expect_false("A" %in% s$graph$upstream$B)
+  w <- waiting_cells(s)
+  expect_equal(w$A, "dplyr")
+  expect_equal(w$B, "dplyr")
+  expect_null(w$C)
+
+  r <- drive(s, ev_run(NULL, at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(), at(3)))
+  expect_equal(r$state$worker$running$cell, "C")
+
+  # Once dplyr's exports are known, B's wait comes from its edge to A.
+  s2 <- s
+  s2$exports <- list(dplyr = "summarise")
+  s2 <- rebuild_graph(s2)
+  expect_true("A" %in% s2$graph$upstream$B)
+  expect_equal(waiting_cells(s2)$B, "dplyr")
+
+  # Nothing installing, nothing held: a typo alone doesn't wait.
+  s3 <- fake_state(list(A = cell("x <- summarse(mtcars)")))
+  expect_null(waiting_cells(s3)$A)
+})
+
 test_that("missing_package_error() for a locked, uninstalled package points at the install failure", {
   lock <- new_lock(name = "cli", version = "3.6.0", source = "CRAN")
   s <- fake_state(list(S = cell(""), A = cell("library(cli)")), lock = lock)

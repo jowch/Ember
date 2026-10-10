@@ -890,6 +890,18 @@ switch_pending <- function(state) {
 #' not hold its cell: it runs, R says "there is no package called", and
 #' the problem row explains why.
 #'
+#' A cell can also wait without naming a package (#67). Edges to a
+#' package's exports come from the installed package, so before
+#' `library(dplyr)` is installed, a cell calling `summarise()` has no edge
+#' to it and would run, fail with "could not find function", and rerun
+#' once the install brings the edge. So while a waiting cell attaches a
+#' package whose exports aren't known yet, any other cell with a reference
+#' that resolves to nothing (no edge, not a base R name) waits for those
+#' packages too, with its downstream. A cell whose references all resolve
+#' still runs. A typo or a column name read through non-standard
+#' evaluation also holds its cell until the install ends: too long a wait
+#' rather than a false error.
+#'
 #' `schedule()` skips waiting cells but keeps them in `pending`, so they run
 #' the moment the library is ready. When the target library fails, they run
 #' anyway: the worker raises `packageNotFoundError` and
@@ -923,6 +935,23 @@ waiting_cells <- function(state) {
       !(pk %in% names(installed)) && (pk %in% lock_names || (resolving && any_fetching))
     }, pkgs)
     if (length(needed) > 0) direct[[id]] <- needed
+  }
+
+  # Packages that waiting cells attach and whose exports the graph doesn't
+  # have yet: until they install, a reference with no edge may be theirs.
+  unknown <- unique(unlist(lapply(names(direct), function(id) {
+    intersect(direct[[id]], state$graph$cells[[id]]$attaches)
+  }), use.names = FALSE))
+  unknown <- setdiff(unknown, names(state$graph$exports))
+  if (length(unknown) > 0) {
+    edges <- state$graph$edges
+    known <- base_names()
+    for (id in setdiff(runnable_ids, names(direct))) {
+      refs <- state$graph$cells[[id]]$references
+      if (length(refs) == 0) next
+      unresolved <- setdiff(refs, c(edges$name[edges$from == id], known))
+      if (length(unresolved) > 0) direct[[id]] <- unknown
+    }
   }
 
   out <- direct
