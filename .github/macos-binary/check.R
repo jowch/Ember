@@ -13,6 +13,7 @@ stopifnot("ember" %in% rownames(listed), listed["ember", "SHA256"] == sha256)
 downloads <- tempfile("ember")
 dir.create(downloads)
 file <- download.packages("ember", downloads, contriburl = here, type = type, quiet = TRUE)[1, 2]
+stopifnot(tools::sha256sum(file) == sha256)
 lib <- tempfile("lib")
 dir.create(lib)
 install.packages(file, lib = lib, repos = NULL, type = type)

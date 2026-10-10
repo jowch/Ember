@@ -11,7 +11,12 @@ name: macos-binary
 # Ember from it on an Apple Silicon Mac, and from r-universe elsewhere.
 # The release keeps only the build PACKAGES lists and the one before it, so a
 # runtime that read the index just before an update can still download.
+# Replacing PACKAGES deletes it first, so for a moment it's missing; a runtime
+# that asks then finds no Ember here and keeps the one it has.
 # Pull requests that change this workflow build and check without publishing.
+#
+# Only the publish job can write to the repository; building, which installs
+# packages from CRAN, runs with a read-only token.
 
 on:
   push:
@@ -23,7 +28,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   binary:
@@ -33,14 +38,10 @@ jobs:
       fail-fast: false
       matrix:
         r: [release, oldrel]
-    # One publish per R version at a time; a newer push waits for the one before.
-    concurrency:
-      group: macos-binary-${{ matrix.r }}-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
-      cancel-in-progress: false
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
-      # What CRAN's Apple Silicon binaries target (big-sur-arm64). R itself may
-      # need a newer macOS; this only keeps Ember from asking for more than R.
+      # Below what R itself needs on Apple Silicon, so Ember never asks for a
+      # newer macOS than R does.
       MACOSX_DEPLOYMENT_TARGET: '11.0'
     steps:
       - uses: actions/checkout@v4
@@ -71,12 +72,11 @@ jobs:
           sha256=$(shasum -a 256 "$file" | cut -d' ' -f1)
           Rscript ../.github/macos-binary/index.R "$file" "$sha256"
           cat PACKAGES
+          # For the publish job.
+          printf 'COMMIT=%s\nFILE=%s\nTAG=macos-arm64-r%s\nVERSION=%s\n' "$commit" "$file" "$version" "$version" > release.env
           {
             echo "commit=$commit"
-            echo "file=$file"
             echo "sha256=$sha256"
-            echo "tag=macos-arm64-r$version"
-            echo "version=$version"
           } >> "$GITHUB_OUTPUT"
 
       - name: Check it runs on macOS 11 and installs as the runtime installs it
@@ -89,18 +89,49 @@ jobs:
           done
           Rscript ../.github/macos-binary/check.R "${{ steps.build.outputs.commit }}" "${{ steps.build.outputs.sha256 }}"
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ember-macos-arm64-${{ matrix.r }}
+          path: out/
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    needs: binary
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    name: Publish (R ${{ matrix.r }})
+    strategy:
+      fail-fast: false
+      matrix:
+        r: [release, oldrel]
+    permissions:
+      contents: write
+    # One publish per R version at a time; a newer push waits for the one before.
+    concurrency:
+      group: macos-binary-publish-${{ matrix.r }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ember-macos-arm64-${{ matrix.r }}
+          path: out
       - name: Publish
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         working-directory: out
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.build.outputs.tag }}
-          VERSION: ${{ steps.build.outputs.version }}
-          FILE: ${{ steps.build.outputs.file }}
         run: |
           set -euo pipefail
+          . ./release.env
+          # A run started again by hand after main moved on would point the
+          # index back at an older build.
+          if [ "$(gh api "repos/$GH_REPO/commits/main" --jq .sha)" != "$COMMIT" ]; then
+            echo "main has moved on from $COMMIT; not publishing"
+            exit 0
+          fi
           if ! gh release view "$TAG" > /dev/null 2>&1; then
-            gh release create "$TAG" --prerelease --target "${{ steps.build.outputs.commit }}" \
+            gh release create "$TAG" --prerelease --target "$COMMIT" \
               --title "Ember for R $VERSION on Apple Silicon Macs" \
               --notes "Ember's latest main, built for R $VERSION on Apple Silicon Macs by the macos-binary workflow. It's an R package repository: PACKAGES lists the build, which is replaced on every push to main. The tag doesn't move; PACKAGES says which commit the build is."
           fi
