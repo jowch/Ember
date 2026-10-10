@@ -176,15 +176,22 @@ move_notebook <- function(nb, path) {
 #'
 #' @param ... Ops made by `set_code()`, `insert_cell()`, `delete_cell()`,
 #'   `move_cell()`, `fold_cell()`, applied in order. Indexes are display
-#'   positions after the previous ops.
+#'   positions after the previous ops. An op may name, by id, a cell an
+#'   earlier `insert_cell()` in the same batch adds.
 #' @return Invisibly, `list(inserted = <ids of inserted cells, in op order>,
 #'   seq = <the state's seq after the batch>)`.
 #' @export
 edit_notebook <- function(nb, ...) {
   ops <- list(...)
+  # An op may name a cell an earlier insert in the same batch adds (the
+  # page's undo-delete of a folded cell is an insert and then a fold).
+  inserted <- character()
   resolved <- lapply(ops, function(op) {
     if (identical(op$op, "insert")) {
       if (is.null(op$id)) op$id <- uuid()
+      inserted <<- c(inserted, op$id)
+    } else if (is.character(op$cell) && length(op$cell) == 1 && op$cell %in% inserted) {
+      # already an id
     } else if (!is.null(op$cell)) {
       op$cell <- resolve_cell_id(nb, op$cell)
     }

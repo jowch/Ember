@@ -273,9 +273,9 @@ New fixtures:
     beside its neighbours (the existing `compute_order` fixture,
     unchanged); `M` has a `mixed_text` error; a setup cell with `#'` lines
     has none.
-43. `reduce_apply()`: `insert` of `"#' Hi"` gives kind `"markdown"` and
-    `folded`. `set_code` of a code cell that has a result to `"#' Hi"`
-    gives kind `"markdown"` and `folded`, drops the result, emits
+43. `reduce_apply()`: `insert` of `"#' Hi"` gives kind `"markdown"`, not
+    folded. `set_code` of a code cell that has a result to `"#' Hi"`
+    gives kind `"markdown"`, leaves its fold as it was, drops the result, emits
     `remove_cell`, and marks its readers stale. `set_code` back to
     `"x <- 1"` gives kind `"code"`. `set_code` of a disabled cell to
     `"#' Hi"` clears `disabled`.
@@ -327,7 +327,7 @@ New fixtures:
     nothing changes.
 54. `update_notebook` setting `A`'s code to `"#' # Title"`, then
     `run_multiple_cells`: the next projection has `kind = "markdown"`,
-    `code_folded = TRUE`, and an output with `<h1>Title</h1>`.
+    `code_folded = FALSE`, and an output with `<h1>Title</h1>`.
 55. `docs` with query `clean` on `text.R` (no worker running) replies with
     the HTML of test 52.
 
@@ -344,7 +344,8 @@ New fixtures:
     second is code that has not run.
 60. markdown.test.mjs: the edited code becomes
     `"#' # Changed\n#'\n#' New text."`. A new case types `#' Hello` into a
-    new cell, runs it, and finds "Hello" rendered and the cell folded.
+    new cell, runs it, and finds "Hello" rendered and the cell not folded,
+    its source showing.
 61. Help for a notebook function: put the cursor on `clean` in a new cell;
     the Help tab shows `clean(df)`, "Drop rows with a missing value.",
     and "Go to it", which scrolls `FN` into view.

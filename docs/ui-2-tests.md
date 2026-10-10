@@ -43,8 +43,9 @@ New fixtures:
    `insert_cell(i, code, kind = "markdown", id = <client id>)`; a new cell
    added by the page (no `kind`) gives `kind = "code"`.
 3. `edit_notebook(nb, insert_cell(2, "# Hi", kind = "markdown"))`: the
-   snapshot shows the cell `folded`, and the written file lists it as
-   `<id> folded`. A code cell inserted the same way is not folded.
+   snapshot shows the cell not folded, and the written file lists it as
+   plain `<id>`; after `fold_cell()` it is `<id> folded`. A code cell
+   inserted the same way is not folded either (changed 2026-10-10).
 4. A file whose footer lists a markdown cell without `folded` opens with it
    unfolded (fold state is the file's).
 5. `test-frontend-files.R`: no file under `system.file("frontend", package =
@@ -69,7 +70,7 @@ New fixtures:
 10. The cell menu on B lists "Delete cell" and "Copy output" and none of
     the classes `ask_ai`, `disable_cell`, `skip_as_script`, `hide_logs`,
     `show_logs`; there is no `form#feedback` on the page.
-11. Markdown (`rich.R`): `MD` shows rendered text and is folded; unfolding
+11. Markdown (`rich.R`): `MD` shows rendered text and is folded, as its footer says; unfolding
     it shows an editor whose syntax tree's top node is markdown's
     (`Document`, read through `.cm-content`'s `cmView`), with R tokens
     inside the fenced block; a code cell's top node is the R grammar's. The

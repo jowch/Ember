@@ -193,6 +193,7 @@ questions). Piece 2 vendors whichever fonts this piece keeps.
   bundle (frontend-build/src/index.js:82, 91).
 - Engine: `insert_cell(..., kind = "markdown")` makes the cell folded
   (step.R:532: `folded = identical(op$kind, "markdown")`).
+  (Superseded 2026-10-10: Ember no longer folds a text cell for you.)
 - Translation: `order_ops()` inserts with
   `kind = after$cell_inputs[[id]]$kind %||% "code"` (pluto-edits.R:156), so
   "undo delete" and paste of a markdown cell keep it markdown. Today they

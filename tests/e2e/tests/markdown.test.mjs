@@ -59,9 +59,9 @@ test("markdown: a new cell typed as `#' ...` becomes a text cell and stays unfol
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("Hello"),
     `${newSel} pluto-output`, { timeout: 15000 });
-  assert.equal(await page.locator(newSel).evaluate((el) => el.classList.contains("text_cell") && el.classList.contains("code_folded")), false,
-    "a text cell is never folded for you");
   assert.ok(await page.locator(newSel).evaluate((el) => el.classList.contains("text_cell")));
+  assert.equal(await page.locator(newSel).evaluate((el) => el.classList.contains("code_folded")), false,
+    "a text cell is never folded for you");
   await page.locator(`${newSel} pluto-input .cm-editor`).waitFor({ state: "visible", timeout: 5000 });
 
   assertNoProblems(page);
