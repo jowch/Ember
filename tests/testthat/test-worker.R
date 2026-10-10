@@ -69,6 +69,56 @@ test_that("earlier_visible_values_to_console", {
   expect_identical(r$console[[1]]$text, "[1] 1")
 })
 
+test_that("a last-line assignment is the output; other invisible last lines show nothing (design.md, Which values a cell shows)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "x <- 2")
+  expect_identical(r$output$text, "[1] 2")
+  r <- run_and_wait(h, "b", 2L, "3 -> y", order = c("a", "b"))
+  expect_identical(r$output$text, "[1] 3")
+  r <- run_and_wait(h, "c", 3L, "z = 4", order = c("a", "b", "c"))
+  expect_identical(r$output$text, "[1] 4")
+  # A data frame assignment shows the table.
+  r <- run_and_wait(h, "d", 4L, "cars <- head(mtcars, 2)", order = c("a", "b", "c", "d"))
+  expect_identical(r$output$mime, "application/vnd.ember.table")
+  # invisible(), an assigned function and <<- show nothing.
+  r <- run_and_wait(h, "e", 5L, "invisible(w <- 5)", order = c("a", "b", "c", "d", "e"))
+  expect_null(r$output)
+  r <- run_and_wait(h, "f", 6L, "f <- function(x) x", order = c("a", "b", "c", "d", "e", "f"))
+  expect_null(r$output)
+  r <- run_and_wait(h, "g", 7L, "g <<- 6", order = c("a", "b", "c", "d", "e", "f", "g"))
+  expect_null(r$output)
+  r <- run_and_wait(h, "i", 8L, "v <- w <- 7", order = c("a", "b", "c", "d", "e", "f", "g", "i"))
+  expect_identical(r$output$text, "[1] 7")
+  r <- run_and_wait(h, "j", 9L, "n <- NULL", order = c("a", "b", "c", "d", "e", "f", "g", "i", "j"))
+  expect_identical(r$output$text, "NULL")
+  r <- run_and_wait(h, "k", 10L, "en <- new.env()", order = c("a", "b", "c", "d", "e", "f", "g", "i", "j", "k"))
+  expect_null(r$output)
+  r <- run_and_wait(h, "l", 11L, 'ce <- structure(new.env(), class = "thing")', order = c("a", "b", "c", "d", "e", "f", "g", "i", "j", "k", "l"))
+  expect_false(is.null(r$output))
+})
+
+test_that("a plot drawn before a last-line assignment is the output, not the assigned value", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "hh <- hist(c(1, 2, 2, 3))")
+  expect_identical(r$output$kind, "plot")
+  r <- run_and_wait(h, "b", 2L, "plot(1:10)\nn <- 5", order = c("a", "b"))
+  expect_identical(r$output$kind, "plot")
+})
+
+test_that("an earlier visible value goes to the console when the last line is invisible", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "1\ninvisible(2)")
+  expect_null(r$output)
+  expect_length(r$console, 1)
+  expect_identical(r$console[[1]]$text, "[1] 1")
+  r <- run_and_wait(h, "b", 2L, "1\nx <- 2", order = c("a", "b"))
+  expect_identical(r$output$text, "[1] 2")
+  expect_identical(r$console[[1]]$text, "[1] 1")
+})
+
 test_that("a warning raised inside a function carries its call; a message carries none (ui-3-tests 130)", {
   h <- worker_harness()
   on.exit(h$close())
