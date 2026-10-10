@@ -92,6 +92,10 @@ test_that("a last-line assignment is the output; other invisible last lines show
   expect_identical(r$output$text, "[1] 7")
   r <- run_and_wait(h, "j", 9L, "n <- NULL", order = c("a", "b", "c", "d", "e", "f", "g", "i", "j"))
   expect_identical(r$output$text, "NULL")
+  r <- run_and_wait(h, "k", 10L, "en <- new.env()", order = c("a", "b", "c", "d", "e", "f", "g", "i", "j", "k"))
+  expect_null(r$output)
+  r <- run_and_wait(h, "l", 11L, 'ce <- structure(new.env(), class = "thing")', order = c("a", "b", "c", "d", "e", "f", "g", "i", "j", "k", "l"))
+  expect_false(is.null(r$output))
 })
 
 test_that("a plot drawn before a last-line assignment is the output, not the assigned value", {

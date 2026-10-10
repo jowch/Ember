@@ -415,7 +415,9 @@ shows nothing: `invisible()`, `library()`, a function that returns
 invisibly. So `invisible(x <- big)`, or a last line of `invisible()`, is
 how a cell hides its output (Pluto's trailing `;` has no meaning in R).
 `<<-` and `assign()` stay hidden, as does an assigned function (its
-printed form is the cell's code again). Earlier visible values, `print()`,
+printed form is the cell's code again) or a plain environment (its
+printed form is an address; an R6 object, which has a class, still
+prints). Earlier visible values, `print()`,
 `cat()`, messages and warnings go to a console area below the output, in
 order. A plot drawn with no visible value after it is the output. R
 Markdown instead shows every visible value inline.

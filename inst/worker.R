@@ -1930,10 +1930,12 @@ inline_text <- function(x) {
 #' (`->` parses as `<-`), at any target (`df$col <- v` shows `v`). Not
 #' `<<-` or `assign()`, which write elsewhere, and not a function value
 #' (`f <- function(x) ...`, a `setClass()` generator): its printed form is
-#' the cell's own code again.
+#' the cell's own code again. Not a plain environment either (`e <-
+#' new.env()` would print only its address); a classed one, such as an R6
+#' object, keeps its print method.
 shows_assignment <- function(e, value) {
   is.call(e) && (identical(e[[1]], as.name("<-")) || identical(e[[1]], as.name("="))) &&
-    !is.function(value)
+    !is.function(value) && !(is.environment(value) && is.null(attr(value, "class")))
 }
 
 #' Turn the output value into a display bundle (design.md, How values
