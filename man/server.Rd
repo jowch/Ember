@@ -41,7 +41,8 @@ or a reverse proxy's saved config keeps working across restarts.}
 cookie \verb{/edit} sets); files served directly from the frontend folder do
 not.}
 \item{on_ready}{\code{function(server)}, called once the port is listening, or
-\code{NULL}. A host opens notebooks with the R API here (or later, from its own
+\code{NULL}. Its \code{server$port} is the port on 127.0.0.1 the server listens on
+(the one \code{port = 0} picked), which a host reads to reach the server. A host opens notebooks with the R API here (or later, from its own
 callbacks) and hands them to the server with \code{host_notebook()}.}
 \item{launch_browser}{Open the first notebook's edit URL (or the server's
 own URL if none was given) once the server is ready.}
