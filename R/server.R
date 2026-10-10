@@ -34,7 +34,9 @@ HOURGLASS <- "\u231B"
 #' @param port Port on 127.0.0.1; 0 tries the stable default (see
 #'   `pick_default_port()`) and falls back to a free one.
 #' @param secret The URL secret; every page, file and socket needs it.
-#' @param on_ready `function(server)` or NULL.
+#' @param on_ready `function(server)` or NULL. Its `server$port` is the port on
+#'   127.0.0.1 the server listens on (the one `port = 0` picked), which a host
+#'   reads to reach the server.
 #' @param launch_browser Open the first notebook's URL (or the server's).
 #' @param allowed_hosts `Host` names (with or without `:<port>`) to accept
 #'   besides loopback, for a reverse proxy that isn't loopback from this R
