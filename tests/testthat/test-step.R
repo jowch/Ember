@@ -2019,6 +2019,33 @@ test_that("while a package installs, a cell calling its functions waits for it i
   expect_true("A" %in% s2$graph$upstream$B)
   expect_equal(waiting_cells(s2)$B, "dplyr")
 
+  # A failed install releases B too: it runs after A and shows R's own error,
+  # while A carries the install failure.
+  key <- s$packages$target$key
+  r <- drive(s, ev_run(NULL, at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(), at(3)))
+  expect_true("B" %in% r$state$pending)
+  r <- drive(r$state, ev_library_checked(key, NULL, at(4)))
+  expect_true("B" %in% r$state$pending)
+  tok <- r$state$packages$install$token
+  r <- drive(r$state, ev_install_done(tok, key, NULL, "install failed", character(), at(5),
+                                      failures = data.frame(package = "dplyr", kind = "build_error",
+                                                            detail = "boom", stringsAsFactors = FALSE)))
+  expect_equal(r$state$packages$target$status, "failed")
+  ran <- character()
+  for (i in 1:4) {
+    cell <- r$state$worker$running$cell
+    if (is.null(cell)) break
+    ran <- c(ran, cell)
+    err <- if (cell == "A") list(message = "there is no package called 'dplyr'", package = "dplyr")
+           else if (cell == "B") list(message = 'could not find function "summarise"') else NULL
+    r <- drive(r$state, wk_done(r$state$worker$gen, r$state$worker$running$token,
+                                report(error = err), at(6 + i)))
+  }
+  expect_true(all(c("A", "B") %in% ran))
+  expect_lt(match("A", ran), match("B", ran))
+  expect_equal(r$state$results$A$error$kind, "missing_package")
+  expect_match(r$state$results$B$error$message, "could not find function")
+
   # Nothing installing, nothing held: a typo alone doesn't wait.
   s3 <- fake_state(list(A = cell("x <- summarse(mtcars)")))
   expect_null(waiting_cells(s3)$A)

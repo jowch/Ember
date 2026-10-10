@@ -900,7 +900,9 @@ switch_pending <- function(state) {
 #' packages too, with its downstream. A cell whose references all resolve
 #' still runs. A typo or a column name read through non-standard
 #' evaluation also holds its cell until the install ends: too long a wait
-#' rather than a false error.
+#' rather than a false error. The hold lasts as long as the attaching cell's
+#' own wait, which is almost always an install; the rare exception is a
+#' Bioconductor move held for an answer (`bioc_move_pending()`).
 #'
 #' `schedule()` skips waiting cells but keeps them in `pending`, so they run
 #' the moment the library is ready. When the target library fails, they run
