@@ -54,7 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           commit=$(git rev-parse HEAD)
-          version=$(Rscript -e 'cat(R.version$major, sub("\\..*", "", R.version$minor), sep = ".")')
+          version=$(Rscript -e 'cat(R.version$major, sub("[.].*", "", R.version$minor), sep = ".")')
           src="$RUNNER_TEMP/src"
           mkdir -p "$src" out
           git archive HEAD | tar -x -C "$src"
