@@ -28,7 +28,7 @@ test("markdown: editing and running a text cell renders the new text", async (t)
   assertNoProblems(page);
 });
 
-test("markdown: a new cell typed as `#' ...` becomes a folded text cell", async (t) => {
+test("markdown: a new cell typed as `#' ...` becomes a text cell and stays unfolded", async (t) => {
   const notebook = tempNotebook();
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "markdown-new-cell.server.log") });
   const browser = await launchBrowser();
@@ -59,8 +59,10 @@ test("markdown: a new cell typed as `#' ...` becomes a folded text cell", async 
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("Hello"),
     `${newSel} pluto-output`, { timeout: 15000 });
-  assert.ok(await page.locator(newSel).evaluate((el) => el.classList.contains("code_folded")),
-    "a text cell folds itself once it has run");
+  assert.equal(await page.locator(newSel).evaluate((el) => el.classList.contains("text_cell") && el.classList.contains("code_folded")), false,
+    "a text cell is never folded for you");
+  assert.ok(await page.locator(newSel).evaluate((el) => el.classList.contains("text_cell")));
+  await page.locator(`${newSel} pluto-input .cm-editor`).waitFor({ state: "visible", timeout: 5000 });
 
   assertNoProblems(page);
 });

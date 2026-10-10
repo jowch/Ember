@@ -160,7 +160,8 @@ target_order <- function(before, after) {
 #' engine change, see RATIONALE.md): the browser already shows the cell under
 #' that id and its next request is run_multiple_cells for it. Their code is
 #' `after$cell_inputs[[id]]$code`; its kind is `cell_kind()` of that code, so
-#' undo-delete and paste of a text cell keep it text.
+#' undo-delete and paste of a text cell keep it text. An inserted cell the
+#' page has folded (undo-delete of a folded cell) gets a fold_cell() too.
 #'
 #' Indexes are computed as edit_notebook() reads them: positions after the
 #' previous ops, 1-based.
@@ -177,6 +178,7 @@ order_ops <- function(current, target, after) {
     idx  <- if (is.null(pred)) 1L else match(pred, cur) + 1L
     ops  <- c(ops, list(if (id %in% current) move_cell(id, idx)
                         else insert_cell(idx, code = after$cell_inputs[[id]]$code, id = id)))
+    if (!(id %in% current) && isTRUE(after$cell_inputs[[id]]$code_folded)) ops <- c(ops, list(fold_cell(id, TRUE)))
     cur  <- append(cur, id, after = idx - 1L)
   }
   stopifnot(identical(cur, target))

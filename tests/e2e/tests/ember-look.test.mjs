@@ -1,6 +1,6 @@
 // Piece 1 ("Ember's look"), docs/ui-2-tests.md items 8-12: the page says
 // Ember, not Pluto/Julia; the deleted features (AI, feedback, disable/skip
-// cell, hide logs) stay gone; markdown cells render folded with R inside
+// cell, hide logs) stay gone; a folded markdown cell renders with R inside
 // fenced blocks; Endeavor's DOM hooks survive.
 
 import { test } from "node:test";
@@ -112,7 +112,8 @@ test("look: cell menu has only Delete/Copy output/Disable cell; no feedback form
   assertNoProblems(page);
 });
 
-// 11. Markdown cells: folded by default, R-highlighted fenced block inside.
+// 11. Markdown cells: a fold saved in the file is kept (the fixture's MD is
+// marked folded; Ember never folds one for you), R-highlighted fenced block inside.
 test("look: markdown cell renders folded, with R tokens in its fenced block (11)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "ember-look-11.server.log") });
@@ -131,7 +132,7 @@ test("look: markdown cell renders folded, with R tokens in its fenced block (11)
   await page.waitForFunction(() => document.querySelectorAll("#ember-safe-preview").length === 0, null, { timeout: 20000 });
 
   const isFolded = await page.locator(cellSelector("MD")).evaluate((el) => el.classList.contains("code_folded"));
-  assert.ok(isFolded, "MD starts folded");
+  assert.ok(isFolded, "MD opens folded, as its file says");
   const renderedText = await page.locator(`${cellSelector("MD")} pluto-output`).innerText();
   assert.match(renderedText, /Rich outputs/);
 

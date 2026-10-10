@@ -102,8 +102,11 @@ out of the way of the data, the code and the results.
 
 - There is one kind of cell. A cell made only of `#'` lines (knitr's spin
   convention for prose in R scripts) is text: rendered in Source Serif 4,
-  folded, and opened for editing by clicking it. Typing `#'` and pressing
-  Enter continues the next line with `#'`.
+  with its source above it like any cell. Ember never folds it for you
+  (changed 2026-10-10 at Jonathan's request; this said "folded" before).
+  Folded by hand, it shows only the text and opens for editing by
+  clicking it. Typing `#'` and pressing Enter continues the next line
+  with `#'`.
 - A cell mixing `#'` lines and code is an error, as Pluto treats several
   expressions in one cell: nothing runs, and a button splits the cell at each
   change between text and code.

@@ -107,6 +107,19 @@ test_that("undo a delete re-adds the cell with the client's (original) id (17)",
   expect_equal(ed$ops[[1]]$id, "A2")
 })
 
+test_that("undo a delete of a folded cell re-adds it folded; an unfolded one gets no fold op", {
+  before <- base_before(2, ids = c("A", "B"))
+  patches <- list(
+    patch_add(list("cell_inputs", "A2"), new_cell_patch("A2", "#' A2", folded = TRUE)),
+    patch_add(list("cell_inputs", "A3"), new_cell_patch("A3", "#' A3")),
+    patch_replace(list("cell_order"), as_arr(c("A", "A2", "A3", "B"))))
+  ed <- pluto_edits(before, patches)
+  expect_null(ed$refusal)
+  expect_equal(vapply(ed$ops, `[[`, "", "op"), c("insert", "fold", "insert"))
+  expect_equal(ed$ops[[2]]$cell, "A2")
+  expect_true(ed$ops[[2]]$folded)
+})
+
 # ---- ui-2-tests.md 2: a text cell's kind survives undo delete and paste ----
 # (piece 2, ui-3-tests.md 50): kind is no longer a patch field -- a cell's
 # kind is cell_kind() of its own code, so an inserted cell is text exactly

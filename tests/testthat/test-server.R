@@ -178,7 +178,7 @@ test_that("run_multiple_cells {cells: []} runs nothing; a blank new cell doesn't
   expect_equal(notebook_snapshot(nb)$process, "preview")
 })
 
-test_that("update_notebook to a text cell, then running it: kind markdown, folded, rendered as HTML (54)", {
+test_that("update_notebook to a text cell, then running it: kind markdown, not folded, rendered as HTML (54)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1")))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
@@ -200,7 +200,7 @@ test_that("update_notebook to a text cell, then running it: kind markdown, folde
 
   page <- ws$page()
   expect_equal(page$cell_inputs[[a]]$kind, "markdown")
-  expect_true(page$cell_inputs[[a]]$code_folded)
+  expect_false(page$cell_inputs[[a]]$code_folded)
   expect_match(page$cell_results[[a]]$output$body, "<h1>Title</h1>", fixed = TRUE)
 })
 

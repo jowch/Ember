@@ -471,7 +471,7 @@ test_that("clean() never deletes a library an open notebook holds active, throug
   expect_true(info$path %in% d2$path)
 })
 
-test_that("insert_cell() of #' code folds the cell in the snapshot and the written file (ui-2 3)", {
+test_that("insert_cell() of #' code leaves the cell unfolded in the snapshot and the written file (ui-2 3)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1"), B = cell("2")))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
@@ -480,7 +480,11 @@ test_that("insert_cell() of #' code folds the cell in the snapshot and the writt
   md_id <- res$inserted[[1]]
   snap <- notebook_snapshot(nb)
   expect_equal(snap_view(snap, md_id)$kind, "markdown")
-  expect_true(snap_view(snap, md_id)$folded)
+  expect_false(snap_view(snap, md_id)$folded)
+  expect_true(any(grepl(paste0("^# ", md_id, "$"), strsplit(nb$written, "\n")[[1]])))
+
+  edit_notebook(nb, fold_cell(md_id))
+  expect_true(snap_view(notebook_snapshot(nb), md_id)$folded)
   expect_true(any(grepl(paste0("^# ", md_id, " folded$"), strsplit(nb$written, "\n")[[1]])))
 
   res2 <- edit_notebook(nb, insert_cell(2, "3"))
