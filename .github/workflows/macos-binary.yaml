@@ -1,0 +1,147 @@
+name: macos-binary
+
+# Ember's binary for Apple Silicon Macs. r-universe builds binaries for Linux,
+# Intel Macs and Windows, but its Apple Silicon build fails (#66), and Ember has
+# C code, so without a binary a Mac needs a compiler to install it.
+#
+# Each push to main builds Ember on an Apple Silicon runner for R release and
+# oldrel, and publishes it to a prerelease per R version (macos-arm64-r4.6, ...).
+# Each release is an R package repository with one build: the binary, named by
+# commit, and a PACKAGES index with its SHA256. EndeavorMCP's runtime installs
+# Ember from it on an Apple Silicon Mac, and from r-universe elsewhere.
+# The release keeps only the build PACKAGES lists and the one before it, so a
+# runtime that read the index just before an update can still download.
+# Replacing PACKAGES deletes it first, so for a moment it's missing; a runtime
+# that asks then finds no Ember here and keeps the one it has.
+# Pull requests that change this workflow build and check without publishing.
+#
+# Only the publish job can write to the repository; building, which installs
+# packages from CRAN, runs with a read-only token.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - .github/workflows/macos-binary.yaml
+      - .github/macos-binary/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  binary:
+    runs-on: macos-latest
+    name: Apple Silicon binary (R ${{ matrix.r }})
+    strategy:
+      fail-fast: false
+      matrix:
+        r: [release, oldrel]
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      # Below what R itself needs on Apple Silicon, so Ember never asks for a
+      # newer macOS than R does.
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          r-version: ${{ matrix.r }}
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+
+      - name: Build
+        id: build
+        run: |
+          set -euo pipefail
+          commit=$(git rev-parse HEAD)
+          version=$(Rscript -e 'cat(R.version$major, sub("[.].*", "", R.version$minor), sep = ".")')
+          src="$RUNNER_TEMP/src"
+          mkdir -p "$src" out
+          git archive HEAD | tar -x -C "$src"
+          # Which commit this is, as r-universe records it, for the runtime's log.
+          printf 'RemoteType: github\nRemoteUsername: jowch\nRemoteRepo: Ember\nRemoteRef: main\nRemoteSha: %s\nRemoteUrl: https://github.com/jowch/Ember\n' "$commit" >> "$src/DESCRIPTION"
+          cd out
+          R CMD build --no-build-vignettes --no-manual "$src"
+          mkdir "$RUNNER_TEMP/lib"
+          R CMD INSTALL --build -l "$RUNNER_TEMP/lib" ember_*.tar.gz
+          rm ember_*.tar.gz
+          file="ember_${commit:0:12}.tgz"
+          mv ember_*.tgz "$file"
+          sha256=$(shasum -a 256 "$file" | cut -d' ' -f1)
+          Rscript ../.github/macos-binary/index.R "$file" "$sha256"
+          cat PACKAGES
+          # For the publish job.
+          printf 'COMMIT=%s\nFILE=%s\nTAG=macos-arm64-r%s\nVERSION=%s\n' "$commit" "$file" "$version" "$version" > release.env
+          {
+            echo "commit=$commit"
+            echo "sha256=$sha256"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check it runs on macOS 11 and installs as the runtime installs it
+        working-directory: out
+        run: |
+          set -euo pipefail
+          for so in "$RUNNER_TEMP"/lib/ember/libs/*.so; do
+            otool -l "$so" | grep -A4 LC_BUILD_VERSION
+            otool -l "$so" | grep -A4 LC_BUILD_VERSION | grep -q 'minos 11.0'
+          done
+          Rscript ../.github/macos-binary/check.R "${{ steps.build.outputs.commit }}" "${{ steps.build.outputs.sha256 }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ember-macos-arm64-${{ matrix.r }}
+          path: out/
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    needs: binary
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    name: Publish (R ${{ matrix.r }})
+    strategy:
+      fail-fast: false
+      matrix:
+        r: [release, oldrel]
+    permissions:
+      contents: write
+    # One publish per R version at a time; a newer push waits for the one before.
+    concurrency:
+      group: macos-binary-publish-${{ matrix.r }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ember-macos-arm64-${{ matrix.r }}
+          path: out
+      - name: Publish
+        working-directory: out
+        run: |
+          set -euo pipefail
+          . ./release.env
+          # A run started again by hand after main moved on would point the
+          # index back at an older build.
+          if [ "$(gh api "repos/$GH_REPO/commits/main" --jq .sha)" != "$COMMIT" ]; then
+            echo "main has moved on from $COMMIT; not publishing"
+            exit 0
+          fi
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --prerelease --target "$COMMIT" \
+              --title "Ember for R $VERSION on Apple Silicon Macs" \
+              --notes "Ember's latest main, built for R $VERSION on Apple Silicon Macs by the macos-binary workflow. It's an R package repository: PACKAGES lists the build, which is replaced on every push to main. The tag doesn't move; PACKAGES says which commit the build is."
+          fi
+          # The binary first, under a new name, then the index that points to it,
+          # so the index never lists a file that isn't there yet.
+          gh release upload "$TAG" "$FILE" --clobber
+          gh release upload "$TAG" PACKAGES PACKAGES.gz --clobber
+          # Keep the build PACKAGES lists and the one before it.
+          gh release view "$TAG" --json assets \
+            --jq '.assets | map(select(.name | endswith(".tgz"))) | sort_by(.createdAt) | reverse | .[2:] | .[].name' |
+            while read -r old; do
+              [ "$old" = "$FILE" ] || gh release delete-asset "$TAG" "$old" --yes
+            done
