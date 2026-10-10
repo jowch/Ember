@@ -39,7 +39,8 @@ jobs:
       cancel-in-progress: false
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
-      # The oldest macOS that R's own Apple Silicon build supports.
+      # What CRAN's Apple Silicon binaries target (big-sur-arm64). R itself may
+      # need a newer macOS; this only keeps Ember from asking for more than R.
       MACOSX_DEPLOYMENT_TARGET: '11.0'
     steps:
       - uses: actions/checkout@v4
