@@ -1042,7 +1042,7 @@ pluto-cell.text_cell.code_folded.show_input > pluto-input:not(:focus-within) {
 pluto-cell.text_cell.show_input > pluto-input .cm-editor {
     box-shadow: 0 0 0 1px var(--ember-line);
 }
-/* A text cell's source is folded by design, so the folded code cell's
+/* A folded text cell shows its text, so the folded code cell's
    "hidden code" note (editor.css) doesn't apply. */
 pluto-editor pluto-cell.text_cell.code_folded.show_input > pluto-input > div.preview_hidden_code_info {
     display: none;

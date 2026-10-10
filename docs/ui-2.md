@@ -84,7 +84,8 @@ package metadata.
   slides, front matter, Pluto.land upload, Pkg bubbles, language picker.
 - Markdown cells: rendered text with the source folded away; unfolding shows
   the source highlighted as markdown (with R highlighting inside fenced
-  code blocks). New markdown cells start folded.
+  code blocks). New markdown cells start folded. (Superseded 2026-10-10:
+  Ember no longer folds a text cell for you; see design.md.)
 - Text that mentioned Julia or Pluto now says R or Ember ("You are reading
   and editing this file without running R code").
 
@@ -192,6 +193,7 @@ questions). Piece 2 vendors whichever fonts this piece keeps.
   bundle (frontend-build/src/index.js:82, 91).
 - Engine: `insert_cell(..., kind = "markdown")` makes the cell folded
   (step.R:532: `folded = identical(op$kind, "markdown")`).
+  (Superseded 2026-10-10: Ember no longer folds a text cell for you.)
 - Translation: `order_ops()` inserts with
   `kind = after$cell_inputs[[id]]$kind %||% "code"` (pluto-edits.R:156), so
   "undo delete" and paste of a markdown cell keep it markdown. Today they
@@ -1195,7 +1197,7 @@ Still open (placeholders until the user decides):
 3. **Downloaded exports.** Decided: self-contained, offline, one file (piece
    2, Exports), including widgets' files.
 4. **Markdown fold state in existing files.** New markdown cells start
-   folded. A markdown cell in a file without a `folded` mark opens
+   folded (superseded 2026-10-10: they no longer do). A markdown cell in a file without a `folded` mark opens
    unfolded, since fold state is the file's. Folding those by default
    would need an "unfolded" mark in the file format.
 5. **Signature hint.** A tooltip above the call while typing its arguments

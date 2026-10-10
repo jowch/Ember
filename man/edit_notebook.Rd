@@ -34,7 +34,8 @@ disable_cell(cell, disabled = TRUE)
 \item{...}{One or more ops made by \code{set_code()}, \code{insert_cell()},
 \code{delete_cell()}, \code{move_cell()}, \code{fold_cell()}, \code{disable_cell()},
 applied in order. Indexes are display positions after the previous ops in
-the same call.}
+the same call. An op may name, by id, a cell an earlier \code{insert_cell()}
+in the same call adds.}
 \item{cell}{A cell id or 1-based display index.}
 \item{code}{The cell's new code (a single string).}
 \item{expected}{The code the caller believes the cell currently has, as a

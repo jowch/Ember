@@ -178,7 +178,42 @@ test_that("run_multiple_cells {cells: []} runs nothing; a blank new cell doesn't
   expect_equal(notebook_snapshot(nb)$process, "preview")
 })
 
-test_that("update_notebook to a text cell, then running it: kind markdown, folded, rendered as HTML (54)", {
+test_that("undo-delete through update_notebook restores a cell, folded if it was", {
+  # Inserts take only UUIDs, and undo re-inserts the deleted cell's own id.
+  ids <- c("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222",
+           "33333333-3333-4333-8333-333333333333")
+  path <- write_session_notebook(setNames(list(cell(""), cell("#' text"), cell("1")), ids))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+
+  for (fold in c(TRUE, FALSE)) {
+    a <- ids[2]
+    edit_notebook(nb, fold_cell(a, fold))
+    ws <- fake_socket()
+    handle_message(server, ws, wire("connect", notebook_id = id))
+    handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+    entry <- ws$page()$cell_inputs[[a]]
+    expect_identical(isTRUE(entry$code_folded), fold)
+
+    handle_message(server, ws, wire("update_notebook", notebook_id = id,
+      updates = list(patch("remove", list("cell_inputs", a)),
+                     patch("replace", list("cell_order"), as.list(ids[-2])))))
+    expect_equal(ws$last()$message$response$update_went_well, "\U0001F44D")
+    expect_false(a %in% names(notebook_state(nb)$cells))
+
+    handle_message(server, ws, wire("update_notebook", notebook_id = id,
+      updates = list(patch("add", list("cell_inputs", a), entry),
+                     patch("replace", list("cell_order"), as.list(ids)))))
+    expect_equal(ws$last()$message$response$update_went_well, "\U0001F44D")
+    expect_equal(names(notebook_state(nb)$cells), ids)
+    expect_identical(isTRUE(notebook_state(nb)$cells[[a]]$folded), fold)
+  }
+})
+
+test_that("update_notebook to a text cell, then running it: kind markdown, not folded, rendered as HTML (54)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1")))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
@@ -200,7 +235,7 @@ test_that("update_notebook to a text cell, then running it: kind markdown, folde
 
   page <- ws$page()
   expect_equal(page$cell_inputs[[a]]$kind, "markdown")
-  expect_true(page$cell_inputs[[a]]$code_folded)
+  expect_false(page$cell_inputs[[a]]$code_folded)
   expect_match(page$cell_results[[a]]$output$body, "<h1>Title</h1>", fixed = TRUE)
 })
 

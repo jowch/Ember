@@ -52,7 +52,7 @@ test("mixed cell: shows the mixed error and a Split button; clicking it splits t
     cellSelector("B") + " pluto-output", { timeout: 15000 });
   const bText = await page.locator(`${cellSelector("B")} pluto-output`).innerText();
   assert.match(bText, /A note\./);
-  assert.ok(await page.locator(cellSelector("B")).evaluate((el) => el.classList.contains("code_folded")));
+  assert.equal(await page.locator(cellSelector("B")).evaluate((el) => el.classList.contains("code_folded")), false, "the text half is not folded for you");
 
   const newCellId = await page.evaluate((bid) => {
     const cells = Array.from(document.querySelectorAll("pluto-cell"));

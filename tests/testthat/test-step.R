@@ -157,7 +157,7 @@ test_that("deleting a run cell removes its variables and invalidates readers (29
   expect_false("B" %in% r2$state$pending)
 })
 
-test_that("set_code of a run code cell to text folds it, drops the result, emits remove_cell, and marks readers stale (43)", {
+test_that("set_code of a run code cell to text leaves it unfolded, drops the result, emits remove_cell, and marks readers stale (43)", {
   s <- fake_state(list(A = cell("x <- 1"), B = cell("y <- x")))
   r <- boot(s, NULL)
   r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
@@ -166,7 +166,7 @@ test_that("set_code of a run code cell to text folds it, drops the result, emits
 
   r2 <- drive(r$state, ev_apply(list(op_set_code("A", "#' now text", expected = "x <- 1")), at(12)))
   expect_equal(r2$state$cells$A$kind, "markdown")
-  expect_true(isTRUE(r2$state$cells$A$folded))
+  expect_false(isTRUE(r2$state$cells$A$folded))
   expect_null(r2$state$results$A)
   sends <- Filter(function(e) identical(e$type, "send") && identical(e$msg$type, "remove_cell"), r2$effects)
   expect_equal(sends[[1]]$msg$cell, "A")
@@ -174,6 +174,23 @@ test_that("set_code of a run code cell to text folds it, drops the result, emits
 
   r3 <- drive(r2$state, ev_apply(list(op_set_code("A", "x <- 2", expected = "#' now text")), at(13)))
   expect_equal(r3$state$cells$A$kind, "code")
+})
+
+test_that("a cell's fold survives becoming text and going back: only a fold op changes it", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("y <- 2", folded = TRUE)))
+  r <- drive(s, ev_apply(list(op_set_code("A", "#' text", expected = "x <- 1"),
+                              op_set_code("B", "#' text", expected = "y <- 2")), at(1)))
+  expect_equal(r$state$cells$A$kind, "markdown")
+  expect_false(isTRUE(r$state$cells$A$folded))
+  expect_true(isTRUE(r$state$cells$B$folded))
+
+  r2 <- drive(r$state, ev_apply(list(op_fold("A", TRUE), op_set_code("B", "y <- 2", expected = "#' text")), at(2)))
+  expect_true(isTRUE(r2$state$cells$A$folded))
+  expect_equal(r2$state$cells$B$kind, "code")
+  expect_true(isTRUE(r2$state$cells$B$folded))
+
+  r3 <- drive(r2$state, ev_apply(list(op_set_code("A", "#' edited", expected = "#' text")), at(3)))
+  expect_true(isTRUE(r3$state$cells$A$folded))
 })
 
 test_that("set_code of a disabled cell to text clears disabled (43)", {

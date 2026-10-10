@@ -779,7 +779,7 @@ of JavaScript across 15 files, plus tests.
 ### What the user sees
 
 - Typing `#' Some *text*` into a cell and pressing Shift + Enter makes it a
-  text cell: rendered and folded. The file holds the same `#'` lines under
+  text cell: rendered and folded (superseded 2026-10-10: Ember no longer folds a text cell for you). The file holds the same `#'` lines under
   a plain `# %% id=...` marker.
 - `#' The average car does `r round(mean(cars$mpg), 1)` mpg.` reads "The
   average car does 20.1 mpg." once the notebook runs. Values are formatted
@@ -902,10 +902,10 @@ indexes `inline_spans()$line`.
 - api.R:93-94 (a new notebook) and notebook.R:505 (a made-up setup cell):
   `"code"`, unchanged.
 - `reduce_apply()` `insert` (step.R:540-541): `kind = cell_kind(code)`,
-  `folded = kind == "markdown"`.
+  `folded = kind == "markdown"`. (Superseded 2026-10-10: Ember no longer folds a text cell for you.)
 - `reduce_apply()` `set_code` (step.R:525):
   `kind = cell_kind(code, setup = op$cell == state$setup)`. A code cell
-  that becomes text is folded and loses `disabled`.
+  that becomes text is folded and loses `disabled`. (Superseded 2026-10-10: Ember no longer folds a text cell for you.)
 - `set_code` also resets the cell when the change affects how it runs (its
   kind changes, or it is a text cell left with no inline expression): its
   result is dropped and the worker gets `remove_cell`. These are the lines
@@ -1091,7 +1091,7 @@ worker.R +50, frontend +60.
 - `#'` with spaces in front is a code comment, as in spin; indenting a
   text line makes the cell mixed.
 - Folding on code-to-text happens on every `set_code`, including
-  Endeavor's.
+  Endeavor's. (Superseded 2026-10-10: Ember no longer folds a text cell for you.)
 - A token `EMBERINLINE1X` typed in the text itself would be replaced too.
 - **Docstrings are a convention, not syntax.** A comment that happens to
   sit right above a function (a commented-out line of code, say) shows in

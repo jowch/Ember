@@ -766,9 +766,10 @@ reduce_apply <- function(state, event) {
           # Learned definitions are kept unless they block the cell
           # (drop_blocking_learned(), below).
           if (!identical(code, old_cell$code)) learned_dropped <- c(learned_dropped, op$cell)
+          # A text cell can't be disabled. Its fold is left as it was:
+          # text cells are never folded for the user (only by hand).
           if (kind_different && identical(new_kind, "markdown")) {
             cells[[op$cell]]$disabled <- FALSE
-            cells[[op$cell]]$folded <- TRUE
           }
           cells[[op$cell]]$code <- code
           cells[[op$cell]]$kind <- new_kind
@@ -787,8 +788,7 @@ reduce_apply <- function(state, event) {
           bad <- refused("code contains a cell or footer marker line", op)
         } else {
           new_kind <- cell_kind(code)
-          new_cell <- list(code = code, kind = new_kind,
-                           folded = identical(new_kind, "markdown"), disabled = FALSE)
+          new_cell <- list(code = code, kind = new_kind, folded = FALSE, disabled = FALSE)
           cells <- append(cells, setNames(list(new_cell), op$id), after = op$index - 1)
           inserted <- c(inserted, op$id)
         }

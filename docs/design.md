@@ -857,6 +857,9 @@ load("fits.RData")
   its value is inserted as plain text once the notebook has run. The
   `[markdown]` tag an older Ember wrote is still read (an unprefixed line
   gets a `#'` added) but never written.
+- Ember never folds a cell for you, text cells included: a text cell
+  shows its source above the rendered text until you fold it. A fold set
+  by hand is kept in the footer like any other.
 - The comment lines directly above a top-level `name <- function(...)`
   definition, with no blank line between, are its docstring, shown in
   Help.
