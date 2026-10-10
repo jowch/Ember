@@ -435,13 +435,18 @@ run_cell <- function(msg) {
             inline_values[[li]] <- if (r$visible) inline_text(r$value) else ""
           }
         } else {
+          # The last top-level expression's value is the output (shown
+          # even when it's an assignment, as in Pluto); an earlier visible
+          # value prints to the console when it's made (design.md, "Which
+          # values a cell shows").
           for (k in seq_along(exprs)) {
             at <- k   # the top-level expression index; error$line reads its srcref
             r <- withVisible(eval(exprs[[k]], globalenv()))
-            if (r$visible) {
-              if (visible) console$print(value)
+            if (k < length(exprs)) {
+              if (r$visible) console$print(r$value)
+            } else {
               value <- r$value
-              visible <- TRUE
+              visible <- r$visible || shows_assignment(exprs[[k]], r$value)
             }
           }
         }
@@ -1911,6 +1916,17 @@ display_html <- function(value) {
 inline_text <- function(x) {
   if (is.numeric(x)) x <- as.character(round(x, getOption("digits")))
   paste(as.character(x), collapse = ", ")
+}
+
+#' Whether a cell's last expression, `e`, is an assignment whose value is
+#' shown although R returned it invisibly: `x <- v`, `x = v` and `v -> x`
+#' (`->` parses as `<-`), at any target (`df$col <- v` shows `v`). Not
+#' `<<-` or `assign()`, which write elsewhere, and not a function value
+#' (`f <- function(x) ...`, a `setClass()` generator): its printed form is
+#' the cell's own code again.
+shows_assignment <- function(e, value) {
+  is.call(e) && (identical(e[[1]], as.name("<-")) || identical(e[[1]], as.name("="))) &&
+    !is.function(value)
 }
 
 #' Turn the output value into a display bundle (design.md, How values

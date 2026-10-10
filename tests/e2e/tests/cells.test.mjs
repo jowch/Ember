@@ -777,11 +777,12 @@ test("figures: no border, background or filter in either theme; at most the colu
     };
   }, cellSelector(id));
   assert.deepEqual(await underOutput("PLT"), { padding: "2px 0px 0px 12px", width: 708, gap: 14 }, "a default plot");
-  for (const id of ["DF", "FIT"]) await runCell(page, id);
+  for (const id of ["S", "DF", "FIT"]) await runCell(page, id);
   await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("Coefficients"), `${cellSelector("FIT")} > pluto-output`, { timeout: 30000 }).catch(() => {});
   assert.deepEqual(await underOutput("FIT"), { padding: "2px 0px 0px 12px", width: null, gap: 12 }, "printed text");
-  const df = await underOutput("DF");
-  assert.equal(df.gap, 0, "an empty output adds no gap above the code");
+  // S only defines a function, so its output is empty.
+  const empty = await underOutput("S");
+  assert.equal(empty.gap, 0, "an empty output adds no gap above the code");
 
   const look = () => page.locator(img).evaluate((el) => {
     const s = getComputedStyle(el);

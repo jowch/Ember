@@ -404,10 +404,18 @@ The worker runs each cell in the global environment:
    goes up.
 4. Turn the output value into a display (see "How values display" below).
 
-**Which values a cell shows** follows marimo: the last visible value is the
-cell's output. Earlier visible values, `print()`, `cat()`, messages and
-warnings go to a console area below it, in order. R Markdown instead shows
-every visible value inline, and Pluto shows only the last value.
+**Which values a cell shows** follows Pluto: the value of the cell's last
+top-level expression is its output. When that expression is an assignment
+(`<-`, `=` or `->`), the assigned value is shown even though R returns it
+invisibly, so `cars <- mtcars` shows the table. Any other invisible value
+shows nothing: `invisible()`, `library()`, a function that returns
+invisibly. So `invisible(x <- big)`, or a last line of `invisible()`, is
+how a cell hides its output (Pluto's trailing `;` has no meaning in R).
+`<<-` and `assign()` stay hidden, as does an assigned function (its
+printed form is the cell's code again). Earlier visible values, `print()`,
+`cat()`, messages and warnings go to a console area below the output, in
+order. A plot drawn with no visible value after it is the output. R
+Markdown instead shows every visible value inline.
 
 **How values display.** Julia has one display function in its base
 language, `show(io, MIME"text/html"(), x)`, that every package extends. R has
