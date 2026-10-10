@@ -22,7 +22,7 @@ serve(paths = character(), port = 0L, secret = random_secret(32),
 start_server(path = NULL, port = 0L, open = interactive(), timeout = 15,
              allowed_hosts = character())
 
-host_notebook(server, nb, owned = FALSE)
+host_notebook(server, nb, owned = FALSE, remember = FALSE)
 
 stop_server(server)
 
@@ -66,6 +66,11 @@ listening.}
 when the server stops or the page sends "shut down"; a host's own
 notebooks are the host's to close, so its calls to \code{host_notebook()}
 leave this \code{FALSE}.}
+\item{remember}{Internal: \code{TRUE} adds the notebook's path to the start
+page's recent notebooks. Only Ember's own pages set it (the start page,
+\verb{/open}, the paths given to \code{serve()} or \code{start_server()}); a
+host leaves it \code{FALSE}, so notebooks it drives never show up there as
+ones the user opened.}
 \item{x}{An \code{ember_server} or \code{ember_server_handle}, for \code{print()}.}
 \item{...}{Unused; present for consistency with \code{print()} generics.}
 }
