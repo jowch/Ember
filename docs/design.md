@@ -793,13 +793,21 @@ common Linux systems, including Bioconductor software packages since
 2026.08. Source builds are still needed for GitHub packages with compiled
 code, R versions outside the binary window (current minor and four before
 it), and packages whose binary build failed. Before one, the engine checks
-for the tools (macOS: `xcode-select -p` and the Fortran compiler R names in
-`R CMD config FC`, `/opt/gfortran/bin/gfortran`; Windows: Rtools; Linux: a C
-compiler) and, if missing, stops with instructions. Linux
-packages also need system libraries (GDAL for sf, libxml2 for xml2). Posit
-Package Manager publishes each package's system requirements, so before
-installing, the engine checks for them and, if any are missing, names the
-exact `apt` or `dnf` command; installing them stays with the user.
+for the tools (macOS: `xcode-select -p`; Windows: Rtools; Linux: the C
+compiler R names in `R CMD config CC`) and, if missing, stops with
+instructions. The Fortran compiler (macOS: `/opt/gfortran/bin/gfortran`) is
+needed by only some packages, and nothing says which before their source is
+unpacked, so its absence is read from the build's output instead. Linux
+packages also need system libraries (GDAL for sf, libxml2 for xml2). A
+binary installs without them and fails when loaded, so once renv has
+installed the packages, and before the library is used, the engine asks
+the system's loader (`ldd`) whether every package finds its libraries. For
+the ones that don't, it names the exact `apt` or `dnf` command from Posit
+Package Manager's published system requirements; installing them stays
+with the user. Asking the loader rather than the package manager's database
+gets libraries from elsewhere (an HPC module, conda) right, and doesn't ask
+for a `-dev` package a binary doesn't need. See packages.md, "Install
+checks".
 
 ## File format
 

@@ -33,15 +33,41 @@ const failure_sentence = (failure, rows, r_version) => {
             return t("t_ember_install_failed_unavailable")
         case "system":
             return t("t_ember_install_failed_system")
+        case "missing_system":
+            return t("t_ember_install_failed_missing_system")
+        case "missing_compiler":
+            return t("t_ember_install_failed_missing_compiler")
         default:
             return t("t_ember_install_failed_other")
     }
 }
 
 /**
+ * What to do about a missing compiler or system library, from `detail`
+ * (R/install-checks.R): the command for system libraries, or a sentence
+ * whose `backticked` parts are commands for a compiler. Nothing for other
+ * kinds, whose `detail` is a line of the log.
+ *
+ * @param {import("./Editor.js").EmberInstallFailure} failure
+ */
+const failure_fix = (failure) => {
+    if (failure.detail == null) return null
+    if (failure.kind === "missing_system") {
+        return html`<pre class="ember-install-failure-command">${failure.detail}</pre>`
+    }
+    if (failure.kind === "missing_compiler") {
+        const parts = failure.detail.split("`")
+        return html`<p class="ember-install-failure-fix">${parts.map((part, i) => (i % 2 === 1 ? html`<code>${part}</code>` : part))}</p>`
+    }
+    return null
+}
+
+/**
  * One failed package's card: title, a sentence depending
- * on `kind`, then Update (build failures), Try again (downloads and
- * packages the repositories didn't list) and
+ * on `kind` (and for a missing compiler or system library, what to
+ * install), then Update (build failures), Try again (downloads, packages
+ * the repositories didn't list, and anything the user installs on the
+ * computer) and
  * Show the error (always). `ember_update_packages` and `ember_run_all`
  * are plain requests (server.R); neither is this component's to answer.
  *
@@ -58,12 +84,14 @@ const InstallFailureCard = ({ failure, rows, r_version, log }) => {
     const can_update = failure.kind === "compile" || failure.kind === "configure"
     // "unavailable" is most often a repository index that couldn't be
     // read, which can be passing, so it gets Try again too.
-    const can_retry = failure.kind === "download" || failure.kind === "unavailable"
+    // The missing-piece kinds are fixed outside Ember, then retried.
+    const can_retry = ["download", "unavailable", "system", "missing_system", "missing_compiler"].includes(failure.kind)
 
     return html`
         <div class="ember-install-failure-card">
             <p class="ember-install-failure-title">${t("t_ember_install_failed_title", { package: failure.package })}</p>
             <p class="ember-install-failure-sentence">${failure_sentence(failure, rows, r_version)}</p>
+            ${failure_fix(failure)}
             <div class="ember-install-failure-actions">
                 ${can_update
                     ? html`<button

@@ -129,6 +129,19 @@ In test-packages-core.R, with `drive()`:
 88. A reopened notebook with a Bioc lock fetches the Bioconductor indexes when its wanted set changes, and reports no `not_in_index`.
 89. A date move on an R with no known Bioconductor release fails for a notebook with Bioc packages; a failed Bioconductor index doesn't fail one for a notebook without any.
 
+## Install checks (test-install-checks.R)
+
+90. `linux_release`/`linux_family` name the package manager from `/etc/os-release`, through `ID_LIKE` for a derivative.
+91. `compiler_instructions` says what to install on macOS, Windows and each Linux family, with `sudo` only when not root.
+92. `source_builds` names compiled packages with no binary at the locked version, and every compiled one when there are no binaries.
+93. `compiler_check` reads no index when the compiler is there or Linux gets binaries, and names the source builds otherwise.
+94. `parse_ldd` reads the libraries not found, with and without per-file headers, leaving R's own out.
+95. `ppm_sysreqs_url` builds Package Manager's request for CRAN and Bioconductor, and nothing for another server or an unknown Linux.
+96. `parse_sysreqs`/`sysreqs_command` merge Package Manager's answer into one command, with Red Hat's pre-install steps first. **[net]** xml2 on Ubuntu 24.04 needs libxml2-dev.
+97. `system_library_check` gives each package's libraries and command, and one command for all.
+98. The installer's `EMBER-MISSING` lines become `missing_compiler`, `missing_system` and `system` rows, and its `Error:` line the message.
+99. A compiler missing during a source build is `missing_compiler`; a missing header stays `system`.
+
 ## Network, opt-in
 
 75. **[net]** A notebook with `library(dplyr)` at a fixed past date resolves from PPM, installs with renv, and the worker loads exactly the locked versions.
