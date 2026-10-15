@@ -323,10 +323,15 @@ retries once the user has installed what was missing.
   libraries not found. For those packages it asks Package Manager's system
   requirements API (`__api__/repos/<repo>/sysreqs`, CRAN's or
   Bioconductor's, for the distribution in `/etc/os-release`) and merges the
-  answer into one command (`sysreqs_command()`), with `sudo` unless the
-  installer runs as root. Rows: `missing_system`, `detail` = the command;
-  or `system`, `detail` = the libraries, when the repository isn't Package
-  Manager or the system isn't one it builds for. Other load errors (an
+  answer into one command for all of them (`sysreqs_command()`), with
+  `sudo` unless the installer runs as root or there is no `sudo`. Rows:
+  `missing_system`, `detail` = that command (the same on every row, so the
+  Packages tab shows it once), `libraries` = the package's own libraries
+  not found; or `system`, with `libraries` but no command, when the
+  repository isn't Package Manager or the system isn't one it builds for.
+  The card and the message also tell someone who can't run the command
+  (most clusters have `sudo`, but its users may not use it) to ask the
+  administrator or load a module that provides the libraries. Other load errors (an
   `.onLoad` that fails) now show when a cell loads the package, as they
   always have on macOS and Windows, where renv doesn't test.
 

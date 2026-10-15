@@ -11,7 +11,7 @@ main <- function(plan_path) {
   flush(stdout())
   Sys.sleep(0.2)
   writeLines(c(
-    "EMBER-MISSING system brokenpkg sudo apt-get install -y libbroken-dev",
+    "EMBER-MISSING system brokenpkg libbroken.so.1 sudo apt-get install -y libbroken-dev",
     paste("Error: brokenpkg needs system libraries that aren't installed (libbroken.so.1).",
           "Install them with `sudo apt-get install -y libbroken-dev`, then try again.")
   ), con = stderr())

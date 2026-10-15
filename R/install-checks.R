@@ -11,9 +11,10 @@
 #
 # The installer reports a missing piece on stdout as one line per package,
 #   EMBER-MISSING <what> <package> <detail>
-# with <what> one of `compiler`, `system` (detail: the command that
-# installs the system libraries) or `library` (detail: the libraries not
-# found, when no command is known), followed by an `Error:` line that
+# with <what> one of `compiler` (detail: what to install), `system`
+# (detail: the libraries not found, comma-separated, then the command
+# that installs every package's) or `library` (detail: the libraries,
+# when no command is known), followed by an `Error:` line that
 # `install_failure_message()` shows. `install_failures()` turns the
 # EMBER-MISSING lines into rows.
 
@@ -82,11 +83,17 @@ linux_family <- function(release) {
   NA_character_
 }
 
-#' `sudo ` unless this process is root (a container, a cloud machine),
-#' where `sudo` may not exist.
-sudo_prefix <- function(user = Sys.info()[["effective_user"]]) {
-  if (identical(user, "root")) "" else "sudo "
+#' `sudo ` unless this process is root (a container, a cloud machine) or
+#' there is no `sudo` to run.
+sudo_prefix <- function(user = Sys.info()[["effective_user"]], has_sudo = nzchar(Sys.which("sudo"))) {
+  if (identical(user, "root") || !has_sudo) "" else "sudo "
 }
+
+#' For someone who can't run the install command: most shared servers
+#' have `sudo`, but its users may not use it. Shown with every missing
+#' system library, on the page and in the install's message.
+no_admin_sentence <- paste("On a shared server or cluster, ask its administrator to install",
+                           "them, or load a module that provides them before starting R.")
 
 #' What to install so packages can build from source, as one or two
 #' sentences for the user. `fortran`: the build failed for want of a
@@ -163,15 +170,18 @@ read_available <- function(repos, type) {
 #' from source. The repository indexes are read only when the compiler is
 #' missing. `linux_binaries`: whether renv will install Package Manager's
 #' Linux binaries (the installer knows from renv's own URL rewrite);
-#' unused elsewhere. `binary_type`: the binary repositories' type on
-#' macOS and Windows (a parameter so tests on Linux can ask for a Mac's). GitHub sources aren't counted: whether they have code
-#' to compile is known only once they're downloaded, so a missing compiler
+#' unused elsewhere: with them nothing builds from source, and the
+#' compiler isn't even looked for. `binary_type`: the binary repositories'
+#' type on macOS and Windows (a parameter so tests on Linux can ask for a
+#' Mac's). GitHub sources aren't counted: whether they have code to
+#' compile is known only once they're downloaded, so a missing compiler
 #' shows up from their build instead.
 compiler_check <- function(lock, repos, linux_binaries = FALSE, os = os_kind(),
-                           compiler = has_compiler(os), binary_type = .Platform$pkgType) {
-  if (isTRUE(compiler)) return(NULL)
+                           compiler = NULL, binary_type = .Platform$pkgType) {
   linux <- identical(os, "linux")
   if (linux && linux_binaries) return(NULL)
+  if (is.null(compiler)) compiler <- has_compiler(os)
+  if (isTRUE(compiler)) return(NULL)
   entries <- lock$entries[lock$entries$source %in% c("CRAN", "Bioc"), , drop = FALSE]
   if (nrow(entries) == 0) return(NULL)
   wanted <- stats::setNames(entries$version, entries$name)
@@ -373,15 +383,18 @@ missing_report_lines <- function(compiler = NULL, system = NULL) {
   }
   if (!is.null(system)) {
     pk <- system$packages
-    cmds <- vapply(pk, `[[`, "", "command")
-    libs <- vapply(pk, function(s) paste(s$libraries, collapse = ", "), "")
-    out <- c(out, ifelse(is.na(cmds),
-                         sprintf("EMBER-MISSING library %s %s", names(pk), libs),
-                         sprintf("EMBER-MISSING system %s %s", names(pk), cmds)))
-    how <- if (!is.na(system$command)) {
-      paste0(" Install them with `", system$command, "`, then try again.")
+    # Every package's row carries the command for all of them, so one
+    # command, run once, fixes the whole install.
+    libs <- vapply(pk, function(s) paste(s$libraries, collapse = ","), "")
+    out <- c(out, if (is.na(system$command)) {
+      sprintf("EMBER-MISSING library %s %s", names(pk), libs)
     } else {
-      " Install them with your system's package manager, then try again."
+      sprintf("EMBER-MISSING system %s %s %s", names(pk), libs, system$command)
+    })
+    how <- if (!is.na(system$command)) {
+      paste0(" Install them with `", system$command, "`, then try again. ", no_admin_sentence)
+    } else {
+      paste(" Install them with your system's package manager, then try again.", no_admin_sentence)
     }
     out <- c(out, sprintf("Error: %s %s system libraries that aren't installed (%s).%s",
                           paste(names(pk), collapse = ", "),

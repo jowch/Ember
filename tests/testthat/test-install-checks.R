@@ -44,8 +44,9 @@ test_that("compiler_instructions() says what to install on each platform, with s
   rocky <- linux_release(c("ID=rocky", "ID_LIKE=rhel", "VERSION_ID=9"))
   expect_match(compiler_instructions(os = "linux", release = rocky, sudo = ""), "dnf install -y gcc", fixed = TRUE)
   expect_match(compiler_instructions(os = "linux", release = NULL), "package manager", fixed = TRUE)
-  expect_equal(sudo_prefix("root"), "")
-  expect_equal(sudo_prefix("someone"), "sudo ")
+  expect_equal(sudo_prefix("root", has_sudo = TRUE), "")
+  expect_equal(sudo_prefix("someone", has_sudo = TRUE), "sudo ")
+  expect_equal(sudo_prefix("someone", has_sudo = FALSE), "")
 })
 
 test_that("source_builds() names the compiled packages with no binary at the locked version (92)", {
@@ -190,11 +191,27 @@ test_that("the installer's report becomes failure rows and the install's message
   lines <- missing_report_lines(system = system)
   rows <- install_failures(lines)
   expect_equal(rows$package, c("sf", "units"))
-  expect_equal(rows$kind, c("missing_system", "system"))
-  expect_equal(rows$detail, c("sudo apt-get install -y libgdal-dev", "libudunits2.so.0 not found"))
+  # Every row carries the one command that installs them all, and its own
+  # libraries.
+  expect_equal(rows$kind, c("missing_system", "missing_system"))
+  expect_equal(rows$detail, rep("sudo apt-get install -y libgdal-dev", 2))
+  expect_equal(rows$libraries, c("libgdal.so.34", "libudunits2.so.0"))
   msg <- install_failure_message(lines, 1L)
   expect_match(msg, "sf, units need system libraries that aren't installed (libgdal.so.34, libudunits2.so.0).", fixed = TRUE)
   expect_match(msg, "Install them with `sudo apt-get install -y libgdal-dev`, then try again.", fixed = TRUE)
+  expect_match(msg, no_admin_sentence, fixed = TRUE)
+
+  # No command known (not Package Manager): the libraries, as "system".
+  two <- list(packages = list(sf = list(libraries = c("libgdal.so.34", "libgeos_c.so.1"), command = NA_character_)),
+              command = NA_character_)
+  lines <- missing_report_lines(system = two)
+  rows <- install_failures(lines)
+  expect_equal(rows$kind, "system")
+  expect_equal(rows$detail, "libgdal.so.34, libgeos_c.so.1 not found")
+  expect_equal(rows$libraries, "libgdal.so.34, libgeos_c.so.1")
+  expect_match(install_failure_message(lines, 1L), "your system's package manager", fixed = TRUE)
+  # Rows of other kinds have no libraries.
+  expect_true(all(is.na(install_failures(missing_report_lines(compiler = compiler))$libraries)))
 })
 
 test_that("install_failures() reads a compiler missing during a source build as missing_compiler (99)", {

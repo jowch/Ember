@@ -156,7 +156,7 @@ new_library_slot <- function(key, path, status = "unknown", installed = characte
 
 #' Empty, correctly typed `install_failures()` result: no package, no row.
 empty_install_failures <- function() {
-  data.frame(package = character(), kind = character(), detail = character(),
+  data.frame(package = character(), kind = character(), detail = character(), libraries = character(),
             stringsAsFactors = FALSE)
 }
 
@@ -176,14 +176,17 @@ install_failure_message <- function(lines, status) {
 #' Which packages an install failed on, and why, from the installer's
 #' output. R's quotes are curly (left/right single quotation marks) or
 #' ASCII depending on locale; both are matched.
-#' -> data.frame(package, kind, detail): kind "missing_compiler" (the
+#' -> data.frame(package, kind, detail, libraries): `libraries` is the
+#'    system libraries not found (", "-separated) on the rows the installer's
+#'    system-library check made, `NA` otherwise; kind "missing_compiler" (the
 #'    installer's own compiler check, an `EMBER-MISSING compiler` line, or
 #'    while a package builds from source a line saying the compiler itself
 #'    isn't there: `compiler_patterns` below; detail = what to install,
 #'    `compiler_instructions()`), "missing_system" (the installer's
 #'    system-library check, `EMBER-MISSING system`; detail = the command
-#'    that installs them), "system" (an `EMBER-MISSING library` line, detail
-#'    = the libraries not found; or, while a package
+#'    that installs every package's, the same on each row), "system" (an
+#'    `EMBER-MISSING library` line, detail = the libraries not found; or,
+#'    while a package
 #'    builds from source, a line saying a system library or header is
 #'    missing: `system_patterns` below; detail = that line), "compile" ("ERROR:
 #'    compilation failed for package"), "configure" ("ERROR: configuration
@@ -223,8 +226,9 @@ install_failures <- function(lines) {
   }
   strip_version <- function(name) sub("@.*$", "", name)
 
-  pkg <- character(); kind <- character(); detail <- character()
-  add <- function(p, k, d) {
+  pkg <- character(); kind <- character(); detail <- character(); libs <- character()
+  add <- function(p, k, d, l = NA_character_) {
+    libs[length(libs) + 1L] <<- l
     pkg[length(pkg) + 1L] <<- strip_version(p)
     kind[length(kind) + 1L] <<- k
     detail[length(detail) + 1L] <<- d
@@ -250,7 +254,15 @@ install_failures <- function(lines) {
     if (grepl("^EMBER-MISSING (compiler|system|library) [A-Za-z0-9.]+ ", line)) {
       m <- regmatches(line, regexec("^EMBER-MISSING (compiler|system|library) ([A-Za-z0-9.]+) (.*)$", line))[[1]]
       k <- switch(m[[2]], compiler = "missing_compiler", system = "missing_system", library = "system")
-      add(m[[3]], k, if (identical(m[[2]], "library")) paste(m[[4]], "not found") else m[[4]])
+      if (identical(m[[2]], "compiler")) {
+        add(m[[3]], k, m[[4]])
+      } else {
+        # `<libs>` or `<libs> <command>`, the libraries comma-separated.
+        l <- sub(" .*$", "", m[[4]])
+        rest <- if (grepl(" ", m[[4]])) sub("^\\S+ ", "", m[[4]]) else NA_character_
+        add(m[[3]], k, if (identical(m[[2]], "library")) paste(gsub(",", ", ", l), "not found") else rest,
+            gsub(",", ", ", l))
+      }
       next
     }
     if (grepl("^\\* installing \\*source\\* package '[^']+'", line)) {
@@ -325,7 +337,7 @@ install_failures <- function(lines) {
   # dependency, before the catch-all summary line).
   kind_rank <- c(missing_compiler = 0L, missing_system = 0L, system = 1L, compile = 2L,
                  configure = 3L, dependency = 4L, download = 5L, unavailable = 6L, other = 7L)
-  df <- data.frame(package = pkg, kind = kind, detail = detail, stringsAsFactors = FALSE)
+  df <- data.frame(package = pkg, kind = kind, detail = detail, libraries = libs, stringsAsFactors = FALSE)
   df <- df[order(kind_rank[df$kind]), ]
   df <- df[!duplicated(df$package), ]
   df[order(df$package), ]

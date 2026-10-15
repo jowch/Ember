@@ -844,7 +844,7 @@ project_nbpkg <- function(state) {
 #'
 #'   `packages$library` adds `log` (one string, the installer's last 200
 #'   lines, joined with "\n") and `failures` (`arr(list(package, version,
-#'   kind, detail, needed_by))`, `version` looked up from `packages$rows`
+#'   kind, detail, libraries, needed_by))`, `version` looked up from `packages$rows`
 #'   and `needed_by` from `packages_view()`'s own `library$failures`
 #'   column) -- both only while the library's `status` is `"failed"`;
 #'   `NULL`/`arr()` otherwise, so a page that has never seen a failure
@@ -902,6 +902,8 @@ project_ember <- function(state, ctx) {
           version = if (length(ver) == 0 || is.na(ver)) NULL else ver,
           kind = fdf$kind[[i]],
           detail = if (is.na(fdf$detail[[i]])) NULL else fdf$detail[[i]],
+          # A hand-built failures frame (tests) may have no such column.
+          libraries = if (is.null(fdf$libraries) || is.na(fdf$libraries[[i]])) NULL else fdf$libraries[[i]],
           needed_by = as_arr(fdf$needed_by[[i]] %||% character()))
     })
   }
