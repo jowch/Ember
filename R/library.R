@@ -72,7 +72,10 @@ r_info <- function() {
 # ---- Indexes -----------------------------------------------------------------
 
 #' The path an index for `key` is cached at: `key`'s `/` turned to `_`, so
-#' `"cran/2026-09-01"` is a single filename component.
+#' `"cran/2026-09-01"` is a single filename component. Two GitHub branches
+#' of one repository, `feature/x` and `feature_x`, share a file; harmless,
+#' since an index for a moving ref is always fetched again before it is
+#' read (`fresh_github_index()`), and a commit's key has no `/` in its ref.
 index_rds_path <- function(key, cache = cache_dir()) {
   file.path(cache, "indexes", paste0(gsub("/", "_", key, fixed = TRUE), ".rds"))
 }
@@ -166,59 +169,43 @@ index_fetch_command <- function(key, url, cache = cache_dir()) {
 
 #' Run in a subprocess (`index_fetch_command()`, for a `github/` key), as
 #' `fetch_index_main()` is for a dated one: find the commit the key's ref
-#' names (`<url>/commits/<ref>`, asking GitHub for the bare SHA), download
-#' that commit's tarball (`<url>/tarball/<sha>`, the URL renv installs
-#' from), read its DESCRIPTION and save a one-row `ember_repo_index` whose
-#' label is the lock source `"github:<user>/<repo>@<sha>"`.
+#' names (`<url>/commits/<ref>`, asking GitHub for the bare SHA), read that
+#' commit's DESCRIPTION (`github_description_url()`) and save a one-row
+#' `ember_repo_index` whose label is the lock source
+#' `"github:<user>/<repo>@<sha>"`. Two small requests: the package itself
+#' is downloaded only when it is installed (by renv), so a safe preview
+#' fetches metadata only, as for CRAN.
 #'
 #' The index is saved under the key asked for, and also under the key of
 #' the commit it found (`github_key(..., sha)`), which never changes: a
 #' notebook whose lock holds that commit then finds it in the cache.
-#' `GITHUB_PAT` (as renv reads it), else `GITHUB_TOKEN`, is sent when set,
-#' for private repositories and GitHub's rate limit.
-#'
-#' The tarball is downloaded rather than only the DESCRIPTION file because
-#' it is the same URL for GitHub and for the `file://` layout the tests use
-#' (GitHub's file endpoint takes the commit as a query parameter).
+#' A token (`github_token()`) is sent when there is one, for private
+#' repositories and GitHub's rate limit; a refusal says which it likely was
+#' (`github_failure()`).
 fetch_github_main <- function(key, url, path) {
   src <- parse_github_key(key)
   if (is.null(src)) stop("ember: not a GitHub key: ", key, call. = FALSE)
   base <- sub("/+$", "", url)
-  token <- Sys.getenv("GITHUB_PAT", Sys.getenv("GITHUB_TOKEN", ""))
+  token <- github_token(base)
   headers <- if (nzchar(token)) c(Authorization = paste("token", token)) else character()
-  get <- function(u, dest, accept) {
-    isTRUE(tryCatch({
-      utils::download.file(u, dest, quiet = TRUE, mode = "wb", headers = c(headers, Accept = accept))
-      TRUE
-    }, error = function(e) FALSE, warning = function(w) FALSE))
-  }
   where <- sprintf("github:%s/%s@%s", src$user, src$repo, src$ref)
 
   sha_file <- tempfile("ember-github-sha-")
-  if (!get(paste0(base, "/commits/", utils::URLencode(src$ref, reserved = TRUE)), sha_file,
-           "application/vnd.github.sha")) {
-    stop("ember: could not find ", where, " on GitHub (", base, ")", call. = FALSE)
-  }
+  got <- github_get(paste0(base, "/commits/", utils::URLencode(src$ref, reserved = TRUE)), sha_file,
+                    c(headers, Accept = "application/vnd.github.sha"))
+  if (!got$ok) stop(github_failure(where, got, nzchar(token)), call. = FALSE)
   sha <- tolower(trimws(readLines(sha_file, n = 1L, warn = FALSE)))
   if (!is_commit(sha)) stop("ember: GitHub didn't name a commit for ", where, call. = FALSE)
 
-  tarball <- tempfile("ember-github-", fileext = ".tar.gz")
-  if (!get(paste0(base, "/tarball/", sha), tarball, "application/vnd.github+json")) {
-    stop("ember: could not download ", where, " (commit ", sha, ")", call. = FALSE)
-  }
-  files <- utils::untar(tarball, list = TRUE)
-  desc <- grep("^[^/]+/DESCRIPTION$", files, value = TRUE)
-  if (length(desc) != 1) {
+  desc <- tempfile("ember-github-desc-")
+  got <- github_get(github_description_url(base, sha), desc,
+                    c(headers, Accept = "application/vnd.github.raw"))
+  if (identical(got$status, 404L)) {
     stop("ember: ", where, " has no DESCRIPTION at its top level, so it isn't an R package",
          call. = FALSE)
   }
-  out <- tempfile("ember-github-desc-")
-  utils::untar(tarball, files = desc, exdir = out)
-  # A source tree's DESCRIPTION rarely says NeedsCompilation (R CMD build
-  # adds it): a `src` folder is what says it.
-  has_src <- any(startsWith(files, paste0(dirname(desc), "/src/")))
-  idx <- read_description_index(file.path(out, desc), key,
-                                github_source(src$user, src$repo, sha), has_src = has_src)
+  if (!got$ok) stop(github_failure(where, got, nzchar(token), sha), call. = FALSE)
+  idx <- read_description_index(desc, key, github_source(src$user, src$repo, sha))
 
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
   pinned <- github_key(src$user, src$repo, sha)
@@ -233,19 +220,101 @@ fetch_github_main <- function(key, url, path) {
   invisible(NULL)
 }
 
+#' The URL of a commit's top-level DESCRIPTION: GitHub's contents endpoint
+#' (`<base>/contents/DESCRIPTION?ref=<sha>`, the call renv makes too), or,
+#' for a `file://` base (the tests' fixture, which can't take a query),
+#' `<base>/contents/<sha>/DESCRIPTION`.
+github_description_url <- function(base, sha) {
+  if (startsWith(base, "file://")) paste0(base, "/contents/", sha, "/DESCRIPTION")
+  else paste0(base, "/contents/DESCRIPTION?ref=", sha)
+}
+
+#' The token to send to GitHub's API at `base`, or `""`: `GITHUB_PAT` (as
+#' renv reads it), else `GITHUB_TOKEN`, else, for github.com when the
+#' gitcreds package is installed, the git credential store's
+#' (`gitcreds::gitcreds_get()`, which usethis sets up and renv also reads).
+#' The fetch runs under `--vanilla`, so `~/.Renviron` counts only when the
+#' server read it; the credential store doesn't depend on that.
+github_token <- function(base) {
+  token <- Sys.getenv("GITHUB_PAT", Sys.getenv("GITHUB_TOKEN", ""))
+  if (nzchar(token) || !startsWith(base, "https://api.github.com")) return(token)
+  if (!requireNamespace("gitcreds", quietly = TRUE)) return("")
+  cred <- tryCatch(gitcreds::gitcreds_get("https://github.com", use_cache = FALSE),
+                   error = function(e) NULL)
+  if (is.null(cred) || is.null(cred$password)) "" else as.character(cred$password)
+}
+
+#' Download `u` to `dest` -> `list(ok, status, detail)`: `status` the HTTP
+#' status GitHub answered (an integer, `NA` when there was none; a missing
+#' `file://` path counts as 404), `detail` the last condition's message.
+github_get <- function(u, dest, headers) {
+  msgs <- character()
+  ok <- tryCatch(withCallingHandlers({
+    utils::download.file(u, dest, quiet = TRUE, mode = "wb", headers = headers)
+    TRUE
+  }, warning = function(w) {
+    msgs <<- c(msgs, conditionMessage(w))
+    invokeRestart("muffleWarning")
+  }), error = function(e) {
+    msgs <<- c(msgs, conditionMessage(e))
+    FALSE
+  })
+  ok <- isTRUE(ok) && length(msgs) == 0
+  hit <- regmatches(msgs, regexpr("HTTP status was '[0-9]{3}", msgs))
+  status <- if (length(hit) > 0) {
+    as.integer(sub(".*'", "", hit[[1]]))
+  } else if (!ok && startsWith(u, "file://") && any(grepl("No such file", msgs, fixed = TRUE))) {
+    404L   # the fixture's "not there"
+  } else {
+    NA_integer_
+  }
+  list(ok = ok, status = status, detail = if (length(msgs) > 0) msgs[[length(msgs)]] else "")
+}
+
+#' The message for a failed GitHub request for `where`
+#' (`"github:user/repo@ref"`), from `got` (`github_get()`) and whether a
+#' token was sent. GitHub answers 404 for a private repository it wasn't
+#' shown a token for, and 403 or 429 when the rate limit (60 requests an
+#' hour without a token) runs out, so each says that rather than only
+#' "not found". `sha`: the commit, when the failure was reading its
+#' DESCRIPTION.
+github_failure <- function(where, got, token, sha = NULL) {
+  status <- got$status
+  what <- if (is.null(sha)) where else sprintf("%s (commit %s)", where, sha)
+  if (identical(status, 422L)) {
+    # The commits endpoint's answer for a ref the repository doesn't have.
+    paste0("ember: could not find ", what, " on GitHub: the repository has no branch, tag or commit by that name")
+  } else if (identical(status, 404L)) {
+    paste0("ember: could not find ", what, " on GitHub",
+           if (token) " (or the token can't see that repository)"
+           else "; if the repository is private, set GITHUB_PAT to a token that can read it")
+  } else if (identical(status, 401L)) {
+    paste0("ember: GitHub refused the token for ", what, " (GITHUB_PAT): it may have expired")
+  } else if (identical(status, 403L) || identical(status, 429L)) {
+    paste0("ember: GitHub refused to look up ", what,
+           if (token) ", most likely its rate limit or the token's access"
+           else ", most likely its rate limit of 60 requests an hour without a token; set GITHUB_PAT to raise it")
+  } else {
+    paste0("ember: could not reach GitHub for ", what,
+           if (nzchar(got$detail)) paste0(" (", got$detail, ")") else "")
+  }
+}
+
 #' A package's DESCRIPTION -> a one-row `ember_repo_index` under `key`,
 #' labelled `label`: the same fields `read_repo_index()` reads from an index.
-#' `has_src`: the package has a `src` folder, so it compiles even when its
-#' DESCRIPTION doesn't say so.
-read_description_index <- function(path, key, label, has_src = FALSE) {
+#' A source tree's DESCRIPTION rarely says NeedsCompilation (`R CMD build`
+#' adds it), so without it `needs_compilation` is `NA`: unknown until the
+#' package is downloaded.
+read_description_index <- function(path, key, label) {
   dcf <- read.dcf(path, fields = c("Package", "Version", "Depends", "Imports", "LinkingTo",
                                    "NeedsCompilation"))
   if (nrow(dcf) != 1 || is.na(dcf[1, "Package"]) || is.na(dcf[1, "Version"])) {
     stop("ember: ", label, "'s DESCRIPTION has no Package or Version", call. = FALSE)
   }
   deps <- list(dep_field_union(dcf[1, "Depends"], dcf[1, "Imports"], dcf[1, "LinkingTo"]))
+  nc <- toupper(trimws(unname(dcf[1, "NeedsCompilation"])))
   new_repo_index(key, label, unname(dcf[1, "Package"]), unname(dcf[1, "Version"]), deps,
-                 has_src || toupper(trimws(unname(dcf[1, "NeedsCompilation"]))) %in% "YES")
+                 if (is.na(nc)) NA else nc == "YES")
 }
 
 #' Run in the installer: for each GitHub package in `lock`, the package

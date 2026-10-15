@@ -582,10 +582,12 @@ schedule_packages <- function(state, old) {
     date_header <- state$file$header
     date_header$snapshot <- prop$date
     date_header$bioc_version <- NA_character_
-    # GitHub packages have no date: their keys name the commits the lock
-    # already holds (`source_keys()`), so moving the date keeps them.
+    # GitHub packages have no date: moving it back keeps the commits the
+    # lock holds, and moving it forward asks branches again
+    # (`source_keys()`, `refreshes_sources()`).
     sources_for <- state$packages$sources_for %||% character()
-    gh <- unname(source_keys(state$file$header, state$file$lock, sources_for))
+    gh <- unname(source_keys(state$file$header, state$file$lock, sources_for,
+                             refresh = refreshes_sources(state$file$header, prop$date, prop$kind)))
     repos_needed <- needed_repos(date_header, state$options$r, releases)
     needed <- c(gh, repos_needed)
     key <- repos_needed[[1]]
@@ -1208,11 +1210,15 @@ reduce_preview_date <- function(state, event) {
   date_header$snapshot <- event$date
   date_header$bioc_version <- NA_character_
   keys <- c(unname(source_keys(state$file$header, state$file$lock,
-                               state$packages$sources_for %||% character())),
+                               state$packages$sources_for %||% character(),
+                               refresh = refreshes_sources(state$file$header, event$date))),
             needed_repos(date_header, state$options$r, releases_at(state$packages, event$date)))
   for (key in keys) {
     slot <- state$packages$indexes[[key]]
-    if (!is.null(slot) && identical(slot$status, "failed")) {
+    # A branch's index read earlier in this session is dropped too, so the
+    # preview asks GitHub where the branch is now.
+    moving <- is_github_key(key) && !is_commit(parse_github_key(key)$ref)
+    if (!is.null(slot) && (identical(slot$status, "failed") || moving && identical(slot$status, "ready"))) {
       state$packages$indexes[[key]] <- NULL
     }
   }

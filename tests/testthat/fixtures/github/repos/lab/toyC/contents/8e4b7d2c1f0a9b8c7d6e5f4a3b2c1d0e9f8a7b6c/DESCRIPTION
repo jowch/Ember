@@ -1,0 +1,10 @@
+Package: toyC
+Type: Package
+Title: Toy C
+Version: 0.4.0
+Authors@R: person("T", "Est", email="t@example.com", role=c("aut","cre"))
+Description: Toy package C, only on GitHub, for Ember tests.
+Imports: toyB
+License: MIT
+Encoding: UTF-8
+NeedsCompilation: no

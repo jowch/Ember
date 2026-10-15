@@ -841,7 +841,7 @@ reduce_apply <- function(state, event) {
       }
     } else if (identical(op$op, "set_package_source")) {
       spec <- github_spec(op$source)
-      if (!is.character(op$name) || length(op$name) != 1 || is.na(op$name) || !is_valid_package_name(op$name)) {
+      if (!is_one_package_name(op$name)) {
         bad <- refused("not a package name", op)
       } else if (is.null(spec)) {
         bad <- refused("a source is written \"github:user/repo\", optionally with @ and a branch, tag or commit", op)
@@ -851,7 +851,12 @@ reduce_apply <- function(state, event) {
         header$sources <- src[order(names(src), method = "radix")]
       }
     } else if (identical(op$op, "remove_package_source")) {
-      header$sources <- (header$sources %||% character())[names(header$sources) != op$name]
+      if (!is_one_package_name(op$name)) {
+        bad <- refused("not a package name", op)
+      } else {
+        src <- header$sources %||% character()
+        header$sources <- src[names(src) != op$name]
+      }
     } else {
       bad <- refused(sprintf("unknown op %s", op$op), op)
     }

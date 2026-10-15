@@ -24,6 +24,10 @@ main <- function(plan_path) {
   # which library and lockfile it uses.
   Sys.unsetenv(c("RENV_CONFIG_REPOS_OVERRIDE", "RENV_PROFILE", "RENV_PROJECT",
                  "RENV_PATHS_LIBRARY", "RENV_PATHS_LOCKFILE"))
+  # A GitHub package's `Remotes` would have renv install those packages
+  # from their repositories' moving HEAD, outside the lock; the lock alone
+  # decides (each GitHub package needs its own [sources] entry).
+  Sys.setenv(RENV_CONFIG_INSTALL_REMOTES = "FALSE")
 
   if (!is.null(ember:::read_library_manifest(plan$path))) {
     unlink(plan$staging, recursive = TRUE)

@@ -4,8 +4,9 @@
 # (packages-core.R), as test-packages-core.R does for CRAN and Bioconductor.
 #
 # The GitHub fixture (fixtures/github) is laid out as the GitHub API is:
-# `repos/lab/toyC/commits/<ref>` holds the commit a ref names, and
-# `repos/lab/toyC/tarball/<sha>` that commit's package. toyC imports toyB
+# `repos/lab/toyC/commits/<ref>` holds the commit a ref names,
+# `repos/lab/toyC/contents/<sha>/DESCRIPTION` that commit's DESCRIPTION, and
+# `repos/lab/toyC/tarball/<sha>` the package renv installs. toyC imports toyB
 # (from the toy CRAN fixture); it is 0.3.0 at C1 (tag v0.3.0, short sha
 # 3f2a1c9) and 0.4.0 at C2 (main, HEAD).
 
@@ -176,6 +177,50 @@ test_that("fetch_github_main finds the ref's commit, reads its DESCRIPTION and s
   short <- github_key("lab", "toyC", "3f2a1c9")
   fetch_github_main(short, repo_url(repos, short), index_rds_path(short, cache))
   expect_equal(fresh_github_index(short, cache)$label, github_source("lab", "toyC", C1))
+})
+
+test_that("fetch_github_main reads only the DESCRIPTION, and stops when a commit has none", {
+  cache <- tempfile("ember-gh-cache-")
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  key <- github_key("lab", "toyC", "no-description")
+  url <- repo_url(ember_repos(github = github_fixture()), key)
+  expect_error(fetch_github_main(key, url, index_rds_path(key, cache)),
+               "github:lab/toyC@no-description has no DESCRIPTION at its top level", fixed = TRUE)
+  expect_equal(github_description_url("https://api.github.com/repos/lab/toyC", C1),
+               paste0("https://api.github.com/repos/lab/toyC/contents/DESCRIPTION?ref=", C1))
+  expect_equal(github_description_url("file:///f/repos/lab/toyC", C1),
+               paste0("file:///f/repos/lab/toyC/contents/", C1, "/DESCRIPTION"))
+})
+
+test_that("a GitHub DESCRIPTION without NeedsCompilation leaves it unknown", {
+  path <- tempfile()
+  writeLines(c("Package: toyC", "Version: 0.4.0", "Imports: toyB"), path)
+  idx <- read_description_index(path, "k", github_source("lab", "toyC", C2))
+  expect_true(is.na(idx$needs_compilation))
+  writeLines(c("Package: toyC", "Version: 0.4.0", "NeedsCompilation: yes"), path)
+  expect_true(read_description_index(path, "k", "l")$needs_compilation)
+})
+
+test_that("a failed GitHub lookup says whether to suspect a private repository, the token or the rate limit", {
+  where <- "github:lab/mypkg@HEAD"
+  got <- function(status) list(ok = FALSE, status = status, detail = "x")
+  expect_match(github_failure(where, got(404L), FALSE),
+               "could not find github:lab/mypkg@HEAD on GitHub; if the repository is private, set GITHUB_PAT", fixed = TRUE)
+  expect_match(github_failure(where, got(404L), TRUE), "the token can't see that repository", fixed = TRUE)
+  expect_match(github_failure(where, got(422L), TRUE), "has no branch, tag or commit by that name", fixed = TRUE)
+  expect_match(github_failure(where, got(403L), FALSE), "rate limit of 60 requests an hour without a token; set GITHUB_PAT", fixed = TRUE)
+  expect_match(github_failure(where, got(429L), TRUE), "rate limit or the token's access", fixed = TRUE)
+  expect_match(github_failure(where, got(401L), TRUE), "refused the token", fixed = TRUE)
+  expect_match(github_failure(where, got(NA_integer_), FALSE), "could not reach GitHub for github:lab/mypkg@HEAD (x)", fixed = TRUE)
+})
+
+test_that("github_token takes GITHUB_PAT, then GITHUB_TOKEN, and asks no credential store for another host", {
+  withr::local_envvar(GITHUB_PAT = "pat", GITHUB_TOKEN = "tok")
+  expect_equal(github_token("https://api.github.com"), "pat")
+  withr::local_envvar(GITHUB_PAT = NA)
+  expect_equal(github_token("https://api.github.com"), "tok")
+  withr::local_envvar(GITHUB_TOKEN = NA)
+  expect_equal(github_token("file:///fixture"), "")
 })
 
 test_that("fetch_github_main stops, naming the source, when the ref isn't there", {
@@ -349,19 +394,67 @@ test_that("a [sources] entry added by hand for a CRAN-locked package resolves at
                c("cli 3.6.5 CRAN", paste("dplyr 1.2.0.9000", github_source("tidy", "dplyr", C2))))
 })
 
-test_that("moving the date keeps the GitHub commit and moves the CRAN packages", {
-  r <- open_toyc()
+test_that("moving the date forward (update all) asks a branch again, and the preview shows its new commit", {
+  r <- open_toyc("github:lab/toyC@main", sha = C1, version = "0.3.0")   # main was at C1
+  expect_equal(format_lock_lines(r$state$file$lock)[[2]], paste("toyC 0.3.0", github_source("lab", "toyC", C1)))
   r <- drive(r$state, ev_preview_date("2026-09-30", at(4)))
-  pinned <- github_key("lab", "toyC", C2)
-  expect_setequal(effect_keys(r), c(pinned, "cran/2026-09-30"))
-  r <- drive(r$state, ev_index_fetched(pinned, gh_index(pinned, C2), at(5)))
+  main <- github_key("lab", "toyC", "main")
+  expect_setequal(effect_keys(r), c(main, "cran/2026-09-30"))
+  # main has moved to C2.
+  r <- drive(r$state, ev_index_fetched(main, gh_index(main, C2), at(5)))
   r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_at("2026-09-30"), at(6)))
   prop <- r$state$packages$proposal
   expect_equal(prop$status, "ready")
-  expect_equal(prop$changes$name, "cli")
+  expect_setequal(prop$changes$name, c("cli", "toyC"))
+  expect_equal(prop$changes$to[prop$changes$name == "toyC"], "0.4.0")
   r <- drive(r$state, ev_set_date("2026-09-30", at(7)))
   expect_equal(format_lock_lines(r$state$file$lock),
                c("cli 3.6.6 CRAN", paste("toyC 0.4.0", github_source("lab", "toyC", C2))))
+})
+
+test_that("moving the date back keeps the GitHub commit and moves only the CRAN packages", {
+  s <- src_state(list(S = cell(""), A = cell("library(toyC)")), sources = c(toyC = "github:lab/toyC"),
+                 snapshot = "2026-09-30")
+  head <- github_key("lab", "toyC", "HEAD")
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_at("2026-09-30"), at(2)))
+  r <- drive(r$state, ev_index_fetched(head, gh_index(head, C2), at(3)))
+  r <- drive(r$state, ev_preview_date("2026-09-01", at(4)))
+  pinned <- github_key("lab", "toyC", C2)
+  expect_setequal(effect_keys(r), c(pinned, "cran/2026-09-01"))
+  r <- drive(r$state, ev_index_fetched(pinned, gh_index(pinned, C2), at(5)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_at("2026-09-01"), at(6)))
+  prop <- r$state$packages$proposal
+  expect_equal(prop$status, "ready")
+  expect_equal(prop$changes$name, "cli")
+})
+
+test_that("a commit entry stays at its commit when the date moves forward", {
+  short <- "3f2a1c9"
+  r <- open_toyc(paste0("github:lab/toyC@", short), sha = C1, version = "0.3.0")
+  r <- drive(r$state, ev_preview_date("2026-09-30", at(4)))
+  expect_setequal(effect_keys(r), c(github_key("lab", "toyC", C1), "cran/2026-09-30"))
+})
+
+test_that("refreshes_sources: forward or the same date, not back, not a Bioconductor move", {
+  h <- list(snapshot = "2026-09-01")
+  expect_true(refreshes_sources(h, "2026-09-30"))
+  expect_true(refreshes_sources(h, "2026-09-01"))
+  expect_false(refreshes_sources(h, "2026-08-01"))
+  expect_false(refreshes_sources(h, "2026-09-01", kind = "bioc"))
+})
+
+test_that("remove_package_source is refused without one package name, and removes nothing", {
+  s <- src_state(list(S = cell("")), sources = c(toyC = "github:lab/toyC", other = "github:lab/other"))
+  for (op in list(list(op = "remove_package_source"),
+                  list(op = "remove_package_source", name = c("toyC", "other")),
+                  list(op = "remove_package_source", name = NA_character_))) {
+    r <- drive(s, ev_apply(list(op), at(1)))
+    expect_match(conditionMessage(r$reply), "not a package name", fixed = TRUE)
+    expect_length(r$state$file$header$sources, 2)
+  }
+  r <- drive(s, ev_apply(list(op_remove_source("other")), at(1)))
+  expect_equal(r$state$file$header$sources, c(toyC = "github:lab/toyC"))
 })
 
 test_that("set_package_source is refused for a bad name or source", {

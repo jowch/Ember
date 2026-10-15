@@ -104,6 +104,7 @@
     "t_ember_packages_column_name": "Package",
     "t_ember_packages_column_version": "Version",
     "t_ember_packages_from_github": "GitHub {{repo}}",
+    "t_ember_packages_from_github_unchecked": "{{source}}\nUnchecked: GitHub packages have no date, so this one wasn't checked against the other packages' versions.",
     "t_ember_packages_column_status": "Status",
     "t_ember_packages_status_installed": "installed",
     "t_ember_packages_status_installing": "installing",

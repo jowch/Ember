@@ -304,10 +304,12 @@ Built from increment 2 (#20).
 - **One-row indexes.** Each entry is a repo key,
   `github/<user>/<repo>@<ref>` (`HEAD` when no ref is given), fetched by
   the same `fx_fetch_index` effect as a dated one. The fetch
-  (`fetch_github_main()`) asks the GitHub API which commit the ref names,
-  downloads that commit's tarball (the URL renv installs from) and reads
-  its DESCRIPTION into a one-row index whose label is
-  `github:<user>/<repo>@<sha>`. That label is the lock's source, so
+  (`fetch_github_main()`) asks the GitHub API which commit the ref names
+  and reads that commit's DESCRIPTION (`contents/DESCRIPTION?ref=<sha>`,
+  as renv does) into a one-row index whose label is
+  `github:<user>/<repo>@<sha>`: two small requests, metadata only, so a
+  safe preview downloads no package. Whether it compiles is unknown
+  (`needs_compilation` is `NA`) unless the DESCRIPTION says. That label is the lock's source, so
   `resolve_lock()` needs no special case: the GitHub keys go first in
   `needed`, and they and CRAN's are fetched up front.
 - **The lock fixes the commit.** The lock line is
@@ -315,9 +317,14 @@ Built from increment 2 (#20).
   the DESCRIPTION's. Once locked, a package keeps its commit:
   `source_keys()` asks for the commit's own key, which never changes and
   is cached on disk like a dated index, so resolving again or moving the
-  date never moves it (GitHub packages have no date). A branch moves only
-  when its entry is changed. A key at a branch, tag or `HEAD` is fetched
-  afresh by each session, since the cache could hold an older commit.
+  date back never moves it (GitHub packages have no date). Moving the
+  date to the notebook's date or later ("update all",
+  `refreshes_sources()`) asks again for every entry at a branch, tag or
+  `HEAD`, so a branch comes forward with everything else, and the
+  preview shows the new commit as a `source` change before it applies.
+  Changing the entry moves it too. A key at a branch, tag or `HEAD` is
+  fetched afresh by each session (and by each forward preview), since
+  the cache could hold an older commit.
 - **Changing an entry.** `packages$sources_for` records the entries the
   lock answers, as `resolved_for` does the wanted set; when they differ,
   resolution runs, and `lock_for_sources()` drops the entries that no
@@ -332,7 +339,15 @@ Built from increment 2 (#20).
   package. An `index_unavailable` row names the package, and running
   retries. An entry that holds another package than its name gets a
   `source` row and stops resolution the same way; one that isn't
-  `github:user/repo[@ref]` gets a `source` row and is ignored.
+  `github:user/repo[@ref]` gets a `source` row and is ignored. GitHub
+  answers 404 for a private repository it wasn't shown a token for, and
+  403 when its rate limit (60 requests an hour without a token) runs
+  out, so the message says which to suspect (`github_failure()`).
+- **Credentials.** `GITHUB_PAT` (as renv reads it), else `GITHUB_TOKEN`,
+  else for github.com the git credential store through gitcreds when it
+  is installed (`github_token()`, as renv does). The fetch runs under
+  `--vanilla`, so a token in `~/.Renviron` counts only when the server's
+  R read it.
 - **Installing.** renv installs a GitHub record from
   `<api>/repos/<user>/<repo>/tarball/<sha>` (`RemoteHost`). renv orders
   installs by each package's dependencies, which for a GitHub package it
@@ -344,12 +359,18 @@ Built from increment 2 (#20).
 - **The test seam** is `ember_repos(github = "file://...")`:
   `fixtures/github` is laid out as the API is
   (`repos/lab/toyC/commits/<ref>`, `repos/lab/toyC/tarball/<sha>`), so the
-  same fetch and the same renv install run offline. `GITHUB_PAT` (as renv
-  reads it), else `GITHUB_TOKEN`, is sent when set, for private
-  repositories and the rate limit.
+  same fetch and the same renv install run offline. A `file://` base
+  can't take a query, so the DESCRIPTION is read from
+  `contents/<sha>/DESCRIPTION` there (`github_description_url()`).
+- **Unchecked.** design.md marks GitHub packages unchecked: they sit
+  outside the one-date rule. The Packages tab's "GitHub user/repo@sha"
+  line under the version is that mark, and its tooltip says so.
+- **Remotes are ignored.** The installer sets
+  `RENV_CONFIG_INSTALL_REMOTES=FALSE`, so renv never installs a GitHub
+  package's `Remotes` from their moving HEAD: the lock alone decides.
 
 Not built: the prompt design.md asks for when a name isn't found (the
-Packages tab offering to add a source); dependencies listed in a GitHub
+Packages tab offering to add a source, #78); following a GitHub
 package's `Remotes` (each needs its own entry); packages in a
 subdirectory of a repository; GitLab and other hosts.
 

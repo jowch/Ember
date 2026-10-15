@@ -23,7 +23,8 @@ test("packages tab: a GitHub package shows its repository and commit under its v
   await row.waitFor({ timeout: 30000 });
   const label = row.locator(".ember-package-source");
   assert.equal(await label.innerText(), "GitHub lab/toyC@8e4b7d2");
-  assert.equal(await label.getAttribute("title"), "github:lab/toyC@8e4b7d2c1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c");
+  const title = await label.getAttribute("title");
+  assert.ok(title.startsWith("github:lab/toyC@8e4b7d2c1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c\nUnchecked:"), title);
   assert.match(await row.locator("td").nth(1).innerText(), /^0\.4\.0/);
 
   assertNoProblems(page);

@@ -357,16 +357,23 @@ github_sources <- function(header) {
 #' entry. A package the lock already has from a commit that still answers
 #' its spec (`source_satisfied()`), with the spec unchanged since that
 #' resolution (`sources_for`), keeps that commit: its key names the commit,
-#' so resolving again (or moving the date) never moves it and its index
-#' comes from the disk cache. Any other is looked up at its spec's ref.
-source_keys <- function(header, lock, sources_for = character()) {
+#' so resolving again (or moving the date back) never moves it and its
+#' index comes from the disk cache. Any other is looked up at its spec's
+#' ref.
+#'
+#' `refresh`: moving the date forward ("update all", `refreshes_sources()`)
+#' asks again for every entry whose ref can move (a branch, a tag, `HEAD`:
+#' anything but a commit), so a branch comes forward with everything else.
+#' A tag usually names the same commit again.
+source_keys <- function(header, lock, sources_for = character(), refresh = FALSE) {
   src <- github_sources(header)
   if (length(src) == 0) return(character())
   e <- lock$entries
   keys <- vapply(names(src), function(name) {
     spec <- parse_github_source(src[[name]])
     row <- match(name, e$name)
-    if (!is.na(row) && source_unchanged(name, src, sources_for) &&
+    moving <- is.na(spec$ref) || !grepl("^[0-9a-fA-F]{7,40}$", spec$ref)
+    if (!(refresh && moving) && !is.na(row) && source_unchanged(name, src, sources_for) &&
         source_satisfied(src[[name]], e$source[[row]])) {
       locked <- parse_github_source(e$source[[row]])
       if (is_commit(locked$ref)) return(github_key(spec$user, spec$repo, tolower(locked$ref)))
@@ -374,6 +381,18 @@ source_keys <- function(header, lock, sources_for = character()) {
     github_key(spec$user, spec$repo, if (is.na(spec$ref)) "HEAD" else spec$ref)
   }, character(1))
   stats::setNames(keys, names(src))
+}
+
+#' Whether a date move to `date` asks GitHub again for `[sources]` entries
+#' at moving refs (`source_keys(refresh = TRUE)`): a move to the notebook's
+#' date or later, which "update all" always is. A move back keeps the
+#' locked commits: a branch has no date to go back to. A Bioconductor
+#' move (`kind = "bioc"`) changes the release, not the date.
+refreshes_sources <- function(header, date, kind = NULL) {
+  if (identical(kind, "bioc")) return(FALSE)
+  current <- header$snapshot %||% NA_character_
+  if (is.na(current)) return(TRUE)
+  isTRUE(as.Date(date) >= as.Date(current))
 }
 
 source_unchanged <- function(name, sources, sources_for) {
@@ -440,9 +459,10 @@ source_problems <- function(header, keys = character(), indexes = list()) {
 #' * `deps`: list of character, the package names in Depends, Imports and
 #'   LinkingTo, with version constraints and `R` dropped. Not Suggests.
 #' * `needs_compilation`: logical (increment 2 uses it for the compiler
-#'   check).
+#'   check). `NA` for a GitHub package whose DESCRIPTION doesn't say
+#'   (`read_description_index()`).
 #'
-#' Built only by `read_repo_index()`, at the boundary, so no other code
+#' Built only by `read_repo_index()` and `read_description_index()`, at the boundary, so no other code
 #' sees DCF field names. A dated index never changes, so a parsed copy is
 #' cached on disk forever (library.R) and shared in memory across sessions:
 #' every state holding the index for one key holds the same R object, so

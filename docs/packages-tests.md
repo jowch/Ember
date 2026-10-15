@@ -137,14 +137,17 @@ In test-github-sources.R:
 92. A locked commit answers a spec of the same repository (any case), and a commit spec only when it is that commit.
 93. `source_keys` asks for the locked commit's key while the spec is unchanged, and for the spec's ref otherwise; `lock_for_sources` drops entries that disagree with `[sources]`.
 94. renv's record for a GitHub entry names the host, user, repo and commit, and the dependencies as `Imports`; `lock_diff` calls a move to another commit a source change.
-95. `fetch_github_main` on the `file://` fixture finds a ref's commit, reads the DESCRIPTION, and saves the index under both keys; a missing ref stops with the source named.
+95. `fetch_github_main` on the `file://` fixture finds a ref's commit, reads only its DESCRIPTION, and saves the index under both keys; a missing ref stops with the source named, and a commit with no DESCRIPTION says it isn't an R package. Without `NeedsCompilation` the index leaves it unknown.
 96. `github_install_deps` reads the cached index, and fetches it into a cache that never resolved it.
 97. A package with a source is fetched from GitHub together with CRAN's index, and isn't resolved from CRAN's alone.
 98. Once both arrive the lock holds the commit, dependencies come from CRAN, and the file and the view show the source; the install carries the GitHub API.
 99. A reopened notebook fetches nothing at open, and asks for its commit's key when the wanted set changes.
 100. Changing the source looks the new ref up and moves the lock; removing it sends the package back to CRAN, or to `not_found`.
 101. A failed GitHub lookup keeps the lock and names the package, until running retries it; a source holding another package resolves nothing; an unreadable source is reported and ignored.
-102. A source added by hand for a CRAN-locked package resolves at open; moving the date keeps the commit.
+102. A source added by hand for a CRAN-locked package resolves at open; moving the date back keeps the commit.
+105. Moving the date forward ("update all") asks a branch again and the preview moves it to the new commit; a commit entry stays at its commit.
+106. A failed lookup's message says whether to suspect a missing ref, a private repository without a token, the token, or the rate limit; `github_token` takes `GITHUB_PAT`, then `GITHUB_TOKEN`.
+107. `remove_package_source` without one valid package name is refused and removes nothing.
 
 In test-packages-session.R:
 

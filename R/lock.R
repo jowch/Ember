@@ -63,6 +63,14 @@ is_valid_package_name <- function(x) {
   grepl("^[A-Za-z][A-Za-z0-9.]*[A-Za-z0-9]$", x)
 }
 
+#' Whether `x`, as an edit op sent it, is one valid package name: a single
+#' non-missing string (`is_valid_package_name()`). An op missing its name
+#' (a client leaving a field out) is refused rather than matching nothing,
+#' or everything.
+is_one_package_name <- function(x) {
+  is.character(x) && length(x) == 1 && !is.na(x) && is_valid_package_name(x)
+}
+
 #' Whether `x` parses as an R package version (`package_version()`). Used by
 #' `parse_lock_lines()` to catch a version field that isn't one at all (a
 #' hand-edited "latest", say): such a line used to pass through as an
