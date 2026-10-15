@@ -528,24 +528,79 @@ stamp <- function(event) { event$at <- Sys.time(); event }
 
 # ---- The worker process ------------------------------------------------------
 
-#' A free TCP port to listen on, as a server socket.
+#' A free TCP port to listen on, as a server socket, that the worker's
+#' connection to 127.0.0.1 will actually reach (`loopback_reaches()`).
 pick_listen_socket <- function(tries = 50) {
   for (i in seq_len(tries)) {
     port <- random_port()
     s <- tryCatch(serverSocket(port), error = function(e) NULL)
-    if (!is.null(s)) return(list(socket = s, port = port))
+    if (is.null(s)) next
+    if (loopback_reaches(s, port)) return(list(socket = s, port = port))
+    tryCatch(close(s), error = function(e) NULL)
   }
   stop("ember: could not find a free port after ", tries, " tries")
+}
+
+#' Does a connection to 127.0.0.1:`port` reach the listening socket `s`?
+#' `serverSocket()` has no host argument and binds 0.0.0.0. On macOS that
+#' bind succeeds even while another process listens on 127.0.0.1 at the
+#' same port, and a connection to 127.0.0.1 then goes to the other process,
+#' the more specific bind. The worker connects to 127.0.0.1 and sends the
+#' secret first thing, so such a port must not be used. This connects once,
+#' sends a random nonce, and checks that the first connection `s` accepts
+#' carries it: any other connection (the process holding 127.0.0.1 could
+#' learn the port from the probe and connect back by another address) fails
+#' the check, and the caller tries another port.
+#'
+#' Waits with zero-timeout `socketSelect()` calls, not a positive timeout,
+#' which returns `FALSE` at once in a process where `later` has run
+#' (engine.md, Measured). On loopback the connection and the nonce are
+#' queued before the write returns, so the first check normally succeeds.
+loopback_reaches <- function(s, port, wait = 1) {
+  probe <- tryCatch(suppressWarnings(socketConnection(
+    "127.0.0.1", port, blocking = TRUE, open = "r+b", timeout = 2)),
+    error = function(e) NULL)
+  if (is.null(probe)) return(FALSE)
+  on.exit(tryCatch(close(probe), error = function(e) NULL), add = TRUE)
+  nonce <- os_random_bytes(16)
+  sent <- tryCatch({ writeBin(nonce, probe); flush(probe); TRUE }, error = function(e) FALSE)
+  if (!sent) return(FALSE)
+  deadline <- Sys.time() + wait
+  ready <- function(con) isTRUE(tryCatch(socketSelect(list(con), timeout = 0), error = function(e) FALSE))
+  repeat {
+    if (ready(s)) break
+    if (Sys.time() > deadline) return(FALSE)
+    Sys.sleep(0.005)
+  }
+  got <- tryCatch(socketAccept(s, blocking = FALSE, open = "a+b"), error = function(e) NULL)
+  if (is.null(got)) return(FALSE)
+  on.exit(tryCatch(close(got), error = function(e) NULL), add = TRUE)
+  heard <- raw(0)
+  repeat {
+    if (ready(got)) {
+      chunk <- tryCatch(readBin(got, "raw", length(nonce) - length(heard)), error = function(e) raw(0))
+      heard <- c(heard, chunk)
+      if (length(heard) >= length(nonce)) break
+    }
+    if (Sys.time() > deadline) return(FALSE)
+    Sys.sleep(0.005)
+  }
+  identical(heard, nonce)
 }
 
 #' Spawn a worker. Never waits for it: the connection is accepted by the
 #' poll once the listening socket is readable.
 start_worker_process <- function(nb, fx) {
-  if (is.null(nb$listen)) {
-    picked <- pick_listen_socket()
-    nb$listen <- picked$socket
-    nb$port <- picked$port
-  }
+  # A fresh, checked port for every worker: another process may have
+  # taken 127.0.0.1 at the old port since it was checked
+  # (`loopback_reaches()`), and a connection a dead worker left unaccepted
+  # goes with the old socket. A process that binds 127.0.0.1 at the new
+  # port between the check and the worker's connect still wins; that
+  # window is the worker's startup, and is accepted (Ember #25).
+  if (!is.null(nb$listen)) tryCatch(close(nb$listen), error = function(e) NULL)
+  picked <- pick_listen_socket()
+  nb$listen <- picked$socket
+  nb$port <- picked$port
   lib <- fx$library
   if (is.null(lib)) lib <- file.path(tempdir(), "ember-empty-lib")
   if (!dir.exists(lib)) dir.create(lib, recursive = TRUE, showWarnings = FALSE)
