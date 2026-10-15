@@ -300,3 +300,33 @@ test_that("worker traffic brings a slow poll forward, but not from inside the po
   expect_equal(nb$poll_interval, 0.005)
   expect_false(is.null(nb$last_io))
 })
+
+test_that("loopback_reaches(): true for the socket a connection to 127.0.0.1 reaches (Ember #25)", {
+  picked <- pick_listen_socket()
+  on.exit(close(picked$socket))
+  expect_true(loopback_reaches(picked$socket, picked$port))
+  # The probe's connection was accepted and closed, so nothing is left for
+  # the worker's accept to pick up by mistake.
+  expect_false(socketSelect(list(picked$socket), timeout = 0))
+})
+
+test_that("loopback_reaches(): false when the connection goes to another listener (Ember #25)", {
+  # macOS lets serverSocket()'s 0.0.0.0 bind share a port with another
+  # process's 127.0.0.1 bind; Linux doesn't. Two ports stand in for it: the
+  # connection reaches `other`, never `mine`.
+  mine <- pick_listen_socket()
+  other <- pick_listen_socket()
+  on.exit({ close(mine$socket); close(other$socket) })
+  expect_false(loopback_reaches(mine$socket, other$port, wait = 0.2))
+})
+
+test_that("pick_listen_socket() skips a port whose loopback goes elsewhere (Ember #25)", {
+  checks <- 0L
+  local_mocked_bindings(loopback_reaches = function(s, port, wait = 1) {
+    checks <<- checks + 1L
+    checks > 1L
+  })
+  picked <- pick_listen_socket()
+  on.exit(close(picked$socket))
+  expect_equal(checks, 2L)
+})

@@ -528,24 +528,60 @@ stamp <- function(event) { event$at <- Sys.time(); event }
 
 # ---- The worker process ------------------------------------------------------
 
-#' A free TCP port to listen on, as a server socket.
+#' A free TCP port to listen on, as a server socket, that the worker's
+#' connection to 127.0.0.1 will actually reach (`loopback_reaches()`).
 pick_listen_socket <- function(tries = 50) {
   for (i in seq_len(tries)) {
     port <- random_port()
     s <- tryCatch(serverSocket(port), error = function(e) NULL)
-    if (!is.null(s)) return(list(socket = s, port = port))
+    if (is.null(s)) next
+    if (loopback_reaches(s, port)) return(list(socket = s, port = port))
+    tryCatch(close(s), error = function(e) NULL)
   }
   stop("ember: could not find a free port after ", tries, " tries")
+}
+
+#' Does a connection to 127.0.0.1:`port` reach the listening socket `s`?
+#' `serverSocket()` has no host argument and binds 0.0.0.0. On macOS that
+#' bind succeeds even while another process listens on 127.0.0.1 at the
+#' same port, and a connection to 127.0.0.1 then goes to the other process,
+#' the more specific bind. The worker connects to 127.0.0.1 and sends the
+#' secret first thing, so such a port must not be used. This connects once
+#' and checks that `s` is the socket that got it.
+#'
+#' Waits with zero-timeout `socketSelect()` calls, not a positive timeout,
+#' which returns `FALSE` at once in a process where `later` has run
+#' (engine.md, Measured). On loopback the connection is queued before the
+#' connect returns, so the first check normally succeeds.
+loopback_reaches <- function(s, port, wait = 1) {
+  probe <- tryCatch(suppressWarnings(socketConnection(
+    "127.0.0.1", port, blocking = TRUE, open = "r+b", timeout = 2)),
+    error = function(e) NULL)
+  if (is.null(probe)) return(FALSE)
+  on.exit(tryCatch(close(probe), error = function(e) NULL))
+  deadline <- Sys.time() + wait
+  repeat {
+    if (isTRUE(tryCatch(socketSelect(list(s), timeout = 0), error = function(e) FALSE))) break
+    if (Sys.time() > deadline) return(FALSE)
+    Sys.sleep(0.005)
+  }
+  got <- tryCatch(socketAccept(s, blocking = FALSE, open = "a+b"), error = function(e) NULL)
+  if (is.null(got)) return(FALSE)
+  tryCatch(close(got), error = function(e) NULL)
+  TRUE
 }
 
 #' Spawn a worker. Never waits for it: the connection is accepted by the
 #' poll once the listening socket is readable.
 start_worker_process <- function(nb, fx) {
-  if (is.null(nb$listen)) {
-    picked <- pick_listen_socket()
-    nb$listen <- picked$socket
-    nb$port <- picked$port
-  }
+  # A fresh, checked port for every worker: another process may have
+  # taken 127.0.0.1 at the old port since it was checked
+  # (`loopback_reaches()`), and a connection a dead worker left unaccepted
+  # goes with the old socket.
+  if (!is.null(nb$listen)) tryCatch(close(nb$listen), error = function(e) NULL)
+  picked <- pick_listen_socket()
+  nb$listen <- picked$socket
+  nb$port <- picked$port
   lib <- fx$library
   if (is.null(lib)) lib <- file.path(tempdir(), "ember-empty-lib")
   if (!dir.exists(lib)) dir.create(lib, recursive = TRUE, showWarnings = FALSE)
