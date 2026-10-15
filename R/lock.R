@@ -11,7 +11,9 @@
 #'
 #' `entries`: data frame `name`, `version`, `source`, `extra`, one row per
 #' package, sorted by `name` (C locale), names unique.
-#' * `source` is `"CRAN"`, `"Bioc"`, or `"github:<user>/<repo>@<sha>"`.
+#' * `source` is `"CRAN"`, `"Bioc"`, or `"github:<user>/<repo>@<sha>"`
+#'   (the commit the header's `[sources]` entry resolved to; `version` is
+#'   then the package's own DESCRIPTION version at that commit).
 #' * `extra` is the text after the source on the line, verbatim (`""` when
 #'   none). Older Embers ignore it; this one keeps it so a field a newer
 #'   Ember wrote (a SHA-256, say) survives a save.
@@ -71,10 +73,11 @@ is_valid_version <- function(x) {
   isTRUE(tryCatch({ package_version(x); TRUE }, error = function(e) FALSE))
 }
 
-#' Whether a lock line's version field is valid for its source: a GitHub
-#' entry's "version" is a commit SHA (`"3f2a1c9"`), which is never a valid
-#' `package_version()` and isn't compared as one anywhere; any non-empty
-#' field is accepted there. A CRAN or Bioc entry's version must parse as
+#' Whether a lock line's version field is valid for its source: Ember
+#' writes a GitHub entry's DESCRIPTION version, but its commit is what fixes
+#' the code, so any non-empty field is accepted there (a hand-written lock
+#' may hold the SHA again); `lock_diff()` compares it only when both sides
+#' parse. A CRAN or Bioc entry's version must parse as
 #' one (`is_valid_version()`), since `resolve_lock()` and `lock_diff()`
 #' both call `package_version()` on it.
 valid_version_field <- function(version, source) {
@@ -180,13 +183,13 @@ lock_diff <- function(old, new) {
     from_src <- old_e$source[match(common, old_e$name)]
     to_src <- new_e$source[match(common, new_e$name)]
     cmp <- mapply(function(a, b) {
-      if (identical(a, b)) 0L
+      if (identical(a, b) || !is_valid_version(a) || !is_valid_version(b)) 0L
       else if (package_version(a) < package_version(b)) -1L
       else 1L
     }, from, to)
     change <- ifelse(cmp < 0, "upgraded",
                      ifelse(cmp > 0, "downgraded",
-                            ifelse(from_src != to_src, "source", NA_character_)))
+                            ifelse(from_src != to_src | from != to, "source", NA_character_)))
     keep <- !is.na(change)
     if (any(keep)) {
       rows <- c(rows, list(data.frame(name = common[keep], from = from[keep], to = to[keep],
@@ -256,13 +259,25 @@ hash_text <- function(text) {
 #' `list(R = list(Version = r$version, Repositories = repos_list),
 #'      Packages = per entry list(Package, Version, Source, Repository))`:
 #' CRAN entries -> `Source = "Repository", Repository = "CRAN"`; Bioc ->
-#' `Repository = "BioCsoft"`; GitHub (increment 2) -> `Source = "GitHub",
-#' RemoteUsername, RemoteRepo, RemoteSha`. No hash: measured, renv restores
-#' exact versions from this minimal form (spikes/packages, section 2).
+#' `Repository = "BioCsoft"`; GitHub -> `Source = "GitHub", RemoteHost,
+#' RemoteUsername, RemoteRepo, RemoteSha`, which renv downloads from
+#' `<github>/repos/<user>/<repo>/tarball/<sha>`. No hash: measured, renv
+#' restores exact versions from this minimal form (spikes/packages,
+#' section 2).
 #'
 #' @param repos named character, repository name -> dated URL
 #'   (`repo_urls()` in resolve.R).
-renv_lockfile_of <- function(lock, r, repos) {
+#' @param github the GitHub API (`github_api_url()`). renv takes a host
+#'   with no scheme as https, and any other URL (a `file://` test fixture)
+#'   as given.
+#' @param deps named list, GitHub package -> the package names its
+#'   DESCRIPTION needs (`github_install_deps()`), written as the record's
+#'   `Imports`. renv orders installs by them; it asks GitHub for the
+#'   DESCRIPTION itself, and when that fails (no network, the rate limit,
+#'   a `file://` fixture) it would otherwise install the package before its
+#'   dependencies, and the install fails.
+renv_lockfile_of <- function(lock, r, repos, github = "https://api.github.com", deps = list()) {
+  host <- sub("^https://", "", sub("/+$", "", github))
   e <- lock$entries
   package_record <- function(name, version, source) {
     if (identical(source, "CRAN")) {
@@ -274,8 +289,10 @@ renv_lockfile_of <- function(lock, r, repos) {
     } else if (startsWith(source, "github:")) {
       rest <- sub("^github:", "", source)
       at <- regmatches(rest, regexec("^([^/]+)/([^@]+)@(.+)$", rest))[[1]]
-      list(Package = name, Version = version, Source = "GitHub",
-          RemoteUsername = at[[2]], RemoteRepo = at[[3]], RemoteSha = at[[4]])
+      record <- list(Package = name, Version = version, Source = "GitHub", RemoteHost = host,
+                     RemoteUsername = at[[2]], RemoteRepo = at[[3]], RemoteSha = at[[4]])
+      if (length(deps[[name]]) > 0) record$Imports <- paste(deps[[name]], collapse = ", ")
+      record
     } else {
       stop("renv_lockfile_of: unknown source: ", source)
     }

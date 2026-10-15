@@ -4,7 +4,8 @@
 #
 #   Rscript --vanilla installer.R <plan.rds>
 #
-# Plan: list(lock_lines, repos (name -> dated URL), r, staging, path, cache).
+# Plan: list(lock_lines, repos (name -> dated URL), r, staging, path, cache,
+# github (the GitHub API GitHub packages install from)).
 #
 # Output on stdout, one per line, for the shell to turn into
 # `ev_install_progress` (best effort: renv's own per-package reporting
@@ -43,7 +44,9 @@ main <- function(plan_path) {
     error = function(e) NULL)
   repos <- ember:::ppm_binary_repos(plan$repos, cran_binary)
 
-  lf <- ember:::renv_lockfile_of(lock, plan$r, repos)
+  github <- if (is.null(plan$github)) "https://api.github.com" else plan$github
+  deps <- ember:::github_install_deps(lock, plan$cache, github)
+  lf <- ember:::renv_lockfile_of(lock, plan$r, repos, github = github, deps = deps)
   lockfile_tmp <- tempfile("ember-lockfile-", fileext = ".json")
   renv::lockfile_write(lf, file = lockfile_tmp)
 

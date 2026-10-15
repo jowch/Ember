@@ -24,6 +24,11 @@
 #'   Set at open to `wanted` when every wanted name is in the lock (an
 #'   Ember-written file: nothing to do, no network, no write), else to
 #'   `character()` so the first `schedule_packages()` resolves.
+#' * `sources_for`: the header's readable `[sources]` (`github_sources()`)
+#'   the current lock answers, as `resolved_for` is for the wanted set:
+#'   resolution runs again when they differ, and a package whose spec
+#'   changed is resolved again from its new spec (`lock_for_sources()`).
+#'   Set at open to the header's own.
 #' * `indexes`: named list, repo key -> `ember_index_slot`.
 #' * `problems`: data frame (`empty_package_problems()`), from the last
 #'   resolution plus install failures. Replaced, never appended, by each
@@ -70,14 +75,21 @@ new_packages_state <- function(lock, wanted, r, cache, header = NULL, releases =
   active <- new_library_slot(empty$key, empty$path, status = "ready",
                              installed = character(), exports = list())
   locked_names <- if (is.null(lock$entries) || nrow(lock$entries) == 0) character() else lock$entries$name
-  resolved_for <- if (all(wanted %in% locked_names)) wanted else character()
+  # A lock that disagrees with the header's `[sources]` (a source added,
+  # changed or removed by hand) is resolved again, as one missing a name is.
+  sources_for <- if (is.null(header)) character() else github_sources(header)
+  agrees <- is.null(header) || identical(lock_for_sources(lock, header, sources_for)$entries, lock$entries)
+  resolved_for <- if (all(wanted %in% locked_names) && agrees) wanted else character()
   # A pin built for another R is said at open, in safe preview, before
   # running the notebook moves it (design.md, "R itself"); resolution
   # doesn't run at open for a file Ember wrote, so nothing else would. With
   # the release list still to fetch, `reduce_bioc_releases_fetched()` says it.
-  problems <- if (is.null(header)) empty_package_problems() else bioc_problems(header, r, releases$table)
+  problems <- if (is.null(header)) empty_package_problems() else {
+    rbind(bioc_problems(header, r, releases$table), source_problems(header))
+  }
   structure(list(
     resolved_for = resolved_for,
+    sources_for = sources_for,
     indexes = list(),
     problems = problems,
     target = target,
@@ -388,8 +400,10 @@ fx_check_library  <- function(key, path) effect("check_library", key = key, path
 #' `ember_repos` value: `renv_lockfile_of()` writes it straight into the
 #' lockfile's `Repositories`, which `Source = "Repository"` entries resolve
 #' against by name ("CRAN", "BioCsoft").
-fx_install        <- function(token, key, path, lock, repos)
-  effect("install", token = token, key = key, path = path, lock = lock, repos = repos)
+#' `github` is the GitHub API the lock's GitHub packages install from
+#' (`github_api_url()`).
+fx_install        <- function(token, key, path, lock, repos, github = "https://api.github.com")
+  effect("install", token = token, key = key, path = path, lock = lock, repos = repos, github = github)
 #' Deviation from the sketch: `fx_cancel_install()` also carries `key` and
 #' `path`, not just `token`. The shell's job table (library.R) is keyed by
 #' the install's library path, not the token (two notebooks installing the
@@ -459,7 +473,8 @@ schedule_packages <- function(state, old) {
       wanted_packages(state$graph, state$file$header)
     }
     p$wanted_cache <- wanted
-    if (!setequal(wanted, p$resolved_for)) {
+    sources <- github_sources(state$file$header)
+    if (!setequal(wanted, p$resolved_for) || !identical(sources, p$sources_for %||% character())) {
       if (length(wanted) > 0 && (is.null(state$file$header$snapshot) || is.na(state$file$header$snapshot))) {
         # `format()` on a POSIXct uses the local time zone directly; routing
         # through `as.Date()` first would convert to UTC (its default `tz`)
@@ -469,32 +484,48 @@ schedule_packages <- function(state, old) {
         # behaves the same either way.
         state$file$header$snapshot <- format(state$clock, "%Y-%m-%d")
       }
-      needed <- needed_repos(state$file$header, state$options$r,
-                             releases_at(p, state$file$header$snapshot))
-      # Only CRAN's index is fetched up front; the Bioconductor keys after
-      # it are fetched when `resolve_lock()` asks for them (a name CRAN
-      # lacks). A later key that failed is retried once the wanted set
-      # changes; until then it is left out of `needed`, so its names
-      # resolve as not found instead of waiting on it forever.
+      repos_needed <- needed_repos(state$file$header, state$options$r,
+                                   releases_at(p, state$file$header$snapshot))
+      # The `[sources]` GitHub keys come first, so a package with a source
+      # comes from it, never from CRAN; they and CRAN's index are fetched up
+      # front. The Bioconductor keys after CRAN are fetched when
+      # `resolve_lock()` asks for them (a name CRAN lacks). A later key that
+      # failed is retried once the wanted set changes; until then it is left
+      # out of `needed`, so its names resolve as not found instead of
+      # waiting on it forever.
+      gh <- source_keys(state$file$header, state$file$lock, p$sources_for %||% character())
+      upfront <- c(unname(gh), repos_needed[1])
+      later <- repos_needed[-1]
+      needed <- c(unname(gh), repos_needed)
       refetch <- function(k) {
         slot <- p$indexes[[k]]
         identical(slot$status, "failed") && !setequal(slot$wanted %||% character(), wanted)
       }
       # A later key's failed slot is dropped rather than refetched, so it is
       # fetched again only if `resolve_lock()` still asks for it.
-      for (k in Filter(refetch, needed[-1])) p$indexes[[k]] <- NULL
-      to_fetch <- Filter(function(k) is.null(p$indexes[[k]]) || refetch(k), needed[1])
+      for (k in Filter(refetch, later)) p$indexes[[k]] <- NULL
+      to_fetch <- Filter(function(k) is.null(p$indexes[[k]]) || refetch(k), upfront)
       for (k in to_fetch) {
         p$indexes[[k]] <- new_index_slot("fetching")
         effects <- c(effects, list(fx_fetch_index(k, repo_url(state$options$repos, k))))
       }
       if (length(to_fetch) == 0 && length(needed) > 0) {
-        first <- p$indexes[[needed[[1]]]]
-        if (!is.null(first) && identical(first$status, "ready")) {
-          failed <- Filter(function(k) identical(p$indexes[[k]]$status, "failed"), needed[-1])
+        first <- p$indexes[[repos_needed[[1]]]]
+        up_status <- vapply(upfront, function(k) p$indexes[[k]]$status %||% "missing", character(1))
+        loaded_gh <- lapply(p$indexes[unname(gh)], function(s) s$index)
+        mismatch <- source_problems(state$file$header, gh, loaded_gh)
+        mismatch <- mismatch[mismatch$package %in% names(gh), , drop = FALSE]
+        if (all(up_status == "ready") && nrow(mismatch) > 0) {
+          # A source holding another package than the one it was written
+          # for: resolving would silently take that name from CRAN instead.
+          p$problems <- mismatch
+        } else if (all(up_status == "ready")) {
+          failed <- Filter(function(k) identical(p$indexes[[k]]$status, "failed"), later)
           usable <- setdiff(needed, failed)
           loaded_idx <- Filter(Negate(is.null), lapply(p$indexes[usable], function(s) s$index))
-          res <- resolve_lock(wanted, state$file$lock, loaded_idx, needed = usable, mode = "keep")
+          res <- resolve_lock(wanted, lock_for_sources(state$file$lock, state$file$header,
+                                                       p$sources_for %||% character()),
+                              loaded_idx, needed = usable, mode = "keep")
           # Which release `needed` names comes from Bioconductor's list:
           # fetch it when resolution first meets Bioconductor (a name CRAN
           # lacks, which without the list has no Bioconductor key to look
@@ -510,7 +541,9 @@ schedule_packages <- function(state, old) {
             state$file$header$bioc_version <- bioc_pin(res$lock, bioc_release_in(needed))
             p <- state$packages
             p$resolved_for <- wanted
-            p$problems <- rbind(res$problems, failed_index_problems(p$indexes[failed]),
+            p$sources_for <- sources
+            p$problems <- rbind(res$problems, source_problems(state$file$header),
+                                failed_index_problems(p$indexes[failed]),
                                 bioc_problems(state$file$header, state$options$r, p$bioc_releases$table),
                                 bioc_unavailable_problem(needed, res$problems, state$file$header,
                                                          state$options$r))
@@ -522,10 +555,14 @@ schedule_packages <- function(state, old) {
               }
             }
           }
-        } else if (!is.null(first) && identical(first$status, "failed")) {
-          p$problems <- data.frame(kind = "index_unavailable", package = NA_character_,
-                                   message = first$message %||% "no package index available",
-                                   fixes = NA_character_, stringsAsFactors = FALSE)
+        } else if (!any(up_status == "fetching") && any(up_status == "failed")) {
+          p$problems <- empty_package_problems()
+          if (!is.null(first) && identical(first$status, "failed")) {
+            p$problems <- data.frame(kind = "index_unavailable", package = NA_character_,
+                                     message = first$message %||% "no package index available",
+                                     fixes = NA_character_, stringsAsFactors = FALSE)
+          }
+          p$problems <- rbind(p$problems, source_failed_problems(state$file$header, gh, p$indexes))
         }
       }
     }
@@ -545,10 +582,29 @@ schedule_packages <- function(state, old) {
     date_header <- state$file$header
     date_header$snapshot <- prop$date
     date_header$bioc_version <- NA_character_
-    needed <- needed_repos(date_header, state$options$r, releases)
-    key <- needed[[1]]
-    slot <- state$packages$indexes[[key]]
-    failed <- Filter(function(k) identical(state$packages$indexes[[k]]$status, "failed"), needed[-1])
+    # GitHub packages have no date: their keys name the commits the lock
+    # already holds (`source_keys()`), so moving the date keeps them.
+    sources_for <- state$packages$sources_for %||% character()
+    gh <- unname(source_keys(state$file$header, state$file$lock, sources_for))
+    repos_needed <- needed_repos(date_header, state$options$r, releases)
+    needed <- c(gh, repos_needed)
+    key <- repos_needed[[1]]
+    upfront <- c(gh, key)
+    unfetched <- Filter(function(k) is.null(state$packages$indexes[[k]]), upfront)
+    # The up-front keys as one slot: missing (`NULL`) until each has been
+    # asked for, then failed if any failed, ready once all are.
+    slot <- if (length(unfetched) > 0) NULL else {
+      statuses <- vapply(upfront, function(k) state$packages$indexes[[k]]$status, character(1))
+      bad <- upfront[statuses == "failed"]
+      if (length(bad) > 0) {
+        state$packages$indexes[[bad[[1]]]]
+      } else if (all(statuses == "ready")) {
+        state$packages$indexes[[key]]
+      } else {
+        new_index_slot("fetching")
+      }
+    }
+    failed <- Filter(function(k) identical(state$packages$indexes[[k]]$status, "failed"), repos_needed[-1])
     has_bioc <- any(state$file$lock$entries$source == "Bioc")
     # Without a Bioconductor index (none fetched, or no release for this R
     # at that date), the lock's Bioconductor packages would resolve as not
@@ -570,16 +626,18 @@ schedule_packages <- function(state, old) {
       state$packages <- fr$p
       effects <- c(effects, fr$effects)
     } else if (is.null(slot)) {
-      state$packages$indexes[[key]] <- new_index_slot("fetching")
-      effects <- c(effects, list(fx_fetch_index(key, repo_url(state$options$repos, key))))
+      for (k in unfetched) {
+        state$packages$indexes[[k]] <- new_index_slot("fetching")
+        effects <- c(effects, list(fx_fetch_index(k, repo_url(state$options$repos, k))))
+      }
     } else if (identical(slot$status, "ready") && !is.null(drop_message)) {
       state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
                                               message = drop_message, kind = prop$kind)
     } else if (identical(slot$status, "ready") &&
               (identical(prop$status, "fetching") || !setequal(prop$for_wanted %||% character(), wanted))) {
       indexes_loaded <- Filter(Negate(is.null), lapply(state$packages$indexes[needed], function(s) s$index))
-      res <- resolve_lock(wanted, state$file$lock, indexes_loaded, needed = needed,
-                          mode = if (is_move) "bioc" else "fresh")
+      res <- resolve_lock(wanted, lock_for_sources(state$file$lock, state$file$header, sources_for),
+                          indexes_loaded, needed = needed, mode = if (is_move) "bioc" else "fresh")
       if (needs_bioc(res) && releases_unsettled(state$packages, prop$date)) {
         fr <- fetch_releases(state$packages, state$options, prop$date)
         state$packages <- fr$p
@@ -651,7 +709,8 @@ schedule_packages <- function(state, old) {
     tgt$progress <- NULL
     state$packages$target <- tgt
     effects <- c(effects, list(fx_install(token, tgt$key, tgt$path, state$file$lock,
-                                          repo_urls(state$options$repos, state$file$header))))
+                                          repo_urls(state$options$repos, state$file$header),
+                                          github_api_url(state$options$repos))))
   }
 
   # ---- 5. Switch -------------------------------------------------------------
@@ -780,6 +839,20 @@ set_lock <- function(state, lock) {
 #' version.
 bioc_pin <- function(lock, release) {
   if (any(lock$entries$source == "Bioc")) release else NA_character_
+}
+
+#' One `index_unavailable` row per `[sources]` package whose GitHub index
+#' (`keys`: package -> key, `source_keys()`) failed, naming the source.
+source_failed_problems <- function(header, keys, indexes) {
+  out <- empty_package_problems()
+  for (name in names(keys)) {
+    slot <- indexes[[keys[[name]]]]
+    if (!identical(slot$status, "failed")) next
+    out <- rbind(out, package_problem("index_unavailable", name, sprintf(
+      "couldn't look up %s for %s: %s", header$sources[[name]], name,
+      slot$message %||% "no answer from GitHub")))
+  }
+  out
 }
 
 #' One `index_unavailable` row per failed index slot (Bioconductor's,
@@ -1088,8 +1161,10 @@ reduce_install_done <- function(state, event) {
       # are all already fixed by the time this reducer runs.
       if (nrow(tgt$failures) > 0) {
         wanted <- wanted_packages(state$graph, state$file$header)
-        needed <- needed_repos(state$file$header, state$options$r,
-                               releases_at(state$packages, state$file$header$snapshot))
+        needed <- c(unname(source_keys(state$file$header, state$file$lock,
+                                       state$packages$sources_for %||% character())),
+                    needed_repos(state$file$header, state$options$r,
+                                 releases_at(state$packages, state$file$header$snapshot)))
         indexes <- lapply(state$packages$indexes, function(s) s$index)
         tgt$failures$needed_by <- lapply(tgt$failures$package, function(pk) {
           failure_needed_by(pk, wanted, indexes, needed)
@@ -1132,7 +1207,10 @@ reduce_preview_date <- function(state, event) {
   date_header <- state$file$header
   date_header$snapshot <- event$date
   date_header$bioc_version <- NA_character_
-  for (key in needed_repos(date_header, state$options$r, releases_at(state$packages, event$date))) {
+  keys <- c(unname(source_keys(state$file$header, state$file$lock,
+                               state$packages$sources_for %||% character())),
+            needed_repos(date_header, state$options$r, releases_at(state$packages, event$date)))
+  for (key in keys) {
     slot <- state$packages$indexes[[key]]
     if (!is.null(slot) && identical(slot$status, "failed")) {
       state$packages$indexes[[key]] <- NULL

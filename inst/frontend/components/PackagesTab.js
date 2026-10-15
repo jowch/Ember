@@ -180,6 +180,18 @@ const PackageStatus = ({ row }) => {
  *
  * @param {{ packages: import("./Editor.js").EmberPackagesData? }} props
  */
+/**
+ * Where a package from the header's `[sources]` comes from, under its
+ * version: "GitHub lab/mypkg@3f2a1c9". Its version isn't the snapshot
+ * date's, so the date above the table doesn't speak for it.
+ * @param {string?} source  the lock's source, "github:<user>/<repo>@<sha>"
+ */
+const github_source_label = (source) => {
+    const m = /^github:([^@]+)@(.+)$/.exec(source ?? "")
+    if (m == null) return null
+    return html`<div class="ember-package-source" title=${source}>${t("t_ember_packages_from_github", { repo: `${m[1]}@${m[2].slice(0, 7)}` })}</div>`
+}
+
 export const PackagesTab = ({ packages }) => {
     if (packages == null) return null
     const { snapshot, r_version, library, rows, update } = packages
@@ -232,7 +244,7 @@ export const PackagesTab = ({ packages }) => {
                           ${direct_rows.map(
                               (row) => html`<tr class="ember-package-row ember-package-${row.status}" key=${row.name}>
                                   <td class="ember-mono">${row.name}</td>
-                                  <td class="ember-mono">${row.version ?? "—"}</td>
+                                  <td class="ember-mono">${row.version ?? "—"}${github_source_label(row.source)}</td>
                                   <td title=${row.message ?? ""}><${PackageStatus} row=${row} /></td>
                               </tr>`
                           )}

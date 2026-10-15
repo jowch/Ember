@@ -1145,6 +1145,10 @@ nav#at_the_top .ember-menu {
 .ember-mono {
     font-family: var(--ember-code-font);
 }
+.ember-package-source {
+    font-size: 11px;
+    color: var(--ember-muted);
+}
 .ember-faint-text {
     color: var(--ember-faint);
 }

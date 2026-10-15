@@ -406,7 +406,14 @@ run_effect <- function(nb, fx) {
       unregister_session(nb)
     },
     fetch_index = {
-      idx <- tryCatch(cached_index(fx$key, nb$state$options$cache, url = fx$url), error = function(e) NULL)
+      # A GitHub key at a moving ref (a branch, a tag, HEAD) is fetched
+      # afresh: the cache could hold an older commit (`github_key()`).
+      moving <- is_github_key(fx$key) && !is_commit(parse_github_key(fx$key)$ref)
+      read_index <- function() {
+        if (moving) fresh_github_index(fx$key, nb$state$options$cache)
+        else cached_index(fx$key, nb$state$options$cache, url = fx$url)
+      }
+      idx <- if (moving) NULL else tryCatch(read_index(), error = function(e) NULL)
       if (!is.null(idx)) {
         enqueue(nb, ev_index_fetched(fx$key, idx, at = Sys.time()))
       } else {
@@ -420,8 +427,7 @@ run_effect <- function(nb, fx) {
           make_progress = function(line) NULL,
           make_done = function(status, output) {
             if (identical(status, 0L)) {
-              idx2 <- tryCatch(cached_index(fx$key, nb$state$options$cache, url = fx$url),
-                               error = function(e) NULL)
+              idx2 <- tryCatch(read_index(), error = function(e) NULL)
               if (!is.null(idx2)) ev_index_fetched(fx$key, idx2, at = Sys.time())
               else ev_index_failed(fx$key, "index fetch produced no index", at = Sys.time())
             } else {
@@ -463,7 +469,8 @@ run_effect <- function(nb, fx) {
       enqueue(nb, ev_library_checked(fx$key, manifest, at = Sys.time()))
     },
     install = {
-      cmd <- installer_command(fx$lock, fx$repos, fx$path, nb$state$options$cache)
+      cmd <- installer_command(fx$lock, fx$repos, fx$path, nb$state$options$cache,
+                               github = fx$github %||% "https://api.github.com")
       # Keyed by `path`, not `key`: `key` is a hash of the lock text alone
       # (library_for(), lock.R), the same for two sessions with the same
       # lock but different library paths (different caches, or -- in tests

@@ -166,7 +166,7 @@ One process-wide table, `jobs`, lets two sessions that want the same index or li
 **Interface depth.** The public additions are:
 
 - `package_status`
-- two edit ops (`add_extra_package`, `remove_extra_package`)
+- four edit ops (`add_extra_package`, `remove_extra_package`, and for `[sources]` `set_package_source`, `remove_package_source`)
 - `preview_date` and `set_date`
 - `run` and `clean`
 - `ember_repos` and `cache_dir`, plus `repos`/`cache` arguments to `open_notebook`
@@ -199,7 +199,7 @@ Behind that sit detection, resolution, index caching, library naming, installs, 
    - offline and opt-in tests
 2. **Bioconductor, GitHub and source builds:**
    - Bioconductor (`bioc_version`, its index keys, the date-window warning): built, see [Bioconductor](#bioconductor)
-   - `[sources]` GitHub as one-row indexes
+   - `[sources]` GitHub as one-row indexes: built, see [GitHub sources](#github-sources)
    - the install plan job: download size and consent, compilers, system requirements
    - disk use
    - R minor version change with a Bioconductor pin: built, see [Bioconductor](#bioconductor)
@@ -290,6 +290,68 @@ not.
 
 Not built: asking before large downloads, compiler and system-library
 checks.
+
+### GitHub sources
+
+Built from increment 2 (#20).
+
+- **The header names them.** A package that isn't on CRAN or
+  Bioconductor can't be inferred, so the user writes it under
+  `[sources]`: `mypkg = "github:lab/mypkg"`, optionally with `@` and a
+  branch, tag or commit. `set_package_source()` and
+  `remove_package_source()` are the edit ops for it. A package with an
+  entry comes from it, never from CRAN, even when CRAN has the name.
+- **One-row indexes.** Each entry is a repo key,
+  `github/<user>/<repo>@<ref>` (`HEAD` when no ref is given), fetched by
+  the same `fx_fetch_index` effect as a dated one. The fetch
+  (`fetch_github_main()`) asks the GitHub API which commit the ref names,
+  downloads that commit's tarball (the URL renv installs from) and reads
+  its DESCRIPTION into a one-row index whose label is
+  `github:<user>/<repo>@<sha>`. That label is the lock's source, so
+  `resolve_lock()` needs no special case: the GitHub keys go first in
+  `needed`, and they and CRAN's are fetched up front.
+- **The lock fixes the commit.** The lock line is
+  `mypkg 0.3.1 github:lab/mypkg@<40-character sha>`, the version being
+  the DESCRIPTION's. Once locked, a package keeps its commit:
+  `source_keys()` asks for the commit's own key, which never changes and
+  is cached on disk like a dated index, so resolving again or moving the
+  date never moves it (GitHub packages have no date). A branch moves only
+  when its entry is changed. A key at a branch, tag or `HEAD` is fetched
+  afresh by each session, since the cache could hold an older commit.
+- **Changing an entry.** `packages$sources_for` records the entries the
+  lock answers, as `resolved_for` does the wanted set; when they differ,
+  resolution runs, and `lock_for_sources()` drops the entries that no
+  longer agree (a changed spec, a CRAN entry for a name that now has a
+  source, a GitHub entry whose source was removed) so they resolve again.
+  At open, a lock that disagrees with the header (an entry added by hand)
+  is resolved again too. A branch or tag edited by hand outside Ember
+  can't be checked without the network, so the locked commit stays until
+  the entry is changed in Ember.
+- **Failures.** A GitHub lookup that fails stops resolution, as CRAN's
+  index failing does: falling back to CRAN would install a different
+  package. An `index_unavailable` row names the package, and running
+  retries. An entry that holds another package than its name gets a
+  `source` row and stops resolution the same way; one that isn't
+  `github:user/repo[@ref]` gets a `source` row and is ignored.
+- **Installing.** renv installs a GitHub record from
+  `<api>/repos/<user>/<repo>/tarball/<sha>` (`RemoteHost`). renv orders
+  installs by each package's dependencies, which for a GitHub package it
+  asks the GitHub API for; when that fails it installs the package before
+  its dependencies and the install fails. So the installer writes the
+  dependencies into the record's `Imports` itself, from the cached index
+  (fetched again when this machine never resolved it,
+  `github_install_deps()`).
+- **The test seam** is `ember_repos(github = "file://...")`:
+  `fixtures/github` is laid out as the API is
+  (`repos/lab/toyC/commits/<ref>`, `repos/lab/toyC/tarball/<sha>`), so the
+  same fetch and the same renv install run offline. `GITHUB_PAT` (as renv
+  reads it), else `GITHUB_TOKEN`, is sent when set, for private
+  repositories and the rate limit.
+
+Not built: the prompt design.md asks for when a name isn't found (the
+Packages tab offering to add a source); dependencies listed in a GitHub
+package's `Remotes` (each needs its own entry); packages in a
+subdirectory of a repository; GitLab and other hosts.
 
 ## Where the direction strains
 

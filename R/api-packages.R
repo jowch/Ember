@@ -23,6 +23,20 @@ add_extra_package <- function(name) list(op = "add_extra_package", name = name)
 #' @export
 remove_extra_package <- function(name) list(op = "remove_extra_package", name = name)
 
+#' Edit ops for `edit_notebook()`: say where a package comes from, in the
+#' header's `[sources]`, for a package that isn't on CRAN or Bioconductor
+#' (or to use another version of one that is). `source` is
+#' `"github:user/repo"`, optionally with `@` and a branch, tag or commit;
+#' `"user/repo"` is read as the same. The lock records the commit it
+#' resolves to, and that commit stays until the source is changed.
+#'
+#' `remove_package_source("mypkg")` drops the entry, so mypkg resolves from
+#' CRAN or Bioconductor again.
+#' @export
+set_package_source <- function(name, source) list(op = "set_package_source", name = name, source = source)
+#' @export
+remove_package_source <- function(name) list(op = "remove_package_source", name = name)
+
 # ---- Moving the date ---------------------------------------------------------
 
 #' What moving the notebook's snapshot date would change.
@@ -134,7 +148,8 @@ run <- function(path, repos = ember_repos(), cache = cache_dir(), echo = TRUE) {
   lib <- if (is.null(file$lock$entries) || nrow(file$lock$entries) == 0) {
     empty_library(r_info(), cache)$path
   } else {
-    ensure_library(file$lock, repo_urls(repos, file$header), cache = cache, echo = echo)
+    ensure_library(file$lock, repo_urls(repos, file$header), cache = cache, echo = echo,
+                   github = github_api_url(repos))
   }
   touch_library(lib)
 

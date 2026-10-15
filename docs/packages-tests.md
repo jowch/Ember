@@ -48,7 +48,7 @@ Increment 1 unless marked (2) or (3).
 24. A missing index makes the result incomplete, names the key in `fetch` and returns the lock unchanged.
 25. Mode fresh at a later date moves every version and `lock_diff` lists them.
 26. (2) A name missing from CRAN asks for the Bioconductor indexes, then resolves there with source `Bioc`.
-27. (2) A `[sources]` GitHub entry wins over a CRAN package of the same name.
+27. (2) A `[sources]` GitHub entry wins over a CRAN package of the same name (in test-github-sources.R).
 
 ## Core: packages in step() (test-packages-core.R, with drive())
 
@@ -128,6 +128,28 @@ In test-packages-core.R, with `drive()`:
 87. A date move keeps Bioconductor packages at the new date's release, and fails rather than dropping them when a Bioconductor index can't be fetched.
 88. A reopened notebook with a Bioc lock fetches the Bioconductor indexes when its wanted set changes, and reports no `not_in_index`.
 89. A date move on an R with no known Bioconductor release fails for a notebook with Bioc packages; a failed Bioconductor index doesn't fail one for a notebook without any.
+
+## GitHub sources (increment 2)
+
+In test-github-sources.R:
+
+91. A `github:` spec reads user, repo and an optional ref; `"user/repo"` reads as the same; anything else is no spec.
+92. A locked commit answers a spec of the same repository (any case), and a commit spec only when it is that commit.
+93. `source_keys` asks for the locked commit's key while the spec is unchanged, and for the spec's ref otherwise; `lock_for_sources` drops entries that disagree with `[sources]`.
+94. renv's record for a GitHub entry names the host, user, repo and commit, and the dependencies as `Imports`; `lock_diff` calls a move to another commit a source change.
+95. `fetch_github_main` on the `file://` fixture finds a ref's commit, reads the DESCRIPTION, and saves the index under both keys; a missing ref stops with the source named.
+96. `github_install_deps` reads the cached index, and fetches it into a cache that never resolved it.
+97. A package with a source is fetched from GitHub together with CRAN's index, and isn't resolved from CRAN's alone.
+98. Once both arrive the lock holds the commit, dependencies come from CRAN, and the file and the view show the source; the install carries the GitHub API.
+99. A reopened notebook fetches nothing at open, and asks for its commit's key when the wanted set changes.
+100. Changing the source looks the new ref up and moves the lock; removing it sends the package back to CRAN, or to `not_found`.
+101. A failed GitHub lookup keeps the lock and names the package, until running retries it; a source holding another package resolves nothing; an unreadable source is reported and ignored.
+102. A source added by hand for a CRAN-locked package resolves at open; moving the date keeps the commit.
+
+In test-packages-session.R:
+
+103. A package from a `[sources]` entry installs at the ref's commit with its CRAN dependency from the toy repo, and the cell runs.
+104. `ember::run()` installs a saved GitHub lock into a cache that never resolved it.
 
 ## Network, opt-in
 
