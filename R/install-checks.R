@@ -60,8 +60,9 @@ has_compiler <- function(os = os_kind()) {
 #' or `NULL` when the file can't be read. `like` is `ID_LIKE` split into
 #' words, so a derivative (Linux Mint, Pop!_OS) still gets its parent's
 #' package manager.
-linux_release <- function(lines = tryCatch(readLines("/etc/os-release", warn = FALSE),
-                                           error = function(e) NULL)) {
+linux_release <- function(lines = if (file.exists("/etc/os-release"))
+                            tryCatch(readLines("/etc/os-release", warn = FALSE),
+                                     error = function(e) NULL)) {
   if (is.null(lines)) return(NULL)
   field <- function(name) {
     hit <- grep(paste0("^", name, "="), lines, value = TRUE)

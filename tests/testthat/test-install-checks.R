@@ -73,7 +73,9 @@ test_that("compiler_check() reads no index when the compiler is there or Linux g
   # Unreadable indexes leave it to renv, which says why.
   expect_null(compiler_check(lock, nowhere, os = "linux", compiler = FALSE))
 
-  repo <- paste0("file://", normalizePath(testthat::test_path("fixtures", "repos", "cran", "2026-09-01")))
+  # file:///D:/... on Windows: "file://D:/..." reads D: as a host.
+  repo <- paste0(if (.Platform$OS.type == "windows") "file:///" else "file://",
+                 normalizePath(testthat::test_path("fixtures", "repos", "cran", "2026-09-01"), winslash = "/"))
   got <- compiler_check(lock, c(CRAN = repo), os = "linux", compiler = FALSE)
   expect_equal(got$packages, "Rcpp")
   expect_equal(got$instructions, compiler_instructions(os = "linux"))
