@@ -306,8 +306,11 @@ retries once the user has installed what was missing.
   compiler on the PATH elsewhere), the installer reads the source and
   binary indexes and names the locked packages that have code to compile
   and no binary at their locked version (`source_builds()`). On Linux with
-  Package Manager binaries nothing builds from source, and without them
-  everything does. The indexes are read only when the compiler is missing,
+  Package Manager binaries this check is skipped: almost nothing builds from
+  source there, and the few that do (an R version outside the binary
+  window, a failed binary build, a version Package Manager never built)
+  are caught by the next item, from the build's own error. Without those
+  binaries everything builds from source. The indexes are read only when the compiler is missing,
   so a normal install costs nothing. Rows: `missing_compiler`, `detail` =
   what to install (`compiler_instructions()`). GitHub sources aren't
   counted: whether they compile is known only once downloaded.

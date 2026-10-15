@@ -9,7 +9,7 @@
 # user what to install. Installing compilers or system libraries is the
 # user's (design.md, Decisions); this only names them.
 #
-# The installer reports a missing piece on stdout as one line per package,
+# The installer reports a missing piece on stderr as one line per package,
 #   EMBER-MISSING <what> <package> <detail>
 # with <what> one of `compiler` (detail: what to install), `system`
 # (detail: the libraries not found, comma-separated, then the command
@@ -234,9 +234,12 @@ parse_ldd <- function(lines, files) {
 missing_system_libraries <- function(library, packages) {
   ldd <- Sys.which("ldd")
   if (!nzchar(ldd)) return(list())
-  files <- unlist(lapply(packages, function(p) {
-    list.files(file.path(library, p, "libs"), pattern = "\\.so$", recursive = TRUE, full.names = TRUE)
+  # Each file's package, keyed by the path ldd echoes back (the one passed).
+  pkg_of <- unlist(lapply(packages, function(p) {
+    f <- list.files(file.path(library, p, "libs"), pattern = "\\.so$", recursive = TRUE, full.names = TRUE)
+    stats::setNames(rep(p, length(f)), f)
   }))
+  files <- names(pkg_of)
   if (length(files) == 0) return(list())
   chunks <- split(files, ceiling(seq_along(files) / 100))
   found <- do.call(rbind, lapply(chunks, function(ch) {
@@ -245,10 +248,8 @@ missing_system_libraries <- function(library, packages) {
     parse_ldd(out, ch)
   }))
   if (is.null(found) || nrow(found) == 0) return(list())
-  lib_root <- normalizePath(library, winslash = "/", mustWork = FALSE)
-  rel <- substring(normalizePath(found$file, winslash = "/", mustWork = FALSE), nchar(lib_root) + 2)
-  found$package <- sub("/.*$", "", rel)
-  out <- tapply(found$lib, found$package, function(x) sort(unique(x)), simplify = FALSE)
+  found$package <- unname(pkg_of[found$file])
+  out <- lapply(split(found$lib, found$package), function(x) sort(unique(x)))
   out[order(names(out))]
 }
 

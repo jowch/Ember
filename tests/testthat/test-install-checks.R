@@ -113,6 +113,38 @@ test_that("missing_system_libraries() finds nothing missing for packages whose l
   expect_equal(missing_system_libraries(.Library, "datasets"), list())
 })
 
+test_that("missing_system_libraries() names each package whose library is gone, a symlinked package folder too (94)", {
+  skip_if_not(identical(os_kind(), "linux") && nzchar(Sys.which("ldd")), "needs Linux and ldd")
+  cc <- Sys.which("gcc")
+  skip_if_not(nzchar(cc), "needs gcc to build stub libraries")
+  dir <- tempfile("ember-ldd-test-"); dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  build <- file.path(dir, "build"); lib <- file.path(dir, "lib"); cache <- file.path(dir, "cache")
+  dir.create(build); dir.create(lib)
+  # A shared object linking `soname`, which is deleted once linked.
+  stub <- function(out, soname) {
+    writeLines("int fake(void){return 1;}", file.path(build, "fake.c"))
+    writeLines("int fake(void); int f(void){return fake();}", file.path(build, "pkg.c"))
+    fake <- file.path(build, soname)
+    expect_equal(system2(cc, c("-shared", "-fPIC", "-o", shQuote(fake), paste0("-Wl,-soname,", soname),
+                               shQuote(file.path(build, "fake.c")))), 0)
+    dir.create(dirname(out), recursive = TRUE, showWarnings = FALSE)
+    expect_equal(system2(cc, c("-shared", "-fPIC", "-o", shQuote(out), shQuote(file.path(build, "pkg.c")),
+                               paste0("-L", shQuote(build)), paste0("-l:", soname))), 0)
+    unlink(fake)
+  }
+  stub(file.path(lib, "fakeunits", "libs", "fakeunits.so"), "libfakeudunits.so.0")
+  # renv's cache layout when it links: the package folder is a symlink.
+  stub(file.path(cache, "fakesf", "1.0", "abc", "fakesf", "libs", "fakesf.so"), "libfakegdal.so.34")
+  file.symlink(file.path(cache, "fakesf", "1.0", "abc", "fakesf"), file.path(lib, "fakesf"))
+
+  # One package: ldd prints no per-file header.
+  expect_equal(missing_system_libraries(lib, "fakeunits"), list(fakeunits = "libfakeudunits.so.0"))
+  # Two, plus one with nothing missing: one ldd call, with headers.
+  expect_equal(missing_system_libraries(c(lib), c("fakesf", "fakeunits", "nothere")),
+               list(fakesf = "libfakegdal.so.34", fakeunits = "libfakeudunits.so.0"))
+})
+
 test_that("ppm_distribution() and ppm_sysreqs_url() build the request for Package Manager, and nothing for other servers (95)", {
   expect_equal(ppm_distribution(linux_release(c("ID=ubuntu", 'VERSION_ID="24.04"'))),
                list(distribution = "ubuntu", release = "24.04"))
