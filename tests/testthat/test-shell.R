@@ -303,7 +303,7 @@ test_that("worker traffic brings a slow poll forward, but not from inside the po
 
 test_that("loopback_reaches(): true for the socket a connection to 127.0.0.1 reaches (Ember #25)", {
   picked <- pick_listen_socket()
-  on.exit(close(picked$socket))
+  on.exit(close(picked$socket), add = TRUE)
   expect_true(loopback_reaches(picked$socket, picked$port))
   # The probe's connection was accepted and closed, so nothing is left for
   # the worker's accept to pick up by mistake.
@@ -316,7 +316,7 @@ test_that("loopback_reaches(): false when the connection goes to another listene
   # connection reaches `other`, never `mine`.
   mine <- pick_listen_socket()
   other <- pick_listen_socket()
-  on.exit({ close(mine$socket); close(other$socket) })
+  on.exit({ close(mine$socket); close(other$socket) }, add = TRUE)
   expect_false(loopback_reaches(mine$socket, other$port, wait = 0.2))
 })
 
@@ -327,6 +327,36 @@ test_that("pick_listen_socket() skips a port whose loopback goes elsewhere (Embe
     checks > 1L
   })
   picked <- pick_listen_socket()
-  on.exit(close(picked$socket))
+  on.exit(close(picked$socket), add = TRUE)
   expect_equal(checks, 2L)
+})
+
+test_that("loopback_reaches(): another connection arriving first doesn't pass the check (Ember #25)", {
+  # The process holding 127.0.0.1 gets the probe and could connect back to
+  # `mine` by another address; only the probe's nonce counts.
+  mine <- pick_listen_socket()
+  other <- pick_listen_socket()
+  on.exit({ close(mine$socket); close(other$socket) }, add = TRUE)
+  intruder <- socketConnection("127.0.0.1", mine$port, blocking = TRUE, open = "r+b", timeout = 2)
+  on.exit(close(intruder), add = TRUE)
+  expect_false(loopback_reaches(mine$socket, other$port, wait = 0.2))
+})
+
+test_that("macOS: serverSocket() can share a port held on 127.0.0.1, and the check catches it (Ember #25)", {
+  skip_on_os(c("linux", "windows", "solaris"))
+  skip_if(!nzchar(Sys.which("python3")), "no python3")
+  # Another process listening on 127.0.0.1 only, at a port it picks.
+  holder <- processx::process$new("python3", c("-c", paste(
+    "import socket, sys, time",
+    "s = socket.socket(); s.bind(('127.0.0.1', 0)); s.listen(8)",
+    "print(s.getsockname()[1], flush=True)",
+    "time.sleep(120)", sep = "\n")), stdout = "|", cleanup = TRUE)
+  on.exit(holder$kill(), add = TRUE)
+  holder$poll_io(10000)
+  port <- as.integer(trimws(holder$read_output_lines()[1]))
+  expect_false(is.na(port))
+  s <- tryCatch(serverSocket(port), error = function(e) NULL)
+  skip_if(is.null(s), "this macOS refuses the shared bind, so Ember #25 can't happen here")
+  on.exit(close(s), add = TRUE)
+  expect_false(loopback_reaches(s, port, wait = 0.2))
 })
