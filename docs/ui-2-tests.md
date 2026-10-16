@@ -24,9 +24,10 @@ New fixtures:
   `tags$script` that writes `typeof jQuery` into the div. Its packages
   install for real, so scenarios using it run only when
   `EMBER_E2E_INSTALLS=1` (set in CI on ubuntu-latest).
-- `tests/testthat/fixtures/pluto-css-variables.txt`: every CSS variable name
-  defined in Pluto v1.0.3's `themes/light.css`, one per line (taken from the
-  vendoring commit).
+- `tests/testthat/fixtures/pluto-css-variables.txt`: the CSS variable names
+  from Pluto v1.0.3's `themes/light.css` that Ember's frontend still reads,
+  one per line. The names nothing reads were dropped (#57); the themes
+  still define them.
 - `tests/testthat/fixtures/endeavor-css-variables.txt`: the variables
   Endeavor's page code reads (the list in docs/ui-2.md is from
   `endeavor/frontend/src/*.ts`).
