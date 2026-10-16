@@ -13,22 +13,28 @@
  *
  * Until `needed_by` fills in (the index the walk reads is still being
  * fetched, or can't be), a "dependency" row's `detail` still names the
- * package it waited on, so a card follows that chain to a cause. A
- * failed cause that no card covers keeps a card of its own, as before
- * #91; a "dependency" row only when its chain ends where no card says.
+ * package it waited on, so a card follows that chain to a cause. What
+ * is still left over goes to the card of the package the notebook loads,
+ * or one card for several (`direct`). Only without `direct` does a failed
+ * cause that no card covers keep a card of its own, as before #91; a
+ * "dependency" row only when its chain ends where no card says.
  *
  * @typedef {import("../components/Editor.js").EmberInstallFailure} Failure
- * @typedef {{ package: string, own: Failure?, causes: Array<Failure> }} InstallCard
+ * @typedef {{ package: string?, packages?: Array<string>, own: Failure?, causes: Array<Failure> }} InstallCard
  * `own`: the card's package's own failure when it isn't "dependency"
  * (its sentence starts "It ..."); `causes`: the failed packages it needs,
- * in `failures` order, without `own`.
+ * in `failures` order, without `own`. A card for several packages the
+ * notebook loads at once has `package` null and `packages` their names
+ * (its sentences start "Packages they need").
  */
 
 /**
  * @param {Array<Failure>} failures
+ * @param {Array<string>} direct the packages the notebook loads
+ *   (`packages.rows` with `direct`)
  * @returns {Array<InstallCard>}
  */
-export const install_cards = (failures) => {
+export const install_cards = (failures, direct = []) => {
     const by_name = new Map(failures.map((f) => [f.package, f]))
     const is_cause = (f) => f.kind !== "dependency"
 
@@ -81,6 +87,37 @@ export const install_cards = (failures) => {
     }
 
     const cards = roots.map(card_for)
+
+    // A failure no card covers, of a package the notebook doesn't load
+    // itself, is still needed by one it does: `needed_by` is empty only
+    // because the index it walks hasn't come, or can't (#91's offline
+    // case, where every package fails as "unavailable"). With one such
+    // package to name, its card takes them all; with several, one card
+    // names them together rather than a card per failure.
+    const leftover = failures.filter((f) => !covered.has(f.package) && !direct.includes(f.package))
+    if (direct.length > 0 && leftover.length > 0) {
+        const extra = []
+        for (const f of leftover) {
+            covered.add(f.package)
+            const { cause, links } = is_cause(f) ? { cause: f, links: [] } : follow(f)
+            for (const l of links) covered.add(l)
+            if (cause != null && !extra.includes(cause)) extra.push(cause)
+        }
+        // Which of several needs which isn't known, so the shared card
+        // names them all, a package with a card of its own too.
+        if (direct.length === 1) {
+            let card = cards.find((c) => c.package === direct[0])
+            if (card == null) {
+                card = card_for(direct[0])
+                cards.push(card)
+            }
+            for (const f of extra) {
+                if (f !== card.own && !card.causes.includes(f)) card.causes.push(f)
+            }
+        } else {
+            cards.push({ package: null, packages: direct, own: null, causes: extra })
+        }
+    }
     // What no card covers: each failed cause gets its own card first, then
     // a "dependency" row only when its chain leads somewhere no card says.
     for (const f of failures) {

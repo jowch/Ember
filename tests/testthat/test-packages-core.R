@@ -778,8 +778,10 @@ test_that("install_failures() on each captured output gives the expected rows; n
   expect_equal(cfg$kind, "system")
   expect_equal(cfg$detail, "configure: error: pkg-config not found")
 
+  # (Not "C compiler cannot create executables", which is a broken or
+  # missing compiler: missing_compiler, test-install-checks.R.)
   cfg_plain <- install_failures(c("* installing *source* package 'brokenpkg' ...",
-                                 "configure: error: C compiler cannot create executables",
+                                 "configure: error: this platform is not supported",
                                  "ERROR: configuration failed for package 'brokenpkg'"))
   expect_equal(cfg_plain$kind, "configure")
 

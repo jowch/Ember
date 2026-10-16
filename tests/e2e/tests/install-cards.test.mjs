@@ -65,6 +65,37 @@ test("a dependency cycle doesn't loop", () => {
   assert.deepEqual(summary(install_cards(failures)), [["a", null, []]]);
 });
 
+test("with no index (offline), one loaded package's card takes every failure", () => {
+  // The reviewer's case: the repository can't be reached, so every package
+  // fails as unavailable and only DESeq2's own needed_by is filled.
+  const deps = Array.from({ length: 40 }, (_, i) => fail(`dep${i}`, "unavailable"));
+  const failures = [fail("DESeq2", "unavailable", { needed_by: ["DESeq2"] }), ...deps];
+  const cards = install_cards(failures, ["DESeq2"]);
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].package, "DESeq2");
+  assert.equal(cards[0].own.package, "DESeq2");
+  assert.equal(cards[0].causes.length, 40);
+
+  // A loaded package that didn't fail itself (its needed_by never filled) still gets the card.
+  const quiet = install_cards(deps.slice(0, 3), ["DESeq2"]);
+  assert.deepEqual(summary(quiet), [["DESeq2", null, ["dep0", "dep1", "dep2"]]]);
+});
+
+test("with no index and several loaded packages, the failures share one card", () => {
+  const failures = [fail("a", "unavailable"), fail("b", "dependency", { detail: "a" }), fail("c", "download")];
+  const cards = install_cards(failures, ["ggplot2", "dplyr"]);
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].package, null);
+  assert.deepEqual(cards[0].packages, ["ggplot2", "dplyr"]);
+  assert.deepEqual(cards[0].causes.map((f) => f.package), ["a", "c"]);
+
+  // Which one needs them isn't known, so the shared card still names
+  // both, even the one with a card of its own.
+  const own = install_cards([fail("dplyr", "compile", { needed_by: ["dplyr"] }), ...failures], ["ggplot2", "dplyr"]);
+  assert.deepEqual(summary(own), [["dplyr", "dplyr", []], [null, null, ["a", "c"]]]);
+  assert.deepEqual(own[1].packages, ["ggplot2", "dplyr"]);
+});
+
 test("causes are grouped by the sentence they read as", () => {
   const groups = cause_groups([
     fail("a", "compile"),

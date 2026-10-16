@@ -43,26 +43,51 @@ const DEP_SENTENCE = {
     other: "t_ember_install_failed_dep_other",
 }
 
+/** The same sentences for a card naming several packages the notebook loads ("Packages they need, ..."). */
+const THEY_SENTENCE = {
+    compile: "t_ember_install_failed_they_compile",
+    download: "t_ember_install_failed_they_download",
+    unavailable: "t_ember_install_failed_they_unavailable",
+    system: "t_ember_install_failed_they_system",
+    missing_system: "t_ember_install_failed_they_missing_system",
+    missing_compiler: "t_ember_install_failed_they_missing_compiler",
+    no_binary: "t_ember_install_failed_they_no_binary",
+    other: "t_ember_install_failed_they_other",
+}
+
+/** A list of names for a sentence, the first few and then "and 38 more": Show the error has them all. */
+const MAX_NAMES = 5
+const name_list = (names) =>
+    join_names(
+        names.length <= MAX_NAMES ? names : [...names.slice(0, MAX_NAMES - 1), t("t_ember_install_failed_more", { count: names.length - (MAX_NAMES - 1) })],
+        getCurrentLanguage()
+    )
+
 /**
  * One sentence per kind of failure among the packages a card's package
  * needs (#91): "A package it needs, rlang 1.1.6, doesn't build on R
  * 4.6.1." Each is named with its locked version from `rows`
- * (`packages.rows`) when it has one; a missing-system sentence lists
- * every library its packages lack.
+ * (`packages.rows`); a missing-system sentence lists every library its
+ * packages lack. `they`: the card names several packages the notebook
+ * loads. `same`: the card's own package failed the same way, so its
+ * sentence already gave the reason and the advice, and this one only
+ * names the rest.
  *
  * @param {{ kind: string, failures: Array<import("./Editor.js").EmberInstallFailure> }} group
  * @param {Array<import("./Editor.js").EmberPackageRow>} rows
  * @param {string?} r_version
+ * @param {{ they?: boolean, same?: boolean }} how
  */
-const dep_sentence = (group, rows, r_version) => {
+const dep_sentence = (group, rows, r_version, { they = false, same = false } = {}) => {
     const names = group.failures.map((f) => {
         const version = f.version ?? rows.find((r) => r.name === f.package)?.version
         return version == null ? f.package : `${f.package} ${version}`
     })
     const libraries = [...new Set(group.failures.flatMap((f) => (f.libraries ?? "").split(",").map((l) => l.trim()).filter((l) => l !== "")))]
-    return t(DEP_SENTENCE[group.kind], {
+    const key = same ? "t_ember_install_failed_dep_same" : (they ? THEY_SENTENCE : DEP_SENTENCE)[group.kind]
+    return t(key, {
         count: names.length,
-        packages: join_names(names, getCurrentLanguage()),
+        packages: name_list(names),
         libraries: libraries.join(", "),
         r_version: r_version ?? "",
     })
@@ -137,12 +162,19 @@ const InstallFailureCard = ({ card, rows, r_version, log, show_command }) => {
 
     return html`
         <div class="ember-install-failure-card">
-            <p class="ember-install-failure-title">${t("t_ember_install_failed_title", { package: card.package })}</p>
+            <p class="ember-install-failure-title">
+                ${t("t_ember_install_failed_title", { package: card.package ?? name_list(card.packages ?? []) })}
+            </p>
             ${card.own != null || card.causes.length === 0
                 ? html`<p class="ember-install-failure-sentence">${own_sentence(card.own ?? { kind: "other" }, r_version)}</p>`
                 : null}
             ${cause_groups(card.causes).map(
-                (group) => html`<p class="ember-install-failure-sentence">${dep_sentence(group, rows, r_version)}</p>`
+                (group) => html`<p class="ember-install-failure-sentence">
+                    ${dep_sentence(group, rows, r_version, {
+                        they: card.package == null,
+                        same: card.own != null && sentence_kind(card.own) === group.kind,
+                    })}
+                </p>`
             )}
             ${failure_fixes(failures, show_command)}
             <div class="ember-install-failure-actions">
@@ -418,7 +450,7 @@ export const PackagesTab = ({ packages, read_only = false }) => {
     if (packages == null) return null
     const { snapshot, r_version, library, rows, update } = packages
     const direct_rows = rows.filter((row) => row.direct)
-    const cards = install_cards(library.failures)
+    const cards = install_cards(library.failures, direct_rows.map((row) => row.name))
     // The one card that shows the system-library command (`failure_fixes()`).
     const command_card = cards.findIndex((card) => [card.own, ...card.causes].some((f) => f != null && sentence_kind(f) === "missing_system"))
 
@@ -447,7 +479,7 @@ export const PackagesTab = ({ packages, read_only = false }) => {
                 : html`<div class="ember-install-failure-cards">
                       ${cards.map(
                           (card, i) => html`<${InstallFailureCard}
-                              key=${card.package}
+                              key=${card.package ?? "(several)"}
                               card=${card}
                               rows=${rows}
                               r_version=${r_version}

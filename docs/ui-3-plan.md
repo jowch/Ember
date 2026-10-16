@@ -1646,8 +1646,12 @@ worker message (`chdir`).
   failed itself, then one sentence per kind among the failed packages it
   needs. A `"dependency"` row is a consequence and gets no sentence of
   its own. Until `needed_by` fills in, a card follows the `"dependency"`
-  rows' `detail` to the package that failed; a failure no card covers
-  keeps a card of its own.
+  rows' `detail` to the package that failed. A failure still left over
+  (offline, where the index never comes) is needed by some package the
+  notebook loads: with one, its card takes them all; with several, one
+  card names them together ("Packages they need, ..."). A sentence names
+  at most five packages ("and 40 more"); one of the card's own kind only
+  names them ("failed the same way").
 
 **B. Update to today's snapshot.** The engine applies the proposal itself,
 so the API, the page and Endeavor behave the same, and it stays pure.
