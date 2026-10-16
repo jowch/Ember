@@ -4,7 +4,8 @@
 #
 #   Rscript --vanilla installer.R <plan.rds>
 #
-# Plan: list(lock_lines, repos (name -> dated URL), r, staging, path, cache).
+# Plan: list(lock_lines, repos (name -> dated URL), r, staging, path, cache,
+# github (the GitHub API GitHub packages install from)).
 #
 # Output on stdout, one per line, for the shell to turn into
 # `ev_install_progress` (best effort: renv's own per-package reporting
@@ -25,6 +26,10 @@ main <- function(plan_path) {
   # which library and lockfile it uses.
   Sys.unsetenv(c("RENV_CONFIG_REPOS_OVERRIDE", "RENV_PROFILE", "RENV_PROJECT",
                  "RENV_PATHS_LIBRARY", "RENV_PATHS_LOCKFILE"))
+  # A GitHub package's `Remotes` would have renv install those packages
+  # from their repositories' moving HEAD, outside the lock; the lock alone
+  # decides (each GitHub package needs its own [sources] entry).
+  Sys.setenv(RENV_CONFIG_INSTALL_REMOTES = "FALSE")
 
   if (!is.null(ember:::read_library_manifest(plan$path))) {
     unlink(plan$staging, recursive = TRUE)
@@ -52,7 +57,9 @@ main <- function(plan_path) {
   compiler <- ember:::compiler_check(lock, plan$repos, linux_binaries)
   if (!is.null(compiler)) stop_missing(plan, compiler = compiler)
 
-  lf <- ember:::renv_lockfile_of(lock, plan$r, repos)
+  github <- if (is.null(plan$github)) "https://api.github.com" else plan$github
+  deps <- ember:::github_install_deps(lock, plan$cache, github)
+  lf <- ember:::renv_lockfile_of(lock, plan$r, repos, github = github, deps = deps)
   lockfile_tmp <- tempfile("ember-lockfile-", fileext = ".json")
   renv::lockfile_write(lf, file = lockfile_tmp)
 

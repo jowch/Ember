@@ -21,12 +21,19 @@
 #' `bioc_config` is where Bioconductor's list of releases comes from
 #' (`parse_bioc_config()`): bioconductor.org's own `config.yaml`, or a
 #' `file://` copy. `NA` turns the lookup off, and with it Bioconductor.
+#'
+#' `github` is the GitHub API that `[sources]` GitHub packages come from
+#' (`github_api_url()`): GitHub's own, a GitHub Enterprise server's
+#' (`https://github.example.org/api/v3`), or a `file://` folder laid out
+#' the same way (`repos/<user>/<repo>/commits/<ref>` holding the commit,
+#' `repos/<user>/<repo>/tarball/<sha>` the package), which is the test seam.
 #' @export
 ember_repos <- function(cran = "https://packagemanager.posit.co/cran",
                         bioc = "https://packagemanager.posit.co/bioconductor",
-                        bioc_config = "https://bioconductor.org/config.yaml") {
+                        bioc_config = "https://bioconductor.org/config.yaml",
+                        github = "https://api.github.com") {
   structure(list(cran = sub("/+$", "", cran), bioc = sub("/+$", "", bioc),
-                 bioc_config = bioc_config),
+                 bioc_config = bioc_config, github = sub("/+$", "", github)),
             class = "ember_repos")
 }
 
@@ -63,7 +70,10 @@ bioc_repo_names <- c(bioc = "BioCsoft", "bioc-ann" = "BioCann", "bioc-exp" = "Bi
 repo_url <- function(repos, key) {
   parts <- strsplit(key, "/", fixed = TRUE)[[1]]
   kind <- parts[[1]]
-  if (kind %in% names(bioc_kinds)) {
+  if (identical(kind, "github")) {
+    src <- parse_github_key(key)
+    paste0(github_api_url(repos), "/repos/", src$user, "/", src$repo)
+  } else if (kind %in% names(bioc_kinds)) {
     date <- parts[[2]]
     bioc_version <- parts[[3]]
     paste0(repos$bioc, "/", date, "/packages/", bioc_version, "/", bioc_kinds[[kind]])
@@ -262,6 +272,181 @@ bioc_problems <- function(header, r, releases) {
   out
 }
 
+# ---- GitHub sources ----------------------------------------------------------
+
+#' A package can't come from GitHub by inference: the user names it in the
+#' header's `[sources]`, `mypkg = "github:lab/mypkg"`, optionally with a
+#' ref after `@` (a branch, a tag, or a commit). Each such entry becomes a
+#' one-row index (`fetch_github_main()`, library.R) whose label is the
+#' commit it resolved to, `"github:lab/mypkg@<40-character sha>"`, and that
+#' label is the lock's source, so resolution needs no special case: the
+#' GitHub keys go first in `needed`, and the first index that has a name
+#' wins (design.md, "Package environments"). GitHub packages have no date,
+#' so a date move keeps their commit (`source_keys()`).
+#'
+#' The GitHub API base, from `ember_repos(github)`.
+github_api_url <- function(repos) sub("/+$", "", repos$github %||% "https://api.github.com")
+
+#' A `github:` source string (a header spec, or a lock source) ->
+#' `list(user, repo, ref)`, `ref` `NA` when there is no `@`. `NULL` when
+#' `x` isn't one: any other scheme, or a malformed user or repository.
+parse_github_source <- function(x) {
+  if (length(x) != 1 || is.na(x)) return(NULL)
+  m <- regmatches(x, regexec("^github:([A-Za-z0-9][A-Za-z0-9-]*)/([A-Za-z0-9._-]+)(@([^[:space:]@]+))?$", x))[[1]]
+  if (length(m) == 0) return(NULL)
+  list(user = m[[2]], repo = m[[3]], ref = if (nzchar(m[[5]])) m[[5]] else NA_character_)
+}
+
+#' A `[sources]` spec as the user gave it, normalised: `"github:user/repo"`
+#' as is, `"user/repo"` read as the same; `NULL` when it is neither.
+github_spec <- function(x) {
+  if (!is.character(x) || length(x) != 1 || is.na(x)) return(NULL)
+  x <- trimws(x)
+  if (!grepl(":", x, fixed = TRUE)) x <- paste0("github:", x)
+  if (is.null(parse_github_source(x))) NULL else x
+}
+
+#' The lock source for a commit: `"github:<user>/<repo>@<sha>"`.
+github_source <- function(user, repo, sha) paste0("github:", user, "/", repo, "@", sha)
+
+#' The repo key of a GitHub source at `ref` (`"HEAD"`: the default branch):
+#' `"github/<user>/<repo>@<ref>"`. Like a dated key it names one index; a
+#' key whose ref is a full commit (`is_commit()`) never changes, so its
+#' index is cached on disk for good, as a dated one is. Any other ref (a
+#' branch, a tag) moves, so its index is fetched again by each session that
+#' needs it (shell.R).
+github_key <- function(user, repo, ref) paste0("github/", user, "/", repo, "@", ref)
+
+#' `github_key()`'s inverse: `list(user, repo, ref)`.
+parse_github_key <- function(key) parse_github_source(sub("^github/", "github:", key))
+
+is_github_key <- function(keys) startsWith(keys, "github/")
+
+#' `TRUE` for a full, 40-character commit SHA.
+is_commit <- function(x) grepl("^[0-9a-fA-F]{40}$", x)
+
+#' Whether the lock's `source` still answers the header's `spec`: the same
+#' repository (GitHub's names ignore case), and, when the spec names a
+#' commit (7 to 40 hex digits), that commit. A branch or tag can't be
+#' checked without the network, so any commit of the repository answers
+#' it: the lock is what fixes the code, and a moving branch moves only when
+#' the spec is changed (`source_keys()`).
+source_satisfied <- function(spec, source) {
+  s <- parse_github_source(spec)
+  l <- parse_github_source(source)
+  if (is.null(s) || is.null(l) || is.na(l$ref)) return(FALSE)
+  if (!identical(tolower(s$user), tolower(l$user)) || !identical(tolower(s$repo), tolower(l$repo))) {
+    return(FALSE)
+  }
+  if (is.na(s$ref) || !grepl("^[0-9a-fA-F]{7,40}$", s$ref)) return(TRUE)
+  startsWith(tolower(l$ref), tolower(s$ref))
+}
+
+#' The header's readable `[sources]`: named character, package -> spec,
+#' sorted by name. Entries `parse_github_source()` can't read are left out
+#' (`source_problems()` reports them).
+github_sources <- function(header) {
+  src <- header$sources %||% character()
+  if (length(src) == 0) return(character())
+  ok <- vapply(src, function(x) !is.null(parse_github_source(x)), logical(1))
+  src <- src[ok]
+  src[order(names(src), method = "radix")]
+}
+
+#' Named character, package -> repo key, one per readable `[sources]`
+#' entry. A package the lock already has from a commit that still answers
+#' its spec (`source_satisfied()`), with the spec unchanged since that
+#' resolution (`sources_for`), keeps that commit: its key names the commit,
+#' so resolving again (or moving the date back) never moves it and its
+#' index comes from the disk cache. Any other is looked up at its spec's
+#' ref.
+#'
+#' `refresh`: moving the date forward ("update all", `refreshes_sources()`)
+#' asks again for every entry whose ref can move (a branch, a tag, `HEAD`:
+#' anything but a commit), so a branch comes forward with everything else.
+#' A tag usually names the same commit again.
+source_keys <- function(header, lock, sources_for = character(), refresh = FALSE) {
+  src <- github_sources(header)
+  if (length(src) == 0) return(character())
+  e <- lock$entries
+  keys <- vapply(names(src), function(name) {
+    spec <- parse_github_source(src[[name]])
+    row <- match(name, e$name)
+    moving <- is.na(spec$ref) || !grepl("^[0-9a-fA-F]{7,40}$", spec$ref)
+    if (!(refresh && moving) && !is.na(row) && source_unchanged(name, src, sources_for) &&
+        source_satisfied(src[[name]], e$source[[row]])) {
+      locked <- parse_github_source(e$source[[row]])
+      if (is_commit(locked$ref)) return(github_key(spec$user, spec$repo, tolower(locked$ref)))
+    }
+    github_key(spec$user, spec$repo, if (is.na(spec$ref)) "HEAD" else spec$ref)
+  }, character(1))
+  stats::setNames(keys, names(src))
+}
+
+#' Whether a date move to `date` asks GitHub again for `[sources]` entries
+#' at moving refs (`source_keys(refresh = TRUE)`): a move to the notebook's
+#' date or later, which "update all" always is. A move back keeps the
+#' locked commits: a branch has no date to go back to. A Bioconductor
+#' move (`kind = "bioc"`) changes the release, not the date.
+refreshes_sources <- function(header, date, kind = NULL) {
+  if (identical(kind, "bioc")) return(FALSE)
+  current <- header$snapshot %||% NA_character_
+  if (is.na(current)) return(TRUE)
+  isTRUE(as.Date(date) >= as.Date(current))
+}
+
+source_unchanged <- function(name, sources, sources_for) {
+  name %in% names(sources_for) && identical(unname(sources_for[[name]]), unname(sources[[name]]))
+}
+
+#' The lock `resolve_lock()` keeps entries from, given the header's
+#' `[sources]`: an entry stays only when its source still agrees with them.
+#' A package with a spec keeps a GitHub entry that answers the unchanged
+#' spec; one whose spec changed, or that was locked from CRAN or
+#' Bioconductor, is dropped so it resolves again from its own index. A
+#' GitHub entry whose spec was removed is dropped too, so the package comes
+#' from CRAN or Bioconductor again (or is `not_found`).
+lock_for_sources <- function(lock, header, sources_for = character()) {
+  e <- lock$entries
+  if (is.null(e) || nrow(e) == 0) return(lock)
+  src <- github_sources(header)
+  keep <- vapply(seq_len(nrow(e)), function(i) {
+    name <- e$name[[i]]
+    if (name %in% names(src)) {
+      source_unchanged(name, src, sources_for) && source_satisfied(src[[name]], e$source[[i]])
+    } else {
+      !startsWith(e$source[[i]], "github:")
+    }
+  }, logical(1))
+  if (all(keep)) return(lock)
+  new_lock(e$name[keep], e$version[keep], e$source[keep], e$extra[keep], unparsed = lock$unparsed)
+}
+
+#' Problem rows for `[sources]`: a `"source"` row per entry that isn't a
+#' readable `github:user/repo[@ref]` (it is ignored, so its package resolves
+#' from CRAN or Bioconductor as if it had none), and per GitHub index whose
+#' package isn't the one the spec was written for (`indexes`: named list,
+#' key -> loaded `ember_repo_index`).
+source_problems <- function(header, keys = character(), indexes = list()) {
+  out <- empty_package_problems()
+  src <- header$sources %||% character()
+  for (name in names(src)) {
+    if (is.null(parse_github_source(src[[name]]))) {
+      out <- rbind(out, package_problem("source", name, sprintf(
+        "can't read the source %s for %s: write it as \"github:user/repo\", optionally with @ and a branch, tag or commit",
+        src[[name]], name)))
+    }
+  }
+  for (name in names(keys)) {
+    idx <- indexes[[keys[[name]]]]
+    if (!is.null(idx) && !(name %in% idx$name)) {
+      out <- rbind(out, package_problem("source", name, sprintf(
+        "%s holds the package %s, not %s", src[[name]], paste(idx$name, collapse = ", "), name)))
+    }
+  }
+  out
+}
+
 # ---- The index ---------------------------------------------------------------
 
 #' One repository's index at one date: what was current, and what each
@@ -274,9 +459,10 @@ bioc_problems <- function(header, r, releases) {
 #' * `deps`: list of character, the package names in Depends, Imports and
 #'   LinkingTo, with version constraints and `R` dropped. Not Suggests.
 #' * `needs_compilation`: logical (increment 2 uses it for the compiler
-#'   check).
+#'   check). `NA` for a GitHub package whose DESCRIPTION doesn't say
+#'   (`read_description_index()`).
 #'
-#' Built only by `read_repo_index()`, at the boundary, so no other code
+#' Built only by `read_repo_index()` and `read_description_index()`, at the boundary, so no other code
 #' sees DCF field names. A dated index never changes, so a parsed copy is
 #' cached on disk forever (library.R) and shared in memory across sessions:
 #' every state holding the index for one key holds the same R object, so

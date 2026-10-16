@@ -224,6 +224,78 @@ test_that("ember::run() on the saved file installs if needed and prints the cell
   expect_match(out, "toyA 0.1 says: hello from toyB", fixed = TRUE)
 })
 
+# ---- GitHub sources ([sources], #20) -----------------------------------------
+
+#' `toy_repos()` plus the `file://` GitHub fixture (fixtures/github): toyC,
+#' which imports toyB from the toy repo, at 0.3.0 (tag v0.3.0) and 0.4.0
+#' (main).
+toy_github_repos <- function() {
+  toy <- normalizePath(testthat::test_path("fixtures", "repos", "toy"), mustWork = TRUE)
+  gh <- normalizePath(testthat::test_path("fixtures", "github"), mustWork = TRUE)
+  ember_repos(cran = paste0("file://", toy), github = paste0("file://", gh))
+}
+
+#' A notebook using toyC from `spec` in its `[sources]`, with an empty lock.
+write_toyc_notebook <- function(spec) {
+  dir <- tempfile("ember-nb-")
+  dir.create(dir, recursive = TRUE)
+  cells <- list(S = list(code = "", kind = "code", folded = FALSE),
+               A = list(code = "library(toyC)\ntoyC_hello()", kind = "code", folded = FALSE))
+  header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
+                       r_version = paste(R.version$major, R.version$minor, sep = "."),
+                       snapshot = "2026-09-01", sources = c(toyC = spec))
+  file <- new_notebook_file(
+    header = header, cells = cells, run_order = names(cells), learned = list(),
+    sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
+    lock = empty_lock(), extra_blocks = list(), format = ember_format)
+  path <- file.path(dir, "nb.R")
+  stopifnot(write_atomic(path, format_notebook(file)))
+  path
+}
+
+test_that("a package from a [sources] GitHub entry installs at the ref's commit with its CRAN dependency, and runs", {
+  repos <- toy_github_repos()
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  path <- write_toyc_notebook("github:lab/toyC@v0.3.0")
+
+  nb <- open_notebook(path, repos = repos, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  res <- run_cells(nb, wait = TRUE, timeout = 120)
+  expect_false(res$timed_out)
+
+  status <- package_status(nb)
+  expect_equal(status$library$status, "ready",
+               info = paste(c(status$library$message, notebook_state(nb)$packages$target$log), collapse = "\n"))
+  expect_equal(snap_view(notebook_snapshot(nb), "A")$output$text, "[1] \"toyC 0.3.0 says: hello from toyB\"")
+  pkgs <- status$packages
+  expect_equal(pkgs$source[pkgs$name == "toyC"], "github:lab/toyC@3f2a1c90a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0")
+  expect_equal(pkgs$source[pkgs$name == "toyB"], "CRAN")
+  expect_true(all(pkgs$status == "installed"))
+})
+
+test_that("ember::run() installs a saved GitHub lock on a machine that never resolved it", {
+  repos <- toy_github_repos()
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  path <- write_toyc_notebook("github:lab/toyC")
+
+  nb <- open_notebook(path, repos = repos, cache = cache)
+  res <- run_cells(nb, wait = TRUE, timeout = 120)
+  expect_false(res$timed_out)
+  close_notebook(nb)
+  expect_match(read_file_utf8(path), "# toyC 0.4.0 github:lab/toyC@8e4b7d2c1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c",
+               fixed = TRUE)
+
+  # A fresh cache: no index for toyC's commit, so the installer looks its
+  # DESCRIPTION up itself to install toyB first.
+  cache2 <- toy_cache()
+  on.exit(unlink(cache2, recursive = TRUE), add = TRUE)
+  out <- testthat::capture_output(status <- run(path, repos = repos, cache = cache2, echo = TRUE))
+  expect_equal(status, 0L)
+  expect_match(out, "toyC 0.4.0 says: hello from toyB", fixed = TRUE)
+})
+
 # ---- 75: network, opt-in -----------------------------------------------------
 
 test_that("[net] a notebook with library(dplyr) at a fixed past date resolves, installs and loads from PPM (75)", {

@@ -3,6 +3,8 @@
 \alias{package_status}
 \alias{add_extra_package}
 \alias{remove_extra_package}
+\alias{set_package_source}
+\alias{remove_package_source}
 \alias{preview_date}
 \alias{set_date}
 \alias{run}
@@ -26,6 +28,10 @@ add_extra_package(name)
 
 remove_extra_package(name)
 
+set_package_source(name, source)
+
+remove_package_source(name)
+
 preview_date(nb, date = Sys.Date(), wait = TRUE, apply = FALSE, timeout = 60)
 
 set_date(nb, date)
@@ -37,13 +43,18 @@ clean(max_age = 60, cache = TRUE, dry_run = FALSE, dir = cache_dir(),
 
 ember_repos(cran = "https://packagemanager.posit.co/cran",
             bioc = "https://packagemanager.posit.co/bioconductor",
-            bioc_config = "https://bioconductor.org/config.yaml")
+            bioc_config = "https://bioconductor.org/config.yaml",
+            github = "https://api.github.com")
 
 cache_dir()
 }
 \arguments{
 \item{nb}{An \code{ember_notebook} handle.}
-\item{name}{A package name, for \code{add_extra_package()}/\code{remove_extra_package()}.}
+\item{name}{A package name, for \code{add_extra_package()}/\code{remove_extra_package()}
+and \code{set_package_source()}/\code{remove_package_source()}.}
+\item{source}{Where the package comes from, for \code{set_package_source()}:
+\code{"github:user/repo"}, optionally with \code{@} and a branch, tag or commit
+(\code{"user/repo"} reads as the same).}
 \item{date}{A date (anything \code{as.Date()} accepts). \code{preview_date(nb,
 Sys.Date())} is "update all".}
 \item{wait}{\code{TRUE} blocks until the preview is ready (or failed) or
@@ -80,6 +91,10 @@ replace them.}
 Fetched when a notebook first needs Bioconductor and kept in \code{cache} for
 a day; the last copy fetched is used when a fetch fails. \code{NA} turns the
 lookup off, and with it Bioconductor.}
+\item{github}{The GitHub API that \code{[sources]} GitHub packages come from,
+for \code{ember_repos()}: GitHub's own, a GitHub Enterprise server's
+(\code{https://github.example.org/api/v3}), or a \code{file://} folder laid out
+the same way. \code{GITHUB_PAT} (or \code{GITHUB_TOKEN}) is sent when set.}
 }
 \value{
 \code{package_status()} returns a plain list, the same value as
@@ -112,6 +127,15 @@ plain list, for use with \code{edit_notebook()}; they do nothing on their own.
 \code{remove_extra_package()} is refused through \code{edit_notebook()} when the
 name is also named directly in code (removing it from the header would do
 nothing): edit the code instead.
+
+\code{set_package_source()}/\code{remove_package_source()} return an
+\code{ember_op} the same way. They set or drop the package's entry in the
+header's \code{[sources]}. A package with an entry comes from it, never from
+CRAN or Bioconductor; the lock records the commit the entry resolved to
+(\code{github:user/repo@<sha>}), and that commit stays, through date moves
+too, until the entry changes. Its dependencies resolve from CRAN and
+Bioconductor at the notebook's date as usual; one that is itself only on
+GitHub needs its own entry.
 
 \code{preview_date()} returns \code{list(date, status, changes, problems, restart)},
 where \code{status} is \code{"fetching"}, \code{"ready"} or \code{"failed"}, and \code{changes} is
