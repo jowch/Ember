@@ -144,8 +144,9 @@ export const go_to_definition_plugin = ViewPlugin.fromClass(
                         }
 
                         event.preventDefault()
-                        let scrollto_selector = `[id='${encodeURI(display_name(variable))}']`
-                        document.querySelector(scrollto_selector)?.scrollIntoView({
+                        // By id, not a selector: an R name can hold any character
+                        // (`` `n's` ``), which a quoted selector would choke on.
+                        document.getElementById(encodeURI(display_name(variable)))?.scrollIntoView({
                             behavior: "smooth",
                             block: "center",
                         })

@@ -1041,6 +1041,12 @@ test_that("project_spans() gives a cell's own definitions and the reads whose sp
     expect_true(text %in% c(r[[1]], paste0("`", r[[1]], "`"), sub("<-$", "", r[[1]])), info = r[[1]])
   }
 
+  # a definition made from a string selects the name inside the quotes
+  code2 <- 'setGeneric("area", function(s) standardGeneric("area"))'
+  d2 <- project_spans(read_cell(code2, function(p) NULL), code2)$defs
+  area <- Filter(function(r) r[[1]] == "area", d2)[[1]]
+  expect_equal(substr(code2, area[[2]] + 1, area[[3]]), "area")
+
   # none for markdown, a missing analysis, or an analysis of other code
   expect_equal(project_spans(a, code, "markdown"), list(defs = list(), refs = list()))
   expect_equal(project_spans(NULL, code), list(defs = list(), refs = list()))
@@ -1056,4 +1062,25 @@ test_that("cell_inputs carry ember_spans from the graph, and check_wire() passes
   refs_b <- js$cell_inputs$B$ember_spans$refs
   expect_equal(Filter(function(r) r[[1]] == "a", refs_b), list(list("a", 5L, 6L)))
   expect_equal(js$cell_inputs$Md$ember_spans, list(defs = list(), refs = list()))
+})
+
+test_that("Run all at 2000 cells reads no cell's spans again: they depend only on the code (4e, review)", {
+  # Run all changes every cell's key (queued), so every cell input is
+  # rebuilt; the spans must come from the previous projection. Counted,
+  # not timed, like the cell_key test above.
+  s <- fake_state(perf_cells(2000))
+  previous <- pluto_state(s)
+  ran <- drive(s, ev_run(NULL, at(1)))$state
+  n <- 0L
+  real <- project_spans
+  local_mocked_bindings(project_spans = function(...) { n <<- n + 1L; real(...) })
+  p <- pluto_state(ran, previous)
+  expect_equal(n, 0L)
+  expect_identical(p$js$cell_inputs$c7$ember_spans, previous$js$cell_inputs$c7$ember_spans)
+
+  # an edit reads only the edited cell's
+  edited <- drive(ran, ev_apply(list(op_set_code("c7", "x7 <- x6")), at(2)))$state
+  p2 <- pluto_state(edited, p)
+  expect_equal(n, 1L)
+  expect_equal(p2$js$cell_inputs$c7$ember_spans$refs, list(list("x6", 6L, 8L)))
 })

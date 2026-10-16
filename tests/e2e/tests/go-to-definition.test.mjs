@@ -45,6 +45,18 @@ test("go-to-definition: Ctrl/Cmd-click on a name another cell defines selects it
   }, null, { timeout: 10000 });
   assert.deepEqual(await focused(page), { cell: "A", text: "tiny" });
 
+  // R allows any character in a backticked name, a quote included.
+  await page.locator(cellSelector("B")).scrollIntoViewIfNeeded();
+  await page.waitForSelector(mark("B", "n's"), { timeout: 30000 });
+  assert.equal(await page.locator(mark("B", "n's")).innerText(), "`n's`");
+  await page.keyboard.down(MOD);
+  await page.locator(mark("B", "n's")).click();
+  await page.keyboard.up(MOD);
+  await page.waitForFunction(() => {
+    const cell = document.activeElement?.closest("pluto-cell")?.id;
+    return cell === "A" && window.getSelection()?.toString() === "`n's`";
+  }, null, { timeout: 10000 });
+
   // A replacement call links to the replacement function: `r(w) <- 3`
   // runs `r<-`, which R defines.
   await page.locator(cellSelector("W")).scrollIntoViewIfNeeded();

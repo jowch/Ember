@@ -79,7 +79,11 @@ pluto_state <- function(state, previous = NULL) {
       view <- cell_view(state, ctx, i)          # state.R, shared with snapshot_of()
       old_input  <- if (!is.na(j)) pj$cell_inputs[[j]] else NULL
       old_result <- if (!is.na(j)) pj$cell_results[[j]] else NULL
-      inputs[[i]]  <- reuse(project_cell_input(view, state$graph$analyses[[view$id]]),  old_input)
+      # The spans depend only on the code: a key change from a run, a
+      # queue or a restart (every cell, on Run all) keeps the last ones.
+      spans <- if (!is.null(old_input) && identical(old_input$code, view$code) &&
+                   identical(old_input$kind, view$kind)) old_input$ember_spans else NULL
+      inputs[[i]]  <- reuse(project_cell_input(view, state$graph$analyses[[view$id]], spans),  old_input)
       results[[i]] <- reuse(project_cell_result(view, ids), old_result)
     }
   }
@@ -191,12 +195,13 @@ key_unchanged <- function(state, ctx, i, prev_key) {
 #' `ember_spans` is where the cell's code defines and reads each name, for
 #' the editor's go-to-definition (ui-2.md 4e): see `project_spans()`. The
 #' graph is always built from the cells' current code (state.R's
-#' invariants), so the cell key, which holds the code, covers it too.
-project_cell_input <- function(view, analysis = NULL) {
+#' invariants), so the spans change only with the code: `spans`, when
+#' given, are the previous projection's for the same code, reused as is.
+project_cell_input <- function(view, analysis = NULL, spans = NULL) {
   list(cell_id = view$id, code = view$code, code_folded = view$folded,
        kind = view$kind,
        metadata = if (isTRUE(view$disabled)) CELL_METADATA_DISABLED else CELL_METADATA,
-       ember_spans = project_spans(analysis, view$code, view$kind))
+       ember_spans = spans %||% project_spans(analysis, view$code, view$kind))
 }
 
 #' `list(defs, refs)`, each an array of `[name, from, to]`: the cell's own
@@ -220,15 +225,21 @@ project_spans <- function(analysis, code, kind = "code") {
   name <- c(d$name, r$name); line <- c(d$line, r$line)
   col <- c(d$col, r$col); end_col <- c(d$end_col, r$end_col)
   keep <- is.na(c(d$file, r$file)) & !is.na(col) & !is.na(end_col)
+  if (!any(keep)) return(none)
   is_ref <- rep(c(FALSE, TRUE), c(nd, nr))
-  off <- span_offsets(code, line, col, end_col)
+  lines <- code_lines(code)
+  off <- span_offsets(code, line, col, end_col, lines)
   keep <- keep & !is.na(off$from)
+  text <- rep(NA_character_, length(name))
+  text[keep] <- substring(lines[line[keep]], off$first[keep], off$last[keep])
   check <- keep & is_ref
-  if (any(check)) {
-    text <- substring(code_lines(code)[line[check]], off$first[check], off$last[check])
-    nm <- name[check]
-    keep[check] <- text == nm | text == paste0("`", nm, "`") | paste0(text, "<-") == nm
-  }
+  keep[check] <- text[check] == name[check] | text[check] == paste0("`", name[check], "`") |
+    paste0(text[check], "<-") == name[check]
+  # A definition made from a string (`setGeneric("area", ...)`) selects the
+  # name inside the quotes.
+  quoted <- keep & !is_ref & substr(text, 1, 1) %in% c("\"", "'") & nchar(text) >= 2
+  off$from[quoted] <- off$from[quoted] + 1L
+  off$to[quoted] <- off$to[quoted] - 1L
   spans <- function(k) lapply(k, function(i) arr(name[[i]], off$from[[i]], off$to[[i]]))
   list(defs = spans(which(keep & !is_ref)), refs = spans(which(keep & is_ref)))
 }
@@ -240,9 +251,9 @@ code_lines <- function(code) strsplit(enc2utf8(code), "\n", fixed = TRUE)[[1]]
 #' tab moving to the next multiple of 8 (in `"\tb"`, `b` is column 9);
 #' CodeMirror counts UTF-16 code units, two for a character above U+FFFF.
 #' `first` and `last` are the span's character indices in its line. A
-#' position that doesn't fall on a character's start gives NA. Pure.
-span_offsets <- function(code, line, col, end_col) {
-  lines <- code_lines(code)
+#' position that doesn't fall on a character's start gives NA. `lines`, when
+#' the caller has them, saves splitting `code` again. Pure.
+span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
   n <- length(line)
   from <- to <- first <- last <- rep(NA_integer_, n)
   if (length(lines) == 0 || n == 0) return(list(from = from, to = to, first = first, last = last))

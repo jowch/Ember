@@ -95,6 +95,10 @@ analysis rather than a scope analysis in the page (ui-2.md 4e, #53).
   is the name, plain or backticked, or a replacement function's name
   without `<-`. That drops the reads the walker places on a whole string
   (a glue segment, `new("C")`).
+  A definition made from a string (`setGeneric("area", ...)`) spans the
+  name inside the quotes. The spans depend only on the code, so a cell
+  input rebuilt for any other reason (a run, a queue, Run all) keeps the
+  previous projection's.
 - **Page** (`CellInput/go_to_definition_plugin.js`): a reference to a name
   another cell defines becomes a `data-pluto-variable` link, and one to a
   name its own cell defines becomes a `data-cell-variable` link.
@@ -107,7 +111,8 @@ analysis rather than a scope analysis in the page (ui-2.md 4e, #53).
 - **Not covered yet:** the walker records no read of a name already bound
   in the cell, so `x <- 1; y <- x` gives no in-cell link on the second `x`.
   It also gives no link from a class name in a string (`new("Circle")`) to
-  its `setClass()`.
+  its `setClass()`, and none to a name defined in a sourced file
+  (`source("helpers.R")`), whose rows the spans leave out.
 
 ## Not changed, on purpose
 

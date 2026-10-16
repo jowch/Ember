@@ -10,9 +10,10 @@
 # %% id=A
 total.n <- 10
 tiny <- 1
+`n's` <- 2
 
 # %% id=B
-y <- total.n + tiny + mean(1)
+y <- total.n + tiny + mean(1) + `n's`
 
 # %% id=R
 `r<-` <- function(x, value) value
