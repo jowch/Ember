@@ -199,6 +199,61 @@ test("help: the page fits the panel, is padded, and has no Rd header table or qu
   assertNoProblems(page);
 });
 
+// #51: the Help tab as Panel3 draws it. No "Description" heading (the
+// description sits under the title); See Also is a row of links; the
+// search field is 30 px on the page's background with a search icon.
+test("help: no Description heading, See Also is a row of links, and the search field matches Panel3 (#51)", { timeout: 120000 }, async (t) => {
+  const page = await open_idle_notebook(t, "help-panel3.server.log");
+  const p = await point_in_cell(page, "C", "lm(mpg", 1);
+  await page.mouse.click(p.x, p.y);
+  await page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper .ember-help-page h2")?.innerText === "Fitting Linear Models",
+    null, { timeout: 15000 });
+
+  const m = await page.evaluate(() => {
+    const page_el = document.querySelector(".ember-help-page");
+    const headings = Array.from(page_el.querySelectorAll("h3")).map((h) => h.innerText.trim());
+    const see_also = page_el.querySelector("p.ember-help-seealso");
+    const links = Array.from(see_also?.children ?? []);
+    const input = document.querySelector("#live-docs-search");
+    const icon = document.querySelector(".live-docs-searchbox .ember-help-search-icon svg");
+    const page_bg = getComputedStyle(document.documentElement).getPropertyValue("--ember-page").trim();
+    const probe = document.createElement("div");
+    probe.style.background = page_bg;
+    document.body.append(probe);
+    const page_rgb = getComputedStyle(probe).backgroundColor;
+    probe.remove();
+    return {
+      headings,
+      first_after_title: page_el.querySelector("h2")?.nextElementSibling?.tagName,
+      see_also_display: see_also && getComputedStyle(see_also).display,
+      link_tags: links.map((a) => a.tagName),
+      link_refs: links.map((a) => /^(@ref |https?:)/.test(a.getAttribute("href") ?? "")),
+      see_also_text: see_also?.innerText.replace(/\s+/g, " ").trim(),
+      link_text: links.map((a) => a.innerText.trim()).join(" "),
+      input_height: input.getBoundingClientRect().height,
+      input_bg: getComputedStyle(input).backgroundColor,
+      page_rgb,
+      icon_inside: icon != null && (() => {
+        const i = icon.getBoundingClientRect(), f = input.getBoundingClientRect();
+        return i.left > f.left && i.right < f.left + 30 && i.top > f.top && i.bottom < f.bottom;
+      })(),
+    };
+  });
+  assert.ok(!m.headings.includes("Description"), `no Description heading: ${m.headings}`);
+  assert.equal(m.first_after_title, "P", "the description is the first paragraph under the title");
+  assert.ok(m.headings.includes("See Also"), `See Also is still a section: ${m.headings}`);
+  assert.equal(m.see_also_display, "flex");
+  assert.ok(m.link_tags.length > 3 && m.link_tags.every((tag) => tag === "A"), `See Also holds only links: ${m.link_tags}`);
+  // lm's links are other help pages, plus biglm's CRAN page.
+  assert.ok(m.link_refs.every(Boolean), "every See Also link is another help page or an outside page");
+  assert.equal(m.see_also_text, m.link_text, "no prose between the links");
+  assert.equal(m.input_height, 30);
+  assert.equal(m.input_bg, m.page_rgb, "the search field has the page's background");
+  assert.ok(m.icon_inside, "a search icon sits inside the field, on the left");
+  assertNoProblems(page);
+});
+
 test("help: no link on a page leaves the notebook; a clicked link isn't labelled as following the cursor (#30)", { timeout: 120000 }, async (t) => {
   const page = await open_idle_notebook(t, "help-links.server.log");
   const start_url = page.url();

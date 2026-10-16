@@ -106,3 +106,21 @@ test("status tab: Restart R stays off while the page doesn't know R's state yet 
   assert.equal(await restart.isDisabled(), true, "and stays off in safe preview");
   await context.close();
 });
+
+// #51: Interrupt and Restart R are Panel3's side-panel buttons, 30 px tall
+// like the Packages tab's, not the header's 32 px.
+test("status tab: Interrupt and Restart R are the side panel's 30 px buttons (#51)", async (t) => {
+  const notebook = tempNotebook();
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "status-tab-buttons.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.locator("#ember-r-status").click();
+  await page.waitForSelector("#ember-status-tab .ember-btn");
+  const heights = await page.locator("#ember-status-tab .ember-btn").evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height));
+  assert.equal(heights.length, 2, "Interrupt and Restart R");
+  assert.deepEqual(heights, [30, 30]);
+  assertNoProblems(page);
+});

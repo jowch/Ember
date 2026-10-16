@@ -6,7 +6,7 @@ import { RawHTMLContainer, highlight } from "./CellOutput.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { cl } from "../common/ClassTable.js"
 import { t } from "../common/lang.js"
-import { BackIcon, ForwardIcon } from "../common/Icons.js"
+import { BackIcon, ForwardIcon, SearchIcon } from "../common/Icons.js"
 
 const DOCS_RETRY_MS = 1000
 
@@ -208,6 +208,7 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, doc_query_explicit
                 })}
                 translate=${false}
             >
+                <span class="ember-help-search-icon" aria-hidden="true"><${SearchIcon} /></span>
                 <input
                     title=${no_docs_found ? `"${state.searched_query}" not found` : ""}
                     id="live-docs-search"
