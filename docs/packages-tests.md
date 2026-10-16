@@ -141,6 +141,10 @@ In test-packages-core.R, with `drive()`:
 97. `system_library_check` gives each package's libraries and command, and one command for all.
 98. The installer's `EMBER-MISSING` lines become `missing_compiler`, `missing_system` and `system` rows, and its `Error:` line the message.
 99. A compiler missing during a source build is `missing_compiler`; a missing header stays `system`.
+117. On Linux with Package Manager binaries, `compiler_check` asks Package Manager about one package; binaries (or no answer) skip the check, a source answer counts every compiled package and offers a newer date. **[net]** At 2024-06-01 it sends R 4.6 cli's source, at 2026-09-01 its binary.
+118. `renv_failed_packages` reads renv's "failed to install" error in either quotes; `failed_builds` leaves out dependents renv never built, and names none without an index; `no_binary_packages` names the failed packages with no binary at the locked version (macOS: the binary index; Linux with Package Manager binaries: asked per package, through Bioconductor's repositories; Linux without them, GitHub sources and unlocked names: none).
+119. The installer's `EMBER-MISSING binary` line turns a failed build (`compile`, `configure`, `other`) into `no_binary` with the version, and leaves a missing compiler or a download as it was; its `Error:` line is the message.
+120. A real renv log (cli 3.6.2 at 2024-06-01 on R 4.6.1) is `no_binary`; in a real log with dependents (cli, rlang failed; lifecycle waited on them), cli and rlang are `no_binary` and lifecycle a `dependency` on cli; without the installer's line, "ERROR: loading failed" after a source build is `compile`. The Packages tab card says why and offers Update (e2e, install-no-binary.test.mjs).
 
 ## GitHub sources (increment 2)
 

@@ -14,7 +14,8 @@
 # manifest, not the progress, says what got installed):
 #   EMBER-PROGRESS <done> <total> <package> <step>
 #   EMBER-MISSING <what> <package> <detail>
-# when a compiler or a system library is missing (install-checks.R).
+# when a compiler or a system library is missing, or a package that failed
+# to build had no binary for this R (install-checks.R).
 # Exit status 0 iff the manifest was written and the rename made (which
 # includes losing a race to another process: see `finish_library()`).
 
@@ -54,7 +55,7 @@ main <- function(plan_path) {
   # renv downloads anything, so a missing one says what to install
   # instead of failing a build minutes in (install-checks.R).
   linux_binaries <- !is.null(cran_binary) && grepl("/__linux__/", cran_binary)
-  compiler <- ember:::compiler_check(lock, plan$repos, linux_binaries)
+  compiler <- ember:::compiler_check(lock, plan$repos, linux_binaries, binary_repos = repos)
   if (!is.null(compiler)) stop_missing(plan, compiler = compiler)
 
   github <- if (is.null(plan$github)) "https://api.github.com" else plan$github
@@ -79,10 +80,25 @@ main <- function(plan_path) {
   # and Windows, where renv never tests.
   Sys.setenv(RENV_INSTALL_TEST_LOAD = "FALSE")
   options(repos = repos)
-  withCallingHandlers(
+  restored <- tryCatch(withCallingHandlers(
     renv::restore(lockfile = lockfile_tmp, library = plan$staging,
                   project = project_dir, prompt = FALSE, clean = FALSE),
-    message = function(m) invokeRestart("muffleMessage"))
+    message = function(m) invokeRestart("muffleMessage")),
+    error = function(e) e)
+  # A failed build of a package that had no binary for this R is most
+  # often a version from before this R came out (an old snapshot date,
+  # #19): its own error (a removed C API) doesn't say so, so this does.
+  if (inherits(restored, "error")) {
+    msg <- conditionMessage(restored)
+    writeLines(paste("Error:", msg), con = stderr())
+    failed <- ember:::renv_failed_packages(msg)
+    if (length(failed) > 0) failed <- ember:::failed_builds(failed, ember:::read_available(plan$repos, "source"))
+    no_binary <- ember:::no_binary_packages(failed, lock, plan$repos,
+                                            binary_repos = repos, linux_binaries = linux_binaries)
+    if (length(no_binary) > 0) writeLines(ember:::missing_report_lines(no_binary = no_binary), con = stderr())
+    flush(stderr())
+    quit(status = 1L, save = "no")
+  }
 
   ember:::copy_from_r_library(plan$staging, wanted)
 

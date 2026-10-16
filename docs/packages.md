@@ -202,6 +202,7 @@ Behind that sit detection, resolution, index caching, library naming, installs, 
    - `[sources]` GitHub as one-row indexes: built, see [GitHub sources](#github-sources)
    - the install plan job: download size and consent
    - compiler and system-library checks: built, see [Install checks](#install-checks)
+   - old snapshot dates that build from source on a newer R: explained when the build fails, see [Install checks](#install-checks); saying so before the install waits for the install plan
    - disk use
    - R minor version change with a Bioconductor pin: built, see [Bioconductor](#bioconductor)
 3. **Release dates:** crandb, `preview_update()` for per-package update and pinning.
@@ -314,6 +315,43 @@ retries once the user has installed what was missing.
   so a normal install costs nothing. Rows: `missing_compiler`, `detail` =
   what to install (`compiler_instructions()`). GitHub sources aren't
   counted: whether they compile is known only once downloaded.
+- **On Linux with Package Manager binaries**, the compiler check above
+  is skipped unless Package Manager has no binaries for this R at the
+  snapshot date. A date from before it built binaries for this R gets
+  none, for every package (measured at 2024-06-01 on R 4.6). The installer
+  asks about one locked package (`ppm_serves_binary()`: the
+  `X-Package-Type` header Package Manager sends for R's user agent), and
+  only then reads the source index and names every compiled package. The
+  instructions add that a newer date needs no compiler.
+- **A build that fails with no binary for this R (#19).** A snapshot date
+  from before the running R came out has no binaries for that R, so renv
+  builds from source, and versions that old often don't build on a newer
+  R. At 2024-06-01 on R 4.6, rlang 1.1.3 fails to compile and cli 3.6.2
+  builds, then fails to load (`undefined symbol: SET_FRAME`), so any
+  notebook that uses the tidyverse fails. The build's own error doesn't
+  say why. When renv stops with "failed to install", the installer takes
+  the packages it names, drops the dependents renv never built (those
+  that need another failed package, from the source index:
+  `failed_builds()`), and asks which of the rest had no binary at their
+  locked version (`no_binary_packages()`: the binary index on macOS and
+  Windows, Package Manager per package on Linux with its binaries; on
+  Linux without them everything builds from source, so a failed build
+  says nothing about the date). Rows: `no_binary`, `detail` = the locked
+  version; it replaces the row's `compile`, `configure` or `other` kind,
+  not a missing compiler, system library, dependency or download. renv's
+  `- [lifecycle]: dependency failed (cli, rlang)` is a `dependency` row
+  naming cli. The card says the version had no binary for this R and was
+  built here, that the snapshot date being older than this R is the
+  likely reason (a failed binary build is the other one), and offers
+  Update (a newer date, whose versions have binaries) or an older R.
+  "ERROR: loading failed" after a source build (R's own load test) counts
+  as a failed build (`compile`).
+  Not built: saying so before the install. It is cheap to detect (one
+  request on Linux with Package Manager; on macOS and Windows a second
+  read of the binary index renv reads anyway), but it shouldn't stop the
+  install, since pure R packages build fine, and there is nowhere yet to
+  show a notice that doesn't stop it: that is the install plan's consent
+  step, which isn't built.
 - **A compiler missing during a build.** A build that fails because make
   or configure can't find the compiler (`gcc: No such file or directory`,
   `no acceptable C compiler`, `xcrun: error: invalid active developer

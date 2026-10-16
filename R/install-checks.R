@@ -13,8 +13,9 @@
 #   EMBER-MISSING <what> <package> <detail>
 # with <what> one of `compiler` (detail: what to install), `system`
 # (detail: the libraries not found, comma-separated, then the command
-# that installs every package's) or `library` (detail: the libraries,
-# when no command is known), followed by an `Error:` line that
+# that installs every package's), `library` (detail: the libraries,
+# when no command is known) or `binary` (after a failed build: the
+# package had no binary for this R, detail: its version), followed by an `Error:` line that
 # `install_failure_message()` shows. `install_failures()` turns the
 # EMBER-MISSING lines into rows.
 
@@ -171,20 +172,36 @@ read_available <- function(repos, type) {
 #' from source. The repository indexes are read only when the compiler is
 #' missing. `linux_binaries`: whether renv will install Package Manager's
 #' Linux binaries (the installer knows from renv's own URL rewrite);
-#' unused elsewhere: with them nothing builds from source, and the
-#' compiler isn't even looked for. `binary_type`: the binary repositories'
-#' type on macOS and Windows (a parameter so tests on Linux can ask for a
-#' Mac's). GitHub sources aren't counted: whether they have code to
-#' compile is known only once they're downloaded, so a missing compiler
-#' shows up from their build instead.
+#' unused elsewhere. With them almost nothing builds from source, except
+#' at a snapshot date from before Package Manager built binaries for this
+#' R (#19): then none of its packages has one. So one locked CRAN package
+#' is asked about (`ppm_serves_binary()`), at the URL renv will use
+#' (`binary_repos`, the installer's rewritten repositories), and only when
+#' it comes as source are the packages counted, as without binaries.
+#' (Measured: at 2024-06-01 Package Manager sent R 4.6 the source of every
+#' package asked about, pure R ones too; at 2026-09-01, binaries.)
+#' `binary_type`: the binary repositories' type on macOS and Windows (a
+#' parameter so tests on Linux can ask for a Mac's). GitHub sources aren't
+#' counted: whether they have code to compile is known only once they're
+#' downloaded, so a missing compiler shows up from their build instead.
 compiler_check <- function(lock, repos, linux_binaries = FALSE, os = os_kind(),
-                           compiler = NULL, binary_type = .Platform$pkgType) {
+                           compiler = NULL, binary_type = .Platform$pkgType,
+                           binary_repos = repos, serves_binary = ppm_serves_binary) {
   linux <- identical(os, "linux")
-  if (linux && linux_binaries) return(NULL)
   if (is.null(compiler)) compiler <- has_compiler(os)
   if (isTRUE(compiler)) return(NULL)
   entries <- lock$entries[lock$entries$source %in% c("CRAN", "Bioc"), , drop = FALSE]
   if (nrow(entries) == 0) return(NULL)
+  if (linux && linux_binaries) {
+    cran <- entries[entries$source == "CRAN", , drop = FALSE]
+    if (nrow(cran) == 0 || !"CRAN" %in% names(binary_repos)) return(NULL)
+    if (!identical(serves_binary(package_url(binary_repos[["CRAN"]], cran$name[[1]], cran$version[[1]])), FALSE)) {
+      return(NULL)
+    }
+    old_date <- TRUE
+  } else {
+    old_date <- FALSE
+  }
   wanted <- stats::setNames(entries$version, entries$name)
   source_index <- read_available(repos, "source")
   if (is.null(source_index)) return(NULL)
@@ -194,7 +211,99 @@ compiler_check <- function(lock, repos, linux_binaries = FALSE, os = os_kind(),
   if (!linux && is.null(binary_index)) return(NULL)
   pkgs <- source_builds(wanted, source_index, binary_index)
   if (length(pkgs) == 0) return(NULL)
-  list(packages = pkgs, instructions = compiler_instructions(os = os))
+  instructions <- compiler_instructions(os = os)
+  if (old_date) {
+    instructions <- paste(instructions, sprintf(paste(
+      "Package Manager has no binaries for R %s at this snapshot date; updating the",
+      "packages to a newer date, which has them, needs no compiler."), getRversion()))
+  }
+  list(packages = pkgs, instructions = instructions)
+}
+
+# ---- Packages with no binary for this R (#19) ----------------------------------
+#
+# A snapshot date from before this R came out has no binaries for it, so
+# renv builds its packages from source, and versions that old often don't
+# build on a newer R (cli 3.6.2 from 2024 on R 4.6: `undefined symbol:
+# SET_FRAME`). The build's own error says nothing about why. When a build
+# fails, the installer asks which of the failed packages had no binary and
+# says so, with what to do: move the date forward, or use an older R.
+
+#' A source package's URL in the repository at `repo`.
+package_url <- function(repo, package, version) {
+  paste0(sub("/+$", "", repo), "/src/contrib/", package, "_", version, ".tar.gz")
+}
+
+#' Whether Package Manager sends the package at `url` (under a `__linux__`
+#' repository) as a binary for this R: `TRUE`, `FALSE`, or `NA` when it
+#' can't be asked. It picks the binary from R's user agent, which
+#' `curlGetHeaders()` sends as renv's downloads do, and names what it sent
+#' in `X-Package-Type`. Bounded by `timeout` seconds, so a slow or
+#' unreachable server costs at most that, and answers `NA`.
+ppm_serves_binary <- function(url, timeout = 10L) {
+  h <- tryCatch(suppressWarnings(curlGetHeaders(url, timeout = timeout)), error = function(e) NULL)
+  if (is.null(h) || !identical(as.integer(attr(h, "status")), 200L)) return(NA)
+  type <- grep("^x-package-type:", h, ignore.case = TRUE, value = TRUE)
+  if (length(type) == 0) return(NA)
+  grepl("binary", type[[length(type)]], ignore.case = TRUE)
+}
+
+#' The packages renv names in its "failed to install" error, or none for
+#' any other error (a failed download stops renv with other words).
+renv_failed_packages <- function(message) {
+  if (!grepl("failed to install", message, fixed = TRUE)) return(character())
+  m <- regmatches(message, gregexpr("[\"\u201c][A-Za-z][A-Za-z0-9.]*[\"\u201d]", message))[[1]]
+  unique(gsub("[\"\u201c\u201d]", "", m))
+}
+
+#' The packages in `failed` that renv tried to build: those whose own
+#' dependencies (`Depends`, `Imports`, `LinkingTo` in `index`, the source
+#' `available.packages()` matrix) include no other failed package. renv's
+#' "failed to install" names its dependents too, which it never built
+#' (`- [lifecycle]: dependency failed (cli, rlang)`); they mustn't be said
+#' not to build. `NULL` index (unreadable): none, rather than guess.
+failed_builds <- function(failed, index) {
+  if (length(failed) == 0 || is.null(index)) return(character())
+  deps <- tools::package_dependencies(failed, db = index, which = c("Depends", "Imports", "LinkingTo"))
+  failed[!vapply(failed, function(p) any(deps[[p]] %in% failed), logical(1))]
+}
+
+#' Which of the locked packages in `failed` had no binary for this R at the
+#' snapshot date, so renv built them from source: named character,
+#' package -> locked version.
+#'
+#' * macOS and Windows: not in the binary index (`binary_type`) of `repos`
+#'   at the locked version. An unreadable index names none.
+#' * Linux with Package Manager binaries (`linux_binaries`): Package
+#'   Manager sends the source (`serves_binary`), asked at the URL renv used
+#'   (`binary_repos`, the installer's rewritten repositories).
+#' * Linux without them: none. Everything builds from source there, so a
+#'   failed build says nothing about the date.
+#'
+#' GitHub sources aren't counted: they always build from source.
+no_binary_packages <- function(failed, lock, repos, binary_repos = repos, linux_binaries = FALSE,
+                               os = os_kind(), binary_type = .Platform$pkgType,
+                               serves_binary = ppm_serves_binary) {
+  e <- lock$entries
+  e <- e[e$name %in% failed & e$source %in% c("CRAN", "Bioc"), , drop = FALSE]
+  none <- stats::setNames(character(), character())
+  if (nrow(e) == 0) return(none)
+  if (identical(os, "linux")) {
+    if (!linux_binaries) return(none)
+    repo_names <- list(CRAN = "CRAN", Bioc = c("BioCsoft", "BioCann", "BioCexp"))
+    no_binary <- vapply(seq_len(nrow(e)), function(i) {
+      for (r in intersect(repo_names[[e$source[[i]]]], names(binary_repos))) {
+        got <- serves_binary(package_url(binary_repos[[r]], e$name[[i]], e$version[[i]]))
+        if (!is.na(got)) return(!got)
+      }
+      FALSE
+    }, logical(1))
+  } else {
+    index <- read_available(repos, binary_type)
+    if (is.null(index)) return(none)
+    no_binary <- !paste(e$name, e$version) %in% paste(index[, "Package"], index[, "Version"])
+  }
+  stats::setNames(e$version[no_binary], e$name[no_binary])[order(e$name[no_binary])]
 }
 
 # ---- System libraries --------------------------------------------------------
@@ -374,8 +483,22 @@ system_library_check <- function(library, lock, repos, os = os_kind(),
 
 #' The installer's report of a check that stopped the install (see the
 #' top of this file): the lines it prints, without the newline.
-missing_report_lines <- function(compiler = NULL, system = NULL) {
+#' `no_binary`: packages whose build failed and that had no binary for
+#' this R (`no_binary_packages()`), with `r_version` the running R.
+missing_report_lines <- function(compiler = NULL, system = NULL, no_binary = character(),
+                                 r_version = as.character(getRversion())) {
   out <- character()
+  if (length(no_binary) > 0) {
+    named <- paste(names(no_binary), no_binary)
+    out <- c(out, sprintf("EMBER-MISSING binary %s %s", names(no_binary), unname(no_binary)),
+             sprintf(paste("Error: %s %s no binary for R %s, so %s built from source, and %s on R %s.",
+                           "Most often the snapshot date is older than this R, and versions from",
+                           "before an R release often don't build on it. Update the packages to a",
+                           "newer date, whose versions have binaries, or run the notebook on an older R."),
+                     paste(named, collapse = ", "), if (length(named) == 1) "has" else "have", r_version,
+                     if (length(named) == 1) "it was" else "they were",
+                     if (length(named) == 1) "it doesn't build" else "they don't build", r_version))
+  }
   if (!is.null(compiler)) {
     out <- c(out, sprintf("EMBER-MISSING compiler %s %s", compiler$packages, compiler$instructions),
              sprintf("Error: %s %s to build from source, and no compiler is installed. %s",

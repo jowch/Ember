@@ -1,0 +1,604 @@
+- Lockfile written to "/tmp/RtmpVk0EbV/ember-lockfile-487d3a0b94c0.json".
+EMBER-PROGRESS 0 4 - restore
+The following package(s) will be updated:
+
+# CRAN -----------------------------------------------------------------------
+- cli         [* -> 3.6.2]
+- glue        [* -> 1.7.0]
+- lifecycle   [* -> 1.0.4]
+- rlang       [* -> 1.1.3]
+
+- Querying repositories for available source packages ... Done!
+# Downloading packages -------------------------------------------------------
+[?25l  (0/4) Downloading: cli, glue, lifecycle, rlang                                                                                                                [32m✔[0m cli 3.6.2                                [568 kB in 0.68s]
+  (1/4) Downloading: glue, lifecycle, rlang                                                                                                                     [32m✔[0m lifecycle 1.0.4                          [108 kB in 0.9s]
+  (2/4) Downloading: glue, rlang                                                                                                                                [32m✔[0m glue 1.7.0                               [106 kB in 0.94s]
+  (3/4) Downloading: rlang                                                                                                                                      [32m✔[0m rlang 1.1.3                              [761 kB in 1.0s]
+                                                                                Successfully downloaded 4 packages in 1.3 seconds.
+
+# Installing packages --------------------------------------------------------
+  (0/4) Installing: cli, glue, rlang                                              (0/4) Installing: cli, glue, rlang                                              (0/4) Installing: cli, glue, rlang                                              (0/4) Installing: cli, glue, rlang                                                                                                                            [31m✖[0m rlang 1.1.3                             
+  (1/4) Installing: cli, glue                                                     (1/4) Installing: cli, glue                                                                                                                                   [32m✔[0m glue 1.7.0                               [built from source in 2.0s]
+  (2/4) Installing: cli                                                           (2/4) Installing: cli                                                           (2/4) Installing: cli                                                                                                                                         [31m✖[0m cli 3.6.2                               
+Rolled back installation of 1 package due to errors.
+
+The following package(s) were not installed successfully:
+- [rlang]: install failed
+- [cli]: install failed
+- [lifecycle]: dependency failed (cli, rlang)
+You may need to manually download and install these packages.
+
+# rlang ----------------------------------------------------------------------
+* installing *source* package ‘rlang’ ...
+** this is package ‘rlang’ version ‘1.1.3’
+** package ‘rlang’ successfully unpacked and MD5 sums checked
+** using staged installation
+** libs
+using C compiler: ‘gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0’
+In file included from ./rlang/rlang.h:44,
+                 from internal/internal.c:1,
+                 from internal.c:1:
+./rlang/obj.h: In function ‘r_mark_object’:
+./rlang/obj.h:55:3: warning: implicit declaration of function ‘SET_OBJECT’ [-Wimplicit-function-declaration]
+   55 |   SET_OBJECT(x, 1);
+      |   ^~~~~~~~~~
+./rlang/obj.h: In function ‘r_is_object’:
+./rlang/obj.h:63:10: warning: implicit declaration of function ‘OBJECT’ [-Wimplicit-function-declaration]
+   63 |   return OBJECT(x);
+      |          ^~~~~~
+./rlang/obj.h: In function ‘r_poke_type’:
+./rlang/obj.h:90:3: warning: implicit declaration of function ‘SET_TYPEOF’; did you mean ‘TYPEOF’? [-Wimplicit-function-declaration]
+   90 |   SET_TYPEOF(x, type);
+      |   ^~~~~~~~~~
+      |   TYPEOF
+In file included from ./rlang/rlang.h:49:
+./rlang/attrib.h: In function ‘r_attrib’:
+./rlang/attrib.h:10:10: warning: implicit declaration of function ‘ATTRIB’ [-Wimplicit-function-declaration]
+   10 |   return ATTRIB(x);
+      |          ^~~~~~
+./rlang/attrib.h:10:10: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+   10 |   return ATTRIB(x);
+      |          ^~~~~~~~~
+./rlang/attrib.h: In function ‘r_poke_attrib’:
+./rlang/attrib.h:14:3: warning: implicit declaration of function ‘SET_ATTRIB’; did you mean ‘ANY_ATTRIB’? [-Wimplicit-function-declaration]
+   14 |   SET_ATTRIB(x, attrs);
+      |   ^~~~~~~~~~
+      |   ANY_ATTRIB
+capture.c: In function ‘new_captured_promise’:
+capture.c:39:20: warning: implicit declaration of function ‘PRENV’ [-Wimplicit-function-declaration]
+   39 |         expr_env = PRENV(expr);
+      |                    ^~~~~
+capture.c:39:18: warning: assignment to ‘SEXP’ {aka ‘struct SEXPREC *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+   39 |         expr_env = PRENV(expr);
+      |                  ^
+capture.c:40:16: warning: implicit declaration of function ‘PREXPR’ [-Wimplicit-function-declaration]
+   40 |         expr = PREXPR(expr);
+      |                ^~~~~~
+capture.c:40:14: warning: assignment to ‘SEXP’ {aka ‘struct SEXPREC *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+   40 |         expr = PREXPR(expr);
+      |              ^
+In file included from capture.c:1:
+capture.c: In function ‘rlang_capturearginfo’:
+/opt/R/4.6.1/lib/R/include/Rinternals.h:920:33: warning: implicit declaration of function ‘Rf_findVarInFrame3’; did you mean ‘findVarInFrame3’? [-Wimplicit-function-declaration]
+  920 | #define findVarInFrame3         Rf_findVarInFrame3
+      |                                 ^~~~~~~~~~~~~~~~~~
+capture.c:70:16: note: in expansion of macro ‘findVarInFrame3’
+   70 |     SEXP sym = findVarInFrame3(rho, install("arg"), TRUE);
+      |                ^~~~~~~~~~~~~~~
+In file included from ./rlang/dyn-array.h:4,
+                 from ./rlang/rlang.h:56:
+./rlang/vec.h: In function ‘r_chr_cbegin’:
+/opt/R/4.6.1/lib/R/include/Rinternals.h:920:33: warning: initialization of ‘SEXP’ {aka ‘struct SEXPREC *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+  920 | #define findVarInFrame3         Rf_findVarInFrame3
+      |                                 ^~~~~~~~~~~~~~~~~~
+capture.c:70:16: note: in expansion of macro ‘findVarInFrame3’
+   70 |     SEXP sym = findVarInFrame3(rho, install("arg"), TRUE);
+      |                ^~~~~~~~~~~~~~~
+capture.c:80:9: warning: assignment to ‘SEXP’ {aka ‘struct SEXPREC *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+   80 |     sym = PREXPR(sym);
+      |         ^
+/opt/R/4.6.1/lib/R/include/Rinternals.h:918:33: warning: implicit declaration of function ‘Rf_findVar’; did you mean ‘Rf_findFun’? [-Wimplicit-function-declaration]
+  918 | #define findVar                 Rf_findVar
+      |                                 ^~~~~~~~~~
+capture.c:94:15: note: in expansion of macro ‘findVar’
+   94 |         arg = findVar(sym, frame);
+      |               ^~~~~~~
+capture.c:94:13: warning: assignment to ‘SEXP’ {aka ‘struct SEXPREC *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+   94 |         arg = findVar(sym, frame);
+      |             ^
+capture.c: In function ‘capturedots’:
+/opt/R/4.6.1/lib/R/include/Rinternals.h:918:33: warning: passing argument 1 of ‘Rf_protect’ makes pointer from integer without a cast [-Wint-conversion]
+  918 | #define findVar                 Rf_findVar
+/opt/R/4.6.1/lib/R/include/Rinternals.h:357:36: note: in definition of macro ‘PROTECT’
+  357 | #define PROTECT(s)      Rf_protect(s)
+      |                                    ^
+capture.c:113:25: note: in expansion of macro ‘findVar’
+  113 |     SEXP dots = PROTECT(findVar(R_DotsSymbol, frame));
+      |                         ^~~~~~~
+/opt/R/4.6.1/lib/R/include/Rinternals.h:1117:17: note: expected ‘SEXP’ {aka ‘struct SEXPREC *’} but argument is of type ‘int’
+ 1117 | SEXP Rf_protect(SEXP);
+      |                 ^~~~
+capture.c: In function ‘capturedot’:
+/opt/R/4.6.1/lib/R/include/Rinternals.h:918:33: warning: passing argument 1 of ‘Rf_protect’ makes pointer from integer without a cast [-Wint-conversion]
+  918 | #define findVar                 Rf_findVar
+/opt/R/4.6.1/lib/R/include/Rinternals.h:357:36: note: in definition of macro ‘PROTECT’
+  357 | #define PROTECT(s)      Rf_protect(s)
+      |                                    ^
+capture.c:177:25: note: in expansion of macro ‘findVar’
+  177 |     SEXP dots = PROTECT(findVar(R_DotsSymbol, frame));
+      |                         ^~~~~~~
+/opt/R/4.6.1/lib/R/include/Rinternals.h:1117:17: note: expected ‘SEXP’ {aka ‘struct SEXPREC *’} but argument is of type ‘int’
+ 1117 | SEXP Rf_protect(SEXP);
+      |                 ^~~~
+./rlang/vec.h:50:27: warning: implicit declaration of function ‘STRING_PTR’; did you mean ‘STRING_ELT’? [-Wimplicit-function-declaration]
+   50 |   return (r_obj* const *) STRING_PTR(x);
+      |                           ^~~~~~~~~~
+      |                           STRING_ELT
+./rlang/vec.h:50:10: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+   50 |   return (r_obj* const *) STRING_PTR(x);
+      |          ^
+In file included from ./rlang/rlang.h:58:
+./rlang/env.h: In function ‘r_env_parent’:
+./rlang/env.h:29:10: warning: implicit declaration of function ‘ENCLOS’ [-Wimplicit-function-declaration]
+   29 |   return ENCLOS(env);
+      |          ^~~~~~
+./rlang/env.h:29:10: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+   29 |   return ENCLOS(env);
+      |          ^~~~~~~~~~~
+./rlang/env.h: In function ‘r_env_poke_parent’:
+./rlang/env.h:33:3: warning: implicit declaration of function ‘SET_ENCLOS’ [-Wimplicit-function-declaration]
+   33 |   SET_ENCLOS(env, new_parent);
+      |   ^~~~~~~~~~
+./rlang/env.h: In function ‘r_env_find’:
+./rlang/env.h:47:10: warning: implicit declaration of function ‘Rf_findVarInFrame3’ [-Wimplicit-function-declaration]
+   47 |   return Rf_findVarInFrame3(env, sym, FALSE);
+      |          ^~~~~~~~~~~~~~~~~~
+./rlang/env.h:47:10: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+   47 |   return Rf_findVarInFrame3(env, sym, FALSE);
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+./rlang/env.h: In function ‘r_env_find_anywhere’:
+./rlang/env.h:51:10: warning: implicit declaration of function ‘Rf_findVar’; did you mean ‘Rf_findFun’? [-Wimplicit-function-declaration]
+   51 |   return Rf_findVar(sym, env);
+      |          ^~~~~~~~~~
+      |          Rf_findFun
+./rlang/env.h:51:10: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+   51 |   return Rf_findVar(sym, env);
+      |          ^~~~~~~~~~~~~~~~~~~~
+./rlang/env.h: In function ‘r_alloc_empty_environment’:
+./rlang/env.h:88:16: warning: implicit declaration of function ‘Rf_allocSExp’; did you mean ‘Rf_allocList’? [-Wimplicit-function-declaration]
+   88 |   r_obj* env = Rf_allocSExp(R_TYPE_environment);
+      |                ^~~~~~~~~~~~
+      |                Rf_allocList
+./rlang/env.h:88:16: warning: initialization of ‘r_obj *’ {aka ‘struct SEXPREC *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+In file included from ./rlang/rlang.h:62:
+./rlang/fn.h: In function ‘r_fn_poke_body’:
+./rlang/fn.h:11:3: warning: implicit declaration of function ‘SET_BODY’ [-Wimplicit-function-declaration]
+   11 |   SET_BODY(fn, body);
+      |   ^~~~~~~~
+./rlang/fn.h: In function ‘r_fn_env’:
+./rlang/fn.h:16:10: warning: implicit declaration of function ‘CLOENV’ [-Wimplicit-function-declaration]
+   16 |   return CLOENV(fn);
+      |          ^~~~~~
+./rlang/fn.h:16:10: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+   16 |   return CLOENV(fn);
+      |          ^~~~~~~~~~
+./rlang/fn.h: In function ‘r_fn_poke_env’:
+./rlang/fn.h:20:3: warning: implicit declaration of function ‘SET_CLOENV’ [-Wimplicit-function-declaration]
+   20 |   SET_CLOENV(fn, env);
+      |   ^~~~~~~~~~
+./rlang/fn.h: In function ‘r_new_function’:
+./rlang/fn.h:25:13: warning: initialization of ‘SEXP’ {aka ‘struct SEXPREC *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+   25 |   SEXP fn = Rf_allocSExp(R_TYPE_closure);
+      |             ^~~~~~~~~~~~
+./rlang/fn.h:26:3: warning: implicit declaration of function ‘SET_FORMALS’ [-Wimplicit-function-declaration]
+   26 |   SET_FORMALS(fn, formals);
+      |   ^~~~~~~~~~~
+In file included from internal/internal.c:12:
+internal/dots-ellipsis.c: In function ‘ellipsis_promise_forced’:
+internal/dots-ellipsis.c:56:12: warning: implicit declaration of function ‘PRVALUE’ [-Wimplicit-function-declaration]
+   56 |     return PRVALUE(x) != r_syms.unbound;
+      |            ^~~~~~~
+internal/dots-ellipsis.c:56:23: warning: comparison between pointer and integer
+   56 |     return PRVALUE(x) != r_syms.unbound;
+      |                       ^~
+In file included from internal/internal.c:13:
+internal/encoding.c: In function ‘str_is_ascii_or_utf8’:
+internal/encoding.c:200:22: warning: implicit declaration of function ‘LEVELS’ [-Wimplicit-function-declaration]
+  200 |   const int levels = LEVELS(x);
+      |                      ^~~~~~
+In file included from internal/internal.c:14:
+internal/env.c: In function ‘ffi_env_unlock’:
+internal/env.c:5:25: warning: implicit declaration of function ‘SET_ENVFLAGS’ [-Wimplicit-function-declaration]
+    5 | #define UNLOCK_FRAME(e) SET_ENVFLAGS(e, ENVFLAGS(e) & (~FRAME_LOCK_MASK))
+      |                         ^~~~~~~~~~~~
+internal/env.c:9:3: note: in expansion of macro ‘UNLOCK_FRAME’
+    9 |   UNLOCK_FRAME(env);
+      |   ^~~~~~~~~~~~
+internal/env.c:5:41: warning: implicit declaration of function ‘ENVFLAGS’ [-Wimplicit-function-declaration]
+    5 | #define UNLOCK_FRAME(e) SET_ENVFLAGS(e, ENVFLAGS(e) & (~FRAME_LOCK_MASK))
+      |                                         ^~~~~~~~
+internal/env.c:9:3: note: in expansion of macro ‘UNLOCK_FRAME’
+    9 |   UNLOCK_FRAME(env);
+      |   ^~~~~~~~~~~~
+In file included from internal/internal.c:18:
+internal/exported.c: In function ‘ffi_env_frame’:
+internal/exported.c:443:10: warning: implicit declaration of function ‘FRAME’ [-Wimplicit-function-declaration]
+  443 |   return FRAME(env);
+      |          ^~~~~
+internal/exported.c:443:10: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+  443 |   return FRAME(env);
+      |          ^~~~~~~~~~
+internal/exported.c: In function ‘ffi_env_hash_table’:
+internal/exported.c:446:10: warning: implicit declaration of function ‘HASHTAB’ [-Wimplicit-function-declaration]
+  446 |   return HASHTAB(env);
+      |          ^~~~~~~
+internal/exported.c:446:10: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+  446 |   return HASHTAB(env);
+      |          ^~~~~~~~~~~~
+internal/exported.c: In function ‘ffi_env_browse’:
+internal/exported.c:486:22: warning: implicit declaration of function ‘RDEBUG’; did you mean ‘NDEBUG’? [-Wimplicit-function-declaration]
+  486 |   r_obj* old = r_lgl(RDEBUG(env));
+      |                      ^~~~~~
+      |                      NDEBUG
+internal/exported.c:487:3: warning: implicit declaration of function ‘SET_RDEBUG’ [-Wimplicit-function-declaration]
+  487 |   SET_RDEBUG(env, r_lgl_get(value, 0));
+      |   ^~~~~~~~~~
+internal/exported.c: In function ‘ffi_ns_registry_env’:
+internal/exported.c:499:10: error: ‘R_NamespaceRegistry’ undeclared (first use in this function)
+  499 |   return R_NamespaceRegistry;
+      |          ^~~~~~~~~~~~~~~~~~~
+internal/exported.c:499:10: note: each undeclared identifier is reported only once for each function it appears in
+internal/exported.c: In function ‘ffi_true_length’:
+internal/exported.c:694:16: warning: implicit declaration of function ‘XTRUELENGTH’; did you mean ‘XLENGTH’? [-Wimplicit-function-declaration]
+  694 |   return r_int(XTRUELENGTH(x));
+      |                ^~~~~~~~~~~
+      |                XLENGTH
+internal/exported.c: In function ‘ffi_promise_expr’:
+internal/exported.c:757:10: warning: implicit declaration of function ‘PREXPR’; did you mean ‘PRIXPTR’? [-Wimplicit-function-declaration]
+  757 |   return PREXPR(prom);
+      |          ^~~~~~
+      |          PRIXPTR
+internal/exported.c:757:10: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+  757 |   return PREXPR(prom);
+      |          ^~~~~~~~~~~~
+internal/exported.c: In function ‘ffi_promise_env’:
+internal/exported.c:761:10: warning: implicit declaration of function ‘PRENV’ [-Wimplicit-function-declaration]
+  761 |   return PRENV(prom);
+      |          ^~~~~
+internal/exported.c:761:10: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+  761 |   return PRENV(prom);
+      |          ^~~~~~~~~~~
+internal/exported.c: In function ‘ffi_promise_value’:
+internal/exported.c:765:18: warning: initialization of ‘r_obj *’ {aka ‘struct SEXPREC *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+  765 |   r_obj* value = PRVALUE(prom);
+      |                  ^~~~~~~
+In file included from ./rlang/rlang.h:24:
+internal/exported.c: In function ‘ffi_named’:
+internal/exported.c:778:15: warning: passing argument 1 of ‘Rf_protect’ makes pointer from integer without a cast [-Wint-conversion]
+  778 |   x = PROTECT(Rf_findVarInFrame3(env, x, FALSE));
+      |               ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      |               |
+      |               int
+/opt/R/4.6.1/lib/R/include/Rinternals.h:357:36: note: in definition of macro ‘PROTECT’
+  357 | #define PROTECT(s)      Rf_protect(s)
+      |                                    ^
+/opt/R/4.6.1/lib/R/include/Rinternals.h:1117:17: note: expected ‘SEXP’ {aka ‘struct SEXPREC *’} but argument is of type ‘int’
+ 1117 | SEXP Rf_protect(SEXP);
+      |                 ^~~~
+internal/exported.c:787:27: warning: implicit declaration of function ‘NAMED’ [-Wimplicit-function-declaration]
+  787 |   return Rf_ScalarInteger(NAMED(x));
+      |                           ^~~~~
+internal/exported.c: In function ‘ffi_find_var’:
+internal/exported.c:791:10: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+  791 |   return Rf_findVar(sym, env);
+      |          ^~~~~~~~~~~~~~~~~~~~
+internal/exported.c: In function ‘ffi_find_var_in_frame’:
+internal/exported.c:794:10: warning: implicit declaration of function ‘Rf_findVarInFrame’; did you mean ‘R_existsVarInFrame’? [-Wimplicit-function-declaration]
+  794 |   return Rf_findVarInFrame(env, sym);
+      |          ^~~~~~~~~~~~~~~~~
+      |          R_existsVarInFrame
+internal/exported.c:794:10: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+  794 |   return Rf_findVarInFrame(env, sym);
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+make: *** [/opt/R/4.6.1/lib/R/etc/Makeconf:190: internal.o] Error 1
+make: *** Waiting for unfinished jobs....
+In file included from ./rlang/rlang.h:44,
+                 from rlang/rlang.c:1,
+                 from rlang.c:5:
+./rlang/obj.h: In function ‘r_mark_object’:
+./rlang/obj.h:55:3: warning: implicit declaration of function ‘SET_OBJECT’ [-Wimplicit-function-declaration]
+   55 |   SET_OBJECT(x, 1);
+      |   ^~~~~~~~~~
+./rlang/obj.h: In function ‘r_is_object’:
+./rlang/obj.h:63:10: warning: implicit declaration of function ‘OBJECT’ [-Wimplicit-function-declaration]
+   63 |   return OBJECT(x);
+      |          ^~~~~~
+./rlang/obj.h: In function ‘r_poke_type’:
+./rlang/obj.h:90:3: warning: implicit declaration of function ‘SET_TYPEOF’; did you mean ‘TYPEOF’? [-Wimplicit-function-declaration]
+   90 |   SET_TYPEOF(x, type);
+      |   ^~~~~~~~~~
+      |   TYPEOF
+In file included from ./rlang/rlang.h:49:
+./rlang/attrib.h: In function ‘r_attrib’:
+./rlang/attrib.h:10:10: warning: implicit declaration of function ‘ATTRIB’ [-Wimplicit-function-declaration]
+   10 |   return ATTRIB(x);
+      |          ^~~~~~
+./rlang/attrib.h:10:10: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+   10 |   return ATTRIB(x);
+      |          ^~~~~~~~~
+./rlang/attrib.h: In function ‘r_poke_attrib’:
+./rlang/attrib.h:14:3: warning: implicit declaration of function ‘SET_ATTRIB’; did you mean ‘ANY_ATTRIB’? [-Wimplicit-function-declaration]
+   14 |   SET_ATTRIB(x, attrs);
+      |   ^~~~~~~~~~
+      |   ANY_ATTRIB
+In file included from ./rlang/dyn-array.h:4,
+                 from ./rlang/rlang.h:56:
+./rlang/vec.h: In function ‘r_chr_cbegin’:
+./rlang/vec.h:50:27: warning: implicit declaration of function ‘STRING_PTR’; did you mean ‘STRING_ELT’? [-Wimplicit-function-declaration]
+   50 |   return (r_obj* const *) STRING_PTR(x);
+      |                           ^~~~~~~~~~
+      |                           STRING_ELT
+./rlang/vec.h:50:10: warning: cast to pointer from integer of different size [-Wint-to-pointer-cast]
+   50 |   return (r_obj* const *) STRING_PTR(x);
+      |          ^
+In file included from ./rlang/rlang.h:58:
+./rlang/env.h: In function ‘r_env_parent’:
+./rlang/env.h:29:10: warning: implicit declaration of function ‘ENCLOS’ [-Wimplicit-function-declaration]
+   29 |   return ENCLOS(env);
+      |          ^~~~~~
+./rlang/env.h:29:10: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+   29 |   return ENCLOS(env);
+      |          ^~~~~~~~~~~
+./rlang/env.h: In function ‘r_env_poke_parent’:
+./rlang/env.h:33:3: warning: implicit declaration of function ‘SET_ENCLOS’ [-Wimplicit-function-declaration]
+   33 |   SET_ENCLOS(env, new_parent);
+      |   ^~~~~~~~~~
+./rlang/env.h: In function ‘r_env_find’:
+./rlang/env.h:47:10: warning: implicit declaration of function ‘Rf_findVarInFrame3’ [-Wimplicit-function-declaration]
+   47 |   return Rf_findVarInFrame3(env, sym, FALSE);
+      |          ^~~~~~~~~~~~~~~~~~
+./rlang/env.h:47:10: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+   47 |   return Rf_findVarInFrame3(env, sym, FALSE);
+      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+./rlang/env.h: In function ‘r_env_find_anywhere’:
+./rlang/env.h:51:10: warning: implicit declaration of function ‘Rf_findVar’; did you mean ‘Rf_findFun’? [-Wimplicit-function-declaration]
+   51 |   return Rf_findVar(sym, env);
+      |          ^~~~~~~~~~
+      |          Rf_findFun
+./rlang/env.h:51:10: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+   51 |   return Rf_findVar(sym, env);
+      |          ^~~~~~~~~~~~~~~~~~~~
+./rlang/env.h: In function ‘r_alloc_empty_environment’:
+./rlang/env.h:88:16: warning: implicit declaration of function ‘Rf_allocSExp’; did you mean ‘Rf_allocList’? [-Wimplicit-function-declaration]
+   88 |   r_obj* env = Rf_allocSExp(R_TYPE_environment);
+      |                ^~~~~~~~~~~~
+      |                Rf_allocList
+./rlang/env.h:88:16: warning: initialization of ‘r_obj *’ {aka ‘struct SEXPREC *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+In file included from ./rlang/rlang.h:62:
+./rlang/fn.h: In function ‘r_fn_poke_body’:
+./rlang/fn.h:11:3: warning: implicit declaration of function ‘SET_BODY’ [-Wimplicit-function-declaration]
+   11 |   SET_BODY(fn, body);
+      |   ^~~~~~~~
+./rlang/fn.h: In function ‘r_fn_env’:
+./rlang/fn.h:16:10: warning: implicit declaration of function ‘CLOENV’ [-Wimplicit-function-declaration]
+   16 |   return CLOENV(fn);
+      |          ^~~~~~
+./rlang/fn.h:16:10: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+   16 |   return CLOENV(fn);
+      |          ^~~~~~~~~~
+./rlang/fn.h: In function ‘r_fn_poke_env’:
+./rlang/fn.h:20:3: warning: implicit declaration of function ‘SET_CLOENV’ [-Wimplicit-function-declaration]
+   20 |   SET_CLOENV(fn, env);
+      |   ^~~~~~~~~~
+./rlang/fn.h: In function ‘r_new_function’:
+./rlang/fn.h:25:13: warning: initialization of ‘SEXP’ {aka ‘struct SEXPREC *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+   25 |   SEXP fn = Rf_allocSExp(R_TYPE_closure);
+      |             ^~~~~~~~~~~~
+./rlang/fn.h:26:3: warning: implicit declaration of function ‘SET_FORMALS’ [-Wimplicit-function-declaration]
+   26 |   SET_FORMALS(fn, formals);
+      |   ^~~~~~~~~~~
+In file included from rlang/rlang.c:14:
+rlang/env.c: In function ‘r_ns_env’:
+rlang/env.c:9:26: error: ‘R_NamespaceRegistry’ undeclared (first use in this function)
+    9 |   r_obj* ns = r_env_find(R_NamespaceRegistry, r_sym(pkg));
+      |                          ^~~~~~~~~~~~~~~~~~~
+rlang/env.c:9:26: note: each undeclared identifier is reported only once for each function it appears in
+In file included from rlang/rlang.c:15:
+rlang/env-binding.c: In function ‘r_env_binding_is_promise’:
+rlang/env-binding.c:7:45: warning: implicit declaration of function ‘PRVALUE’ [-Wimplicit-function-declaration]
+    7 |   return r_typeof(obj) == R_TYPE_promise && PRVALUE(obj) == r_syms.unbound;
+      |                                             ^~~~~~~
+rlang/env-binding.c:7:58: warning: comparison between pointer and integer
+    7 |   return r_typeof(obj) == R_TYPE_promise && PRVALUE(obj) == r_syms.unbound;
+      |                                                          ^~
+In file included from rlang/rlang.c:28:
+rlang/vec.c: In function ‘r_lgl_resize’:
+rlang/vec.c:30:7: warning: implicit declaration of function ‘SETLENGTH’; did you mean ‘XLENGTH’? [-Wimplicit-function-declaration]
+   30 |       SETLENGTH(x, size);                                       \
+      |       ^~~~~~~~~
+rlang/vec.c:75:3: note: in expansion of macro ‘RESIZE’
+   75 |   RESIZE(R_TYPE_logical, int, r_lgl_cbegin, r_lgl_begin);
+      |   ^~~~~~
+rlang/vec.c:31:7: warning: implicit declaration of function ‘SET_TRUELENGTH’ [-Wimplicit-function-declaration]
+   31 |       SET_TRUELENGTH(x, x_size);                                \
+      |       ^~~~~~~~~~~~~~
+rlang/vec.c:75:3: note: in expansion of macro ‘RESIZE’
+   75 |   RESIZE(R_TYPE_logical, int, r_lgl_cbegin, r_lgl_begin);
+      |   ^~~~~~
+rlang/vec.c:32:7: warning: implicit declaration of function ‘SET_GROWABLE_BIT’ [-Wimplicit-function-declaration]
+   32 |       SET_GROWABLE_BIT(x);                                      \
+      |       ^~~~~~~~~~~~~~~~
+rlang/vec.c:75:3: note: in expansion of macro ‘RESIZE’
+   75 |   RESIZE(R_TYPE_logical, int, r_lgl_cbegin, r_lgl_begin);
+      |   ^~~~~~
+In file included from rlang/rlang.c:32:
+rlang/walk.c: In function ‘sexp_node_attrib’:
+rlang/walk.c:309:12: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+  309 |     return ATTRIB(x);
+      |            ^~~~~~~~~
+rlang/walk.c: In function ‘sexp_node_car’:
+rlang/walk.c:317:78: warning: implicit declaration of function ‘FORMALS’ [-Wimplicit-function-declaration]
+  317 |   case R_TYPE_closure:     *p_rel = R_SEXP_IT_RELATION_function_fmls; return FORMALS(x);
+      |                                                                              ^~~~~~~
+rlang/walk.c:317:78: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+  317 |   case R_TYPE_closure:     *p_rel = R_SEXP_IT_RELATION_function_fmls; return FORMALS(x);
+      |                                                                              ^~~~~~~~~~
+rlang/walk.c:318:82: warning: implicit declaration of function ‘FRAME’ [-Wimplicit-function-declaration]
+  318 |   case R_TYPE_environment: *p_rel = R_SEXP_IT_RELATION_environment_frame; return FRAME(x);
+      |                                                                                  ^~~~~
+rlang/walk.c:318:82: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+  318 |   case R_TYPE_environment: *p_rel = R_SEXP_IT_RELATION_environment_frame; return FRAME(x);
+      |                                                                                  ^~~~~~~~
+rlang/walk.c:319:78: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+  319 |   case R_TYPE_promise:     *p_rel = R_SEXP_IT_RELATION_promise_value; return PRVALUE(x);
+      |                                                                              ^~~~~~~~~~
+rlang/walk.c: In function ‘sexp_node_cdr’:
+rlang/walk.c:332:78: warning: implicit declaration of function ‘BODY’ [-Wimplicit-function-declaration]
+  332 |   case R_TYPE_closure:     *p_rel = R_SEXP_IT_RELATION_function_body; return BODY(x);
+      |                                                                              ^~~~
+rlang/walk.c:332:78: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+  332 |   case R_TYPE_closure:     *p_rel = R_SEXP_IT_RELATION_function_body; return BODY(x);
+      |                                                                              ^~~~~~~
+rlang/walk.c:333:83: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+  333 |   case R_TYPE_environment: *p_rel = R_SEXP_IT_RELATION_environment_enclos; return ENCLOS(x);
+      |                                                                                   ^~~~~~~~~
+rlang/walk.c:334:77: warning: implicit declaration of function ‘PREXPR’; did you mean ‘PRIXPTR’? [-Wimplicit-function-declaration]
+  334 |   case R_TYPE_promise:     *p_rel = R_SEXP_IT_RELATION_promise_expr; return PREXPR(x);
+      |                                                                             ^~~~~~
+      |                                                                             PRIXPTR
+rlang/walk.c:334:77: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+  334 |   case R_TYPE_promise:     *p_rel = R_SEXP_IT_RELATION_promise_expr; return PREXPR(x);
+      |                                                                             ^~~~~~~~~
+rlang/walk.c:335:77: warning: implicit declaration of function ‘EXTPTR_PROT’ [-Wimplicit-function-declaration]
+  335 |   case R_TYPE_pointer:     *p_rel = R_SEXP_IT_RELATION_pointer_prot; return EXTPTR_PROT(x);
+      |                                                                             ^~~~~~~~~~~
+rlang/walk.c:335:77: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+  335 |   case R_TYPE_pointer:     *p_rel = R_SEXP_IT_RELATION_pointer_prot; return EXTPTR_PROT(x);
+      |                                                                             ^~~~~~~~~~~~~~
+rlang/walk.c: In function ‘sexp_node_tag’:
+rlang/walk.c:347:77: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+  347 |   case R_TYPE_closure:     *p_rel = R_SEXP_IT_RELATION_function_env; return CLOENV(x);
+      |                                                                             ^~~~~~~~~
+rlang/walk.c:348:84: warning: implicit declaration of function ‘HASHTAB’ [-Wimplicit-function-declaration]
+  348 |   case R_TYPE_environment: *p_rel = R_SEXP_IT_RELATION_environment_hashtab; return HASHTAB(x);
+      |                                                                                    ^~~~~~~
+rlang/walk.c:348:84: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+  348 |   case R_TYPE_environment: *p_rel = R_SEXP_IT_RELATION_environment_hashtab; return HASHTAB(x);
+      |                                                                                    ^~~~~~~~~~
+rlang/walk.c:349:76: warning: implicit declaration of function ‘PRENV’ [-Wimplicit-function-declaration]
+  349 |   case R_TYPE_promise:     *p_rel = R_SEXP_IT_RELATION_promise_env; return PRENV(x);
+      |                                                                            ^~~~~
+rlang/walk.c:349:76: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+  349 |   case R_TYPE_promise:     *p_rel = R_SEXP_IT_RELATION_promise_env; return PRENV(x);
+      |                                                                            ^~~~~~~~
+rlang/walk.c:350:76: warning: implicit declaration of function ‘EXTPTR_TAG’ [-Wimplicit-function-declaration]
+  350 |   case R_TYPE_pointer:     *p_rel = R_SEXP_IT_RELATION_pointer_tag; return EXTPTR_TAG(x);
+      |                                                                            ^~~~~~~~~~
+rlang/walk.c:350:76: warning: returning ‘int’ from a function with return type ‘r_obj *’ {aka ‘struct SEXPREC *’} makes pointer from integer without a cast [-Wint-conversion]
+  350 |   case R_TYPE_pointer:     *p_rel = R_SEXP_IT_RELATION_pointer_tag; return EXTPTR_TAG(x);
+      |                                                                            ^~~~~~~~~~~~~
+make: *** [/opt/R/4.6.1/lib/R/etc/Makeconf:190: rlang.o] Error 1
+ERROR: compilation failed for package ‘rlang’
+* removing ‘/tmp/claude-r19/cache2/libraries/R-4.6/x86_64-pc-linux-gnu/36c5c28b840f54e5d72aadd883d4d450.staging-18540-file486c5b4eee4b/.renv/1/rlang’
+
+# cli ------------------------------------------------------------------------
+* installing *source* package ‘cli’ ...
+** this is package ‘cli’ version ‘3.6.2’
+** package ‘cli’ successfully unpacked and MD5 sums checked
+** using staged installation
+** libs
+using C compiler: ‘gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0’
+cleancall.c: In function ‘cleancall_init’:
+cleancall.c:39:28: warning: implicit declaration of function ‘Rf_findVar’; did you mean ‘Rf_findFun’? [-Wimplicit-function-declaration]
+   39 |   cleancall_fns_dot_call = Rf_findVar(Rf_install(".Call"), R_BaseEnv);
+      |                            ^~~~~~~~~~
+      |                            Rf_findFun
+cleancall.c:39:26: warning: assignment to ‘SEXP’ {aka ‘struct SEXPREC *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+   39 |   cleancall_fns_dot_call = Rf_findVar(Rf_install(".Call"), R_BaseEnv);
+      |                          ^
+diff.c: In function ‘clic_diff_chr’:
+diff.c:88:15: warning: implicit declaration of function ‘STRING_PTR’; did you mean ‘STRING_ELT’? [-Wimplicit-function-declaration]
+   88 |   data.aptr = STRING_PTR(old);
+      |               ^~~~~~~~~~
+      |               STRING_ELT
+diff.c:88:13: warning: assignment to ‘struct SEXPREC **’ from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+   88 |   data.aptr = STRING_PTR(old);
+      |             ^
+diff.c:89:13: warning: assignment to ‘struct SEXPREC **’ from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+   89 | Error: failed to install "cli", "lifecycle", "rlang"
+  data.bptr = STRING_PTR(new);
+      |             ^
+init.c: In function ‘R_init_cli’:
+init.c:107:28: warning: implicit declaration of function ‘Rf_findVar’; did you mean ‘Rf_findFun’? [-Wimplicit-function-declaration]
+  107 |   cleancall_fns_dot_call = Rf_findVar(Rf_install(".Call"), R_BaseEnv);
+      |                            ^~~~~~~~~~
+      |                            Rf_findFun
+init.c:107:26: warning: assignment to ‘SEXP’ {aka ‘struct SEXPREC *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+  107 |   cleancall_fns_dot_call = Rf_findVar(Rf_install(".Call"), R_BaseEnv);
+      |                          ^
+progress-altrep.c: In function ‘progress_along_Dataptr’:
+progress-altrep.c:106:12: warning: implicit declaration of function ‘DATAPTR’; did you mean ‘DATAPTR_RW’? [-Wimplicit-function-declaration]
+  106 |     return DATAPTR(data1);
+      |            ^~~~~~~
+      |            DATAPTR_RW
+progress-altrep.c:106:12: warning: returning ‘int’ from a function with return type ‘void *’ makes pointer from integer without a cast [-Wint-conversion]
+  106 |     return DATAPTR(data1);
+      |            ^~~~~~~~~~~~~~
+In file included from cli.h:8,
+                 from progress.c:2:
+progress.c: In function ‘new_env’:
+/opt/R/4.6.1/lib/R/include/Rinternals.h:874:33: warning: implicit declaration of function ‘Rf_allocSExp’; did you mean ‘allocSExp’? [-Wimplicit-function-declaration]
+  874 | #define allocSExp               Rf_allocSExp
+      |                                 ^~~~~~~~~~~~
+/opt/R/4.6.1/lib/R/include/Rinternals.h:357:36: note: in definition of macro ‘PROTECT’
+  357 | #define PROTECT(s)      Rf_protect(s)
+      |                                    ^
+progress.c:71:17: note: in expansion of macro ‘allocSExp’
+   71 |   PROTECT(env = allocSExp(ENVSXP));
+      |                 ^~~~~~~~~
+progress.c:71:15: warning: assignment to ‘SEXP’ {aka ‘struct SEXPREC *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+   71 |   PROTECT(env = allocSExp(ENVSXP));
+      |               ^
+/opt/R/4.6.1/lib/R/include/Rinternals.h:357:36: note: in definition of macro ‘PROTECT’
+  357 | #define PROTECT(s)      Rf_protect(s)
+      |                                    ^
+progress.c:72:3: warning: implicit declaration of function ‘SET_FRAME’ [-Wimplicit-function-declaration]
+   72 |   SET_FRAME(env, R_NilValue);
+      |   ^~~~~~~~~
+progress.c:73:3: warning: implicit declaration of function ‘SET_ENCLOS’ [-Wimplicit-function-declaration]
+   73 |   SET_ENCLOS(env, R_EmptyEnv);
+      |   ^~~~~~~~~~
+progress.c:74:3: warning: implicit declaration of function ‘SET_HASHTAB’ [-Wimplicit-function-declaration]
+   74 |   SET_HASHTAB(env, R_NilValue);
+      |   ^~~~~~~~~~~
+progress.c:75:3: warning: implicit declaration of function ‘SET_ATTRIB’; did you mean ‘ANY_ATTRIB’? [-Wimplicit-function-declaration]
+   75 |   SET_ATTRIB(env, R_NilValue);
+      |   ^~~~~~~~~~
+      |   ANY_ATTRIB
+progress.c: In function ‘clic__find_var’:
+progress.c:96:14: warning: implicit declaration of function ‘Rf_findVarInFrame3’; did you mean ‘findVarInFrame3’? [-Wimplicit-function-declaration]
+   96 |   SEXP ret = Rf_findVarInFrame3(rho, symbol, TRUE);
+      |              ^~~~~~~~~~~~~~~~~~
+      |              findVarInFrame3
+progress.c:96:14: warning: initialization of ‘SEXP’ {aka ‘struct SEXPREC *’} from ‘int’ makes pointer from integer without a cast [-Wint-conversion]
+** R
+** exec
+** inst
+** byte-compile and prepare package for lazy loading
+** help
+*** installing help indices
+*** copying figures
+** building package indices
+** testing if installed package can be loaded from temporary location
+Error: package or namespace load failed for ‘cli’ in dyn.load(file, DLLpath = DLLpath, ...):
+ unable to load shared object '/tmp/claude-r19/cache2/libraries/R-4.6/x86_64-pc-linux-gnu/36c5c28b840f54e5d72aadd883d4d450.staging-18540-file486c5b4eee4b/.renv/1/00LOCK-cli/00new/cli/libs/cli.so':
+  /tmp/claude-r19/cache2/libraries/R-4.6/x86_64-pc-linux-gnu/36c5c28b840f54e5d72aadd883d4d450.staging-18540-file486c5b4eee4b/.renv/1/00LOCK-cli/00new/cli/libs/cli.so: undefined symbol: SET_FRAME
+Error: loading failed
+Execution halted
+ERROR: loading failed
+* removing ‘/tmp/claude-r19/cache2/libraries/R-4.6/x86_64-pc-linux-gnu/36c5c28b840f54e5d72aadd883d4d450.staging-18540-file486c5b4eee4b/.renv/1/cli’
+
+[?25hEMBER-MISSING binary cli 3.6.2
+EMBER-MISSING binary lifecycle 1.0.4
+EMBER-MISSING binary rlang 1.1.3
+Error: cli 3.6.2, lifecycle 1.0.4, rlang 1.1.3 have no binary for R 4.6.1 at the notebook's snapshot date, so they were built from source, and they don't build on R 4.6.1. Versions from before an R release often don't build on it. Update the packages to a newer date, whose versions have binaries, or run the notebook on an older R.
