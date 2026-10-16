@@ -3,7 +3,7 @@
 # Plain functions; the parts that ask the machine (`xcode-select`, `ldd`,
 # Package Manager) take their answers as arguments, so these run anywhere.
 #
-# Covers packages-tests.md items 90-99 ("Install checks").
+# Covers packages-tests.md items 90-99 and 117-120 ("Install checks").
 
 sysreqs_fixture <- function(name) {
   readLines(testthat::test_path("fixtures", "sysreqs", paste0(name, ".json")), warn = FALSE)
@@ -69,7 +69,8 @@ test_that("compiler_check() reads no index when the compiler is there or Linux g
   # An unreadable repository proves nothing is read in the first two cases.
   nowhere <- c(CRAN = "file:///nonexistent/ember-test-repo")
   expect_null(compiler_check(lock, nowhere, os = "macos", compiler = TRUE))
-  expect_null(compiler_check(lock, nowhere, linux_binaries = TRUE, os = "linux", compiler = FALSE))
+  expect_null(compiler_check(lock, nowhere, linux_binaries = TRUE, os = "linux", compiler = FALSE,
+                             serves_binary = function(url) TRUE))
   # Unreadable indexes leave it to renv, which says why.
   expect_null(compiler_check(lock, nowhere, os = "linux", compiler = FALSE))
 
@@ -85,6 +86,126 @@ test_that("compiler_check() reads no index when the compiler is there or Linux g
   # GitHub sources aren't counted (their build says so instead).
   gh <- parse_lock_lines("mypkg 3f2a1c9 github:lab/mypkg@3f2a1c9")$lock
   expect_null(compiler_check(gh, c(CRAN = repo), os = "linux", compiler = FALSE))
+})
+
+test_that("compiler_check() on Linux with Package Manager binaries asks about one package, and counts source builds when it comes as source (117)", {
+  lock <- parse_lock_lines(c("Rcpp 1.0.12 CRAN", "glue 1.8.0 CRAN"))$lock
+  repo <- paste0(if (.Platform$OS.type == "windows") "file:///" else "file://",
+                 normalizePath(testthat::test_path("fixtures", "repos", "cran", "2026-09-01"), winslash = "/"))
+  binary_repos <- c(CRAN = "https://ppm.example/cran/__linux__/noble/2024-06-01")
+  asked <- character()
+  answer <- function(value) function(url) { asked <<- c(asked, url); value }
+
+  # Binaries for this R at this date: nothing to count, no index read.
+  expect_null(compiler_check(lock, c(CRAN = "file:///nonexistent/ember-test-repo"), linux_binaries = TRUE,
+                             os = "linux", compiler = FALSE, binary_repos = binary_repos,
+                             serves_binary = answer(TRUE)))
+  expect_equal(asked, "https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/Rcpp_1.0.12.tar.gz")
+  # Can't tell: left to the build's own error, as before.
+  expect_null(compiler_check(lock, c(CRAN = repo), linux_binaries = TRUE, os = "linux", compiler = FALSE,
+                             binary_repos = binary_repos, serves_binary = answer(NA)))
+  # Source (a date from before Package Manager built for this R): every
+  # compiled package builds, and the instructions offer a newer date.
+  got <- compiler_check(lock, c(CRAN = repo), linux_binaries = TRUE, os = "linux", compiler = FALSE,
+                        binary_repos = binary_repos, serves_binary = answer(FALSE))
+  expect_equal(got$packages, "Rcpp")
+  expect_match(got$instructions, compiler_instructions(os = "linux"), fixed = TRUE)
+  expect_match(got$instructions, "updating the packages to a newer date, which has them, needs no compiler", fixed = TRUE)
+  # With the compiler there nothing is asked.
+  asked <- character()
+  expect_null(compiler_check(lock, c(CRAN = repo), linux_binaries = TRUE, os = "linux", compiler = TRUE,
+                             binary_repos = binary_repos, serves_binary = answer(FALSE)))
+  expect_equal(asked, character())
+})
+
+test_that("renv_failed_packages() reads renv's \"failed to install\" error, in either quotes, and nothing else (118)", {
+  expect_equal(renv_failed_packages('failed to install "cli"'), "cli")
+  expect_equal(renv_failed_packages("failed to install \u201ccli\u201d, \u201cdata.table\u201d"), c("cli", "data.table"))
+  expect_equal(renv_failed_packages('failed to retrieve package "cli"'), character())
+})
+
+test_that("no_binary_packages() names the failed packages with no binary for this R, per platform (118)", {
+  lock <- parse_lock_lines(c("cli 3.6.2 CRAN", "glue 1.7.0 CRAN", "S4Vectors 0.40.0 Bioc",
+                             "mypkg 3f2a1c9 github:lab/mypkg@3f2a1c9"))$lock
+  failed <- c("cli", "glue", "S4Vectors", "mypkg", "notlocked")
+
+  # macOS: not in the binary index at the locked version. The index is a
+  # file repository laid out where contrib.url() looks for this R.
+  type <- "mac.binary.big-sur-arm64"
+  root <- tempfile("ember-bin-repo-")
+  contrib <- sub("^file://", "", utils::contrib.url(paste0("file://", root), type))
+  dir.create(contrib, recursive = TRUE)
+  writeLines(c("Package: glue", "Version: 1.7.0", "", "Package: cli", "Version: 3.6.5", ""),
+             file.path(contrib, "PACKAGES"))
+  on.exit(unlink(root, recursive = TRUE))
+  repos <- c(CRAN = paste0(if (.Platform$OS.type == "windows") "file:///" else "file://", normalizePath(root, winslash = "/")))
+  got <- no_binary_packages(failed, lock, repos, os = "macos", binary_type = type)
+  # cli has a binary only at another version; S4Vectors has none; glue
+  # has one; mypkg is GitHub; notlocked isn't in the lock.
+  expect_equal(got, c(S4Vectors = "0.40.0", cli = "3.6.2"))
+  # An unreadable index names none.
+  expect_equal(length(no_binary_packages(failed, lock, c(CRAN = "file:///nonexistent/ember-test-repo"),
+                                         os = "macos", binary_type = type)), 0)
+
+  # Linux with Package Manager binaries: Package Manager is asked, at the
+  # rewritten URL, through Bioconductor's three repositories in turn.
+  binary_repos <- c(CRAN = "https://ppm.example/cran/__linux__/noble/2024-06-01",
+                    BioCsoft = "https://ppm.example/bioc/soft", BioCann = "https://ppm.example/bioc/ann")
+  asked <- character()
+  serves <- function(url) {
+    asked <<- c(asked, url)
+    if (grepl("glue_", url)) TRUE else if (grepl("bioc/soft", url)) NA else FALSE
+  }
+  got <- no_binary_packages(failed, lock, repos, binary_repos = binary_repos, linux_binaries = TRUE,
+                            os = "linux", serves_binary = serves)
+  expect_equal(got, c(S4Vectors = "0.40.0", cli = "3.6.2"))
+  expect_true("https://ppm.example/bioc/ann/src/contrib/S4Vectors_0.40.0.tar.gz" %in% asked)
+  # Linux without them: everything builds from source there anyway.
+  expect_equal(length(no_binary_packages(failed, lock, repos, linux_binaries = FALSE, os = "linux",
+                                         serves_binary = function(url) stop("not asked"))), 0)
+})
+
+test_that("a failed build with no binary becomes a no_binary row with the version, and other kinds stay (119)", {
+  lines <- missing_report_lines(no_binary = c(cli = "3.6.2"), r_version = "4.6.1")
+  expect_equal(lines[[1]], "EMBER-MISSING binary cli 3.6.2")
+  expect_match(lines[[2]], "^Error: cli 3.6.2 has no binary for R 4.6.1 at the notebook's snapshot date")
+  expect_match(lines[[2]], "Update the packages to a newer date", fixed = TRUE)
+  two <- missing_report_lines(no_binary = c(cli = "3.6.2", rlang = "1.1.3"), r_version = "4.6.1")
+  expect_match(two[[3]], "cli 3.6.2, rlang 1.1.3 have no binary", fixed = TRUE)
+
+  build <- c("* installing *source* package 'cli' ...",
+             "ERROR: compilation failed for package 'cli'",
+             "* installing *source* package 'rlang' ...",
+             "make: gcc: No such file or directory",
+             "ERROR: compilation failed for package 'rlang'",
+             "- [vctrs]: failed to retrieve package 'vctrs@0.6.5'",
+             "- [glue]: install failed")
+  report <- missing_report_lines(no_binary = c(cli = "3.6.2", rlang = "1.1.3", vctrs = "0.6.5", glue = "1.7.0"))
+  rows <- install_failures(c(build, report))
+  expect_equal(rows$package, c("cli", "glue", "rlang", "vctrs"))
+  # A build failure says why it was built; a missing compiler and a
+  # download stay what they are.
+  expect_equal(rows$kind, c("no_binary", "no_binary", "missing_compiler", "download"))
+  expect_equal(rows$detail[1:2], c("3.6.2", "1.7.0"))
+  expect_match(install_failure_message(c(build, report), 1L), "have no binary for R", fixed = TRUE)
+  # Without the installer's line, a build failure stays one.
+  expect_equal(install_failures(build)$kind, c("compile", "other", "missing_compiler", "download"))
+})
+
+test_that("a real renv 1.3.0 / R 4.6.1 log: cli 3.6.2 at 2024-06-01 builds, fails to load, and is no_binary (120)", {
+  # Captured from `ember::run()` on Linux (Ubuntu 24.04) against Package
+  # Manager at 2024-06-01, which sends R 4.6 sources only: cli builds,
+  # then fails R's load test (`undefined symbol: SET_FRAME`). The gcc lines
+  # are cut.
+  lines <- readLines(testthat::test_path("fixtures", "install-output", "real-renv-old-snapshot.txt"), warn = FALSE)
+  rows <- install_failures(lines)
+  expect_equal(rows$package, "cli")
+  expect_equal(rows$kind, "no_binary")
+  expect_equal(rows$detail, "3.6.2")
+  # Without the installer's line, "ERROR: loading failed" after a source
+  # build is a failed build, not "other".
+  plain <- install_failures(lines[!grepl("EMBER-MISSING", lines, fixed = TRUE)])
+  expect_equal(plain$kind, "compile")
 })
 
 test_that("parse_ldd() reads the libraries ldd couldn't find, with and without per-file headers, leaving R's own out (94)", {
@@ -280,4 +401,14 @@ test_that("[net] Package Manager names libxml2's development package for xml2 on
   reqs <- fetch_sysreqs(c(xml2 = "CRAN"), c(CRAN = "https://packagemanager.posit.co/cran/2026-09-01"),
                         dist = list(distribution = "ubuntu", release = "24.04"))
   expect_equal(sysreqs_command(reqs["xml2"], sudo = ""), "apt-get install -y libxml2-dev")
+})
+
+test_that("[net] Package Manager sends R 4.6 on Linux cli's source at 2024-06-01 and its binary at 2026-09-01 (117)", {
+  skip_if_not(identical(Sys.getenv("EMBER_TEST_NETWORK"), "1"),
+              "set EMBER_TEST_NETWORK=1 to run the opt-in network test")
+  skip_if_not(identical(os_kind(), "linux") && getRversion() >= "4.6" && getRversion() < "4.7",
+              "Package Manager's answer depends on this R's user agent")
+  base <- "https://packagemanager.posit.co/cran/__linux__/noble/"
+  expect_false(ppm_serves_binary(paste0(base, "2024-06-01/src/contrib/cli_3.6.2.tar.gz")))
+  expect_true(ppm_serves_binary(paste0(base, "2026-09-01/src/contrib/cli_3.6.6.tar.gz")))
 })

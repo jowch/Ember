@@ -39,6 +39,8 @@ const failure_sentence = (failure, rows, r_version) => {
             return t("t_ember_install_failed_missing_system", { libraries: failure.libraries ?? "" })
         case "missing_compiler":
             return t("t_ember_install_failed_missing_compiler")
+        case "no_binary":
+            return t("t_ember_install_failed_no_binary", { version: failure.detail ?? "", r_version: r_version ?? "" })
         default:
             return t("t_ember_install_failed_other")
     }
@@ -51,8 +53,9 @@ const failure_sentence = (failure, rows, r_version) => {
  * (`show_command`) shows it, with the sentence for people who can't run
  * it; without a command (not Package Manager), the package-manager
  * sentence instead. A compiler: `detail` is a sentence whose
- * `backticked` parts are commands. Nothing for other kinds, whose
- * `detail` is a line of the log.
+ * `backticked` parts are commands. A package with no binary for this R
+ * (#19): update the date, or use an older R. Nothing for other kinds,
+ * whose `detail` is a line of the log.
  *
  * @param {import("./Editor.js").EmberInstallFailure} failure
  * @param {boolean} show_command
@@ -67,6 +70,9 @@ const failure_fix = (failure, show_command) => {
                 : html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_system_manager")}</p>`}
             <p class="ember-install-failure-fix">${t("t_ember_install_failed_no_admin")}</p>
         `
+    }
+    if (failure.kind === "no_binary") {
+        return html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_no_binary_fix")}</p>`
     }
     if (failure.detail == null) return null
     if (failure.kind === "missing_compiler") {
@@ -96,7 +102,7 @@ const failure_fix = (failure, show_command) => {
 const InstallFailureCard = ({ failure, rows, r_version, log, show_command }) => {
     const pluto_actions = useContext(PlutoActionsContext)
     const [show_error, set_show_error] = useState(false)
-    const can_update = failure.kind === "compile" || failure.kind === "configure"
+    const can_update = ["compile", "configure", "no_binary"].includes(failure.kind)
     // "unavailable" is most often a repository index that couldn't be
     // read, which can be passing, so it gets Try again too.
     // The missing-piece kinds are fixed outside Ember, then retried.

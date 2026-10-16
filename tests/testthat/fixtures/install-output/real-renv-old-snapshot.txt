@@ -1,0 +1,48 @@
+- Lockfile written to "/tmp/RtmpNnLWNV/ember-lockfile-5533bf1a40c.json".
+EMBER-PROGRESS 0 1 - restore
+The following package(s) will be updated:
+
+# CRAN -----------------------------------------------------------------------
+- cli   [* -> 3.6.2]
+
+- Querying repositories for available source packages ... Done!
+# Downloading packages -------------------------------------------------------
+[?25l  (0/1) Downloading: cli                                                                                                                                        [32m✔[0m cli 3.6.2                                [568 kB in 0.95s]
+                                                                                Successfully downloaded 1 package in 1.5 seconds.
+
+# Installing packages --------------------------------------------------------
+  (0/1) Installing: cli                                                           (0/1) Installing: cli                                                           (0/1) Installing: cli                                                                                                                                         [31m✖[0m cli 3.6.2                               
+
+The following package(s) were not installed successfully:
+- [cli]: install failed
+You may need to manually download and install these packages.
+
+# cli ------------------------------------------------------------------------
+* installing *source* package ‘cli’ ...
+** this is package ‘cli’ version ‘3.6.2’
+** package ‘cli’ successfully unpacked and MD5 sums checked
+** using staged installation
+** libs
+using C compiler: ‘gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0’
+gcc -std=gnu2x -I"/opt/R/4.6.1/lib/R/include" -DNDEBUG   -I/usr/local/include   -fvisibility=hidden -I../inst/include -fpic  -g -O2  -c ansi.c -o ansi.o
+gcc -std=gnu2x -shared -L/opt/R/4.6.1/lib/R/lib -L/usr/local/lib -o cli.so ansi.o cleancall.o diff.o errors.o glue.o init.o inst.o keypress-unix.o keypress-win.o keypress.o md5.o progress-altrep.o progress.o sha1.o sha256.o thread.o tty.o utf8.o utils.o vt.o vtparse.o vtparse_table.o win-utf8.o winfiles.o -L/opt/R/4.6.1/lib/R/lib -lR
+installing to /tmp/claude-r19/cache/libraries/R-4.6/x86_64-pc-linux-gnu/804b5d3461bac36796aea2785f814e22.staging-1346-file5425ab50050/.renv/1/00LOCK-cli/00new/cli/libs
+** R
+** exec
+** inst
+** byte-compile and prepare package for lazy loading
+** help
+*** installing help indices
+*** copying figures
+** building package indices
+** testing if installed package can be loaded from temporary location
+Error: package or namespace load failed for ‘cli’ in dyn.load(file, DLLpath = DLLpath, ...):
+ unable to load shared object '/tmp/claude-r19/cache/libraries/R-4.6/x86_64-pc-linux-gnu/804b5d3461bac36796aea2785f814e22.staging-1346-file5425ab50050/.renv/1/00LOCK-cli/00new/cli/libs/cli.so':
+  /tmp/claude-r19/cache/libraries/R-4.6/x86_64-pc-linux-gnu/804b5d3461bac36796aea2785f814e22.staging-1346-file5425ab50050/.renv/1/00LOCK-cli/00new/cli/libs/cli.so: undefined symbol: SET_FRAME
+Error: loading failed
+Execution halted
+ERROR: loading failed
+* removing ‘/tmp/claude-r19/cache/libraries/R-4.6/x86_64-pc-linux-gnu/804b5d3461bac36796aea2785f814e22.staging-1346-file5425ab50050/.renv/1/cli’
+
+[?25hEMBER-MISSING binary cli 3.6.2
+Error: cli 3.6.2 has no binary for R 4.6.1 at the notebook's snapshot date, so it was built from source, and it doesn't build on R 4.6.1. Versions from before an R release often don't build on it. Update the packages to a newer date, whose versions have binaries, or run the notebook on an older R.

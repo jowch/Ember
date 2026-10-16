@@ -219,9 +219,10 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
 
 /**
  * `kind`: "missing_compiler", "missing_system", "system", "compile",
- * "configure", "dependency", "download", "unavailable" or "other"
- * (install_failures(), R/packages-core.R). `libraries`: the system
+ * "configure", "no_binary", "dependency", "download", "unavailable" or
+ * "other" (install_failures(), R/packages-core.R). `libraries`: the system
  * libraries not found, on rows from the installer's system-library check.
+ * `detail` of a "no_binary" row: the locked version that had no binary.
  *
  * @typedef EmberInstallFailure
  * @type {{ package: string, version: string?, kind: string, detail: string?, libraries: string?, needed_by: Array<string> }}

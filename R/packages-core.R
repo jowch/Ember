@@ -201,10 +201,15 @@ install_failure_message <- function(lines, status) {
 #'    while a package
 #'    builds from source, a line saying a system library or header is
 #'    missing: `system_patterns` below; detail = that line), "compile" ("ERROR:
-#'    compilation failed for package"), "configure" ("ERROR: configuration
+#'    compilation failed for package", or "ERROR: loading failed" after a
+#'    source build), "configure" ("ERROR: configuration
 #'    failed"), "dependency" ("ERROR: dependency 'x' is not available",
 #'    detail = x), "download" (a summary line, or renv's own "error
 #'    downloading"/"failed to retrieve", naming the package),
+#'    "no_binary" (a "compile", "configure" or "other" row whose package
+#'    the installer's `EMBER-MISSING binary` line says had no binary for
+#'    this R, so it was built from source: most often a snapshot date from
+#'    before this R, #19; detail = the locked version),
 #'    "unavailable" (renv's summary line saying "failed to find source"
 #'    or "binary for 'pkg version' in package repositories"; detail = that
 #'    reason), "other"
@@ -262,7 +267,13 @@ install_failures <- function(lines) {
                          "^xcrun: error: invalid active developer path")
   building <- NA_character_
 
+  no_binary <- character()
   for (line in lines) {
+    if (grepl("^EMBER-MISSING binary [A-Za-z0-9.]+ ", line)) {
+      m <- regmatches(line, regexec("^EMBER-MISSING binary ([A-Za-z0-9.]+) (\\S+)", line))[[1]]
+      no_binary[[m[[2]]]] <- m[[3]]
+      next
+    }
     if (grepl("^EMBER-MISSING (compiler|system|library) [A-Za-z0-9.]+ ", line)) {
       m <- regmatches(line, regexec("^EMBER-MISSING (compiler|system|library) ([A-Za-z0-9.]+) (.*)$", line))[[1]]
       k <- switch(m[[2]], compiler = "missing_compiler", system = "missing_system", library = "system")
@@ -293,7 +304,12 @@ install_failures <- function(lines) {
     if (grepl("^ERROR: [a-z]+ failed for package '[^']+'", line) || grepl("^\\* DONE \\(", line)) {
       building <- NA_character_
     }
-    if (grepl("^ERROR: compilation failed for package '[^']+'", line)) {
+    if (!is.na(building) && grepl("^ERROR: loading failed", line)) {
+      # Built, but the result doesn't load: a C API this R removed
+      # (`undefined symbol`). A failed build like the ones below.
+      add(building, "compile", NA_character_)
+      building <- NA_character_
+    } else if (grepl("^ERROR: compilation failed for package '[^']+'", line)) {
       add(capture("^ERROR: compilation failed for package '([^']+)'", line), "compile", NA_character_)
     } else if (grepl("^ERROR: configuration failed for package '[^']+'", line)) {
       add(capture("^ERROR: configuration failed for package '([^']+)'", line), "configure", NA_character_)
@@ -352,6 +368,14 @@ install_failures <- function(lines) {
   df <- data.frame(package = pkg, kind = kind, detail = detail, libraries = libs, stringsAsFactors = FALSE)
   df <- df[order(kind_rank[df$kind]), ]
   df <- df[!duplicated(df$package), ]
+  # A package that failed to build and had no binary for this R (the
+  # installer's `EMBER-MISSING binary` line, after renv): the build's own
+  # reason is a symptom, so the row says why it was built at all. A
+  # missing compiler or system library, a dependency or a download stay
+  # what they are.
+  upgrade <- df$package %in% names(no_binary) & df$kind %in% c("compile", "configure", "other")
+  df$kind[upgrade] <- "no_binary"
+  df$detail[upgrade] <- unname(no_binary[df$package[upgrade]])
   df[order(df$package), ]
 }
 
