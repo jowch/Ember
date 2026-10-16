@@ -528,7 +528,7 @@ test_that("formula_check_symbol_data", {
   expect_identical(r2$formula_misses, character())
 })
 
-test_that("the formula check evaluates a data call made only of pure functions (#42)", {
+test_that("the formula check reads a data call's columns without running it (#42)", {
   h <- worker_harness()
   on.exit(h$close())
   site <- function(data, columns) {
@@ -542,24 +542,48 @@ test_that("the formula check evaluates a data call made only of pure functions (
   expect_identical(r$status, "ok")
   expect_identical(r$formula_misses, "z")
 
-  # Nested calls, an empty argument, and base's own `[`.
+  # Nested calls, an empty argument, pkg::, %>%, and the names
+  # transform() adds.
   r2 <- run_and_wait(h, "b", 2L, "1", formulas = list(
     site("head(df[df$x > 1, ], n = 2)", c("x", "w")),
-    site("transform(df, w = x * 2)", c("x", "w"))))
-  expect_identical(r2$formula_misses, "w")
+    site("base::subset(df, x > 1)", c("x", "v")),
+    site("df %>% head(2)", c("x", "u")),
+    site("transform(head(df), w = x * 2)", c("x", "w"))))
+  expect_setequal(r2$formula_misses, c("w", "v", "u"))
 
-  # A notebook's own function of a listed name, or any unlisted one, is
-  # never evaluated: the call would run again, side effects and all.
+  # A call the check can't read, or a notebook's own function of a listed
+  # name, leaves the formula unchecked.
   r3 <- run_and_wait(h, "c", 3L, paste(
-    "calls <- 0",
-    "subset <- function(d, ...) { calls <<- calls + 1; d }",
-    "keep <- function(d) d", sep = "\n"),
-    formulas = list(site("subset(df, x > 1)", "w"), site("keep(df)", "w"),
-                    site("head(keep(df))", "w"),
-                    site("transform(df, w = (function(v) v)(x))", "w")))
+    "keep <- function(d) d",
+    "tail <- function(d, ...) d", sep = "\n"),
+    formulas = list(site("keep(df)", "w"), site("head(keep(df))", "w"),
+                    site("tail(df)", "w"), site("merge(df, df)", "w")))
   expect_identical(r3$formula_misses, character())
-  r4 <- run_and_wait(h, "d", 4L, "calls")
-  expect_identical(r4$output$text, "[1] 0")
+})
+
+test_that("the formula check never runs a notebook's method on its data again (#42)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  run_and_wait(h, "a", 1L, paste(
+    "calls <- 0",
+    "head.logged <- function(x, ...) { calls <<- calls + 1; NextMethod() }",
+    "`[.logged` <- function(x, ...) { calls <<- calls + 1; NextMethod() }",
+    "obj <- structure(data.frame(x = 1:3, y = c(1, 3, 2)), class = c('logged', 'data.frame'))",
+    sep = "\n"))
+  sites <- list(
+    list(index = 1L, line = 1L, col = NA_integer_, end_col = NA_integer_,
+         fn = "lm", data = "head(obj)", columns = c("x", "w")),
+    list(index = 2L, line = 1L, col = NA_integer_, end_col = NA_integer_,
+         fn = "lm", data = "obj[obj$x > 1, ]", columns = "x"))
+  r <- run_and_wait(h, "b", 2L, "before <- calls; fit <- lm(y ~ x, data = head(obj)); calls - before",
+                    formulas = sites)
+  expect_identical(r$status, "ok")
+  expect_identical(r$formula_misses, "w")
+  # The cell's own run called the methods (head.data.frame indexes with
+  # `[`); the check after it called neither.
+  r2 <- run_and_wait(h, "c", 3L, "calls")
+  expect_identical(r2$output$text, r$output$text)
+  expect_false(identical(r2$output$text, "[1] 0"))
 })
 
 test_that("fresh_device_per_cell", {
