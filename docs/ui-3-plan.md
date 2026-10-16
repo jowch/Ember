@@ -1803,8 +1803,8 @@ PackagesTab +90, start.html and css 130. Rd: notebooks.Rd, packages.Rd's
   snapshot after the first fetch, and indexes are cached forever ("a dated
   index never changes", resolve.R:84-88), so updating twice on one day can
   miss packages released later that day. Harmless (the lock pins what was
-  chosen); fixed in #39: an index dated yesterday or later is fetched
-  again by each session and each preview.
+  chosen); fixed in #39: a preview fetches an index dated yesterday or
+  later again.
 - **Concurrent writers to the recent file** can lose an entry; writes are
   atomic, so it is never corrupt. Accepted.
 - **`chdir` and a busy worker.** The message is read after the running

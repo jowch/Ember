@@ -179,7 +179,7 @@ test_that("moving the toy date upgrades toyA, restarts the loaded worker, and th
 
 # ---- #39: today's index is fetched again --------------------------------------
 
-test_that("an index dated today is fetched again by a new session and by a preview of today, and the saved copy stands in offline (#39)", {
+test_that("an index dated today is fetched again by a preview of today, a later session reads that copy, and the saved copy stands in offline (#39)", {
   # A file:// repository whose only date is today (UTC), first with the
   # toy repo's 2026-09-01 packages (toyA 0.1), then, "later that day", with
   # its 2026-09-30 ones (toyA 0.2).
@@ -212,27 +212,32 @@ test_that("an index dated today is fetched again by a new session and by a previ
   expect_true(o1$ok)
   expect_equal(toyA(o1$nb), "0.1")
 
-  # toyA 0.2 is added to today's snapshot. A new session asks again rather
-  # than reading the copy saved by the first.
+  # toyA 0.2 is added to today's snapshot. Opening reads the saved copy, as
+  # for any date: fetching on every open would cost seconds.
   publish("2026-09-30")
   o2 <- open_locked()
   on.exit(close_notebook(o2$nb), add = TRUE)
   expect_true(o2$ok)
-  expect_equal(toyA(o2$nb), "0.2")
+  expect_equal(toyA(o2$nb), "0.1")
 
-  # So does updating to today in the first session, which already has an
-  # index for today.
+  # Updating to today fetches it again, though the session has an index
+  # for today, and finds the new version.
   preview <- preview_date(o1$nb, today, wait = TRUE, timeout = 120)
   expect_equal(preview$status, "ready")
   expect_equal(preview$changes$to[preview$changes$name == "toyA"], "0.2")
 
-  # Offline: the fetch fails, and the copy saved by the last fetch stands in.
-  unlink(root, recursive = TRUE)
+  # A session opened after that reads the copy that fetch saved.
   o3 <- open_locked()
   on.exit(close_notebook(o3$nb), add = TRUE)
   expect_true(o3$ok)
   expect_equal(toyA(o3$nb), "0.2")
-  expect_false("index_unavailable" %in% package_status(o3$nb)$problems$kind)
+
+  # Offline, updating to today in the session still on the morning's copy:
+  # the fetch fails, and the copy saved by the last fetch stands in.
+  unlink(root, recursive = TRUE)
+  preview2 <- preview_date(o2$nb, today, wait = TRUE, timeout = 120)
+  expect_equal(preview2$status, "ready")
+  expect_equal(preview2$changes$to[preview2$changes$name == "toyA"], "0.2")
 })
 
 # ---- 73: the saved lock round-trips -----------------------------------------

@@ -84,7 +84,7 @@ Increment 1 unless marked (2) or (3).
 57. `packages_changed` is notified once per dispatch when the view changes, and not otherwise.
 58. `check_state` holds after every step in every test above.
 
-A preview fetches a `provisional` index again (the same date included) and resolves against what arrives; one that isn't provisional is kept (#39).
+A preview fetches a `provisional` index again with a `fresh` fetch (the same date included) and resolves against what arrives; one that isn't provisional is kept (#39).
 
 ## Disk and jobs (test-library.R)
 
@@ -113,7 +113,7 @@ A preview fetches a `provisional` index again (the same date included) and resol
 73. The saved file's lock block lists toyA and toyB and round-trips unchanged on reopen.
 74. `ember::run()` on the saved file installs if needed and prints the cell's output with the locked version.
 
-An index dated today is fetched again by a new session and by a preview of today, so a package added to today's snapshot later that day is found; offline, the copy saved by the last fetch stands in (#39).
+An index dated today is read from the saved copy on open, fetched again by a preview of today (so a package added to today's snapshot later that day is found), and a session opened after that reads the new copy; offline, the preview falls back to the saved copy (#39).
 
 ## Bioconductor (increment 2)
 

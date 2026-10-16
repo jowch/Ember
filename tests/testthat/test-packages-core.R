@@ -554,11 +554,13 @@ test_that("a preview fetches a provisional index again, and keeps one that isn't
   # asks for the index again and resolves against what arrives.
   r2 <- drive(r$state, ev_preview_date(as.Date("2026-09-01"), at(3)))
   expect_equal(vapply(r2$effects, function(e) e$key, character(1)), "cran/2026-09-01")
+  expect_true(r2$effects[[1]]$fresh)
   r2 <- drive(r2$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index("2026-09-30"), at(4)))
   prop <- r2$state$packages$proposal
   expect_equal(prop$status, "ready")
   expect_equal(prop$changes$change[prop$changes$name == "dplyr"], "upgraded")
   expect_false(r2$state$packages$indexes[["cran/2026-09-01"]]$provisional)
+  expect_length(r2$state$packages$refresh, 0)
 
   # An index that isn't provisional is the date's for good.
   r <- drive(s, ev_open(at(1)))

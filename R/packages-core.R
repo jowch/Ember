@@ -91,6 +91,9 @@ new_packages_state <- function(lock, wanted, r, cache, header = NULL, releases =
     resolved_for = resolved_for,
     sources_for = sources_for,
     indexes = list(),
+    # Provisional index keys a date preview asked for again: their next
+    # fetch skips the saved copy (`fetch_index_effect()`, #39).
+    refresh = character(),
     problems = problems,
     target = target,
     active = active,
@@ -459,7 +462,14 @@ ev_install_done <- function(token, key, manifest, message, log, at, failures = e
   event("install_done", at, token = token, key = key, manifest = manifest,
         message = message, log = log, failures = failures)
 
-fx_fetch_index    <- function(key, url) effect("fetch_index", key = key, url = url)
+#' `fresh`: fetch even when a saved copy exists (a provisional index a date
+#' preview asked for again, `p$refresh`).
+fx_fetch_index    <- function(key, url, fresh = FALSE) effect("fetch_index", key = key, url = url, fresh = fresh)
+
+#' The fetch for key `k`, `fresh` when a date preview asked for it again.
+fetch_index_effect <- function(p, options, k) {
+  fx_fetch_index(k, repo_url(options$repos, k), fresh = k %in% (p$refresh %||% character()))
+}
 #' Fetch Bioconductor's release list from `url` (`ember_repos(bioc_config)`),
 #' or read it from the disk cache when it is less than a day old and was
 #' fetched no earlier than `date` (the snapshot date it must cover).
@@ -578,7 +588,7 @@ schedule_packages <- function(state, old) {
       to_fetch <- Filter(function(k) is.null(p$indexes[[k]]) || refetch(k), upfront)
       for (k in to_fetch) {
         p$indexes[[k]] <- new_index_slot("fetching")
-        effects <- c(effects, list(fx_fetch_index(k, repo_url(state$options$repos, k))))
+        effects <- c(effects, list(fetch_index_effect(p, state$options, k)))
       }
       if (length(to_fetch) == 0 && length(needed) > 0) {
         first <- p$indexes[[repos_needed[[1]]]]
@@ -622,7 +632,7 @@ schedule_packages <- function(state, old) {
             for (k in res$fetch) {
               if (is.null(p$indexes[[k]]) || !identical(p$indexes[[k]]$status, "fetching")) {
                 p$indexes[[k]] <- new_index_slot("fetching")
-                effects <- c(effects, list(fx_fetch_index(k, repo_url(state$options$repos, k))))
+                effects <- c(effects, list(fetch_index_effect(p, state$options, k)))
               }
             }
           }
@@ -701,7 +711,7 @@ schedule_packages <- function(state, old) {
     } else if (is.null(slot)) {
       for (k in unfetched) {
         state$packages$indexes[[k]] <- new_index_slot("fetching")
-        effects <- c(effects, list(fx_fetch_index(k, repo_url(state$options$repos, k))))
+        effects <- c(effects, list(fetch_index_effect(state$packages, state$options, k)))
       }
     } else if (identical(slot$status, "ready") && !is.null(drop_message)) {
       state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
@@ -744,7 +754,7 @@ schedule_packages <- function(state, old) {
         for (k in res$fetch) {
           if (is.null(state$packages$indexes[[k]])) {
             state$packages$indexes[[k]] <- new_index_slot("fetching")
-            effects <- c(effects, list(fx_fetch_index(k, repo_url(state$options$repos, k))))
+            effects <- c(effects, list(fetch_index_effect(state$packages, state$options, k)))
           }
         }
       }
@@ -1122,6 +1132,7 @@ reduce_index_fetched <- function(state, event) {
   }
   state$packages$indexes[[event$key]] <- new_index_slot("ready", index = event$index,
                                                         provisional = isTRUE(event$provisional))
+  if (event$key %in% state$packages$refresh) state$packages$refresh <- setdiff(state$packages$refresh, event$key)
   # A failed install waiting on this index to say which direct packages
   # need each failed one (#17).
   state <- fill_needed_by(state)$state
@@ -1276,12 +1287,14 @@ reduce_preview_date <- function(state, event) {
     slot <- state$packages$indexes[[key]]
     # A branch's index read earlier in this session is dropped too, so the
     # preview asks GitHub where the branch is now; so is a provisional one
-    # (today's), so it asks Package Manager for what it has added since
-    # (#39).
-    moving <- is_github_key(key) && !is_commit(parse_github_key(key)$ref) || isTRUE(slot$provisional)
-    if (!is.null(slot) && (identical(slot$status, "failed") || moving && identical(slot$status, "ready"))) {
+    # (today's), which is fetched again rather than read from the cache
+    # (`refresh`), for what Package Manager has added since (#39).
+    moving <- is_github_key(key) && !is_commit(parse_github_key(key)$ref)
+    provisional <- isTRUE(slot$provisional) && identical(slot$status, "ready")
+    if (!is.null(slot) && (identical(slot$status, "failed") || moving && identical(slot$status, "ready") || provisional)) {
       state$packages$indexes[[key]] <- NULL
     }
+    if (provisional) state$packages$refresh <- union(state$packages$refresh %||% character(), key)
   }
   state$packages$proposal <- new_proposal(event$date, apply = isTRUE(event$apply))
   list(state = state, effects = list(), reply = TRUE)
@@ -1548,7 +1561,7 @@ fill_needed_by <- function(state, fetch = FALSE) {
     wanted_keys <- c(gh, repos[[1]], if (lock_has_bioc(state$file$lock)) repos[-1])
     for (k in Filter(function(k) is.null(state$packages$indexes[[k]]), wanted_keys)) {
       state$packages$indexes[[k]] <- new_index_slot("fetching")
-      effects <- c(effects, list(fx_fetch_index(k, repo_url(state$options$repos, k))))
+      effects <- c(effects, list(fetch_index_effect(state$packages, state$options, k)))
     }
   }
   indexes <- lapply(state$packages$indexes, function(s) s$index)

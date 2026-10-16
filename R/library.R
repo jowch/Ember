@@ -83,11 +83,12 @@ index_rds_path <- function(key, cache = cache_dir()) {
 #' Whether the index for a dated `key` may still change at `now`: its date
 #' is yesterday or later, in UTC (#39). Package Manager may publish a
 #' date's snapshot after the first fetch of it, so an index fetched that
-#' early could miss packages released later that day. Yesterday too, since
-#' when a day's snapshot is complete isn't known here, and a date ahead of
-#' UTC's (a clock east of Greenwich) is later still. Any other dated index
-#' never changes and is cached for good. Not GitHub keys: those move by
-#' ref (`github_key()`).
+#' early could miss packages released later that day; a date preview
+#' fetches such an index again (its slot is `provisional`). Yesterday too,
+#' since when a day's snapshot is complete isn't known here, and a date
+#' ahead of UTC's (a clock east of Greenwich) is later still. Any other
+#' dated index never changes. Not GitHub keys: those move by ref
+#' (`github_key()`).
 index_may_change <- function(key, now = Sys.time()) {
   if (is_github_key(key)) return(FALSE)
   date <- tryCatch(as.Date(strsplit(key, "/", fixed = TRUE)[[1]][[2]]), error = function(e) NA)
@@ -130,14 +131,26 @@ cached_index <- function(key, cache = cache_dir(), url = NULL) {
 }
 index_memo <- new.env(parent = emptyenv())
 
+#' `cached_index()` after a fetch that may have replaced the saved copy (a
+#' provisional key fetched again, `index_may_change()`): read from disk,
+#' and the memo answers with this copy from now on, so a session opened
+#' later gets it too. `NULL` when there is none.
+reload_index <- function(key, cache = cache_dir(), url = NULL) {
+  memo_key <- paste(key, url %||% "", cache, sep = "\u0001")
+  if (exists(memo_key, envir = index_memo, inherits = FALSE)) rm(list = memo_key, envir = index_memo)
+  cached_index(key, cache, url)
+}
+
 #' Run in the index-fetch subprocess (`index_fetch_command()`'s `-e`,
 #' with `library(ember)` already loaded, as the installer is): download
 #' `<url>/src/contrib/PACKAGES.gz`, falling back to the uncompressed
 #' `PACKAGES` (the toy fixtures ship only the latter), parse it with
 #' `read_repo_index()` and save the RDS at a temporary name, then rename
 #' into place. A rename that loses the race to another process fetching
-#' the same key is a no-op: the two parses are `identical()` in content,
-#' and `cached_index()`'s memo only cares that a file exists at `path`.
+#' the same key is harmless: the two parses are `identical()` in content,
+#' except for a key as recent as today (`index_may_change()`), where a later
+#' fetch may hold more, and either is a valid snapshot of that day.
+#' `cached_index()`'s memo only cares that a file exists at `path`.
 fetch_index_main <- function(key, url, path) {
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
   base <- paste0(sub("/+$", "", url), "/src/contrib/")
@@ -357,11 +370,10 @@ github_install_deps <- function(lock, cache, github) {
   out
 }
 
-#' The index saved for a `key` that may have changed since it was saved (a
-#' GitHub key at a branch, a tag or `HEAD`, `github_key()`; a dated key
-#' `index_may_change()`), read straight from disk after this session's own
-#' fetch: not memoised, and not read before fetching. `NULL` when there is
-#' none.
+#' The index saved for a GitHub `key` with a moving ref (a branch, a tag,
+#' `HEAD`), read straight from disk after this session's own fetch: not
+#' memoised, and not read before fetching, since the ref may have moved
+#' since an earlier fetch (`github_key()`). `NULL` when there is none.
 fresh_index <- function(key, cache = cache_dir()) {
   path <- index_rds_path(key, cache)
   if (!file.exists(path)) return(NULL)
