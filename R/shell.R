@@ -407,10 +407,14 @@ run_effect <- function(nb, fx) {
     },
     fetch_index = {
       # A GitHub key at a moving ref (a branch, a tag, HEAD) is fetched
-      # afresh: the cache could hold an older commit (`github_key()`).
-      moving <- is_github_key(fx$key) && !is_commit(parse_github_key(fx$key)$ref)
+      # afresh: the cache could hold an older commit (`github_key()`). So is
+      # a dated key as recent as today (#39), which Package Manager may
+      # still add to; if that fetch fails (offline), the copy saved by an
+      # earlier fetch, if any, stands in.
+      provisional <- index_may_change(fx$key)
+      moving <- is_github_key(fx$key) && !is_commit(parse_github_key(fx$key)$ref) || provisional
       read_index <- function() {
-        if (moving) fresh_github_index(fx$key, nb$state$options$cache)
+        if (moving) fresh_index(fx$key, nb$state$options$cache)
         else cached_index(fx$key, nb$state$options$cache, url = fx$url)
       }
       idx <- if (moving) NULL else tryCatch(read_index(), error = function(e) NULL)
@@ -426,10 +430,11 @@ run_effect <- function(nb, fx) {
         job_start(index_job_key(fx$key, fx$url, nb$state$options$cache), cmd, nb,
           make_progress = function(line) NULL,
           make_done = function(status, output) {
-            if (identical(status, 0L)) {
-              idx2 <- tryCatch(read_index(), error = function(e) NULL)
-              if (!is.null(idx2)) ev_index_fetched(fx$key, idx2, at = Sys.time())
-              else ev_index_failed(fx$key, "index fetch produced no index", at = Sys.time())
+            idx2 <- if (identical(status, 0L) || provisional) tryCatch(read_index(), error = function(e) NULL)
+            if (!is.null(idx2)) {
+              ev_index_fetched(fx$key, idx2, at = Sys.time(), provisional = provisional)
+            } else if (identical(status, 0L)) {
+              ev_index_failed(fx$key, "index fetch produced no index", at = Sys.time())
             } else {
               ev_index_failed(fx$key, fetch_error_message(output), at = Sys.time())
             }

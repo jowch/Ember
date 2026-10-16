@@ -496,7 +496,8 @@ source_problems <- function(header, keys = character(), indexes = list()) {
 #'   (`read_description_index()`).
 #'
 #' Built only by `read_repo_index()` and `read_description_index()`, at the boundary, so no other code
-#' sees DCF field names. A dated index never changes, so a parsed copy is
+#' sees DCF field names. A dated index never changes once its date is past
+#' (`index_may_change()`, #39), so a parsed copy is
 #' cached on disk forever (library.R) and shared in memory across sessions:
 #' every state holding the index for one key holds the same R object, so
 #' it is stored once and `identical()` on it returns at once.

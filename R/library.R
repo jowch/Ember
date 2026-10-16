@@ -75,9 +75,23 @@ r_info <- function() {
 #' `"cran/2026-09-01"` is a single filename component. Two GitHub branches
 #' of one repository, `feature/x` and `feature_x`, share a file; harmless,
 #' since an index for a moving ref is always fetched again before it is
-#' read (`fresh_github_index()`), and a commit's key has no `/` in its ref.
+#' read (`fresh_index()`), and a commit's key has no `/` in its ref.
 index_rds_path <- function(key, cache = cache_dir()) {
   file.path(cache, "indexes", paste0(gsub("/", "_", key, fixed = TRUE), ".rds"))
+}
+
+#' Whether the index for a dated `key` may still change at `now`: its date
+#' is yesterday or later, in UTC (#39). Package Manager may publish a
+#' date's snapshot after the first fetch of it, so an index fetched that
+#' early could miss packages released later that day. Yesterday too, since
+#' when a day's snapshot is complete isn't known here, and a date ahead of
+#' UTC's (a clock east of Greenwich) is later still. Any other dated index
+#' never changes and is cached for good. Not GitHub keys: those move by
+#' ref (`github_key()`).
+index_may_change <- function(key, now = Sys.time()) {
+  if (is_github_key(key)) return(FALSE)
+  date <- tryCatch(as.Date(strsplit(key, "/", fixed = TRUE)[[1]][[2]]), error = function(e) NA)
+  !is.na(date) && date >= as.Date(format(now, tz = "UTC", usetz = FALSE)) - 1
 }
 
 #' The label a dated repo key resolves to (`read_repo_index()`'s `label`,
@@ -334,7 +348,7 @@ github_install_deps <- function(lock, cache, github) {
       url <- repo_url(list(github = github), key)
       idx <- tryCatch({
         fetch_github_main(key, url, index_rds_path(key, cache))
-        fresh_github_index(key, cache)
+        fresh_index(key, cache)
       }, error = function(e) NULL)
     }
     pos <- if (is.null(idx)) NA else match(e$name[[i]], idx$name)
@@ -343,11 +357,12 @@ github_install_deps <- function(lock, cache, github) {
   out
 }
 
-#' The index saved for a GitHub `key` with a moving ref (a branch, a tag,
-#' `HEAD`), read straight from disk after this session's own fetch: not
-#' memoised, and not read before fetching, since the ref may have moved
-#' since an earlier fetch (`github_key()`). `NULL` when there is none.
-fresh_github_index <- function(key, cache = cache_dir()) {
+#' The index saved for a `key` that may have changed since it was saved (a
+#' GitHub key at a branch, a tag or `HEAD`, `github_key()`; a dated key
+#' `index_may_change()`), read straight from disk after this session's own
+#' fetch: not memoised, and not read before fetching. `NULL` when there is
+#' none.
+fresh_index <- function(key, cache = cache_dir()) {
   path <- index_rds_path(key, cache)
   if (!file.exists(path)) return(NULL)
   tryCatch(readRDS(path), error = function(e) NULL)

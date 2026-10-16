@@ -84,6 +84,8 @@ Increment 1 unless marked (2) or (3).
 57. `packages_changed` is notified once per dispatch when the view changes, and not otherwise.
 58. `check_state` holds after every step in every test above.
 
+A preview fetches a `provisional` index again (the same date included) and resolves against what arrives; one that isn't provisional is kept (#39).
+
 ## Disk and jobs (test-library.R)
 
 59. `read_library_manifest` returns `NULL` for a missing folder and for a folder without a manifest.
@@ -94,6 +96,8 @@ Increment 1 unless marked (2) or (3).
 64. `clean(dry_run = TRUE)` lists libraries older than `max_age` and staging folders older than a day, and deletes nothing.
 65. `clean()` keeps libraries active in an open session even when old.
 66. `clean(cache = TRUE)` deletes only cache entries no manifest lists.
+
+`index_may_change` is true for a dated key from yesterday on, in UTC, and false for older ones and GitHub keys (#39).
 
 ## Worker (test-worker.R additions)
 
@@ -108,6 +112,8 @@ Increment 1 unless marked (2) or (3).
 72. Moving the toy date from the first to the second upgrades toyA, restarts the loaded worker, and the cell reruns on request with 0.2.
 73. The saved file's lock block lists toyA and toyB and round-trips unchanged on reopen.
 74. `ember::run()` on the saved file installs if needed and prints the cell's output with the locked version.
+
+An index dated today is fetched again by a new session and by a preview of today, so a package added to today's snapshot later that day is found; offline, the copy saved by the last fetch stands in (#39).
 
 ## Bioconductor (increment 2)
 

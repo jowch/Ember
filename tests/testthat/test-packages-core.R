@@ -541,6 +541,33 @@ test_that("preview_date retries a failed index fetch for that date (04)", {
   expect_equal(r2$state$packages$proposal$status, "fetching")
 })
 
+test_that("a preview fetches a provisional index again, and keeps one that isn't (#39)", {
+  # The shell marks today's index provisional; the core has no clock.
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index("2026-09-01"), at(2),
+                                       provisional = TRUE))
+  expect_true(r$state$packages$indexes[["cran/2026-09-01"]]$provisional)
+  expect_equal(r$state$file$lock$entries$version[r$state$file$lock$entries$name == "dplyr"], "1.1.4")
+
+  # Later that day Package Manager has more: the preview of the same date
+  # asks for the index again and resolves against what arrives.
+  r2 <- drive(r$state, ev_preview_date(as.Date("2026-09-01"), at(3)))
+  expect_equal(vapply(r2$effects, function(e) e$key, character(1)), "cran/2026-09-01")
+  r2 <- drive(r2$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index("2026-09-30"), at(4)))
+  prop <- r2$state$packages$proposal
+  expect_equal(prop$status, "ready")
+  expect_equal(prop$changes$change[prop$changes$name == "dplyr"], "upgraded")
+  expect_false(r2$state$packages$indexes[["cran/2026-09-01"]]$provisional)
+
+  # An index that isn't provisional is the date's for good.
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index("2026-09-01"), at(2)))
+  r3 <- drive(r$state, ev_preview_date(as.Date("2026-09-01"), at(3)))
+  expect_false("fetch_index" %in% effect_types(r3))
+  expect_equal(r3$state$packages$proposal$status, "ready")
+})
+
 test_that("set_date replaces problems with the proposal's, not the old date's (06)", {
   # dplyr hand-edited to a version the 2026-09-01 index doesn't have:
   # an off_date problem at the old date.

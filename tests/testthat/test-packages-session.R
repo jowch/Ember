@@ -177,6 +177,64 @@ test_that("moving the toy date upgrades toyA, restarts the loaded worker, and th
   expect_equal(notebook_state(nb)$file$header$snapshot, "2026-09-30")
 })
 
+# ---- #39: today's index is fetched again --------------------------------------
+
+test_that("an index dated today is fetched again by a new session and by a preview of today, and the saved copy stands in offline (#39)", {
+  # A file:// repository whose only date is today (UTC), first with the
+  # toy repo's 2026-09-01 packages (toyA 0.1), then, "later that day", with
+  # its 2026-09-30 ones (toyA 0.2).
+  today <- format(as.Date(format(Sys.time(), tz = "UTC")))
+  toy <- normalizePath(testthat::test_path("fixtures", "repos", "toy"), mustWork = TRUE)
+  root <- tempfile("ember-today-repo-")
+  dir.create(root)
+  on.exit(unlink(root, recursive = TRUE), add = TRUE)
+  publish <- function(from) {
+    unlink(file.path(root, today), recursive = TRUE)
+    stopifnot(file.copy(file.path(toy, from), root, recursive = TRUE),
+              file.rename(file.path(root, from), file.path(root, today)))
+  }
+  repos <- ember_repos(cran = paste0("file://", root))
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  toyA <- function(nb) {
+    e <- notebook_state(nb)$file$lock$entries
+    e$version[e$name == "toyA"]
+  }
+  open_locked <- function() {
+    nb <- open_notebook(write_toy_notebook(today), repos = repos, cache = cache)
+    ok <- wait_for(nb, function(snap) length(toyA(nb)) == 1, timeout = 120)
+    list(nb = nb, ok = ok)
+  }
+
+  publish("2026-09-01")
+  o1 <- open_locked()
+  on.exit(close_notebook(o1$nb), add = TRUE)
+  expect_true(o1$ok)
+  expect_equal(toyA(o1$nb), "0.1")
+
+  # toyA 0.2 is added to today's snapshot. A new session asks again rather
+  # than reading the copy saved by the first.
+  publish("2026-09-30")
+  o2 <- open_locked()
+  on.exit(close_notebook(o2$nb), add = TRUE)
+  expect_true(o2$ok)
+  expect_equal(toyA(o2$nb), "0.2")
+
+  # So does updating to today in the first session, which already has an
+  # index for today.
+  preview <- preview_date(o1$nb, today, wait = TRUE, timeout = 120)
+  expect_equal(preview$status, "ready")
+  expect_equal(preview$changes$to[preview$changes$name == "toyA"], "0.2")
+
+  # Offline: the fetch fails, and the copy saved by the last fetch stands in.
+  unlink(root, recursive = TRUE)
+  o3 <- open_locked()
+  on.exit(close_notebook(o3$nb), add = TRUE)
+  expect_true(o3$ok)
+  expect_equal(toyA(o3$nb), "0.2")
+  expect_false("index_unavailable" %in% package_status(o3$nb)$problems$kind)
+})
+
 # ---- 73: the saved lock round-trips -----------------------------------------
 
 test_that("the saved file's lock block lists toyA and toyB and round-trips unchanged on reopen (73)", {
