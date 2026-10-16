@@ -63,14 +63,49 @@ test("start page: Open a file completes a typed path and opens it in the editor 
   const page = await newPage(browser);
   await page.goto(server.url);
 
+  // Typed the way a person types, with a pause before the last separator:
+  // the list for the parent folder shows first, then the separator has to
+  // ask for the folder's own entries. Before #124 the parent's list stayed
+  // (it showed only this folder's own name), and in a temp folder with
+  // over 200 entries this folder's name could be missing from it, so no
+  // list showed at all (macOS, late in a CI run). No timeouts of our own:
+  // each wait is for a list a completion request answered, and the test
+  // runner's timeout bounds them.
   const openInput = page.locator(".ember-start-open-file .cm-content");
   await openInput.click();
-  await page.keyboard.type(dir + path.sep);
-  await page.waitForSelector(".cm-tooltip-autocomplete li", { timeout: 5000 });
-  await page.getByText("existing.R", { exact: false }).first().click();
+  await page.keyboard.type(dir);
+  const option = (name) => page.locator(".cm-tooltip-autocomplete li", { hasText: name });
+  await option(path.basename(dir)).waitFor({ state: "visible", timeout: 0 });
+  await page.keyboard.type(path.sep);
+  await option("existing.R").waitFor({ state: "visible", timeout: 0 });
+  await option("existing.R").click();
 
   await page.locator(".ember-start-open-file button").click();
   await page.waitForURL(/edit\?id=/, { timeout: 10000 });
+
+  assertNoProblems(page);
+});
+
+test("start page: Open a file finds a name past the first 200 entries of a big folder (#124)", async (t) => {
+  // 250 folders that sort before the one we want: the server lists only
+  // 200 entries, so the list for the bare folder can't include it, and
+  // typing its name has to ask again rather than narrow that list.
+  const dir = mkdtempSync(path.join(tmpdir(), "ember-e2e-start-big-"));
+  for (let i = 0; i < 250; i++) fs.mkdirSync(path.join(dir, `a${String(i).padStart(3, "0")}`));
+  fs.mkdirSync(path.join(dir, "zz-target"));
+  const server = await startServer([], { cwd: dir, logFile: path.join(artifactsDir(), "start-page-big.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await page.goto(server.url);
+
+  const option = (name) => page.locator(".cm-tooltip-autocomplete li", { hasText: name });
+  await page.locator(".ember-start-open-file .cm-content").click();
+  await page.keyboard.type(dir + path.sep);
+  await option("a000/").waitFor({ state: "visible", timeout: 0 });
+  await page.keyboard.type("zz");
+  await option("zz-target/").waitFor({ state: "visible", timeout: 0 });
 
   assertNoProblems(page);
 });
