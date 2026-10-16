@@ -169,9 +169,14 @@ Workers and jobs (installs, index fetches) end when the server does. They
 start with processx's supervisor, a separate process that sends them SIGTERM
 once the server is gone, even after a SIGKILL (#141, #147). On Unix a job
 also takes its own children with it (docs/packages.md); on Windows that isn't
-checked yet (#148). A worker doesn't take its children: the server interrupts
-a cell with SIGINT to the worker itself, so processes a cell started can
-still outlive a killed server (#150).
+checked yet (#148). For a worker, a small `sh` outside its process group
+waits on a pipe from the server and ends the group once the server is gone
+(#150), since the worker itself can't run under a wrapper: the server
+interrupts a cell with SIGINT to the worker's own process. So what a cell
+starts with `system()` or a fork ends with the server, as it already did
+when the notebook restarts. A process a cell starts in a session of its own
+(processx, callr) is outside the group and outlives both a restart and a
+killed server.
 
 The server runs two ways. From an interactive R session, the R API starts
 it as a background process (processx) and returns a handle to get its URL and
