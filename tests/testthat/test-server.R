@@ -700,7 +700,9 @@ test_that("every request type in the handler table is answered as documented (36
              "ember_run_all", "ember_retry_install", "ember_split_cell", "ember_apply_update", "ember_cancel_update",
              "ember_set_mode", "request_js_link_response", "nbpkg_available_versions",
              "nbpkg_get_project_toml", "nbpkg_set_project_toml", "pkg_update")
-  expect_setequal(names(handlers), c(answered, silent))
+  # Answered once a subprocess exits, so not counted here: see its own test.
+  answered_later <- "ember_disk_use"
+  expect_setequal(names(handlers), c(answered, silent, answered_later))
 
   # A fresh notebook and server per type: some requests change engine state
   # (run_multiple_cells, ember_run_notebook), which would otherwise leak into
@@ -734,6 +736,39 @@ test_that("every request type in the handler table is answered as documented (36
 
   for (type in answered) expect_gt(one_request(type), 0, label = type)
   for (type in silent) expect_equal(one_request(type), 0, label = type)   # idempotent: nothing changed
+})
+
+test_that("ember_disk_use replies with the disk use of the notebook's cache dir and deletes nothing (#38)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  cache <- tempfile("ember-pkg-cache-")
+  dir.create(file.path(cache, "indexes"), recursive = TRUE)
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  index <- file.path(cache, "indexes", "cran-2026-09-01.rds")
+  writeBin(as.raw(rep(3L, 50000)), index)
+  nb <- open_notebook(path, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  baseline <- length(ws$messages)
+  handle_message(server, ws, wire("ember_disk_use", notebook_id = id))
+  expect_equal(length(ws$messages), baseline)  # the reply comes when the subprocess exits
+  # A guard against a hang, not a timing check.
+  deadline <- Sys.time() + 60
+  replies <- list()
+  while (length(replies) == 0 && Sys.time() < deadline) {
+    later::run_now(timeout = 0.5)
+    replies <- Filter(function(m) identical(m$type, "ember_disk_use"), ws$messages)
+  }
+  expect_length(replies, 1)
+  msg <- replies[[1]]$message
+  expect_null(msg$error)
+  expect_gte(msg$indexes, 50000)
+  expect_equal(msg$libraries, 0)
+  expect_equal(msg$cache, 0)
+  expect_true(file.exists(index))
 })
 
 # ---- HTTP: secret, cookie, redirect, file download, websocket gate ----------

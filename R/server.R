@@ -829,6 +829,7 @@ on_run <- function(server, cl, hub, req) {
 #' | ember_cancel_update            | dispatch ev_cancel_preview(); flush. No reply                        |
 #' | ember_set_package_source       | {name, source}: edit_notebook(set_package_source()); reply {ok} or {error}; flush |
 #' | ember_remove_package_source    | {name}: edit_notebook(remove_package_source()); reply {ok} or {error}; flush |
+#' | ember_disk_use                 | {}: measure disk use of the notebook's cache dir in a subprocess (disk_use()); reply {libraries, cache, indexes, exact} or {error} when it exits (#38) |
 #' | ember_move_notebook            | {name, folder}: notebook_target_path() + move_notebook(); reply {path} or {error}; flush |
 #' | ember_start_page               | {}: reply start_page_reply() -- start_dir, new_name, open and recent notebooks. No hub |
 #' | ember_new_notebook             | {name, folder}: notebook_target_path() + new_notebook() + host_notebook(owned = TRUE); reply {url} or {error}. No hub |
@@ -1097,6 +1098,37 @@ handlers <- list(
       text <- if (!is.null(reply)) reply$text else signature_fallback(name, package)
       send(cl, reply_message(req, "ember_signature", list(text = text)))
     })
+  },
+
+  #' The Packages tab's disk use line (#38): `disk_use()` of the
+  #' notebook's cache dir, in a subprocess (`disk_use_command()`), since
+  #' walking a large cache can take seconds and the server never blocks.
+  #' Polled with `later` until it exits; the reply comes then, to the
+  #' caller only. Nothing is deleted: the tab only reports.
+  ember_disk_use = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    cmd <- disk_use_command(hub$nb$state$options$cache %||% cache_dir())
+    proc <- tryCatch(processx::process$new(cmd$command, cmd$args, env = cmd$env,
+                                           stdout = "|", stderr = "|", cleanup_tree = TRUE),
+                     error = function(e) e)
+    answer <- function(message) send(cl, reply_message(req, "ember_disk_use", message))
+    if (inherits(proc, "error")) return(answer(list(error = conditionMessage(proc))))
+    out <- ""
+    poll <- function() {
+      out <<- paste0(out, tryCatch(proc$read_output(), error = function(e) ""))
+      if (proc$is_alive()) return(later::later(poll, 0.1))
+      out <<- paste0(out, tryCatch(proc$read_all_output(), error = function(e) ""))
+      use <- tryCatch(jsonlite::fromJSON(out), error = function(e) NULL)
+      if (identical(proc$get_exit_status(), 0L) && is.list(use) && !is.null(use$cache)) {
+        answer(list(libraries = use$libraries, cache = use$cache, indexes = use$indexes,
+                    exact = isTRUE(use$exact)))
+      } else {
+        err <- tryCatch(proc$read_all_error(), error = function(e) "")
+        answer(list(error = if (nzchar(err)) err else "could not measure disk use"))
+      }
+    }
+    later::later(poll, 0.1)
+    invisible(NULL)
   },
 
   get_all_notebooks = function(server, cl, hub, req) {

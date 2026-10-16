@@ -1207,6 +1207,12 @@ nav#at_the_top .ember-menu {
     font-weight: 600;
 }
 
+/* The disk use line under the table (#38). */
+#ember-packages-tab .ember-packages-disk-use {
+    font-size: 12px;
+    color: var(--ember-muted);
+}
+
 #ember-packages-tab .ember-packages-library-message {
     font-weight: normal;
     opacity: 0.7;
