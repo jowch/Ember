@@ -42,7 +42,16 @@ async function openPackagesTab(t, cache, name) {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { cacheDir: cache.root, logFile: path.join(artifactsDir(), `${name}.server.log`) });
   const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); await server.stop(); rmSync(cache.root, { recursive: true, force: true }); });
+  t.after(async () => {
+    await browser.close();
+    await server.stop();
+    // A job the stopped server started (an index fetch) can still write
+    // into the cache, so the folder can refill while it is removed (#141).
+    try { rmSync(cache.root, { recursive: true, force: true }); } catch (err) {
+      if (err.code !== "ENOTEMPTY") throw err;
+      console.error(`clean-up.test.mjs: left ${cache.root} behind (ENOTEMPTY, #141)`);
+    }
+  });
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
   await page.getByRole("button", { name: "Packages", exact: true }).click();
