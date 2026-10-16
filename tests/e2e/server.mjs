@@ -4,7 +4,7 @@
 // (docs/ui-tests.md, "Running locally" / "In CI").
 
 import { spawn } from "node:child_process";
-import { mkdtempSync, copyFileSync, mkdirSync, appendFileSync } from "node:fs";
+import { mkdtempSync, copyFileSync, mkdirSync, appendFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -81,6 +81,7 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   // must already be set the first time a notebook tries to install.
   let prelude = installerScript ? `options(ember.installer_script = ${JSON.stringify(installerScript)}); ` : "";
   let expr;
+  let cache = null;
   if (repos) {
     // The notebooks resolve against fixture repositories (`ember_repos()`
     // arguments, e.g. `file://` folders), so `serve()` doesn't open them
@@ -88,7 +89,7 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
     // before the server answers any request. Their indexes go to a cache
     // of their own, never the shared one: a fixture's index is saved under
     // the same key ("cran/2026-09-01") a real one would be.
-    const cache = mkdtempSync(path.join(tmpdir(), "ember-e2e-cache-"));
+    cache = mkdtempSync(path.join(tmpdir(), "ember-e2e-cache-"));
     prelude += `options(ember.cache_dir = ${JSON.stringify(cache)}); `;
     const args = Object.entries(repos).map(([k, v]) => `${k} = ${v === null ? "NA" : JSON.stringify(v)}`).join(", ");
     const onReady = `function(server) for (p in c(${quoted})) ember::host_notebook(server, ember::open_notebook(p, repos = ember::ember_repos(${args})), owned = TRUE)`;
@@ -113,6 +114,8 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   });
   liveChildren.add(child);
   child.on("exit", () => liveChildren.delete(child));
+  // The private index cache goes with the server that used it.
+  if (cache) child.on("exit", () => rmSync(cache, { recursive: true, force: true }));
   // Unreferenced so a test file whose test failed before `stop()` still
   // lets node exit, which kills the child through the "exit" handler.
   child.unref();

@@ -482,12 +482,14 @@ test_that("a not-found package given a source is looking up, then locked with it
   expect_equal(row$status, "not_found")
   expect_true(is.na(row$spec))
 
-  # The stale not_found problem is still there while the lookup runs.
+  # The stale not_found problem is still there while the lookup runs, but
+  # the row doesn't repeat it.
   r <- drive(r$state, ev_apply(list(op_set_source("toyC", "lab/nope")), at(3)))
   expect_equal(effect_keys(r), "github/lab/nope@HEAD")
   row <- view_row(r$state, "toyC")
   expect_equal(row$status, "looking_up")
   expect_equal(row$spec, "github:lab/nope")
+  expect_true(is.na(row$message))
 
   # A typo: the lookup fails, nothing falls back, and the row stays to say why.
   r <- drive(r$state, ev_index_failed("github/lab/nope@HEAD", "could not find github:lab/nope@HEAD on GitHub", at(4)))
@@ -527,5 +529,20 @@ test_that("a failed fetch's message drops R's wrapping, so the row reads as one 
                "could not find github:lab/nope@HEAD on GitHub")
   expect_equal(fetch_error_message(c("trying URL", "Error in f(x) : ", "  cannot open URL 'x'", "Execution halted")),
                "cannot open URL 'x'")
+  expect_equal(fetch_error_message("Error in pkg::f(x) : boom\nExecution halted"), "boom")
   expect_equal(fetch_error_message(c("a", "b")), "a\nb")
+})
+
+test_that("a source answered while CRAN's index failed isn't left looking up: the row says why (121)", {
+  s <- src_state(list(S = cell(""), A = cell("library(toyC)")), sources = c(toyC = "github:lab/toyC"))
+  r <- drive(s, ev_open(at(1)))
+  expect_equal(view_row(r$state, "toyC")$status, "looking_up")
+  key <- "github/lab/toyC@HEAD"
+  r <- drive(r$state, ev_index_fetched(key, gh_index(key, C2), at(2)))
+  # Still waiting on CRAN's index.
+  expect_equal(view_row(r$state, "toyC")$status, "looking_up")
+  r <- drive(r$state, ev_index_failed(repo_key("cran", "2026-09-01"), "offline", at(3)))
+  row <- view_row(r$state, "toyC")
+  expect_equal(row$status, "source_failed")
+  expect_equal(row$message, "offline")
 })

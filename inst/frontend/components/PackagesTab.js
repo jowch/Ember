@@ -319,6 +319,7 @@ const SourceDetail = ({ row, read_only }) => {
     const pluto_actions = useContext(PlutoActionsContext)
     const [editing, set_editing] = useState(false)
     const [error, set_error] = useState(/** @type {string?} */ (null))
+    const [removing, set_removing] = useState(false)
     const has_spec = row.spec != null
     const failed_message = has_spec && row.message != null ? row.message : null
     if (!has_spec && row.status !== "not_found") return null
@@ -347,10 +348,16 @@ const SourceDetail = ({ row, read_only }) => {
                               ? html`<button
                                     type="button"
                                     class="ember-btn"
+                                    disabled=${removing}
                                     onClick=${async () => {
                                         set_error(null)
-                                        const response = await pluto_actions.ember_remove_package_source(row.name)
-                                        if (response?.message?.error != null) set_error(response.message.error)
+                                        set_removing(true)
+                                        try {
+                                            const response = await pluto_actions.ember_remove_package_source(row.name)
+                                            if (response?.message?.error != null) set_error(response.message.error)
+                                        } finally {
+                                            set_removing(false)
+                                        }
                                     }}
                                 >
                                     ${t("t_ember_packages_source_remove")}

@@ -1065,9 +1065,12 @@ sync_watch <- function(nb, paths) {
 fetch_error_message <- function(output) {
   output <- unlist(strsplit(paste(output, collapse = "\n"), "\r?\n"))
   output <- output[!grepl("^Execution halted\\s*$", output)]
-  at <- grep("^Error( in [^:]*)?: ", output)
+  # "Error: msg", or "Error in <call> : msg" (R's separator is " : ", and
+  # the call may hold colons of its own, as pkg::f() does).
+  error_re <- "^Error(: | in .*? : ?)"
+  at <- grep(error_re, output, perl = TRUE)
   if (length(at) == 0) return(paste(utils::tail(output, 20), collapse = "\n"))
   lines <- output[at[[length(at)]]:length(output)]
-  lines[[1]] <- sub("^Error( in [^:]*)?: (ember: )?", "", lines[[1]])
+  lines[[1]] <- sub(paste0(error_re, "(ember: )?"), "", lines[[1]], perl = TRUE)
   trimws(paste(trimws(lines), collapse = " "))
 }

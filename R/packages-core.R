@@ -1462,9 +1462,10 @@ empty_packages_df <- function() {
 #'   running, is `"looking_up"`, even while the last resolution's stale
 #'   `not_found` row for it is still in `problems`;
 #' * a wanted package with a spec that is neither locked nor `not_found`
-#'   would have no row at all: it gets one, `"source_failed"` once a
-#'   problem names it, `"looking_up"` until then (its lookup, or CRAN's
-#'   index, is still being fetched). A failed
+#'   would have no row at all: it gets one, `"looking_up"` while its
+#'   lookup (or, with no problem naming it yet, any index) is being
+#'   fetched, else `"source_failed"` with the problem naming it, or the
+#'   notebook-wide one (CRAN's index failed). A failed
 #'   lookup leaves the lock alone (no CRAN fallback), so without this row a
 #'   typo in the repository would make the package vanish from the tab.
 source_rows <- function(state, wanted, rows) {
@@ -1483,12 +1484,20 @@ source_rows <- function(state, wanted, rows) {
 
   hit <- match(rows$name, probs$package)
   rows$message[!is.na(hit)] <- probs$message[hit[!is.na(hit)]]
-  rows$status[rows$status == "not_found" & rows$name %in% looking_up] <- "looking_up"
+  now_looking <- rows$status == "not_found" & rows$name %in% looking_up
+  rows$status[now_looking] <- "looking_up"
+  rows$message[now_looking] <- NA_character_
 
   extra <- setdiff(intersect(wanted, names(specs)), rows$name)
   if (length(extra) == 0) return(rows)
+  # Nothing named this package, but nothing is being fetched either (CRAN's
+  # index failed while GitHub answered): the notebook-wide problem says why.
+  general <- (p$problems %||% empty_package_problems())
+  general <- general$message[is.na(general$package)]
+  any_fetching <- any(vapply(names(p$indexes), fetching, logical(1)))
   msg <- probs$message[match(extra, probs$package)]
-  status <- ifelse(extra %in% looking_up | is.na(msg), "looking_up", "source_failed")
+  status <- ifelse(extra %in% looking_up | (is.na(msg) & any_fetching), "looking_up", "source_failed")
+  msg[is.na(msg)] <- if (length(general) > 0) general[[1]] else NA_character_
   rbind(rows, data.frame(name = extra, version = NA_character_, source = NA_character_,
                          direct = TRUE, status = status,
                          message = ifelse(status == "looking_up", NA_character_, msg),
