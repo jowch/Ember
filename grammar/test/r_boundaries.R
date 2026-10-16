@@ -1,15 +1,34 @@
-# Emits, for each file in the corpus manifest, R's own top-level
-# expression boundaries (as character offsets into the UTF-8 text) so a
-# Node script can compare them against the Lezer grammar's top-level
-# statements. Run as:
-#   Rscript --vanilla test/r_boundaries.R <manifest.csv> <corpus-root> <out.json>
+# Emits, for each R file in the corpus, R's own top-level expression
+# boundaries (as character offsets into the UTF-8 text) so a Node script
+# can compare them against the Lezer grammar's top-level statements. Run
+# as:
+#   Rscript --vanilla test/r_boundaries.R <out.json> [<manifest.csv> <corpus-root>]
+#
+# With a manifest (the `id` and `file` columns of spikes/corpus's), the
+# corpus is the files it lists. Without one, it is every `.R` file the
+# installed packages ship in `doc/`, `demo/` and `tests/` (vignette code,
+# demos, test scripts): real R that every machine with R has, so the test
+# runs anywhere, not only where the gitignored spikes/corpus exists (#58).
+# Each entry of the JSON carries the file's `path`.
 
 args <- commandArgs(trailingOnly = TRUE)
-manifest_path <- args[[1]]
-corpus_root <- args[[2]]
-out_path <- args[[3]]
+out_path <- args[[1]]
 
-m <- read.csv(manifest_path, stringsAsFactors = FALSE)
+if (length(args) >= 3) {
+  m <- read.csv(args[[2]], stringsAsFactors = FALSE)
+  m$path <- file.path(args[[3]], basename(m$file))
+} else {
+  libs <- unique(c(.libPaths(), R.home("library")))
+  paths <- unlist(lapply(libs, function(lib) {
+    Sys.glob(file.path(lib, "*", c("doc", "demo", "tests"), "*.R"))
+  }))
+  paths <- unique(normalizePath(paths, winslash = "/"))
+  # A package installed in two libraries ships the same files twice.
+  paths <- paths[!duplicated(file.path(basename(dirname(dirname(paths))),
+                                       basename(dirname(paths)), basename(paths)))]
+  m <- data.frame(id = sub("^.*/([^/]+/[^/]+/[^/]+)$", "\\1", paths), path = paths,
+                  stringsAsFactors = FALSE)
+}
 
 # R's getParseData() reports 1-based (line, column) positions. Columns are
 # counted in characters (verified against a UTF-8 file containing
@@ -54,18 +73,18 @@ names(results) <- m$id
 
 for (i in seq_len(nrow(m))) {
   id <- m$id[i]
-  path <- file.path(corpus_root, basename(m$file[i]))
+  path <- m$path[i]
   code <- tryCatch(
     paste(readLines(path, warn = FALSE, encoding = "UTF-8"), collapse = "\n"),
     error = function(e) NA_character_
   )
   if (is.na(code)) {
-    results[[id]] <- list(error = "read-failed")
+    results[[id]] <- list(path = path, error = "read-failed")
     next
   }
   p <- tryCatch(parse(text = code, keep.source = TRUE), error = function(e) e)
   if (inherits(p, "error")) {
-    results[[id]] <- list(error = conditionMessage(p))
+    results[[id]] <- list(path = path, error = conditionMessage(p))
     next
   }
   pd <- getParseData(p)
@@ -74,7 +93,7 @@ for (i in seq_len(nrow(m))) {
   # are not expressions.
   top <- pd[pd$parent == 0 & !pd$token %in% c("COMMENT", "';'"), , drop = FALSE]
   if (nrow(top) == 0) {
-    results[[id]] <- list(error = NULL, boundaries = list())
+    results[[id]] <- list(path = path, error = NULL, boundaries = list())
     next
   }
   lines <- strsplit(code, "\n", fixed = TRUE)[[1]]
@@ -87,7 +106,7 @@ for (i in seq_len(nrow(m))) {
   # that already equals "one past" the 0-based index).
   to <- starts[top$line2] + vapply(seq_len(nrow(top)), function(k) colmaps[[top$line2[k]]][top$col2[k]], numeric(1))
   ord <- order(from)
-  results[[id]] <- list(error = NULL, boundaries = unname(Map(function(a, b) list(a, b), from[ord], to[ord])))
+  results[[id]] <- list(path = path, error = NULL, boundaries = unname(Map(function(a, b) list(a, b), from[ord], to[ord])))
 }
 
 jsonlite::write_json(results, out_path, auto_unbox = TRUE, null = "null")

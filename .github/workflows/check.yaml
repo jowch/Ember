@@ -54,6 +54,14 @@ jobs:
       - name: Generated parser is committed and current
         run: git diff --exit-code -- src/parser.js src/parser.terms.js dist
       - run: npm test
+      # The corpus test compares the grammar's top-level boundaries with
+      # R's own parser on the R files installed packages ship (#58), so it
+      # needs R and jsonlite, nothing else.
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - run: Rscript -e 'install.packages("jsonlite")'
+      - run: npm run corpus
 
   e2e:
     runs-on: ${{ matrix.os }}
