@@ -304,7 +304,7 @@ parse_github_source <- function(x) {
 github_spec <- function(x) {
   if (!is.character(x) || length(x) != 1 || is.na(x)) return(NULL)
   x <- trimws(x)
-  if (grepl("^(https?://)?(www\\.)?github\\.com/", x, ignore.case = TRUE)) {
+  if (is_github_link(x)) {
     x <- github_link_spec(x)
     if (is.null(x)) return(NULL)
   } else if (!grepl(":", x, fixed = TRUE)) {
@@ -312,6 +312,9 @@ github_spec <- function(x) {
   }
   if (is.null(parse_github_source(x))) NULL else x
 }
+
+#' `TRUE` for a string that starts as a github.com link does.
+is_github_link <- function(x) grepl("^(https?://)?(www\\.)?github\\.com/", trimws(x), ignore.case = TRUE)
 
 #' A github.com link -> its `github:` spec (#85): the repository's page,
 #' `https://github.com/user/repo`, with or without a trailing `/` or

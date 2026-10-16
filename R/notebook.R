@@ -246,11 +246,11 @@ parse_header_block <- function(lines) {
       valraw <- m[[3]]
       val <- if (grepl('^".*"$', valraw)) toml_unquote(valraw) else valraw
       if (section == "sources") {
-        # Normalised as set_package_source() does, so a link or a bare
-        # "user/repo" written by hand is saved as "github:user/repo" (#85).
-        # One github_spec() can't read stays as written, for
-        # source_problems() to name.
-        sources[key] <- github_spec(val) %||% val
+        # A github.com link written by hand is read as set_package_source()
+        # saves it, so the next save writes "github:user/repo" (#85). Any
+        # other value stays as written: a bare "user/repo" is not the
+        # header's form, and source_problems() names what it can't read.
+        sources[key] <- (if (is_github_link(val)) github_spec(val)) %||% val
       } else if (key %in% names(known)) {
         known[[key]] <- val
       } else {

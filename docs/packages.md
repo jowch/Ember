@@ -384,12 +384,12 @@ Built from increment 2 (#20).
   Bioconductor can't be inferred, so the user writes it under
   `[sources]`: `mypkg = "github:lab/mypkg"`, optionally with `@` and a
   branch, tag or commit. `set_package_source()` and
-  `remove_package_source()` are the edit ops for it. A bare
-  `user/repo`, or a github.com link to the repository or to a branch,
-  tag or commit's page (`https://github.com/lab/mypkg/tree/dev`), reads
-  as the same (`github_spec()`, #85), in the op and in a header written
-  by hand, and is saved in the `github:` form. Only github.com links: a
-  GitHub Enterprise host has its own API base (`ember_repos(github)`). A package with an
+  `remove_package_source()` are the edit ops for it. The op also takes
+  a bare `user/repo`, and both the op and a header written by hand take
+  a github.com link to the repository or to a branch, tag or commit's
+  page (`https://github.com/lab/mypkg/tree/dev`, `github_spec()`, #85);
+  either is saved in the `github:` form. Only github.com links: a GitHub
+  Enterprise host has its own API base (`ember_repos(github)`). A package with an
   entry comes from it, never from CRAN, even when CRAN has the name.
 - **One-row indexes.** Each entry is a repo key,
   `github/<user>/<repo>@<ref>` (`HEAD` when no ref is given), fetched by

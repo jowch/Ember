@@ -510,12 +510,15 @@ test_that("a link is saved as its github: source, by the op and when the header 
   r <- drive(s, ev_apply(list(op_set_source("toyC", "https://github.com/lab/toyC/tree/dev")), at(1)))
   expect_equal(r$state$file$header$sources, c(toyC = "github:lab/toyC@dev"))
 
-  # Written by hand: read as the op would save it, so the next save writes
-  # no link. One that can't be read stays as written, for its problem row.
+  # Written by hand: a link is read as the op would save it, so the next
+  # save writes no link. Anything else stays as written, for its problem
+  # row: a bare "user/repo" is the op's shorthand, not the header's form.
   hand <- src_file(list(S = cell("")), sources = c(toyC = "https://github.com/lab/toyC.git",
-                                                   other = "lab/other", bad = "cran:dplyr"))
+                                                   other = "lab/other", bad = "cran:dplyr",
+                                                   page = "https://github.com/lab/toyC/issues"))
   file <- parse_notebook(format_notebook(hand), new_id = new_id_seq(), version = "0.1.0")
-  expect_equal(file$header$sources, c(toyC = "github:lab/toyC", other = "github:lab/other", bad = "cran:dplyr"))
+  expect_equal(file$header$sources, c(toyC = "github:lab/toyC", other = "lab/other", bad = "cran:dplyr",
+                                      page = "https://github.com/lab/toyC/issues"))
   expect_false(grepl("https://", format_notebook(file), fixed = TRUE))
 })
 
