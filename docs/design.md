@@ -409,7 +409,15 @@ The rule is wrong when a formula mixes a data frame with a global vector
 (`lm(y ~ x + z, data = df)`, `z` not a column), and it errs towards a missing
 edge. So after the cell runs, the worker checks that each name taken as a
 column is in `names()` of the data frame the function received; if one
-isn't, the engine adds the edge and shows a note. The footer's `learned
+isn't, the engine adds the edge and shows a note. The check runs no code
+of the notebook's: it reads a name or a `$`/`[[` path's value, and for a
+call that only filters, sorts or adds named columns (`subset(df, x > 1)`,
+`head()`, `df[rows, ]`, `transform(df, w = …)`, dplyr's `filter()`,
+`mutate()` and the like, `column_keeping_calls` in the worker) it takes
+the columns of the data the call is given plus the names it adds. Running
+the call again could repeat a slow data step or a notebook's own S3
+method. Any other call (a join, a notebook's own function, `read.csv()`)
+leaves its formula unchecked. The footer's `learned
 references` block records these names, so the edge is there when the
 notebook is opened without running. Editing the cell drops them, as it
 drops learned settings; the next run's check finds them again.
