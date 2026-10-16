@@ -265,7 +265,7 @@ handle_next <- function() {
     help = {
       r <- help_lookup(msg$topic, msg$package, isTRUE(msg$all_packages))
       send(list(type = "help_page", id = msg$id, found = r$found, topic = r$topic,
-               package = r$package, html = r$html, matches = r$matches))
+               package = r$package, html = r$html, matches = r$matches, error = r$error))
     },
     signature = send(list(type = "signature", id = msg$id, text = worker_signature(msg$name, msg$package))),
     quit = quit(save = "no"),
@@ -2378,7 +2378,9 @@ complete_line <- function(line, cursor) {
 #' Rd, `Rd2HTML()` renders it to a temp file (`dynamic = TRUE`, so
 #' cross-reference links are the short `../../pkg/help/topic` form the
 #' server's `rewrite_help_links()` expects), and only the `<body>` is
-#' returned -- the page already has its own `<html>`/`<head>`.
+#' returned -- the page already has its own `<html>`/`<head>`. An error
+#' anywhere in the lookup comes back as `error`, its message, so the page
+#' can say so instead of looking like no match (#121).
 help_lookup <- function(topic, package, all_packages = FALSE) {
   tryCatch({
     matches <- if (!is.null(package)) {
@@ -2415,7 +2417,8 @@ help_lookup <- function(topic, package, all_packages = FALSE) {
     body <- sub("(?s).*<body>", "", full, perl = TRUE)
     body <- sub("(?s)</body>.*", "", body, perl = TRUE)
     list(found = TRUE, topic = topic, package = pkg_name, html = body, matches = list())
-  }, error = function(e) list(found = FALSE, topic = topic, package = package, html = NULL, matches = list()))
+  }, error = function(e) list(found = FALSE, topic = topic, package = package, html = NULL, matches = list(),
+                              error = conditionMessage(e)))
 }
 
 #' `args(fn)` deparsed into `name(arg1, arg2 = default, ...)`, the trailing

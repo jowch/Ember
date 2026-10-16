@@ -5,6 +5,7 @@
     "t_ember_help_back": "Back",
     "t_ember_help_forward": "Forward",
     "t_ember_help_follows_cursor": "{{package}} · follows the cursor",
+    "t_live_docs_not_found": "No help page for <code>{{query}}</code>.",
     "t_live_docs_body": "<p>Welcome to <b>Help</b>! Keep this little window open while you work on the notebook, and you will get the R documentation of everything you type.</p><p>You can also type a query above.</p>",
     "t_panel_status_short": "Status",
     "t_panel_docs": "Help",
