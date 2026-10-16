@@ -1536,6 +1536,56 @@ test_that("display_html resolves and dedupes dependencies, skipped without htmlt
   expect_identical(r$output$deps[[1]]$script, "a.js")
 })
 
+test_that("a value with a knit_print() method shows as its HTML: registered by a package, defined in the notebook, an HTML kable; a markdown kable keeps its text (#154)", {
+  skip_if_not_installed("knitr")
+  h <- worker_harness(extra_libs = dirname(find.package("knitr")))
+  on.exit(h$close())
+
+  # As gt registers knit_print.gt_tbl: in knitr's S3 table, out of sight
+  # of the search path.
+  r <- run_and_wait(h, "a", 1L, paste(
+    'registerS3method("knit_print", "ember_registered", function(x, ...) knitr::asis_output("<b>registered</b>"), envir = asNamespace("knitr"))',
+    'structure(1, class = "ember_registered")', sep = "\n"))
+  expect_identical(r$output$kind, "html")
+  expect_identical(r$output$html, "<b>registered</b>")
+  expect_match(r$output$text, "ember_registered")
+
+  r <- run_and_wait(h, "b", 2L, paste(
+    'knit_print.ember_own <- function(x, ...) knitr::asis_output("<i>own</i>")',
+    'structure(1, class = "ember_own")', sep = "\n"))
+  expect_identical(r$output$kind, "html")
+  expect_identical(r$output$html, "<i>own</i>")
+
+  r <- run_and_wait(h, "c", 3L, 'knitr::kable(data.frame(x = 1:2), format = "html")')
+  expect_identical(r$output$kind, "html")
+  expect_match(r$output$html, "<table")
+
+  r <- run_and_wait(h, "d", 4L, 'knitr::kable(data.frame(x = 1:2))')
+  expect_false(identical(r$output$kind, "html"))
+  expect_match(r$output$text, "|", fixed = TRUE)
+
+  # As huxtable's: the format comes from knitr::is_html_output().
+  r <- run_and_wait(h, "e", 5L, paste(
+    'knit_print.ember_fmt <- function(x, ...) knitr::asis_output(if (knitr::is_html_output()) "<p>html</p>" else "screen")',
+    'structure(1, class = "ember_fmt")', sep = "\n"))
+  expect_identical(r$output$html, "<p>html</p>")
+
+  # As flextable's for pandoc: the HTML in a raw-HTML fence.
+  r <- run_and_wait(h, "g", 7L, paste(
+    'knit_print.ember_fenced <- function(x, ...) knitr::asis_output("\\n```{=html}\\n<p>fenced</p>\\n```\\n")',
+    'structure(1, class = "ember_fenced")', sep = "\n"))
+  expect_identical(r$output$html, "<p>fenced</p>")
+
+  # As rmarkdown's knit_print.data.frame outside a report: it prints the
+  # value and returns it, which isn't knit_asis. The data frame stays
+  # Ember's table, and nothing is printed to the console.
+  r <- run_and_wait(h, "f", 6L, paste(
+    'registerS3method("knit_print", "data.frame", function(x, ...) { print(x); x }, envir = asNamespace("knitr"))',
+    'data.frame(x = 1:3)', sep = "\n"))
+  expect_identical(r$output$kind, "table")
+  expect_false(any(vapply(r$console, function(e) identical(e$kind, "stdout"), logical(1))))
+})
+
 test_that("render_plot() redraws at the cell's own figure size and a new res; width/height pixels override (ui-3 65)", {
   h <- worker_harness()
   on.exit(h$close())
