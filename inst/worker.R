@@ -1998,9 +1998,21 @@ try_knit_print <- function(value) {
   if (inherits(value, "knitr_kable") && !identical(attr(value, "format"), "html")) return(NULL)
   # Called from globalenv(), as in a report, so the dispatch sees a method
   # the notebook defined; called from here it would see only knitr's table.
-  out <- tryCatch(do.call(knitr::knit_print, list(value), quote = TRUE, envir = globalenv()),
-                  error = function(e) NULL)
-  if (is.null(out)) return(NULL)
+  # The report is HTML for the call (rmarkdown.pandoc.to), so a method
+  # that picks its format from knitr::is_html_output(), as huxtable's
+  # does, gives HTML rather than screen text.
+  old_to <- knitr::opts_knit$get("rmarkdown.pandoc.to")
+  knitr::opts_knit$set(rmarkdown.pandoc.to = "html")
+  on.exit(knitr::opts_knit$set(rmarkdown.pandoc.to = old_to), add = TRUE)
+  out <- NULL
+  # Some methods have nothing for a value outside a report and print it
+  # instead (rmarkdown's for data frames and tibbles, data.table's): what
+  # they print is dropped, and only a knit_asis result is kept, so the
+  # value goes on to the next step, Ember's table (#154).
+  utils::capture.output(
+    out <- tryCatch(do.call(knitr::knit_print, list(value), quote = TRUE, envir = globalenv()),
+                    error = function(e) NULL))
+  if (!inherits(out, "knit_asis")) return(NULL)
   tf <- text_form(value)
   list(kind = "html", mime = "text/html", html = paste(out, collapse = "\n"),
        text = tf$text, truncated = tf$truncated)

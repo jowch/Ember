@@ -1563,6 +1563,21 @@ test_that("a value with a knit_print() method shows as its HTML: registered by a
   r <- run_and_wait(h, "d", 4L, 'knitr::kable(data.frame(x = 1:2))')
   expect_false(identical(r$output$kind, "html"))
   expect_match(r$output$text, "|", fixed = TRUE)
+
+  # As huxtable's: the format comes from knitr::is_html_output().
+  r <- run_and_wait(h, "e", 5L, paste(
+    'knit_print.ember_fmt <- function(x, ...) knitr::asis_output(if (knitr::is_html_output()) "<p>html</p>" else "screen")',
+    'structure(1, class = "ember_fmt")', sep = "\n"))
+  expect_identical(r$output$html, "<p>html</p>")
+
+  # As rmarkdown's knit_print.data.frame outside a report: it prints the
+  # value and returns it, which isn't knit_asis. The data frame stays
+  # Ember's table, and nothing is printed to the console.
+  r <- run_and_wait(h, "f", 6L, paste(
+    'registerS3method("knit_print", "data.frame", function(x, ...) { print(x); x }, envir = asNamespace("knitr"))',
+    'data.frame(x = 1:3)', sep = "\n"))
+  expect_identical(r$output$kind, "table")
+  expect_false(any(vapply(r$console, function(e) identical(e$kind, "stdout"), logical(1))))
 })
 
 test_that("render_plot() redraws at the cell's own figure size and a new res; width/height pixels override (ui-3 65)", {
