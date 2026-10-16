@@ -21,6 +21,16 @@ THUMBS_DOWN <- "\U0001F44E"
 WAVE <- "\U0001F44B"
 HOURGLASS <- "\u231B"
 
+#' How long a Help lookup may take in an idle worker before the reply says
+#' R didn't answer in time. Completions and signatures keep
+#' `worker_query()`'s 0.8 s: they answer as you type, and a late one is
+#' useless. A help page is asked for once and its answer is still wanted,
+#' and a search typed in the Help box reads every installed package's help
+#' index (`help_lookup()`, inst/worker.R), which can take seconds on a big
+#' library. With 0.8 s that lookup's reply was dropped, and each new ask
+#' queued in the worker behind it and was dropped too (#92 review).
+DOCS_QUERY_TIMEOUT <- 10
+
 # ---- Public API --------------------------------------------------------------
 
 #' Run the UI server in this process, blocking until it is stopped.
@@ -956,7 +966,7 @@ handlers <- list(
     was_idle <- worker_is_idle(hub$nb)
     help_msg <- list(type = "help", topic = parsed$name, package = parsed$package,
                      all_packages = isTRUE(req$body$all_packages))
-    worker_query(hub$nb, help_msg, function(reply) {
+    worker_query(hub$nb, help_msg, timeout = DOCS_QUERY_TIMEOUT, callback = function(reply) {
       if (!is.null(reply)) {
         doc <- help_reply_html(reply)
         # `package` NULL when ambiguous (reply$matches non-empty): the page
