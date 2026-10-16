@@ -668,3 +668,30 @@ test_that("disabling a cell removes it from R; Rscript on the saved file still r
   expect_false(isTRUE(b_after$stale))
   expect_true(b_after$last_run > b_before$last_run)
 })
+
+test_that("a worker busy in a long cell ends when the server that started it is killed (#147)", {
+  skip_on_os("windows")
+  use_installed_ember()
+  pidfile <- tempfile("worker-pid-")
+  path <- write_session_notebook(list(S = cell(""), A = cell(sprintf(
+    "writeLines(as.character(Sys.getpid()), %s); Sys.sleep(300)", deparse(pidfile)))))
+  code <- paste0("library(ember); nb <- open_notebook(", deparse(path), "); run_cells(nb, 'A'); ",
+                 "repeat later::run_now(1)")
+  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
+                                  env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
+                                  stdout = "|", stderr = "2>&1")
+  on.exit(if (server$is_alive()) server$kill(), add = TRUE)
+  # Until the cell is running. The deadline only keeps a broken server
+  # from hanging the suite.
+  deadline <- Sys.time() + 60
+  while (!file.exists(pidfile) && server$is_alive() && Sys.time() < deadline) Sys.sleep(0.05)
+  expect_true(file.exists(pidfile), info = server$read_all_output())
+  worker <- as.integer(readLines(pidfile))
+  on.exit(tools::pskill(worker, tools::SIGKILL), add = TRUE)
+  expect_true(pid_running(worker))
+
+  # SIGKILL: no handler, no finalizer, nothing in the server runs.
+  server$kill()
+
+  expect_true(wait_pid_gone(worker))
+})

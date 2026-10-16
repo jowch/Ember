@@ -661,9 +661,16 @@ start_worker_process <- function(nb, fx) {
   wd <- fx$wd
   if (is.null(wd) || !nzchar(wd)) wd <- getwd()
 
+  # `supervise = TRUE`: processx's supervisor sends the worker SIGTERM once
+  # the server has gone, however it went, so a worker busy in a long cell
+  # doesn't outlive a killed server (#147; the jobs' `job_process()` does
+  # the same, #141). Not under `job_process()`'s `sh`: the server
+  # interrupts a cell with SIGINT to this process (`interrupt`), which must
+  # reach the worker itself. Processes a cell started are not covered (#150).
   proc <- processx::process$new(
     rscript, c("--vanilla", "-e", boot, as.character(nb$port)),
-    env = env, wd = wd, stdout = "|", stderr = "2>&1", cleanup_tree = TRUE)
+    env = env, wd = wd, stdout = "|", stderr = "2>&1", cleanup_tree = TRUE,
+    supervise = TRUE)
 
   if (!is.null(nb$con)) tryCatch(close(nb$con), error = function(e) NULL)
   nb$proc <- proc
