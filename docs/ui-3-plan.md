@@ -72,7 +72,8 @@ See [Order of implementation](#order-of-implementation) for why.
   `pluto-shoulder > button.foldcode`, `#helpbox-wrapper`, `pluto-helpbox`,
   `#live-docs-search`, the `open_bottom_right_panel` event), every CSS
   variable name in `themes/light.css` and `themes/dark.css` (Ember's new
-  values are `--ember-*` tokens that the kept names point at),
+  values are `--ember-*` tokens that the kept names point at; since #57,
+  only the names something reads, see design.md, "Look distinct"),
   `window.editor_state` and `selected_cells`, and the URLs `/edit`,
   `/notebookfile`, `/notebookexport`.
 - **No native pop-ups.** After piece 7a no new `alert()` or `confirm()` is
