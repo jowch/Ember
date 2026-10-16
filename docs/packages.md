@@ -450,13 +450,24 @@ Built from increment 2 (#20).
 - **Unchecked.** design.md marks GitHub packages unchecked: they sit
   outside the one-date rule. The Packages tab's "GitHub user/repo@sha"
   line under the version is that mark, and its tooltip says so.
+- **The Packages tab** (#78). A not-found package's row offers "Add a
+  GitHub source": a field for `user/repo`, optionally with `@` and a
+  branch, tag or commit, sent as the `set_package_source` op
+  (`ember_set_package_source`, server.R). A refused source shows Ember's
+  refusal under the field. A row with an entry offers "Change source"
+  (the same op, starting from the entry) and "Remove source"
+  (`remove_package_source`). Each row carries its entry as `spec`.
+  While the lookup runs the row says "looking up"; when it fails, the
+  package keeps a "source failed" row with the reason, since a failed
+  lookup locks nothing and the package would otherwise drop out of the
+  table (`source_rows()`). A read-only notebook shows no buttons.
 - **Remotes are ignored.** The installer sets
   `RENV_CONFIG_INSTALL_REMOTES=FALSE`, so renv never installs a GitHub
   package's `Remotes` from their moving HEAD: the lock alone decides.
 
-Not built: the prompt design.md asks for when a name isn't found (the
-Packages tab offering to add a source, #78); following a GitHub
-package's `Remotes` (each needs its own entry); packages in a
+Not built: guessing the repository for a name that isn't found (from a
+CRAN archive record, or a search); following a GitHub package's
+`Remotes` (each needs its own entry); packages in a
 subdirectory of a repository; GitLab and other hosts.
 
 ## Where the direction strains

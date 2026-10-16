@@ -213,8 +213,13 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  */
 
 /**
+ * `status`: "installed", "installing", "missing", "failed", "not_installed",
+ * "not_found", and for a package with a `[sources]` entry "looking_up" or
+ * "source_failed" (packages_view(), R/packages-core.R). `spec`: that entry,
+ * "github:user/repo[@ref]".
+ *
  * @typedef EmberPackageRow
- * @type {{ name: string, version: string?, source: string?, direct: boolean, status: string, message: string? }}
+ * @type {{ name: string, version: string?, source: string?, direct: boolean, status: string, message: string?, spec: string? }}
  */
 
 /**
@@ -673,6 +678,10 @@ export class Editor extends Component {
                 this.client.send("ember_apply_update", { date }, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_cancel_update: () =>
                 this.client.send("ember_cancel_update", {}, { notebook_id: this.state.notebook.notebook_id }, false),
+            ember_set_package_source: (name, source) =>
+                this.client.send("ember_set_package_source", { name, source }, { notebook_id: this.state.notebook.notebook_id }),
+            ember_remove_package_source: (name) =>
+                this.client.send("ember_remove_package_source", { name }, { notebook_id: this.state.notebook.notebook_id }),
             ember_split_cell: (cell_id, code) =>
                 this.client.send("ember_split_cell", { cell_id, code }, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_move_notebook: (name, folder) =>

@@ -209,8 +209,10 @@ const PackagesUpdate = ({ update, library_status }) => {
 const PackageStatus = ({ row }) => {
     const text = t(`t_ember_packages_status_${row.status}`)
     if (row.status === "installed") return html`<span class="ember-pill ember-pill-accent">${text}</span>`
-    if (row.status === "failed" || row.status === "not_found") return html`<span class="ember-pill ember-pill-red">${text}</span>`
-    if (row.status === "installing") {
+    if (row.status === "failed" || row.status === "not_found" || row.status === "source_failed") {
+        return html`<span class="ember-pill ember-pill-red">${text}</span>`
+    }
+    if (row.status === "installing" || row.status === "looking_up") {
         return html`<div class="ember-package-progress-status">
             <span>${text}</span>
             <div class="ember-package-progress ember-package-progress-indeterminate"></div>
@@ -232,17 +234,154 @@ const github_source_label = (source) => {
     return html`<div class="ember-package-source" title=${t("t_ember_packages_from_github_unchecked", { source })}>${t("t_ember_packages_from_github", { repo: `${m[1]}@${m[2].slice(0, 7)}` })}</div>`
 }
 
+/** A `[sources]` spec as the form shows it and takes it: "user/repo[@ref]". */
+const spec_text = (/** @type {string?} */ spec) => (spec ?? "").replace(/^github:/, "")
+
+/**
+ * The form that sets a package's GitHub source (#78): "user/repo",
+ * optionally with @ and a branch, tag or commit, sent as the
+ * `set_package_source` edit op (`ember_set_package_source`, server.R).
+ * Ember's refusal, if any, shows under the field and the form stays open;
+ * otherwise it closes, and the row goes on to say "looking up".
+ *
+ * @param {{ name: string, spec: string?, on_close: () => void }} props
+ */
+const SourceForm = ({ name, spec, on_close }) => {
+    const pluto_actions = useContext(PlutoActionsContext)
+    const [value, set_value] = useState(spec_text(spec))
+    const [error, set_error] = useState(/** @type {string?} */ (null))
+    const [saving, set_saving] = useState(false)
+    const input_ref = useRef(/** @type {HTMLInputElement?} */ (null))
+    useEffect(() => input_ref.current?.focus(), [])
+    const input_id = `ember-package-source-input-${name}`
+
+    return html`
+        <form
+            class="ember-package-source-form"
+            onSubmit=${async (/** @type {SubmitEvent} */ e) => {
+                e.preventDefault()
+                set_saving(true)
+                set_error(null)
+                try {
+                    const response = await pluto_actions.ember_set_package_source(name, value.trim())
+                    if (response?.message?.error != null) {
+                        set_error(response.message.error)
+                    } else {
+                        on_close()
+                    }
+                } finally {
+                    set_saving(false)
+                }
+            }}
+            onKeyDown=${(/** @type {KeyboardEvent} */ e) => {
+                if (e.key === "Escape") {
+                    e.stopPropagation()
+                    on_close()
+                }
+            }}
+        >
+            <label for=${input_id}>${t("t_ember_packages_source_label", { package: name })}</label>
+            <div class="ember-package-source-form-row">
+                <input
+                    id=${input_id}
+                    ref=${input_ref}
+                    class="ember-mono"
+                    type="text"
+                    spellcheck="false"
+                    autocomplete="off"
+                    placeholder=${t("t_ember_packages_source_placeholder")}
+                    value=${value}
+                    disabled=${saving}
+                    aria-invalid=${error != null}
+                    onInput=${(/** @type {InputEvent} */ e) => set_value(/** @type {HTMLInputElement} */ (e.target).value)}
+                />
+                <button type="submit" class="ember-btn primary" disabled=${saving || !value.trim()}>
+                    ${spec == null ? t("t_ember_packages_source_add") : t("t_ember_packages_source_save")}
+                </button>
+                <button type="button" class="ember-btn" disabled=${saving} onClick=${on_close}>${t("t_cancel")}</button>
+            </div>
+            ${error != null ? html`<p class="ember-package-source-error" role="alert">${error}</p>` : null}
+        </form>
+    `
+}
+
+/**
+ * The line under a package's row for its GitHub source (#78), or `null`
+ * when it has none to show: a not-found package offers to add one; a
+ * package with a `[sources]` entry offers to change or remove it, and says
+ * why its source failed (a failed lookup, a repository holding another
+ * package). Nothing to click in a read-only notebook, whose edits Ember
+ * refuses.
+ *
+ * @param {{ row: import("./Editor.js").EmberPackageRow, read_only: boolean }} props
+ */
+const SourceDetail = ({ row, read_only }) => {
+    const pluto_actions = useContext(PlutoActionsContext)
+    const [editing, set_editing] = useState(false)
+    const [error, set_error] = useState(/** @type {string?} */ (null))
+    const [removing, set_removing] = useState(false)
+    const has_spec = row.spec != null
+    const failed_message = has_spec && row.message != null ? row.message : null
+    if (!has_spec && row.status !== "not_found") return null
+    if (read_only && failed_message == null) return null
+
+    return html`
+        <tr class="ember-package-detail" key=${`${row.name} source`}>
+            <td colspan="3">
+                ${failed_message != null ? html`<p class="ember-package-source-failed">${failed_message}</p>` : null}
+                ${read_only
+                    ? null
+                    : editing
+                    ? html`<${SourceForm} name=${row.name} spec=${row.spec} on_close=${() => set_editing(false)} />`
+                    : html`<div class="ember-package-source-actions">
+                          <button
+                              type="button"
+                              class="ember-btn"
+                              onClick=${() => {
+                                  set_error(null)
+                                  set_editing(true)
+                              }}
+                          >
+                              ${has_spec ? t("t_ember_packages_source_change") : t("t_ember_packages_source_add_from_github")}
+                          </button>
+                          ${has_spec
+                              ? html`<button
+                                    type="button"
+                                    class="ember-btn"
+                                    disabled=${removing}
+                                    onClick=${async () => {
+                                        set_error(null)
+                                        set_removing(true)
+                                        try {
+                                            const response = await pluto_actions.ember_remove_package_source(row.name)
+                                            if (response?.message?.error != null) set_error(response.message.error)
+                                        } finally {
+                                            set_removing(false)
+                                        }
+                                    }}
+                                >
+                                    ${t("t_ember_packages_source_remove")}
+                                </button>`
+                              : null}
+                      </div>`}
+                ${error != null ? html`<p class="ember-package-source-error" role="alert">${error}</p>` : null}
+            </td>
+        </tr>
+    `
+}
+
 /**
  * The "Packages" tab (ui-2.md, 5; ui-3-plan.md, piece 4 and piece 5's
  * "Packages tab"): "Versions as of <date>" with Update, a description
  * line, the library's install status, a card per install failure, and
- * one row per *direct* package (dependencies hidden). Reads
+ * one row per *direct* package (dependencies hidden), each followed by its
+ * GitHub source line when it has one (`SourceDetail`). Reads
  * `notebook.ember.packages` (project_ember(), pluto-state.R); `nbpkg`
  * stays filled beside it for Endeavor and isn't read here.
  *
- * @param {{ packages: import("./Editor.js").EmberPackagesData? }} props
+ * @param {{ packages: import("./Editor.js").EmberPackagesData?, read_only?: boolean }} props
  */
-export const PackagesTab = ({ packages }) => {
+export const PackagesTab = ({ packages, read_only = false }) => {
     if (packages == null) return null
     const { snapshot, r_version, library, rows, update } = packages
     const direct_rows = rows.filter((row) => row.direct)
@@ -294,10 +433,11 @@ export const PackagesTab = ({ packages }) => {
                       <tbody>
                           ${direct_rows.map(
                               (row) => html`<tr class="ember-package-row ember-package-${row.status}" key=${row.name}>
-                                  <td class="ember-mono">${row.name}</td>
-                                  <td class="ember-mono">${row.version ?? "—"}${github_source_label(row.source)}</td>
-                                  <td title=${row.message ?? ""}><${PackageStatus} row=${row} /></td>
-                              </tr>`
+                                      <td class="ember-mono">${row.name}</td>
+                                      <td class="ember-mono">${row.version ?? "—"}${github_source_label(row.source)}</td>
+                                      <td title=${row.message ?? ""}><${PackageStatus} row=${row} /></td>
+                                  </tr>
+                                  <${SourceDetail} key=${`${row.name} source`} row=${row} read_only=${read_only} />`
                           )}
                       </tbody>
                   </table>`}

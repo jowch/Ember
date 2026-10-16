@@ -169,6 +169,17 @@ two cells is a `multiple_definitions` error keyed `generic.class` (S3) or
 undoes a cell's registrations whenever it removes the cell's globals, so R
 falls back to another method.
 
+**Classes** named as strings read and define `.__C__<name>`, the binding R
+keeps a class in (`class_name_calls` in `R/rules.R`): `setClass("X")`
+defines `.__C__X` (kind `"class"`), and `new("X")`, a `setMethod()`
+signature or `contains = "X"` reads it, so they resolve by rules 1 to 4
+like any name, a package's `exportClasses()` included. Slot and field
+classes are recorded with `where = "slot"` and resolved as soft edges
+(`add_soft_edges()`: added only where they close no cycle). `is_private_name()`
+makes `.__C__` names the one public dot-name. Two cells defining one class
+are a `multiple_definitions` error; the page shows the name as "class X"
+(`display_names()`).
+
 **Settings cells** ([settings-cells.md](settings-cells.md)) are the
 enabled cells that set a global setting, found in the code or learned at
 run time. Each setting is keyed (`option:digits`, `env:TZ`, `wd`,

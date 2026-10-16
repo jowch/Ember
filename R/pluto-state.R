@@ -240,7 +240,7 @@ project_cell_result <- function(view, known_ids = NULL) {
   errored <- length(view$errors) > 0 || view$status %in% c("error", "interrupted")
   last_error <- if (length(view$errors) > 0) view$errors[[length(view$errors)]] else NULL
   upstream_error <- if (!is.null(last_error) && identical(last_error$kind, "upstream")) {
-    as_arr(Map(function(n, c) list(name = n, cell = c), last_error$names, last_error$cells))
+    as_arr(Map(function(n, c) list(name = n, cell = c), display_names(last_error$names), last_error$cells))
   } else {
     NULL
   }
@@ -553,6 +553,7 @@ project_tree <- function(data) {
 #' `conj` is `"and"` for multiple definitions and cycles, `"or"` for an
 #' upstream error (several names could each fix the cell; any one would do).
 join_names <- function(names, conj = "and") {
+  names <- display_names(names)
   if (length(names) <= 1) return(if (length(names) == 0) "" else names)
   if (length(names) == 2) return(paste(names, collapse = paste0(" ", conj, " ")))
   paste0(paste(names[-length(names)], collapse = ", "), " ", conj, " ", names[length(names)])
@@ -767,7 +768,8 @@ project_process_status <- function(state) {
 #' * `installed_versions`: name -> version for rows with status "installed".
 #' * `busy_packages`: arr(names with status "installing").
 #' * `terminal_outputs`: `list(nbpkg_sync = <library message, the install
-#'   progress line, and any failed/not_found rows, one per line>)`.
+#'   progress line, and any failed/not_found/source_failed rows, one per
+#'   line>)`.
 #' * `restart_required_msg`: when `plan$restart` is non-empty, "Restart R to
 #'   use the new versions of: <names>".
 #' * `restart_recommended_msg`: when the snapshot's `restart_offered` (a
@@ -797,7 +799,7 @@ project_nbpkg <- function(state) {
     lines <- c(lines, sprintf("Installing %s (%d/%d)...",
                               pr$current %||% "", pr$done %||% 0L, pr$total %||% 0L))
   }
-  nf <- pkgs[pkgs$status == "not_found", , drop = FALSE]
+  nf <- pkgs[pkgs$status %in% c("not_found", "source_failed"), , drop = FALSE]
   if (nrow(nf) > 0) lines <- c(lines, sprintf("%s: %s", nf$name, nf$message))
   if (identical(p$target$status, "failed") && !is.null(p$target$message)) {
     lines <- c(lines, p$target$message)
@@ -839,9 +841,11 @@ project_nbpkg <- function(state) {
 #'   views' `stale` flag.
 #' * `plan`: `packages_view(state)$plan`, `list(install, restart)` or `NULL`.
 #' * `packages`: the snapshot date, R/Bioconductor versions, the library's
-#'   status, and one row per locked or not-found package, from
-#'   `packages_view(state)`. `NA` fields (no version, no source, no message)
-#'   become `NULL` for the wire.
+#'   status, and one row per locked or not-found package (and per package
+#'   whose `[sources]` lookup is running or failed), from
+#'   `packages_view(state)`. `spec` is the row's `[sources]` entry. `NA`
+#'   fields (no version, no source, no message, no spec) become `NULL` for
+#'   the wire.
 #'
 #'   `packages$library` adds `log` (one string, the installer's last 200
 #'   lines, joined with "\n") and `failures` (`arr(list(package, version,
@@ -885,7 +889,8 @@ project_ember <- function(state, ctx) {
         version = if (is.na(pkgs$version[[i]])) NULL else pkgs$version[[i]],
         source = if (is.na(pkgs$source[[i]])) NULL else pkgs$source[[i]],
         direct = isTRUE(pkgs$direct[[i]]), status = pkgs$status[[i]],
-        message = if (is.na(pkgs$message[[i]])) NULL else pkgs$message[[i]])
+        message = if (is.na(pkgs$message[[i]])) NULL else pkgs$message[[i]],
+        spec = if (is.na(pkgs$spec[[i]])) NULL else pkgs$spec[[i]])
   })
   library_failed <- identical(pv$library$status, "failed")
   log <- if (library_failed && length(pv$library$log) > 0) {

@@ -140,7 +140,7 @@ export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, noteboo
                                 sanitize_html=${sanitize_html}
                             />`
                           : open_tab === "packages"
-                            ? html`<${PackagesTab} packages=${notebook.ember?.packages} />`
+                            ? html`<${PackagesTab} packages=${notebook.ember?.packages} read_only=${notebook.ember?.read_only === true} />`
                             : open_tab === "process"
                               ? html`<${StatusTab} notebook=${notebook} connected=${connected} key_refused=${key_refused} my_clock_is_ahead_by=${my_clock_is_ahead_by} on_restart=${on_restart} />`
                               : null}

@@ -1418,7 +1418,7 @@ missing_package_error <- function(state, pkg) {
 #'
 #' `list(snapshot, r_version, bioc_version,
 #'      library = list(status, path, progress, message, log, failures),
-#'      packages = data.frame(name, version, source, direct, status, message),
+#'      packages = data.frame(name, version, source, direct, status, message, spec),
 #'      problems, proposal = NULL | list(date, status, changes, problems),
 #'      plan = NULL | list(install = <n packages>, restart = <names>))`
 #'
@@ -1429,7 +1429,9 @@ missing_package_error <- function(state, pkg) {
 #' (every other row of a library that failed: the staging folder is never
 #' renamed into place, so nothing in that install actually landed, even
 #' the packages that built fine), `"not_found"` (from `problems`, `version`
-#' `NA`). `direct` is `TRUE` for wanted names. `plan` is what running would
+#' `NA`), and for a package with a `[sources]` entry, `"looking_up"` and
+#' `"source_failed"` (`source_rows()`, which also adds `spec`). `direct` is
+#' `TRUE` for wanted names. `plan` is what running would
 #' do; the banner's "installs 3 packages" (a `"not_installed"` row counts
 #' toward it exactly as `"missing"` does: running retries it).
 #'
@@ -1440,11 +1442,74 @@ missing_package_error <- function(state, pkg) {
 #' through whatever indexes are loaded (`find_in_indexes()`, resolve.R) --
 #' `character()` for a package when none are.
 #' Empty, correctly typed `packages` data.frame: the shape both halves of
-#' `packages_view()` build their rows into.
+#' `packages_view()` build their rows into. `spec` is added by
+#' `source_rows()`.
 empty_packages_df <- function() {
   data.frame(name = character(), version = character(), source = character(),
             direct = logical(), status = character(), message = character(),
             stringsAsFactors = FALSE)
+}
+
+#' `packages_view()`'s rows as the header's `[sources]` sees them (#78):
+#'
+#' * every row gets `spec`, the header's entry for its name as written
+#'   (`"github:user/repo[@ref]"`), `NA` without one, so the Packages tab
+#'   can offer to change or remove it;
+#' * a row whose source failed (a failed lookup, `source_failed_problems()`;
+#'   a source holding another package, or one that can't be read,
+#'   `source_problems()`) carries that problem's message;
+#' * a wanted package with a readable spec, its GitHub lookup still
+#'   running, is `"looking_up"`, even while the last resolution's stale
+#'   `not_found` row for it is still in `problems`;
+#' * a wanted package with a spec that is neither locked nor `not_found`
+#'   would have no row at all: it gets one, `"looking_up"` while its
+#'   lookup (or, with no problem naming it yet, any index) is being
+#'   fetched (the Bioconductor release list counts), else
+#'   `"source_failed"` with the problem naming it, or the notebook-wide
+#'   one (CRAN's index failed); never `"source_failed"` without a
+#'   message. A failed
+#'   lookup leaves the lock alone (no CRAN fallback), so without this row a
+#'   typo in the repository would make the package vanish from the tab.
+source_rows <- function(state, wanted, rows) {
+  p <- state$packages
+  header <- state$file$header
+  specs <- header$sources %||% character()
+  rows$spec <- if (nrow(rows) == 0) character() else unname(specs[rows$name])
+  if (length(specs) == 0) return(rows)
+
+  probs <- p$problems %||% empty_package_problems()
+  probs <- probs[!is.na(probs$package) & probs$kind %in% c("index_unavailable", "source"), , drop = FALSE]
+  probs <- probs[probs$package %in% names(specs), , drop = FALSE]
+  keys <- source_keys(header, state$file$lock, p$sources_for %||% character())
+  fetching <- function(k) identical(p$indexes[[k]]$status, "fetching")
+  looking_up <- names(keys)[vapply(keys, fetching, logical(1))]
+
+  hit <- match(rows$name, probs$package)
+  rows$message[!is.na(hit)] <- probs$message[hit[!is.na(hit)]]
+  now_looking <- rows$status == "not_found" & rows$name %in% looking_up
+  rows$status[now_looking] <- "looking_up"
+  rows$message[now_looking] <- NA_character_
+
+  extra <- setdiff(intersect(wanted, names(specs)), rows$name)
+  if (length(extra) == 0) return(rows)
+  # Nothing named this package, but nothing is being fetched either (CRAN's
+  # index failed while GitHub answered): the notebook-wide problem says why.
+  general <- (p$problems %||% empty_package_problems())
+  general <- general$message[is.na(general$package)]
+  # The Bioconductor release list isn't an index slot, but resolution waits
+  # on it all the same (`fetch_releases()`).
+  any_fetching <- any(vapply(names(p$indexes), fetching, logical(1))) ||
+    identical(p$bioc_releases$status, "fetching")
+  msg <- probs$message[match(extra, probs$package)]
+  waiting <- extra %in% looking_up | (is.na(msg) & any_fetching)
+  msg[is.na(msg)] <- if (length(general) > 0) general[[1]] else NA_character_
+  # A failure always says why; with no problem at all, resolution hasn't
+  # settled yet.
+  status <- ifelse(waiting | is.na(msg), "looking_up", "source_failed")
+  rbind(rows, data.frame(name = extra, version = NA_character_, source = NA_character_,
+                         direct = TRUE, status = status,
+                         message = ifelse(status == "looking_up", NA_character_, msg),
+                         spec = unname(specs[extra]), stringsAsFactors = FALSE))
 }
 
 #' The wanted (direct) packages whose dependency closure reaches `pkg`,
@@ -1539,7 +1604,7 @@ packages_view <- function(state) {
                                  message = nf$message, stringsAsFactors = FALSE)
     }
   }
-  packages_df <- rbind(locked_df, not_found_df)
+  packages_df <- source_rows(state, wanted, rbind(locked_df, not_found_df))
 
   proposal <- NULL
   if (!is.null(p$proposal)) {
