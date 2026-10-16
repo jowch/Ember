@@ -40,7 +40,11 @@ test("packages tab: add a GitHub source to a not-found package, fix a typo, remo
   // A refusal stays in the form, under the field.
   await detail.getByRole("button", { name: "Add a GitHub source" }).click();
   const input = detail.getByLabel("GitHub repository for toyC");
-  assert.ok(await input.evaluate((el) => el === document.activeElement), "the field has focus");
+  // The form focuses its field in an effect, after the click's render.
+  await input.evaluate((el) => new Promise((resolve) => {
+    const check = () => (el === document.activeElement ? resolve() : requestAnimationFrame(check));
+    check();
+  }));
   await input.fill("https://github.com/lab/toyC");
   await detail.getByRole("button", { name: "Add", exact: true }).click();
   await detail.getByRole("alert").waitFor({ timeout: 10000 });
