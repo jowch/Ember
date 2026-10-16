@@ -176,7 +176,8 @@ out of the way of the data, the code and the results.
   loads (dependencies hidden), and their status. A failed install shows a
   card naming the package and the real cause in one sentence, with
   **Update** ("Updating usually fixes this") and **Show the error**.
-- **Status**: R's state, memory, version and uptime; Interrupt and Restart R;
+- **Status**: R's state, memory, version and uptime; Interrupt and Restart R
+  (off in safe preview, where R hasn't started);
   counts of not-run cells and errors with links; the autorun/lazy setting as
   "When a cell changes: rerun the cells that depend on it / mark them stale
   and let me run them".

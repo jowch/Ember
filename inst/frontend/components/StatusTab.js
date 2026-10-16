@@ -40,14 +40,21 @@ const useStartedAgo = (/** @type {number?} */ started_at, /** @type {number} */ 
  * @param {{
  * notebook: import("./Editor.js").NotebookData,
  * connected: boolean,
+ * key_refused?: boolean,
  * my_clock_is_ahead_by: number,
  * on_restart: () => void,
  * }} props
  */
-export const StatusTab = ({ notebook, connected, my_clock_is_ahead_by, on_restart }) => {
+export const StatusTab = ({ notebook, connected, key_refused = false, my_clock_is_ahead_by, on_restart }) => {
     const pluto_actions = useContext(PlutoActionsContext)
-    const status = use_r_status({ connected, notebook })
+    // `key_refused` too, so the tab says "Ember restarted" as the header
+    // does, not "Reconnecting" (#32).
+    const status = use_r_status({ connected, key_refused, notebook })
     const busy = notebook.ember?.process === "busy"
+    // Off until the page knows R's state, and in safe preview, where R
+    // hasn't started and there is nothing to restart (#29).
+    const process = notebook.ember?.process
+    const can_restart = connected && process != null && process !== "preview"
 
     // The running cell's own start (ui-3-plan.md piece 5's "Status tab"),
     // not just "R is busy": two cells back to back without R ever going
@@ -90,7 +97,7 @@ export const StatusTab = ({ notebook, connected, my_clock_is_ahead_by, on_restar
                     <button class="ember-btn" type="button" disabled=${!busy} onClick=${() => pluto_actions.interrupt_remote()}>
                         ${t("t_ember_status_interrupt")}
                     </button>
-                    <button id="ember-status-restart" class="ember-btn" type="button" onClick=${() => on_restart()}>${t("t_ember_status_restart")}</button>
+                    <button id="ember-status-restart" class="ember-btn" type="button" disabled=${!can_restart} onClick=${() => on_restart()}>${t("t_ember_status_restart")}</button>
                 </div>
                 <span class="ember-status-hint">
                     ${restart.length > 0 ? t("t_ember_r_status_restart_title", { names: restart.join(", ") }) : t("t_ember_status_restart_hint")}

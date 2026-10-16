@@ -75,11 +75,12 @@ const TABS = /** @type {const} */ ([
  * desired_doc_query: string?,
  * on_update_doc_query: (query: string?) => void,
  * connected: boolean,
+ * key_refused?: boolean,
  * sanitize_html?: boolean,
  * on_restart: () => void,
  * }} props
  */
-export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, notebook, connected, sanitize_html = true, on_restart }) => {
+export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, notebook, connected, key_refused = false, sanitize_html = true, on_restart }) => {
     const container_ref = useRef()
     const focus_docs_on_open_ref = useRef(false)
     const opener_ref = useRef(/** @type {HTMLElement?} */ (null))
@@ -141,7 +142,7 @@ export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, noteboo
                           : open_tab === "packages"
                             ? html`<${PackagesTab} packages=${notebook.ember?.packages} read_only=${notebook.ember?.read_only === true} />`
                             : open_tab === "process"
-                              ? html`<${StatusTab} notebook=${notebook} connected=${connected} my_clock_is_ahead_by=${my_clock_is_ahead_by} on_restart=${on_restart} />`
+                              ? html`<${StatusTab} notebook=${notebook} connected=${connected} key_refused=${key_refused} my_clock_is_ahead_by=${my_clock_is_ahead_by} on_restart=${on_restart} />`
                               : null}
                 </section>
             </pluto-helpbox>

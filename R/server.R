@@ -798,7 +798,8 @@ on_run <- function(server, cl, hub, req) {
 #' | update_notebook               | see on_update_notebook()                                        |
 #' | run_multiple_cells            | see on_run()                                                    |
 #' | interrupt_all                 | interrupt_notebook(nb); no reply (the frontend sends without waiting) |
-#' | restart_process               | preview: run_cells(nb) (the banner's "run notebook code"); else restart_notebook(nb). Then flush |
+#' | restart_process               | restart_notebook(nb); flush. In safe preview there is no R to restart: refused (log), nothing runs (#29) |
+#' | ember_run_notebook            | the safe preview banner's "Run this notebook": run_cells(nb, NULL), which allows execution and runs every cell; flush. No reply |
 #' | shutdown_notebook             | keep_in_session FALSE and the hub is owned: close_notebook(nb), drop hub. A host's notebook: refused (log) |
 #' | reset_shared_state            | cl$sent <- NULL; flush(req, list(from_reset = TRUE))            |
 #' | complete                      | completion_context() + worker_query(complete); pkg:: and a busy/absent worker answer from fallback_completions() (ui-2.md, 4a/4b) |
@@ -855,10 +856,26 @@ handlers <- list(
     invisible(NULL)
   },
 
+  #' Restart R only restarts. In safe preview it used to mean "run every
+  #' cell" (Pluto's banner sends restart_process), so a Restart R click from
+  #' the Status tab, or one made before the page knew it was in preview, ran
+  #' code the user hadn't allowed (#29). The banner sends ember_run_notebook.
   restart_process = function(server, cl, hub, req) {
     if (is.null(hub)) return(invisible(NULL))
-    snap <- notebook_snapshot(hub$nb)
-    if (identical(snap$process, "preview")) run_cells(hub$nb, NULL) else restart_notebook(hub$nb)
+    if (identical(notebook_snapshot(hub$nb)$process, "preview")) {
+      message("ember: refused restart_process in safe preview: nothing to restart")
+      return(invisible(NULL))
+    }
+    restart_notebook(hub$nb)
+    flush_clients(server, hub)
+  },
+
+  #' The safe preview banner's "Run this notebook" (SafePreviewUI.js): the
+  #' first run the user asks for allows execution (design.md, Safe preview),
+  #' and this one runs every cell.
+  ember_run_notebook = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    run_cells(hub$nb, NULL)
     flush_clients(server, hub)
   },
 

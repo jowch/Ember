@@ -748,6 +748,7 @@ project_dependencies <- function(graph, previous) {
 #'
 #' "no_process" shows Pluto's "process exited" bar with a restart link,
 #' which sends restart_process; the server maps that to restart_notebook().
+#' (Safe preview's banner sends ember_run_notebook instead; see server.R.)
 project_process_status <- function(state) {
   if (!isTRUE(state$allowed)) return("waiting_for_permission")
   switch(state$worker$status,

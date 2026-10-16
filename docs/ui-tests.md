@@ -105,7 +105,8 @@ is `new_server(secret, throttle = 0)`, with no httpuv.
     safe preview it doesn't start the worker (`notebook_snapshot()$process`
     stays "preview").
 31. `interrupt_all` during `Sys.sleep(10)` stops the cell; `restart_process`
-    in preview runs all, otherwise restarts and leaves cells not run.
+    in preview runs nothing, `ember_run_notebook` runs all, and a restart
+    after that leaves cells not run.
 32. `reset_shared_state`: the next message is a full replace with
     `from_reset = TRUE`.
 33. Two notebooks on one server: a client connected to one never receives
