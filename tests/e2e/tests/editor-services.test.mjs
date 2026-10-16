@@ -309,10 +309,21 @@ test("help: a query typed while R is busy is still a typed query when it's asked
     null, { timeout: 15000 });
 
   // The retry once LOOP ends must keep the typed search's scope and
-  // label: mgcv's page, and no "follows the cursor" line.
+  // label: mgcv's page, and no "follows the cursor" line. If it never
+  // comes, say what the panel shows and what the docs replies were.
   await page.waitForFunction(
     () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("mgcv"),
-    null, { timeout: 30000 });
+    null, { timeout: 30000 }).catch(async (e) => {
+    const seen = await page.evaluate(() => ({
+      query: document.querySelector("#live-docs-search")?.value,
+      package_line: document.querySelector(".ember-help-package")?.innerText ?? null,
+      page: document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.slice(0, 300),
+      loop_running: document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
+      replies: window.pluto_get_message_log().filter((m) => m.message?.doc !== undefined)
+        .map((m) => [m.message.status, String(m.message.doc).replace(/<[^>]*>/g, "").slice(0, 80)]).slice(-12),
+    }));
+    throw new Error(`${e.message}\nthe panel: ${JSON.stringify(seen, null, 1)}`);
+  });
   assert.equal(await page.locator(".ember-help-package").count(), 0, "no 'follows the cursor' line on a typed query's retry");
   assertNoProblems(page);
 });
