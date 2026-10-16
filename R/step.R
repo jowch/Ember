@@ -21,15 +21,17 @@ event <- function(type, at, ...) {
   structure(list(type = type, at = at, ...), class = "ember_event")
 }
 
-#' A 36-character UUID (any version/variant, case-insensitive): the shape
-#' `uuid()` (api.R) generates and the only shape a cell id is allowed to
-#' have. Checked on every insert op before it reaches `state$cells`
-#' (`reduce_apply()`): an id from the frontend is untrusted input, and a
-#' non-UUID id (a stray `# ///` or `# %%` line, a newline, an empty string)
-#' written into the notebook file as a cell's id corrupts the file's format.
-is_uuid <- function(x) {
+#' Is `x` a cell id Ember accepts: 1 to 64 letters, digits, `.`, `_` or
+#' `-`. Covers the UUIDs `uuid()` (api.R) generates and the short ids a
+#' hand-written file uses (`# %% id=B`), so undo-delete can put such a cell
+#' back under its own id. Checked on every insert op before it reaches
+#' `state$cells` (`reduce_apply()`): an id from the frontend is untrusted
+#' input, and an id with a space, a newline, a quote or a `#` (a stray
+#' `# ///` or `# %%` line, an empty string) written into the notebook file
+#' as a cell's id corrupts the file's format.
+is_cell_id <- function(x) {
   is.character(x) && length(x) == 1 && !is.na(x) &&
-    grepl("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$", x)
+    grepl("^[A-Za-z0-9._-]{1,64}$", x)
 }
 
 # From the API
@@ -776,8 +778,8 @@ reduce_apply <- function(state, event) {
         }
       }
     } else if (identical(op$op, "insert")) {
-      if (!is_uuid(op$id)) {
-        bad <- refused("cell id must be a UUID", op)
+      if (!is_cell_id(op$id)) {
+        bad <- refused("cell id must be 1 to 64 letters, digits, '.', '_' or '-'", op)
       } else if (op$id %in% names(cells)) {
         bad <- refused("id already used", op)
       } else if (op$index < 1 || op$index > length(cells) + 1) {

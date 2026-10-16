@@ -172,8 +172,8 @@ test("keyboard: Backspace on a selected cell selects the next one, or the one ab
     await page.evaluate((id) => window.editor_state_set({ selected_cells: [id] }), id);
   };
 
-  // Undo re-inserts the cell, and an inserted cell's id has to be a UUID,
-  // so the cell deleted and brought back is one added here.
+  // The cell deleted and brought back is one added here, with a UUID id;
+  // disabled.test.mjs undoes the delete of a cell with a short id ("A").
   await page.locator(`${cellSelector("ERR")} button.add_cell.before`).click();
   await page.waitForFunction(() => window.editor_state.notebook.cell_order.length === 7, null, { timeout: 10000 });
   const added = (await state()).order[3];

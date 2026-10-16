@@ -161,7 +161,10 @@ target_order <- function(before, after) {
 #' that id and its next request is run_multiple_cells for it. Their code is
 #' `after$cell_inputs[[id]]$code`; its kind is `cell_kind()` of that code, so
 #' undo-delete and paste of a text cell keep it text. An inserted cell the
-#' page has folded (undo-delete of a folded cell) gets a fold_cell() too.
+#' page has folded (undo-delete of a folded cell) gets a fold_cell() too,
+#' and an inserted code cell the page has disabled (undo-delete of a
+#' disabled cell) a disable_cell(): it was disabled because it is slow or
+#' has side effects, and the page runs the cells it puts back.
 #'
 #' Indexes are computed as edit_notebook() reads them: positions after the
 #' previous ops, 1-based.
@@ -178,7 +181,14 @@ order_ops <- function(current, target, after) {
     idx  <- if (is.null(pred)) 1L else match(pred, cur) + 1L
     ops  <- c(ops, list(if (id %in% current) move_cell(id, idx)
                         else insert_cell(idx, code = after$cell_inputs[[id]]$code, id = id)))
-    if (!(id %in% current) && isTRUE(after$cell_inputs[[id]]$code_folded)) ops <- c(ops, list(fold_cell(id, TRUE)))
+    if (!(id %in% current)) {
+      input <- after$cell_inputs[[id]]
+      if (isTRUE(input$code_folded)) ops <- c(ops, list(fold_cell(id, TRUE)))
+      # A text cell can't be disabled (the engine refuses it, and with it the batch).
+      if (isTRUE(input$metadata$disabled) && identical(cell_kind(input$code), "code")) {
+        ops <- c(ops, list(disable_cell(id, TRUE)))
+      }
+    }
     cur  <- append(cur, id, after = idx - 1L)
   }
   stopifnot(identical(cur, target))
