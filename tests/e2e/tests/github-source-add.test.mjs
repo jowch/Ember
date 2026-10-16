@@ -1,6 +1,7 @@
 // #78: a package that isn't found gets a GitHub source from its row in the
-// Packages tab. A typo stays on the row with the reason; fixing it locks
-// the package from GitHub; Remove source sends it back to not found. The
+// Packages tab. A typo stays on the row with the reason; fixing it (with a
+// link pasted from the browser, #85) locks the package from GitHub, saved
+// as a github: source; Remove source sends it back to not found. The
 // notebook resolves against the toy CRAN repository and the file://
 // GitHub fixture (tests/testthat/fixtures), so nothing touches the network.
 
@@ -45,7 +46,7 @@ test("packages tab: add a GitHub source to a not-found package, fix a typo, remo
     const check = () => (el === document.activeElement ? resolve() : requestAnimationFrame(check));
     check();
   }));
-  await input.fill("https://github.com/lab/toyC");
+  await input.fill("https://github.com/lab/toyC/blob/main/README.md");
   await detail.getByRole("button", { name: "Add", exact: true }).click();
   await detail.getByRole("alert").waitFor({ timeout: 10000 });
   assert.match(await detail.getByRole("alert").innerText(), /github:user\/repo/);
@@ -63,7 +64,7 @@ test("packages tab: add a GitHub source to a not-found package, fix a typo, remo
   // Fixed: the form starts from the current source.
   await detail.getByRole("button", { name: "Change source" }).click();
   assert.equal(await input.inputValue(), "lab/nope");
-  await input.fill("lab/toyC");
+  await input.fill("https://github.com/lab/toyC");
   await input.press("Enter");
   await row.locator(".ember-package-source").waitFor({ timeout: 30000 });
   assert.equal(await row.locator(".ember-package-source").innerText(), "GitHub lab/toyC@8e4b7d2");

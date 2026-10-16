@@ -2164,6 +2164,8 @@ id="pluto-nav">`):
   | state | dot | words |
   |---|---|---|
   | not connected | faint | Reconnecting |
+  | not connected, key refused (Ember restarted with a new key) | red | Ember restarted |
+  | not connected, every try failing for 30 s (#33) | red | Can't reach Ember |
   | `preview` | faint | R not started |
   | `starting` | run | R starting |
   | `ready` | accent | R ready |
