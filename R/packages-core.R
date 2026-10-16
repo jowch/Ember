@@ -1464,8 +1464,10 @@ empty_packages_df <- function() {
 #' * a wanted package with a spec that is neither locked nor `not_found`
 #'   would have no row at all: it gets one, `"looking_up"` while its
 #'   lookup (or, with no problem naming it yet, any index) is being
-#'   fetched, else `"source_failed"` with the problem naming it, or the
-#'   notebook-wide one (CRAN's index failed). A failed
+#'   fetched (the Bioconductor release list counts), else
+#'   `"source_failed"` with the problem naming it, or the notebook-wide
+#'   one (CRAN's index failed); never `"source_failed"` without a
+#'   message. A failed
 #'   lookup leaves the lock alone (no CRAN fallback), so without this row a
 #'   typo in the repository would make the package vanish from the tab.
 source_rows <- function(state, wanted, rows) {
@@ -1494,10 +1496,16 @@ source_rows <- function(state, wanted, rows) {
   # index failed while GitHub answered): the notebook-wide problem says why.
   general <- (p$problems %||% empty_package_problems())
   general <- general$message[is.na(general$package)]
-  any_fetching <- any(vapply(names(p$indexes), fetching, logical(1)))
+  # The Bioconductor release list isn't an index slot, but resolution waits
+  # on it all the same (`fetch_releases()`).
+  any_fetching <- any(vapply(names(p$indexes), fetching, logical(1))) ||
+    identical(p$bioc_releases$status, "fetching")
   msg <- probs$message[match(extra, probs$package)]
-  status <- ifelse(extra %in% looking_up | (is.na(msg) & any_fetching), "looking_up", "source_failed")
+  waiting <- extra %in% looking_up | (is.na(msg) & any_fetching)
   msg[is.na(msg)] <- if (length(general) > 0) general[[1]] else NA_character_
+  # A failure always says why; with no problem at all, resolution hasn't
+  # settled yet.
+  status <- ifelse(waiting | is.na(msg), "looking_up", "source_failed")
   rbind(rows, data.frame(name = extra, version = NA_character_, source = NA_character_,
                          direct = TRUE, status = status,
                          message = ifelse(status == "looking_up", NA_character_, msg),

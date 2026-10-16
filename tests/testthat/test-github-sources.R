@@ -546,3 +546,17 @@ test_that("a source answered while CRAN's index failed isn't left looking up: th
   expect_equal(row$status, "source_failed")
   expect_equal(row$message, "offline")
 })
+
+test_that("a source needing Bioconductor is still looking up while the release list is fetched (121)", {
+  s <- src_state(list(S = cell(""), A = cell("library(toyC)")), sources = c(toyC = "github:lab/toyC"))
+  s$packages$bioc_releases$status <- "unknown"
+  r <- drive(s, ev_open(at(1)))
+  key <- "github/lab/toyC@HEAD"
+  r <- drive(r$state, ev_index_fetched(key, gh_index(key, C2, deps = "limma"), at(2)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_at(), at(3)))
+  expect_true("fetch_bioc_config" %in% effect_types_of(r))
+  expect_equal(r$state$packages$bioc_releases$status, "fetching")
+  row <- view_row(r$state, "toyC")
+  expect_equal(row$status, "looking_up")
+  expect_true(is.na(row$message))
+})
