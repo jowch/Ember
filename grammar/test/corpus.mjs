@@ -115,4 +115,10 @@ if (totalFiles === 0) {
   console.error("No corpus files found")
   process.exit(1)
 }
-if (failureLines.length > 0) process.exit(1)
+if (failureLines.length > 0) {
+  // Print them too: CI keeps the log, not corpus-failures.txt.
+  const shown = failureLines.slice(0, 20)
+  console.error(`${failureLines.length} failure(s):\n  ` + shown.join("\n  ") +
+    (failureLines.length > shown.length ? `\n  ... and ${failureLines.length - shown.length} more` : ""))
+  process.exit(1)
+}
