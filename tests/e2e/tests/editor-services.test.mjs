@@ -382,6 +382,88 @@ test("help: a typed query keeps its scope when the Help tab is closed and reopen
   assertNoProblems(page);
 });
 
+// #132: a reply that arrives after a later query has gone out. `mean`'s
+// request is held back past the panel's 2 s wait, so `s` is asked while
+// it's still on the way, and `s` gets "R is busy" first. Then the page
+// clock is paused, so `s`'s retry can't fire before `mean`'s late "R is
+// busy" lands. That late reply used to cancel `s`'s retry, and the panel
+// said R was busy for good.
+test("help: a late \"R is busy\" for an older query doesn't cancel the current query's retry (#132)", { timeout: 120000 }, async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help-busy-late.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  // Messages from the page to the server that mention `mean`, held while
+  // `held` is a list.
+  let held = null;
+  let to_server = null;
+  let on_held = null;
+  const mean_held = new Promise((resolve) => (on_held = resolve));
+  await page.routeWebSocket(/.*/, (ws) => {
+    const srv = ws.connectToServer();
+    to_server = srv;
+    ws.onMessage((m) => {
+      if (held != null && Buffer.from(m).includes("mean")) {
+        held.push(m);
+        on_held();
+      } else srv.send(m);
+    });
+    srv.onMessage((m) => ws.send(m));
+  });
+  await page.clock.install();
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await runCell(page, "LOOP");
+  await page.waitForFunction(
+    () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
+    null, { timeout: 10000 });
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
+
+  // `mean` replaces whatever the cursor asked for, and its request is held.
+  // It goes out only once the cursor's own query has its answer, so the
+  // wait below starts from `mean`'s request. The panel stops waiting for it
+  // after 2 s, so the next query can go out.
+  held = [];
+  await page.locator("#live-docs-search").fill("mean");
+  await mean_held;
+  await page.waitForFunction(() => document.querySelector(".live-docs-searchbox")?.classList.contains("loading"), null, { timeout: 5000 });
+  await page.waitForFunction(() => !document.querySelector(".live-docs-searchbox")?.classList.contains("loading"), null, { timeout: 15000 });
+
+  // From here the clock moves only by hand: 100 ms lets the page draw and
+  // send `s` (an effect waits for the next frame), well short of the 1 s
+  // retry. Each "R is busy" reply is told apart by when it came.
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  const mark_replies = () => page.evaluate(() => { window.__seen_messages = new Set(window.pluto_get_message_log()); });
+  const new_busy_reply = () => page.waitForFunction(
+    () => window.pluto_get_message_log().some((m) => m.message?.status === "⌛" && !window.__seen_messages.has(m)),
+    null, { timeout: 15000 });
+  await mark_replies();
+  await page.locator("#live-docs-search").fill("s");
+  await page.clock.runFor(100);
+  await new_busy_reply();
+
+  // `mean`'s request goes now, and R is still busy, so its reply is a
+  // late "R is busy".
+  await mark_replies();
+  const release = held;
+  held = null;
+  for (const m of release) to_server.send(m);
+  await new_busy_reply();
+  assert.ok(await page.locator('pluto-cell[id="LOOP"]').evaluate((el) => el.classList.contains("running")),
+    "LOOP was still running when mean's late reply came");
+
+  // The clock runs again. `s` must still be asked again once LOOP ends,
+  // and find mgcv's page.
+  await page.clock.resume();
+  await page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("mgcv"),
+    null, { timeout: 30000 });
+  assert.equal(await page.locator("#live-docs-search").inputValue(), "s");
+  assertNoProblems(page);
+});
+
 test("help: a search that finds nothing once R is free replaces \"R is busy\" (#121)", { timeout: 120000 }, async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help-busy-notfound.server.log") });
