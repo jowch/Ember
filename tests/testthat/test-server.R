@@ -1887,6 +1887,45 @@ test_that("docs: a help lookup that fails says so, with R's message, instead of 
   expect_match(r$doc, "R couldn't open this help page: .*the help database is broken")
 })
 
+test_that("docs: a reply says whether the lookup was asked to, and did, search every installed package (#121)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  allow_execution(nb)
+  expect_true(run_cells(nb, wait = TRUE, timeout = 20)$accepted)
+
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  docs_reply <- function(...) {
+    ws$messages <- list()
+    handle_message(server, ws, wire("docs", notebook_id = id, query = "zzznotatopic", ...))
+    deadline <- Sys.time() + 20
+    docs_msgs <- list()
+    while (length(docs_msgs) == 0 && Sys.time() < deadline) {
+      later::run_now(timeout = 1)
+      docs_msgs <- Filter(function(m) identical(m$type, "docs"), ws$messages)
+    }
+    expect_length(docs_msgs, 1)
+    docs_msgs[[1]]$message
+  }
+  # Both find nothing; only the reply says how far each looked.
+  typed <- docs_reply(all_packages = TRUE)
+  expect_identical(typed$status, "\U0001F44D")
+  expect_identical(typed$doc, "")
+  expect_true(typed$all_packages)
+  expect_true(typed$tried_all_packages)
+
+  cursor <- docs_reply(all_packages = FALSE)
+  expect_identical(cursor$doc, "")
+  expect_false(cursor$all_packages)
+  expect_false(cursor$tried_all_packages)
+})
+
 test_that("docs: a busy worker answers with an hourglass, so the help panel asks again (61)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("Sys.sleep(3)")))
   nb <- open_notebook(path)

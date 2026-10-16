@@ -336,7 +336,10 @@ test("help: a query typed while R is busy is still a typed query when it's asked
       page: document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.slice(0, 300),
       loop_running: document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
       replies: window.pluto_get_message_log().filter((m) => m.message?.doc !== undefined)
-        .map((m) => [m.message.status, String(m.message.doc).replace(/<[^>]*>/g, "").slice(0, 80)]).slice(-12),
+        .map((m) => [m.message.status, String(m.message.doc).replace(/<[^>]*>/g, "").slice(0, 80),
+          // How far a 👍's lookup looked: asked to search every installed
+          // package, and whether help() did (#121).
+          ...(m.message.status === "👍" ? [{ all_packages: m.message.all_packages, tried_all_packages: m.message.tried_all_packages }] : [])]).slice(-12),
     }));
     throw new Error(`${e.message}\nthe panel: ${JSON.stringify(seen, null, 1)}`);
   });
