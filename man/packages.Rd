@@ -54,7 +54,9 @@ cache_dir()
 and \code{set_package_source()}/\code{remove_package_source()}.}
 \item{source}{Where the package comes from, for \code{set_package_source()}:
 \code{"github:user/repo"}, optionally with \code{@} and a branch, tag or commit
-(\code{"user/repo"} reads as the same).}
+(\code{"user/repo"} reads as the same, and so does a github.com link to the
+repository or to a branch, tag or commit's page,
+\code{"https://github.com/user/repo/tree/<ref>"}).}
 \item{date}{A date (anything \code{as.Date()} accepts). \code{preview_date(nb,
 Sys.Date())} is "update all".}
 \item{wait}{\code{TRUE} blocks until the preview is ready (or failed) or

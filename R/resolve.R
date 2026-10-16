@@ -298,12 +298,37 @@ parse_github_source <- function(x) {
 }
 
 #' A `[sources]` spec as the user gave it, normalised: `"github:user/repo"`
-#' as is, `"user/repo"` read as the same; `NULL` when it is neither.
+#' as is, `"user/repo"` read as the same, and a link copied from the
+#' browser read as what it names (`github_link_spec()`); `NULL` when it is
+#' none of these.
 github_spec <- function(x) {
   if (!is.character(x) || length(x) != 1 || is.na(x)) return(NULL)
   x <- trimws(x)
-  if (!grepl(":", x, fixed = TRUE)) x <- paste0("github:", x)
+  if (grepl("^(https?://)?(www\\.)?github\\.com/", x, ignore.case = TRUE)) {
+    x <- github_link_spec(x)
+    if (is.null(x)) return(NULL)
+  } else if (!grepl(":", x, fixed = TRUE)) {
+    x <- paste0("github:", x)
+  }
   if (is.null(parse_github_source(x))) NULL else x
+}
+
+#' A github.com link -> its `github:` spec (#85): the repository's page,
+#' `https://github.com/user/repo`, with or without a trailing `/` or
+#' `.git`, is `"github:user/repo"`, and a branch, tag or commit's page,
+#' `.../tree/<ref>`, is `"github:user/repo@<ref>"`. A `?query` or
+#' `#fragment` (`#readme`) is dropped. Any other page of the repository (a
+#' file, an issue) is `NULL`: it doesn't say which code to use. Only
+#' github.com: a GitHub Enterprise host (`ember_repos(github)`) has its own
+#' API base, which a link's host can't be matched to.
+github_link_spec <- function(x) {
+  x <- sub("/+$", "", sub("[?#].*$", "", x))
+  m <- regmatches(x, regexec("^(https?://)?(www\\.)?github\\.com/([^/]+)/([^/]+)(/tree/(.+))?$",
+                             x, ignore.case = TRUE))[[1]]
+  if (length(m) == 0) return(NULL)
+  repo <- sub("\\.git$", "", m[[5]])
+  ref <- m[[7]]
+  paste0("github:", m[[4]], "/", repo, if (nzchar(ref)) paste0("@", ref))
 }
 
 #' The lock source for a commit: `"github:<user>/<repo>@<sha>"`.
