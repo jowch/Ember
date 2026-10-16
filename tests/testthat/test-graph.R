@@ -611,6 +611,54 @@ test_that("a cell's view is resolved again when only its learned names change (#
   expect_equal(g3$cells$B$definitions, "y")
 })
 
+test_that("a graph built from `previous` equals one built from scratch, over random edits (#43)", {
+  # The views kept from `previous` must be exactly the ones a fresh build
+  # gives, whatever happened in between: edits, undo to older code,
+  # deletes, inserts, disabling, learned names added, removed or edited in
+  # place (as drop_blocking_learned() does). A fixed seed, so a failure
+  # reproduces.
+  withr::local_seed(20261016)
+  pool <- c("x <- 1", "y <- x + 1", "z <- y * 2", "x <- 5", "f <- function(a) a + x",
+            "w <- f(y)", "options(digits = 3)", "library(stats)", "", "#' some text",
+            "setGeneric('area', function(s) standardGeneric('area'))",
+            "setMethod('area', 'numeric', function(s) s^2)", "names(v) <- c('a')", "v <- 1:3",
+            "q <- sd(v)", "source('h.R')", "y <- 2")
+  learnable <- c("x", "y", "w", "q", "p", ".hid", "area")
+  read_file <- function(p) if (p == "h.R") "h <- 1" else NULL
+  strip <- function(g) { g$reread <- NULL; g$read_file <- NULL; g }
+  actions <- c("edit", "undo", "learn", "unlearn", "in_place", "delete", "insert", "disable",
+               "settings", "references")
+  for (trial in 1:12) {
+    ids <- paste0("c", seq_len(sample(3:8, 1)))
+    code <- stats::setNames(sample(pool, length(ids), TRUE), ids)
+    learned <- list(); disabled <- character(); history <- list(code)
+    g <- notebook_graph(code, read_file = read_file)
+    for (k in 1:20) {
+      act <- sample(actions, 1)
+      ids <- names(code)
+      previous <- g
+      i <- sample(ids, 1)
+      switch(act,
+        edit = code[[i]] <- sample(pool, 1),
+        undo = code <- history[[sample(length(history), 1)]],
+        learn = learned$definitions[[i]] <- sample(learnable, sample(0:2, 1)),
+        unlearn = learned$definitions[[i]] <- NULL,
+        in_place = { previous$learned$definitions[[i]] <- NULL; learned <- previous$learned },
+        delete = if (length(ids) > 2) code <- code[names(code) != i],
+        insert = code <- append(code, stats::setNames(sample(pool, 1), sprintf("n%d_%d", trial, k)),
+                                sample(0:length(ids), 1)),
+        disable = disabled <- intersect(unique(c(disabled, i))[seq_len(sample(0:2, 1))], ids),
+        settings = learned$settings[[i]] <- if (stats::runif(1) < 0.5) "option:digits",
+        references = learned$references[[i]] <- sample(learnable, sample(0:2, 1)))
+      history[[length(history) + 1L]] <- code
+      g <- notebook_graph(code, learned = learned, disabled = disabled, previous = previous,
+                          read_file = read_file)
+      fresh <- notebook_graph(code, learned = learned, disabled = disabled, read_file = read_file)
+      expect_identical(strip(g), strip(fresh), label = sprintf("trial %d, step %d (%s)", trial, k, act))
+    }
+  }
+})
+
 # ---- changed_cells() ----------------------------------------------------------
 
 
