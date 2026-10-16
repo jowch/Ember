@@ -3169,7 +3169,6 @@ pluto-header-id-copy:focus-visible {
     max-height: calc(100vh - 32px);
     background: var(--ember-panel);
     color: var(--ember-text);
-    font-family: var(--ember-ui-font);
 }
 
 .psettings .ember-dialog-title {

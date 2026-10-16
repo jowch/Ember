@@ -342,19 +342,27 @@ test("signature: a click on the tooltip lands in the code under it (#34)", async
   }, "DF");
   const newSel = `pluto-cell[id="${newCellId}"]`;
 
+  // Room above the cell, so CodeMirror shows the tooltip above the call's
+  // line rather than flipping it below.
+  await page.locator(newSel).evaluate((el) => el.scrollIntoView({ block: "center" }));
+  // How far the tooltip reaches up depends on fonts and how the signature
+  // wraps, which differ by platform. A minimum height makes it cover DF's
+  // line on every platform; what this test checks is where the click goes.
+  await page.addStyleTag({ content: ".cm-ember-signature-tooltip { min-height: 8em; }" });
+
   await page.locator(`${newSel} .cm-content`).click();
   await page.keyboard.type("read.table(", { delay: 10 });
   const tooltip = page.locator(".cm-ember-signature-tooltip");
   await tooltip.waitFor({ timeout: 30000 });
 
-  // read.table()'s signature wraps to several lines, so the tooltip
-  // reaches up over DF's only line. Click a few characters into that line,
-  // where it is under the tooltip.
+  // Click in the middle of where the tooltip and DF's line overlap.
   const box = await tooltip.boundingBox();
   const df_line = await page.locator(`${cellSelector("DF")} .cm-line`).first().boundingBox();
-  const x = df_line.x + 30;
-  const y = df_line.y + df_line.height / 2;
-  assert.ok(y >= box.y && y <= box.y + box.height && x >= box.x && x <= box.x + box.width, "the tooltip covers DF's line at the click point");
+  const left = Math.max(box.x, df_line.x), right = Math.min(box.x + box.width, df_line.x + df_line.width);
+  const top = Math.max(box.y, df_line.y), bottom = Math.min(box.y + box.height, df_line.y + df_line.height);
+  assert.ok(left < right && top < bottom, "the tooltip covers DF's line");
+  const x = (left + right) / 2;
+  const y = (top + bottom) / 2;
 
   await page.mouse.click(x, y);
   await tooltip.waitFor({ state: "detached", timeout: 30000 });
