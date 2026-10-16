@@ -220,9 +220,17 @@ test("help: no link on a page leaves the notebook; a clicked link isn't labelled
   assert.doesNotMatch(text, /Run examples/);
   assert.match(text, /\[Package stats version [\d.]+\]/);
 
-  // A citation scrolls to its reference without touching the URL.
-  await page.locator("#helpbox-wrapper .ember-help-page a.citation").first().click();
+  // A citation scrolls to its reference, within the panel, without
+  // touching the URL.
+  const citation = page.locator("#helpbox-wrapper .ember-help-page a.citation").first();
+  const target_id = (await citation.getAttribute("href")).slice(1);
+  await citation.click();
   assert.equal(page.url(), start_url, "the citation link left the URL alone");
+  await page.waitForFunction((id) => {
+    const target = document.getElementById(id)?.getBoundingClientRect();
+    const panel = document.querySelector("#helpbox-wrapper").getBoundingClientRect();
+    return target != null && target.top >= panel.top - 1 && target.top <= panel.top + panel.height / 2;
+  }, target_id, { timeout: 5000 });
 
   // A See Also link: a new page, still on the notebook, and asked for
   // explicitly, so no "follows the cursor" line.
