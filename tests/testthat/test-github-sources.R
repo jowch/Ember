@@ -298,6 +298,27 @@ test_that("a reopened notebook keeps its commit: no fetch at open, and the commi
                c("cli 3.6.5 CRAN", paste("toyC 0.4.0", github_source("lab", "toyC", C2)), "viz 2.0.0 CRAN"))
 })
 
+test_that("a reopened notebook's failed install points a GitHub package's failed dependency back at it (#17)", {
+  lock <- open_toyc()$state$file$lock
+  s <- src_state(list(S = cell(""), A = cell("library(toyC)")), sources = c(toyC = "github:lab/toyC"),
+                 lock = lock)
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(2)))
+  r <- drive(r$state, ev_allow(at(3)))
+  token <- r$state$packages$install$token
+  failures <- data.frame(package = "cli", kind = "no_binary", detail = "3.6.5", stringsAsFactors = FALSE)
+  r <- drive(r$state, ev_install_done(token, r$state$packages$target$key, NULL, "install failed",
+                                      character(), at(4), failures = failures))
+  # The lock's commit, not the branch: the walk reads what was installed.
+  pinned <- github_key("lab", "toyC", C2)
+  expect_setequal(effect_keys(r), c(pinned, "cran/2026-09-01"))
+  r <- drive(r$state, ev_index_fetched(pinned, gh_index(pinned, C2), at(5)))
+  view <- packages_view(r$state)
+  expect_equal(view$library$failures$needed_by[[1]], "toyC")
+  expect_equal(view$packages$status[view$packages$name == "toyC"], "failed")
+  expect_identical(r$state$file$lock, lock)
+})
+
 test_that("changing the source looks the new ref up and moves the lock to its commit", {
   r <- open_toyc()
   r <- drive(r$state, ev_apply(list(op_set_source("toyC", "lab/toyC@v0.3.0")), at(4)))

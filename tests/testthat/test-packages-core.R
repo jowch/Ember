@@ -932,16 +932,70 @@ test_that("reduce_install_done() writes one install_failed row per failed packag
   expect_equal(nrow(install_rows), 1)
   expect_equal(install_rows$package, "rlang")
 
-  # Without a loaded index, the closure can't be walked: needed_by is
-  # empty, and broom -- the package install_failures() didn't itself name
-  # -- reverts to "not_installed" rather than "failed".
+  # A notebook opened with its lock never resolves, so no index is loaded
+  # when the install fails (#17). The failure fetches CRAN's index; until it
+  # arrives, needed_by is empty and broom reads "not_installed"; once it
+  # does, broom points at the failure again.
   rf_noidx <- drive(r0$state, ev_install_done(token, key, NULL, "install failed",
                                                c("ERROR: compilation failed for package 'rlang'"),
                                                at(5), failures = failures))
+  fetches <- Filter(function(e) identical(e$type, "fetch_index"), rf_noidx$effects)
+  expect_equal(vapply(fetches, function(e) e$key, character(1)), idx_key)
   v2 <- packages_view(rf_noidx$state)
   expect_equal(v2$packages$status[v2$packages$name == "rlang"], "failed")
   expect_equal(v2$packages$status[v2$packages$name == "broom"], "not_installed")
   expect_equal(length(v2$library$failures$needed_by[[1]]), 0)
+
+  rf_idx <- drive(rf_noidx$state, ev_index_fetched(idx_key, idx, at(6)))
+  v3 <- packages_view(rf_idx$state)
+  expect_equal(v3$library$failures$needed_by[[1]], "broom")
+  expect_equal(v3$packages$status[v3$packages$name == "broom"], "failed")
+  # The lock still answers the wanted set: the index doesn't start a resolve.
+  expect_false("fetch_index" %in% effect_types(rf_idx))
+  expect_identical(rf_idx$state$file$lock, r0$state$file$lock)
+})
+
+test_that("a failed install on a locked Bioconductor notebook fetches CRAN's and Bioconductor's indexes to say what needs the failure (#17)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46))
+  locked <- deliver_bioc(open_with_cran(s)$state)$state$file$lock
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46),
+                 lock = locked, bioc_version = "3.23")
+  r0 <- drive(s, ev_open(at(1)))
+  r0 <- drive(r0$state, ev_library_checked(r0$state$packages$target$key, NULL, at(2)))
+  r0 <- drive(r0$state, ev_allow(at(3)))
+  expect_false("fetch_index" %in% effect_types(r0))
+  key <- r0$state$packages$target$key
+  token <- r0$state$packages$install$token
+  failures <- data.frame(package = "S4Vectors", kind = "missing_system", detail = NA_character_,
+                         stringsAsFactors = FALSE)
+  rf <- drive(r0$state, ev_install_done(token, key, NULL, "install failed", character(), at(4),
+                                        failures = failures))
+  fetched <- vapply(Filter(function(e) identical(e$type, "fetch_index"), rf$effects),
+                    function(e) e$key, character(1))
+  expect_setequal(fetched, c("cran/2026-09-01", "bioc/2026-09-01/3.23",
+                             "bioc-ann/2026-09-01/3.23", "bioc-exp/2026-09-01/3.23"))
+  expect_equal(length(packages_view(rf$state)$library$failures$needed_by[[1]]), 0)
+
+  r1 <- deliver_bioc(rf$state, t = 5)
+  v <- packages_view(r1$state)
+  expect_equal(v$library$failures$needed_by[[1]], "DESeq2")
+  expect_equal(v$packages$status[v$packages$name == "DESeq2"], "failed")
+  # CRAN's index that never arrives leaves the walk as it was, and nothing
+  # resolves: the lock still answers the notebook.
+  r2 <- drive(r1$state, ev_index_failed("cran/2026-09-01", "offline", at(6)))
+  expect_equal(packages_view(r2$state)$library$failures$needed_by[[1]], "DESeq2")
+  expect_identical(r2$state$file$lock, locked)
+  expect_false("fetch_index" %in% effect_types(r2))
+
+  # Trying again drops the failed slot, so the next failure asks for it again.
+  r3 <- drive(r2$state, ev_run(NULL, at(7)))
+  token2 <- r3$state$packages$install$token
+  expect_false(is.null(token2))
+  r4 <- drive(r3$state, ev_install_done(token2, key, NULL, "install failed", character(), at(8),
+                                        failures = failures))
+  expect_equal(vapply(Filter(function(e) identical(e$type, "fetch_index"), r4$effects),
+                      function(e) e$key, character(1)), "cran/2026-09-01")
+  expect_equal(packages_view(r4$state)$library$failures$needed_by[[1]], "DESeq2")
 })
 
 # ---- Bioconductor (docs/packages-tests.md, 82-87) ----------------------------
