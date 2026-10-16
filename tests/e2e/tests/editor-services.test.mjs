@@ -1,7 +1,7 @@
 // Piece 4 (docs/ui-2.md, "Editor services"), scenarios 59-61 of
 // docs/ui-2-tests.md: completion, the help panel and the signature
-// tooltip against a real server and worker. Scenario 62 (go-to-definition)
-// is cut from this increment (ui-2.md, 4e) and has no test here.
+// tooltip against a real server and worker. Go-to-definition (4e) is in
+// go-to-definition.test.mjs.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

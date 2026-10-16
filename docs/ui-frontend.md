@@ -44,25 +44,15 @@ spot with one grep.
 ## Julia-only features switched off
 
 - **`components/CellInput.js`**: `pkgBubblePlugin` and
-  `NotebookpackagesFacet` (bubbles on `using` lines), `go_to_definition_plugin`
-  and the "unsubmitted global definitions" listener built on `ScopeStateField`,
-  `AiSuggestionPlugin`, and `pluto_autocomplete`'s
+  `NotebookpackagesFacet` (bubbles on `using` lines), the "unsubmitted
+  global definitions" listener, `AiSuggestionPlugin`, and `pluto_autocomplete`'s
   `request_packages`/`request_special_symbols` (Julia package names and
   LaTeX symbols). Keep `pluto_autocomplete` itself: it asks `complete`, the
   server answers with no results, and increment 2 fills that in from the
   worker.
-  **Deviation**: `ScopeStateField` itself is left wired unconditionally,
-  not switched off. It isn't only `go_to_definition_plugin`'s input:
-  `CellInput/LiveDocsFromCursor.js` (`get_selected_doc_from_state`, run on
-  every doc change or selection by the always-on `docs_updater` listener)
-  and `CellInput/pluto_autocomplete.js` (its symbol-usage completion source,
-  run whenever autocomplete triggers, kept on per above) both call
-  `state.field(ScopeStateField)` with CodeMirror's default `require: true`,
-  which throws if the field isn't registered. Removing the field would turn
-  "no definitions found" into a hard crash on every keystroke. Verified live
-  against the stub server: typing and running R cells does not throw from
-  `scopestate_statefield.js` — its tree walk fails quietly over an R syntax
-  tree (empty `usages`/`definitions`), which is why it was safe to leave on.
+  `go_to_definition_plugin` is back on, reading the engine's analysis
+  instead of Julia's: `ScopeStateField` and `scopestate_statefield.js` are
+  gone. See "Go-to-definition" below.
 - **`components/CellInput.js` cell menu** (and `Cell.js`'s handlers): hide
   "Disable in notebook" and "Skip as script". Ember has neither; the server
   would answer 👎 and revert them.
@@ -91,6 +81,33 @@ spot with one grep.
 - Nothing else changes for outputs: the server maps every `ember_display` to
   a MIME type Pluto already renders (see `project_output()`), and console
   output arrives as Pluto log entries.
+
+## Go-to-definition
+
+Pluto's links from a name to the cell defining it, driven by the engine's
+analysis rather than a scope analysis in the page (ui-2.md 4e, #53).
+
+- **Server** (`pluto-state.R`): each cell input carries `ember_spans`,
+  `{defs, refs}`, each a list of `[name, from, to]`. They are the cell's
+  own definition and reference rows, at UTF-16 offsets into its code
+  (`span_offsets()` converts parse-data columns, which count a tab to the
+  next multiple of 8). A reference is kept only when the code at its span
+  is the name, plain or backticked, or a replacement function's name
+  without `<-`. That drops the reads the walker places on a whole string
+  (a glue segment, `new("C")`).
+- **Page** (`CellInput/go_to_definition_plugin.js`): a reference to a name
+  another cell defines becomes a `data-pluto-variable` link, and one to a
+  name its own cell defines becomes a `data-cell-variable` link.
+  Ctrl/Cmd-click focuses the defining cell and selects the definition.
+  `Notebook.js` maps each name to the first cell defining it, from every
+  cell's `defs`. Package exports and method generics, which
+  `downstream_cells_map` also lists, are not links. The marks show only
+  while the editor holds exactly the submitted code the spans were read
+  from. While the user types they go away, until the cell is submitted.
+- **Not covered yet:** the walker records no read of a name already bound
+  in the cell, so `x <- 1; y <- x` gives no in-cell link on the second `x`.
+  It also gives no link from a class name in a string (`new("Circle")`) to
+  its `setClass()`.
 
 ## Not changed, on purpose
 

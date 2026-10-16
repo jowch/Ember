@@ -197,6 +197,7 @@ pluto_schema <- function() {
   list(
     maps = c(
       "", "cell_inputs", "cell_inputs/*", "cell_inputs/*/metadata",
+      "cell_inputs/*/ember_spans",
       "cell_results", "cell_results/*", "cell_results/*/output",
       "published_objects", "bonds", "metadata", "nbpkg",
       "cell_dependencies", "cell_dependencies/*",
@@ -207,6 +208,7 @@ pluto_schema <- function() {
     ),
     arrays = c(
       "cell_order", "cell_execution_order",
+      "cell_inputs/*/ember_spans/defs", "cell_inputs/*/ember_spans/refs",
       "cell_results/*/published_object_keys", "cell_results/*/logs",
       "ember/packages/rows", "ember/plan/restart",
       "cell_results/*/ember/variables"

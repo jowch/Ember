@@ -95,7 +95,7 @@ const useCellApi = (node_ref, published_object_keys, pluto_actions) => {
  * }} props
  * */
 export const Cell = ({
-    cell_input: { cell_id, code, code_folded, kind, metadata },
+    cell_input: { cell_id, code, code_folded, kind, metadata, ember_spans },
     cell_result: { queued, running, runtime, errored, output, logs, published_object_keys, depends_on_disabled_cells, depends_on_skipped_cells, ember },
     cell_dependencies,
     cell_input_local,
@@ -109,6 +109,7 @@ export const Cell = ({
     sanitize_html = true,
     nbpkg,
     global_definition_locations,
+    definition_cells,
     is_first_cell,
     inspecting_hidden_code,
 }) => {
@@ -576,6 +577,8 @@ export const Cell = ({
                 on_line_heights=${set_line_heights}
                 cell_id=${cell_id}
                 notebook_id=${notebook_id}
+                definition_cells=${definition_cells}
+                ember_spans=${ember_spans}
                 cm_highlighted_line=${cm_highlighted_line}
                 cm_highlighted_range=${cm_highlighted_range}
                 cm_diagnostics=${cm_diagnostics}

@@ -79,7 +79,7 @@ pluto_state <- function(state, previous = NULL) {
       view <- cell_view(state, ctx, i)          # state.R, shared with snapshot_of()
       old_input  <- if (!is.na(j)) pj$cell_inputs[[j]] else NULL
       old_result <- if (!is.na(j)) pj$cell_results[[j]] else NULL
-      inputs[[i]]  <- reuse(project_cell_input(view),  old_input)
+      inputs[[i]]  <- reuse(project_cell_input(view, state$graph$analyses[[view$id]]),  old_input)
       results[[i]] <- reuse(project_cell_result(view, ids), old_result)
     }
   }
@@ -187,10 +187,101 @@ key_unchanged <- function(state, ctx, i, prev_key) {
 #' CELL_METADATA_DISABLED, picked by `view$disabled`, so cells still share
 #' one R object each. `kind` is `view$kind` ("code" or "markdown"); the
 #' cell key already covers it (it holds `state$cells[[i]]`).
-project_cell_input <- function(view) {
+#'
+#' `ember_spans` is where the cell's code defines and reads each name, for
+#' the editor's go-to-definition (ui-2.md 4e): see `project_spans()`. The
+#' graph is always built from the cells' current code (state.R's
+#' invariants), so the cell key, which holds the code, covers it too.
+project_cell_input <- function(view, analysis = NULL) {
   list(cell_id = view$id, code = view$code, code_folded = view$folded,
        kind = view$kind,
-       metadata = if (isTRUE(view$disabled)) CELL_METADATA_DISABLED else CELL_METADATA)
+       metadata = if (isTRUE(view$disabled)) CELL_METADATA_DISABLED else CELL_METADATA,
+       ember_spans = project_spans(analysis, view$code, view$kind))
+}
+
+#' `list(defs, refs)`, each an array of `[name, from, to]`: the cell's own
+#' definition and reference rows (`file` NA, so not from a sourced file),
+#' at UTF-16 offsets into `code`, which is how CodeMirror counts. Rows
+#' with no exact position (`col` NA) are left out. A reference is kept only
+#' when the code at its span is the name itself (plain or backticked), or
+#' a replacement function's name without its `<-` (`r(x) <- 2` reads
+#' `` `r<-` `` at `r`). That drops the reads the walker places on a whole
+#' string (a glue segment, a class name in `new("C")`), whose span isn't
+#' the name. Markdown cells, and an analysis of other code, give none.
+project_spans <- function(analysis, code, kind = "code") {
+  none <- list(defs = list(), refs = list())
+  if (is.null(analysis) || !identical(kind, "code") || !identical(analysis$code, code)) return(none)
+  # Plain column vectors, not data-frame subsetting: at 2000 cells `[` on
+  # the data frames was most of a from-scratch projection's added cost.
+  d <- analysis$definitions; r <- analysis$references
+  nd <- if (is.null(d)) 0L else nrow(d)
+  nr <- if (is.null(r)) 0L else nrow(r)
+  if (nd + nr == 0) return(none)
+  name <- c(d$name, r$name); line <- c(d$line, r$line)
+  col <- c(d$col, r$col); end_col <- c(d$end_col, r$end_col)
+  keep <- is.na(c(d$file, r$file)) & !is.na(col) & !is.na(end_col)
+  is_ref <- rep(c(FALSE, TRUE), c(nd, nr))
+  off <- span_offsets(code, line, col, end_col)
+  keep <- keep & !is.na(off$from)
+  check <- keep & is_ref
+  if (any(check)) {
+    text <- substring(code_lines(code)[line[check]], off$first[check], off$last[check])
+    nm <- name[check]
+    keep[check] <- text == nm | text == paste0("`", nm, "`") | paste0(text, "<-") == nm
+  }
+  spans <- function(k) lapply(k, function(i) arr(name[[i]], off$from[[i]], off$to[[i]]))
+  list(defs = spans(which(keep & !is_ref)), refs = spans(which(keep & is_ref)))
+}
+
+code_lines <- function(code) strsplit(enc2utf8(code), "\n", fixed = TRUE)[[1]]
+
+#' Parse-data positions to UTF-16 offsets into `code` (`from` inclusive,
+#' `to` exclusive). `getParseData()` counts a column per character, with a
+#' tab moving to the next multiple of 8 (in `"\tb"`, `b` is column 9);
+#' CodeMirror counts UTF-16 code units, two for a character above U+FFFF.
+#' `first` and `last` are the span's character indices in its line. A
+#' position that doesn't fall on a character's start gives NA. Pure.
+span_offsets <- function(code, line, col, end_col) {
+  lines <- code_lines(code)
+  n <- length(line)
+  from <- to <- first <- last <- rep(NA_integer_, n)
+  if (length(lines) == 0 || n == 0) return(list(from = from, to = to, first = first, last = last))
+  chars <- lapply(lines, utf8ToInt)
+  u16 <- vapply(chars, function(ch) sum(1L + (ch > 0xFFFF)), integer(1))
+  line_start <- cumsum(c(0L, u16 + 1L))
+  # A line of ASCII with no tab (most lines) maps column k to character k.
+  plain <- vapply(chars, function(ch) !anyNA(ch) && all(ch < 128L & ch != 9L), logical(1))
+  ok_line <- !is.na(line) & line >= 1 & line <= length(lines)
+  ln_safe <- ifelse(ok_line, line, 1L)
+  fast <- ok_line & plain[ln_safe] & !is.na(col) & !is.na(end_col) & col >= 1 &
+    end_col >= col & end_col <= lengths(chars)[ln_safe]
+  from[fast] <- line_start[line[fast]] + col[fast] - 1L
+  to[fast] <- line_start[line[fast]] + end_col[fast]
+  first[fast] <- col[fast]
+  last[fast] <- end_col[fast]
+  for (ln in unique(line[ok_line & !plain[ln_safe]])) {
+    ch <- chars[[ln]]
+    if (length(ch) == 0 || anyNA(ch)) next
+    width <- 1L + (ch > 0xFFFF)
+    # each character's parse-data column: one more than the last, or the
+    # next multiple of 8 (plus one) after a tab
+    pcol <- integer(length(ch))
+    at <- 1L
+    for (k in seq_along(ch)) {
+      pcol[[k]] <- at
+      at <- if (ch[[k]] == 9L) ((at - 1L) %/% 8L + 1L) * 8L + 1L else at + 1L
+    }
+    starts <- line_start[[ln]] + cumsum(c(0L, width))[seq_along(ch)]
+    rows <- which(line == ln)
+    i <- match(col[rows], pcol)
+    j <- match(end_col[rows], pcol)
+    ok <- !is.na(i) & !is.na(j)
+    from[rows[ok]] <- starts[i[ok]]
+    to[rows[ok]] <- starts[j[ok]] + width[j[ok]]
+    first[rows[ok]] <- i[ok]
+    last[rows[ok]] <- j[ok]
+  }
+  list(from = from, to = to, first = first, last = last)
 }
 
 #' CellResultData from an `ember_cell_view` (state.R).

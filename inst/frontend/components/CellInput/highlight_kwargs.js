@@ -15,9 +15,9 @@ const create_kwarg_decorations = (view) => {
                 if (node_ref.name == "Identifier") {
                     const node = node_ref.node
 
-                    const is_first_child = (/** @type {import("./scopestate_statefield.js").SyntaxNode} */ n) => n.prevSibling == null
+                    const is_first_child = (/** @type {import("../../imports/CodemirrorPlutoSetup.js").TreeCursor["node"]} */ n) => n.prevSibling == null
 
-                    const is_kwarg = (/** @type {import("./scopestate_statefield.js").SyntaxNode | null} */ n) => {
+                    const is_kwarg = (/** @type {import("../../imports/CodemirrorPlutoSetup.js").TreeCursor["node"] | null} */ n) => {
                         if (!n) return false
                         if (
                             // f(x; NODE)
@@ -35,7 +35,7 @@ const create_kwarg_decorations = (view) => {
                         }
                     }
 
-                    /** @type {import("./scopestate_statefield.js").SyntaxNode | null} */
+                    /** @type {import("../../imports/CodemirrorPlutoSetup.js").TreeCursor["node"] | null} */
                     let node_to_check = node
 
                     // NODE::Soething
