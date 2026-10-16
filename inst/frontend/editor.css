@@ -1239,6 +1239,49 @@ nav#at_the_top .ember-menu {
     opacity: 0.7;
 }
 
+/* A package's GitHub source line (#78): under its row, across the table. */
+.ember-package-row:has(+ .ember-package-detail) td {
+    border-bottom: none;
+}
+.ember-package-detail td {
+    padding-top: 0;
+    padding-bottom: 0.5em;
+}
+.ember-package-source-actions,
+.ember-package-source-form-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+.ember-package-source-form label {
+    display: block;
+    margin: 0 0 4px 0;
+    font-size: 12px;
+    color: var(--ember-muted);
+}
+.ember-package-source-form input {
+    flex: 1 1 14em;
+    min-width: 0;
+    height: 30px;
+    padding: 0 8px;
+    font-size: 12.5px;
+    border: 1px solid var(--rule-color);
+    border-radius: 7px;
+    background: var(--main-bg-color);
+    color: var(--ember-text);
+}
+.ember-package-source-failed,
+.ember-package-source-error {
+    margin: 0 0 0.4em 0;
+    font-size: 12px;
+    /* As the failed rows' status: readable against the background in both themes. */
+    color: var(--ember-upstream-error-label-color);
+}
+.ember-package-source-error {
+    margin: 0.4em 0 0 0;
+}
+
 .ember-packages-update {
     display: flex;
     align-items: center;

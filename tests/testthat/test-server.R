@@ -689,7 +689,8 @@ test_that("every request type in the handler table is answered as documented (36
                "restart_process", "reset_shared_state", "complete", "complete_symbols", "docs",
                "all_registered_package_names", "completepath", "get_all_notebooks", "ember_signature",
                "ember_update_packages", "ember_move_notebook", "ember_start_page", "ember_new_notebook",
-               "ember_open_notebook", "ember_forget_recent")
+               "ember_open_notebook", "ember_forget_recent", "ember_set_package_source",
+               "ember_remove_package_source")
   silent <- c("interrupt_all", "shutdown_notebook", "reshow_cell", "ember_render_plot",
              "ember_run_all", "ember_split_cell", "ember_apply_update", "ember_cancel_update",
              "ember_set_mode", "request_js_link_response", "nbpkg_available_versions",
@@ -2021,4 +2022,90 @@ test_that("every hashed vendor file a shim or editor.html names exists, and no o
   unreferenced <- setdiff(on_disk, named)
   unreferenced <- unreferenced[!grepl("^_", unreferenced)]
   expect_equal(unreferenced, character(0))
+})
+
+# ---- 122. The Packages tab's GitHub source form (#78) ----------------------
+
+test_that("ember_set_package_source replies ok and the row looks the source up; a refusal is the reply; remove sends it back (122)", {
+  fixtures <- normalizePath(testthat::test_path("fixtures"), mustWork = TRUE)
+  repos <- ember_repos(cran = paste0("file://", file.path(fixtures, "repos", "toy")), bioc_config = NA,
+                       github = paste0("file://", file.path(fixtures, "github")))
+  cache <- tempfile("ember-pkg-cache-")
+  dir.create(cache, recursive = TRUE)
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  path <- write_session_notebook(list(S = cell(""), A = cell("library(toyC)")), snapshot = "2026-09-01")
+  nb <- open_notebook(path, repos = repos, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  page_row <- function() {
+    Find(function(r) identical(r$name, "toyC"), ws$page()$ember$packages$rows)
+  }
+  status_is <- function(status) {
+    wait_for(nb, function(snap) {
+      rows <- snap$packages$packages
+      identical(rows$status[rows$name == "toyC"], status)
+    }, timeout = 30)
+  }
+  replies <- function(type) Filter(function(m) identical(m$type, type), ws$messages)
+  expect_true(status_is("not_found"))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+  expect_equal(page_row()$status, "not_found")
+  expect_null(page_row()$spec)
+
+  # A refusal comes back as the reply, and nothing changes.
+  handle_message(server, ws, wire("ember_set_package_source", notebook_id = id, name = "toyC",
+                                  source = "https://github.com/lab/toyC"))
+  r <- replies("ember_set_package_source")
+  expect_match(r[[length(r)]]$message$error, "github:user/repo", fixed = TRUE)
+  expect_length(notebook_state(nb)$file$header$sources, 0)
+
+  handle_message(server, ws, wire("ember_set_package_source", notebook_id = id, name = "toyC", source = "lab/toyC"))
+  r <- replies("ember_set_package_source")
+  expect_true(r[[length(r)]]$message$ok)
+  expect_equal(page_row()$spec, "github:lab/toyC")
+  expect_match(read_file_utf8(path), '# toyC = "github:lab/toyC"', fixed = TRUE)
+  expect_true(status_is("missing"))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+  expect_equal(page_row()$source, paste0("github:lab/toyC@", "8e4b7d2c1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c"))
+
+  handle_message(server, ws, wire("ember_remove_package_source", notebook_id = id, name = "toyC"))
+  r <- replies("ember_remove_package_source")
+  expect_true(r[[length(r)]]$message$ok)
+  expect_false(grepl("[sources]", read_file_utf8(path), fixed = TRUE))
+  expect_true(status_is("not_found"))
+})
+
+test_that("ember_set_package_source on a read-only notebook replies with the refusal (122)", {
+  ro_dir <- tempfile("ember-nb-ro-")
+  dir.create(ro_dir, recursive = TRUE)
+  on.exit(unlink(ro_dir, recursive = TRUE), add = TRUE)
+  header <- new_header(ember_version = "99.0.0", r_version = "4.5.1", snapshot = "2026-01-01")
+  cells <- list(a = list(code = "1", kind = "code", folded = FALSE))
+  file0 <- new_notebook_file(header = header, cells = cells, run_order = "a",
+                             learned = list(),
+                             sourced = data.frame(path = character(), hash = character(),
+                                                  stringsAsFactors = FALSE),
+                             lock = empty_lock(), extra_blocks = list(), format = ember_format)
+  ro_path <- file.path(ro_dir, "nb.R")
+  write_file_exact(ro_path, format_notebook(file0))
+  before <- read_file_utf8(ro_path)
+  nb <- open_notebook(ro_path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  reply_of <- function(type) Filter(function(m) identical(m$type, type), ws$messages)[[1]]$message
+  handle_message(server, ws, wire("ember_set_package_source", notebook_id = id, name = "toyC", source = "lab/toyC"))
+  expect_match(reply_of("ember_set_package_source")$error, "read-only", fixed = TRUE)
+  handle_message(server, ws, wire("ember_remove_package_source", notebook_id = id, name = "toyC"))
+  expect_match(reply_of("ember_remove_package_source")$error, "read-only", fixed = TRUE)
+  expect_equal(read_file_utf8(ro_path), before)
 })
