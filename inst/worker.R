@@ -667,11 +667,7 @@ run_cell <- function(msg) {
 #' defined itself still exists to remove them from.
 remove_cell <- function(cell) {
   undo_registrations(cell)
-  globals <- owned[[cell]]
-  if (length(globals)) {
-    existing <- intersect(globals, ls(globalenv(), all.names = TRUE))
-    if (length(existing)) rm(list = existing, envir = globalenv())
-  }
+  remove_globals(owned[[cell]])
   owned[[cell]] <<- NULL
   display[[cell]] <<- NULL
   attached[[cell]] <<- NULL
@@ -765,12 +761,24 @@ undo_registrations <- function(cell) {
 #' Remove a failed cell's globals, keeping what it attached to the search
 #' path (unlike remove_cell(), which also detaches and drops display data).
 drop_globals <- function(cell) {
-  globals <- owned[[cell]]
-  if (length(globals)) {
-    existing <- intersect(globals, ls(globalenv(), all.names = TRUE))
-    if (length(existing)) rm(list = existing, envir = globalenv())
-  }
+  remove_globals(owned[[cell]])
   owned[[cell]] <<- character()
+}
+
+#' Remove the named globals that still exist. A class's binding
+#' (`.__C__Circle`) goes through `removeClass()`: removing the binding
+#' alone leaves the class in the methods package's cache, so `new("Circle")`
+#' would go on working after its cell was deleted, disabled or failed.
+remove_globals <- function(globals) {
+  if (length(globals) == 0) return(invisible())
+  existing <- intersect(globals, ls(globalenv(), all.names = TRUE))
+  for (n in existing[startsWith(existing, ".__C__")]) {
+    tryCatch(suppressMessages(suppressWarnings(
+      methods::removeClass(substring(n, nchar(".__C__") + 1), where = globalenv()))),
+      error = function(e) NULL)
+  }
+  existing <- intersect(existing, ls(globalenv(), all.names = TRUE))
+  if (length(existing)) rm(list = existing, envir = globalenv())
 }
 
 #' A snapshot of the named globals, for later comparison. Active bindings

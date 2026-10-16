@@ -694,6 +694,13 @@ find_errors <- function(cells, analyses, edges, ids, components,
       }
     }
     lines_df <- do.call(rbind, lines_rows)
+    if (is_class_binding(n)) {
+      errors[[length(errors) + 1]] <- new_graph_error(
+        kind = "multiple_definitions", cells = defs, names = n, lines = lines_df,
+        message = sprintf("Class %s is defined in more than one cell.", class_of_binding(n)),
+        fixes = "Keep the class in one cell and remove the others")
+      next
+    }
     fix <- if ("replacement" %in% kinds) {
       sprintf("Move the line into the cell that defines %s, or name the result (%s2 <- ...)", n, n)
     } else if (length(kinds) > 0 && all(kinds == "for")) {

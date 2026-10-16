@@ -145,6 +145,10 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
     walk_assignment(e, scope, acc, name, pid)
     return(invisible())
   }
+  # Class names (`new("Circle")`, `setClass("Circle", contains = "Shape")`)
+  # are recorded first; the call is then walked by whichever rule below
+  # matches (`setMethod()` is also a method registrar).
+  if (name %in% names(class_name_calls)) walk_class_names(e, scope, acc, name, arg_pids)
   if (name %in% quoting_functions) {
     maybe_record_name_read()
     walk_quoting_call(e, scope, acc, name, arg_pids)

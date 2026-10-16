@@ -11,6 +11,7 @@ import { useEventListener } from "../common/useEventListener.js"
 import { t, th } from "../common/lang.js"
 import { CircleIcon, ClockIcon, SlashCircleIcon, SlidersIcon } from "../common/Icons.js"
 import { stale_names } from "../common/stale_names.js"
+import { display_name } from "../common/display_name.js"
 import { useSettled, wait_for_on } from "../common/useSettled.js"
 import { EditorSelection, EditorView } from "../imports/CodemirrorPlutoSetup.js"
 
@@ -21,7 +22,7 @@ import { EditorSelection, EditorView } from "../imports/CodemirrorPlutoSetup.js"
  * 'and N more'").
  */
 const format_stale_chip = (notebook, cell_id) => {
-    const names = stale_names(notebook, cell_id)
+    const names = stale_names(notebook, cell_id).map(display_name)
     if (names.length === 0) return t("t_chip_stale")
     const shown = names.slice(0, 3)
     const rest = names.length - shown.length
@@ -118,7 +119,9 @@ export const Cell = ({
     const on_update_doc_query = useCallback((...args) => pluto_actions.set_doc_query(...args), [pluto_actions])
     const on_focus_neighbor = useCallback((...args) => pluto_actions.focus_on_neighbor(...args), [pluto_actions])
     const on_change = useCallback((val) => pluto_actions.set_local_cell(cell_id, val), [cell_id, pluto_actions])
-    const variables = useMemo(() => Object.keys(cell_dependencies?.downstream_cells_map ?? {}), [cell_dependencies])
+    // As the page shows them (`class Circle`), so the cell's name and the
+    // "Multiple definitions for class Circle" link's target read the same.
+    const variables = useMemo(() => Object.keys(cell_dependencies?.downstream_cells_map ?? {}).map(display_name), [cell_dependencies])
 
     // We need to unmount & remount when a destructive error occurs.
     // For that reason, we will use a simple react key and increment it on error

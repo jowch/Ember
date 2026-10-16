@@ -136,6 +136,50 @@ method_registrars <- list(
   setMethod = c(generic = "f", signature = "signature", form = "s4")
 )
 
+#' S4 class names written as strings. R keeps the definition of class `X`
+#' in the global binding `.__C__X` (what `setClass("X")` creates, and what a
+#' package's `exportClasses(X)` exports), so a string in a class position
+#' is read as that name and resolves by the ordinary rules: to the cell
+#' that defines the class, else to a cell attaching a package that exports
+#' it. Each entry lists the function's leading formals, in order (for
+#' matching positional arguments), and which of them hold class names:
+#' `read` are classes the call needs, `define` the class it creates (at the
+#' top level, or in `local()` nested there, like `setGeneric()`).
+#' `slots` and `fields` name their classes only in named elements
+#' (`slots = c(r = "numeric")`; `slots = c("r")` is a slot of class "ANY");
+#' everywhere else every string counts, so `representation("VIRTUAL", r =
+#' "numeric")` reads both.
+class_name_calls <- list(
+  setClass = list(formals = c("Class", "representation", "prototype", "contains"),
+                  define = "Class", read = c("representation", "contains", "slots")),
+  setClassUnion = list(formals = c("name", "members"), define = "name", read = "members"),
+  setRefClass = list(formals = c("Class", "fields", "contains"),
+                     define = "Class", read = c("fields", "contains")),
+  setValidity = list(formals = "Class", read = "Class"),
+  setMethod = list(formals = c("f", "signature"), read = "signature"),
+  new = list(formals = "Class", read = "Class"),
+  is = list(formals = c("object", "class2"), read = "class2"),
+  as = list(formals = c("object", "Class"), read = "Class"),
+  setAs = list(formals = c("from", "to"), read = c("from", "to")),
+  getClass = list(formals = "Class", read = "Class"),
+  getClassDef = list(formals = "Class", read = "Class")
+)
+
+#' The arguments of `class_name_calls` whose unnamed elements are not
+#' classes (slot and field names of class "ANY").
+class_named_only <- c("slots", "fields")
+
+#' The global name R keeps class `cls`'s definition in.
+class_binding <- function(cls) paste0(".__C__", cls)
+
+#' Is `name` a class definition's binding (`.__C__X`)? Those are public
+#' despite the leading dot: they are how one cell's `setClass()` reaches
+#' another cell's `new()`.
+is_class_binding <- function(name) startsWith(name, ".__C__")
+
+#' The class a `.__C__X` binding holds the definition of: `"X"`.
+class_of_binding <- function(name) substring(name, nchar(".__C__") + 1)
+
 #' Base R's S3 generics: a top-level function named `generic.class` is a
 #' method only when `generic` is one of these, a function or `setGeneric()`
 #' another cell defines, or a name an installed package exports (the graph
@@ -250,9 +294,10 @@ is_dotdot_prefixed_name <- function(name) {
 
 #' Is `name` private to its cell?
 #'
-#' Dot-names are private. Used by the graph, never by the walker: the
+#' Dot-names are private, except class bindings (`.__C__X`; see
+#' `class_name_calls`). Used by the graph, never by the walker: the
 #' walker records every name and the graph applies the policy, so the
 #' analysis of a cell doesn't depend on which rule is in force.
 is_private_name <- function(name) {
-  startsWith(name, ".")
+  startsWith(name, ".") & !is_class_binding(name)
 }

@@ -2,6 +2,7 @@ import { html, useEffect, useRef, useState } from "../imports/Preact.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { t, pretty_long_time } from "../common/lang.js"
 import { get_settings } from "./Settings.js"
+import { display_name } from "../common/display_name.js"
 import { url_logo_small } from "./Editor.js"
 
 const NOTIFY_AFTER_SECONDS = 60
@@ -22,7 +23,8 @@ const last_run = (/** @type {import("./Editor.js").NotebookData} */ notebook, /*
 const run_message = (notebook, seen) => {
     const errored = notebook.cell_order.filter((id) => seen.has(id) && notebook.cell_results[id]?.errored)
     if (errored.length === 0) return t("t_run_finished", { count: seen.size })
-    const name = Object.keys(notebook.cell_dependencies[errored[0]]?.downstream_cells_map ?? {})[0] ?? t("t_run_a_cell")
+    const first_name = Object.keys(notebook.cell_dependencies[errored[0]]?.downstream_cells_map ?? {})[0]
+    const name = first_name == null ? t("t_run_a_cell") : display_name(first_name)
     const first = t("t_run_error", { name })
     return errored.length === 1 ? first : first + t("t_run_more_errors", { count: errored.length - 1 })
 }

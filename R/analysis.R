@@ -19,7 +19,8 @@
 #'   `file`. `kind` is one of `"assign"` (`x <- v`, `=`, `->`, top-level
 #'   `<<-`), `"replacement"` (`df$col <- v`, `names(x) <- v`, `x %<>% f()`:
 #'   the innermost target), `"for"`, `"function"`, `"call"` (`assign("x",
-#'   v)`, `data(iris)`), `"generic"` (`setGeneric("area")`), `"alias"`
+#'   v)`, `data(iris)`), `"generic"` (`setGeneric("area")`), `"class"`
+#'   (`setClass("Circle")` defines `.__C__Circle`), `"alias"`
 #'   (`box::use(dplyr[mutate])` binds `mutate`). `file` is `NA` for the cell's own code, else the sourced
 #'   file's path. Dot-names are included; the graph decides what private
 #'   means. A name defined more than once at distinct positions (rare: e.g.

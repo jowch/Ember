@@ -240,7 +240,7 @@ project_cell_result <- function(view, known_ids = NULL) {
   errored <- length(view$errors) > 0 || view$status %in% c("error", "interrupted")
   last_error <- if (length(view$errors) > 0) view$errors[[length(view$errors)]] else NULL
   upstream_error <- if (!is.null(last_error) && identical(last_error$kind, "upstream")) {
-    as_arr(Map(function(n, c) list(name = n, cell = c), last_error$names, last_error$cells))
+    as_arr(Map(function(n, c) list(name = n, cell = c), display_names(last_error$names), last_error$cells))
   } else {
     NULL
   }
@@ -548,11 +548,20 @@ project_tree <- function(data) {
       ember_length = data$length, elements = as_arr(elements))
 }
 
+#' Names as the page shows them: a class binding (`.__C__Circle`) reads
+#' "class Circle".
+display_names <- function(names) {
+  cls <- is_class_binding(names)
+  names[cls] <- paste("class", class_of_binding(names[cls]))
+  names
+}
+
 #' Join names the way the frontend's rewritten messages read: one name as
 #' is, two with `conj`, more as a comma list with `conj` before the last.
 #' `conj` is `"and"` for multiple definitions and cycles, `"or"` for an
 #' upstream error (several names could each fix the cell; any one would do).
 join_names <- function(names, conj = "and") {
+  names <- display_names(names)
   if (length(names) <= 1) return(if (length(names) == 0) "" else names)
   if (length(names) == 2) return(paste(names, collapse = paste0(" ", conj, " ")))
   paste0(paste(names[-length(names)], collapse = ", "), " ", conj, " ", names[length(names)])
