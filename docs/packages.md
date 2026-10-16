@@ -384,18 +384,30 @@ what was missing.
   run catches two cases where Package Manager's binary doesn't match the
   machine, which would otherwise install as ready and fail when a cell
   loads the package:
-  - *Built for a newer system.* `ldd` finds the library but not a symbol
-    version the binary needs (``version `GLIBC_2.38' not found``). Rows:
-    `newer_system`, `detail` = the versions, `libraries` = the libraries
-    here that lack them. The card adds that an older library from conda or
-    a module is the usual cause, else a newer Linux release than this one.
+  - *Built for a newer system.* `ldd` finds the library but not one of
+    the toolchain's symbol versions the binary needs (``version
+    `GLIBC_2.38' not found``; `GLIBC_`, `GLIBCXX_`, `CXXABI_`, `GCC_`).
+    Rows: `newer_system`, `detail` = the highest version of each family,
+    `libraries` = the libraries here that lack them. The card adds that
+    an older library from conda or a module is the usual cause, else a
+    newer Linux release than this one.
+  - *Built against another build of a library.* The same, for a
+    library's own symbol versions (`CURL_OPENSSL_4`, `LIBXML2_2.9`).
+    These don't say the system is older: libcurl's name its TLS backend,
+    for one. Rows: `symbol_version`; the card says the copy here lacks
+    them, and that a library from conda or a module may be the cause.
   - *Built against another version of a library.* A library not found
-    (`libgdal.so.34`) that the loader has under another number
-    (`libgdal.so.36`, from `ldconfig -p` and `LD_LIBRARY_PATH`:
-    `loader_libraries()`) isn't one to install: it is left out of the
-    command, and the row is `library_version`, `libraries` = the ones
-    wanted, `detail` = those here. The card says installing it again won't
-    help, and to install the version this Linux release ships. A package
+    (`libgdal.so.34`) that the distribution's own folders (`/lib`,
+    `/usr/lib`, `/lib64`, `/usr/lib64` and their multiarch folders) have
+    under another number (`libgdal.so.36`, from `ldconfig -p` and
+    `LD_LIBRARY_PATH`: `loader_libraries()`) isn't one to install: the
+    command would install the version already there (ubuntugis's GDAL,
+    for one). It is left out of the command, and the row is
+    `library_version`, `libraries` = the ones wanted, `detail` = those
+    here, by soname. The card says so, and to install a package that
+    provides the wanted version if this Linux has one. Another number
+    elsewhere (`/usr/local`, conda, a module) says nothing about what the
+    distribution ships, so the library stays one to install. A package
     with a library missing as well keeps the `missing_system` row.
   Neither offers Update; `library_version` offers Try again.
 

@@ -28,6 +28,8 @@ const own_sentence = (failure, r_version) => {
             return t("t_ember_install_failed_no_binary", { version: failure.detail ?? "", r_version: r_version ?? "" })
         case "newer_system":
             return t("t_ember_install_failed_newer_system", { versions: failure.detail ?? "", libraries: failure.libraries ?? "" })
+        case "symbol_version":
+            return t("t_ember_install_failed_symbol_version", { versions: failure.detail ?? "", libraries: failure.libraries ?? "" })
         case "library_version":
             return t("t_ember_install_failed_library_version", { libraries: failure.libraries ?? "", have: failure.detail ?? "" })
         default:
@@ -45,6 +47,7 @@ const DEP_SENTENCE = {
     missing_compiler: "t_ember_install_failed_dep_missing_compiler",
     no_binary: "t_ember_install_failed_dep_no_binary",
     newer_system: "t_ember_install_failed_dep_newer_system",
+    symbol_version: "t_ember_install_failed_dep_symbol_version",
     library_version: "t_ember_install_failed_dep_library_version",
     other: "t_ember_install_failed_dep_other",
 }
@@ -59,6 +62,7 @@ const THEY_SENTENCE = {
     missing_compiler: "t_ember_install_failed_they_missing_compiler",
     no_binary: "t_ember_install_failed_they_no_binary",
     newer_system: "t_ember_install_failed_they_newer_system",
+    symbol_version: "t_ember_install_failed_they_symbol_version",
     library_version: "t_ember_install_failed_they_library_version",
     other: "t_ember_install_failed_they_other",
 }
@@ -97,7 +101,7 @@ const dep_sentence = (group, rows, r_version, { they = false, same = false } = {
         count: names.length,
         packages: name_list(names),
         libraries: unique_list("libraries"),
-        // newer_system: the symbol versions; library_version: the versions this system has.
+        // newer_system, symbol_version: the symbol versions; library_version: the versions this system has.
         versions: unique_list("detail"),
         have: unique_list("detail"),
         r_version: r_version ?? "",
@@ -113,7 +117,10 @@ const dep_sentence = (group, rows, r_version, { they = false, same = false } = {
  * it. A package the command doesn't cover ("system" with libraries: a
  * GitHub package, or no Package Manager) gets the package-manager
  * sentence on its own card (#76). A library here only as another version
- * ("library_version", #76): installing it again won't help. A compiler:
+ * ("library_version", #76): the command would install the version
+ * already here. A binary built for a newer system ("newer_system") or
+ * against another build of a library ("symbol_version"): a library from
+ * conda or a module may be the cause. A compiler:
  * `detail` is a sentence whose `backticked` parts are commands. A package
  * with no binary for this R (#19): update the date, or use an older R.
  * Nothing for other kinds, whose `detail` is a line of the log.
@@ -142,6 +149,9 @@ const failure_fixes = (failures, show_command) => {
             : null}
         ${failures.some((f) => f.kind === "newer_system")
             ? html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_newer_system_fix")}</p>`
+            : null}
+        ${failures.some((f) => f.kind === "symbol_version")
+            ? html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_symbol_version_fix")}</p>`
             : null}
         ${failures.some((f) => f.kind === "no_binary")
             ? html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_no_binary_fix")}</p>`

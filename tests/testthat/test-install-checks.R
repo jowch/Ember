@@ -304,40 +304,76 @@ test_that("a package built against a newer library is named with the versions it
   on.exit(if (is.na(old_path)) Sys.unsetenv("LD_LIBRARY_PATH") else Sys.setenv(LD_LIBRARY_PATH = old_path), add = TRUE)
   found <- ldd_findings(lib, "fakenew")
   expect_equal(missing_system_libraries(lib, "fakenew", found), list())
-  expect_equal(newer_system_libraries(found),
+  # FAKE_2 is the library's own version, not the toolchain's: the copy
+  # here lacks it, which doesn't say the system is older.
+  expect_equal(newer_system_libraries(found), list())
+  expect_equal(newer_system_libraries(found, toolchain = FALSE),
                list(fakenew = list(versions = "FAKE_2", paths = file.path(old, "libfakec.so.6"))))
 
   # The check stops the install, with no libraries to install.
   lock <- parse_lock_lines("fakenew 1.0 CRAN")$lock
   got <- system_library_check(lib, lock, c(), os = "linux", findings = found, available = character(), sysreqs = list())
   expect_length(got$packages, 0)
-  expect_equal(names(got$newer), "fakenew")
+  expect_length(got$newer, 0)
+  expect_equal(names(got$symbols), "fakenew")
+})
+
+test_that("only the toolchain's symbol versions say a binary was built for a newer system (#76)", {
+  found <- data.frame(file = "x.so", lib = c("libc.so.6", "libc.so.6", "libstdc++.so.6", "libcurl.so.4", "libxml2.so.2", "libxml2.so.2"),
+                      version = c("GLIBC_2.34", "GLIBC_2.38", "GLIBCXX_3.4.32", "CURL_OPENSSL_4", "LIBXML2_2.6.11", "LIBXML2_2.6.2"),
+                      path = c("/lib/libc.so.6", "/lib/libc.so.6", "/lib/libstdc++.so.6", "/lib/libcurl.so.4", "/lib/libxml2.so.2", "/lib/libxml2.so.2"),
+                      package = c("sf", "sf", "sf", "curl", "xml2", "xml2"), stringsAsFactors = FALSE)
+  # The highest of each family, by number: GLIBC_2.38 of the two.
+  expect_equal(newer_system_libraries(found),
+               list(sf = list(versions = c("GLIBCXX_3.4.32", "GLIBC_2.38"), paths = c("/lib/libc.so.6", "/lib/libstdc++.so.6"))))
+  expect_equal(newer_system_libraries(found, toolchain = FALSE),
+               list(curl = list(versions = "CURL_OPENSSL_4", paths = "/lib/libcurl.so.4"),
+                    xml2 = list(versions = "LIBXML2_2.6.11", paths = "/lib/libxml2.so.2")))
+  expect_equal(highest_versions(c("LIBXML2_2.6.2", "LIBXML2_2.6.11", "Base")), c("Base", "LIBXML2_2.6.11"))
 })
 
 test_that("a missing library that is here as another version isn't a library to install (#76)", {
+  multi <- "/usr/lib/x86_64-linux-gnu"
+  # The full-version file of a soname (libgdal.so.36.3.8.4) is the same
+  # library, so only the soname is named.
   expect_equal(other_library_versions(c("libgdal.so.34", "libudunits2.so.0", "libicuuc.so.70"),
-                                      c("libgdal.so.36", "libgdal.so", "libgdal.so.36.3.8.4", "libicuuc.so.74",
-                                        "libicuuc-extra.so.70", "libudunits2.so")),
-               list(libgdal.so.34 = c("libgdal.so.36", "libgdal.so.36.3.8.4"), libicuuc.so.70 = "libicuuc.so.74"))
+                                      file.path(multi, c("libgdal.so.36", "libgdal.so", "libgdal.so.36.3.8.4", "libicuuc.so.74",
+                                                         "libicuuc-extra.so.70", "libudunits2.so"))),
+               list(libgdal.so.34 = "libgdal.so.36", libicuuc.so.70 = "libicuuc.so.74"))
+  expect_equal(other_library_versions("libxml2.so.9", file.path(multi, c("libxml2.so.2", "libxml2.so.2.9.14"))),
+               list(libxml2.so.9 = "libxml2.so.2"))
+  # Only the distribution's folders count: a version in /usr/local, conda
+  # or a module's folder says nothing about what its packages install.
+  expect_equal(other_library_versions("libgdal.so.34", c("/usr/local/lib/libgdal.so.36", "/opt/modules/gdal/3.9/lib/libgdal.so.36",
+                                                          "/home/me/conda/lib/libgdal.so.36")), setNames(list(), character()))
+  expect_equal(other_library_versions("libgdal.so.34", c("/lib64/libgdal.so.36", "/usr/lib/libgdal.so.35")),
+               list(libgdal.so.34 = c("libgdal.so.35", "libgdal.so.36")))
 
   dir <- tempfile("ember-loader-test-"); dir.create(dir)
   on.exit(unlink(dir, recursive = TRUE), add = TRUE)
   file.create(file.path(dir, c("libgdal.so.36", "notalib.txt")))
-  expect_equal(loader_libraries(ldconfig = "", ld_library_path = paste("/does/not/exist", dir, sep = .Platform$path.sep)), "libgdal.so.36")
+  expect_equal(loader_libraries(ldconfig = "", ld_library_path = paste("/does/not/exist", dir, sep = .Platform$path.sep)),
+               file.path(dir, "libgdal.so.36"))
 
   lock <- parse_lock_lines(c("sf 1.0-21 CRAN", "units 0.8-5 CRAN"))$lock
   reqs <- parse_sysreqs(sysreqs_fixture("ubuntu-sf-units"))
   missing <- list(sf = c("libgdal.so.34", "libgeos_c.so.1"), units = "libudunits2.so.0")
   got <- system_library_check("unused", lock, c(), os = "linux", missing = missing, newer = list(),
-                              available = c("libgdal.so.36", "libudunits2.so.0"), sysreqs = reqs)
+                              available = file.path(multi, c("libgdal.so.36", "libudunits2.so.0")), sysreqs = reqs)
   expect_equal(got$packages$sf$libraries, "libgeos_c.so.1")
   expect_equal(got$versions, list(sf = c(libgdal.so.34 = "libgdal.so.36")))
   # Only a version mismatch: no command, and still a stop.
   only <- system_library_check("unused", lock, c(), os = "linux", missing = list(sf = "libgdal.so.34"), newer = list(),
-                               available = "libgdal.so.36", sysreqs = reqs)
+                               available = file.path(multi, "libgdal.so.36"), sysreqs = reqs)
   expect_length(only$packages, 0)
   expect_true(is.na(only$command))
   expect_equal(names(only$versions), "sf")
+  # The other version is a module's: libgdal.so.34 is still one to install, with the command.
+  module <- system_library_check("unused", lock, c(), os = "linux", missing = list(sf = "libgdal.so.34"), newer = list(),
+                                 available = "/opt/modules/gdal/3.9/lib/libgdal.so.36", sysreqs = reqs)
+  expect_equal(module$packages$sf$libraries, "libgdal.so.34")
+  expect_false(is.na(module$command))
+  expect_length(module$versions, 0)
 })
 
 test_that("the installer's report of a binary that doesn't fit becomes failure rows and a message (#76)", {
@@ -345,18 +381,21 @@ test_that("the installer's report of a binary that doesn't fit becomes failure r
                  command = NA_character_,
                  newer = list(sf = list(versions = c("GLIBCXX_3.4.32", "GLIBC_2.38"),
                                         paths = c("/lib/libc.so.6", "/opt/conda/lib/libstdc++.so.6"))),
+                 symbols = list(curl = list(versions = "CURL_OPENSSL_4", paths = "/opt/conda/lib/libcurl.so.4")),
                  versions = list(terra = c(libgdal.so.34 = "libgdal.so.36", libproj.so.25 = "libproj.so.22, libproj.so.24")))
   lines <- missing_report_lines(system = system)
   rows <- install_failures(lines)
-  expect_equal(rows$package, c("sf", "terra"))
-  expect_equal(rows$kind, c("newer_system", "library_version"))
-  expect_equal(rows$detail, c("GLIBCXX_3.4.32, GLIBC_2.38", "libgdal.so.36, libproj.so.22, libproj.so.24"))
-  expect_equal(rows$libraries, c("/lib/libc.so.6, /opt/conda/lib/libstdc++.so.6", "libgdal.so.34, libproj.so.25"))
+  expect_equal(rows$package, c("curl", "sf", "terra"))
+  expect_equal(rows$kind, c("symbol_version", "newer_system", "library_version"))
+  expect_equal(rows$detail, c("CURL_OPENSSL_4", "GLIBCXX_3.4.32, GLIBC_2.38", "libgdal.so.36, libproj.so.22, libproj.so.24"))
+  expect_equal(rows$libraries, c("/opt/conda/lib/libcurl.so.4", "/lib/libc.so.6, /opt/conda/lib/libstdc++.so.6",
+                                 "libgdal.so.34, libproj.so.25"))
   msg <- install_failure_message(lines, 1L)
   expect_match(msg, paste("sf was built for a newer system than this one, and needs GLIBCXX_3.4.32, GLIBC_2.38",
                           "from libraries here that are older (/lib/libc.so.6, /opt/conda/lib/libstdc++.so.6)."), fixed = TRUE)
+  expect_match(msg, "curl needs CURL_OPENSSL_4 from /opt/conda/lib/libcurl.so.4, which the copy here doesn't have.", fixed = TRUE)
   expect_match(msg, "terra was built against libgdal.so.34, libproj.so.25, and this system has libgdal.so.36,", fixed = TRUE)
-  expect_match(msg, "Installing the library again won't help.", fixed = TRUE)
+  expect_match(msg, "The install command would install the version already here: if your Linux has a package that provides libgdal.so.34, libproj.so.25, install that", fixed = TRUE)
   # One `Error:` line, so the message says both.
   expect_length(grep("^Error:", lines), 1)
 

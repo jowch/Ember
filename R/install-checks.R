@@ -16,7 +16,8 @@
 # that installs every package's), `library` (detail: the libraries,
 # when the command doesn't cover them), `newer` (built for a newer
 # system, #76; detail: the symbol versions it needs, then the libraries
-# here that lack them), `soname` (a library it was built against is here
+# here that lack them), `symbols` (a library's own symbol versions the
+# copy here lacks, #76; detail as for `newer`), `soname` (a library it was built against is here
 # only as another version, #76; detail: `wanted=have[,have];...`) or
 # `binary` (after a failed build: the
 # package had no binary for this R, detail: its version), followed by an `Error:` line that
@@ -390,21 +391,46 @@ missing_system_libraries <- function(library, packages, findings = ldd_findings(
   out[order(names(out))]
 }
 
-#' Which installed packages were built for a newer system than this one
-#' (#76): named list, package -> `list(versions, paths)`, the symbol
-#' versions (`GLIBC_2.38`, `GLIBCXX_3.4.32`) its files need and the
-#' libraries here that lack them. From `ldd_findings()`.
-newer_system_libraries <- function(findings) {
+#' Whether a symbol version is the toolchain's (`GLIBC_2.38`,
+#' `GLIBCXX_3.4.32`, `CXXABI_1.3.15`, `GCC_14.0`): one this system lacks
+#' means the binary was built on a newer system. A library's own
+#' (`CURL_OPENSSL_4`, `LIBXML2_2.9`) only says that the copy here was
+#' built differently: older, or with another TLS backend (#76).
+toolchain_version <- function(v) grepl("^(GLIBC|GLIBCXX|CXXABI|GCC)_", v)
+
+#' The highest of each family of symbol versions (`GLIBC_2.38` of
+#' `GLIBC_2.34`, `GLIBC_2.38`): what someone acts on. A name with no
+#' number at the end is kept as it is.
+highest_versions <- function(v) {
+  v <- unique(v)
+  m <- regmatches(v, regexec("^(.*)_([0-9]+(\\.[0-9]+)*)$", v))
+  family <- vapply(seq_along(v), function(i) if (length(m[[i]]) > 0) m[[i]][[2]] else v[[i]], "")
+  out <- vapply(split(seq_along(v), family), function(ix) {
+    num <- vapply(ix, function(i) if (length(m[[i]]) > 0) m[[i]][[3]] else NA_character_, "")
+    if (anyNA(num)) return(v[[ix[[1]]]])
+    v[[ix[[which.max(rank(numeric_version(num), ties.method = "first"))]]]]
+  }, "")
+  sort(unname(out))
+}
+
+#' Which installed packages need symbol versions the libraries here lack
+#' (#76): named list, package -> `list(versions, paths)`, the highest
+#' version of each family its files need (`highest_versions()`) and the
+#' libraries that lack them. `toolchain = TRUE`: only the toolchain's
+#' (`toolchain_version()`), the packages built for a newer system;
+#' `FALSE`: only the libraries' own. From `ldd_findings()`.
+newer_system_libraries <- function(findings, toolchain = TRUE) {
   if (is.null(findings)) return(list())
   found <- findings[!is.na(findings$version), , drop = FALSE]
+  found <- found[toolchain_version(found$version) == toolchain, , drop = FALSE]
   if (nrow(found) == 0) return(list())
   out <- lapply(split(found, found$package), function(d) {
-    list(versions = sort(unique(d$version)), paths = sort(unique(d$path)))
+    list(versions = highest_versions(d$version), paths = sort(unique(d$path)))
   })
   out[order(names(out))]
 }
 
-#' The shared libraries the loader can find, by file name: `ldconfig -p`'s
+#' The shared libraries the loader can find, as paths: `ldconfig -p`'s
 #' cache plus every file in `LD_LIBRARY_PATH`'s folders. Used only to say
 #' that a missing `libgdal.so.34` is there as another version (#76).
 #' `character()` when neither can be read.
@@ -415,21 +441,35 @@ loader_libraries <- function(ldconfig = c(Sys.which("ldconfig"), "/sbin/ldconfig
   if (length(tool) > 0) {
     lines <- tryCatch(suppressWarnings(system2(tool[[1]], "-p", stdout = TRUE, stderr = FALSE)),
                       error = function(e) character())
-    out <- sub("^\\s*(\\S+) .*$", "\\1", grep("=>", lines, value = TRUE, fixed = TRUE))
+    out <- sub("^.*=> ", "", grep("=>", lines, value = TRUE, fixed = TRUE))
   }
   dirs <- strsplit(ld_library_path, .Platform$path.sep, fixed = TRUE)[[1]]
-  for (d in dirs[nzchar(dirs) & dir.exists(dirs)]) out <- c(out, list.files(d, pattern = "\\.so"))
+  for (d in dirs[nzchar(dirs) & dir.exists(dirs)]) out <- c(out, list.files(d, pattern = "\\.so", full.names = TRUE))
   unique(out)
 }
 
 #' For each library in `libs` (`libgdal.so.34`), the other versions of it
-#' in `available` (`loader_libraries()`): a named list, library -> the
-#' file names found (`libgdal.so.36`), only for those with one. A library
-#' is matched by its name up to `.so`, and only numbered versions count:
-#' the `-dev` package's bare `libgdal.so` is a link to one of them.
+#' in `available` (`loader_libraries()`, paths): a named list, library ->
+#' the file names found (`libgdal.so.36`), only for those with one.
+#'
+#' * Only a version in a folder the distribution manages counts (`/lib`,
+#'   `/lib64`, `/usr/lib`, `/usr/lib64` and their multiarch folders): its
+#'   package manager's install command would install that same version,
+#'   so it can't help. One in `/usr/local`, conda or a loaded module says
+#'   nothing about what the distribution ships, so the library stays one
+#'   to install (#76's review).
+#' * A library is matched by its name up to `.so`, and only numbered
+#'   versions count: the `-dev` package's bare `libgdal.so` is a link to
+#'   one of them.
+#' * A file whose name extends another's (`libxml2.so.2.9.14` of
+#'   `libxml2.so.2`) is the same library under its full version, so only
+#'   the soname is kept.
 other_library_versions <- function(libs, available) {
   stem <- function(x) sub("\\.so(\\..*)?$", "", x)
-  numbered <- available[grepl("\\.so\\.[0-9]", available)]
+  distro <- grepl("^/(usr/)?lib(64)?(/[^/]+)?$", dirname(available))
+  names_here <- unique(basename(available[distro]))
+  numbered <- names_here[grepl("\\.so\\.[0-9]", names_here)]
+  numbered <- numbered[!vapply(numbered, function(n) any(startsWith(n, paste0(setdiff(numbered, n), "."))), logical(1))]
   out <- lapply(libs, function(l) sort(setdiff(numbered[stem(numbered) == stem(l)], l)))
   names(out) <- libs
   Filter(length, out)
@@ -543,15 +583,18 @@ fetch_sysreqs <- function(packages, repos, dist = ppm_distribution(linux_release
 #' * `command` installs what all of those need;
 #' * `newer`: `newer_system_libraries()`, packages built for a newer
 #'   system than this one (#76);
+#' * `symbols`: `newer_system_libraries(toolchain = FALSE)`, packages
+#'   needing a library's own symbol versions the copy here lacks (#76);
 #' * `versions`: named list, package -> named character, a library it was
 #'   built against -> the other versions this system has
 #'   (`c(libgdal.so.34 = "libgdal.so.36")`, several comma-separated):
-#'   installing the library again won't help, so these aren't in
-#'   `packages` or the command (#76).
+#'   the command would install the version already here, so these aren't
+#'   in `packages` or the command (#76).
 system_library_check <- function(library, lock, repos, os = os_kind(),
                                  findings = ldd_findings(library, lock$entries$name),
                                  missing = missing_system_libraries(library, lock$entries$name, findings),
                                  newer = newer_system_libraries(findings),
+                                 symbols = newer_system_libraries(findings, toolchain = FALSE),
                                  available = loader_libraries(),
                                  sysreqs = NULL) {
   if (!identical(os, "linux")) return(NULL)
@@ -563,7 +606,7 @@ system_library_check <- function(library, lock, repos, os = os_kind(),
     missing[[p]] <- setdiff(missing[[p]], names(other))
   }
   missing <- Filter(length, missing)
-  if (length(missing) == 0 && length(newer) == 0 && length(versions) == 0) return(NULL)
+  if (length(missing) == 0 && length(newer) == 0 && length(symbols) == 0 && length(versions) == 0) return(NULL)
   if (is.null(sysreqs) && length(missing) > 0) {
     src <- lock$entries$source[match(names(missing), lock$entries$name)]
     sysreqs <- fetch_sysreqs(stats::setNames(src, names(missing)), repos)
@@ -577,7 +620,7 @@ system_library_check <- function(library, lock, repos, os = os_kind(),
   covered <- names(packages)[!is.na(commands)]
   list(packages = packages,
        command = if (length(covered) > 0) sysreqs_command(sysreqs[covered]) else NA_character_,
-       newer = newer, versions = versions)
+       newer = newer, symbols = symbols, versions = versions)
 }
 
 #' The installer's report of a check that stopped the install (see the
@@ -647,17 +690,32 @@ missing_report_lines <- function(compiler = NULL, system = NULL, no_binary = cha
                           paste(unique(unlist(lapply(newer, `[[`, "versions"))), collapse = ", "),
                           paste(unique(unlist(lapply(newer, `[[`, "paths"))), collapse = ", ")))
   }
+  symbols <- system$symbols %||% list()
+  if (length(symbols) > 0) {
+    out <- c(out, sprintf("EMBER-MISSING symbols %s %s %s", names(symbols),
+                          vapply(symbols, function(n) paste(n$versions, collapse = ","), ""),
+                          vapply(symbols, function(n) paste(n$paths, collapse = ","), "")))
+    paths <- unique(unlist(lapply(symbols, `[[`, "paths")))
+    why <- c(why, sprintf("%s %s %s from %s, which the %s here %s.",
+                          paste(names(symbols), collapse = ", "),
+                          if (length(symbols) == 1) "needs" else "need",
+                          paste(unique(unlist(lapply(symbols, `[[`, "versions"))), collapse = ", "),
+                          paste(paths, collapse = ", "),
+                          if (length(paths) == 1) "copy" else "copies",
+                          if (length(paths) == 1) "doesn't have" else "don't have"))
+  }
   versions <- system$versions %||% list()
   if (length(versions) > 0) {
     out <- c(out, sprintf("EMBER-MISSING soname %s %s", names(versions),
                           vapply(versions, function(v) paste0(names(v), "=", gsub(", ", ",", v), collapse = ";"), "")))
     wanted <- unlist(lapply(versions, names))
     have <- unlist(lapply(versions, function(v) unname(v)))
-    why <- c(why, sprintf(paste("%s %s built against %s, and this system has %s instead. Installing",
-                                "the library again won't help. Package Manager builds against the",
-                                "versions this Linux release ships: install those, then try again."),
+    why <- c(why, sprintf(paste("%s %s built against %s, and this system has %s instead. The install",
+                                "command would install the version already here: if your Linux has a",
+                                "package that provides %s, install that, then try again."),
                           paste(names(versions), collapse = ", "), if (length(versions) == 1) "was" else "were",
-                          paste(unique(wanted), collapse = ", "), paste(unique(have), collapse = ", ")))
+                          paste(unique(wanted), collapse = ", "), paste(unique(have), collapse = ", "),
+                          paste(unique(wanted), collapse = ", ")))
   }
   if (length(why) > 0) out <- c(out, paste("Error:", paste(why, collapse = " ")))
   out

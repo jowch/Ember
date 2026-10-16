@@ -1,7 +1,7 @@
 // #76: binaries that don't fit this system reach the Packages tab. toyA,
 // the package failing-dep.R loads, was built for a newer system; toyB, its
 // dependency, against another version of a library. One card, toyA's,
-// says both, says installing the library again won't help, and offers
+// says both, says the install command would install the version already here, and offers
 // Try again (for once the right version is installed) but no command.
 // The toy CRAN repository is a file:// fixture, so nothing touches the
 // network.
@@ -45,7 +45,7 @@ test("failing-dep.R: a binary built for a newer system, and one against another 
     "A package it needs, toyB 1.0, was built against libtoy.so.1, and this system has libtoy.so.2 instead.",
   ]);
   const fixes = await card.locator(".ember-install-failure-fix").allInnerTexts();
-  assert.ok(fixes.some((text) => /Installing the library again won't help/.test(text)));
+  assert.ok(fixes.some((text) => /The install command would install the version already here/.test(text)));
   assert.ok(fixes.some((text) => /conda or a loaded module/.test(text)));
   assert.equal(await card.locator(".ember-install-failure-command").count(), 0);
   assert.equal(await card.locator("button", { hasText: "Try again" }).count(), 1);

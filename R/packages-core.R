@@ -206,7 +206,10 @@ install_failure_message <- function(lines, status) {
 #'    it wants, detail = the versions this system has), "newer_system"
 #'    (`EMBER-MISSING newer`, #76: built for a newer system; detail = the
 #'    symbol versions it needs, `GLIBC_2.38`, libraries = the libraries
-#'    here that lack them), "system" (an
+#'    here that lack them), "symbol_version" (`EMBER-MISSING symbols`,
+#'    #76: a library's own symbol versions, `CURL_OPENSSL_4`, that the
+#'    copy here lacks; detail and libraries as for "newer_system"),
+#'    "system" (an
 #'    `EMBER-MISSING library` line, detail = the libraries not found; or,
 #'    while a package
 #'    builds from source, a line saying a system library or header is
@@ -288,9 +291,12 @@ install_failures <- function(lines) {
       no_binary[[m[[2]]]] <- m[[3]]
       next
     }
-    if (grepl("^EMBER-MISSING newer [A-Za-z0-9.]+ ", line)) {
-      m <- regmatches(line, regexec("^EMBER-MISSING newer ([A-Za-z0-9.]+) (\\S+) (.*)$", line))[[1]]
-      if (length(m) == 4) add(m[[2]], "newer_system", gsub(",", ", ", m[[3]]), gsub(",", ", ", m[[4]]))
+    if (grepl("^EMBER-MISSING (newer|symbols) [A-Za-z0-9.]+ ", line)) {
+      m <- regmatches(line, regexec("^EMBER-MISSING (newer|symbols) ([A-Za-z0-9.]+) (\\S+) (.*)$", line))[[1]]
+      if (length(m) == 5) {
+        add(m[[3]], if (m[[2]] == "newer") "newer_system" else "symbol_version",
+            gsub(",", ", ", m[[4]]), gsub(",", ", ", m[[5]]))
+      }
       next
     }
     if (grepl("^EMBER-MISSING soname [A-Za-z0-9.]+ ", line)) {
@@ -396,7 +402,7 @@ install_failures <- function(lines) {
   # was seen with, in the order the loop above checks patterns in
   # (a missing compiler or system library, then compile/configure/
   # dependency, before the catch-all summary line).
-  kind_rank <- c(missing_compiler = 0L, missing_system = 0L, library_version = 1L, newer_system = 1L,
+  kind_rank <- c(missing_compiler = 0L, missing_system = 0L, library_version = 1L, newer_system = 1L, symbol_version = 1L,
                  system = 1L, compile = 2L,
                  configure = 3L, dependency = 4L, download = 5L, unavailable = 6L, other = 7L)
   df <- data.frame(package = pkg, kind = kind, detail = detail, libraries = libs, stringsAsFactors = FALSE)

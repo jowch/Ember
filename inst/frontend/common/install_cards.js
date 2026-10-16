@@ -152,7 +152,7 @@ export const cause_groups = (causes) => {
     return groups
 }
 
-const OWN_DETAIL_KINDS = ["missing_system", "newer_system", "library_version"]
+const OWN_DETAIL_KINDS = ["missing_system", "newer_system", "symbol_version", "library_version"]
 
 /**
  * Whether a cause group's sentence can just say "failed the same way":
@@ -171,7 +171,7 @@ export const reads_same = (own, group) => own != null && !OWN_DETAIL_KINDS.inclu
 export const sentence_kind = (f) => {
     if (f.kind === "configure") return "compile"
     if (f.kind === "system" && f.libraries != null) return "missing_system"
-    if (["compile", "download", "unavailable", "system", "missing_system", "missing_compiler", "no_binary", "newer_system", "library_version"].includes(f.kind)) return f.kind
+    if (["compile", "download", "unavailable", "system", "missing_system", "missing_compiler", "no_binary", "newer_system", "symbol_version", "library_version"].includes(f.kind)) return f.kind
     return "other"
 }
 

@@ -17,8 +17,8 @@ main <- function(plan_path) {
     "EMBER-MISSING soname toyB libtoy.so.1=libtoy.so.2",
     paste("Error: toyA was built for a newer system than this one, and needs GLIBC_2.38 from libraries",
           "here that are older (/lib/x86_64-linux-gnu/libc.so.6). toyB was built against libtoy.so.1,",
-          "and this system has libtoy.so.2 instead. Installing the library again won't help. Package",
-          "Manager builds against the versions this Linux release ships: install those, then try again.")
+          "and this system has libtoy.so.2 instead. The install command would install the version",
+          "already here: if your Linux has a package that provides libtoy.so.1, install that, then try again.")
   ), con = stderr())
   quit(save = "no", status = 1L)
 }
