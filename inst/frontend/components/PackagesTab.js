@@ -139,7 +139,7 @@ const failure_fixes = (failures, show_command) => {
  * Update (build failures), Try again (downloads, packages the
  * repositories didn't list, and anything the user installs on the
  * computer) and Show the error (always). `ember_update_packages` and
- * `ember_run_all` are plain requests (server.R); neither is this
+ * `ember_retry_install` are plain requests (server.R); neither is this
  * component's to answer.
  *
  * @param {{
@@ -189,7 +189,7 @@ const InstallFailureCard = ({ card, rows, r_version, log, show_command }) => {
                       </button>`
                     : null}
                 ${can_retry
-                    ? html`<button type="button" class="ember-btn" onClick=${() => pluto_actions.ember_run_all()}>${t("t_ember_try_again")}</button>`
+                    ? html`<button type="button" class="ember-btn" onClick=${() => pluto_actions.ember_retry_install()}>${t("t_ember_try_again")}</button>`
                     : null}
                 <button type="button" class="ember-btn" onClick=${() => set_show_error(!show_error)}>${t("t_ember_show_the_error")}</button>
             </div>

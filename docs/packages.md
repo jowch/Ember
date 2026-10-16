@@ -299,8 +299,10 @@ session's install and `ember::run()` both get them. A check that fails
 stops the install before the library is made: no cell runs with a package
 that can't load. The installer prints one `EMBER-MISSING` line per package
 and an `Error:` line; `install_failures()` turns the first into rows and
-`install_failure_message()` shows the second. Try again (`ev_run()`)
-retries once the user has installed what was missing.
+`install_failure_message()` shows the second. The card's Try again
+(`ember_retry_install`, server.R) reruns the cells that stopped on the
+missing package, which retries the install once the user has installed
+what was missing.
 
 - **Compiler, before renv.** When this machine has no compiler
   (`has_compiler()`: `xcode-select -p` on macOS, the `R CMD config CC`

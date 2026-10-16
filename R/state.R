@@ -680,6 +680,24 @@ not_run_ids <- function(state, ctx) {
   out
 }
 
+#' The cells the failure card's Try again runs (`ember_retry_install`,
+#' server.R; #106): every cell whose last run stopped on a package that
+#' isn't installed (run error kind `"missing_package"`), and the cells
+#' `not_run_ids()` counts. Without the first, a failed install is never
+#' retried once its cells have run: `library(DESeq2)` and everything after
+#' it already has a result. Running one asks for the library again
+#' (`reduce_run()` resets a failed target), and its dependents follow
+#' once it runs, as for Shift+Enter.
+retry_install_ids <- function(state, ctx) {
+  if (!isTRUE(state$allowed)) return(character())
+  failed <- Filter(function(id) {
+    r <- state$results[[id]]
+    !is.null(r) && !is.null(r$error) && identical(r$error$kind, "missing_package") &&
+      can_run(state, id)
+  }, ctx$ids)
+  union(failed, not_run_ids(state, ctx))
+}
+
 #' Paths the shell should watch: every literal `source()` path in the
 #' analyses plus `computed_sources` and `footer_sources`, relative to the notebook's folder.
 watched_files <- function(state) {

@@ -811,6 +811,7 @@ on_run <- function(server, cl, hub, req) {
 #' | reshow_cell                   | "more" paging (ui-2.md, 3b/3c): dispatch ev_show_more(cell, objectid, dim); flush. No reply (the frontend sends without awaiting one) |
 #' | ember_render_plot             | {cell_id, res}, res clamped: dispatch ev_render() at the cell's own figure size; flush |
 #' | ember_run_all                 | the "N cells not run" bar's button (ui-2.md, 5): run_cells() on not_run_ids(), the same set the bar counts; flush. No reply |
+#' | ember_retry_install           | the failure card's Try again (#106): run_cells() on retry_install_ids(), cells that stopped on a missing package plus not_run_ids(); asks even when empty, which retries a failed install; flush. No reply |
 #' | ember_split_cell              | {cell_id, code}: split a mixed_text cell at each text/code change (split_mixed()); nothing if code is stale or the cell isn't mixed. Flush. No reply |
 #' | ember_signature                | worker_query(signature); else signature_fallback() (ui-2.md, 4d)   |
 #' | ember_update_packages          | dispatch ev_preview_date(today, apply = TRUE); flush. No reply       |
@@ -1021,6 +1022,17 @@ handlers <- list(
     st <- notebook_state(hub$nb)
     ids <- not_run_ids(st, view_context(st))
     if (length(ids) > 0) run_cells(hub$nb, ids)
+    flush_clients(server, hub)
+  },
+
+  #' The failure card's Try again (#106): `retry_install_ids()`, the
+  #' cells that stopped on a missing package and the ones not run yet.
+  #' Asks to run even when there are none: `reduce_run()` resets a failed
+  #' target library, so the install is retried all the same.
+  ember_retry_install = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    st <- notebook_state(hub$nb)
+    run_cells(hub$nb, retry_install_ids(st, view_context(st)))
     flush_clients(server, hub)
   },
 

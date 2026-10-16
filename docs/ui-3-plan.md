@@ -1683,8 +1683,11 @@ so the API, the page and Endeavor behave the same, and it stays pure.
   `ember_apply_update {date}` calls `set_date(hub$nb, date)`; a refusal is
   logged and flushed. `ember_cancel_update {}` dispatches a new
   `ev_cancel_preview` (`proposal <- NULL`). The card's Update sends
-  `ember_update_packages`; "Try again" sends `ember_run_all`, since
-  `reduce_run()` already retries a failed library (step.R:629-632).
+  `ember_update_packages`; "Try again" sends `ember_retry_install`
+  (#106), which runs the cells that stopped on a missing package and the
+  ones not run yet. `reduce_run()` already retries a failed library, but
+  `ember_run_all` alone runs only cells with no result, and after a failed
+  install every cell has one.
 
 **C. Move keeps R running and follows the folder.**
 
