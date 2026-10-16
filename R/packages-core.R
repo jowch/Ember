@@ -1500,8 +1500,8 @@ source_rows <- function(state, wanted, rows) {
                          spec = unname(specs[extra]), stringsAsFactors = FALSE))
 }
 
-#' Fill a failed target's `failures$needed_by` (`failure_needed_by()`
-#' for each failed package) from whatever indexes are loaded:
+#' Fill a failed target's `failures$needed_by` (`failure_needed_by()`)
+#' from whatever indexes are loaded:
 #' `list(state, effects)`. Computed here, when the failure or an index
 #' arrives, rather than by every `packages_view()` call: the walk was
 #' ~35ms per failed package per call at a CRAN-sized index, and
@@ -1543,39 +1543,39 @@ fill_needed_by <- function(state, fetch = FALSE) {
     }
   }
   indexes <- lapply(state$packages$indexes, function(s) s$index)
-  tgt$failures$needed_by <- lapply(tgt$failures$package, function(pk) {
-    failure_needed_by(pk, wanted, indexes, needed)
-  })
+  tgt$failures$needed_by <- failure_needed_by(tgt$failures$package, wanted, indexes, needed)
   state$packages$target <- tgt
   list(state = state, effects = effects)
 }
 
-#' The wanted (direct) packages whose dependency closure reaches `pkg`,
-#' walking from each root through `find_in_indexes()` (resolve.R) with
-#' whatever indexes are loaded. A root is included when `pkg` is the root
+#' For each failed package in `pkgs`, the wanted (direct) packages whose
+#' dependency closure reaches it, walking from each root through
+#' `find_in_indexes()` (resolve.R) with whatever indexes are loaded: a list
+#' parallel to `pkgs`. A root is included when the package is the root
 #' itself (a direct package that failed names itself here too) or appears
 #' anywhere in what it transitively depends on. No loaded index at all
-#' means no closure can be walked, so the result is `character()`: still
-#' correct, just less informative (install_failures()'s own finding is
-#' unaffected).
-failure_needed_by <- function(pkg, wanted, indexes, needed) {
-  roots <- character()
-  for (root in wanted) {
-    seen <- character()
+#' means no closure can be walked, so each answer is the roots that failed
+#' themselves: still correct, just less informative (install_failures()'s
+#' own finding is unaffected). Each root's closure is walked once, not
+#' once per failed package, since a dependency chain that fails usually
+#' fails many packages at once and this runs again as each index arrives.
+failure_needed_by <- function(pkgs, wanted, indexes, needed) {
+  closures <- lapply(wanted, function(root) {
+    seen <- new.env(hash = TRUE, parent = emptyenv())
     queue <- root
-    found <- FALSE
     while (length(queue) > 0) {
       cur <- queue[[1]]
       queue <- queue[-1]
-      if (cur %in% seen) next
-      seen <- c(seen, cur)
-      if (identical(cur, pkg)) { found <- TRUE; break }
+      if (!nzchar(cur) || !is.null(seen[[cur]])) next
+      seen[[cur]] <- TRUE
       hit <- find_in_indexes(cur, indexes, needed)
       if (!is.null(hit)) queue <- c(queue, hit$deps)
     }
-    if (found) roots <- c(roots, root)
-  }
-  roots
+    seen
+  })
+  lapply(pkgs, function(pkg) {
+    wanted[vapply(closures, function(seen) !is.null(seen[[pkg]]), logical(1))]
+  })
 }
 
 packages_view <- function(state) {
