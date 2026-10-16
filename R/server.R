@@ -71,18 +71,24 @@ serve <- function(paths = character(), port = 0L, secret = random_secret(32),
     if (is.null(first_url)) first_url <- url
   }
 
+  # On the way out, however it comes: stop_server(), or an interrupt
+  # (Ctrl-C, SIGINT) or an error, which skip anything after the loop.
+  # Closing an owned notebook ends its installs and index fetches
+  # (`job_leave()`), so none outlives the server (#141).
+  on.exit({
+    for (hub in mget(ls(server$hubs), envir = server$hubs, ifnotfound = list(NULL))) {
+      if (is.null(hub)) next
+      if (!is.null(hub$unsubscribe)) hub$unsubscribe()
+      if (isTRUE(hub$owned)) close_notebook(hub$nb)
+    }
+    httpuv::stopServer(server$http)
+  }, add = TRUE)
+
   cat("ember: listening on ", server_url(server), "\n", sep = "")
   if (!is.null(on_ready)) on_ready(server)
   if (isTRUE(launch_browser)) utils::browseURL(first_url %||% server_url(server))
 
   while (!isTRUE(server$stopped)) later::run_now(timeout = 1)
-
-  for (hub in mget(ls(server$hubs), envir = server$hubs, ifnotfound = list(NULL))) {
-    if (is.null(hub)) next
-    if (!is.null(hub$unsubscribe)) hub$unsubscribe()
-    if (isTRUE(hub$owned)) close_notebook(hub$nb)
-  }
-  httpuv::stopServer(server$http)
   invisible(NULL)
 }
 
@@ -1136,9 +1142,7 @@ handlers <- list(
   ember_disk_use = function(server, cl, hub, req) {
     if (is.null(hub)) return(invisible(NULL))
     cmd <- disk_use_command(hub$nb$state$options$cache %||% cache_dir())
-    proc <- tryCatch(processx::process$new(cmd$command, cmd$args, env = cmd$env,
-                                           stdout = "|", stderr = "|", cleanup_tree = TRUE),
-                     error = function(e) e)
+    proc <- tryCatch(job_process(cmd, stderr = "|"), error = function(e) e)
     answer <- function(message) send(cl, reply_message(req, "ember_disk_use", message))
     if (inherits(proc, "error")) return(answer(list(error = conditionMessage(proc))))
     out <- ""; err <- ""

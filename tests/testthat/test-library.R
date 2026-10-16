@@ -296,6 +296,74 @@ test_that("job_leave by the last subscriber kills the process (63)", {
   expect_null(jobs[[key]])
 })
 
+#' TRUE while `pid` is a running process: not gone and not a zombie (an
+#' orphan's parent is PID 1, which in a container may never reap it).
+pid_running <- function(pid) {
+  st <- suppressWarnings(system2("ps", c("-o", "stat=", "-p", pid), stdout = TRUE, stderr = FALSE))
+  length(st) > 0 && nzchar(trimws(st[1])) && !startsWith(trimws(st[1]), "Z")
+}
+
+#' Waits until `pid` is no longer running. The deadline only keeps a
+#' broken kill from hanging the suite.
+wait_pid_gone <- function(pid) {
+  deadline <- Sys.time() + 60
+  while (pid_running(pid) && Sys.time() < deadline) Sys.sleep(0.05)
+  !pid_running(pid)
+}
+
+#' A job command that starts a grandchild (`sleep`, in the job's process
+#' group, as `R CMD INSTALL` is for an install), prints its pid, and waits.
+grandchild_cmd <- function() {
+  list(command = file.path(R.home("bin"), "Rscript"),
+       args = c("--vanilla", "-e", "system('sleep 300 & echo $!'); Sys.sleep(300)"),
+       env = "current")
+}
+
+test_that("job_leave by the last subscriber kills the job's children too (#141)", {
+  skip_on_os("windows")
+  key <- paste0("job-kill-tree-", uuid())
+  nb <- fake_sub()
+  job_start(key, grandchild_cmd(), nb, make_progress = function(line) NULL,
+           make_done = function(status, output) NULL)
+  proc <- jobs[[key]]$proc
+  proc$poll_io(30000)
+  pid <- as.integer(proc$read_output_lines()[1])
+  expect_true(pid_running(pid))
+
+  job_leave(key, nb)
+
+  expect_true(wait_pid_gone(pid))
+})
+
+test_that("a job and its children end when the server that started it is killed (#141)", {
+  skip_on_os("windows")
+  use_installed_ember()
+  cmd <- grandchild_cmd()
+  code <- paste0(
+    "library(ember); cmd <- ", paste(deparse(cmd), collapse = " "), "; ",
+    "ember:::job_start('k', cmd, new.env(), function(line) NULL, function(status, output) NULL); ",
+    "p <- ember:::jobs[['k']]$proc; invisible(p$poll_io(30000)); ",
+    "cat(p$get_pid(), p$read_output_lines()[1], '\\n'); flush(stdout()); Sys.sleep(300)")
+  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
+                                  env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
+                                  stdout = "|", stderr = "2>&1")
+  on.exit(if (server$is_alive()) server$kill(), add = TRUE)
+  line <- character()
+  while (length(line) == 0 && server$is_alive()) {
+    server$poll_io(30000)
+    line <- server$read_output_lines()
+  }
+  pids <- as.integer(strsplit(trimws(line[1]), " +")[[1]])
+  expect_length(pids, 2)
+  expect_true(all(vapply(pids, pid_running, logical(1))))
+
+  # SIGKILL: no handler, no finalizer, nothing in the server runs.
+  server$kill()
+
+  expect_true(wait_pid_gone(pids[1]))  # the job
+  expect_true(wait_pid_gone(pids[2]))  # its child
+})
+
 # ---- poll_jobs(): no inserted newline, failure lines survive the cap -------
 
 #' A minimal stand-in for a `processx::process` handle, giving `poll_jobs()`
