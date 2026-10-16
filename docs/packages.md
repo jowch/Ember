@@ -370,13 +370,34 @@ what was missing.
   `sudo` unless the installer runs as root or there is no `sudo`. Rows:
   `missing_system`, `detail` = that command (the same on every row, so the
   Packages tab shows it once), `libraries` = the package's own libraries
-  not found; or `system`, with `libraries` but no command, when the
-  repository isn't Package Manager or the system isn't one it builds for.
+  not found; or `system`, with `libraries` but no command, for a package
+  the command doesn't cover: the repository isn't Package Manager, the
+  system isn't one it builds for, or the package comes from GitHub, which
+  Package Manager knows nothing about (#76). Its card says to install
+  those with the system's package manager.
   The card and the message also tell someone who can't run the command
   (most clusters have `sudo`, but its users may not use it) to ask the
   administrator or load a module that provides the libraries. Other load errors (an
   `.onLoad` that fails) now show when a cell loads the package, as they
   always have on macOS and Windows, where renv doesn't test.
+- **A binary that doesn't fit this system (Linux, #76).** The same `ldd`
+  run catches two cases where Package Manager's binary doesn't match the
+  machine, which would otherwise install as ready and fail when a cell
+  loads the package:
+  - *Built for a newer system.* `ldd` finds the library but not a symbol
+    version the binary needs (``version `GLIBC_2.38' not found``). Rows:
+    `newer_system`, `detail` = the versions, `libraries` = the libraries
+    here that lack them. The card adds that an older library from conda or
+    a module is the usual cause, else a newer Linux release than this one.
+  - *Built against another version of a library.* A library not found
+    (`libgdal.so.34`) that the loader has under another number
+    (`libgdal.so.36`, from `ldconfig -p` and `LD_LIBRARY_PATH`:
+    `loader_libraries()`) isn't one to install: it is left out of the
+    command, and the row is `library_version`, `libraries` = the ones
+    wanted, `detail` = those here. The card says installing it again won't
+    help, and to install the version this Linux release ships. A package
+    with a library missing as well keeps the `missing_system` row.
+  Neither offers Update; `library_version` offers Try again.
 
 ### GitHub sources
 

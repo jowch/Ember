@@ -253,6 +253,122 @@ test_that("parse_ldd() reads the libraries ldd couldn't find, with and without p
   expect_equal(nrow(parse_ldd(character(), "x.so")), 0)
 })
 
+test_that("parse_ldd() reads a library that lacks a symbol version the file needs (#76)", {
+  # As ldd prints it, for one file and for several (the per-file header,
+  # then the loader's own line, which starts with the file's path).
+  one <- c("/lib/sf/libs/sf.so: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.38' not found (required by /lib/sf/libs/sf.so)",
+           "/lib/sf/libs/sf.so: /lib/x86_64-linux-gnu/libstdc++.so.6: version `GLIBCXX_3.4.32' not found (required by /usr/lib/libgdal.so.34)",
+           "\tlinux-vdso.so.1 (0x00007ffd)",
+           "\tlibgdal.so.34 => /usr/lib/libgdal.so.34 (0x00007f)")
+  got <- parse_ldd(one, "/lib/sf/libs/sf.so")
+  expect_equal(got$lib, c("libc.so.6", "libstdc++.so.6"))
+  expect_equal(got$version, c("GLIBC_2.38", "GLIBCXX_3.4.32"))
+  expect_equal(got$path, c("/lib/x86_64-linux-gnu/libc.so.6", "/lib/x86_64-linux-gnu/libstdc++.so.6"))
+
+  two <- c("/my lib/a/libs/a.so:", "/my lib/a/libs/a.so: /lib/libc.so.6: version `GLIBC_2.39' not found (required by /my lib/a/libs/a.so)",
+           "\tlibfoo.so.1 => not found", "/my lib/b/libs/b.so:", "\tlibc.so.6 => /lib/libc.so.6 (0x00007f)")
+  got <- parse_ldd(two, c("/my lib/a/libs/a.so", "/my lib/b/libs/b.so"))
+  expect_equal(got$file, rep("/my lib/a/libs/a.so", 2))
+  expect_equal(got$lib, c("libc.so.6", "libfoo.so.1"))
+  expect_equal(got$version, c("GLIBC_2.39", NA))
+})
+
+test_that("a package built against a newer library is named with the versions it needs, apart from missing ones (#76)", {
+  skip_if_not(identical(os_kind(), "linux") && nzchar(Sys.which("ldd")), "needs Linux and ldd")
+  cc <- Sys.which("gcc")
+  skip_if_not(nzchar(cc), "needs gcc to build stub libraries")
+  dir <- tempfile("ember-ldd-test-"); dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  build <- file.path(dir, "build"); old <- file.path(dir, "old"); lib <- file.path(dir, "lib")
+  for (d in c(build, old)) dir.create(d)
+  # libfakec.so.6 in two builds: the new one adds `f2` under FAKE_2. The
+  # package links the new one and calls `f2`; the loader is then pointed
+  # at the old one, as on a system older than the one it was built on.
+  writeLines(c("int f1(void){return 1;}", "int f2(void){return 2;}"), file.path(build, "c.c"))
+  writeLines(c("FAKE_1 { global: f1; local: *; };", "FAKE_2 { global: f2; } FAKE_1;"), file.path(build, "new.map"))
+  writeLines("FAKE_1 { global: f1; local: *; };", file.path(build, "old.map"))
+  so <- function(out, map) {
+    system2(cc, c("-shared", "-fPIC", "-o", shQuote(out), "-Wl,-soname,libfakec.so.6",
+                  paste0("-Wl,--version-script=", shQuote(map)), shQuote(file.path(build, "c.c"))))
+  }
+  expect_equal(so(file.path(build, "libfakec.so.6"), file.path(build, "new.map")), 0)
+  expect_equal(so(file.path(old, "libfakec.so.6"), file.path(build, "old.map")), 0)
+  writeLines("int f2(void); int g(void){return f2();}", file.path(build, "pkg.c"))
+  out <- file.path(lib, "fakenew", "libs", "fakenew.so")
+  dir.create(dirname(out), recursive = TRUE)
+  expect_equal(system2(cc, c("-shared", "-fPIC", "-o", shQuote(out), shQuote(file.path(build, "pkg.c")),
+                             paste0("-L", shQuote(build)), "-l:libfakec.so.6")), 0)
+
+  old_path <- Sys.getenv("LD_LIBRARY_PATH", NA)
+  Sys.setenv(LD_LIBRARY_PATH = old)
+  on.exit(if (is.na(old_path)) Sys.unsetenv("LD_LIBRARY_PATH") else Sys.setenv(LD_LIBRARY_PATH = old_path), add = TRUE)
+  found <- ldd_findings(lib, "fakenew")
+  expect_equal(missing_system_libraries(lib, "fakenew", found), list())
+  expect_equal(newer_system_libraries(found),
+               list(fakenew = list(versions = "FAKE_2", paths = file.path(old, "libfakec.so.6"))))
+
+  # The check stops the install, with no libraries to install.
+  lock <- parse_lock_lines("fakenew 1.0 CRAN")$lock
+  got <- system_library_check(lib, lock, c(), os = "linux", findings = found, available = character(), sysreqs = list())
+  expect_length(got$packages, 0)
+  expect_equal(names(got$newer), "fakenew")
+})
+
+test_that("a missing library that is here as another version isn't a library to install (#76)", {
+  expect_equal(other_library_versions(c("libgdal.so.34", "libudunits2.so.0", "libicuuc.so.70"),
+                                      c("libgdal.so.36", "libgdal.so", "libgdal.so.36.3.8.4", "libicuuc.so.74",
+                                        "libicuuc-extra.so.70", "libudunits2.so")),
+               list(libgdal.so.34 = c("libgdal.so.36", "libgdal.so.36.3.8.4"), libicuuc.so.70 = "libicuuc.so.74"))
+
+  dir <- tempfile("ember-loader-test-"); dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  file.create(file.path(dir, c("libgdal.so.36", "notalib.txt")))
+  expect_equal(loader_libraries(ldconfig = "", ld_library_path = paste0("/does/not/exist:", dir)), "libgdal.so.36")
+
+  lock <- parse_lock_lines(c("sf 1.0-21 CRAN", "units 0.8-5 CRAN"))$lock
+  reqs <- parse_sysreqs(sysreqs_fixture("ubuntu-sf-units"))
+  missing <- list(sf = c("libgdal.so.34", "libgeos_c.so.1"), units = "libudunits2.so.0")
+  got <- system_library_check("unused", lock, c(), os = "linux", missing = missing, newer = list(),
+                              available = c("libgdal.so.36", "libudunits2.so.0"), sysreqs = reqs)
+  expect_equal(got$packages$sf$libraries, "libgeos_c.so.1")
+  expect_equal(got$versions, list(sf = c(libgdal.so.34 = "libgdal.so.36")))
+  # Only a version mismatch: no command, and still a stop.
+  only <- system_library_check("unused", lock, c(), os = "linux", missing = list(sf = "libgdal.so.34"), newer = list(),
+                               available = "libgdal.so.36", sysreqs = reqs)
+  expect_length(only$packages, 0)
+  expect_true(is.na(only$command))
+  expect_equal(names(only$versions), "sf")
+})
+
+test_that("the installer's report of a binary that doesn't fit becomes failure rows and a message (#76)", {
+  system <- list(packages = list(),
+                 command = NA_character_,
+                 newer = list(sf = list(versions = c("GLIBCXX_3.4.32", "GLIBC_2.38"),
+                                        paths = c("/lib/libc.so.6", "/opt/conda/lib/libstdc++.so.6"))),
+                 versions = list(terra = c(libgdal.so.34 = "libgdal.so.36", libproj.so.25 = "libproj.so.22, libproj.so.24")))
+  lines <- missing_report_lines(system = system)
+  rows <- install_failures(lines)
+  expect_equal(rows$package, c("sf", "terra"))
+  expect_equal(rows$kind, c("newer_system", "library_version"))
+  expect_equal(rows$detail, c("GLIBCXX_3.4.32, GLIBC_2.38", "libgdal.so.36, libproj.so.22, libproj.so.24"))
+  expect_equal(rows$libraries, c("/lib/libc.so.6, /opt/conda/lib/libstdc++.so.6", "libgdal.so.34, libproj.so.25"))
+  msg <- install_failure_message(lines, 1L)
+  expect_match(msg, paste("sf was built for a newer system than this one, and needs GLIBCXX_3.4.32, GLIBC_2.38",
+                          "from libraries here that are older (/lib/libc.so.6, /opt/conda/lib/libstdc++.so.6)."), fixed = TRUE)
+  expect_match(msg, "terra was built against libgdal.so.34, libproj.so.25, and this system has libgdal.so.36,", fixed = TRUE)
+  expect_match(msg, "Installing the library again won't help.", fixed = TRUE)
+  # One `Error:` line, so the message says both.
+  expect_length(grep("^Error:", lines), 1)
+
+  # A package with a missing library and a mismatched one: the missing
+  # one's row wins, since installing it is something to do.
+  both <- list(packages = list(sf = list(libraries = "libgeos_c.so.1", command = "sudo apt-get install -y libgeos-dev")),
+               command = "sudo apt-get install -y libgeos-dev", newer = list(),
+               versions = list(sf = c(libgdal.so.34 = "libgdal.so.36")))
+  rows <- install_failures(missing_report_lines(system = both))
+  expect_equal(rows$kind, "missing_system")
+})
+
 test_that("missing_system_libraries() finds nothing missing for packages whose libraries are all there (94)", {
   skip_if_not(identical(os_kind(), "linux") && nzchar(Sys.which("ldd")), "needs Linux and ldd")
   # R's own stats package links only to libraries R itself has.
@@ -342,18 +458,21 @@ test_that("system_library_check() gives each package's libraries and command, an
   lock <- parse_lock_lines(c("Rcpp 1.0.12 CRAN", "sf 1.0-21 CRAN", "units 0.8-5 CRAN"))$lock
   reqs <- parse_sysreqs(sysreqs_fixture("ubuntu-sf-units"))
   missing <- list(sf = c("libgdal.so.34", "libgeos_c.so.1"), units = "libudunits2.so.0")
-  got <- system_library_check("unused", lock, c(), os = "linux", missing = missing, sysreqs = reqs)
+  got <- system_library_check("unused", lock, c(), os = "linux", missing = missing, newer = list(),
+                              available = character(), sysreqs = reqs)
   expect_equal(names(got$packages), c("sf", "units"))
   expect_equal(got$packages$units$libraries, "libudunits2.so.0")
   expect_match(got$packages$units$command, "apt-get install -y libudunits2-dev$")
   expect_match(got$command, "apt-get install -y libgdal-dev .*libudunits2-dev$")
 
   # Package Manager can't say (another server, an unknown Linux): libraries only.
-  none <- system_library_check("unused", lock, c(), os = "linux", missing = missing, sysreqs = list())
+  none <- system_library_check("unused", lock, c(), os = "linux", missing = missing, newer = list(),
+                               available = character(), sysreqs = list())
   expect_true(is.na(none$packages$sf$command))
   expect_true(is.na(none$command))
 
-  expect_null(system_library_check("unused", lock, c(), os = "linux", missing = list(), sysreqs = reqs))
+  expect_null(system_library_check("unused", lock, c(), os = "linux", missing = list(), newer = list(),
+                                   available = character(), sysreqs = reqs))
   expect_null(system_library_check("unused", lock, c(), os = "macos", missing = missing, sysreqs = reqs))
 })
 
@@ -373,15 +492,25 @@ test_that("the installer's report becomes failure rows and the install's message
   lines <- missing_report_lines(system = system)
   rows <- install_failures(lines)
   expect_equal(rows$package, c("sf", "units"))
-  # Every row carries the one command that installs them all, and its own
-  # libraries.
-  expect_equal(rows$kind, c("missing_system", "missing_system"))
-  expect_equal(rows$detail, rep("sudo apt-get install -y libgdal-dev", 2))
+  # A row the command covers carries the one command that installs them
+  # all; one it doesn't (Package Manager had no command for units: a
+  # GitHub package, #76) carries only its libraries.
+  expect_equal(rows$kind, c("missing_system", "system"))
+  expect_equal(rows$detail, c("sudo apt-get install -y libgdal-dev", "libudunits2.so.0 not found"))
   expect_equal(rows$libraries, c("libgdal.so.34", "libudunits2.so.0"))
   msg <- install_failure_message(lines, 1L)
   expect_match(msg, "sf, units need system libraries that aren't installed (libgdal.so.34, libudunits2.so.0).", fixed = TRUE)
-  expect_match(msg, "Install them with `sudo apt-get install -y libgdal-dev`, then try again.", fixed = TRUE)
+  expect_match(msg, paste("Install them with `sudo apt-get install -y libgdal-dev`, which doesn't install what",
+                          "units needs: install that with your system's package manager. Then try again."), fixed = TRUE)
   expect_match(msg, no_admin_sentence, fixed = TRUE)
+
+  # Every package covered: the one command.
+  system$packages$units$command <- "sudo apt-get install -y libudunits2-dev"
+  rows <- install_failures(missing_report_lines(system = system))
+  expect_equal(rows$kind, c("missing_system", "missing_system"))
+  expect_equal(rows$detail, rep("sudo apt-get install -y libgdal-dev", 2))
+  expect_match(install_failure_message(missing_report_lines(system = system), 1L),
+               "Install them with `sudo apt-get install -y libgdal-dev`, then try again.", fixed = TRUE)
 
   # No command known (not Package Manager): the libraries, as "system".
   two <- list(packages = list(sf = list(libraries = c("libgdal.so.34", "libgeos_c.so.1"), command = NA_character_)),
