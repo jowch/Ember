@@ -384,16 +384,21 @@ tidy_help_sections <- function(html) {
   m <- regexpr("(?is)<h3>\\s*See Also\\s*</h3>.*?(?=<h3|<hr|</main|$)", html, perl = TRUE)
   if (m < 0) return(html)
   section <- regmatches(html, m)
-  # Links and code names in the order R wrote them. A link inside
-  # <code> (R's \\code{\\link{x}}) is a link.
+  # Links and code names in the order R wrote them, each kept whole: a
+  # <code> around one link (R's \\code{\\link{x}}, or \\code{\\link{f}(a)})
+  # becomes that link with all of the code as its text; a <code> with
+  # more than one link keeps its links inside it.
   items <- regmatches(section, gregexpr("(?is)<code>.*?</code>|<a\\b[^>]*>.*?</a>", section, perl = TRUE))[[1]]
-  is_link <- grepl("(?i)<a\\b", items, perl = TRUE)
+  n_links <- lengths(regmatches(items, gregexpr("(?i)<a\\b", items, perl = TRUE)))
+  is_link <- n_links > 0
   if (!any(is_link)) return(html)
-  items[is_link] <- regmatches(items[is_link], regexpr("(?is)<a\\b[^>]*>.*?</a>", items[is_link], perl = TRUE))
   text <- trimws(gsub("(?s)<[^>]*>", "", items, perl = TRUE))
-  chips <- ifelse(is_link,
-    sub("(?is)(<a\\b[^>]*>)(.*?)(</a>)", "\\1<code>\\2</code>\\3", gsub("(?is)</?code>", "", items, perl = TRUE), perl = TRUE),
-    sprintf('<code class="ember-help-seealso-name">%s</code>', text))
+  open_tag <- regmatches(items, regexpr("(?i)<a\\b[^>]*>", items, perl = TRUE))
+  chips <- sprintf('<code class="ember-help-seealso-name">%s</code>', text)
+  one <- n_links == 1
+  chips[one] <- sprintf("%s<code>%s</code></a>", open_tag[one[is_link]], text[one])
+  many <- n_links > 1
+  chips[many] <- sub("(?is)^<code>", '<code class="ember-help-seealso-name">', items[many], perl = TRUE)
   # One chip per name; a name both linked and plain keeps its link.
   keep <- nzchar(text) & !duplicated(chips) & !(!is_link & (text %in% text[is_link] | duplicated(text)))
   row <- sprintf('<h3>See Also</h3>\n<p class="ember-help-seealso">%s</p>\n', paste(chips[keep], collapse = " "))

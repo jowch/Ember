@@ -262,6 +262,22 @@ test_that("See Also keeps a name R sets in code without a link, as a plain chip 
     '<h3>See Also</h3>\n<p class="ember-help-seealso"><a href="@ref p::a"><code>a</code></a> <code class="ember-help-seealso-name">b</code></p>\n')
 })
 
+test_that("See Also keeps a code expression around a link whole (#51)", {
+  # ?Memory writes \\code{\\link{object.size}(a)}: the chip is the link,
+  # reading object.size(a), not just object.size.
+  rd <- utils:::.getHelpFile(utils::help("Memory", package = "base"))
+  out <- tempfile(fileext = ".html")
+  on.exit(unlink(out))
+  tools::Rd2HTML(rd, out, package = "base", dynamic = TRUE)
+  html <- help_reply_html(list(html = paste(readLines(out, warn = FALSE), collapse = "\n"), matches = list()))
+  row <- regmatches(html, regexpr('(?s)<p class="ember-help-seealso">.*?</p>', html, perl = TRUE))
+  expect_match(row, '<a href="@ref base::object.size"><code>object.size(a)</code></a>', fixed = TRUE)
+  # Code with two links keeps both, inside one chip.
+  two <- '<h3>See Also</h3><p><code><a href="@ref p::f">f</a>(<a href="@ref p::g">g</a>())</code></p>'
+  expect_identical(tidy_help_sections(two),
+    '<h3>See Also</h3>\n<p class="ember-help-seealso"><code class="ember-help-seealso-name"><a href="@ref p::f">f</a>(<a href="@ref p::g">g</a>())</code></p>\n')
+})
+
 test_that("tidy_help_sections() leaves a See Also with no links, and one that is the last section (#51)", {
   plain <- "<h2>T</h2><h3>See Also</h3><p>Nothing to link.</p><h3>Examples</h3>"
   expect_identical(tidy_help_sections(plain), plain)
