@@ -4,7 +4,7 @@ import _ from "../imports/lodash-es.js"
 import { utf8index_to_ut16index } from "../common/UnicodeTools.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { get_selected_doc_from_state } from "./CellInput/LiveDocsFromCursor.js"
-import { GlobalDefinitionsFacet } from "./CellInput/go_to_definition_plugin.js"
+import { GlobalDefinitionsFacet, DefinitionCellsFacet, EmberSpansFacet, current_spans, go_to_definition_plugin } from "./CellInput/go_to_definition_plugin.js"
 // import { debug_syntax_plugin } from "./CellInput/debug_syntax_plugin.js"
 
 import {
@@ -54,7 +54,6 @@ import { bracketMatching } from "./CellInput/block_matcher_plugin.js"
 import { cl } from "../common/ClassTable.js"
 import { HighlightLineFacet, HighlightRangeFacet, highlightLinePlugin, highlightRangePlugin } from "./CellInput/highlight_line.js"
 import { commentKeymap } from "./CellInput/comment_mixed_parsers.js"
-import { ScopeStateField } from "./CellInput/scopestate_statefield.js"
 import { mod_d_command } from "./CellInput/mod_d_command.js"
 import { open_bottom_right_panel } from "./BottomRightPanel.js"
 import { assert_not_null, timeout_promise } from "../common/PlutoConnection.js"
@@ -240,6 +239,8 @@ let line_and_ch_to_cm6_position = (/** @type {import("../imports/CodemirrorPluto
  *  remote_code: string,
  *  scroll_into_view_after_creation: boolean,
  *  global_definition_locations: { [variable_name: string]: string },
+ *  definition_cells: { [variable_name: string]: string },
+ *  ember_spans: import("./CellInput/go_to_definition_plugin.js").EmberSpans?,
  *  [key: string]: any,
  * }} props
  */
@@ -265,6 +266,8 @@ export const CellInput = ({
     cm_highlighted_line,
     cm_highlighted_range,
     global_definition_locations,
+    definition_cells,
+    ember_spans,
     cm_diagnostics,
     running_disabled,
     depends_on_disabled_cells,
@@ -303,6 +306,13 @@ export const CellInput = ({
     let dark_theme_compartment = useCompartment(newcm_ref, EditorView.theme({}, { dark: dark_theme }))
 
     let global_definitions_compartment = useCompartment(newcm_ref, GlobalDefinitionsFacet.of(global_definition_locations))
+    let definition_cells_compartment = useCompartment(newcm_ref, DefinitionCellsFacet.of(definition_cells ?? {}))
+    // The spans were read from the submitted code, so they carry it: the
+    // marks show only while the editor holds exactly that text.
+    let ember_spans_compartment = useCompartment(
+        newcm_ref,
+        EmberSpansFacet.of(ember_spans == null ? null : { code: remote_code, defs: ember_spans.defs ?? [], refs: ember_spans.refs ?? [] })
+    )
     let highlighted_line_compartment = useCompartment(newcm_ref, HighlightLineFacet.of(cm_highlighted_line))
     let highlighted_range_compartment = useCompartment(newcm_ref, HighlightRangeFacet.of(cm_highlighted_range))
     let editable_compartment = useCompartment(newcm_ref, EditorState.readOnly.of(disable_input))
@@ -568,6 +578,8 @@ export const CellInput = ({
                     highlighted_line_compartment,
                     highlighted_range_compartment,
                     global_definitions_compartment,
+                    definition_cells_compartment,
+                    ember_spans_compartment,
                     editable_compartment,
                     last_remote_code_set_time_compartment,
                     highlightLinePlugin(),
@@ -580,7 +592,7 @@ export const CellInput = ({
                     // TODO Use https://codemirror.net/6/docs/ref/#state.Prec when added to pluto-codemirror-setup
                     prevent_holding_a_key_from_doing_things_across_cells,
 
-                    ScopeStateField,
+                    go_to_definition_plugin,
                     syntaxHighlighting(pluto_syntax_colors_julia),
                     syntaxHighlighting(pluto_syntax_colors_html),
                     syntaxHighlighting(pluto_syntax_colors_javascript),
@@ -814,12 +826,11 @@ export const CellInput = ({
             }
 
             if (cm_forced_focus[2]?.definition_of) {
-                let scopestate = cm.state.field(ScopeStateField)
-                let definition = scopestate?.definitions.get(cm_forced_focus[2]?.definition_of)
+                let definition = current_spans(cm.state)?.defs.find(([name]) => name === cm_forced_focus[2]?.definition_of)
                 if (definition) {
                     new_selection = {
-                        anchor: definition.from,
-                        head: definition.to,
+                        anchor: definition[1],
+                        head: definition[2],
                     }
                 }
             }

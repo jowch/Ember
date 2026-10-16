@@ -2,6 +2,7 @@ import { t } from "../common/lang.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { html, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "../imports/Preact.js"
 
+import _ from "../imports/lodash-es.js"
 import { Cell } from "./Cell.js"
 import { EmptyNotebookHints } from "./EmptyNotebookHints.js"
 
@@ -44,6 +45,7 @@ const CellMemo = ({
     set_show_logs,
     nbpkg,
     global_definition_locations,
+    definition_cells,
     is_first_cell,
     inspecting_hidden_code,
 }) => {
@@ -68,6 +70,7 @@ const CellMemo = ({
                 sanitize_html=${sanitize_html}
                 nbpkg=${nbpkg}
                 global_definition_locations=${global_definition_locations}
+                definition_cells=${definition_cells}
                 is_first_cell=${is_first_cell}
                 inspecting_hidden_code=${inspecting_hidden_code}
             />
@@ -106,6 +109,8 @@ const CellMemo = ({
         sanitize_html,
         ...nbpkg_fingerprint(nbpkg),
         global_definition_locations,
+        definition_cells,
+        cell_input?.ember_spans,
         is_first_cell,
         inspecting_hidden_code,
     ])
@@ -184,6 +189,22 @@ export const Notebook = ({
         [notebook?.cell_dependencies]
     )
 
+    // Go-to-definition's targets: each name to the first cell defining it,
+    // from the engine's analysis (CellInput/go_to_definition_plugin.js).
+    // The same object is kept while the map is equal, so an edit that
+    // changes no definition doesn't re-render every cell.
+    const definition_cells_ref = useRef({})
+    let definition_cells = useMemo(() => {
+        const out = {}
+        for (const cell_id of notebook?.cell_order ?? []) {
+            for (const [name] of notebook?.cell_inputs?.[cell_id]?.ember_spans?.defs ?? []) {
+                if (!(name in out)) out[name] = cell_id
+            }
+        }
+        if (!_.isEqual(out, definition_cells_ref.current)) definition_cells_ref.current = out
+        return definition_cells_ref.current
+    }, [notebook?.cell_order, notebook?.cell_inputs])
+
     useLayoutEffect(() => {
         let oldhash = window.location.hash
         if (oldhash.length > 1) {
@@ -242,6 +263,7 @@ export const Notebook = ({
                             sanitize_html=${sanitize_html}
                             nbpkg=${notebook.nbpkg}
                             global_definition_locations=${global_definition_locations}
+                            definition_cells=${definition_cells}
                             is_first_cell=${i === 0}
                             inspecting_hidden_code=${inspecting_hidden_code}
                         />`
