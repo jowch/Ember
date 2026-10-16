@@ -34,9 +34,12 @@ export const useMyClockIsAheadBy = ({ connected }) => {
                 if (!isNaN(diff)) set_my_clock_is_ahead_by(diff)
             }
 
-            f()
+            // A sync still running when the connection drops fails its
+            // next send; that is no error, the next connect syncs again.
+            const sync = () => f().catch(() => undefined)
+            sync()
 
-            let handle = setInterval(f, 60 * 1000)
+            let handle = setInterval(sync, 60 * 1000)
 
             return () => clearInterval(handle)
         }

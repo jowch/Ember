@@ -342,25 +342,57 @@ test("signature: a click on the tooltip lands in the code under it (#34)", async
   }, "DF");
   const newSel = `pluto-cell[id="${newCellId}"]`;
 
-  // Room above the cell, so CodeMirror shows the tooltip above the call's
-  // line rather than flipping it below.
-  await page.locator(newSel).evaluate((el) => el.scrollIntoView({ block: "center" }));
   // How far the tooltip reaches up depends on fonts and how the signature
   // wraps, which differ by platform. A minimum height makes it cover DF's
   // line on every platform; what this test checks is where the click goes.
   await page.addStyleTag({ content: ".cm-ember-signature-tooltip { min-height: 8em; }" });
 
-  await page.locator(`${newSel} .cm-content`).click();
+  // CodeMirror puts the tooltip above the line only if there is room when
+  // it first shows it, and once it has put it below it keeps it there
+  // while it fits (#100). So the cell must be in the middle of the window,
+  // with every scroll finished, before the tooltip opens. A new cell
+  // focuses itself on a timer and scrolls itself into view (smoothly,
+  // focus_after_creation in CellInput.js); wait for that focus and for the
+  // page to stop scrolling, then centre the cell and wait again.
+  const scroll_settled = () => page.waitForFunction(() => new Promise((resolve) => {
+    const y = window.scrollY;
+    let frames = 10;
+    const step = () => {
+      if (window.scrollY !== y) return resolve(false);
+      if (--frames === 0) return resolve(true);
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }), null, { timeout: 30000 });
+  await page.waitForSelector(`${newSel} .cm-editor.cm-focused`, { timeout: 30000 });
+  await scroll_settled();
+  await page.locator(newSel).evaluate((el) => el.scrollIntoView({ block: "center" }));
+  await scroll_settled();
+
   await page.keyboard.type("read.table(", { delay: 10 });
   const tooltip = page.locator(".cm-ember-signature-tooltip");
   await tooltip.waitFor({ timeout: 30000 });
+  // Created first, placed on CodeMirror's next measure.
+  await page.waitForSelector(".cm-ember-signature-tooltip.cm-tooltip-above, .cm-ember-signature-tooltip.cm-tooltip-below", { timeout: 30000 });
+  const where = async () => JSON.stringify({
+    tooltip: await tooltip.boundingBox(),
+    class: await tooltip.getAttribute("class"),
+    cell: await page.locator(newSel).boundingBox(),
+    df_line: await page.locator(`${cellSelector("DF")} .cm-line`).first().boundingBox(),
+    scrollY: await page.evaluate(() => window.scrollY),
+  });
+  const placed = await where();
+  if (!/cm-tooltip-above/.test(await tooltip.getAttribute("class"))) {
+    await page.screenshot({ path: path.join(artifactsDir(), "editor-signature-click-placement.png") });
+  }
+  assert.match(await tooltip.getAttribute("class"), /cm-tooltip-above/, `the tooltip is above the call's line: ${placed}`);
 
   // Click in the middle of where the tooltip and DF's line overlap.
   const box = await tooltip.boundingBox();
   const df_line = await page.locator(`${cellSelector("DF")} .cm-line`).first().boundingBox();
   const left = Math.max(box.x, df_line.x), right = Math.min(box.x + box.width, df_line.x + df_line.width);
   const top = Math.max(box.y, df_line.y), bottom = Math.min(box.y + box.height, df_line.y + df_line.height);
-  assert.ok(left < right && top < bottom, "the tooltip covers DF's line");
+  assert.ok(left < right && top < bottom, `the tooltip covers DF's line: ${placed}`);
   const x = (left + right) / 2;
   const y = (top + bottom) / 2;
 
