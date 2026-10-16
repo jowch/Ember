@@ -83,7 +83,7 @@ function emberLibs() {
     throw new Error("EMBER_E2E_LIB is not set: run the browser tests with `npm test` (or `node run.mjs <files>`), " +
       "which installs this checkout into a temp library, or set it to a library holding the ember to test");
   }
-  return [lib, process.env.R_LIBS].filter(Boolean).join(path.delimiter);
+  return [path.resolve(lib), process.env.R_LIBS].filter(Boolean).join(path.delimiter);
 }
 
 async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port: fixedPort, secret = SECRET, repos }) {

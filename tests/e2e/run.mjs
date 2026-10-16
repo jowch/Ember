@@ -20,7 +20,10 @@ import { fileURLToPath } from "node:url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, "..", "..");
 
-let lib = process.env.EMBER_E2E_LIB;
+// A relative EMBER_E2E_LIB is taken from where you ran the command (npm
+// moves into tests/e2e but keeps that directory in INIT_CWD), and made
+// absolute, since the servers run in other directories.
+let lib = process.env.EMBER_E2E_LIB && path.resolve(process.env.INIT_CWD ?? process.cwd(), process.env.EMBER_E2E_LIB);
 let ownLib = false;
 if (!lib) {
   lib = mkdtempSync(path.join(tmpdir(), "ember-e2e-lib-"));
