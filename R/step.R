@@ -1495,6 +1495,7 @@ reduce_wk_done <- function(state, event) {
   # computed `options(op)`, or learned before) already has its setting edges.
   settings_found <- if (id %in% state$graph$settings) character()
                     else setting_label(setdiff(reported_keys, known_keys))
+  load_notes <- report_load_notes(report$load_notes)
   if (defs_changed || refs_changed || settings_changed) {
     state$graph <- graph_learn(state$graph, id,
                                definitions = if (defs_changed) learned_defs else NULL,
@@ -1513,7 +1514,8 @@ reduce_wk_done <- function(state, event) {
                        started_at = w$running$started_at, runtime = runtime,
                        defined = report$created %||% character(),
                        variables = if (identical(status, "ok")) report$globals %||% list() else list(),
-                       settings_found = settings_found, setting = id %in% state$graph$settings)
+                       settings_found = settings_found, setting = id %in% state$graph$settings,
+                       load_notes = load_notes)
   state$results[[id]] <- result
   if (length(state$footer_sources) && all_code_cells_ran(state)) {
     state$footer_sources <- character()
@@ -1566,6 +1568,20 @@ report_setting_keys <- function(settings) {
       character())
   }), use.names = FALSE)
   unique(as.character(keys))
+}
+
+#' The worker's `load_notes` (`list(package, kind, name)` each: a package
+#' load that overwrote a setting a settings cell set, worker.R's
+#' `settings_by_code()`) as `list(package, setting)`, `setting` the label
+#' `setting_label()` shows. An old worker's notes, plain strings, are
+#' dropped.
+report_load_notes <- function(notes) {
+  notes <- Filter(function(n) is.list(n) && is.character(n$package) && !is.na(n$package),
+                  notes %||% list())
+  lapply(notes, function(n) {
+    key <- report_setting_keys(list(list(kind = n$kind, name = n$name)))
+    list(package = n$package, setting = if (length(key)) setting_label(key[[1]]) else n$name)
+  })
 }
 
 #' Every code cell that can run has an "ok" result in this worker, so every

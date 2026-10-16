@@ -73,7 +73,8 @@ const TABS = /** @type {const} */ ([
  * @param {{
  * notebook: import("./Editor.js").NotebookData,
  * desired_doc_query: string?,
- * on_update_doc_query: (query: string?) => void,
+ * doc_query_explicit: boolean,
+ * on_update_doc_query: (query: string?, explicit?: boolean) => void,
  * connected: boolean,
  * key_refused?: boolean,
  * unreachable?: boolean,
@@ -81,7 +82,7 @@ const TABS = /** @type {const} */ ([
  * on_restart: () => void,
  * }} props
  */
-export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, notebook, connected, key_refused = false, unreachable = false, sanitize_html = true, on_restart }) => {
+export let BottomRightPanel = ({ desired_doc_query, doc_query_explicit, on_update_doc_query, notebook, connected, key_refused = false, unreachable = false, sanitize_html = true, on_restart }) => {
     const container_ref = useRef()
     const focus_docs_on_open_ref = useRef(false)
     const opener_ref = useRef(/** @type {HTMLElement?} */ (null))
@@ -136,6 +137,7 @@ export let BottomRightPanel = ({ desired_doc_query, on_update_doc_query, noteboo
                           ? html`<${LiveDocsTab}
                                 focus_on_open=${focus_docs_on_open_ref.current}
                                 desired_doc_query=${desired_doc_query}
+                                doc_query_explicit=${doc_query_explicit}
                                 on_update_doc_query=${on_update_doc_query}
                                 notebook=${notebook}
                                 sanitize_html=${sanitize_html}

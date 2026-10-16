@@ -21,6 +21,16 @@ THUMBS_DOWN <- "\U0001F44E"
 WAVE <- "\U0001F44B"
 HOURGLASS <- "\u231B"
 
+#' How long a Help lookup may take in an idle worker before the reply says
+#' R didn't answer in time. Completions and signatures keep
+#' `worker_query()`'s 0.8 s: they answer as you type, and a late one is
+#' useless. A help page is asked for once and its answer is still wanted,
+#' and a search typed in the Help box reads every installed package's help
+#' index (`help_lookup()`, inst/worker.R), which can take seconds on a big
+#' library. With 0.8 s that lookup's reply was dropped, and each new ask
+#' queued in the worker behind it and was dropped too (#92 review).
+DOCS_QUERY_TIMEOUT <- 10
+
 # ---- Public API --------------------------------------------------------------
 
 #' Run the UI server in this process, blocking until it is stopped.
@@ -806,7 +816,7 @@ on_run <- function(server, cl, hub, req) {
 #' | complete_symbols              | reply {latex = {}, emoji = {}} (Julia's symbol tables; none for R) |
 #' | docs                          | a notebook definition from state; else worker_query(help); else "needs R running" (ui-2.md, 4c) |
 #' | all_registered_package_names  | reply {results = []}                                            |
-#' | completepath                  | {query, ember_dirs_only?}: reply complete_path()'s {start, stop, results} |
+#' | completepath                  | {query, ember_dirs_only?}: reply complete_path()'s {start, stop, results, ember_truncated} |
 #' | get_all_notebooks             | reply "notebook_list" {notebooks = hosted notebooks}           |
 #' | reshow_cell                   | "more" paging (ui-2.md, 3b/3c): dispatch ev_show_more(cell, objectid, dim); flush. No reply (the frontend sends without awaiting one) |
 #' | ember_render_plot             | {cell_id, res}, res clamped: dispatch ev_render() at the cell's own figure size; flush |
@@ -956,13 +966,17 @@ handlers <- list(
     was_idle <- worker_is_idle(hub$nb)
     help_msg <- list(type = "help", topic = parsed$name, package = parsed$package,
                      all_packages = isTRUE(req$body$all_packages))
-    worker_query(hub$nb, help_msg, function(reply) {
+    worker_query(hub$nb, help_msg, timeout = DOCS_QUERY_TIMEOUT, callback = function(reply) {
       if (!is.null(reply)) {
         doc <- help_reply_html(reply)
         # `package` NULL when ambiguous (reply$matches non-empty): the page
         # then shows the pkg::topic choices, not one page to attribute.
         pkg <- if (length(reply$matches %||% list()) > 0) NULL else reply$package
-        send(cl, reply_message(req, "docs", list(status = THUMBS_UP, doc = doc, package = pkg)))
+        # How far the lookup looked: the scope the page asked for, and
+        # whether help() searched every installed package (#121).
+        send(cl, reply_message(req, "docs", list(status = THUMBS_UP, doc = doc, package = pkg,
+                                                 all_packages = help_msg$all_packages,
+                                                 tried_all_packages = isTRUE(reply$tried_all_packages))))
       } else if (was_idle) {
         msg <- "<p>R didn't answer in time. Trying again\u2026</p>"
         send(cl, reply_message(req, "docs", list(status = HOURGLASS, doc = msg)))

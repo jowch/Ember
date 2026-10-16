@@ -565,8 +565,22 @@ allowed; `Rscript` makes them too. The rest belong to the cell's code and
 make it a settings cell. A package that overwrites a setting the notebook
 already changed gets a note, since in the notebook it may load at a different point
 than in the script. In a clean process none of the 199 changed an existing
-option or variable, only added new ones; whether any overwrite a value the
-notebook set is still untested. None changed the working directory or
+option or variable, only added new ones. Set beforehand, a package's own
+options are a different story (#61, 383 packages): 33 reset one of their
+own options, or a dependency's, when they load (mgcv's `mgcv.vc.logrange`,
+lme4, `spam.*`, fixest and others), and keras and modeltime reset an
+environment variable. None touched a common setting such as `digits`,
+`warn` or `TZ`. So a settings cell that sets `mgcv.vc.logrange` keeps its
+value in the notebook, which applies settings cells before each run, but
+under `Rscript` the settings cells come first in the file and
+`library(mgcv)` resets it. The cell that loads the package gets a note:
+"Loading mgcv resets mgcv.vc.logrange, which a settings cell sets. Under
+Rscript the setting is lost, because settings cells come first in the
+file. Move it into this cell, after mgcv loads." Moved there, the loading
+cell becomes the one settings cell for that option (leaving it in both
+would be the "set in two cells" conflict), and within one cell the
+notebook and `Rscript` keep the order as written. The note shows on the
+run that loads the package. None changed the working directory or
 locale. RcppArmadillo, rstan and V8 create `.Random.seed` when loaded, which
 the global-environment check already skips.
 
@@ -1101,8 +1115,9 @@ run), and the snapshot has no stale state.
    worker, the frontend stub, rig, rv against renv, and package loading.
    Since then the URL secret and rich outputs in the browser are built, and
    the server and worker run on Linux in CI. Still to run: the server and
-   worker, and rig, on Windows (#48, #49); whether any package overwrites a
-   setting the notebook already set (#61).
+   worker, and rig, on Windows (#48, #49). Whether any package overwrites a
+   setting the notebook already set (#61) was run on Linux in 2026-10: see
+   [Global settings](#running-cells).
    - Server and worker: httpuv serving the UI while a worker runs a long
      cell; interrupting a running cell and restarting its worker, on macOS,
      Linux and Windows. Pluto's unmodified frontend talking to a stub R

@@ -63,7 +63,8 @@
 #   rendered     cell, token, display   display is NULL when the cell has no
 #                                       kept value to page or re-render
 #   completions  id, token, items = list(name, kind, notebook), too_long
-#   help_page    id, found, topic, package, html, matches (packages, when several)
+#   help_page    id, found, topic, package, html, matches (packages, when several),
+#                error, tried_all_packages
 #   signature    id, text             NULL if not a function
 #
 # complete/help/signature are answered outside the run loop's ordering
@@ -265,7 +266,8 @@ handle_next <- function() {
     help = {
       r <- help_lookup(msg$topic, msg$package, isTRUE(msg$all_packages))
       send(list(type = "help_page", id = msg$id, found = r$found, topic = r$topic,
-               package = r$package, html = r$html, matches = r$matches))
+               package = r$package, html = r$html, matches = r$matches, error = r$error,
+               tried_all_packages = r$tried_all_packages))
     },
     signature = send(list(type = "signature", id = msg$id, text = worker_signature(msg$name, msg$package))),
     quit = quit(save = "no"),
@@ -360,7 +362,7 @@ run_cell <- function(msg) {
 
   rc <- list(status = "ok", output = NULL, console = list(), error = NULL,
              runtime = NA_real_, created = character(), changed = character(),
-             removed = character(), settings = list(), load_notes = character(),
+             removed = character(), settings = list(), load_notes = list(),
              attached = list(), formula_misses = character(), loaded = character(),
              globals = list())
 
@@ -1073,18 +1075,26 @@ revert_search <- function(target) {
 
 #' Changes made by the cell's own code: settings changes not explained by
 #' package loads. Returns list(settings = list(kind, name, before, after),
-#' load_notes = character()).
+#' load_notes = list(list(package, kind, name))).
+#'
+#' A load note is a package load that changed a setting the notebook had
+#' already set (a settings cell, applied before this run): the notebook
+#' keeps the settings cell's value for the cells after this one, but under
+#' `Rscript` the settings cells come first in the file, so the load
+#' overwrites it there (#61). The search path is left out: attaching is
+#' tracked on its own, and a package that `attach()`es something while
+#' loading isn't overwriting a value the user set.
 settings_by_code <- function(settings0, after, load_log) {
   baseline <- settings0
-  notes <- character()
+  notes <- list()
   for (entry in load_log) {
     for (chg in entry$changes) {
       baseline_val <- get_setting(baseline, chg$kind, chg$name)
       start_val <- get_setting(settings_base, chg$kind, chg$name)
       notebook_set <- !identical(baseline_val, start_val)
-      if (notebook_set && !identical(baseline_val, chg$after)) {
-        notes <- c(notes, sprintf("package %s changed %s %s, which the notebook set",
-                                   entry$package, chg$kind, chg$name))
+      if (!identical(chg$kind, "search") && notebook_set && !identical(baseline_val, chg$after)) {
+        note <- list(package = entry$package, kind = chg$kind, name = chg$name)
+        if (!any(vapply(notes, identical, logical(1), y = note))) notes[[length(notes) + 1]] <- note
       }
       baseline <- set_setting(baseline, chg$kind, chg$name, chg$after)
       # A package's own change is part of the starting values from now on.
@@ -1136,10 +1146,14 @@ ember_load_enter <- function(pkg) {
 #' snapshot `ember_load_enter()` pushed, records the change in `load_log`,
 #' and forward-propagates it onto any still-open outer frame (a nested
 #' load, from a Depends/Imports chain) so the outer frame's own diff
-#' doesn't report the same change again.
-ember_load_exit <- function() {
+#' doesn't report the same change again. `pkg`, when known, is the name
+#' the call actually loaded or attached, which replaces the one read off
+#' the call text: a nested `loadNamespace(package)` or an Imports load's
+#' `loadNamespace(i[[1L]])` has a variable there, not the name.
+ember_load_exit <- function(pkg = NA_character_) {
   if (!length(load_stack)) return(invisible())
   frame <- load_stack[[length(load_stack)]]
+  if (length(pkg) == 1 && !is.na(pkg)) frame$package <- pkg
   stack <- load_stack[-length(load_stack)]
   after <- snapshot_settings()
   diffs <- diff_settings(frame$before, after)
@@ -1245,7 +1259,9 @@ install_traces <- function() {
         }, error = function(e) NA_character_)
       } else NA_character_
       ember_load_enter(pkg)
-      on.exit(ember_load_exit(), add = TRUE)
+      # Evaluated when this wrapper returns, so it sees the name set below.
+      loaded_name <- NA_character_
+      on.exit(ember_load_exit(loaded_name), add = TRUE)
       # Called as the notebook wrote it (`library(x)`, not `original(...)`),
       # so the error call and the function's own sys.call() are the user's.
       real_call <- mc
@@ -1257,12 +1273,21 @@ install_traces <- function() {
       # already on the path (a plain search() diff would miss that case,
       # and so would wrongly drop the package from the desired path on
       # the next rebuild -- see the note at attach_requests's use).
-      if (attachable && !is.null(running) && !is.null(pe)) {
+      # Also outside a cell run, for the load's name: resolve_attach_name()
+      # evaluates `pe` only for `character.only = TRUE`, where the caller
+      # declared it a value, and reads no more than the call already did.
+      if (attachable && !is.null(pe)) {
         after_search <- packages_on_search(search())
         resolved <- resolve_attach_name(pe, char_only, call_env, before_search, after_search)
         if (!is.na(resolved)) {
-          attach_requests[[running$cell]] <<- union(attach_requests[[running$cell]], resolved)
+          loaded_name <- resolved
+          if (!is.null(running)) {
+            attach_requests[[running$cell]] <<- union(attach_requests[[running$cell]], resolved)
+          }
         }
+      } else if (identical(name, "loadNamespace")) {
+        # The namespace it returns names itself; no argument is evaluated again.
+        loaded_name <- tryCatch(unname(getNamespaceName(result$value)), error = function(e) NA_character_)
       }
       if (result$visible) result$value else invisible(result$value)
     }
@@ -2355,7 +2380,11 @@ complete_line <- function(line, cursor) {
 #' Rd, `Rd2HTML()` renders it to a temp file (`dynamic = TRUE`, so
 #' cross-reference links are the short `../../pkg/help/topic` form the
 #' server's `rewrite_help_links()` expects), and only the `<body>` is
-#' returned -- the page already has its own `<html>`/`<head>`.
+#' returned -- the page already has its own `<html>`/`<head>`. An error
+#' anywhere in the lookup comes back as `error`, its message, so the page
+#' can say so instead of looking like no match (#121). `tried_all_packages`
+#' is `help()`'s own attribute of that name: whether it searched every
+#' installed package, so a "not found" says how far it looked (#121).
 help_lookup <- function(topic, package, all_packages = FALSE) {
   tryCatch({
     matches <- if (!is.null(package)) {
@@ -2367,8 +2396,10 @@ help_lookup <- function(topic, package, all_packages = FALSE) {
       }
       found
     }
+    tried <- isTRUE(attr(matches, "tried_all_packages"))
     if (length(matches) == 0) {
-      return(list(found = FALSE, topic = topic, package = package, html = NULL, matches = list()))
+      return(list(found = FALSE, topic = topic, package = package, html = NULL, matches = list(),
+                  tried_all_packages = tried))
     }
 
     # A help path is <libpath>/<package>/help/<topic> (index.search()'s
@@ -2379,7 +2410,7 @@ help_lookup <- function(topic, package, all_packages = FALSE) {
       matches_list <- Map(function(p, path) list(package = p, topic = basename(path)),
                           pkgs, as.character(matches))
       return(list(found = TRUE, topic = topic, package = package, html = NULL,
-                  matches = unname(matches_list)))
+                  matches = unname(matches_list), tried_all_packages = tried))
     }
 
     rd_path <- as.character(matches)[1]
@@ -2391,8 +2422,10 @@ help_lookup <- function(topic, package, all_packages = FALSE) {
     full <- paste(readLines(out, warn = FALSE), collapse = "\n")
     body <- sub("(?s).*<body>", "", full, perl = TRUE)
     body <- sub("(?s)</body>.*", "", body, perl = TRUE)
-    list(found = TRUE, topic = topic, package = pkg_name, html = body, matches = list())
-  }, error = function(e) list(found = FALSE, topic = topic, package = package, html = NULL, matches = list()))
+    list(found = TRUE, topic = topic, package = pkg_name, html = body, matches = list(),
+         tried_all_packages = tried)
+  }, error = function(e) list(found = FALSE, topic = topic, package = package, html = NULL, matches = list(),
+                              error = conditionMessage(e)))
 }
 
 #' `args(fn)` deparsed into `name(arg1, arg2 = default, ...)`, the trailing

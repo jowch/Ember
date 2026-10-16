@@ -516,6 +516,35 @@ test_that("a setting found at run time makes a settings cell, not an error (47, 
   expect_equal(r4$state$graph$settings, character())
 })
 
+test_that("a package load that resets a setting a settings cell set shows a note on the loading cell (#61)", {
+  # A loads mgcv inside a function, so the fake lock needs no entry for it;
+  # the worker's report is what matters here.
+  s <- fake_state(list(S = cell("options(mgcv.vc.logrange = 50)"), A = cell("fit_model()"),
+                       B = cell("x <- 1")))
+  r <- boot(s, c("S", "A"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(10)))
+  expect_equal(last_sent(r)$cell, "A")
+  notes <- list(list(package = "mgcv", kind = "option", name = "mgcv.vc.logrange"))
+  r2 <- drive(r$state, wk_done(1, last_token(r), report(load_notes = notes), at(11)))
+  expect_equal(r2$state$results$A$status, "ok")
+  expect_equal(r2$state$results$A$load_notes, list(list(package = "mgcv", setting = "mgcv.vc.logrange")))
+  # The note doesn't make the loading cell a settings cell.
+  expect_equal(r2$state$graph$settings, "S")
+  expect_equal(snapshot_of(r2$state)$cells$A$load_notes,
+               list(list(package = "mgcv", setting = "mgcv.vc.logrange")))
+  js <- pluto_state(r2$state)$js
+  check_wire(js)
+  expect_equal(js$cell_results$A$ember$load_notes,
+               as_arr(list(list(package = "mgcv", setting = "mgcv.vc.logrange"))))
+  expect_null(js$cell_results$S$ember$load_notes)
+
+  # The next run loads nothing new: the note goes.
+  r3 <- drive(r2$state, ev_run("A", at(12)))
+  r3 <- drive(r3$state, wk_done(1, last_token(r3), report(), at(13)))
+  expect_equal(r3$state$results$A$load_notes, list())
+  expect_null(pluto_state(r3$state)$js$cell_results$A$ember$load_notes)
+})
+
 test_that("a computed options(op) cell is already a settings cell: no run-time note (review)", {
   s <- fake_state(list(A = cell("options(op)"), B = cell("x <- 1")))
   expect_equal(s$graph$settings, "A")

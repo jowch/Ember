@@ -393,6 +393,53 @@ test_that("chdir to a folder that no longer exists doesn't kill the worker", {
   expect_identical(r2$output$text, sprintf('[1] "%s"', f0))
 })
 
+test_that("a package load that resets a setting a settings cell set leaves a note naming the package (#61)", {
+  h <- worker_harness(extra_libs = fixture_lib())
+  on.exit(h$close())
+  run_and_wait(h, "s", 1L, 'options(emberfix_load_opt = "user")')
+  # library() loads through an inner loadNamespace(package): the note names
+  # the package, not the loader's argument.
+  r <- run_and_wait(h, "l", 2L, "library(emberfix1)", settings = "s")
+  expect_identical(r$status, "ok")
+  expect_identical(r$settings, list())
+  expect_identical(r$load_notes, list(list(package = "emberfix1", kind = "option", name = "emberfix_load_opt")))
+  # The settings cell is applied again before the next run, as before.
+  r2 <- run_and_wait(h, "c", 3L, 'getOption("emberfix_load_opt")', settings = "s")
+  expect_identical(r2$output$text, '[1] "user"')
+  # Already loaded: nothing resets it, so no note.
+  r3 <- run_and_wait(h, "l", 4L, "library(emberfix1)", settings = "s")
+  expect_identical(r3$load_notes, list())
+})
+
+test_that("the note's advice: the setting moved into the loading cell, after the load, keeps it and gives no note (#61)", {
+  h <- worker_harness(extra_libs = fixture_lib())
+  on.exit(h$close())
+  r <- run_and_wait(h, "l", 1L, 'library(emberfix1); options(emberfix_load_opt = "user")')
+  expect_identical(r$load_notes, list())
+  expect_identical(r$settings[[1]]$name, "emberfix_load_opt")
+  r2 <- run_and_wait(h, "c", 2L, 'getOption("emberfix_load_opt")', settings = "l")
+  expect_identical(r2$output$text, '[1] "user"')
+})
+
+test_that("a load through requireNamespace() names the package in its note (#61)", {
+  h <- worker_harness(extra_libs = fixture_lib())
+  on.exit(h$close())
+  run_and_wait(h, "s", 1L, 'options(emberfix_load_opt = "user")')
+  r <- run_and_wait(h, "l", 2L, 'requireNamespace("emberfix1", quietly = TRUE)', settings = "s")
+  expect_identical(r$load_notes, list(list(package = "emberfix1", kind = "option", name = "emberfix_load_opt")))
+})
+
+test_that("a package load gets no note when no settings cell set what it changes (#61)", {
+  h <- worker_harness(extra_libs = fixture_lib())
+  on.exit(h$close())
+  # attach() in a settings cell makes the search path differ from the
+  # start; library() attaching a package is not a reset of it.
+  run_and_wait(h, "s", 1L, "attach(data.frame(emberfix_col = 1))")
+  r <- run_and_wait(h, "l", 2L, "library(emberfix1)", settings = "s")
+  expect_identical(r$status, "ok")
+  expect_identical(r$load_notes, list())
+})
+
 test_that("package_load_changes_allowed", {
   flib <- fixture_lib()
   h <- worker_harness(extra_libs = flib)
@@ -1630,6 +1677,14 @@ test_that("help() searches installed but unattached packages only when all_packa
   m2 <- h$receive()
   expect_true(m2$found)
   expect_identical(m2$package, "codetools")
+
+  # The reply says how far each lookup looked, found or not (#121).
+  expect_false(m$tried_all_packages)
+  expect_true(m2$tried_all_packages)
+  h$send(list(type = "help", id = 3L, topic = "zzznotatopic", package = NULL, all_packages = TRUE))
+  m3 <- h$receive()
+  expect_false(m3$found)
+  expect_true(m3$tried_all_packages)
 })
 
 test_that("signature() (46)", {

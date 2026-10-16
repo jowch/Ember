@@ -118,6 +118,22 @@ test_that("complete_path(): a backslash also separates the folder from the typed
   expect_equal(r$start, nchar("sub\\", type = "bytes"))
 })
 
+test_that("complete_path(): over 200 matches lists the first 200 and says so (#124)", {
+  dir <- tempfile("ember-complete-big-")
+  dir.create(dir)
+  for (i in 0:249) dir.create(file.path(dir, sprintf("a%03d", i)))
+  dir.create(file.path(dir, "zz-target"))
+
+  r <- complete_path(paste0(dir, "/"))
+  expect_length(r$results, 200)
+  expect_true(r$ember_truncated)
+  expect_false("zz-target/" %in% unlist(r$results))
+
+  r_typed <- complete_path(file.path(dir, "zz"))
+  expect_equal(unlist(r_typed$results), "zz-target/")
+  expect_false(r_typed$ember_truncated)
+})
+
 test_that("first_free_notebook_name(): notebook.R, then notebook-2.R, notebook-3.R, ...", {
   dir <- tempfile("ember-free-name-")
   dir.create(dir)

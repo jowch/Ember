@@ -40,6 +40,9 @@ cases <- local(envir = env, list(
   packages_view_150 = list(
     setup = function() perf_packages(150),
     run = function(st) packages_view(st), inner = 10L),
+  graph_edit_2000 = list(
+    setup = function() perf_graph_edit(2000),
+    run = function(x) notebook_graph(x$code, previous = x$previous), inner = 1L),
   run_all_chain_2000 = list(
     setup = function() fake_state(make_chain_cells(2000)),
     run = function(s) step(s, ev_run(NULL, at(1))), inner = 1L)

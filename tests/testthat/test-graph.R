@@ -216,6 +216,12 @@ test_that("a setting in two cells is setting_conflict; two different settings ar
   expect_setequal(blocked_cells(g), c("A", "B"))
 })
 
+test_that("the load note's advice, the setting moved after the load into one cell, gives no conflict (#61)", {
+  g <- notebook_graph(list(S = "x <- 1", A = "library(mgcv)\noptions(mgcv.vc.logrange = 50)"), read_file = NULL)
+  expect_length(Filter(function(e) e$kind == "setting_conflict", g$errors), 0)
+  expect_equal(g$settings, "A")
+})
+
 test_that("a static setting and a learned one for the same key conflict", {
   g <- build_test_graph(list(
     A = fake_cell(code = "A", settings = c(Sys.setenv = "env:TZ")),
@@ -574,6 +580,89 @@ test_that("unknown learned ids are dropped", {
     B = fake_cell(code = "B")
   ), learned = list(definitions = list(ghost = "x")))
   expect_false("ghost" %in% names(g$learned$definitions))
+})
+
+test_that("an edit at 2000 cells resolves only the edited cell's view, and gives the from-scratch graph (#43)", {
+  # Each cell's resolved view (definitions, references, setting keys) is
+  # kept from `previous` when its analysis and learned names are unchanged.
+  # Counted, not timed: a count can't be noisy.
+  x <- perf_graph_edit(2000)
+  n <- 0L
+  real <- setting_keys_of
+  local_mocked_bindings(setting_keys_of = function(...) { n <<- n + 1L; real(...) })
+  g <- notebook_graph(x$code, previous = x$previous)
+  expect_equal(n, 1L)
+  fresh <- notebook_graph(x$code)
+  g$reread <- fresh$reread <- NULL
+  g$read_file <- fresh$read_file <- NULL
+  expect_identical(g, fresh)
+})
+
+test_that("a cell's view is resolved again when only its learned names change (#43)", {
+  g0 <- notebook_graph(c(A = "x <- 1", B = "y <- x", C = "f(y)"))
+  g1 <- graph_learn(g0, "B", definitions = c("w", ".p"), settings = "option:digits")
+  expect_equal(g1$cells$B$definitions, c("y", "w"))
+  expect_equal(g1$cells$B$private, ".p")
+  expect_equal(g1$cells$B$setting_keys$key, "option:digits")
+  expect_identical(g1$cells$A, g0$cells$A)
+  g2 <- graph_learn(g1, "B", definitions = character(), settings = character())
+  expect_equal(g2$cells$B$definitions, "y")
+  expect_equal(nrow(g2$cells$B$setting_keys), 0)
+  # A previous graph whose learned names were edited in place, as
+  # drop_blocking_learned() does, still gets B's view resolved again.
+  edited <- g1
+  edited$learned$definitions$B <- NULL
+  g3 <- notebook_graph(c(A = "x <- 1", B = "y <- x", C = "f(y)"), learned = edited$learned,
+                       previous = edited)
+  expect_equal(g3$cells$B$definitions, "y")
+})
+
+test_that("a graph built from `previous` equals one built from scratch, over random edits (#43)", {
+  # The views kept from `previous` must be exactly the ones a fresh build
+  # gives, whatever happened in between: edits, undo to older code,
+  # deletes, inserts, disabling, learned names added, removed or edited in
+  # place (as drop_blocking_learned() does). A fixed seed, so a failure
+  # reproduces.
+  withr::local_seed(20261016)
+  pool <- c("x <- 1", "y <- x + 1", "z <- y * 2", "x <- 5", "f <- function(a) a + x",
+            "w <- f(y)", "options(digits = 3)", "library(stats)", "", "#' some text",
+            "setGeneric('area', function(s) standardGeneric('area'))",
+            "setMethod('area', 'numeric', function(s) s^2)", "names(v) <- c('a')", "v <- 1:3",
+            "q <- sd(v)", "source('h.R')", "y <- 2")
+  learnable <- c("x", "y", "w", "q", "p", ".hid", "area")
+  read_file <- function(p) if (p == "h.R") "h <- 1" else NULL
+  strip <- function(g) { g$reread <- NULL; g$read_file <- NULL; g }
+  actions <- c("edit", "undo", "learn", "unlearn", "in_place", "delete", "insert", "disable",
+               "settings", "references")
+  for (trial in 1:12) {
+    ids <- paste0("c", seq_len(sample(3:8, 1)))
+    code <- stats::setNames(sample(pool, length(ids), TRUE), ids)
+    learned <- list(); disabled <- character(); history <- list(code)
+    g <- notebook_graph(code, read_file = read_file)
+    for (k in 1:20) {
+      act <- sample(actions, 1)
+      ids <- names(code)
+      previous <- g
+      i <- sample(ids, 1)
+      switch(act,
+        edit = code[[i]] <- sample(pool, 1),
+        undo = code <- history[[sample(length(history), 1)]],
+        learn = learned$definitions[[i]] <- sample(learnable, sample(0:2, 1)),
+        unlearn = learned$definitions[[i]] <- NULL,
+        in_place = { previous$learned$definitions[[i]] <- NULL; learned <- previous$learned },
+        delete = if (length(ids) > 2) code <- code[names(code) != i],
+        insert = code <- append(code, stats::setNames(sample(pool, 1), sprintf("n%d_%d", trial, k)),
+                                sample(0:length(ids), 1)),
+        disable = disabled <- intersect(unique(c(disabled, i))[seq_len(sample(0:2, 1))], ids),
+        settings = learned$settings[[i]] <- if (stats::runif(1) < 0.5) "option:digits",
+        references = learned$references[[i]] <- sample(learnable, sample(0:2, 1)))
+      history[[length(history) + 1L]] <- code
+      g <- notebook_graph(code, learned = learned, disabled = disabled, previous = previous,
+                          read_file = read_file)
+      fresh <- notebook_graph(code, learned = learned, disabled = disabled, read_file = read_file)
+      expect_identical(strip(g), strip(fresh), label = sprintf("trial %d, step %d (%s)", trial, k, act))
+    }
+  }
 })
 
 # ---- changed_cells() ----------------------------------------------------------

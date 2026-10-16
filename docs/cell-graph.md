@@ -296,7 +296,8 @@ keeps display order unless an edge forces a move.
 - We accept that a rebuild is whole-notebook (linear in cells and
   references) in exchange for no incremental edge maintenance; the
   performance section budgets about a millisecond per changed cell for
-  reading and the rest is table lookups.
+  reading and the rest is table lookups. Only a re-read cell, or one whose
+  learned names changed, has its per-cell view resolved again (#43).
 
 ## Alternatives considered
 

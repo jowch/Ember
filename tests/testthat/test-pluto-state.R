@@ -1004,3 +1004,83 @@ test_that("project_error() gives a setting or package conflict's cells, so the p
   expect_equal(o$ember_cells, list("A", "B"))
   expect_null(project_error(list(kind = "error", message = "boom"))$ember_cells)
 })
+
+# ---- ui-2.md 4e: go-to-definition spans ---------------------------------------
+
+test_that("span_offsets() turns parse-data columns into UTF-16 offsets: tabs, wide and astral characters (4e)", {
+  # getParseData() counts one column per character and moves a tab to the
+  # next multiple of 8; CodeMirror counts UTF-16 code units.
+  code <- "x <- '\U0001F600漢'; b <- 1\n\t\tc <- b\n  \td <- 2"
+  pd <- getParseData(parse(text = code, keep.source = TRUE))
+  sym <- pd[pd$token %in% c("SYMBOL"), ]
+  off <- span_offsets(code, sym$line1, sym$col1, sym$col2)
+  # what JavaScript's code.slice(from, to) would give, in UTF-16 units
+  u16 <- utf8ToInt(code)
+  units <- unlist(lapply(u16, function(ch) if (ch > 0xFFFF) c(ch, NA) else ch))
+  js_slice <- function(from, to) intToUtf8(stats::na.omit(units[(from + 1):to]))
+  expect_equal(mapply(js_slice, off$from, off$to), sym$text)
+  expect_equal(off$from[sym$text == "b"][1], 12L)   # the emoji is 2 units, the CJK character 1
+
+  # a column inside a tab, or past the line, isn't a character's start
+  expect_true(is.na(span_offsets("\tx", 3L, 3L, 3L)$from))
+  expect_true(is.na(span_offsets("x", 1L, 5L, 5L)$from))
+  expect_true(is.na(span_offsets("x", 4L, 1L, 1L)$from))
+})
+
+test_that("project_spans() gives a cell's own definitions and the reads whose span is the name (4e)", {
+  code <- "y <- total.n + mean(z)\nr(y) <- glue::glue('{q}')\n`s<-` <- 1"
+  a <- read_cell(code, function(p) NULL)
+  sp <- project_spans(a, code)
+  names_of <- function(rows) vapply(rows, `[[`, "", 1)
+  expect_setequal(names_of(sp$defs), c("y", "s<-"))
+  refs <- names_of(sp$refs)
+  expect_true(all(c("total.n", "mean", "z", "r<-") %in% refs))
+  expect_false("q" %in% refs)           # a glue segment's read sits on the whole string
+  for (r in c(sp$defs, sp$refs)) {
+    text <- substr(code, r[[2]] + 1, r[[3]])
+    expect_true(text %in% c(r[[1]], paste0("`", r[[1]], "`"), sub("<-$", "", r[[1]])), info = r[[1]])
+  }
+
+  # a definition made from a string selects the name inside the quotes
+  code2 <- 'setGeneric("area", function(s) standardGeneric("area"))'
+  d2 <- project_spans(read_cell(code2, function(p) NULL), code2)$defs
+  area <- Filter(function(r) r[[1]] == "area", d2)[[1]]
+  expect_equal(substr(code2, area[[2]] + 1, area[[3]]), "area")
+
+  # none for markdown, a missing analysis, or an analysis of other code
+  expect_equal(project_spans(a, code, "markdown"), list(defs = list(), refs = list()))
+  expect_equal(project_spans(NULL, code), list(defs = list(), refs = list()))
+  expect_equal(project_spans(a, paste(code, "+ 1")), list(defs = list(), refs = list()))
+})
+
+test_that("cell_inputs carry ember_spans from the graph, and check_wire() passes (4e)", {
+  s0 <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- a + 1"),
+                        Md = cell("#' hi", kind = "markdown")))
+  js <- pluto_state(s0)$js
+  expect_true(check_wire(js))
+  expect_equal(js$cell_inputs$A$ember_spans$defs, list(list("a", 0L, 1L)))
+  refs_b <- js$cell_inputs$B$ember_spans$refs
+  expect_equal(Filter(function(r) r[[1]] == "a", refs_b), list(list("a", 5L, 6L)))
+  expect_equal(js$cell_inputs$Md$ember_spans, list(defs = list(), refs = list()))
+})
+
+test_that("Run all at 2000 cells reads no cell's spans again: they depend only on the code (4e, review)", {
+  # Run all changes every cell's key (queued), so every cell input is
+  # rebuilt; the spans must come from the previous projection. Counted,
+  # not timed, like the cell_key test above.
+  s <- fake_state(perf_cells(2000))
+  previous <- pluto_state(s)
+  ran <- drive(s, ev_run(NULL, at(1)))$state
+  n <- 0L
+  real <- project_spans
+  local_mocked_bindings(project_spans = function(...) { n <<- n + 1L; real(...) })
+  p <- pluto_state(ran, previous)
+  expect_equal(n, 0L)
+  expect_identical(p$js$cell_inputs$c7$ember_spans, previous$js$cell_inputs$c7$ember_spans)
+
+  # an edit reads only the edited cell's
+  edited <- drive(ran, ev_apply(list(op_set_code("c7", "x7 <- x6")), at(2)))$state
+  p2 <- pluto_state(edited, p)
+  expect_equal(n, 1L)
+  expect_equal(p2$js$cell_inputs$c7$ember_spans$refs, list(list("x6", 6L, 8L)))
+})

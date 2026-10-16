@@ -1815,7 +1815,7 @@ test_that("docs: an idle worker that doesn't answer in time says so, not 'needs 
   # The worker is idle (worker_is_idle(nb) is TRUE), but its connection is
   # broken right before asking, so worker_query()'s write fails and its
   # callback runs with NULL immediately -- the same shape a real answer
-  # timing out would have, without waiting out the real 0.8s. The reply
+  # timing out would have, without waiting out DOCS_QUERY_TIMEOUT. The reply
   # must name a timeout, not "Help pages need R running": R *is* running.
   close(nb$con)
   handle_message(server, ws, wire("docs", notebook_id = id, query = "mean"))
@@ -1823,6 +1823,107 @@ test_that("docs: an idle worker that doesn't answer in time says so, not 'needs 
   expect_identical(r$status, "\u231B")
   expect_match(r$doc, "answer in time")
   expect_no_match(r$doc, "Run a cell")
+})
+
+test_that("docs: a help lookup slower than a completion's timeout is waited for, not dropped (#92 review)", {
+  # Every help() lookup in this worker sleeps 1.5 s first: a cold
+  # `try.all.packages` search on a big library, as on the macOS runner.
+  # With the 0.8 s completion timeout the reply was dropped and the page
+  # asked again, queued behind the lookup still running, for ever.
+  slow <- 'trace("index.search", quote(Sys.sleep(1.5)), where = asNamespace("utils"), print = FALSE)'
+  path <- write_session_notebook(list(S = cell(""), A = cell(slow)))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  allow_execution(nb)
+  expect_true(run_cells(nb, wait = TRUE, timeout = 20)$accepted)
+
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  handle_message(server, ws, wire("docs", notebook_id = id, query = "mean", all_packages = TRUE))
+  deadline <- Sys.time() + 20
+  docs_msgs <- list()
+  while (length(docs_msgs) == 0 && Sys.time() < deadline) {
+    later::run_now(timeout = 1)
+    docs_msgs <- Filter(function(m) identical(m$type, "docs"), ws$messages)
+  }
+  expect_length(docs_msgs, 1)
+  r <- docs_msgs[[1]]$message
+  expect_identical(r$status, "\U0001F44D")
+  expect_match(r$doc, "Arithmetic Mean")
+})
+
+test_that("docs: a help lookup that fails says so, with R's message, instead of looking like no match (#121)", {
+  # Every help page this worker renders fails: the reply must carry the
+  # error, where it used to be the same empty page as "not found".
+  broken <- 'trace(".getHelpFile", quote(stop("the help database is broken")), where = asNamespace("utils"), print = FALSE)'
+  path <- write_session_notebook(list(S = cell(""), A = cell(broken)))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  allow_execution(nb)
+  expect_true(run_cells(nb, wait = TRUE, timeout = 20)$accepted)
+
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  handle_message(server, ws, wire("docs", notebook_id = id, query = "mean", all_packages = TRUE))
+  deadline <- Sys.time() + 20
+  docs_msgs <- list()
+  while (length(docs_msgs) == 0 && Sys.time() < deadline) {
+    later::run_now(timeout = 1)
+    docs_msgs <- Filter(function(m) identical(m$type, "docs"), ws$messages)
+  }
+  expect_length(docs_msgs, 1)
+  r <- docs_msgs[[1]]$message
+  expect_identical(r$status, "\U0001F44D")
+  expect_match(r$doc, "R couldn't open this help page: .*the help database is broken")
+})
+
+test_that("docs: a reply says whether the lookup was asked to, and did, search every installed package (#121)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  allow_execution(nb)
+  expect_true(run_cells(nb, wait = TRUE, timeout = 20)$accepted)
+
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  docs_reply <- function(...) {
+    ws$messages <- list()
+    handle_message(server, ws, wire("docs", notebook_id = id, query = "zzznotatopic", ...))
+    deadline <- Sys.time() + 20
+    docs_msgs <- list()
+    while (length(docs_msgs) == 0 && Sys.time() < deadline) {
+      later::run_now(timeout = 1)
+      docs_msgs <- Filter(function(m) identical(m$type, "docs"), ws$messages)
+    }
+    expect_length(docs_msgs, 1)
+    docs_msgs[[1]]$message
+  }
+  # Both find nothing; only the reply says how far each looked.
+  typed <- docs_reply(all_packages = TRUE)
+  expect_identical(typed$status, "\U0001F44D")
+  expect_identical(typed$doc, "")
+  expect_true(typed$all_packages)
+  expect_true(typed$tried_all_packages)
+
+  cursor <- docs_reply(all_packages = FALSE)
+  expect_identical(cursor$doc, "")
+  expect_false(cursor$all_packages)
+  expect_false(cursor$tried_all_packages)
 })
 
 test_that("docs: a busy worker answers with an hourglass, so the help panel asks again (61)", {
