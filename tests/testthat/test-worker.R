@@ -1570,6 +1570,12 @@ test_that("a value with a knit_print() method shows as its HTML: registered by a
     'structure(1, class = "ember_fmt")', sep = "\n"))
   expect_identical(r$output$html, "<p>html</p>")
 
+  # As flextable's for pandoc: the HTML in a raw-HTML fence.
+  r <- run_and_wait(h, "g", 7L, paste(
+    'knit_print.ember_fenced <- function(x, ...) knitr::asis_output("\\n```{=html}\\n<p>fenced</p>\\n```\\n")',
+    'structure(1, class = "ember_fenced")', sep = "\n"))
+  expect_identical(r$output$html, "<p>fenced</p>")
+
   # As rmarkdown's knit_print.data.frame outside a report: it prints the
   # value and returns it, which isn't knit_asis. The data frame stays
   # Ember's table, and nothing is printed to the console.

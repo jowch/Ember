@@ -2013,8 +2013,11 @@ try_knit_print <- function(value) {
     out <- tryCatch(do.call(knitr::knit_print, list(value), quote = TRUE, envir = globalenv()),
                     error = function(e) NULL))
   if (!inherits(out, "knit_asis")) return(NULL)
+  # For pandoc, some methods (flextable's) wrap their HTML in a raw-HTML
+  # fence, ```{=html} ... ```; the page would show the fence lines as text.
+  html <- sub("(?s)^\\s*```\\{=html\\}[ \t]*\n(.*)\n```\\s*$", "\\1", paste(out, collapse = "\n"), perl = TRUE)
   tf <- text_form(value)
-  list(kind = "html", mime = "text/html", html = paste(out, collapse = "\n"),
+  list(kind = "html", mime = "text/html", html = html,
        text = tf$text, truncated = tf$truncated)
 }
 
