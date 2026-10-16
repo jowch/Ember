@@ -1332,8 +1332,7 @@ nav#at_the_top .ember-menu {
     margin: 0 0 0.2em 0;
 }
 
-.ember-install-failure-sentence,
-.ember-install-failure-needed-by {
+.ember-install-failure-sentence {
     margin: 0 0 0.5em 0;
     opacity: 0.85;
 }
