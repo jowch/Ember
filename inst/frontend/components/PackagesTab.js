@@ -84,8 +84,9 @@ const failure_fix = (failure, show_command) => {
 
 /**
  * One failed package's card: title, a sentence depending
- * on `kind` (and for a missing compiler or system library, what to
- * install), then Update (build failures), Try again (downloads, packages
+ * on `kind`, the packages the notebook loads that need it (#17), for a
+ * missing compiler or system library what to
+ * install, then Update (build failures), Try again (downloads, packages
  * the repositories didn't list, and anything the user installs on the
  * computer) and
  * Show the error (always). `ember_update_packages` and `ember_run_all`
@@ -107,11 +108,17 @@ const InstallFailureCard = ({ failure, rows, r_version, log, show_command }) => 
     // read, which can be passing, so it gets Try again too.
     // The missing-piece kinds are fixed outside Ember, then retried.
     const can_retry = ["download", "unavailable", "system", "missing_system", "missing_compiler"].includes(failure.kind)
+    // The packages the notebook loads that need this one (#17); a package
+    // the notebook loads itself names itself there, which says nothing.
+    const needed_by = (failure.needed_by ?? []).filter((name) => name !== failure.package)
 
     return html`
         <div class="ember-install-failure-card">
             <p class="ember-install-failure-title">${t("t_ember_install_failed_title", { package: failure.package })}</p>
             <p class="ember-install-failure-sentence">${failure_sentence(failure, rows, r_version)}</p>
+            ${needed_by.length === 0
+                ? null
+                : html`<p class="ember-install-failure-needed-by">${t("t_ember_install_failed_needed_by", { packages: needed_by.join(", ") })}</p>`}
             ${failure_fix(failure, show_command)}
             <div class="ember-install-failure-actions">
                 ${can_update

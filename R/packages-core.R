@@ -1115,6 +1115,9 @@ reduce_index_fetched <- function(state, event) {
     return(list(state = state, effects = list(), reply = NULL))
   }
   state$packages$indexes[[event$key]] <- new_index_slot("ready", index = event$index)
+  # A failed install waiting on this index to say which direct packages
+  # need each failed one (#17).
+  state <- fill_needed_by(state)$state
   list(state = state, effects = list(), reply = NULL)
 }
 
@@ -1195,7 +1198,8 @@ reduce_install_progress <- function(state, event) {
 #' `"ready"` (as `reduce_library_checked`), else `"failed"` with `message`,
 #' `log` and `failures` (`event$failures`, `install_failures()`'s result),
 #' plus one `problems` row (`install_failed`) per failed package, each
-#' naming its `package`; falls back to today's single `NA`-package row
+#' naming its `package`, and `failures$needed_by` (`fill_needed_by()`,
+#' which may fetch indexes to walk); falls back to today's single `NA`-package row
 #' only when `event$failures` has none (the installer's output didn't
 #' parse). An old key's result is dropped: the library exists on disk and
 #' costs nothing until cleanup.
@@ -1203,6 +1207,7 @@ reduce_install_done <- function(state, event) {
   inst <- state$packages$install
   if (is.null(inst) || !eq(inst$token, event$token)) return(list(state = state, effects = list(), reply = NULL))
   state$packages$install <- NULL
+  effects <- list()
   if (identical(event$key, state$packages$target$key)) {
     tgt <- state$packages$target
     if (!is.null(event$manifest)) {
@@ -1217,30 +1222,12 @@ reduce_install_done <- function(state, event) {
       tgt$message <- event$message
       tgt$log <- event$log
       tgt$failures <- event$failures %||% empty_install_failures()
-      # `needed_by` is computed once, here, rather than by every
-      # `packages_view()` call: `failure_needed_by()` walks the loaded
-      # index's dependency graph from every wanted package, which was
-      # showing up as ~35ms per failed package per call at a CRAN-sized
-      # index (packages_view() runs on every dispatch that might have
-      # changed anything package-related, notifications()), and nothing
-      # about the answer changes between one call and the next -- the
-      # failure, the wanted set and the indexes loaded when it happened
-      # are all already fixed by the time this reducer runs.
-      if (nrow(tgt$failures) > 0) {
-        wanted <- wanted_packages(state$graph, state$file$header)
-        needed <- c(unname(source_keys(state$file$header, state$file$lock,
-                                       state$packages$sources_for %||% character())),
-                    needed_repos(state$file$header, state$options$r,
-                                 releases_at(state$packages, state$file$header$snapshot)))
-        indexes <- lapply(state$packages$indexes, function(s) s$index)
-        tgt$failures$needed_by <- lapply(tgt$failures$package, function(pk) {
-          failure_needed_by(pk, wanted, indexes, needed)
-        })
-      } else {
-        tgt$failures$needed_by <- list()
-      }
       tgt$progress <- NULL
       state$packages$target <- tgt
+      walked <- fill_needed_by(state, fetch = TRUE)
+      state <- walked$state
+      effects <- walked$effects
+      tgt <- state$packages$target
       rows <- if (nrow(tgt$failures) > 0) {
         data.frame(kind = "install_failed", package = tgt$failures$package,
                   message = event$message %||% "install failed", fixes = NA_character_,
@@ -1257,7 +1244,7 @@ reduce_install_done <- function(state, event) {
       }
     }
   }
-  list(state = state, effects = list(), reply = NULL)
+  list(state = state, effects = effects, reply = NULL)
 }
 
 #' A preview of moving the date: `proposal <- new_proposal(date)`;
@@ -1440,7 +1427,8 @@ missing_package_error <- function(state, pkg) {
 #' result) with a `needed_by` column added: for each failed package, the
 #' wanted (direct) packages whose dependency closure reaches it, walked
 #' through whatever indexes are loaded (`find_in_indexes()`, resolve.R) --
-#' `character()` for a package when none are.
+#' `character()` for a package when none are. A failure with none loaded
+#' fetches them, and the walk is redone as each arrives (`fill_needed_by()`).
 #' Empty, correctly typed `packages` data.frame: the shape both halves of
 #' `packages_view()` build their rows into. `spec` is added by
 #' `source_rows()`.
@@ -1512,32 +1500,82 @@ source_rows <- function(state, wanted, rows) {
                          spec = unname(specs[extra]), stringsAsFactors = FALSE))
 }
 
-#' The wanted (direct) packages whose dependency closure reaches `pkg`,
-#' walking from each root through `find_in_indexes()` (resolve.R) with
-#' whatever indexes are loaded. A root is included when `pkg` is the root
+#' Fill a failed target's `failures$needed_by` (`failure_needed_by()`)
+#' from whatever indexes are loaded:
+#' `list(state, effects)`. Computed here, when the failure or an index
+#' arrives, rather than by every `packages_view()` call: the walk was
+#' ~35ms per failed package per call at a CRAN-sized index, and
+#' `packages_view()` runs on every dispatch that might have changed
+#' anything package-related (`notifications()`).
+#'
+#' A notebook opened with a lock never resolves, so it usually has no
+#' index loaded when its install fails (#17), and without one a failed
+#' dependency can't point back to the package the notebook loads. With
+#' `fetch = TRUE` (the failure itself), each index the walk would read
+#' that the session hasn't asked for yet is fetched: the GitHub keys and
+#' CRAN's, and Bioconductor's when the lock has a Bioconductor package.
+#' Each one's arrival walks again (`reduce_index_fetched()`). A slot that
+#' failed is left alone, as resolving leaves it: `reduce_run()` drops it
+#' when the user tries again, so an offline machine doesn't loop. Until
+#' the indexes arrive, or if they can't, the walk uses what it has.
+fill_needed_by <- function(state, fetch = FALSE) {
+  tgt <- state$packages$target
+  effects <- list()
+  if (!identical(tgt$status, "failed") || is.null(tgt$failures)) {
+    return(list(state = state, effects = effects))
+  }
+  if (nrow(tgt$failures) == 0) {
+    tgt$failures$needed_by <- list()
+    state$packages$target <- tgt
+    return(list(state = state, effects = effects))
+  }
+  wanted <- wanted_packages(state$graph, state$file$header)
+  gh <- unname(source_keys(state$file$header, state$file$lock,
+                           state$packages$sources_for %||% character()))
+  repos <- needed_repos(state$file$header, state$options$r,
+                        releases_at(state$packages, state$file$header$snapshot))
+  needed <- c(gh, repos)
+  if (fetch) {
+    wanted_keys <- c(gh, repos[[1]], if (lock_has_bioc(state$file$lock)) repos[-1])
+    for (k in Filter(function(k) is.null(state$packages$indexes[[k]]), wanted_keys)) {
+      state$packages$indexes[[k]] <- new_index_slot("fetching")
+      effects <- c(effects, list(fx_fetch_index(k, repo_url(state$options$repos, k))))
+    }
+  }
+  indexes <- lapply(state$packages$indexes, function(s) s$index)
+  tgt$failures$needed_by <- failure_needed_by(tgt$failures$package, wanted, indexes, needed)
+  state$packages$target <- tgt
+  list(state = state, effects = effects)
+}
+
+#' For each failed package in `pkgs`, the wanted (direct) packages whose
+#' dependency closure reaches it, walking from each root through
+#' `find_in_indexes()` (resolve.R) with whatever indexes are loaded: a list
+#' parallel to `pkgs`. A root is included when the package is the root
 #' itself (a direct package that failed names itself here too) or appears
 #' anywhere in what it transitively depends on. No loaded index at all
-#' means no closure can be walked, so the result is `character()`: still
-#' correct, just less informative (install_failures()'s own finding is
-#' unaffected).
-failure_needed_by <- function(pkg, wanted, indexes, needed) {
-  roots <- character()
-  for (root in wanted) {
-    seen <- character()
+#' means no closure can be walked, so each answer is the roots that failed
+#' themselves: still correct, just less informative (install_failures()'s
+#' own finding is unaffected). Each root's closure is walked once, not
+#' once per failed package, since a dependency chain that fails usually
+#' fails many packages at once and this runs again as each index arrives.
+failure_needed_by <- function(pkgs, wanted, indexes, needed) {
+  closures <- lapply(wanted, function(root) {
+    seen <- new.env(hash = TRUE, parent = emptyenv())
     queue <- root
-    found <- FALSE
     while (length(queue) > 0) {
       cur <- queue[[1]]
       queue <- queue[-1]
-      if (cur %in% seen) next
-      seen <- c(seen, cur)
-      if (identical(cur, pkg)) { found <- TRUE; break }
+      if (!nzchar(cur) || !is.null(seen[[cur]])) next
+      seen[[cur]] <- TRUE
       hit <- find_in_indexes(cur, indexes, needed)
       if (!is.null(hit)) queue <- c(queue, hit$deps)
     }
-    if (found) roots <- c(roots, root)
-  }
-  roots
+    seen
+  })
+  lapply(pkgs, function(pkg) {
+    wanted[vapply(closures, function(seen) !is.null(seen[[pkg]]), logical(1))]
+  })
 }
 
 packages_view <- function(state) {

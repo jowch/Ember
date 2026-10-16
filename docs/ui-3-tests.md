@@ -451,8 +451,9 @@ New fixtures:
     rlang; index: broom needs rlang): `packages_view()` rows are broom
     `"failed"` and rlang `"failed"`; `library$failures` has rlang with
     `needed_by = "broom"`; problems has one row with `package = "rlang"`.
-    With no index loaded, `needed_by` is empty and broom is
-    `"not_installed"`.
+    With no index loaded, the failure fetches CRAN's index (#17); until
+    it arrives `needed_by` is empty and broom is `"not_installed"`, and
+    once it does, `needed_by = "broom"` and broom is `"failed"`.
 82. `project_ember()`: `library$log` is set only when failed;
     `check_wire()` passes; a second flush with the same state gives no
     patch under `ember/packages`.

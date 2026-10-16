@@ -1615,7 +1615,9 @@ worker message (`chdir`).
 - `packages_view()` (packages-core.R:718-779): `library` gains `log` and
   `failures` (plus `needed_by`: the direct packages whose dependency
   closure includes the failed one, from the snapshot's index when loaded,
-  `deps`, resolve.R:78-80, else `character()`). Per-row status is
+  `deps`, resolve.R:78-80, else `character()`; since #17 a failure with
+  no index loaded, as on a notebook opened with its lock, fetches it and
+  walks again when it arrives, and the card says "Needed by ..."). Per-row status is
   `"failed"` for failed packages and the direct packages that need one;
   every other row in a failed library is `"not_installed"`, not
   `"failed"` (the staging folder is never renamed, so none is installed).

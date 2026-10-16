@@ -122,6 +122,7 @@
     "t_ember_packages_source_add": "Add",
     "t_ember_packages_source_save": "Save",
     "t_ember_install_failed_title": "{{package}} couldn't install",
+    "t_ember_install_failed_needed_by": "Needed by {{packages}}.",
     "t_ember_install_failed_compile": "It doesn't build on R {{r_version}}.",
     "t_ember_install_failed_compile_dependency": "A package it needs, {{dep}} {{version}}, doesn't build on R {{r_version}}.",
     "t_ember_install_failed_configure": "It doesn't build on R {{r_version}}.",
