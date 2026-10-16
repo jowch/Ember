@@ -4,8 +4,12 @@ import { StateField, StateEffect, ViewPlugin, showTooltip, syntaxTree } from "..
  * The call the cursor is inside, if any: the innermost `Call` whose
  * `ArgList` contains the cursor (the same rule `get_selected_doc_from_state`
  * uses, ui-2.md "4d. Signatures"). `name`/`package` split a `pkg::name` or
- * `pkg:::name` callee; `pos` is where the tooltip anchors (the call's own
- * start, so it stays above the line while the user types arguments).
+ * `pkg:::name` callee; `pos` is where the tooltip anchors: the call's own
+ * start while the cursor is on the call's first line, so it stays put
+ * while the user types arguments, and the start of the cursor's line once
+ * the call spans several. CodeMirror puts the tooltip above that line, or
+ * below it when there is no room above, so it never covers the line being
+ * typed (#103).
  */
 function call_at_cursor(state) {
     let pos = state.selection.main.head
@@ -17,7 +21,8 @@ function call_at_cursor(state) {
             if (callee == null) return null
             let text = state.doc.sliceString(callee.from, callee.to)
             let m = text.match(/^([.\p{L}\p{N}_]+):::?([.\p{L}\p{N}_]+)$/u)
-            return { name: m ? m[2] : text, package: m ? m[1] : null, pos: call.from }
+            let line = state.doc.lineAt(pos)
+            return { name: m ? m[2] : text, package: m ? m[1] : null, pos: call.from >= line.from ? call.from : line.from }
         }
     }
     return null

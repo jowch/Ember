@@ -964,7 +964,10 @@ Page, `CellInput/pluto_autocomplete.js` rewritten for R:
 - Page: new `CellInput/signature_hint.js`, a CodeMirror plugin. When the
   cursor is inside a `Call`'s `ArgList`, it sends `ember_signature {name,
   package}` (debounced 150 ms, cached per name) and shows the answer with
-  `showTooltip` above the call.
+  `showTooltip` above the call. In a call spanning several lines it
+  anchors on the cursor's line instead, so that when there's no room above
+  and CodeMirror puts it below, it doesn't cover the line being typed
+  (#103).
 - Server: `ember_signature` handler; worker idle → `worker_query(signature)`
   (worker: `args(fn)` deparsed, the trailing `NULL` dropped); otherwise
   `signature_fallback(name, package)`: `formals()` of the function in the
