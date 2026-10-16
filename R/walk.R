@@ -477,6 +477,12 @@ walk_assignment <- function(e, scope, acc, op, pid = NA_integer_) {
     target_name <- extract_target_name(raw_target)
     if (is.null(target_name)) return(invisible())
     tpid <- extract_target_pid(acc$pd, raw_target, raw_target_pid)
+    # `x[i] %<>% sort` runs as `` x <- `[<-`(x, i, value = sort(x[i])) ``:
+    # the target is read as a value (`[`, `i`) and then replaced (`[<-`).
+    if (is.call(raw_target)) {
+      walk_expr(raw_target, scope, acc, raw_target_pid)
+      walk_replacement_target(raw_target, scope, acc, raw_target_pid)
+    }
     record_read(acc, scope, target_name, pos = pd_position(acc, tpid))
     record_definition(acc, scope, target_name, "replacement", pd_position(acc, tpid))
     return(invisible())

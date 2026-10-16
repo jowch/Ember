@@ -44,6 +44,12 @@ test_that("a replacement call inside a function body reads the function", {
   expect_setequal(refs(a), c("x", "[<-", "i"))
 })
 
+test_that("%<>% on a replacement target reads the getter and the setter", {
+  a <- read_cell("x[i] %<>% sort")
+  expect_setequal(defs(a), "x")
+  expect_setequal(refs(a), c("x", "i", "[", "[<-", "sort"))
+})
+
 test_that("the reference sits on the replacement call's head", {
   a <- read_cell("x <- list()\nr(x) <- 2")
   row <- a$references[a$references$name == "r<-", ]
