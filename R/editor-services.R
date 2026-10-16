@@ -328,13 +328,22 @@ notebook_definition_doc <- function(state, name) {
   NULL
 }
 
-#' Rd2HTML's cross-reference links (with `dynamic = TRUE`) read
-#' `../../pkg/help/topic`; LiveDocsTab.js already turns an `@ref` link into
-#' a new query (LiveDocsTab.js:126-135), so this is all the rewriting a
-#' help page needs. Pure; any other link (an external URL, an anchor) is
-#' left alone.
+#' Rd2HTML's links (with `dynamic = TRUE`) are relative to R's own help
+#' server, which the page isn't, so any left as they are would navigate the
+#' editor away. Cross-references (`../../pkg/help/topic`) become `@ref`
+#' links, which LiveDocsTab.js turns into a new query. The "Run examples"
+#' paragraph (`../Example/topic`) is dropped: the examples are on the page
+#' below it, and running them in the notebook's R would define names no
+#' cell defines. The footer's "Index" link (`00Index.html`) is dropped and
+#' its "[Package stats version 4.6.1]" text kept. Any other relative link
+#' (one that isn't `@ref`, an anchor, `http(s):` or `mailto:`) loses its
+#' `<a>` and keeps its text. LiveDocsTab.js opens external links in a new
+#' tab. Pure.
 rewrite_help_links <- function(html) {
-  gsub('(href=")\\.\\./\\.\\./([^/"]+)/help/([^"]+)(")', "\\1@ref \\2::\\3\\4", html %||% "", perl = TRUE)
+  html <- gsub('(href=")\\.\\./\\.\\./([^/"]+)/help/([^"]+)(")', "\\1@ref \\2::\\3\\4", html %||% "", perl = TRUE)
+  html <- gsub("(?is)<p>\\s*<a\\s+href\\s*=\\s*['\"]\\.\\./Example/[^'\"]*['\"]\\s*>[^<]*</a>\\s*</p>", "", html, perl = TRUE)
+  html <- gsub("(?is)\\s*<a\\s+href\\s*=\\s*['\"]00Index\\.html['\"]\\s*>[^<]*</a>", "", html, perl = TRUE)
+  gsub("(?is)<a\\b[^>]*?\\shref\\s*=\\s*(['\"])(?!@ref|#|https?:|mailto:)[^'\"]*\\1[^>]*>(.*?)</a>", "\\2", html, perl = TRUE)
 }
 
 #' Help HTML is a package's own Rd, not the notebook's: it must never run

@@ -46,6 +46,13 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
     // "Help tab") only makes sense for the latter.
     let explicit_ref = useRef(false)
 
+    // A link clicked in a help page is an explicit action too, not the
+    // cursor moving (#30).
+    let follow_link = (/** @type {string} */ query) => {
+        explicit_ref.current = true
+        on_update_doc_query(query)
+    }
+
     // This is all in a single state object so that we can update multiple field simultaneously
     let [state, set_state] = useState({
         shown_query: null,
@@ -201,7 +208,7 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
                 ></input>
             </div>
         </div>
-        <section class="ember-help-page" ref=${(ref) => ref != null && post_process_doc_node(ref, on_update_doc_query)}>
+        <section class="ember-help-page" ref=${(ref) => ref != null && post_process_doc_node(ref, follow_link)}>
             ${state.package != null && state.from_cursor
                 ? html`<p class="ember-help-package">${t("t_ember_help_follows_cursor", { package: state.package })}</p>`
                 : null}
@@ -210,7 +217,7 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
     `
 }
 
-const post_process_doc_node = (node, on_update_doc_query) => {
+const post_process_doc_node = (node, follow_link) => {
     // Apply syntax highlighting to code blocks:
 
     // In the standard HTML container we already do this for code.language-julia blocks,
@@ -223,15 +230,30 @@ const post_process_doc_node = (node, on_update_doc_query) => {
         highlight(code_element, "r")
     }
 
-    // Resolve @doc reference links:
+    // No link in a help page may navigate the editor away (#30). The
+    // server already rewrote or unwrapped R's relative links
+    // (rewrite_help_links(), R/editor-services.R); what's left is `@ref`
+    // (a new query), an anchor on the page, or an external URL.
     for (let anchor of node.querySelectorAll("a")) {
         const href = anchor.getAttribute("href")
-        if (href != null && href.startsWith("@ref")) {
+        if (href == null || anchor.hasAttribute("data-ember-cell")) continue
+        if (href.startsWith("@ref")) {
             const query = href.length > 4 ? href.substr(5) : anchor.textContent
             anchor.onclick = (e) => {
-                on_update_doc_query(query)
+                follow_link(query)
                 e.preventDefault()
             }
+        } else if (href.startsWith("#")) {
+            // A citation's link to its reference: scroll within the page,
+            // leaving the URL's hash (Notebook.js reads it as a cell id) alone.
+            anchor.onclick = (e) => {
+                e.preventDefault()
+                const target = href.length > 1 ? node.querySelector(`[id="${CSS.escape(href.substr(1))}"]`) : null
+                target?.scrollIntoView({ block: "start" })
+            }
+        } else {
+            anchor.target = "_blank"
+            anchor.rel = "noopener noreferrer"
         }
     }
 

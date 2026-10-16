@@ -198,3 +198,48 @@ test("help: the page fits the panel, is padded, and has no Rd header table or qu
   assert.equal(m.package_line, "stats · follows the cursor");
   assertNoProblems(page);
 });
+
+test("help: no link on a page leaves the notebook; a clicked link isn't labelled as following the cursor (#30)", { timeout: 120000 }, async (t) => {
+  const page = await open_idle_notebook(t, "help-links.server.log");
+  const start_url = page.url();
+  const p = await point_in_cell(page, "C", "lm(mpg", 1);
+  await page.mouse.click(p.x, p.y);
+  await page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper .ember-help-page h2")?.innerText === "Fitting Linear Models",
+    null, { timeout: 15000 });
+
+  const links = await page.evaluate(() => Array.from(document.querySelectorAll("#helpbox-wrapper .ember-help-page a[href]")).map((a) => ({
+    href: a.getAttribute("href"), target: a.getAttribute("target"), text: a.innerText,
+  })));
+  const relative = links.filter((l) => !/^(@ref |#|https?:|mailto:)/i.test(l.href));
+  assert.deepEqual(relative, [], "every link is @ref, an anchor or external");
+  const external = links.filter((l) => /^https?:/i.test(l.href));
+  assert.ok(external.length > 0, "lm's page has an external link (doi, CRAN)");
+  for (const l of external) assert.equal(l.target, "_blank", `${l.href} opens in a new tab`);
+  const text = await help_text(page);
+  assert.doesNotMatch(text, /Run examples/);
+  assert.match(text, /\[Package stats version [\d.]+\]/);
+
+  // A citation scrolls to its reference, within the panel, without
+  // touching the URL.
+  const citation = page.locator("#helpbox-wrapper .ember-help-page a.citation").first();
+  const target_id = (await citation.getAttribute("href")).slice(1);
+  await citation.click();
+  assert.equal(page.url(), start_url, "the citation link left the URL alone");
+  await page.waitForFunction((id) => {
+    const target = document.getElementById(id)?.getBoundingClientRect();
+    const panel = document.querySelector("#helpbox-wrapper").getBoundingClientRect();
+    return target != null && target.top >= panel.top - 1 && target.top <= panel.top + panel.height / 2;
+  }, target_id, { timeout: 5000 });
+
+  // A See Also link: a new page, still on the notebook, and asked for
+  // explicitly, so no "follows the cursor" line.
+  await page.locator('#helpbox-wrapper .ember-help-page a[href="@ref stats::summary.lm"]').first().click();
+  await page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper .ember-help-page h2")?.innerText === "Summarizing Linear Model Fits",
+    null, { timeout: 15000 });
+  assert.equal(await help_query(page), "stats::summary.lm");
+  assert.equal(await page.locator(".ember-help-package").count(), 0, "no 'follows the cursor' line after a clicked link");
+  assert.equal(page.url(), start_url);
+  assertNoProblems(page);
+});
