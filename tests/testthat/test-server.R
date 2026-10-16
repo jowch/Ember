@@ -2050,6 +2050,36 @@ test_that("start_server() prints its link, and prints it again when a browser as
   expect_equal(seen, paste0("A browser asked for Ember without its key. Open: ", handle$url, "\n"))
 })
 
+test_that("start_server()'s watcher waits on the child's pipe instead of reading it on a timer (#47)", {
+  skip_on_os("windows")  # Windows pipes can't be waited on: it reads every 0.5 s there
+  proc <- processx::process$new(
+    file.path(R.home("bin"), "Rscript"),
+    c("--vanilla", "-e", "cat('one\\n'); Sys.sleep(2); cat('two\\n'); Sys.sleep(2)"),
+    stdout = "|", stderr = "2>&1", cleanup = TRUE)
+  on.exit(proc$kill(), add = TRUE)
+  reads <- 0L
+  handle <- new.env(parent = emptyenv())
+  handle$url <- "http://127.0.0.1:1/?secret=s"
+  handle$output <- character()
+  handle$stopped <- FALSE
+  handle$process <- list(
+    read_output_lines = function() { reads <<- reads + 1L; proc$read_output_lines() },
+    get_output_connection = function() proc$get_output_connection(),
+    is_incomplete_output = function() proc$is_incomplete_output(),
+    is_alive = function() proc$is_alive())
+
+  expect_equal(watch_child(handle), "pipe")
+  # Until the watcher has read the pipe to its end. The deadline only keeps
+  # a broken watcher from hanging the suite.
+  deadline <- Sys.time() + 60
+  while (proc$is_incomplete_output() && Sys.time() < deadline) later::run_now(0.1)
+  expect_false(proc$is_incomplete_output())
+  expect_equal(handle$output, c("one", "two"))
+  # A read per line and one at the end, not one every 0.5 s through the
+  # child's 4 s of silence.
+  expect_lte(reads, 5L)
+})
+
 # ---- Cache headers: immutable for hashed vendor files, no-cache for the ----
 # ---- rest (ui-2-tests.md 15a) ----------------------------------------------
 
