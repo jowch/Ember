@@ -165,12 +165,13 @@ the start. The server polls the worker socket from its `later` loop every
 5 ms (about 2% of a core when idle), and must read a large worker message in
 pieces rather than all at once, so a big output can't stall it.
 
-No process the server starts outlives it. Workers and jobs (installs, index
-fetches) start with processx's supervisor, a separate process that sends them
-SIGTERM once the server is gone, even after a SIGKILL (#141, #147). A job also
-takes its own children with it (docs/packages.md). A worker doesn't: the
-server interrupts a cell with SIGINT to the worker itself, so processes a cell
-started can still outlive a killed server (#150).
+Workers and jobs (installs, index fetches) end when the server does. They
+start with processx's supervisor, a separate process that sends them SIGTERM
+once the server is gone, even after a SIGKILL (#141, #147). On Unix a job
+also takes its own children with it (docs/packages.md); on Windows that isn't
+checked yet (#148). A worker doesn't take its children: the server interrupts
+a cell with SIGINT to the worker itself, so processes a cell started can
+still outlive a killed server (#150).
 
 The server runs two ways. From an interactive R session, the R API starts
 it as a background process (processx) and returns a handle to get its URL and
