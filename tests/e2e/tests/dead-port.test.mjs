@@ -161,6 +161,31 @@ test("dead port: an outage shorter than 30 s reconnects without a dialog", async
   assertNoPageErrors(page);
 });
 
+// A computer that sleeps mid-outage: the wall clock jumps by the length of
+// the sleep, but the page's own timers don't run (#99). On wake the next
+// try fails because the network isn't up yet, and that alone must not be
+// "30 s of failures". setSystemTime moves Date.now() without firing timers.
+test("dead port: a sleep in the middle of an outage doesn't count towards the 30 s (#99)", async (t) => {
+  const { page } = await openThenKillPort(t, "dead-port-sleep");
+  const dialog = page.getByRole("alertdialog", { name: "Can't reach Ember here" });
+
+  // One failed try, then an hour's sleep.
+  await page.clock.fastForward(1000);
+  await page.waitForTimeout(200);
+  await page.clock.setSystemTime(await page.evaluate(() => Date.now() + 60 * 60 * 1000));
+
+  // Tries after waking, about 20 s of the page's own waits: still no dialog.
+  for (let moved = 0; moved < 20000; moved += 1000) {
+    await page.clock.fastForward(1000);
+    await page.waitForTimeout(100);
+  }
+  assert.deepEqual(await page.evaluate(() => window.ember_dialogs.map((d) => d.title)), []);
+
+  // It still says so once the outage has lasted 30 s on its own clock.
+  await fastForwardUntil(page, dialog);
+  assertNoPageErrors(page);
+});
+
 // Something at the address that accepts the websocket and closes it before
 // Ember's "connect" reply (Ember itself does this for a page from another
 // origin) is a failed try too: the page says it can't reach Ember, instead
