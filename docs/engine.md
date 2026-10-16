@@ -268,10 +268,13 @@ Follow-ups to act on are [GitHub issues](https://github.com/jowch/Ember/issues).
 - **Accepted limit:** undoing a cell's `attach()` or `detach()` is best
   effort. An entry that left the search path can't be recreated.
 
-- **Measured:** rebuilding the graph after an edit takes 30 ms at 100
-  cells, 64 ms at 500 and 590 ms at 2000, spread across step 1's
-  `notebook_graph()` with no single hot spot. Fine for typical notebooks;
-  worth optimising before very large ones are common.
+- **Measured:** rebuilding the graph after an edit grows about linearly
+  with the cell count: on a cloud container, 58 ms at 500 cells and 0.29 s
+  at 2000, against 0.34 s and 2.06 s before #43. Two things made it
+  quadratic: per-cell lookups by name in named lists and vectors (each one
+  scans the names), and resolving every cell's view again. Lists keyed by
+  cell are now read by position, and a cell whose analysis and learned
+  names are unchanged keeps its view from the previous graph.
 - **Measured:** once `later` has run callbacks in a process,
   `socketSelect()` with a positive timeout returns `FALSE` at once even
   when a socket is readable (R 4.6.1, later 1.4.8); a zero timeout still

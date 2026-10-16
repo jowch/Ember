@@ -63,7 +63,8 @@
 #   rendered     cell, token, display   display is NULL when the cell has no
 #                                       kept value to page or re-render
 #   completions  id, token, items = list(name, kind, notebook), too_long
-#   help_page    id, found, topic, package, html, matches (packages, when several)
+#   help_page    id, found, topic, package, html, matches (packages, when several),
+#                error, tried_all_packages
 #   signature    id, text             NULL if not a function
 #
 # complete/help/signature are answered outside the run loop's ordering
@@ -265,7 +266,8 @@ handle_next <- function() {
     help = {
       r <- help_lookup(msg$topic, msg$package, isTRUE(msg$all_packages))
       send(list(type = "help_page", id = msg$id, found = r$found, topic = r$topic,
-               package = r$package, html = r$html, matches = r$matches))
+               package = r$package, html = r$html, matches = r$matches, error = r$error,
+               tried_all_packages = r$tried_all_packages))
     },
     signature = send(list(type = "signature", id = msg$id, text = worker_signature(msg$name, msg$package))),
     quit = quit(save = "no"),
@@ -2378,7 +2380,11 @@ complete_line <- function(line, cursor) {
 #' Rd, `Rd2HTML()` renders it to a temp file (`dynamic = TRUE`, so
 #' cross-reference links are the short `../../pkg/help/topic` form the
 #' server's `rewrite_help_links()` expects), and only the `<body>` is
-#' returned -- the page already has its own `<html>`/`<head>`.
+#' returned -- the page already has its own `<html>`/`<head>`. An error
+#' anywhere in the lookup comes back as `error`, its message, so the page
+#' can say so instead of looking like no match (#121). `tried_all_packages`
+#' is `help()`'s own attribute of that name: whether it searched every
+#' installed package, so a "not found" says how far it looked (#121).
 help_lookup <- function(topic, package, all_packages = FALSE) {
   tryCatch({
     matches <- if (!is.null(package)) {
@@ -2390,8 +2396,10 @@ help_lookup <- function(topic, package, all_packages = FALSE) {
       }
       found
     }
+    tried <- isTRUE(attr(matches, "tried_all_packages"))
     if (length(matches) == 0) {
-      return(list(found = FALSE, topic = topic, package = package, html = NULL, matches = list()))
+      return(list(found = FALSE, topic = topic, package = package, html = NULL, matches = list(),
+                  tried_all_packages = tried))
     }
 
     # A help path is <libpath>/<package>/help/<topic> (index.search()'s
@@ -2402,7 +2410,7 @@ help_lookup <- function(topic, package, all_packages = FALSE) {
       matches_list <- Map(function(p, path) list(package = p, topic = basename(path)),
                           pkgs, as.character(matches))
       return(list(found = TRUE, topic = topic, package = package, html = NULL,
-                  matches = unname(matches_list)))
+                  matches = unname(matches_list), tried_all_packages = tried))
     }
 
     rd_path <- as.character(matches)[1]
@@ -2414,8 +2422,10 @@ help_lookup <- function(topic, package, all_packages = FALSE) {
     full <- paste(readLines(out, warn = FALSE), collapse = "\n")
     body <- sub("(?s).*<body>", "", full, perl = TRUE)
     body <- sub("(?s)</body>.*", "", body, perl = TRUE)
-    list(found = TRUE, topic = topic, package = pkg_name, html = body, matches = list())
-  }, error = function(e) list(found = FALSE, topic = topic, package = package, html = NULL, matches = list()))
+    list(found = TRUE, topic = topic, package = pkg_name, html = body, matches = list(),
+         tried_all_packages = tried)
+  }, error = function(e) list(found = FALSE, topic = topic, package = package, html = NULL, matches = list(),
+                              error = conditionMessage(e)))
 }
 
 #' `args(fn)` deparsed into `name(arg1, arg2 = default, ...)`, the trailing

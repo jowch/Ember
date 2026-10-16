@@ -972,7 +972,11 @@ handlers <- list(
         # `package` NULL when ambiguous (reply$matches non-empty): the page
         # then shows the pkg::topic choices, not one page to attribute.
         pkg <- if (length(reply$matches %||% list()) > 0) NULL else reply$package
-        send(cl, reply_message(req, "docs", list(status = THUMBS_UP, doc = doc, package = pkg)))
+        # How far the lookup looked: the scope the page asked for, and
+        # whether help() searched every installed package (#121).
+        send(cl, reply_message(req, "docs", list(status = THUMBS_UP, doc = doc, package = pkg,
+                                                 all_packages = help_msg$all_packages,
+                                                 tried_all_packages = isTRUE(reply$tried_all_packages))))
       } else if (was_idle) {
         msg <- "<p>R didn't answer in time. Trying again\u2026</p>"
         send(cl, reply_message(req, "docs", list(status = HOURGLASS, doc = msg)))
