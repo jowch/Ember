@@ -522,6 +522,79 @@ walk_method_registrar <- function(e, scope, acc, name, arg_pids = NULL) {
   walk_call_args(e, scope, acc, arg_pids)
 }
 
+#' The S4 class names a call writes as strings (see `class_name_calls`):
+#' each one it needs is a read of `.__C__<name>`, and the class it creates,
+#' outside a function body, is a definition of that name with kind
+#' `"class"`. Reads come first, so a class never reads itself. A computed
+#' name is nothing here; the worker still learns the class when the cell
+#' runs. Arguments are matched as R matches them, by exact name and then
+#' by position among the formals left open (partial names aren't matched).
+walk_class_names <- function(e, scope, acc, name, arg_pids = NULL) {
+  spec <- class_name_calls[[name]]
+  args <- as.list(e)[-1]
+  if (length(args) == 0) return(invisible())
+  if (is.null(arg_pids)) arg_pids <- rep(list(NA_integer_), length(args))
+  nms <- names2(args)
+  unnamed <- which(nms == "")
+  open_formals <- spec$formals[!(spec$formals %in% nms)]
+  arg_index <- function(formal) {
+    i <- which(nms == formal)
+    if (length(i) >= 1) return(i[1])
+    k <- match(formal, open_formals)
+    if (is.na(k) || length(unnamed) < k) NA_integer_ else unnamed[k]
+  }
+  for (formal in spec$read) {
+    i <- arg_index(formal)
+    if (is.na(i) || missing_arg(args[[i]])) next
+    pos <- pd_position(acc, arg_pids[[i]])
+    a <- args[[i]]
+    # A slot or field class is a soft read ("slot"); a superclass, and any
+    # other class position, a hard one. In `representation()` the unnamed
+    # elements are superclasses and the named ones slots.
+    slots <- formal %in% class_slot_args
+    reps <- is.call(a) && is.symbol(a[[1]]) && identical(as.character(a[[1]]), "representation")
+    hard <- if (slots) character() else literal_class_names(a, named = !reps)
+    soft <- if (slots || reps) literal_class_names(a, unnamed = FALSE) else character()
+    for (cls in hard) record_read(acc, scope, class_binding(cls), pos = pos)
+    for (cls in setdiff(soft, hard)) record_read(acc, scope, class_binding(cls), where = "slot", pos = pos)
+  }
+  if (!is.null(spec$define) && !in_function(scope)) {
+    i <- arg_index(spec$define)
+    if (!is.na(i) && !missing_arg(args[[i]])) {
+      a <- args[[i]]
+      if (is.character(a) && length(a) == 1 && !is.na(a) && nzchar(a)) {
+        record_top_level_definition(acc, scope, class_binding(a), "class",
+                                    pd_position(acc, arg_pids[[i]]))
+      }
+    }
+  }
+  invisible()
+}
+
+#' The class names in a literal: a string, or the strings among the
+#' elements of `c()`, `list()`, `representation()` or `signature()`
+#' (`signature(x = "Foo")`, `representation("VIRTUAL", r = "numeric")`).
+#' `unnamed = FALSE` keeps only named elements (`slots = c(r =
+#' "numeric")`), `named = FALSE` only unnamed ones. Anything computed is
+#' skipped.
+literal_class_names <- function(a, unnamed = TRUE, named = TRUE) {
+  is_name <- function(x) is.character(x) && length(x) == 1 && !is.na(x) && nzchar(x)
+  if (is.character(a)) return(if (unnamed) unique(a[!is.na(a) & nzchar(a)]) else character())
+  if (!is.call(a) || !is.symbol(a[[1]]) ||
+      !(as.character(a[[1]]) %in% c("c", "list", "representation", "signature"))) {
+    return(character())
+  }
+  parts <- as.list(a)[-1]
+  pnms <- names2(parts)
+  out <- character()
+  for (j in seq_along(parts)) {
+    if (missing_arg(parts[[j]])) next
+    p <- parts[[j]]
+    if (is_name(p) && (if (nzchar(pnms[j])) named else unnamed)) out <- c(out, p)
+  }
+  unique(out)
+}
+
 #' A literal class or S4 signature as one string, `NULL` when computed:
 #' `"Foo"`, `c("Foo", "Bar")`, `signature("Foo", "Bar")` and
 #' `signature(x = "Foo")` give `"Foo"`, `"Foo,Bar"`, `"Foo,Bar"` and

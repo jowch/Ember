@@ -325,10 +325,11 @@ resolve_cells <- function(analyses, learned, ids) {
     private <- defs_all[is_private_name(defs_all)]
     definitions <- defs_all[!is_private_name(defs_all)]
     references <- unique(c(references_of(a), learned_refs))
+    soft_references <- setdiff(unique(a$references$name[a$references$where == "slot"]), references)
     attaches <- unique(a$packages$name[a$packages$attached])
 
     cells[[id]] <- list(definitions = definitions, learned = learned_defs,
-                        references = references,
+                        references = references, soft_references = soft_references,
                         packages = unique(a$packages$name),
                         attaches = attaches, settings = a$settings,
                         setting_keys = setting_keys_of(a$settings, learned_settings),
@@ -478,10 +479,17 @@ resolve_edges <- function(cells, exports, ids, disabled = character()) {
   # edge without a special case here. Each cell's own edges are built as
   # plain vectors and combined with `unlist()` once, rather than growing
   # one shared vector element by element.
-  ref_edges <- lapply(ids, function(b) {
-    refs <- cells[[b]]$references
-    m_b <- cells[[b]]$methods
-    refs <- c(refs, setdiff(unique(m_b$generic[m_b$form != "name"]), refs))
+  # `soft = TRUE` resolves the cells' soft references (slot and field
+  # classes) instead, the same way; they are added after, by
+  # add_soft_edges().
+  edges_of <- function(soft) lapply(ids, function(b) {
+    if (soft) {
+      refs <- cells[[b]]$soft_references
+    } else {
+      refs <- cells[[b]]$references
+      m_b <- cells[[b]]$methods
+      refs <- c(refs, setdiff(unique(m_b$generic[m_b$form != "name"]), refs))
+    }
     if (length(refs) == 0) return(NULL)
     resolve_ref <- function(n) {
       definers <- definer_lookup[[n]]
@@ -519,17 +527,63 @@ resolve_edges <- function(cells, exports, ids, disabled = character()) {
         name = unlist(lapply(parts, `[[`, "name"), use.names = FALSE),
         via = unlist(lapply(parts, `[[`, "via"), use.names = FALSE))
   })
-  ref_edges <- Filter(Negate(is.null), ref_edges)
+  as_edges <- function(ref_edges) {
+    ref_edges <- Filter(Negate(is.null), ref_edges)
+    from <- unlist(lapply(ref_edges, `[[`, "from"), use.names = FALSE)
+    to <- unlist(lapply(ref_edges, `[[`, "to"), use.names = FALSE)
+    name <- unlist(lapply(ref_edges, `[[`, "name"), use.names = FALSE)
+    via <- unlist(lapply(ref_edges, `[[`, "via"), use.names = FALSE)
+    if (is.null(from)) from <- to <- name <- via <- character()
+    data.frame(from = from, to = to, name = name, via = via, stringsAsFactors = FALSE)
+  }
 
-  from <- unlist(lapply(ref_edges, `[[`, "from"), use.names = FALSE)
-  to <- unlist(lapply(ref_edges, `[[`, "to"), use.names = FALSE)
-  name <- unlist(lapply(ref_edges, `[[`, "name"), use.names = FALSE)
-  via <- unlist(lapply(ref_edges, `[[`, "via"), use.names = FALSE)
-
-  if (is.null(from)) from <- to <- name <- via <- character()
-  edges <- data.frame(from = from, to = to, name = name, via = via, stringsAsFactors = FALSE)
+  edges <- as_edges(edges_of(soft = FALSE))
+  if (any(vapply(ids, function(id) length(cells[[id]]$soft_references) > 0, logical(1)))) {
+    edges <- add_soft_edges(edges, as_edges(edges_of(soft = TRUE)))
+  }
   if (has_methods) edges <- add_method_edges(edges, cells, ids, method_lookup)
   edges
+}
+
+#' Soft reference edges: a slot or field class (`representation(r =
+#' "Shape")`, `slots =`, `fields =`). R doesn't need a slot's class when
+#' the class is defined (it warns "undefined slot classes" and checks
+#' later, at `new()`), so two classes whose slots name each other run fine
+#' under `Rscript`. Each candidate is added, in order, only when its
+#' target doesn't already depend on its source, as method edges are
+#' (`add_method_edges()`): the edge orders the cells and reruns the user
+#' when it can, and never makes a cycle.
+add_soft_edges <- function(edges, candidates) {
+  if (nrow(candidates) == 0) return(edges)
+  upstream <- new.env(parent = emptyenv())
+  for (i in seq_len(nrow(edges))) {
+    upstream[[edges$from[i]]] <- c(upstream[[edges$from[i]]], edges$to[i])
+  }
+  reaches <- function(start, goal) {
+    seen <- new.env(parent = emptyenv())
+    stack <- start
+    while (length(stack) > 0) {
+      v <- stack[length(stack)]
+      stack <- stack[-length(stack)]
+      if (identical(v, goal)) return(TRUE)
+      for (u in upstream[[v]]) {
+        if (is.null(seen[[u]])) {
+          seen[[u]] <- TRUE
+          stack <- c(stack, u)
+        }
+      }
+    }
+    FALSE
+  }
+  keep <- logical(nrow(candidates))
+  for (i in seq_len(nrow(candidates))) {
+    b <- candidates$from[i]
+    t <- candidates$to[i]
+    if (reaches(t, b)) next
+    keep[i] <- TRUE
+    upstream[[b]] <- c(upstream[[b]], t)
+  }
+  rbind(edges, candidates[keep, , drop = FALSE])
 }
 
 #' Method edges (the Pluto model, design.md "Methods"): a cell reading a
@@ -694,6 +748,13 @@ find_errors <- function(cells, analyses, edges, ids, components,
       }
     }
     lines_df <- do.call(rbind, lines_rows)
+    if (is_class_binding(n)) {
+      errors[[length(errors) + 1]] <- new_graph_error(
+        kind = "multiple_definitions", cells = defs, names = n, lines = lines_df,
+        message = sprintf("Class %s is defined in more than one cell.", class_of_binding(n)),
+        fixes = "Keep the class in one cell and remove the others")
+      next
+    }
     fix <- if ("replacement" %in% kinds) {
       sprintf("Move the line into the cell that defines %s, or name the result (%s2 <- ...)", n, n)
     } else if (length(kinds) > 0 && all(kinds == "for")) {
@@ -834,16 +895,18 @@ find_errors <- function(cells, analyses, edges, ids, components,
                       edges$via != "setting" & !is.na(edges$name), , drop = FALSE]
     inside <- inside[order(match(inside$to, ids)), , drop = FALSE]
     names_in_comp <- unique(inside$name)
-    fix <- if (length(names_in_comp) == 1) {
-      sprintf("If %s is a column name, rename the global", names_in_comp)
-    } else if (length(names_in_comp) > 1) {
+    # A class can't be a column name, so the column-name fix leaves them out.
+    columns <- names_in_comp[!is_class_binding(names_in_comp)]
+    fix <- if (length(columns) == 1) {
+      sprintf("If %s is a column name, rename the global", columns)
+    } else if (length(columns) > 1) {
       sprintf("If one of %s is a column name, rename the global",
-              paste(names_in_comp, collapse = ", "))
+              paste(columns, collapse = ", "))
     } else {
       character()
     }
     cycle_msg <- if (length(names_in_comp) > 0) {
-      sprintf("%s form a cycle.", paste(names_in_comp, collapse = ", "))
+      sprintf("%s form a cycle.", paste(display_names(names_in_comp), collapse = ", "))
     } else {
       # No named edge inside the component (every link is a bare
       # for dependency): name no cell (cell ids are UUIDs and

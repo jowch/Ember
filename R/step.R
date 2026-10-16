@@ -1442,17 +1442,26 @@ reduce_wk_done <- function(state, event) {
       }
     }
   } else {
-    changed_removed <- union(report$changed %||% character(), report$removed %||% character())
+    # A changed class binding is R's own bookkeeping, not a reassignment:
+    # `setClass("Circle", contains = "Shape")` and `setClassUnion()` record
+    # the new subclass in `.__C__Shape`.
+    changed <- report$changed %||% character()
+    changed <- changed[!is_class_binding(changed)]
+    changed_removed <- union(changed, report$removed %||% character())
     owners <- unique(unlist(lapply(changed_removed, function(n) {
       Find(function(cid) !identical(cid, id) && n %in% state$graph$cells[[cid]]$definitions,
           state$graph$ids)
     }), use.names = FALSE))
     if (length(owners) > 0) {
       error <- new_run_error("multiple_definitions",
-        message = sprintf("%s changed a global defined elsewhere.", paste(changed_removed, collapse = ", ")),
+        message = sprintf("%s changed a global defined elsewhere.", paste(display_names(changed_removed), collapse = ", ")),
         names = changed_removed,
-        fixes = sprintf("Move the line into the cell that defines %s, or name the result (%s2 <- ...)",
-                        changed_removed[1], changed_removed[1]))
+        fixes = if (is_class_binding(changed_removed[1])) {
+          sprintf("Change %s only in the cell that defines it", display_names(changed_removed[1]))
+        } else {
+          sprintf("Move the line into the cell that defines %s, or name the result (%s2 <- ...)",
+                  changed_removed[1], changed_removed[1])
+        })
     }
   }
   status <- if (!is.null(error)) "error" else (report$status %||% "ok")

@@ -352,9 +352,32 @@ the rerun the dropped edge misses.
   cell's last expression gets no edge to the `print` methods, as in Pluto
   (whose own test for this is marked broken). Otherwise nearly every cell
   with output would rerun on any `print` method edit.
+- **Classes named as strings.** R keeps class `Circle` in the global
+  binding `.__C__Circle`, so `setClass("Circle")`, `setClassUnion()` and
+  `setRefClass()` with a literal name define that name, and a string in a
+  class position reads it: `new()`'s class, a `setMethod()` signature,
+  `contains =`, slot and field classes, `setValidity()`, `is()`, `as()`,
+  `setAs()` and `getClass()`. These edges are ordinary definition edges,
+  not soft ones: `new("Circle")` can't run before the class exists. Slot
+  and field classes (`representation(r = "Shape")`, `slots =`, `fields =`)
+  are the exception: R only warns about an undefined slot class and checks
+  it at `new()`, so two classes whose slots name each other run under
+  `Rscript`, and their edges are soft like method edges. A subclass or
+  union rewriting its superclass's binding (R records the subclass there)
+  is not "changing a global defined elsewhere". A class
+  exported by a package (`.__C__X` in its exports) resolves to the cell
+  that attaches it. Class bindings are the one public dot-name. The same
+  class in two cells is a "Multiple definitions" error, and messages call
+  it "class Circle". When the worker removes a cell's globals (the cell is
+  removed, disabled, rerun or failed), it removes a class with
+  `removeClass()`: dropping the binding alone leaves the class in the
+  methods package's cache, and `new("Circle")` would go on working.
 - **Not covered yet:** group generics (`Ops.money`, `Math.interval`), `$`
-  methods (the walker doesn't read `$` as a call), `setClass()`,
-  `setValidity()` and `setReplaceMethod()`.
+  methods (the walker doesn't read `$` as a call), `setReplaceMethod()`
+  (`radius(x) <- v` isn't read as a use of `radius<-`), `setOldClass()` as
+  a class definer (the worker learns it after a run), and further class
+  readers (`slotNames()`, `getSlots()`, `extends()`, `isVirtualClass()`,
+  the signatures of `existsMethod()`, `getMethod()`, `selectMethod()`).
 
 ### Formulas
 

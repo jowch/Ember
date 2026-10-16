@@ -19,7 +19,8 @@
 #'   `file`. `kind` is one of `"assign"` (`x <- v`, `=`, `->`, top-level
 #'   `<<-`), `"replacement"` (`df$col <- v`, `names(x) <- v`, `x %<>% f()`:
 #'   the innermost target), `"for"`, `"function"`, `"call"` (`assign("x",
-#'   v)`, `data(iris)`), `"generic"` (`setGeneric("area")`), `"alias"`
+#'   v)`, `data(iris)`), `"generic"` (`setGeneric("area")`), `"class"`
+#'   (`setClass("Circle")` defines `.__C__Circle`), `"alias"`
 #'   (`box::use(dplyr[mutate])` binds `mutate`). `file` is `NA` for the cell's own code, else the sourced
 #'   file's path. Dot-names are included; the graph decides what private
 #'   means. A name defined more than once at distinct positions (rare: e.g.
@@ -28,11 +29,13 @@
 #' * `references`: data frame `name`, `line`, `col`, `end_col`, `where`,
 #'   `file`. Names read at the top level before the cell defines them, plus
 #'   free names inside function bodies that the cell never defines. `where`
-#'   is `"code"` or `"formula"`. Names local to functions, `local()`, and
+#'   is `"code"`, `"formula"` or `"slot"` (a slot or field class,
+#'   `representation(r = "Shape")`: a soft read; see `add_soft_edges()`). Names local to functions, `local()`, and
 #'   formula columns are not here. Function heads (`helper()`) are
 #'   references. A name read more than once is one row per distinct
 #'   position (deduplicated on `name`/`line`/`col`/`where`/`file`, not on
-#'   `name` alone); `references_of()` still returns unique names.
+#'   `name` alone); `references_of()` still returns unique names, without
+#'   the `"slot"` rows.
 #' * `packages`: data frame `name`, `attached`, `line`. `attached` is `TRUE`
 #'   for `library`, `require`, `pacman::p_load`; `FALSE` for `pkg::fn`,
 #'   `requireNamespace`, `box::use`. A package can appear once per line. A
@@ -280,7 +283,8 @@ definitions_of <- function(analysis) {
 
 #' Which names the cell reads: unique, source order.
 references_of <- function(analysis) {
-  unique(analysis$references$name)
+  r <- analysis$references
+  unique(r$name[r$where != "slot"])
 }
 
 #' Source-order line of a top-level expression.
