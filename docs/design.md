@@ -795,7 +795,7 @@ returning notebook's library is rebuilt from the cache in seconds, or from
 the lock. The shared cache is what grows, since it keeps every version ever
 installed. The package view shows disk use (libraries, cache and indexes,
 measured when the tab opens; built, #38). It only reports for now: the
-"clean up" button is not built, so `ember::clean()` is the way to delete
+"clean up" button is not built (#128), so `ember::clean()` is the way to delete
 from R, also clearing cache entries no library uses; hosts such as Endeavor
 call it through the R API.
 

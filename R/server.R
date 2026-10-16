@@ -1113,17 +1113,20 @@ handlers <- list(
                      error = function(e) e)
     answer <- function(message) send(cl, reply_message(req, "ember_disk_use", message))
     if (inherits(proc, "error")) return(answer(list(error = conditionMessage(proc))))
-    out <- ""
+    out <- ""; err <- ""
     poll <- function() {
+      # Both pipes are drained while it runs, so a child that writes more
+      # than a pipe buffer can't block on a full stderr.
       out <<- paste0(out, tryCatch(proc$read_output(), error = function(e) ""))
+      err <<- paste0(err, tryCatch(proc$read_error(), error = function(e) ""))
       if (proc$is_alive()) return(later::later(poll, 0.1))
       out <<- paste0(out, tryCatch(proc$read_all_output(), error = function(e) ""))
+      err <<- paste0(err, tryCatch(proc$read_all_error(), error = function(e) ""))
       use <- tryCatch(jsonlite::fromJSON(out), error = function(e) NULL)
       if (identical(proc$get_exit_status(), 0L) && is.list(use) && !is.null(use$cache)) {
         answer(list(libraries = use$libraries, cache = use$cache, indexes = use$indexes,
                     exact = isTRUE(use$exact)))
       } else {
-        err <- tryCatch(proc$read_all_error(), error = function(e) "")
         answer(list(error = if (nzchar(err)) err else "could not measure disk use"))
       }
     }
