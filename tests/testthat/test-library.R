@@ -296,21 +296,6 @@ test_that("job_leave by the last subscriber kills the process (63)", {
   expect_null(jobs[[key]])
 })
 
-#' TRUE while `pid` is a running process: not gone and not a zombie (an
-#' orphan's parent is PID 1, which in a container may never reap it).
-pid_running <- function(pid) {
-  st <- suppressWarnings(system2("ps", c("-o", "stat=", "-p", pid), stdout = TRUE, stderr = FALSE))
-  length(st) > 0 && nzchar(trimws(st[1])) && !startsWith(trimws(st[1]), "Z")
-}
-
-#' Waits until `pid` is no longer running. The deadline only keeps a
-#' broken kill from hanging the suite.
-wait_pid_gone <- function(pid) {
-  deadline <- Sys.time() + 60
-  while (pid_running(pid) && Sys.time() < deadline) Sys.sleep(0.05)
-  !pid_running(pid)
-}
-
 #' A job command that starts a grandchild (`sleep`, in the job's process
 #' group, as `R CMD INSTALL` is for an install), prints its pid, and waits.
 grandchild_cmd <- function() {
