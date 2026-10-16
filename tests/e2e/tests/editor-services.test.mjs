@@ -321,3 +321,55 @@ test("signature: the cursor after lm( shows a tooltip containing formula within 
   assertNoProblems(page);
 });
 
+// #34: the tooltip sits above the call's line. For a call on a cell's
+// first line that is over the cell before it, and a click there must reach
+// that cell, not the tooltip.
+test("signature: a click on the tooltip lands in the code under it (#34)", async (t) => {
+  const notebook = tempNotebook("rich.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-signature-click.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await page.hover(cellSelector("DF"));
+  await page.locator(`${cellSelector("DF")} button.add_cell.after`).click({ force: true });
+  const newCellId = await page.evaluate((bid) => {
+    const cells = Array.from(document.querySelectorAll("pluto-cell"));
+    const i = cells.findIndex((c) => c.id === bid);
+    return cells[i + 1]?.id ?? null;
+  }, "DF");
+  const newSel = `pluto-cell[id="${newCellId}"]`;
+
+  // Room above the cell, so CodeMirror shows the tooltip above the call's
+  // line rather than flipping it below.
+  await page.locator(newSel).evaluate((el) => el.scrollIntoView({ block: "center" }));
+  // How far the tooltip reaches up depends on fonts and how the signature
+  // wraps, which differ by platform. A minimum height makes it cover DF's
+  // line on every platform; what this test checks is where the click goes.
+  await page.addStyleTag({ content: ".cm-ember-signature-tooltip { min-height: 8em; }" });
+
+  await page.locator(`${newSel} .cm-content`).click();
+  await page.keyboard.type("read.table(", { delay: 10 });
+  const tooltip = page.locator(".cm-ember-signature-tooltip");
+  await tooltip.waitFor({ timeout: 30000 });
+
+  // Click in the middle of where the tooltip and DF's line overlap.
+  const box = await tooltip.boundingBox();
+  const df_line = await page.locator(`${cellSelector("DF")} .cm-line`).first().boundingBox();
+  const left = Math.max(box.x, df_line.x), right = Math.min(box.x + box.width, df_line.x + df_line.width);
+  const top = Math.max(box.y, df_line.y), bottom = Math.min(box.y + box.height, df_line.y + df_line.height);
+  assert.ok(left < right && top < bottom, "the tooltip covers DF's line");
+  const x = (left + right) / 2;
+  const y = (top + bottom) / 2;
+
+  await page.mouse.click(x, y);
+  await tooltip.waitFor({ state: "detached", timeout: 30000 });
+  await page.keyboard.type("Z");
+  assert.match(await page.locator(`${cellSelector("DF")} .cm-line`).first().innerText(), /Z/, "the click put the cursor in DF");
+  assert.equal(await page.locator(`${newSel} .cm-line`).first().innerText(), "read.table()", "the new cell is unchanged");
+
+  assertNoProblems(page);
+});
+

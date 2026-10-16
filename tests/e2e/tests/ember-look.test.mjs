@@ -239,6 +239,33 @@ test("look: with no custom code font set, cm-content renders in IBM Plex Mono, n
   assertNoProblems(page);
 });
 
+// #31: ask()/tell() mount their dialog on document.body, outside the
+// editor, so the dialog sets its own font instead of inheriting one.
+test("look: a tell() dialog renders in the UI font, not the browser's serif default (#31)", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "ember-look-dialog-font.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await page.evaluate(async () => {
+    const mod = await import("./common/dialogs.js");
+    mod.tell({ title: "Font check", body: "Some body text" });
+  });
+  const dialog = page.locator("dialog.ember-dialog[open]");
+  await dialog.waitFor();
+  const first_family = (el) => getComputedStyle(el).fontFamily.split(",")[0].trim().replace(/^["']|["']$/g, "");
+  assert.equal(await dialog.locator(".ember-dialog-title").evaluate(first_family), "Figtree");
+  assert.equal(await dialog.locator(".ember-dialog-text").evaluate(first_family), "Figtree");
+  assert.equal(await dialog.locator("button.primary").evaluate(first_family), "Figtree");
+  await page.screenshot({ path: path.join(artifactsDir(), "dialog-font.png") });
+  await dialog.locator("button.primary").click();
+
+  assertNoProblems(page);
+});
+
 // 123. Endeavor's panel hooks: #helpbox-wrapper, pluto-helpbox > header,
 // #live-docs-search once Help is open; open_bottom_right_panel(null) closes
 // it; header#pluto-nav and main pluto-notebook still exist.
