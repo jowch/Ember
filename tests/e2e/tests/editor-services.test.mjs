@@ -11,8 +11,8 @@ import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSe
 
 /** Resolves once the page hasn't scrolled for 10 frames in a row. The
  * check runs once a frame and returns a plain value: waitForFunction
- * returns at once if the function returns a Promise, whatever it then
- * resolves to, so a Promise-based check here wouldn't wait at all. */
+ * awaits a returned Promise and takes its value as final, even a falsy
+ * one, so a Promise-based check would never poll again. */
 const scroll_settled = (page) => page.waitForFunction(() => {
   const s = (window.__scroll_settled ??= { y: null, frames: 0 });
   if (window.scrollY !== s.y) {
@@ -520,6 +520,8 @@ test("signature: in a multi-line call at the top of the window, the tooltip leav
   }, null, { polling: "raf", timeout: 30000 }).then((h) => h.jsonValue());
 
   assert.equal(placed.line_number, 2, `the cursor is on the call's second line: ${JSON.stringify(placed)}`);
+  // #103 only happens below the line: with room above, main passes too.
+  assert.match(placed.class, /cm-tooltip-below/, `no room above, so the tooltip goes below: ${JSON.stringify(placed)}`);
   const overlap = Math.min(placed.tooltip[1], placed.cursor[1]) - Math.max(placed.tooltip[0], placed.cursor[0]);
   assert.ok(overlap <= 0, `the tooltip doesn't cover the text being typed: ${JSON.stringify(placed)}`);
 
