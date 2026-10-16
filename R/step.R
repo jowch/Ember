@@ -846,7 +846,7 @@ reduce_apply <- function(state, event) {
       if (!is_one_package_name(op$name)) {
         bad <- refused("not a package name", op)
       } else if (is.null(spec)) {
-        bad <- refused("a source is written \"github:user/repo\", optionally with @ and a branch, tag or commit, or as a github.com link", op)
+        bad <- refused("a source is written \"github:user/repo\", optionally with @ and a branch, tag or commit, or as a github.com link to the repository or to a branch, tag or commit", op)
       } else {
         src <- header$sources %||% character()
         src[[op$name]] <- spec

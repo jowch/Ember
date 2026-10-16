@@ -387,9 +387,13 @@ Built from increment 2 (#20).
   `remove_package_source()` are the edit ops for it. The op also takes
   a bare `user/repo`, and both the op and a header written by hand take
   a github.com link to the repository or to a branch, tag or commit's
-  page (`https://github.com/lab/mypkg/tree/dev`, `github_spec()`, #85);
-  either is saved in the `github:` form. Only github.com links: a GitHub
-  Enterprise host has its own API base (`ember_repos(github)`). A package with an
+  page (`https://github.com/lab/mypkg/tree/dev`, `.../commit/<sha>`,
+  `.../releases/tag/<tag>`; `github_spec()`, #85); either is saved in
+  the `github:` form. A folder's page (`.../tree/main/R`) reads as the
+  ref `main/R`, since a link can't tell a ref with a `/` from a ref and
+  a path, and the lookup then says there is no such ref. Only github.com
+  links: a GitHub Enterprise host has its own API base
+  (`ember_repos(github)`). A package with an
   entry comes from it, never from CRAN, even when CRAN has the name.
 - **One-row indexes.** Each entry is a repo key,
   `github/<user>/<repo>@<ref>` (`HEAD` when no ref is given), fetched by

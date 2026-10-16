@@ -89,9 +89,15 @@ test_that("a github.com link reads as the source it names, and any other link as
   expect_equal(github_spec("https://github.com/lab/mypkg/tree/v1.2"), "github:lab/mypkg@v1.2")
   expect_equal(github_spec("https://github.com/lab/mypkg/tree/feature/x/"), "github:lab/mypkg@feature/x")
   expect_equal(github_spec(paste0("https://github.com/lab/mypkg/tree/", C1)), paste0("github:lab/mypkg@", C1))
+  expect_equal(github_spec(paste0("https://github.com/lab/mypkg/commit/", C1)), paste0("github:lab/mypkg@", C1))
+  expect_equal(github_spec("https://github.com/lab/mypkg/releases/tag/v1.0"), "github:lab/mypkg@v1.0")
+  expect_equal(github_spec("https://github.com/lab/mypkg/tree/fix%2312"), "github:lab/mypkg@fix#12")
+  expect_equal(github_spec("HTTPS://GitHub.COM/Lab/MyPkg.GIT"), "github:Lab/MyPkg")
   # Pages that don't name the code to use, and other hosts.
   expect_null(github_spec("https://github.com/lab/mypkg/blob/main/R/a.R"))
   expect_null(github_spec("https://github.com/lab/mypkg/tree/"))
+  expect_null(github_spec("https://github.com/lab/mypkg/tree//x"))
+  expect_null(github_spec("https://github.com/lab/mypkg/releases"))
   expect_null(github_spec("https://github.com/lab"))
   expect_null(github_spec("https://github.example.com/lab/mypkg"))
   expect_null(github_spec("https://gitlab.com/lab/mypkg"))
@@ -519,7 +525,9 @@ test_that("a link is saved as its github: source, by the op and when the header 
   file <- parse_notebook(format_notebook(hand), new_id = new_id_seq(), version = "0.1.0")
   expect_equal(file$header$sources, c(toyC = "github:lab/toyC", other = "lab/other", bad = "cran:dplyr",
                                       page = "https://github.com/lab/toyC/issues"))
-  expect_false(grepl("https://", format_notebook(file), fixed = TRUE))
+  text <- format_notebook(file)
+  expect_true(grepl('# toyC = "github:lab/toyC"', text, fixed = TRUE))
+  expect_false(grepl("toyC.git", text, fixed = TRUE))
 })
 
 # ---- The Packages tab's rows (#78) ------------------------------------------

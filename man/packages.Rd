@@ -56,7 +56,8 @@ and \code{set_package_source()}/\code{remove_package_source()}.}
 \code{"github:user/repo"}, optionally with \code{@} and a branch, tag or commit
 (\code{"user/repo"} reads as the same, and so does a github.com link to the
 repository or to a branch, tag or commit's page,
-\code{"https://github.com/user/repo/tree/<ref>"}).}
+\code{".../tree/<ref>"}, \code{".../commit/<sha>"},
+\code{".../releases/tag/<tag>"}).}
 \item{date}{A date (anything \code{as.Date()} accepts). \code{preview_date(nb,
 Sys.Date())} is "update all".}
 \item{wait}{\code{TRUE} blocks until the preview is ready (or failed) or

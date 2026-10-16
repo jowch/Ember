@@ -318,19 +318,24 @@ is_github_link <- function(x) grepl("^(https?://)?(www\\.)?github\\.com/", trimw
 
 #' A github.com link -> its `github:` spec (#85): the repository's page,
 #' `https://github.com/user/repo`, with or without a trailing `/` or
-#' `.git`, is `"github:user/repo"`, and a branch, tag or commit's page,
-#' `.../tree/<ref>`, is `"github:user/repo@<ref>"`. A `?query` or
-#' `#fragment` (`#readme`) is dropped. Any other page of the repository (a
-#' file, an issue) is `NULL`: it doesn't say which code to use. Only
+#' `.git`, is `"github:user/repo"`, and the page of a branch, tag or
+#' commit (`.../tree/<ref>`, `.../commit/<sha>`, `.../releases/tag/<tag>`)
+#' is `"github:user/repo@<ref>"`, the ref percent-decoded. A `?query` or
+#' `#fragment` (`#readme`) is dropped. A folder's page,
+#' `.../tree/main/R`, reads as the ref `main/R`: a link can't tell a ref
+#' with a `/` from a ref and a path, so the lookup says there is no such
+#' ref. Any other page of the repository (a file, an issue) is `NULL`: it
+#' doesn't say which code to use. Only
 #' github.com: a GitHub Enterprise host (`ember_repos(github)`) has its own
 #' API base, which a link's host can't be matched to.
 github_link_spec <- function(x) {
   x <- sub("/+$", "", sub("[?#].*$", "", x))
-  m <- regmatches(x, regexec("^(https?://)?(www\\.)?github\\.com/([^/]+)/([^/]+)(/tree/(.+))?$",
+  m <- regmatches(x, regexec("^(https?://)?(www\\.)?github\\.com/([^/]+)/([^/]+)(/(tree|commit|releases/tag)/(.+))?$",
                              x, ignore.case = TRUE))[[1]]
   if (length(m) == 0) return(NULL)
-  repo <- sub("\\.git$", "", m[[5]])
-  ref <- m[[7]]
+  repo <- sub("\\.git$", "", m[[5]], ignore.case = TRUE)
+  ref <- utils::URLdecode(m[[8]])
+  if (startsWith(ref, "/")) return(NULL)
   paste0("github:", m[[4]], "/", repo, if (nzchar(ref)) paste0("@", ref))
 }
 
