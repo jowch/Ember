@@ -216,6 +216,12 @@ test_that("a setting in two cells is setting_conflict; two different settings ar
   expect_setequal(blocked_cells(g), c("A", "B"))
 })
 
+test_that("the load note's advice, the setting moved after the load into one cell, gives no conflict (#61)", {
+  g <- notebook_graph(list(S = "x <- 1", A = "library(mgcv)\noptions(mgcv.vc.logrange = 50)"), read_file = NULL)
+  expect_length(Filter(function(e) e$kind == "setting_conflict", g$errors), 0)
+  expect_equal(g$settings, "A")
+})
+
 test_that("a static setting and a learned one for the same key conflict", {
   g <- build_test_graph(list(
     A = fake_cell(code = "A", settings = c(Sys.setenv = "env:TZ")),

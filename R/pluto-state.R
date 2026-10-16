@@ -320,7 +320,9 @@ span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
 #'   (`list(name, found)` per setting), only for a settings cell: the
 #'   chip. `settings_found` is present, as `as_arr()` of names, only on the
 #'   run that found settings the cell wasn't known to set: the one-line
-#'   note. `split` is present, as `length(split_mixed(view$code))`,
+#'   note. `load_notes` is present, as `as_arr()` of `list(package,
+#'   setting)`, only on the run that loaded a package which overwrote a
+#'   setting a settings cell set: one note each (#61). `split` is present, as `length(split_mixed(view$code))`,
 #'   only when `view$errors` has a `mixed_text` error: the Split button's
 #'   label (Cell.js), answered by the `ember_split_cell` request (server.R).
 #'   `figure` is present, as `list(width, height)` inches, only when the
@@ -362,6 +364,7 @@ project_cell_result <- function(view, known_ids = NULL) {
             list(can_disable = can_disable),
             if (length(view$settings) > 0) list(settings = as_arr(view$settings)),
             if (length(view$settings_found) > 0) list(settings_found = as_arr(view$settings_found)),
+            if (length(view$load_notes) > 0) list(load_notes = as_arr(view$load_notes)),
             if (!is.null(split)) list(split = split),
             if (!is.null(figure)) list(figure = figure),
             if (length(view$variables) > 0) list(variables = as_arr(view$variables)))
