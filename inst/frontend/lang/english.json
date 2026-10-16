@@ -107,7 +107,7 @@
     "t_ember_packages_clean_up_libraries_other": "{{count}} libraries",
     "t_ember_packages_clean_up_entries_one": "{{count}} package cache entry",
     "t_ember_packages_clean_up_entries_other": "{{count}} package cache entries",
-    "t_ember_packages_clean_up_question": "Delete {{libraries}} not used by an open notebook or in the last day, and {{cache}} that only those need? This frees about {{bytes}}. A notebook whose library is deleted installs its packages again the next time it opens.",
+    "t_ember_packages_clean_up_question": "Delete {{libraries}} not used by an open notebook or in the last day, and {{cache}} no other library uses? This frees about {{bytes}}. A notebook whose library is deleted installs its packages again the next time it opens.",
     "t_ember_packages_clean_up_delete": "Delete",
     "t_ember_packages_clean_up_deleting": "Deleting…",
     "t_ember_packages_clean_up_nothing": "Nothing to clean up: every library is in use or was used in the last day.",

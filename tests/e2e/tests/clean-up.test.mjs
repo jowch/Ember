@@ -31,6 +31,7 @@ function seedCache() {
     }
     dir.create(file.path(${JSON.stringify(entry)}, "pkgStale"), recursive = TRUE)
     writeBin(raw(100000), file.path(${JSON.stringify(entry)}, "pkgStale", "R.rdb"))
+    Sys.setFileTime(${JSON.stringify(entry)}, Sys.time() - 7 * 86400)
     lib(${JSON.stringify(stale)}, 3, ${JSON.stringify(entry)})
     lib(${JSON.stringify(recent)}, 1 / 24, character())`;
   const res = spawnSync(process.env.EMBER_RSCRIPT ?? "Rscript", ["--vanilla", "-e", expr], { encoding: "utf8" });
@@ -66,7 +67,7 @@ test("packages tab: Clean up… shows what it would delete, and Delete deletes i
   const question = page.locator("#ember-packages-tab .ember-packages-clean-up-question");
   await question.waitFor({ timeout: 60000 });
   assert.match(await question.innerText(),
-    /^Delete 1 library not used by an open notebook or in the last day, and 1 package cache entry that only those need\? This frees about [\d.,]+ [KMGT]?B\./);
+    /^Delete 1 library not used by an open notebook or in the last day, and 1 package cache entry no other library uses\? This frees about [\d.,]+ [KMGT]?B\./);
   // The preview deleted nothing.
   assert.ok(existsSync(cache.stale) && existsSync(cache.entry) && existsSync(cache.recent));
 
@@ -77,6 +78,8 @@ test("packages tab: Clean up… shows what it would delete, and Delete deletes i
   assert.ok(!existsSync(cache.stale), "the stale library is deleted");
   assert.ok(!existsSync(cache.entry), "the cache entry only it listed is deleted");
   assert.ok(existsSync(cache.recent), "a library used in the last day is kept");
+  // The button comes back for another go.
+  await page.getByRole("button", { name: "Clean up…", exact: true }).waitFor();
 
   assertNoProblems(page);
 });

@@ -623,6 +623,19 @@ library_cache_entries <- function(staging, installed, cache_root) {
   unique(out)
 }
 
+#' The cache entries a staging folder's package symlinks point at, for
+#' `clean()` to keep while that install runs. Hard links have nothing to
+#' follow, and need nothing: the library's copy outlives the entry.
+staging_link_targets <- function(staging) {
+  out <- character()
+  for (pkg_dir in list.files(staging, full.names = TRUE)) {
+    link <- tryCatch(Sys.readlink(pkg_dir), error = function(e) "")
+    if (!is.na(link) && nzchar(link))
+      out <- c(out, dirname(normalizePath(link, mustWork = FALSE)))
+  }
+  unique(out)
+}
+
 #' Write the manifest into `staging` and rename it to `path`: the one
 #' rename every installer (real or fake) ends with. If `path` already has
 #' a valid manifest, another process's installer won the race while this
@@ -834,7 +847,9 @@ dir_size <- function(path) {
 #' * Staging folders older than one day (an installer that crashed).
 #' * With `cache = TRUE`: renv cache entries listed in no remaining
 #'   library's manifest (`cache_entries`), so deleting one never breaks a
-#'   library whether renv linked with hard links or symlinks.
+#'   library whether renv linked with hard links or symlinks. An entry
+#'   made in the last day, or one a staging folder younger than a day
+#'   links to, is kept too: an install still running has no manifest yet.
 #' * With `indexes = TRUE`: index RDS files not read for `max_age` days.
 #'
 #' `keep` is the library paths never to delete: by default every library
@@ -870,6 +885,11 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
         if (is.na(age) || age >= 1) {
           record(entry, "staging", dir_size(entry), file.info(entry)$mtime)
           if (!dry_run) unlink(entry, recursive = TRUE)
+        } else {
+          # An install in progress: it has no manifest yet, so the cache
+          # entries it links to are listed nowhere. Keep the ones its
+          # symlinks point at (a hard link survives its entry's deletion).
+          kept_cache_entries <- c(kept_cache_entries, staging_link_targets(entry))
         }
         next
       }
@@ -912,7 +932,10 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
       hash_dirs <- Sys.glob(file.path(cache_root, "v5", "*", "*", "*", "*", "*", "*"))
       kept <- unique(kept_cache_entries)
       for (h in hash_dirs) {
-        if (!(h %in% kept)) {
+        # A cache entry made in the last day may belong to an install
+        # still running, which renv fills before it links the library.
+        age <- age_days(file.info(h)$mtime)
+        if (!(h %in% kept) && !is.na(age) && age >= 1) {
           record(h, "cache", dir_size(h), file.info(h)$mtime)
           if (!dry_run) unlink(h, recursive = TRUE)
         }
@@ -1006,19 +1029,22 @@ clean_up <- function(dir = cache_dir(), keep = character(), dry_run = TRUE, max_
 }
 
 #' Run in a subprocess (`clean_up_command()`): print `clean_up()` as JSON.
-clean_up_main <- function(dir, keep, dry_run) {
-  cat(jsonlite::toJSON(clean_up(dir, keep = keep, dry_run = dry_run),
+clean_up_main <- function(dir, keep, dry_run, now = Sys.time()) {
+  cat(jsonlite::toJSON(clean_up(dir, keep = keep, dry_run = dry_run, now = as.POSIXct(now)),
                        auto_unbox = TRUE, digits = NA))
   invisible(NULL)
 }
 
 #' The command that runs `clean_up()` for `dir`, keeping `keep`, like
-#' `disk_use_command()`.
-clean_up_command <- function(dir = cache_dir(), keep = character(), dry_run = TRUE) {
+#' `disk_use_command()`. `now` (seconds since the epoch) is the time the
+#' rule is judged at: the deletion passes the preview's, so a library that
+#' turns a day old between the two isn't deleted unseen.
+clean_up_command <- function(dir = cache_dir(), keep = character(), dry_run = TRUE,
+                             now = as.numeric(Sys.time())) {
   rscript <- file.path(R.home("bin"), "Rscript")
   code <- paste0("local({library(ember); ember:::clean_up_main(", deparse(dir), ", ",
                  paste(deparse(as.character(keep)), collapse = ""), ", ",
-                 deparse(isTRUE(dry_run)), ")})")
+                 deparse(isTRUE(dry_run)), ", ", format(as.numeric(now), digits = 17), ")})")
   env <- c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep),
            R_LIBS_USER = "", R_LIBS_SITE = "")
   list(command = rscript, args = c("--vanilla", "-e", code), env = env)

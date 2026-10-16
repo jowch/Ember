@@ -76,6 +76,7 @@ session_start <- function(state) {
   register_session(nb)
   sync_active_libraries()
   maybe_start_cleanup()
+  maybe_start_heartbeat()
   schedule_poll(nb)
   nb
 }
@@ -138,6 +139,44 @@ maybe_start_cleanup <- function() {
   if (isTRUE(startup_clean$scheduled)) return(invisible(NULL))
   startup_clean$scheduled <- TRUE
   later::later(function() tryCatch(clean(cache = FALSE), error = function(e) NULL), 0)
+  invisible(NULL)
+}
+
+#' Whether the library heartbeat is running in this process.
+library_heartbeat <- local({
+  env <- new.env(parent = emptyenv())
+  env$scheduled <- FALSE
+  env
+})
+
+#' Touch every library an open session holds, so `ember-last-used`
+#' means "in use", not only "a worker started on it": a notebook left
+#' open for days in one Ember process keeps a fresh marker, and another
+#' process's clean-up (`clean_up()`, which skips libraries used in the
+#' last day, #128) never takes it.
+touch_active_libraries <- function() {
+  for (p in active_libraries$paths) touch_library(p)
+  invisible(NULL)
+}
+
+#' Start the heartbeat the first time a notebook opens: every
+#' `ember.library_heartbeat` seconds (default an hour) it touches the
+#' open sessions' libraries, and it stops once no session is open (the
+#' next `session_start()` starts it again).
+maybe_start_heartbeat <- function() {
+  if (isTRUE(library_heartbeat$scheduled)) return(invisible(NULL))
+  library_heartbeat$scheduled <- TRUE
+  later::later(heartbeat_tick, getOption("ember.library_heartbeat", 3600))
+  invisible(NULL)
+}
+
+heartbeat_tick <- function() {
+  if (length(ls(open_sessions, all.names = TRUE)) == 0L) {
+    library_heartbeat$scheduled <- FALSE
+    return(invisible(NULL))
+  }
+  tryCatch(touch_active_libraries(), error = function(e) NULL)
+  later::later(heartbeat_tick, getOption("ember.library_heartbeat", 3600))
   invisible(NULL)
 }
 

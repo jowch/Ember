@@ -880,7 +880,7 @@ answer_from_subprocess <- function(cmd, answer, ok, failure) {
 #' | ember_set_package_source       | {name, source}: edit_notebook(set_package_source()); reply {ok} or {error}; flush |
 #' | ember_remove_package_source    | {name}: edit_notebook(remove_package_source()); reply {ok} or {error}; flush |
 #' | ember_disk_use                 | {}: measure disk use of the notebook's cache dir in a subprocess (disk_use()); reply {libraries, cache, indexes, exact} or {error} when it exits (#38) |
-#' | ember_clean_up                 | {dry_run}: clean_up() of the notebook's cache dir in a subprocess, keeping open notebooks' libraries; dry_run (default true) only counts. Reply {libraries, cache, bytes, dry_run} or {error} when it exits; refused when read-only (#128) |
+#' | ember_clean_up                 | {dry_run, as_of}: clean_up() of the notebook's cache dir in a subprocess, keeping open notebooks' libraries; dry_run (default true) only counts; a deletion is judged at the preview's as_of. Reply {libraries, cache, bytes, dry_run, as_of} or {error} when it exits; refused when read-only (#128) |
 #' | ember_move_notebook            | {name, folder}: notebook_target_path() + move_notebook(); reply {path} or {error}; flush |
 #' | ember_start_page               | {}: reply start_page_reply() -- start_dir, new_name, open and recent notebooks. No hub |
 #' | ember_new_notebook             | {name, folder}: notebook_target_path() + new_notebook() + host_notebook(owned = TRUE); reply {url} or {error}. No hub |
@@ -1182,13 +1182,20 @@ handlers <- list(
       return(answer(list(error = "read-only notebook")))
     sync_active_libraries()
     dry_run <- !identical(req$body$dry_run, FALSE)
+    # The deletion is judged at the preview's time (`as_of`, which the
+    # preview's reply carries), never later, so it deletes nothing the
+    # preview didn't count for having aged since.
+    now <- as.numeric(Sys.time())
+    as_of <- req$body$as_of
+    if (!dry_run && is.numeric(as_of) && length(as_of) == 1L && is.finite(as_of))
+      now <- min(as_of, now)
     answer_from_subprocess(
       clean_up_command(hub$nb$state$options$cache %||% cache_dir(),
-                       keep = active_libraries$paths, dry_run = dry_run),
+                       keep = active_libraries$paths, dry_run = dry_run, now = now),
       answer,
       function(done) if (!is.null(done$cache))
         list(libraries = done$libraries, cache = done$cache, bytes = done$bytes,
-             dry_run = dry_run),
+             dry_run = dry_run, as_of = now),
       "could not clean up")
   },
 

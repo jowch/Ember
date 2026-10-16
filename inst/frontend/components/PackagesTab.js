@@ -488,8 +488,10 @@ export const format_bytes = (bytes, lang = getCurrentLanguage()) => {
  *
  * "Clean up…" (#128) frees space now. It first asks the server what it
  * would delete (`ember_clean_up`, a dry run: libraries no open notebook
- * holds and unused for a day, and the cache entries only they list) and
- * shows that with Delete and Cancel. Nothing is deleted until Delete.
+ * holds and unused for a day, and the cache entries no other library
+ * lists) and shows that with Delete and Cancel. Nothing is deleted until
+ * Delete, and Delete judges at the preview's time. After the result the
+ * button comes back.
  */
 const DiskUse = () => {
     const pluto_actions = useContext(PlutoActionsContext)
@@ -515,9 +517,11 @@ const DiskUse = () => {
             .catch(() => live.current && set_failed(true))
     }
     useEffect(measure, [])
-    const clean_up = (dry_run) => {
+    // `as_of` is the preview's time, sent back with Delete so the deletion
+    // is judged then and removes nothing the preview didn't count.
+    const clean_up = (dry_run, as_of) => {
         set_clean(dry_run ? "checking" : "deleting")
-        Promise.resolve(pluto_actions.ember_clean_up?.(dry_run))
+        Promise.resolve(pluto_actions.ember_clean_up?.(dry_run, as_of))
             .then((response) => {
                 if (!live.current) return
                 const message = response?.message
@@ -532,6 +536,8 @@ const DiskUse = () => {
     }
 
     const nothing = clean != null && typeof clean === "object" && clean.error == null && clean.libraries === 0 && clean.cache === 0
+    // After a result (done, nothing, failed) the button comes back, for another go.
+    const button = html`<button type="button" class="ember-btn" onClick=${() => clean_up(true)}>${t("t_ember_packages_clean_up")}</button>`
     return html`<div class="ember-packages-disk">
         <p class="ember-packages-disk-use">
             ${failed
@@ -545,15 +551,17 @@ const DiskUse = () => {
                     })}
         </p>
         ${clean == null
-            ? html`<button type="button" class="ember-btn" onClick=${() => clean_up(true)}>${t("t_ember_packages_clean_up")}</button>`
+            ? button
             : clean === "checking"
               ? html`<p>${t("t_ember_packages_clean_up_checking")}</p>`
               : clean === "deleting"
                 ? html`<p>${t("t_ember_packages_clean_up_deleting")}</p>`
                 : clean.error != null
-                  ? html`<p class="ember-packages-update-failed">${t("t_ember_packages_clean_up_failed")}</p>`
+                  ? html`<p class="ember-packages-update-failed">${t("t_ember_packages_clean_up_failed")}</p>
+                        ${button}`
                   : nothing
-                    ? html`<p>${t("t_ember_packages_clean_up_nothing")}</p>`
+                    ? html`<p>${t("t_ember_packages_clean_up_nothing")}</p>
+                          ${button}`
                     : clean.dry_run
                       ? html`<div class="ember-packages-update-question ember-packages-clean-up-question">
                             <p>
@@ -563,7 +571,7 @@ const DiskUse = () => {
                                     bytes: format_bytes(clean.bytes),
                                 })}
                             </p>
-                            <button type="button" class="ember-btn primary" onClick=${() => clean_up(false)}>${t("t_ember_packages_clean_up_delete")}</button>
+                            <button type="button" class="ember-btn primary" onClick=${() => clean_up(false, clean.as_of)}>${t("t_ember_packages_clean_up_delete")}</button>
                             <button type="button" class="ember-btn" onClick=${() => set_clean(null)}>${t("t_cancel")}</button>
                         </div>`
                       : html`<p>
@@ -572,7 +580,8 @@ const DiskUse = () => {
                                 cache: t("t_ember_packages_clean_up_entries", { count: clean.cache }),
                                 bytes: format_bytes(clean.bytes),
                             })}
-                        </p>`}
+                        </p>
+                        ${button}`}
     </div>`
 }
 

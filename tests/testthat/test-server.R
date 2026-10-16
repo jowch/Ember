@@ -792,6 +792,7 @@ test_that("ember_clean_up counts first, and deletes only when asked with dry_run
   entry <- file.path(cache, "renv-cache", "v5", "os", "R-4.6", "triplet", "pkgOld", "1.0", "hashOld")
   dir.create(file.path(entry, "pkgOld"), recursive = TRUE)
   writeBin(raw(80000), file.path(entry, "pkgOld", "R.rdb"))
+  Sys.setFileTime(entry, Sys.time() - 7 * 86400)
   lib <- file.path(cache, "libraries", "R-4.6", "testplat", "oldkey")
   dir.create(lib, recursive = TRUE)
   saveRDS(list(cache_entries = entry), file.path(lib, "ember-library.rds"))
@@ -815,9 +816,20 @@ test_that("ember_clean_up counts first, and deletes only when asked with dry_run
   expect_gte(plan$bytes, 80000)
   expect_true(dir.exists(lib))
   expect_true(dir.exists(entry))
+  expect_true(is.numeric(plan$as_of))
+
+  # A deletion is judged at the preview's time: as of 2.5 days ago the
+  # library had been used half a day before, so nothing goes.
+  ws$messages <- list()
+  handle_message(server, ws, wire("ember_clean_up", notebook_id = id, dry_run = FALSE,
+                                  as_of = as.numeric(Sys.time()) - 2.5 * 86400))
+  replies <- await_reply(ws, "ember_clean_up")
+  expect_equal(replies[[1]]$message$libraries, 0)
+  expect_true(dir.exists(lib))
 
   ws$messages <- list()
-  handle_message(server, ws, wire("ember_clean_up", notebook_id = id, dry_run = FALSE))
+  handle_message(server, ws, wire("ember_clean_up", notebook_id = id, dry_run = FALSE,
+                                  as_of = plan$as_of))
   replies <- await_reply(ws, "ember_clean_up")
   expect_length(replies, 1)
   done <- replies[[1]]$message
