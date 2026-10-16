@@ -110,11 +110,25 @@ test_that("inserted ids come from the ops, in op order (25)", {
   expect_equal(names(r$state$cells), c("S", "A", n1, n2))
 })
 
-test_that("a non-UUID insert id is refused (review4 item 6)", {
+test_that("an insert id that isn't a cell id is refused (review4 item 6)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1")))
-  r <- drive(s, ev_apply(list(op_insert("not a uuid\n# ///", 3, "a <- 1")), at(1)))
-  expect_s3_class(r$reply, "ember_refused")
-  expect_equal(names(r$state$cells), c("S", "A"))
+  for (bad in list("not a uuid\n# ///", "", "a b", "# %%", "a\"", strrep("a", 65), NA_character_, 1)) {
+    r <- drive(s, ev_apply(list(op_insert(bad, 3, "a <- 1")), at(1)))
+    expect_s3_class(r$reply, "ember_refused")
+    expect_equal(names(r$state$cells), c("S", "A"))
+  }
+})
+
+test_that("a short id from a hand-written file can be inserted again, as undo-delete does (#27)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1")))
+  r <- drive(s, ev_apply(list(op_delete("B")), at(1)))
+  r <- drive(r$state, ev_apply(list(op_insert("B", 3, "x + 1")), at(2)))
+  expect_false(inherits(r$reply, "ember_refused"))
+  expect_equal(names(r$state$cells), c("S", "A", "B"))
+  for (id in c("md1", "load_1", "cell.2", "x-y", strrep("a", 64))) {
+    r2 <- drive(r$state, ev_apply(list(op_insert(id, 1, "")), at(3)))
+    expect_false(inherits(r2$reply, "ember_refused"), info = id)
+  }
 })
 
 test_that("deleting the first cell is allowed: no cell is special (26, settings-cells.md)", {

@@ -1047,8 +1047,10 @@ inline diffs, and the URLs `/edit?id=…&secret=…`, `/notebookfile` and
 `/notebookexport`. The fork keeps all of these and keeps CodeMirror 6; the
 Julia-shaped parts of the state (`nbpkg`, and the package log in
 `status_tree` until increment 3 removed it)
-change, and Endeavor's per-backend page adapter handles them. Cell and
-notebook IDs are full 36-character UUIDs.
+change, and Endeavor's per-backend page adapter handles them. Notebook IDs
+are full 36-character UUIDs, and so are the cell IDs Ember generates. A
+hand-written file may use short cell IDs (1 to 64 of `[A-Za-z0-9._-]`);
+Ember keeps them.
 
 Two Endeavor documents describe Pluto's behaviour where Ember's differs, and
 need updating there: `restart` "then every cell runs" (Ember leaves cells not

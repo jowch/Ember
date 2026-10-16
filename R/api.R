@@ -212,8 +212,9 @@ set_code <- function(cell, code, expected = NULL) {
                  expected = expected), class = "ember_op")
 }
 #' `id`, when given, is kept by `edit_notebook()` instead of generating a
-#' fresh one (it must be a 36-character UUID not already in use; a reused
-#' id is refused). The step-4 UI server passes the id the page already
+#' fresh one (it must be 1 to 64 letters, digits, `.`, `_` or `-`, such as
+#' a UUID or a hand-written file's short id, and not already in use; a
+#' reused id is refused). The step-4 UI server passes the id the page already
 #' shows the new cell under, so inserting never makes the browser's cell
 #' flicker away and a run requested for it right after never misses. The
 #' inserted cell's kind is always `cell_kind(code)`: there is no separate

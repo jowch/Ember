@@ -179,7 +179,7 @@ test_that("run_multiple_cells {cells: []} runs nothing; a blank new cell doesn't
 })
 
 test_that("undo-delete through update_notebook restores a cell, folded if it was", {
-  # Inserts take only UUIDs, and undo re-inserts the deleted cell's own id.
+  # Undo re-inserts the deleted cell under its own id.
   ids <- c("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222",
            "33333333-3333-4333-8333-333333333333")
   path <- write_session_notebook(setNames(list(cell(""), cell("#' text"), cell("1")), ids))
@@ -211,6 +211,36 @@ test_that("undo-delete through update_notebook restores a cell, folded if it was
     expect_equal(names(notebook_state(nb)$cells), ids)
     expect_identical(isTRUE(notebook_state(nb)$cells[[a]]$folded), fold)
   }
+})
+
+test_that("undo-delete through update_notebook restores a disabled cell disabled, under a short id (#26, #27)", {
+  # A hand-written file's ids ("A") are re-inserted as they are.
+  ids <- c("S", "A", "B")
+  path <- write_session_notebook(setNames(list(cell(""), cell("Sys.sleep(60)", disabled = TRUE), cell("1")), ids))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+  entry <- ws$page()$cell_inputs[["A"]]
+  expect_true(isTRUE(entry$metadata$disabled))
+
+  handle_message(server, ws, wire("update_notebook", notebook_id = id,
+    updates = list(patch("remove", list("cell_inputs", "A")),
+                   patch("replace", list("cell_order"), as.list(ids[-2])))))
+  expect_equal(ws$last()$message$response$update_went_well, "\U0001F44D")
+
+  handle_message(server, ws, wire("update_notebook", notebook_id = id,
+    updates = list(patch("add", list("cell_inputs", "A"), entry),
+                   patch("replace", list("cell_order"), as.list(ids)))))
+  expect_equal(ws$last()$message$response$update_went_well, "\U0001F44D")
+  expect_equal(names(notebook_state(nb)$cells), ids)
+  expect_true(notebook_state(nb)$cells[["A"]]$disabled)
+  expect_true(isTRUE(ws$page()$cell_inputs[["A"]]$metadata$disabled))
 })
 
 test_that("update_notebook to a text cell, then running it: kind markdown, not folded, rendered as HTML (54)", {
