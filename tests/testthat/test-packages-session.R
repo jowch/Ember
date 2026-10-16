@@ -180,19 +180,23 @@ test_that("moving the toy date upgrades toyA, restarts the loaded worker, and th
 # ---- #39: today's index is fetched again --------------------------------------
 
 test_that("an index dated today is fetched again by a preview of today, a later session reads that copy, and the saved copy stands in offline (#39)", {
-  # A file:// repository whose only date is today (UTC), first with the
-  # toy repo's 2026-09-01 packages (toyA 0.1), then, "later that day", with
-  # its 2026-09-30 ones (toyA 0.2).
+  # A file:// repository dated today (UTC), first with the toy repo's
+  # 2026-09-01 packages (toyA 0.1), then, "later that day", with its
+  # 2026-09-30 ones (toyA 0.2); and 2026-09-01 itself, for an older notebook.
   today <- format(as.Date(format(Sys.time(), tz = "UTC")))
   toy <- normalizePath(testthat::test_path("fixtures", "repos", "toy"), mustWork = TRUE)
   root <- tempfile("ember-today-repo-")
   dir.create(root)
   on.exit(unlink(root, recursive = TRUE), add = TRUE)
   publish <- function(from) {
+    staging <- tempfile("ember-today-staging-")
+    dir.create(staging)
+    on.exit(unlink(staging, recursive = TRUE))
     unlink(file.path(root, today), recursive = TRUE)
-    stopifnot(file.copy(file.path(toy, from), root, recursive = TRUE),
-              file.rename(file.path(root, from), file.path(root, today)))
+    stopifnot(file.copy(file.path(toy, from), staging, recursive = TRUE),
+              file.rename(file.path(staging, from), file.path(root, today)))
   }
+  stopifnot(file.copy(file.path(toy, "2026-09-01"), root, recursive = TRUE))
   repos <- ember_repos(cran = paste0("file://", root))
   cache <- toy_cache()
   on.exit(unlink(cache, recursive = TRUE), add = TRUE)
@@ -200,8 +204,8 @@ test_that("an index dated today is fetched again by a preview of today, a later 
     e <- notebook_state(nb)$file$lock$entries
     e$version[e$name == "toyA"]
   }
-  open_locked <- function() {
-    nb <- open_notebook(write_toy_notebook(today), repos = repos, cache = cache)
+  open_locked <- function(snapshot = today) {
+    nb <- open_notebook(write_toy_notebook(snapshot), repos = repos, cache = cache)
     ok <- wait_for(nb, function(snap) length(toyA(nb)) == 1, timeout = 120)
     list(nb = nb, ok = ok)
   }
@@ -220,8 +224,17 @@ test_that("an index dated today is fetched again by a preview of today, a later 
   expect_true(o2$ok)
   expect_equal(toyA(o2$nb), "0.1")
 
-  # Updating to today fetches it again, though the session has an index
-  # for today, and finds the new version.
+  # An older notebook updating to today fetches today's index rather than
+  # reading the copy the first session saved this morning.
+  old <- open_locked("2026-09-01")
+  on.exit(close_notebook(old$nb), add = TRUE)
+  expect_true(old$ok)
+  preview0 <- preview_date(old$nb, today, wait = TRUE, timeout = 120)
+  expect_equal(preview0$status, "ready")
+  expect_equal(preview0$changes$to[preview0$changes$name == "toyA"], "0.2")
+
+  # So does updating to today in a session that already has an index for
+  # today.
   preview <- preview_date(o1$nb, today, wait = TRUE, timeout = 120)
   expect_equal(preview$status, "ready")
   expect_equal(preview$changes$to[preview$changes$name == "toyA"], "0.2")

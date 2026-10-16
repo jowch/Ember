@@ -411,7 +411,7 @@ run_effect <- function(nb, fx) {
       # A dated key as recent as today (#39) is read from the cache like
       # any other, since fetching it on every open costs seconds, but its
       # slot is marked provisional: Package Manager may still add to that
-      # day's snapshot, so a date preview asks for it `fresh` and it is
+      # day's snapshot, so when a date preview asks for it (`fresh`) it is
       # fetched again. If that fetch fails (offline), the saved copy
       # stands in.
       provisional <- index_may_change(fx$key)
@@ -422,7 +422,7 @@ run_effect <- function(nb, fx) {
         else if (provisional) reload_index(fx$key, cache, url = fx$url)
         else cached_index(fx$key, cache, url = fx$url)
       }
-      idx <- if (moving || isTRUE(fx$fresh)) NULL else tryCatch(cached_index(fx$key, cache, url = fx$url), error = function(e) NULL)
+      idx <- if (moving || isTRUE(fx$fresh) && provisional) NULL else tryCatch(cached_index(fx$key, cache, url = fx$url), error = function(e) NULL)
       if (!is.null(idx)) {
         enqueue(nb, ev_index_fetched(fx$key, idx, at = Sys.time(), provisional = provisional))
       } else {

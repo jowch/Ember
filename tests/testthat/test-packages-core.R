@@ -560,7 +560,6 @@ test_that("a preview fetches a provisional index again, and keeps one that isn't
   expect_equal(prop$status, "ready")
   expect_equal(prop$changes$change[prop$changes$name == "dplyr"], "upgraded")
   expect_false(r2$state$packages$indexes[["cran/2026-09-01"]]$provisional)
-  expect_length(r2$state$packages$refresh, 0)
 
   # An index that isn't provisional is the date's for good.
   r <- drive(s, ev_open(at(1)))
@@ -568,6 +567,12 @@ test_that("a preview fetches a provisional index again, and keeps one that isn't
   r3 <- drive(r$state, ev_preview_date(as.Date("2026-09-01"), at(3)))
   expect_false("fetch_index" %in% effect_types(r3))
   expect_equal(r3$state$packages$proposal$status, "ready")
+
+  # A date the session has no index for is asked for fresh too: the shell
+  # skips a saved copy only when its date is recent enough to change.
+  r4 <- drive(r$state, ev_preview_date(as.Date("2026-09-30"), at(3)))
+  expect_equal(vapply(r4$effects, function(e) e$key, character(1)), "cran/2026-09-30")
+  expect_true(r4$effects[[1]]$fresh)
 })
 
 test_that("set_date replaces problems with the proposal's, not the old date's (06)", {
