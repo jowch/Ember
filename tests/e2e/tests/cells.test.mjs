@@ -481,6 +481,48 @@ test('chips: NEVER (loaded with code, never run) shows "Not run yet" with no out
   assertNoProblems(page);
 });
 
+// #52: when a cell showing "Not run yet" runs, the chip used to go at once
+// and the output came later, so the code moved up and then down. NEVER is
+// made slow (Sys.sleep) so the two would be far apart; the code's place in
+// its cell, read once a frame through the whole run, may change only once.
+test('chips: a "Not run yet" cell that runs moves its code once, when the output lands (#52)', async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-notrun-run.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await runCell(page, "A");
+  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached", timeout: 30000 });
+  await setCellCode(page, "NEVER", "Sys.sleep(1); 3 + 3");
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.classList.contains("not_run_yet"),
+    cellSelector("NEVER"), { timeout: 20000 });
+
+  await page.evaluate((sel) => {
+    window.__code_tops = [];
+    window.__stop = false;
+    const tick = () => {
+      const cell = document.querySelector(sel);
+      const top = cell.querySelector(".cm-editor").getBoundingClientRect().top - cell.getBoundingClientRect().top;
+      const output = cell.querySelector(":scope > pluto-output")?.innerText ?? "";
+      const last = window.__code_tops.at(-1);
+      if (last == null || Math.abs(last.top - top) > 0.5) window.__code_tops.push({ top, output });
+      if (!window.__stop) requestAnimationFrame(tick);
+    };
+    tick();
+  }, cellSelector("NEVER"));
+  await page.keyboard.press("Shift+Enter");
+  await page.waitForSelector(`${cellSelector("NEVER")} ember-runtime`, { state: "attached", timeout: 30000 });
+  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("6"), cellSelector("NEVER") + " > pluto-output", { timeout: 30000 });
+  const tops = await page.evaluate(() => { window.__stop = true; return window.__code_tops; });
+
+  assert.ok(tops.length <= 2, `the code moved once at most: ${JSON.stringify(tops)}`);
+  assert.equal(await page.locator(`${cellSelector("NEVER")} ember-chip`).count(), 0, "no chip once it has output");
+  assertNoProblems(page);
+});
+
 test('chips: "Stale · x changed" after an upstream edit in lazy mode, with a greyed output (144)', async (t) => {
   const notebook = tempNotebook("lazy.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-stale.server.log") });
