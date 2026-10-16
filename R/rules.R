@@ -146,9 +146,12 @@ method_registrars <- list(
 #' `read` are classes the call needs, `define` the class it creates (at the
 #' top level, or in `local()` nested there, like `setGeneric()`).
 #' `slots` and `fields` name their classes only in named elements
-#' (`slots = c(r = "numeric")`; `slots = c("r")` is a slot of class "ANY");
-#' everywhere else every string counts, so `representation("VIRTUAL", r =
-#' "numeric")` reads both.
+#' (`slots = c(r = "numeric")`; `slots = c("r")` is a slot of class "ANY").
+#' Slot and field classes, and the named elements of `representation()`,
+#' are soft reads (`where = "slot"`): R doesn't need them until `new()`,
+#' so they never make a cycle (`add_soft_edges()`). Every other class
+#' position, `representation()`'s unnamed superclasses included, is a hard
+#' read.
 class_name_calls <- list(
   setClass = list(formals = c("Class", "representation", "prototype", "contains"),
                   define = "Class", read = c("representation", "contains", "slots")),
@@ -165,9 +168,9 @@ class_name_calls <- list(
   getClassDef = list(formals = "Class", read = "Class")
 )
 
-#' The arguments of `class_name_calls` whose unnamed elements are not
-#' classes (slot and field names of class "ANY").
-class_named_only <- c("slots", "fields")
+#' The arguments of `class_name_calls` that hold slot or field classes,
+#' in their named elements only (unnamed ones are names of class "ANY").
+class_slot_args <- c("slots", "fields")
 
 #' The global name R keeps class `cls`'s definition in.
 class_binding <- function(cls) paste0(".__C__", cls)
@@ -179,6 +182,14 @@ is_class_binding <- function(name) startsWith(name, ".__C__")
 
 #' The class a `.__C__X` binding holds the definition of: `"X"`.
 class_of_binding <- function(name) substring(name, nchar(".__C__") + 1)
+
+#' Names as messages show them: a class binding (`.__C__Circle`) reads
+#' "class Circle".
+display_names <- function(names) {
+  cls <- is_class_binding(names)
+  names[cls] <- paste("class", class_of_binding(names[cls]))
+  names
+}
 
 #' Base R's S3 generics: a top-level function named `generic.class` is a
 #' method only when `generic` is one of these, a function or `setGeneric()`

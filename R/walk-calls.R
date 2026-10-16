@@ -547,9 +547,16 @@ walk_class_names <- function(e, scope, acc, name, arg_pids = NULL) {
     i <- arg_index(formal)
     if (is.na(i) || missing_arg(args[[i]])) next
     pos <- pd_position(acc, arg_pids[[i]])
-    for (cls in literal_class_names(args[[i]], unnamed = !(formal %in% class_named_only))) {
-      record_read(acc, scope, class_binding(cls), pos = pos)
-    }
+    a <- args[[i]]
+    # A slot or field class is a soft read ("slot"); a superclass, and any
+    # other class position, a hard one. In `representation()` the unnamed
+    # elements are superclasses and the named ones slots.
+    slots <- formal %in% class_slot_args
+    reps <- is.call(a) && is.symbol(a[[1]]) && identical(as.character(a[[1]]), "representation")
+    hard <- if (slots) character() else literal_class_names(a, named = !reps)
+    soft <- if (slots || reps) literal_class_names(a, unnamed = FALSE) else character()
+    for (cls in hard) record_read(acc, scope, class_binding(cls), pos = pos)
+    for (cls in setdiff(soft, hard)) record_read(acc, scope, class_binding(cls), where = "slot", pos = pos)
   }
   if (!is.null(spec$define) && !in_function(scope)) {
     i <- arg_index(spec$define)
@@ -567,9 +574,10 @@ walk_class_names <- function(e, scope, acc, name, arg_pids = NULL) {
 #' The class names in a literal: a string, or the strings among the
 #' elements of `c()`, `list()`, `representation()` or `signature()`
 #' (`signature(x = "Foo")`, `representation("VIRTUAL", r = "numeric")`).
-#' With `unnamed = FALSE` only named elements count (`slots = c(r =
-#' "numeric")`). Anything computed is skipped.
-literal_class_names <- function(a, unnamed = TRUE) {
+#' `unnamed = FALSE` keeps only named elements (`slots = c(r =
+#' "numeric")`), `named = FALSE` only unnamed ones. Anything computed is
+#' skipped.
+literal_class_names <- function(a, unnamed = TRUE, named = TRUE) {
   is_name <- function(x) is.character(x) && length(x) == 1 && !is.na(x) && nzchar(x)
   if (is.character(a)) return(if (unnamed) unique(a[!is.na(a) & nzchar(a)]) else character())
   if (!is.call(a) || !is.symbol(a[[1]]) ||
@@ -582,7 +590,7 @@ literal_class_names <- function(a, unnamed = TRUE) {
   for (j in seq_along(parts)) {
     if (missing_arg(parts[[j]])) next
     p <- parts[[j]]
-    if (is_name(p) && (unnamed || nzchar(pnms[j]))) out <- c(out, p)
+    if (is_name(p) && (if (nzchar(pnms[j])) named else unnamed)) out <- c(out, p)
   }
   unique(out)
 }

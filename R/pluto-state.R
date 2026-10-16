@@ -548,14 +548,6 @@ project_tree <- function(data) {
       ember_length = data$length, elements = as_arr(elements))
 }
 
-#' Names as the page shows them: a class binding (`.__C__Circle`) reads
-#' "class Circle".
-display_names <- function(names) {
-  cls <- is_class_binding(names)
-  names[cls] <- paste("class", class_of_binding(names[cls]))
-  names
-}
-
 #' Join names the way the frontend's rewritten messages read: one name as
 #' is, two with `conj`, more as a comma list with `conj` before the last.
 #' `conj` is `"and"` for multiple definitions and cycles, `"or"` for an

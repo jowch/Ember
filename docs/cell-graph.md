@@ -173,7 +173,9 @@ falls back to another method.
 keeps a class in (`class_name_calls` in `R/rules.R`): `setClass("X")`
 defines `.__C__X` (kind `"class"`), and `new("X")`, a `setMethod()`
 signature or `contains = "X"` reads it, so they resolve by rules 1 to 4
-like any name, a package's `exportClasses()` included. `is_private_name()`
+like any name, a package's `exportClasses()` included. Slot and field
+classes are recorded with `where = "slot"` and resolved as soft edges
+(`add_soft_edges()`: added only where they close no cycle). `is_private_name()`
 makes `.__C__` names the one public dot-name. Two cells defining one class
 are a `multiple_definitions` error; the page shows the name as "class X"
 (`display_names()`).

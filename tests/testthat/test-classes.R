@@ -45,14 +45,16 @@ test_that("string class names in class positions read the class", {
                                      "numeric", "Rect")))
 })
 
-test_that("setClass() reads its superclasses and slot classes", {
+test_that("setClass() reads its superclasses, and its slot classes softly", {
   a <- read_cell(paste(
     "setClass('A', representation('Base', r = 'numeric'))",
     "setClass('B', contains = c('Base2'), slots = c('untyped', p = 'Point'))",
     "setRefClass('C', fields = c('anything', q = 'Queue'), contains = 'RBase')",
     sep = "\n"))
-  reads <- grep("^\\.__C__", a$references$name, value = TRUE)
-  expect_setequal(reads, paste0(".__C__", c("Base", "numeric", "Base2", "Point", "Queue", "RBase")))
+  r <- a$references[grepl("^\\.__C__", a$references$name), ]
+  expect_setequal(r$name[r$where == "code"], paste0(".__C__", c("Base", "Base2", "RBase")))
+  expect_setequal(r$name[r$where == "slot"], paste0(".__C__", c("numeric", "Point", "Queue")))
+  expect_false(".__C__Point" %in% references_of(a))
 })
 
 test_that("a class the cell defines itself is no read, and nor is a computed name", {
@@ -87,6 +89,34 @@ test_that("a subclass depends on its superclass, and setValidity() on the class"
   expect_true(has_edge(g, "circle", "shape", ".__C__Shape", "definition"))
   expect_true(has_edge(g, "valid", "circle", ".__C__Circle", "definition"))
   expect_setequal(downstream(g, "shape", transitive = TRUE), c("circle", "valid"))
+})
+
+test_that("a slot class orders the cells, but never makes a cycle", {
+  g <- notebook_graph(c(
+    pt   = "setClass('Pt', representation(x = 'numeric'))",
+    line = "setClass('Line', representation(a = 'Pt', b = 'Pt'))"))
+  expect_true(has_edge(g, "line", "pt", ".__C__Pt", "definition"))
+
+  g <- notebook_graph(c(
+    aa = "setClass('AA', representation(b = 'BB'))",
+    bb = "setClass('BB', representation(a = 'AA'))"))
+  expect_length(g$errors, 0)
+  expect_equal(nrow(g$edges), 1)
+})
+
+test_that("a slot class is a hard read where the cell also needs it", {
+  g <- notebook_graph(c(
+    aa = "setClass('AA', representation(b = 'BB'))\nx <- new('BB')",
+    bb = "setClass('BB', representation(a = 'AA'))"))
+  expect_true(has_edge(g, "aa", "bb", ".__C__BB", "definition"))
+  expect_false(has_edge(g, "bb", "aa", ".__C__AA", "definition"))
+})
+
+test_that("a cycle through classes names them as classes, with no column-name fix", {
+  g <- notebook_graph(c(a = "setClass('A', contains = 'B')", b = "setClass('B', contains = 'A')"))
+  e <- Find(function(e) e$kind == "cycle", g$errors)
+  expect_equal(e$message, "class A, class B form a cycle.")
+  expect_length(e$fixes, 0)
 })
 
 test_that("a class learned from a run counts like one read from the code", {
@@ -172,4 +202,65 @@ test_that("deleting the class cell removes the class, not only its binding", {
 
   expect_false(res$timed_out)
   expect_equal(snap_view(notebook_snapshot(nb), "U")$output$text, '[1] "no class"')
+})
+
+test_that("a subclass or union in another cell doesn't count as changing the class", {
+  cells <- list(S = cell(""),
+                A = cell("setClass('Shape', representation('VIRTUAL'))"),
+                B = cell("setClass('Circ', contains = 'Shape', representation(r = 'numeric'))"),
+                N = cell("setClass('Node', representation(v = 'numeric'))"),
+                V = cell("setClassUnion('NodeOrNULL', c('Node', 'NULL'))"),
+                U = cell("c(is(new('Circ', r = 1), 'Shape'), is(new('Node', v = 1), 'NodeOrNULL'))"))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  res <- run_cells(nb, wait = TRUE, timeout = 30)
+
+  expect_false(res$timed_out)
+  snap <- notebook_snapshot(nb)
+  for (id in c("A", "B", "N", "V", "U")) expect_equal(snap_view(snap, id)$status, "ok", info = id)
+  expect_equal(snap_view(snap, "U")$output$text, "[1] TRUE TRUE")
+})
+
+test_that("two classes whose slots name each other both run", {
+  cells <- list(S = cell(""),
+                A = cell("setClass('AA', representation(b = 'BB'))"),
+                B = cell("setClass('BB', representation(a = 'AA'))"),
+                U = cell("class(new('AA', b = new('BB'))@b)[[1]]"))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  res <- run_cells(nb, wait = TRUE, timeout = 30)
+
+  expect_false(res$timed_out)
+  snap <- notebook_snapshot(nb)
+  for (id in c("A", "B", "U")) expect_equal(snap_view(snap, id)$status, "ok", info = id)
+  expect_equal(snap_view(snap, "U")$output$text, '[1] "BB"')
+})
+
+test_that("the trial's shapes notebook runs, and renaming a slot reruns the method", {
+  cells <- list(S = cell(""),
+                V = cell("setClass('Shape', representation('VIRTUAL'))"),
+                C = cell("Circle <- setClass('Circle', contains = 'Shape', representation(radius = 'numeric'))"),
+                R = cell("Rectangle <- setClass('Rectangle', contains = 'Shape',\n  representation(width = 'numeric', height = 'numeric'))"),
+                G = cell("setGeneric('area', function(shape) standardGeneric('area'))"),
+                MC = cell("setMethod('area', 'Circle', function(shape) shape@radius^2)"),
+                MR = cell("setMethod('area', 'Rectangle', function(shape) shape@width * shape@height)"),
+                P = cell("setMethod('show', 'Shape', function(object) cat('area', area(object), '\\n'))"),
+                U = cell("vapply(list(Circle(radius = 2), Rectangle(width = 3, height = 4)), area, numeric(1))"))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  res <- run_cells(nb, wait = TRUE, timeout = 60)
+  expect_false(res$timed_out)
+  snap <- notebook_snapshot(nb)
+  for (id in names(cells)[-1]) expect_equal(snap_view(snap, id)$status, "ok", info = id)
+  expect_equal(snap_view(snap, "U")$output$text, "[1]  4 12")
+
+  edit_notebook(nb, set_code("C", "Circle <- setClass('Circle', contains = 'Shape', representation(diameter = 'numeric'))"))
+  run_cells(nb, "C", wait = TRUE, timeout = 60)
+  expect_false(snap_view(notebook_snapshot(nb), "MC")$stale %||% FALSE)
+  # The method reran with the new class, so a Circle now fails in it, as it
+  # would under Rscript: nothing still holds the old slot.
+  expect_equal(snap_view(notebook_snapshot(nb), "U")$status, "error")
 })
