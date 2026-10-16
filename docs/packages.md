@@ -203,7 +203,7 @@ Behind that sit detection, resolution, index caching, library naming, installs, 
    - the install plan job: download size and consent
    - compiler and system-library checks: built, see [Install checks](#install-checks)
    - old snapshot dates that build from source on a newer R: explained when the build fails, see [Install checks](#install-checks); saying so before the install waits for the install plan
-   - disk use
+   - disk use: built. The Packages tab shows the libraries', the cache's and the indexes' disk use for all notebooks, from one `du` run so a hard-linked file counts once (`disk_use()`); without `du` (Windows) it sums file sizes and says the libraries' figure includes shared files. It reports only; the "clean up" button is not built, #128 (#38)
    - R minor version change with a Bioconductor pin: built, see [Bioconductor](#bioconductor)
 3. **Release dates:** crandb, `preview_update()` for per-package update and pinning.
 

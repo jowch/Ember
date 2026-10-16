@@ -367,6 +367,59 @@ test_that("poll_jobs(): a line matching the failure patterns survives the 400-li
   expect_true(grepl(failure_line, done[[1]]$output, fixed = TRUE))
 })
 
+# ---- disk_use() (#38) -------------------------------------------------------
+
+#' A cache dir with a 200 KB cache entry hard-linked into a library, a
+#' 100 KB file of the library's own and a 50 KB index.
+make_disk_use_cache <- function() {
+  root <- tempfile("ember-cache-")
+  dir.create(root)
+  lib <- make_fake_library(root, "dukey")
+  entry <- file.path(root, "renv-cache", "v5", "R-4.6", "testplat", "pkg", "1.0", "abc", "pkg")
+  dir.create(entry, recursive = TRUE)
+  writeBin(as.raw(rep(1L, 200000)), file.path(entry, "big"))
+  linked <- file.link(file.path(entry, "big"), file.path(lib, "big"))
+  writeBin(as.raw(rep(2L, 100000)), file.path(lib, "own"))
+  dir.create(file.path(root, "indexes"))
+  writeBin(as.raw(rep(3L, 50000)), file.path(root, "indexes", "cran-2026-09-01.rds"))
+  list(root = root, linked = linked)
+}
+
+test_that("disk_use() counts a file hard-linked from the cache into a library once, in the cache (#38)", {
+  skip_if(!nzchar(Sys.which("du")), "no du on this system")
+  d <- make_disk_use_cache()
+  on.exit(unlink(d$root, recursive = TRUE))
+  skip_if_not(d$linked, "this file system has no hard links")
+  use <- disk_use(d$root)
+  expect_named(use, c("libraries", "cache", "indexes", "exact"))
+  expect_true(use$exact)
+  expect_gte(use$cache, 200000)
+  expect_gte(use$libraries, 100000)
+  expect_lt(use$libraries, 200000)  # its own file only; the linked one is the cache's
+  expect_gte(use$indexes, 50000)
+  expect_lt(use$indexes, 100000)
+})
+
+test_that("disk_use() without du sums file sizes, which counts a linked file twice, and says so (#38)", {
+  d <- make_disk_use_cache()
+  on.exit(unlink(d$root, recursive = TRUE))
+  use <- disk_use(d$root, du = "")
+  expect_false(use$exact)
+  expect_gte(use$cache, 200000)
+  expect_gte(use$libraries, if (d$linked) 300000 else 100000)
+  expect_gte(use$indexes, 50000)
+})
+
+test_that("disk_use() of a cache dir with nothing in it is all zero (#38)", {
+  root <- tempfile("ember-cache-")
+  dir.create(root)
+  on.exit(unlink(root, recursive = TRUE))
+  use <- disk_use(root)
+  expect_equal(c(use$libraries, use$cache, use$indexes), c(0, 0, 0))
+  use2 <- disk_use(file.path(root, "missing"))
+  expect_equal(c(use2$libraries, use2$cache, use2$indexes), c(0, 0, 0))
+})
+
 # ---- clean() (64, 65, 66) ---------------------------------------------------
 
 test_that("clean(dry_run = TRUE) lists libraries older than max_age and staging folders older than a day, and deletes nothing (64)", {

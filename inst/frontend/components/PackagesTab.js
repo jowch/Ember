@@ -466,13 +466,68 @@ const SourceDetail = ({ row, read_only }) => {
     `
 }
 
+/** Bytes as "512 KB", "3.4 MB", "1.2 GB" (powers of 1000, as file managers show them). */
+export const format_bytes = (bytes, lang = getCurrentLanguage()) => {
+    const units = ["B", "KB", "MB", "GB", "TB"]
+    let value = bytes
+    let unit = 0
+    while (value >= 1000 && unit < units.length - 1) {
+        value /= 1000
+        unit += 1
+    }
+    const digits = unit === 0 || value >= 10 ? 0 : 1
+    return `${new Intl.NumberFormat(lang, { maximumFractionDigits: digits, minimumFractionDigits: digits }).format(value)} ${units[unit]}`
+}
+
+/**
+ * How much disk the libraries, the package cache and the indexes use
+ * (#38; design.md's "The package view shows disk use"). Measured by the
+ * server in a subprocess (`ember_disk_use`, server.R) each time the tab
+ * opens; shared by every notebook, so it says so. It only reports:
+ * Ember deletes unused libraries on its own after 60 days, and
+ * `ember::clean()` does the rest from R.
+ */
+const DiskUse = () => {
+    const pluto_actions = useContext(PlutoActionsContext)
+    const [use, set_use] = useState(/** @type {{ libraries: number, cache: number, indexes: number, exact: boolean }?} */ (null))
+    const [failed, set_failed] = useState(false)
+    useEffect(() => {
+        let live = true
+        Promise.resolve(pluto_actions.ember_disk_use?.())
+            .then((response) => {
+                if (!live) return
+                const message = response?.message
+                if (message == null || message.error != null || message.cache == null) set_failed(true)
+                else set_use(message)
+            })
+            .catch(() => live && set_failed(true))
+        return () => {
+            live = false
+        }
+    }, [])
+
+    return html`<p class="ember-packages-disk-use">
+        ${failed
+            ? t("t_ember_packages_disk_use_failed")
+            : use == null
+              ? t("t_ember_packages_disk_use_measuring")
+              : t(use.exact ? "t_ember_packages_disk_use" : "t_ember_packages_disk_use_estimate", {
+                    libraries: format_bytes(use.libraries),
+                    cache: format_bytes(use.cache),
+                    indexes: format_bytes(use.indexes),
+                })}
+    </p>`
+}
+
 /**
  * The "Packages" tab (ui-2.md, 5; ui-3-plan.md, piece 4 and piece 5's
  * "Packages tab"): "Versions as of <date>" with Update, a description
  * line, the library's install status, a card per package the notebook
  * loads whose install failed (`install_cards()`), and
  * one row per *direct* package (dependencies hidden), each followed by its
- * GitHub source line when it has one (`SourceDetail`). Reads
+ * GitHub source line when it has one (`SourceDetail`), then the disk use
+ * of every notebook's libraries and the shared cache (`DiskUse`; not in
+ * a read-only export, which has no server to ask). Reads
  * `notebook.ember.packages` (project_ember(), pluto-state.R); `nbpkg`
  * stays filled beside it for Endeavor and isn't read here.
  *
@@ -541,6 +596,7 @@ export const PackagesTab = ({ packages, read_only = false }) => {
                           )}
                       </tbody>
                   </table>`}
+            ${read_only ? null : html`<${DiskUse} />`}
         </div>
     `
 }

@@ -917,10 +917,50 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
   invisible(out)
 }
 
-#' Disk use for the package view: `list(libraries, cache, indexes)` in
-#' bytes. R's `file.info()` has no inode or link count, so this uses `du`
-#' over the cache and libraries together where it exists (it counts a
-#' hard-linked file once) and sums sizes elsewhere, which overcounts
-#' libraries. Run as a job when asked; walking a large cache can take
-#' seconds. Increment 2.
-disk_use <- function(dir = cache_dir()) stop("not implemented")
+#' Disk use for the package view (#38): `list(libraries, cache, indexes,
+#' exact)`, the first three in bytes. R's `file.info()` has no inode or
+#' link count, so this runs one `du -sk` over the cache, the indexes and
+#' the libraries, in that order: `du` counts a hard-linked file once per
+#' run, at its first sighting, so a library's links into renv's cache
+#' count as the cache's and the libraries' number is what they hold of
+#' their own. `exact` is `TRUE` then. Without `du` (`du = ""`; Windows
+#' has none) it sums file sizes, which counts a linked file in both, and
+#' `exact` is `FALSE`. A folder that doesn't exist is 0. Run in a
+#' subprocess when asked (`disk_use_command()`): walking a large cache
+#' can take seconds.
+disk_use <- function(dir = cache_dir(), du = Sys.which("du")) {
+  roots <- c(cache = file.path(dir, "renv-cache"), indexes = file.path(dir, "indexes"),
+             libraries = file.path(dir, "libraries"))
+  use <- list(libraries = 0, cache = 0, indexes = 0, exact = nzchar(du))
+  present <- roots[dir.exists(roots)]
+  if (length(present) == 0L) return(use)
+  if (nzchar(du)) {
+    res <- processx::run(du, c("-sk", unname(present)), error_on_status = FALSE)
+    lines <- strsplit(res$stdout, "\n")[[1]]
+    lines <- lines[nzchar(lines)]
+    if (identical(res$status, 0L) && length(lines) == length(present)) {
+      kb <- as.numeric(sub("\t.*$", "", lines))
+      for (i in seq_along(present)) use[[names(present)[i]]] <- kb[i] * 1024
+      return(use)
+    }
+    use$exact <- FALSE
+  }
+  for (kind in names(present)) use[[kind]] <- dir_size(present[[kind]])
+  use
+}
+
+#' Run in a subprocess (`disk_use_command()`): print `disk_use(dir)` as JSON.
+disk_use_main <- function(dir) {
+  cat(jsonlite::toJSON(disk_use(dir), auto_unbox = TRUE, digits = NA))
+  invisible(NULL)
+}
+
+#' The command that measures disk use for `dir`, as `index_fetch_command()`
+#' builds its own: an inline `Rscript -e` that loads the installed `ember`.
+disk_use_command <- function(dir = cache_dir()) {
+  rscript <- file.path(R.home("bin"), "Rscript")
+  code <- paste0("local({library(ember); ember:::disk_use_main(", deparse(dir), ")})")
+  env <- c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep),
+           R_LIBS_USER = "", R_LIBS_SITE = "")
+  list(command = rscript, args = c("--vanilla", "-e", code), env = env)
+}
