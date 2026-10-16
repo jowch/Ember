@@ -578,7 +578,12 @@ test_that("the library heartbeat keeps open sessions' markers fresh, and stops w
   # A clean-up in another process now sees it as used.
   expect_equal(clean_up(root, dry_run = TRUE)$libraries, 0)
 
-  expect_length(ls(open_sessions, all.names = TRUE), 0L)
+  # Sessions earlier test files left open would keep it going; set them
+  # aside for this check.
+  ids <- ls(open_sessions, all.names = TRUE)
+  saved <- mget(ids, envir = open_sessions)
+  rm(list = ids, envir = open_sessions)
+  on.exit(list2env(saved, envir = open_sessions), add = TRUE)
   was <- library_heartbeat$scheduled
   on.exit(library_heartbeat$scheduled <- was, add = TRUE)
   library_heartbeat$scheduled <- TRUE
