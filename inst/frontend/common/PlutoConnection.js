@@ -27,6 +27,9 @@ const unreachable_after = 30 * 1000
 /** Once the page has said so, it still tries this often, so it reconnects by itself if Ember comes back at the same address. */
 const unreachable_retry_delay = 10 * 1000
 
+/** How long one try may take to open its socket before it counts as failed. */
+const connect_timeout_ms = 30 * 1000
+
 /** The close code Ember's server uses when it refuses this page's secret: `WS_CLOSE_KEY_REFUSED` in R/server.R. */
 const key_refused_close_code = 4403
 
@@ -167,7 +170,7 @@ const try_close_socket_connection = (/** @type {WebSocket} */ socket) => {
  * @param {number} timeout_s Timeout for creating the websocket connection (seconds)
  * @returns {Promise<WebsocketConnection>}
  */
-const create_ws_connection = (address, { on_message, on_socket_close }, timeout_s = 30) => {
+const create_ws_connection = (address, { on_message, on_socket_close }, timeout_s = connect_timeout_ms / 1000) => {
     return new Promise((resolve, reject) => {
         const socket = new WebSocket(address)
 
@@ -375,10 +378,21 @@ export const create_pluto_connection = async ({
     window.pluto_get_message_log = () => message_log.get()
     let auto_reconnect = true
 
-    // Connect tries that failed in a row, when the first of them failed,
+    // Connect tries that failed in a row, how long they have been failing,
     // and whether the page has said it can't reach Ember here (#33).
+    //
+    // `failing_for` is counted from the page's own waits and tries, each
+    // at most as long as it can take, not from the wall clock: a computer
+    // that sleeps mid-outage wakes with the clock moved on by the whole
+    // sleep, and its first try fails while the network comes back, which
+    // must not count as 30 s of failures (#99). A sleep during a wait adds
+    // at most that wait; one during a pending try can still count as a
+    // full try (`connect_timeout_ms`), since the try's own timeout fires
+    // late on wake. Tries rarely hang: a dead port or a dropped tunnel
+    // refuses at once, and a try only hangs when the network is gone.
     let failures = 0
-    let failing_since = /** @type {number?} */ (null)
+    let failing_for = 0
+    let try_started_at = Date.now()
     let unreachable = false
     let retried_by_hand = false
     const between_tries = wakeable_delay()
@@ -388,7 +402,7 @@ export const create_pluto_connection = async ({
     }
     const connected_again = () => {
         failures = 0
-        failing_since = null
+        failing_for = 0
         retried_by_hand = false
         if (unreachable) {
             unreachable = false
@@ -405,14 +419,23 @@ export const create_pluto_connection = async ({
     /** After a failed try that wasn't a refused key: say Ember can't be reached here once it has failed long enough, and again after a "Try again" that failed. */
     const note_failure = () => {
         failures += 1
-        failing_since ??= Date.now()
-        const long_enough = Date.now() - failing_since >= unreachable_after
+        // From the first failure on, as before: the try that found the
+        // outage doesn't count.
+        if (failures > 1) failing_for += Math.max(0, Math.min(Date.now() - try_started_at, connect_timeout_ms))
+        const long_enough = failing_for >= unreachable_after
         if ((long_enough && !unreachable) || (unreachable && retried_by_hand)) {
             unreachable = true
             on_unreachable(true)
             ask_unreachable(retry_now)
         }
         retried_by_hand = false
+    }
+    /** The wait before the next try, counted as at most its own length. */
+    const wait_between_tries = async () => {
+        const ms = unreachable ? unreachable_retry_delay : retry_delay(failures)
+        const started = Date.now()
+        await between_tries.wait(ms)
+        failing_for += Math.max(0, Math.min(Date.now() - started, ms))
     }
 
     const client = {
@@ -466,6 +489,7 @@ export const create_pluto_connection = async ({
         // Whether this socket got its "connect" reply: one that opens and
         // closes before that is a failed try, like one that never opens.
         let said_hello = false
+        try_started_at = Date.now()
         try {
             ws_connection = await create_ws_connection(String(ws_address), {
                 on_message: (update) => {
@@ -503,7 +527,7 @@ export const create_pluto_connection = async ({
                         await Promises.delay(reconnect_after_close_delay)
                     } else {
                         note_failure()
-                        await between_tries.wait(unreachable ? unreachable_retry_delay : retry_delay(failures))
+                        await wait_between_tries()
                     }
                     await connect() // reconnect!
 
@@ -568,7 +592,7 @@ export const create_pluto_connection = async ({
                 key_check_refused(ws_address, ex)
                     .catch(() => false)
                     .then((r) => (r ? true : new Promise(() => {}))),
-                between_tries.wait(unreachable ? unreachable_retry_delay : retry_delay(failures)).then(() => false),
+                wait_between_tries().then(() => false),
             ])
             if (refused) {
                 on_connection_status(false, false)

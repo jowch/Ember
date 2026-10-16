@@ -1677,6 +1677,14 @@ test_that("help() searches installed but unattached packages only when all_packa
   m2 <- h$receive()
   expect_true(m2$found)
   expect_identical(m2$package, "codetools")
+
+  # The reply says how far each lookup looked, found or not (#121).
+  expect_false(m$tried_all_packages)
+  expect_true(m2$tried_all_packages)
+  h$send(list(type = "help", id = 3L, topic = "zzznotatopic", package = NULL, all_packages = TRUE))
+  m3 <- h$receive()
+  expect_false(m3$found)
+  expect_true(m3$tried_all_packages)
 })
 
 test_that("signature() (46)", {
