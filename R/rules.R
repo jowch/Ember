@@ -129,11 +129,13 @@ literal_definers <- c("assign", "data", "setGeneric")
 #' A literal generic makes the call a method definition of it (the graph
 #' adds an edge from every cell that reads the generic); a computed one is
 #' ignored, and a computed class or signature still gives the edge but
-#' can't take part in the duplicate check.
+#' can't take part in the duplicate check. `suffix` is appended to the
+#' literal generic: `setReplaceMethod("r", ...)` is `setMethod("r<-", ...)`.
 method_registrars <- list(
   registerS3method = c(generic = "genname", signature = "class", form = "register"),
   .S3method = c(generic = "generic", signature = "class", form = "register"),
-  setMethod = c(generic = "f", signature = "signature", form = "s4")
+  setMethod = c(generic = "f", signature = "signature", form = "s4"),
+  setReplaceMethod = c(generic = "f", signature = "signature", form = "s4", suffix = "<-")
 )
 
 #' S4 class names written as strings. R keeps the definition of class `X`
@@ -147,6 +149,8 @@ method_registrars <- list(
 #' top level, or in `local()` nested there, like `setGeneric()`).
 #' `slots` and `fields` name their classes only in named elements
 #' (`slots = c(r = "numeric")`; `slots = c("r")` is a slot of class "ANY").
+#' `setOldClass(c("lm2", "lm"))` defines its first class and reads the
+#' rest, the S3 superclasses it names (`define_first`).
 #' Slot and field classes, and the named elements of `representation()`,
 #' are soft reads (`where = "slot"`): R doesn't need them until `new()`,
 #' so they never make a cycle (`add_soft_edges()`). Every other class
@@ -159,7 +163,10 @@ class_name_calls <- list(
   setRefClass = list(formals = c("Class", "fields", "contains"),
                      define = "Class", read = c("fields", "contains")),
   setValidity = list(formals = "Class", read = "Class"),
+  setOldClass = list(formals = c("Classes", "prototype", "where", "test", "S4Class"),
+                     define = "Classes", define_first = TRUE, read = "S4Class"),
   setMethod = list(formals = c("f", "signature"), read = "signature"),
+  setReplaceMethod = list(formals = c("f", "signature"), read = "signature"),
   new = list(formals = "Class", read = "Class"),
   is = list(formals = c("object", "class2"), read = "class2"),
   as = list(formals = c("object", "Class"), read = "Class"),

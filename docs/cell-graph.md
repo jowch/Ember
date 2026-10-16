@@ -153,8 +153,9 @@ with fuller exports once packages install.
 **Methods** (design.md, "Methods": the Pluto model) are read per cell into
 the analysis's `methods` rows: every way of splitting the name of a
 top-level dotted function with arguments (`as.data.frame.foo` gives three
-candidate generics), plus literal `registerS3method()`, `.S3method()` and
-`setMethod()` calls. The graph keeps a dotted name's split only when its
+candidate generics), plus literal `registerS3method()`, `.S3method()`,
+`setMethod()` and `setReplaceMethod()` calls (the last a method of
+`` `f<-` ``). The graph keeps a dotted name's split only when its
 generic is in `s3_generics`, is a function or `setGeneric()` some cell
 defines, or is exported by a package some cell attaches or calls with
 `pkg::` (`resolve_methods()`). Once every other edge is in place,
@@ -169,9 +170,18 @@ two cells is a `multiple_definitions` error keyed `generic.class` (S3) or
 undoes a cell's registrations whenever it removes the cell's globals, so R
 falls back to another method.
 
+**Replacement functions.** A replacement target reads the replacement
+function of each call in it, since R runs `r(x) <- v` as
+`` x <- `r<-`(x, value = v) ``: `r(x) <- v` reads `` `r<-` ``, and
+`names(x)[i] <- v` reads `` `[<-` ``, `` `names<-` `` and the getter
+`names` (`walk_replacement_target()`). So the cell gets a definition edge
+to a cell defining `` `r<-` ``, and method edges to cells defining
+methods of it. `$` and `@` targets read neither, as `df$col` reads no `$`.
+
 **Classes** named as strings read and define `.__C__<name>`, the binding R
 keeps a class in (`class_name_calls` in `R/rules.R`): `setClass("X")`
-defines `.__C__X` (kind `"class"`), and `new("X")`, a `setMethod()`
+defines `.__C__X` (kind `"class"`), as does `setOldClass(c("X", "Y"))`,
+which also reads its superclass `Y`, and `new("X")`, a `setMethod()`
 signature or `contains = "X"` reads it, so they resolve by rules 1 to 4
 like any name, a package's `exportClasses()` included. Slot and field
 classes are recorded with `where = "slot"` and resolved as soft edges
