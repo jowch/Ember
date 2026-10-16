@@ -443,16 +443,22 @@ test('chips: NEVER (loaded with code, never run) shows "Not run yet" with no out
     cellSelector("NEVER"), { timeout: 20000 });
   assert.equal(await page.locator(`${cellSelector("NEVER")} ember-chip`).innerText(), "Not run yet");
   assert.equal(await page.locator(`${cellSelector("NEVER")} pluto-output`).innerText(), "");
-  // Board Cells: 12px right of the rail and 12px above the code.
-  const neverCell = await rect(page, cellSelector("NEVER"));
-  const neverRail = await rect(page, `${cellSelector("NEVER")} > pluto-trafficlight`);
-  const neverChip = await rect(page, `${cellSelector("NEVER")} > ember-chip`);
-  const neverCode = await rect(page, `${cellSelector("NEVER")} .cm-editor`);
+  // Board Cells: 12px right of the rail and 12px above the code. A's run
+  // can still be landing (its chip goes, its output comes), which moves
+  // NEVER down, so wait for it to finish and read every box in one round
+  // trip: reads taken a moment apart once measured the chip 46px from the
+  // code.
+  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached", timeout: 15000 });
+  const { neverCell, neverRail, neverChip, neverCode } = await rects(page, {
+    neverCell: cellSelector("NEVER"),
+    neverRail: `${cellSelector("NEVER")} > pluto-trafficlight`,
+    neverChip: `${cellSelector("NEVER")} > ember-chip`,
+    neverCode: `${cellSelector("NEVER")} .cm-editor`,
+  });
   near(neverRail.right, neverCell.left, "the rail ends where the cell starts");
   near(neverChip.left - neverRail.right, 12, "chip to rail");
   near(neverCode.top - neverChip.bottom, 12, "chip to code");
   assert.equal(await page.locator(`${cellSelector("NEVER")} ember-runtime`).count(), 0, "no run-time chip before a first run");
-  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached", timeout: 15000 });
 
   const formatted = await page.evaluate(async () => {
     const src = document.querySelector('script[src$="editor.js"]').src;
@@ -501,9 +507,11 @@ test('chips: "Stale · x changed" after an upstream edit in lazy mode, with a gr
 
   // Board "Cells": output, then chip, both on one full-strength wash that
   // runs down to the code box, whose top-right corner goes square.
-  const out = await rect(page, `${cellSelector("B")} > pluto-output`);
-  const chip = await rect(page, `${cellSelector("B")} > ember-chip`);
-  const code = await rect(page, `${cellSelector("B")} .cm-editor`);
+  const { out, chip, code } = await rects(page, {
+    out: `${cellSelector("B")} > pluto-output`,
+    chip: `${cellSelector("B")} > ember-chip`,
+    code: `${cellSelector("B")} .cm-editor`,
+  });
   assert.ok(chip.top >= out.bottom, `chip (${chip.top}) under the output (${out.bottom})`);
   const wash = await page.locator(cellSelector("B")).evaluate((el) => {
     const s = getComputedStyle(el, "::before");
@@ -1148,9 +1156,11 @@ test("cell menu: the ⋯ is in pluto-input after the code, on the code box even 
   assert.deepEqual(order, ["code", "run", "menu"], "Tab reaches the code first, then run, then ⋯");
 
   await page.hover(`${cellSelector("ERR")} .cm-content`);
-  const box = await rect(page, `${cellSelector("ERR")} .cm-editor`);
-  const more = await rect(page, `${cellSelector("ERR")} button.input_context_menu`);
-  const output = await rect(page, `${cellSelector("ERR")} > pluto-output`);
+  const { box, more, output } = await rects(page, {
+    box: `${cellSelector("ERR")} .cm-editor`,
+    more: `${cellSelector("ERR")} button.input_context_menu`,
+    output: `${cellSelector("ERR")} > pluto-output`,
+  });
   near(box.right - more.right, 6, "⋯ right inset");
   near(more.top - box.top, 5, "⋯ top inset");
   assert.ok(more.top >= output.bottom, "the ⋯ is below the error output, not over it");

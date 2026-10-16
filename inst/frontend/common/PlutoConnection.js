@@ -4,11 +4,28 @@ import { pack, unpack } from "./MsgPack.js"
 import "./Polyfill.js"
 import { Stack } from "./Stack.js"
 import { with_query_params } from "./URLTools.js"
-import { reload_prompt, tell } from "./dialogs.js"
+import { ask, dismiss, reload_prompt, tell } from "./dialogs.js"
 import { t } from "./lang.js"
 
 const reconnect_after_close_delay = 500
-const retry_after_connect_failure_delay = 5000
+
+/**
+ * After a failed connect the page waits before the next try: 1 s, then
+ * twice as long each time, up to 5 s (#33).
+ */
+const retry_delay = (/** @type {number} */ failures) => Math.min(1000 * 2 ** (failures - 1), 5000)
+
+/**
+ * How long connects may keep failing before the page stops saying
+ * "Reconnecting" and says it can't reach Ember at its address: a tab left
+ * open after Ember stopped, after it started again on another port, or
+ * after the tunnel to it closed has nothing to reconnect to (#33). Ember restarting on the same port
+ * takes a few seconds, so this is well past that.
+ */
+const unreachable_after = 30 * 1000
+
+/** Once the page has said so, it still tries this often, so it reconnects by itself if Ember comes back at the same address. */
+const unreachable_retry_delay = 10 * 1000
 
 /** The close code Ember's server uses when it refuses this page's secret: `WS_CLOSE_KEY_REFUSED` in R/server.R. */
 const key_refused_close_code = 4403
@@ -16,8 +33,47 @@ const key_refused_close_code = 4403
 const is_key_refused = (/** @type {any} */ e) => e instanceof CloseEvent && e.code === key_refused_close_code
 
 /** Ember restarted (a new key) under this open page: retrying with the old key can never succeed. */
-const tell_key_refused = () =>
-    tell({ title: t("t_ember_key_refused_title"), body: t("t_ember_key_refused"), key: "ember-key-refused" })
+const tell_key_refused = () => {
+    dismiss("ember-unreachable")
+    return tell({ title: t("t_ember_key_refused_title"), body: t("t_ember_key_refused"), key: "ember-key-refused" })
+}
+
+/**
+ * Nothing has answered at this page's address for `unreachable_after`.
+ * "Try again" tries at once instead of waiting for the next background try.
+ */
+const ask_unreachable = (/** @type {() => void} */ retry_now) =>
+    ask({
+        title: t("t_ember_unreachable_title"),
+        body: t("t_ember_unreachable", { address: window.location.host }),
+        actions: [
+            { label: t("t_ember_unreachable_retry"), value: "retry", primary: true },
+            { label: t("t_close"), value: "close" },
+        ],
+        cancel_value: "close",
+        key: "ember-unreachable",
+    }).then((value) => {
+        if (value === "retry") retry_now()
+    })
+
+/**
+ * A delay that `wake()` can end early: the wait between connect tries,
+ * which "Try again" cuts short.
+ */
+const wakeable_delay = () => {
+    let wake_current = () => {}
+    return {
+        wait: (/** @type {number} */ ms) =>
+            new Promise((resolve) => {
+                const handle = setTimeout(resolve, ms)
+                wake_current = () => {
+                    clearTimeout(handle)
+                    resolve(undefined)
+                }
+            }),
+        wake: () => wake_current(),
+    }
+}
 
 /**
  * Return a promise that resolves to:
@@ -298,6 +354,7 @@ const default_ws_address = () => ws_address_from_base(window.location.href)
  *  on_reconnect: () => Promise<boolean>,
  *  on_connection_status: (connection_status: boolean, hopeless: boolean) => void,
  *  on_key_refused?: () => void,
+ *  on_unreachable?: (unreachable: boolean) => void,
  *  connect_metadata?: Object,
  *  ws_address?: String,
  * }} options
@@ -308,6 +365,7 @@ export const create_pluto_connection = async ({
     on_reconnect,
     on_connection_status,
     on_key_refused = () => {},
+    on_unreachable = () => {},
     connect_metadata = {},
     ws_address = default_ws_address(),
 }) => {
@@ -316,6 +374,46 @@ export const create_pluto_connection = async ({
     // @ts-ignore
     window.pluto_get_message_log = () => message_log.get()
     let auto_reconnect = true
+
+    // Connect tries that failed in a row, when the first of them failed,
+    // and whether the page has said it can't reach Ember here (#33).
+    let failures = 0
+    let failing_since = /** @type {number?} */ (null)
+    let unreachable = false
+    let retried_by_hand = false
+    const between_tries = wakeable_delay()
+    const retry_now = () => {
+        retried_by_hand = true
+        between_tries.wake()
+    }
+    const connected_again = () => {
+        failures = 0
+        failing_since = null
+        retried_by_hand = false
+        if (unreachable) {
+            unreachable = false
+            dismiss("ember-unreachable")
+            on_unreachable(false)
+        }
+    }
+    const stop_unreachable = () => {
+        if (unreachable) {
+            unreachable = false
+            on_unreachable(false)
+        }
+    }
+    /** After a failed try that wasn't a refused key: say Ember can't be reached here once it has failed long enough, and again after a "Try again" that failed. */
+    const note_failure = () => {
+        failures += 1
+        failing_since ??= Date.now()
+        const long_enough = Date.now() - failing_since >= unreachable_after
+        if ((long_enough && !unreachable) || (unreachable && retried_by_hand)) {
+            unreachable = true
+            on_unreachable(true)
+            ask_unreachable(retry_now)
+        }
+        retried_by_hand = false
+    }
 
     const client = {
         // send: null,
@@ -365,6 +463,9 @@ export const create_pluto_connection = async ({
     client.send = batched_updates(send)
 
     const connect = async () => {
+        // Whether this socket got its "connect" reply: one that opens and
+        // closes before that is a failed try, like one that never opens.
+        let said_hello = false
         try {
             ws_connection = await create_ws_connection(String(ws_address), {
                 on_message: (update) => {
@@ -386,6 +487,7 @@ export const create_pluto_connection = async ({
                 on_socket_close: async (/** @type {CloseEvent=} */ e) => {
                     on_connection_status(false, false)
                     if (is_key_refused(e)) {
+                        stop_unreachable()
                         on_key_refused()
                         tell_key_refused()
                         return
@@ -397,7 +499,12 @@ export const create_pluto_connection = async ({
                     }
 
                     console.log(`Starting new websocket`, new Date().toLocaleTimeString())
-                    await Promises.delay(reconnect_after_close_delay)
+                    if (said_hello) {
+                        await Promises.delay(reconnect_after_close_delay)
+                    } else {
+                        note_failure()
+                        await between_tries.wait(unreachable ? unreachable_retry_delay : retry_delay(failures))
+                    }
                     await connect() // reconnect!
 
                     console.log(`Starting state sync`, new Date().toLocaleTimeString())
@@ -414,6 +521,8 @@ export const create_pluto_connection = async ({
             console.log("Hello?")
             const u = await send("connect", {}, connect_metadata)
             console.log("Hello!")
+            said_hello = true
+            connected_again()
             client.kill = (allow_reconnect = true) => {
                 auto_reconnect = allow_reconnect
                 if (ws_connection) ws_connection.socket.close()
@@ -445,10 +554,12 @@ export const create_pluto_connection = async ({
             console.error("connect() failed", ex)
             if (is_key_refused(ex)) {
                 on_connection_status(false, false)
+                stop_unreachable()
                 on_key_refused()
                 tell_key_refused()
                 return {}
             }
+            note_failure()
             // The key check runs alongside the retry delay, not before it,
             // so a check that hangs never holds up the retry. If it finds
             // the key refused before the delay is up, that is the same
@@ -457,10 +568,11 @@ export const create_pluto_connection = async ({
                 key_check_refused(ws_address, ex)
                     .catch(() => false)
                     .then((r) => (r ? true : new Promise(() => {}))),
-                Promises.delay(retry_after_connect_failure_delay).then(() => false),
+                between_tries.wait(unreachable ? unreachable_retry_delay : retry_delay(failures)).then(() => false),
             ])
             if (refused) {
                 on_connection_status(false, false)
+                stop_unreachable()
                 on_key_refused()
                 tell_key_refused()
                 return {}
