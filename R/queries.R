@@ -119,10 +119,26 @@ affected <- function(old, new, changed) {
 #' The result orders ids present in `new` by `new`'s run order, followed by
 #' deleted ids (present in `old` only) in `old`'s run order.
 changed_cells <- function(old, new) {
+  # Most dispatches (a worker message during Run all) keep the same graph
+  # object: nothing changed, and the per-cell walk below is skipped (#44).
+  if (identical(old, new)) return(character())
   ids <- union(old$ids, new$ids)
+  # By position, not by name: a lookup by name scans the names (#43).
+  oi <- match(ids, old$ids)
+  ni <- match(ids, new$ids)
+  old_cells <- old$cells[oi]; new_cells <- new$cells[ni]
+  old_up <- old$upstream[match(ids, names(old$upstream))]
+  new_up <- new$upstream[match(ids, names(new$upstream))]
+  errors_of <- function(graph) {
+    by <- new.env(parent = emptyenv())
+    for (e in graph$errors) for (cid in unique(e$cells)) by[[cid]] <- c(by[[cid]], list(e))
+    by
+  }
+  old_errors <- errors_of(old); new_errors <- errors_of(new)
   changed <- character()
-  for (id in ids) {
-    oc <- old$cells[[id]]; nc <- new$cells[[id]]
+  for (k in seq_along(ids)) {
+    id <- ids[[k]]
+    oc <- old_cells[[k]]; nc <- new_cells[[k]]
     if (is.null(oc) || is.null(nc)) {
       changed <- c(changed, id)
       next
@@ -130,8 +146,8 @@ changed_cells <- function(old, new) {
     if (!identical(oc$definitions, nc$definitions) ||
         !identical(oc$references, nc$references) ||
         !identical(oc$packages, nc$packages) ||
-        !identical(old$upstream[[id]], new$upstream[[id]]) ||
-        !identical(cell_errors(old, id), cell_errors(new, id))) {
+        !identical(old_up[[k]], new_up[[k]]) ||
+        !identical(old_errors[[id]], new_errors[[id]])) {
       changed <- c(changed, id)
     }
   }
