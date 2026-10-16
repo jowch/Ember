@@ -374,19 +374,29 @@ strip_rd_header <- function(html) {
 #' Two of Rd2HTML's sections as the Help tab's board (Panel3) draws them
 #' (#51). The "Description" heading goes: the description is the page's
 #' first paragraph, under its title. "See Also" becomes a row of its links,
-#' each in code type; the prose between them goes. A See Also with no
-#' links stays as R wrote it. Run after `rewrite_help_links()`, so a link
-#' left in the section is one the Help tab can follow. Pure.
+#' each in code type; the prose between them goes. A name R sets in code
+#' type without a link (`which.max` on `?max`) stays in the row as a plain
+#' code chip, so the row never loses a name the section had. A See Also
+#' with no links stays as R wrote it. Run after `rewrite_help_links()`, so
+#' a link left in the section is one the Help tab can follow. Pure.
 tidy_help_sections <- function(html) {
   html <- sub("(?is)<h3>\\s*Description\\s*</h3>\\s*", "", html, perl = TRUE)
   m <- regexpr("(?is)<h3>\\s*See Also\\s*</h3>.*?(?=<h3|<hr|</main|$)", html, perl = TRUE)
   if (m < 0) return(html)
   section <- regmatches(html, m)
-  links <- regmatches(section, gregexpr("(?is)<a\\b[^>]*>.*?</a>", section, perl = TRUE))[[1]]
-  if (length(links) == 0) return(html)
-  links <- unique(gsub("(?is)</?code>", "", links, perl = TRUE))
-  links <- sub("(?is)(<a\\b[^>]*>)(.*?)(</a>)", "\\1<code>\\2</code>\\3", links, perl = TRUE)
-  row <- sprintf('<h3>See Also</h3>\n<p class="ember-help-seealso">%s</p>\n', paste(links, collapse = " "))
+  # Links and code names in the order R wrote them. A link inside
+  # <code> (R's \\code{\\link{x}}) is a link.
+  items <- regmatches(section, gregexpr("(?is)<code>.*?</code>|<a\\b[^>]*>.*?</a>", section, perl = TRUE))[[1]]
+  is_link <- grepl("(?i)<a\\b", items, perl = TRUE)
+  if (!any(is_link)) return(html)
+  items[is_link] <- regmatches(items[is_link], regexpr("(?is)<a\\b[^>]*>.*?</a>", items[is_link], perl = TRUE))
+  text <- trimws(gsub("(?s)<[^>]*>", "", items, perl = TRUE))
+  chips <- ifelse(is_link,
+    sub("(?is)(<a\\b[^>]*>)(.*?)(</a>)", "\\1<code>\\2</code>\\3", gsub("(?is)</?code>", "", items, perl = TRUE), perl = TRUE),
+    sprintf('<code class="ember-help-seealso-name">%s</code>', text))
+  # One chip per name; a name both linked and plain keeps its link.
+  keep <- nzchar(text) & !duplicated(chips) & !(!is_link & (text %in% text[is_link] | duplicated(text)))
+  row <- sprintf('<h3>See Also</h3>\n<p class="ember-help-seealso">%s</p>\n', paste(chips[keep], collapse = " "))
   regmatches(html, m) <- row
   html
 }
