@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector, setCellCode } from "../browser.mjs";
 
 /** Resolves once the page hasn't scrolled for 10 frames in a row. The
  * check runs once a frame and returns a plain value: waitForFunction
@@ -415,6 +415,9 @@ test("help: a late \"R is busy\" for an older query doesn't cancel the current q
   await page.clock.install();
   await openNotebook(page, server.origin, server.secret, notebook);
 
+  // R must stay busy through all the setup below, however slow the
+  // runner: 20 s, not the fixture's 8.
+  await setCellCode(page, "LOOP", "t0 <- Sys.time(); while (Sys.time() - t0 < 20) NULL");
   await runCell(page, "LOOP");
   await page.waitForFunction(
     () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
@@ -459,7 +462,7 @@ test("help: a late \"R is busy\" for an older query doesn't cancel the current q
   await page.clock.resume();
   await page.waitForFunction(
     () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("mgcv"),
-    null, { timeout: 30000 });
+    null, { timeout: 45000 });
   assert.equal(await page.locator("#live-docs-search").inputValue(), "s");
   assertNoProblems(page);
 });
