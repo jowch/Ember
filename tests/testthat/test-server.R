@@ -458,7 +458,7 @@ test_that("interrupt_all sends SIGINT to the running cell (31)", {
   expect_true(nzchar(ws$page()$nbpkg$restart_recommended_msg))
 })
 
-test_that("restart_process runs all in preview, and restarts (leaving cells not run) otherwise (31)", {
+test_that("restart_process runs nothing in preview, ember_run_notebook runs all, and restart leaves cells not run (31)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1 + 1")))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
@@ -472,7 +472,12 @@ test_that("restart_process runs all in preview, and restarts (leaving cells not 
   handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
 
   expect_equal(notebook_snapshot(nb)$process, "preview")
-  handle_message(server, ws, wire("restart_process", notebook_id = id))
+  # Restart R in preview: refused, R doesn't start, nothing runs (#29).
+  expect_message(handle_message(server, ws, wire("restart_process", notebook_id = id)), "nothing to restart")
+  expect_equal(notebook_snapshot(nb)$process, "preview")
+  expect_equal(snap_view(notebook_snapshot(nb), a)$status, "not_run")
+
+  handle_message(server, ws, wire("ember_run_notebook", notebook_id = id))
   ok <- wait_for(nb, timeout = 20)
   expect_true(ok)
   expect_equal(snap_view(notebook_snapshot(nb), a)$status, "ok")
@@ -686,18 +691,18 @@ test_that("an unknown request type and malformed bytes are logged and dropped, n
 
 test_that("every request type in the handler table is answered as documented (36)", {
   answered <- c("connect", "ping", "current_time", "update_notebook", "run_multiple_cells",
-               "restart_process", "reset_shared_state", "complete", "complete_symbols", "docs",
+               "ember_run_notebook", "reset_shared_state", "complete", "complete_symbols", "docs",
                "all_registered_package_names", "completepath", "get_all_notebooks", "ember_signature",
                "ember_update_packages", "ember_move_notebook", "ember_start_page", "ember_new_notebook",
                "ember_open_notebook", "ember_forget_recent")
-  silent <- c("interrupt_all", "shutdown_notebook", "reshow_cell", "ember_render_plot",
+  silent <- c("interrupt_all", "restart_process", "shutdown_notebook", "reshow_cell", "ember_render_plot",
              "ember_run_all", "ember_split_cell", "ember_apply_update", "ember_cancel_update",
              "ember_set_mode", "request_js_link_response", "nbpkg_available_versions",
              "nbpkg_get_project_toml", "nbpkg_set_project_toml", "pkg_update")
   expect_setequal(names(handlers), c(answered, silent))
 
   # A fresh notebook and server per type: some requests change engine state
-  # (run_multiple_cells, restart_process), which would otherwise leak into
+  # (run_multiple_cells, ember_run_notebook), which would otherwise leak into
   # later iterations sharing the same worker.
   one_request <- function(type) {
     path <- write_session_notebook(list(S = cell(""), A = cell("1")))

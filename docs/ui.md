@@ -272,8 +272,9 @@ with the R grammar inside, committed, and checked by CI.
 
 ### Decisions
 
-- **"Run notebook code" in safe preview** (`restart_process`) allows
-  execution and runs every cell, as the button says.
+- **"Run notebook code" in safe preview** allows execution and runs every
+  cell, as the button says. It sends `ember_run_notebook`; it used to send
+  Pluto's `restart_process`, which made Restart R run the notebook too (#29).
 - **Markdown cells are editable**: refusing `set_code` on them was a bug in
   the engine, fixed with this step.
 - **The page names new cells**: `insert_cell()` takes an optional `id`.

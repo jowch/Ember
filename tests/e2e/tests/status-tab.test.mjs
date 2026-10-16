@@ -50,8 +50,8 @@ test("status tab: Restart R is off in safe preview and runs nothing (#29)", asyn
   assert.equal(await restart.isDisabled(), true, "Restart R is disabled in safe preview");
 
   // Once the banner's "Run this notebook" starts R, Restart R is on again.
-  // (The open panel covers the banner at this width; the R status button
-  // toggles it shut.)
+  // (At newPage()'s 1200px the open panel is a slide-over that covers the
+  // banner; the R status button toggles it shut.)
   await page.locator("#ember-r-status").click();
   await page.locator("#ember-status-tab").waitFor({ state: "detached" });
   await page.locator("#ember-safe-preview button").click();
@@ -61,4 +61,48 @@ test("status tab: Restart R is off in safe preview and runs nothing (#29)", asyn
   await page.locator("#ember-r-status").click();
   await page.waitForFunction(() => document.querySelector("#ember-status-restart")?.disabled === false, null, { timeout: 30000 });
   assertNoProblems(page);
+});
+
+// #29, while the page loads: the Status tab can be on screen (the last tab
+// used, docked from 1240px) and the socket up before the first notebook
+// state says the notebook is in safe preview. Restart R stays off until it
+// does. Here the server's messages after the first are held until the test
+// has looked, so the window is as wide as the test needs.
+test("status tab: Restart R stays off while the page doesn't know R's state yet (#29)", async (t) => {
+  const notebook = tempNotebook();
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "status-tab-load.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  await context.addInitScript(() => {
+    localStorage.setItem("ember_panel_tab", "process");
+    localStorage.setItem("ember_panel_open", "true");
+  });
+  const page = await context.newPage();
+  let held = [];
+  let seen = 0;
+  let to_page = null;
+  await page.routeWebSocket(/.*/, (ws) => {
+    const srv = ws.connectToServer();
+    to_page = ws;
+    ws.onMessage((m) => srv.send(m));
+    srv.onMessage((m) => {
+      seen += 1;
+      if (seen === 1 || held == null) ws.send(m); else held.push(m);
+    });
+  });
+  await page.goto(`${server.origin}open?path=${encodeURIComponent(notebook)}&secret=${server.secret}`);
+
+  const restart = page.locator("#ember-status-restart");
+  await restart.waitFor();
+  assert.equal(await page.evaluate(() => window.editor_state?.notebook?.ember?.process ?? null), null, "the notebook state is still held back");
+  assert.equal(await restart.isDisabled(), true, "Restart R is off before the page knows R's state");
+
+  const release = held;
+  held = null;
+  for (const m of release) to_page.send(m);
+  await page.locator("#ember-safe-preview").waitFor({ state: "visible", timeout: 30000 });
+  assert.equal(await restart.isDisabled(), true, "and stays off in safe preview");
+  await context.close();
 });

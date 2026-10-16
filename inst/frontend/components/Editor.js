@@ -1416,6 +1416,9 @@ all patches: ${JSON.stringify(patches, null, 1)}
                 }
             )
         }
+        // The banner's "Run this notebook": allows execution and runs every
+        // cell. Not restart_process, which only restarts (#29).
+        const run_notebook = () => this.client.send("ember_run_notebook", {}, { notebook_id: notebook.notebook_id }, false)
 
         return html`
             ${this.state.disable_ui === false && html`<${HijackExternalLinksToOpenInNewTab} />`}
@@ -1461,9 +1464,9 @@ all patches: ${JSON.stringify(patches, null, 1)}
                     html`<${MoveDialog} path=${notebook.path} shortpath=${notebook.shortpath} on_close=${() => this.setState({ move_dialog_open: false })} />`}
                     <${SafePreviewUI}
                         process_waiting_for_permission=${status.process_waiting_for_permission}
-                        restart=${() => {
+                        run_notebook=${() => {
                             run_started()
-                            return restart()
+                            return run_notebook()
                         }}
                         plan=${notebook.ember?.plan}
                     />

@@ -23,9 +23,9 @@ const plan_text = (plan) => {
  * the page outline and its info popup; no cell shows "not executed"
  * anymore (Cell.js no longer renders `SafePreviewOutput`).
  *
- * @param {{ process_waiting_for_permission: boolean, restart: () => void, plan: { install: number, restart: string[] }? }} props
+ * @param {{ process_waiting_for_permission: boolean, run_notebook: () => void, plan: { install: number, restart: string[] }? }} props
  */
-export const SafePreviewUI = ({ process_waiting_for_permission, restart, plan }) => {
+export const SafePreviewUI = ({ process_waiting_for_permission, run_notebook, plan }) => {
     if (!process_waiting_for_permission) return null
     return html`
         <div id="ember-safe-preview">
@@ -33,7 +33,7 @@ export const SafePreviewUI = ({ process_waiting_for_permission, restart, plan })
                 <path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"></path>
             </svg>
             <span>${t("t_ember_safe_preview_banner")}${plan_text(plan) == null ? "" : ` ${plan_text(plan)}`}</span>
-            <button class="ember-btn primary" type="button" onClick=${() => restart()}>${t("t_ember_run_this_notebook")}</button>
+            <button class="ember-btn primary" type="button" onClick=${() => run_notebook()}>${t("t_ember_run_this_notebook")}</button>
         </div>
     `
 }
