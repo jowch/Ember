@@ -38,7 +38,11 @@
 #' closing dispatch's notifications are delivered), `queries` (environment,
 #' id (character) -> callback, for `worker_query()`'s pending completion/
 #' help/signature questions -- outside `ember_state` and the event log, see
-#' `worker_query()`), `next_query_id` (integer, last id handed out).
+#' `worker_query()`), `next_query_id` (integer, last id handed out),
+#' `file_inputs`/`watch_inputs` (what the last saved file text and the
+#' last watched paths were made from: `save_if_changed()` and
+#' `after_dispatch()` skip the work when these are unchanged; `NULL` until
+#' the first drain).
 #' The poll runs on `later`'s global loop, so an interactive console
 #' services it whenever R is at the prompt.
 session_start <- function(state) {

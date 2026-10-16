@@ -546,6 +546,10 @@ is_idle <- function(snapshot) {
 #' from `computed_sources`, sourced-file hashes from `files` for every
 #' literal and computed `source()` path, the lock and header unchanged.
 #' The header's `ember_version` is the running Ember's.
+#'
+#' Reads only the parts of `state` that `file_inputs()` (shell.R) lists:
+#' `save_if_changed()` skips this when they are unchanged, so a new read
+#' here must be added there too.
 notebook_file_of <- function(state) {
   header <- state$file$header
   header$ember_version <- as.character(utils::packageVersion("ember"))
@@ -739,6 +743,9 @@ retry_install_ids <- function(state, ctx) {
 
 #' Paths the shell should watch: every literal `source()` path in the
 #' analyses plus `computed_sources` and `footer_sources`, relative to the notebook's folder.
+#' Reads only what `watch_inputs()` (shell.R) lists: `after_dispatch()`
+#' skips this when they are unchanged, so a new read here must be added
+#' there too.
 watched_files <- function(state) {
   # `.subset2()`, not `nrow()` and `$`: those dispatch on the data frame,
   # and `step()` runs this for every message (#44).
