@@ -150,13 +150,18 @@ it matters.
 44. Two tabs: an edit run in one appears in the other.
 45. No secret: `/edit` without it gives 403.
 
-**Running locally**: `R CMD INSTALL .` then `npm --prefix tests/e2e ci`
-then `npm --prefix tests/e2e test`. Chromium comes from `npx playwright
+**Running locally**: `npm --prefix tests/e2e ci` then `npm --prefix
+tests/e2e test`. `npm test` (tests/e2e/run.mjs) installs the working tree
+into a temp library and every test server loads ember from there, never
+from Rscript's default library (#55). To run some files only, `node
+tests/e2e/run.mjs tests/<name>.test.mjs` (paths relative to tests/e2e). To
+test an ember already installed somewhere, set `EMBER_E2E_LIB` to that
+library and the install is skipped. Chromium comes from `npx playwright
 install chromium`, or from `EMBER_CHROMIUM` (the path browser3.mjs uses on
 this Mac).
 
 **In CI**: a job `e2e` on ubuntu-latest and macos-latest:
-`r-lib/actions/setup-r` and `setup-r-dependencies`, `R CMD INSTALL .`,
+`r-lib/actions/setup-r` and `setup-r-dependencies`,
 `actions/setup-node` (22), `npm ci` in `tests/e2e`, `npx playwright install
 --with-deps chromium`, `npm test`, and the server logs and a screenshot per
 failed scenario uploaded as artifacts. Windows waits for its interrupt

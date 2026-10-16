@@ -72,6 +72,20 @@ for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]]) {
   process.once(signal, () => process.exit(code));
 }
 
+/** `R_LIBS` for a server child: the library run.mjs installed this
+ * checkout into, ahead of anything already on `R_LIBS`, so `ember::`
+ * loads the code under test and not whatever the default library has
+ * (#55). The worker finds ember through the server's own install
+ * (`system.file()`, R/shell.R), so it follows. */
+function emberLibs() {
+  const lib = process.env.EMBER_E2E_LIB;
+  if (!lib) {
+    throw new Error("EMBER_E2E_LIB is not set: run the browser tests with `npm test` (or `node run.mjs <files>`), " +
+      "which installs this checkout into a temp library, or set it to a library holding the ember to test");
+  }
+  return [path.resolve(lib), process.env.R_LIBS].filter(Boolean).join(path.delimiter);
+}
+
 async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port: fixedPort, secret = SECRET, repos }) {
   const rscript = process.env.EMBER_RSCRIPT ?? "Rscript";
   const quoted = notebookPaths.map((p) => JSON.stringify(p)).join(", ");
@@ -105,7 +119,7 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   const dataDir = mkdtempSync(path.join(tmpdir(), "ember-e2e-data-"));
   const child = spawn(rscript, ["--vanilla", "-e", expr], {
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, R_USER_DATA_DIR: dataDir },
+    env: { ...process.env, R_USER_DATA_DIR: dataDir, R_LIBS: emberLibs() },
     // `new_server()`'s `start_dir` (the start page's default Folder for a
     // new notebook) is wherever this child's cwd is; default to the
     // parent's own, same as spawn()'s own default, so tests that care
