@@ -2338,8 +2338,11 @@ pluto-helpbox .live-docs-searchbox.notfound input {
 
 /* The signature tooltip inside a call (CellInput/signature_hint.js).
    !important: CodeMirror's own tooltip base theme sets a background on
-   `.cm-tooltip` at a specificity this single class can't otherwise beat. */
+   `.cm-tooltip` at a specificity this single class can't otherwise beat.
+   It only shows text, and it sits over the line above the call (or the
+   cell before it), so clicks go through to the code under it (#34). */
 .cm-tooltip.cm-ember-signature-tooltip {
+    pointer-events: none;
     background-color: var(--helpbox-bg-color) !important;
     color: var(--helpbox-text-color) !important;
     border: 1px solid var(--helpbox-search-border-color);
@@ -3043,8 +3046,11 @@ pluto-header-id-copy:focus-visible {
 
 /* Shared dialogs (common/dialogs.js) and menus (common/useMenu.js). */
 
+/* ask()/tell() mount their dialogs on document.body, outside every
+   element that sets a font, so the dialog sets its own (#31). */
 .ember-dialog {
     width: min(420px, calc(100vw - 32px));
+    font-family: var(--ember-ui-font);
     padding: 0;
     border: 1px solid var(--ember-border);
     border-radius: 10px;
@@ -3083,7 +3089,6 @@ pluto-header-id-copy:focus-visible {
     max-height: calc(100vh - 32px);
     background: var(--ember-panel);
     color: var(--ember-text);
-    font-family: var(--ember-ui-font);
 }
 
 .ember-shortcuts .ember-dialog-title {
