@@ -816,7 +816,7 @@ on_run <- function(server, cl, hub, req) {
 #' | complete_symbols              | reply {latex = {}, emoji = {}} (Julia's symbol tables; none for R) |
 #' | docs                          | a notebook definition from state; else worker_query(help); else "needs R running" (ui-2.md, 4c) |
 #' | all_registered_package_names  | reply {results = []}                                            |
-#' | completepath                  | {query, ember_dirs_only?}: reply complete_path()'s {start, stop, results} |
+#' | completepath                  | {query, ember_dirs_only?}: reply complete_path()'s {start, stop, results, ember_truncated} |
 #' | get_all_notebooks             | reply "notebook_list" {notebooks = hosted notebooks}           |
 #' | reshow_cell                   | "more" paging (ui-2.md, 3b/3c): dispatch ev_show_more(cell, objectid, dim); flush. No reply (the frontend sends without awaiting one) |
 #' | ember_render_plot             | {cell_id, res}, res clamped: dispatch ev_render() at the cell's own figure size; flush |
