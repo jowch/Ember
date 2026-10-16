@@ -1586,6 +1586,39 @@ test_that("a value with a knit_print() method shows as its HTML: registered by a
   expect_false(any(vapply(r$console, function(e) identical(e$kind, "stdout"), logical(1))))
 })
 
+test_that("an HTML output whose print() text is its source or empty gets the HTML's text as its text form (#157)", {
+  skip_if_not_installed("knitr")
+  skip_if_not_installed("htmltools")
+  h <- worker_harness(extra_libs = unique(dirname(c(find.package("knitr"), find.package("htmltools")))))
+  on.exit(h$close())
+
+  # As gt: print() gives the HTML source, CSS first. The text form is the
+  # table's text, a row per line and its cells split by tabs.
+  src <- paste0('<div id="t"><style>#t .x { color: red; }</style><table><caption>Fits &amp; tests</caption>',
+                '<tr><th>term</th><th>p</th></tr>\n<tr>\n  <td>wt</td>\n  <td>&lt;0.001</td>\n</tr>',
+                '<tr><td>hp&#39;s</td><td>0.01</td></tr></table><script>var x = 1;</script></div>')
+  r <- run_and_wait(h, "a", 1L, paste(
+    sprintf('src <- %s', deparse(src)),
+    'print.ember_src <- function(x, ...) cat(src, "\\n")',
+    'knit_print.ember_src <- function(x, ...) knitr::asis_output(src)',
+    'structure(1, class = "ember_src")', sep = "\n"))
+  expect_identical(r$output$kind, "html")
+  expect_identical(r$output$text, "Fits & tests\nterm\tp\nwt\t<0.001\nhp's\t0.01")
+
+  # print() text that isn't HTML stays, as flextable's summary does.
+  r <- run_and_wait(h, "b", 2L, paste(
+    'print.ember_sum <- function(x, ...) cat("a table of 2 rows\\n")',
+    'knit_print.ember_sum <- function(x, ...) knitr::asis_output("<table><tr><td>1</td></tr></table>")',
+    'structure(1, class = "ember_sum")', sep = "\n"))
+  expect_identical(r$output$text, "a table of 2 rows")
+
+  # HTML with no text at all, as a widget whose data is in a script: the
+  # text form says what it is rather than being empty.
+  r <- run_and_wait(h, "c", 3L, 'htmltools::tags$div(htmltools::tags$script("var data = [1, 2];"))')
+  expect_identical(r$output$kind, "html")
+  expect_identical(r$output$text, "<HTML output: no text form; it shows in the notebook's page>")
+})
+
 test_that("render_plot() redraws at the cell's own figure size and a new res; width/height pixels override (ui-3 65)", {
   h <- worker_harness()
   on.exit(h$close())

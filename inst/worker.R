@@ -1734,6 +1734,60 @@ text_form <- function(value) {
   list(text = txt, truncated = truncated)
 }
 
+#' The text form of an HTML output (design.md, How values display): the
+#' value's print() text, unless that is empty (an htmlwidget's) or is the
+#' HTML source itself (gt's, an HTML kable's). Then it is the HTML's own
+#' text, with style and script blocks dropped, a table row per line and its
+#' cells split by tabs; and for an HTML output with no text at all (a
+#' plotly or leaflet widget, whose data is in a script), what it is.
+html_text_form <- function(value, html) {
+  tf <- text_form(value)
+  if (nzchar(trimws(tf$text)) && !grepl("^\\s*<", tf$text)) return(tf)
+  txt <- html_to_text(html)
+  if (!nzchar(txt)) {
+    kind <- if (inherits(value, "htmlwidget")) paste(class(value)[1], "htmlwidget") else "HTML output"
+    return(list(text = sprintf("<%s: no text form; it shows in the notebook's page>", kind), truncated = FALSE))
+  }
+  lines <- strsplit(txt, "\n", fixed = TRUE)[[1]]
+  truncated <- length(lines) > 50
+  if (truncated) lines <- lines[1:50]
+  txt <- paste(lines, collapse = "\n")
+  if (nchar(txt) > 4000) {
+    txt <- substr(txt, 1, 4000)
+    truncated <- TRUE
+  }
+  list(text = txt, truncated = truncated)
+}
+
+#' The text of an HTML fragment: no style, script or comments; a line per
+#' table row, block or <br>, table cells split by tabs; entities decoded.
+html_to_text <- function(html) {
+  h <- paste(html, collapse = "\n")
+  h <- gsub("(?is)<(style|script)\\b.*?</\\1\\s*>|<!--.*?-->", "", h, perl = TRUE)
+  # Line breaks in HTML source are spaces; the lines below come from the markup.
+  h <- gsub("[\r\n]+", " ", h, perl = TRUE)
+  h <- gsub("(?i)</t[dh]\\s*>", "\t", h, perl = TRUE)
+  h <- gsub("(?i)<br\\s*/?>|</(tr|p|div|li|caption|h[1-6]|thead|tbody|tfoot|table)\\s*>", "\n", h, perl = TRUE)
+  h <- gsub("(?s)<[^>]*>", "", h, perl = TRUE)
+  entities <- c("&nbsp;" = " ", "&lt;" = "<", "&gt;" = ">", "&quot;" = "\"", "&#39;" = "'", "&apos;" = "'", "&minus;" = "-")
+  for (e in names(entities)) h <- gsub(e, entities[[e]], h, fixed = TRUE)
+  num <- gregexpr("&#(x?)([0-9a-fA-F]+);", h, perl = TRUE)
+  regmatches(h, num) <- lapply(regmatches(h, num), function(m) {
+    hex <- grepl("^&#x", m)
+    code <- ifelse(hex, strtoi(sub("^&#x([0-9a-fA-F]+);$", "\\1", m), 16L), suppressWarnings(as.integer(sub("^&#([0-9]+);$", "\\1", m))))
+    out <- vapply(code, function(cp) if (is.na(cp)) "" else intToUtf8(cp), "")
+    ifelse(is.na(code), m, out)
+  })
+  h <- gsub("&amp;", "&", h, fixed = TRUE)
+  lines <- strsplit(h, "\n", fixed = TRUE)[[1]]
+  lines <- vapply(lines, function(l) {
+    cells <- trimws(gsub("[ \r\f\v]+", " ", strsplit(l, "\t", fixed = TRUE)[[1]]))
+    paste(cells, collapse = "\t")
+  }, "", USE.NAMES = FALSE)
+  lines <- sub("\t+$", "", lines)
+  paste(lines[nzchar(trimws(lines))], collapse = "\n")
+}
+
 #' print() text, with colour on so tibble/cli output keeps its colours.
 display_text <- function(value) {
   tf <- text_form(value)
@@ -2016,7 +2070,7 @@ try_knit_print <- function(value) {
   # For pandoc, some methods (flextable's) wrap their HTML in a raw-HTML
   # fence, ```{=html} ... ```; the page would show the fence lines as text.
   html <- sub("(?s)^\\s*```\\{=html\\}[ \t]*\n(.*)\n```\\s*$", "\\1", paste(out, collapse = "\n"), perl = TRUE)
-  tf <- text_form(value)
+  tf <- html_text_form(value, html)
   list(kind = "html", mime = "text/html", html = html,
        text = tf$text, truncated = tf$truncated)
 }
@@ -2026,7 +2080,7 @@ try_repr <- function(value) {
   if (!requireNamespace("repr", quietly = TRUE)) return(NULL)
   html <- tryCatch(repr::repr_html(value), error = function(e) NULL)
   if (is.null(html)) return(NULL)
-  tf <- text_form(value)
+  tf <- html_text_form(value, html)
   list(kind = "html", mime = "text/html", html = html, text = tf$text, truncated = tf$truncated)
 }
 
@@ -2056,7 +2110,7 @@ display_html <- function(value) {
   if (!requireNamespace("htmltools", quietly = TRUE)) return(display_text(value))
   rendered <- tryCatch(htmltools::renderTags(value), error = function(e) NULL)
   if (is.null(rendered)) return(display_text(value))
-  tf <- text_form(value)
+  tf <- html_text_form(value, rendered$html)
   deps <- tryCatch({
     resolved <- htmltools::resolveDependencies(rendered$dependencies %||% list())
     lapply(resolved, dep_to_wire)
