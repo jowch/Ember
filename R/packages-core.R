@@ -268,6 +268,9 @@ install_failures <- function(lines) {
   # aren't installed.
   compiler_patterns <- c("(^|[ /])(gcc|g\\+\\+|cc|c\\+\\+|clang|clang\\+\\+|gfortran|f95)(-[0-9.]+)?: (No such file or directory|command not found|not found)$",
                          "^configure: error: no acceptable C compiler found",
+                         # A compiler is named (often a stub or a broken
+                         # toolchain) but can't link anything.
+                         "compiler cannot create executables",
                          "^xcrun: error: invalid active developer path")
   building <- NA_character_
 
