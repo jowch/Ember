@@ -374,8 +374,11 @@ strip_rd_header <- function(html) {
 #' The `docs` reply body for a worker's `help_page` message: the sanitized,
 #' rewritten page without its header row, or, when the topic exists in
 #' more than one package, a list of `pkg::topic` links for the user to
-#' choose from.
+#' choose from. A lookup that failed says so, with R's message (#121).
 help_reply_html <- function(reply) {
+  if (!is.null(reply$error)) {
+    return(sprintf("<p>R couldn't open this help page: %s</p>", html_escape(reply$error)))
+  }
   if (length(reply$matches %||% list()) > 0) {
     items <- vapply(reply$matches, function(m) {
       ref <- sprintf("%s::%s", m$package, m$topic)

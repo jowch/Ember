@@ -344,6 +344,35 @@ test("help: a query typed while R is busy is still a typed query when it's asked
   assertNoProblems(page);
 });
 
+test("help: a search that finds nothing once R is free replaces \"R is busy\" (#121)", { timeout: 120000 }, async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help-busy-notfound.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await runCell(page, "LOOP");
+  await page.waitForFunction(
+    () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
+    null, { timeout: 10000 });
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
+
+  await page.locator("#live-docs-search").fill("zzznotatopic");
+  await page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("R is busy running a cell"),
+    null, { timeout: 15000 });
+
+  // Once LOOP ends the retry finds nothing. The page must say so, not
+  // keep saying R is busy.
+  await page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("No help page for zzznotatopic"),
+    null, { timeout: 30000 });
+  assert.doesNotMatch(await page.locator("#helpbox-wrapper .ember-help-page").innerText(), /R is busy/);
+  assertNoProblems(page);
+});
+
 test("signature: the cursor after lm( shows a tooltip containing formula within 1s (62)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-signature.server.log") });

@@ -10,6 +10,8 @@ import { BackIcon, ForwardIcon } from "../common/Icons.js"
 
 const DOCS_RETRY_MS = 1000
 
+const escape_html = (/** @type {string} */ s) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
+
 /**
  * @param {{
  * focus_on_open: boolean,
@@ -146,7 +148,13 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
                     // An empty `doc` is a real "not found" (help_reply_html(),
                     // R/editor-services.R, from a worker help_lookup() with
                     // nothing matching): not a page to show or add to history.
+                    // The page shown stays, unless it's a message about R
+                    // ("R is busy…"), which is no longer true (#121).
                     update_state((state) => {
+                        if (!u.message.doc && state.waiting) {
+                            state.body = `<p>${t("t_live_docs_not_found", { query: escape_html(new_query) })}</p>`
+                            state.package = null
+                        }
                         state.waiting = false
                     })
                     if (u.message.doc) {

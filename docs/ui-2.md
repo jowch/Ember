@@ -940,12 +940,16 @@ Page, `CellInput/pluto_autocomplete.js` rewritten for R:
   2. worker idle: `worker_query(help)`; worker side: `utils::help()` by
      `do.call()`, `utils:::.getHelpFile()`, `tools::Rd2HTML(rd, out,
      package, dynamic = TRUE)`, body only. Several matches: a list of
-     `pkg::topic` links;
+     `pkg::topic` links. No match: an empty `doc`. A lookup that fails
+     with an error: "R couldn't open this help page:" and R's message,
+     not an empty `doc`, so it doesn't look like no match (#121);
   3. otherwise: `{status: "⌛", doc: "<p>Help pages need R running. Run a
      cell to start it.</p>"}`, or "R is busy running a cell…", or (idle
      but no answer in time) "R didn't answer in time". LiveDocsTab shows
      a "⌛" reply's `doc` and asks again after 1 s while the query is
-     unchanged: the cursor staying put sends no new query.
+     unchanged: the cursor staying put sends no new query. If the retry
+     then finds nothing, the page says "No help page for …" in place of
+     the ⌛ message, which is no longer true (#121).
 - `rewrite_help_links(html)` (pure): Rd2HTML's `../../pkg/help/topic`
   links become `@ref pkg::topic`, which LiveDocsTab already turns into a
   new query (LiveDocsTab.js:126-135). No link may navigate the editor
