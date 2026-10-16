@@ -206,6 +206,11 @@ test_that("sanitize_help_html() drops unquoted event handlers and unquoted javas
   expect_match(clean, '<img src=x>', fixed = TRUE)
 })
 
+test_that("help_reply_html() says a failed lookup failed, with its message escaped (#121)", {
+  html <- help_reply_html(list(found = FALSE, html = NULL, matches = list(), error = "can't read <db>"))
+  expect_identical(html, "<p>R couldn't open this help page: can&#39;t read &lt;db&gt;</p>")
+})
+
 test_that("help_reply_html() drops Rd2HTML's 'topic {pkg} | R Documentation' header table", {
   rd <- utils:::.getHelpFile(utils::help("mean", package = "base"))
   out <- tempfile(fileext = ".html")

@@ -9,6 +9,22 @@ import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector } from "../browser.mjs";
 
+/** Resolves once the page hasn't scrolled for 10 frames in a row. The
+ * check runs once a frame and returns a plain value: waitForFunction
+ * awaits a returned Promise and takes its value as final, even a falsy
+ * one, so a Promise-based check would never poll again. */
+const scroll_settled = (page) => page.waitForFunction(() => {
+  const s = (window.__scroll_settled ??= { y: null, frames: 0 });
+  if (window.scrollY !== s.y) {
+    s.y = window.scrollY;
+    s.frames = 0;
+    return false;
+  }
+  if (++s.frames < 10) return false;
+  delete window.__scroll_settled;
+  return true;
+}, null, { polling: "raf", timeout: 30000 });
+
 /** Type `code` into the cell at `sel`, open the completion popup and check
  * `predicate(labels)`, retrying (clear, retype) for up to `timeout`ms. A
  * CI runner busy with other e2e suites can be slow enough that the first
@@ -328,6 +344,35 @@ test("help: a query typed while R is busy is still a typed query when it's asked
   assertNoProblems(page);
 });
 
+test("help: a search that finds nothing once R is free replaces \"R is busy\" (#121)", { timeout: 120000 }, async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help-busy-notfound.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await runCell(page, "LOOP");
+  await page.waitForFunction(
+    () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
+    null, { timeout: 10000 });
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
+
+  await page.locator("#live-docs-search").fill("zzznotatopic");
+  await page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("R is busy running a cell"),
+    null, { timeout: 15000 });
+
+  // Once LOOP ends the retry finds nothing. The page must say so, not
+  // keep saying R is busy.
+  await page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("No help page for zzznotatopic"),
+    null, { timeout: 30000 });
+  assert.doesNotMatch(await page.locator("#helpbox-wrapper .ember-help-page").innerText(), /R is busy/);
+  assertNoProblems(page);
+});
+
 test("signature: the cursor after lm( shows a tooltip containing formula within 1s (62)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-signature.server.log") });
@@ -396,20 +441,10 @@ test("signature: a click on the tooltip lands in the code under it (#34)", async
   // focuses itself on a timer and scrolls itself into view (smoothly,
   // focus_after_creation in CellInput.js); wait for that focus and for the
   // page to stop scrolling, then centre the cell and wait again.
-  const scroll_settled = () => page.waitForFunction(() => new Promise((resolve) => {
-    const y = window.scrollY;
-    let frames = 10;
-    const step = () => {
-      if (window.scrollY !== y) return resolve(false);
-      if (--frames === 0) return resolve(true);
-      requestAnimationFrame(step);
-    };
-    requestAnimationFrame(step);
-  }), null, { timeout: 30000 });
   await page.waitForSelector(`${newSel} .cm-editor.cm-focused`, { timeout: 30000 });
-  await scroll_settled();
+  await scroll_settled(page);
   await page.locator(newSel).evaluate((el) => el.scrollIntoView({ block: "center" }));
-  await scroll_settled();
+  await scroll_settled(page);
 
   await page.keyboard.type("read.table(", { delay: 10 });
   const tooltip = page.locator(".cm-ember-signature-tooltip");
@@ -443,6 +478,81 @@ test("signature: a click on the tooltip lands in the code under it (#34)", async
   await page.keyboard.type("Z");
   assert.match(await page.locator(`${cellSelector("DF")} .cm-line`).first().innerText(), /Z/, "the click put the cursor in DF");
   assert.equal(await page.locator(`${newSel} .cm-line`).first().innerText(), "read.table()", "the new cell is unchanged");
+
+  assertNoProblems(page);
+});
+
+// #103: with no room above (the cell just under the header), CodeMirror
+// puts the tooltip below the line it is anchored to. In a call that spans
+// several lines, that line must be the cursor's, not the call's first, or
+// the tooltip covers the line being typed.
+test("signature: in a multi-line call at the top of the window, the tooltip leaves the cursor's line visible (#103)", async (t) => {
+  const notebook = tempNotebook("rich.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-signature-multiline.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await page.hover(cellSelector("DF"));
+  await page.locator(`${cellSelector("DF")} button.add_cell.after`).click({ force: true });
+  const newCellId = await page.evaluate((bid) => {
+    const cells = Array.from(document.querySelectorAll("pluto-cell"));
+    const i = cells.findIndex((c) => c.id === bid);
+    return cells[i + 1]?.id ?? null;
+  }, "DF");
+  const newSel = `pluto-cell[id="${newCellId}"]`;
+
+  // As in #34's test: wait out the new cell's own focus and smooth scroll,
+  // then put the cell right under the header, and wait again.
+  await page.waitForSelector(`${newSel} .cm-editor.cm-focused`, { timeout: 30000 });
+  await scroll_settled(page);
+  await page.locator(newSel).evaluate((el) => {
+    const header = document.querySelector("header")?.getBoundingClientRect().bottom ?? 0;
+    window.scrollBy({ top: el.getBoundingClientRect().top - header, behavior: "instant" });
+  });
+  await scroll_settled(page);
+
+  await page.keyboard.type("read.table(", { delay: 10 });
+  await page.waitForSelector(".cm-ember-signature-tooltip.cm-tooltip-above, .cm-ember-signature-tooltip.cm-tooltip-below", { timeout: 30000 });
+  // Enter only: typing an argument would open the completion popup, and
+  // CodeMirror moves the tooltip clear of it.
+  await page.keyboard.press("Enter");
+
+  // Wait until the cursor's line and the tooltip have held still for 10
+  // frames (the debounced re-anchor and CodeMirror's measure both land on
+  // later frames); both are read in the same frame.
+  const placed = await page.waitForFunction(() => {
+    const tooltip = document.querySelector(".cm-ember-signature-tooltip");
+    const editor = document.querySelector(".cm-editor.cm-focused");
+    const cursor = editor?.querySelector(".cm-cursor");
+    if (tooltip == null || cursor == null || !/cm-tooltip-(above|below)/.test(tooltip.className)) return false;
+    // The text the cursor is in spans the caret's own box (the line's box
+    // is a little taller, and CodeMirror places the tooltip from the text).
+    const c = cursor.getBoundingClientRect(), t = tooltip.getBoundingClientRect();
+    const line_number = Array.from(editor.querySelectorAll(".cm-line")).findIndex((l) => {
+      const b = l.getBoundingClientRect();
+      return c.top + c.height / 2 > b.top && c.top + c.height / 2 < b.bottom;
+    }) + 1;
+    const now = { tooltip: [t.top, t.bottom], cursor: [c.top, c.bottom], line_number, class: tooltip.className };
+    const s = (window.__placed ??= { last: null, frames: 0 });
+    const key = JSON.stringify(now);
+    if (key !== s.last) {
+      s.last = key;
+      s.frames = 0;
+      return false;
+    }
+    if (++s.frames < 10) return false;
+    delete window.__placed;
+    return now;
+  }, null, { polling: "raf", timeout: 30000 }).then((h) => h.jsonValue());
+
+  assert.equal(placed.line_number, 2, `the cursor is on the call's second line: ${JSON.stringify(placed)}`);
+  // #103 only happens below the line: with room above, main passes too.
+  assert.match(placed.class, /cm-tooltip-below/, `no room above, so the tooltip goes below: ${JSON.stringify(placed)}`);
+  const overlap = Math.min(placed.tooltip[1], placed.cursor[1]) - Math.max(placed.tooltip[0], placed.cursor[0]);
+  assert.ok(overlap <= 0, `the tooltip doesn't cover the text being typed: ${JSON.stringify(placed)}`);
 
   assertNoProblems(page);
 });
