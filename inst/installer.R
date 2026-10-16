@@ -91,7 +91,9 @@ main <- function(plan_path) {
   if (inherits(restored, "error")) {
     msg <- conditionMessage(restored)
     writeLines(paste("Error:", msg), con = stderr())
-    no_binary <- ember:::no_binary_packages(ember:::renv_failed_packages(msg), lock, plan$repos,
+    failed <- ember:::renv_failed_packages(msg)
+    if (length(failed) > 0) failed <- ember:::failed_builds(failed, ember:::read_available(plan$repos, "source"))
+    no_binary <- ember:::no_binary_packages(failed, lock, plan$repos,
                                             binary_repos = repos, linux_binaries = linux_binaries)
     if (length(no_binary) > 0) writeLines(ember:::missing_report_lines(no_binary = no_binary), con = stderr())
     flush(stderr())

@@ -168,7 +168,8 @@ test_that("no_binary_packages() names the failed packages with no binary for thi
 test_that("a failed build with no binary becomes a no_binary row with the version, and other kinds stay (119)", {
   lines <- missing_report_lines(no_binary = c(cli = "3.6.2"), r_version = "4.6.1")
   expect_equal(lines[[1]], "EMBER-MISSING binary cli 3.6.2")
-  expect_match(lines[[2]], "^Error: cli 3.6.2 has no binary for R 4.6.1 at the notebook's snapshot date")
+  expect_match(lines[[2]], "^Error: cli 3.6.2 has no binary for R 4.6.1, so it was built from source")
+  expect_match(lines[[2]], "Most often the snapshot date is older than this R", fixed = TRUE)
   expect_match(lines[[2]], "Update the packages to a newer date", fixed = TRUE)
   two <- missing_report_lines(no_binary = c(cli = "3.6.2", rlang = "1.1.3"), r_version = "4.6.1")
   expect_match(two[[3]], "cli 3.6.2, rlang 1.1.3 have no binary", fixed = TRUE)
@@ -206,6 +207,32 @@ test_that("a real renv 1.3.0 / R 4.6.1 log: cli 3.6.2 at 2024-06-01 builds, fail
   # build is a failed build, not "other".
   plain <- install_failures(lines[!grepl("EMBER-MISSING", lines, fixed = TRUE)])
   expect_equal(plain$kind, "compile")
+})
+
+test_that("failed_builds() leaves out the dependents renv never built, and names none without an index (118)", {
+  index <- cbind(Package = c("cli", "rlang", "lifecycle", "glue"),
+                 Version = c("3.6.2", "1.1.3", "1.0.4", "1.7.0"),
+                 Depends = c("R (>= 3.4)", "R (>= 3.5.0)", "R (>= 3.6)", NA),
+                 Imports = c("utils", "utils", "cli (>= 3.4.0), glue, rlang (>= 1.1.0)", NA),
+                 LinkingTo = NA)
+  expect_equal(failed_builds(c("cli", "lifecycle", "rlang"), index), c("cli", "rlang"))
+  expect_equal(failed_builds("lifecycle", index), "lifecycle")
+  expect_equal(failed_builds(c("cli", "rlang"), NULL), character())
+})
+
+test_that("a real log with dependents: the ones that failed to build are no_binary, lifecycle is a dependency (120)", {
+  # Captured from `ember::run()` (Ubuntu 24.04, R 4.6.1, Package Manager
+  # at 2024-06-01) on cli, glue, lifecycle and rlang, with the installer
+  # as it was before `failed_builds()`: rlang fails to compile, cli to
+  # load, and renv never builds lifecycle ("dependency failed (cli,
+  # rlang)") but names it in "failed to install". gcc lines cut.
+  lines <- readLines(testthat::test_path("fixtures", "install-output", "real-renv-old-snapshot-dependents.txt"), warn = FALSE)
+  rows <- install_failures(lines)
+  expect_equal(rows$package, c("cli", "lifecycle", "rlang"))
+  # Even with the old installer's line for lifecycle, its row stays a
+  # dependency, named by the first package it waited on.
+  expect_equal(rows$kind, c("no_binary", "dependency", "no_binary"))
+  expect_equal(rows$detail, c("3.6.2", "cli", "1.1.3"))
 })
 
 test_that("parse_ldd() reads the libraries ldd couldn't find, with and without per-file headers, leaving R's own out (94)", {

@@ -15,8 +15,8 @@ main <- function(plan_path) {
   writeLines(c(
     "Error: failed to install \"brokenpkg\"",
     "EMBER-MISSING binary brokenpkg 0.1.0",
-    paste("Error: brokenpkg 0.1.0 has no binary for R 4.6.1 at the notebook's snapshot date,",
-          "so it was built from source, and it doesn't build on R 4.6.1.")
+    paste("Error: brokenpkg 0.1.0 has no binary for R 4.6.1, so it was built from source,",
+          "and it doesn't build on R 4.6.1.")
   ), con = stderr())
   quit(save = "no", status = 1L)
 }

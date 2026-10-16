@@ -204,6 +204,7 @@ install_failure_message <- function(lines, status) {
 #'    compilation failed for package", or "ERROR: loading failed" after a
 #'    source build), "configure" ("ERROR: configuration
 #'    failed"), "dependency" ("ERROR: dependency 'x' is not available",
+#'    detail = x; or renv's summary line "dependency failed (x, y)",
 #'    detail = x), "download" (a summary line, or renv's own "error
 #'    downloading"/"failed to retrieve", naming the package),
 #'    "no_binary" (a "compile", "configure" or "other" row whose package
@@ -338,7 +339,11 @@ install_failures <- function(lines) {
       name_pattern <- "^- \\[?([A-Za-z.][A-Za-z0-9._@-]*)\\]?:"
       name <- capture(name_pattern, line)
       reason <- trimws(sub(name_pattern, "", line))
-      if (grepl("retriev|download", reason, ignore.case = TRUE)) {
+      if (grepl("^dependency failed \\(", reason)) {
+        # A package renv never built because one it needs failed:
+        # "dependency failed (cli, rlang)". Named by the first.
+        add(name, "dependency", trimws(sub(",.*$", "", sub("^dependency failed \\(([^)]*)\\).*$", "\\1", reason))))
+      } else if (grepl("retriev|download", reason, ignore.case = TRUE)) {
         add(name, "download", NA_character_)
       } else if (grepl("^failed to find (source|binary) for ", reason, ignore.case = TRUE)) {
         # renv found no such version in any repository it could read: the

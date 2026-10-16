@@ -238,9 +238,10 @@ package_url <- function(repo, package, version) {
 #' repository) as a binary for this R: `TRUE`, `FALSE`, or `NA` when it
 #' can't be asked. It picks the binary from R's user agent, which
 #' `curlGetHeaders()` sends as renv's downloads do, and names what it sent
-#' in `X-Package-Type`.
-ppm_serves_binary <- function(url) {
-  h <- tryCatch(suppressWarnings(curlGetHeaders(url)), error = function(e) NULL)
+#' in `X-Package-Type`. Bounded by `timeout` seconds, so a slow or
+#' unreachable server costs at most that, and answers `NA`.
+ppm_serves_binary <- function(url, timeout = 10L) {
+  h <- tryCatch(suppressWarnings(curlGetHeaders(url, timeout = timeout)), error = function(e) NULL)
   if (is.null(h) || !identical(as.integer(attr(h, "status")), 200L)) return(NA)
   type <- grep("^x-package-type:", h, ignore.case = TRUE, value = TRUE)
   if (length(type) == 0) return(NA)
@@ -253,6 +254,18 @@ renv_failed_packages <- function(message) {
   if (!grepl("failed to install", message, fixed = TRUE)) return(character())
   m <- regmatches(message, gregexpr("[\"\u201c][A-Za-z][A-Za-z0-9.]*[\"\u201d]", message))[[1]]
   unique(gsub("[\"\u201c\u201d]", "", m))
+}
+
+#' The packages in `failed` that renv tried to build: those whose own
+#' dependencies (`Depends`, `Imports`, `LinkingTo` in `index`, the source
+#' `available.packages()` matrix) include no other failed package. renv's
+#' "failed to install" names its dependents too, which it never built
+#' (`- [lifecycle]: dependency failed (cli, rlang)`); they mustn't be said
+#' not to build. `NULL` index (unreadable): none, rather than guess.
+failed_builds <- function(failed, index) {
+  if (length(failed) == 0 || is.null(index)) return(character())
+  deps <- tools::package_dependencies(failed, db = index, which = c("Depends", "Imports", "LinkingTo"))
+  failed[!vapply(failed, function(p) any(deps[[p]] %in% failed), logical(1))]
 }
 
 #' Which of the locked packages in `failed` had no binary for this R at the
@@ -478,10 +491,10 @@ missing_report_lines <- function(compiler = NULL, system = NULL, no_binary = cha
   if (length(no_binary) > 0) {
     named <- paste(names(no_binary), no_binary)
     out <- c(out, sprintf("EMBER-MISSING binary %s %s", names(no_binary), unname(no_binary)),
-             sprintf(paste("Error: %s %s no binary for R %s at the notebook's snapshot date, so %s built",
-                           "from source, and %s on R %s. Versions from before an R release often",
-                           "don't build on it. Update the packages to a newer date, whose versions",
-                           "have binaries, or run the notebook on an older R."),
+             sprintf(paste("Error: %s %s no binary for R %s, so %s built from source, and %s on R %s.",
+                           "Most often the snapshot date is older than this R, and versions from",
+                           "before an R release often don't build on it. Update the packages to a",
+                           "newer date, whose versions have binaries, or run the notebook on an older R."),
                      paste(named, collapse = ", "), if (length(named) == 1) "has" else "have", r_version,
                      if (length(named) == 1) "it was" else "they were",
                      if (length(named) == 1) "it doesn't build" else "they don't build", r_version))

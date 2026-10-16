@@ -30,7 +30,8 @@ test("failing.R: a build with no binary for this R says why and offers Update", 
   await page.waitForSelector(".ember-install-failure-card", { timeout: 30000 });
 
   const sentence = await page.locator(".ember-install-failure-sentence").innerText();
-  assert.match(sentence, /no binary of version 0\.1\.0 for R \S+ at this snapshot date/);
+  assert.match(sentence, /no binary of version 0\.1\.0 for R \S+, so it was built on this computer/);
+  assert.match(sentence, /the snapshot date is older than this R/);
   const fix = await page.locator(".ember-install-failure-fix").innerText();
   assert.match(fix, /Update moves the packages to a newer date/);
 
