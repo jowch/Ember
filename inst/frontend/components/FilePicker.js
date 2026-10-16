@@ -303,14 +303,17 @@ const pathhints =
         const query_full = /** @type {String} */ (ctx.state.sliceDoc(0, ctx.pos))
         const query = dirname(query_full)
 
-        return client
-            .send("completepath", {
-                query,
-            })
+        const ask = (/** @type {string} */ q) => client.send("completepath", { query: q })
+        // The whole folder first, so CodeMirror can match what was typed loosely. The server lists at most 200
+        // entries; when a folder has more, ask again for only the names starting with what was typed (#124).
+        return ask(query)
+            .then((update) => (update.message.ember_truncated === true && query_full !== query ? ask(query_full) : update))
             .then((update) => {
                 const queryFileName = basename(query_full)
 
                 const results = update.message.results
+                // still cut short: a longer typed name may match one the server left out, so ask on every key
+                const truncated = update.message.ember_truncated === true
                 const from = utf8index_to_ut16index(query, update.message.start)
 
                 // if the typed text matches one of the paths exactly, stop autocomplete immediately.
@@ -357,7 +360,11 @@ const pathhints =
                 const validFor = (/** @type {string} */ text, from, to) => {
                     return (
                         to >= startpos &&
-                        /[\p{L}\p{Nl}\p{Sc}\d_!-\.]*$/u.test(text) &&
+                        !truncated &&
+                        // these results list one folder: a typed / or \ moves into another, so ask again. (Pluto's
+                        // own check here, an unanchored /[...]*$/, matched any text, so a path typed at human speed
+                        // ended on the parent folder's list.)
+                        !/[\/\\]/.test(text) &&
                         // if the typed text matches one of the paths exactly, stop autocomplete immediately.
                         !results.includes(basename(text))
                     )

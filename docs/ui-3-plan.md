@@ -1774,7 +1774,7 @@ server.mjs passes it to the child.
   | `ember_new_notebook` | `{name, folder}` | `notebook_target_path()`, `new_notebook()`, `host_notebook(owned = TRUE)` -> `{url: "edit?id=..&secret=.."}` (relative, as `http_open()`, server.R:1119-1126) or `{error}` |
   | `ember_open_notebook` | `{path}` | `{url}` or `{error}`; `http_open()`'s find-or-open body (server.R:1101-1117) moves into `open_or_find(server, path)`, used by both |
   | `ember_forget_recent` | `{path}` | `forget_notebook()`, then the `ember_start_page` reply |
-  | `completepath` (Pluto's, stubbed at server.R:789-792) | `{query, ember_dirs_only?}` | Pluto's `{start, stop, results}`: entries of `dirname(query)` starting with its last part, folders with a trailing "/", at most 200, hidden files only when the typed part starts with "." |
+  | `completepath` (Pluto's, stubbed at server.R:789-792) | `{query, ember_dirs_only?}` | Pluto's `{start, stop, results}`: entries of `dirname(query)` starting with its last part, folders with a trailing "/", at most 200 (`ember_truncated` says when more matched, and FilePicker then asks again with the typed part, #124), hidden files only when the typed part starts with "." |
 
   Closing an open notebook reuses `shutdown_notebook` with the row's
   `notebook_id` (server.R:701-711), which already refuses notebooks a host

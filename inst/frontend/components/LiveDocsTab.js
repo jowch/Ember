@@ -16,12 +16,13 @@ const escape_html = (/** @type {string} */ s) => s.replace(/[&<>"']/g, (c) => `&
  * @param {{
  * focus_on_open: boolean,
  * desired_doc_query: string?,
- * on_update_doc_query: (query: string) => void,
+ * doc_query_explicit: boolean,
+ * on_update_doc_query: (query: string, explicit?: boolean) => void,
  * notebook: import("./Editor.js").NotebookData,
  * sanitize_html?: boolean,
  * }} props
  */
-export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_query, notebook, sanitize_html = true }) => {
+export let LiveDocsTab = ({ focus_on_open, desired_doc_query, doc_query_explicit, on_update_doc_query, notebook, sanitize_html = true }) => {
     let pluto_actions = useContext(PlutoActionsContext)
     let live_doc_search_ref = useRef(/** @type {HTMLInputElement?} */ (null))
 
@@ -36,24 +37,19 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
     let go_to = (/** @type {number} */ i) => {
         if (i < 0 || i >= history.length) return
         navigating_ref.current = true
-        explicit_ref.current = true
         set_history_index(i)
-        on_update_doc_query(history[i])
+        on_update_doc_query(history[i], true)
     }
 
-    // Set by this component's own explicit actions (typing in the search
-    // box, Back/Forward) right before they change desired_doc_query, so
-    // fetch_docs() can tell those apart from the cursor just moving: the
+    // This component's own actions (typing in the search box, Back/Forward,
+    // a link clicked in a help page, #30) set the query as explicit, so
+    // fetch_docs() can tell them apart from the cursor just moving: only an
+    // explicit query searches every installed package, and the
     // "{{package}} . follows the cursor" line (ui-3-plan.md piece 5's
-    // "Help tab") only makes sense for the latter.
-    let explicit_ref = useRef(false)
-
-    // A link clicked in a help page is an explicit action too, not the
-    // cursor moving (#30).
-    let follow_link = (/** @type {string} */ query) => {
-        explicit_ref.current = true
-        on_update_doc_query(query)
-    }
+    // "Help tab") only makes sense for the cursor. `doc_query_explicit`
+    // comes with the query from the Editor, so it holds for every retry and
+    // survives this tab being closed and opened again (#121).
+    let follow_link = (/** @type {string} */ query) => on_update_doc_query(query, true)
 
     // This is all in a single state object so that we can update multiple field simultaneously
     let [state, set_state] = useState({
@@ -106,8 +102,7 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
     useEffect(() => () => clearTimeout(retry_timer.current), [])
 
     let fetch_docs = (new_query) => {
-        const from_cursor = !explicit_ref.current
-        explicit_ref.current = false
+        const from_cursor = !doc_query_explicit
         update_state((state) => {
             state.loading = true
             state.searched_query = new_query
@@ -128,18 +123,12 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
                             state.waiting = true
                         })
                     }
-                    // The retry is the same request, so it keeps this one's
-                    // scope and label: a typed, Back/Forward or clicked
-                    // query stays explicit (#92). Only ever set, never
-                    // cleared, so an explicit action taken meanwhile isn't
-                    // undone.
+                    // The retry asks for the same query, with the scope
+                    // that comes with it (#92).
                     clearTimeout(retry_timer.current)
                     retry_timer.current = setTimeout(() => {
                         update_state((state) => {
-                            if (state.searched_query === new_query) {
-                                if (!from_cursor) explicit_ref.current = true
-                                state.searched_query = null
-                            }
+                            if (state.searched_query === new_query) state.searched_query = null
                         })
                     }, DOCS_RETRY_MS)
                     return false
@@ -216,8 +205,7 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
                     placeholder=${t("t_live_docs_search_placeholder")}
                     ref=${live_doc_search_ref}
                     onInput=${(e) => {
-                        explicit_ref.current = true
-                        on_update_doc_query(e.target.value)
+                        on_update_doc_query(e.target.value, true)
                     }}
                     value=${desired_doc_query}
                     type="search"
