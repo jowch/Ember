@@ -1960,7 +1960,8 @@ pluto-notebook`, `#helpbox-wrapper`, `pluto-helpbox`, `pluto-helpbox >
 header`, `pluto-helpbox > section`, `.live-docs-searchbox`,
 `#live-docs-search` (drawer.ts:83-93, 156), the `open_bottom_right_panel`
 event with detail `"docs"` (drawer.ts:147, 318), and every CSS variable
-name. Endeavor reads `--main-bg-color`, `--pluto-cell-spacing`,
+name (since #57, only the names something reads; see design.md, "Look
+distinct"). Endeavor reads `--main-bg-color`, `--pluto-cell-spacing`,
 `--sans-serif-font-stack`, `--indented` (set by CodeMirror, not the
 themes), `--normal-cell-color`, `--selected-cell-color` and
 `--code-differs-cell-color` (errors.ts:29-31, diff.ts:21, asking.ts:14,
