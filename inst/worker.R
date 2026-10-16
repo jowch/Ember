@@ -1975,8 +1975,15 @@ display_plot <- function(cell, token, dev) {
       text = "<plot>", truncated = FALSE)
 }
 
+#' Whether `knit_print()` has a method for class `cl`, looked up from
+#' knitr's namespace. The worker's own functions live in an environment
+#' whose parent is `baseenv()` (line 8), which sees neither the generic nor
+#' the search path, so a lookup from here found nothing, even with knitr
+#' attached (#154). From knitr's namespace it sees knitr's S3 table, where
+#' packages such as gt register their methods, and `globalenv()`, where a
+#' notebook defines its own.
 knit_print_method_exists <- function(cl) {
-  length(utils::getS3method("knit_print", cl, optional = TRUE)) > 0
+  length(utils::getS3method("knit_print", cl, optional = TRUE, envir = asNamespace("knitr"))) > 0
 }
 
 #' `knit_print()`, tried only when knitr is in the notebook's library and
@@ -1985,7 +1992,14 @@ knit_print_method_exists <- function(cl) {
 try_knit_print <- function(value) {
   if (!requireNamespace("knitr", quietly = TRUE)) return(NULL)
   if (!any(vapply(class(value), knit_print_method_exists, logical(1)))) return(NULL)
-  out <- tryCatch(knitr::knit_print(value), error = function(e) NULL)
+  # knit_print() gives a kable in the kable's own format, which is markdown
+  # ("pipe") unless the cell asked for HTML. Only an HTML one is shown as
+  # HTML; the others keep their print() text, which is the same table.
+  if (inherits(value, "knitr_kable") && !identical(attr(value, "format"), "html")) return(NULL)
+  # Called from globalenv(), as in a report, so the dispatch sees a method
+  # the notebook defined; called from here it would see only knitr's table.
+  out <- tryCatch(do.call(knitr::knit_print, list(value), quote = TRUE, envir = globalenv()),
+                  error = function(e) NULL)
   if (is.null(out)) return(NULL)
   tf <- text_form(value)
   list(kind = "html", mime = "text/html", html = paste(out, collapse = "\n"),
