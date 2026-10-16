@@ -50,6 +50,7 @@ export const SidePanelIcon = ({ size = 18 }) => icon(size, html`<rect x="3" y="4
 
 export const BackIcon = ({ size = 16 }) => icon(size, html`<path d="M15 6l-6 6 6 6"></path>`)
 export const ForwardIcon = ({ size = 16 }) => icon(size, html`<path d="M9 6l6 6-6 6"></path>`)
+export const SearchIcon = ({ size = 14 }) => icon(size, html`<circle cx="11" cy="11" r="6"></circle><path d="M20 20l-4.5-4.5"></path>`)
 
 export const MoreIcon = ({ size = 18 }) => html`
     <svg width=${size} height=${size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
