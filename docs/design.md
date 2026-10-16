@@ -403,7 +403,13 @@ The rule is wrong when a formula mixes a data frame with a global vector
 (`lm(y ~ x + z, data = df)`, `z` not a column), and it errs towards a missing
 edge. So after the cell runs, the worker checks that each name taken as a
 column is in `names()` of the data frame the function received; if one
-isn't, the engine adds the edge and shows a note. The footer's `learned
+isn't, the engine adds the edge and shows a note. It gets that data frame
+by evaluating `data` again, so it checks a name or a `$`/`[[` path, and a
+call only when every function in it is a known side-effect-free one from
+base R, stats, utils, dplyr or tidyr (`subset(df, x > 1)`,
+`filter(df, x > 1)`; `pure_data_functions` in the worker). Any other call
+(a notebook's own function, `read.csv()`, `sample_n()`) isn't run again,
+and its formula isn't checked. The footer's `learned
 references` block records these names, so the edge is there when the
 notebook is opened without running. Editing the cell drops them, as it
 drops learned settings; the next run's check finds them again.

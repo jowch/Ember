@@ -1379,8 +1379,8 @@ rebuild_search_path <- function() {
 # ---- Formulas ------------------------------------------------------------------------
 
 #' Is `e` a symbol, or a `$`/`[[` chain (with a literal index) on one?
-#' These are the only `data` expressions safe to re-evaluate after the
-#' cell ran: anything else (a function call) could have side effects.
+#' These are always safe to evaluate again after the cell ran; a call
+#' could have side effects, so it must pass `is_pure_data_call()`.
 is_data_path <- function(e) {
   if (is.symbol(e)) return(TRUE)
   if (is.call(e) && length(e) == 3 && is.symbol(e[[1]])) {
@@ -1394,15 +1394,83 @@ is_data_path <- function(e) {
   FALSE
 }
 
-#' After the run: which names taken as columns are not in the data.
+#' Functions a `data` call (`data = subset(df, x > 1)`) may use for the
+#' check to evaluate it again after the run: each returns a new value and
+#' changes nothing (no assignment, no I/O, no random numbers), and none
+#' calls a function it is handed. A name counts only when it is, from the
+#' global environment, the function `pure_data_packages` exports under it,
+#' so a notebook's own `filter()` is never run by the check.
+pure_data_functions <- c(
+  # Operators and constructors.
+  "(", "[", "[[", "$", "c", "list", ":", "+", "-", "*", "/", "^", "%%",
+  "%/%", "==", "!=", "<", "<=", ">", ">=", "&", "&&", "|", "||", "!", "%in%",
+  "%>%",
+  # base, stats, utils.
+  "subset", "transform", "within", "head", "tail", "droplevels", "merge",
+  "rbind", "cbind", "data.frame", "as.data.frame", "unique", "rev", "order",
+  "nrow", "ncol", "seq_len", "seq", "rep", "is.na", "is.finite", "which",
+  "na.omit", "complete.cases", "log", "log2", "log10", "log1p", "exp",
+  "sqrt", "abs", "round", "ifelse", "factor", "as.factor", "relevel",
+  "levels", "as.numeric", "as.integer", "as.character", "as.Date", "nchar",
+  "paste", "paste0", "startsWith", "endsWith", "grepl", "toupper", "tolower",
+  "mean", "median", "sum", "min", "max", "range", "names", "setdiff",
+  "intersect", "union", "setNames", "rowSums", "colSums", "rowMeans",
+  "colMeans",
+  # dplyr and tidyr (with the tidyselect helpers dplyr exports).
+  "filter", "select", "mutate", "transmute", "arrange", "rename", "relocate",
+  "slice", "slice_head", "slice_tail", "slice_min", "slice_max", "distinct",
+  "left_join", "right_join", "inner_join", "full_join", "semi_join",
+  "anti_join", "bind_rows", "bind_cols", "group_by", "ungroup", "summarise",
+  "summarize", "count", "n", "desc", "between", "if_else", "case_when",
+  "coalesce", "na_if", "lag", "lead", "row_number", "n_distinct",
+  "starts_with", "ends_with", "contains", "matches", "everything", "all_of",
+  "any_of", "drop_na", "replace_na", "pivot_longer", "pivot_wider", "fill",
+  "separate", "unite"
+)
+pure_data_packages <- c("base", "stats", "utils", "dplyr", "tidyr", "magrittr")
+
+#' Is `e` a call the check may evaluate again: every call in it (the
+#' arguments too) is to one of `pure_data_functions`, as the global
+#' environment resolves it? A symbol or a constant is fine anywhere; a
+#' function literal, or any other call, is not.
+is_pure_data_call <- function(e) {
+  if (!is.call(e)) return(TRUE)
+  head <- e[[1]]
+  if (!is.symbol(head)) return(FALSE)
+  name <- as.character(head)
+  if (!(name %in% pure_data_functions) || !is_pure_data_function(name)) return(FALSE)
+  args <- as.list(e)[-1]
+  for (i in seq_along(args)) {
+    if (identical(args[[i]], quote(expr = ))) next  # an empty argument: df[x > 1, ]
+    if (!is_pure_data_call(args[[i]])) return(FALSE)
+  }
+  TRUE
+}
+
+is_pure_data_function <- function(name) {
+  fn <- get0(name, envir = globalenv(), mode = "function")
+  if (is.null(fn)) return(FALSE)
+  for (pkg in pure_data_packages) {
+    if (!isNamespaceLoaded(pkg)) next
+    exported <- tryCatch(getExportedValue(pkg, name), error = function(e) NULL)
+    if (!is.null(exported) && identical(fn, exported)) return(TRUE)
+  }
+  FALSE
+}
+
+#' After the run: which names taken as columns are not in the data. The
+#' `data` expression is evaluated again, so only a symbol, a `$`/`[[` path
+#' or a call `is_pure_data_call()` accepts is checked.
 check_formulas <- function(formulas) {
   misses <- character()
   for (site in formulas) {
     data_text <- site$data
     if (is.null(data_text) || !nzchar(data_text)) next
     expr <- tryCatch(parse(text = data_text, keep.source = FALSE)[[1]], error = function(e) NULL)
-    if (is.null(expr) || !is_data_path(expr)) next
-    val <- tryCatch(eval(expr, envir = globalenv()), error = function(e) NULL)
+    if (is.null(expr) || !(is_data_path(expr) || is_pure_data_call(expr))) next
+    # Quietly: dplyr's joins say which columns they joined by.
+    val <- tryCatch(suppressMessages(suppressWarnings(eval(expr, envir = globalenv()))),
+                    error = function(e) NULL)
     nms <- tryCatch(names(val), error = function(e) NULL)
     if (is.null(nms)) next
     miss <- setdiff(site$columns, nms)
