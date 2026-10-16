@@ -828,20 +828,26 @@ dir_size <- function(path) {
 #' of what was (or with `dry_run`, would be) deleted.
 #'
 #' * Libraries whose `ember-last-used` is older than `max_age` days, except
-#'   any an open session in this process has as `active` or `target`. They
+#'   those in `keep`. They
 #'   hold only links, so a returning notebook gets its library back from
 #'   the cache in seconds, or from the lock.
 #' * Staging folders older than one day (an installer that crashed).
 #' * With `cache = TRUE`: renv cache entries listed in no remaining
 #'   library's manifest (`cache_entries`), so deleting one never breaks a
 #'   library whether renv linked with hard links or symlinks.
-#' * Index RDS files not read for `max_age` days.
+#' * With `indexes = TRUE`: index RDS files not read for `max_age` days.
+#'
+#' `keep` is the library paths never to delete: by default every library
+#' an open session in this process holds. The Packages tab's clean-up
+#' (`clean_up()`, #128) runs this in a subprocess, so it passes the
+#' server's set.
 #'
 #' The first `open_notebook()` in a process runs it once, in a job, with
 #' `cache = FALSE` (design.md: "when the server starts").
 #' @export
 clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
-                  dir = cache_dir(), now = Sys.time()) {
+                  dir = cache_dir(), now = Sys.time(), keep = active_libraries$paths,
+                  indexes = TRUE) {
   out <- data.frame(path = character(), kind = character(), bytes = numeric(),
                     last_used = as.POSIXct(character()), stringsAsFactors = FALSE)
   record <- function(path, kind, bytes, last_used) {
@@ -871,7 +877,7 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
       manifest <- read_library_manifest(entry)
       if (is.null(manifest)) next
 
-      if (entry %in% active_libraries$paths) {
+      if (entry %in% keep) {
         kept_cache_entries <- c(kept_cache_entries, manifest$cache_entries)
         next
       }
@@ -888,7 +894,7 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
   }
 
   idx_root <- file.path(dir, "indexes")
-  if (dir.exists(idx_root)) {
+  if (isTRUE(indexes) && dir.exists(idx_root)) {
     for (f in list.files(idx_root, full.names = TRUE, pattern = "\\.rds$")) {
       info <- file.info(f)
       last_used <- if (!is.na(info$atime)) info$atime else info$mtime
@@ -960,6 +966,59 @@ disk_use_main <- function(dir) {
 disk_use_command <- function(dir = cache_dir()) {
   rscript <- file.path(R.home("bin"), "Rscript")
   code <- paste0("local({library(ember); ember:::disk_use_main(", deparse(dir), ")})")
+  env <- c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep),
+           R_LIBS_USER = "", R_LIBS_SITE = "")
+  list(command = rscript, args = c("--vanilla", "-e", code), env = env)
+}
+
+#' The Packages tab's clean-up button (#128): `clean()` with the rule
+#' "unused now", libraries no open notebook holds (`keep`) and not used
+#' in the last `max_age` days, then the renv cache entries no remaining
+#' library lists. The one-day default is a guard for notebooks open in
+#' another Ember process or run with Rscript, which this process can't
+#' see: a worker touches its library's `ember-last-used` when it starts.
+#' Indexes are left to the startup sweep. Returns `list(libraries, cache,
+#' bytes)`: how many libraries (staging folders included) and cache
+#' entries were, or with `dry_run` would be, deleted, and about how many
+#' bytes that frees. `bytes` is measured before deleting, by one `du` over
+#' the cache entries then the libraries, so a file a library links from a
+#' deleted cache entry counts once; without `du` it is `clean()`'s plain
+#' sum, which counts such a file twice.
+clean_up <- function(dir = cache_dir(), keep = character(), dry_run = TRUE, max_age = 1,
+                     du = Sys.which("du"), now = Sys.time()) {
+  plan <- clean(max_age = max_age, cache = TRUE, dry_run = TRUE, dir = dir, now = now,
+                keep = keep, indexes = FALSE)
+  libs <- plan$path[plan$kind %in% c("library", "staging")]
+  entries <- plan$path[plan$kind == "cache"]
+  bytes <- sum(plan$bytes)
+  paths <- c(entries, libs)
+  if (length(paths) > 0L && nzchar(du)) {
+    res <- processx::run(du, c("-sck", paths), error_on_status = FALSE)
+    lines <- strsplit(res$stdout, "\n")[[1]]
+    total <- grep("\ttotal$", lines, value = TRUE)
+    if (identical(res$status, 0L) && length(total) == 1L)
+      bytes <- as.numeric(sub("\t.*$", "", total)) * 1024
+  }
+  if (!isTRUE(dry_run) && length(paths) > 0L)
+    clean(max_age = max_age, cache = TRUE, dry_run = FALSE, dir = dir, now = now,
+          keep = keep, indexes = FALSE)
+  list(libraries = length(libs), cache = length(entries), bytes = bytes)
+}
+
+#' Run in a subprocess (`clean_up_command()`): print `clean_up()` as JSON.
+clean_up_main <- function(dir, keep, dry_run) {
+  cat(jsonlite::toJSON(clean_up(dir, keep = keep, dry_run = dry_run),
+                       auto_unbox = TRUE, digits = NA))
+  invisible(NULL)
+}
+
+#' The command that runs `clean_up()` for `dir`, keeping `keep`, like
+#' `disk_use_command()`.
+clean_up_command <- function(dir = cache_dir(), keep = character(), dry_run = TRUE) {
+  rscript <- file.path(R.home("bin"), "Rscript")
+  code <- paste0("local({library(ember); ember:::clean_up_main(", deparse(dir), ", ",
+                 paste(deparse(as.character(keep)), collapse = ""), ", ",
+                 deparse(isTRUE(dry_run)), ")})")
   env <- c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep),
            R_LIBS_USER = "", R_LIBS_SITE = "")
   list(command = rscript, args = c("--vanilla", "-e", code), env = env)

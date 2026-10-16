@@ -479,6 +479,83 @@ test_that("clean(cache = TRUE) deletes only cache entries no manifest lists (66)
   expect_true(dir.exists(used_entry))
 })
 
+# ---- clean_up(): the Packages tab's clean-up button (#128) --------------------
+
+# A cache dir with two cache entries, each 100 KB: `kept` is listed by an
+# open notebook's library, `stale` by a library last used 3 days ago.
+# A third library, used an hour ago, lists nothing.
+make_clean_up_cache <- function() {
+  root <- tempfile("ember-cache-")
+  dir.create(root)
+  entry <- function(pkg) {
+    e <- file.path(root, "renv-cache", "v5", "os", "R-4.6", "triplet", pkg, "1.0", paste0("hash", pkg))
+    dir.create(file.path(e, pkg), recursive = TRUE)
+    writeBin(raw(100000), file.path(e, pkg, "R.rdb"))
+    e
+  }
+  kept <- entry("pkgKept"); stale <- entry("pkgStale")
+  list(root = root, kept_entry = kept, stale_entry = stale,
+       open_lib = make_fake_library(root, "openkey", last_used_days_ago = 90, cache_entries = kept),
+       stale_lib = make_fake_library(root, "stalekey", last_used_days_ago = 3, cache_entries = stale),
+       recent_lib = make_fake_library(root, "recentkey", last_used_days_ago = 1 / 24))
+}
+
+test_that("clean_up(dry_run = TRUE) counts what it would delete and deletes nothing (#128)", {
+  d <- make_clean_up_cache()
+  on.exit(unlink(d$root, recursive = TRUE))
+  plan <- clean_up(d$root, keep = d$open_lib, dry_run = TRUE)
+  expect_equal(plan$libraries, 1)
+  expect_equal(plan$cache, 1)
+  expect_gte(plan$bytes, 100000)
+  expect_lt(plan$bytes, 200000)
+  expect_true(all(dir.exists(c(d$open_lib, d$stale_lib, d$recent_lib, d$kept_entry, d$stale_entry))))
+})
+
+test_that("clean_up() deletes libraries no open notebook holds and unused for a day, then the cache entries only they listed (#128)", {
+  d <- make_clean_up_cache()
+  on.exit(unlink(d$root, recursive = TRUE))
+  done <- clean_up(d$root, keep = d$open_lib, dry_run = FALSE)
+  expect_equal(c(done$libraries, done$cache), c(1, 1))
+  expect_false(dir.exists(d$stale_lib))
+  expect_false(dir.exists(d$stale_entry))
+  # The open notebook's library is kept however old, and so is its cache entry.
+  expect_true(dir.exists(d$open_lib))
+  expect_true(dir.exists(d$kept_entry))
+  # A library used in the last day may belong to a notebook open in
+  # another Ember process, which this one can't see.
+  expect_true(dir.exists(d$recent_lib))
+})
+
+test_that("clean_up() leaves the indexes to the startup sweep (#128)", {
+  d <- make_clean_up_cache()
+  on.exit(unlink(d$root, recursive = TRUE))
+  dir.create(file.path(d$root, "indexes"))
+  idx <- file.path(d$root, "indexes", "old.rds")
+  saveRDS(1, idx)
+  Sys.setFileTime(idx, Sys.time() - 90 * 86400)
+  clean_up(d$root, keep = d$open_lib, dry_run = FALSE)
+  expect_true(file.exists(idx))
+})
+
+test_that("clean_up() without du estimates bytes from file sizes (#128)", {
+  d <- make_clean_up_cache()
+  on.exit(unlink(d$root, recursive = TRUE))
+  plan <- clean_up(d$root, keep = d$open_lib, dry_run = TRUE, du = "")
+  expect_gte(plan$bytes, 100000)
+})
+
+test_that("clean_up_command() runs clean_up() in a subprocess and prints JSON (#128)", {
+  use_installed_ember()
+  d <- make_clean_up_cache()
+  on.exit(unlink(d$root, recursive = TRUE))
+  cmd <- clean_up_command(d$root, keep = d$open_lib, dry_run = TRUE)
+  res <- processx::run(cmd$command, cmd$args, env = cmd$env, error_on_status = FALSE)
+  expect_identical(res$status, 0L)
+  out <- jsonlite::fromJSON(res$stdout)
+  expect_equal(c(out$libraries, out$cache), c(1, 1))
+  expect_true(dir.exists(d$stale_lib))
+})
+
 test_that("a lock entry renv skipped because R already has that version is copied into the library", {
   fake_pkg <- function(lib, pkg, version) {
     dir.create(file.path(lib, pkg), recursive = TRUE)

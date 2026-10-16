@@ -794,10 +794,14 @@ server starts, deletes those unused for 60 days; they hold only links, so a
 returning notebook's library is rebuilt from the cache in seconds, or from
 the lock. The shared cache is what grows, since it keeps every version ever
 installed. The package view shows disk use (libraries, cache and indexes,
-measured when the tab opens; built, #38). It only reports for now: the
-"clean up" button is not built (#128), so `ember::clean()` is the way to delete
-from R, also clearing cache entries no library uses; hosts such as Endeavor
-call it through the R API.
+measured when the tab opens; built, #38) and a "Clean up…" button (built,
+#128) that frees space now: it deletes libraries no notebook open in this
+server uses and that weren't used in the last day (a notebook open in
+another Ember process or run with Rscript touches its library's marker),
+then the cache entries only they listed. It shows the counts and an
+estimate of the space first, and deletes nothing until Delete. Indexes are
+left to the startup sweep. `ember::clean()` does the same from R with any
+age; hosts such as Endeavor call it through the R API.
 
 **Installer: renv.** pak copies instead of linking, so it's out. The
 spike installed the same 42 packages (dplyr, ggplot2, data.table, lme4, sf)

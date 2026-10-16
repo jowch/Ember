@@ -698,6 +698,7 @@ export class Editor extends Component {
             ember_remove_package_source: (name) =>
                 this.client.send("ember_remove_package_source", { name }, { notebook_id: this.state.notebook.notebook_id }),
             ember_disk_use: () => this.client.send("ember_disk_use", {}, { notebook_id: this.state.notebook.notebook_id }),
+            ember_clean_up: (dry_run) => this.client.send("ember_clean_up", { dry_run }, { notebook_id: this.state.notebook.notebook_id }),
             ember_split_cell: (cell_id, code) =>
                 this.client.send("ember_split_cell", { cell_id, code }, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_move_notebook: (name, folder) =>

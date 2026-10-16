@@ -1208,9 +1208,13 @@ nav#at_the_top .ember-menu {
 }
 
 /* The disk use line under the table (#38). */
-#ember-packages-tab .ember-packages-disk-use {
+#ember-packages-tab .ember-packages-disk {
     font-size: 12px;
     color: var(--ember-muted);
+}
+
+#ember-packages-tab .ember-packages-clean-up-question {
+    color: var(--ember-text);
 }
 
 #ember-packages-tab .ember-packages-library-message {
