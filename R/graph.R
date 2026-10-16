@@ -1,6 +1,7 @@
 # The notebook graph: a pure function of the cells, the package exports,
 # the disabled cells, and what the worker has learned. Rebuilt whole on every
-# change; only cells whose code changed are re-read.
+# change; only cells whose code changed are re-read, and only those (or
+# those whose learned names changed) get their per-cell view resolved again.
 
 # ---- Result type -----------------------------------------------------------
 
@@ -173,23 +174,32 @@ notebook_graph <- function(cells, exports = list(),
 
   # 1. analyses: reuse previous$analyses[[id]] when code and sourced files
   #    are unchanged; else read_cell(code, read_file). reread <- the rest.
-  analyses <- list()
-  reread <- character()
-  for (id in ids) {
-    code <- cells[[id]]
+  #    Lists keyed by id are filled and read by position: a lookup by
+  #    name scans the names, so doing one per cell made the build grow
+  #    with the square of the cell count (#43).
+  analyses <- setNames(vector("list", length(ids)), ids)
+  is_reread <- logical(length(ids))
+  prev_analyses <- if (!is.null(previous)) previous$analyses[match(ids, names(previous$analyses))]
+  for (i in seq_along(ids)) {
+    code <- cells[[i]]
     if (is.na(code)) code <- ""
-    prev_a <- if (!is.null(previous)) previous$analyses[[id]] else NULL
+    prev_a <- prev_analyses[[i]]
     if (reuse_analysis(prev_a, code, read_file)) {
-      analyses[[id]] <- prev_a
+      analyses[[i]] <- prev_a
     } else {
-      analyses[[id]] <- read_cell(code, read_file)
-      reread <- c(reread, id)
+      analyses[[i]] <- read_cell(code, read_file)
+      is_reread[i] <- TRUE
     }
   }
+  reread <- ids[is_reread]
 
-  # 2. cells: the resolved, per-cell view.
-  cells_resolved <- resolve_cells(analyses, learned, ids)
+  # 2. cells: the resolved, per-cell view. A cell whose analysis was
+  #    reused and whose learned names are unchanged keeps its previous
+  #    view (resolve_cells()).
+  cells_resolved <- resolve_cells(analyses, learned, ids, previous)
+  built_from <- attr(cells_resolved, "learned")
   cells_resolved <- resolve_methods(cells_resolved, analyses, exports, ids)
+  attr(cells_resolved, "learned") <- built_from
 
   # 3. edges: resolve_edges(cells, exports, disabled). Setting edges come
   #    after the order (step 6).
@@ -215,8 +225,7 @@ notebook_graph <- function(cells, exports = list(),
     components
   } else {
     no_disabled <- split(edges$to[edges$via != "disabled"], edges$from[edges$via != "disabled"])
-    upstream_no_disabled <- setNames(vector("list", length(ids)), ids)
-    for (id in ids) upstream_no_disabled[[id]] <- character()
+    upstream_no_disabled <- setNames(rep(list(character()), length(ids)), ids)
     for (f in names(no_disabled)) upstream_no_disabled[[f]] <- unique(no_disabled[[f]])
     scc_components(ids, upstream_no_disabled)
   }
@@ -230,11 +239,11 @@ notebook_graph <- function(cells, exports = list(),
   # 5. order <- compute_order(...).
   comp_of <- setNames(rep(NA_integer_, length(ids)), ids)
   for (i in seq_along(components)) comp_of[components[[i]]] <- i
-  attaches_list <- setNames(lapply(ids, function(id) cells_resolved[[id]]$attaches), ids)
-  is_markdown <- setNames(vapply(ids, function(id) grepl("^\\s*$", analyses[[id]]$code), logical(1)), ids)
-  settings <- ids[vapply(ids, function(id) {
-    !(id %in% disabled) && nrow(cells_resolved[[id]]$setting_keys) > 0
-  }, logical(1))]
+  attaches_list <- lapply(cells_resolved, `[[`, "attaches")
+  is_markdown <- grepl("^\\s*$", vapply(analyses, `[[`, character(1), "code"))
+  names(is_markdown) <- ids
+  settings <- ids[!(ids %in% disabled) &
+                    vapply(cells_resolved, function(c) nrow(c$setting_keys) > 0, logical(1))]
   order <- compute_order(ids, settings, upstream_list, attaches_list, comp_of, is_markdown)
 
   # 6. setting edges: every non-markdown cell to each settings cell before
@@ -310,31 +319,70 @@ graph_learn <- function(graph, cell, definitions = NULL, references = NULL,
 }
 
 #' Public definitions, references, packages per cell.
-resolve_cells <- function(analyses, learned, ids) {
-  cells <- list()
-  for (id in ids) {
-    a <- analyses[[id]]
-    learned_defs <- learned$definitions[[id]]
-    if (is.null(learned_defs)) learned_defs <- character()
-    learned_refs <- learned$references[[id]]
-    if (is.null(learned_refs)) learned_refs <- character()
-    learned_settings <- learned$settings[[id]]
-    if (is.null(learned_settings)) learned_settings <- character()
+#'
+#' A cell's view depends only on its analysis and its learned names. When
+#' `previous` (a graph) has the same analysis for the cell (reused by
+#' `notebook_graph()`) and its view was built from the same learned names,
+#' the view is taken from there, with `methods` set back to the analysis's
+#' rows for `resolve_methods()` to resolve again. The learned names each
+#' view was built from ride on the list as attribute `"learned"`, so a
+#' caller that edits `previous$learned` (step.R's `drop_blocking_learned()`)
+#' can't make a stale view look current.
+resolve_cells <- function(analyses, learned, ids, previous = NULL) {
+  by_id <- function(x) {
+    if (is.null(x)) x <- list()
+    out <- x[match(ids, names(x))]
+    names(out) <- ids
+    out
+  }
+  learned_defs <- by_id(learned$definitions)
+  learned_refs <- by_id(learned$references)
+  learned_settings <- by_id(learned$settings)
+  built_from <- attr(previous$cells, "learned")
+  reuse <- !is.null(previous) && !is.null(built_from)
+  if (reuse) {
+    keep <- match(ids, previous$ids)
+    prev_analyses <- previous$analyses[keep]
+    prev_cells <- previous$cells[keep]
+    prev_defs <- built_from$definitions[keep]
+    prev_refs <- built_from$references[keep]
+    prev_settings <- built_from$settings[keep]
+  }
+  cells <- setNames(vector("list", length(ids)), ids)
+  for (i in seq_along(ids)) {
+    a <- analyses[[i]]
+    if (reuse && !is.na(keep[i]) && identical(prev_analyses[[i]], a) &&
+        identical(prev_defs[[i]], learned_defs[[i]]) &&
+        identical(prev_refs[[i]], learned_refs[[i]]) &&
+        identical(prev_settings[[i]], learned_settings[[i]])) {
+      cell <- prev_cells[[i]]
+      cell$methods <- a$methods
+      cells[[i]] <- cell
+      next
+    }
+    l_defs <- learned_defs[[i]]
+    if (is.null(l_defs)) l_defs <- character()
+    l_refs <- learned_refs[[i]]
+    if (is.null(l_refs)) l_refs <- character()
+    l_settings <- learned_settings[[i]]
+    if (is.null(l_settings)) l_settings <- character()
 
-    defs_all <- unique(c(definitions_of(a), learned_defs))
+    defs_all <- unique(c(definitions_of(a), l_defs))
     private <- defs_all[is_private_name(defs_all)]
     definitions <- defs_all[!is_private_name(defs_all)]
-    references <- unique(c(references_of(a), learned_refs))
+    references <- unique(c(references_of(a), l_refs))
     soft_references <- setdiff(unique(a$references$name[a$references$where == "slot"]), references)
     attaches <- unique(a$packages$name[a$packages$attached])
 
-    cells[[id]] <- list(definitions = definitions, learned = learned_defs,
-                        references = references, soft_references = soft_references,
-                        packages = unique(a$packages$name),
-                        attaches = attaches, settings = a$settings,
-                        setting_keys = setting_keys_of(a$settings, learned_settings),
-                        private = private, methods = a$methods)
+    cells[[i]] <- list(definitions = definitions, learned = l_defs,
+                       references = references, soft_references = soft_references,
+                       packages = unique(a$packages$name),
+                       attaches = attaches, settings = a$settings,
+                       setting_keys = setting_keys_of(a$settings, l_settings),
+                       private = private, methods = a$methods)
   }
+  attr(cells, "learned") <- list(definitions = learned_defs, references = learned_refs,
+                                 settings = learned_settings)
   cells
 }
 
@@ -356,26 +404,28 @@ resolve_cells <- function(analyses, learned, ids) {
 #' `methods` with the rows that count plus `key`; `file`, `col` and
 #' `end_col` are dropped.
 resolve_methods <- function(cells, analyses, exports, ids) {
-  has <- ids[vapply(ids, function(id) nrow(cells[[id]]$methods) > 0, logical(1))]
-  if (length(has) == 0) {
-    for (id in ids) cells[[id]]$methods <- no_resolved_methods
+  # By position, in `ids` order: a named list's lookup scans its names.
+  cells <- cells[ids]
+  analyses <- analyses[ids]
+  if (!any(vapply(cells, function(c) nrow(c$methods) > 0, logical(1)))) {
+    for (i in seq_along(cells)) cells[[i]]$methods <- no_resolved_methods
     return(cells)
   }
   # Generics the notebook defines itself: functions and setGeneric() names.
-  user_generics <- unique(unlist(lapply(ids, function(id) {
-    d <- analyses[[id]]$definitions
+  user_generics <- unique(unlist(lapply(analyses, function(a) {
+    d <- a$definitions
     d$name[d$kind %in% c("function", "generic")]
   }), use.names = FALSE))
-  used <- unique(unlist(lapply(ids, function(id) cells[[id]]$packages), use.names = FALSE))
+  used <- unique(unlist(lapply(cells, `[[`, "packages"), use.names = FALSE))
   exports <- exports[names(exports) %in% used]
   is_generic <- function(g) {
     g %in% s3_generics || g %in% user_generics ||
       any(vapply(exports, function(x) g %in% x, logical(1)))
   }
-  for (id in ids) {
-    m <- cells[[id]]$methods
+  for (i in seq_along(cells)) {
+    m <- cells[[i]]$methods
     if (nrow(m) == 0) {
-      cells[[id]]$methods <- no_resolved_methods
+      cells[[i]]$methods <- no_resolved_methods
       next
     }
     keep <- m$form != "name" | vapply(m$generic, is_generic, logical(1))
@@ -383,9 +433,9 @@ resolve_methods <- function(cells, analyses, exports, ids) {
     key <- ifelse(is.na(m$signature), NA_character_,
                   ifelse(m$form == "s4", sprintf("%s(%s)", m$generic, m$signature),
                          paste0(m$generic, ".", m$signature)))
-    cells[[id]]$methods <- data.frame(generic = m$generic, signature = m$signature,
-                                      form = m$form, key = key, line = m$line,
-                                      stringsAsFactors = FALSE)
+    cells[[i]]$methods <- data.frame(generic = m$generic, signature = m$signature,
+                                     form = m$form, key = key, line = m$line,
+                                     stringsAsFactors = FALSE)
   }
   cells
 }
@@ -434,19 +484,24 @@ resolve_edges <- function(cells, exports, ids, disabled = character()) {
   #  - name_to_pkgs: name -> packages (from `exports`) that export it.
   # A reference is then resolved by two hash lookups (plus, for rules 3-4,
   # one lookup per exporting package) rather than a scan of every id.
+  # `cells` is read by position, in `ids` order, for the same reason.
+  cells <- cells[ids]
+  is_disabled <- ids %in% disabled
   definer_lookup <- new.env(parent = emptyenv())
   disabled_definer_lookup <- new.env(parent = emptyenv())
-  for (id in ids) {
-    tbl <- if (id %in% disabled) disabled_definer_lookup else definer_lookup
-    for (n in cells[[id]]$definitions) {
+  for (i in seq_along(ids)) {
+    id <- ids[[i]]
+    tbl <- if (is_disabled[i]) disabled_definer_lookup else definer_lookup
+    for (n in cells[[i]]$definitions) {
       tbl[[n]] <- c(tbl[[n]], id)
     }
   }
   attachers <- new.env(parent = emptyenv())
   disabled_attachers <- new.env(parent = emptyenv())
-  for (id in ids) {
-    tbl <- if (id %in% disabled) disabled_attachers else attachers
-    for (p in cells[[id]]$attaches) {
+  for (i in seq_along(ids)) {
+    id <- ids[[i]]
+    tbl <- if (is_disabled[i]) disabled_attachers else attachers
+    for (p in cells[[i]]$attaches) {
       tbl[[p]] <- c(tbl[[p]], id)
     }
   }
@@ -460,9 +515,9 @@ resolve_edges <- function(cells, exports, ids, disabled = character()) {
   # generic -> enabled ids defining a method of it, display order. Empty
   # (and skipped below) for the usual notebook with no methods.
   method_lookup <- new.env(parent = emptyenv())
-  for (id in ids) {
-    if (id %in% disabled) next
-    for (g in unique(cells[[id]]$methods$generic)) {
+  for (i in which(!is_disabled)) {
+    id <- ids[[i]]
+    for (g in unique(cells[[i]]$methods$generic)) {
       method_lookup[[g]] <- c(method_lookup[[g]], id)
     }
   }
@@ -482,13 +537,14 @@ resolve_edges <- function(cells, exports, ids, disabled = character()) {
   # `soft = TRUE` resolves the cells' soft references (slot and field
   # classes) instead, the same way; they are added after, by
   # add_soft_edges().
-  edges_of <- function(soft) lapply(ids, function(b) {
+  edges_of <- function(soft) lapply(seq_along(ids), function(i) {
+    b <- ids[[i]]
     if (soft) {
-      refs <- cells[[b]]$soft_references
+      refs <- cells[[i]]$soft_references
     } else {
-      refs <- cells[[b]]$references
-      m_b <- cells[[b]]$methods
-      refs <- c(refs, setdiff(unique(m_b$generic[m_b$form != "name"]), refs))
+      refs <- cells[[i]]$references
+      m_b <- cells[[i]]$methods
+      if (nrow(m_b) > 0) refs <- c(refs, setdiff(unique(m_b$generic[m_b$form != "name"]), refs))
     }
     if (length(refs) == 0) return(NULL)
     resolve_ref <- function(n) {
@@ -538,7 +594,7 @@ resolve_edges <- function(cells, exports, ids, disabled = character()) {
   }
 
   edges <- as_edges(edges_of(soft = FALSE))
-  if (any(vapply(ids, function(id) length(cells[[id]]$soft_references) > 0, logical(1)))) {
+  if (any(lengths(lapply(cells, `[[`, "soft_references")) > 0)) {
     edges <- add_soft_edges(edges, as_edges(edges_of(soft = TRUE)))
   }
   if (has_methods) edges <- add_method_edges(edges, cells, ids, method_lookup)
@@ -656,26 +712,29 @@ add_method_edges <- function(edges, cells, ids, method_lookup) {
 #' Returns a list of character vectors; a component of length 1 is not a
 #' cycle (the design gives no self edges).
 scc_components <- function(ids, adjacency) {
+  # Per-cell state in environments: a named list's lookup scans its names,
+  # which made this quadratic in the cell count (#43).
   counter <- 0L
-  index <- list()
-  low <- list()
-  on_stack <- list()
+  index <- new.env(parent = emptyenv(), size = length(ids))
+  low <- new.env(parent = emptyenv(), size = length(ids))
+  on_stack <- new.env(parent = emptyenv(), size = length(ids))
+  adjacency <- list2env(adjacency, envir = new.env(parent = emptyenv(), size = length(ids)))
   stack <- character()
   components <- list()
 
   connect <- function(v) {
     counter <<- counter + 1L
-    index[[v]] <<- counter
-    low[[v]] <<- counter
+    index[[v]] <- counter
+    low[[v]] <- counter
     stack <<- c(stack, v)
-    on_stack[[v]] <<- TRUE
+    on_stack[[v]] <- TRUE
 
     for (w in adjacency[[v]]) {
       if (is.null(index[[w]])) {
         connect(w)
-        low[[v]] <<- min(low[[v]], low[[w]])
+        low[[v]] <- min(low[[v]], low[[w]])
       } else if (isTRUE(on_stack[[w]])) {
-        low[[v]] <<- min(low[[v]], index[[w]])
+        low[[v]] <- min(low[[v]], index[[w]])
       }
     }
 
@@ -684,7 +743,7 @@ scc_components <- function(ids, adjacency) {
       repeat {
         w <- stack[length(stack)]
         stack <<- stack[-length(stack)]
-        on_stack[[w]] <<- FALSE
+        on_stack[[w]] <- FALSE
         comp <- c(comp, w)
         if (identical(w, v)) break
       }
@@ -704,12 +763,16 @@ scc_components <- function(ids, adjacency) {
 find_errors <- function(cells, analyses, edges, ids, components,
                         disabled = character()) {
   errors <- list()
+  # Read per cell by position below (`[ids]` matches by hash, once).
+  cells <- cells[ids]
+  analyses <- analyses[ids]
 
   # parse: analyses[[id]]$parse_error non-NULL. lines carries pe$line
   # through to project_parse_error() (pluto-state.R) so the diagnostic
   # lands on the real line instead of always line 1.
-  for (id in ids) {
-    pe <- analyses[[id]]$parse_error
+  for (i in seq_along(ids)) {
+    id <- ids[[i]]
+    pe <- analyses[[i]]$parse_error
     if (!is.null(pe)) {
       errors[[length(errors) + 1]] <- new_graph_error(
         kind = "parse", cells = id, names = character(),
@@ -726,14 +789,11 @@ find_errors <- function(cells, analyses, edges, ids, components,
   # fix wording depends on whether any row has kind "replacement", or all
   # are kind "for". A disabled cell defines nothing here (Pluto's rule): it
   # doesn't count as a definer, and can't be named alongside one.
-  definer_map <- list()
-  for (id in ids) {
-    if (id %in% disabled) next
-    for (n in cells[[id]]$definitions) definer_map[[n]] <- union(definer_map[[n]], id)
-  }
+  enabled <- !(ids %in% disabled)
+  definer_map <- owners_by_name(ids[enabled], lapply(cells[enabled], `[[`, "definitions"))
+  definer_map <- definer_map[lengths(definer_map) > 1]
   for (n in names(definer_map)) {
     defs <- definer_map[[n]]
-    if (length(defs) <= 1) next
     kinds <- character()
     lines_rows <- list()
     for (id in defs) {
@@ -771,9 +831,10 @@ find_errors <- function(cells, analyses, edges, ids, components,
   # more enabled cells, where at least one of them registers it by a call
   # (two `print.foo <- function` cells are already caught above, by name).
   method_map <- list()
-  for (id in ids) {
-    if (id %in% disabled) next
-    m <- cells[[id]]$methods
+  for (j in which(enabled)) {
+    id <- ids[[j]]
+    m <- cells[[j]]$methods
+    if (nrow(m) == 0) next
     m <- m[!is.na(m$key), , drop = FALSE]
     for (i in seq_len(nrow(m))) {
       method_map[[m$key[i]]] <- rbind(method_map[[m$key[i]]],
@@ -801,14 +862,11 @@ find_errors <- function(cells, analyses, edges, ids, components,
   # UUIDs and never belong in user-facing text), only the private name.
   # Built from a name -> owning ids lookup (one pass over private names)
   # instead of testing every id against every private reference.
-  private_owner_map <- list()
-  for (id in ids) {
-    if (id %in% disabled) next
-    for (n in cells[[id]]$private) private_owner_map[[n]] <- union(private_owner_map[[n]], id)
-  }
-  for (b in ids) {
-    if (b %in% disabled) next
-    for (n in cells[[b]]$references) {
+  private_owner_map <- list2env(owners_by_name(ids[enabled], lapply(cells[enabled], `[[`, "private")),
+                                envir = new.env(parent = emptyenv()))
+  for (i in which(enabled)) {
+    b <- ids[[i]]
+    for (n in cells[[i]]$references) {
       if (!is_private_name(n)) next
       owners <- private_owner_map[[n]]
       if (is.null(owners)) next
@@ -824,14 +882,10 @@ find_errors <- function(cells, analyses, edges, ids, components,
   # setting_conflict: one setting key in two or more enabled cells, static
   # or learned (settings-cells.md, "One cell per setting"). A disabled cell
   # sets nothing here, as it defines nothing above.
-  setter_map <- list()
-  for (id in ids) {
-    if (id %in% disabled) next
-    for (k in cells[[id]]$setting_keys$key) setter_map[[k]] <- union(setter_map[[k]], id)
-  }
+  setter_map <- owners_by_name(ids[enabled], lapply(cells[enabled], function(c) c$setting_keys$key))
+  setter_map <- setter_map[lengths(setter_map) > 1]
   for (k in names(setter_map)) {
     setters <- setter_map[[k]]
-    if (length(setters) <= 1) next
     lines_df <- do.call(rbind, lapply(setters, function(id) {
       rows <- analyses[[id]]$settings
       ln <- rows$line[!is.na(rows$setting) & rows$setting == k]
@@ -849,14 +903,10 @@ find_errors <- function(cells, analyses, edges, ids, components,
   # enabled cells (settings-cells.md, "Attaching a package is a
   # definition"). Only literal names count: `attaches` never holds a
   # computed one, nor a package attached inside a function body.
-  attacher_map <- list()
-  for (id in ids) {
-    if (id %in% disabled) next
-    for (p in cells[[id]]$attaches) attacher_map[[p]] <- union(attacher_map[[p]], id)
-  }
+  attacher_map <- owners_by_name(ids[enabled], lapply(cells[enabled], `[[`, "attaches"))
+  attacher_map <- attacher_map[lengths(attacher_map) > 1]
   for (p in names(attacher_map)) {
     attachers <- attacher_map[[p]]
-    if (length(attachers) <= 1) next
     lines_df <- do.call(rbind, lapply(attachers, function(id) {
       rows <- analyses[[id]]$packages
       ln <- rows$line[rows$name == p & rows$attached]
@@ -875,9 +925,9 @@ find_errors <- function(cells, analyses, edges, ids, components,
   # Split button (ember$split, pluto-state.R), not a wording suggestion.
   # A text cell's analysed code has no #' lines (code_of()), so only code
   # cells can ever match.
-  for (id in ids) {
-    if (id %in% disabled) next
-    if (!is_mixed(analyses[[id]]$code)) next
+  for (i in which(enabled)) {
+    id <- ids[[i]]
+    if (!is_mixed(analyses[[i]]$code)) next
     errors[[length(errors) + 1]] <- new_graph_error(
       kind = "mixed_text", cells = id, names = character(), lines = NULL,
       message = "Text and code in one cell. A cell is either text (only #' lines) or code. Nothing in it has run.",
@@ -919,6 +969,20 @@ find_errors <- function(cells, analyses, edges, ids, components,
   }
 
   errors
+}
+
+#' For parallel `ids` and `values` (a list of character vectors), a list
+#' name -> the ids whose values hold it, each once, in `ids` order; names
+#' in order of first appearance. `NA` values are left out. One `split()`
+#' instead of growing a named list per value, whose lookups scan its
+#' names (#43).
+owners_by_name <- function(ids, values) {
+  name <- unlist(values, use.names = FALSE)
+  owner <- rep(ids, lengths(values))
+  keep <- !is.na(name)
+  name <- name[keep]
+  if (length(name) == 0) return(list())
+  lapply(split(owner[keep], factor(name, levels = unique(name))), unique)
 }
 
 #' Run order over all cells.
@@ -963,23 +1027,33 @@ find_errors <- function(cells, analyses, edges, ids, components,
 #' and `b` ahead of `md1`/`md2`); anchoring reinserts `md1` before `a` and
 #' `md2` before `b`, for `s md1 a md2 b`.
 compute_order <- function(ids, settings, upstream, attaches, comp_of, is_markdown) {
-  # anchor[[id]]: for a markdown id, the next non-markdown id in display
+  # Everything per cell is read by position: `at[[id]]` is the id's
+  # position, and the named inputs are put in `ids` order once. A lookup
+  # by name in a named vector or list scans the names (#43).
+  at <- list2env(setNames(as.list(seq_along(ids)), ids),
+                 envir = new.env(parent = emptyenv(), size = length(ids)))
+  upstream <- unname(upstream[ids])
+  attaches <- unname(attaches[ids])
+  comp_of <- unname(comp_of[ids])
+  is_markdown <- unname(is_markdown[ids]) %in% TRUE
+
+  # anchor[i]: for a markdown cell, the next non-markdown id in display
   # order (NA if none). Computed with one backward pass over `ids`.
-  anchor <- setNames(rep(NA_character_, length(ids)), ids)
+  anchor <- rep(NA_character_, length(ids))
   next_code <- NA_character_
-  for (id in rev(ids)) {
-    if (isTRUE(is_markdown[[id]])) {
-      anchor[[id]] <- next_code
+  for (i in rev(seq_along(ids))) {
+    if (is_markdown[i]) {
+      anchor[i] <- next_code
     } else {
-      next_code <- id
+      next_code <- ids[[i]]
     }
   }
   # pending[[anchor_id]]: markdown ids to place right before anchor_id,
   # display order.
   pending <- new.env(parent = emptyenv())
-  for (id in ids) {
-    a <- anchor[[id]]
-    if (!is.na(a)) pending[[a]] <- c(pending[[a]], id)
+  for (i in which(!is.na(anchor))) {
+    a <- anchor[i]
+    pending[[a]] <- c(pending[[a]], ids[[i]])
   }
 
   emitted <- character()
@@ -994,8 +1068,9 @@ compute_order <- function(ids, settings, upstream, attaches, comp_of, is_markdow
   emit <- function(id) {
     if (isTRUE(emitted_flag[[id]]) || isTRUE(visiting_flag[[id]])) return(invisible())
     assign(id, TRUE, envir = visiting_flag)
-    for (u in upstream[[id]]) {
-      if (identical(comp_of[[id]], comp_of[[u]])) next
+    k <- at[[id]]
+    for (u in upstream[[k]]) {
+      if (identical(comp_of[[k]], comp_of[[at[[u]]]])) next
       emit(u)
     }
     rm(list = id, envir = visiting_flag)
@@ -1006,9 +1081,9 @@ compute_order <- function(ids, settings, upstream, attaches, comp_of, is_markdow
   }
 
   for (id in settings) emit(id)
-  for (id in ids) if (!isTRUE(is_markdown[[id]]) && length(attaches[[id]]) > 0) emit(id)
-  for (id in ids) if (!isTRUE(is_markdown[[id]])) emit(id)
-  for (id in ids) if (isTRUE(is_markdown[[id]]) && !isTRUE(emitted_flag[[id]])) place(id)
+  for (i in which(!is_markdown & lengths(attaches) > 0)) emit(ids[[i]])
+  for (i in which(!is_markdown)) emit(ids[[i]])
+  for (i in which(is_markdown)) if (!isTRUE(emitted_flag[[ids[[i]]]])) place(ids[[i]])
   emitted
 }
 
@@ -1021,6 +1096,7 @@ compute_order <- function(ids, settings, upstream, attaches, comp_of, is_markdow
 #' reports the names, so it is a settings cell from the start
 #' (settings-cells.md, "Computed names"); `NA` never conflicts.
 setting_keys_of <- function(settings, learned) {
+  if (length(learned) == 0 && nrow(settings) == 0) return(no_setting_keys)
   static <- unique(settings$setting[!is.na(settings$setting)])
   run <- setdiff(learned, static)
   keys <- c(static, run)
@@ -1031,6 +1107,8 @@ setting_keys_of <- function(settings, learned) {
   }
   data.frame(key = as.character(keys), found = found, stringsAsFactors = FALSE)
 }
+
+no_setting_keys <- data.frame(key = character(), found = character(), stringsAsFactors = FALSE)
 
 #' A setting key as the page shows it: `option:digits` -> `digits`,
 #' `env:TZ` -> `TZ`, `attach:survey` -> `attach(survey)`; `wd`, `locale`
@@ -1070,18 +1148,22 @@ count_word <- function(n) {
 #' in `order`, one row per (from, to), `via = "setting"`, named by that
 #' settings cell's first known setting (`setting_label()`).
 setting_edges_of <- function(order, settings, cells, is_markdown) {
-  from <- character()
-  to <- character()
-  name <- character()
+  # Built per cell and joined once: growing `from`/`to` row by row copies
+  # them each time, and a lookup by name scans the names (#43).
   seen <- character()
-  for (id in order) {
-    if (isTRUE(is_markdown[[id]])) next
+  code_cell <- !(unname(is_markdown[order]) %in% TRUE)
+  is_setting <- order %in% settings
+  from <- to <- vector("list", length(order))
+  for (i in which(code_cell)) {
+    id <- order[[i]]
     if (length(seen) > 0) {
-      from <- c(from, rep(id, length(seen)))
-      to <- c(to, seen)
+      from[[i]] <- rep(id, length(seen))
+      to[[i]] <- seen
     }
-    if (id %in% settings) seen <- c(seen, id)
+    if (is_setting[i]) seen <- c(seen, id)
   }
+  from <- as.character(unlist(from, use.names = FALSE))
+  to <- as.character(unlist(to, use.names = FALSE))
   labels <- vapply(settings, function(s) {
     keys <- cells[[s]]$setting_keys$key
     keys <- keys[!is.na(keys)]

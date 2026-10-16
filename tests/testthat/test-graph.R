@@ -576,6 +576,41 @@ test_that("unknown learned ids are dropped", {
   expect_false("ghost" %in% names(g$learned$definitions))
 })
 
+test_that("an edit at 2000 cells resolves only the edited cell's view, and gives the from-scratch graph (#43)", {
+  # Each cell's resolved view (definitions, references, setting keys) is
+  # kept from `previous` when its analysis and learned names are unchanged.
+  # Counted, not timed: a count can't be noisy.
+  x <- perf_graph_edit(2000)
+  n <- 0L
+  real <- setting_keys_of
+  local_mocked_bindings(setting_keys_of = function(...) { n <<- n + 1L; real(...) })
+  g <- notebook_graph(x$code, previous = x$previous)
+  expect_equal(n, 1L)
+  fresh <- notebook_graph(x$code)
+  g$reread <- fresh$reread <- NULL
+  g$read_file <- fresh$read_file <- NULL
+  expect_identical(g, fresh)
+})
+
+test_that("a cell's view is resolved again when only its learned names change (#43)", {
+  g0 <- notebook_graph(c(A = "x <- 1", B = "y <- x", C = "f(y)"))
+  g1 <- graph_learn(g0, "B", definitions = c("w", ".p"), settings = "option:digits")
+  expect_equal(g1$cells$B$definitions, c("y", "w"))
+  expect_equal(g1$cells$B$private, ".p")
+  expect_equal(g1$cells$B$setting_keys$key, "option:digits")
+  expect_identical(g1$cells$A, g0$cells$A)
+  g2 <- graph_learn(g1, "B", definitions = character(), settings = character())
+  expect_equal(g2$cells$B$definitions, "y")
+  expect_equal(nrow(g2$cells$B$setting_keys), 0)
+  # A previous graph whose learned names were edited in place, as
+  # drop_blocking_learned() does, still gets B's view resolved again.
+  edited <- g1
+  edited$learned$definitions$B <- NULL
+  g3 <- notebook_graph(c(A = "x <- 1", B = "y <- x", C = "f(y)"), learned = edited$learned,
+                       previous = edited)
+  expect_equal(g3$cells$B$definitions, "y")
+})
+
 # ---- changed_cells() ----------------------------------------------------------
 
 
