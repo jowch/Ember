@@ -147,6 +147,38 @@ test_that("rewrite_help_links() (54)", {
   )
 })
 
+test_that("rewrite_help_links() leaves no link that navigates away from the page (#30)", {
+  expect_identical(
+    rewrite_help_links("<h3>Examples</h3>\n<p><a href='../Example/lm'>Run examples</a></p><pre>x</pre>"),
+    "<h3>Examples</h3>\n<pre>x</pre>")
+  expect_identical(
+    rewrite_help_links('[Package <em>stats</em> version 4.6.1 <a href="00Index.html">Index</a>]'),
+    "[Package <em>stats</em> version 4.6.1]")
+  # Any other relative link keeps its text and loses its <a>.
+  expect_identical(
+    rewrite_help_links('see <a href="../doc/index.html">the vignettes</a> and <a class="x" href="/doc/html/R.css">R</a>'),
+    "see the vignettes and R")
+  # Anchors, external URLs and mailto: stay.
+  kept <- paste0('<a href="#reference+lm.Rd+R" class="citation">Chambers</a>',
+                 '<a href="https://doi.org/10.2307/2346786">doi</a>',
+                 '<a href="mailto:a@b.org">mail</a>')
+  expect_identical(rewrite_help_links(kept), kept)
+
+  # A real page: every remaining link is @ref, an anchor or external.
+  rd <- utils:::.getHelpFile(utils::help("lm", package = "stats"))
+  out <- tempfile(fileext = ".html")
+  on.exit(unlink(out))
+  tools::Rd2HTML(rd, out, package = "stats", dynamic = TRUE)
+  # The worker sends only the <body> (help_lookup(), inst/worker.R).
+  body <- sub("(?s).*<body>", "", paste(readLines(out, warn = FALSE), collapse = "\n"), perl = TRUE)
+  page <- help_reply_html(list(html = body, matches = list()))
+  hrefs <- regmatches(page, gregexpr('href="[^"]*"|href=\'[^\']*\'', page, perl = TRUE))[[1]]
+  expect_true(length(hrefs) > 0)
+  expect_true(all(grepl("^href=[\"'](@ref |#|https?:)", hrefs)), info = paste(hrefs, collapse = " "))
+  expect_no_match(page, "Run examples", fixed = TRUE)
+  expect_match(page, "[Package <em>stats</em> version ", fixed = TRUE)
+})
+
 test_that("sanitize_help_html() drops scripts, styles, iframes, event handlers and javascript: links", {
   dirty <- paste0(
     '<p onclick="evil()">hi</p>',

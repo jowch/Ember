@@ -273,7 +273,9 @@ New fixtures:
 53. `project_dependencies()`: a definition no cell reads is in its cell's
     `downstream_cells_map` with an empty array.
 54. `rewrite_help_links()`: `../../stats/help/sd` becomes `@ref stats::sd`;
-    other links are unchanged.
+    anchors, external URLs and `mailto:` are unchanged; "Run examples",
+    the footer's "Index" link and any other relative link are removed
+    (#30), so lm's real page has only `@ref`, `#` and `http(s):` links.
 55. `span_offsets()`: a tab before the name, a two-byte character and an
     astral character (two UTF-16 units) each give the right offsets.
     `ember_spans` for `y <- x + 1` is defs `[["y", 0, 1]]`, refs `[["x", 5,

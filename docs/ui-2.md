@@ -948,7 +948,12 @@ Page, `CellInput/pluto_autocomplete.js` rewritten for R:
      unchanged: the cursor staying put sends no new query.
 - `rewrite_help_links(html)` (pure): Rd2HTML's `../../pkg/help/topic`
   links become `@ref pkg::topic`, which LiveDocsTab already turns into a
-  new query (LiveDocsTab.js:126-135).
+  new query (LiveDocsTab.js:126-135). No link may navigate the editor
+  away (#30): the "Run examples" paragraph (`../Example/topic`) and the
+  footer's "Index" link (`00Index.html`) are dropped, and any other
+  relative link keeps its text and loses its `<a>`. LiveDocsTab opens
+  external links in a new tab and scrolls to an anchor's target without
+  changing the URL's hash.
 - LiveDocsTab.js: highlight `code` blocks as `r`, not `julia`
   (LiveDocsTab.js:122); delete `without_workspace_stuff` (Julia module
   names). A small `--helpbox-*`-based stylesheet for Rd2HTML's tables and
