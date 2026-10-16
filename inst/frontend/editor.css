@@ -1294,6 +1294,22 @@ nav#at_the_top .ember-menu {
     opacity: 0.85;
 }
 
+.ember-install-failure-fix {
+    margin: 0 0 0.5em 0;
+}
+
+.ember-install-failure-command {
+    margin: 0 0 0.5em 0;
+    padding: 0.4em 0.5em;
+    font-family: var(--mono-font-stack, monospace);
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+    background: var(--rule-color);
+    border-radius: 4px;
+    user-select: all;
+}
+
 .ember-install-failure-actions {
     display: flex;
     flex-wrap: wrap;

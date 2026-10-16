@@ -13,6 +13,8 @@
 # so this emits only a start and a finish line, not one per package; the
 # manifest, not the progress, says what got installed):
 #   EMBER-PROGRESS <done> <total> <package> <step>
+#   EMBER-MISSING <what> <package> <detail>
+# when a compiler or a system library is missing (install-checks.R).
 # Exit status 0 iff the manifest was written and the rename made (which
 # includes losing a race to another process: see `finish_library()`).
 
@@ -48,6 +50,13 @@ main <- function(plan_path) {
     error = function(e) NULL)
   repos <- ember:::ppm_binary_repos(plan$repos, cran_binary)
 
+  # A package that builds from source needs a compiler. Checked before
+  # renv downloads anything, so a missing one says what to install
+  # instead of failing a build minutes in (install-checks.R).
+  linux_binaries <- !is.null(cran_binary) && grepl("/__linux__/", cran_binary)
+  compiler <- ember:::compiler_check(lock, plan$repos, linux_binaries)
+  if (!is.null(compiler)) stop_missing(plan, compiler = compiler)
+
   github <- if (is.null(plan$github)) "https://api.github.com" else plan$github
   deps <- ember:::github_install_deps(lock, plan$cache, github)
   lf <- ember:::renv_lockfile_of(lock, plan$r, repos, github = github, deps = deps)
@@ -61,6 +70,14 @@ main <- function(plan_path) {
   cat(sprintf("EMBER-PROGRESS 0 %d - restore\n", total))
   flush(stdout())
 
+  # On Linux renv loads each binary it installs in a fresh R, and stops at
+  # the first that fails: a missing system library then surfaces one
+  # package per attempt, as a bare linker error. The check after renv
+  # (`system_library_check()`) looks at every package at once and names
+  # the command that installs what they need, so renv's own test is off.
+  # Other load errors show up when a cell loads the package, as on macOS
+  # and Windows, where renv never tests.
+  Sys.setenv(RENV_INSTALL_TEST_LOAD = "FALSE")
   options(repos = repos)
   withCallingHandlers(
     renv::restore(lockfile = lockfile_tmp, library = plan$staging,
@@ -84,6 +101,12 @@ main <- function(plan_path) {
     }
     installed[[pkg]] <- got
   }
+
+  # Linux: every package finds the system libraries it links to. A
+  # Package Manager binary installs without them and fails only when a
+  # cell loads it, so this is the last moment to say what to install.
+  syslibs <- ember:::system_library_check(plan$staging, lock, plan$repos)
+  if (!is.null(syslibs)) stop_missing(plan, system = syslibs)
 
   exports <- list()
   for (pkg in names(installed)) {
@@ -111,6 +134,17 @@ main <- function(plan_path) {
   cat(sprintf("EMBER-PROGRESS %d %d - restore\n", total, total))
   flush(stdout())
   invisible(NULL)
+}
+
+# Report a check that stopped the install (EMBER-MISSING lines and an
+# `Error:` line, install-checks.R) and exit without making the library.
+# On stderr: a session reads both streams as one, and `ensure_library()`
+# shows stderr's last lines when it stops.
+stop_missing <- function(plan, compiler = NULL, system = NULL) {
+  writeLines(ember:::missing_report_lines(compiler = compiler, system = system), con = stderr())
+  flush(stderr())
+  unlink(plan$staging, recursive = TRUE)
+  quit(status = 1L, save = "no")
 }
 
 if (!interactive()) {

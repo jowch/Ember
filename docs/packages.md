@@ -200,7 +200,8 @@ Behind that sit detection, resolution, index caching, library naming, installs, 
 2. **Bioconductor, GitHub and source builds:**
    - Bioconductor (`bioc_version`, its index keys, the date-window warning): built, see [Bioconductor](#bioconductor)
    - `[sources]` GitHub as one-row indexes: built, see [GitHub sources](#github-sources)
-   - the install plan job: download size and consent, compilers, system requirements
+   - the install plan job: download size and consent
+   - compiler and system-library checks: built, see [Install checks](#install-checks)
    - disk use
    - R minor version change with a Bioconductor pin: built, see [Bioconductor](#bioconductor)
 3. **Release dates:** crandb, `preview_update()` for per-package update and pinning.
@@ -288,8 +289,54 @@ not.
   fetched keeps the pin, shows a `bioc_move_failed` row, lets the old
   library install, and is proposed again on the next run.
 
-Not built: asking before large downloads, compiler and system-library
-checks.
+Not built: asking before large downloads.
+
+### Install checks
+
+Built from increment 2, in the installer (R/install-checks.R), so a
+session's install and `ember::run()` both get them. A check that fails
+stops the install before the library is made: no cell runs with a package
+that can't load. The installer prints one `EMBER-MISSING` line per package
+and an `Error:` line; `install_failures()` turns the first into rows and
+`install_failure_message()` shows the second. Try again (`ev_run()`)
+retries once the user has installed what was missing.
+
+- **Compiler, before renv.** When this machine has no compiler
+  (`has_compiler()`: `xcode-select -p` on macOS, the `R CMD config CC`
+  compiler on the PATH elsewhere), the installer reads the source and
+  binary indexes and names the locked packages that have code to compile
+  and no binary at their locked version (`source_builds()`). On Linux with
+  Package Manager binaries this check is skipped: almost nothing builds from
+  source there, and the few that do (an R version outside the binary
+  window, a failed binary build, a version Package Manager never built)
+  are caught by the next item, from the build's own error. Without those
+  binaries everything builds from source. The indexes are read only when the compiler is missing,
+  so a normal install costs nothing. Rows: `missing_compiler`, `detail` =
+  what to install (`compiler_instructions()`). GitHub sources aren't
+  counted: whether they compile is known only once downloaded.
+- **A compiler missing during a build.** A build that fails because make
+  or configure can't find the compiler (`gcc: No such file or directory`,
+  `no acceptable C compiler`, `xcrun: error: invalid active developer
+  path`) is also `missing_compiler`; a missing Fortran compiler gets the
+  Fortran instructions.
+- **System libraries, after renv (Linux).** renv's own load test is off
+  (`RENV_INSTALL_TEST_LOAD`): it stops at the first package that fails,
+  so a notebook with sf, units and xml2 would need three tries. Instead the
+  installer runs `ldd` on every package's shared objects and collects the
+  libraries not found. For those packages it asks Package Manager's system
+  requirements API (`__api__/repos/<repo>/sysreqs`, CRAN's or
+  Bioconductor's, for the distribution in `/etc/os-release`) and merges the
+  answer into one command for all of them (`sysreqs_command()`), with
+  `sudo` unless the installer runs as root or there is no `sudo`. Rows:
+  `missing_system`, `detail` = that command (the same on every row, so the
+  Packages tab shows it once), `libraries` = the package's own libraries
+  not found; or `system`, with `libraries` but no command, when the
+  repository isn't Package Manager or the system isn't one it builds for.
+  The card and the message also tell someone who can't run the command
+  (most clusters have `sudo`, but its users may not use it) to ask the
+  administrator or load a module that provides the libraries. Other load errors (an
+  `.onLoad` that fails) now show when a cell loads the package, as they
+  always have on macOS and Windows, where renv doesn't test.
 
 ### GitHub sources
 
@@ -412,7 +459,7 @@ Taken from B: the test installer seam (a fake installer that writes an
 empty library with a manifest), so core and shell tests need no renv run.
 
 Build order: increment 1 below. Bioconductor, GitHub sources, install
-consent, compiler and system-library checks (increment 2) and per-package
+consent (increment 2) and per-package
 update and pin through crandb (increment 3) follow.
 
 ## Tradeoffs accepted
