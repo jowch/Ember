@@ -354,11 +354,27 @@ export const Cell = ({
         if (view == null) return
         view.focus()
         // The editor was hidden until now; a selection set before CodeMirror
-        // has measured it (a frame or two) doesn't stick.
-        let frame = requestAnimationFrame(() => {
-            frame = requestAnimationFrame(() => view.dispatch({ selection: EditorSelection.cursor(view.state.doc.length), scrollIntoView: true }))
+        // has measured it (a frame or two) doesn't stick. A key or click in
+        // the editor before then wins: the cursor is the person's now, and
+        // moving it to the end would put their next keys there (#120).
+        let frame = 0
+        let cancelled = false
+        const done = () => {
+            cancelled = true
+            cancelAnimationFrame(frame)
+            view.dom.removeEventListener("keydown", done, true)
+            view.dom.removeEventListener("pointerdown", done, true)
+        }
+        view.dom.addEventListener("keydown", done, true)
+        view.dom.addEventListener("pointerdown", done, true)
+        frame = requestAnimationFrame(() => {
+            frame = requestAnimationFrame(() => {
+                if (cancelled) return
+                done()
+                view.dispatch({ selection: EditorSelection.cursor(view.state.doc.length), scrollIntoView: true })
+            })
         })
-        return () => cancelAnimationFrame(frame)
+        return done
     }, [text_open])
     // Keys on the selected cell itself (Esc in its code selects it).
     const on_cell_keydown = (/** @type {KeyboardEvent} */ e) => {
