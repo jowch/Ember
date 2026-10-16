@@ -103,7 +103,7 @@ export const Dialog = ({ title, title_note, class_name, on_close, role = "dialog
 }
 
 /** One queued dialog request: `render_body` and `on_close` as `Dialog` expects, plus a stable `id` used as the Preact key so the next item in the queue mounts fresh. */
-let queue = /** @type {Array<{ id: number, key: string?, title?: string, on_close: () => void, render: (ctx: { close: () => void, describedby_id: string }) => any }>} */ ([])
+let queue = /** @type {Array<{ id: number, key: string?, title?: string, role?: string, handle?: { close?: () => void }, on_close: () => void, render: (ctx: { close: () => void, describedby_id: string }) => any }>} */ ([])
 let listeners = /** @type {Set<(q: typeof queue) => void>} */ (new Set())
 let host_mounted = false
 let next_id = 1
@@ -190,11 +190,18 @@ export const ask = ({ title, body, actions, cancel_value = null, role = "alertdi
             resolve(value)
             dequeue(item)
         }
+        // The showing dialog's `close`, for `dismiss()`. Not on `item`: the
+        // first dialog renders inside `enqueue()`, before `item` is set.
+        const handle = /** @type {{ close?: () => void }} */ ({})
         const item = enqueue({
+            key: key ?? null,
+            handle,
             title,
             role,
             on_close: () => settle(cancel_value, null),
-            render: ({ close, describedby_id }) => html`
+            render: ({ close, describedby_id }) => {
+                handle.close = close
+                return html`
                 <p id=${describedby_id} class="ember-dialog-text">${body}</p>
                 <div class="ember-dialog-actions">
                     ${actions.map(
@@ -212,12 +219,27 @@ export const ask = ({ title, body, actions, cancel_value = null, role = "alertdi
                         </button>`
                     )}
                 </div>
-            `,
+            `
+            },
         })
     })
 
     if (key != null) pending_by_key.set(key, promise)
     return promise
+}
+
+/**
+ * Take away the dialog asked for with `key`, as if the person had pressed
+ * Esc, when what it says is no longer true: one showing closes, one still
+ * queued is dropped. Nothing happens when there is none.
+ *
+ * @param {string} key
+ */
+export const dismiss = (key) => {
+    const item = queue.find((x) => x.key === key)
+    if (item == null) return
+    if (item.handle?.close != null) item.handle.close()
+    else item.on_close()
 }
 
 /**

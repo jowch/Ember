@@ -41,15 +41,17 @@ const useStartedAgo = (/** @type {number?} */ started_at, /** @type {number} */ 
  * notebook: import("./Editor.js").NotebookData,
  * connected: boolean,
  * key_refused?: boolean,
+ * unreachable?: boolean,
  * my_clock_is_ahead_by: number,
  * on_restart: () => void,
  * }} props
  */
-export const StatusTab = ({ notebook, connected, key_refused = false, my_clock_is_ahead_by, on_restart }) => {
+export const StatusTab = ({ notebook, connected, key_refused = false, unreachable = false, my_clock_is_ahead_by, on_restart }) => {
     const pluto_actions = useContext(PlutoActionsContext)
-    // `key_refused` too, so the tab says "Ember restarted" as the header
-    // does, not "Reconnecting" (#32).
-    const status = use_r_status({ connected, key_refused, notebook })
+    // `key_refused` and `unreachable` too, so the tab says "Ember
+    // restarted" or "Ember not running" as the header does, not
+    // "Reconnecting" (#32, #33).
+    const status = use_r_status({ connected, key_refused, unreachable, notebook })
     const busy = notebook.ember?.process === "busy"
     // Off until the page knows R's state, and in safe preview, where R
     // hasn't started and there is nothing to restart (#29).
