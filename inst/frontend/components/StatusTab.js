@@ -49,7 +49,7 @@ const useStartedAgo = (/** @type {number?} */ started_at, /** @type {number} */ 
 export const StatusTab = ({ notebook, connected, key_refused = false, unreachable = false, my_clock_is_ahead_by, on_restart }) => {
     const pluto_actions = useContext(PlutoActionsContext)
     // `key_refused` and `unreachable` too, so the tab says "Ember
-    // restarted" or "Ember not running" as the header does, not
+    // restarted" or "Can't reach Ember" as the header does, not
     // "Reconnecting" (#32, #33).
     const status = use_r_status({ connected, key_refused, unreachable, notebook })
     const busy = notebook.ember?.process === "busy"

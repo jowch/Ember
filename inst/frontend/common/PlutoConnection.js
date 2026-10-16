@@ -17,9 +17,9 @@ const retry_delay = (/** @type {number} */ failures) => Math.min(1000 * 2 ** (fa
 
 /**
  * How long connects may keep failing before the page stops saying
- * "Reconnecting" and says Ember isn't running at its address: a tab left
- * open after Ember stopped, or after it started again on another port,
- * has nothing to reconnect to (#33). Ember restarting on the same port
+ * "Reconnecting" and says it can't reach Ember at its address: a tab left
+ * open after Ember stopped, after it started again on another port, or
+ * after the tunnel to it closed has nothing to reconnect to (#33). Ember restarting on the same port
  * takes a few seconds, so this is well past that.
  */
 const unreachable_after = 30 * 1000
@@ -376,7 +376,7 @@ export const create_pluto_connection = async ({
     let auto_reconnect = true
 
     // Connect tries that failed in a row, when the first of them failed,
-    // and whether the page has said Ember isn't running here (#33).
+    // and whether the page has said it can't reach Ember here (#33).
     let failures = 0
     let failing_since = /** @type {number?} */ (null)
     let unreachable = false
@@ -402,7 +402,7 @@ export const create_pluto_connection = async ({
             on_unreachable(false)
         }
     }
-    /** After a failed try that wasn't a refused key: say Ember isn't running here once it has failed long enough, and again after a "Try again" that failed. */
+    /** After a failed try that wasn't a refused key: say Ember can't be reached here once it has failed long enough, and again after a "Try again" that failed. */
     const note_failure = () => {
         failures += 1
         failing_since ??= Date.now()
@@ -463,6 +463,9 @@ export const create_pluto_connection = async ({
     client.send = batched_updates(send)
 
     const connect = async () => {
+        // Whether this socket got its "connect" reply: one that opens and
+        // closes before that is a failed try, like one that never opens.
+        let said_hello = false
         try {
             ws_connection = await create_ws_connection(String(ws_address), {
                 on_message: (update) => {
@@ -496,7 +499,12 @@ export const create_pluto_connection = async ({
                     }
 
                     console.log(`Starting new websocket`, new Date().toLocaleTimeString())
-                    await Promises.delay(reconnect_after_close_delay)
+                    if (said_hello) {
+                        await Promises.delay(reconnect_after_close_delay)
+                    } else {
+                        note_failure()
+                        await between_tries.wait(unreachable ? unreachable_retry_delay : retry_delay(failures))
+                    }
                     await connect() // reconnect!
 
                     console.log(`Starting state sync`, new Date().toLocaleTimeString())
@@ -513,6 +521,7 @@ export const create_pluto_connection = async ({
             console.log("Hello?")
             const u = await send("connect", {}, connect_metadata)
             console.log("Hello!")
+            said_hello = true
             connected_again()
             client.kill = (allow_reconnect = true) => {
                 auto_reconnect = allow_reconnect

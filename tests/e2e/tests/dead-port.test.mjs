@@ -1,6 +1,6 @@
 // A tab whose address nothing answers any more (Ember stopped, or started
 // again on another port, or the tunnel to it closed) stops saying
-// "Reconnecting" and says Ember isn't running there, with Try again (#33).
+// "Reconnecting" and says it can't reach Ember there, with Try again (#33).
 // It keeps trying in the background, so it reconnects by itself if Ember
 // comes back at the same address.
 //
@@ -17,6 +17,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import net from "node:net";
+import http from "node:http";
+import crypto from "node:crypto";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, openNotebook } from "../browser.mjs";
 
@@ -82,27 +84,27 @@ async function openThenKillPort(t, name) {
   return { page, status, bringBack, port, notebook };
 }
 
-test("dead port: the tab says Ember isn't running here, and Try again reconnects once it's back", async (t) => {
+test("dead port: the tab says it can't reach Ember, and Try again reconnects once it's back", async (t) => {
   const { page, status, bringBack, port } = await openThenKillPort(t, "dead-port-try-again");
 
-  const dialog = page.getByRole("alertdialog", { name: "Ember isn't running here" });
+  const dialog = page.getByRole("alertdialog", { name: "Can't reach Ember here" });
   await fastForwardUntil(page, dialog);
   assert.match(await dialog.innerText(), new RegExp(`Nothing at 127\\.0\\.0\\.1:${port} answers as Ember`));
   assert.match(await dialog.innerText(), /ember::start_server\(\)/);
-  assert.match(await status.innerText(), /Ember not running/);
+  assert.match(await status.innerText(), /Can't reach Ember/);
 
   // The Status tab says the same as the header.
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "process" })));
-  assert.match(await page.locator("#ember-status-tab .ember-status-state").innerText(), /Ember not running/);
+  assert.match(await page.locator("#ember-status-tab .ember-status-state").innerText(), /Can't reach Ember/);
   await page.screenshot({ path: path.join(artifactsDir(), "dead-port-not-running.png") });
 
   // Try again while the port is still dead: the page tries at once and
   // says so again (a second dialog, asked after the click), without the
   // clock moving.
-  const asked = () => page.evaluate(() => window.ember_dialogs.filter((d) => d.title === "Ember isn't running here").length);
+  const asked = () => page.evaluate(() => window.ember_dialogs.filter((d) => d.title === "Can't reach Ember here").length);
   assert.equal(await asked(), 1);
   await dialog.getByRole("button", { name: "Try again" }).click();
-  await page.waitForFunction(() => window.ember_dialogs.filter((d) => d.title === "Ember isn't running here").length === 2, null, { timeout: 30000 });
+  await page.waitForFunction(() => window.ember_dialogs.filter((d) => d.title === "Can't reach Ember here").length === 2, null, { timeout: 30000 });
   await dialog.waitFor({ timeout: 30000 });
 
   // Try again once something answers there: the page reconnects at once,
@@ -114,10 +116,10 @@ test("dead port: the tab says Ember isn't running here, and Try again reconnects
   assertNoPageErrors(page);
 });
 
-test("dead port: a tab that said Ember isn't running reconnects by itself when it comes back", async (t) => {
+test("dead port: a tab that said it can't reach Ember reconnects by itself when it comes back", async (t) => {
   const { page, status, bringBack } = await openThenKillPort(t, "dead-port-background");
 
-  const dialog = page.getByRole("alertdialog", { name: "Ember isn't running here" });
+  const dialog = page.getByRole("alertdialog", { name: "Can't reach Ember here" });
   await fastForwardUntil(page, dialog);
   // Left open on purpose: coming back takes it away.
 
@@ -127,10 +129,10 @@ test("dead port: a tab that said Ember isn't running reconnects by itself when i
   assertNoPageErrors(page);
 });
 
-test("dead port: a tab that said Ember isn't running says Ember restarted when a new one starts at its address", async (t) => {
+test("dead port: a tab that said it can't reach Ember says Ember restarted when a new one starts at its address", async (t) => {
   const { page, status, port, notebook } = await openThenKillPort(t, "dead-port-restarted");
 
-  const dialog = page.getByRole("alertdialog", { name: "Ember isn't running here" });
+  const dialog = page.getByRole("alertdialog", { name: "Can't reach Ember here" });
   await fastForwardUntil(page, dialog);
 
   const second = await startServer([notebook], {
@@ -141,5 +143,47 @@ test("dead port: a tab that said Ember isn't running says Ember restarted when a
   await fastForwardUntil(page, restarted);
   await status.filter({ hasText: "Ember restarted" }).waitFor({ timeout: 30000 });
   assert.equal(await dialog.count(), 0, "the not-running dialog went when the restart was found");
+  assertNoPageErrors(page);
+});
+
+// The regression this change risks: a short outage, well under the 30 s,
+// must reconnect as before, with no dialog at all.
+test("dead port: an outage shorter than 30 s reconnects without a dialog", async (t) => {
+  const { page, status, bringBack } = await openThenKillPort(t, "dead-port-short");
+
+  for (let moved = 0; moved < 25000; moved += 5000) {
+    await page.clock.fastForward(5000);
+    await page.waitForTimeout(200);
+  }
+  await bringBack();
+  await fastForwardUntil(page, status.filter({ hasText: "R not started" }), { step: 1000, limit: 10000 });
+  assert.deepEqual(await page.evaluate(() => window.ember_dialogs.map((d) => d.title)), []);
+  assertNoPageErrors(page);
+});
+
+// Something at the address that accepts the websocket and closes it before
+// Ember's "connect" reply (Ember itself does this for a page from another
+// origin) is a failed try too: the page says it can't reach Ember, instead
+// of reconnecting every half second for ever.
+test("dead port: a socket that opens and closes before Ember answers counts as a failed try", async (t) => {
+  const { page, port } = await openThenKillPort(t, "dead-port-open-close");
+
+  let upgrades = 0;
+  const standIn = http.createServer((req, res) => { res.writeHead(404); res.end(); });
+  standIn.on("upgrade", (req, socket) => {
+    upgrades += 1;
+    const accept = crypto.createHash("sha1")
+      .update(req.headers["sec-websocket-key"] + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
+    socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+      `Sec-WebSocket-Accept: ${accept}\r\n\r\n`);
+    socket.end(Buffer.from([0x88, 0x02, 0x03, 0xe8])); // close frame, code 1000
+  });
+  await new Promise((resolve) => standIn.listen(port, "127.0.0.1", resolve));
+  t.after(() => standIn.close());
+
+  const dialog = page.getByRole("alertdialog", { name: "Can't reach Ember here" });
+  await fastForwardUntil(page, dialog);
+  assert.ok(upgrades > 0, "the page did reach the stand-in");
+  assert.match(await page.locator("#ember-r-status").innerText(), /Can't reach Ember/);
   assertNoPageErrors(page);
 });
