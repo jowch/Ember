@@ -286,6 +286,48 @@ test("help: opened while a cell runs, the panel says R is busy, then shows mean'
   assertNoProblems(page);
 });
 
+test("help: a query typed while R is busy is still a typed query when it's asked again (#92)", { timeout: 120000 }, async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help-busy-typed.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await runCell(page, "LOOP");
+  await page.waitForFunction(
+    () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
+    null, { timeout: 10000 });
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
+
+  // `s` is mgcv's, installed but never attached: only a typed search
+  // looks through every installed package (help-panel.test.mjs).
+  await page.locator("#live-docs-search").fill("s");
+  await page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("R is busy running a cell"),
+    null, { timeout: 15000 });
+
+  // The retry once LOOP ends must keep the typed search's scope and
+  // label: mgcv's page, and no "follows the cursor" line. If it never
+  // comes, say what the panel shows and what the docs replies were.
+  await page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("mgcv"),
+    null, { timeout: 30000 }).catch(async (e) => {
+    const seen = await page.evaluate(() => ({
+      query: document.querySelector("#live-docs-search")?.value,
+      package_line: document.querySelector(".ember-help-package")?.innerText ?? null,
+      page: document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.slice(0, 300),
+      loop_running: document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
+      replies: window.pluto_get_message_log().filter((m) => m.message?.doc !== undefined)
+        .map((m) => [m.message.status, String(m.message.doc).replace(/<[^>]*>/g, "").slice(0, 80)]).slice(-12),
+    }));
+    throw new Error(`${e.message}\nthe panel: ${JSON.stringify(seen, null, 1)}`);
+  });
+  assert.equal(await page.locator(".ember-help-package").count(), 0, "no 'follows the cursor' line on a typed query's retry");
+  assertNoProblems(page);
+});
+
 test("signature: the cursor after lm( shows a tooltip containing formula within 1s (62)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-signature.server.log") });
@@ -404,4 +446,3 @@ test("signature: a click on the tooltip lands in the code under it (#34)", async
 
   assertNoProblems(page);
 });
-

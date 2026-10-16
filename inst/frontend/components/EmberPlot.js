@@ -1,4 +1,4 @@
-import { html, useRef, useEffect, useState, useContext } from "../imports/Preact.js"
+import { html, useRef, useEffect, useLayoutEffect, useState, useContext } from "../imports/Preact.js"
 import { PlutoImage } from "./CellOutput.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 
@@ -61,7 +61,10 @@ export const EmberPlot = ({ mime, body, cell_id, last_run_timestamp, figure }) =
         }
     }
 
-    useEffect(() => {
+    // A layout effect, so the size is on the <img> before the first paint.
+    // A plain effect runs a frame later, and by then a quick image can
+    // already have loaded and painted at its natural size.
+    useLayoutEffect(() => {
         maybe_ask()
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [last_run_timestamp, figure?.width, figure?.height])

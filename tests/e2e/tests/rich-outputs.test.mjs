@@ -179,6 +179,53 @@ test("plot: FIG's #| fig-width/fig-height lines give a fixed 480 x 384 CSS px im
   assertNoProblems(page);
 });
 
+// On a slow machine the image could load and paint at its natural size
+// before the effect that sizes it ran, a frame later: macOS CI read it
+// 708 px wide, the column's width. A slowed-down CPU makes that likely.
+test("plot: FIG is 480 CSS px wide from its first painted frame, even on a slow CPU", async (t) => {
+  const notebook = tempNotebook("rich.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "rich-fig-first-frame.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: 8 });
+
+  // Every frame (and every style or src change) from before the run.
+  await page.evaluate((sel) => {
+    window.__fig_frames = [];
+    window.__fig_stop = false;
+    const snap = () => {
+      const img = document.querySelector(sel);
+      if (img == null || img.naturalWidth === 0 || img.style.display === "none") return;
+      window.__fig_frames.push(Math.round(img.getBoundingClientRect().width));
+    };
+    new MutationObserver(snap).observe(document.body, { subtree: true, attributes: true, attributeFilter: ["style", "src"], childList: true });
+    const tick = () => { snap(); if (!window.__fig_stop) requestAnimationFrame(tick); };
+    tick();
+  }, `${cellSelector("FIG")} img`);
+
+  await runCell(page, "FIG");
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.naturalWidth > 0,
+    `${cellSelector("FIG")} img`, { timeout: 30000 });
+  // A few more frames, so a late resize would be seen too.
+  await page.evaluate(() => new Promise((done) => {
+    let n = 0;
+    const tick = () => (++n >= 10 ? done() : requestAnimationFrame(tick));
+    requestAnimationFrame(tick);
+  }));
+  const widths = await page.evaluate(() => { window.__fig_stop = true; return window.__fig_frames; });
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+
+  assert.ok(widths.length > 0, "a frame showed the image");
+  assert.deepEqual([...new Set(widths)], [480], "the image is 480 px wide in every frame that shows it");
+
+  assertNoProblems(page);
+});
+
 test("plot: a 3x-density tab asks for one redraw at res 288; a 1x tab asks for none (76)", { timeout: 60000 }, async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "rich-plot-dpr.server.log") });

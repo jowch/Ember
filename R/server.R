@@ -21,6 +21,16 @@ THUMBS_DOWN <- "\U0001F44E"
 WAVE <- "\U0001F44B"
 HOURGLASS <- "\u231B"
 
+#' How long a Help lookup may take in an idle worker before the reply says
+#' R didn't answer in time. Completions and signatures keep
+#' `worker_query()`'s 0.8 s: they answer as you type, and a late one is
+#' useless. A help page is asked for once and its answer is still wanted,
+#' and a search typed in the Help box reads every installed package's help
+#' index (`help_lookup()`, inst/worker.R), which can take seconds on a big
+#' library. With 0.8 s that lookup's reply was dropped, and each new ask
+#' queued in the worker behind it and was dropped too (#92 review).
+DOCS_QUERY_TIMEOUT <- 10
+
 # ---- Public API --------------------------------------------------------------
 
 #' Run the UI server in this process, blocking until it is stopped.
@@ -811,6 +821,7 @@ on_run <- function(server, cl, hub, req) {
 #' | reshow_cell                   | "more" paging (ui-2.md, 3b/3c): dispatch ev_show_more(cell, objectid, dim); flush. No reply (the frontend sends without awaiting one) |
 #' | ember_render_plot             | {cell_id, res}, res clamped: dispatch ev_render() at the cell's own figure size; flush |
 #' | ember_run_all                 | the "N cells not run" bar's button (ui-2.md, 5): run_cells() on not_run_ids(), the same set the bar counts; flush. No reply |
+#' | ember_retry_install           | the failure card's Try again (#106): run_cells() on retry_install_ids(), cells that stopped on a missing package plus not_run_ids(); asks even when empty, which retries a failed install (never in safe preview); flush. No reply |
 #' | ember_split_cell              | {cell_id, code}: split a mixed_text cell at each text/code change (split_mixed()); nothing if code is stale or the cell isn't mixed. Flush. No reply |
 #' | ember_signature                | worker_query(signature); else signature_fallback() (ui-2.md, 4d)   |
 #' | ember_update_packages          | dispatch ev_preview_date(today, apply = TRUE); flush. No reply       |
@@ -955,7 +966,7 @@ handlers <- list(
     was_idle <- worker_is_idle(hub$nb)
     help_msg <- list(type = "help", topic = parsed$name, package = parsed$package,
                      all_packages = isTRUE(req$body$all_packages))
-    worker_query(hub$nb, help_msg, function(reply) {
+    worker_query(hub$nb, help_msg, timeout = DOCS_QUERY_TIMEOUT, callback = function(reply) {
       if (!is.null(reply)) {
         doc <- help_reply_html(reply)
         # `package` NULL when ambiguous (reply$matches non-empty): the page
@@ -1021,6 +1032,20 @@ handlers <- list(
     st <- notebook_state(hub$nb)
     ids <- not_run_ids(st, view_context(st))
     if (length(ids) > 0) run_cells(hub$nb, ids)
+    flush_clients(server, hub)
+  },
+
+  #' The failure card's Try again (#106): `retry_install_ids()`, the
+  #' cells that stopped on a missing package and the ones not run yet.
+  #' Asks to run even when there are none: `reduce_run()` resets a failed
+  #' target library, so the install is retried all the same. Never in safe
+  #' preview, where nothing has run or installed yet and asking to run
+  #' would allow it.
+  ember_retry_install = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    st <- notebook_state(hub$nb)
+    if (!isTRUE(st$allowed)) return(invisible(NULL))
+    run_cells(hub$nb, retry_install_ids(st, view_context(st)))
     flush_clients(server, hub)
   },
 

@@ -697,7 +697,7 @@ test_that("every request type in the handler table is answered as documented (36
                "ember_open_notebook", "ember_forget_recent", "ember_set_package_source",
                "ember_remove_package_source")
   silent <- c("interrupt_all", "restart_process", "shutdown_notebook", "reshow_cell", "ember_render_plot",
-             "ember_run_all", "ember_split_cell", "ember_apply_update", "ember_cancel_update",
+             "ember_run_all", "ember_retry_install", "ember_split_cell", "ember_apply_update", "ember_cancel_update",
              "ember_set_mode", "request_js_link_response", "nbpkg_available_versions",
              "nbpkg_get_project_toml", "nbpkg_set_project_toml", "pkg_update")
   expect_setequal(names(handlers), c(answered, silent))
@@ -1815,7 +1815,7 @@ test_that("docs: an idle worker that doesn't answer in time says so, not 'needs 
   # The worker is idle (worker_is_idle(nb) is TRUE), but its connection is
   # broken right before asking, so worker_query()'s write fails and its
   # callback runs with NULL immediately -- the same shape a real answer
-  # timing out would have, without waiting out the real 0.8s. The reply
+  # timing out would have, without waiting out DOCS_QUERY_TIMEOUT. The reply
   # must name a timeout, not "Help pages need R running": R *is* running.
   close(nb$con)
   handle_message(server, ws, wire("docs", notebook_id = id, query = "mean"))
@@ -1823,6 +1823,38 @@ test_that("docs: an idle worker that doesn't answer in time says so, not 'needs 
   expect_identical(r$status, "\u231B")
   expect_match(r$doc, "answer in time")
   expect_no_match(r$doc, "Run a cell")
+})
+
+test_that("docs: a help lookup slower than a completion's timeout is waited for, not dropped (#92 review)", {
+  # Every help() lookup in this worker sleeps 1.5 s first: a cold
+  # `try.all.packages` search on a big library, as on the macOS runner.
+  # With the 0.8 s completion timeout the reply was dropped and the page
+  # asked again, queued behind the lookup still running, for ever.
+  slow <- 'trace("index.search", quote(Sys.sleep(1.5)), where = asNamespace("utils"), print = FALSE)'
+  path <- write_session_notebook(list(S = cell(""), A = cell(slow)))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  allow_execution(nb)
+  expect_true(run_cells(nb, wait = TRUE, timeout = 20)$accepted)
+
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  handle_message(server, ws, wire("docs", notebook_id = id, query = "mean", all_packages = TRUE))
+  deadline <- Sys.time() + 20
+  docs_msgs <- list()
+  while (length(docs_msgs) == 0 && Sys.time() < deadline) {
+    later::run_now(timeout = 1)
+    docs_msgs <- Filter(function(m) identical(m$type, "docs"), ws$messages)
+  }
+  expect_length(docs_msgs, 1)
+  r <- docs_msgs[[1]]$message
+  expect_identical(r$status, "\U0001F44D")
+  expect_match(r$doc, "Arithmetic Mean")
 })
 
 test_that("docs: a busy worker answers with an hourglass, so the help panel asks again (61)", {

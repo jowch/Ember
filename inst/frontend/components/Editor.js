@@ -672,6 +672,10 @@ export class Editor extends Component {
                 run_started()
                 return this.client.send("ember_run_all", {}, { notebook_id: this.state.notebook.notebook_id }, false)
             },
+            ember_retry_install: () => {
+                run_started()
+                return this.client.send("ember_retry_install", {}, { notebook_id: this.state.notebook.notebook_id }, false)
+            },
             ember_set_mode: (mode) =>
                 this.client.send("ember_set_mode", { mode }, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_update_packages: () =>
