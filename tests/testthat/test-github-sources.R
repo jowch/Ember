@@ -188,7 +188,7 @@ test_that("fetch_github_main finds the ref's commit, reads its DESCRIPTION and s
   repos <- ember_repos(github = github_fixture())
   key <- github_key("lab", "toyC", "v0.3.0")
   fetch_github_main(key, repo_url(repos, key), index_rds_path(key, cache))
-  idx <- fresh_github_index(key, cache)
+  idx <- fresh_index(key, cache)
   expect_equal(idx$name, "toyC")
   expect_equal(idx$version, "0.3.0")
   expect_equal(idx$label, github_source("lab", "toyC", C1))
@@ -199,7 +199,7 @@ test_that("fetch_github_main finds the ref's commit, reads its DESCRIPTION and s
 
   short <- github_key("lab", "toyC", "3f2a1c9")
   fetch_github_main(short, repo_url(repos, short), index_rds_path(short, cache))
-  expect_equal(fresh_github_index(short, cache)$label, github_source("lab", "toyC", C1))
+  expect_equal(fresh_index(short, cache)$label, github_source("lab", "toyC", C1))
 })
 
 test_that("fetch_github_main reads only the DESCRIPTION, and stops when a commit has none", {

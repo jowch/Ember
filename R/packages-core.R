@@ -113,9 +113,12 @@ new_packages_state <- function(lock, wanted, r, cache, header = NULL, releases =
 #' `status`: `"fetching"`, `"ready"` (`index` set) or `"failed"`
 #' (`message`; `wanted` records the wanted set at failure, and the fetch is
 #' retried only once `wanted` differs or `ev_run` asks: no retry loop when
-#' offline).
-new_index_slot <- function(status, index = NULL, message = NULL, wanted = NULL) {
-  structure(list(status = status, index = index, message = message, wanted = wanted),
+#' offline). `provisional`: a ready index of a date so recent that
+#' Package Manager may still add to it (`index_may_change()`, library.R),
+#' fetched again by a date preview (#39).
+new_index_slot <- function(status, index = NULL, message = NULL, wanted = NULL, provisional = FALSE) {
+  structure(list(status = status, index = index, message = message, wanted = wanted,
+                 provisional = provisional),
             class = "ember_index_slot")
 }
 
@@ -434,7 +437,10 @@ ev_cancel_preview <- function(at) event("cancel_preview", at)
 #   add_extra_package(name), remove_extra_package(name)
 
 # From the shell's jobs
-ev_index_fetched <- function(key, index, at) event("index_fetched", at, key = key, index = index)
+#' `provisional`: the shell's word that the index's date is recent enough
+#' to change (`index_may_change()`); the core has no clock to judge it.
+ev_index_fetched <- function(key, index, at, provisional = FALSE)
+  event("index_fetched", at, key = key, index = index, provisional = isTRUE(provisional))
 ev_index_failed  <- function(key, message, at) event("index_failed", at, key = key, message = message)
 #' `table`: `parse_bioc_config()`'s result, as fetched (or cached).
 #' `fetched`: the day that list was fetched, a `Date` (a cached copy's own
@@ -453,7 +459,9 @@ ev_install_done <- function(token, key, manifest, message, log, at, failures = e
   event("install_done", at, token = token, key = key, manifest = manifest,
         message = message, log = log, failures = failures)
 
-fx_fetch_index    <- function(key, url) effect("fetch_index", key = key, url = url)
+#' `fresh`: asked for by a date preview, so the shell fetches again when the
+#' saved copy may have changed since (`index_may_change()`, #39).
+fx_fetch_index    <- function(key, url, fresh = FALSE) effect("fetch_index", key = key, url = url, fresh = fresh)
 #' Fetch Bioconductor's release list from `url` (`ember_repos(bioc_config)`),
 #' or read it from the disk cache when it is less than a day old and was
 #' fetched no earlier than `date` (the snapshot date it must cover).
@@ -695,7 +703,7 @@ schedule_packages <- function(state, old) {
     } else if (is.null(slot)) {
       for (k in unfetched) {
         state$packages$indexes[[k]] <- new_index_slot("fetching")
-        effects <- c(effects, list(fx_fetch_index(k, repo_url(state$options$repos, k))))
+        effects <- c(effects, list(fx_fetch_index(k, repo_url(state$options$repos, k), fresh = TRUE)))
       }
     } else if (identical(slot$status, "ready") && !is.null(drop_message)) {
       state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
@@ -738,7 +746,7 @@ schedule_packages <- function(state, old) {
         for (k in res$fetch) {
           if (is.null(state$packages$indexes[[k]])) {
             state$packages$indexes[[k]] <- new_index_slot("fetching")
-            effects <- c(effects, list(fx_fetch_index(k, repo_url(state$options$repos, k))))
+            effects <- c(effects, list(fx_fetch_index(k, repo_url(state$options$repos, k), fresh = TRUE)))
           }
         }
       }
@@ -1114,7 +1122,8 @@ reduce_index_fetched <- function(state, event) {
   if (is.null(slot) || !identical(slot$status, "fetching")) {
     return(list(state = state, effects = list(), reply = NULL))
   }
-  state$packages$indexes[[event$key]] <- new_index_slot("ready", index = event$index)
+  state$packages$indexes[[event$key]] <- new_index_slot("ready", index = event$index,
+                                                        provisional = isTRUE(event$provisional))
   # A failed install waiting on this index to say which direct packages
   # need each failed one (#17).
   state <- fill_needed_by(state)$state
@@ -1268,11 +1277,17 @@ reduce_preview_date <- function(state, event) {
   for (key in keys) {
     slot <- state$packages$indexes[[key]]
     # A branch's index read earlier in this session is dropped too, so the
-    # preview asks GitHub where the branch is now.
+    # preview asks GitHub where the branch is now; so is a provisional one
+    # (today's), for what Package Manager has added since (#39). The
+    # proposal stage asks for every index it fetches `fresh`, so the shell
+    # skips a saved copy that may have changed since, such as one another
+    # notebook saved this morning; the core has no clock to tell which.
     moving <- is_github_key(key) && !is_commit(parse_github_key(key)$ref)
-    if (!is.null(slot) && (identical(slot$status, "failed") || moving && identical(slot$status, "ready"))) {
+    provisional <- isTRUE(slot$provisional) && identical(slot$status, "ready")
+    if (!is.null(slot) && (identical(slot$status, "failed") || moving && identical(slot$status, "ready") || provisional)) {
       state$packages$indexes[[key]] <- NULL
     }
+
   }
   state$packages$proposal <- new_proposal(event$date, apply = isTRUE(event$apply))
   list(state = state, effects = list(), reply = TRUE)
