@@ -456,7 +456,10 @@ turn_off <- function(state, ids) {
 #' `worker$running$code` is set from the cell's own code separately
 #' (`schedule()`, step.R).
 run_message <- function(state, id, token) {
-  order <- Filter(function(i) identical(state$cells[[i]]$kind, "code"), state$graph$order)
+  # A vector test, not a lookup by name per cell: those scan the names, and
+  # this runs for every cell during Run all (#44).
+  is_code <- vapply(state$cells, function(c) identical(c$kind, "code"), logical(1))
+  order <- state$graph$order[state$graph$order %in% names(state$cells)[is_code]]
   cell <- state$cells[[id]]
   is_text <- identical(cell$kind, "markdown")
   list(type = "run", cell = id, token = token,

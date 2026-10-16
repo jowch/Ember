@@ -268,11 +268,10 @@ drain <- function(nb) {
 #' Save the file if its text changed. Called inside the drain, after the
 #' inbox empties.
 #'
-#' Formatting the whole file per drain is cheap only because
-#' `notebook_file_of()` is skipped when `cells`, `graph$order`,
-#' `graph$learned`, `files` and `file` are identical to the previous
-#' drain's (handled by `notebook_graph()`'s analysis cache and R's
-#' `identical()` short cuts on unchanged parts).
+#' The file is formatted again only when something it is made from
+#' (`file_inputs()`) differs from the last drain's. Most drains during Run
+#' all change only results, and formatting a 2000-cell file costs about
+#' 0.17 s (#44).
 #'
 #' A failed write (the file's new folder is gone, permissions changed, the
 #' disk is full) is not retried with the same text: `ev_save_failed()` joins
@@ -285,6 +284,9 @@ drain <- function(nb) {
 save_if_changed <- function(nb) {
   s <- nb$state
   if (isTRUE(s$read_only)) return(invisible(NULL))
+  inputs <- file_inputs(s)
+  if (identical(inputs, nb$file_inputs)) return(invisible(NULL))
+  nb$file_inputs <- inputs
   text <- format_notebook(notebook_file_of(s))
   if (identical(text, nb$written)) return(invisible(NULL))
   if (!is.null(nb$save_failed_text) && identical(text, nb$save_failed_text)) return(invisible(NULL))
@@ -298,6 +300,21 @@ save_if_changed <- function(nb) {
     enqueue(nb, ev_save_failed("could not write the notebook file", at = Sys.time()))
   }
   invisible(NULL)
+}
+
+#' What `notebook_file_of()` reads from a state. Equal inputs give the same
+#' text, so `save_if_changed()` skips formatting the file when they are
+#' identical to the last drain's: the previous text was then either written
+#' already or failed to write.
+file_inputs <- function(state) {
+  list(state$cells, state$graph, state$file, state$files, state$computed_sources,
+       state$footer_sources, state$problems, state$read_only)
+}
+
+#' What `watched_files()` reads from a state, for the same skip in
+#' `after_dispatch()`.
+watch_inputs <- function(state) {
+  list(state$graph$analyses, state$computed_sources, state$footer_sources)
 }
 
 #' Notify and re-watch: derived from the state change over a dispatch.
@@ -318,7 +335,13 @@ after_dispatch <- function(nb, before) {
       })
     }
   }
-  sync_watch(nb, watched_files(nb$state))
+  # Gathering the watched paths walks every cell's analysis (about 24 ms at
+  # 2000 cells), so it is skipped when nothing it reads changed (#44).
+  inputs <- watch_inputs(nb$state)
+  if (!identical(inputs, nb$watch_inputs)) {
+    nb$watch_inputs <- inputs
+    sync_watch(nb, watched_files(nb$state))
+  }
   # Any dispatch can have changed `target`/`active` (an install finished, a
   # switch happened, a close unregistered this session already): keep
   # `clean()`'s view of what's in use current.

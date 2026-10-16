@@ -281,7 +281,26 @@ Follow-ups to act on are [GitHub issues](https://github.com/jowch/Ember/issues).
   works. The shell polls with a zero timeout, so it is unaffected; any
   future blocking wait on a socket in the server process must not rely on
   `socketSelect()`'s timeout.
-- **Risk:** a listener that is slow (the UI encoding a large diff) runs on the server thread after every drain. Coalescing helps, but a 2000-cell `cell_state` storm during "Run all" needs measuring.
+- **Measured:** during "Run all" on a 2000-cell notebook, each worker
+  message cost about 0.8 s of server time before #44, and costs about
+  0.12 s now (cloud container, a message that changes one cell):
+
+  | Per message | before | now |
+  |---|---|---|
+  | `step()` | 45 ms | 12 ms |
+  | `notifications()` | 360 ms | 41 ms |
+  | The UI's flush (`pluto_state()` against the last one) | 197 ms | 68 ms |
+  | Formatting the file to compare with the last save | 206 ms | skipped |
+  | Gathering the watched paths | 34 ms | skipped |
+
+  `notifications()` built and compared every cell's view in both states;
+  it now builds only those whose inputs changed (`changed_views()`). The
+  file is formatted again only when something it is made from changed,
+  and the watched paths are gathered again only when an analysis or a
+  source list changed. The rest were lookups by name per cell and a
+  `trimws()` per cell. The flush is throttled to one every 30 ms, so at
+  this size it still runs after almost every message; what is left of it
+  is the per-cell key comparison and `packages_view()`.
 - **Risk:** `later`'s global loop is shared with anything else the host runs. A host callback that blocks stalls the poll. Should the session use a private loop that the server services?
 
 ## Next implementation step
