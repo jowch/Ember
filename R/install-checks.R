@@ -417,7 +417,7 @@ loader_libraries <- function(ldconfig = c(Sys.which("ldconfig"), "/sbin/ldconfig
                       error = function(e) character())
     out <- sub("^\\s*(\\S+) .*$", "\\1", grep("=>", lines, value = TRUE, fixed = TRUE))
   }
-  dirs <- strsplit(ld_library_path, ":", fixed = TRUE)[[1]]
+  dirs <- strsplit(ld_library_path, .Platform$path.sep, fixed = TRUE)[[1]]
   for (d in dirs[nzchar(dirs) & dir.exists(dirs)]) out <- c(out, list.files(d, pattern = "\\.so"))
   unique(out)
 }

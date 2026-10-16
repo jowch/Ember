@@ -323,7 +323,7 @@ test_that("a missing library that is here as another version isn't a library to 
   dir <- tempfile("ember-loader-test-"); dir.create(dir)
   on.exit(unlink(dir, recursive = TRUE), add = TRUE)
   file.create(file.path(dir, c("libgdal.so.36", "notalib.txt")))
-  expect_equal(loader_libraries(ldconfig = "", ld_library_path = paste0("/does/not/exist:", dir)), "libgdal.so.36")
+  expect_equal(loader_libraries(ldconfig = "", ld_library_path = paste("/does/not/exist", dir, sep = .Platform$path.sep)), "libgdal.so.36")
 
   lock <- parse_lock_lines(c("sf 1.0-21 CRAN", "units 0.8-5 CRAN"))$lock
   reqs <- parse_sysreqs(sysreqs_fixture("ubuntu-sf-units"))
