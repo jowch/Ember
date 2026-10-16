@@ -576,9 +576,11 @@ under `Rscript` the settings cells come first in the file and
 `library(mgcv)` resets it. The cell that loads the package gets a note:
 "Loading mgcv resets mgcv.vc.logrange, which a settings cell sets. Under
 Rscript the setting is lost, because settings cells come first in the
-file. Set it in this cell, after mgcv loads." Within one cell the notebook
-and `Rscript` keep the order as written. The note shows on the run that
-loads the package. None changed the working directory or
+file. Move it into this cell, after mgcv loads." Moved there, the loading
+cell becomes the one settings cell for that option (leaving it in both
+would be the "set in two cells" conflict), and within one cell the
+notebook and `Rscript` keep the order as written. The note shows on the
+run that loads the package. None changed the working directory or
 locale. RcppArmadillo, rstan and V8 create `.Random.seed` when loaded, which
 the global-environment check already skips.
 

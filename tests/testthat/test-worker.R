@@ -411,6 +411,16 @@ test_that("a package load that resets a setting a settings cell set leaves a not
   expect_identical(r3$load_notes, list())
 })
 
+test_that("the note's advice: the setting moved into the loading cell, after the load, keeps it and gives no note (#61)", {
+  h <- worker_harness(extra_libs = fixture_lib())
+  on.exit(h$close())
+  r <- run_and_wait(h, "l", 1L, 'library(emberfix1); options(emberfix_load_opt = "user")')
+  expect_identical(r$load_notes, list())
+  expect_identical(r$settings[[1]]$name, "emberfix_load_opt")
+  r2 <- run_and_wait(h, "c", 2L, 'getOption("emberfix_load_opt")', settings = "l")
+  expect_identical(r2$output$text, '[1] "user"')
+})
+
 test_that("a load through requireNamespace() names the package in its note (#61)", {
   h <- worker_harness(extra_libs = fixture_lib())
   on.exit(h$close())

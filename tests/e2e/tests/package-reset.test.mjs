@@ -29,7 +29,7 @@ test("a package that resets a settings cell's option leaves a note on the cell t
   await page.waitForSelector(note, { timeout: 120000 });
   assert.equal(await page.locator(note).innerText(),
     "Loading mgcv resets mgcv.vc.logrange, which a settings cell sets. Under Rscript the setting is lost, " +
-    "because settings cells come first in the file. Set it in this cell, after mgcv loads.");
+    "because settings cells come first in the file. Move it into this cell, after mgcv loads.");
   assert.equal(await page.locator(`${cellSelector("S")} ember-settings-note`).count(), 0, "no note on the settings cell");
 
   // The cell after the load still sees the settings cell's value.

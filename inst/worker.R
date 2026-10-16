@@ -1271,6 +1271,9 @@ install_traces <- function() {
       # already on the path (a plain search() diff would miss that case,
       # and so would wrongly drop the package from the desired path on
       # the next rebuild -- see the note at attach_requests's use).
+      # Also outside a cell run, for the load's name: resolve_attach_name()
+      # evaluates `pe` only for `character.only = TRUE`, where the caller
+      # declared it a value, and reads no more than the call already did.
       if (attachable && !is.null(pe)) {
         after_search <- packages_on_search(search())
         resolved <- resolve_attach_name(pe, char_only, call_env, before_search, after_search)
