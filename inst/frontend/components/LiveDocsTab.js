@@ -126,10 +126,18 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
                             state.waiting = true
                         })
                     }
+                    // The retry is the same request, so it keeps this one's
+                    // scope and label: a typed, Back/Forward or clicked
+                    // query stays explicit (#92). Only ever set, never
+                    // cleared, so an explicit action taken meanwhile isn't
+                    // undone.
                     clearTimeout(retry_timer.current)
                     retry_timer.current = setTimeout(() => {
                         update_state((state) => {
-                            if (state.searched_query === new_query) state.searched_query = null
+                            if (state.searched_query === new_query) {
+                                if (!from_cursor) explicit_ref.current = true
+                                state.searched_query = null
+                            }
                         })
                     }, DOCS_RETRY_MS)
                     return false
