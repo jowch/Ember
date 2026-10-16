@@ -691,6 +691,39 @@ jobs <- new.env(parent = emptyenv())
 #' guards against in its own memo).
 index_job_key <- function(key, url, cache) paste(key, url, cache, sep = "\u0001")
 
+#' Start a job's subprocess (`cmd`, as `index_fetch_command()` and the
+#' other `*_command()`s return it) so that it ends with the server however
+#' the server ends (#141). processx gives the child a session of its own,
+#' so a signal to the server never reaches it, and `cleanup_tree` acts
+#' only when R exits normally. `supervise = TRUE` starts processx's
+#' supervisor, a separate process that sends the child SIGTERM once the
+#' server has gone, by any signal, SIGKILL included. The supervisor signals
+#' only the child itself, and an install's child (the installer's Rscript)
+#' has children of its own (`R CMD INSTALL`, the compiler) in its session.
+#' So on Unix the command runs under `sh`, which passes a SIGTERM on to its
+#' whole process group, the job's tree. On Windows the supervisor ends the
+#' child; whether its children go too is not checked there yet.
+#'
+#' Ending an install halfway is safe: a library is built in a staging
+#' folder and renamed into place only once complete (docs/packages.md), and
+#' `clean()` removes the staging folder it leaves.
+job_process <- function(cmd, stderr = "2>&1") {
+  command <- cmd$command
+  args <- cmd$args
+  if (.Platform$OS.type == "unix") {
+    args <- c("-c", JOB_SH, command, args)
+    command <- "/bin/sh"
+  }
+  processx::process$new(command, args, env = cmd$env, stdout = "|", stderr = stderr,
+                        cleanup_tree = TRUE, supervise = TRUE)
+}
+
+#' The `sh -c` script `job_process()` runs the job's command under (as
+#' `"$0" "$@"`, so nothing is quoted into the script). It waits for the
+#' command and exits with its status; on SIGTERM it sends SIGTERM to its
+#' process group, which processx made the job's own.
+JOB_SH <- 'trap "trap - TERM; kill -TERM 0" TERM; "$0" "$@" & wait $!'
+
 #' Start, or join a running job with the same key. `make_progress(line)`
 #' -> event or `NULL`; `make_done(status, output)` -> event. Each
 #' subscriber keeps its own closures, since the same index fetch can be
@@ -699,8 +732,7 @@ index_job_key <- function(key, url, cache) paste(key, url, cache, sep = "\u0001"
 job_start <- function(key, cmd, nb, make_progress, make_done) {
   job <- jobs[[key]]
   if (is.null(job)) {
-    proc <- processx::process$new(cmd$command, cmd$args, env = cmd$env,
-                                  stdout = "|", stderr = "2>&1", cleanup_tree = TRUE)
+    proc <- job_process(cmd)
     job <- new.env(parent = emptyenv())
     job$proc <- proc
     job$buf <- ""

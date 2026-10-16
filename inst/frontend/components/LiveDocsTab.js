@@ -6,7 +6,7 @@ import { RawHTMLContainer, highlight } from "./CellOutput.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { cl } from "../common/ClassTable.js"
 import { t } from "../common/lang.js"
-import { BackIcon, ForwardIcon } from "../common/Icons.js"
+import { BackIcon, ForwardIcon, SearchIcon } from "../common/Icons.js"
 
 const DOCS_RETRY_MS = 1000
 
@@ -100,9 +100,17 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, doc_query_explicit
 
     let retry_timer = useRef(/** @type {any} */ (null))
     useEffect(() => () => clearTimeout(retry_timer.current), [])
+    // Each request's number. A reply can come after a later request has
+    // gone out (a slow reply loses the race below, and the next query is
+    // asked while it's still on the way). Only the latest request's reply
+    // may change the page or the retry timer: an older one's "R is busy"
+    // would otherwise cancel the current query's retry and leave the
+    // panel saying R is busy for good (#132).
+    let latest_request = useRef(0)
 
     let fetch_docs = (new_query) => {
         const from_cursor = !doc_query_explicit
+        const request = ++latest_request.current
         update_state((state) => {
             state.loading = true
             state.searched_query = new_query
@@ -111,6 +119,7 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, doc_query_explicit
         Promise.race([
             observablehq.Promises.delay(2000, false),
             pluto_actions.send("docs", { query: new_query.replace(/^\?/, ""), all_packages: !from_cursor }, { notebook_id: notebook.notebook_id }).then((u) => {
+                if (request !== latest_request.current) return false
                 if (u.message.status === "⌛") {
                     // R couldn't answer yet (busy, not started, or slow). The
                     // query only changes when the cursor moves, so ask again.
@@ -199,6 +208,7 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, doc_query_explicit
                 })}
                 translate=${false}
             >
+                <span class="ember-help-search-icon" aria-hidden="true"><${SearchIcon} /></span>
                 <input
                     title=${no_docs_found ? `"${state.searched_query}" not found` : ""}
                     id="live-docs-search"

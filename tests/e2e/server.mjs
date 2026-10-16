@@ -133,8 +133,14 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   });
   liveChildren.add(child);
   child.on("exit", () => liveChildren.delete(child));
-  // The private index cache goes with the server that used it.
-  if (cache) child.on("exit", () => rmSync(cache, { recursive: true, force: true }));
+  // The private index cache goes with the server that used it. `stop()`
+  // interrupts the server, whose `serve()` then closes its notebooks and
+  // so ends their installs and index fetches before it exits (#141): a
+  // removal that still fails means something the server started outlived
+  // it, a leak, and its throw here fails the test file (#138).
+  // `maxRetries` covers only the moment between a killed job's last
+  // write and its exit.
+  if (cache) child.on("exit", () => rmSync(cache, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   // Unreferenced so a test file whose test failed before `stop()` still
   // lets node exit, which kills the child through the "exit" handler.
   child.unref();
@@ -178,16 +184,20 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
     port,
     child,
     log: () => buffer,
-    /** SIGTERM, then SIGKILL if the child is still alive 2 s later.
-     * Resolves once it has exited. */
+    /** SIGINT, as Ctrl-C would, so `serve()` closes its notebooks and
+     * ends their jobs on the way out; SIGKILL if the child is still alive
+     * 2 s later. Resolves once it has exited. */
     stop() {
       if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+      // Referenced again, so node waits for the child's exit, and the
+      // cleanup above, even when the test doesn't await this.
+      child.ref();
       return new Promise((resolve) => {
         const timer = setTimeout(() => {
           try { child.kill("SIGKILL"); } catch { /* already gone */ }
         }, 2000);
         child.once("exit", () => { clearTimeout(timer); resolve(); });
-        try { child.kill("SIGTERM"); } catch { clearTimeout(timer); resolve(); }
+        try { child.kill("SIGINT"); } catch { clearTimeout(timer); resolve(); }
       });
     },
   };

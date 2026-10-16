@@ -1298,8 +1298,9 @@ nav#at_the_top .ember-menu {
     gap: 0.6em;
 }
 
-/* Panel3's smaller .btn, for the side panel's buttons. */
-#ember-packages-tab .ember-btn {
+/* Panel3's smaller .btn, for the side panel's buttons: the Packages
+   tab's and the Status tab's Interrupt and Restart R (#51). */
+:is(#ember-packages-tab, #ember-status-tab) .ember-btn {
     height: 30px;
     padding: 0 10px;
     font-size: 12.5px;
@@ -1331,8 +1332,9 @@ nav#at_the_top .ember-menu {
     margin: 0 0 0.8em 0;
 }
 
+/* Red-tinted, as Panel3 draws a failure (#51): the error cells' line. */
 .ember-install-failure-card {
-    border: 1px solid var(--rule-color);
+    border: 1px solid var(--ember-err-line);
     border-radius: 6px;
     padding: 0.6em 0.8em;
 }
@@ -2320,7 +2322,32 @@ pluto-helpbox .live-docs-searchbox.notfound input {
 }
 .ember-help-bar .live-docs-searchbox {
     flex-grow: 1;
+    position: relative;
     margin: 0 0 0 6px;
+}
+/* The search field as Panel3 draws it (#51): 30 px, the page's
+   background, a search icon inside on the left, like the Variables tab's
+   filter. */
+.ember-help-bar .live-docs-searchbox input {
+    width: 100%;
+    height: 30px;
+    margin: 0;
+    padding: 0 10px 0 28px;
+    border: 1px solid var(--ember-line);
+    border-radius: 7px;
+    background: var(--ember-page);
+    color: var(--ember-text);
+    font-family: var(--ember-ui-font);
+    font-size: 13px;
+}
+.ember-help-search-icon {
+    position: absolute;
+    left: 9px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    color: var(--ember-muted);
+    pointer-events: none;
 }
 .ember-help-package {
     margin: 0;
@@ -2412,6 +2439,12 @@ pluto-helpbox .live-docs-searchbox.notfound input {
     margin: 18px 0 8px;
     font-size: 13px;
     font-weight: 600;
+}
+/* See Also as a row of links (#51; tidy_help_sections(), R/editor-services.R). */
+.helpbox-docs > section .ember-help-page p.ember-help-seealso {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
 }
 .helpbox-docs > section .ember-help-page p,
 .helpbox-docs > section .ember-help-page li {

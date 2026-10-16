@@ -230,6 +230,30 @@ test_that("help_reply_html() drops Rd2HTML's 'topic {pkg} | R Documentation' hea
   expect_identical(help_reply_html(list(html = older)), "<h2>T</h2>")
 })
 
+test_that("help_reply_html() drops the Description heading and makes See Also a row of its links (#51)", {
+  rd <- utils:::.getHelpFile(utils::help("mean", package = "base"))
+  out <- tempfile(fileext = ".html")
+  on.exit(unlink(out))
+  tools::Rd2HTML(rd, out, package = "base", dynamic = TRUE)
+  html <- help_reply_html(list(html = paste(readLines(out, warn = FALSE), collapse = "\n"), matches = list()))
+  expect_no_match(html, "<h3>Description</h3>", fixed = TRUE)
+  expect_match(html, "<h2>Arithmetic Mean</h2>\\s*<p>Generic function", perl = TRUE)
+  row <- regmatches(html, regexpr('(?s)<p class="ember-help-seealso">.*?</p>', html, perl = TRUE))
+  expect_length(row, 1)
+  expect_match(row, '<a href="@ref base::weighted.mean"><code>weighted.mean</code></a>', fixed = TRUE)
+  expect_no_match(row, "for row and column means", fixed = TRUE)
+  # The section after it is untouched.
+  expect_match(html, "<h3>Examples</h3>", fixed = TRUE)
+})
+
+test_that("tidy_help_sections() leaves a See Also with no links, and one that is the last section (#51)", {
+  plain <- "<h2>T</h2><h3>See Also</h3><p>Nothing to link.</p><h3>Examples</h3>"
+  expect_identical(tidy_help_sections(plain), plain)
+  last <- '<h3>See Also</h3><p><code><a href="@ref a::b">b</a></code> and <code><a href="@ref a::b">b</a></code>.</p><hr><div>[Package]</div>'
+  expect_identical(tidy_help_sections(last),
+    '<h3>See Also</h3>\n<p class="ember-help-seealso"><a href="@ref a::b"><code>b</code></a></p>\n<hr><div>[Package]</div>')
+})
+
 test_that("signature_fallback() (56)", {
   expect_match(signature_fallback("lm"), "^lm\\(formula, data")
   expect_null(signature_fallback("my_fun"))

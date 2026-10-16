@@ -159,6 +159,8 @@ Any event that changes what the notebook wants reaches the same code, so no hand
 
 One process-wide table, `jobs`, lets two sessions that want the same index or library share one subprocess. It holds processes and subscribers and makes no decisions.
 
+**Jobs end with the server.** A job is killed when its last session leaves (the session closed or cancelled the install), and the server closes its notebooks on the way out, including on Ctrl-C. If the server is killed instead, processx's supervisor ends the job, and on Unix the job runs under `sh`, which takes the job's children (`R CMD INSTALL`, the compiler) with it (`job_process()`, #141). On Windows there is no `sh`: the supervisor ends the job's own process, and whether its children go too is not checked yet. A killed install leaves only its staging folder, which `clean()` removes.
+
 **renv comes from the server's own library** as an Imports dependency. Only the installer subprocess loads it, never the server or the worker.
 
 **The test seam is the repository URL.** `ember_repos(cran = "file://…/fixtures/repos/cran")` drives the same code that reads PPM, with no mock. Resolution unit tests call `resolve_lock()` with a parsed fixture index. An offline end-to-end test installs two toy source packages from a `file://` repo. One opt-in test uses PPM.
