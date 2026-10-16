@@ -50,6 +50,70 @@ test_that("notifications list only the cells whose view changed (69)", {
   expect_equal(cs$cells, "A")
 })
 
+# What changed_views() and changed_cells() replaced: every view and every
+# cell compared, by name (#44).
+all_changed_views <- function(old, new) {
+  ov <- snapshot_of(old)$cells; nv <- snapshot_of(new)$cells
+  ids <- union(names(ov), names(nv))
+  ids[!vapply(ids, function(id) identical(ov[[id]], nv[[id]]), logical(1))]
+}
+all_changed_cells <- function(old, new) {
+  ids <- union(old$ids, new$ids)
+  ids[vapply(ids, function(id) {
+    oc <- old$cells[[id]]; nc <- new$cells[[id]]
+    is.null(oc) || is.null(nc) ||
+      !identical(oc[c("definitions", "references", "packages")], nc[c("definitions", "references", "packages")]) ||
+      !identical(old$upstream[[id]], new$upstream[[id]]) ||
+      !identical(unname(cell_errors(old, id)), unname(cell_errors(new, id)))
+  }, logical(1))]
+}
+
+test_that("changed_views() and changed_cells() match comparing every cell, step by step (#44)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("y <- x"),
+                       C = cell("z <- y"), Md = cell("#' notes", kind = "markdown")))
+  steps <- list()
+  r <- boot(s, c("A", "B", "C")); steps <- c(steps, list(list(s, r$state)))
+  for (k in 1:3) {
+    old <- r$state
+    r <- drive(old, wk_done(1, last_token(r), report(), at(10 + k)))
+    steps <- c(steps, list(list(old, r$state)))
+  }
+  edits <- list(
+    list(op_set_code("A", "x <- 2")),                  # re-runs its dependents
+    list(op_set_code("B", "y <- 1")),                  # drops an edge
+    list(op_set_code("C", "x <- 3")),                  # two cells define x
+    list(op_insert("D", 2, "w <- z")),
+    list(op_move("D", 5)),
+    list(op_disable("A")),
+    list(op_disable("A", FALSE)),
+    list(op_delete("B")),
+    list(op_fold("Md")))
+  for (e in edits) {
+    old <- r$state
+    r <- drive(old, ev_apply(e, at(20)))
+    steps <- c(steps, list(list(old, r$state)))
+  }
+  for (st in steps) {
+    expect_equal(changed_views(st[[1]], st[[2]]), all_changed_views(st[[1]], st[[2]]))
+    expect_equal(changed_cells(st[[1]]$graph, st[[2]]$graph),
+                 all_changed_cells(st[[1]]$graph, st[[2]]$graph))
+  }
+  expect_identical(changed_cells(r$state$graph, r$state$graph), character())
+})
+
+test_that("a worker message at 2000 cells builds only the views that may have changed (#44)", {
+  st <- perf_running(2000)
+  tok <- st$worker$running$token
+  new <- step(st, wk_done(1, tok, report(), at(10)))$state
+  built <- 0L
+  real_view <- cell_view
+  local_mocked_bindings(cell_view = function(...) { built <<- built + 1L; real_view(...) })
+  changed <- changed_views(st, new)
+  # The finished cell and the next one, in both states: not all 4000 views.
+  expect_lte(built, 8L)
+  expect_equal(changed, all_changed_views(st, new))
+})
+
 test_that("notifications list topology_changed only when edges change (70)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("y <- x")))
 

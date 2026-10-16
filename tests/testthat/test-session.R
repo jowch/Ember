@@ -88,6 +88,33 @@ test_that("the file on disk matches the state after an edit, and file_saved fire
   expect_equal(on_disk, expected)
 })
 
+test_that("running cells formats the file and gathers watched paths only when they can change (#44)", {
+  cells <- c(list(S = cell("")),
+             stats::setNames(lapply(1:20, function(i) cell(sprintf("x%d <- %d", i, i))), sprintf("c%d", 1:20)))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  edit_notebook(nb, set_code("c1", "x1 <- 0"))  # the first save after open
+
+  formatted <- 0L; synced <- 0L
+  real_format <- format_notebook; real_sync <- sync_watch
+  local_mocked_bindings(
+    format_notebook = function(...) { formatted <<- formatted + 1L; real_format(...) },
+    sync_watch = function(...) { synced <<- synced + 1L; real_sync(...) })
+  res <- run_cells(nb, wait = TRUE, timeout = 20)
+  expect_false(res$timed_out)
+  # Twenty cells finishing are dozens of worker messages, none of which
+  # changes the file or what it sources.
+  expect_lt(formatted, 5L)
+  expect_lt(synced, 5L)
+
+  # An edit still saves, and a new source() is still watched.
+  writeLines("y <- 1", file.path(dirname(path), "helper.R"))
+  edit_notebook(nb, set_code("c2", "source('helper.R')"))
+  expect_equal(read_file_utf8(path), real_format(notebook_file_of(notebook_state(nb))))
+  expect_true("helper.R" %in% names(nb$watch))
+})
+
 # ---- review4 item 2: move_notebook() validates before changing state ---------
 
 test_that("move_notebook() refuses to overwrite an existing file (review4 2)", {

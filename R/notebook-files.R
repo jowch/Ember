@@ -46,10 +46,12 @@ notebook_target_path <- function(name, folder) {
 #' what follows is matched by prefix, case-sensitively, against that
 #' folder's entries, folders getting a trailing "/". A typed part that
 #' doesn't start with "." leaves out hidden entries. `dirs_only` keeps
-#' only folders. At most 200 results, alphabetical.
+#' only folders. At most 200 results, alphabetical; `ember_truncated` is
+#' `TRUE` when more matched, so the frontend asks again as more is typed
+#' rather than narrowing a list that may be missing the match (#124).
 #'
-#' @return `list(start, stop, results)`, the shape Pluto's own protocol
-#'   uses: `start` is the 0-based UTF-8 byte offset in `query` right after
+#' @return `list(start, stop, results, ember_truncated)`, the shape Pluto's
+#'   own protocol uses plus Ember's `ember_truncated`: `start` is the 0-based UTF-8 byte offset in `query` right after
 #'   its last "/" or "\\" (0 when there is neither) and `stop` is
 #'   `query`'s byte length, together the span a chosen result replaces --
 #'   bytes, not characters, because the frontend (FolderField.js,
@@ -77,10 +79,12 @@ complete_path <- function(query, dirs_only = FALSE) {
 
   labeled <- ifelse(is_dir, paste0(entries, "/"), entries)
   results <- sort(labeled[keep])
-  if (length(results) > 200) results <- results[seq_len(200)]
+  truncated <- length(results) > 200
+  if (truncated) results <- results[seq_len(200)]
 
   start_bytes <- nchar(substr(query, 1L, last_slash), type = "bytes")
-  list(start = start_bytes, stop = nchar(query, type = "bytes"), results = as.list(results))
+  list(start = start_bytes, stop = nchar(query, type = "bytes"), results = as.list(results),
+       ember_truncated = truncated)
 }
 
 #' The first unused name in `dir`: "notebook.R", then "notebook-2.R",

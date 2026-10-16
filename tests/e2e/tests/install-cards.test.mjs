@@ -120,6 +120,10 @@ test("a cause group reads \"failed the same way\" only when that drops nothing",
   const sf = fail("sf", "missing_system", { libraries: "libgdal.so.34" });
   const [group] = cause_groups([fail("units", "missing_system", { libraries: "libudunits2.so.0" })]);
   assert.equal(reads_same(sf, group), false);
+  // #76's kinds list each package's libraries too.
+  assert.equal(reads_same(fail("a", "newer_system"), { kind: "newer_system" }), false);
+  assert.equal(reads_same(fail("a", "library_version"), { kind: "library_version" }), false);
+  assert.equal(reads_same(fail("a", "symbol_version"), { kind: "symbol_version" }), false);
 });
 
 test("names join as a sentence's list", () => {

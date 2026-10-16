@@ -504,6 +504,14 @@ pluto-cell.not_run_yet > ember-chip {
     color: var(--ember-muted);
 }
 
+/* A "Not run yet" chip's space, kept unseen while the cell's first run
+   is on its way, so the code moves once, when the result lands (#52). The
+   transparent border keeps the size it had. */
+pluto-cell > ember-chip.held {
+    visibility: hidden;
+    border: 1px solid transparent;
+}
+
 pluto-cell.stale > ember-chip {
     background: var(--ember-chip-stale-bg);
     border: 1px solid var(--ember-chip-stale-line);

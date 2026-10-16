@@ -26,6 +26,12 @@ const own_sentence = (failure, r_version) => {
             return t("t_ember_install_failed_missing_compiler")
         case "no_binary":
             return t("t_ember_install_failed_no_binary", { version: failure.detail ?? "", r_version: r_version ?? "" })
+        case "newer_system":
+            return t("t_ember_install_failed_newer_system", { versions: failure.detail ?? "", libraries: failure.libraries ?? "" })
+        case "symbol_version":
+            return t("t_ember_install_failed_symbol_version", { versions: failure.detail ?? "", libraries: failure.libraries ?? "" })
+        case "library_version":
+            return t("t_ember_install_failed_library_version", { libraries: failure.libraries ?? "", have: failure.detail ?? "" })
         default:
             return t("t_ember_install_failed_other")
     }
@@ -40,6 +46,9 @@ const DEP_SENTENCE = {
     missing_system: "t_ember_install_failed_dep_missing_system",
     missing_compiler: "t_ember_install_failed_dep_missing_compiler",
     no_binary: "t_ember_install_failed_dep_no_binary",
+    newer_system: "t_ember_install_failed_dep_newer_system",
+    symbol_version: "t_ember_install_failed_dep_symbol_version",
+    library_version: "t_ember_install_failed_dep_library_version",
     other: "t_ember_install_failed_dep_other",
 }
 
@@ -52,6 +61,9 @@ const THEY_SENTENCE = {
     missing_system: "t_ember_install_failed_they_missing_system",
     missing_compiler: "t_ember_install_failed_they_missing_compiler",
     no_binary: "t_ember_install_failed_they_no_binary",
+    newer_system: "t_ember_install_failed_they_newer_system",
+    symbol_version: "t_ember_install_failed_they_symbol_version",
+    library_version: "t_ember_install_failed_they_library_version",
     other: "t_ember_install_failed_they_other",
 }
 
@@ -83,12 +95,15 @@ const dep_sentence = (group, rows, r_version, { they = false, same = false } = {
         const version = f.version ?? rows.find((r) => r.name === f.package)?.version
         return version == null ? f.package : `${f.package} ${version}`
     })
-    const libraries = [...new Set(group.failures.flatMap((f) => (f.libraries ?? "").split(",").map((l) => l.trim()).filter((l) => l !== "")))]
+    const unique_list = (field) => [...new Set(group.failures.flatMap((f) => (f[field] ?? "").split(",").map((l) => l.trim()).filter((l) => l !== "")))].join(", ")
     const key = same ? "t_ember_install_failed_dep_same" : (they ? THEY_SENTENCE : DEP_SENTENCE)[group.kind]
     return t(key, {
         count: names.length,
         packages: name_list(names),
-        libraries: libraries.join(", "),
+        libraries: unique_list("libraries"),
+        // newer_system, symbol_version: the symbol versions; library_version: the versions this system has.
+        versions: unique_list("detail"),
+        have: unique_list("detail"),
         r_version: r_version ?? "",
     })
 }
@@ -96,10 +111,16 @@ const dep_sentence = (group, rows, r_version, { they = false, same = false } = {
 /**
  * What to do about a missing compiler or system library
  * (R/install-checks.R), over a card's own failure and its causes. System
- * libraries: every package's row carries the same command, which
- * installs them all, so only the first card (`show_command`) shows it,
- * with the sentence for people who can't run it; without a command (not
- * Package Manager), the package-manager sentence instead. A compiler:
+ * libraries: every covered package's row ("missing_system") carries the
+ * same command, which installs them all, so only the first card
+ * (`show_command`) shows it, with the sentence for people who can't run
+ * it. A package the command doesn't cover ("system" with libraries: a
+ * GitHub package, or no Package Manager) gets the package-manager
+ * sentence on its own card (#76). A library here only as another version
+ * ("library_version", #76): the command would install the version
+ * already here. A binary built for a newer system ("newer_system") or
+ * against another build of a library ("symbol_version"): a library from
+ * conda or a module may be the cause. A compiler:
  * `detail` is a sentence whose `backticked` parts are commands. A package
  * with no binary for this R (#19): update the date, or use an older R.
  * Nothing for other kinds, whose `detail` is a line of the log.
@@ -108,18 +129,29 @@ const dep_sentence = (group, rows, r_version, { they = false, same = false } = {
  * @param {boolean} show_command
  */
 const failure_fixes = (failures, show_command) => {
-    const has_libraries = failures.some((f) => sentence_kind(f) === "missing_system")
     const command = failures.find((f) => f.kind === "missing_system" && f.detail != null)?.detail
+    const uncovered = failures.some((f) => f.kind === "system" && f.libraries != null)
     const compiler = failures.find((f) => f.kind === "missing_compiler" && f.detail != null)?.detail
+    const command_shown = show_command && command != null
     return html`
-        ${has_libraries && show_command
-            ? html`
-                  ${command != null
-                      ? html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_system_command")}</p>
-                            <pre class="ember-install-failure-command">${command}</pre>`
-                      : html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_system_manager")}</p>`}
-                  <p class="ember-install-failure-fix">${t("t_ember_install_failed_no_admin")}</p>
-              `
+        ${command_shown
+            ? html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_system_command")}</p>
+                  <pre class="ember-install-failure-command">${command}</pre>`
+            : null}
+        ${uncovered
+            ? html`<p class="ember-install-failure-fix">
+                  ${t(command_shown ? "t_ember_install_failed_system_uncovered" : "t_ember_install_failed_system_manager")}
+              </p>`
+            : null}
+        ${command_shown || uncovered ? html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_no_admin")}</p>` : null}
+        ${failures.some((f) => f.kind === "library_version")
+            ? html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_library_version_fix")}</p>`
+            : null}
+        ${failures.some((f) => f.kind === "newer_system")
+            ? html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_newer_system_fix")}</p>`
+            : null}
+        ${failures.some((f) => f.kind === "symbol_version")
+            ? html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_symbol_version_fix")}</p>`
             : null}
         ${failures.some((f) => f.kind === "no_binary")
             ? html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_no_binary_fix")}</p>`
@@ -158,7 +190,7 @@ const InstallFailureCard = ({ card, rows, r_version, log, show_command }) => {
     // "unavailable" is most often a repository index that couldn't be
     // read, which can be passing, so it gets Try again too.
     // The missing-piece kinds are fixed outside Ember, then retried.
-    const can_retry = failures.some((f) => ["download", "unavailable", "system", "missing_system", "missing_compiler"].includes(f.kind))
+    const can_retry = failures.some((f) => ["download", "unavailable", "system", "missing_system", "missing_compiler", "library_version"].includes(f.kind))
 
     return html`
         <div class="ember-install-failure-card">
@@ -507,7 +539,7 @@ export const PackagesTab = ({ packages, read_only = false }) => {
     const direct_rows = rows.filter((row) => row.direct)
     const cards = install_cards(library.failures, direct_rows.map((row) => row.name))
     // The one card that shows the system-library command (`failure_fixes()`).
-    const command_card = cards.findIndex((card) => [card.own, ...card.causes].some((f) => f != null && sentence_kind(f) === "missing_system"))
+    const command_card = cards.findIndex((card) => [card.own, ...card.causes].some((f) => f != null && f.kind === "missing_system" && f.detail != null))
 
     return html`
         <div id="ember-packages-tab">
