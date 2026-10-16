@@ -164,6 +164,20 @@ test_that("two installs of one key racing in two processes leave one library and
 
 # ---- The index memo (61) ---------------------------------------------------
 
+test_that("an index dated yesterday or later in UTC may still change, and an older one or a GitHub key doesn't (#39)", {
+  now <- as.POSIXct("2026-10-16 01:30:00", tz = "UTC")
+  expect_true(index_may_change("cran/2026-10-16", now))
+  expect_true(index_may_change("cran/2026-10-15", now))
+  expect_true(index_may_change("cran/2026-10-17", now))   # a clock east of UTC
+  expect_true(index_may_change("bioc-ann/2026-10-16/3.23", now))
+  expect_false(index_may_change("cran/2026-10-14", now))
+  expect_false(index_may_change("bioc/2026-09-01/3.23", now))
+  expect_false(index_may_change("github/lab/toyC@main", now))
+  # The day is UTC's, whatever the local zone says: 20:00 on the 16th in
+  # Los Angeles is the 17th in UTC, so the 15th is two days back.
+  expect_false(index_may_change("cran/2026-10-15", as.POSIXct("2026-10-16 20:00:00", tz = "America/Los_Angeles")))
+})
+
 test_that("cached_index returns the identical object to two callers in one process (61)", {
   cache <- tempfile("ember-cache-")
   dir.create(file.path(cache, "indexes"), recursive = TRUE)

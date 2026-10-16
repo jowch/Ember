@@ -25,6 +25,26 @@ test_that("setClass(), setClassUnion() and setRefClass() define their class", {
   expect_true(all(c("Circle", "Account") %in% def_names(a, "assign")))
 })
 
+test_that("setOldClass() defines its first class and reads the rest", {
+  a <- read_cell(paste(
+    "setOldClass(c('lm2', 'lm'))",
+    "setOldClass('tbl3')",
+    "setOldClass(c(cls, 'glm'))",                       # computed first: reads glm
+    sep = "\n"))
+  expect_equal(def_names(a, "class"), c(".__C__lm2", ".__C__tbl3"))
+  expect_true(all(c(".__C__lm", ".__C__glm") %in% refs(a)))
+  expect_false(".__C__lm2" %in% refs(a))
+})
+
+test_that("setOldClass() orders a method on the old class after it", {
+  g <- notebook_graph(c(
+    S = "setMethod('show', 'lm2', function(object) cat('lm2'))",
+    O = "setOldClass(c('lm2', 'lm'))"
+  ))
+  expect_true(has_edge(g, "S", "O", ".__C__lm2", "definition"))
+  expect_equal(run_order(g), c("O", "S"))
+})
+
 test_that("a class created inside a function body is not the cell's", {
   a <- read_cell("make <- function() setClass('Later')")
   expect_length(def_names(a, "class"), 0)
@@ -200,6 +220,27 @@ test_that("deleting the class cell removes the class, not only its binding", {
   edit_notebook(nb, delete_cell("C"))
   res <- run_cells(nb, "U", wait = TRUE, timeout = 30)
 
+  expect_false(res$timed_out)
+  expect_equal(snap_view(notebook_snapshot(nb), "U")$output$text, '[1] "no class"')
+})
+
+test_that("a setOldClass() cell placed last runs first, and deleting it removes the class", {
+  cells <- list(S = cell(""),
+                M = cell("setMethod('show', 'lm2', function(object) cat('an lm2\\n'))"),
+                U = cell("tryCatch(getClass('lm2')@className, error = function(e) 'no class')"),
+                O = cell("setOldClass(c('lm2', 'lm'))"))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  res <- run_cells(nb, wait = TRUE, timeout = 30)
+  expect_false(res$timed_out)
+  snap <- notebook_snapshot(nb)
+  for (id in c("M", "U", "O")) expect_equal(snap_view(snap, id)$status, "ok", info = id)
+  expect_match(snap_view(snap, "U")$output$text, '"lm2"', fixed = TRUE)
+
+  edit_notebook(nb, delete_cell("O"))
+  edit_notebook(nb, delete_cell("M"))
+  res <- run_cells(nb, "U", wait = TRUE, timeout = 30)
   expect_false(res$timed_out)
   expect_equal(snap_view(notebook_snapshot(nb), "U")$output$text, '[1] "no class"')
 })

@@ -78,7 +78,8 @@ jobs:
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           needs: check
-      - run: R CMD INSTALL .
+      # No `R CMD INSTALL .`: `npm test` (tests/e2e/run.mjs) installs this
+      # checkout into a temp library of its own.
       - uses: actions/setup-node@v4
         with:
           node-version: 22

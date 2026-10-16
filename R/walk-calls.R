@@ -513,6 +513,7 @@ walk_method_registrar <- function(e, scope, acc, name, arg_pids = NULL) {
   sig_idx <- arg_index(spec[["signature"]], "signature")
   generic <- if (!is.na(gen_idx) && !missing_arg(args[[gen_idx]])) args[[gen_idx]] else NULL
   if (is.character(generic) && length(generic) == 1 && !is.na(generic) && nzchar(generic)) {
+    if (!is.na(spec["suffix"])) generic <- paste0(generic, spec[["suffix"]])
     signature <- if (!is.na(sig_idx) && !missing_arg(args[[sig_idx]])) {
       literal_signature(args[[sig_idx]])
     }
@@ -558,12 +559,27 @@ walk_class_names <- function(e, scope, acc, name, arg_pids = NULL) {
     for (cls in hard) record_read(acc, scope, class_binding(cls), pos = pos)
     for (cls in setdiff(soft, hard)) record_read(acc, scope, class_binding(cls), where = "slot", pos = pos)
   }
-  if (!is.null(spec$define) && !in_function(scope)) {
+  if (!is.null(spec$define)) {
     i <- arg_index(spec$define)
     if (!is.na(i) && !missing_arg(args[[i]])) {
       a <- args[[i]]
-      if (is.character(a) && length(a) == 1 && !is.na(a) && nzchar(a)) {
-        record_top_level_definition(acc, scope, class_binding(a), "class",
+      defined <- NULL
+      if (isTRUE(spec$define_first)) {
+        # The first class is defined, the rest are superclasses. Computed
+        # elements are skipped by literal_class_names(), so the first is
+        # known only when the first element is a string.
+        classes <- literal_class_names(a, named = FALSE)
+        first <- if (is.character(a)) a[1] else if (is.call(a) && length(a) >= 2) a[[2]]
+        if (length(classes) >= 1 && identical(first, classes[1])) {
+          defined <- classes[1]
+          classes <- classes[-1]
+        }
+        for (cls in classes) record_read(acc, scope, class_binding(cls), pos = pd_position(acc, arg_pids[[i]]))
+      } else if (is.character(a) && length(a) == 1 && !is.na(a) && nzchar(a)) {
+        defined <- a
+      }
+      if (!is.null(defined) && !in_function(scope)) {
+        record_top_level_definition(acc, scope, class_binding(defined), "class",
                                     pd_position(acc, arg_pids[[i]]))
       }
     }

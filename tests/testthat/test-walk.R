@@ -91,13 +91,13 @@ test_that("names(x)[i] <- nm resolves through nested replacement calls", {
   a <- read_cell("names(x)[i] <- nm")
   expect_setequal(defs(a), "x")
   expect_equal(a$definitions$kind, "replacement")
-  expect_setequal(refs(a), c("x", "i", "nm"))
+  expect_setequal(refs(a), c("x", "i", "nm", "names<-", "names", "[<-"))
 })
 
-test_that("x[[i]] <- v defines x and reads i, v and x", {
+test_that("x[[i]] <- v defines x and reads i, v, x and [[<-", {
   a <- read_cell("x[[i]] <- v")
   expect_setequal(defs(a), "x")
-  expect_setequal(refs(a), c("i", "v", "x"))
+  expect_setequal(refs(a), c("i", "v", "x", "[[<-"))
 })
 
 test_that("-> defines its right-hand target", {
@@ -220,13 +220,13 @@ test_that("a backslash lambda reads like an ordinary function", {
 test_that("m[, 2] <- 0: an empty replacement-target argument is skipped", {
   a <- read_cell("m[, 2] <- 0")
   expect_setequal(defs(a), "m")
-  expect_setequal(refs(a), "m")
+  expect_setequal(refs(a), c("m", "[<-"))
 })
 
 test_that("df[df$a > 1, ] <- 0: an empty argument after a filter is skipped", {
   a <- read_cell("df[df$a > 1, ] <- 0")
   expect_setequal(defs(a), "df")
-  expect_setequal(refs(a), c("df", ">"))
+  expect_setequal(refs(a), c("df", ">", "[<-"))
 })
 
 test_that("f <- function() d[1, ]: an empty argument inside a body is skipped", {

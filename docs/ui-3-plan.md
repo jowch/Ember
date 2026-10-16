@@ -1617,7 +1617,7 @@ worker message (`chdir`).
   closure includes the failed one, from the snapshot's index when loaded,
   `deps`, resolve.R:78-80, else `character()`; since #17 a failure with
   no index loaded, as on a notebook opened with its lock, fetches it and
-  walks again when it arrives, and the card says "Needed by ..."). Per-row status is
+  walks again when it arrives). Per-row status is
   `"failed"` for failed packages and the direct packages that need one;
   every other row in a failed library is `"not_installed"`, not
   `"failed"` (the staging folder is never renamed, so none is installed).
@@ -1638,9 +1638,21 @@ worker message (`chdir`).
   Endeavor reads (drawer.ts:218, 244).
 - The page builds the card sentences from `kind`, `package`, `version` and
   `packages$r_version` with translation keys
-  (`t_ember_install_failed_title`, `_compile`, `_compile_dependency`,
-  `_configure`, `_download`, `_other`, `t_ember_show_the_error`). R sends
-  no prose.
+  (`t_ember_install_failed_title`, `_compile`, `_download`, `_other`,
+  ..., one `_dep_<kind>_one`/`_other` pair per kind for the packages a
+  card's package needs, `t_ember_show_the_error`). R sends no prose.
+- Since #91 the page groups `failures` into one card per package named
+  in a `needed_by` (common/install_cards.js): its own sentence if it
+  failed itself, then one sentence per kind among the failed packages it
+  needs. A `"dependency"` row is a consequence and gets no sentence of
+  its own. Until `needed_by` fills in, a card follows the `"dependency"`
+  rows' `detail` to the package that failed. A failure still left over
+  (offline, where the index never comes) is needed by some package the
+  notebook loads: with one, its card takes them all; with several, one
+  card names them together ("Packages they need, ..."). A sentence names
+  at most five packages ("and 40 more"); one of the card's own kind only
+  names them ("failed the same way"), except for missing system
+  libraries, where each sentence lists its own.
 
 **B. Update to today's snapshot.** The engine applies the proposal itself,
 so the API, the page and Endeavor behave the same, and it stays pure.
@@ -1803,7 +1815,8 @@ PackagesTab +90, start.html and css 130. Rd: notebooks.Rd, packages.Rd's
   snapshot after the first fetch, and indexes are cached forever ("a dated
   index never changes", resolve.R:84-88), so updating twice on one day can
   miss packages released later that day. Harmless (the lock pins what was
-  chosen); tracked in #39.
+  chosen); fixed in #39: a preview fetches an index dated yesterday or
+  later again.
 - **Concurrent writers to the recent file** can lose an entry; writes are
   atomic, so it is never corrupt. Accepted.
 - **`chdir` and a busy worker.** The message is read after the running

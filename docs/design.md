@@ -337,7 +337,14 @@ the rerun the dropped edge misses.
   dotted helper with any other prefix (`fit.plot`), or with no arguments
   (`print.stats <- function()`), is just a function. Also
   `registerS3method()`, `.S3method()` and `setMethod()` with a literal
-  generic, which always count. `setGeneric("area")` defines `area`.
+  generic, which always count, and `setReplaceMethod("r", …)`, a method
+  of `` `r<-` ``. `setGeneric("area")` defines `area`.
+- **Replacement functions.** R runs `r(x) <- v` as
+  `` x <- `r<-`(x, value = v) ``, so the cell reads `` `r<-` ``: it depends
+  on a cell that defines `` `r<-` `` (a function or a generic) and on the
+  cells that define methods of it. A nested target reads every setter and
+  the getters inside it (`names(x)[i] <- v` reads `` `[<-` ``,
+  `` `names<-` `` and `names`). `$` and `@` read neither, as below.
 - **Many cells, one generic.** Any number of cells may add methods to one
   generic. The same pair in two cells (`print.foo` in one,
   `registerS3method("print", "foo", …)` in another, or two
@@ -353,8 +360,9 @@ the rerun the dropped edge misses.
   (whose own test for this is marked broken). Otherwise nearly every cell
   with output would rerun on any `print` method edit.
 - **Classes named as strings.** R keeps class `Circle` in the global
-  binding `.__C__Circle`, so `setClass("Circle")`, `setClassUnion()` and
-  `setRefClass()` with a literal name define that name, and a string in a
+  binding `.__C__Circle`, so `setClass("Circle")`, `setClassUnion()`,
+  `setRefClass()` and `setOldClass()` with a literal name define that name
+  (`setOldClass(c("lm2", "lm"))` defines `lm2` and reads `lm`), and a string in a
   class position reads it: `new()`'s class, a `setMethod()` signature,
   `contains =`, slot and field classes, `setValidity()`, `is()`, `as()`,
   `setAs()` and `getClass()`. These edges are ordinary definition edges,
@@ -373,9 +381,7 @@ the rerun the dropped edge misses.
   `removeClass()`: dropping the binding alone leaves the class in the
   methods package's cache, and `new("Circle")` would go on working.
 - **Not covered yet:** group generics (`Ops.money`, `Math.interval`), `$`
-  methods (the walker doesn't read `$` as a call), `setReplaceMethod()`
-  (`radius(x) <- v` isn't read as a use of `radius<-`), `setOldClass()` as
-  a class definer (the worker learns it after a run), and further class
+  methods (the walker doesn't read `$` as a call), and further class
   readers (`slotNames()`, `getSlots()`, `extends()`, `isVirtualClass()`,
   the signatures of `existsMethod()`, `getMethod()`, `selectMethod()`).
 
@@ -403,7 +409,15 @@ The rule is wrong when a formula mixes a data frame with a global vector
 (`lm(y ~ x + z, data = df)`, `z` not a column), and it errs towards a missing
 edge. So after the cell runs, the worker checks that each name taken as a
 column is in `names()` of the data frame the function received; if one
-isn't, the engine adds the edge and shows a note. The footer's `learned
+isn't, the engine adds the edge and shows a note. The check runs no code
+of the notebook's: it reads a name or a `$`/`[[` path's value, and for a
+call that only filters, sorts or adds named columns (`subset(df, x > 1)`,
+`head()`, `df[rows, ]`, `transform(df, w = …)`, dplyr's `filter()`,
+`mutate()` and the like, `column_keeping_calls` in the worker) it takes
+the columns of the data the call is given plus the names it adds. Running
+the call again could repeat a slow data step or a notebook's own S3
+method. Any other call (a join, a notebook's own function, `read.csv()`)
+leaves its formula unchecked. The footer's `learned
 references` block records these names, so the edge is there when the
 notebook is opened without running. Editing the cell drops them, as it
 drops learned settings; the next run's check finds them again.

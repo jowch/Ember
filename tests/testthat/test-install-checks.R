@@ -415,6 +415,15 @@ test_that("install_failures() reads a compiler missing during a source build as 
                               "ERROR: compilation failed for package 'brokenpkg'"))
   expect_equal(xcrun$kind, "missing_compiler")
 
+  # A compiler that is there but can't link (configure's own words, as
+  # seen with BiocParallel and a stub compiler): not a build to Update.
+  stub <- install_failures(c("* installing *source* package \u2018BiocParallel\u2019 ...",
+                             "configure: error: in `/tmp/RtmpX/R.INSTALL1/BiocParallel':",
+                             "configure: error: C++ compiler cannot create executables",
+                             "See `config.log' for more details",
+                             "ERROR: configuration failed for package \u2018BiocParallel\u2019"))
+  expect_equal(stub$kind, "missing_compiler")
+
   # A missing header is still a system library, not the compiler.
   hdr <- install_failures(c("* installing *source* package 'xml2' ...",
                             "fatal error: libxml/tree.h: No such file or directory",

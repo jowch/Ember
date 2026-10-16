@@ -1379,8 +1379,7 @@ rebuild_search_path <- function() {
 # ---- Formulas ------------------------------------------------------------------------
 
 #' Is `e` a symbol, or a `$`/`[[` chain (with a literal index) on one?
-#' These are the only `data` expressions safe to re-evaluate after the
-#' cell ran: anything else (a function call) could have side effects.
+#' These are the only expressions the check evaluates: they run no code.
 is_data_path <- function(e) {
   if (is.symbol(e)) return(TRUE)
   if (is.call(e) && length(e) == 3 && is.symbol(e[[1]])) {
@@ -1394,16 +1393,104 @@ is_data_path <- function(e) {
   FALSE
 }
 
-#' After the run: which names taken as columns are not in the data.
+#' Calls whose result has at most the columns of the data they're given,
+#' plus, for `column_adding_calls`, the names of their named arguments
+#' (`transform(df, w = x * 2)`, `mutate(df, w = ...)`, `rename(df, w = x)`,
+#' `group_by(df, decade = year %/% 10)`, `select(df, w = x)`). An unnamed
+#' argument that is a call can add columns whose names the check can't see
+#' (`mutate(df, across(x, log, .names = "{.col}_log"))`, `!!nm := v`), so
+#' `column_naming_calls` with one leave the formula unchecked.
+#' For a `data` call made of these the check reads the columns without
+#' running the call: it never runs a notebook's code again (an S3 method a
+#' notebook defines for one of them included), and never repeats a slow
+#' data step. Dropping columns (`select()`, `df[, cols]`) only makes the
+#' check find fewer misses, the side the column rule already errs on.
+#' Joins and reshapes, whose new names the call itself makes up, aren't
+#' listed. Each name must be, from the global environment, the function
+#' `data_call_packages` exports under it (looked up, never called), so a
+#' notebook's own `subset()` is not taken for base R's.
+column_keeping_calls <- c(
+  "subset", "head", "tail", "na.omit", "droplevels", "[", "transform",
+  "filter", "arrange", "slice", "slice_head", "slice_tail", "slice_min",
+  "slice_max", "distinct", "group_by", "ungroup", "drop_na", "select",
+  "relocate", "mutate", "rename"
+)
+column_adding_calls <- c("transform", "mutate", "rename", "group_by", "distinct", "select")
+column_naming_calls <- c("transform", "mutate", "group_by", "distinct")
+data_call_packages <- c("base", "stats", "utils", "dplyr", "tidyr")
+
+#' The columns a `data` expression can have, or `NULL` when the check
+#' can't tell without running code: a path's `names()`, or for a call in
+#' `column_keeping_calls` (spelled `f(df, ...)`, `pkg::f(df, ...)`, or
+#' through magrittr's `%>%`) the columns of its first argument and the
+#' names it adds.
+data_columns <- function(e) {
+  if (is_data_path(e)) {
+    val <- tryCatch(eval(e, envir = globalenv()), error = function(err) NULL)
+    return(tryCatch(names(val), error = function(err) NULL))
+  }
+  if (!is.call(e) || length(e) < 2) return(NULL)
+  head <- e[[1]]
+  if (is.symbol(head) && identical(as.character(head), "%>%") && length(e) == 3) {
+    rhs <- e[[3]]
+    if (!is.call(rhs)) return(NULL)
+    return(data_columns(as.call(c(list(rhs[[1]], e[[2]]), as.list(rhs)[-1]))))
+  }
+  name <- data_call_name(head)
+  if (is.null(name)) return(NULL)
+  args <- as.list(e)[-1]
+  if (identical(args[[1]], quote(expr = ))) return(NULL)
+  cols <- data_columns(args[[1]])
+  if (is.null(cols)) return(NULL)
+  if (name %in% column_adding_calls) {
+    nms <- names(args)
+    if (is.null(nms)) nms <- character(length(args))
+    if (name %in% column_naming_calls) {
+      for (i in seq_along(args)[-1]) {
+        if (!nzchar(nms[i]) && is.call(args[[i]])) return(NULL)
+      }
+    }
+    added <- nms[-1]
+    cols <- c(cols, added[!is.na(added) & nzchar(added)])
+  }
+  cols
+}
+
+#' The function a `data` call's head names, when it's one of
+#' `column_keeping_calls` as `data_call_packages` export it: a symbol that
+#' resolves from the global environment to that export, or `pkg::name`
+#' with `pkg` one of those packages. Otherwise `NULL`.
+data_call_name <- function(head) {
+  if (is.call(head) && length(head) == 3 && is.symbol(head[[1]]) &&
+      as.character(head[[1]]) %in% c("::", ":::")) {
+    pkg <- as.character(head[[2]])
+    name <- as.character(head[[3]])
+    if (pkg %in% data_call_packages && name %in% column_keeping_calls) return(name)
+    return(NULL)
+  }
+  if (!is.symbol(head)) return(NULL)
+  name <- as.character(head)
+  if (!(name %in% column_keeping_calls)) return(NULL)
+  fn <- get0(name, envir = globalenv(), mode = "function")
+  if (is.null(fn)) return(NULL)
+  for (pkg in data_call_packages) {
+    if (!isNamespaceLoaded(pkg)) next
+    exported <- tryCatch(getExportedValue(pkg, name), error = function(err) NULL)
+    if (!is.null(exported) && identical(fn, exported)) return(name)
+  }
+  NULL
+}
+
+#' After the run: which names taken as columns are not in the data. The
+#' check runs no code: see `data_columns()`.
 check_formulas <- function(formulas) {
   misses <- character()
   for (site in formulas) {
     data_text <- site$data
     if (is.null(data_text) || !nzchar(data_text)) next
     expr <- tryCatch(parse(text = data_text, keep.source = FALSE)[[1]], error = function(e) NULL)
-    if (is.null(expr) || !is_data_path(expr)) next
-    val <- tryCatch(eval(expr, envir = globalenv()), error = function(e) NULL)
-    nms <- tryCatch(names(val), error = function(e) NULL)
+    if (is.null(expr)) next
+    nms <- data_columns(expr)
     if (is.null(nms)) next
     miss <- setdiff(site$columns, nms)
     if (length(miss)) misses <- c(misses, miss)

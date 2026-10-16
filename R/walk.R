@@ -477,6 +477,12 @@ walk_assignment <- function(e, scope, acc, op, pid = NA_integer_) {
     target_name <- extract_target_name(raw_target)
     if (is.null(target_name)) return(invisible())
     tpid <- extract_target_pid(acc$pd, raw_target, raw_target_pid)
+    # `x[i] %<>% sort` runs as `` x <- `[<-`(x, i, value = sort(x[i])) ``:
+    # the target is read as a value (`[`, `i`) and then replaced (`[<-`).
+    if (is.call(raw_target)) {
+      walk_expr(raw_target, scope, acc, raw_target_pid)
+      walk_replacement_target(raw_target, scope, acc, raw_target_pid)
+    }
     record_read(acc, scope, target_name, pos = pd_position(acc, tpid))
     record_definition(acc, scope, target_name, "replacement", pd_position(acc, tpid))
     return(invisible())
@@ -486,6 +492,7 @@ walk_assignment <- function(e, scope, acc, op, pid = NA_integer_) {
     target_name <- extract_target_name(raw_target)
     if (is.null(target_name) || is_ignored(target_name)) return(invisible())
     tpid <- extract_target_pid(acc$pd, raw_target, raw_target_pid)
+    if (is.call(raw_target)) walk_replacement_target(raw_target, scope, acc, raw_target_pid)
     if (in_function(scope)) {
       record_read(acc, scope, target_name, pos = pd_position(acc, tpid))
     } else {
@@ -529,15 +536,32 @@ walk_assignment <- function(e, scope, acc, op, pid = NA_integer_) {
 #' empty argument (`m[, 2] <- 0`'s target is `` `[`(m, , 2) ``, whose second
 #' argument is the empty symbol); guarded like every other loop over call
 #' arguments.
-walk_replacement_target <- function(t, scope, acc, pid = NA_integer_) {
+#'
+#' Each call in the chain is also a call of its replacement function: R
+#' runs `r(x) <- v` as `` x <- `r<-`(x, value = v) ``, so the target reads
+#' `` `r<-` ``, and a call nested inside another (`names(x)` in
+#' `names(x)[i] <- nm`) reads its getter too, which R calls to get the
+#' value it then modifies. `$` and `@` read neither, as `df$col` reads no
+#' `$` elsewhere. A `pkg::f(x) <- v` head is a use of `pkg`.
+walk_replacement_target <- function(t, scope, acc, pid = NA_integer_, outer = TRUE) {
   if (missing_arg(t)) return(invisible())
   if (!is.call(t)) return(invisible())
   h <- t[[1]]
   hname <- if (is.symbol(h)) as.character(h) else NULL
   args <- as.list(t)[-1]
   parts <- pd_call_parts(acc$pd, t, pid)
-  if (length(args) >= 1) walk_replacement_target(args[[1]], scope, acc, safe_pid(parts$args, 1))
+  if (length(args) >= 1) {
+    walk_replacement_target(args[[1]], scope, acc, safe_pid(parts$args, 1), outer = FALSE)
+  }
   if (!is.null(hname) && hname %in% c("$", "@")) return(invisible())
+  if (!is.null(hname) && nzchar(hname)) {
+    hpos <- pd_position(acc, parts$head)
+    record_read(acc, scope, paste0(hname, "<-"), pos = hpos)
+    if (!outer) record_read(acc, scope, hname, pos = hpos)
+  } else {
+    q <- qualified_head(h)
+    if (!is.null(q)) record_package(acc, q$pkg, attached = FALSE)
+  }
   if (length(args) > 1) {
     for (i in 2:length(args)) {
       rest <- args[[i]]
