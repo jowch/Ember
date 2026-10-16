@@ -1526,6 +1526,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                         desired_doc_query=${this.state.desired_doc_query}
                         on_update_doc_query=${this.actions.set_doc_query}
                         connected=${this.state.connected}
+                        key_refused=${this.state.key_refused}
                         notebook=${this.state.notebook}
                         sanitize_html=${status.sanitize_html}
                         on_restart=${restart}
