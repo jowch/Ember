@@ -548,7 +548,8 @@ test_that("the formula check reads a data call's columns without running it (#42
     site("head(df[df$x > 1, ], n = 2)", c("x", "w")),
     site("base::subset(df, x > 1)", c("x", "v")),
     site("df %>% head(2)", c("x", "u")),
-    site("transform(head(df), w = x * 2)", c("x", "w"))))
+    site("transform(head(df), w = x * 2)", c("x", "w")),
+    site("transform(df, w = x * 2, cbind(t = x))", "t")))
   expect_setequal(r2$formula_misses, c("w", "v", "u"))
 
   # A call the check can't read, or a notebook's own function of a listed
@@ -559,6 +560,26 @@ test_that("the formula check reads a data call's columns without running it (#42
     formulas = list(site("keep(df)", "w"), site("head(keep(df))", "w"),
                     site("tail(df)", "w"), site("merge(df, df)", "w")))
   expect_identical(r3$formula_misses, character())
+})
+
+test_that("dplyr calls that name columns are read by their named arguments, or not at all (#42)", {
+  # Written as dplyr::f(), which the check resolves by name alone, so this
+  # runs without dplyr installed: the check never calls the function.
+  h <- worker_harness()
+  on.exit(h$close())
+  site <- function(data, columns) {
+    list(index = 1L, line = 1L, col = NA_integer_, end_col = NA_integer_,
+         fn = "lm", data = data, columns = columns)
+  }
+  r <- run_and_wait(h, "a", 1L, "df <- data.frame(year = c(1990, 2001), y = 1:2)",
+    formulas = list(
+      site("dplyr::group_by(df, decade = year %/% 10)", "decade"),
+      site("dplyr::distinct(df, k = year %% 2)", "k"),
+      site("dplyr::select(df, yr = year)", "yr"),
+      site("dplyr::mutate(df, across(year, log, .names = '{.col}_log'))", "year_log"),
+      site("dplyr::filter(df, year > 1995)", c("year", "z"))))
+  expect_identical(r$status, "ok")
+  expect_identical(r$formula_misses, "z")
 })
 
 test_that("the formula check never runs a notebook's method on its data again (#42)", {

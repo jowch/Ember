@@ -1395,7 +1395,11 @@ is_data_path <- function(e) {
 
 #' Calls whose result has at most the columns of the data they're given,
 #' plus, for `column_adding_calls`, the names of their named arguments
-#' (`transform(df, w = x * 2)`, `mutate(df, w = ...)`, `rename(df, w = x)`).
+#' (`transform(df, w = x * 2)`, `mutate(df, w = ...)`, `rename(df, w = x)`,
+#' `group_by(df, decade = year %/% 10)`, `select(df, w = x)`). An unnamed
+#' argument that is a call can add columns whose names the check can't see
+#' (`mutate(df, across(x, log, .names = "{.col}_log"))`, `!!nm := v`), so
+#' `column_naming_calls` with one leave the formula unchecked.
 #' For a `data` call made of these the check reads the columns without
 #' running the call: it never runs a notebook's code again (an S3 method a
 #' notebook defines for one of them included), and never repeats a slow
@@ -1411,7 +1415,8 @@ column_keeping_calls <- c(
   "slice_max", "distinct", "group_by", "ungroup", "drop_na", "select",
   "relocate", "mutate", "rename"
 )
-column_adding_calls <- c("transform", "mutate", "rename")
+column_adding_calls <- c("transform", "mutate", "rename", "group_by", "distinct", "select")
+column_naming_calls <- c("transform", "mutate", "group_by", "distinct")
 data_call_packages <- c("base", "stats", "utils", "dplyr", "tidyr")
 
 #' The columns a `data` expression can have, or `NULL` when the check
@@ -1438,7 +1443,14 @@ data_columns <- function(e) {
   cols <- data_columns(args[[1]])
   if (is.null(cols)) return(NULL)
   if (name %in% column_adding_calls) {
-    added <- names(args)[-1]
+    nms <- names(args)
+    if (is.null(nms)) nms <- character(length(args))
+    if (name %in% column_naming_calls) {
+      for (i in seq_along(args)[-1]) {
+        if (!nzchar(nms[i]) && is.call(args[[i]])) return(NULL)
+      }
+    }
+    added <- nms[-1]
     cols <- c(cols, added[!is.na(added) & nzchar(added)])
   }
   cols
