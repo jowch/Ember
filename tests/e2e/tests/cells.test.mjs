@@ -839,6 +839,13 @@ test("text cells: serif text with tinted values that copy as plain text; click o
   const cell = cellSelector("TXT");
   const out = `${cell} > pluto-output`;
   const editor = `${cell} pluto-input .cm-editor`;
+  // A's first run starts R and puts its output above TXT, moving TXT down:
+  // a drag measured before that lands can start beside the paragraph and
+  // select nothing (#120). So the test starts once A's run is done.
+  await page.waitForFunction((sel) => {
+    const a = document.querySelector(sel);
+    return a != null && !a.matches(".running, .queued") && (a.querySelector(":scope > pluto-output")?.innerText.trim() ?? "") !== "";
+  }, cellSelector("A"), { timeout: 30000 });
   const isOpen = () => page.locator(cell).evaluate((el) => el.classList.contains("show_input"));
   // A click opens the source once the double-click interval has passed, so
   // "didn't open" is only known after that.
@@ -864,7 +871,9 @@ test("text cells: serif text with tinted values that copy as plain text; click o
   await page.mouse.down();
   await page.mouse.move(p.x + 120, p.y + p.height / 2, { steps: 5 });
   await page.mouse.up();
-  assert.ok((await page.evaluate(() => getSelection().toString())).length > 5, "the drag selected text");
+  const p_after = await page.locator(`${out} p`).boundingBox();
+  assert.ok((await page.evaluate(() => getSelection().toString())).length > 5,
+    `the drag selected text (the paragraph's box before the drag: ${JSON.stringify(p)}, after: ${JSON.stringify(p_after)})`);
   await staysClosed("selecting text by dragging doesn't open the source");
 
   // A click inside the dragged selection would keep it until mouseup.
@@ -936,6 +945,52 @@ test("text cells: serif text with tinted values that copy as plain text; click o
     return getSelection().toString();
   });
   assert.equal(copied, "One more than x is 2, as the docs say.");
+
+  assertNoProblems(page);
+});
+
+test("text cells: keys pressed as the source opens, before it has drawn, aren't undone by the opening cursor (#120)", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-text-early-keys.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const cell = cellSelector("TXT");
+  const out = `${cell} > pluto-output`;
+  const editor = `${cell} pluto-input .cm-editor`;
+  const source = () => page.locator(editor).evaluate((el) => el.CodeMirror.getValue().split("\n"));
+  await page.locator(cell).scrollIntoViewIfNeeded();
+
+  // Hold animation frames, the way a slow or busy machine delays them, so
+  // the keys below land after the editor has focus but before its next
+  // frames. Opening the source then put the cursor at the end of the text
+  // two frames later, on top of wherever the keys had moved it, so Enter
+  // landed at the end (#120: macOS CI, cells.test.mjs "Enter in column 0").
+  await page.evaluate(() => {
+    const held = new Map();
+    let next = 1;
+    const real = { request: window.requestAnimationFrame.bind(window), cancel: window.cancelAnimationFrame.bind(window) };
+    window.requestAnimationFrame = (cb) => { held.set(next, cb); return next++; };
+    window.cancelAnimationFrame = (id) => held.delete(id);
+    window.__release_frames = () => {
+      window.requestAnimationFrame = real.request;
+      window.cancelAnimationFrame = real.cancel;
+      for (const cb of held.values()) real.request(cb);
+      held.clear();
+    };
+  });
+  await page.locator(`${out} h2`).click();
+  await page.locator(editor).waitFor({ state: "visible", timeout: 5000 });
+  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, editor, { timeout: 5000 });
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowUp" : "Control+Home");
+  // The frames come between the two keys: two for the deferred cursor,
+  // and one more to be sure it ran.
+  await page.evaluate(() => window.__release_frames());
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(done)))));
+  await page.keyboard.press("Enter");
+  assert.deepEqual((await source()).slice(0, 2), ["", "#' ## Results"], "Enter in column 0 adds an empty line above");
 
   assertNoProblems(page);
 });
