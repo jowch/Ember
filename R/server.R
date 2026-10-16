@@ -214,15 +214,18 @@ started_text <- function(link, path = NULL) {
 #' How many of the child's output lines an `ember_server_handle` keeps.
 CHILD_OUTPUT_KEEP <- 1000L
 
-#' Read the child's output every `interval` seconds while it runs, through
-#' later, so it happens whenever the console is idle: reprint the link
-#' when the child reports a request refused for its key (`KEY_HINT_LINE`,
-#' see `note_key_refused()`), and keep every other line in `handle$output`.
-#' Reading also keeps the pipe drained, so the child never blocks writing
-#' to a full one.
+#' Read the child's output as it arrives, through later, so it happens
+#' whenever the console is idle: reprint the link when the child reports a
+#' request refused for its key (`KEY_HINT_LINE`, see `note_key_refused()`),
+#' and keep every other line in `handle$output`. Reading also keeps the
+#' pipe drained, so the child never blocks writing to a full one.
+#'
+#' On macOS and Linux this waits on the pipe (`later::later_fd()`), so an
+#' idle server costs this session nothing. Windows pipes can't be waited on
+#' that way, so there it reads every `interval` seconds (#47). Returns
+#' `"pipe"` or `"poll"`, invisibly, for the tests.
 watch_child <- function(handle, interval = 0.5) {
-  poll <- function() {
-    if (isTRUE(handle$stopped) || !handle$process$is_alive()) return(invisible(NULL))
+  read <- function() {
     for (ln in handle$process$read_output_lines()) {
       if (startsWith(ln, KEY_HINT_LINE)) {
         message(KEY_HINT, handle$url)
@@ -230,9 +233,30 @@ watch_child <- function(handle, interval = 0.5) {
         handle$output <- utils::tail(c(handle$output, ln), CHILD_OUTPUT_KEEP)
       }
     }
-    later::later(poll, interval)
   }
-  later::later(poll, interval)
+  fd <- if (.Platform$OS.type != "windows") {
+    tryCatch(processx::conn_get_fileno(handle$process$get_output_connection()), error = function(e) NULL)
+  }
+  if (is.null(fd)) {
+    poll <- function() {
+      if (isTRUE(handle$stopped) || !handle$process$is_alive()) return(invisible(NULL))
+      read()
+      later::later(poll, interval)
+    }
+    later::later(poll, interval)
+    return(invisible("poll"))
+  }
+  # Called when the pipe has something to read, or is closed: the child
+  # exited, or stop() killed it. Once the pipe is at its end there is
+  # nothing more to wait for (a closed pipe is always readable, so waiting
+  # again would spin).
+  wait <- function(ready) {
+    if (isTRUE(handle$stopped)) return(invisible(NULL))
+    read()
+    if (handle$process$is_incomplete_output()) later::later_fd(wait, readfds = fd)
+  }
+  later::later_fd(wait, readfds = fd)
+  invisible("pipe")
 }
 
 #' @export
