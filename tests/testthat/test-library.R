@@ -694,3 +694,33 @@ test_that("clean_up() judged at an earlier time keeps a library that aged since 
   expect_true(dir.exists(d$stale_entry))
 })
 
+test_that("clean_up() through a symlinked cache dir keeps an open library's own entry (#128)", {
+  skip_on_os("windows")  # symlinks
+  d <- make_clean_up_cache()
+  on.exit(unlink(d$root, recursive = TRUE))
+  # The open library lists its entry by the resolved path, as
+  # library_cache_entries() records a symlink's target; the cache dir is
+  # reached through a symlink (macOS's /var -> /private/var).
+  m <- readRDS(file.path(d$open_lib, "ember-library.rds"))
+  m$cache_entries <- normalizePath(d$kept_entry)
+  saveRDS(m, file.path(d$open_lib, "ember-library.rds"))
+  link <- tempfile("ember-cache-link-")
+  file.symlink(d$root, link)
+  on.exit(unlink(link), add = TRUE)
+
+  done <- clean_up(link, keep = d$open_lib, dry_run = FALSE)
+  expect_equal(c(done$libraries, done$cache), c(1, 1))
+  expect_true(dir.exists(d$open_lib))
+  expect_true(dir.exists(d$kept_entry))
+  expect_false(dir.exists(d$stale_entry))
+  # keep spelled through the link matches too.
+  d2 <- make_clean_up_cache()
+  on.exit(unlink(d2$root, recursive = TRUE), add = TRUE)
+  link2 <- tempfile("ember-cache-link-")
+  file.symlink(d2$root, link2)
+  on.exit(unlink(link2), add = TRUE)
+  open_via_link <- file.path(link2, substring(d2$open_lib, nchar(d2$root) + 2))
+  clean_up(d2$root, keep = open_via_link, dry_run = FALSE)
+  expect_true(dir.exists(d2$open_lib))
+})
+

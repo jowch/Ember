@@ -875,6 +875,9 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
 
   kept_cache_entries <- character()
 
+  # Resolved like the paths it is compared with, so a `dir` spelled
+  # through a symlink still matches an open session's library path.
+  keep_resolved <- normalizePath(as.character(keep), mustWork = FALSE)
   lib_root <- file.path(dir, "libraries")
   if (dir.exists(lib_root)) {
     key_dirs <- Sys.glob(file.path(lib_root, "*", "*", "*"))
@@ -897,7 +900,7 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
       manifest <- read_library_manifest(entry)
       if (is.null(manifest)) next
 
-      if (entry %in% keep) {
+      if (normalizePath(entry, mustWork = FALSE) %in% keep_resolved) {
         kept_cache_entries <- c(kept_cache_entries, manifest$cache_entries)
         next
       }
@@ -930,12 +933,15 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
     cache_root <- file.path(dir, "renv-cache")
     if (dir.exists(cache_root)) {
       hash_dirs <- Sys.glob(file.path(cache_root, "v5", "*", "*", "*", "*", "*", "*"))
-      kept <- unique(kept_cache_entries)
+      # Compared resolved: a manifest can name an entry through a symlink
+      # target (`library_cache_entries()` follows renv's links) while the
+      # glob spells it through `dir` (/var vs /private/var on macOS).
+      kept <- unique(normalizePath(kept_cache_entries, mustWork = FALSE))
       for (h in hash_dirs) {
         # A cache entry made in the last day may belong to an install
         # still running, which renv fills before it links the library.
         age <- age_days(file.info(h)$mtime)
-        if (!(h %in% kept) && !is.na(age) && age >= 1) {
+        if (!(normalizePath(h, mustWork = FALSE) %in% kept) && !is.na(age) && age >= 1) {
           record(h, "cache", dir_size(h), file.info(h)$mtime)
           if (!dry_run) unlink(h, recursive = TRUE)
         }
