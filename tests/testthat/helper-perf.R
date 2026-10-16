@@ -70,12 +70,16 @@ time_ratio <- function(a, b, samples = 9L, inner_a = 1L, inner_b = 1L,
       ta[i] <- time_calls(a, inner_a)
       tb[i] <- time_calls(b, inner_b)
     }
+    # Half of min_secs, under two Windows ticks, so a median accepted at
+    # the floor can be off by about a tick. Only a machine that sped up
+    # after calibrating gets here; the floor trades that precision for a
+    # bounded number of retries.
     short_a <- stats::median(ta) < min_secs / 2
     short_b <- stats::median(tb) < min_secs / 2
     if (!short_a && !short_b) break
     if (attempt == retries) {
       stop(sprintf("time_ratio(): a median sample of %s still lasts under %g s after %d retries",
-                   if (short_a) "a()" else "b()", min_secs / 2, retries))
+                   paste(c("a()", "b()")[c(short_a, short_b)], collapse = " and "), min_secs / 2, retries))
     }
     if (short_a) inner_a <- inner_a * 2L
     if (short_b) inner_b <- inner_b * 2L
