@@ -1651,7 +1651,8 @@ worker message (`chdir`).
   notebook loads: with one, its card takes them all; with several, one
   card names them together ("Packages they need, ..."). A sentence names
   at most five packages ("and 40 more"); one of the card's own kind only
-  names them ("failed the same way").
+  names them ("failed the same way"), except for missing system
+  libraries, where each sentence lists its own.
 
 **B. Update to today's snapshot.** The engine applies the proposal itself,
 so the API, the page and Endeavor behave the same, and it stays pure.

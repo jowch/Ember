@@ -4,7 +4,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { install_cards, cause_groups, join_names } from "../../../inst/frontend/common/install_cards.js";
+import { install_cards, cause_groups, reads_same, join_names } from "../../../inst/frontend/common/install_cards.js";
 
 const fail = (pkg, kind, extra = {}) => ({ package: pkg, version: null, kind, detail: null, libraries: null, needed_by: [], ...extra });
 const summary = (cards) => cards.map((c) => [c.package, c.own?.package ?? null, c.causes.map((f) => f.package)]);
@@ -107,6 +107,19 @@ test("causes are grouped by the sentence they read as", () => {
   ]);
   assert.deepEqual(groups.map((g) => [g.kind, g.failures.map((f) => f.package)]),
     [["compile", ["a", "c"]], ["missing_system", ["b", "d"]], ["system", ["e"]], ["other", ["f"]]]);
+});
+
+test("a cause group reads \"failed the same way\" only when that drops nothing", () => {
+  const own = fail("DESeq2", "download");
+  assert.equal(reads_same(own, { kind: "download" }), true);
+  assert.equal(reads_same(own, { kind: "compile" }), false);
+  assert.equal(reads_same(null, { kind: "download" }), false);
+  assert.equal(reads_same(fail("x", "configure"), { kind: "compile" }), true);
+  // #75's sf and units: each lacks its own libraries, and the own
+  // sentence lists only sf's, so units' sentence must still list its own.
+  const sf = fail("sf", "missing_system", { libraries: "libgdal.so.34" });
+  const [group] = cause_groups([fail("units", "missing_system", { libraries: "libudunits2.so.0" })]);
+  assert.equal(reads_same(sf, group), false);
 });
 
 test("names join as a sentence's list", () => {

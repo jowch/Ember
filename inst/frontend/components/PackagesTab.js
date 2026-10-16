@@ -1,6 +1,6 @@
 import { html, useState, useContext, useEffect, useRef } from "../imports/Preact.js"
 import { t, getCurrentLanguage } from "../common/lang.js"
-import { install_cards, cause_groups, sentence_kind, join_names } from "../common/install_cards.js"
+import { install_cards, cause_groups, sentence_kind, reads_same, join_names } from "../common/install_cards.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 
 /**
@@ -71,7 +71,7 @@ const name_list = (names) =>
  * packages lack. `they`: the card names several packages the notebook
  * loads. `same`: the card's own package failed the same way, so its
  * sentence already gave the reason and the advice, and this one only
- * names the rest.
+ * names the rest (`reads_same()`: never for missing system libraries).
  *
  * @param {{ kind: string, failures: Array<import("./Editor.js").EmberInstallFailure> }} group
  * @param {Array<import("./Editor.js").EmberPackageRow>} rows
@@ -172,7 +172,7 @@ const InstallFailureCard = ({ card, rows, r_version, log, show_command }) => {
                 (group) => html`<p class="ember-install-failure-sentence">
                     ${dep_sentence(group, rows, r_version, {
                         they: card.package == null,
-                        same: card.own != null && sentence_kind(card.own) === group.kind,
+                        same: reads_same(card.own, group),
                     })}
                 </p>`
             )}

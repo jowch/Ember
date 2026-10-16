@@ -152,6 +152,19 @@ export const cause_groups = (causes) => {
     return groups
 }
 
+/**
+ * Whether a cause group's sentence can just say "failed the same way":
+ * the card's own failure is of the same kind, so its sentence already
+ * gave the reason and the advice. Never for missing system libraries,
+ * whose own sentence lists only the package's own libraries: the
+ * group's would drop off the card (#75's sf, lacking libgdal, with units,
+ * lacking libudunits2).
+ *
+ * @param {Failure?} own
+ * @param {{ kind: string }} group
+ */
+export const reads_same = (own, group) => own != null && group.kind !== "missing_system" && sentence_kind(own) === group.kind
+
 /** @param {Failure} f */
 export const sentence_kind = (f) => {
     if (f.kind === "configure") return "compile"
