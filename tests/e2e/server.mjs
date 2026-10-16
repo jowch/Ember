@@ -128,8 +128,23 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   });
   liveChildren.add(child);
   child.on("exit", () => liveChildren.delete(child));
-  // The private index cache goes with the server that used it.
-  if (cache) child.on("exit", () => rmSync(cache, { recursive: true, force: true }));
+  // The private index cache goes with the server that used it. A job the
+  // server started (an index fetch, an install) can outlive it, since
+  // processx gives each its own session and the SIGTERM in `stop()`
+  // doesn't reach it (#141), and write into the folder while this removes
+  // it: rmSync then fails with ENOTEMPTY, and a throw here, after the test
+  // has ended, fails the whole file (#138). Until #141 lands, that one
+  // error leaves the folder behind with a line on stderr; any other error
+  // still throws. When #141 lands, drop the catch: stopping the server
+  // will then end its jobs, and a write after it is a new leak.
+  if (cache) child.on("exit", () => {
+    try {
+      rmSync(cache, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch (e) {
+      if (e.code !== "ENOTEMPTY") throw e;
+      process.stderr.write(`ember e2e: left ${cache} (ENOTEMPTY): a job of the stopped server is still writing to it (#141)\n`);
+    }
+  });
   // Unreferenced so a test file whose test failed before `stop()` still
   // lets node exit, which kills the child through the "exit" handler.
   child.unref();
