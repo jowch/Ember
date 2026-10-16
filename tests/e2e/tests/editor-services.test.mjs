@@ -347,6 +347,41 @@ test("help: a query typed while R is busy is still a typed query when it's asked
   assertNoProblems(page);
 });
 
+test("help: a typed query keeps its scope when the Help tab is closed and reopened while R is busy (#121)", { timeout: 120000 }, async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help-busy-reopen.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await runCell(page, "LOOP");
+  await page.waitForFunction(
+    () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
+    null, { timeout: 10000 });
+  const open_tab = (tab) => page.evaluate((tab) => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: tab })), tab);
+  await open_tab("docs");
+  await page.locator("#live-docs-search").fill("s");
+  await page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("R is busy running a cell"),
+    null, { timeout: 15000 });
+
+  // Another tab and back while R is still busy: the Help tab is a new
+  // component, but the query is still the one typed, so it still looks
+  // through every installed package and finds mgcv's `s`.
+  await open_tab("variables");
+  await page.waitForFunction(() => document.querySelector("#ember-variables-tab") != null, null, { timeout: 5000 });
+  await open_tab("docs");
+  assert.ok(await page.locator('pluto-cell[id="LOOP"]').evaluate((el) => el.classList.contains("running")),
+    "LOOP was still running when the Help tab came back");
+  await page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("mgcv"),
+    null, { timeout: 30000 });
+  assert.equal(await page.locator(".ember-help-package").count(), 0, "no 'follows the cursor' line on a typed query");
+  assertNoProblems(page);
+});
+
 test("help: a search that finds nothing once R is free replaces \"R is busy\" (#121)", { timeout: 120000 }, async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help-busy-notfound.server.log") });

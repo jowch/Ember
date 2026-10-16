@@ -311,6 +311,7 @@ export const url_logo_small = get_included_external_source("pluto-logo-small")?.
  * notebook: NotebookData,
  * cell_inputs_local: { [uuid: string]: { code: String } },
  * desired_doc_query: ?String,
+ * doc_query_explicit: boolean,
  * recently_deleted: ?Array<{ index: number, cell: CellInputData }>,
  * last_update_time: number,
  * disable_ui: boolean,
@@ -347,6 +348,7 @@ export class Editor extends Component {
             notebook: initial_notebook_state,
             cell_inputs_local: {},
             desired_doc_query: null,
+            doc_query_explicit: false,
             recently_deleted: [],
             last_update_time: 0,
 
@@ -389,7 +391,11 @@ export class Editor extends Component {
             get_published_object: (objectid) => this.state.notebook.published_objects[objectid],
             //@ts-ignore
             update_notebook: (...args) => this.update_notebook(...args),
-            set_doc_query: (query) => this.setState({ desired_doc_query: query }),
+            // `explicit`: typed in the Help box, Back/Forward or a link in a
+            // help page, not the cursor moving. It lives here with the query,
+            // not in the Help tab, so the tab keeps a typed query's scope
+            // when it is closed and opened again (#121).
+            set_doc_query: (query, explicit = false) => this.setState({ desired_doc_query: query, doc_query_explicit: explicit }),
             set_local_cell: (cell_id, new_val) => {
                 return this.setStatePromise(
                     immer((/** @type {EditorState} */ state) => {
@@ -1544,6 +1550,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                     }
                     <${BottomRightPanel}
                         desired_doc_query=${this.state.desired_doc_query}
+                        doc_query_explicit=${this.state.doc_query_explicit}
                         on_update_doc_query=${this.actions.set_doc_query}
                         connected=${this.state.connected}
                         key_refused=${this.state.key_refused}
