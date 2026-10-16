@@ -59,21 +59,27 @@ npm run corpus  # corpus test against real R, see below
 ### Corpus test
 
 `npm run corpus` runs `test/r_boundaries.R` (needs `Rscript` on `PATH`,
-or at `~/.local/share/rig/r/4.6.1/bin/Rscript` / `~/.local/bin/Rscript`)
-against the 399-file corpus in `spikes/corpus/files/`, extracting R's own
-top-level expression boundaries via `getParseData()`, converting R's
-(line, column) positions to character offsets (carefully: columns are
-character-counted but tabs expand to the next multiple of 8, like a
-terminal). `test/corpus.mjs` then parses every file with the Lezer
-grammar and checks:
+or at `~/.local/share/rig/r/4.6.1/bin/Rscript` / `~/.local/bin/Rscript`,
+and the jsonlite package) over a corpus of real R: every `.R` file the
+installed packages ship in `doc/`, `demo/` and `tests/` (vignette code,
+demos, test scripts). Every machine with R has one, base R's own alone
+is about 60 files, so the test runs anywhere, CI's grammar job included
+(#58). It extracts R's own top-level expression boundaries via
+`getParseData()`, converting R's (line, column) positions to character
+offsets (carefully: columns are character-counted but tabs expand to the
+next multiple of 8, like a terminal). `test/corpus.mjs` then parses every
+file with the Lezer grammar and fails unless:
 
 1. Zero error nodes on files R can parse.
 2. The grammar's top-level `TopExpr` boundaries exactly match R's.
 
-Latest run: **0 error nodes** and **100.000% boundary match** (9207/9207)
-across the corpus, in ~160ms total parse time for all 399 files. One
-file fails to parse in R and is skipped from the boundary comparison
-(see Known gaps).
+`EMBER_CORPUS=<dir> npm run corpus` uses a folder with a `manifest.csv`
+(`id` and `file` columns) and `files/` instead, such as the gitignored
+399-file `spikes/corpus/` the grammar was first written against. Its last
+run: **0 error nodes** and **100.000% boundary match** (9207/9207), in
+~160ms total parse time. One file in it fails to parse in R and is
+skipped from the boundary comparison (see Known gaps). On the cloud
+container's installed packages (116 files): 6276/6276.
 
 Per-file failures are written to `test/corpus-failures.txt`.
 
