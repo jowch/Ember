@@ -42,24 +42,37 @@ export const RunTracker = ({ notebook }) => {
     const notebook_ref = useRef(notebook)
     notebook_ref.current = notebook
     const run_ref = useRef(/** @type {{ started_at: number, before: Record<string, number>, seen: Set<string> }?} */ (null))
+    // A run started while another is still being tracked. Its cells show
+    // up only once its request reaches the server, which can be after the
+    // tracked run has ended, so it can't simply join that run: it is
+    // tracked as a run of its own from the moment that run ends (#70).
+    const next_ref = useRef(false)
     const give_up_ref = useRef(/** @type {ReturnType<typeof setTimeout>?} */ (null))
     const [message, set_message] = useState("")
+
+    const begin = (/** @type {import("./Editor.js").NotebookData} */ nb) => {
+        run_ref.current = {
+            started_at: Date.now(),
+            before: Object.fromEntries(nb.cell_order.map((id) => [id, last_run(nb, id)])),
+            seen: new Set(),
+        }
+        clearTimeout(give_up_ref.current ?? undefined)
+        give_up_ref.current = setTimeout(() => {
+            if (run_ref.current?.seen.size !== 0) return
+            run_ref.current = null
+            if (next_ref.current) {
+                next_ref.current = false
+                begin(notebook_ref.current)
+            }
+        }, GIVE_UP_MS)
+    }
 
     useEventListener(
         window,
         "ember run started",
         () => {
-            if (run_ref.current != null) return
-            const nb = notebook_ref.current
-            run_ref.current = {
-                started_at: Date.now(),
-                before: Object.fromEntries(nb.cell_order.map((id) => [id, last_run(nb, id)])),
-                seen: new Set(),
-            }
-            clearTimeout(give_up_ref.current ?? undefined)
-            give_up_ref.current = setTimeout(() => {
-                if (run_ref.current?.seen.size === 0) run_ref.current = null
-            }, GIVE_UP_MS)
+            if (run_ref.current != null) next_ref.current = true
+            else begin(notebook_ref.current)
         },
         []
     )
@@ -81,6 +94,12 @@ export const RunTracker = ({ notebook }) => {
         }
         if (busy || run.seen.size === 0) return
         run_ref.current = null
+        // If the next run's cells already showed up in this one, they are
+        // announced here, and the next run gives up with nothing to say.
+        if (next_ref.current) {
+            next_ref.current = false
+            begin(notebook)
+        }
 
         const text = run_message(notebook, run.seen)
         // Cleared first, so the same words twice in a row are read again.

@@ -354,11 +354,27 @@ export const Cell = ({
         if (view == null) return
         view.focus()
         // The editor was hidden until now; a selection set before CodeMirror
-        // has measured it (a frame or two) doesn't stick.
-        let frame = requestAnimationFrame(() => {
-            frame = requestAnimationFrame(() => view.dispatch({ selection: EditorSelection.cursor(view.state.doc.length), scrollIntoView: true }))
+        // has measured it (a frame or two) doesn't stick. A key or click in
+        // the editor before then wins: the cursor is the person's now, and
+        // moving it to the end would put their next keys there (#120).
+        let frame = 0
+        let cancelled = false
+        const done = () => {
+            cancelled = true
+            cancelAnimationFrame(frame)
+            view.dom.removeEventListener("keydown", done, true)
+            view.dom.removeEventListener("pointerdown", done, true)
+        }
+        view.dom.addEventListener("keydown", done, true)
+        view.dom.addEventListener("pointerdown", done, true)
+        frame = requestAnimationFrame(() => {
+            frame = requestAnimationFrame(() => {
+                if (cancelled) return
+                done()
+                view.dispatch({ selection: EditorSelection.cursor(view.state.doc.length), scrollIntoView: true })
+            })
         })
-        return () => cancelAnimationFrame(frame)
+        return done
     }, [text_open])
     // Keys on the selected cell itself (Esc in its code selects it).
     const on_cell_keydown = (/** @type {KeyboardEvent} */ e) => {
@@ -444,6 +460,14 @@ export const Cell = ({
         !depends_on_disabled_cells &&
         !errored
     const not_run_yet = useSettled(not_run_yet_now, wait_for_on)
+    // When a cell showing "Not run yet" starts, the chip goes at once but
+    // its first result lands later, so the code would move up and then
+    // down again. Keep the chip's space, unseen, until that result lands
+    // or the run is called off, so the layout moves once (#52).
+    const holding_chip_ref = useRef(false)
+    if (not_run_yet) holding_chip_ref.current = true
+    else if (!no_output_yet || !(running || queued || waiting_to_run)) holding_chip_ref.current = false
+    const hold_chip_space = holding_chip_ref.current && !not_run_yet
 
     // depends_on_disabled_cells is also true on the disabled cell itself, so
     // running_disabled is checked first.
@@ -465,11 +489,13 @@ export const Cell = ({
             }
           : not_run_yet
             ? { icon: CircleIcon, text: t("t_chip_not_run") }
-            : stale
-              ? { icon: ClockIcon, text: format_stale_chip(pluto_actions.get_notebook(), cell_id) }
-              : (ember?.settings?.length ?? 0) > 0
-                ? settings_chip(ember.settings)
-                : null
+            : hold_chip_space
+              ? { icon: CircleIcon, text: t("t_chip_not_run"), kind: "held" }
+              : stale
+                ? { icon: ClockIcon, text: format_stale_chip(pluto_actions.get_notebook(), cell_id) }
+                : (ember?.settings?.length ?? 0) > 0
+                  ? settings_chip(ember.settings)
+                  : null
     const settings_found = ember?.settings_found ?? []
     const load_notes = ember?.load_notes ?? []
 
@@ -548,7 +574,7 @@ export const Cell = ({
             <pluto-trafficlight></pluto-trafficlight>
             ${rail === "due" ? html`<ember-rail-tip>${t("t_rail_due_hint")}</ember-rail-tip>` : null}
             ${chip != null
-                ? html`<ember-chip role="status" class=${chip.kind ?? ""} title=${chip.title}><span class="ember-chip-icon" aria-hidden="true"><${chip.icon} /></span><span>${chip.text}</span></ember-chip>`
+                ? html`<ember-chip role="status" class=${chip.kind ?? ""} title=${chip.title} aria-hidden=${chip.kind === "held" ? "true" : undefined}><span class="ember-chip-icon" aria-hidden="true"><${chip.icon} /></span><span>${chip.text}</span></ember-chip>`
                 : null}
             ${settings_found.length > 0
                 ? html`<ember-settings-note role="status">${t("t_settings_found_note", { names: join_names(settings_found) })}</ember-settings-note>`

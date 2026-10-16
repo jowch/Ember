@@ -31,6 +31,27 @@ function unnamed(page, scope) {
   }, scope);
 }
 
+/** From now on, every announcement #ember-run-status makes, in order, in
+ * `window.ember_announcements`. The tracker clears the text before each
+ * one, so a run whose words are the same as the last run's still counts:
+ * waiting for the status to read some text can't tell the two apart. */
+async function recordAnnouncements(page) {
+  await page.evaluate(() => {
+    const el = document.querySelector("#ember-run-status");
+    window.ember_announcements = [];
+    let last = el.textContent;
+    new MutationObserver(() => {
+      const now = el.textContent;
+      if (now !== "" && now !== last) window.ember_announcements.push(now);
+      last = now;
+    }).observe(el, { childList: true, characterData: true, subtree: true });
+  });
+}
+
+/** The `n`th announcement since recordAnnouncements(), once it is made. */
+const announcement = (page, n) =>
+  page.waitForFunction((n) => window.ember_announcements[n] ?? false, n, { timeout: 30000 }).then((h) => h.jsonValue());
+
 async function waitIdle(page) {
   await page.waitForFunction(() => {
     const nb = window.editor_state?.notebook;
@@ -76,25 +97,69 @@ test("cell names and one announcement per run (168)", async (t) => {
   assert.equal(await status.getAttribute("role"), "status");
   assert.equal(await page.locator("pluto-output[aria-live]").count(), 0, "outputs are not live regions");
 
+  await recordAnnouncements(page);
+
+  // A's run says "Finished: 1 cell" too, so each step waits for its own
+  // announcement, not for the words: B's step once passed on A's, and
+  // ERR's run then started while B's was still going (#70).
   await runCell(page, "A");
   await waitIdle(page);
-  await page.waitForFunction(() => document.querySelector("#ember-run-status").textContent.startsWith("Finished: "), null, { timeout: 5000 });
+  assert.match(await announcement(page, 0), /^Finished: /);
 
   await runCell(page, "B");
-  await page.waitForFunction(() => document.querySelector("#ember-run-status").textContent === "Finished: 1 cell", null, { timeout: 30000 });
+  assert.equal(await announcement(page, 1), "Finished: 1 cell");
 
   await runCell(page, "ERR");
-  await page.waitForFunction(() => document.querySelector("#ember-run-status").textContent === "A cell: error", null, { timeout: 30000 });
+  assert.equal(await announcement(page, 2), "A cell: error");
 
   await setCellCode(page, "ERR", 'fit <- stop("bad")');
   await page.keyboard.press("Shift+Enter");
-  await page.waitForFunction(() => document.querySelector("#ember-run-status").textContent === "fit: error", null, { timeout: 30000 });
+  assert.equal(await announcement(page, 3), "fit: error");
+  assert.equal(await page.evaluate(() => window.ember_announcements.length), 4, "one announcement per run");
 
   const labels = await page.evaluate(() => Object.fromEntries(["A", "ERR", "MD"].map((id) => [id, document.getElementById(id).getAttribute("aria-label")])));
   assert.equal(labels.ERR, "Cell defining fit, error");
   assert.ok(labels.A.startsWith("Cell defining x"), labels.A);
   assert.equal(labels.MD, "Text cell");
   assert.equal(await page.locator(`${cellSelector("A")}`).getAttribute("role"), "group");
+  assertNoProblems(page);
+});
+
+// #70: a run started while another is still going. Its cells show up only
+// once its requests reach the server; here those are held back until the
+// first run has ended and been announced, which is what a slow runner did
+// by chance. The second run must still get its own announcement.
+test("a run started while another is going is announced, even when its cells show up after that run ends (#70)", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "a11y-overlap.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  // Messages from the page to the server, held while `held` is a list.
+  let held = null;
+  let to_server = null;
+  await page.routeWebSocket(/.*/, (ws) => {
+    const srv = ws.connectToServer();
+    to_server = srv;
+    ws.onMessage((m) => (held == null ? srv.send(m) : held.push(m)));
+    srv.onMessage((m) => ws.send(m));
+  });
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await recordAnnouncements(page);
+
+  await runCell(page, "LOOP");
+  await page.waitForFunction(() => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"), null, { timeout: 30000 });
+  await setCellCode(page, "ERR", 'fit <- stop("bad")');
+  held = [];
+  await page.keyboard.press("Shift+Enter");
+
+  assert.equal(await announcement(page, 0), "Finished: 1 cell", "LOOP's run, once it ends");
+  assert.ok(held.length > 0, "ERR's requests were held back");
+  const release = held;
+  held = null;
+  for (const m of release) to_server.send(m);
+  assert.equal(await announcement(page, 1), "fit: error", "ERR's run, started while LOOP's was going");
   assertNoProblems(page);
 });
 

@@ -45,7 +45,15 @@ cases <- local(envir = env, list(
     run = function(x) notebook_graph(x$code, previous = x$previous), inner = 1L),
   run_all_chain_2000 = list(
     setup = function() fake_state(make_chain_cells(2000)),
-    run = function(s) step(s, ev_run(NULL, at(1))), inner = 1L)
+    run = function(s) step(s, ev_run(NULL, at(1))), inner = 1L),
+  # One worker message during Run all: the step, then what the shell
+  # derives from it (#44).
+  worker_message_2000 = list(
+    setup = function() {
+      st <- perf_running(2000)
+      list(st = st, done = wk_done(1, st$worker$running$token, report(), at(10)))
+    },
+    run = function(x) { r <- step(x$st, x$done); notifications(x$st, r$state) }, inner = 1L)
 ))
 
 rows <- lapply(names(cases), function(name) {
