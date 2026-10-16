@@ -318,7 +318,9 @@ test_that("interrupting a stuck cell offers a restart after the grace period (11
   on.exit(close_notebook(nb), add = TRUE)
 
   run_cells(nb, "A", wait = FALSE)
-  busy <- wait_for(nb, function(s) identical(s$process, "busy"), timeout = 15)
+  # Wait for A itself to run: "busy" is already true while S runs, and an
+  # interrupt then would clear the queue before A starts (#149).
+  busy <- wait_for(nb, function(s) isTRUE(snap_view(s, "A")$running), timeout = 15)
   expect_true(busy)
   # Give the cell a moment to truly be inside the C loop (not still
   # starting up) before interrupting, via the later loop rather than a
@@ -328,7 +330,10 @@ test_that("interrupting a stuck cell offers a restart after the grace period (11
 
   interrupt_notebook(nb)
   offered <- wait_for(nb, function(s) isTRUE(s$restart_offered), timeout = 15)
-  expect_true(offered)
+  # On a failure, say whether A stopped cleanly or the worker died (#149).
+  snap <- notebook_snapshot(nb)
+  expect_true(offered, info = sprintf("process %s, worker_message %s, A %s",
+    snap$process, format(snap$worker_message %||% "NULL"), snap_view(snap, "A")$status))
 
   restart_notebook(nb)
   ready <- wait_for(nb, function(s) identical(s$process, "ready"), timeout = 15)
