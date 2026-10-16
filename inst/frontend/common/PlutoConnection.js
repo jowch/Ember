@@ -385,7 +385,11 @@ export const create_pluto_connection = async ({
     // at most as long as it can take, not from the wall clock: a computer
     // that sleeps mid-outage wakes with the clock moved on by the whole
     // sleep, and its first try fails while the network comes back, which
-    // must not count as 30 s of failures (#99).
+    // must not count as 30 s of failures (#99). A sleep during a wait adds
+    // at most that wait; one during a pending try can still count as a
+    // full try (`connect_timeout_ms`), since the try's own timeout fires
+    // late on wake. Tries rarely hang: a dead port or a dropped tunnel
+    // refuses at once, and a try only hangs when the network is gone.
     let failures = 0
     let failing_for = 0
     let try_started_at = Date.now()

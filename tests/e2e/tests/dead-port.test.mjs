@@ -169,8 +169,9 @@ test("dead port: a sleep in the middle of an outage doesn't count towards the 30
   const { page } = await openThenKillPort(t, "dead-port-sleep");
   const dialog = page.getByRole("alertdialog", { name: "Can't reach Ember here" });
 
-  // One failed try, then an hour's sleep.
-  await page.clock.fastForward(1000);
+  // One failed try, then an hour's sleep. The clock stays paused from here
+  // on, so only fastForward moves it, however slow the runner is.
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   await page.waitForTimeout(200);
   await page.clock.setSystemTime(await page.evaluate(() => Date.now() + 60 * 60 * 1000));
 
