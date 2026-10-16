@@ -1294,8 +1294,9 @@ nav#at_the_top .ember-menu {
     gap: 0.6em;
 }
 
-/* Panel3's smaller .btn, for the side panel's buttons. */
-#ember-packages-tab .ember-btn {
+/* Panel3's smaller .btn, for the side panel's buttons: the Packages
+   tab's and the Status tab's Interrupt and Restart R (#51). */
+:is(#ember-packages-tab, #ember-status-tab) .ember-btn {
     height: 30px;
     padding: 0 10px;
     font-size: 12.5px;
@@ -1327,8 +1328,9 @@ nav#at_the_top .ember-menu {
     margin: 0 0 0.8em 0;
 }
 
+/* Red-tinted, as Panel3 draws a failure (#51): the error cells' line. */
 .ember-install-failure-card {
-    border: 1px solid var(--rule-color);
+    border: 1px solid var(--ember-err-line);
     border-radius: 6px;
     padding: 0.6em 0.8em;
 }
