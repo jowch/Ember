@@ -975,7 +975,7 @@ disk_use_command <- function(dir = cache_dir()) {
 #' "unused now", libraries no open notebook holds (`keep`) and not used
 #' in the last `max_age` days, then the renv cache entries no remaining
 #' library lists. The one-day default is a guard for notebooks open in
-#' another Ember process or run with Rscript, which this process can't
+#' another Ember process or run by `ember::run()`, which this process can't
 #' see: a worker touches its library's `ember-last-used` when it starts.
 #' Indexes are left to the startup sweep. Returns `list(libraries, cache,
 #' bytes)`: how many libraries (staging folders included) and cache

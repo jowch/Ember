@@ -797,10 +797,15 @@ installed. The package view shows disk use (libraries, cache and indexes,
 measured when the tab opens; built, #38) and a "Clean up…" button (built,
 #128) that frees space now: it deletes libraries no notebook open in this
 server uses and that weren't used in the last day (a notebook open in
-another Ember process or run with Rscript touches its library's marker),
-then the cache entries only they listed. It shows the counts and an
-estimate of the space first, and deletes nothing until Delete. Indexes are
-left to the startup sweep. `ember::clean()` does the same from R with any
+another Ember process or run by `ember::run()` touches its library's
+marker), then the cache entries only they listed. It shows the counts and
+an estimate of the space first, and deletes nothing until Delete. The cost
+of a wrong guess: a notebook whose library was deleted installs its lock
+again when it next opens, downloading what the cache no longer holds. With
+binaries (macOS, Windows, Linux with Package Manager binaries) that is a
+download; on Linux without them, or for Bioconductor packages pinned to
+another R, it builds from source, which for a Bioconductor set takes far
+longer. Indexes are left to the startup sweep. `ember::clean()` does the same from R with any
 age; hosts such as Endeavor call it through the R API.
 
 **Installer: renv.** pak copies instead of linking, so it's out. The
