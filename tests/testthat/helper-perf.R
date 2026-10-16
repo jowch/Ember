@@ -36,10 +36,17 @@ time_median <- function(f, samples = 9L, inner = 1L) {
 }
 
 #' The smallest `inner`, doubling from the given one, for which `inner`
-#' calls of `f()` take at least `min_secs`. Windows' elapsed-time clock
-#' ticks every 10-16 ms, so a sample shorter than that can read as 0.
+#' calls of `f()` take at least `min_secs` in each of three timings.
+#' Windows' elapsed-time clock ticks every 10-16 ms, so a sample shorter
+#' than that can read as 0. One timing isn't enough to stop on: a slow
+#' moment (a GC, a stalled runner) can stretch it past `min_secs` while
+#' a typical sample still lasts under one tick (#90).
 calibrate_inner <- function(f, inner = 1L, min_secs = 0.05) {
-  while (time_calls(f, inner) < min_secs && inner < 1e6) inner <- inner * 2L
+  long_enough <- function(inner) {
+    for (i in 1:3) if (time_calls(f, inner) < min_secs) return(FALSE)
+    TRUE
+  }
+  while (inner < 1e6 && !long_enough(inner)) inner <- inner * 2L
   inner
 }
 
@@ -47,18 +54,37 @@ calibrate_inner <- function(f, inner = 1L, min_secs = 0.05) {
 #' sample of `a`, one of `b`, `samples` times, after a warm-up call of
 #' each), and `ratio = a / b`. `inner_*` repeats a fast call within one
 #' sample; each is raised (calibrate_inner()) until a sample lasts well
-#' above the clock's resolution, which is coarse on Windows.
-time_ratio <- function(a, b, samples = 9L, inner_a = 1L, inner_b = 1L) {
+#' above the clock's resolution, which is coarse on Windows. If the
+#' median sample of either still lasts under half of `min_secs` (the
+#' machine sped up after calibrating), that side's `inner` doubles and
+#' both are sampled again, up to `retries` times: a median read off a
+#' few clock ticks, or 0, would make the ratio meaningless.
+time_ratio <- function(a, b, samples = 9L, inner_a = 1L, inner_b = 1L,
+                       min_secs = 0.05, retries = 4L) {
   a(); b()
-  inner_a <- calibrate_inner(a, inner_a)
-  inner_b <- calibrate_inner(b, inner_b)
-  ta <- tb <- numeric(samples)
-  for (i in seq_len(samples)) {
-    ta[i] <- time_calls(a, inner_a) / inner_a
-    tb[i] <- time_calls(b, inner_b) / inner_b
+  inner_a <- calibrate_inner(a, inner_a, min_secs)
+  inner_b <- calibrate_inner(b, inner_b, min_secs)
+  for (attempt in 0:retries) {
+    ta <- tb <- numeric(samples)
+    for (i in seq_len(samples)) {
+      ta[i] <- time_calls(a, inner_a)
+      tb[i] <- time_calls(b, inner_b)
+    }
+    # Half of min_secs, under two Windows ticks, so a median accepted at
+    # the floor can be off by about a tick. Only a machine that sped up
+    # after calibrating gets here; the floor trades that precision for a
+    # bounded number of retries.
+    short_a <- stats::median(ta) < min_secs / 2
+    short_b <- stats::median(tb) < min_secs / 2
+    if (!short_a && !short_b) break
+    if (attempt == retries) {
+      stop(sprintf("time_ratio(): a median sample of %s still lasts under %g s after %d retries",
+                   paste(c("a()", "b()")[c(short_a, short_b)], collapse = " and "), min_secs / 2, retries))
+    }
+    if (short_a) inner_a <- inner_a * 2L
+    if (short_b) inner_b <- inner_b * 2L
   }
-  ma <- stats::median(ta); mb <- stats::median(tb)
-  if (!(mb > 0)) stop("time_ratio(): b() timed as 0 s even after calibration")
+  ma <- stats::median(ta) / inner_a; mb <- stats::median(tb) / inner_b
   list(a = ma, b = mb, ratio = ma / mb)
 }
 
