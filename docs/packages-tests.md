@@ -165,6 +165,13 @@ In test-github-sources.R:
 114. Moving the date forward ("update all") asks a branch again and the preview moves it to the new commit; a commit entry stays at its commit.
 115. A failed lookup's message says whether to suspect a missing ref, a private repository without a token, the token, or the rate limit; `github_token` takes `GITHUB_PAT`, then `GITHUB_TOKEN`.
 116. `remove_package_source` without one valid package name is refused and removes nothing.
+121. The Packages tab's rows (#78): a not-found package given a source is `looking_up` while the lookup runs, then locked with its `spec`; a failed lookup keeps a `source_failed` row with the reason, without R's "Error:"/"Execution halted" wrapping; a locked package whose new ref fails keeps its row and says why.
+
+In test-server.R:
+
+122. `ember_set_package_source` replies `{ok}`, writes the entry and the row looks it up and locks it; a bad source's refusal is the reply and changes nothing; `ember_remove_package_source` sends the package back to not found; a read-only notebook gets the refusal for both.
+
+In the browser (github-source-add.test.mjs, against the toy repository and the `file://` GitHub fixture): a refused source shows under the field; a typo leaves a "source failed" row with the reason; "Change source" starts from the entry and fixing it shows the GitHub line; "Remove source" sends it back to not found.
 
 In test-packages-session.R:
 

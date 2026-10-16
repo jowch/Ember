@@ -815,6 +815,8 @@ on_run <- function(server, cl, hub, req) {
 #' | ember_update_packages          | dispatch ev_preview_date(today, apply = TRUE); flush. No reply       |
 #' | ember_apply_update             | {date}: set_date(hub$nb, date); a refusal is logged. Flush. No reply |
 #' | ember_cancel_update            | dispatch ev_cancel_preview(); flush. No reply                        |
+#' | ember_set_package_source       | {name, source}: edit_notebook(set_package_source()); reply {ok} or {error}; flush |
+#' | ember_remove_package_source    | {name}: edit_notebook(remove_package_source()); reply {ok} or {error}; flush |
 #' | ember_move_notebook            | {name, folder}: notebook_target_path() + move_notebook(); reply {path} or {error}; flush |
 #' | ember_start_page               | {}: reply start_page_reply() -- start_dir, new_name, open and recent notebooks. No hub |
 #' | ember_new_notebook             | {name, folder}: notebook_target_path() + new_notebook() + host_notebook(owned = TRUE); reply {url} or {error}. No hub |
@@ -1098,6 +1100,23 @@ handlers <- list(
     flush_clients(server, hub)
   },
 
+  #' The Packages tab's GitHub source form (#78): the `set_package_source`
+  #' edit op, replying `{ok = TRUE}` or `{error}` with Ember's refusal (a
+  #' bad name or source, a read-only notebook) so the form can show it.
+  #' Then a flush: the row turns "looking_up" while the lookup runs.
+  ember_set_package_source = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    b <- req$body
+    reply_edit(server, cl, hub, req, set_package_source(b$name, b$source))
+  },
+
+  #' The Packages tab's "Remove source": the `remove_package_source` edit
+  #' op, replying as `ember_set_package_source` does.
+  ember_remove_package_source = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    reply_edit(server, cl, hub, req, remove_package_source(req$body$name))
+  },
+
   #' MoveDialog's Save: `notebook_target_path()` then `move_notebook()`,
   #' replying `{path}` or `{error}` directly to the caller (as
   #' `ember_signature` does), then flushing so the new `path`/`shortpath`
@@ -1184,6 +1203,19 @@ handlers <- list(
     flush_clients(server, hub)
   }
 )
+
+#' Apply one edit op for a request the page awaits, and reply with its
+#' type: `{ok = TRUE}`, or `{error}` with the refusal's message. Any error,
+#' not only `ember_refused`, so the page is never left waiting (as
+#' `ember_move_notebook`). Then flush.
+reply_edit <- function(server, cl, hub, req, op) {
+  result <- tryCatch({
+    edit_notebook(hub$nb, op)
+    list(ok = TRUE)
+  }, error = function(e) list(error = conditionMessage(e)))
+  send(cl, reply_message(req, req$type, result))
+  flush_clients(server, hub)
+}
 
 #' The `ember_start_page` reply: `start_dir` and the default new-notebook
 #' name, every hosted notebook under `open`, and every remembered path not

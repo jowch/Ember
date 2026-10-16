@@ -465,3 +465,67 @@ test_that("set_package_source is refused for a bad name or source", {
   expect_match(conditionMessage(r$reply), "not a package name", fixed = TRUE)
   expect_equal(length(r$state$file$header$sources), 0)
 })
+
+# ---- The Packages tab's rows (#78) ------------------------------------------
+
+view_row <- function(state, name) {
+  v <- packages_view(state)$packages
+  v[v$name == name, , drop = FALSE]
+}
+
+test_that("a not-found package given a source is looking up, then locked with its spec; a failed lookup keeps a row with the reason (121)", {
+  s <- src_state(list(S = cell(""), A = cell("library(toyC)")), options = list(bioc_config = NA))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_at(), at(2)))
+  for (k in effect_keys(r)) r <- drive(r$state, ev_index_failed(k, "offline", at(2)))
+  row <- view_row(r$state, "toyC")
+  expect_equal(row$status, "not_found")
+  expect_true(is.na(row$spec))
+
+  # The stale not_found problem is still there while the lookup runs.
+  r <- drive(r$state, ev_apply(list(op_set_source("toyC", "lab/nope")), at(3)))
+  expect_equal(effect_keys(r), "github/lab/nope@HEAD")
+  row <- view_row(r$state, "toyC")
+  expect_equal(row$status, "looking_up")
+  expect_equal(row$spec, "github:lab/nope")
+
+  # A typo: the lookup fails, nothing falls back, and the row stays to say why.
+  r <- drive(r$state, ev_index_failed("github/lab/nope@HEAD", "could not find github:lab/nope@HEAD on GitHub", at(4)))
+  row <- view_row(r$state, "toyC")
+  expect_equal(nrow(row), 1)
+  expect_equal(row$status, "source_failed")
+  expect_true(row$direct)
+  expect_match(row$message, "couldn't look up github:lab/nope for toyC", fixed = TRUE)
+
+  # Fixed: looked up, then locked from the source.
+  r <- drive(r$state, ev_apply(list(op_set_source("toyC", "lab/toyC")), at(5)))
+  expect_equal(view_row(r$state, "toyC")$status, "looking_up")
+  key <- "github/lab/toyC@HEAD"
+  r <- drive(r$state, ev_index_fetched(key, gh_index(key, C2), at(6)))
+  row <- view_row(r$state, "toyC")
+  expect_equal(row$status, "missing")
+  expect_equal(row$source, github_source("lab", "toyC", C2))
+  expect_equal(row$spec, "github:lab/toyC")
+  expect_true(is.na(row$message))
+  expect_true(is.na(view_row(r$state, "cli")$spec))
+})
+
+test_that("a locked GitHub package whose new ref fails keeps its row and says why (121)", {
+  r <- open_toyc()
+  r <- drive(r$state, ev_apply(list(op_set_source("toyC", "lab/toyC@no-such-branch")), at(4)))
+  expect_equal(view_row(r$state, "toyC")$status, "missing")
+  r <- drive(r$state, ev_index_failed("github/lab/toyC@no-such-branch", "could not find github:lab/toyC@no-such-branch", at(5)))
+  row <- view_row(r$state, "toyC")
+  expect_equal(row$version, "0.4.0")
+  expect_equal(row$spec, "github:lab/toyC@no-such-branch")
+  expect_match(row$message, "couldn't look up github:lab/toyC@no-such-branch", fixed = TRUE)
+})
+
+test_that("a failed fetch's message drops R's wrapping, so the row reads as one sentence (121)", {
+  # The job's output is one string (job_start()).
+  expect_equal(fetch_error_message("Error: ember: could not find github:lab/nope@HEAD on GitHub\nExecution halted\n"),
+               "could not find github:lab/nope@HEAD on GitHub")
+  expect_equal(fetch_error_message(c("trying URL", "Error in f(x) : ", "  cannot open URL 'x'", "Execution halted")),
+               "cannot open URL 'x'")
+  expect_equal(fetch_error_message(c("a", "b")), "a\nb")
+})

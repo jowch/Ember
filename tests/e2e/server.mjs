@@ -72,15 +72,30 @@ for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]]) {
   process.once(signal, () => process.exit(code));
 }
 
-async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port: fixedPort, secret = SECRET }) {
+async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port: fixedPort, secret = SECRET, repos }) {
   const rscript = process.env.EMBER_RSCRIPT ?? "Rscript";
   const quoted = notebookPaths.map((p) => JSON.stringify(p)).join(", ");
   const port = fixedPort ?? await freePort();
   // Set before `ember::serve()` starts: `installer_script()` (R/library.R)
   // reads the option when `library.R` builds each install's command, so it
   // must already be set the first time a notebook tries to install.
-  const prelude = installerScript ? `options(ember.installer_script = ${JSON.stringify(installerScript)}); ` : "";
-  const expr = `${prelude}ember::serve(paths = c(${quoted}), port = ${port}, secret = ${JSON.stringify(secret)})`;
+  let prelude = installerScript ? `options(ember.installer_script = ${JSON.stringify(installerScript)}); ` : "";
+  let expr;
+  if (repos) {
+    // The notebooks resolve against fixture repositories (`ember_repos()`
+    // arguments, e.g. `file://` folders), so `serve()` doesn't open them
+    // itself: they are opened with those repos and hosted in `on_ready`,
+    // before the server answers any request. Their indexes go to a cache
+    // of their own, never the shared one: a fixture's index is saved under
+    // the same key ("cran/2026-09-01") a real one would be.
+    const cache = mkdtempSync(path.join(tmpdir(), "ember-e2e-cache-"));
+    prelude += `options(ember.cache_dir = ${JSON.stringify(cache)}); `;
+    const args = Object.entries(repos).map(([k, v]) => `${k} = ${v === null ? "NA" : JSON.stringify(v)}`).join(", ");
+    const onReady = `function(server) for (p in c(${quoted})) ember::host_notebook(server, ember::open_notebook(p, repos = ember::ember_repos(${args})), owned = TRUE)`;
+    expr = `${prelude}ember::serve(port = ${port}, secret = ${JSON.stringify(secret)}, on_ready = ${onReady})`;
+  } else {
+    expr = `${prelude}ember::serve(paths = c(${quoted}), port = ${port}, secret = ${JSON.stringify(secret)})`;
+  }
 
   // tools::R_user_dir("ember", "data") (recent.R's recent-notebooks file)
   // honours this environment variable: each server gets its own temp
@@ -165,13 +180,15 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
  * behind a slower, equally failing attempt.
  *
  * `port` and `secret` pin what the server uses, for a test that restarts
- * a server at the same address with a new secret. */
+ * a server at the same address with a new secret. `repos` (an object of
+ * `ember_repos()` arguments, `null` for `NA`) opens the notebooks against
+ * those repositories instead of the real ones. */
 export async function startServer(notebookPaths, opts = {}) {
-  const { timeoutMs = 30000, logFile, retries = 3, installerScript, cwd, port, secret } = opts;
+  const { timeoutMs = 30000, logFile, retries = 3, installerScript, cwd, port, secret, repos } = opts;
   let lastErr;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      return await startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port, secret });
+      return await startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port, secret, repos });
     } catch (err) {
       if (!err.bindFailure || attempt === retries) throw err;
       lastErr = err;

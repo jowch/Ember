@@ -431,7 +431,7 @@ run_effect <- function(nb, fx) {
               if (!is.null(idx2)) ev_index_fetched(fx$key, idx2, at = Sys.time())
               else ev_index_failed(fx$key, "index fetch produced no index", at = Sys.time())
             } else {
-              ev_index_failed(fx$key, paste(utils::tail(output, 20), collapse = "\n"), at = Sys.time())
+              ev_index_failed(fx$key, fetch_error_message(output), at = Sys.time())
             }
           })
       }
@@ -1055,4 +1055,19 @@ sync_watch <- function(nb, paths) {
     nb$watch[[p]] <- NULL
   }
   invisible(NULL)
+}
+
+#' What a failed index fetch said, for a problem row: the child's `stop()`
+#' message without R's wrapping ("Error: ", "Execution halted") or the
+#' "ember: " every such message starts with, since the row already says
+#' which fetch failed. Without an error line, the output's last 20 lines.
+#' `output` is the job's output, one string (`job_start()`).
+fetch_error_message <- function(output) {
+  output <- unlist(strsplit(paste(output, collapse = "\n"), "\r?\n"))
+  output <- output[!grepl("^Execution halted\\s*$", output)]
+  at <- grep("^Error( in [^:]*)?: ", output)
+  if (length(at) == 0) return(paste(utils::tail(output, 20), collapse = "\n"))
+  lines <- output[at[[length(at)]]:length(output)]
+  lines[[1]] <- sub("^Error( in [^:]*)?: (ember: )?", "", lines[[1]])
+  trimws(paste(trimws(lines), collapse = " "))
 }
