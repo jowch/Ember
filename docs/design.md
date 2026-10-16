@@ -337,7 +337,14 @@ the rerun the dropped edge misses.
   dotted helper with any other prefix (`fit.plot`), or with no arguments
   (`print.stats <- function()`), is just a function. Also
   `registerS3method()`, `.S3method()` and `setMethod()` with a literal
-  generic, which always count. `setGeneric("area")` defines `area`.
+  generic, which always count, and `setReplaceMethod("r", …)`, a method
+  of `` `r<-` ``. `setGeneric("area")` defines `area`.
+- **Replacement functions.** R runs `r(x) <- v` as
+  `` x <- `r<-`(x, value = v) ``, so the cell reads `` `r<-` ``: it depends
+  on a cell that defines `` `r<-` `` (a function or a generic) and on the
+  cells that define methods of it. A nested target reads every setter and
+  the getters inside it (`names(x)[i] <- v` reads `` `[<-` ``,
+  `` `names<-` `` and `names`). `$` and `@` read neither, as below.
 - **Many cells, one generic.** Any number of cells may add methods to one
   generic. The same pair in two cells (`print.foo` in one,
   `registerS3method("print", "foo", …)` in another, or two
@@ -353,8 +360,9 @@ the rerun the dropped edge misses.
   (whose own test for this is marked broken). Otherwise nearly every cell
   with output would rerun on any `print` method edit.
 - **Classes named as strings.** R keeps class `Circle` in the global
-  binding `.__C__Circle`, so `setClass("Circle")`, `setClassUnion()` and
-  `setRefClass()` with a literal name define that name, and a string in a
+  binding `.__C__Circle`, so `setClass("Circle")`, `setClassUnion()`,
+  `setRefClass()` and `setOldClass()` with a literal name define that name
+  (`setOldClass(c("lm2", "lm"))` defines `lm2` and reads `lm`), and a string in a
   class position reads it: `new()`'s class, a `setMethod()` signature,
   `contains =`, slot and field classes, `setValidity()`, `is()`, `as()`,
   `setAs()` and `getClass()`. These edges are ordinary definition edges,
@@ -373,9 +381,7 @@ the rerun the dropped edge misses.
   `removeClass()`: dropping the binding alone leaves the class in the
   methods package's cache, and `new("Circle")` would go on working.
 - **Not covered yet:** group generics (`Ops.money`, `Math.interval`), `$`
-  methods (the walker doesn't read `$` as a call), `setReplaceMethod()`
-  (`radius(x) <- v` isn't read as a use of `radius<-`), `setOldClass()` as
-  a class definer (the worker learns it after a run), and further class
+  methods (the walker doesn't read `$` as a call), and further class
   readers (`slotNames()`, `getSlots()`, `extends()`, `isVirtualClass()`,
   the signatures of `existsMethod()`, `getMethod()`, `selectMethod()`).
 
