@@ -2065,7 +2065,7 @@ test_that("ember_set_package_source replies ok and the row looks the source up; 
 
   # A refusal comes back as the reply, and nothing changes.
   handle_message(server, ws, wire("ember_set_package_source", notebook_id = id, name = "toyC",
-                                  source = "https://github.com/lab/toyC"))
+                                  source = "https://gitlab.com/lab/toyC"))
   r <- replies("ember_set_package_source")
   expect_match(r[[length(r)]]$message$error, "github:user/repo", fixed = TRUE)
   expect_length(notebook_state(nb)$file$header$sources, 0)

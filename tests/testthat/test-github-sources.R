@@ -78,7 +78,30 @@ test_that("a github: spec reads user, repo and an optional ref, and anything els
   expect_null(parse_github_source(NA_character_))
   expect_equal(github_spec("lab/mypkg@v1"), "github:lab/mypkg@v1")
   expect_equal(github_spec(" github:lab/mypkg "), "github:lab/mypkg")
-  expect_null(github_spec("https://github.com/lab/mypkg"))
+})
+
+test_that("a github.com link reads as the source it names, and any other link as nothing (#85)", {
+  expect_equal(github_spec("https://github.com/lab/mypkg"), "github:lab/mypkg")
+  expect_equal(github_spec(" https://github.com/lab/my.pkg/ "), "github:lab/my.pkg")
+  expect_equal(github_spec("https://github.com/lab/mypkg.git"), "github:lab/mypkg")
+  expect_equal(github_spec("http://www.github.com/lab/mypkg#readme"), "github:lab/mypkg")
+  expect_equal(github_spec("github.com/lab/mypkg?tab=readme-ov-file"), "github:lab/mypkg")
+  expect_equal(github_spec("https://github.com/lab/mypkg/tree/v1.2"), "github:lab/mypkg@v1.2")
+  expect_equal(github_spec("https://github.com/lab/mypkg/tree/feature/x/"), "github:lab/mypkg@feature/x")
+  expect_equal(github_spec(paste0("https://github.com/lab/mypkg/tree/", C1)), paste0("github:lab/mypkg@", C1))
+  expect_equal(github_spec(paste0("https://github.com/lab/mypkg/commit/", C1)), paste0("github:lab/mypkg@", C1))
+  expect_equal(github_spec("https://github.com/lab/mypkg/releases/tag/v1.0"), "github:lab/mypkg@v1.0")
+  expect_equal(github_spec("https://github.com/lab/mypkg/tree/fix%2312"), "github:lab/mypkg@fix#12")
+  expect_equal(github_spec("HTTPS://GitHub.COM/Lab/MyPkg.GIT"), "github:Lab/MyPkg")
+  # Pages that don't name the code to use, and other hosts.
+  expect_null(github_spec("https://github.com/lab/mypkg/blob/main/R/a.R"))
+  expect_null(github_spec("https://github.com/lab/mypkg/tree/"))
+  expect_null(github_spec("https://github.com/lab/mypkg/tree//x"))
+  expect_null(github_spec("https://github.com/lab/mypkg/releases"))
+  expect_null(github_spec("https://github.com/lab"))
+  expect_null(github_spec("https://github.example.com/lab/mypkg"))
+  expect_null(github_spec("https://gitlab.com/lab/mypkg"))
+  expect_null(github_spec("git@github.com:lab/mypkg.git"))
 })
 
 test_that("a locked commit answers a spec of the same repository, and a commit spec only when it is that commit", {
@@ -480,11 +503,31 @@ test_that("remove_package_source is refused without one package name, and remove
 
 test_that("set_package_source is refused for a bad name or source", {
   s <- src_state(list(S = cell("")))
-  r <- drive(s, ev_apply(list(op_set_source("toyC", "https://github.com/lab/toyC")), at(1)))
+  r <- drive(s, ev_apply(list(op_set_source("toyC", "https://github.com/lab/toyC/blob/main/README.md")), at(1)))
   expect_match(conditionMessage(r$reply), "github:user/repo", fixed = TRUE)
+  expect_match(conditionMessage(r$reply), "github.com link", fixed = TRUE)
   r <- drive(s, ev_apply(list(op_set_source("1bad", "lab/toyC")), at(1)))
   expect_match(conditionMessage(r$reply), "not a package name", fixed = TRUE)
   expect_equal(length(r$state$file$header$sources), 0)
+})
+
+test_that("a link is saved as its github: source, by the op and when the header is read (#85)", {
+  s <- src_state(list(S = cell("")))
+  r <- drive(s, ev_apply(list(op_set_source("toyC", "https://github.com/lab/toyC/tree/dev")), at(1)))
+  expect_equal(r$state$file$header$sources, c(toyC = "github:lab/toyC@dev"))
+
+  # Written by hand: a link is read as the op would save it, so the next
+  # save writes no link. Anything else stays as written, for its problem
+  # row: a bare "user/repo" is the op's shorthand, not the header's form.
+  hand <- src_file(list(S = cell("")), sources = c(toyC = "https://github.com/lab/toyC.git",
+                                                   other = "lab/other", bad = "cran:dplyr",
+                                                   page = "https://github.com/lab/toyC/issues"))
+  file <- parse_notebook(format_notebook(hand), new_id = new_id_seq(), version = "0.1.0")
+  expect_equal(file$header$sources, c(toyC = "github:lab/toyC", other = "lab/other", bad = "cran:dplyr",
+                                      page = "https://github.com/lab/toyC/issues"))
+  text <- format_notebook(file)
+  expect_true(grepl('# toyC = "github:lab/toyC"', text, fixed = TRUE))
+  expect_false(grepl("toyC.git", text, fixed = TRUE))
 })
 
 # ---- The Packages tab's rows (#78) ------------------------------------------

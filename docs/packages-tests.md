@@ -150,7 +150,7 @@ In test-packages-core.R, with `drive()`:
 
 In test-github-sources.R:
 
-100. A `github:` spec reads user, repo and an optional ref; `"user/repo"` reads as the same; anything else is no spec.
+100. A `github:` spec reads user, repo and an optional ref; `"user/repo"` reads as the same, and so does a github.com link to the repository or a `/tree/<ref>`, `/commit/<sha>` or `/releases/tag/<tag>` page (#85); any other link or scheme is no spec. The op and the header reader save a link in the `github:` form; the header reader leaves a bare `user/repo` as written.
 101. A locked commit answers a spec of the same repository (any case), and a commit spec only when it is that commit.
 102. `source_keys` asks for the locked commit's key while the spec is unchanged, and for the spec's ref otherwise; `lock_for_sources` drops entries that disagree with `[sources]`.
 103. renv's record for a GitHub entry names the host, user, repo and commit, and the dependencies as `Imports`; `lock_diff` calls a move to another commit a source change.

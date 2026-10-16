@@ -27,7 +27,10 @@ remove_extra_package <- function(name) list(op = "remove_extra_package", name = 
 #' header's `[sources]`, for a package that isn't on CRAN or Bioconductor
 #' (or to use another version of one that is). `source` is
 #' `"github:user/repo"`, optionally with `@` and a branch, tag or commit;
-#' `"user/repo"` is read as the same. The lock records the commit it
+#' `"user/repo"` is read as the same, and so is a github.com link to the
+#' repository or to a branch, tag or commit's page (`.../tree/<ref>`,
+#' `.../commit/<sha>`, `.../releases/tag/<tag>`); the
+#' header stores the `github:` form. The lock records the commit it
 #' resolves to, and that commit stays until the source is changed.
 #'
 #' `remove_package_source("mypkg")` drops the entry, so mypkg resolves from
