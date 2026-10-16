@@ -128,8 +128,20 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   });
   liveChildren.add(child);
   child.on("exit", () => liveChildren.delete(child));
-  // The private index cache goes with the server that used it.
-  if (cache) child.on("exit", () => rmSync(cache, { recursive: true, force: true }));
+  // The private index cache goes with the server that used it. An index
+  // fetch the server started can outlive it (processx gives the fetch its
+  // own session, so the SIGTERM in `stop()` doesn't reach it) and create
+  // `indexes/` while this removes the folder: rmSync then fails with
+  // ENOTEMPTY, and a throw here, after the test has ended, fails the whole
+  // file (#138). So it retries, and a folder it still can't remove is left
+  // in the temp folder with a line on stderr instead.
+  if (cache) child.on("exit", () => {
+    try {
+      rmSync(cache, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch (e) {
+      process.stderr.write(`ember e2e: left ${cache} (${e.code ?? e.message}): a subprocess of the stopped server is still writing to it\n`);
+    }
+  });
   // Unreferenced so a test file whose test failed before `stop()` still
   // lets node exit, which kills the child through the "exit" handler.
   child.unref();
