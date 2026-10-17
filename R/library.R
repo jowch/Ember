@@ -964,6 +964,8 @@ job_start <- function(key, cmd, nb, make_progress, make_done) {
   }
   job$subs[[length(job$subs) + 1L]] <- list(nb = nb, make_progress = make_progress,
                                             make_done = make_done)
+  # An idle session polls every 2 s; read the job at the job pace from now.
+  hurry_poll(nb, 0.25)
   invisible(NULL)
 }
 
