@@ -516,6 +516,29 @@ test_that("a setting found at run time makes a settings cell, not an error (47, 
   expect_equal(r4$state$graph$settings, character())
 })
 
+test_that("a cell that changes another cell's object in place shows a note, and its readers don't go stale (#167)", {
+  s <- fake_state(list(A = cell("cnt <- make_counter()"), B = cell("cnt$add()"), C = cell("cnt$n")))
+  r <- boot(s, c("A", "B", "C"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "cnt"), at(10)))
+  # The worker reports a name; only one another cell defines gets the note.
+  r <- drive(r$state, wk_done(1, last_token(r), report(changed_in_place = c("cnt", "tmp")), at(11)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(12)))
+  expect_equal(r$state$results$B$status, "ok")
+  expect_equal(r$state$results$B$changed_in_place, "cnt")
+  expect_equal(snapshot_of(r$state)$cells$B$changed_in_place, "cnt")
+  js <- pluto_state(r$state)$js
+  check_wire(js)
+  expect_equal(js$cell_results$B$ember$changed_in_place, as_arr("cnt"))
+  expect_null(js$cell_results$A$ember$changed_in_place)
+  expect_false(isTRUE(r$state$results$C$stale))
+
+  # A run that changes nothing in place clears the note.
+  r2 <- drive(r$state, ev_run("B", at(13)))
+  r2 <- drive(r2$state, wk_done(1, last_token(r2), report(), at(14)))
+  expect_equal(r2$state$results$B$changed_in_place, character())
+  expect_null(pluto_state(r2$state)$js$cell_results$B$ember$changed_in_place)
+})
+
 test_that("a package load that resets a setting a settings cell set shows a note on the loading cell (#61)", {
   # A loads mgcv inside a function, so the fake lock needs no entry for it;
   # the worker's report is what matters here.

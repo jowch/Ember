@@ -304,7 +304,7 @@ span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
 #'   (Pluto's own field, Run.jl:86-91) -- true for a disabled cell itself,
 #'   too.
 #' * `ember`: `list(stale, code_changed, upstream_error?, disabled_by?,
-#'   can_disable, settings?, settings_found?, split?, figure?)`, from the view's `stale` and
+#'   can_disable, settings?, settings_found?, load_notes?, changed_in_place?, split?, figure?)`, from the view's `stale` and
 #'   `code_differs` -- both already in `cell_key()`'s key (`code_differs`
 #'   is derived from `cell$code` and `result$code`). `stale` is
 #'   `isTRUE(view$stale) && !off`: an off cell shows as disabled, not also
@@ -322,7 +322,10 @@ span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
 #'   run that found settings the cell wasn't known to set: the one-line
 #'   note. `load_notes` is present, as `as_arr()` of `list(package,
 #'   setting)`, only on the run that loaded a package which overwrote a
-#'   setting a settings cell set: one note each (#61). `split` is present, as `length(split_mixed(view$code))`,
+#'   setting a settings cell set: one note each (#61). `changed_in_place`
+#'   is present, as `as_arr()` of names, when the last run changed another
+#'   cell's reference object in place: the note that its readers don't
+#'   rerun (#167). `split` is present, as `length(split_mixed(view$code))`,
 #'   only when `view$errors` has a `mixed_text` error: the Split button's
 #'   label (Cell.js), answered by the `ember_split_cell` request (server.R).
 #'   `figure` is present, as `list(width, height)` inches, only when the
@@ -365,6 +368,7 @@ project_cell_result <- function(view, known_ids = NULL) {
             if (length(view$settings) > 0) list(settings = as_arr(view$settings)),
             if (length(view$settings_found) > 0) list(settings_found = as_arr(view$settings_found)),
             if (length(view$load_notes) > 0) list(load_notes = as_arr(view$load_notes)),
+            if (length(view$changed_in_place) > 0) list(changed_in_place = as_arr(display_names(view$changed_in_place))),
             if (!is.null(split)) list(split = split),
             if (!is.null(figure)) list(figure = figure),
             if (length(view$variables) > 0) list(variables = as_arr(view$variables)))

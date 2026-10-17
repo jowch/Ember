@@ -262,15 +262,20 @@ new_worker_state <- function() {
 #'   first in the file, so the load would lose the user's value there.
 #'   Shown once, on this run's result: a later run finds the package
 #'   already loaded.
+#' * `changed_in_place`: names of environments, R6 objects or reference
+#'   class objects another cell defines that this run changed without
+#'   rebinding them (the worker's report, #167). Cells that read them don't
+#'   rerun, so the cell shows a note.
 new_result <- function(code, status, output, console, error, started_at,
                        runtime, defined, stale = FALSE, variables = list(),
                        settings_found = character(), setting = FALSE,
-                       load_notes = list()) {
+                       load_notes = list(), changed_in_place = character()) {
   structure(list(code = code, status = status, output = output,
                  console = console, error = error, started_at = started_at,
                  runtime = runtime, defined = defined, stale = stale,
                  variables = variables, settings_found = settings_found,
-                 setting = setting, load_notes = load_notes),
+                 setting = setting, load_notes = load_notes,
+                 changed_in_place = changed_in_place),
             class = "ember_result")
 }
 
@@ -334,7 +339,8 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 #' `settings` (`list(name, found)` per setting the cell sets, `found` being
 #' `"code"` or `"run"`; empty for an ordinary cell), `settings_found` (the
 #' last result's, `character()` when none), `load_notes` (the last
-#' result's, `list()` when none), `queued`, `running`, `status` (`"not_run"`, `"ok"`, `"error"`,
+#' result's, `list()` when none), `changed_in_place` (the last result's,
+#' `character()` when none), `queued`, `running`, `status` (`"not_run"`, `"ok"`, `"error"`,
 #' `"interrupted"`), `stale`, `code_differs`, `errors` (graph errors, or
 #' else the run error, each with `kind`, `message`, `fixes`, `names`, and, for an
 #' `"upstream"` run error, `cells`; a plain "error" also carries `call`,
@@ -516,6 +522,7 @@ cell_view <- function(state, ctx, i) {
     folded = isTRUE(cell$folded), settings = ctx$settings[[i]] %||% list(),
     settings_found = if (!is.null(result)) result$settings_found %||% character() else character(),
     load_notes = if (!is.null(result)) result$load_notes %||% list() else list(),
+    changed_in_place = if (!is.null(result)) result$changed_in_place %||% character() else character(),
     queued = ctx$queued[[i]], running = is_running,
     status = if (!is.null(result)) result$status else "not_run",
     stale = !is.null(result) && isTRUE(result$stale),

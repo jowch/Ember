@@ -192,11 +192,11 @@ test("look: Endeavor's DOM hooks are present (12)", async (t) => {
   // reads from :root (endeavor-css-variables.txt; Endeavor also reads
   // --indented, which CodeMirror sets per line, not on :root).
   const varsPath = path.join(HERE, "..", "..", "testthat", "fixtures", "pluto-css-variables.txt");
-  // A few variables are defined as the literal value `inherit` in one or
-  // both themes, which (correctly) resolves to the empty string at `:root`
-  // (no parent to inherit from); they only resolve once used inside a rule
-  // that has one, which this broad :root check can't exercise.
-  const inheritValued = new Set(["--pluto-logs-info-accent-color", "--blockquote-color"]);
+  // A variable defined as the literal value `inherit` in one or both
+  // themes (correctly) resolves to the empty string at `:root` (no parent
+  // to inherit from); it only resolves once used inside a rule that has
+  // one, which this broad :root check can't exercise.
+  const inheritValued = new Set(["--blockquote-color"]);
   const endeavorPath = path.join(HERE, "..", "..", "testthat", "fixtures", "endeavor-css-variables.txt");
   const names = [varsPath, endeavorPath].flatMap((p) => fs.readFileSync(p, "utf8").split("\n"))
     .map((l) => l.trim()).filter(Boolean).filter((n) => !inheritValued.has(n));
