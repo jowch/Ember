@@ -71,7 +71,10 @@ test("rail: idle before running, amber when edited, red on error, blue while run
   await page.locator(`${cellSelector("A")} .cm-content`).click();
   await page.hover(`${cellSelector("B")} .cm-content`);
   assert.equal(await tip.isVisible(), false, "no tip while hovering B's code");
-  await page.hover(rail("B"));
+  // Near the rail's foot: B is one line, so with its chip's space above
+  // the code (#139) the rail's middle sits under the run button's corner.
+  const railBox = await page.locator(rail("B")).boundingBox();
+  await page.hover(rail("B"), { position: { x: railBox.width / 2, y: railBox.height - 3 } });
   await tip.waitFor({ state: "visible", timeout: 5000 });
   assert.equal(await tip.innerText(), "Press Shift + Enter to run this cell");
   await page.locator(`${cellSelector("B")} .cm-content`).click();
@@ -410,8 +413,10 @@ test('chips: "Not run yet" before running, none in safe preview, "Stale" after a
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  // Safe preview: B has never run, but it's not shown yet.
-  assert.equal(await page.locator(`${cellSelector("B")} ember-chip`).count(), 0, "no chip in safe preview");
+  // Safe preview: B has never run, but it's not shown yet. Its chip's
+  // space is kept, unseen (#139).
+  assert.equal(await page.locator(`${cellSelector("B")} ember-chip:not(.held)`).count(), 0, "no chip in safe preview");
+  assert.equal(await page.locator(`${cellSelector("B")} ember-chip.held`).isVisible(), false, "only its space");
 
   await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(
@@ -520,6 +525,95 @@ test('chips: a "Not run yet" cell that runs moves its code once, when the output
 
   assert.ok(tops.length <= 2, `the code moved once at most: ${JSON.stringify(tops)}`);
   assert.equal(await page.locator(`${cellSelector("NEVER")} ember-chip`).count(), 0, "no chip once it has output");
+  assertNoProblems(page);
+});
+
+// #139: safe preview shows no "Not run yet" chip (its banner says it once),
+// so the first run used to give every unrun cell its chip at once and push
+// the page down by a chip per cell. Safe preview now keeps the chip's space,
+// unseen. NEVER, LOOP and W stay unrun when A runs; the code's place in
+// each, read once a frame from safe preview through A's run, must not move.
+test('chips: leaving safe preview doesn\'t move unrun cells: their chip\'s space is kept unseen (#139)', async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-preview-space.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const ids = ["NEVER", "LOOP", "W"];
+  const held = page.locator(`${cellSelector("NEVER")} > ember-chip.held`);
+  assert.equal(await held.count(), 1, "safe preview keeps the chip's space");
+  assert.equal(await held.isVisible(), false, "and doesn't show it");
+  assert.equal(await held.getAttribute("aria-hidden"), "true", "and doesn't read it out");
+
+  await page.evaluate((sels) => {
+    window.__code_tops = Object.fromEntries(sels.map((sel) => [sel, []]));
+    window.__stop = false;
+    const tick = () => {
+      for (const sel of sels) {
+        const cell = document.querySelector(sel);
+        const top = cell.querySelector(":scope > pluto-input").getBoundingClientRect().top - cell.getBoundingClientRect().top;
+        const tops = window.__code_tops[sel];
+        if (!tops.length || Math.abs(tops.at(-1) - top) > 0.5) tops.push(top);
+      }
+      if (!window.__stop) requestAnimationFrame(tick);
+    };
+    tick();
+  }, ids.map(cellSelector));
+  await runCell(page, "A");
+  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached", timeout: 30000 });
+  for (const id of ids) {
+    await page.waitForFunction(
+      (sel) => document.querySelector(sel)?.classList.contains("not_run_yet"),
+      cellSelector(id), { timeout: 20000 });
+  }
+  const tops = await page.evaluate(() => { window.__stop = true; return window.__code_tops; });
+  for (const id of ids) {
+    assert.equal(tops[cellSelector(id)].length, 1, `${id}'s code didn't move: ${JSON.stringify(tops[cellSelector(id)])}`);
+  }
+  assert.equal(await page.locator(`${cellSelector("NEVER")} > ember-chip`).innerText(), "Not run yet");
+  assert.equal(await page.locator(`${cellSelector("NEVER")} > ember-chip.held`).count(), 0, "the chip shows once the run starts");
+  assertNoProblems(page);
+});
+
+// #139, round 1 of its review: "Run this notebook" queues every cell. A
+// queued cell gives its held space back at the click, with the banner, so
+// a cell that finishes with no output (F, LOOP) doesn't move the page up
+// mid-run. TXT's place on the page, read once a frame: once it starts
+// moving down (outputs landing), it never moves up again.
+test('chips: "Run this notebook" moves the page up only at the click, then only down (#139)', async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-preview-runall.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.locator(`${cellSelector("NEVER")} > ember-chip.held`).waitFor({ state: "attached", timeout: 15000 });
+
+  await page.evaluate((sel) => {
+    window.__txt_tops = [];
+    window.__stop = false;
+    const tick = () => {
+      const top = document.querySelector(sel).getBoundingClientRect().top + window.scrollY;
+      const tops = window.__txt_tops;
+      if (!tops.length || Math.abs(tops.at(-1) - top) > 0.5) tops.push(top);
+      if (!window.__stop) requestAnimationFrame(tick);
+    };
+    tick();
+  }, cellSelector("TXT"));
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForSelector(`${cellSelector("LOOP")} ember-runtime`, { state: "attached", timeout: 30000 });
+  await page.waitForFunction(
+    () => document.querySelectorAll('pluto-cell[data-rail="run"], pluto-cell[data-rail="queued"]').length === 0,
+    null, { timeout: 30000 });
+  const tops = await page.evaluate(() => { window.__stop = true; return window.__txt_tops; });
+  const moves = tops.slice(1).map((top, i) => Math.round(top - tops[i]));
+  const firstDown = moves.findIndex((m) => m > 0);
+  assert.ok(firstDown >= 0, `outputs moved TXT down: ${JSON.stringify(moves)}`);
+  assert.ok(moves.slice(firstDown).every((m) => m > 0), `no move up once the run's outputs land: ${JSON.stringify(moves)}`);
+  assert.equal(await page.locator("ember-chip.held").count(), 0, "no held space left once every cell ran");
   assertNoProblems(page);
 });
 

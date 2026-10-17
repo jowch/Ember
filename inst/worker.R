@@ -3,7 +3,9 @@
 #
 # Started by the server as
 #   Rscript --vanilla -e '<boot>' <port>
-# where <boot> sources this file into a private environment whose parent is
+# where <boot> (worker_boot(), R/shell.R) loads this file's compiled image
+# (EMBER_WORKER_IMAGE, made by compiler::cmpfile(); #229), or sources the
+# file when there is none, into a private environment whose parent is
 # baseenv(), then calls main():
 #   local({e <- new.env(parent = baseenv()); sys.source(Sys.getenv("EMBER_WORKER"), e); e$main()})
 # so nothing here is visible from, or shadowed by, the notebook's globals
@@ -55,7 +57,7 @@
 #   quit
 #
 # Worker -> server
-#   hello        secret, pid, r_version, lib_paths, tempdir
+#   hello        secret, pid, r_version, lib_paths, tempdir, interrupts
 #   console      cell, token, item = list(kind, text)   streamed during a run
 #   source       cell, token, path, text                before a computed
 #                                                       source() runs; waits
@@ -117,6 +119,7 @@ touched <- list()       # every list(kind, name) any cell has changed this sessi
 search_added <- character()  # every attach() entry any cell has added this session
 running <- NULL        # list(cell, token) during a run (for the source trace)
 deferred <- list()     # messages read while waiting for a source_reply
+interrupt_drain <- NULL # Windows: the DLL routine that drops a late interrupt (listen_for_interrupts())
 load_log <- NULL       # settings changes made inside loadNamespace/library during a run
 notebook_options <- character()  # option names an options() call from the
                        # notebook's own code (top-level, or a function a
@@ -147,7 +150,33 @@ loaded_namespace_versions <- function() {
   stats::setNames(vapply(ns, function(n) as.character(getNamespaceVersion(n)), character(1)), ns)
 }
 
+#' On Windows, start listening for the server's interrupts before the
+#' hello, from the package's DLL (src/interrupt.c, #48): loaded by path
+#' (`EMBER_DLL`), since the worker never loads the package. If that fails,
+#' the server finds no event to set and says the interrupt couldn't be
+#' delivered. Elsewhere the server sends SIGINT and this does nothing.
+listen_for_interrupts <- function() {
+  path <- Sys.getenv("EMBER_DLL")
+  Sys.unsetenv("EMBER_DLL")
+  if (.Platform$OS.type != "windows" || !nzchar(path)) return(invisible(FALSE))
+  invisible(tryCatch({
+    dll <- dyn.load(path)
+    interrupt_drain <<- getNativeSymbolInfo("C_interrupt_drain", dll)
+    isTRUE(.Call(getNativeSymbolInfo("C_interrupt_listen", dll)))
+  }, error = function(e) FALSE))
+}
+
+#' Drop an interrupt still pending as a run starts: it is late, for the
+#' run before, since the server interrupts a run only once it has
+#' "running" (src/interrupt.c's `C_interrupt_drain()`). On Unix a SIGINT
+#' that late was already handled where it landed, between runs.
+drain_late_interrupt <- function() {
+  if (!is.null(interrupt_drain)) .Call(interrupt_drain)
+  invisible(NULL)
+}
+
 main <- function() {
+  listening <- listen_for_interrupts()
   port <- as.integer(commandArgs(trailingOnly = TRUE)[1])
   con <<- socketConnection("127.0.0.1", port, blocking = TRUE, open = "r+b",
                            timeout = 60 * 60 * 24 * 365)
@@ -173,7 +202,7 @@ main <- function() {
     send(list(type = "hello", secret = secret,
               pid = Sys.getpid(), r_version = R.version.string,
               lib_paths = .libPaths(), loaded = loaded_namespace_versions(),
-              tempdir = tempdir()))
+              tempdir = tempdir(), interrupts = listening))
     # This frame stays on the stack while every cell runs, so a cell
     # walking sys.frames() would find the secret here.
     rm(secret)
@@ -219,8 +248,11 @@ handle_next <- function() {
   trace_line("message", msg$type)
   on.exit(trace_line("handled", msg$type))
   switch(msg$type,
-    run = send(list(type = "done", cell = msg$cell, token = msg$token,
-                     report = run_cell(msg))),
+    run = {
+      drain_late_interrupt()
+      send(list(type = "done", cell = msg$cell, token = msg$token,
+                report = run_cell(msg)))
+    },
     remove_cell = {
       remove_cell(msg$cell)
       cell_order <<- msg$order
@@ -544,8 +576,15 @@ run_cell <- function(msg) {
                      # `e$package` is set by R's own loadNamespace()/library()
                      # for a packageNotFoundError regardless of locale, so the
                      # server can recognise a missing package without matching
-                     # the (locale-translated) message text.
-                     package = if (inherits(e, "packageNotFoundError")) e$package else NULL,
+                     # the (locale-translated) message text. rlang's
+                     # check_installed() names its packages the same way (#184),
+                     # unless one has a version (`"rlang (>= 99.0)"`): that one
+                     # may be installed and only too old, so the error stays as
+                     # it is, its message whole (the server can still offer a
+                     # fix for a quoted name in it that isn't installed).
+                     package = if (inherits(e, "packageNotFoundError")) e$package
+                               else if (inherits(e, "rlib_error_package_not_found") &&
+                                        (is.null(e$version) || all(is.na(e$version)))) as.character(e$pkg),
                      # Which text line (`inline_spans()$line` of the cell's
                      # analysed code) failed, for a text cell only.
                      span = if (is_text) at else NULL,

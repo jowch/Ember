@@ -35,7 +35,8 @@ repository depends on them.
   runs.
 - **`Rscript notebook.R` gives the notebook's results.** Running the file top
   to bottom does what running every cell in the notebook does, given the
-  same package versions (`ember::run()` supplies them from the lock). So
+  same package versions (`ember::run()` supplies them from the lock) and
+  every interactive input at its default (see [inputs.md](inputs.md)). So
   cells run in the global environment, as a script's code does, not in a new
   environment per run as Pluto's cells run in a new module: `source()`,
   `<<-`, `data()` and S4 classes all write to the global environment.
@@ -67,6 +68,11 @@ repository depends on them.
   cell runs its stale ancestors first, and so does running a cell whose
   ancestor was edited: every ancestor between the edited one and the cell
   run runs too, since each goes stale once the edited one runs (#169).
+  The dependents autorun queues follow the same rule: a dependent that
+  also reads a stale cell (one a delete, a rename or an interrupt left
+  stale) runs after it, not with its stale value (#176). Autorun doesn't
+  restart an ancestor that failed or was interrupted while it ran, so a
+  dependent that needs one ends as an error until that ancestor is run.
   Pluto's safe preview shows editing without running is workable.
 - **Open without running.** Running a cell runs its unrun ancestors first.
   "Run all" is one click. Long simulations don't start just because a
@@ -111,7 +117,7 @@ repository depends on them.
   needs building from source and explains what to install; it doesn't install
   compilers itself.
 - **Interactive inputs** (sliders, dropdowns and the like, Pluto's `@bind`)
-  are in scope. Their design comes later.
+  are in scope. The proposed design is in [inputs.md](inputs.md).
 - **No script importer for now.** Converting existing `.R` and `.Rmd` files
   into notebooks may come later.
 
@@ -158,22 +164,40 @@ This maps one to one onto Pluto's server and workers:
   library, where rig puts pak, is hidden). A worker starts and connects in
   about 115 ms; package loading comes on top.
 
+  The worker loads a byte-compiled image of `worker.R` when there is one
+  (#229). R's JIT compiles a function the second time it's called, so a
+  worker running `worker.R` as source paid for compiling its own run code
+  on its second run: 0.35 to 0.57 s on Linux, and over 5 s on a slow
+  Windows runner. From the image, that run takes 0.09 s. The first notebook
+  opened in a process compiles the image in a separate `Rscript`
+  (`compiler::cmpfile()`, about 1.5 s, nothing waits on it). The image goes
+  in the cache under `worker/`, named by R's version and `worker.R`'s MD5.
+  Workers started before it's ready, or with an image that won't load,
+  source `worker.R` as before. Turning the JIT off instead would make the
+  user's own code slower than in plain R.
+
 The server resets SIGINT to its default before starting workers. A process
 started in the background by a shell (`&`) inherits SIGINT as ignored, R then
 never installs its interrupt handler, and interrupts silently do nothing
 (measured: a 10 s loop ran to the end; with the reset, it stopped in 10 ms).
 The reset is a few lines of C, so the server package has compiled code from
-the start. The server polls the worker socket from its `later` loop every
-5 ms (about 2% of a core when idle), and must read a large worker message in
-pieces rather than all at once, so a big output can't stall it.
+the start. The server polls the worker socket from its `later` loop: every 5 ms while
+it waits on the worker (a run, a query, or traffic in the last second),
+every 250 ms while an install or index job runs, and every 2 s otherwise. A
+crash during a run is noticed within 5 ms; one while idle, or an edit to a
+watched file, within about 2 s. At 250 ms an idle notebook cost the server
+0.7% of a core and 4 wake-ups a second; at 2 s it is about 0.12% (#46).
+It must read a large worker message in pieces rather than all at once, so a
+big output can't stall it.
 
 Workers and jobs (installs, index fetches) end when the server does. They
 start with processx's supervisor, a separate process that sends them SIGTERM
-once the server is gone, even after a SIGKILL (#141, #147). On Unix a job
-also takes its own children with it (docs/packages.md); on Windows that isn't
-checked yet (#148). For a worker, a small `sh` outside its process group
-waits on a pipe from the server and ends the group once the server is gone
-(#150), since the worker itself can't run under a wrapper: the server
+once the server is gone, even after a SIGKILL (#141, #147). A job also takes
+its own children with it: on Unix through `sh`; on Windows because R's
+`system()` ends a child it started once the R that started it ends
+(docs/packages.md, #148). For a worker, a small `sh` outside its process
+group waits on a pipe from the server and ends the group once the server is
+gone (#150), since the worker itself can't run under a wrapper: the server
 interrupts a cell with SIGINT to the worker's own process. So what a cell
 starts with `system()` or a fork ends with the server, as it already did
 when the notebook restarts. A process a cell starts in a session of its own
@@ -397,7 +421,9 @@ the rerun the dropped edge misses.
   on a cell that defines `` `r<-` `` (a function or a generic) and on the
   cells that define methods of it. A nested target reads every setter and
   the getters inside it (`names(x)[i] <- v` reads `` `[<-` ``,
-  `` `names<-` `` and `names`). `$` and `@` read neither, as below.
+  `` `names<-` `` and `names`). `x$a <- v` reads `` `$<-` `` (and
+  `$` when nested), so a `` `$<-.rec` `` method orders before it, and
+  `x@a <- v` reads `` `@<-` `` the same way.
 - **Many cells, one generic.** Any number of cells may add methods to one
   generic. The same pair in two cells (`print.foo` in one,
   `registerS3method("print", "foo", …)` in another, or two
@@ -433,10 +459,19 @@ the rerun the dropped edge misses.
   removed, disabled, rerun or failed), it removes a class with
   `removeClass()`: dropping the binding alone leaves the class in the
   methods package's cache, and `new("Circle")` would go on working.
-- **Not covered yet:** group generics (`Ops.money`, `Math.interval`), `$`
-  methods (the walker doesn't read `$` as a call), and further class
-  readers (`slotNames()`, `getSlots()`, `extends()`, `isVirtualClass()`,
-  the signatures of `existsMethod()`, `getMethod()`, `selectMethod()`).
+- **Group generics.** A method of a group generic (`Ops.money`,
+  `Math.interval`, `setMethod("Arith", …)`) is read through any member of
+  the group (`?groupGeneric`, `?S4groupGeneric`): `a + b` reads
+  `Ops.money` and `Arith`'s methods, `sqrt(a)` reads `Math`'s. The table
+  is in `R/rules.R`.
+- **`$` and `@` methods.** `x$a` reads `$` as `x[1]` reads `[`, so a
+  cell using `$` depends on the cells that define `` `$.rec` ``. `@` is
+  an S3 generic too since R 4.3 (S7 uses it), so `x@a` reads `@`. The
+  field or slot name is never read.
+- **More class readers.** `slotNames()`, `getSlots()`, `extends()`,
+  `isVirtualClass()` and the signatures of `existsMethod()`,
+  `hasMethod()`, `getMethod()` and `selectMethod()` read a class named as
+  a string, like `new()`.
 
 ### Formulas
 
@@ -582,8 +617,14 @@ these only for each cell's current output and drops them when the cell
 reruns or is deleted, so a removed variable isn't kept alive by its display.
 
 Interrupts go to the worker as SIGINT on macOS and Linux (processx). Windows
-has no SIGINT; processx sends CTRL+C through a helper (to verify in the
-spike). Compiled code often ignores interrupts, so "restart worker" is always
+has no SIGINT, and processx's CTRL+C helper needs the worker to have a
+console, which it lacks whenever the server does: the interrupt was then
+lost, while processx said it sent it. So on Windows the worker waits on a
+named event of its own, on a thread of its own, and the server sets it; the
+thread sets R's `UserBreak`, as R's own CTRL+C handler does, and R raises
+the interrupt as for CTRL+C (src/interrupt.c, #48). If the server can't set
+the event, it offers the restart at once and says the interrupt couldn't
+reach R. Compiled code often ignores interrupts, so "restart worker" is always
 available, as in Pluto. If a cell hasn't stopped a few seconds after an
 interrupt, the UI offers the restart and lists the cells that will need to
 run again, as RStudio's "Terminate R" does. An interrupt isn't lost: R acts
@@ -757,11 +798,18 @@ rest:
    `[extra_packages]` list for packages the code can't reveal: some are only
    needed at run time (`ggsave("x.svg")` needs svglite). When a cell fails
    with "there is no package called 'svglite'", the engine offers to add it
-   to that list.
+   to that list. It offers the same when rlang's `check_installed()` names
+   the packages, and when an error's message says a package is needed and
+   marks one in the snapshot that isn't installed (quoted, styled, or just
+   before "package"): tidymodels names its engines only as strings
+   (`set_engine("glmnet")`). That last one matches the message's text, so a
+   translated message gets no offer. The engine
+   never installs such a package by itself.
 2. Resolve each against CRAN and Bioconductor at the notebook's snapshot
-   date. GitHub packages can't be inferred; the user records them in the
-   header's `[sources]` as `github:user/repo`, and the Packages tab offers
-   to add one on a name that isn't found.
+   date. GitHub and r-universe packages can't be inferred; the user records
+   them in the header's `[sources]` as `github:user/repo` or
+   `universe:name`, and the Packages tab offers to add one on a name that
+   isn't found.
 3. Update the lock and install into the notebook's library in a subprocess.
    The worker restarts only if a package it has already loaded changed
    version; a new package is just loaded.
@@ -778,8 +826,9 @@ not. R packages declare only minimum versions (`rlang (>= 1.1.0)`), never
 upper bounds, so this is the strictest consistency R's metadata allows, and
 Ember enforces it: the lock never mixes CRAN dates. With a Bioconductor pin,
 the rule is one CRAN date plus one Bioconductor release, whose packages are
-already consistent with each other. GitHub packages have no date; they sit
-outside the rule and are marked unchecked.
+already consistent with each other. GitHub and r-universe packages have no
+date; they sit outside the rule and are marked unchecked. The lock records
+the git commit for both (an r-universe serves only its latest build).
 
 - **Adding a package** resolves it at the notebook's date, with its
   dependencies. On open, packages already in the lock install at exactly the
@@ -807,7 +856,7 @@ some date), but they are much stronger than minimum versions. Moving the date
 can move many packages when a notebook is old; the preview shows it.
 
 **The lock in the file** is one line per package: name, version and source
-(`CRAN`, `Bioc`, or a GitHub commit). Ember converts it to an `renv.lock`
+(`CRAN`, `Bioc`, a GitHub commit, or an r-universe build and its commit). Ember converts it to an `renv.lock`
 when installing. Measured: `renv.lock` runs to about 38 lines per
 package (2201 lines for 58 packages) and `rv.lock` to about 9; either
 conflicts when two people add packages on different branches, and one line
@@ -931,6 +980,20 @@ nobody is watching; a program that downloads R must not quarantine it, or
 must clear the flag (`xattr -dr com.apple.quarantine`). `capabilities()`
 without arguments warns about X11 on Macs without XQuartz; the worker doesn't
 call it.
+
+Measured with rig 0.11.0 user mode on Windows 10 (#49), from an account
+without admin rights: `rig add --user release` installs R into
+`%APPDATA%\rig\data\r\<version>`, and `rig add --user rtools` installs
+Rtools into `%APPDATA%\rig\data\rtools\<version>` and sets `RTOOLS45_HOME`
+for the user. Neither goes on the PATH. A copy of the R tree runs from its
+own `bin\Rscript.exe`, with PNG, Cairo and HTTPS working, and builds a
+package with compiled code from source. CRAN's installers are signed, but
+the files they install aren't, and rig's downloads carry no "downloaded
+from the internet" mark, so nothing asks before R first runs. Rtools' gcc
+is on the PATH only inside `R CMD` (R's Rcmd_environ), so the compiler
+check asks `R CMD` (install-checks.R's `has_compiler()`); it looked on the
+installer's own PATH, found no gcc, and stopped every source build with
+"Install Rtools" on a machine that had it.
 
 **Compilers.** Posit Package Manager serves binaries for macOS, Windows and
 common Linux systems, including Bioconductor software packages since
@@ -1141,7 +1204,8 @@ HTML export (`/notebookexport`), which Endeavor uses.
 
 **Interactive inputs.** Pluto's frontend already has the mechanism (bonds:
 the page reports an input's value, the server sets a variable and reruns its
-dependents). Ember keeps it; the R-side API is to be designed.
+dependents). Ember keeps it; the R-side API is proposed in
+[inputs.md](inputs.md).
 
 **Look distinct:** own colours, fonts and layout. Programs that inject
 scripts into the page (Endeavor does) rely on the DOM hooks Pluto's page has
@@ -1197,7 +1261,9 @@ Julia-shaped parts of the state (`nbpkg`, and the package log in
 change, and Endeavor's per-backend page adapter handles them. Notebook IDs
 are full 36-character UUIDs, and so are the cell IDs Ember generates. A
 hand-written file may use short cell IDs (1 to 64 of `[A-Za-z0-9._-]`);
-Ember keeps them.
+Ember keeps them, and Endeavor's tools take them. An ID outside that set
+(`cell:1`) gets a fresh UUID when the file is read, with its lines in the
+footer read under the new ID, and the next save writes that UUID (#82).
 
 Two Endeavor documents describe Pluto's behaviour where Ember's differs, and
 need updating there: `restart` "then every cell runs" (Ember leaves cells not
@@ -1209,8 +1275,12 @@ run), and the snapshot has no stale state.
    (2026-09-29; results are folded into the sections above): server and
    worker, the frontend stub, rig, rv against renv, and package loading.
    Since then the URL secret and rich outputs in the browser are built, and
-   the server and worker run on Linux in CI. Still to run: the server and
-   worker, and rig, on Windows (#48, #49). Whether any package overwrites a
+   the server and worker run on Linux in CI. The server and worker were run
+   on Windows 10 in 2026-10, started both with a console and without one:
+   interrupts needed a way of their own there (#48, see [Running
+   cells](#running-cells)). Rig's user mode was run on Windows in 2026-10
+   too (#49, see [Package environments](#package-environments)). Whether any
+   package overwrites a
    setting the notebook already set (#61) was run on Linux in 2026-10: see
    [Global settings](#running-cells).
    - Server and worker: httpuv serving the UI while a worker runs a long

@@ -54,6 +54,8 @@ on_notebook_event(nb, function(note) {
 # A cell failed with `ggsave("x.svg")`:
 err <- notebook_snapshot(nb)$cells[[7]]$errors[[1]]
 err$kind; err$names; err$fixes   # "missing_package", "svglite", "Add svglite to [extra_packages]"
+# A cell failed with "Package install is required for glmnet." (set_engine("glmnet")):
+err$kind; err$fixes              # "error", "Add glmnet to [extra_packages]"
 edit_notebook(nb, add_extra_package("svglite"))
 ```
 
@@ -153,13 +155,14 @@ Any event that changes what the notebook wants reaches the same code, so no hand
 **Shared things are plain functions over the filesystem (library.R).**
 
 - The index cache is a dated index saved as RDS forever, plus a memo per process so sessions share one R object. The exception is an index dated yesterday or later in UTC (`index_may_change()`, #39): Package Manager may still add to that day's snapshot. Opening still reads the saved copy (fetching a CRAN index costs about 11 s), but the slot is marked `provisional` (the shell judges the date; the core has no clock), and a date preview fetches it again: the preview asks for every index it fetches `fresh`, and the shell skips the saved copy of a `fresh` key whose date may change, whether or not the session held it. That fetch replaces the saved copy and the memo, so sessions opened later read it. When it fails (offline), the saved copy stands in.
+- A new notebook is dated today, and Package Manager publishes a day's snapshot hours after that day starts in UTC. Until then the date's index is a 404, and east of UTC that is most of a local morning (#162). `fetch_index_main()` says so when the server answers 404 (`index_not_published()`), and the shell passes `unpublished` on `index_failed` for a date from yesterday to tomorrow in UTC (`may_be_unpublished()`). A date further ahead is no clock's today, so its 404 is a plain failure. While the lock is empty, nothing came from that date, so the core moves the notebook's date back a day and resolves there. The saved file then carries the date its packages came from. It stops at the day before yesterday in UTC, where the failure shows as `index_unavailable`. Offline, the fetch fails without a 404, so the date stays today; the next fetch once online moves it if the snapshot still isn't out. A notebook with locked packages keeps its date: its lock was resolved from that date's index, so the date was published. A date preview of a day that isn't published yet moves back the same way: "Update all" is a preview of today, so early in a day it offers the newest published date instead of failing with no changes. The proposal keeps the date it was asked for as `asked`, and its `date` is the one it would move to.
 - Libraries are built in a staging folder and then renamed into place. A process that loses the race deletes its copy, so no locks are needed.
 - The renv cache is Ember's own, so `clean()` can never break the user's renv projects.
 - `clean()` and `ember::run()` sit outside the core.
 
 One process-wide table, `jobs`, lets two sessions that want the same index or library share one subprocess. It holds processes and subscribers and makes no decisions.
 
-**Jobs end with the server.** A job is killed when its last session leaves (the session closed or cancelled the install), and the server closes its notebooks on the way out, including on Ctrl-C. If the server is killed instead, processx's supervisor ends the job, and on Unix the job runs under `sh`, which takes the job's children (`R CMD INSTALL`, the compiler) with it (`job_process()`, #141). On Windows there is no `sh`: the supervisor ends the job's own process, and whether its children go too is not checked yet. A killed install leaves only its staging folder, which `clean()` removes.
+**Jobs end with the server.** A job is killed when its last session leaves (the session closed or cancelled the install), and the server closes its notebooks on the way out, including on Ctrl-C. If the server is killed instead, processx's supervisor ends the job, and on Unix the job runs under `sh`, which takes the job's children (`R CMD INSTALL`, the compiler) with it (`job_process()`, #141). On Windows there is no `sh`, and none is needed: R's `system()` and `system2()` start each child in a job object that ends it once the R process that started it ends. So when processx's job object, the supervisor or a cancel ends the job's process, `R CMD INSTALL` and the compiler go too. That covers children started through `system()`/`system2()`, as renv starts `R CMD INSTALL`, or through processx; a child started some other way isn't covered (#148). A killed install leaves only its staging folder, which `clean()` removes.
 
 **renv comes from the server's own library** as an Imports dependency. Only the installer subprocess loads it, never the server or the worker.
 
@@ -202,6 +205,7 @@ Behind that sit detection, resolution, index caching, library naming, installs, 
 2. **Bioconductor, GitHub and source builds:**
    - Bioconductor (`bioc_version`, its index keys, the date-window warning): built, see [Bioconductor](#bioconductor)
    - `[sources]` GitHub as one-row indexes: built, see [GitHub sources](#github-sources)
+   - `[sources]` r-universe the same way: built, see [r-universe sources](#r-universe-sources)
    - the install plan job: download size and consent
    - compiler and system-library checks: built, see [Install checks](#install-checks)
    - old snapshot dates that build from source on a newer R: explained when the build fails, see [Install checks](#install-checks); saying so before the install waits for the install plan
@@ -292,6 +296,24 @@ not.
   that date's release) is the way out. A move whose index can't be
   fetched keeps the pin, shows a `bioc_move_failed` row, lets the old
   library install, and is proposed again on the next run.
+- **Bioconductor's own binaries on macOS and Windows (#22).** Package
+  Manager doesn't build every binary Bioconductor does. For 3.23 on macOS
+  arm64 it lacked 123 packages with code to compile that Bioconductor
+  builds (preprocessCore, affy, flowCore, csaw, ...), and about as many on
+  Intel Macs; on Windows, 10. Those built from source, and on a Mac
+  without the Fortran runtime preprocessCore failed to link (`ld: library
+  'emutls_w' not found`), so WGCNA didn't install. The installer adds
+  Bioconductor's own software repository for the pinned release
+  (`https://bioconductor.org/packages/3.23/bioc`) after Package Manager's
+  on macOS and Windows (`bioc_binary_repos()`). It isn't dated and holds
+  only each package's latest version in the release, but renv takes a
+  binary only at the locked version, so a package whose version has moved
+  on since the snapshot date builds from source as before. Bioconductor
+  rebuilds a binary when its dependencies change, so at the same version
+  the binary can be a later build than the one out at the snapshot date. At 2026-06-01,
+  2161 of 2324 versions still matched. Its name doesn't start with "BioC",
+  since renv reads binaries from no such repository but BioCsoft. The
+  compiler check counts its binaries too.
 
 Not built: asking before large downloads.
 
@@ -309,7 +331,9 @@ what was missing.
 
 - **Compiler, before renv.** When this machine has no compiler
   (`has_compiler()`: `xcode-select -p` on macOS, the `R CMD config CC`
-  compiler on the PATH elsewhere), the installer reads the source and
+  compiler on the PATH on Linux, and on the PATH `R CMD` builds with on
+  Windows, since only that PATH has Rtools, #49), the installer reads the
+  source and
   binary indexes and names the locked packages that have code to compile
   and no binary at their locked version (`source_builds()`). On Linux with
   Package Manager binaries this check is skipped: almost nothing builds from
@@ -337,11 +361,15 @@ what was missing.
   say why. When renv stops with "failed to install", the installer takes
   the packages it names, drops the dependents renv never built (those
   that need another failed package, from the source index:
-  `failed_builds()`), and asks which of the rest had no binary at their
-  locked version (`no_binary_packages()`: the binary index on macOS and
+  `failed_builds()`), and asks which of the CRAN packages among the rest
+  had no binary at their locked version (`no_binary_packages()`: the
+  binary index on macOS and
   Windows, Package Manager per package on Linux with its binaries; on
   Linux without them everything builds from source, so a failed build
-  says nothing about the date). Rows: `no_binary`, `detail` = the locked
+  says nothing about the date). A Bioconductor package isn't asked
+  about: its pin is a release built for this R, so the date isn't why,
+  and its row keeps the build's own error (#22). Rows: `no_binary`,
+  `detail` = the locked
   version; it replaces the row's `compile`, `configure` or `other` kind,
   not a missing compiler, system library, dependency or download. renv's
   `- [lifecycle]: dependency failed (cli, rlang)` is a `dependency` row
@@ -498,8 +526,8 @@ Built from increment 2 (#20).
   outside the one-date rule. The Packages tab's "GitHub user/repo@sha"
   line under the version is that mark, and its tooltip says so.
 - **The Packages tab** (#78). A not-found package's row offers "Add a
-  GitHub source": a field for `user/repo`, optionally with `@` and a
-  branch, tag or commit, sent as the `set_package_source` op
+  source": a field for `user/repo`, optionally with `@` and a
+  branch, tag or commit, or an r-universe link (#203), sent as the `set_package_source` op
   (`ember_set_package_source`, server.R). A refused source shows Ember's
   refusal under the field. A row with an entry offers "Change source"
   (the same op, starting from the entry) and "Remove source"
@@ -516,6 +544,61 @@ Not built: guessing the repository for a name that isn't found (from a
 CRAN archive record, or a search); following a GitHub package's
 `Remotes` (each needs its own entry); packages in a
 subdirectory of a repository; GitLab and other hosts.
+
+### r-universe sources
+
+Built for #203. emberui, the inputs package (docs/inputs.md), ships on
+r-universe.
+
+- **The header names them.** `emberui = "universe:jowch"`, for
+  `https://jowch.r-universe.dev`. The op and the header reader also take
+  a link to the universe or to any page in it, saved in the `universe:`
+  form (`source_spec()`). There is no ref: a universe serves only its
+  latest build of each package. A package with an entry comes from it,
+  never from CRAN.
+- **One request.** The fetch (`fetch_universe_main()`) reads the
+  universe's JSON for the package (`<universe>/api/packages/<name>`),
+  which gives the version, the dependencies, and the git commit the
+  build came from (`RemoteUrl`, `RemoteSha`, `RemoteSubdir`). The key is
+  `universe/<name>/<package>`, and it always moves, like a GitHub branch.
+- **The lock fixes the commit, not the build.** The lock line is
+  `emberui 0.1.0 universe:jowch/github.com/jowch/emberui@<sha>`: the
+  universe, then the repository without `https://`, then the commit, with
+  `//<subdir>` before the `@` for a package in a subdirectory. So the
+  file alone says where the code is after the universe has moved on.
+  Once locked, a package keeps its commit, under the key
+  `universe-commit/<package>/...`, which never changes. A machine that
+  never resolved it reads that commit's DESCRIPTION from GitHub when the
+  repository is there (a universe keeps no old builds); off GitHub, it
+  can only while the universe still serves that commit, and otherwise
+  the row says to update the package. Update all takes the latest build;
+  moving the date back keeps the commit.
+- **Installing.** The installer asks the universe which commit it serves
+  now (`universe_served()`). When that is the locked one, renv installs
+  the universe's own build, binaries included, as a repository record for
+  `universe-<name>` (`repo_urls()`). When it isn't, the version alone
+  can't say: a development version (`0.0.0.9000`) keeps its version
+  across commits. So renv gets a GitHub record for the locked commit,
+  which builds from source, or for a repository elsewhere a git record,
+  which needs git on the machine.
+- **The build is checked, not trusted.** Binaries are separate builds: one
+  can lag the source build while it is made, or stay behind when it
+  fails, and the universe can rebuild during the install, all under the
+  same version. r-universe writes the commit into every build's
+  DESCRIPTION, so after renv the installer reads it
+  (`universe_wrong_builds()`) and installs any package whose build isn't
+  the locked commit again from the commit itself. The repository record
+  carries no `RemoteSha` for that reason: renv would write the record's
+  over the build's own.
+- **Unchecked**, as GitHub packages are: the Packages tab's line under the
+  version reads "r-universe jowch@<sha>".
+- **The test seam** is `ember_repos(universe = "file://.../%s")`:
+  `fixtures/universe/lab` is laid out as an r-universe is, and its
+  package's commits are in the GitHub fixture.
+
+Not built: guessing the universe for a name that isn't found; a
+universe's own dependencies resolve from CRAN, so a dependency only on
+r-universe needs its own entry.
 
 ## Where the direction strains
 

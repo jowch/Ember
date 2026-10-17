@@ -106,7 +106,6 @@
     --ui-button-color: var(--ember-text);
     --cm-color-editor-text: var(--ember-text);
     --black: var(--ember-text);
-    --white: black;
     --helpbox-notfound-search-color: var(--ember-faint);
     --cm-color-line-numbers: var(--ember-faint);
 
@@ -178,12 +177,8 @@
     --helpbox-box-shadow-color: #00000017;
     --helpbox-header-tab-bg-color: #554e4e;
     --helpbox-header-color: rgb(255 248 235);
-    --code-section-border-color: #555a64;
 
     /*footer*/
-    --footer-input-border-color: #6c6c6c;
-    --footer-filepicker-button-color: black;
-    --footer-filepicker-focus-color: #c1c1c1;
     --footnote-border-color: rgba(114, 225, 231, 0.15);
 
     /* undo delete cell*/

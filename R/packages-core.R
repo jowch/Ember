@@ -24,7 +24,7 @@
 #'   Set at open to `wanted` when every wanted name is in the lock (an
 #'   Ember-written file: nothing to do, no network, no write), else to
 #'   `character()` so the first `schedule_packages()` resolves.
-#' * `sources_for`: the header's readable `[sources]` (`github_sources()`)
+#' * `sources_for`: the header's readable `[sources]` (`readable_sources()`)
 #'   the current lock answers, as `resolved_for` is for the wanted set:
 #'   resolution runs again when they differ, and a package whose spec
 #'   changed is resolved again from its new spec (`lock_for_sources()`).
@@ -77,7 +77,7 @@ new_packages_state <- function(lock, wanted, r, cache, header = NULL, releases =
   locked_names <- if (is.null(lock$entries) || nrow(lock$entries) == 0) character() else lock$entries$name
   # A lock that disagrees with the header's `[sources]` (a source added,
   # changed or removed by hand) is resolved again, as one missing a name is.
-  sources_for <- if (is.null(header)) character() else github_sources(header)
+  sources_for <- if (is.null(header)) character() else readable_sources(header)
   agrees <- is.null(header) || identical(lock_for_sources(lock, header, sources_for)$entries, lock$entries)
   resolved_for <- if (all(wanted %in% locked_names) && agrees) wanted else character()
   # A pin built for another R is said at open, in safe preview, before
@@ -443,14 +443,18 @@ install_failures <- function(lines) {
 #'   even when it restarts R (running the notebook was the consent), holds
 #'   the install of the old pin's library while it is pending, and isn't
 #'   the page's update question (`project_ember()`).
+#' * `asked`: the date the preview was asked for. It differs from `date`
+#'   only when that day wasn't published yet and the preview moved back to
+#'   the newest one that is (`reduce_index_failed()`, #162), so
+#'   `preview_date()` can find its own preview.
 new_proposal <- function(date, status = "fetching", lock = NULL, changes = NULL,
                          problems = NULL, for_wanted = NULL, apply = FALSE,
                          restart = character(), message = NULL,
-                         bioc_version = NA_character_, kind = "date") {
+                         bioc_version = NA_character_, kind = "date", asked = date) {
   structure(list(date = date, status = status, lock = lock, changes = changes,
                  problems = problems, for_wanted = for_wanted, apply = apply,
                  restart = restart, message = message, bioc_version = bioc_version,
-                 kind = kind),
+                 kind = kind, asked = asked),
             class = "ember_proposal")
 }
 
@@ -473,7 +477,11 @@ ev_cancel_preview <- function(at) event("cancel_preview", at)
 #' to change (`index_may_change()`); the core has no clock to judge it.
 ev_index_fetched <- function(key, index, at, provisional = FALSE)
   event("index_fetched", at, key = key, index = index, provisional = isTRUE(provisional))
-ev_index_failed  <- function(key, message, at) event("index_failed", at, key = key, message = message)
+#' `unpublished`: the shell's word that the repository answered 404 for a
+#' date recent enough to be one it hasn't published yet (#162); the core
+#' has no clock to judge either.
+ev_index_failed  <- function(key, message, at, unpublished = FALSE)
+  event("index_failed", at, key = key, message = message, unpublished = isTRUE(unpublished))
 #' `table`: `parse_bioc_config()`'s result, as fetched (or cached).
 #' `fetched`: the day that list was fetched, a `Date` (a cached copy's own
 #' day, not today's).
@@ -578,7 +586,7 @@ schedule_packages <- function(state, old) {
       wanted_packages(state$graph, state$file$header)
     }
     p$wanted_cache <- wanted
-    sources <- github_sources(state$file$header)
+    sources <- readable_sources(state$file$header)
     if (!setequal(wanted, p$resolved_for) || !identical(sources, p$sources_for %||% character())) {
       if (length(wanted) > 0 && (is.null(state$file$header$snapshot) || is.na(state$file$header$snapshot))) {
         # `format()` on a POSIXct uses the local time zone directly; routing
@@ -739,7 +747,8 @@ schedule_packages <- function(state, old) {
       }
     } else if (identical(slot$status, "ready") && !is.null(drop_message)) {
       state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
-                                              message = drop_message, kind = prop$kind)
+                                              message = drop_message, kind = prop$kind,
+                                              asked = prop$asked %||% prop$date)
     } else if (identical(slot$status, "ready") &&
               (identical(prop$status, "fetching") || !setequal(prop$for_wanted %||% character(), wanted))) {
       indexes_loaded <- Filter(Negate(is.null), lapply(state$packages$indexes[needed], function(s) s$index))
@@ -754,7 +763,7 @@ schedule_packages <- function(state, old) {
         new_prop <- new_proposal(prop$date, status = "ready", lock = res$lock, changes = changes,
                                  problems = res$problems, for_wanted = wanted, apply = prop$apply,
                                  bioc_version = bioc_pin(res$lock, bioc_release_in(needed)),
-                                 kind = prop$kind)
+                                 kind = prop$kind, asked = prop$asked %||% prop$date)
         if (isTRUE(prop$apply)) {
           loaded <- state$worker$loaded %||% character()
           restart_names <- intersect(changes$name, names(loaded))
@@ -784,7 +793,8 @@ schedule_packages <- function(state, old) {
       }
     } else if (identical(slot$status, "failed")) {
       state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
-                                              message = slot$message, kind = prop$kind)
+                                              message = slot$message, kind = prop$kind,
+                                              asked = prop$asked %||% prop$date)
     }
   }
 
@@ -816,7 +826,7 @@ schedule_packages <- function(state, old) {
     tgt$progress <- NULL
     state$packages$target <- tgt
     effects <- c(effects, list(fx_install(token, tgt$key, tgt$path, state$file$lock,
-                                          repo_urls(state$options$repos, state$file$header),
+                                          repo_urls(state$options$repos, state$file$header, state$file$lock),
                                           github_api_url(state$options$repos))))
   }
 
@@ -957,7 +967,7 @@ source_failed_problems <- function(header, keys, indexes) {
     if (!identical(slot$status, "failed")) next
     out <- rbind(out, package_problem("index_unavailable", name, sprintf(
       "couldn't look up %s for %s: %s", header$sources[[name]], name,
-      slot$message %||% "no answer from GitHub")))
+      slot$message %||% "no answer")))
   }
   out
 }
@@ -1167,7 +1177,43 @@ reduce_index_failed <- function(state, event) {
   if (is.null(slot) || !identical(slot$status, "fetching")) {
     return(list(state = state, effects = list(), reply = NULL))
   }
-  wanted <- wanted_packages(state$graph, state$file$header)
+  header <- state$file$header
+  # The notebook's own date isn't published yet (a new notebook dated
+  # today, before Package Manager has that day's snapshot, #162). While
+  # nothing is locked, no package came from that date, so the date moves
+  # back a day and resolution fetches that one. The shell says
+  # `unpublished` only from yesterday to tomorrow in UTC
+  # (`may_be_unpublished()`), so this stops by the day before yesterday,
+  # and then the failure shows; a date further ahead fails at once.
+  if (isTRUE(event$unpublished) && nrow(state$file$lock$entries) == 0 &&
+      !is.null(header$snapshot) && !is.na(header$snapshot) &&
+      identical(event$key, repo_key("cran", header$snapshot))) {
+    state$packages$indexes[[event$key]] <- NULL
+    state$file$header$snapshot <- format(as.Date(header$snapshot) - 1, "%Y-%m-%d")
+    return(list(state = state, effects = list(), reply = NULL))
+  }
+  # A date preview of a day that isn't published yet ("Update all" is a
+  # preview of today) moves back a day the same way, so it offers the
+  # newest published date instead of failing with no changes. The same
+  # bound applies.
+  prop <- state$packages$proposal
+  if (isTRUE(event$unpublished) && !is.null(prop) && identical(prop$kind, "date") &&
+      identical(prop$status, "fetching") && identical(event$key, repo_key("cran", prop$date))) {
+    state$packages$indexes[[event$key]] <- NULL
+    earlier <- format(as.Date(prop$date) - 1, "%Y-%m-%d")
+    # The earlier day may still be gaining packages too: a copy this
+    # session holds from before is fetched again, as reduce_preview_date()
+    # does for the date asked.
+    held <- state$packages$indexes[[repo_key("cran", earlier)]]
+    if (isTRUE(held$provisional) && identical(held$status, "ready")) {
+      state$packages$indexes[[repo_key("cran", earlier)]] <- NULL
+    }
+    state$packages$proposal <- new_proposal(earlier,
+                                            apply = prop$apply, kind = prop$kind,
+                                            asked = prop$asked %||% prop$date)
+    return(list(state = state, effects = list(), reply = NULL))
+  }
+  wanted <- wanted_packages(state$graph, header)
   state$packages$indexes[[event$key]] <- new_index_slot("failed", message = event$message, wanted = wanted)
   list(state = state, effects = list(), reply = NULL)
 }
@@ -1314,7 +1360,7 @@ reduce_preview_date <- function(state, event) {
     # proposal stage asks for every index it fetches `fresh`, so the shell
     # skips a saved copy that may have changed since, such as one another
     # notebook saved this morning; the core has no clock to tell which.
-    moving <- is_github_key(key) && !is_commit(parse_github_key(key)$ref)
+    moving <- is_moving_source_key(key)
     provisional <- isTRUE(slot$provisional) && identical(slot$status, "ready")
     if (!is.null(slot) && (identical(slot$status, "failed") || moving && identical(slot$status, "ready") || provisional)) {
       state$packages$indexes[[key]] <- NULL
@@ -1451,6 +1497,43 @@ missing_package_error <- function(state, pkg) {
   }
   err <- new_run_error("missing_package", message = msg, names = pkg, fixes = character())
   list(state = state, error = err)
+}
+
+#' The packages a run error's message names as needed, for the fix "Add pkg
+#' to [extra_packages]" (#184): tidymodels names its engines only as strings
+#' (`set_engine("glmnet")`, "Package install is required for glmnet."), and
+#' tidytext its lexicons' packages ("The textdata package is required ...").
+#' A text match, so kept narrow. The message has the word "package", and a
+#' name counts only where the message marks it as one: quoted ('glmnet'),
+#' styled by cli (parsnip colours it), or just before "package" ("the
+#' textdata package", only when nothing is quoted or styled). Ordinary words
+#' that are also CRAN packages ("not", "here", "optional") are never marked so. Each name must also be in one of the
+#' notebook's loaded indexes, and not installed (the notebook's library or
+#' R's own), in the lock, or already wanted. A message R or a package
+#' translated doesn't match, and gets no fix.
+packages_named_in <- function(state, msg) {
+  name <- "([A-Za-z][A-Za-z0-9.]*[A-Za-z0-9])"
+  # The name each match of `pattern` (whose one group is `name`) marks.
+  marked <- function(pattern, text) {
+    m <- regmatches(text, gregexpr(pattern, text, perl = TRUE))[[1]]
+    sub(pattern, "\\1", m, perl = TRUE)
+  }
+  styled <- marked(paste0("\033\\[[0-9;]*m", name, "\033\\["), msg)
+  msg <- gsub("\033\\[[0-9;?]*[A-Za-z]", "", msg)
+  if (!grepl("\\bpackages?\\b", msg, ignore.case = TRUE, perl = TRUE)) return(character())
+  words <- unique(c(styled, marked(paste0("(?:'|\"|`|\u2018|\u201c)", name, "(?:'|\"|`|\u2019|\u201d)"), msg)))
+  # Only when nothing is quoted or styled: in "The optional package "ranger"", the
+  # quotes already say which word is the package ("optional" is one on CRAN too).
+  if (length(words) == 0) words <- marked(paste0("(?<![A-Za-z0-9._])", name, "(?=\\s+(?i:packages?)\\b)"), msg)
+  p <- state$packages
+  indexed <- unlist(lapply(p$indexes, function(s) if (identical(s$status, "ready")) s$index$name), use.names = FALSE)
+  words <- intersect(words, indexed)
+  lock <- state$file$lock$entries
+  words <- setdiff(words, c(names(p$active$installed), names(p$target$installed),
+                            if (!is.null(lock) && nrow(lock) > 0) lock$name,
+                            wanted_packages(state$graph, state$file$header)))
+  if (length(words) == 0) return(character())
+  setdiff(words, rownames(utils::installed.packages(c(.Library, .Library.site), noCache = TRUE)))
 }
 
 # ---- Projection --------------------------------------------------------------
@@ -1703,7 +1786,8 @@ packages_view <- function(state) {
     proposal <- list(date = p$proposal$date, status = p$proposal$status,
                      changes = p$proposal$changes, problems = p$proposal$problems,
                      apply = isTRUE(p$proposal$apply), restart = p$proposal$restart %||% character(),
-                     message = p$proposal$message, kind = p$proposal$kind %||% "date")
+                     message = p$proposal$message, kind = p$proposal$kind %||% "date",
+                     asked = p$proposal$asked %||% p$proposal$date)
   }
   # A Bioconductor move that failed isn't the page's update question
   # (`project_ember()`), so it is said as a problem instead. Where an

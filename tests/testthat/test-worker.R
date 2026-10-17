@@ -10,14 +10,11 @@ run_msg <- function(cell, token, code, role = "cell", order = character(), formu
 }
 
 #' Run code in a fresh harness and return the `done` report. Fails the
-#' test (via a timeout error) if the worker never replies.
-run_and_wait <- function(h, cell, token, code, ..., timeout = 5) {
+#' test if the worker exits or hangs before replying (next_frame()), or,
+#' with a `timeout`, once that many seconds pass.
+run_and_wait <- function(h, cell, token, code, ..., timeout = NULL) {
   h$send(run_msg(cell, token, code, ...))
-  repeat {
-    m <- h$receive(timeout)
-    if (is.null(m)) no_reply(h, timeout)
-    if (identical(m$type, "done")) return(m$report)
-  }
+  wait_for_done(h, timeout)
 }
 
 png_dims <- function(bytes) {
@@ -173,6 +170,29 @@ test_that("run_cell(): an assignment to a failing call's result isn't deep (item
   expect_identical(r$status, "error")
   expect_identical(r$error$call, "f(1)")
   expect_identical(r$error$deep, FALSE)
+})
+
+test_that("run_cell(): rlang's check_installed() error names its packages, as a packageNotFoundError does (#184)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  # The worker's library has no rlang, so the cell raises the condition the way
+  # check_installed() does: class rlib_error_package_not_found, with `pkg`.
+  r <- run_and_wait(h, "a", 1L, paste0('stop(structure(class = c("rlib_error_package_not_found", "rlib_error", ',
+                                       '"error", "condition"), list(message = "The packages are required.", ',
+                                       'call = NULL, pkg = c("emberabsent1", "emberabsent2"), version = NULL)))'))
+  expect_identical(r$status, "error")
+  expect_identical(r$error$package, c("emberabsent1", "emberabsent2"))
+
+  # One with a version may be installed and only too old: none is named, so the
+  # whole message stays (check_installed("rlang (>= 99.0)")).
+  r <- run_and_wait(h, "a", 2L, paste0('stop(structure(class = c("rlib_error_package_not_found", "rlib_error", ',
+                                       '"error", "condition"), list(message = "The package \\"stats\\" (>= 99.0) is required.", ',
+                                       'call = NULL, pkg = c("stats", "emberabsent1"), version = c("99.0", NA))))'))
+  expect_null(r$error$package)
+  r <- run_and_wait(h, "a", 3L, paste0('stop(structure(class = c("rlib_error_package_not_found", "rlib_error", ',
+                                       '"error", "condition"), list(message = "The package \\"stats\\" (>= 99.0) is required.", ',
+                                       'call = NULL, pkg = "stats", version = "99.0")))'))
+  expect_null(r$error$package)
 })
 
 test_that("run_cell(): a notebook function calling lm() with bad data (ui-3-tests 128)", {
@@ -1024,7 +1044,7 @@ test_that("an interrupt sent on the running frame stops that run", {
   for (i in 1:10) {
     h$send(run_msg(paste0("c", i), i, "Sys.sleep(5)"))
     r <- wait_for_done(h, timeout = 30, on_frame = function(m) {
-      if (identical(m$type, "running")) h$process$interrupt()
+      if (identical(m$type, "running")) h$interrupt()
     })
     expect_identical(r$status, "interrupted")
   }
@@ -1045,7 +1065,7 @@ test_that("interrupt_r_code", {
   while (!file.exists(started) && Sys.time() < deadline) Sys.sleep(0.05)
   expect_true(file.exists(started))
   t0 <- Sys.time()
-  h$process$interrupt()
+  h$interrupt()
   r <- wait_for_done(h, timeout = 5)
   elapsed <- as.numeric(Sys.time() - t0, units = "secs")
   expect_identical(r$status, "interrupted")
@@ -1057,13 +1077,52 @@ test_that("interrupt_r_code", {
   expect_identical(check$output$text, "[1] 1 2")
 })
 
-test_that("interrupt_between_runs_swallowed", {
-  # On Windows the interrupt arrives later than the 0.2 s this test waits,
-  # so it lands in the next cell; tracked in #48.
-  skip_on_os("windows")
+test_that("on Windows a worker with no console is interrupted all the same (#48)", {
+  # processx's interrupt() needs the worker to have a console, and one
+  # started by a server without a console has none: every interrupt was
+  # lost, while interrupt() said it was sent. The interrupt event needs no
+  # console.
+  skip_on_os(c("mac", "linux", "solaris"))
+  h <- worker_harness(detached = TRUE)
+  expect_true(isTRUE(h$hello$interrupts))
+  on.exit(h$close())
+  for (code in c("Sys.sleep(20)", "t0 <- Sys.time(); repeat if (Sys.time() - t0 > 20) break")) {
+    h$send(run_msg("a", 1L, code))
+    r <- wait_for_done(h, timeout = 10, on_frame = function(m) {
+      if (identical(m$type, "running")) expect_true(h$interrupt())
+    })
+    expect_identical(r$status, "interrupted")
+  }
+})
+
+test_that("on Windows interrupting a process with no interrupt event says it wasn't delivered (#48)", {
+  skip_on_os(c("mac", "linux", "solaris"))
+  p <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", "Sys.sleep(30)"))
+  on.exit(p$kill())
+  expect_false(interrupt_worker(p))
+  expect_true(p$is_alive())
+})
+
+test_that("an interrupt just after a run's done doesn't stop the next run (#48)", {
+  # The server sends the next run as soon as it has "done", so a late
+  # interrupt and the next run can reach the worker together. One still
+  # pending when the run starts is late, and must not stop it.
   h <- worker_harness()
   on.exit(h$close())
-  h$process$interrupt()
+  for (i in 1:50) {
+    h$send(run_msg(paste0("c", i), i, "1 + 1"))
+    r <- wait_for_done(h, timeout = 10)
+    expect_identical(r$status, "ok")
+    h$interrupt()
+  }
+  r <- run_and_wait(h, "last", 51L, "1 + 1")
+  expect_identical(r$status, "ok")
+})
+
+test_that("interrupt_between_runs_swallowed", {
+  h <- worker_harness()
+  on.exit(h$close())
+  h$interrupt()
   Sys.sleep(0.2)
   r <- run_and_wait(h, "a", 1L, "1 + 1")
   expect_identical(r$status, "ok")
@@ -1172,16 +1231,13 @@ test_that("known_attached_packages_never_shrink", {
 })
 
 test_that("interrupt_during_display_still_completes_bookkeeping", {
-  # Windows delivers the interrupt through processx's CTRL+C helper, too late
-  # for this test's timing; tracked in #48.
-  skip_on_os("windows")
   h <- worker_harness()
   on.exit(h$close())
   run_and_wait(h, "a", 1L,
     'registerS3method("print", "slowprint", function(x, ...) { Sys.sleep(3); cat("slow\\n") })')
   h$send(run_msg("b", 2L, 'options(digits = 3); orphan <- 42; structure(1, class = "slowprint")'))
   Sys.sleep(1)
-  h$process$interrupt()
+  h$interrupt()
   r <- wait_for_done(h, timeout = 10)
   expect_identical(r$status, "interrupted")
   expect_true("orphan" %in% r$created)
@@ -1201,14 +1257,11 @@ test_that("interrupt_during_display_still_completes_bookkeeping", {
 })
 
 test_that("sigint_during_remove_cell_does_not_crash_worker", {
-  # On Windows a late interrupt between cells can still stop the worker;
-  # tracked in #48.
-  skip_on_os("windows")
   h <- worker_harness()
   on.exit(h$close())
   run_and_wait(h, "a", 1L, "x <- 1")
   h$send(list(type = "remove_cell", cell = "a", order = character()))
-  h$process$interrupt()
+  h$interrupt()
   # a SIGINT landing in the remove_cell/rebuild_search_path bookkeeping (or
   # anywhere else between runs) has nothing to interrupt there and must be
   # swallowed, not reach top level and kill the worker.
