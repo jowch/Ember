@@ -382,6 +382,47 @@ test_that("when the library becomes ready the waiting cell is sent with the new 
   expect_equal(r$state$packages$active$key, target_key)
 })
 
+test_that("a cell rerun to wait for an install marks its dependents stale meanwhile, and they rerun after it (#248)", {
+  s <- pkg_state(list(S = cell(""), A = cell("x <- 1"), B = cell("y <- x + 1")))
+  r <- boot(s, c("A", "B"))
+  expect_equal(last_sent(r)$cell, "A")
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(4)))
+  expect_equal(last_sent(r)$cell, "B")
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(5)))
+  expect_false(r$state$results$B$stale)
+
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "library(dplyr)\nx <- 2")), at(6)),
+             ev_run("A", at(7)))
+  expect_true("A" %in% r$state$pending)
+  expect_null(last_sent(r))
+  expect_true(r$state$results$B$stale)
+  # Queued when A is sent, not before: it can't run ahead of A.
+  expect_false("B" %in% r$state$pending)
+
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(20)))
+  target_key <- r$state$packages$target$key
+  r <- drive(r$state, ev_library_checked(target_key, NULL, at(21)))
+  r <- drive(r$state, ev_install_done(r$state$packages$install$token, target_key,
+                                      manifest(c(dplyr = "1.1.4", cli = "3.6.5", glue = "1.8.0")),
+                                      NULL, character(), at(22)))
+  expect_equal(last_sent(r)$cell, "A")
+  r <- drive(r$state, wk_done(r$state$worker$gen, last_token(r), report(created = "x"), at(23)))
+  expect_equal(last_sent(r)$cell, "B")
+})
+
+test_that("a waiting settings cell marks later cells stale without letting them run first (#248)", {
+  s <- pkg_state(list(S = cell(""), A = cell("options(digits = 3)"), B = cell("z <- 2")))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(settings = list(list(kind = "option", name = "digits", before = 7, after = 3))), at(4)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "z"), at(5)))
+  expect_false(r$state$results$B$stale)
+
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "library(dplyr)\noptions(digits = 4)")), at(6)),
+             ev_run("A", at(7)))
+  expect_true(r$state$results$B$stale)
+  expect_null(last_sent(r))
+})
+
 # ---- Library readiness and restarts -------------------------------------------
 
 #' Get a notebook using dplyr through install, the worker started and the

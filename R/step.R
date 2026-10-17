@@ -212,6 +212,26 @@ schedule <- function(state) {
   if (!isTRUE(state$allowed) || isTRUE(state$read_only)) {
     return(list(state = state, effects = list()))
   }
+  waiting <- waiting_cells(state)
+  # A target library that failed can never bring in the packages these
+  # cells are waiting for; let them run anyway so the worker reports the
+  # missing-package error (packages-core.R, missing_package_error()) instead
+  # of leaving them queued forever with no result.
+  if (identical(state$packages$target$status, "failed") && length(waiting) > 0) {
+    waiting <- list()
+  }
+  # A queued cell waiting for an install will still run, so its dependents
+  # are marked stale now rather than showing their last result as current
+  # for the whole install (#248). They are queued only when the cell is
+  # sent, as before: a settings cell's dependents, or a reader of a name it
+  # used to define, needn't be waiting themselves, and queued now they
+  # could run ahead of it. One that can't run is dropped below, never sent.
+  for (wid in intersect(state$pending, names(waiting))) {
+    if (!can_run(state, wid)) next
+    prev <- state$results[[wid]]
+    state <- invalidate_dependents(state, wid, if (!is.null(prev)) prev$defined else character(),
+                                   queue = FALSE)
+  }
   # A conflicting library switch is waiting for the running cell to finish
   # (switch_library() in packages-core.R): send nothing new meanwhile, so no
   # further cell loads the version about to be replaced.
@@ -238,14 +258,6 @@ schedule <- function(state) {
   if (!identical(w$status, "ready")) return(list(state = state, effects = list()))
 
   id <- NULL
-  waiting <- waiting_cells(state)
-  # A target library that failed can never bring in the packages these
-  # cells are waiting for; let them run anyway so the worker reports the
-  # missing-package error (packages-core.R, missing_package_error()) instead
-  # of leaving them queued forever with no result.
-  if (identical(state$packages$target$status, "failed") && length(waiting) > 0) {
-    waiting <- list()
-  }
   repeat {
     queue <- run_order(state$graph, state$pending)
     if (length(queue) == 0) return(list(state = state, effects = list()))
