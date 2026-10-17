@@ -585,7 +585,7 @@ run_graph <- function(state, edited = edited_cells(state)) {
     union(state$results[[id]]$defined, code_edges(state$results[[id]]$code)$definitions)
   })
   names(old_defs) <- edited
-  refs <- lapply(g$cells[ids], `[[`, "references")
+  refs <- lapply(g$cells[ids], function(c) setdiff(c$references, c$masked_none))
   defs <- lapply(g$cells[ids], `[[`, "definitions")
   defs[edited] <- Map(union, defs[edited], old_defs)
   # Name to the cells that read it, and to the cells that define it now or
@@ -655,10 +655,16 @@ edited_cells <- function(state) {
 #' What a cell's result read: its references, plus those of the code it
 #' last ran when it was edited since (#175).
 ran_references <- function(state, id) {
-  refs <- state$graph$cells[[id]]$references
+  now <- state$graph$cells[[id]]
+  refs <- setdiff(now$references, now$masked_none)
   r <- state$results[[id]]
   if (is.null(r) || is.null(r$code) || identical(r$code, state$cells[[id]]$code)) return(refs)
-  union(refs, code_edges(r$code)$references)
+  # A column read (`x` in `subset(df, x > 1)`) the current code's data
+  # provides isn't a read of the global in the old code either (#107). One
+  # the current code doesn't resolve stays a reference, as #107 keeps an
+  # edge it can't settle.
+  old <- code_edges(r$code)
+  union(refs, setdiff(old$references, intersect(old$masked, now$masked_none)))
 }
 
 #' The static references and definitions of `code`, parsed once per code
@@ -671,7 +677,11 @@ code_edges <- function(code) {
   if (!is.null(hit)) return(hit)
   if (length(edges_cache) >= 1000) rm(list = ls(edges_cache, all.names = TRUE), envir = edges_cache)
   parsed <- read_cell(code)
-  hit <- list(references = references_of(parsed), definitions = definitions_of(parsed))
+  refs <- parsed$references
+  # Names read only inside a data-masking call (`masked`): whether they read
+  # the global depends on the data's columns.
+  masked <- setdiff(unique(refs$name[refs$where == "masked"]), refs$name[refs$where != "masked"])
+  hit <- list(references = references_of(parsed), definitions = definitions_of(parsed), masked = masked)
   assign(key, hit, envir = edges_cache)
   hit
 }

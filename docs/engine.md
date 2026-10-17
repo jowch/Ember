@@ -174,6 +174,7 @@ Behind it sit all scheduling, invalidation, safe preview, worker lifecycle, fram
 
 ## Where the direction strains
 
+- **Caches.** `run_graph()` keeps its last answer, and `code_edges()` the analysis of code it has seen, in package environments (step.R). Both are keyed on everything they read, so `step()` still returns the same thing for the same state; they only save work, and two open notebooks share them.
 - **Replies.** API calls need answers (inserted ids, refusals, `skipped`), so `step()` returns a third field. It is honest but not pure Elm.
 - **IO the graph needs.** `read_cell()` follows `source()` through a reader. To stay pure, file text lives in the state and arrives by `fx_read_files` → `ev_files_read`. Opening a notebook with sourced files takes two steps inside one drain, so callers never see the gap.
 - **A blocking request from the worker.** A computed `source()` makes the worker wait for a reply. That works because the reply is sent within the same drain, and the worker queues anything else it reads while waiting (`deferred`). The pure core can't express "wait". It only answers.
