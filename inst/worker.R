@@ -195,14 +195,18 @@ listen_for_interrupts <- function() {
 #' worker killed right after starting it (#235). processx makes the job
 #' only as it starts a child, and Windows says nothing when it does, so the
 #' half-second thread in src/children.c could miss that first child.
-#' Silent: a failure leaves the thread to release the job, as before.
+#' System32's cmd with `/d`, so no AutoRun command (conda's, say) runs
+#' first. The job exists once the child has started, so a child that hangs
+#' anyway is killed after two seconds and the job released all the same.
+#' Silent: an error or warning here never reaches the cell, and the job is
+#' released whatever happened (the thread is left for a start that failed).
 release_processx_job <- function() {
   tryCatch({
-    p <- processx::process$new(Sys.getenv("COMSPEC", "cmd.exe"), c("/c", "exit"), cleanup = TRUE,
-                                windows_hide_window = TRUE)
-    p$wait()
-    .Call(release_children)
-  }, error = function(e) NULL)
+    cmd <- file.path(Sys.getenv("SystemRoot", "C:/Windows"), "System32", "cmd.exe")
+    p <- processx::process$new(cmd, c("/d", "/c", "exit"), cleanup = TRUE, windows_hide_window = TRUE)
+    p$wait(2000)
+    if (p$is_alive()) p$kill()
+  }, warning = function(w) NULL, error = function(e) NULL, finally = .Call(release_children))
   invisible(NULL)
 }
 

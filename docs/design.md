@@ -212,9 +212,9 @@ same, so the worker clears that one setting on processx's job after every
 run, before it says the run is done, and from a thread every half second
 for a cell still running (src/children.c). processx makes that job only as
 it starts its first child, so when processx loads in the worker, the worker
-has it start one that only exits and releases the job at once (#235). A
-processx or callr child then outlives a restart and a killed server, as on
-Unix, the first one included.
+has it start one that only exits (System32's `cmd /d /c exit`) and
+releases the job at once (#235). A processx or callr child then outlives a
+restart and a killed server, as on Unix, the first one included.
 
 On every system the worker also drops the `PROCESSX_<id>` marker it
 inherits as the server's process tree (`cleanup_tree`). Otherwise a cell's
