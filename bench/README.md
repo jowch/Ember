@@ -34,8 +34,11 @@ may not, and the tests in `tests/testthat` don't time that either.
 It prints a table of each case's time on both sides (the median over
 rounds) and exits 1 when a case is more than 25% slower on head.
 Identical builds read within 5% of each other on a 4-core cloud
-container under a bursty background load, and a build made 30% slower
-fails (#163); anything under 25% shows in the table but doesn't fail. The `bench` workflow runs it on
+container under a bursty background load. A build with about 30% added
+to each timed call fails, with six of the seven slowed cases flagged at
+1.26x to 1.50x (#163). A slowdown near 30% can still read under 25% on a
+single case, so treat a case in the 1.15x to 1.25x range as worth a
+look; anything under 25% shows in the table but doesn't fail. The `bench` workflow runs it on
 every pull request that changes package code (R/, inst/, src/) or the
 fixtures. It is a separate workflow so that it can stay out of the
 required checks: a red `bench` means "look at this table", and a change that
