@@ -181,6 +181,15 @@ when the notebook restarts. A process a cell starts in a session of its own
 (processx, callr) is outside the group and outlives both a restart and a
 killed server.
 
+Windows has no process groups, and gets the same result another way (#208).
+What a cell starts with `system()` ends with the worker there, since R puts
+each such child in a job object that ends it once the worker ends. processx
+(and so callr) puts its children in a job object of its own that does the
+same, so a thread in the worker clears that one setting on processx's job
+every half second (src/children.c). A processx or callr child then outlives
+a restart and a killed server, as on Unix, unless the worker is killed in
+the half second after the cell started it.
+
 A stopped worker is killed, so R never removes its temp folder itself. The
 worker names its `tempdir()` in its hello, and the server removes that
 folder once the worker has stopped (closed, restarted, failed or crashed),

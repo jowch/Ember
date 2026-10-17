@@ -152,7 +152,10 @@ loaded_namespace_versions <- function() {
 #' hello, from the package's DLL (src/interrupt.c, #48): loaded by path
 #' (`EMBER_DLL`), since the worker never loads the package. If that fails,
 #' the server finds no event to set and says the interrupt couldn't be
-#' delivered. Elsewhere the server sends SIGINT and this does nothing.
+#' delivered. The same DLL keeps a cell's processx and callr children
+#' alive past this process (src/children.c, #208). Elsewhere the server
+#' sends SIGINT, those children are in sessions of their own, and this
+#' does nothing.
 listen_for_interrupts <- function() {
   path <- Sys.getenv("EMBER_DLL")
   Sys.unsetenv("EMBER_DLL")
@@ -160,6 +163,9 @@ listen_for_interrupts <- function() {
   invisible(tryCatch({
     dll <- dyn.load(path)
     interrupt_drain <<- getNativeSymbolInfo("C_interrupt_drain", dll)
+    # So a cell's processx and callr children outlive this process, as
+    # they do on Unix (src/children.c, #208).
+    tryCatch(.Call(getNativeSymbolInfo("C_keep_cell_children", dll)), error = function(e) NULL)
     isTRUE(.Call(getNativeSymbolInfo("C_interrupt_listen", dll)))
   }, error = function(e) FALSE))
 }
