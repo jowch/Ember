@@ -949,6 +949,9 @@ test_that("on Windows a cell's first processx child outlives a server killed rig
   on.exit(if (server$is_alive()) server$kill(), add = TRUE)
   deadline <- Sys.time() + 60
   while (!file.exists(pidfile) && server$is_alive() && Sys.time() < deadline) Sys.sleep(0.01)
+  # read_all_output() waits for the server to end, so a server still
+  # running without the file is ended first.
+  if (!file.exists(pidfile) && server$is_alive()) server$kill()
   expect_true(file.exists(pidfile), info = server$read_all_output())
   server$kill()
   pids <- as.integer(readLines(pidfile))
