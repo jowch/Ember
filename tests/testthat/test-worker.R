@@ -1257,6 +1257,42 @@ test_that("require_and_character_only_library_tracked_for_search_path", {
   expect_false(grepl("package:emberfix2", r$output$text, fixed = TRUE))
 })
 
+test_that("a package that attaches others keeps plain R's search order after a rebuild (#180)", {
+  # emberfix4 attaches emberfix2 (Depends) before itself and emberfix1
+  # (.onAttach) after, so plain R has emberfix1 above emberfix4 above
+  # emberfix2. Rebuilding in the order the library() calls returned put
+  # emberfix4 on top.
+  flib <- fixture_lib()
+  h <- worker_harness(extra_libs = flib)
+  on.exit(h$close())
+  run_and_wait(h, "a", 1L, "library(emberfix4)", order = c("a", "b"))
+  run_and_wait(h, "b", 2L, "library(tools)", order = c("a", "b"))
+  h$send(list(type = "remove_cell", cell = "b", order = "a"))
+  r <- run_and_wait(h, "chk", 3L, 'grep("emberfix|tools", search(), value = TRUE)', order = c("a", "chk"))
+  expect_identical(r$output$text, '[1] "package:emberfix1" "package:emberfix4" "package:emberfix2"')
+})
+
+test_that("a library() wrapper on the search path is used, missing arguments and all (#180)", {
+  # emberfix3 is conflicted's case: `.emberfix3` at position 2, with a
+  # library() that passes its missing arguments on, and a name that fails
+  # when base library() reads it. Through Ember's own library() the
+  # missing `exclude` arrived as given ("only one of 'include.only' and
+  # 'exclude' can be used"), and the rebuild's base library() failed on
+  # the name, so every package it attached again was lost.
+  flib <- fixture_lib()
+  h <- worker_harness(extra_libs = flib)
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "library(emberfix1); library(emberfix2); emberfix3::shield()",
+                    order = c("a", "b", "chk"))
+  expect_identical(r$status, "ok")
+  r <- run_and_wait(h, "b", 2L, "library(tools)", order = c("a", "b", "chk"), settings = "a")
+  expect_identical(r$status, "ok")
+  h$send(list(type = "remove_cell", cell = "b", order = c("a", "chk")))
+  r <- run_and_wait(h, "chk", 3L, 'grep("emberfix|tools", search(), value = TRUE)',
+                    order = c("a", "chk"), settings = "a")
+  expect_identical(r$output$text, '[1] ".emberfix3"        "package:emberfix2" "package:emberfix1"')
+})
+
 test_that("drop_globals removes a cell's globals but keeps its attached packages (ui-3 12)", {
   h <- worker_harness()
   on.exit(h$close())

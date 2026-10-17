@@ -668,7 +668,7 @@ run_cell <- function(msg) {
       # was a no-op because it was already on the path (a plain search()
       # diff would miss that case, and so would wrongly drop the package
       # from the desired path on the next rebuild).
-      attached[[msg$cell]] <<- attach_requests[[msg$cell]]
+      attached[[msg$cell]] <<- in_attach_order(attach_requests[[msg$cell]])
       ever_attached <<- union(ever_attached, attach_requests[[msg$cell]])
       rc$loaded <- loaded_namespace_versions()
 
@@ -1085,6 +1085,18 @@ packages_on_search <- function(s = search()) {
   sub("^package:", "", grep("^package:", s, value = TRUE))
 }
 
+#' `pkgs` in the order they were attached, as the search path shows it:
+#' the lowest first. A package's own library() calls finish in a
+#' different order: one that attaches others in its .onAttach
+#' (tidymodels) is attached before them but its call returns after, and
+#' Depends are attached before the package. Attaching again in call order
+#' would put the package above the ones it attached, which plain R
+#' doesn't. Packages not on the path keep their order, at the end.
+in_attach_order <- function(pkgs) {
+  pos <- match(pkgs, packages_on_search())
+  pkgs[order(-pos, na.last = TRUE)]
+}
+
 #' The locale categories snapshotted and restored individually. Not every
 #' category exists on every platform (LC_MESSAGES is absent on Windows),
 #' so `snapshot_locale()` only keeps the ones `Sys.getlocale()` answers.
@@ -1424,6 +1436,17 @@ install_traces <- function() {
       # so the error call and the function's own sys.call() are the user's.
       real_call <- mc
       real_call[[1]] <- as.name(name)
+      # An argument the caller passes on from its own missing formal
+      # (`exclude = exclude` in conflicted's library() wrapper) is left out,
+      # so it stays missing: evaluated in this child environment, R's
+      # missing() would no longer see through it to the caller's frame.
+      for (arg in rev(which(nzchar(names(real_call) %||% character(length(real_call)))))) {
+        val <- real_call[[arg]]
+        if (is.symbol(val) && nzchar(as.character(val)) &&
+            isTRUE(tryCatch(eval(call("missing", val), call_env), error = function(e) FALSE))) {
+          real_call[[arg]] <- NULL
+        }
+      }
       result <- withVisible(eval(real_call, list2env(stats::setNames(list(original), name),
                                                      parent = call_env)))
       # library()/require(): record that this cell named a package for
@@ -1589,8 +1612,14 @@ rebuild_search_path <- function() {
     tryCatch(detach(paste0("package:", p), character.only = TRUE, unload = FALSE, force = TRUE),
              error = function(e) NULL)
   }
+  # library() as the notebook's own code finds it, on the search path: a
+  # package can wrap it to keep an environment of its own in step.
+  # conflicted's `.conflicts` holds a library() that detaches it, attaches,
+  # and puts it back at position 2. Base library() with `.conflicts` still
+  # attached fails on its unresolved names, and the package is lost (#180).
+  attach_one <- get("library", envir = parent.env(globalenv()), mode = "function")
   for (p in desired) {
-    tryCatch(library(p, character.only = TRUE), error = function(e) NULL)
+    tryCatch(attach_one(p, character.only = TRUE), error = function(e) NULL)
   }
   invisible()
 }

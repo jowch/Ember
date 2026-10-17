@@ -1,0 +1,9 @@
+Package: emberfix4
+Title: Ember worker test fixture 4
+Version: 0.0.1
+Description: A fixture that attaches other packages itself: emberfix2
+    through Depends, and emberfix1 from its .onAttach, as tidymodels and
+    tidyverse do.
+Depends: emberfix2
+License: MIT
+Encoding: UTF-8
