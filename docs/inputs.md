@@ -346,15 +346,17 @@ coming later.
 
 1. **Package name.** `emberui` (recommended: PlutoUI's counterpart, short)
    or `emberinputs`. Neither is taken on CRAN.
-2. **Where it ships.** CRAN (recommended) or GitHub/r-universe only, like
-   Ember.
-   - *CRAN:* a notebook installs it like any package, and `Rscript` users
-     get it with `install.packages()`. The cost is upkeep: CRAN's checks
-     and policy changes need answering for as long as it is there. A
-     base-R package with no dependencies and no compiled code keeps that
-     small.
-   - *Not on CRAN:* notebooks can't install from r-universe (`ember_repos()`
-     in R/resolve.R knows CRAN, Bioconductor and GitHub sources), so Ember
-     would write a GitHub `[sources]` entry itself whenever it sees the
-     package, and `Rscript` users install it by hand.
-   - Either way, `[sources]` is the stopgap until a CRAN release.
+2. **Where it ships.** r-universe only, like Ember (recommended), or CRAN.
+   - *r-universe only:* no standing upkeep beyond Ember's own. CRAN would
+     add policy changes, R-devel check failures with fix-by deadlines, and
+     archival if one is missed, even for a package with no dependencies.
+     Everyone who sees a widget already has Ember, which ships the same
+     way. This waits on notebooks being able to install from r-universe:
+     today `ember_repos()` in R/resolve.R knows only CRAN, Bioconductor and
+     GitHub sources, and that work is being filed as its own issue. Until
+     then, Ember writes a GitHub `[sources]` entry itself when it sees the
+     package.
+   - *CRAN:* someone running a shared notebook with plain `Rscript` and no
+     Ember gets the package with a bare `install.packages()`, instead of
+     naming the r-universe repository. That is the only reach CRAN adds:
+     the `Rscript` fallback needs only the package, from wherever it comes.
