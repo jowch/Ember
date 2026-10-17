@@ -476,6 +476,7 @@ test_that("[net] on macOS and Windows, a Bioconductor package Package Manager ha
   path <- file.path(dir, "nb.R")
   write_atomic(path, format_notebook(file))
 
+  started <- Sys.time()
   nb <- open_notebook(path, repos = ember_repos(), cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
   res <- run_cells(nb, wait = TRUE, timeout = 600)
@@ -487,12 +488,17 @@ test_that("[net] on macOS and Windows, a Bioconductor package Package Manager ha
   expect_equal(status$packages$version[row], "1.46.0")
   expect_equal(status$packages$status[row], "installed")
   expect_match(snap_view(notebook_snapshot(nb), "A")$output$text, "1.46.0", fixed = TRUE)
-  # renv records the repository it installed from: a build from Package
-  # Manager's source would say BioCsoft.
-  desc <- read.dcf(file.path(status$library$path, "SNPRelate", "DESCRIPTION"),
-                   fields = c("RemoteReposName", "RemoteRepos"))
-  expect_equal(unname(desc[1, "RemoteReposName"]), "Bioconductor")
-  expect_equal(unname(desc[1, "RemoteRepos"]), "https://bioconductor.org/packages/3.23/bioc")
+  # It came as a binary, and not Package Manager's, so Bioconductor's: a
+  # build on this machine would have been built today, after `started`.
+  # (renv's RemoteRepos can't say which repository: Bioconductor's Windows
+  # binaries carry RemoteUrl, RemoteRef and RemoteSha of their own, and
+  # renv then adds none.)
+  ppm <- read_available(repo_url(ember_repos(), repo_key("bioc", "2026-10-08", "3.23")), .Platform$pkgType)
+  expect_false(is.null(ppm))
+  expect_false("SNPRelate" %in% ppm[, "Package"])
+  built <- read.dcf(file.path(status$library$path, "SNPRelate", "DESCRIPTION"), fields = "Built")[1, 1]
+  built_at <- as.POSIXct(trimws(strsplit(built, ";", fixed = TRUE)[[1]][[3]]), tz = "UTC")
+  expect_lt(as.numeric(built_at), as.numeric(started))
 })
 
 # ---- 90: the empty-log regression, with the failing-installer fixture ------
