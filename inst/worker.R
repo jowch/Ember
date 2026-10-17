@@ -1743,14 +1743,16 @@ text_form <- function(value) {
 html_text_form <- function(value, html) {
   tf <- text_form(value)
   if (nzchar(trimws(tf$text)) && !grepl("^\\s*<", tf$text)) return(tf)
-  txt <- html_to_text(html)
+  # The text form must never cost the page its HTML view: a conversion that
+  # fails gives the line naming the output.
+  txt <- tryCatch(html_to_text(html), error = function(e) "")
   if (!nzchar(txt)) {
     kind <- if (inherits(value, "htmlwidget")) paste(class(value)[1], "htmlwidget") else "HTML output"
     return(list(text = sprintf("<%s: no text form; it shows in the notebook's page>", kind), truncated = FALSE))
   }
   lines <- strsplit(txt, "\n", fixed = TRUE)[[1]]
-  truncated <- length(lines) > 50
-  if (truncated) lines <- lines[1:50]
+  truncated <- length(lines) > 50 || isTRUE(attr(txt, "cut"))
+  if (length(lines) > 50) lines <- lines[1:50]
   txt <- paste(lines, collapse = "\n")
   if (nchar(txt) > 4000) {
     txt <- substr(txt, 1, 4000)
@@ -1764,6 +1766,13 @@ html_text_form <- function(value, html) {
 html_to_text <- function(html) {
   h <- paste(html, collapse = "\n")
   h <- gsub("(?is)<(style|script)\\b.*?</\\1\\s*>|<!--.*?-->", "", h, perl = TRUE)
+  # The text form keeps 50 lines, so only the start of a long table is read:
+  # up to its 60th row, and at most 200,000 characters.
+  # `cut` says so, for the text form's `truncated`.
+  rows <- gregexpr("(?i)</tr\\s*>", h, perl = TRUE)[[1]]
+  cut <- length(rows) > 60 || nchar(h) > 200000
+  if (length(rows) > 60) h <- substr(h, 1, rows[60] + attr(rows, "match.length")[60] - 1)
+  if (nchar(h) > 200000) h <- substr(h, 1, 200000)
   # Line breaks in HTML source are spaces; the lines below come from the markup.
   h <- gsub("[\r\n]+", " ", h, perl = TRUE)
   h <- gsub("(?i)</t[dh]\\s*>", "\t", h, perl = TRUE)
@@ -1775,7 +1784,8 @@ html_to_text <- function(html) {
   regmatches(h, num) <- lapply(regmatches(h, num), function(m) {
     hex <- grepl("^&#x", m)
     code <- ifelse(hex, strtoi(sub("^&#x([0-9a-fA-F]+);$", "\\1", m), 16L), suppressWarnings(as.integer(sub("^&#([0-9]+);$", "\\1", m))))
-    out <- vapply(code, function(cp) if (is.na(cp)) "" else intToUtf8(cp), "")
+    # A code point UTF-8 can't hold (a lone surrogate, above U+10FFFF) is U+FFFD.
+    out <- vapply(code, function(cp) if (is.na(cp)) "" else { u <- intToUtf8(cp); if (is.na(u)) "\uFFFD" else u }, "")
     ifelse(is.na(code), m, out)
   })
   h <- gsub("&amp;", "&", h, fixed = TRUE)
@@ -1785,7 +1795,7 @@ html_to_text <- function(html) {
     paste(cells, collapse = "\t")
   }, "", USE.NAMES = FALSE)
   lines <- sub("\t+$", "", lines)
-  paste(lines[nzchar(trimws(lines))], collapse = "\n")
+  structure(paste(lines[nzchar(trimws(lines))], collapse = "\n"), cut = cut)
 }
 
 #' print() text, with colour on so tibble/cli output keeps its colours.

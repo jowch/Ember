@@ -1612,9 +1612,20 @@ test_that("an HTML output whose print() text is its source or empty gets the HTM
     'structure(1, class = "ember_sum")', sep = "\n"))
   expect_identical(r$output$text, "a table of 2 rows")
 
+  # A code point UTF-8 can't hold is U+FFFD; the HTML view stays.
+  r <- run_and_wait(h, "d", 4L, 'htmltools::HTML("<p>a &#xD800; b &#1114112; c</p>")')
+  expect_identical(r$output$kind, "html")
+  expect_identical(r$output$text, "a \uFFFD b \uFFFD c")
+
+  # A long table is read only to its 60th row: the text form keeps 50 lines.
+  r <- run_and_wait(h, "e", 5L, paste0('htmltools::HTML(paste0("<table>", strrep("<tr><td>x</td><td>1</td></tr>", 1e5), "</table>"))'), timeout = 30)
+  expect_identical(r$output$kind, "html")
+  expect_identical(r$output$text, paste(rep("x\t1", 50), collapse = "\n"))
+  expect_true(r$output$truncated)
+
   # HTML with no text at all, as a widget whose data is in a script: the
   # text form says what it is rather than being empty.
-  r <- run_and_wait(h, "c", 3L, 'htmltools::tags$div(htmltools::tags$script("var data = [1, 2];"))')
+  r <- run_and_wait(h, "c", 6L, 'htmltools::tags$div(htmltools::tags$script("var data = [1, 2];"))')
   expect_identical(r$output$kind, "html")
   expect_identical(r$output$text, "<HTML output: no text form; it shows in the notebook's page>")
 })
