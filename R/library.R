@@ -12,6 +12,8 @@
 #   libraries/R-4.6/<platform>/<key>.staging-<pid>-<rand>/   in progress
 #   renv-cache/                              RENV_PATHS_CACHE
 #   renv-root/                               RENV_PATHS_ROOT (sandbox etc.)
+#   worker/R-<x.y.z>-<md5 of worker.R>.Rc    the worker's compiled image
+#                                            (shell.R, ready_worker_image())
 #
 # Ember's own renv cache, not the user's: `ember::clean()` deletes cache
 # entries no Ember library uses, which must never touch the user's own renv
@@ -93,6 +95,17 @@ index_may_change <- function(key, now = Sys.time()) {
   if (is_github_key(key) || is_universe_key(key)) return(FALSE)
   date <- tryCatch(as.Date(strsplit(key, "/", fixed = TRUE)[[1]][[2]]), error = function(e) NA)
   !is.na(date) && date >= as.Date(format(now, tz = "UTC", usetz = FALSE)) - 1
+}
+
+#' Whether a 404 for `key` can mean "not published yet" (#162): a date
+#' `index_may_change()` covers, and no later than tomorrow in UTC, which is
+#' as far ahead as a clock east of UTC can be. A 404 for a date further
+#' ahead (a typo, a year off) is just a failure, so nothing steps back
+#' from it day by day.
+may_be_unpublished <- function(key, now = Sys.time()) {
+  if (!index_may_change(key, now)) return(FALSE)
+  date <- as.Date(strsplit(key, "/", fixed = TRUE)[[1]][[2]])
+  date <= as.Date(format(now, tz = "UTC", usetz = FALSE)) + 1
 }
 
 #' The label a dated repo key resolves to (`read_repo_index()`'s `label`,
@@ -953,6 +966,8 @@ job_start <- function(key, cmd, nb, make_progress, make_done) {
   }
   job$subs[[length(job$subs) + 1L]] <- list(nb = nb, make_progress = make_progress,
                                             make_done = make_done)
+  # An idle session polls every 2 s; read the job at the job pace from now.
+  hurry_poll(nb, 0.25)
   invisible(NULL)
 }
 

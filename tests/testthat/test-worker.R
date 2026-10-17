@@ -10,14 +10,11 @@ run_msg <- function(cell, token, code, role = "cell", order = character(), formu
 }
 
 #' Run code in a fresh harness and return the `done` report. Fails the
-#' test (via a timeout error) if the worker never replies.
-run_and_wait <- function(h, cell, token, code, ..., timeout = 5) {
+#' test if the worker exits or hangs before replying (next_frame()), or,
+#' with a `timeout`, once that many seconds pass.
+run_and_wait <- function(h, cell, token, code, ..., timeout = NULL) {
   h$send(run_msg(cell, token, code, ...))
-  repeat {
-    m <- h$receive(timeout)
-    if (is.null(m)) no_reply(h, timeout)
-    if (identical(m$type, "done")) return(m$report)
-  }
+  wait_for_done(h, timeout)
 }
 
 png_dims <- function(bytes) {

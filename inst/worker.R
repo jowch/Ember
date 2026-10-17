@@ -3,7 +3,9 @@
 #
 # Started by the server as
 #   Rscript --vanilla -e '<boot>' <port>
-# where <boot> sources this file into a private environment whose parent is
+# where <boot> (worker_boot(), R/shell.R) loads this file's compiled image
+# (EMBER_WORKER_IMAGE, made by compiler::cmpfile(); #229), or sources the
+# file when there is none, into a private environment whose parent is
 # baseenv(), then calls main():
 #   local({e <- new.env(parent = baseenv()); sys.source(Sys.getenv("EMBER_WORKER"), e); e$main()})
 # so nothing here is visible from, or shadowed by, the notebook's globals
@@ -55,7 +57,8 @@
 #   quit
 #
 # Worker -> server
-#   hello        secret, pid, r_version, lib_paths, tempdir, interrupts
+#   hello        secret, pid, r_version, lib_paths, tempdir, interrupts,
+#                cell_children
 #   console      cell, token, item = list(kind, text)   streamed during a run
 #   source       cell, token, path, text                before a computed
 #                                                       source() runs; waits
@@ -118,6 +121,8 @@ search_added <- character()  # every attach() entry any cell has added this sess
 running <- NULL        # list(cell, token) during a run (for the source trace)
 deferred <- list()     # messages read while waiting for a source_reply
 interrupt_drain <- NULL # Windows: the DLL routine that drops a late interrupt (listen_for_interrupts())
+release_children <- NULL # Windows: the DLL routine that releases a cell's processx children (#208)
+keeping_children <- FALSE  # Windows: whether the thread that releases them runs
 load_log <- NULL       # settings changes made inside loadNamespace/library during a run
 notebook_options <- character()  # option names an options() call from the
                        # notebook's own code (top-level, or a function a
@@ -152,7 +157,10 @@ loaded_namespace_versions <- function() {
 #' hello, from the package's DLL (src/interrupt.c, #48): loaded by path
 #' (`EMBER_DLL`), since the worker never loads the package. If that fails,
 #' the server finds no event to set and says the interrupt couldn't be
-#' delivered. Elsewhere the server sends SIGINT and this does nothing.
+#' delivered. The same DLL keeps a cell's processx and callr children
+#' alive past this process (src/children.c, #208). Elsewhere the server
+#' sends SIGINT, those children are in sessions of their own, and this
+#' does nothing.
 listen_for_interrupts <- function() {
   path <- Sys.getenv("EMBER_DLL")
   Sys.unsetenv("EMBER_DLL")
@@ -160,6 +168,11 @@ listen_for_interrupts <- function() {
   invisible(tryCatch({
     dll <- dyn.load(path)
     interrupt_drain <<- getNativeSymbolInfo("C_interrupt_drain", dll)
+    # So a cell's processx and callr children outlive this process, as
+    # they do on Unix (src/children.c, #208).
+    release_children <<- getNativeSymbolInfo("C_release_cell_children", dll)
+    keeping_children <<- isTRUE(tryCatch(.Call(getNativeSymbolInfo("C_keep_cell_children", dll)),
+                                         error = function(e) FALSE))
     isTRUE(.Call(getNativeSymbolInfo("C_interrupt_listen", dll)))
   }, error = function(e) FALSE))
 }
@@ -173,7 +186,23 @@ drain_late_interrupt <- function() {
   invisible(NULL)
 }
 
+#' processx marks the worker as the server's process tree (`cleanup_tree`,
+#' shell.R): `PROCESSX_<id>=YES` in its environment, which everything it
+#' starts inherits. When the server collects the old worker's process
+#' object after a restart, its finalizer ends every process with that
+#' marker, a cell's processx and callr children too, which are meant to
+#' outlive a restart (design.md, #150). Dropped before any cell runs, so
+#' a cell's children don't carry it; what a cell starts with `system()`
+#' still ends with the worker, through the process group and reaper on
+#' Unix and R's job object on Windows (#232).
+drop_processx_marker <- function() {
+  marks <- grep("^PROCESSX_", names(Sys.getenv()), value = TRUE)
+  if (length(marks)) Sys.unsetenv(marks)
+  invisible(marks)
+}
+
 main <- function() {
+  drop_processx_marker()
   listening <- listen_for_interrupts()
   port <- as.integer(commandArgs(trailingOnly = TRUE)[1])
   con <<- socketConnection("127.0.0.1", port, blocking = TRUE, open = "r+b",
@@ -200,7 +229,8 @@ main <- function() {
     send(list(type = "hello", secret = secret,
               pid = Sys.getpid(), r_version = R.version.string,
               lib_paths = .libPaths(), loaded = loaded_namespace_versions(),
-              tempdir = tempdir(), interrupts = listening))
+              tempdir = tempdir(), interrupts = listening,
+              cell_children = keeping_children))
     # This frame stays on the stack while every cell runs, so a cell
     # walking sys.frames() would find the secret here.
     rm(secret)
@@ -248,8 +278,11 @@ handle_next <- function() {
   switch(msg$type,
     run = {
       drain_late_interrupt()
-      send(list(type = "done", cell = msg$cell, token = msg$token,
-                report = run_cell(msg)))
+      report <- run_cell(msg)
+      # Before "done": the children a finished cell started are released
+      # by the time the server hears it ended (src/children.c, #208).
+      if (!is.null(release_children)) .Call(release_children)
+      send(list(type = "done", cell = msg$cell, token = msg$token, report = report))
     },
     remove_cell = {
       remove_cell(msg$cell)
@@ -378,7 +411,8 @@ trace_line <- function(...) {
 #' or NULL), console (list of items, also streamed), error (NULL or
 #' list(message, call, traceback, span)), runtime, created, changed, removed,
 #' settings, load_notes, attached (package -> exports, for packages newly
-#' attached), formula_misses, globals (see summarise_globals()),
+#' attached), formula_misses, columns (see global_columns()), globals (see
+#' summarise_globals()),
 #' changed_in_place (names of other cells' environments, R6 objects and
 #' reference class objects this run changed; env_fingerprint())).
 #' `error$span` is set only for role "text": the 1-based index of the
@@ -402,7 +436,7 @@ run_cell <- function(msg) {
              runtime = NA_real_, created = character(), changed = character(),
              removed = character(), settings = list(), load_notes = list(),
              attached = list(), formula_misses = character(), loaded = character(),
-             globals = list(), changed_in_place = character())
+             globals = list(), changed_in_place = character(), columns = list())
 
   # `dev`/`console` are closed here (not just at their normal point of use
   # below) so an interrupt landing anywhere in this function -- including
@@ -739,6 +773,8 @@ run_cell <- function(msg) {
       rebuild_search_path()
 
       rc$formula_misses <- check_formulas(msg$formulas)
+      # No names (every masked read an edge) if reading them fails.
+      rc$columns <- tryCatch(global_columns(facts$created), error = function(e) list())
       trace_line("bookkept", msg$cell)
     })
 
@@ -1940,6 +1976,30 @@ data_call_name <- function(head) {
     if (!is.null(exported) && identical(fn, exported)) return(name)
   }
   NULL
+}
+
+#' The most names `global_columns()` reports for one value. A name past
+#' it is taken for a global, which costs an extra edge, never a missing one.
+GLOBAL_COLUMNS_MAX <- 10000L
+
+#' After the run: the names each global the cell created has as data, for
+#' the graph's reading of `subset(df, x > 1)` and the like (graph.R,
+#' `resolve_masked()`). A data frame (`frame = TRUE`) or a plain list gets
+#' its `names()`; any other value gets none, so every name read under it
+#' is a reference. An active binding isn't read, nor reported: a global
+#' with no entry counts as having no names.
+global_columns <- function(names) {
+  out <- list()
+  for (n in names) {
+    if (bindingIsActive(n, globalenv())) next
+    v <- tryCatch(get(n, envir = globalenv(), inherits = FALSE), error = function(e) NULL)
+    frame <- is.data.frame(v)
+    cols <- if (frame || (is.list(v) && !is.object(v))) names(v) else NULL
+    cols <- if (is.character(cols)) cols[!is.na(cols) & nzchar(cols)] else character()
+    if (length(cols) > GLOBAL_COLUMNS_MAX) cols <- cols[seq_len(GLOBAL_COLUMNS_MAX)]
+    out[[n]] <- list(frame = frame, names = cols)
+  }
+  out
 }
 
 #' After the run: which names taken as columns are not in the data. The

@@ -164,14 +164,31 @@ This maps one to one onto Pluto's server and workers:
   library, where rig puts pak, is hidden). A worker starts and connects in
   about 115 ms; package loading comes on top.
 
+  The worker loads a byte-compiled image of `worker.R` when there is one
+  (#229). R's JIT compiles a function the second time it's called, so a
+  worker running `worker.R` as source paid for compiling its own run code
+  on its second run: 0.35 to 0.57 s on Linux, and over 5 s on a slow
+  Windows runner. From the image, that run takes 0.09 s. The first notebook
+  opened in a process compiles the image in a separate `Rscript`
+  (`compiler::cmpfile()`, about 1.5 s, nothing waits on it). The image goes
+  in the cache under `worker/`, named by R's version and `worker.R`'s MD5.
+  Workers started before it's ready, or with an image that won't load,
+  source `worker.R` as before. Turning the JIT off instead would make the
+  user's own code slower than in plain R.
+
 The server resets SIGINT to its default before starting workers. A process
 started in the background by a shell (`&`) inherits SIGINT as ignored, R then
 never installs its interrupt handler, and interrupts silently do nothing
 (measured: a 10 s loop ran to the end; with the reset, it stopped in 10 ms).
 The reset is a few lines of C, so the server package has compiled code from
-the start. The server polls the worker socket from its `later` loop every
-5 ms (about 2% of a core when idle), and must read a large worker message in
-pieces rather than all at once, so a big output can't stall it.
+the start. The server polls the worker socket from its `later` loop: every 5 ms while
+it waits on the worker (a run, a query, or traffic in the last second),
+every 250 ms while an install or index job runs, and every 2 s otherwise. A
+crash during a run is noticed within 5 ms; one while idle, or an edit to a
+watched file, within about 2 s. At 250 ms an idle notebook cost the server
+0.7% of a core and 4 wake-ups a second; at 2 s it is about 0.12% (#46).
+It must read a large worker message in pieces rather than all at once, so a
+big output can't stall it.
 
 Workers and jobs (installs, index fetches) end when the server does. They
 start with processx's supervisor, a separate process that sends them SIGTERM
@@ -186,6 +203,22 @@ starts with `system()` or a fork ends with the server, as it already did
 when the notebook restarts. A process a cell starts in a session of its own
 (processx, callr) is outside the group and outlives both a restart and a
 killed server.
+
+Windows has no process groups, and gets the same result another way (#208).
+What a cell starts with `system()` ends with the worker there, since R puts
+each such child in a job object that ends it once the worker ends. processx
+(and so callr) puts its children in a job object of its own that does the
+same, so the worker clears that one setting on processx's job after every
+run, before it says the run is done, and from a thread every half second
+for a cell still running (src/children.c). A processx or callr child then
+outlives a restart and a killed server, as on Unix. Only the first one a
+worker starts can still end with it, if the worker is killed mid-run within
+half a second of starting it; later ones join a job already released.
+
+On every system the worker also drops the `PROCESSX_<id>` marker it
+inherits as the server's process tree (`cleanup_tree`). Otherwise a cell's
+children inherit it, and when the server collects the old worker's process
+object after a restart, its finalizer ends them all (#232).
 
 A stopped worker is killed, so R never removes its temp folder itself. The
 worker names its `tempdir()` in its hello, and the server removes that
@@ -256,6 +289,34 @@ look like references; that only adds an edge when some cell defines a global
 with the same name. The cost is a rerun, or a false cycle when that cell also
 reads the result (`df |> mutate(z = x * 2)`, then a later cell defines `x`
 from it); the error suggests renaming the global.
+
+Base R's own data-masking calls follow R exactly (#107). `subset(df, x > 1)`,
+`transform()`, `with()` and `within()` look `x` up in `df` first and take
+the global only when `df` has no such column, so the edge does the same.
+The worker reports the names of each data frame or list a cell creates,
+and the graph reads a masked `x` by the columns `df` had when the one cell
+that defines it last ran:
+
+- `df` had `x`: no edge. Editing the cell that defines a global `x` reruns
+  nothing, as under `Rscript`, and the false cycle above can't happen.
+- `df` had no `x`: an ordinary edge.
+- `df`'s cell hasn't run in this session, or its last run failed: a soft
+  edge, kept unless it would close a cycle. The cell runs after `df`'s cell
+  (it reads `df`), so `df`'s report settles the name before it runs; a cell
+  that defines its own `df` settles it on its first run.
+- Anything the columns can't decide is an ordinary edge: data that isn't a
+  bare name (`subset(df[rows, ], x > 1)`), a `df` from a package or defined
+  by several cells, a value that isn't a data frame (`subset()` and
+  `transform()`) or a plain list (`with()`, `within()` also), and a
+  notebook that defines `subset()` itself or a method of it.
+
+A call's head (`f` in `subset(df, f(x))`) is never masked, as R skips a
+column that isn't a function, and assignments inside `with()` and
+`within()` define no global. Edges can now appear when an upstream cell
+runs, after a run was asked for: a cell whose result came from a stale
+cell the run didn't include is left stale, so running it again runs that
+cell first. dplyr's verbs keep the behaviour above; they mask through
+rlang, with its own pronouns, and aren't covered.
 
 **Code inside strings and lambdas.** glue and cli interpolate `{…}` in
 strings (`glue("{total} of {n}")`, `cli_alert("{n} files")`), so the

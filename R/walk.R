@@ -60,7 +60,7 @@ walk_expr <- function(e, scope, acc, pid = NA_integer_) {
     },
     "local" = {
       parts <- pd_call_parts(acc$pd, e, pid)
-      record_read(acc, scope, "local", pos = pd_position(acc, parts$head))
+      record_read(acc, scope, "local", pos = pd_position(acc, parts$head), unmasked = TRUE)
       walk_local(e, scope, acc, parts$args)
       return(invisible())
     },
@@ -75,7 +75,7 @@ walk_expr <- function(e, scope, acc, pid = NA_integer_) {
       # `$` and `@` are generics (`@` since R 4.3), so `df$col` reads `$`,
       # as `a + b` reads `+`: a `$.foo` method feeds the cells that use `$`
       # (#41). The field or slot name is never a read.
-      record_read(acc, scope, name, pos = pd_position(acc, parts$head))
+      record_read(acc, scope, name, pos = pd_position(acc, parts$head), unmasked = TRUE)
       walk_expr(e[[2]], scope, acc, safe_pid(parts$args, 1))
       return(invisible())
     },
@@ -142,7 +142,7 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
   head_pos <- function() pd_position(acc, head_pos_pid)
 
   maybe_record_name_read <- function() {
-    if (!qualified) record_read(acc, scope, name, pos = head_pos())
+    if (!qualified) record_read(acc, scope, name, pos = head_pos(), unmasked = TRUE)
   }
 
   if (!qualified && name %in% names(assignment_ops)) {
@@ -234,6 +234,11 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
     }
     return(invisible())
   }
+  if (name %in% names(data_masking_calls) && (!qualified || is_base_qualified(e[[1]]))) {
+    maybe_record_name_read()
+    walk_masking_call(e, scope, acc, name, arg_pids)
+    return(invisible())
+  }
   if (identical(name, "source")) {
     maybe_record_name_read()
     if (!in_function(scope)) {
@@ -246,6 +251,45 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
 
   maybe_record_name_read()
   walk_call_args(e, scope, acc, arg_pids)
+}
+
+#' Is a call head `base::name` (or `base:::name`)?
+is_base_qualified <- function(head) {
+  q <- qualified_head(head)
+  !is.null(q) && identical(q$pkg, "base")
+}
+
+#' `subset(df, x > 1)`, `transform()`, `with()`, `within()` (#107): the
+#' data argument is walked as usual; every other argument is walked in a
+#' `"local"` scope, as R evaluates it in an environment made from the data
+#' (so `within(df, z <- x * 2)` defines no global `z`), with its reads at
+#' the top level recorded as masked by the data. A masked read names the
+#' data only when the data argument is a bare name that is a global (the
+#' cell's own or another's), not a function's or `local()`'s; otherwise `acc$mask` is `NA` and the reads are ordinary ones.
+#' The graph turns each masked read into an edge or not
+#' (`resolve_masked()`).
+walk_masking_call <- function(e, scope, acc, name, arg_pids) {
+  args <- as.list(e)[-1]
+  if (length(args) == 0) return(invisible())
+  nms <- names2(args)
+  data_i <- which(nms == data_masking_calls[[name]]$data)[1]
+  if (is.na(data_i)) data_i <- which(nms == "")[1]
+  if (is.na(data_i)) {
+    walk_call_args(e, scope, acc, arg_pids)
+    return(invisible())
+  }
+  data <- args[[data_i]]
+  if (!missing_arg(data)) walk_expr(data, scope, acc, arg_pids[[data_i]])
+  root <- if (is.symbol(data) && !is_bound_locally(scope, as.character(data))) as.character(data) else NA_character_
+  masked_scope <- new_scope("local", character(), parent = scope,
+                            home = scope$home, defer_target = scope$defer_target)
+  outer <- acc$mask
+  acc$mask <- list(data = root, fn = name)
+  on.exit(acc$mask <- outer)
+  for (i in seq_along(args)[-data_i]) {
+    if (missing_arg(args[[i]])) next
+    walk_expr(args[[i]], masked_scope, acc, arg_pids[[i]])
+  }
 }
 
 #' The bare function name behind a call head, package-qualified or not, for
@@ -560,8 +604,8 @@ walk_replacement_target <- function(t, scope, acc, pid = NA_integer_, outer = TR
   }
   if (!is.null(hname) && nzchar(hname)) {
     hpos <- pd_position(acc, parts$head)
-    record_read(acc, scope, paste0(hname, "<-"), pos = hpos)
-    if (!outer) record_read(acc, scope, hname, pos = hpos)
+    record_read(acc, scope, paste0(hname, "<-"), pos = hpos, unmasked = TRUE)
+    if (!outer) record_read(acc, scope, hname, pos = hpos, unmasked = TRUE)
     if (hname %in% c("$", "@")) return(invisible())
   } else {
     q <- qualified_head(h)

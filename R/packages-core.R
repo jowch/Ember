@@ -443,14 +443,18 @@ install_failures <- function(lines) {
 #'   even when it restarts R (running the notebook was the consent), holds
 #'   the install of the old pin's library while it is pending, and isn't
 #'   the page's update question (`project_ember()`).
+#' * `asked`: the date the preview was asked for. It differs from `date`
+#'   only when that day wasn't published yet and the preview moved back to
+#'   the newest one that is (`reduce_index_failed()`, #162), so
+#'   `preview_date()` can find its own preview.
 new_proposal <- function(date, status = "fetching", lock = NULL, changes = NULL,
                          problems = NULL, for_wanted = NULL, apply = FALSE,
                          restart = character(), message = NULL,
-                         bioc_version = NA_character_, kind = "date") {
+                         bioc_version = NA_character_, kind = "date", asked = date) {
   structure(list(date = date, status = status, lock = lock, changes = changes,
                  problems = problems, for_wanted = for_wanted, apply = apply,
                  restart = restart, message = message, bioc_version = bioc_version,
-                 kind = kind),
+                 kind = kind, asked = asked),
             class = "ember_proposal")
 }
 
@@ -743,7 +747,8 @@ schedule_packages <- function(state, old) {
       }
     } else if (identical(slot$status, "ready") && !is.null(drop_message)) {
       state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
-                                              message = drop_message, kind = prop$kind)
+                                              message = drop_message, kind = prop$kind,
+                                              asked = prop$asked %||% prop$date)
     } else if (identical(slot$status, "ready") &&
               (identical(prop$status, "fetching") || !setequal(prop$for_wanted %||% character(), wanted))) {
       indexes_loaded <- Filter(Negate(is.null), lapply(state$packages$indexes[needed], function(s) s$index))
@@ -758,7 +763,7 @@ schedule_packages <- function(state, old) {
         new_prop <- new_proposal(prop$date, status = "ready", lock = res$lock, changes = changes,
                                  problems = res$problems, for_wanted = wanted, apply = prop$apply,
                                  bioc_version = bioc_pin(res$lock, bioc_release_in(needed)),
-                                 kind = prop$kind)
+                                 kind = prop$kind, asked = prop$asked %||% prop$date)
         if (isTRUE(prop$apply)) {
           loaded <- state$worker$loaded %||% character()
           restart_names <- intersect(changes$name, names(loaded))
@@ -788,7 +793,8 @@ schedule_packages <- function(state, old) {
       }
     } else if (identical(slot$status, "failed")) {
       state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
-                                              message = slot$message, kind = prop$kind)
+                                              message = slot$message, kind = prop$kind,
+                                              asked = prop$asked %||% prop$date)
     }
   }
 
@@ -1176,13 +1182,35 @@ reduce_index_failed <- function(state, event) {
   # today, before Package Manager has that day's snapshot, #162). While
   # nothing is locked, no package came from that date, so the date moves
   # back a day and resolution fetches that one. The shell says
-  # `unpublished` only for a date `index_may_change()` covers, so this
-  # stops by the day before yesterday in UTC, and then the failure shows.
+  # `unpublished` only from yesterday to tomorrow in UTC
+  # (`may_be_unpublished()`), so this stops by the day before yesterday,
+  # and then the failure shows; a date further ahead fails at once.
   if (isTRUE(event$unpublished) && nrow(state$file$lock$entries) == 0 &&
       !is.null(header$snapshot) && !is.na(header$snapshot) &&
       identical(event$key, repo_key("cran", header$snapshot))) {
     state$packages$indexes[[event$key]] <- NULL
     state$file$header$snapshot <- format(as.Date(header$snapshot) - 1, "%Y-%m-%d")
+    return(list(state = state, effects = list(), reply = NULL))
+  }
+  # A date preview of a day that isn't published yet ("Update all" is a
+  # preview of today) moves back a day the same way, so it offers the
+  # newest published date instead of failing with no changes. The same
+  # bound applies.
+  prop <- state$packages$proposal
+  if (isTRUE(event$unpublished) && !is.null(prop) && identical(prop$kind, "date") &&
+      identical(prop$status, "fetching") && identical(event$key, repo_key("cran", prop$date))) {
+    state$packages$indexes[[event$key]] <- NULL
+    earlier <- format(as.Date(prop$date) - 1, "%Y-%m-%d")
+    # The earlier day may still be gaining packages too: a copy this
+    # session holds from before is fetched again, as reduce_preview_date()
+    # does for the date asked.
+    held <- state$packages$indexes[[repo_key("cran", earlier)]]
+    if (isTRUE(held$provisional) && identical(held$status, "ready")) {
+      state$packages$indexes[[repo_key("cran", earlier)]] <- NULL
+    }
+    state$packages$proposal <- new_proposal(earlier,
+                                            apply = prop$apply, kind = prop$kind,
+                                            asked = prop$asked %||% prop$date)
     return(list(state = state, effects = list(), reply = NULL))
   }
   wanted <- wanted_packages(state$graph, header)
@@ -1758,7 +1786,8 @@ packages_view <- function(state) {
     proposal <- list(date = p$proposal$date, status = p$proposal$status,
                      changes = p$proposal$changes, problems = p$proposal$problems,
                      apply = isTRUE(p$proposal$apply), restart = p$proposal$restart %||% character(),
-                     message = p$proposal$message, kind = p$proposal$kind %||% "date")
+                     message = p$proposal$message, kind = p$proposal$kind %||% "date",
+                     asked = p$proposal$asked %||% p$proposal$date)
   }
   # A Bioconductor move that failed isn't the page's update question
   # (`project_ember()`), so it is said as a problem instead. Where an
