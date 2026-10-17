@@ -464,6 +464,11 @@ The worker runs each cell in the global environment:
    changed by the window; they redraw only when the screen's pixel density
    goes up.
 4. Turn the output value into a display (see "How values display" below).
+   Its messages and warnings go to the console too, after the cell's own:
+   ggplot2 builds a plot only when it's printed, so its "Removed n rows"
+   warning comes from this step. The value is shown by one call of its
+   print method or renderer, so each shows once, though the text form and
+   the table's cells run the same methods again.
 
 **Which values a cell shows** follows Pluto: the value of the cell's last
 top-level expression is its output. When that expression is an assignment

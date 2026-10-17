@@ -301,7 +301,7 @@ test_that("an option a package sets when it loads survives the reset before each
 
 test_that("library(ggplot2) and theme_set() in one cell: the theme is that cell's setting (review)", {
   skip_if_not_installed("ggplot2")
-  h <- worker_harness()
+  h <- worker_harness(extra_libs = .libPaths())
   on.exit(h$close())
   r <- run_and_wait(h, "t", 1L, "library(ggplot2); theme_set(theme_minimal(base_size = 21))", timeout = 30)
   expect_identical(r$status, "ok")
@@ -327,7 +327,7 @@ test_that("library(ggplot2) and theme_set() in one cell: the theme is that cell'
 
 test_that("ggplot2's theme is a setting the worker resets and reapplies", {
   skip_if_not_installed("ggplot2")
-  h <- worker_harness()
+  h <- worker_harness(extra_libs = .libPaths())
   on.exit(h$close())
   run_and_wait(h, "l", 1L, "loadNamespace('ggplot2')", timeout = 30)
   r <- run_and_wait(h, "t", 2L, "ggplot2::theme_set(ggplot2::theme_minimal(base_size = 21))")
@@ -1613,6 +1613,89 @@ test_that("taking the in-place fingerprint forces no promise, and a big environm
   expect_length(r$changed_in_place, 0)
   r <- run_and_wait(h, "g", 6L, "assign('x', 1, envir = le)")
   expect_identical(r$changed_in_place, "le")
+})
+
+console_kinds <- function(r) vapply(r$console, `[[`, character(1), "kind")
+console_texts <- function(r) vapply(r$console, `[[`, character(1), "text")
+
+test_that("a value's print method's warnings and messages go to the console once, after the cell's own (#183)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  run_and_wait(h, "m", 1L, paste(
+    'print.noisy <- function(x, ...) {',
+    '  warning("from print"); message("said by print"); cat("noisy\\n"); invisible(x)',
+    '}', sep = "\n"))
+  r <- run_and_wait(h, "a", 2L, 'warning("own"); structure(1, class = "noisy")', order = c("m", "a"))
+  expect_identical(r$status, "ok")
+  expect_identical(r$output$text, "noisy")
+  expect_identical(console_kinds(r), c("warning", "warning", "message"))
+  expect_identical(console_texts(r), c("own", "from print", "said by print\n"))
+  # A list with a class prints too, through the same one call.
+  r <- run_and_wait(h, "b", 3L, 'structure(list(a = 1), class = "noisy")', order = c("m", "b"))
+  expect_identical(console_texts(r), c("from print", "said by print\n"))
+})
+
+test_that("a plot's warnings come from its one draw, not again from its text form (#183)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  # As ggplot2's print method: it builds the plot, and warns, when it draws.
+  run_and_wait(h, "m", 1L, paste(
+    'print.gg <- function(x, ...) { warning("Removed 2 rows"); plot(1:3); invisible(x) }', sep = "\n"))
+  r <- run_and_wait(h, "a", 2L, 'structure(list(), class = "gg")', order = c("m", "a"))
+  expect_identical(r$status, "ok")
+  expect_identical(r$output$kind, "plot")
+  expect_identical(console_kinds(r), "warning")
+  expect_identical(console_texts(r), "Removed 2 rows")
+  # So does an assigned one.
+  r <- run_and_wait(h, "b", 3L, 'p <- structure(list(), class = "gg")', order = c("m", "b"))
+  expect_identical(r$output$kind, "plot")
+  expect_identical(console_texts(r), "Removed 2 rows")
+})
+
+test_that("a table's warnings come from its print, not again from its cells (#183)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  run_and_wait(h, "m", 1L, 'format.loud <- function(x, ...) { warning("formatting"); rep("L", length(x)) }')
+  r <- run_and_wait(h, "a", 2L, 'data.frame(a = structure(1:2, class = "loud"))', order = c("m", "a"))
+  expect_identical(r$output$kind, "table")
+  expect_identical(console_texts(r), "formatting")
+})
+
+test_that("a knit_print() result's warnings show; one that isn't used is quiet, and the next step's show instead (#183)", {
+  skip_if_not_installed("knitr")
+  h <- worker_harness(extra_libs = dirname(find.package("knitr")))
+  on.exit(h$close())
+  run_and_wait(h, "m", 1L, paste(
+    'registerS3method("knit_print", "ember_kept", function(x, ...) {',
+    '  warning("from knit_print"); knitr::asis_output("<b>shown</b>")',
+    '}, envir = asNamespace("knitr"))',
+    'registerS3method("knit_print", "ember_passed", function(x, ...) {',
+    '  warning("from a passed knit_print"); print(unclass(x)); invisible(NULL)',
+    '}, envir = asNamespace("knitr"))',
+    'print.ember_passed <- function(x, ...) { warning("from print"); print(unclass(x)) }', sep = "\n"))
+  r <- run_and_wait(h, "a", 2L, 'structure(1, class = "ember_kept")', order = c("m", "a"))
+  expect_identical(r$output$html, "<b>shown</b>")
+  expect_identical(console_texts(r), "from knit_print")
+  r <- run_and_wait(h, "b", 3L, 'structure(1, class = "ember_passed")', order = c("m", "b"))
+  expect_identical(r$output$kind, "text")
+  expect_identical(console_texts(r), "from print")
+})
+
+test_that("ggplot2's \"Removed n rows\" warning and geom_smooth()'s message show (#183)", {
+  skip_if_not_installed("ggplot2")
+  h <- worker_harness(extra_libs = .libPaths())
+  on.exit(h$close())
+  run_and_wait(h, "l", 1L, "library(ggplot2)", order = c("l", "a", "b"), timeout = 30)
+  r <- run_and_wait(h, "a", 2L, paste(
+    'd <- data.frame(x = c(1, 2, NA), y = c(1, NA, 3))',
+    'ggplot(d, aes(x, y)) + geom_point()', sep = "\n"), order = c("l", "a", "b"), timeout = 30)
+  expect_identical(r$output$kind, "plot")
+  expect_identical(console_kinds(r), "warning")
+  expect_match(console_texts(r), "Removed 2 rows")
+  r <- run_and_wait(h, "b", 3L, "ggplot(mtcars, aes(wt, mpg)) + geom_smooth()", order = c("l", "a", "b"), timeout = 30)
+  expect_identical(r$output$kind, "plot")
+  expect_identical(console_kinds(r), "message")
+  expect_match(console_texts(r), "geom_smooth()", fixed = TRUE)
 })
 
 test_that("a setting the display step changes isn't the cell's: only its code's changes make it a settings cell, and the display's change stays as a package load's would (#156)", {
