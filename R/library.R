@@ -717,8 +717,13 @@ index_job_key <- function(key, url, cache) paste(key, url, cache, sep = "\u0001"
 #' only the child itself, and an install's child (the installer's Rscript)
 #' has children of its own (`R CMD INSTALL`, the compiler) in its session.
 #' So on Unix the command runs under `sh`, which passes a SIGTERM on to its
-#' whole process group, the job's tree. On Windows the supervisor ends the
-#' child; whether its children go too is not checked there yet.
+#' whole process group, the job's tree. Windows needs no wrapper: R's
+#' `system()` and `system2()` start each child in a job object of their own
+#' that ends it once the R process that started it ends. So when processx's
+#' job object (`cleanup = TRUE`), the supervisor or `$kill()` ends the
+#' job's process, `R CMD INSTALL` and the compiler go too. That covers
+#' children started through `system()`/`system2()` (renv's `R CMD INSTALL`)
+#' or processx; one a job starts some other way isn't covered (#148).
 #'
 #' Ending an install halfway is safe: a library is built in a staging
 #' folder and renamed into place only once complete (docs/packages.md), and
