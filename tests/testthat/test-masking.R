@@ -24,6 +24,9 @@ test_that("names in a data-masking call's other arguments are noted with their d
 test_that("a call's head and a data argument that isn't a bare name aren't masked", {
   a <- read_cell("d2 <- subset(df, f(x) > 1)")
   expect_equal(a$masked$name, "x")
+  # `$` is a generic read (#41), but as a call head it is never a column.
+  a <- read_cell("d2 <- subset(df, a$b > 1)")
+  expect_equal(a$masked$name, "a")
   a <- read_cell("d2 <- subset(df[1:2, ], x > 1)")
   expect_equal(nrow(a$masked), 0)
   expect_true("x" %in% references_of(a))
