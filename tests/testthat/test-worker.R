@@ -1678,7 +1678,7 @@ test_that("a table's warnings come from its print, not again from its cells (#18
   expect_identical(console_texts(r), "formatting")
 })
 
-test_that("a knit_print() result's warnings show; one that isn't used is quiet, and the next step's show instead (#183)", {
+test_that("a knit_print() result's warnings show once; one that isn't used shows its warnings only when the next step doesn't raise them again (#183, #193)", {
   skip_if_not_installed("knitr")
   h <- worker_harness(extra_libs = dirname(find.package("knitr")))
   on.exit(h$close())
@@ -1686,16 +1686,33 @@ test_that("a knit_print() result's warnings show; one that isn't used is quiet, 
     'registerS3method("knit_print", "ember_kept", function(x, ...) {',
     '  warning("from knit_print"); knitr::asis_output("<b>shown</b>")',
     '}, envir = asNamespace("knitr"))',
-    'registerS3method("knit_print", "ember_passed", function(x, ...) {',
-    '  warning("from a passed knit_print"); print(unclass(x)); invisible(NULL)',
-    '}, envir = asNamespace("knitr"))',
-    'print.ember_passed <- function(x, ...) { warning("from print"); print(unclass(x)) }', sep = "\n"))
+    # As rmarkdown's knit_print() for data frames: it prints the value and
+    # returns no knit_asis, so the value goes on to the next step.
+    'registerS3method("knit_print", "ember_passed", function(x, ...) { print(x); invisible(NULL) },',
+    '  envir = asNamespace("knitr"))',
+    'print.ember_passed <- function(x, ...) { warning("from print"); print(unclass(x)) }',
+    # A warning that fires once a session, as lifecycle's deprecate_warn().
+    'print.ember_once <- function(x, ...) {',
+    '  if (is.null(getOption("ember_warned"))) { options(ember_warned = TRUE); warning("only once") }',
+    '  print(unclass(x))',
+    '}',
+    'registerS3method("knit_print", "ember_once", function(x, ...) { print(x); invisible(NULL) },',
+    '  envir = asNamespace("knitr"))',
+    'registerS3method("knit_print", "ember_own", function(x, ...) { warning("from a passed knit_print"); invisible(NULL) },',
+    '  envir = asNamespace("knitr"))', sep = "\n"))
   r <- run_and_wait(h, "a", 2L, 'structure(1, class = "ember_kept")', order = c("m", "a"))
   expect_identical(r$output$html, "<b>shown</b>")
   expect_identical(console_texts(r), "from knit_print")
+  # The next step's print raises it again: once.
   r <- run_and_wait(h, "b", 3L, 'structure(1, class = "ember_passed")', order = c("m", "b"))
   expect_identical(r$output$kind, "text")
   expect_identical(console_texts(r), "from print")
+  # Raised only by the knit_print() that wasn't used: still shown.
+  r <- run_and_wait(h, "c", 4L, 'structure(1, class = "ember_once")', order = c("m", "c"))
+  expect_identical(r$output$kind, "text")
+  expect_identical(console_texts(r), "only once")
+  r <- run_and_wait(h, "d", 5L, 'structure(1, class = "ember_own")', order = c("m", "d"))
+  expect_identical(console_texts(r), "from a passed knit_print")
 })
 
 test_that("ggplot2's \"Removed n rows\" warning and geom_smooth()'s message show (#183)", {

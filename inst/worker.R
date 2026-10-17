@@ -2302,8 +2302,9 @@ knit_print_method_exists <- function(cl) {
 
 #' `knit_print()`, tried only when knitr is in the notebook's library and
 #' a method exists for `class(value)`; knitr is loaded the first time a
-#' value reaches this step.
-try_knit_print <- function(value) {
+#' value reaches this step. When its result isn't used, `pass(held)` gets
+#' the messages and warnings it held back (#193).
+try_knit_print <- function(value, pass = function(held) NULL) {
   if (!requireNamespace("knitr", quietly = TRUE)) return(NULL)
   if (!any(vapply(class(value), knit_print_method_exists, logical(1)))) return(NULL)
   # knit_print() gives a kable in the kable's own format, which is markdown
@@ -2332,7 +2333,10 @@ try_knit_print <- function(value) {
                error = function(e) NULL),
       message = function(m) { held[[length(held) + 1L]] <<- m; invokeRestart("muffleMessage") },
       warning = function(w) { held[[length(held) + 1L]] <<- w; invokeRestart("muffleWarning") }))
-  if (!inherits(out, "knit_asis")) return(NULL)
+  if (!inherits(out, "knit_asis")) {
+    pass(held)
+    return(NULL)
+  }
   for (cnd in held) if (inherits(cnd, "warning")) warning(cnd) else message(cnd)
   # For pandoc, some methods (flextable's) wrap their HTML in a raw-HTML
   # fence, ```{=html} ... ```; the page would show the fence lines as text.
@@ -2421,11 +2425,19 @@ shows_assignment <- function(e, value) {
 #' values display" (Ember's own views are for data frames, plots and plain
 #' lists; everything else prints).
 display_value <- function(value, cell, token, dev, console) {
-  tryCatch({
+  # A knit_print() that isn't used holds its messages and warnings, and the
+  # next step raises them again by printing the value again. One that fires
+  # once a session (lifecycle's deprecate_warn()) doesn't fire again, so
+  # each held one the next step didn't raise is raised after it (#193).
+  held <- list()
+  raised <- character()
+  condition_key <- function(cnd) paste(class(cnd)[1], conditionMessage(cnd))
+  note <- function(cnd) raised <<- c(raised, condition_key(cnd))
+  steps <- function() {
     if (inherits(value, c("htmlwidget", "shiny.tag", "shiny.tag.list", "html"))) {
       return(display_html(value))
     }
-    kp <- try_knit_print(value)
+    kp <- try_knit_print(value, function(h) held <<- h)
     if (!is.null(kp)) return(kp)
     rp <- try_repr(value)
     if (!is.null(rp)) return(rp)
@@ -2435,13 +2447,19 @@ display_value <- function(value, cell, token, dev, console) {
     }
     if (identical(class(value), "list")) return(display_tree(value, cell, token))
     display_text(value)
-  }, error = function(e) {
+  }
+  out <- tryCatch(withCallingHandlers(steps(), message = note, warning = note), error = function(e) {
     if (!is.null(console)) {
       tryCatch(console$warning(simpleWarning(paste("display failed:", conditionMessage(e)))),
                error = function(e2) NULL)
     }
     display_text(value)
   })
+  for (cnd in held) {
+    if (condition_key(cnd) %in% raised) next
+    if (inherits(cnd, "warning")) warning(cnd) else message(cnd)
+  }
+  out
 }
 
 #' Worker message `more`: grow the paging limit at `path` (dim 1 rows for a
