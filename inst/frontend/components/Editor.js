@@ -214,7 +214,8 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
 
 /**
  * `status`: "installed", "installing", "missing", "failed", "not_installed",
- * "not_found", and for a package with a `[sources]` entry "looking_up" or
+ * "not_found", "lookup_failed" (not on CRAN, and Bioconductor couldn't be
+ * looked in), and for a package with a `[sources]` entry "looking_up" or
  * "source_failed" (packages_view(), R/packages-core.R). `spec`: that entry,
  * "github:user/repo[@ref]".
  *

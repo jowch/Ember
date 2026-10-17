@@ -876,7 +876,7 @@ project_process_status <- function(state) {
 #' * `installed_versions`: name -> version for rows with status "installed".
 #' * `busy_packages`: arr(names with status "installing").
 #' * `terminal_outputs`: `list(nbpkg_sync = <library message, the install
-#'   progress line, and any failed/not_found/source_failed rows, one per
+#'   progress line, and any failed/not_found/lookup_failed/source_failed rows, one per
 #'   line>)`.
 #' * `restart_required_msg`: when `plan$restart` is non-empty, "Restart R to
 #'   use the new versions of: <names>".
@@ -910,7 +910,7 @@ project_nbpkg <- function(state) {
     lines <- c(lines, sprintf("Installing %s (%d/%d)...",
                               pr$current %||% "", pr$done %||% 0L, pr$total %||% 0L))
   }
-  nf <- pkgs[pkgs$status %in% c("not_found", "source_failed"), , drop = FALSE]
+  nf <- pkgs[pkgs$status %in% c("not_found", "lookup_failed", "source_failed"), , drop = FALSE]
   if (nrow(nf) > 0) lines <- c(lines, sprintf("%s: %s", nf$name, nf$message))
   if (identical(p$target$status, "failed") && !is.null(p$target$message)) {
     lines <- c(lines, p$target$message)

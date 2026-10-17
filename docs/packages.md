@@ -263,10 +263,18 @@ not.
   their indexes when its wanted set changes, rather than reporting each
   one `not_in_index`.
 - **A failed Bioconductor index** is left out of resolution until the
-  wanted set changes, so its packages resolve as `not_found` next to an
-  `index_unavailable` row naming the index, instead of waiting forever.
-  Then its slot is dropped rather than refetched, so it is fetched again
-  only if a name still needs it.
+  wanted set changes or the user runs again, so its packages resolve as
+  `not_found` next to an `index_unavailable` row naming the index, instead
+  of waiting forever. The page shows those packages as `lookup_failed`
+  ("couldn't look up"), with the reason, not as "not found in any
+  repository": they may well be in the index that failed (#264). The same
+  goes for names found nowhere because the release list couldn't be
+  fetched. Then the slot is dropped rather than refetched, so it is
+  fetched again only if a name still needs it.
+- **A cut-off index** is a failed fetch. `read.dcf()` reads a
+  `PACKAGES.gz` cut off part way as far as it goes, with no error, and
+  the parse would be cached for good, so the fetch checks the length in
+  gzip's trailer first (`gz_complete()`).
 - **The pin.** `header$bioc_version` is set to the release used once the
   lock holds a `Bioc` entry, and cleared when it holds none. A pinned
   release is kept on every later resolution; on another R,

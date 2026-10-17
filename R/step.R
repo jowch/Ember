@@ -1018,7 +1018,8 @@ forget_run <- function(state, id) {
 #' Ask to run cells.
 #'
 #' Also retries a failed target library once, and any failed index whose
-#' wanted set hasn't changed: `schedule_packages()`'s install and resolve
+#' wanted set hasn't changed (resolving again, so a failed Bioconductor
+#' index is fetched again too):`schedule_packages()`'s install and resolve
 #' stages don't loop on a broken package by themselves (no retry storm while
 #' offline), but asking to run again is "I want this to work now", the same
 #' way a stopped worker restarts only when something is asked to run.
@@ -1037,6 +1038,13 @@ reduce_run <- function(state, event) {
   failed_keys <- Filter(function(k) identical(state$packages$indexes[[k]]$status, "failed"),
                         names(state$packages$indexes))
   for (k in failed_keys) state$packages$indexes[[k]] <- NULL
+  # A failed Bioconductor index left the names CRAN lacks resolved as not
+  # found, and only resolving again asks for it: without this, its slot was
+  # dropped here but never fetched again (#264). (CRAN's own index is
+  # fetched again by whatever asks for it next, as before.)
+  if (any(is_bioc_key(failed_keys)) && any(state$packages$problems$kind == "not_found")) {
+    state$packages$resolved_for <- character()
+  }
   # So is Bioconductor's release list, and a Bioconductor move that failed
   # (an index fetch) is proposed again.
   # A list kept from an earlier day after a fetch for a later date failed

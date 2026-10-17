@@ -129,7 +129,7 @@ In test-packages-core.R, with `drive()`:
 82. A CRAN-only notebook never fetches a Bioconductor index and carries no pin.
 83. `library(DESeq2)` fetches the three Bioconductor indexes after CRAN's, locks it as `Bioc`, pins the release in the header, and the install gets all four repositories.
 84. Removing the last Bioconductor package drops the pin.
-85. A failed Bioconductor index leaves the name `not_found` with an `index_unavailable` row, and is refetched only when the wanted set changes.
+85. A failed Bioconductor index leaves the name `not_found` with an `index_unavailable` row, shown as `lookup_failed`, and is refetched when the wanted set changes or on run (#264).
 86. A pinned release is kept on another R and flagged `bioc_r_version`; an R with no known release fetches no Bioconductor index and gets a `bioc_unavailable` row.
 87. A date move keeps Bioconductor packages at the new date's release, and fails rather than dropping them when a Bioconductor index can't be fetched.
 88. A reopened notebook with a Bioc lock fetches the Bioconductor indexes when its wanted set changes, and reports no `not_in_index`.
