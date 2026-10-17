@@ -39,7 +39,7 @@ set_date(nb, date)
 run(path, repos = ember_repos(), cache = cache_dir(), echo = TRUE)
 
 clean(max_age = 60, cache = TRUE, dry_run = FALSE, dir = cache_dir(),
-      now = Sys.time())
+      now = Sys.time(), keep = active_libraries$paths, indexes = TRUE)
 
 ember_repos(cran = "https://packagemanager.posit.co/cran",
             bioc = "https://packagemanager.posit.co/bioconductor",
@@ -85,6 +85,10 @@ anything.}
 \item{dir}{The cache directory \code{clean()} operates on.}
 \item{now}{The time \code{clean()} measures ages against; a parameter mainly
 for tests.}
+\item{keep}{Library paths \code{clean()} never deletes, however old. The default is
+every library an open session in this process is using.}
+\item{indexes}{\code{TRUE} also deletes cached index files not read for
+\code{max_age} days.}
 \item{cran, bioc}{Base repository URLs (no date), for \code{ember_repos()}. The
 defaults are the public Posit Package Manager; an institution's own
 Package Manager, or a \code{file://} folder laid out the same way, can
