@@ -1987,11 +1987,14 @@ test_that("a row write to a table held in another cell's list or environment, or
   }
   r <- run_and_wait(h, "c", 4L, "tabs$flights[x > 1L, .N]\nnrow(box$t)", order = ord)
   expect_length(r$changed_in_place, 0)
-  # A second name for the same table: both are named.
-  run_and_wait(h, "b", 5L, "alias <- dt", order = ord)
-  for (code in c("alias[1L, x := 0]", "dt[2L, x := 0]", "alias[, z := 1]")) {
-    r <- run_and_wait(h, "c", 6L, code, order = ord)
-    expect_setequal(r$changed_in_place, c("dt", "alias"))
+  r <- run_and_wait(h, "c", 5L, "with(tabs, flights[3L, x := 0L])", order = ord)
+  expect_identical(r$changed_in_place, "tabs")
+  # A second name for the same table, and a list holding it: all are named
+  # (review).
+  run_and_wait(h, "b", 6L, "alias <- dt\nheld <- list(t = dt)", order = ord)
+  for (code in c("alias[1L, x := 0]", "dt[2L, x := 0]", "alias[, z := 1]", "held$t[3L, x := 0]")) {
+    r <- run_and_wait(h, "c", 7L, code, order = ord)
+    expect_setequal(r$changed_in_place, c("dt", "alias", "held"))
   }
 })
 
@@ -2033,6 +2036,8 @@ test_that("which tables a cell's code could write: a write in a [, set*(), or a 
   expect_true("dt" %in% cw("lapply(1:2, function(i) zero())"))
   expect_true("dt" %in% cw("do.call('zero', list())"))
   expect_identical(cw("count()"), character())
+  expect_identical(cw("with(other, t[1L, x := 0])"), "other")
+  expect_identical(cw("with(other, sum(t$x))"), character())
   # Code run from text could write any table.
   expect_setequal(cw("eval(parse(text = s))"), c("dt", "other"))
 })

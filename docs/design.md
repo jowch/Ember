@@ -429,10 +429,13 @@ that writes the global itself (`zero_dt <- function() dt[1L, x := 0]`)
 counts where it's called. A table can also sit in a list or an
 environment another cell defines, up to three levels down
 (`tabs$flights[1L, x := 0]`, an R6 object's field); the note then names
-the list or environment. Code run from text (`eval(parse(text = ...))`,
+the list or environment, and so does `with(tabs, flights[1L, x := 0])`.
+Code run from text (`eval(parse(text = ...))`,
 `source()`) can't be read, so such a run hashes every other cell's table.
 A write found is noted under every name another cell binds the table to,
-so after `alias <- dt`, a write through `alias` names `dt` too (#216).
+and every list or environment another cell defines that holds it, so
+after `alias <- dt` or `held <- list(t = dt)`, a write through `dt` names
+`alias` and `held` too (#216). A table two globals hold is hashed once.
 Showing the table, reading it with `[` or `$`, and passing it to a
 package's function (`nrow(dt)`, `lm(y ~ x, dt)`, `ggplot(dt)`) hash
 nothing. Such a run

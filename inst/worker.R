@@ -1117,20 +1117,29 @@ datatable_hash <- function(dt) {
 }
 
 #' The hashes of the tables `v` holds, each by its address: a named list,
-#' or `NULL` when it holds none or one can't be hashed.
-datatable_held_hash <- function(v) {
+#' or `NULL` when it holds none or one can't be hashed. `cache` (an
+#' environment) keeps each address's hash for the rest of one pass, so a
+#' table two globals hold is hashed once.
+datatable_held_hash <- function(v, cache = new.env()) {
   tables <- datatable_held(v)
   if (length(tables) == 0L) return(NULL)
-  hashes <- lapply(tables, datatable_hash)
+  addrs <- vapply(tables, asNamespace("data.table")$address, "")
+  hashes <- lapply(seq_along(tables), function(i) {
+    a <- addrs[[i]]
+    if (is.null(cache[[a]])) cache[[a]] <- list(datatable_hash(tables[[i]]))
+    cache[[a]][[1L]]
+  })
   if (any(vapply(hashes, is.null, NA))) return(NULL)
-  names(hashes) <- vapply(tables, asNamespace("data.table")$address, "")
+  names(hashes) <- addrs
   hashes
 }
 
 #' Before the run: of the other cells' globals (`others`, in `before`, a
 #' `snapshot_globals()` result), those that `code` (parsed expressions, or
 #' the lines of a text cell) could write and that hold a table, each as
-#' `list(value, hash)`. A named list, empty when there are none.
+#' `list(value, hash)`. A named list, empty when there are none. Its
+#' `holders` attribute keeps every other cell's list and environment, so
+#' `changed_in_place()` can name those that hold a table found written.
 datatable_before <- function(before, others, code) {
   # No data.table exists before its namespace is loaded.
   if (!isNamespaceLoaded("data.table")) return(list())
@@ -1140,15 +1149,19 @@ datatable_before <- function(before, others, code) {
                   (is.environment(b$value) && !is_shared_env(b$value)))
   }, intersect(others, names(before)))
   if (length(holders) == 0L) return(list())
-  tryCatch({
+  containers <- lapply(Filter(function(n) !inherits(before[[n]]$value, "data.table"), holders), function(n) before[[n]]$value)
+  names(containers) <- Filter(function(n) !inherits(before[[n]]$value, "data.table"), holders)
+  out <- tryCatch({
     if (is.character(code)) code <- unlist(lapply(code, function(l) tryCatch(as.list(parse(text = l)), error = function(e) list())))
     out <- list()
+    cache <- new.env()
     for (n in datatable_could_write(code, holders)) {
-      h <- datatable_held_hash(before[[n]]$value)
+      h <- datatable_held_hash(before[[n]]$value, cache)
       if (!is.null(h)) out[[n]] <- list(value = before[[n]]$value, hash = h)
     }
     out
   }, error = function(e) list())
+  structure(out, holders = containers)
 }
 
 #' data.table's functions that write a table in place: `:=`, `let()` and
@@ -1190,7 +1203,8 @@ datatable_package_fun <- function(fun) {
 #' arguments, and as the table of a `[` with a write in it. A notebook
 #' function's own body is read the same way, so a helper that writes a
 #' global (`zero_dt <- function() dt[1L, x := 0]`) counts where it's
-#' called. Code run from text (`eval()`, `source()`) can't be read, so it
+#' called. A `with()` or `within()` with a write in its code counts as
+#' writing its data. Code run from text (`eval()`, `source()`) can't be read, so it
 #' counts as writing every name. Showing the table, a `[` read
 #' (`dt[x > 1]`), `dt$x`, and a package function (`nrow(dt)`,
 #' `lm(y ~ x, dt)`, `ggplot(dt)`) don't count.
@@ -1205,6 +1219,9 @@ datatable_could_write <- function(exprs, names, env = globalenv()) {
   # Code these run isn't in the cell's text.
   evaluators <- list(base::eval, base::evalq, base::source, base::sys.source)
   is_evaluator <- function(fun) any(vapply(evaluators, function(s) identical(s, fun), NA))
+  # These run their code with their data's contents as variables.
+  scopers <- list(base::with, base::within)
+  is_scoper <- function(fun) any(vapply(scopers, function(s) identical(s, fun), NA))
   is_notebook_closure <- function(fun) is.function(fun) && !is.primitive(fun) && !datatable_package_fun(fun)
   # `f(x, )` and `function(a)` hold the empty symbol, which can't be bound
   # to a variable, so arguments are read by index.
@@ -1249,6 +1266,9 @@ datatable_could_write <- function(exprs, names, env = globalenv()) {
     if (!is.symbol(f)) visit(f, FALSE)
     fun <- datatable_callee(f, env)
     if (!is.null(fun) && is_evaluator(fun)) found <<- names
+    # `with(tabs, t[1L, x := 0])` writes the table `tabs` holds.
+    if (!is.null(fun) && is_scoper(fun) && length(args) > 0L && writes_marked(all.names(e)))
+      found <<- union(found, intersect(all.names(args[[1L]]), names))
     if (is_notebook_closure(fun)) visit_body(fun)
     writer <- is.null(fun) || !datatable_package_fun(fun) ||
       is_setter(fun) ||
@@ -1346,10 +1366,11 @@ changed_in_place <- function(env_before, changed, dt_before = list()) {
   # The addresses of the tables found changed, for their other names below.
   written <- unlist(lapply(out, function(n) if (inherits(env_before[[n]]$env, "data.table")) env_before[[n]]$print$self))
   # A write to some rows keeps the shape; the hash shows it (#201).
+  cache <- new.env()
   for (n in setdiff(names(dt_before), changed)) {
     now <- current(n)
     if (is.null(now) || !identical(now$value, dt_before[[n]]$value)) next
-    h <- datatable_held_hash(now$value)
+    h <- datatable_held_hash(now$value, cache)
     if (is.null(h)) next
     was <- dt_before[[n]]$hash
     differs <- vapply(names(h), function(a) !identical(h[[a]], was[[a]]), NA)
@@ -1358,11 +1379,19 @@ changed_in_place <- function(env_before, changed, dt_before = list()) {
       written <- union(written, names(h)[differs])
     }
   }
-  # The other names of a table found written.
+  # The other names of a table found written, and the lists and
+  # environments that hold it (`held <- list(t = dt)`).
   if (length(written) > 0L) {
     for (n in setdiff(names(env_before), c(changed, out))) {
       self <- env_before[[n]]$print$self
       if (inherits(env_before[[n]]$env, "data.table") && !is.null(self) && self %in% written) out <- c(out, n)
+    }
+    holders <- attr(dt_before, "holders") %||% list()
+    address <- asNamespace("data.table")$address
+    for (n in setdiff(names(holders), c(changed, out))) {
+      now <- current(n)
+      if (is.null(now) || !identical(now$value, holders[[n]])) next
+      if (any(vapply(datatable_held(now$value), address, "") %in% written)) out <- c(out, n)
     }
   }
   out
