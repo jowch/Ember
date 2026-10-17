@@ -1324,6 +1324,36 @@ test_that("a caller's own default passed on to library() or require() is kept (#
   expect_false(any(grepl("Loading required package", unlist(r$console), fixed = TRUE)))
 })
 
+test_that("a search entry a package attaches for itself and that hides nothing is the package's (#181)", {
+  flib <- fixture_lib()
+  h <- worker_harness(extra_libs = flib)
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "emberfix5::stash(1)", order = c("a", "b"))
+  expect_identical(r$status, "ok")
+  expect_length(r$settings, 0)
+  # It stays: the next cell's reset keeps it, as a package load's change.
+  r <- run_and_wait(h, "b", 2L, '"org:emberfix5" %in% search()', order = c("a", "b"))
+  expect_identical(r$output$text, "[1] TRUE")
+})
+
+test_that("a search entry that hides a name, or that the notebook attached, is still a setting (#181)", {
+  flib <- fixture_lib()
+  h <- worker_harness(extra_libs = flib)
+  on.exit(h$close())
+  # Package code attached it, but its nchar() wins over base's.
+  r <- run_and_wait(h, "a", 1L, "emberfix5::prefer()", order = c("a", "b", "c"))
+  expect_identical(r$settings[[1]]$kind, "search")
+  expect_true(".emberfix5" %in% r$settings[[1]]$after)
+  # Hides nothing, but a function a cell defined attached it.
+  r <- run_and_wait(h, "b", 2L,
+    'keep <- function() attach(list(.emberfix_kept = 1), name = "kept", pos = length(search())); keep()',
+    order = c("a", "b", "c"))
+  expect_true("kept" %in% r$settings[[1]]$after)
+  # Not in effect for this run, so the reset takes both off again.
+  r <- run_and_wait(h, "c", 3L, 'c(".emberfix5", "kept") %in% search()', order = c("a", "b", "c"))
+  expect_identical(r$output$text, "[1] FALSE FALSE")
+})
+
 test_that("drop_globals removes a cell's globals but keeps its attached packages (ui-3 12)", {
   h <- worker_harness()
   on.exit(h$close())
