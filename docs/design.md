@@ -164,6 +164,18 @@ This maps one to one onto Pluto's server and workers:
   library, where rig puts pak, is hidden). A worker starts and connects in
   about 115 ms; package loading comes on top.
 
+  The worker loads a byte-compiled image of `worker.R` when there is one
+  (#229). R's JIT compiles a function the second time it's called, so a
+  worker running `worker.R` as source paid for compiling its own run code
+  on its second run: 0.35 to 0.57 s on Linux, and over 5 s on a slow
+  Windows runner. From the image, that run takes 0.09 s. The first notebook
+  opened in a process compiles the image in a separate `Rscript`
+  (`compiler::cmpfile()`, about 1.5 s, nothing waits on it). The image goes
+  in the cache under `worker/`, named by R's version and `worker.R`'s MD5.
+  Workers started before it's ready, or with an image that won't load,
+  source `worker.R` as before. Turning the JIT off instead would make the
+  user's own code slower than in plain R.
+
 The server resets SIGINT to its default before starting workers. A process
 started in the background by a shell (`&`) inherits SIGINT as ignored, R then
 never installs its interrupt handler, and interrupts silently do nothing

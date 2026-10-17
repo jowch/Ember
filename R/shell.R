@@ -77,6 +77,7 @@ session_start <- function(state) {
   register_session(nb)
   sync_active_libraries()
   maybe_start_cleanup()
+  ready_worker_image()
   maybe_start_heartbeat()
   schedule_poll(nb)
   nb
@@ -680,6 +681,73 @@ loopback_reaches <- function(s, port, wait = 1) {
   identical(heard, nonce)
 }
 
+# ---- The worker's compiled image (#229) ---------------------------------------
+# R's JIT compiles a closure the second time it is called. A worker that
+# sys.source()s worker.R runs its own functions uncompiled, so its second
+# run pays for compiling run_cell() and everything it calls: about 0.4 s
+# on Linux, and over 5 s on a slow Windows runner. compiler::cmpfile()
+# compiles the whole file once (about 1.5 s) into the cache, and a worker
+# that loadcmp()s it runs compiled code from its first cell. The compile
+# runs in an Rscript of its own, so nothing waits for it: a worker started
+# before it finishes sys.source()s worker.R, as before.
+
+#' Where the image of `src` lives: one per worker.R content and R version
+#' (bytecode is R's own format), under `cache_dir()`/worker. The content
+#' hash, not Ember's version: a development build keeps its version
+#' across changes to worker.R.
+worker_image_path <- function(src = system.file("worker.R", package = "ember"), dir = cache_dir()) {
+  key <- paste0("R-", R.version$major, ".", R.version$minor, "-", unname(tools::md5sum(src)))
+  file.path(dir, "worker", paste0(key, ".Rc"))
+}
+
+#' The compile this process started, if any: at most one per image path.
+worker_image_build <- local({
+  env <- new.env(parent = emptyenv())
+  env$path <- NULL
+  env$proc <- NULL
+  env
+})
+
+#' The image's path when it exists. Otherwise start compiling it, once per
+#' process, and return `NULL`. The compile writes a private name and
+#' renames it into place, so a worker never loads half a file and two
+#' processes compiling at once both end with the same image (library.R's
+#' concurrency rule). It then deletes other images and leftovers more than
+#' a day old: images of earlier worker.R versions, and a compile that was
+#' killed with its server.
+ready_worker_image <- function(src = system.file("worker.R", package = "ember"), dir = cache_dir()) {
+  if (!nzchar(src) || !file.exists(src)) return(NULL)
+  path <- tryCatch(worker_image_path(src, dir), error = function(e) NULL)
+  if (is.null(path)) return(NULL)
+  if (file.exists(path)) return(path)
+  if (identical(worker_image_build$path, path)) return(NULL)
+  worker_image_build$path <- path
+  code <- paste(
+    "args <- commandArgs(TRUE)",
+    "dir.create(dirname(args[2]), recursive = TRUE, showWarnings = FALSE)",
+    "tmp <- tempfile('build-', dirname(args[2]), '.tmp')",
+    "compiler::cmpfile(args[1], tmp, verbose = FALSE)",
+    "if (!file.rename(tmp, args[2])) unlink(tmp)",
+    "old <- setdiff(list.files(dirname(args[2]), full.names = TRUE), args[2])",
+    "unlink(old[difftime(Sys.time(), file.info(old)$mtime, units = 'days') > 1])",
+    sep = "; ")
+  worker_image_build$proc <- tryCatch(
+    processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code, src, path)),
+    error = function(e) NULL)
+  NULL
+}
+
+#' The `-e` line a worker starts with: load the compiled image named by
+#' EMBER_WORKER_IMAGE into a private environment whose parent is
+#' baseenv(), or, with no image or one that fails to load, source
+#' worker.R there (worker.R's header), then call main().
+worker_boot <- function() {
+  paste0(
+    "local({e <- new.env(parent = baseenv()); img <- Sys.getenv('EMBER_WORKER_IMAGE'); ",
+    "if (!nzchar(img) || inherits(tryCatch(compiler::loadcmp(img, e), error = identity), 'error')) ",
+    "sys.source(Sys.getenv('EMBER_WORKER'), e); e$main()})")
+}
+
 #' Spawn a worker. Never waits for it: the connection is accepted by the
 #' poll once the listening socket is readable.
 start_worker_process <- function(nb, fx) {
@@ -699,13 +767,12 @@ start_worker_process <- function(nb, fx) {
   tryCatch(touch_library(lib), error = function(e) NULL)
 
   rscript <- file.path(R.home("bin"), "Rscript")
-  boot <- paste0(
-    "local({e <- new.env(parent = baseenv()); ",
-    "sys.source(Sys.getenv('EMBER_WORKER'), e); e$main()})")
+  boot <- worker_boot()
   env <- c("current",
            R_LIBS_USER = lib, R_LIBS = "", R_LIBS_SITE = "",
            EMBER_WORKER = system.file("worker.R", package = "ember"),
            EMBER_DLL = ember_dll_path(),
+           EMBER_WORKER_IMAGE = ready_worker_image() %||% "",
            EMBER_SECRET = nb$secret)
   wd <- fx$wd
   if (is.null(wd) || !nzchar(wd)) wd <- getwd()

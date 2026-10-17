@@ -123,17 +123,17 @@ write_frame <- function(con, msg) {
 #' `extra_libs` are prepended to R_LIBS_USER (ahead of the private temp
 #' library), for tests that need a package installed (fixture_lib()).
 #' `detached = TRUE` starts the worker with no console (Windows only).
+#' `image` is a compiled worker image to boot from (worker_boot()); by
+#' default there is none, so the worker sources worker.R.
 worker_harness <- function(secret = "ember-test-secret", extra_libs = character(), detached = FALSE,
-                            connect_timeout = 10, hello_timeout = 10) {
+                            connect_timeout = 10, hello_timeout = 10, image = "") {
   srv <- open_server_socket()
 
   user_lib <- tempfile("ember-worker-lib-")
   dir.create(user_lib, recursive = TRUE)
   lib_path <- paste(c(extra_libs, user_lib), collapse = .Platform$path.sep)
 
-  boot <- paste0(
-    "local({e <- new.env(parent = baseenv()); ",
-    "sys.source(Sys.getenv('EMBER_WORKER'), e); e$main()})")
+  boot <- worker_boot()
 
   out_file <- tempfile("ember-worker-out-")
   err_file <- tempfile("ember-worker-err-")
@@ -142,8 +142,8 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
     r_bin, c("--vanilla", "-e", boot, as.character(srv$port)),
     env = c("current",
             R_LIBS_USER = lib_path, R_LIBS = "", R_LIBS_SITE = "",
-            EMBER_WORKER = worker_script_path(), EMBER_SECRET = secret,
-            EMBER_DLL = ember_dll_path(),
+            EMBER_WORKER = worker_script_path(), EMBER_WORKER_IMAGE = image,
+            EMBER_SECRET = secret, EMBER_DLL = ember_dll_path(),
             EMBER_WORKER_TRACE = "1"),
     # Files, not pipes: nothing reads a pipe until a test fails, and a
     # worker writing to a full pipe blocks.
@@ -207,8 +207,9 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
   h
 }
 
-#' Read frames from `h` until a "done" (returning its report) or until
-#' `timeout` seconds total have passed, whichever comes first.
+#' Read frames from `h` until a "done" (returning its report). With a
+#' `timeout`, fail once that many seconds have passed in total; without
+#' one, wait for the reply however long it takes (next_frame()).
 #'
 #' For tests that need to see or react to frames before "done" (a
 #' "source" request, an interrupt's reply) and so can't use
@@ -239,25 +240,45 @@ no_reply <- function(h, timeout) {
 
 #' Read frames until a "rendered" message arrives (a "more"/"render"
 #' request's reply never comes as "done").
-wait_for_done_or_rendered <- function(h, timeout = 5) {
-  deadline <- Sys.time() + timeout
+wait_for_done_or_rendered <- function(h, timeout = NULL) {
+  deadline <- if (!is.null(timeout)) Sys.time() + timeout
   repeat {
-    remaining <- as.numeric(deadline - Sys.time(), units = "secs")
-    if (remaining <= 0) no_reply(h, timeout)
-    m <- h$receive(remaining)
-    if (is.null(m)) no_reply(h, timeout)
+    m <- next_frame(h, deadline, timeout)
     if (identical(m$type, "rendered")) return(m)
   }
 }
 
-wait_for_done <- function(h, timeout = 5, on_frame = NULL) {
-  deadline <- Sys.time() + timeout
+wait_for_done <- function(h, timeout = NULL, on_frame = NULL) {
+  deadline <- if (!is.null(timeout)) Sys.time() + timeout
   repeat {
+    m <- next_frame(h, deadline, timeout)
+    if (identical(m$type, "done")) return(m$report)
+    if (!is.null(on_frame)) on_frame(m)
+  }
+}
+
+#' The worker's next frame. With a `deadline` (a test that passed a
+#' `timeout`), fail once it passes. Without one, wait for the frame
+#' itself, however slow the machine (#229): fail at once if the worker
+#' has exited, and only after `hang_guard` seconds of silence from a live
+#' worker, which is a hang, not a slow step. The socket is polled for a
+#' frame's first byte, never mid-frame, so no frame is cut short.
+next_frame <- function(h, deadline = NULL, timeout = NULL, hang_guard = 600) {
+  if (!is.null(deadline)) {
     remaining <- as.numeric(deadline - Sys.time(), units = "secs")
     if (remaining <= 0) no_reply(h, timeout)
     m <- h$receive(remaining)
     if (is.null(m)) no_reply(h, timeout)
-    if (identical(m$type, "done")) return(m$report)
-    if (!is.null(on_frame)) on_frame(m)
+    return(m)
+  }
+  quiet_since <- Sys.time()
+  repeat {
+    if (wait_socket(h$con, Sys.time() + 0.5)) {
+      m <- h$receive(hang_guard)
+      if (is.null(m)) no_reply(h, round(as.numeric(Sys.time() - quiet_since, units = "secs")))
+      return(m)
+    }
+    waited <- as.numeric(Sys.time() - quiet_since, units = "secs")
+    if (!h$process$is_alive() || waited >= hang_guard) no_reply(h, round(waited))
   }
 }
