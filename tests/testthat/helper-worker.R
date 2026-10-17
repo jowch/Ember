@@ -112,14 +112,16 @@ write_frame <- function(con, msg) {
 #' Start the real inst/worker.R under processx, accept its connection,
 #' and return a harness object:
 #'
-#'   h$process   the processx handle (for h$process$interrupt(), etc.)
+#'   h$process   the processx handle
+#'   h$interrupt() interrupts the running cell as the server does
 #'   h$send(msg) write a message to the worker
 #'   h$receive(timeout = 5) read the next message, or NULL on timeout
 #'   h$close()   close the socket and stop the worker
 #'
 #' `extra_libs` are prepended to R_LIBS_USER (ahead of the private temp
 #' library), for tests that need a package installed (fixture_lib()).
-worker_harness <- function(secret = "ember-test-secret", extra_libs = character(),
+#' `detached = TRUE` starts the worker with no console (Windows only).
+worker_harness <- function(secret = "ember-test-secret", extra_libs = character(), detached = FALSE,
                             connect_timeout = 10, hello_timeout = 10) {
   srv <- open_server_socket()
 
@@ -139,10 +141,14 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
     env = c("current",
             R_LIBS_USER = lib_path, R_LIBS = "", R_LIBS_SITE = "",
             EMBER_WORKER = worker_script_path(), EMBER_SECRET = secret,
+            EMBER_DLL = ember_dll_path(),
             EMBER_WORKER_TRACE = "1"),
     # Files, not pipes: nothing reads a pipe until a test fails, and a
     # worker writing to a full pipe blocks.
-    stdout = out_file, stderr = err_file)
+    stdout = out_file, stderr = err_file,
+    # `detached`: on Windows, a worker with no console at all, as when the
+    # server has none (#48).
+    windows_detached_process = detached)
 
   fail <- function(...) {
     tryCatch(if (p$is_alive()) p$kill(), error = function(e) NULL)
@@ -176,6 +182,9 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
   h$con <- con
   h$closed <- FALSE
   h$send <- function(msg) write_frame(con, msg)
+  # As the server interrupts a cell (shell.R): SIGINT on Unix, the
+  # worker's interrupt event on Windows.
+  h$interrupt <- function() interrupt_worker(p)
   h$receive <- function(timeout = 5) read_frame(con, timeout)
   h$close <- function() {
     if (h$closed) return(invisible())

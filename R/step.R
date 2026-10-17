@@ -71,6 +71,9 @@ wk_rendered <- function(gen, cell, display, at)
   event("wk_rendered", at, gen = gen, cell = cell, display = display)
 wk_exited   <- function(gen, status, message, at)
   event("wk_exited", at, gen = gen, status = status, message = message)
+#' The shell couldn't deliver an `fx_interrupt` to a live worker (on
+#' Windows, the worker has no interrupt event: shell.R's `interrupt_worker()`).
+wk_interrupt_failed <- function(gen, at) event("wk_interrupt_failed", at, gen = gen)
 
 #' From the shell's own periodic sampling (processx's `get_memory_info()`,
 #' not a worker protocol message; ui-2.md, Worker memory). `rss` is bytes.
@@ -178,6 +181,7 @@ reduce <- function(state, event) {
     wk_done          = reduce_wk_done(state, event),
     wk_rendered      = reduce_wk_rendered(state, event),
     wk_exited        = reduce_wk_exited(state, event),
+    wk_interrupt_failed = reduce_wk_interrupt_failed(state, event),
     worker_usage     = reduce_worker_usage(state, event),
     tm_offer_restart = reduce_offer_restart(state, event),
     preview_date     = reduce_preview_date(state, event),
@@ -1705,6 +1709,18 @@ reduce_wk_exited <- function(state, event) {
 reduce_worker_usage <- function(state, event) {
   if (!eq(event$gen, state$worker$gen)) return(list(state = state, effects = list(), reply = NULL))
   state$worker_usage <- list(gen = event$gen, rss = event$rss)
+  list(state = state, effects = list(), reply = NULL)
+}
+
+#' The interrupt couldn't be delivered, so waiting out the grace period
+#' would only hide that: offer the restart now, and say why (the restart
+#' message, pluto-state.R). Ignored if the interrupted run is over.
+reduce_wk_interrupt_failed <- function(state, event) {
+  w <- state$worker
+  if (eq(event$gen, w$gen) && !is.null(w$running) && !is.null(w$interrupt)) {
+    state$worker$interrupt$failed <- TRUE
+    state$worker$restart_offered <- TRUE
+  }
   list(state = state, effects = list(), reply = NULL)
 }
 

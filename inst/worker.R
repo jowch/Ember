@@ -145,7 +145,23 @@ loaded_namespace_versions <- function() {
   stats::setNames(vapply(ns, function(n) as.character(getNamespaceVersion(n)), character(1)), ns)
 }
 
+#' On Windows, start listening for the server's interrupts before the
+#' hello, from the package's DLL (src/interrupt.c, #48): loaded by path
+#' (`EMBER_DLL`), since the worker never loads the package. If that fails,
+#' the server finds no event to set and says the interrupt couldn't be
+#' delivered. Elsewhere the server sends SIGINT and this does nothing.
+listen_for_interrupts <- function() {
+  path <- Sys.getenv("EMBER_DLL")
+  Sys.unsetenv("EMBER_DLL")
+  if (.Platform$OS.type != "windows" || !nzchar(path)) return(invisible(FALSE))
+  invisible(tryCatch({
+    dll <- dyn.load(path)
+    isTRUE(.Call(getNativeSymbolInfo("C_interrupt_listen", dll)))
+  }, error = function(e) FALSE))
+}
+
 main <- function() {
+  listen_for_interrupts()
   port <- as.integer(commandArgs(trailingOnly = TRUE)[1])
   con <<- socketConnection("127.0.0.1", port, blocking = TRUE, open = "r+b",
                            timeout = 60 * 60 * 24 * 365)

@@ -884,7 +884,10 @@ project_process_status <- function(state) {
 #' * `restart_recommended_msg`: when the snapshot's `restart_offered` (a
 #'   cell ignored the interrupt), "The running cell hasn't stopped. Restart R
 #'   to stop it; every cell will be left not run." Pluto's banner for this
-#'   has a restart link, which is the action Ember offers.
+#'   has a restart link, which is the action Ember offers. If the interrupt
+#'   couldn't be delivered (Windows, #48) it says so instead: "The interrupt
+#'   couldn't reach R. Restart R to stop the running cell; every cell will
+#'   be left not run."
 #' * `install_time_ns = NULL`, `instantiated = library status is "ready"`.
 #'
 #' Kept filled alongside Ember's own `ember$packages` (project_ember(),
@@ -917,7 +920,9 @@ project_nbpkg <- function(state) {
   restart_required <- if (!is.null(pv$plan) && length(pv$plan$restart) > 0) {
     sprintf("Restart R to use the new versions of: %s", paste(pv$plan$restart, collapse = ", "))
   } else NULL
-  restart_recommended <- if (isTRUE(state$worker$restart_offered)) {
+  restart_recommended <- if (isTRUE(state$worker$interrupt$failed) && isTRUE(state$worker$restart_offered)) {
+    "The interrupt couldn't reach R. Restart R to stop the running cell; every cell will be left not run."
+  } else if (isTRUE(state$worker$restart_offered)) {
     "The running cell hasn't stopped. Restart R to stop it; every cell will be left not run."
   } else NULL
 

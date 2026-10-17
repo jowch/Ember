@@ -1024,7 +1024,7 @@ test_that("an interrupt sent on the running frame stops that run", {
   for (i in 1:10) {
     h$send(run_msg(paste0("c", i), i, "Sys.sleep(5)"))
     r <- wait_for_done(h, timeout = 30, on_frame = function(m) {
-      if (identical(m$type, "running")) h$process$interrupt()
+      if (identical(m$type, "running")) h$interrupt()
     })
     expect_identical(r$status, "interrupted")
   }
@@ -1045,7 +1045,7 @@ test_that("interrupt_r_code", {
   while (!file.exists(started) && Sys.time() < deadline) Sys.sleep(0.05)
   expect_true(file.exists(started))
   t0 <- Sys.time()
-  h$process$interrupt()
+  h$interrupt()
   r <- wait_for_done(h, timeout = 5)
   elapsed <- as.numeric(Sys.time() - t0, units = "secs")
   expect_identical(r$status, "interrupted")
@@ -1057,13 +1057,37 @@ test_that("interrupt_r_code", {
   expect_identical(check$output$text, "[1] 1 2")
 })
 
+test_that("on Windows a worker with no console is interrupted all the same (#48)", {
+  # processx's interrupt() needs the worker to have a console, and one
+  # started by a server without a console has none: every interrupt was
+  # lost, while interrupt() said it was sent. The interrupt event needs no
+  # console.
+  skip_on_os(c("mac", "linux", "solaris"))
+  h <- worker_harness(detached = TRUE)
+  on.exit(h$close())
+  for (code in c("Sys.sleep(20)", "t0 <- Sys.time(); repeat if (Sys.time() - t0 > 20) break")) {
+    h$send(run_msg("a", 1L, code))
+    t0 <- NULL
+    r <- wait_for_done(h, timeout = 10, on_frame = function(m) {
+      if (identical(m$type, "running")) { t0 <<- Sys.time(); expect_true(h$interrupt()) }
+    })
+    expect_identical(r$status, "interrupted")
+    expect_lt(as.numeric(Sys.time() - t0, units = "secs"), 3)
+  }
+})
+
+test_that("on Windows interrupting a process with no interrupt event says it wasn't delivered (#48)", {
+  skip_on_os(c("mac", "linux", "solaris"))
+  p <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", "Sys.sleep(30)"))
+  on.exit(p$kill())
+  expect_false(interrupt_worker(p))
+  expect_true(p$is_alive())
+})
+
 test_that("interrupt_between_runs_swallowed", {
-  # On Windows the interrupt arrives later than the 0.2 s this test waits,
-  # so it lands in the next cell; tracked in #48.
-  skip_on_os("windows")
   h <- worker_harness()
   on.exit(h$close())
-  h$process$interrupt()
+  h$interrupt()
   Sys.sleep(0.2)
   r <- run_and_wait(h, "a", 1L, "1 + 1")
   expect_identical(r$status, "ok")
@@ -1172,16 +1196,13 @@ test_that("known_attached_packages_never_shrink", {
 })
 
 test_that("interrupt_during_display_still_completes_bookkeeping", {
-  # Windows delivers the interrupt through processx's CTRL+C helper, too late
-  # for this test's timing; tracked in #48.
-  skip_on_os("windows")
   h <- worker_harness()
   on.exit(h$close())
   run_and_wait(h, "a", 1L,
     'registerS3method("print", "slowprint", function(x, ...) { Sys.sleep(3); cat("slow\\n") })')
   h$send(run_msg("b", 2L, 'options(digits = 3); orphan <- 42; structure(1, class = "slowprint")'))
   Sys.sleep(1)
-  h$process$interrupt()
+  h$interrupt()
   r <- wait_for_done(h, timeout = 10)
   expect_identical(r$status, "interrupted")
   expect_true("orphan" %in% r$created)
@@ -1201,14 +1222,11 @@ test_that("interrupt_during_display_still_completes_bookkeeping", {
 })
 
 test_that("sigint_during_remove_cell_does_not_crash_worker", {
-  # On Windows a late interrupt between cells can still stop the worker;
-  # tracked in #48.
-  skip_on_os("windows")
   h <- worker_harness()
   on.exit(h$close())
   run_and_wait(h, "a", 1L, "x <- 1")
   h$send(list(type = "remove_cell", cell = "a", order = character()))
-  h$process$interrupt()
+  h$interrupt()
   # a SIGINT landing in the remove_cell/rebuild_search_path bookkeeping (or
   # anywhere else between runs) has nothing to interrupt there and must be
   # swallowed, not reach top level and kill the worker.
