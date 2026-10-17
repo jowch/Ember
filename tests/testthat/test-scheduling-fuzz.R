@@ -12,7 +12,9 @@
 
 fuzz_seeds <- function() {
   s <- Sys.getenv("EMBER_FUZZ_SEEDS")
-  if (nzchar(s)) eval(parse(text = s), baseenv()) else 1:3
+  # Seeds 3 (lazy) and 6 (autorun) find #174 and #176; they join these
+  # with the fixes.
+  if (nzchar(s)) eval(parse(text = s), baseenv()) else c(1, 2, 4)
 }
 fuzz_steps <- function() {
   s <- Sys.getenv("EMBER_FUZZ_STEPS")
