@@ -1923,6 +1923,77 @@ test_that("a cell ending in a data.table := shows nothing, as at the R console, 
   expect_false(is.null(r$output))
 })
 
+test_that("a cell that writes some rows of another cell's data.table reports it, and one that only reads it doesn't (#201)", {
+  skip_if_not_installed("data.table")
+  h <- worker_harness(extra_libs = dirname(find.package("data.table")))
+  on.exit(h$close())
+  ord <- c("l", letters[1:6])
+  run_and_wait(h, "l", 1L, "library(data.table)", order = ord)
+  run_and_wait(h, "a", 2L, "dt <- data.table(a = 1:3, x = c(1, 2, 3), s = c('p', 'q', NA))", order = ord)
+  run_and_wait(h, "b", 3L, "bump <- function(d) { d[1L, x := x + 1]; invisible() }", order = ord)
+  for (code in c("dt[a > 1L, x := 0]", "set(dt, 1L, 'x', 99)", "data.table::set(dt, 2L, 'x', 1)",
+                 "dt[2L, let(x = 5)]", "bump(dt)", "dt[3L, s := 'r']", "dt |> bump()")) {
+    r <- run_and_wait(h, "c", 4L, code, order = ord)
+    expect_identical(r$status, "ok", info = code)
+    expect_identical(r$changed_in_place, "dt", info = code)
+    expect_null(r$output)
+    expect_length(r$console, 0)
+  }
+  # Writing the same value again changes nothing.
+  r <- run_and_wait(h, "c", 5L, "dt[1L, a := 1L]", order = ord)
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "c", 6L, "dt[a > 1L, .N]\nnrow(dt)\nsum(dt$x)", order = ord)
+  expect_length(r$changed_in_place, 0)
+  # A cell's own table is its own to change.
+  r <- run_and_wait(h, "d", 7L, "mine <- data.table(v = 1:2)\nmine[1L, v := 5L]\nset(mine, 2L, 'v', 6L)", order = ord)
+  expect_length(r$changed_in_place, 0)
+  # Its writes are seen by the next cell that writes it.
+  r <- run_and_wait(h, "e", 8L, "set(mine, 1L, 'v', 7L)", order = ord)
+  expect_identical(r$changed_in_place, "mine")
+  # Known gap (#216): a table the cell reaches without naming it isn't
+  # hashed. When #216 is fixed, this expects "dt".
+  run_and_wait(h, "b", 9L, "zero_dt <- function() { dt[1L, x := -1]; invisible() }", order = ord)
+  r <- run_and_wait(h, "c", 10L, "zero_dt()", order = ord)
+  expect_length(r$changed_in_place, 0)
+  # That missed write isn't blamed on the next cell that passes the table
+  # to a function and changes nothing (review).
+  run_and_wait(h, "b", 11L, "show_n <- function(d) nrow(d)", order = ord)
+  r <- run_and_wait(h, "c", 12L, "show_n(dt)", order = ord)
+  expect_identical(r$output$text, "[1] 3")
+  expect_length(r$changed_in_place, 0)
+  # data.table's set() through do.call() or under another name.
+  for (code in c("do.call(set, list(dt, 1L, 'x', 41))", "upd <- data.table::set\nupd(dt, 1L, 'x', 42)")) {
+    r <- run_and_wait(h, "c", 13L, code, order = ord)
+    expect_identical(r$changed_in_place, "dt", info = code)
+  }
+})
+
+test_that("which tables a cell's code could write: a write in a [, set*(), or a notebook function it's passed to (#201)", {
+  skip_if_not_installed("data.table")
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  loadNamespace("data.table")
+  nb <- new.env(parent = globalenv())
+  nb$f <- function(d) d
+  environment(nb$f) <- globalenv()   # as a cell's function's is
+  nb$set <- nb$upd <- getExportedValue("data.table", "set")
+  cw <- function(code) e$datatable_could_write(as.list(parse(text = code)), c("dt", "other"), env = nb)
+  # `x <- dt` binds a second name to the table; a later write through it
+  # is noted under that name only (#216).
+  for (code in c("dt", "dt[x > 1]", "dt[, .N, by = g]", "dt$x", "dt[['x']]", "nrow(dt)", "print(dt)",
+                 "head(dt, 3)", "summary(dt)", "y <- data.table::copy(dt)", "dt2 <- dt[x > 1, .(x)]",
+                 "mean(dt$x)", "lm(y ~ x, dt)", "merge(dt, other, by = 'a')", "lapply(list(dt), nrow)",
+                 "x <- dt", "stats::lm(y ~ x, data = dt)", "dt[a %in% setdiff(p, q)]", "dt[, setNames(.SD, nm)]"))
+    expect_identical(cw(code), character(), info = code)
+  for (code in c("dt[i, x := 0]", "dt[, let(x = 1)]", "set(dt, 1L, 'x', 0)", "data.table::setkey(dt, a)",
+                 "f(dt)", "dt |> f()", "not_defined_yet(dt)", "lapply(list(dt), f)", "do.call(f, list(dt))",
+                 "Map(function(d) d[1L, x := 0], list(dt))", "dt[, f(dt)]", "g <- function() dt[1L, x := 0]",
+                 "local(dt[1L, x := 0])", "do.call(set, list(dt, 1L, 'x', 0))",
+                 "do.call(data.table::set, list(dt, 1L, 'x', 0))", "upd(dt, 1L, 'x', 0)"))
+    expect_true("dt" %in% cw(code), info = code)
+  expect_identical(cw("print(other)\nf(dt)"), "dt")
+})
+
 test_that("a setting the display step changes isn't the cell's: only its code's changes make it a settings cell, and the display's change stays as a package load's would (#156)", {
   skip_if_not_installed("knitr")
   h <- worker_harness(extra_libs = dirname(find.package("knitr")))
