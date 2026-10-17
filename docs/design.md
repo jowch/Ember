@@ -350,15 +350,19 @@ address, its spare column slots and its key. So `dt[, z := x * 2]`,
 `setnames()`, `setkey()`, `setorder()` and dropping a column are noted. A
 write to some rows of an existing column (`dt[i, x := 0]`, `set(dt, i,
 "x", v)`) keeps the column where it was, so the shape can't show it. A
-hash of the table's contents does (#201). Hashing costs about 3 ms a
+hash of the table's contents does (#201). Hashing costs about 3.5 ms a
 megabyte, so a run hashes only another cell's tables its code could write:
 the table of a `[` with `:=`, `let()` or `set*()` in it, an argument of
-data.table's `set*()`, and a table passed to one of the notebook's own
-functions (`add_b(dt)`, `lapply(list(dt), add_b)`), or to a function not
-defined yet. Showing the table, reading it with `[` or `$`, and passing it
-to a package's function (`nrow(dt)`, `lm(y ~ x, dt)`, `ggplot(dt)`) hash
-nothing. Such a run hashes the table after its code, and before it unless
-the last such run left a hash of the table as it is. A cell that reaches a
+data.table's `set*()` (under any name, or through `do.call()`), and a
+table passed to one of the notebook's own functions (`add_b(dt)`,
+`lapply(list(dt), add_b)`), or to a function not defined yet. Showing the
+table, reading it with `[` or `$`, and passing it to a package's function
+(`nrow(dt)`, `lm(y ~ x, dt)`, `ggplot(dt)`) hash nothing. Such a run
+hashes the table twice, before its code and after; no hash is kept between
+runs, so a write that was missed is never blamed on a later cell. That cost
+grows with the table and has no cap, on purpose: a cap would bring the
+silent miss back. A 36 MB table adds about 0.17 s to each cell that could
+write it, and a 1 GB table would add about 7 s. A cell that reaches a
 table without naming it (a helper that writes the global, a table in a
 list) isn't hashed, and its write isn't noted (#216). Before R 4.5,
 `tools::md5sum()` can't hash bytes, so row writes aren't noted there.

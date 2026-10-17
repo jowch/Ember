@@ -1902,6 +1902,17 @@ test_that("a cell that writes some rows of another cell's data.table reports it,
   run_and_wait(h, "b", 9L, "zero_dt <- function() { dt[1L, x := -1]; invisible() }", order = ord)
   r <- run_and_wait(h, "c", 10L, "zero_dt()", order = ord)
   expect_length(r$changed_in_place, 0)
+  # That missed write isn't blamed on the next cell that passes the table
+  # to a function and changes nothing (review).
+  run_and_wait(h, "b", 11L, "show_n <- function(d) nrow(d)", order = ord)
+  r <- run_and_wait(h, "c", 12L, "show_n(dt)", order = ord)
+  expect_identical(r$output$text, "[1] 3")
+  expect_length(r$changed_in_place, 0)
+  # data.table's set() through do.call() or under another name.
+  for (code in c("do.call(set, list(dt, 1L, 'x', 41))", "upd <- data.table::set\nupd(dt, 1L, 'x', 42)")) {
+    r <- run_and_wait(h, "c", 13L, code, order = ord)
+    expect_identical(r$changed_in_place, "dt", info = code)
+  }
 })
 
 test_that("which tables a cell's code could write: a write in a [, set*(), or a notebook function it's passed to (#201)", {
@@ -1912,18 +1923,20 @@ test_that("which tables a cell's code could write: a write in a [, set*(), or a 
   nb <- new.env(parent = globalenv())
   nb$f <- function(d) d
   environment(nb$f) <- globalenv()   # as a cell's function's is
+  nb$set <- nb$upd <- getExportedValue("data.table", "set")
   cw <- function(code) e$datatable_could_write(as.list(parse(text = code)), c("dt", "other"), env = nb)
   # `x <- dt` binds a second name to the table; a later write through it
   # is noted under that name only (#216).
   for (code in c("dt", "dt[x > 1]", "dt[, .N, by = g]", "dt$x", "dt[['x']]", "nrow(dt)", "print(dt)",
                  "head(dt, 3)", "summary(dt)", "y <- data.table::copy(dt)", "dt2 <- dt[x > 1, .(x)]",
                  "mean(dt$x)", "lm(y ~ x, dt)", "merge(dt, other, by = 'a')", "lapply(list(dt), nrow)",
-                 "x <- dt", "stats::lm(y ~ x, data = dt)"))
+                 "x <- dt", "stats::lm(y ~ x, data = dt)", "dt[a %in% setdiff(p, q)]", "dt[, setNames(.SD, nm)]"))
     expect_identical(cw(code), character(), info = code)
   for (code in c("dt[i, x := 0]", "dt[, let(x = 1)]", "set(dt, 1L, 'x', 0)", "data.table::setkey(dt, a)",
                  "f(dt)", "dt |> f()", "not_defined_yet(dt)", "lapply(list(dt), f)", "do.call(f, list(dt))",
                  "Map(function(d) d[1L, x := 0], list(dt))", "dt[, f(dt)]", "g <- function() dt[1L, x := 0]",
-                 "local(dt[1L, x := 0])"))
+                 "local(dt[1L, x := 0])", "do.call(set, list(dt, 1L, 'x', 0))",
+                 "do.call(data.table::set, list(dt, 1L, 'x', 0))", "upd(dt, 1L, 'x', 0)"))
     expect_true("dt" %in% cw(code), info = code)
   expect_identical(cw("print(other)\nf(dt)"), "dt")
 })
