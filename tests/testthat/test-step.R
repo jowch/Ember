@@ -1976,6 +1976,15 @@ test_that("run_message() carries fig from the cell's current code (ui-3 63)", {
   expect_equal(msg2$fig$height, 5)
 })
 
+test_that("run_message() carries the setting keys the cell's code names, NA for a computed one, so the worker can tell a package's cached option from the cell's (#164)", {
+  r <- boot(fake_state(list(S = cell(""), A = cell("options(digits = 3)\nx <- read.csv(f)"))), "A")
+  expect_identical(last_sent(r)$code_settings, "option:digits")
+  r <- boot(fake_state(list(S = cell(""), A = cell("options(op)"))), "A")
+  expect_identical(last_sent(r)$code_settings, NA_character_)
+  r <- boot(fake_state(list(S = cell(""), A = cell("x <- 1"))), "A")
+  expect_identical(last_sent(r)$code_settings, character())
+})
+
 test_that("reduce_move() tells a ready/busy worker to chdir; an off one needs nothing; a starting one waits for wk_hello (ui-3 85)", {
   s <- fake_state(list(S = cell(""), A = cell("1")))
 

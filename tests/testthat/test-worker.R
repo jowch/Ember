@@ -4,9 +4,10 @@
 # (worker_harness()'s $receive()), never Sys.sleep polling.
 
 run_msg <- function(cell, token, code, role = "cell", order = character(), formulas = list(),
-                    library = NULL, fig = NULL, settings = character()) {
+                    library = NULL, fig = NULL, settings = character(), code_settings = NULL) {
   list(type = "run", cell = cell, token = token, code = code, role = role,
-       order = order, settings = settings, formulas = formulas, library = library, fig = fig)
+       order = order, settings = settings, formulas = formulas, library = library, fig = fig,
+       code_settings = code_settings)
 }
 
 #' Run code in a fresh harness and return the `done` report. Fails the
@@ -1566,6 +1567,34 @@ test_that("a setting the display step changes isn't the cell's: only its code's 
   run_and_wait(h, "s", 4L, "options(ember_display_opt = 5)")
   r <- run_and_wait(h, "c", 5L, 'getOption("ember_display_opt")')
   expect_identical(r$output$text, "[1] 2")
+})
+
+test_that("an option a package creates for itself on first use is the package's, not the cell's: the cell isn't a settings cell (#164)", {
+  h <- worker_harness()
+  on.exit(h$close())
+
+  # As readr caches `readr.num_threads` on its first read: a function, not
+  # an options() call in the cell, sets an option named for a loaded
+  # package (stats) that didn't exist.
+  run_and_wait(h, "f", 1L, 'cache <- function() if (is.null(getOption("stats.ember_cache"))) options(stats.ember_cache = 4L)')
+  r <- run_and_wait(h, "a", 2L, "cache()\n1", code_settings = character())
+  expect_identical(r$status, "ok")
+  expect_length(r$settings, 0)
+  # It is part of the starting values: putting settings back before the
+  # next run doesn't remove it.
+  r <- run_and_wait(h, "b", 3L, 'getOption("stats.ember_cache")')
+  expect_identical(r$output$text, "[1] 4")
+
+  # The cell's own code naming it, a computed name, an option already set,
+  # or a name no loaded package owns, still make a settings cell.
+  r <- run_and_wait(h, "c", 4L, "options(stats.ember_own = 1)", code_settings = "option:stats.ember_own")
+  expect_identical(vapply(r$settings, function(d) d$name, character(1)), "stats.ember_own")
+  r <- run_and_wait(h, "d", 5L, 'op <- list(stats.ember_computed = 1); options(op)', code_settings = NA_character_)
+  expect_identical(vapply(r$settings, function(d) d$name, character(1)), "stats.ember_computed")
+  r <- run_and_wait(h, "e", 6L, "g <- function() options(stats.ember_cache = 5L); g()", code_settings = character())
+  expect_identical(vapply(r$settings, function(d) d$name, character(1)), "stats.ember_cache")
+  r <- run_and_wait(h, "g", 7L, "g2 <- function() options(nopkg.ember_x = 1); g2()", code_settings = character())
+  expect_identical(vapply(r$settings, function(d) d$name, character(1)), "nopkg.ember_x")
 })
 
 test_that("a package the display step loads still gets its load note when it resets a setting a settings cell set (#156, #61)", {

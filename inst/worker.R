@@ -33,7 +33,9 @@
 #                applied over the baseline first; apply_settings_context()),
 #                formulas (list of formula_site),
 #                fig (list(width, height, problems), inches: the figure
-#                size to open the plot device at).
+#                size to open the plot device at), code_settings (the
+#                setting keys the cell's code names, NA for a computed
+#                one; package_cached_options()).
 #                For role "text", each line of `code` is one inline
 #                expression (a text cell's `` `r expr` `` spans, one per
 #                line); the report's `output` is an "inline" display
@@ -602,6 +604,11 @@ run_cell <- function(msg) {
       rc$removed <- facts$removed
 
       by_code <- settings_by_code(settings0, settings_code, load_log_code)
+      # An option a package creates for itself on first use (readr's
+      # `readr.num_threads`) is the package's, as a load's change is (#164).
+      cached <- package_cached_options(by_code$settings, msg$code_settings)
+      for (d in by_code$settings[cached]) settings_base <<- set_setting(settings_base, d$kind, d$name, d$after)
+      by_code$settings <- by_code$settings[!cached]
       # What the display step changed is its own, as a package load's
       # change is: part of the starting values from now on. A package it
       # loads (knitr, or a table package's dependencies) still gets its
@@ -1123,6 +1130,24 @@ settings_by_code <- function(settings0, after, load_log) {
     }
   }
   list(settings = diff_settings(baseline, after), load_notes = notes)
+}
+
+#' Which of a cell's setting changes are a package caching its own option
+#' on first use (#164): an option that didn't exist before the run, named
+#' `<pkg>.` for a package whose namespace is loaded, that the cell's code
+#' doesn't name. readr sets `readr.num_threads` on its first read or write
+#' and `readr.default_locale` on its first `read_csv2()`. A cell whose code
+#' sets a computed name (`options(op)`) keeps every change, since any of
+#' them could be the one it set. Returns a logical vector over `diffs`.
+package_cached_options <- function(diffs, code_settings) {
+  code_settings <- as.character(code_settings %||% character())
+  if (anyNA(code_settings)) return(logical(length(diffs)))
+  prefixes <- paste0(loadedNamespaces(), ".")
+  vapply(diffs, function(d) {
+    identical(d$kind, "option") && is.null(d$before) && !is.null(d$after) &&
+      !(paste0("option:", d$name) %in% code_settings) &&
+      any(startsWith(d$name, prefixes))
+  }, logical(1))
 }
 
 #' Before a cell runs (settings-cells.md, What the worker does before each

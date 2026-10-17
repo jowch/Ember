@@ -436,10 +436,13 @@ turn_off <- function(state, ids) {
 #' `list(type = "run", cell, token, code, role = "cell" | "text",
 #' order = <code cell ids in run order>, settings = settings_in_effect(state, id),
 #' formulas = graph$analyses[[id]]$formulas,
-#' library = state$packages$active$path, fig = cell_figure_size(cell$code))`.
+#' library = state$packages$active$path, fig = cell_figure_size(cell$code),
+#' code_settings = <the setting keys the cell's code names, NA for a computed one>)`.
 #' `settings` are the settings cells whose changes the worker applies before
 #' the cell runs, in order (settings-cells.md, What the worker does before
 #' each run).
+#' `code_settings` lets the worker tell a package's own option, cached on
+#' first use (`readr.num_threads`), from one the cell sets (#164).
 #' `fig` is the figure size (inches) the cell's `#|` lines ask for; the
 #' worker opens its plot device at that size.
 #' `order` is what the worker rebuilds the search path from (attaching
@@ -466,7 +469,8 @@ run_message <- function(state, id, token) {
       code = if (is_text) inline_code(cell$code) else cell$code,
       role = if (is_text) "text" else "cell",
       order = order, settings = settings_in_effect(state, id), formulas = state$graph$analyses[[id]]$formulas,
-      library = state$packages$active$path, fig = cell_figure_size(cell$code))
+      library = state$packages$active$path, fig = cell_figure_size(cell$code),
+      code_settings = as.character(state$graph$analyses[[id]]$settings$setting))
 }
 
 #' The settings cells in effect before `id`: settings cells before it in

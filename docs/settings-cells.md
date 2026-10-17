@@ -55,7 +55,8 @@ what ran before, and resetting it per run would hand every cell the same
 random stream, which `Rscript` doesn't do. `par()` needs no rule, since each
 cell draws on its own device. Changes a package makes while it loads stay
 the package's, as today, and so do changes made while Ember displays the
-cell's value (see [Settings found at run time](#settings-found-at-run-time)).
+cell's value and options a package creates for itself on first use (see
+[Settings found at run time](#settings-found-at-run-time)).
 
 **Calls inside `local()`** no longer count statically, as calls inside a
 function body already don't. The runtime check still sees any change that
@@ -263,6 +264,17 @@ displayed. A display method that changes a setting (flextable's
 `knit_print()` sets a gdtools option the first time) doesn't make the cell a
 settings cell; the change is kept as a package load's is, as part of the
 starting values (#156).
+
+A package that caches its own option the first time it's used is treated
+the same way. readr sets `readr.num_threads` on its first read or write and
+`readr.default_locale` on its first `read_csv2()`, so without this rule a
+plain `read_csv()` cell would become a settings cell, and a second readr
+cell would get "set in two cells" (#164). The rule: an option that didn't
+exist before the cell ran, whose name starts with a loaded package's name
+and a dot, and that the cell's code doesn't name, is the package's. A cell
+that sets a computed name (`options(op)`) keeps all its changes, since any
+of them could be the one it set. A learned setting saved in a file before
+this rule stays until its cell's code changes, as any learned setting does.
 
 `theme_set()` is the exception: ggplot2 keeps the theme inside its namespace,
 outside what the worker compares, so only the static check finds it (see
