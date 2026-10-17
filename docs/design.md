@@ -1219,8 +1219,9 @@ run), and the snapshot has no stale state.
    the server and worker run on Linux in CI. The server and worker were run
    on Windows 10 in 2026-10, started both with a console and without one:
    interrupts needed a way of their own there (#48, see [Running
-   cells](#running-cells)).
-   Still to run: rig on Windows (#49). Whether any package overwrites a
+   cells](#running-cells)). Rig's user mode was run on Windows in 2026-10
+   too (#49, see [Package environments](#package-environments)). Whether any
+   package overwrites a
    setting the notebook already set (#61) was run on Linux in 2026-10: see
    [Global settings](#running-cells).
    - Server and worker: httpuv serving the UI while a worker runs a long
