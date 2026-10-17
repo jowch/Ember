@@ -728,9 +728,9 @@ rest:
    with "there is no package called 'svglite'", the engine offers to add it
    to that list.
 2. Resolve each against CRAN and Bioconductor at the notebook's snapshot
-   date. GitHub packages can't be inferred; the user records `user/repo` for
-   them, and the Packages tab offers to add one on a name that isn't
-   found.
+   date. GitHub packages can't be inferred; the user records them in the
+   header's `[sources]` as `github:user/repo`, and the Packages tab offers
+   to add one on a name that isn't found.
 3. Update the lock and install into the notebook's library in a subprocess.
    The worker restarts only if a package it has already loaded changed
    version; a new package is just loaded.
