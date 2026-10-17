@@ -51,11 +51,11 @@ comment. A function is how R users already meet inputs (Shiny's
 arguments.
 
 The cost is the package: a notebook with inputs needs `emberui` installed to
-run as a script. Once it is on CRAN, Ember detects, installs and locks it
-like any other package, so `ember::run()` supplies it. Until then, Ember
-can't find it by name (guessing a repository is not built,
-packages.md:515), so the notebook needs a `[sources]` entry; question 2
-covers this.
+run as a script. Once Ember can find it by name (on CRAN, or on
+r-universe once notebooks can install from there), Ember detects, installs
+and locks it like any other package, so `ember::run()` supplies it. Until
+then (guessing a repository is not built, packages.md:515), the notebook
+needs a `[sources]` entry; question 2 covers this.
 
 ## What the user writes
 
@@ -339,8 +339,8 @@ R has no macros, so the binding comes from the assignment instead of from
 
 ## Open questions
 
-Two questions are open. The other choices are decided above: `input_*` names (matching plain R), keeping a value on
-rerun (Pluto), lazy mode marking dependents stale (design.md's definition
+Two questions are open. The other choices are decided above: `input_*`
+names (matching plain R), keeping a value on rerun (Pluto), lazy mode marking dependents stale (design.md's definition
 of lazy, which marimo applies to inputs), and "Make this the default"
 coming later.
 
