@@ -231,7 +231,7 @@ test_that("after allow, a missing target emits exactly one install; a second eve
   expect_equal(sum(effect_types(r) == "install"), 1)
   expect_equal(r$state$packages$target$status, "installing")
 
-  r2 <- drive(r$state, ev_render("nonexistent", 10, 10, at(5)))
+  r2 <- drive(r$state, ev_render("nonexistent", at(5)))
   expect_equal(sum(effect_types(r2) == "install"), 0)
 })
 
@@ -756,7 +756,7 @@ test_that("packages_changed is notified once per dispatch when the view changes,
   notes <- notifications(r$state, r2$state)
   expect_equal(sum(vapply(notes, function(n) n$kind, character(1)) == "packages_changed"), 1)
 
-  r3 <- drive(r2$state, ev_render("nonexistent", 1, 1, at(3)))
+  r3 <- drive(r2$state, ev_render("nonexistent", at(3)))
   notes2 <- notifications(r2$state, r3$state)
   expect_false("packages_changed" %in% vapply(notes2, function(n) n$kind, character(1)))
 })

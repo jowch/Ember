@@ -500,6 +500,37 @@ test_that("Endeavor-shaped calls: apply with expected, run(wait = FALSE), seq, r
   expect_true(is.raw(png$png))
 })
 
+test_that("render_png() at a pixel size returns that image and leaves the stored one, also while busy (#28)", {
+  path <- write_session_notebook(list(S = cell(""), P = cell("plot(1:10)"), B = cell("Sys.sleep(1)")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  allow_execution(nb)
+  run_cells(nb, wait = TRUE, timeout = 20)
+  # PNG width and height: big-endian integers at bytes 17-24 (IHDR).
+  png_px <- function(b) c(sum(as.integer(b[17:20]) * 256^(3:0)), sum(as.integer(b[21:24]) * 256^(3:0)))
+
+  stored <- nb$state$results$P$output
+  seen <- character()
+  unsub <- on_notebook_event(nb, function(note) {
+    if (identical(note$kind, "cell_state")) seen <<- c(seen, unlist(note$cells))
+  })
+  r <- render_png(nb, "P", width = 200, height = 100)
+  expect_equal(r$mime, "image/png")
+  expect_equal(png_px(r$png), c(200, 100))
+  expect_identical(nb$state$results$P$output, stored)
+  expect_identical(render_png(nb, "P")$png, stored$data)
+
+  # A busy worker answers once its run ends.
+  run_cells(nb, "B", wait = FALSE)
+  expect_true(wait_for(nb, function(s) identical(s$process, "busy"), timeout = 15))
+  r2 <- render_png(nb, "P", width = 300, height = 150, timeout = 15)
+  expect_equal(png_px(r2$png), c(300, 150))
+  expect_true(wait_for(nb, timeout = 20))
+  unsub()
+  expect_identical(nb$state$results$P$output, stored)
+  expect_false("P" %in% seen)
+})
+
 test_that("two consecutive notebook_state() values share unchanged cells (116)", {
   cells <- list(S = cell(""), A = cell("1"), B = cell("2"))
   path <- write_session_notebook(cells)
