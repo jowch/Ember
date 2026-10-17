@@ -27,6 +27,14 @@ on:
         description: Head ref (bench/ is always taken from it)
         default: main
 
+# A new push to a pull request cancels that PR's older runs, which would only
+# report on a head nobody will merge. Every other run (a push, a run by hand)
+# gets a group of its own, so it is never cancelled and never waits: a shared
+# group would also drop a run still waiting behind another.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   bench:
     runs-on: ubuntu-latest
