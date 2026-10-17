@@ -319,15 +319,21 @@ const PackageStatus = ({ row }) => {
 
 /**
  * Where a package from the header's `[sources]` comes from, under its
- * version: "GitHub lab/mypkg@3f2a1c9". Its version isn't the snapshot
- * date's, so the date above the table doesn't speak for it; this label is
- * design.md's "marked unchecked", and its tooltip says so.
+ * version: "GitHub lab/mypkg@3f2a1c9", or "r-universe jowch@b56942e" for
+ * a universe's build. Its version isn't the snapshot date's, so the date
+ * above the table doesn't speak for it; this label is design.md's "marked
+ * unchecked", and its tooltip says so.
  * @param {string?} source  the lock's source, "github:<user>/<repo>@<sha>"
+ *   or "universe:<name>/<host>/<path>[//<subdir>]@<sha>"
  */
 const github_source_label = (source) => {
     const m = /^github:([^@]+)@(.+)$/.exec(source ?? "")
-    if (m == null) return null
-    return html`<div class="ember-package-source" title=${t("t_ember_packages_from_github_unchecked", { source })}>${t("t_ember_packages_from_github", { repo: `${m[1]}@${m[2].slice(0, 7)}` })}</div>`
+    if (m != null) {
+        return html`<div class="ember-package-source" title=${t("t_ember_packages_from_github_unchecked", { source })}>${t("t_ember_packages_from_github", { repo: `${m[1]}@${m[2].slice(0, 7)}` })}</div>`
+    }
+    const u = /^universe:([^/]+)\/.*@([0-9a-f]+)$/.exec(source ?? "")
+    if (u == null) return null
+    return html`<div class="ember-package-source" title=${t("t_ember_packages_from_universe_unchecked", { source })}>${t("t_ember_packages_from_universe", { universe: u[1], sha: u[2].slice(0, 7) })}</div>`
 }
 
 /** A `[sources]` spec as the form shows it and takes it: "user/repo[@ref]". */

@@ -419,7 +419,7 @@ resolve_methods <- function(cells, analyses, exports, ids) {
   used <- unique(unlist(lapply(cells, `[[`, "packages"), use.names = FALSE))
   exports <- exports[names(exports) %in% used]
   is_generic <- function(g) {
-    g %in% s3_generics || g %in% user_generics ||
+    g %in% s3_generics || g %in% names(group_generics) || g %in% user_generics ||
       any(vapply(exports, function(x) g %in% x, logical(1)))
   }
   for (i in seq_along(cells)) {
@@ -662,9 +662,14 @@ add_soft_edges <- function(edges, candidates) {
 #' removed, disabled or rerun, so R falls back to another method.
 add_method_edges <- function(edges, cells, ids, method_lookup) {
   generics <- ls(method_lookup, all.names = TRUE)
+  # A group generic's method (`Ops.money`) is read through any member (`+`).
+  read_as <- lapply(generics, function(g) c(g, group_generics[[g]]))
   readers <- new.env(parent = emptyenv())  # generic -> ids reading it
   for (id in ids) {
-    for (g in intersect(cells[[id]]$references, generics)) readers[[g]] <- c(readers[[g]], id)
+    refs <- cells[[id]]$references
+    for (k in seq_along(generics)) {
+      if (any(read_as[[k]] %in% refs)) readers[[generics[[k]]]] <- c(readers[[generics[[k]]]], id)
+    }
   }
   upstream <- new.env(parent = emptyenv())
   for (i in seq_len(nrow(edges))) {
@@ -685,23 +690,23 @@ add_method_edges <- function(edges, cells, ids, method_lookup) {
     }
     seen
   }
-  have <- paste(edges$from, edges$to, edges$name, sep = "\r")
+  have <- new.env(parent = emptyenv())
+  for (k in paste(edges$from, edges$to, edges$name, sep = "\r")) have[[k]] <- TRUE
   method_cells <- ids[ids %in% unique(unlist(mget(generics, envir = method_lookup),
                                              use.names = FALSE))]
-  from <- to <- name <- character()
+  added <- list()
   for (t in method_cells) {
     anc <- ancestors(t)
     for (g in unique(cells[[t]]$methods$generic)) {
       for (b in readers[[g]]) {
         if (identical(b, t) || !is.null(anc[[b]])) next
-        if (paste(b, t, g, sep = "\r") %in% have) next
-        from <- c(from, b)
-        to <- c(to, t)
-        name <- c(name, g)
+        if (!is.null(have[[paste(b, t, g, sep = "\r")]])) next
+        added[[length(added) + 1]] <- c(b, t, g)
         upstream[[b]] <- c(upstream[[b]], t)
       }
     }
   }
+  from <- vapply(added, `[[`, "", 1); to <- vapply(added, `[[`, "", 2); name <- vapply(added, `[[`, "", 3)
   if (length(from) == 0) return(edges)
   rbind(edges, data.frame(from = from, to = to, name = name, via = "method",
                           stringsAsFactors = FALSE))

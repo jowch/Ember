@@ -87,10 +87,10 @@ index_rds_path <- function(key, cache = cache_dir()) {
 #' fetches such an index again (its slot is `provisional`). Yesterday too,
 #' since when a day's snapshot is complete isn't known here, and a date
 #' ahead of UTC's (a clock east of Greenwich) is later still. Any other
-#' dated index never changes. Not GitHub keys: those move by ref
-#' (`github_key()`).
+#' dated index never changes. Not GitHub or universe keys: those move by
+#' ref (`github_key()`, `universe_key()`).
 index_may_change <- function(key, now = Sys.time()) {
-  if (is_github_key(key)) return(FALSE)
+  if (is_github_key(key) || is_universe_key(key)) return(FALSE)
   date <- tryCatch(as.Date(strsplit(key, "/", fixed = TRUE)[[1]][[2]]), error = function(e) NA)
   !is.na(date) && date >= as.Date(format(now, tz = "UTC", usetz = FALSE)) - 1
 }
@@ -197,7 +197,9 @@ index_not_published <- function(base) {
 index_fetch_command <- function(key, url, cache = cache_dir()) {
   path <- index_rds_path(key, cache)
   rscript <- file.path(R.home("bin"), "Rscript")
-  main <- if (is_github_key(key)) "fetch_github_main" else "fetch_index_main"
+  main <- if (is_github_key(key)) "fetch_github_main"
+          else if (is_universe_key(key)) "fetch_universe_main"
+          else "fetch_index_main"
   code <- paste0(
     "local({library(ember); ember:::", main, "(",
     deparse(key), ", ", deparse(url), ", ", deparse(path), ")})")
@@ -266,10 +268,12 @@ fetch_github_main <- function(key, url, path) {
 #' The URL of a commit's top-level DESCRIPTION: GitHub's contents endpoint
 #' (`<base>/contents/DESCRIPTION?ref=<sha>`, the call renv makes too), or,
 #' for a `file://` base (the tests' fixture, which can't take a query),
-#' `<base>/contents/<sha>/DESCRIPTION`.
-github_description_url <- function(base, sha) {
-  if (startsWith(base, "file://")) paste0(base, "/contents/", sha, "/DESCRIPTION")
-  else paste0(base, "/contents/DESCRIPTION?ref=", sha)
+#' `<base>/contents/<sha>/DESCRIPTION`. With `subdir`, the DESCRIPTION in
+#' that folder of the repository (a universe package's `RemoteSubdir`).
+github_description_url <- function(base, sha, subdir = NA_character_) {
+  file <- if (is.na(subdir)) "DESCRIPTION" else paste0(subdir, "/DESCRIPTION")
+  if (startsWith(base, "file://")) paste0(base, "/contents/", sha, "/", file)
+  else paste0(base, "/contents/", file, "?ref=", sha)
 }
 
 #' The token to send to GitHub's API at `base`, or `""`: `GITHUB_PAT` (as
@@ -360,14 +364,35 @@ read_description_index <- function(path, key, label) {
                  if (is.na(nc)) NA else nc == "YES")
 }
 
-#' Run in the installer: for each GitHub package in `lock`, the package
-#' names its DESCRIPTION needs, from the index cached when it was resolved
-#' (under its commit's key), or fetched again (`fetch_github_main()`) when
-#' this machine never resolved it. A package whose DESCRIPTION can't be had
-#' is left out, and renv looks it up itself. -> named list.
-github_install_deps <- function(lock, cache, github) {
+#' Run in the installer: for each GitHub or universe package in `lock`,
+#' the package names its DESCRIPTION needs, from the index cached when it
+#' was resolved (under its commit's key), or fetched again
+#' (`fetch_github_main()`, `fetch_universe_main()`) when this machine never
+#' resolved it. A package whose DESCRIPTION can't be had is left out, and
+#' renv looks it up itself. `repos`: the installer's repositories, which
+#' name each universe (`repo_urls()`). -> named list.
+github_install_deps <- function(lock, cache, github, repos = character()) {
   e <- lock$entries
   out <- list()
+  for (i in which(startsWith(e$source, "universe:"))) {
+    src <- parse_universe_source(e$source[[i]])
+    if (is.null(src)) next
+    key <- universe_commit_key(e$source[[i]], e$name[[i]])
+    idx <- cached_index(key, cache)
+    if (is.null(idx)) {
+      url <- if (is.null(universe_github_repo(src))) {
+        unname(repos[universe_repo_name(src$universe)])
+      } else {
+        repo_url(list(github = github), key)
+      }
+      idx <- if (is.na(url[1])) NULL else tryCatch({
+        fetch_universe_main(key, url, index_rds_path(key, cache))
+        cached_index(key, cache)
+      }, error = function(e) NULL)
+    }
+    pos <- if (is.null(idx)) NA else match(e$name[[i]], idx$name)
+    if (!is.na(pos)) out[[e$name[[i]]]] <- idx$deps[[pos]]
+  }
   for (i in which(startsWith(e$source, "github:"))) {
     src <- parse_github_source(e$source[[i]])
     if (is.null(src) || is.na(src$ref)) next
@@ -394,6 +419,167 @@ fresh_index <- function(key, cache = cache_dir()) {
   path <- index_rds_path(key, cache)
   if (!file.exists(path)) return(NULL)
   tryCatch(readRDS(path), error = function(e) NULL)
+}
+
+# ---- r-universe sources ------------------------------------------------------
+
+#' Run in a subprocess (`index_fetch_command()`, for a universe key), as
+#' `fetch_github_main()` is for a GitHub one.
+#'
+#' For a universe's latest build (`universe_key()`), `url` is the
+#' universe: one request for the package's JSON
+#' (`<url>/api/packages/<package>`, `universe_package_info()`), which gives
+#' its version, its dependencies and the git commit the build came from.
+#' The one-row index is labelled with that commit (`universe_source()`)
+#' and saved under the key asked for and under the commit's own key
+#' (`universe_commit_key()`), which never changes.
+#'
+#' For a commit's key (a lock read on a machine that never resolved it),
+#' the universe may serve a later build by now, so the DESCRIPTION is read
+#' from GitHub at that commit when the repository is there (`url` is its
+#' API, `repo_url()`), and from the universe otherwise, which works only
+#' while it still serves that commit.
+fetch_universe_main <- function(key, url, path) {
+  base <- sub("/+$", "", url)
+  if (startsWith(key, "universe-commit/")) {
+    package <- strsplit(key, "/", fixed = TRUE)[[1]][[2]]
+    source <- universe_source_of_key(key)
+    src <- parse_universe_source(source)
+    if (is.null(src)) stop("ember: not a universe key: ", key, call. = FALSE)
+    if (!is.null(universe_github_repo(src))) {
+      idx <- read_github_description(base, src$sha, src$subdir, key, source,
+                                     sprintf("%s (built by r-universe %s)", src$git, src$universe))
+    } else {
+      info <- universe_package_info(base, src$universe, package)
+      if (!identical(tolower(info$RemoteSha %||% ""), src$sha)) {
+        stop(sprintf(paste0("ember: r-universe %s no longer serves %s at commit %s, and its ",
+                            "repository (%s) isn't on GitHub, so that commit's DESCRIPTION ",
+                            "can't be read; update %s to take the universe's latest build"),
+                     src$universe, package, src$sha, src$git, package), call. = FALSE)
+      }
+      idx <- universe_info_index(info, key, src$universe)
+    }
+    targets <- stats::setNames(path, key)
+  } else {
+    parts <- strsplit(key, "/", fixed = TRUE)[[1]]
+    if (length(parts) != 3) stop("ember: not a universe key: ", key, call. = FALSE)
+    info <- universe_package_info(base, parts[[2]], parts[[3]])
+    idx <- universe_info_index(info, key, parts[[2]])
+    pinned <- universe_commit_key(idx$label, parts[[3]])
+    targets <- stats::setNames(c(path, index_rds_path(pinned, dirname(dirname(path)))), c(key, pinned))
+  }
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  for (k in names(targets)) {
+    idx$key <- k
+    tmp_rds <- paste0(targets[[k]], ".tmp-", Sys.getpid())
+    saveRDS(idx, tmp_rds)
+    if (!file.rename(tmp_rds, targets[[k]])) unlink(tmp_rds)
+  }
+  invisible(NULL)
+}
+
+#' A universe's JSON for `package` (`<base>/api/packages/<package>`), as
+#' a list, or a stop naming what went wrong: no such package in the
+#' universe (404), or no answer.
+universe_package_info <- function(base, universe, package) {
+  dest <- tempfile("ember-universe-")
+  got <- github_get(paste0(base, "/api/packages/", utils::URLencode(package, reserved = TRUE)),
+                    dest, c(Accept = "application/json"))
+  if (identical(got$status, 404L)) {
+    stop(sprintf("ember: r-universe %s has no package %s", universe, package), call. = FALSE)
+  }
+  if (!got$ok) {
+    stop(sprintf("ember: could not reach r-universe %s for %s%s", universe, package,
+                 if (nzchar(got$detail)) paste0(" (", got$detail, ")") else ""), call. = FALSE)
+  }
+  info <- tryCatch(jsonlite::fromJSON(dest, simplifyVector = TRUE), error = function(e) NULL)
+  if (!is.list(info) || is.null(info$Package) || is.null(info$Version)) {
+    stop(sprintf("ember: r-universe %s's answer for %s isn't a package's description", universe, package),
+         call. = FALSE)
+  }
+  info
+}
+
+#' A universe's JSON for a package (`universe_package_info()`) -> a one-row
+#' `ember_repo_index` under `key`, labelled with the commit it was built
+#' from (`universe_source()`). A build that doesn't say its commit, or
+#' whose repository isn't an https URL, can't be locked to its code, so it
+#' stops instead.
+universe_info_index <- function(info, key, universe) {
+  label <- if (is.null(info$RemoteSha) || !is_commit(info$RemoteSha)) NULL
+           else universe_source(universe, info$RemoteUrl %||% NA_character_, info$RemoteSha,
+                                info$RemoteSubdir %||% NA_character_)
+  if (is.null(label)) {
+    stop(sprintf(paste0("ember: r-universe %s doesn't say which git commit it built %s from, ",
+                        "so the lock can't fix its code"), universe, info$Package), call. = FALSE)
+  }
+  deps <- info[["_dependencies"]]
+  deps <- if (is.data.frame(deps) && all(c("package", "role") %in% names(deps))) {
+    unique(setdiff(deps$package[deps$role %in% c("Depends", "Imports", "LinkingTo")], c("R", base_packages)))
+  } else {
+    character()
+  }
+  nc <- toupper(trimws(info$NeedsCompilation %||% NA_character_))
+  new_repo_index(key, label, info$Package, info$Version, list(deps), if (is.na(nc)) NA else nc == "YES")
+}
+
+#' A GitHub repository's DESCRIPTION at commit `sha` (in `subdir` when not
+#' `NA`) -> a one-row index under `key`, labelled `label`; `where` names
+#' the repository in a failure's message (`github_failure()`).
+read_github_description <- function(base, sha, subdir, key, label, where) {
+  token <- github_token(base)
+  headers <- if (nzchar(token)) c(Authorization = paste("token", token)) else character()
+  desc <- tempfile("ember-github-desc-")
+  got <- github_get(github_description_url(base, sha, subdir), desc,
+                    c(headers, Accept = "application/vnd.github.raw"))
+  if (identical(got$status, 404L)) {
+    stop("ember: ", where, " has no DESCRIPTION at commit ", sha,
+         if (!is.na(subdir)) paste0(" in ", subdir), call. = FALSE)
+  }
+  if (!got$ok) stop(github_failure(where, got, nzchar(token), sha), call. = FALSE)
+  read_description_index(desc, key, label)
+}
+
+#' Run in the installer: for each universe package in `lock`, the commit
+#' its universe serves now (`universe_package_info()`, from `repos`, which
+#' name each universe: `repo_urls()`), or `NA` when it can't be asked. A
+#' universe can serve a new commit under the same version (a development
+#' version that stays `0.0.0.9000`), so the version alone can't say whether
+#' its build is the locked code; `renv_lockfile_of()` installs from the
+#' universe only when the commit matches. -> named character.
+universe_served <- function(lock, repos) {
+  e <- lock$entries
+  out <- character()
+  for (i in which(startsWith(e$source, "universe:"))) {
+    src <- parse_universe_source(e$source[[i]])
+    url <- if (is.null(src)) NA_character_ else unname(repos[universe_repo_name(src$universe)])
+    sha <- if (is.na(url[1])) NULL else tryCatch(universe_package_info(url, src$universe, e$name[[i]])$RemoteSha,
+                                                 error = function(e) NULL)
+    out[[e$name[[i]]]] <- if (is.null(sha)) NA_character_ else tolower(sha)
+  }
+  out
+}
+
+#' Run in the installer after renv: the universe packages renv installed
+#' from their universe (`served` names the locked commit) whose installed
+#' build isn't the locked commit. r-universe writes the commit it built
+#' from (`RemoteSha`) into every build's DESCRIPTION, and binaries are
+#' separate builds: one can lag the source build while it is still being
+#' made or after it failed, and the universe can rebuild between
+#' `universe_served()` and renv's download, all under the same version.
+#' A build that doesn't say its commit counts as wrong. -> character.
+universe_wrong_builds <- function(lock, library, served) {
+  e <- lock$entries
+  out <- character()
+  for (i in which(startsWith(e$source, "universe:"))) {
+    name <- e$name[[i]]
+    src <- parse_universe_source(e$source[[i]])
+    if (is.null(src) || !identical(unname(served[name]), src$sha)) next
+    path <- file.path(library, name, "DESCRIPTION")
+    sha <- if (file.exists(path)) unname(read.dcf(path, fields = "RemoteSha")[1, 1]) else NA_character_
+    if (is.na(sha) || !identical(tolower(sha), src$sha)) out <- c(out, name)
+  }
+  out
 }
 
 # ---- Bioconductor's release list ---------------------------------------------
@@ -630,8 +816,12 @@ library_cache_entries <- function(staging, installed, cache_root) {
       out <- c(out, candidates)
       next
     }
+    # Base R's `file.info()` has no `ino` column, so this is `NULL` and the
+    # newest candidate stands in; `is.na(NULL)` used to stop the install
+    # whenever two cache entries shared a package and version (two builds
+    # of one universe version, #203).
     target_ino <- tryCatch(file.info(pkg_dir)$ino, error = function(e) NA)
-    matched <- if (!is.na(target_ino)) {
+    matched <- if (length(target_ino) == 1 && !is.na(target_ino)) {
       Filter(function(c) isTRUE(file.info(file.path(c, pkg))$ino == target_ino), candidates)
     } else character()
     out <- c(out, if (length(matched) > 0) matched else candidates[length(candidates)])

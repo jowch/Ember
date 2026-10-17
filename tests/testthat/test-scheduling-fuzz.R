@@ -27,8 +27,7 @@ fuzz_steps <- function() {
 fuzz_known <- list(
   "lazy 8" = list(issue = 175, step = 4L, kind = "_ shows ok but running from scratch gives error"),
   "autorun 10" = list(issue = 175, step = 8L, kind = "_ shows _ but running from scratch gives _"),
-  "lazy 30" = list(issue = 174, step = 5L, kind = "after running every cell, _ isn't fresh"),
-  "autorun 31" = list(issue = 176, step = 3L, kind = "_ isn't stale but reads from _, which is")
+  "lazy 30" = list(issue = 174, step = 5L, kind = "after running every cell, _ isn't fresh")
 )
 
 known_seeds <- function(mode) {
@@ -72,3 +71,13 @@ for (mode in c("autorun", "lazy")) {
     }
   })
 }
+
+# Regression tests: shrunk traces of what the random runs found.
+
+test_that("autorun runs a queued dependent's stale ancestors first (#176)", {
+  expect_trace_passes(list(mode = "autorun",
+    cells = list(C1 = "v1 <- 1", C2 = "v2 <- v1 + 1", C3 = "v3 <- 10", C4 = "v2 + v3"),
+    steps = list(list(ops = list(), run = "all"),
+                 list(ops = list(list(op = "delete", cell = "C1"),
+                                 list(op = "set_code", cell = "C3", code = "v3 <- 20")), run = "C3"))))
+})

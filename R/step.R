@@ -622,6 +622,7 @@ invalidate_dependents <- function(state, id, names, queue = TRUE,
   dependents <- setdiff(dependents, id)
 
   autorun <- identical(state$file$header$on_cell_change, "autorun")
+  queued <- character()
   for (cid in dependents) {
     r <- state$results[[cid]]
     if (is.null(r)) next
@@ -630,7 +631,24 @@ invalidate_dependents <- function(state, id, names, queue = TRUE,
     if (queue && autorun && isTRUE(state$allowed) && cell_runs(state$cells[[cid]]) &&
         !(cid %in% names(state$graph$off))) {
       state$pending <- union(state$pending, cid)
+      queued <- c(queued, cid)
     }
+  }
+  # A queued dependent can read a stale cell outside this run (a delete, a
+  # rename or an interrupt can leave one stale). As when it is run by hand,
+  # its stale ancestors run first, with every ancestor between them and it
+  # (#176).
+  # Only a stale cell not already pending needs adding, so the walk is
+  # skipped when there is none, as in the usual rerun after an edit, where
+  # every stale cell is one of the queued dependents.
+  outside <- if (length(queued)) Filter(function(a) {
+    isTRUE(state$results[[a]]$stale) && !(a %in% state$pending) && !identical(a, id)
+  }, names(state$results)) else character()
+  if (length(outside)) {
+    ancestors <- setdiff(upstream_of_set(state$graph, queued), id)
+    stale <- Filter(function(a) can_run(state, a), intersect(outside, ancestors))
+    between <- reached_from(state$graph, stale, setdiff(ancestors, stale))
+    state$pending <- union(state$pending, Filter(function(a) can_run(state, a), union(stale, between)))
   }
   state
 }
@@ -872,11 +890,11 @@ reduce_apply <- function(state, event) {
         header$extra_packages <- setdiff(header$extra_packages, op$name)
       }
     } else if (identical(op$op, "set_package_source")) {
-      spec <- github_spec(op$source)
+      spec <- source_spec(op$source)
       if (!is_one_package_name(op$name)) {
         bad <- refused("not a package name", op)
       } else if (is.null(spec)) {
-        bad <- refused("a source is written \"github:user/repo\", optionally with @ and a branch, tag or commit, or as a github.com link to the repository or to a branch, tag or commit", op)
+        bad <- refused("a source is written \"github:user/repo\", optionally with @ and a branch, tag or commit, or as a github.com link to the repository or to a branch, tag or commit; or, for an r-universe, \"universe:name\" or a link to it", op)
       } else {
         src <- header$sources %||% character()
         src[[op$name]] <- spec
@@ -1431,9 +1449,16 @@ reduce_wk_done <- function(state, event) {
       # it and, when the active library claims the package is installed,
       # marks the library to be checked again (another process may have
       # cleaned it).
-      mp <- missing_package_error(state, err$package)
-      state <- mp$state
-      error <- mp$error
+      # rlang's check_installed() can name several (#184): one error, each one's fix.
+      for (pkg in err$package) {
+        mp <- missing_package_error(state, pkg)
+        state <- mp$state
+        error <- if (is.null(error)) mp$error else {
+          error$names <- c(error$names, mp$error$names)
+          error$fixes <- unique(c(error$fixes, mp$error$fixes))
+          error
+        }
+      }
     } else {
       msg <- err$message %||% "error"
       # A denied computed `source()` makes the worker raise an R error whose
@@ -1473,6 +1498,11 @@ reduce_wk_done <- function(state, event) {
         new_run_error(kind, message = msg, traceback = err$traceback %||% character(),
                       call = err$call, line = err$line, deep = isTRUE(err$deep),
                       frames = err$frames %||% list())
+      }
+      # A message that says a package is needed, naming one the code can't reveal (#184).
+      if (identical(error$kind, "error")) {
+        named <- packages_named_in(state, msg)
+        if (length(named) > 0) error$fixes <- sprintf("Add %s to [extra_packages]", named)
       }
     }
   } else {

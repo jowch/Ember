@@ -24,7 +24,7 @@
 #'   Set at open to `wanted` when every wanted name is in the lock (an
 #'   Ember-written file: nothing to do, no network, no write), else to
 #'   `character()` so the first `schedule_packages()` resolves.
-#' * `sources_for`: the header's readable `[sources]` (`github_sources()`)
+#' * `sources_for`: the header's readable `[sources]` (`readable_sources()`)
 #'   the current lock answers, as `resolved_for` is for the wanted set:
 #'   resolution runs again when they differ, and a package whose spec
 #'   changed is resolved again from its new spec (`lock_for_sources()`).
@@ -77,7 +77,7 @@ new_packages_state <- function(lock, wanted, r, cache, header = NULL, releases =
   locked_names <- if (is.null(lock$entries) || nrow(lock$entries) == 0) character() else lock$entries$name
   # A lock that disagrees with the header's `[sources]` (a source added,
   # changed or removed by hand) is resolved again, as one missing a name is.
-  sources_for <- if (is.null(header)) character() else github_sources(header)
+  sources_for <- if (is.null(header)) character() else readable_sources(header)
   agrees <- is.null(header) || identical(lock_for_sources(lock, header, sources_for)$entries, lock$entries)
   resolved_for <- if (all(wanted %in% locked_names) && agrees) wanted else character()
   # A pin built for another R is said at open, in safe preview, before
@@ -582,7 +582,7 @@ schedule_packages <- function(state, old) {
       wanted_packages(state$graph, state$file$header)
     }
     p$wanted_cache <- wanted
-    sources <- github_sources(state$file$header)
+    sources <- readable_sources(state$file$header)
     if (!setequal(wanted, p$resolved_for) || !identical(sources, p$sources_for %||% character())) {
       if (length(wanted) > 0 && (is.null(state$file$header$snapshot) || is.na(state$file$header$snapshot))) {
         # `format()` on a POSIXct uses the local time zone directly; routing
@@ -820,7 +820,7 @@ schedule_packages <- function(state, old) {
     tgt$progress <- NULL
     state$packages$target <- tgt
     effects <- c(effects, list(fx_install(token, tgt$key, tgt$path, state$file$lock,
-                                          repo_urls(state$options$repos, state$file$header),
+                                          repo_urls(state$options$repos, state$file$header, state$file$lock),
                                           github_api_url(state$options$repos))))
   }
 
@@ -961,7 +961,7 @@ source_failed_problems <- function(header, keys, indexes) {
     if (!identical(slot$status, "failed")) next
     out <- rbind(out, package_problem("index_unavailable", name, sprintf(
       "couldn't look up %s for %s: %s", header$sources[[name]], name,
-      slot$message %||% "no answer from GitHub")))
+      slot$message %||% "no answer")))
   }
   out
 }
@@ -1332,7 +1332,7 @@ reduce_preview_date <- function(state, event) {
     # proposal stage asks for every index it fetches `fresh`, so the shell
     # skips a saved copy that may have changed since, such as one another
     # notebook saved this morning; the core has no clock to tell which.
-    moving <- is_github_key(key) && !is_commit(parse_github_key(key)$ref)
+    moving <- is_moving_source_key(key)
     provisional <- isTRUE(slot$provisional) && identical(slot$status, "ready")
     if (!is.null(slot) && (identical(slot$status, "failed") || moving && identical(slot$status, "ready") || provisional)) {
       state$packages$indexes[[key]] <- NULL
@@ -1469,6 +1469,43 @@ missing_package_error <- function(state, pkg) {
   }
   err <- new_run_error("missing_package", message = msg, names = pkg, fixes = character())
   list(state = state, error = err)
+}
+
+#' The packages a run error's message names as needed, for the fix "Add pkg
+#' to [extra_packages]" (#184): tidymodels names its engines only as strings
+#' (`set_engine("glmnet")`, "Package install is required for glmnet."), and
+#' tidytext its lexicons' packages ("The textdata package is required ...").
+#' A text match, so kept narrow. The message has the word "package", and a
+#' name counts only where the message marks it as one: quoted ('glmnet'),
+#' styled by cli (parsnip colours it), or just before "package" ("the
+#' textdata package", only when nothing is quoted or styled). Ordinary words
+#' that are also CRAN packages ("not", "here", "optional") are never marked so. Each name must also be in one of the
+#' notebook's loaded indexes, and not installed (the notebook's library or
+#' R's own), in the lock, or already wanted. A message R or a package
+#' translated doesn't match, and gets no fix.
+packages_named_in <- function(state, msg) {
+  name <- "([A-Za-z][A-Za-z0-9.]*[A-Za-z0-9])"
+  # The name each match of `pattern` (whose one group is `name`) marks.
+  marked <- function(pattern, text) {
+    m <- regmatches(text, gregexpr(pattern, text, perl = TRUE))[[1]]
+    sub(pattern, "\\1", m, perl = TRUE)
+  }
+  styled <- marked(paste0("\033\\[[0-9;]*m", name, "\033\\["), msg)
+  msg <- gsub("\033\\[[0-9;?]*[A-Za-z]", "", msg)
+  if (!grepl("\\bpackages?\\b", msg, ignore.case = TRUE, perl = TRUE)) return(character())
+  words <- unique(c(styled, marked(paste0("(?:'|\"|`|\u2018|\u201c)", name, "(?:'|\"|`|\u2019|\u201d)"), msg)))
+  # Only when nothing is quoted or styled: in "The optional package "ranger"", the
+  # quotes already say which word is the package ("optional" is one on CRAN too).
+  if (length(words) == 0) words <- marked(paste0("(?<![A-Za-z0-9._])", name, "(?=\\s+(?i:packages?)\\b)"), msg)
+  p <- state$packages
+  indexed <- unlist(lapply(p$indexes, function(s) if (identical(s$status, "ready")) s$index$name), use.names = FALSE)
+  words <- intersect(words, indexed)
+  lock <- state$file$lock$entries
+  words <- setdiff(words, c(names(p$active$installed), names(p$target$installed),
+                            if (!is.null(lock) && nrow(lock) > 0) lock$name,
+                            wanted_packages(state$graph, state$file$header)))
+  if (length(words) == 0) return(character())
+  setdiff(words, rownames(utils::installed.packages(c(.Library, .Library.site), noCache = TRUE)))
 }
 
 # ---- Projection --------------------------------------------------------------
