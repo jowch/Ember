@@ -1517,7 +1517,7 @@ main > preamble {
 
 .overlay-button {
     background: var(--overlay-button-bg);
-    color: var(--overlay-button-color);
+    color: var(--overlay-button-color, currentcolor);
     padding: 5px 8px;
     border: 3px solid var(--overlay-button-border);
     border-radius: 12px;
@@ -1530,7 +1530,7 @@ main > preamble {
     display: flex;
 }
 .overlay-button button:not(.asdfdsf) {
-    color: var(--overlay-button-color);
+    color: var(--overlay-button-color, currentcolor);
 }
 
 main > preamble #saveall-container {
