@@ -1970,13 +1970,12 @@ test_that("a cell that writes some rows of another cell's data.table reports it,
   # Its writes are seen by the next cell that writes it.
   r <- run_and_wait(h, "e", 8L, "set(mine, 1L, 'v', 7L)", order = ord)
   expect_identical(r$changed_in_place, "mine")
-  # Known gap (#216): a table the cell reaches without naming it isn't
-  # hashed. When #216 is fixed, this expects "dt".
+  # A helper that writes the global itself, without being passed it (#216).
   run_and_wait(h, "b", 9L, "zero_dt <- function() { dt[1L, x := -1]; invisible() }", order = ord)
   r <- run_and_wait(h, "c", 10L, "zero_dt()", order = ord)
-  expect_length(r$changed_in_place, 0)
-  # That missed write isn't blamed on the next cell that passes the table
-  # to a function and changes nothing (review).
+  expect_identical(r$changed_in_place, "dt")
+  # A cell that passes the table to a function and changes nothing isn't
+  # reported (review).
   run_and_wait(h, "b", 11L, "show_n <- function(d) nrow(d)", order = ord)
   r <- run_and_wait(h, "c", 12L, "show_n(dt)", order = ord)
   expect_identical(r$output$text, "[1] 3")
@@ -1985,6 +1984,37 @@ test_that("a cell that writes some rows of another cell's data.table reports it,
   for (code in c("do.call(set, list(dt, 1L, 'x', 41))", "upd <- data.table::set\nupd(dt, 1L, 'x', 42)")) {
     r <- run_and_wait(h, "c", 13L, code, order = ord)
     expect_identical(r$changed_in_place, "dt", info = code)
+  }
+  # Code run from text (#216).
+  r <- run_and_wait(h, "c", 14L, "eval(parse(text = 'dt[1L, x := 43]'))", order = ord)
+  expect_identical(r$changed_in_place, "dt")
+})
+
+test_that("a row write to a table held in another cell's list or environment, or bound to a second name, is reported under each name (#216)", {
+  skip_if_not_installed("data.table")
+  h <- worker_harness(extra_libs = dirname(find.package("data.table")))
+  on.exit(h$close())
+  ord <- c("l", letters[1:6])
+  run_and_wait(h, "l", 1L, "library(data.table)", order = ord)
+  run_and_wait(h, "a", 2L, paste("dt <- data.table(a = 1:3, x = c(1, 2, 3))",
+                                 "tabs <- list(flights = data.table(x = 1:3), other = 1)",
+                                 "box <- new.env()\nbox$t <- data.table(x = 1:3)", sep = "\n"), order = ord)
+  for (code in c("tabs$flights[1L, x := 0L]", "tabs[['flights']][2L, x := 0L]", "set(box$t, 1L, 'x', 0L)",
+                 "box$t[2L, x := 0L]")) {
+    r <- run_and_wait(h, "c", 3L, code, order = ord)
+    expect_identical(r$status, "ok", info = code)
+    expect_identical(r$changed_in_place, if (startsWith(code, "tabs")) "tabs" else "box", info = code)
+  }
+  r <- run_and_wait(h, "c", 4L, "tabs$flights[x > 1L, .N]\nnrow(box$t)", order = ord)
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "c", 5L, "with(tabs, flights[3L, x := 0L])", order = ord)
+  expect_identical(r$changed_in_place, "tabs")
+  # A second name for the same table, and a list holding it: all are named
+  # (review).
+  run_and_wait(h, "b", 6L, "alias <- dt\nheld <- list(t = dt)", order = ord)
+  for (code in c("alias[1L, x := 0]", "dt[2L, x := 0]", "alias[, z := 1]", "held$t[3L, x := 0]")) {
+    r <- run_and_wait(h, "c", 7L, code, order = ord)
+    expect_setequal(r$changed_in_place, c("dt", "alias", "held"))
   }
 })
 
@@ -1998,8 +2028,6 @@ test_that("which tables a cell's code could write: a write in a [, set*(), or a 
   environment(nb$f) <- globalenv()   # as a cell's function's is
   nb$set <- nb$upd <- getExportedValue("data.table", "set")
   cw <- function(code) e$datatable_could_write(as.list(parse(text = code)), c("dt", "other"), env = nb)
-  # `x <- dt` binds a second name to the table; a later write through it
-  # is noted under that name only (#216).
   for (code in c("dt", "dt[x > 1]", "dt[, .N, by = g]", "dt$x", "dt[['x']]", "nrow(dt)", "print(dt)",
                  "head(dt, 3)", "summary(dt)", "y <- data.table::copy(dt)", "dt2 <- dt[x > 1, .(x)]",
                  "mean(dt$x)", "lm(y ~ x, dt)", "merge(dt, other, by = 'a')", "lapply(list(dt), nrow)",
@@ -2012,6 +2040,26 @@ test_that("which tables a cell's code could write: a write in a [, set*(), or a 
                  "do.call(data.table::set, list(dt, 1L, 'x', 0))", "upd(dt, 1L, 'x', 0)"))
     expect_true("dt" %in% cw(code), info = code)
   expect_identical(cw("print(other)\nf(dt)"), "dt")
+  # A table in a list or an environment, written through it (#216).
+  for (code in c("other$t[1L, x := 0]", "other[['t']][1L, x := 0]", "set(other$t, 1L, 'x', 0)"))
+    expect_identical(cw(code), "other", info = code)
+  for (code in c("other$t[x > 1]", "nrow(other$t)", "other$t$x"))
+    expect_identical(cw(code), character(), info = code)
+  # A notebook function's body is read: one that writes a global counts
+  # where it's called, one that doesn't, doesn't (#216).
+  nb$zero <- function() dt[1L, x := 0]
+  nb$zero2 <- function() zero()
+  nb$count <- function() nrow(dt)
+  environment(nb$zero) <- environment(nb$zero2) <- environment(nb$count) <- nb
+  expect_true("dt" %in% cw("zero()"))
+  expect_true("dt" %in% cw("zero2()"))
+  expect_true("dt" %in% cw("lapply(1:2, function(i) zero())"))
+  expect_true("dt" %in% cw("do.call('zero', list())"))
+  expect_identical(cw("count()"), character())
+  expect_identical(cw("with(other, t[1L, x := 0])"), "other")
+  expect_identical(cw("with(other, sum(t$x))"), character())
+  # Code run from text could write any table.
+  expect_setequal(cw("eval(parse(text = s))"), c("dt", "other"))
 })
 
 test_that("a setting the display step changes isn't the cell's: only its code's changes make it a settings cell, and the display's change stays as a package load's would (#156)", {
