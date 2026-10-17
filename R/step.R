@@ -1634,10 +1634,8 @@ report_columns <- function(columns) {
   out[order(names(out))]
 }
 
-#' Does any cell read one of `globals` as the data of a masked read
-#' (`df` in `subset(df, x > 1)`)?
 #' Drop the data columns of `ids` (every cell's by default): their values
-#' are gone (a restart, R exiting, an edit), so masked reads of them go back
+#' are gone (a restart, R exiting, a forgotten run), so masked reads of them go back
 #' to a soft edge until the cell runs again. Rebuilds the graph only when a
 #' masked read used them.
 forget_columns <- function(state, ids = names(state$data_columns)) {
@@ -1649,6 +1647,8 @@ forget_columns <- function(state, ids = names(state$data_columns)) {
   state
 }
 
+#' Does any cell read one of `globals` as the data of a masked read
+#' (`df` in `subset(df, x > 1)`)?
 masked_data_read <- function(graph, globals) {
   if (length(globals) == 0) return(FALSE)
   any(vapply(graph$cells, function(c) any(c$masked$data %in% globals), logical(1)))
