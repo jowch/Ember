@@ -1536,6 +1536,85 @@ test_that("display_html resolves and dedupes dependencies, skipped without htmlt
   expect_identical(r$output$deps[[1]]$script, "a.js")
 })
 
+test_that("a cell that changes another cell's environment in place reports it; reading it, rebinding it or changing its own doesn't (#167)", {
+  h <- worker_harness()
+  on.exit(h$close())
+
+  # An R6-like object: public fields in one environment, private ones two
+  # levels down, as R6 keeps them.
+  run_and_wait(h, "a", 1L, paste(
+    "cnt <- new.env()",
+    "cnt$n <- 0",
+    "cnt$.__enclos_env__ <- new.env()",
+    "cnt$.__enclos_env__$self <- cnt",
+    "cnt$.__enclos_env__$private <- new.env()",
+    "cnt$.__enclos_env__$private$hits <- 0",
+    "cnt$add <- function() cnt$n <- cnt$n + 1",
+    "cnt$hit <- function() cnt$.__enclos_env__$private$hits <- 1",
+    "x <- 1", sep = "\n"))
+  r <- run_and_wait(h, "b", 2L, "cnt$add()")
+  expect_identical(r$status, "ok")
+  expect_identical(r$changed_in_place, "cnt")
+  r <- run_and_wait(h, "c", 3L, "cnt$hit()")
+  expect_identical(r$changed_in_place, "cnt")
+  r <- run_and_wait(h, "d", 4L, "assign('m', 1, envir = cnt)")
+  expect_identical(r$changed_in_place, "cnt")
+
+  # Reading it, or setting a binding to the value it already has, isn't a change.
+  r <- run_and_wait(h, "e", 5L, "cnt$n\nls(cnt)")
+  expect_length(r$changed_in_place, 0)
+  # A cell's own environment is its own to change.
+  r <- run_and_wait(h, "f", 6L, "mine <- new.env()\nmine$v <- 1")
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "f", 7L, "mine <- new.env()\nmine$v <- 2")
+  expect_length(r$changed_in_place, 0)
+  # Rebinding the name is a change of the name (the server's "Multiple
+  # definitions"), not of its contents.
+  r <- run_and_wait(h, "g", 8L, "cnt <- new.env()")
+  expect_length(r$changed_in_place, 0)
+  # A reference class object copies a method into itself on its first
+  # call, which isn't a change; setting a field is.
+  run_and_wait(h, "r", 9L, paste(
+    'A <- setRefClass("A", fields = list(n = "numeric"), methods = list(get = function() n, inc = function() n <<- n + 1))',
+    "a <- A$new(n = 0)", sep = "\n"))
+  r <- run_and_wait(h, "s", 10L, "a$get()")
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "t", 11L, "a$inc()")
+  expect_identical(r$changed_in_place, "a")
+  # A namespace held in a global isn't read.
+  run_and_wait(h, "h", 12L, "ns <- asNamespace('stats')")
+  r <- run_and_wait(h, "i", 13L, "1")
+  expect_identical(r$status, "ok")
+  expect_length(r$changed_in_place, 0)
+})
+
+test_that("taking the in-place fingerprint forces no promise, and a big environment is skipped without turning the check off for the others (#167)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  run_and_wait(h, "a", 1L, paste(
+    "forced <- 0",
+    "le <- new.env()",
+    "delayedAssign('x', { forced <<- forced + 1; 42 }, assign.env = le)",
+    "delayedAssign('bad', stop('never read'), assign.env = le)",
+    "d <- new.env(hash = TRUE)",
+    "for (i in seq_len(20000)) assign(paste0('k', i), i, envir = d)",
+    "cnt <- new.env()",
+    "cnt$n <- 0", sep = "\n"))
+  r <- run_and_wait(h, "b", 2L, "1")
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "c", 3L, "forced")
+  expect_identical(r$output$text, "[1] 0")
+  # After the skipped dictionary and the environment holding a promise that
+  # errors, a change to the next object is still reported.
+  r <- run_and_wait(h, "e", 4L, "cnt$n <- 1")
+  expect_identical(r$changed_in_place, "cnt")
+  # Forcing a promise isn't a change; assigning over it is.
+  r <- run_and_wait(h, "f", 5L, "le$x")
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "g", 6L, "assign('x', 1, envir = le)")
+  expect_identical(r$changed_in_place, "le")
+})
+
 test_that("a setting the display step changes isn't the cell's: only its code's changes make it a settings cell, and the display's change stays as a package load's would (#156)", {
   skip_if_not_installed("knitr")
   h <- worker_harness(extra_libs = dirname(find.package("knitr")))

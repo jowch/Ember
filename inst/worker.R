@@ -345,7 +345,9 @@ trace_line <- function(...) {
 #' or NULL), console (list of items, also streamed), error (NULL or
 #' list(message, call, traceback, span)), runtime, created, changed, removed,
 #' settings, load_notes, attached (package -> exports, for packages newly
-#' attached), formula_misses, globals (see summarise_globals())).
+#' attached), formula_misses, globals (see summarise_globals()),
+#' changed_in_place (names of other cells' environments, R6 objects and
+#' reference class objects this run changed; env_fingerprint())).
 #' `error$span` is set only for role "text": the 1-based index of the
 #' failing line (into `inline_spans()`'s rows).
 #'
@@ -367,7 +369,7 @@ run_cell <- function(msg) {
              runtime = NA_real_, created = character(), changed = character(),
              removed = character(), settings = list(), load_notes = list(),
              attached = list(), formula_misses = character(), loaded = character(),
-             globals = list())
+             globals = list(), changed_in_place = character())
 
   # `dev`/`console` are closed here (not just at their normal point of use
   # below) so an interrupt landing anywhere in this function -- including
@@ -400,6 +402,10 @@ run_cell <- function(msg) {
 
     before_names <- ls(globalenv(), all.names = TRUE)
     before <- snapshot_globals(before_names)
+    # Other cells' reference objects, to tell the user when this cell
+    # changes one in place (design.md, "only reference objects change in
+    # place"; #167). Its own were removed above.
+    env_before <- env_fingerprints(before, unlist(owned, use.names = FALSE))
     settings0 <- snapshot_settings()
     load_log <<- list()
     notebook_options <<- character()
@@ -604,6 +610,7 @@ run_cell <- function(msg) {
       rc$created <- facts$created
       rc$changed <- facts$changed
       rc$removed <- facts$removed
+      rc$changed_in_place <- changed_in_place(env_before, facts$changed)
 
       by_code <- settings_by_code(settings0, settings_code, load_log_code)
       # An option a package creates for itself on first use (readr's
@@ -857,6 +864,111 @@ compare_globals <- function(before_names, before) {
     }
   }
   list(created = created, changed = changed, removed = removed)
+}
+
+#' The most bindings `env_fingerprints()` reads per run, over all the
+#' environments it visits, and the most it reads from one environment. An
+#' environment over the limit (a dictionary of 1e5 keys) is skipped, not
+#' read, and the others are still checked, so a big one costs only a
+#' `length()` call each run.
+ENV_FINGERPRINT_MAX <- 10000L
+ENV_FINGERPRINT_ONE_MAX <- 1000L
+
+#' Fingerprints of the environment-valued globals in `before` (a
+#' `snapshot_globals()` result) named in `names`: a named list of
+#' `list(env, print)`. Environments, R6 objects and reference class objects
+#' are the values a cell can change without rebinding the name, so
+#' `compare_globals()` can't see it (#167). Package namespaces and the
+#' global environment are skipped, and so is an environment too big to
+#' read.
+env_fingerprints <- function(before, names) {
+  budget <- new.env()
+  budget$left <- ENV_FINGERPRINT_MAX
+  out <- list()
+  for (n in intersect(names, names(before))) {
+    b <- before[[n]]
+    if (b$active || !is.environment(b$value) || is_shared_env(b$value)) next
+    print <- env_fingerprint(b$value, budget)
+    if (is.null(print)) next
+    out[[n]] <- list(env = b$value, print = print)
+  }
+  out
+}
+
+#' An environment the notebook doesn't own: a namespace, a package's
+#' attached environment, the global, base or empty environment.
+is_shared_env <- function(e) {
+  isNamespace(e) || identical(e, globalenv()) || identical(e, baseenv()) ||
+    identical(e, emptyenv()) || nzchar(environmentName(e))
+}
+
+#' One environment's bindings: each value as it is (holding it costs no
+#' copy, and `identical()` on the same object is a pointer check), an
+#' active binding by its function, and an environment-valued binding by
+#' its own fingerprint, `depth` levels down. An R6 object's private fields
+#' are two levels down (`.__enclos_env__`, then `private`). Each
+#' environment is read once (`seen`), so `self` doesn't loop.
+#'
+#' A binding is read with `substitute()`, which never forces a promise: a
+#' `delayedAssign()` binding is kept as its expression, so taking the
+#' fingerprint runs no user code. `NULL` when the environment has more
+#' bindings than `ENV_FINGERPRINT_ONE_MAX` or than `budget$left` (counted
+#' with `length()`, before anything is listed), or if reading it fails. An
+#' inner environment that is skipped is kept by identity only.
+env_fingerprint <- function(e, budget, depth = 3L, seen = new.env()) {
+  tryCatch(env_fingerprint_(e, budget, depth, seen), error = function(err) NULL)
+}
+
+env_fingerprint_ <- function(e, budget, depth, seen) {
+  # `identical()` on environments compares the objects, not their contents.
+  for (s in seen$envs) if (identical(s, e)) return("seen")
+  seen$envs <- c(seen$envs, list(e))
+  # A reference class object is an S4 object holding its environment;
+  # `length()` and `substitute()` need the environment itself.
+  if (isS4(e)) e <- as.environment(e)
+  size <- length(e)
+  if (size > ENV_FINGERPRINT_ONE_MAX || size > budget$left) return(NULL)
+  budget$left <- budget$left - size
+  nms <- ls(e, all.names = TRUE, sorted = TRUE)
+  out <- vector("list", length(nms))
+  names(out) <- nms
+  for (n in nms) {
+    if (bindingIsActive(n, e)) {
+      out[[n]] <- list(active = activeBindingFunction(n, e))
+      next
+    }
+    v <- eval(call("substitute", as.name(n), e))
+    # A reference class object copies a method into itself the first time
+    # it's called (`a$get()`), which is no change to the object.
+    if (inherits(v, "refMethodDef")) {
+      out[[n]] <- NULL
+      next
+    }
+    if (is.environment(v) && depth > 1L && !is_shared_env(v)) {
+      inner <- env_fingerprint_(v, budget, depth - 1L, seen)
+      out[[n]] <- if (is.null(inner)) list(env = v) else list(env = v, print = inner)
+    } else {
+      out[[n]] <- list(value = v)
+    }
+  }
+  out
+}
+
+#' Which of `env_before`'s globals the run changed in place: the name is
+#' still bound to the same environment, and its fingerprint differs. A
+#' name the run rebound (`changed`) or removed is reported as a change of
+#' the name, not of its contents.
+changed_in_place <- function(env_before, changed) {
+  out <- character()
+  for (n in setdiff(names(env_before), changed)) {
+    b <- env_before[[n]]
+    if (!exists(n, envir = globalenv(), inherits = FALSE) || bindingIsActive(n, globalenv())) next
+    now <- get(n, envir = globalenv(), inherits = FALSE)
+    if (!identical(now, b$env)) next
+    print <- env_fingerprint(now, list2env(list(left = ENV_FINGERPRINT_MAX)))
+    if (!identical(print, b$print)) out <- c(out, n)
+  }
+  out
 }
 
 #' At most 80 characters, cut with "\u2026" (the whole string, ellipsis

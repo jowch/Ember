@@ -1526,6 +1526,12 @@ reduce_wk_done <- function(state, event) {
   settings_found <- if (id %in% state$graph$settings) character()
                     else setting_label(setdiff(reported_keys, known_keys))
   load_notes <- report_load_notes(report$load_notes)
+  # A reference object another cell defines, changed in place: cells that
+  # read it don't rerun, so the cell says so (design.md, Definitions; #167).
+  changed_in_place <- Filter(function(n) {
+    any(vapply(state$graph$ids, function(cid) !identical(cid, id) && n %in% state$graph$cells[[cid]]$definitions,
+               logical(1)))
+  }, as.character(report$changed_in_place %||% character()))
   if (defs_changed || refs_changed || settings_changed) {
     state$graph <- graph_learn(state$graph, id,
                                definitions = if (defs_changed) learned_defs else NULL,
@@ -1545,7 +1551,7 @@ reduce_wk_done <- function(state, event) {
                        defined = report$created %||% character(),
                        variables = if (identical(status, "ok")) report$globals %||% list() else list(),
                        settings_found = settings_found, setting = id %in% state$graph$settings,
-                       load_notes = load_notes)
+                       load_notes = load_notes, changed_in_place = as.character(changed_in_place))
   state$results[[id]] <- result
   if (length(state$footer_sources) && all_code_cells_ran(state)) {
     state$footer_sources <- character()

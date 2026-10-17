@@ -327,7 +327,16 @@ makes the same code a visible redefinition, so the rule catches it.
 Only reference objects change in place in R (environments, R6, reference
 classes, data.table's `:=` and `set*()`). Those stay untracked, as mutation
 is in Pluto and marimo; the user docs say so and the engine warns when a
-cell modifies one defined elsewhere.
+cell modifies one defined elsewhere. Before each run the worker keeps a
+fingerprint of every environment another cell defines (its bindings, and
+those of the environments inside it, three levels down, which reaches an
+R6 object's private fields). If a run changes one without rebinding its
+name, the cell shows a note: "Changed `cnt` in place, which another cell
+defines, so the cells that read it don't rerun." Taking the fingerprint
+forces no promise and calls no active binding. Namespaces are skipped, and
+so is any one environment with more than 1,000 bindings; the others are
+still checked, up to 10,000 bindings a run. data.table's in-place changes
+aren't detected yet (#172).
 
 ### Methods
 
