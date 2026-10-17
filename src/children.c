@@ -55,6 +55,7 @@ static DWORD WINAPI release_loop(LPVOID unused) {
     release_processx_jobs();
     Sleep(500);
   }
+  return 0;
 }
 #endif
 
