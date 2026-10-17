@@ -382,6 +382,61 @@ test("help: a typed query keeps its scope when the Help tab is closed and reopen
   assertNoProblems(page);
 });
 
+// #121's cause on macOS: the #92 test's fill() lands before the newly
+// opened Help tab has run its first effects. Those effects then fetch the
+// query the cursor had set (`sum`) before the typed `s`. The typed flag
+// was once a one-shot ref that the first fetch used up, so `sum` went out
+// as typed and `s` as a cursor query, which can't see mgcv. Here the
+// typing comes in the same task as the opening, so it always comes first.
+test("help: a query typed before the Help tab's first effects run keeps its typed scope (#121)", { timeout: 120000 }, async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help-typed-first.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await runCell(page, "A");
+  await page.waitForFunction(() => {
+    const nb = window.editor_state?.notebook;
+    return nb?.process_status === "ready" && nb.cell_results?.A?.runtime != null &&
+      Object.values(nb.cell_results).every((r) => !r.running && !r.queued);
+  }, null, { timeout: 30000 });
+
+  await page.locator(`${cellSelector("B")} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
+  await page.keyboard.press("Home");
+
+  const effects_ran_first = await page.evaluate(async () => {
+    window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" }));
+    // Preact renders in a microtask and runs effects after the next frame,
+    // so waiting on microtasks alone gets the search box but no effects.
+    let input = null;
+    for (let i = 0; i < 100 && input == null; i++) {
+      await Promise.resolve();
+      input = document.querySelector("#live-docs-search");
+    }
+    if (input == null) return null;
+    const before = window.pluto_get_message_log().filter((m) => m.message?.doc !== undefined).length;
+    input.value = "s";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    return before > 0;
+  });
+  assert.equal(effects_ran_first, false, "the search box was there, and no docs request had gone out, when `s` was typed");
+
+  await page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("mgcv"),
+    null, { timeout: 30000 }).catch(async (e) => {
+    const seen = await page.evaluate(() => ({
+      page: document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.slice(0, 300),
+      replies: window.pluto_get_message_log().filter((m) => m.message?.doc !== undefined)
+        .map((m) => [m.message.status, String(m.message.doc).replace(/<[^>]*>/g, "").slice(0, 80), m.message.all_packages]),
+    }));
+    throw new Error(`${e.message}\nthe panel: ${JSON.stringify(seen, null, 1)}`);
+  });
+  assert.equal(await page.locator(".ember-help-package").count(), 0, "no 'follows the cursor' line on a typed query");
+  assertNoProblems(page);
+});
+
 // #132: a reply that arrives after a later query has gone out. `mean`'s
 // request is held back past the panel's 2 s wait, so `s` is asked while
 // it's still on the way, and `s` gets "R is busy" first. Then the page
