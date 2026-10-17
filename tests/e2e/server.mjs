@@ -110,7 +110,7 @@ function emberLibs() {
   return [path.resolve(lib), process.env.R_LIBS].filter(Boolean).join(path.delimiter);
 }
 
-async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port: fixedPort, secret = SECRET, repos, cacheDir }) {
+async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port: fixedPort, secret = SECRET, repos, cacheDir, askAbove }) {
   const rscript = process.env.EMBER_RSCRIPT ?? "Rscript";
   const quoted = notebookPaths.map((p) => JSON.stringify(p)).join(", ");
   const port = fixedPort ?? await freePort();
@@ -121,6 +121,8 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   // A test that seeds the cache itself (clean-up.test.mjs) names it; the
   // folder is the test's, so it is not removed here.
   if (cacheDir) prelude += `options(ember.cache_dir = ${JSON.stringify(cacheDir)}); `;
+  // Read when each notebook opens (`new_state()`), so set first too.
+  if (askAbove != null) prelude += `options(ember.ask_above = ${askAbove}); `;
   let expr;
   let cache = null;
   if (repos) {
@@ -239,13 +241,15 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
  * a server at the same address with a new secret. `repos` (an object of
  * `ember_repos()` arguments, `null` for `NA`) opens the notebooks against
  * those repositories instead of the real ones. `cacheDir` points the
- * server's cache (`options(ember.cache_dir)`) at a folder the test owns. */
+ * server's cache (`options(ember.cache_dir)`) at a folder the test owns.
+ * `askAbove` sets `options(ember.ask_above)`: the bytes of large downloads
+ * an install asks about first (#37). */
 export async function startServer(notebookPaths, opts = {}) {
-  const { timeoutMs = 30000, logFile, retries = 3, installerScript, cwd, port, secret, repos, cacheDir } = opts;
+  const { timeoutMs = 30000, logFile, retries = 3, installerScript, cwd, port, secret, repos, cacheDir, askAbove } = opts;
   let lastErr;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      return await startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port, secret, repos, cacheDir });
+      return await startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port, secret, repos, cacheDir, askAbove });
     } catch (err) {
       if (!err.bindFailure || attempt === retries) throw err;
       lastErr = err;

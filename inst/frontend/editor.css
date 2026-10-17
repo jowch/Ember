@@ -1255,6 +1255,13 @@ nav#at_the_top .ember-menu {
     padding: 0.6em 0.8em;
 }
 
+/* A question, not a failure: the panel's own line (#37). */
+.ember-install-ask-card {
+    border: 1px solid var(--rule-color);
+    border-radius: 6px;
+    padding: 0.6em 0.8em;
+}
+
 .ember-install-failure-title {
     font-weight: 600;
     margin: 0 0 0.2em 0;

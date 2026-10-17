@@ -590,7 +590,8 @@ run_effect <- function(nb, fx) {
     },
     install = {
       cmd <- installer_command(fx$lock, fx$repos, fx$path, nb$state$options$cache,
-                               github = fx$github %||% "https://api.github.com")
+                               github = fx$github %||% "https://api.github.com",
+                               ask_above = fx$ask_above %||% Inf)
       # Keyed by `path`, not `key`: `key` is a hash of the lock text alone
       # (library_for(), lock.R), the same for two sessions with the same
       # lock but different library paths (different caches, or -- in tests
@@ -606,6 +607,12 @@ run_effect <- function(nb, fx) {
           manifest <- tryCatch(read_library_manifest(fx$path), error = function(e) NULL)
           lines <- strsplit(output, "\n", fixed = TRUE)[[1]]
           failed <- !identical(status, 0L)
+          # Status 3: stopped before a large download, to ask (#37).
+          download <- if (identical(status, 3L)) download_lines(lines) else NULL
+          if (!is.null(download)) {
+            return(ev_install_done(fx$token, fx$key, NULL, message = NULL, log = character(),
+                                   download = download, at = Sys.time()))
+          }
           ev_install_done(fx$token, fx$key, manifest,
                           message = if (failed) install_failure_message(lines, status) else NULL,
                           log = utils::tail(lines, 200),

@@ -137,6 +137,8 @@ new_state <- function(file, path, id, options, at) {
   if (is.null(options$grace)) options$grace <- 3
   if (is.null(options$repos)) options$repos <- ember_repos()
   if (is.null(options$cache)) options$cache <- tempfile("ember-cache-")
+  # Bytes of large downloads an install asks about first (#37).
+  if (is.null(options$ask_above)) options$ask_above <- getOption("ember.ask_above", ask_above_default)
   # `[[` (exact), not `$`: `options$r` partial-matches `options$repos` via
   # `$`'s partial-matching on lists whenever `repos` is already set and `r`
   # isn't, which would make this check always find a (wrong) non-NULL value

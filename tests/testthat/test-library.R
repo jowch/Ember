@@ -800,3 +800,65 @@ test_that("clean_up() through a symlinked cache dir keeps an open library's own 
   expect_true(dir.exists(d2$open_lib))
 })
 
+
+# ---- Large downloads (#37) ----------------------------------------------------
+
+#' The fixture Bioconductor repositories copied to a temporary folder, with
+#' a GO.db tarball of `bytes` bytes in the annotation one:
+#' `list(repos, cache)`, `repos` named as the installer's.
+large_download_repos <- function(bytes) {
+  root <- withr::local_tempdir(.local_envir = parent.frame())
+  file.copy(testthat::test_path("fixtures", "repos", "bioc"), root, recursive = TRUE)
+  base <- file.path(root, "bioc", "2026-09-01", "packages", "3.23")
+  ann <- file.path(base, "data", "annotation", "src", "contrib")
+  writeBin(raw(bytes), file.path(ann, "GO.db_3.22.0.tar.gz"))
+  url <- function(...) paste0("file://", normalizePath(file.path(base, ...), winslash = "/"))
+  list(repos = c(CRAN = "file:///nowhere", BioCsoft = url("bioc"), BioCann = url("data", "annotation"),
+                 BioCexp = url("data", "experiment")),
+       cache = file.path(root, "cache"))
+}
+
+go_lock <- function() {
+  new_lock(name = c("AnnotationDbi", "GO.db", "dplyr"), version = c("1.71.1", "3.22.0", "1.1.4"),
+           source = c("Bioc", "Bioc", "CRAN"))
+}
+
+test_that("large_downloads() sizes the data packages renv's cache lacks (78)", {
+  fx <- large_download_repos(2048)
+  big <- large_downloads(go_lock(), fx$repos, fx$cache, minor = "4.6")
+  expect_equal(big$package, "GO.db")
+  expect_equal(big$bytes, 2048)
+
+  # In renv's cache already: nothing to download.
+  dir.create(file.path(fx$cache, "renv-cache", "v5", "linux-ubuntu-noble", "R-4.6",
+                       "x86_64-pc-linux-gnu", "GO.db", "3.22.0", "abc123"), recursive = TRUE)
+  expect_equal(nrow(large_downloads(go_lock(), fx$repos, fx$cache, minor = "4.6")), 0)
+  # Another R's copy doesn't count.
+  expect_equal(nrow(large_downloads(go_lock(), fx$repos, fx$cache, minor = "4.5")), 1)
+})
+
+test_that("large_downloads() skips CRAN-only installs and notebooks without a Bioconductor pin (78)", {
+  fx <- large_download_repos(2048)
+  cran_only <- new_lock(name = "dplyr", version = "1.1.4", source = "CRAN")
+  expect_equal(nrow(large_downloads(cran_only, fx$repos, fx$cache)), 0)
+  expect_equal(nrow(large_downloads(go_lock(), fx$repos["CRAN"], fx$cache)), 0)
+})
+
+test_that("ask_before_install() asks only above ask_above, and never with Inf (78)", {
+  fx <- large_download_repos(2048)
+  plan <- list(repos = fx$repos, cache = fx$cache, r = list(minor = "4.6"), ask_above = 1000)
+  expect_output(expect_true(ask_before_install(plan, go_lock())), "EMBER-DOWNLOAD GO.db 3.22.0 2048")
+  plan$ask_above <- 4096
+  expect_silent(expect_false(ask_before_install(plan, go_lock())))
+  plan$ask_above <- Inf
+  expect_false(ask_before_install(plan, go_lock()))
+  plan$ask_above <- NULL
+  expect_false(ask_before_install(plan, go_lock()))
+})
+
+test_that("url_size() reads a file:// URL's size and gives NA for a missing one (78)", {
+  path <- withr::local_tempfile()
+  writeBin(raw(10), path)
+  expect_equal(url_size(paste0("file://", normalizePath(path, winslash = "/"))), 10)
+  expect_true(is.na(url_size("file:///no/such/file.tar.gz")))
+})

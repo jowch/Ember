@@ -158,8 +158,9 @@ new_releases_slot <- function(status = "unknown", table = empty_bioc_releases(),
 #'
 #' * `key`, `path`: from `library_for()`.
 #' * `status`: `"unknown"` (not looked at), `"checking"`, `"missing"`
-#'   (looked at: no complete library there), `"installing"`, `"ready"`,
-#'   `"failed"`.
+#'   (looked at: no complete library there), `"installing"`, `"asking"`
+#'   (the installer stopped before a large download and waits for the
+#'   user's OK, #37), `"ready"`, `"failed"`.
 #' * `installed`: named character, package -> version, from the library's
 #'   manifest; empty unless `"ready"`.
 #' * `exports`: named list, package -> exported names, from the manifest:
@@ -167,15 +168,19 @@ new_releases_slot <- function(status = "unknown", table = empty_bioc_releases(),
 #'   lazy-load index (no package is loaded in the server).
 #' * `progress`: `NULL` or `list(done, total, current)` while installing.
 #' * `message`, `log`: why it failed, and the installer's last lines.
+#' * `download`: while `"asking"`, the large packages and their sizes
+#'   (`download_lines()`); else `NULL`. `approved`: the user said yes, so
+#'   the next install doesn't stop to ask.
 #'
 #' Readiness is one fact on disk: the manifest exists. The installer writes
 #' it last, into a staging folder that is then renamed into place (library.R).
 new_library_slot <- function(key, path, status = "unknown", installed = character(),
                              exports = list(), progress = NULL, message = NULL,
-                             log = character(), failures = empty_install_failures()) {
+                             log = character(), failures = empty_install_failures(),
+                             download = NULL, approved = FALSE) {
   structure(list(key = key, path = path, status = status, installed = installed,
                  exports = exports, progress = progress, message = message, log = log,
-                 failures = failures),
+                 failures = failures, download = download, approved = approved),
             class = "ember_library_slot")
 }
 
@@ -512,9 +517,14 @@ ev_install_progress <- function(token, item, at)             # item: list(packag
 #' `failures` is `install_failures()`'s result (empty when the install
 #' succeeded, or when the caller doesn't have one -- tests that build this
 #' event directly don't need to).
-ev_install_done <- function(token, key, manifest, message, log, at, failures = empty_install_failures())
+#' `download`: the installer's `EMBER-DOWNLOAD` lines (`download_lines()`)
+#' when it stopped before a large download; else `NULL`.
+ev_install_done <- function(token, key, manifest, message, log, at, failures = empty_install_failures(),
+                            download = NULL)
   event("install_done", at, token = token, key = key, manifest = manifest,
-        message = message, log = log, failures = failures)
+        message = message, log = log, failures = failures, download = download)
+#' The user's OK for the large download the target library waits on.
+ev_approve_install <- function(at) event("approve_install", at)
 
 #' `fresh`: asked for by a date preview, so the shell fetches again when the
 #' saved copy may have changed since (`index_may_change()`, #39).
@@ -533,8 +543,12 @@ fx_check_library  <- function(key, path) effect("check_library", key = key, path
 #' against by name ("CRAN", "BioCsoft").
 #' `github` is the GitHub API the lock's GitHub packages install from
 #' (`github_api_url()`).
-fx_install        <- function(token, key, path, lock, repos, github = "https://api.github.com")
-  effect("install", token = token, key = key, path = path, lock = lock, repos = repos, github = github)
+#' `ask_above`: the installer stops before downloading more than this many
+#' bytes of large packages (`ask_before_install()`); `Inf` never stops.
+fx_install        <- function(token, key, path, lock, repos, github = "https://api.github.com",
+                              ask_above = Inf)
+  effect("install", token = token, key = key, path = path, lock = lock, repos = repos, github = github,
+         ask_above = ask_above)
 #' Deviation from the sketch: `fx_cancel_install()` also carries `key` and
 #' `path`, not just `token`. The shell's job table (library.R) is keyed by
 #' the install's library path, not the token (two notebooks installing the
@@ -863,9 +877,12 @@ schedule_packages <- function(state, old) {
     tgt$status <- "installing"
     tgt$progress <- NULL
     state$packages$target <- tgt
+    # Asked once: after the user's OK (`reduce_approve_install()`), the
+    # same library installs without stopping again.
+    ask_above <- if (isTRUE(tgt$approved)) Inf else state$options$ask_above %||% Inf
     effects <- c(effects, list(fx_install(token, tgt$key, tgt$path, state$file$lock,
                                           repo_urls(state$options$repos, state$file$header, state$file$lock),
-                                          github_api_url(state$options$repos))))
+                                          github_api_url(state$options$repos), ask_above = ask_above)))
   }
 
   # ---- 5. Switch -------------------------------------------------------------
@@ -1327,8 +1344,10 @@ reduce_install_progress <- function(state, event) {
 #' naming its `package`, and `failures$needed_by` (`fill_needed_by()`,
 #' which may fetch indexes to walk); falls back to today's single `NA`-package row
 #' only when `event$failures` has none (the installer's output didn't
-#' parse). An old key's result is dropped: the library exists on disk and
-#' costs nothing until cleanup.
+#' parse). An installer that stopped before a large download
+#' (`event$download`) leaves the target `"asking"` with `download`, and no
+#' problem: nothing failed. An old key's result is dropped: the library
+#' exists on disk and costs nothing until cleanup.
 reduce_install_done <- function(state, event) {
   inst <- state$packages$install
   if (is.null(inst) || !eq(inst$token, event$token)) return(list(state = state, effects = list(), reply = NULL))
@@ -1336,7 +1355,12 @@ reduce_install_done <- function(state, event) {
   effects <- list()
   if (identical(event$key, state$packages$target$key)) {
     tgt <- state$packages$target
-    if (!is.null(event$manifest)) {
+    if (is.null(event$manifest) && !is.null(event$download) && nrow(event$download) > 0) {
+      tgt$status <- "asking"
+      tgt$download <- event$download
+      tgt$progress <- NULL
+      state$packages$target <- tgt
+    } else if (!is.null(event$manifest)) {
       tgt$status <- "ready"
       tgt$installed <- event$manifest$installed
       tgt$exports <- event$manifest$exports
@@ -1371,6 +1395,23 @@ reduce_install_done <- function(state, event) {
     }
   }
   list(state = state, effects = effects, reply = NULL)
+}
+
+#' The user's OK for a large download (#37): an `"asking"` target goes back
+#' to `"missing"` with `approved`, and `schedule_packages()` installs it
+#' without stopping again. Refused when nothing is waiting for one, or in
+#' safe preview, where nothing installs. Reply: `TRUE`.
+reduce_approve_install <- function(state, event) {
+  if (!identical(state$packages$target$status, "asking")) {
+    return(list(state = state, effects = list(), reply = refused("no install is waiting for an OK")))
+  }
+  if (!isTRUE(state$allowed)) {
+    return(list(state = state, effects = list(), reply = refused("the notebook hasn't been allowed to run")))
+  }
+  state$packages$target$status <- "missing"
+  state$packages$target$approved <- TRUE
+  state$packages$target$download <- NULL
+  list(state = state, effects = list(), reply = TRUE)
 }
 
 #' A preview of moving the date: `proposal <- new_proposal(date)`;
@@ -2010,6 +2051,6 @@ packages_view <- function(state) {
       bioc_version = state$file$header$bioc_version,
       library = list(status = p$target$status, path = p$target$path,
                     progress = p$target$progress, message = p$target$message,
-                    log = p$target$log, failures = failures),
+                    log = p$target$log, failures = failures, download = p$target$download),
       packages = packages_df, problems = problems, proposal = proposal, plan = plan)
 }

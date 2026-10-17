@@ -966,7 +966,10 @@ project_nbpkg <- function(state) {
 #'   and `needed_by` from `packages_view()`'s own `library$failures`
 #'   column) -- both only while the library's `status` is `"failed"`;
 #'   `NULL`/`arr()` otherwise, so a page that has never seen a failure
-#'   never sees these fields change.
+#'   never sees these fields change. While `status` is `"asking"` (#37) it
+#'   adds `download`: `list(bytes, packages = arr(list(package, version,
+#'   bytes)))`, largest first, `bytes` the total of the sizes known (a
+#'   package's `bytes` is `NULL` when its size couldn't be had).
 #' * `update`: `list(date, status = "checking"|"ready"|"failed",
 #'   restart = arr(<names>), changes = <int>, message)` while a proposal
 #'   from `ember_update_packages` (`ev_preview_date(..., apply = TRUE)`)
@@ -1032,6 +1035,15 @@ project_ember <- function(state, ctx) {
     library = list(status = pv$library$status, message = pv$library$message %||% NA_character_,
                   progress = pv$library$progress, log = log, failures = as_arr(failures)),
     rows = as_arr(rows))
+  dl <- pv$library$download
+  if (identical(pv$library$status, "asking") && !is.null(dl) && nrow(dl) > 0) {
+    packages$library$download <- list(
+      bytes = sum(dl$bytes, na.rm = TRUE),
+      packages = as_arr(lapply(seq_len(nrow(dl)), function(i) {
+        list(package = dl$package[[i]], version = dl$version[[i]],
+             bytes = if (is.na(dl$bytes[[i]])) NULL else dl$bytes[[i]])
+      })))
+  }
   # `snapshot`/`r_version`/`bioc_version`/`library$message` are NA when
   # unset (packages-core.R: a fresh header has no snapshot date until
   # packages are resolved); the wire has no NA (check_wire()), so each

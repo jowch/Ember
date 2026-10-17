@@ -5,8 +5,9 @@
 #   Rscript --vanilla installer.R <plan.rds>
 #
 # Plan: list(lock_lines, repos (name -> dated URL), r, staging, path, cache,
-# github (the GitHub API GitHub packages install from)). `repos` also names
-# each universe the lock's r-universe packages come from (`repo_urls()`).
+# github (the GitHub API GitHub packages install from), ask_above (bytes;
+# see below)). `repos` also names each universe the lock's r-universe
+# packages come from (`repo_urls()`).
 #
 # Output on stdout, one per line, for the shell to turn into
 # `ev_install_progress` (best effort: renv's own per-package reporting
@@ -19,6 +20,10 @@
 # built for a newer system, or against another version of a library), or
 # a package that failed to build had no binary for this R
 # (install-checks.R).
+#   EMBER-DOWNLOAD <package> <version> <bytes>
+# one per large package, before anything downloads, when they add up to
+# more than `ask_above` (`ask_before_install()`); then exit status 3, and
+# the session waits for the user's OK (#37).
 # Exit status 0 iff the manifest was written and the rename made (which
 # includes losing a race to another process: see `finish_library()`).
 
@@ -63,6 +68,11 @@ main <- function(plan_path) {
   linux_binaries <- !is.null(cran_binary) && grepl("/__linux__/", cran_binary)
   compiler <- ember:::compiler_check(lock, plan$repos, linux_binaries, binary_repos = repos)
   if (!is.null(compiler)) stop_missing(plan, compiler = compiler)
+
+  if (ember:::ask_before_install(plan, lock)) {
+    unlink(plan$staging, recursive = TRUE)
+    quit(status = 3L, save = "no")
+  }
 
   github <- if (is.null(plan$github)) "https://api.github.com" else plan$github
   deps <- ember:::github_install_deps(lock, plan$cache, github, plan$repos)

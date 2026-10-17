@@ -253,6 +253,7 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  *  library: {
  *   status: string, message: string?, progress: { done: number, total: number, current: string }?,
  *   log: string?, failures: Array<EmberInstallFailure>,
+ *   download?: { bytes: number, packages: Array<{ package: string, version: string, bytes: number? }> },
  *  },
  *  rows: Array<EmberPackageRow>,
  *  update: EmberPackagesUpdate?,
@@ -685,6 +686,8 @@ export class Editor extends Component {
                 run_started()
                 return this.client.send("ember_retry_install", {}, { notebook_id: this.state.notebook.notebook_id }, false)
             },
+            ember_approve_install: () =>
+                this.client.send("ember_approve_install", {}, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_set_mode: (mode) =>
                 this.client.send("ember_set_mode", { mode }, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_update_packages: () =>

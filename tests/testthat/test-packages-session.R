@@ -859,3 +859,48 @@ test_that("a notebook with the failing-installer option reports the real compile
   expect_gt(length(status$library$log), 10)
   expect_equal(status$library$failures$package, "brokenpkg")
 })
+
+# ---- 78: a large download waits for an OK ------------------------------------
+
+test_that("an install of a large Bioconductor data package waits for approve_install() (78)", {
+  withr::local_options(ember.installer_script = system.file("fake-installer.R", package = "ember"),
+                       ember.ask_above = 1000)
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  # The fixture repositories, with a 2 kB GO.db tarball for the size.
+  root <- withr::local_tempdir()
+  file.copy(testthat::test_path("fixtures", "repos", "bioc"), root, recursive = TRUE)
+  writeBin(raw(2048), file.path(root, "bioc", "2026-09-01", "packages", "3.23", "data", "annotation",
+                                "src", "contrib", "GO.db_3.22.0.tar.gz"))
+  fixture <- function(...) paste0("file://", normalizePath(testthat::test_path("fixtures", ...), winslash = "/"))
+  repos <- ember_repos(cran = fixture("repos", "cran"),
+                       bioc = paste0("file://", normalizePath(file.path(root, "bioc"), winslash = "/")),
+                       bioc_config = fixture("bioc-config", "config.yaml"))
+
+  dir <- withr::local_tempdir()
+  cells <- list(S = list(code = "", kind = "code", folded = FALSE),
+                A = list(code = "library(GO.db)", kind = "code", folded = FALSE))
+  header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
+                       r_version = paste(R.version$major, R.version$minor, sep = "."),
+                       snapshot = "2026-09-01")
+  file <- new_notebook_file(
+    header = header, cells = cells, run_order = names(cells), learned = list(),
+    sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
+    lock = empty_lock(), extra_blocks = list(), format = ember_format)
+  path <- file.path(dir, "nb.R")
+  write_atomic(path, format_notebook(file))
+
+  nb <- open_notebook(path, repos = repos, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, wait = FALSE)
+  expect_true(wait_for(nb, function(snap) identical(snap$packages$library$status, "asking"), timeout = 120),
+              info = paste(c(package_status(nb)$library$status, package_status(nb)$library$message),
+                           collapse = ": "))
+  download <- package_status(nb)$library$download
+  expect_equal(download$package, "GO.db")
+  expect_equal(download$bytes, 2048)
+
+  approve_install(nb)
+  expect_true(wait_for(nb, function(snap) identical(snap$packages$library$status, "ready"), timeout = 120))
+  expect_error(approve_install(nb), "no install is waiting")
+})
