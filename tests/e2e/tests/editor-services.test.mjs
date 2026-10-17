@@ -786,3 +786,55 @@ test("signature: in a multi-line call at the top of the window, the tooltip leav
 
   assertNoProblems(page);
 });
+
+test("brackets: the bracket at the cursor and its partner are marked, for every R bracket; one inside a string isn't paired (#246)", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-brackets.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  //          0         1         2         3
+  //          0123456789012345678901234567890
+  const code = 'f(c(1), {2}, x[3], y[[4]], "(")';
+  await setCellCode(page, "A", code);
+  const content = page.locator(`${cellSelector("A")} .cm-content`);
+  const marks = `${cellSelector("A")} .cm-matchingBracket`;
+  const marked = () => page.evaluate((sel) => [...document.querySelectorAll(sel)].map((e) => e.textContent), marks);
+  const cursor_at = async (pos) => {
+    await content.click();
+    await page.keyboard.press("Home");
+    for (let i = 0; i < pos; i++) await page.keyboard.press("ArrowRight");
+  };
+  const marks_become = (n) => page.waitForFunction(([sel, n]) => document.querySelectorAll(sel).length === n, [marks, n], { timeout: 30000 });
+
+  // [cursor position, what it sits next to, the pair expected]
+  const cases = [
+    [2, "a call's (", ["(", ")"]],
+    [4, "the inner call's (", ["(", ")"]],
+    [6, "a closing )", ["(", ")"]],
+    [9, "{", ["{", "}"]],
+    [11, "a closing }", ["{", "}"]],
+    [15, "[", ["[", "]"]],
+    [17, "a closing ]", ["[", "]"]],
+    [22, "[[", ["[", "]"]],
+    [31, "the last )", ["(", ")"]],
+  ];
+  for (const [pos, what, pair] of cases) {
+    await cursor_at(pos);
+    await marks_become(2);
+    assert.deepEqual((await marked()).sort(), [...pair].sort(), `next to ${what} (position ${pos}), both brackets are marked`);
+  }
+
+  // From a marked pair to the ( inside the string: that ( is text, so it
+  // isn't paired with the call's closing ). (A bracket with no partner is
+  // still marked on its own, as before.)
+  await cursor_at(2);
+  await marks_become(2);
+  for (let i = 2; i < 29; i++) await page.keyboard.press("ArrowRight");
+  await page.waitForFunction((sel) => document.querySelectorAll(sel).length !== 2, marks, { timeout: 30000 });
+  assert.ok(!(await marked()).includes(")"), `the ( in the string isn't paired: ${JSON.stringify(await marked())}`);
+
+  assertNoProblems(page);
+});
