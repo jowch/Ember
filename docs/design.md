@@ -35,7 +35,8 @@ repository depends on them.
   runs.
 - **`Rscript notebook.R` gives the notebook's results.** Running the file top
   to bottom does what running every cell in the notebook does, given the
-  same package versions (`ember::run()` supplies them from the lock). So
+  same package versions (`ember::run()` supplies them from the lock) and
+  every interactive input at its default (see [inputs.md](inputs.md)). So
   cells run in the global environment, as a script's code does, not in a new
   environment per run as Pluto's cells run in a new module: `source()`,
   `<<-`, `data()` and S4 classes all write to the global environment.
@@ -116,7 +117,7 @@ repository depends on them.
   needs building from source and explains what to install; it doesn't install
   compilers itself.
 - **Interactive inputs** (sliders, dropdowns and the like, Pluto's `@bind`)
-  are in scope. Their design comes later.
+  are in scope. The proposed design is in [inputs.md](inputs.md).
 - **No script importer for now.** Converting existing `.R` and `.Rmd` files
   into notebooks may come later.
 
@@ -1143,7 +1144,8 @@ HTML export (`/notebookexport`), which Endeavor uses.
 
 **Interactive inputs.** Pluto's frontend already has the mechanism (bonds:
 the page reports an input's value, the server sets a variable and reruns its
-dependents). Ember keeps it; the R-side API is to be designed.
+dependents). Ember keeps it; the R-side API is proposed in
+[inputs.md](inputs.md).
 
 **Look distinct:** own colours, fonts and layout. Programs that inject
 scripts into the page (Endeavor does) rely on the DOM hooks Pluto's page has
