@@ -2046,7 +2046,12 @@ test_that("handle_next() answers complete/help/signature with the request's id, 
   h <- worker_harness()
   on.exit(h$close())
 
-  h$send(run_msg("a", 1L, 'source(tempfile(fileext = ".R"))'))
+  # The file is the test's, not the worker's: a file under the worker's
+  # own tempdir() isn't reported as a source (#165), so it wouldn't wait.
+  f <- tempfile(fileext = ".R")
+  file.create(f)
+  on.exit(unlink(f), add = TRUE)
+  h$send(run_msg("a", 1L, sprintf("source(%s)", deparse(f))))
   src <- NULL
   repeat {
     m <- h$receive()
