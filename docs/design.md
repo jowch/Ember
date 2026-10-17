@@ -495,7 +495,12 @@ order, as marimo does with `_display_`, its own formatters, `_mime_` and
 Every rich output also carries a `text/plain` form, the value's `print()`
 text truncated, as a Jupyter MIME bundle does, so programs that read outputs
 as text (Endeavor's agent) see the first rows of a table rather than "HTML
-output". The UI accepts HTML, PNG, SVG, markdown and LaTeX. Steps 2 and 3
+output". When `print()` gives nothing (an htmlwidget) or gives the HTML
+source itself (gt, an HTML kable), the text form is the HTML's own text
+instead: style and script blocks dropped, a table row per line, cells split
+by tabs. HTML with no text at all, such as a plotly or leaflet chart whose
+data is in a script, gets a line naming what it is, so the agent knows a
+chart is there. The UI accepts HTML, PNG, SVG, markdown and LaTeX. Steps 2 and 3
 need knitr or repr loaded; the worker loads them from the notebook's library
 only when they are there and a value needs them. That changes no results, so
 the `Rscript` target holds. Measured: knitr is in the dependencies of common
@@ -1102,8 +1107,8 @@ cover what the adapter needs:
 - **A PNG of a cell's output** for `view_cell_output`. Plots already are
   PNGs. Other outputs have none, as with Pluto, where the tool refuses
   Markdown, HTML and text and points the agent to `read_cell`, which gets
-  the `text/plain` form. So an htmlwidget chart (plotly, leaflet) is text to
-  the agent.
+  the `text/plain` form. So an htmlwidget chart (plotly, leaflet) reaches
+  the agent only as a line naming it.
 
 Endeavor also relies on the page. Its injected script reads Pluto's DOM hooks
 (`pluto-cell` elements with the cell UUID, `.code_differs`, `.selected`,
