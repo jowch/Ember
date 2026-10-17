@@ -1536,6 +1536,60 @@ test_that("display_html resolves and dedupes dependencies, skipped without htmlt
   expect_identical(r$output$deps[[1]]$script, "a.js")
 })
 
+test_that("a setting the display step changes isn't the cell's: only its code's changes make it a settings cell, and the display's change stays as a package load's would (#156)", {
+  skip_if_not_installed("knitr")
+  h <- worker_harness(extra_libs = dirname(find.package("knitr")))
+  on.exit(h$close())
+
+  # As flextable's knit_print() sets an option through gdtools; this one
+  # changes it on every call, so each cell below changes it.
+  run_and_wait(h, "m", 1L, paste(
+    'registerS3method("knit_print", "ember_sets_opt", function(x, ...) {',
+    '  n <- getOption("ember_display_opt")',
+    '  options(ember_display_opt = if (is.null(n)) 1 else n + 1)',
+    '  knitr::asis_output("<b>shown</b>")',
+    '}, envir = asNamespace("knitr"))', sep = "\n"))
+  r <- run_and_wait(h, "a", 2L, paste(
+    'options(ember_code_opt = 1)',
+    'structure(1, class = "ember_sets_opt")', sep = "\n"))
+  expect_identical(r$output$html, "<b>shown</b>")
+  expect_identical(vapply(r$settings, function(d) d$name, character(1)), "ember_code_opt")
+
+  # A cell that only shows such a value sets nothing.
+  r <- run_and_wait(h, "b", 3L, 'structure(2, class = "ember_sets_opt")')
+  expect_identical(r$output$html, "<b>shown</b>")
+  expect_length(r$settings, 0)
+
+  # The display's change is part of the starting values: putting a settings
+  # cell's change back (cell s not in effect) returns to b's display's 2,
+  # not to unset.
+  run_and_wait(h, "s", 4L, "options(ember_display_opt = 5)")
+  r <- run_and_wait(h, "c", 5L, 'getOption("ember_display_opt")')
+  expect_identical(r$output$text, "[1] 2")
+})
+
+test_that("a package the display step loads still gets its load note when it resets a setting a settings cell set (#156, #61)", {
+  skip_if_not_installed("knitr")
+  h <- worker_harness(extra_libs = c(fixture_lib(), dirname(find.package("knitr"))))
+  on.exit(h$close())
+
+  # knitr is loaded here, so the display step below loads only emberfix1.
+  run_and_wait(h, "m", 1L, paste(
+    'registerS3method("knit_print", "ember_loads", function(x, ...) {',
+    '  loadNamespace("emberfix1")',
+    '  knitr::asis_output("<b>shown</b>")',
+    '}, envir = asNamespace("knitr"))', sep = "\n"))
+  run_and_wait(h, "s", 2L, 'options(emberfix_load_opt = "user")')
+  r <- run_and_wait(h, "b", 3L, 'structure(1, class = "ember_loads")', settings = "s")
+  expect_identical(r$output$html, "<b>shown</b>")
+  expect_length(r$settings, 0)
+  expect_identical(r$load_notes, list(list(package = "emberfix1", kind = "option", name = "emberfix_load_opt")))
+  # The settings cell is applied again before the next run, as for a load
+  # in the cell's code.
+  r2 <- run_and_wait(h, "c", 4L, 'getOption("emberfix_load_opt")', settings = "s")
+  expect_identical(r2$output$text, '[1] "user"')
+})
+
 test_that("a value with a knit_print() method shows as its HTML: registered by a package, defined in the notebook, an HTML kable; a markdown kable keeps its text (#154)", {
   skip_if_not_installed("knitr")
   h <- worker_harness(extra_libs = dirname(find.package("knitr")))

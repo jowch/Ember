@@ -555,6 +555,13 @@ run_cell <- function(msg) {
       rc$runtime <- unname((proc.time() - t0)[["elapsed"]])
       if (!is.null(err)) rc$error <- err
 
+      # The cell's settings are what its code changed, taken before the
+      # display step: a display method that sets an option when it first
+      # runs (flextable's knit_print() through gdtools) must not make the
+      # cell a settings cell (#156).
+      settings_code <- snapshot_settings()
+      load_log_code <- load_log
+
       # Displaying runs the value's print and format methods, which are
       # the user's code too, so it can be interrupted like the cell.
       output <- NULL
@@ -594,9 +601,23 @@ run_cell <- function(msg) {
       rc$changed <- facts$changed
       rc$removed <- facts$removed
 
-      by_code <- settings_by_code(settings0, snapshot_settings(), load_log)
+      by_code <- settings_by_code(settings0, settings_code, load_log_code)
+      # What the display step changed is its own, as a package load's
+      # change is: part of the starting values from now on. A package it
+      # loads (knitr, or a table package's dependencies) still gets its
+      # load note, from the same function with the display's start as
+      # the baseline.
+      display_loads <- load_log[seq_along(load_log) > length(load_log_code)]
+      by_display <- settings_by_code(settings_code, snapshot_settings(), display_loads)
+      for (d in by_display$settings) {
+        if (!identical(d$kind, "search")) settings_base <<- set_setting(settings_base, d$kind, d$name, d$after)
+      }
       settings_diffs <- by_code$settings
-      rc$load_notes <- by_code$load_notes
+      notes <- by_code$load_notes
+      for (n in by_display$load_notes) {
+        if (!any(vapply(notes, identical, logical(1), y = n))) notes[[length(notes) + 1]] <- n
+      }
+      rc$load_notes <- notes
 
       # Kept, not reverted: the next run's apply_settings_context() decides
       # whether this cell's changes apply (the server sends which settings
