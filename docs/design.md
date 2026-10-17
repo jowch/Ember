@@ -377,7 +377,9 @@ the rerun the dropped edge misses.
   on a cell that defines `` `r<-` `` (a function or a generic) and on the
   cells that define methods of it. A nested target reads every setter and
   the getters inside it (`names(x)[i] <- v` reads `` `[<-` ``,
-  `` `names<-` `` and `names`). `$` and `@` read neither, as below.
+  `` `names<-` `` and `names`). `x$a <- v` reads `` `$<-` `` (and
+  `$` when nested), so a `` `$<-.rec` `` method orders before it; `@`
+  has no S3 methods and reads neither.
 - **Many cells, one generic.** Any number of cells may add methods to one
   generic. The same pair in two cells (`print.foo` in one,
   `registerS3method("print", "foo", …)` in another, or two
@@ -413,10 +415,18 @@ the rerun the dropped edge misses.
   removed, disabled, rerun or failed), it removes a class with
   `removeClass()`: dropping the binding alone leaves the class in the
   methods package's cache, and `new("Circle")` would go on working.
-- **Not covered yet:** group generics (`Ops.money`, `Math.interval`), `$`
-  methods (the walker doesn't read `$` as a call), and further class
-  readers (`slotNames()`, `getSlots()`, `extends()`, `isVirtualClass()`,
-  the signatures of `existsMethod()`, `getMethod()`, `selectMethod()`).
+- **Group generics.** A method of a group generic (`Ops.money`,
+  `Math.interval`, `setMethod("Arith", …)`) is read through any member of
+  the group (`?groupGeneric`, `?S4groupGeneric`): `a + b` reads
+  `Ops.money` and `Arith`'s methods, `sqrt(a)` reads `Math`'s. The table
+  is in `R/rules.R`.
+- **`$` methods.** `x$a` reads `$` as `x[1]` reads `[`, so a cell using
+  `$` depends on the cells that define `` `$.rec` ``. The field name is
+  never read.
+- **More class readers.** `slotNames()`, `getSlots()`, `extends()`,
+  `isVirtualClass()` and the signatures of `existsMethod()`,
+  `hasMethod()`, `getMethod()` and `selectMethod()` read a class named as
+  a string, like `new()`.
 
 ### Formulas
 

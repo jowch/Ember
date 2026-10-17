@@ -419,7 +419,7 @@ resolve_methods <- function(cells, analyses, exports, ids) {
   used <- unique(unlist(lapply(cells, `[[`, "packages"), use.names = FALSE))
   exports <- exports[names(exports) %in% used]
   is_generic <- function(g) {
-    g %in% s3_generics || g %in% user_generics ||
+    g %in% s3_generics || g %in% names(group_generics) || g %in% user_generics ||
       any(vapply(exports, function(x) g %in% x, logical(1)))
   }
   for (i in seq_along(cells)) {
@@ -662,9 +662,14 @@ add_soft_edges <- function(edges, candidates) {
 #' removed, disabled or rerun, so R falls back to another method.
 add_method_edges <- function(edges, cells, ids, method_lookup) {
   generics <- ls(method_lookup, all.names = TRUE)
+  # A group generic's method (`Ops.money`) is read through any member (`+`).
+  read_as <- lapply(generics, function(g) c(g, group_generics[[g]]))
   readers <- new.env(parent = emptyenv())  # generic -> ids reading it
   for (id in ids) {
-    for (g in intersect(cells[[id]]$references, generics)) readers[[g]] <- c(readers[[g]], id)
+    refs <- cells[[id]]$references
+    for (k in seq_along(generics)) {
+      if (any(read_as[[k]] %in% refs)) readers[[generics[[k]]]] <- c(readers[[generics[[k]]]], id)
+    }
   }
   upstream <- new.env(parent = emptyenv())
   for (i in seq_len(nrow(edges))) {

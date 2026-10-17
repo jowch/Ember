@@ -79,11 +79,11 @@ test_that("<<- inside local() at top level defines globally", {
   expect_equal(a$definitions$kind, "assign")
 })
 
-test_that("df$col <- v defines df (replacement) and reads df and v", {
+test_that("df$col <- v defines df (replacement) and reads df, v and $<-", {
   a <- read_cell("df$col <- v")
   expect_setequal(defs(a), "df")
   expect_equal(a$definitions$kind, "replacement")
-  expect_setequal(refs(a), c("df", "v"))
+  expect_setequal(refs(a), c("df", "v", "$<-"))
   expect_false("col" %in% refs(a))
 })
 
@@ -119,9 +119,11 @@ test_that("NSE: a piped mutate() reads the piped object and its argument", {
   expect_false("z" %in% defs(a))
 })
 
-test_that("$ and @ read only the object, never the field or slot name", {
+test_that("$ and @ read the object, never the field or slot name", {
+  # `$` is also read as a function, like `[`, so a `$.foo` method can
+  # order after it (#41). `@` has no S3 methods to find.
   a <- read_cell("x <- df$a + df@b")
-  expect_setequal(refs(a), c("df", "+"))
+  expect_setequal(refs(a), c("df", "+", "$"))
   expect_false("a" %in% refs(a))
   expect_false("b" %in% refs(a))
 })
@@ -226,7 +228,7 @@ test_that("m[, 2] <- 0: an empty replacement-target argument is skipped", {
 test_that("df[df$a > 1, ] <- 0: an empty argument after a filter is skipped", {
   a <- read_cell("df[df$a > 1, ] <- 0")
   expect_setequal(defs(a), "df")
-  expect_setequal(refs(a), c("df", ">", "[<-"))
+  expect_setequal(refs(a), c("df", ">", "[<-", "$"))
 })
 
 test_that("f <- function() d[1, ]: an empty argument inside a body is skipped", {
@@ -309,7 +311,7 @@ test_that("a function body reads a global before reassigning the same name", {
 test_that("a replacement assignment inside a body reads its target before rebinding it", {
   a <- read_cell("f <- function() { df$z <- df$x * 2; df }")
   expect_setequal(defs(a), "f")
-  expect_setequal(refs(a), c("df", "*"))
+  expect_setequal(refs(a), c("df", "*", "$", "$<-"))
 })
 
 test_that("a name assigned earlier in a body is not a reference later on", {
