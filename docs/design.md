@@ -1119,7 +1119,7 @@ buttons, the error element) and the CSS variable names they read; renaming
 them is a change to coordinate with them. The variable names kept for them
 are the ones Endeavor reads (tests/testthat/fixtures/endeavor-css-variables.txt)
 and the ones in pluto-css-variables.txt that Ember's own frontend reads. The
-themes may drop a Pluto variable that nothing reads (#57).
+themes define only variables that something reads (#57), and a test checks it.
 
 ## Integration with Endeavor
 

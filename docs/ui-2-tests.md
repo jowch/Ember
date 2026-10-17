@@ -26,8 +26,8 @@ New fixtures:
   `EMBER_E2E_INSTALLS=1` (set in CI on ubuntu-latest).
 - `tests/testthat/fixtures/pluto-css-variables.txt`: the CSS variable names
   from Pluto v1.0.3's `themes/light.css` that Ember's frontend still reads,
-  one per line. The names nothing reads were dropped (#57); the themes
-  still define them.
+  one per line. The names nothing reads were dropped, from here and
+  from the themes (#57).
 - `tests/testthat/fixtures/endeavor-css-variables.txt`: the variables
   Endeavor's page code reads (the list in docs/ui-2.md is from
   `endeavor/frontend/src/*.ts`).
@@ -56,6 +56,13 @@ New fixtures:
    `components/welcome/` don't exist.
 6. Every name in `pluto-css-variables.txt` is defined in both
    `themes/light.css` and `themes/dark.css` of the installed frontend.
+   6b. Every variable either theme defines is read: by a `var()` in a
+   frontend file outside `themes/`, by another read theme variable, or by
+   Endeavor (`endeavor-css-variables.txt`).
+   6c. The other direction: every `var(--x)` a frontend file outside
+   `themes/` reads is defined in both themes, defined by the frontend
+   itself, or written with a fallback, `var(--x, ...)`. Two known gaps
+   are listed in the test under #195.
 7. `inst/COPYRIGHTS` exists and names "Pluto.jl"; DESCRIPTION's
    `Authors@R` has a person with role `"cph"` whose name mentions Pluto.jl.
 
