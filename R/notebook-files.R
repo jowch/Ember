@@ -68,17 +68,32 @@ complete_path <- function(query, dirs_only = FALSE) {
   expanded <- path.expand(dir)
   entries <- tryCatch(list.files(expanded, all.files = TRUE, no.. = TRUE, include.dirs = TRUE),
                       error = function(e) character())
-  is_dir <- if (length(entries) == 0) logical() else {
-    info <- file.info(file.path(expanded, entries))$isdir
-    !is.na(info) & info
-  }
 
+  # Match by name first, and ask the file system only about matches, in
+  # name order and a chunk at a time, until more than 200 are known: one
+  # file.info() per entry of a big folder took about 4 s for %TEMP%'s
+  # 20,000 on Windows, per key typed (#218).
   show_hidden <- startsWith(partial, ".")
-  keep <- startsWith(entries, partial) & (show_hidden | !startsWith(entries, "."))
-  if (isTRUE(dirs_only)) keep <- keep & is_dir
-
-  labeled <- ifelse(is_dir, paste0(entries, "/"), entries)
-  results <- sort(labeled[keep])
+  candidates <- sort(entries[startsWith(entries, partial) & (show_hidden | !startsWith(entries, "."))])
+  # Folders only, out of many: list.dirs() names them from the listing
+  # itself, where stat-ing until 200 are found could cover most of the
+  # folder (about 0.6 s for %TEMP% here, against 3 s).
+  if (isTRUE(dirs_only) && length(candidates) > 1024L) {
+    dirs <- tryCatch(list.dirs(expanded, full.names = FALSE, recursive = FALSE),
+                     error = function(e) character())
+    candidates <- candidates[candidates %in% dirs]
+  }
+  results <- character()
+  starts <- if (length(candidates)) seq(1L, length(candidates), by = 256L) else integer()
+  for (from in starts) {
+    if (length(results) > 200) break
+    chunk <- candidates[from:min(from + 255L, length(candidates))]
+    info <- file.info(file.path(expanded, chunk))$isdir
+    is_dir <- !is.na(info) & info
+    keep <- if (isTRUE(dirs_only)) is_dir else rep(TRUE, length(chunk))
+    results <- c(results, ifelse(is_dir, paste0(chunk, "/"), chunk)[keep])
+  }
+  results <- sort(results)
   truncated <- length(results) > 200
   if (truncated) results <- results[seq_len(200)]
 
