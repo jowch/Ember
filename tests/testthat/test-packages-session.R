@@ -399,6 +399,97 @@ test_that("ember::run() installs a saved GitHub lock on a machine that never res
   expect_match(out, "toyC 0.4.0 says: hello from toyB", fixed = TRUE)
 })
 
+# ---- r-universe sources ([sources], #203) ------------------------------------
+
+#' `toy_repos()` plus the `file://` universe and GitHub fixtures: lab's
+#' universe serves toyD 0.2.0 built from commit D2 of github.com/lab/toyD;
+#' the GitHub fixture also has D1, the same version with other code.
+toy_universe_repos <- function() {
+  toy <- normalizePath(testthat::test_path("fixtures", "repos", "toy"), mustWork = TRUE)
+  gh <- normalizePath(testthat::test_path("fixtures", "github"), mustWork = TRUE)
+  u <- normalizePath(testthat::test_path("fixtures", "universe"), mustWork = TRUE)
+  ember_repos(cran = paste0("file://", toy), github = paste0("file://", gh),
+              universe = paste0("file://", u, "/%s"))
+}
+
+#' A notebook using toyD from `universe` (fixtures/universe), with `lock`
+#' (none: empty).
+write_toyd_notebook <- function(lock = empty_lock(), universe = "lab") {
+  dir <- tempfile("ember-nb-")
+  dir.create(dir, recursive = TRUE)
+  cells <- list(S = list(code = "", kind = "code", folded = FALSE),
+               A = list(code = "library(toyD)\ntoyD_hello()", kind = "code", folded = FALSE))
+  header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
+                       r_version = paste(R.version$major, R.version$minor, sep = "."),
+                       snapshot = "2026-09-01", sources = c(toyD = paste0("universe:", universe)))
+  file <- new_notebook_file(
+    header = header, cells = cells, run_order = names(cells), learned = list(),
+    sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
+    lock = lock, extra_blocks = list(), format = ember_format)
+  path <- file.path(dir, "nb.R")
+  stopifnot(write_atomic(path, format_notebook(file)))
+  path
+}
+
+test_that("a package from a [sources] universe entry installs from the universe at the commit it built, and runs", {
+  repos <- toy_universe_repos()
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  path <- write_toyd_notebook()
+
+  nb <- open_notebook(path, repos = repos, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  res <- run_cells(nb, wait = TRUE, timeout = 120)
+  expect_false(res$timed_out)
+
+  status <- package_status(nb)
+  expect_equal(status$library$status, "ready",
+               info = paste(c(status$library$message, notebook_state(nb)$packages$target$log), collapse = "\n"))
+  expect_equal(snap_view(notebook_snapshot(nb), "A")$output$text, "[1] \"toyD at 2e1f5a9 says: hello from toyB\"")
+  pkgs <- status$packages
+  expect_equal(pkgs$source[pkgs$name == "toyD"],
+               "universe:lab/github.com/lab/toyD@2e1f5a9c3b8a7f6e5d4c3b2a1908f7e6d5c4b3a2")
+  # The universe's own build (its DESCRIPTION says so), not GitHub's.
+  desc <- read.dcf(file.path(notebook_state(nb)$packages$target$path, "toyD", "DESCRIPTION"))
+  expect_equal(unname(desc[, "Repository"]), "https://lab.r-universe.dev")
+  expect_equal(unname(desc[, "RemoteSha"]), "2e1f5a9c3b8a7f6e5d4c3b2a1908f7e6d5c4b3a2")
+  expect_false(identical(unname(desc[1, "RemoteType"]), "github"))
+})
+
+test_that("a universe build that isn't the commit its universe names is installed again from that commit", {
+  # The stale universe says it built D2, but its tarball is D1's build, as a
+  # binary that lags the source build would be.
+  repos <- toy_universe_repos()
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  path <- write_toyd_notebook(universe = "stale")
+
+  nb <- open_notebook(path, repos = repos, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  res <- run_cells(nb, wait = TRUE, timeout = 120)
+  expect_false(res$timed_out)
+  status <- package_status(nb)
+  expect_equal(status$library$status, "ready",
+               info = paste(c(status$library$message, notebook_state(nb)$packages$target$log), collapse = "\n"))
+  expect_equal(snap_view(notebook_snapshot(nb), "A")$output$text, "[1] \"toyD at 2e1f5a9 says: hello from toyB\"")
+  desc <- read.dcf(file.path(notebook_state(nb)$packages$target$path, "toyD", "DESCRIPTION"))
+  expect_equal(unname(desc[, "RemoteType"]), "github")
+})
+
+test_that("a locked commit the universe no longer serves installs from GitHub, even under the same version", {
+  repos <- toy_universe_repos()
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  d1 <- "1d0c4e8b2a7f6e5d4c3b2a1908f7e6d5c4b3a291"
+  lock <- new_lock(c("toyB", "toyD"), c("1.0", "0.2.0"),
+                   c("CRAN", universe_source("lab", "https://github.com/lab/toyD", d1)))
+  path <- write_toyd_notebook(lock)
+
+  out <- testthat::capture_output(status <- run(path, repos = repos, cache = cache, echo = TRUE))
+  expect_equal(status, 0L)
+  expect_match(out, "toyD at 1d0c4e8 says: hello from toyB", fixed = TRUE)
+})
+
 # ---- 75: network, opt-in -----------------------------------------------------
 
 test_that("[net] a notebook with library(dplyr) at a fixed past date resolves, installs and loads from PPM (75)", {
@@ -435,6 +526,56 @@ test_that("[net] a notebook with library(dplyr) at a fixed past date resolves, i
   snap <- notebook_snapshot(nb)
   expect_match(snap_view(snap, "A")$output$text, locked_version, fixed = TRUE)
   expect_equal(notebook_state(nb)$worker$loaded[["dplyr"]], locked_version)
+})
+
+test_that("[net] an r-universe package installs from its universe, and a commit it no longer serves from GitHub (#203)", {
+  skip_if_not(identical(Sys.getenv("EMBER_TEST_NETWORK"), "1"),
+             "set EMBER_TEST_NETWORK=1 to run the opt-in network test")
+
+  # highr, from yihui's universe: small, pure R, one CRAN dependency
+  # (xfun). The universe serves only its latest build, so the date is
+  # recent enough for that build's xfun.
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  dir <- tempfile("ember-nb-")
+  dir.create(dir, recursive = TRUE)
+  cells <- list(A = list(code = "library(highr)\ncat(\"highr\", format(packageVersion(\"highr\")), \"\\n\")",
+                        kind = "code", folded = FALSE))
+  header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
+                       r_version = paste(R.version$major, R.version$minor, sep = "."),
+                       snapshot = format(Sys.Date() - 3), sources = c(highr = "https://yihui.r-universe.dev/highr"))
+  file <- new_notebook_file(
+    header = header, cells = cells, run_order = names(cells), learned = list(),
+    sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
+    lock = empty_lock(), extra_blocks = list(), format = ember_format)
+  path <- file.path(dir, "nb.R")
+  write_atomic(path, format_notebook(file))
+
+  nb <- open_notebook(path, cache = cache)
+  res <- run_cells(nb, wait = TRUE, timeout = 300)
+  expect_false(res$timed_out)
+  status <- package_status(nb)
+  expect_equal(status$library$status, "ready",
+               info = paste(c(status$library$message, notebook_state(nb)$packages$target$log), collapse = "\n"))
+  src <- parse_universe_source(status$packages$source[status$packages$name == "highr"])
+  expect_equal(src$universe, "yihui")
+  expect_equal(src$git, "https://github.com/yihui/highr")
+  desc <- read.dcf(file.path(notebook_state(nb)$packages$target$path, "highr", "DESCRIPTION"))
+  expect_equal(unname(desc[, "RemoteSha"]), src$sha)
+  close_notebook(nb)
+  expect_match(read_file_utf8(path), '# highr = "universe:yihui"', fixed = TRUE)
+
+  # Pinned to v0.11's commit (c77ef6d), which the universe no longer serves:
+  # a machine that never resolved it installs that commit from GitHub.
+  text <- sub("# highr [^\n]+ universe:[^\n]+",
+              "# highr 0.11 universe:yihui/github.com/yihui/highr@c77ef6daa04895918f3577cb291880ae8154e3e4",
+              read_file_utf8(path))
+  writeLines(text, path, sep = "")
+  cache2 <- toy_cache()
+  on.exit(unlink(cache2, recursive = TRUE), add = TRUE)
+  out <- testthat::capture_output(code <- run(path, cache = cache2, echo = TRUE))
+  expect_equal(code, 0L)
+  expect_match(out, "highr 0.11", fixed = TRUE)
 })
 
 test_that("[net] a notebook with library(S4Vectors) installs from Bioconductor on PPM and loads", {

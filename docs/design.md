@@ -773,9 +773,10 @@ rest:
    translated message gets no offer. The engine
    never installs such a package by itself.
 2. Resolve each against CRAN and Bioconductor at the notebook's snapshot
-   date. GitHub packages can't be inferred; the user records them in the
-   header's `[sources]` as `github:user/repo`, and the Packages tab offers
-   to add one on a name that isn't found.
+   date. GitHub and r-universe packages can't be inferred; the user records
+   them in the header's `[sources]` as `github:user/repo` or
+   `universe:name`, and the Packages tab offers to add one on a name that
+   isn't found.
 3. Update the lock and install into the notebook's library in a subprocess.
    The worker restarts only if a package it has already loaded changed
    version; a new package is just loaded.
@@ -792,8 +793,9 @@ not. R packages declare only minimum versions (`rlang (>= 1.1.0)`), never
 upper bounds, so this is the strictest consistency R's metadata allows, and
 Ember enforces it: the lock never mixes CRAN dates. With a Bioconductor pin,
 the rule is one CRAN date plus one Bioconductor release, whose packages are
-already consistent with each other. GitHub packages have no date; they sit
-outside the rule and are marked unchecked.
+already consistent with each other. GitHub and r-universe packages have no
+date; they sit outside the rule and are marked unchecked. The lock records
+the git commit for both (an r-universe serves only its latest build).
 
 - **Adding a package** resolves it at the notebook's date, with its
   dependencies. On open, packages already in the lock install at exactly the
@@ -821,7 +823,7 @@ some date), but they are much stronger than minimum versions. Moving the date
 can move many packages when a notebook is old; the preview shows it.
 
 **The lock in the file** is one line per package: name, version and source
-(`CRAN`, `Bioc`, or a GitHub commit). Ember converts it to an `renv.lock`
+(`CRAN`, `Bioc`, a GitHub commit, or an r-universe build and its commit). Ember converts it to an `renv.lock`
 when installing. Measured: `renv.lock` runs to about 38 lines per
 package (2201 lines for 58 packages) and `rv.lock` to about 9; either
 conflicts when two people add packages on different branches, and one line

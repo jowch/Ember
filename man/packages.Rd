@@ -44,7 +44,8 @@ clean(max_age = 60, cache = TRUE, dry_run = FALSE, dir = cache_dir(),
 ember_repos(cran = "https://packagemanager.posit.co/cran",
             bioc = "https://packagemanager.posit.co/bioconductor",
             bioc_config = "https://bioconductor.org/config.yaml",
-            github = "https://api.github.com")
+            github = "https://api.github.com",
+            universe = "https://\%s.r-universe.dev")
 
 cache_dir()
 }
@@ -57,7 +58,8 @@ and \code{set_package_source()}/\code{remove_package_source()}.}
 (\code{"user/repo"} reads as the same, and so does a github.com link to the
 repository or to a branch, tag or commit's page,
 \code{".../tree/<ref>"}, \code{".../commit/<sha>"},
-\code{".../releases/tag/<tag>"}).}
+\code{".../releases/tag/<tag>"}); or, for an r-universe, \code{"universe:name"} or a
+link to the universe.}
 \item{date}{A date (anything \code{as.Date()} accepts). \code{preview_date(nb,
 Sys.Date())} is "update all".}
 \item{wait}{\code{TRUE} blocks until the preview is ready (or failed) or
@@ -102,6 +104,9 @@ lookup off, and with it Bioconductor.}
 for \code{ember_repos()}: GitHub's own, a GitHub Enterprise server's
 (\code{https://github.example.org/api/v3}), or a \code{file://} folder laid out
 the same way. \code{GITHUB_PAT} (or \code{GITHUB_TOKEN}) is sent when set.}
+\item{universe}{Where \code{[sources]} r-universe packages come from, for
+\code{ember_repos()}: a URL with \code{\%s} where the universe's name goes,
+r-universe's own by default, or a \code{file://} folder laid out the same way.}
 }
 \value{
 \code{package_status()} returns a plain list, the same value as
@@ -139,8 +144,9 @@ nothing): edit the code instead.
 \code{ember_op} the same way. They set or drop the package's entry in the
 header's \code{[sources]}. A package with an entry comes from it, never from
 CRAN or Bioconductor; the lock records the commit the entry resolved to
-(\code{github:user/repo@<sha>}), and that commit stays, through date moves
-too, until the entry changes. Its dependencies resolve from CRAN and
+(\code{github:user/repo@<sha>}, or for an r-universe its build's git commit),
+and that commit stays, through date moves back too, until the entry
+changes; moving the date forward takes a branch's or a universe's latest. Its dependencies resolve from CRAN and
 Bioconductor at the notebook's date as usual; one that is itself only on
 GitHub needs its own entry.
 

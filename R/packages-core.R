@@ -24,7 +24,7 @@
 #'   Set at open to `wanted` when every wanted name is in the lock (an
 #'   Ember-written file: nothing to do, no network, no write), else to
 #'   `character()` so the first `schedule_packages()` resolves.
-#' * `sources_for`: the header's readable `[sources]` (`github_sources()`)
+#' * `sources_for`: the header's readable `[sources]` (`readable_sources()`)
 #'   the current lock answers, as `resolved_for` is for the wanted set:
 #'   resolution runs again when they differ, and a package whose spec
 #'   changed is resolved again from its new spec (`lock_for_sources()`).
@@ -77,7 +77,7 @@ new_packages_state <- function(lock, wanted, r, cache, header = NULL, releases =
   locked_names <- if (is.null(lock$entries) || nrow(lock$entries) == 0) character() else lock$entries$name
   # A lock that disagrees with the header's `[sources]` (a source added,
   # changed or removed by hand) is resolved again, as one missing a name is.
-  sources_for <- if (is.null(header)) character() else github_sources(header)
+  sources_for <- if (is.null(header)) character() else readable_sources(header)
   agrees <- is.null(header) || identical(lock_for_sources(lock, header, sources_for)$entries, lock$entries)
   resolved_for <- if (all(wanted %in% locked_names) && agrees) wanted else character()
   # A pin built for another R is said at open, in safe preview, before
@@ -582,7 +582,7 @@ schedule_packages <- function(state, old) {
       wanted_packages(state$graph, state$file$header)
     }
     p$wanted_cache <- wanted
-    sources <- github_sources(state$file$header)
+    sources <- readable_sources(state$file$header)
     if (!setequal(wanted, p$resolved_for) || !identical(sources, p$sources_for %||% character())) {
       if (length(wanted) > 0 && (is.null(state$file$header$snapshot) || is.na(state$file$header$snapshot))) {
         # `format()` on a POSIXct uses the local time zone directly; routing
@@ -820,7 +820,7 @@ schedule_packages <- function(state, old) {
     tgt$progress <- NULL
     state$packages$target <- tgt
     effects <- c(effects, list(fx_install(token, tgt$key, tgt$path, state$file$lock,
-                                          repo_urls(state$options$repos, state$file$header),
+                                          repo_urls(state$options$repos, state$file$header, state$file$lock),
                                           github_api_url(state$options$repos))))
   }
 
@@ -961,7 +961,7 @@ source_failed_problems <- function(header, keys, indexes) {
     if (!identical(slot$status, "failed")) next
     out <- rbind(out, package_problem("index_unavailable", name, sprintf(
       "couldn't look up %s for %s: %s", header$sources[[name]], name,
-      slot$message %||% "no answer from GitHub")))
+      slot$message %||% "no answer")))
   }
   out
 }
@@ -1332,7 +1332,7 @@ reduce_preview_date <- function(state, event) {
     # proposal stage asks for every index it fetches `fresh`, so the shell
     # skips a saved copy that may have changed since, such as one another
     # notebook saved this morning; the core has no clock to tell which.
-    moving <- is_github_key(key) && !is_commit(parse_github_key(key)$ref)
+    moving <- is_moving_source_key(key)
     provisional <- isTRUE(slot$provisional) && identical(slot$status, "ready")
     if (!is.null(slot) && (identical(slot$status, "failed") || moving && identical(slot$status, "ready") || provisional)) {
       state$packages$indexes[[key]] <- NULL
