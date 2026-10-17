@@ -185,10 +185,17 @@ Windows has no process groups, and gets the same result another way (#208).
 What a cell starts with `system()` ends with the worker there, since R puts
 each such child in a job object that ends it once the worker ends. processx
 (and so callr) puts its children in a job object of its own that does the
-same, so a thread in the worker clears that one setting on processx's job
-every half second (src/children.c). A processx or callr child then outlives
-a restart and a killed server, as on Unix, unless the worker is killed in
-the half second after the cell started it.
+same, so the worker clears that one setting on processx's job after every
+run, before it says the run is done, and from a thread every half second
+for a cell still running (src/children.c). A processx or callr child then
+outlives a restart and a killed server, as on Unix. Only the first one a
+worker starts can still end with it, if the worker is killed mid-run within
+half a second of starting it; later ones join a job already released.
+
+On every system the worker also drops the `PROCESSX_<id>` marker it
+inherits as the server's process tree (`cleanup_tree`). Otherwise a cell's
+children inherit it, and when the server collects the old worker's process
+object after a restart, its finalizer ends them all (#232).
 
 A stopped worker is killed, so R never removes its temp folder itself. The
 worker names its `tempdir()` in its hello, and the server removes that

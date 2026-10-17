@@ -782,13 +782,39 @@ test_that("a worker busy in a long cell ends when the server that started it is 
   expect_true(wait_pid_gone(worker))
 })
 
+test_that("a cell's processx child outlives a restart, also once the server collects the old worker (#232)", {
+  # The old worker's process object ends its marked tree when collected;
+  # the worker drops processx's marker so its cell's children aren't in it.
+  pidfile <- tempfile("cell-pid-")
+  libs <- paste(deparse(normalizePath(.libPaths(), winslash = "/")), collapse = "")
+  rscript <- normalizePath(file.path(R.home("bin"), "Rscript"), winslash = "/", mustWork = FALSE)
+  path <- write_session_notebook(list(S = cell(""), A = cell(sprintf(paste0(
+    ".libPaths(c(%s, .libPaths())); ",
+    "p <- processx::process$new('%s', c('-e', 'Sys.sleep(300)')); ",
+    "writeLines(as.character(c(Sys.getpid(), p$get_pid())), '%s')"),
+    libs, rscript, normalizePath(pidfile, winslash = "/", mustWork = FALSE)))))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, "A", wait = TRUE, timeout = 60)
+  expect_identical(snap_view(notebook_snapshot(nb), "A")$status, "ok")
+  pids <- as.integer(readLines(pidfile))
+  on.exit(tools::pskill(pids[2]), add = TRUE)
+  expect_true(pid_running(pids[2]))
+
+  restart_notebook(nb)
+  invisible(gc())
+
+  expect_true(wait_pid_gone(pids[1]))  # the old worker
+  expect_true(pid_running(pids[2]))    # the cell's processx child
+})
+
 #' On Windows, a cell that starts three children, each `Sys.sleep(300)`: one
 #' with `processx::process$new()`, one with `callr::r_bg()` (both with their
 #' default `cleanup = TRUE`) and one with `system2(wait = FALSE)`, which
-#' writes its own pid. The cell writes the worker's pid and the first two
-#' children's to `pidfile`, then sleeps if `busy`. The worker's library
-#' doesn't have processx and callr, so the cell uses this R's.
-windows_children_cell <- function(pidfile, busy) {
+#' writes its own pid. The cell writes the worker's pid and the three
+#' children's to `pidfile`, and finishes. The worker's library doesn't have
+#' processx and callr, so the cell uses this R's.
+windows_children_cell <- function(pidfile) {
   rscript <- normalizePath(file.path(R.home("bin"), "Rscript.exe"), winslash = "/")
   sys_pidfile <- normalizePath(paste0(pidfile, ".sys"), winslash = "/", mustWork = FALSE)
   libs <- paste(deparse(normalizePath(.libPaths(), winslash = "/")), collapse = "")
@@ -796,28 +822,30 @@ windows_children_cell <- function(pidfile, busy) {
     ".libPaths(c(%1$s, .libPaths())); ",
     "a <- processx::process$new('%2$s', c('-e', 'Sys.sleep(300)')); ",
     "b <- callr::r_bg(function() Sys.sleep(300)); ",
-    "system2('%2$s', c('-e', shQuote(\"writeLines(as.character(Sys.getpid()), '%3$s'); Sys.sleep(300)\")), wait = FALSE); ",
-    "while (!file.exists('%3$s')) Sys.sleep(0.05); Sys.sleep(1); ",
+    "system2('%2$s', c('-e', shQuote(\"writeLines(as.character(Sys.getpid()), '%3$s.tmp'); file.rename('%3$s.tmp', '%3$s'); Sys.sleep(300)\")), wait = FALSE); ",
+    "while (!file.exists('%3$s')) Sys.sleep(0.05); ",
     "writeLines(as.character(c(Sys.getpid(), a$get_pid(), b$get_pid(), readLines('%3$s'))), '%4$s.tmp'); ",
-    "file.rename('%4$s.tmp', '%4$s')%5$s"),
-    libs, rscript, sys_pidfile, normalizePath(pidfile, winslash = "/", mustWork = FALSE),
-    if (busy) "; Sys.sleep(300)" else ""))
+    "file.rename('%4$s.tmp', '%4$s')"),
+    libs, rscript, sys_pidfile, normalizePath(pidfile, winslash = "/", mustWork = FALSE)))
 }
 
 test_that("on Windows a cell's processx and callr children outlive a restart; its system() child doesn't (#208)", {
   skip_on_os(c("mac", "linux", "solaris"))
   pidfile <- tempfile("cell-pids-")
-  path <- write_session_notebook(list(S = cell(""), A = windows_children_cell(pidfile, busy = FALSE)))
+  path <- write_session_notebook(list(S = cell(""), A = windows_children_cell(pidfile)))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
+  # The worker releases processx's job before it says a run is done.
   run_cells(nb, "A", wait = TRUE, timeout = 60)
   expect_identical(snap_view(notebook_snapshot(nb), "A")$status, "ok")
   pids <- as.integer(readLines(pidfile))
   on.exit(for (p in pids[-1]) tools::pskill(p), add = TRUE)
   expect_true(all(vapply(pids, pid_running, logical(1))))
-  Sys.sleep(1)  # the worker clears processx's kill-on-close every 0.5 s
 
   restart_notebook(nb)
+  # Collecting the old worker's process object runs its finalizer, which
+  # ends the tree processx marked as the worker's (#232).
+  invisible(gc())
 
   expect_true(wait_pid_gone(pids[1]))  # the old worker
   expect_true(wait_pid_gone(pids[4]))  # system2()'s child
@@ -825,24 +853,28 @@ test_that("on Windows a cell's processx and callr children outlive a restart; it
   expect_true(pid_running(pids[3]))    # callr's
 })
 
-test_that("on Windows a busy cell's processx and callr children outlive a killed server; its system() child doesn't (#208)", {
+test_that("on Windows a busy worker's processx and callr children outlive a killed server; its system() child doesn't (#208)", {
   skip_on_os(c("mac", "linux", "solaris"))
   use_installed_ember()
   pidfile <- tempfile("cell-pids-")
-  path <- write_session_notebook(list(S = cell(""), A = windows_children_cell(pidfile, busy = TRUE)))
-  code <- paste0("library(ember); nb <- open_notebook(", deparse(path), "); run_cells(nb, 'A'); ",
+  marker <- normalizePath(tempfile("busy-"), winslash = "/", mustWork = FALSE)
+  # A starts the children and finishes. B uses A's `a`, so it runs after
+  # A, and is busy when the server is killed. Once B has begun, A's
+  # children have been released.
+  path <- write_session_notebook(list(S = cell(""), A = windows_children_cell(pidfile),
+                                      B = cell(sprintf("a; writeLines('x', '%s'); Sys.sleep(300)", marker))))
+  code <- paste0("library(ember); nb <- open_notebook(", deparse(path), "); run_cells(nb, c('A', 'B')); ",
                  "repeat later::run_now(1)")
   server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
                                   env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
                                   stdout = "|", stderr = "2>&1")
   on.exit(if (server$is_alive()) server$kill(), add = TRUE)
   deadline <- Sys.time() + 60
-  while (!file.exists(pidfile) && server$is_alive() && Sys.time() < deadline) Sys.sleep(0.05)
-  expect_true(file.exists(pidfile), info = server$read_all_output())
+  while (!file.exists(marker) && server$is_alive() && Sys.time() < deadline) Sys.sleep(0.05)
+  expect_true(file.exists(marker), info = server$read_all_output())
   pids <- as.integer(readLines(pidfile))
   on.exit(for (p in pids) tools::pskill(p), add = TRUE)
   expect_true(all(vapply(pids, pid_running, logical(1))))
-  Sys.sleep(1)  # the worker clears processx's kill-on-close every 0.5 s
 
   server$kill()
 

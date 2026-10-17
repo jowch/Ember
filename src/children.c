@@ -9,17 +9,21 @@
    that's the worker, so a restart or a killed server ended them all. On
    Unix the same children are in a session of their own and keep running.
 
-   So on Windows the worker clears that one setting on processx's job, from
-   a thread that looks every half second, since processx makes the job
-   only when a cell first starts a process. processx's job is the one that
+   So on Windows the worker clears that one setting on processx's job:
+   after every run, before it says the run is done, and from a thread that
+   looks every half second, for a cell still running. processx makes the
+   job only when a cell first starts a process, and keeps it while loaded. processx's job is the one that
    lets its members' children leave it silently
    (JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK); R's `system()` makes a
    kill-on-close job per child without that setting, and it is left alone,
    so what a cell starts with `system()` still ends with the worker, as on
    Unix. processx still ends its children itself when R exits normally or
    a process object is collected; only the end of the worker's own process
-   no longer takes them. A child a cell starts in the half second before
-   the worker is killed can still go with it.
+   no longer takes them. Only the first processx or callr child a worker
+   starts (per processx load) can still go with it, if the worker is killed
+   in the half second after, mid-run; later ones join a job already
+   released. The worker's processx marker matters too: see worker.R's
+   `drop_processx_marker()` (#232).
 
    There is no call to list a process's job handles, so the thread asks
    every small handle value whether it's a job: handles are small integers
@@ -69,3 +73,12 @@ SEXP C_keep_cell_children(void) {
 #endif
 }
 
+
+/* Worker side, after a run and before its "done": release now, so the
+   children a finished cell started don't wait for the thread's next pass. */
+SEXP C_release_cell_children(void) {
+#if defined(_WIN32)
+  release_processx_jobs();
+#endif
+  return R_NilValue;
+}
