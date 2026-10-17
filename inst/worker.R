@@ -184,8 +184,26 @@ listen_for_interrupts <- function() {
     release_children <<- getNativeSymbolInfo("C_release_cell_children", dll)
     keeping_children <<- isTRUE(tryCatch(.Call(getNativeSymbolInfo("C_keep_cell_children", dll)),
                                          error = function(e) FALSE))
+    setHook(packageEvent("processx", "onLoad"), function(pkgname, pkgpath) release_processx_job())
     isTRUE(.Call(getNativeSymbolInfo("C_interrupt_listen", dll)))
   }, error = function(e) FALSE))
+}
+
+#' On Windows, as processx loads: have it make its job object now, with a
+#' child that only exits, and release the job at once, so a cell's first
+#' processx or callr child joins a job already released and outlives a
+#' worker killed right after starting it (#235). processx makes the job
+#' only as it starts a child, and Windows says nothing when it does, so the
+#' half-second thread in src/children.c could miss that first child.
+#' Silent: a failure leaves the thread to release the job, as before.
+release_processx_job <- function() {
+  tryCatch({
+    p <- processx::process$new(Sys.getenv("COMSPEC", "cmd.exe"), c("/c", "exit"), cleanup = TRUE,
+                                windows_hide_window = TRUE)
+    p$wait()
+    .Call(release_children)
+  }, error = function(e) NULL)
+  invisible(NULL)
 }
 
 #' Drop an interrupt still pending as a run starts: it is late, for the

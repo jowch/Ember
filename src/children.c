@@ -19,10 +19,11 @@
    so what a cell starts with `system()` still ends with the worker, as on
    Unix. processx still ends its children itself when R exits normally or
    a process object is collected; only the end of the worker's own process
-   no longer takes them. Only the first processx or callr child a worker
-   starts (per processx load) can still go with it, if the worker is killed
-   in the half second after, mid-run; later ones join a job already
-   released. The worker's processx marker matters too: see worker.R's
+   no longer takes them. So that a cell's first child isn't left in the
+   job for up to half a second, the worker has processx make the job as it
+   loads, with a child that only exits, and releases it then (worker.R's
+   `release_processx_job()`, #235); the thread stays in case that fails.
+   The worker's processx marker matters too: see worker.R's
    `drop_processx_marker()` (#232).
 
    There is no call to list a process's job handles, so the thread asks
