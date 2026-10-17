@@ -38,9 +38,11 @@ function seedCache() {
   // passes `-e` on through cmd.exe, which doesn't carry a newline, and
   // here the seeding R crashed (#220).
   // Outside the cache root, so the seeded cache holds only what the test made.
-  const script = path.join(mkdtempSync(path.join(tmpdir(), "ember-e2e-seed-")), "seed.R");
+  const seedDir = mkdtempSync(path.join(tmpdir(), "ember-e2e-seed-"));
+  const script = path.join(seedDir, "seed.R");
   writeFileSync(script, expr);
   const res = spawnSync(process.env.EMBER_RSCRIPT ?? "Rscript", ["--vanilla", script], { encoding: "utf8" });
+  rmSync(seedDir, { recursive: true, force: true });
   assert.equal(res.status, 0, res.stderr);
   return { root, stale, recent, entry };
 }
