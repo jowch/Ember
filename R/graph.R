@@ -171,6 +171,7 @@ notebook_graph <- function(cells, exports = list(),
   learned$definitions <- learned$definitions[names(learned$definitions) %in% ids]
   learned$references <- learned$references[names(learned$references) %in% ids]
   learned$settings <- learned$settings[names(learned$settings) %in% ids]
+  learned$columns <- learned$columns[names(learned$columns) %in% ids]
 
   # 1. analyses: reuse previous$analyses[[id]] when code and sourced files
   #    are unchanged; else read_cell(code, read_file). reread <- the rest.
@@ -203,7 +204,7 @@ notebook_graph <- function(cells, exports = list(),
 
   # 3. edges: resolve_edges(cells, exports, disabled). Setting edges come
   #    after the order (step 6).
-  edges <- resolve_edges(cells_resolved, exports, ids, disabled)
+  edges <- resolve_edges(cells_resolved, exports, ids, disabled, learned$columns)
 
   # upstream/downstream from edges, in display order.
   rank <- setNames(seq_along(ids), ids)
@@ -298,16 +299,25 @@ compute_off <- function(ids, disabled, downstream_list) {
 #' reports the full set after each run, so a name that stopped appearing
 #' drops out); `references` replaces its learned references (the formula
 #' check's missing columns); `settings` replaces its learned setting keys
-#' (`character()` drops them). `NULL` leaves that part as it was. Returns a
+#' (`character()` drops them); `columns` replaces the names the globals it
+#' defined had at its last run (`list()` when it reported none, `NA` to
+#' forget them; see `resolve_masked()`). `NULL` leaves that part as it
+#' was. Returns a
 #' new graph built with `previous = graph`, so nothing is re-read.
 #'
 #' The caller persists `graph$learned$definitions` and
-#' `graph$learned$settings` in the footer.
+#' `graph$learned$settings` in the footer. `columns` is not persisted: it
+#' describes the worker's values, which a reopened notebook doesn't have.
 graph_learn <- function(graph, cell, definitions = NULL, references = NULL,
-                        settings = NULL) {
+                        settings = NULL, columns = NULL) {
   learned <- graph$learned
   if (!is.null(definitions)) learned$definitions[[cell]] <- definitions
   if (!is.null(references)) learned$references[[cell]] <- references
+  if (identical(columns, NA)) {
+    learned$columns[[cell]] <- NULL
+  } else if (!is.null(columns)) {
+    learned$columns[cell] <- list(columns)
+  }
   if (!is.null(settings)) {
     learned$settings[[cell]] <- if (length(settings) > 0) settings else NULL
   }
@@ -370,12 +380,24 @@ resolve_cells <- function(analyses, learned, ids, previous = NULL) {
     defs_all <- unique(c(definitions_of(a), l_defs))
     private <- defs_all[is_private_name(defs_all)]
     definitions <- defs_all[!is_private_name(defs_all)]
+    # A name read only inside data-masking calls is the graph's to decide
+    # per notebook (resolve_masked()); read anywhere else too, or learned
+    # from a formula check, it is an ordinary reference.
+    masked <- a$masked
+    if (!is.null(masked) && nrow(masked) > 0) {
+      r <- a$references
+      plain <- unique(c(r$name[!(r$where %in% c("masked", "slot"))], l_refs))
+      masked <- masked[!(masked$name %in% plain), , drop = FALSE]
+    } else {
+      masked <- empty_masked()
+    }
     references <- unique(c(references_of(a), l_refs))
     soft_references <- setdiff(unique(a$references$name[a$references$where == "slot"]), references)
     attaches <- unique(a$packages$name[a$packages$attached])
 
     cells[[i]] <- list(definitions = definitions, learned = l_defs,
                        references = references, soft_references = soft_references,
+                       masked = masked,
                        packages = unique(a$packages$name),
                        attaches = attaches, settings = a$settings,
                        setting_keys = setting_keys_of(a$settings, l_settings),
@@ -472,7 +494,7 @@ no_resolved_methods <- data.frame(generic = character(), signature = character()
 #' attaches the package exporting it.
 #' Setting edges are added later, once the order is known
 #' (`setting_edges_of()`).
-resolve_edges <- function(cells, exports, ids, disabled = character()) {
+resolve_edges <- function(cells, exports, ids, disabled = character(), columns = list()) {
   # Four lookup tables, each built in one pass so the whole function is
   # linear in (total definitions + total exports + total references)
   # instead of the reference-times-cells cost of testing every id against
@@ -523,6 +545,14 @@ resolve_edges <- function(cells, exports, ids, disabled = character()) {
   }
   has_methods <- length(ls(method_lookup, all.names = TRUE)) > 0
 
+  # Masked reads (`x` in `subset(df, x > 1)`): an ordinary reference, a
+  # soft one, or none, per cell (resolve_masked()).
+  masked_refs <- lapply(seq_along(ids), function(i) {
+    m <- cells[[i]]$masked
+    if (is.null(m) || nrow(m) == 0) return(NULL)
+    resolve_masked(m, ids[[i]], cells[[i]]$private, definer_lookup, method_lookup, columns)
+  })
+
   package_providers <- function(n, tbl) {
     pkgs <- name_to_pkgs[[n]]
     if (is.null(pkgs)) return(character())
@@ -540,9 +570,12 @@ resolve_edges <- function(cells, exports, ids, disabled = character()) {
   edges_of <- function(soft) lapply(seq_along(ids), function(i) {
     b <- ids[[i]]
     if (soft) {
-      refs <- cells[[i]]$soft_references
+      refs <- c(cells[[i]]$soft_references, masked_refs[[i]]$soft)
     } else {
       refs <- cells[[i]]$references
+      if (!is.null(masked_refs[[i]])) {
+        refs <- c(setdiff(refs, cells[[i]]$masked$name), masked_refs[[i]]$hard)
+      }
       m_b <- cells[[i]]$methods
       if (nrow(m_b) > 0) refs <- c(refs, setdiff(unique(m_b$generic[m_b$form != "name"]), refs))
     }
@@ -594,11 +627,56 @@ resolve_edges <- function(cells, exports, ids, disabled = character()) {
   }
 
   edges <- as_edges(edges_of(soft = FALSE))
-  if (any(lengths(lapply(cells, `[[`, "soft_references")) > 0)) {
+  if (any(lengths(lapply(cells, `[[`, "soft_references")) > 0) ||
+      any(lengths(lapply(masked_refs, `[[`, "soft")) > 0)) {
     edges <- add_soft_edges(edges, as_edges(edges_of(soft = TRUE)))
   }
   if (has_methods) edges <- add_method_edges(edges, cells, ids, method_lookup)
   edges
+}
+
+#' How the graph reads a cell's masked reads (`x` in `subset(df, x > 1)`,
+#' #107). R looks `x` up in `df` first and takes the global only when `df`
+#' has no column `x`, so the edge follows `df`'s columns: the names its
+#' value had when the one cell that defines `df` (`owner`) last ran
+#' (`columns[[owner]][[df]]`, from the worker's report, step.R).
+#'
+#' - **hard** (an ordinary reference): `df` doesn't have the name, or its
+#'   owner's run reported no names for it, or it isn't
+#'   a data frame where the call needs one (`frame` in
+#'   `data_masking_calls`), or the answer can't be known: `df` is a
+#'   package's or is defined by no cell or by several, or the notebook
+#'   defines the function itself or a method of it, which needn't mask.
+#' - **none**: `df` had the name. Editing `x`'s cell can't change the
+#'   result, as under `Rscript`.
+#' - **soft**: `df`'s owner hasn't run in this session, or its last run
+#'   failed, so its columns are unknown. The edge is kept unless it would close a cycle
+#'   (`add_soft_edges()`). The owner runs before the cell (the cell reads
+#'   `df`), and its report settles the name before the cell itself runs;
+#'   when the cell is its own owner, its first run settles it, and a name
+#'   that isn't a column then becomes an ordinary reference.
+#'
+#' A name read under several calls takes the strictest answer.
+#' Returns `list(hard, soft)`, character each.
+resolve_masked <- function(masked, id, private, definer_lookup, method_lookup, columns) {
+  answer <- function(k) {
+    n <- masked$name[k]
+    data <- masked$data[k]
+    fn <- masked$fn[k]
+    if (!is.null(definer_lookup[[fn]]) || !is.null(method_lookup[[fn]])) return("hard")
+    owners <- if (data %in% private) id else definer_lookup[[data]]
+    if (length(owners) != 1) return("hard")
+    reported <- columns[[owners]]
+    if (is.null(reported)) return("soft")
+    info <- reported[[data]]
+    if (is.null(info)) return("hard")
+    if (isTRUE(data_masking_calls[[fn]]$frame) && !isTRUE(info$frame)) return("hard")
+    if (n %in% info$names) "none" else "hard"
+  }
+  answers <- vapply(seq_len(nrow(masked)), answer, character(1))
+  hard <- unique(masked$name[answers == "hard"])
+  soft <- setdiff(unique(masked$name[answers == "soft"]), hard)
+  list(hard = hard, soft = soft)
 }
 
 #' Soft reference edges: a slot or field class (`representation(r =

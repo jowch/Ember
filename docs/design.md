@@ -250,6 +250,34 @@ with the same name. The cost is a rerun, or a false cycle when that cell also
 reads the result (`df |> mutate(z = x * 2)`, then a later cell defines `x`
 from it); the error suggests renaming the global.
 
+Base R's own data-masking calls follow R exactly (#107). `subset(df, x > 1)`,
+`transform()`, `with()` and `within()` look `x` up in `df` first and take
+the global only when `df` has no such column, so the edge does the same.
+The worker reports the names of each data frame or list a cell creates,
+and the graph reads a masked `x` by the columns `df` had when the one cell
+that defines it last ran:
+
+- `df` had `x`: no edge. Editing the cell that defines a global `x` reruns
+  nothing, as under `Rscript`, and the false cycle above can't happen.
+- `df` had no `x`: an ordinary edge.
+- `df`'s cell hasn't run in this session, or its last run failed: a soft
+  edge, kept unless it would close a cycle. The cell runs after `df`'s cell
+  (it reads `df`), so `df`'s report settles the name before it runs; a cell
+  that defines its own `df` settles it on its first run.
+- Anything the columns can't decide is an ordinary edge: data that isn't a
+  bare name (`subset(df[rows, ], x > 1)`), a `df` from a package or defined
+  by several cells, a value that isn't a data frame (`subset()` and
+  `transform()`) or a plain list (`with()`, `within()` also), and a
+  notebook that defines `subset()` itself or a method of it.
+
+A call's head (`f` in `subset(df, f(x))`) is never masked, as R skips a
+column that isn't a function, and assignments inside `with()` and
+`within()` define no global. Edges can now appear when an upstream cell
+runs, after a run was asked for: a cell whose result came from a stale
+cell the run didn't include is left stale, so running it again runs that
+cell first. dplyr's verbs keep the behaviour above; they mask through
+rlang, with its own pronouns, and aren't covered.
+
 **Code inside strings and lambdas.** glue and cli interpolate `{…}` in
 strings (`glue("{total} of {n}")`, `cli_alert("{n} files")`), so the
 expression in each segment is read as code; `{{` is an escape. stringr's

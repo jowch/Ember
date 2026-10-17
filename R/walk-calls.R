@@ -556,8 +556,8 @@ walk_class_names <- function(e, scope, acc, name, arg_pids = NULL) {
     reps <- is.call(a) && is.symbol(a[[1]]) && identical(as.character(a[[1]]), "representation")
     hard <- if (slots) character() else literal_class_names(a, named = !reps)
     soft <- if (slots || reps) literal_class_names(a, unnamed = FALSE) else character()
-    for (cls in hard) record_read(acc, scope, class_binding(cls), pos = pos)
-    for (cls in setdiff(soft, hard)) record_read(acc, scope, class_binding(cls), where = "slot", pos = pos)
+    for (cls in hard) record_read(acc, scope, class_binding(cls), pos = pos, unmasked = TRUE)
+    for (cls in setdiff(soft, hard)) record_read(acc, scope, class_binding(cls), where = "slot", pos = pos, unmasked = TRUE)
   }
   if (!is.null(spec$define)) {
     i <- arg_index(spec$define)
@@ -574,7 +574,7 @@ walk_class_names <- function(e, scope, acc, name, arg_pids = NULL) {
           defined <- classes[1]
           classes <- classes[-1]
         }
-        for (cls in classes) record_read(acc, scope, class_binding(cls), pos = pd_position(acc, arg_pids[[i]]))
+        for (cls in classes) record_read(acc, scope, class_binding(cls), pos = pd_position(acc, arg_pids[[i]]), unmasked = TRUE)
       } else if (is.character(a) && length(a) == 1 && !is.na(a) && nzchar(a)) {
         defined <- a
       }

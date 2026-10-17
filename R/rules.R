@@ -281,6 +281,22 @@ formula_data_positional <- c("lm", "glm", "aov", "lmer", "glmer", "nls",
                              "gam", "t.test", "wilcox.test", "xtabs",
                              "aggregate", "boxplot")
 
+#' Base R's data-masking calls (#107): each looks a name in its other
+#' arguments up in its data first, and in the calling environment only
+#' when the data has no such name. `data` is the data argument's names, in
+#' the order R matches them (a named one, else the first unnamed one).
+#' `frame` is `TRUE` when only a data frame masks (`subset()` and
+#' `transform()` on anything else evaluate their arguments as usual);
+#' `with()` and `within()` also mask with a plain list. The graph decides
+#' per name, from the columns the data had when its cell last ran
+#' (graph.R, `resolve_masked()`).
+data_masking_calls <- list(
+  subset = list(data = "x", frame = TRUE),
+  transform = list(data = "_data", frame = TRUE),
+  with = list(data = "data", frame = FALSE),
+  within = list(data = "data", frame = FALSE)
+)
+
 #' Names never recorded as references or definitions.
 #'
 #' `.` is a formula placeholder and the magrittr pipe placeholder.

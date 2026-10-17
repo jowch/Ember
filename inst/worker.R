@@ -346,7 +346,8 @@ trace_line <- function(...) {
 #' or NULL), console (list of items, also streamed), error (NULL or
 #' list(message, call, traceback, span)), runtime, created, changed, removed,
 #' settings, load_notes, attached (package -> exports, for packages newly
-#' attached), formula_misses, globals (see summarise_globals()),
+#' attached), formula_misses, columns (see global_columns()), globals (see
+#' summarise_globals()),
 #' changed_in_place (names of other cells' environments, R6 objects and
 #' reference class objects this run changed; env_fingerprint())).
 #' `error$span` is set only for role "text": the 1-based index of the
@@ -370,7 +371,7 @@ run_cell <- function(msg) {
              runtime = NA_real_, created = character(), changed = character(),
              removed = character(), settings = list(), load_notes = list(),
              attached = list(), formula_misses = character(), loaded = character(),
-             globals = list(), changed_in_place = character())
+             globals = list(), changed_in_place = character(), columns = list())
 
   # `dev`/`console` are closed here (not just at their normal point of use
   # below) so an interrupt landing anywhere in this function -- including
@@ -688,6 +689,8 @@ run_cell <- function(msg) {
       rebuild_search_path()
 
       rc$formula_misses <- check_formulas(msg$formulas)
+      # No names (every masked read an edge) if reading them fails.
+      rc$columns <- tryCatch(global_columns(facts$created), error = function(e) list())
       trace_line("bookkept", msg$cell)
     })
 
@@ -1757,6 +1760,30 @@ data_call_name <- function(head) {
     if (!is.null(exported) && identical(fn, exported)) return(name)
   }
   NULL
+}
+
+#' The most names `global_columns()` reports for one value. A name past
+#' it is taken for a global, which costs an extra edge, never a missing one.
+GLOBAL_COLUMNS_MAX <- 10000L
+
+#' After the run: the names each global the cell created has as data, for
+#' the graph's reading of `subset(df, x > 1)` and the like (graph.R,
+#' `resolve_masked()`). A data frame (`frame = TRUE`) or a plain list gets
+#' its `names()`; any other value gets none, so every name read under it
+#' is a reference. An active binding isn't read, nor reported: a global
+#' with no entry counts as having no names.
+global_columns <- function(names) {
+  out <- list()
+  for (n in names) {
+    if (bindingIsActive(n, globalenv())) next
+    v <- tryCatch(get(n, envir = globalenv(), inherits = FALSE), error = function(e) NULL)
+    frame <- is.data.frame(v)
+    cols <- if (frame || (is.list(v) && !is.object(v))) names(v) else NULL
+    cols <- if (is.character(cols)) cols[!is.na(cols) & nzchar(cols)] else character()
+    if (length(cols) > GLOBAL_COLUMNS_MAX) cols <- cols[seq_len(GLOBAL_COLUMNS_MAX)]
+    out[[n]] <- list(frame = frame, names = cols)
+  }
+  out
 }
 
 #' After the run: which names taken as columns are not in the data. The

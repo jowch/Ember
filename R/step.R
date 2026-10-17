@@ -275,7 +275,8 @@ schedule <- function(state) {
   state <- invalidate_dependents(state, id, if (!is.null(prev)) prev$defined else character())
   state$worker$status <- "busy"
   state$worker$running <- list(cell = id, token = token, code = state$cells[[id]]$code,
-                               started_at = state$clock, console = list(), begun = FALSE)
+                               started_at = state$clock, console = list(), begun = FALSE,
+                               upstream = state$graph$upstream[[id]])
   list(state = state, effects = c(dg$effects, list(fx_send(state$worker$gen, run_message(state, id, token)))))
 }
 
@@ -1532,12 +1533,36 @@ reduce_wk_done <- function(state, event) {
     any(vapply(state$graph$ids, function(cid) !identical(cid, id) && n %in% state$graph$cells[[cid]]$definitions,
                logical(1)))
   }, as.character(report$changed_in_place %||% character()))
-  if (defs_changed || refs_changed || settings_changed) {
+  # The names the cell's globals have as data (worker.R's
+  # global_columns()), for masked reads such as `x` in `subset(df, x > 1)`
+  # (graph.R, resolve_masked()). Only an "ok" run's globals are kept, so a
+  # failed run forgets them. They change an edge only when some cell reads
+  # one of these globals as data, so otherwise they're kept without a
+  # rebuild.
+  cur_columns <- state$graph$learned$columns[[id]]
+  new_columns <- if (identical(status, "ok")) report_columns(report$columns) else NULL
+  columns_changed <- !identical(cur_columns, new_columns)
+  if (columns_changed && !(defs_changed || refs_changed || settings_changed) &&
+      !masked_data_read(state$graph, union(names(cur_columns), names(new_columns)))) {
+    if (is.null(new_columns)) state$graph$learned$columns[[id]] <- NULL
+    else state$graph$learned$columns[id] <- list(new_columns)
+    columns_changed <- FALSE
+  }
+  if (defs_changed || refs_changed || settings_changed || columns_changed) {
     state$graph <- graph_learn(state$graph, id,
                                definitions = if (defs_changed) learned_defs else NULL,
                                references = if (refs_changed) report$formula_misses else NULL,
-                               settings = if (settings_changed) learned_settings else NULL)
+                               settings = if (settings_changed) learned_settings else NULL,
+                               columns = if (!columns_changed) NULL else if (is.null(new_columns)) NA else new_columns)
   }
+  # An input found after the cell was sent (a formula term that isn't a
+  # column, or a masked name the data turned out not to have, learned from
+  # this run or an upstream one) from a cell that is stale and not about
+  # to run: the result came from that cell's old value, so it is stale
+  # too, as it would be had the edge been there when the run was asked for.
+  late <- setdiff(state$graph$upstream[[id]], w$running$upstream)
+  late_stale <- any(vapply(late, function(u) isTRUE(state$results[[u]]$stale) && !(u %in% state$pending),
+                           logical(1)))
 
   runtime <- as.numeric(event$at) - as.numeric(w$running$started_at)
   # Variables are kept only for an "ok" result: a run the worker itself
@@ -1552,6 +1577,7 @@ reduce_wk_done <- function(state, event) {
                        variables = if (identical(status, "ok")) report$globals %||% list() else list(),
                        settings_found = settings_found, setting = id %in% state$graph$settings,
                        load_notes = load_notes, changed_in_place = as.character(changed_in_place))
+  if (late_stale) result$stale <- TRUE
   state$results[[id]] <- result
   if (length(state$footer_sources) && all_code_cells_ran(state)) {
     state$footer_sources <- character()
@@ -1582,6 +1608,24 @@ reduce_wk_done <- function(state, event) {
     state <- invalidate_dependents(state, id, report$created %||% character())
   }
   list(state = state, effects = effects, reply = NULL)
+}
+
+#' The worker's `columns` report (`global_columns()`) in the graph's form:
+#' global -> `list(frame, names)`, `names` always character. msgpack turns
+#' a one-name vector into a string and an empty one into an empty list.
+report_columns <- function(columns) {
+  if (!is.list(columns) || length(columns) == 0 || is.null(names(columns))) return(list())
+  out <- lapply(columns, function(c) {
+    list(frame = isTRUE(c$frame), names = as.character(unlist(c$names, use.names = FALSE)))
+  })
+  out[order(names(out))]
+}
+
+#' Does any cell read one of `globals` as the data of a masked read
+#' (`df` in `subset(df, x > 1)`)?
+masked_data_read <- function(graph, globals) {
+  if (length(globals) == 0) return(FALSE)
+  any(vapply(graph$cells, function(c) any(c$masked$data %in% globals), logical(1)))
 }
 
 #' The setting keys (`setting_keys()`'s form) of the worker's `settings`

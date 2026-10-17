@@ -66,7 +66,7 @@ walk_formula <- function(e, scope, acc, has_data, site = NULL, pid = NA_integer_
       for (i in seq_along(targs)) term(targs[[i]], hd, safe_pid(tparts$args, i))
       return(invisible())
     }
-    if (!is.null(hname)) record_read(acc, scope, hname, where = "formula", pos = pd_position(acc, tparts$head))
+    if (!is.null(hname)) record_read(acc, scope, hname, where = "formula", pos = pd_position(acc, tparts$head), unmasked = TRUE)
     targs <- as.list(t)[-1]
     if (length(targs) >= 1) {
       term(targs[[1]], hd, safe_pid(tparts$args, 1))
