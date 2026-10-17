@@ -48,22 +48,27 @@
 #   source_reply allow, message      only while a `source` request waits
 #   more         cell, path, dim     grow a table's or tree's paging limit
 #                                    at `path` (dim 1 rows/items, 2 columns)
-#   render       cell, res, width?, height?   re-render the cell's recorded
-#                plot at its own figure size and `res`, or at `width`/
-#                `height` pixels when both are given (render_png())
+#   render       cell, res, width?, height?, id?   re-render the cell's
+#                recorded plot at its own figure size and `res`, or at
+#                `width`/`height` pixels when both are given. With `id`
+#                (render_png(), a worker_query()), the `rendered` reply
+#                carries it back and the shell hands it to that query
+#                instead of the state (#28).
 #   complete     id, line, cursor     line: the current line up to the cursor
 #   help         id, topic, package   package NULL: search attached, then all installed
 #   signature    id, name, package
 #   quit
 #
 # Worker -> server
-#   hello        secret, pid, r_version, lib_paths, tempdir, interrupts
+#   hello        secret, pid, r_version, lib_paths, tempdir, interrupts,
+#                cell_children
 #   console      cell, token, item = list(kind, text)   streamed during a run
 #   source       cell, token, path, text                before a computed
 #                                                       source() runs; waits
 #   done         cell, token, report (see run_cell())
-#   rendered     cell, token, display   display is NULL when the cell has no
-#                                       kept value to page or re-render
+#   rendered     cell, token, display, id?   display is NULL when the cell
+#                                       has no kept value to page or
+#                                       re-render; id as the render's
 #   completions  id, token, items = list(name, kind, notebook), too_long
 #   help_page    id, found, topic, package, html, matches (packages, when several),
 #                error, tried_all_packages
@@ -120,6 +125,8 @@ search_added <- character()  # every attach() entry any cell has added this sess
 running <- NULL        # list(cell, token) during a run (for the source trace)
 deferred <- list()     # messages read while waiting for a source_reply
 interrupt_drain <- NULL # Windows: the DLL routine that drops a late interrupt (listen_for_interrupts())
+release_children <- NULL # Windows: the DLL routine that releases a cell's processx children (#208)
+keeping_children <- FALSE  # Windows: whether the thread that releases them runs
 load_log <- NULL       # settings changes made inside loadNamespace/library during a run
 notebook_options <- character()  # option names an options() call from the
                        # notebook's own code (top-level, or a function a
@@ -130,6 +137,13 @@ settings_base <- NULL  # the baseline settings: snapshotted once at boot, then
                        # every change a package load makes is copied in, so a
                        # package's own option survives a reset
 load_stack <- list()   # stack of settings snapshots, one per nested loadNamespace/library
+input_specs <- list()  # cell id -> name -> the spec of each input its last "ok"
+                       # run bound (docs/inputs.md), check function included;
+                       # what a `set_input` message checks a value against
+input_expect <- NULL   # during a run, the binding the top-level expression being
+                       # evaluated can make (input_expectation())
+input_reports <- list() # during a run, every input call the hook saw, in order
+input_bound <- list()  # during a run, name -> spec of each input bound so far
 loader_originals <- list()  # the real loadNamespace/library/require functions
                              # install_traces() replaced, kept so tracebacks can drop
                              # the wrapper's own frame (identified by identity, not text)
@@ -154,7 +168,10 @@ loaded_namespace_versions <- function() {
 #' hello, from the package's DLL (src/interrupt.c, #48): loaded by path
 #' (`EMBER_DLL`), since the worker never loads the package. If that fails,
 #' the server finds no event to set and says the interrupt couldn't be
-#' delivered. Elsewhere the server sends SIGINT and this does nothing.
+#' delivered. The same DLL keeps a cell's processx and callr children
+#' alive past this process (src/children.c, #208). Elsewhere the server
+#' sends SIGINT, those children are in sessions of their own, and this
+#' does nothing.
 listen_for_interrupts <- function() {
   path <- Sys.getenv("EMBER_DLL")
   Sys.unsetenv("EMBER_DLL")
@@ -162,6 +179,11 @@ listen_for_interrupts <- function() {
   invisible(tryCatch({
     dll <- dyn.load(path)
     interrupt_drain <<- getNativeSymbolInfo("C_interrupt_drain", dll)
+    # So a cell's processx and callr children outlive this process, as
+    # they do on Unix (src/children.c, #208).
+    release_children <<- getNativeSymbolInfo("C_release_cell_children", dll)
+    keeping_children <<- isTRUE(tryCatch(.Call(getNativeSymbolInfo("C_keep_cell_children", dll)),
+                                         error = function(e) FALSE))
     isTRUE(.Call(getNativeSymbolInfo("C_interrupt_listen", dll)))
   }, error = function(e) FALSE))
 }
@@ -175,12 +197,29 @@ drain_late_interrupt <- function() {
   invisible(NULL)
 }
 
+#' processx marks the worker as the server's process tree (`cleanup_tree`,
+#' shell.R): `PROCESSX_<id>=YES` in its environment, which everything it
+#' starts inherits. When the server collects the old worker's process
+#' object after a restart, its finalizer ends every process with that
+#' marker, a cell's processx and callr children too, which are meant to
+#' outlive a restart (design.md, #150). Dropped before any cell runs, so
+#' a cell's children don't carry it; what a cell starts with `system()`
+#' still ends with the worker, through the process group and reaper on
+#' Unix and R's job object on Windows (#232).
+drop_processx_marker <- function() {
+  marks <- grep("^PROCESSX_", names(Sys.getenv()), value = TRUE)
+  if (length(marks)) Sys.unsetenv(marks)
+  invisible(marks)
+}
+
 main <- function() {
+  drop_processx_marker()
   listening <- listen_for_interrupts()
   port <- as.integer(commandArgs(trailingOnly = TRUE)[1])
   con <<- socketConnection("127.0.0.1", port, blocking = TRUE, open = "r+b",
                            timeout = 60 * 60 * 24 * 365)
   install_traces()
+  install_input_hook()
   # Baseline, not a cell's change: a colour terminal under Rscript has these
   # on, and a settings cell can still change them (each run resets to this
   # baseline, same as any other setting).
@@ -202,7 +241,8 @@ main <- function() {
     send(list(type = "hello", secret = secret,
               pid = Sys.getpid(), r_version = R.version.string,
               lib_paths = .libPaths(), loaded = loaded_namespace_versions(),
-              tempdir = tempdir(), interrupts = listening))
+              tempdir = tempdir(), interrupts = listening,
+              cell_children = keeping_children))
     # This frame stays on the stack while every cell runs, so a cell
     # walking sys.frames() would find the secret here.
     rm(secret)
@@ -250,8 +290,11 @@ handle_next <- function() {
   switch(msg$type,
     run = {
       drain_late_interrupt()
-      send(list(type = "done", cell = msg$cell, token = msg$token,
-                report = run_cell(msg)))
+      report <- run_cell(msg)
+      # Before "done": the children a finished cell started are released
+      # by the time the server hears it ended (src/children.c, #208).
+      if (!is.null(release_children)) .Call(release_children)
+      send(list(type = "done", cell = msg$cell, token = msg$token, report = report))
     },
     remove_cell = {
       remove_cell(msg$cell)
@@ -259,6 +302,7 @@ handle_next <- function() {
       rebuild_search_path()
     },
     drop_globals = drop_globals(msg$cell),
+    set_input = send(set_input_value(msg)),
     chdir = {
       # getwd() is always the OS's canonical, symlink-resolved form (POSIX
       # getcwd()); `msg$from`/`msg$to` are the engine's own path strings,
@@ -296,7 +340,7 @@ handle_next <- function() {
       })
     },
     more = send(show_more(msg)),
-    render = send(render_plot(msg)),
+    render = send(c(render_plot(msg), if (!is.null(msg$id)) list(id = msg$id))),
     complete = {
       r <- complete_line(msg$line, msg$cursor)
       send(list(type = "completions", id = msg$id, token = r$token, items = r$items, too_long = r$too_long))
@@ -405,7 +449,7 @@ run_cell <- function(msg) {
              runtime = NA_real_, created = character(), changed = character(),
              removed = character(), settings = list(), load_notes = list(),
              attached = list(), formula_misses = character(), loaded = character(),
-             globals = list(), changed_in_place = character(), columns = list())
+             globals = list(), changed_in_place = character(), columns = list(), inputs = list())
 
   # `dev`/`console` are closed here (not just at their normal point of use
   # below) so an interrupt landing anywhere in this function -- including
@@ -447,6 +491,9 @@ run_cell <- function(msg) {
     notebook_options <<- character()
     notebook_attached <<- character()
     attach_requests[[msg$cell]] <<- character()
+    input_reports <<- list()
+    input_bound <<- list()
+    input_expect <<- NULL
     running <<- list(cell = msg$cell, token = msg$token)
     search0 <- search()
     fig <- msg$fig %||% FIGURE_DEFAULT
@@ -470,6 +517,7 @@ run_cell <- function(msg) {
     if (!is_text) exprs <- parse(text = msg$code, keep.source = TRUE,
                                  srcfile = srcfilecopy(msg$cell, msg$code))
     trace_line("eval", msg$cell)
+    dt_before <- datatable_before(env_before, if (is_text) text_lines else exprs)
 
     tryCatch(
       withCallingHandlers({
@@ -492,7 +540,13 @@ run_cell <- function(msg) {
           for (k in seq_along(exprs)) {
             at <- k   # the top-level expression index; error$line reads its srcref
             datatable_clear_mark()
+            input_expect <<- input_expectation(msg$inputs, k, exprs[[k]])
             r <- withVisible(eval(exprs[[k]], globalenv()))
+            # A bound input's value changes without the cell rerunning, so
+            # it isn't shown as the assigned value (design.md, "Which
+            # values a cell shows"); the widget will be.
+            bound_here <- !is.null(input_expect) && input_expect$used && !input_expect$blocked
+            input_expect <<- NULL
             if (k < length(exprs)) {
               if (r$visible && !datatable_assigned(r$value)) console$print(r$value)
             } else {
@@ -500,7 +554,7 @@ run_cell <- function(msg) {
               # A data.table `:=` returns its table visibly, but the
               # console prints nothing for it (#185).
               visible <- r$visible && !datatable_assigned(r$value)
-              assigned <- !r$visible && shows_assignment(exprs[[k]], r$value)
+              assigned <- !r$visible && !bound_here && shows_assignment(exprs[[k]], r$value)
             }
           }
         }
@@ -611,6 +665,13 @@ run_cell <- function(msg) {
     uninterrupted({
       rc$runtime <- unname((proc.time() - t0)[["elapsed"]])
       if (!is.null(err)) rc$error <- err
+      # Only an "ok" run's inputs can be set: a failed run's globals are
+      # dropped (the server sends drop_globals).
+      input_expect <<- NULL
+      rc$inputs <- input_reports
+      input_specs[[msg$cell]] <<- if (identical(rc$status, "ok")) input_bound else NULL
+      input_reports <<- list()
+      input_bound <<- list()
 
       # The cell's settings are what its code changed, taken before the
       # display step: a display method that sets an option when it first
@@ -664,7 +725,7 @@ run_cell <- function(msg) {
       rc$created <- facts$created
       rc$changed <- facts$changed
       rc$removed <- facts$removed
-      rc$changed_in_place <- changed_in_place(env_before, facts$changed)
+      rc$changed_in_place <- changed_in_place(env_before, facts$changed, dt_before)
 
       by_code <- settings_by_code(settings0, settings_code, load_log_code)
       # An option a package creates for itself on first use (readr's
@@ -772,9 +833,110 @@ remove_cell <- function(cell) {
   undo_registrations(cell)
   remove_globals(owned[[cell]])
   owned[[cell]] <<- NULL
+  input_specs[[cell]] <<- NULL
   display[[cell]] <<- NULL
   attached[[cell]] <<- NULL
   cell_settings[[cell]] <<- NULL
+}
+
+# ---- Interactive inputs (docs/inputs.md) -----------------------------------------
+#
+# The emberui package keeps an environment, `.state`, in its namespace. Once
+# the package loads, the worker puts `input_hook()` in it as `.state$hook`.
+# Each input function then ends with
+#
+#   call <- sys.call()
+#   hook <- .state$hook
+#   if (is.function(hook)) hook(spec, call) else spec$value
+#
+# where `spec` is `list(type, value, label, ...)`, `value` being the
+# default, plus `check`, a function that takes a proposed value and returns
+# it as the input would (an integer slider rounds, a dropdown's element)
+# or stops with a message saying what the input allows. Without the hook
+# (plain Rscript, a console) the function returns its default.
+
+#' Put the hook in emberui's `.state` whenever the package loads. A user's
+#' hook on the same event is left alone (setHook() appends).
+install_input_hook <- function() {
+  setHook(packageEvent("emberui", "onLoad"), function(pkgname, pkgpath) {
+    st <- get0(".state", envir = asNamespace(pkgname), inherits = FALSE)
+    if (is.environment(st)) assign("hook", input_hook, envir = st)
+  })
+}
+
+#' What top-level expression `k` of the running cell can bind: the
+#' server's binding for it (`input_bindings()` in R/inputs.R: rules 1 and
+#' 3), with the call it expects (the assignment's right-hand side, rule 2)
+#' and the value kept for the name, if any. `NULL` when it binds nothing.
+input_expectation <- function(inputs, k, expr) {
+  find <- function(bs) Find(function(b) identical(as.integer(b$index), as.integer(k)), bs)
+  b <- find(inputs$bind)
+  blocked <- is.null(b)
+  if (blocked) b <- find(inputs$blocked)
+  if (is.null(b) || !is.call(expr) || length(expr) != 3) return(NULL)
+  kept <- !blocked && b$name %in% names(inputs$values)
+  list(name = b$name, call = expr[[3]], blocked = blocked, used = FALSE,
+       kept = kept, value = if (kept) inputs$values[[b$name]])
+}
+
+#' The hook every emberui input function calls: `spec` as above, `call`
+#' the function's own `sys.call()`. Binds the input only when `call` is
+#' the very call the running top-level assignment expects (rule 2), so a
+#' user's own `input_slider()`, a wrapper or a nested input binds nothing.
+#' Returns the value the cell gets: a kept value its new spec still allows,
+#' or else the default. Every call is reported, bound or not, so the page
+#' can grey the ones that aren't.
+input_hook <- function(spec, call) {
+  if (is.null(running) || !is.list(spec)) return(spec$value)
+  e <- input_expect
+  matched <- !is.null(e) && !e$used && identical(call, e$call)
+  value <- spec$value
+  if (matched) {
+    input_expect$used <<- TRUE
+    if (!e$blocked) {
+      if (e$kept) {
+        v <- input_check(spec, e$value)
+        if (!inherits(v, "error")) value <- v[[1]]
+      }
+      input_bound[[e$name]] <<- spec
+    }
+  }
+  input_reports[[length(input_reports) + 1L]] <<- list(
+    name = if (matched) e$name,
+    bound = matched && !e$blocked,
+    reason = if (!matched) "not_assigned" else if (e$blocked) "read_elsewhere",
+    spec = spec[!vapply(spec, is.function, logical(1))],
+    default = spec$value, value = value)
+  value
+}
+
+#' `list(value)` as `spec$check` returns it, or the error it stopped with.
+input_check <- function(spec, value) {
+  if (!is.function(spec$check)) return(list(value))
+  tryCatch(suppressWarnings(suppressMessages(list(spec$check(value)))),
+           error = function(e) e)
+}
+
+#' A `set_input` message: check the value against the input's spec and
+#' assign it. The reply carries the value as assigned and its summary
+#' (for the cell's variables), or the check's message.
+set_input_value <- function(msg) {
+  reply <- list(type = "input_set", cell = msg$cell, name = msg$name, ok = FALSE)
+  spec <- input_specs[[msg$cell]][[msg$name]]
+  if (is.null(spec)) {
+    reply$error <- sprintf("No input is bound to `%s`.", msg$name)
+    return(reply)
+  }
+  v <- input_check(spec, msg$value)
+  if (inherits(v, "error")) {
+    reply$error <- conditionMessage(v)
+    return(reply)
+  }
+  assign(msg$name, v[[1]], envir = globalenv())
+  reply$ok <- TRUE
+  reply$value <- v[[1]]
+  reply$globals <- tryCatch(summarise_globals(msg$name), error = function(e) list())
+  reply
 }
 
 # ---- Registered methods ------------------------------------------------------
@@ -866,6 +1028,7 @@ undo_registrations <- function(cell) {
 drop_globals <- function(cell) {
   remove_globals(owned[[cell]])
   owned[[cell]] <<- character()
+  input_specs[[cell]] <<- NULL
 }
 
 #' Remove the named globals that still exist. A class's binding
@@ -974,8 +1137,8 @@ ref_fingerprint <- function(v, budget) {
 #' into), and the key. `dt[, z := x * 2]`, `set()` on a new column,
 #' `setnames()`, `setkey()`, `setorder()` and dropping a column all change
 #' it. A write to some rows of an existing column (`dt[i, x := 0]`,
-#' `set(dt, i, "x", v)`) keeps the column's address, so it isn't seen;
-#' finding it would mean hashing every column each run (#172). `NULL`
+#' `set(dt, i, "x", v)`) keeps the column's address, so it isn't seen
+#' here; a hash of its contents finds those (#201). `NULL`
 #' when data.table's namespace isn't loaded or reading fails.
 datatable_fingerprint <- function(dt) {
   if (!isNamespaceLoaded("data.table")) return(NULL)
@@ -1016,6 +1179,132 @@ datatable_clear_mark <- function() {
   if (!isNamespaceLoaded("data.table")) return(invisible())
   tryCatch({ g <- asNamespace("data.table")$.global; g$print <- "" }, error = function(e) NULL)
   invisible()
+}
+
+# ---- data.table row writes (#201) ------------------------------------------
+#
+# A write to some rows (`dt[i, x := 0]`, `set(dt, i, "x", v)`) keeps every
+# column's address, so the shape fingerprint can't see it. A hash of the
+# table's contents can, but costs about 3.5 ms a megabyte, so a run hashes
+# only another cell's tables that its code could write
+# (`datatable_could_write()`), once before its code and once after. No
+# other run hashes anything, and no hash is kept between runs: a write the
+# code check misses would leave a kept hash stale, and the next hashed run
+# would report that write as its own. A table the code reaches without
+# naming it (in a list, or a global a helper reads) isn't hashed (#216).
+
+#' A data.table's contents as one MD5 per column: each column's bytes
+#' (`writeBin()`, which for a character column writes its strings, plus
+#' where its NAs are), or its serialization for a list column. `NULL` if
+#' reading fails, or before R 4.5, whose `md5sum()` can't hash bytes.
+datatable_hash <- function(dt) {
+  if (getRversion() < "4.5.0") return(NULL)
+  tryCatch(vapply(seq_along(dt), function(i) {
+    col <- .subset2(dt, i)
+    bytes <- if (is.character(col)) c(writeBin(col, raw()), writeBin(which(is.na(col)), raw()))
+             else if (is.atomic(col)) writeBin(as.vector(col), raw())
+             else serialize(col, NULL, xdr = FALSE)
+    unname(tools::md5sum(bytes = bytes))
+  }, ""), error = function(e) NULL)
+}
+
+#' The hashes, before the run, of the other cells' tables (in
+#' `env_before`) that `code` (parsed expressions, or the lines of a text
+#' cell) could write: a named list, empty when it can write none.
+datatable_before <- function(env_before, code) {
+  tables <- Filter(function(b) inherits(b$env, "data.table"), env_before)
+  if (length(tables) == 0L) return(list())
+  tryCatch({
+    if (is.character(code)) code <- unlist(lapply(code, function(l) tryCatch(as.list(parse(text = l)), error = function(e) list())))
+    out <- list()
+    for (n in datatable_could_write(code, names(tables))) out[n] <- list(datatable_hash(tables[[n]]$env))
+    out
+  }, error = function(e) list())
+}
+
+#' data.table's functions that write a table in place: `:=`, `let()` and
+#' its exported `set*()` (`set`, `setkey`, `setnames`, ...).
+datatable_setters <- function() {
+  exports <- tryCatch(getNamespaceExports("data.table"), error = function(e) character())
+  c(":=", "let", exports[startsWith(exports, "set")])
+}
+
+#' The function a call's head names, looked up from `env` without
+#' running anything but a package's lazy load: a symbol, or `pkg::f` for a
+#' package already loaded (the check never loads one). `NULL` when it
+#' isn't bound to a function yet, or is anything else (`obj$f`, `f()()`).
+datatable_callee <- function(f, env) {
+  if (is.symbol(f)) return(get0(as.character(f), envir = env, mode = "function"))
+  if (is.call(f) && length(f) == 3L && (identical(f[[1L]], quote(`::`)) || identical(f[[1L]], quote(`:::`))) &&
+      (is.symbol(f[[2L]]) || is.character(f[[2L]])) && isNamespaceLoaded(as.character(f[[2L]])))
+    return(tryCatch(get(as.character(f[[3L]]), envir = asNamespace(as.character(f[[2L]]))), error = function(e) NULL))
+  NULL
+}
+
+#' Whether `fun` comes from a package (a primitive, or a closure made in a
+#' namespace) rather than from the notebook.
+datatable_package_fun <- function(fun) {
+  e <- environment(fun)
+  is.null(e) || isNamespace(topenv(e))
+}
+
+#' Which of `names` the parsed `exprs` could write in place. A table is
+#' written by `:=`, `let()` or a `set*()` function inside a `[` on it, by
+#' data.table's `set*()` functions (under any name, and passed to
+#' `do.call()`), and by the notebook's own functions,
+#' which can do either. So a name counts wherever it is an argument of a
+#' call to anything but a package function (`add_b(dt)`, `dt |> add_b()`,
+#' a function not defined yet), of data.table's `set*()`, or of a package
+#' function that is also passed a function of the notebook's
+#' (`lapply(list(dt), add_b)`, `Map(function(d) d[1, x := 0], list(dt))`),
+#' at any depth in its arguments, and as the table of a `[` with a write
+#' in it. Showing the table, a `[`
+#' read (`dt[x > 1]`), `dt$x`, and a package function (`nrow(dt)`,
+#' `lm(y ~ x, dt)`, `ggplot(dt)`) don't count.
+datatable_could_write <- function(exprs, names, env = globalenv()) {
+  found <- character()
+  setters <- datatable_setters()
+  writes_marked <- function(used) any(used %in% setters)
+  # A setter under another name (`upd <- data.table::set`) is found by
+  # what it is, not by its name.
+  setter_funs <- lapply(setdiff(setters, c(":=", "let")), function(n) get0(n, envir = asNamespace("data.table"), inherits = FALSE))
+  is_setter <- function(fun) any(vapply(setter_funs, function(s) identical(s, fun), NA))
+  # `f(x, )` and `function(a)` hold the empty symbol, which can't be bound
+  # to a variable, so arguments are read by index.
+  visit_each <- function(l, read) {
+    for (j in seq_along(l)) if (!identical(l[[j]], quote(expr = ))) visit(l[[j]], read)
+  }
+  notebook_fun <- function(a) {
+    if (is.call(a) && identical(a[[1L]], quote(`function`))) return(TRUE)
+    fun <- datatable_callee(a, env)
+    !is.null(fun) && (!datatable_package_fun(fun) || is_setter(fun))
+  }
+  visit <- function(e, read) {
+    if (is.symbol(e)) {
+      if (!read && as.character(e) %in% names) found <<- union(found, as.character(e))
+      return()
+    }
+    if (is.pairlist(e) || is.expression(e) || is.list(e)) return(visit_each(as.list(e), FALSE))
+    if (!is.call(e)) return()
+    f <- e[[1L]]
+    args <- as.list(e)[-1L]
+    fname <- if (is.symbol(f)) as.character(f)
+             else if (is.call(f) && length(f) == 3L && is.symbol(f[[3L]])) as.character(f[[3L]]) else ""
+    if (is.symbol(f) && fname %in% c("[", "[[", "$") && length(args) > 0L && !identical(args[[1L]], quote(expr = ))) {
+      visit(args[[1L]], !writes_marked(all.names(e)))
+      return(visit_each(args[-1L], FALSE))
+    }
+    if (!is.symbol(f)) visit(f, FALSE)
+    fun <- datatable_callee(f, env)
+    writer <- is.null(fun) || !datatable_package_fun(fun) ||
+      is_setter(fun) ||
+      any(vapply(seq_along(args), function(j) !identical(args[[j]], quote(expr = )) && notebook_fun(args[[j]]), NA))
+    # A writer can reach any table in its arguments (`lapply(list(dt), f)`).
+    if (writer) found <<- union(found, intersect(all.names(as.call(c(quote(c), args))), names))
+    visit_each(args, TRUE)
+  }
+  for (e in exprs) visit(e, TRUE)
+  found
 }
 
 #' An environment the notebook doesn't own: a namespace, a package's
@@ -1081,7 +1370,7 @@ env_fingerprint_ <- function(e, budget, depth, seen) {
 #' still bound to the same object, and its fingerprint differs. A
 #' name the run rebound (`changed`) or removed is reported as a change of
 #' the name, not of its contents.
-changed_in_place <- function(env_before, changed) {
+changed_in_place <- function(env_before, changed, dt_before = list()) {
   out <- character()
   for (n in setdiff(names(env_before), changed)) {
     b <- env_before[[n]]
@@ -1091,7 +1380,12 @@ changed_in_place <- function(env_before, changed) {
     print <- ref_fingerprint(now, list2env(list(left = ENV_FINGERPRINT_MAX)))
     # `dt <- copy(dt)` binds an equal table, which is a new name, not a change in place.
     if (inherits(now, "data.table") && !identical(print$self, b$print$self)) next
-    if (!identical(print, b$print)) out <- c(out, n)
+    if (!identical(print, b$print)) { out <- c(out, n); next }
+    # A write to some rows keeps the shape; the hash shows it (#201).
+    if (n %in% names(dt_before) && !is.null(dt_before[[n]])) {
+      h <- datatable_hash(now)
+      if (!is.null(h) && !identical(h, dt_before[[n]])) out <- c(out, n)
+    }
   }
   out
 }

@@ -93,6 +93,14 @@ exports_of <- function(state) {
 #' * `seq`: integer, advanced by every event that changed the state
 #'   (Endeavor's `seq`).
 #' * `next_token`: integer, the next run token.
+#' * `input_values`: named list, input name -> `list(cell, code, value)`:
+#'   the value the user gave an input this session (docs/inputs.md), kept
+#'   so the input's cell gets it back when it reruns with the same `code`.
+#'   Never saved; an input at its default has no entry.
+#' * `input_outcome`: `NULL`, or `list(name, ok, error, value, cells)` for
+#'   the last value the worker answered (`reduce_wk_input_set()`): `cells`
+#'   are the readers it reran or marked stale. What `set_input(wait =
+#'   TRUE)` reports.
 #'
 #' Invariants (checked by `check_state()` in tests after every step):
 #' * `graph` is `notebook_graph(code_of(cells), exports,
@@ -203,7 +211,7 @@ new_state <- function(file, path, id, options, at) {
     allowed = FALSE, closed = FALSE, worker = new_worker_state(),
     worker_usage = NULL,
     pending = character(), results = list(), data_columns = list(), clock = at, seq = 0L,
-    next_token = 1L
+    next_token = 1L, input_values = list(), input_outcome = NULL
   ), class = "ember_state")
 }
 
@@ -234,6 +242,9 @@ new_state <- function(file, path, id, options, at) {
 #'   to), or `NULL` before it has ever started. Compared against
 #'   `dirname(state$path)` to notice a move made while the worker was
 #'   still starting (`reduce_wk_hello()`, step.R).
+#' * `input`: `NULL`, or `list(cell, name, value)` while a new input value
+#'   is with the worker (`reduce_set_input()`); nothing new is sent to run
+#'   until it answers.
 new_worker_state <- function() {
   structure(list(status = "off", gen = 0L, running = NULL, interrupt = NULL,
                  restart_offered = FALSE, info = NULL, exit = NULL,
@@ -274,16 +285,24 @@ new_worker_state <- function() {
 #'   class objects another cell defines that this run changed without
 #'   rebinding them (the worker's report, #167). Cells that read them don't
 #'   rerun, so the cell shows a note.
+#' * `inputs`: one entry per input call the run made, in order (the
+#'   worker's report, `input_hook()`): `list(name, bound, reason, spec,
+#'   default, value)`. `bound` inputs can be set (`set_input()`); an
+#'   unbound one has `reason` `"not_assigned"` (not the right-hand side of
+#'   a top-level assignment) or `"read_elsewhere"` (the cell reads or
+#'   redefines `name` too). `spec` is the input's type and arguments.
+#'   `value` follows `set_input()`.
 new_result <- function(code, status, output, console, error, started_at,
                        runtime, defined, stale = FALSE, variables = list(),
                        settings_found = character(), setting = FALSE,
-                       load_notes = list(), changed_in_place = character()) {
+                       load_notes = list(), changed_in_place = character(),
+                       inputs = list()) {
   structure(list(code = code, status = status, output = output,
                  console = console, error = error, started_at = started_at,
                  runtime = runtime, defined = defined, stale = stale,
                  variables = variables, settings_found = settings_found,
                  setting = setting, load_notes = load_notes,
-                 changed_in_place = changed_in_place),
+                 changed_in_place = changed_in_place, inputs = inputs),
             class = "ember_result")
 }
 
@@ -350,7 +369,8 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 #' `"code"` or `"run"`; empty for an ordinary cell), `settings_found` (the
 #' last result's, `character()` when none), `load_notes` (the last
 #' result's, `list()` when none), `changed_in_place` (the last result's,
-#' `character()` when none), `queued`, `running`, `status` (`"not_run"`, `"ok"`, `"error"`,
+#' `character()` when none), `inputs` (the last result's, `list()` when
+#' none; see `new_result()`), `queued`, `running`, `status` (`"not_run"`, `"ok"`, `"error"`,
 #' `"interrupted"`), `stale`, `code_differs`, `errors` (graph errors, or
 #' else the run error, each with `kind`, `message`, `fixes`, `names`, and, for an
 #' `"upstream"` run error, `cells`; a plain "error" also carries `call`,
@@ -534,6 +554,7 @@ cell_view <- function(state, ctx, i) {
     settings_found = if (!is.null(result)) result$settings_found %||% character() else character(),
     load_notes = if (!is.null(result)) result$load_notes %||% list() else list(),
     changed_in_place = if (!is.null(result)) result$changed_in_place %||% character() else character(),
+    inputs = if (!is.null(result)) result$inputs %||% list() else list(),
     queued = ctx$queued[[i]], running = is_running,
     status = if (!is.null(result)) result$status else "not_run",
     stale = !is.null(result) && isTRUE(result$stale),

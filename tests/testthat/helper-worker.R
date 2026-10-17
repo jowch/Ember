@@ -15,17 +15,12 @@ worker_script_path <- function() {
   normalizePath(file.path(ember_package_root(), "inst", "worker.R"), mustWork = TRUE)
 }
 
-#' A free TCP port. serverSocket(0) doesn't report the port it got (the
-#' spike's README notes this), so a port is picked first and retried if
-#' it's taken.
-open_server_socket <- function(tries = 30) {
-  for (i in seq_len(tries)) {
-    port <- sample(20000:59999, 1)
-    s <- tryCatch(serverSocket(port), error = function(e) NULL)
-    if (!is.null(s)) return(list(socket = s, port = port))
-  }
-  stop("could not find a free port after ", tries, " tries")
-}
+#' A free TCP port that a connection to 127.0.0.1 really reaches: the
+#' server's own `pick_listen_socket()` (shell.R). A plain `serverSocket()`
+#' on a random port binds 0.0.0.0, which on Windows and macOS succeeds
+#' while another process listens on 127.0.0.1 there, and the worker then
+#' connects to that process (#241).
+open_server_socket <- function() pick_listen_socket()
 
 # ---- Fixture packages (tests/testthat/fixtures/*) -----------------------------
 #

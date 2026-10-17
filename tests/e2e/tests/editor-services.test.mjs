@@ -187,6 +187,37 @@ test("completion still works on the notebook's names and base R while a cell run
   assertNoProblems(page);
 });
 
+test("completion: typing a number asks R for nothing; a name typed after it still does (#35)", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-complete-number.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  // Each completion request's query_full (the cell's text up to the
+  // cursor), read from the socket's msgpack: the string after its key,
+  // whose header is one byte (fixstr) or two (str8).
+  const queries = [];
+  page.on("websocket", (ws) => ws.on("framesent", (frame) => {
+    const m = Buffer.from(frame.payload).toString("latin1").match(/query_full(?:[\xa0-\xbf]|\xd9[\s\S])([\s\S]*?)\xabnotebook_id/);
+    if (m) queries.push(m[1]);
+  }));
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  // At a person's pace: CodeMirror asks its sources 100 ms after the last
+  // keystroke, so typing faster than that would never ask after a digit.
+  await page.locator(`${cellSelector("B")} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+  await page.keyboard.type("z <- c(12345, 2L, 3.14, 0x1F, 1i) + me", { delay: 150 });
+  await page.waitForSelector(".cm-tooltip-autocomplete .cm-completionLabel", { timeout: 10000 });
+  const labels = await page.locator(".cm-tooltip-autocomplete .cm-completionLabel").allInnerTexts();
+  assert.ok(labels.includes("mean"), `expected "mean" among ${JSON.stringify(labels)}`);
+  assert.ok(queries.some((q) => /\+ me?$/.test(q)), `a request for "me": ${JSON.stringify(queries)}`);
+  assert.deepEqual(queries.filter((q) => /[0-9]$/.test(q)), [], "no request after a digit");
+
+  assertNoProblems(page);
+});
+
 test("help: the cursor inside mean( shows Arithmetic Mean; a link loads another page; examples highlight as R (61)", { timeout: 120000 }, async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help.server.log") });

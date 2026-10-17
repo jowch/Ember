@@ -37,8 +37,8 @@
 #' cancel function), `closing` (listeners are cleared only after the
 #' closing dispatch's notifications are delivered), `queries` (environment,
 #' id (character) -> callback, for `worker_query()`'s pending completion/
-#' help/signature questions -- outside `ember_state` and the event log, see
-#' `worker_query()`), `next_query_id` (integer, last id handed out),
+#' help/signature questions and one-off renders -- outside `ember_state`
+#' and the event log, see `worker_query()`), `next_query_id` (integer, last id handed out),
 #' `file_inputs`/`watch_inputs` (what the last saved file text and the
 #' last watched paths were made from: `save_if_changed()` and
 #' `after_dispatch()` skip the work when these are unchanged; `NULL` until
@@ -561,6 +561,28 @@ run_effect <- function(nb, fx) {
           })
       }
     },
+    fetch_cran_releases = {
+      cache <- nb$state$options$cache
+      hit <- tryCatch(cached_cran_releases(fx$url, cache), error = function(e) NULL)
+      if (!is.null(hit)) {
+        enqueue(nb, ev_cran_releases_fetched(hit$table, at = Sys.time()))
+      } else {
+        job_start(cran_releases_job_key(fx$url, cache), cran_releases_fetch_command(fx$url, cache), nb,
+          make_progress = function(line) NULL,
+          make_done = function(status, output) {
+            # A failed fetch falls back to the last table fetched, however
+            # old: it lacks only the releases since.
+            max_age <- if (identical(status, 0L)) cran_releases_max_age else Inf
+            hit <- tryCatch(cached_cran_releases(fx$url, cache, max_age = max_age), error = function(e) NULL)
+            if (!is.null(hit)) {
+              ev_cran_releases_fetched(hit$table, at = Sys.time())
+            } else {
+              ev_cran_releases_failed(sprintf("couldn't fetch CRAN's release dates from %s", fx$url),
+                                      at = Sys.time())
+            }
+          })
+      }
+    },
     check_library = {
       touch_library(fx$path)
       manifest <- tryCatch(read_library_manifest(fx$path), error = function(e) NULL)
@@ -947,16 +969,25 @@ worker_is_idle <- function(nb) {
     is.null(st$worker$running) && length(st$pending) == 0 && !is.null(nb$con)
 }
 
-#' Ask the worker a question (`complete`, `help` or `signature`) outside
-#' `step()` and the event log: these never change the notebook, so they
-#' don't belong in the engine's history. `callback(reply)` runs once, with
-#' the worker's reply, or with `NULL` at once if the worker isn't idle, or
+#' Ask the worker a question (`complete`, `help` or `signature`, or a
+#' `render` at a one-off size for `render_png()`) outside `step()` and the
+#' event log: these never change the notebook, so they don't belong in the
+#' engine's history. `callback(reply)` runs once, with the worker's reply,
+#' or with `NULL` at once if the worker isn't idle (with `busy_ok`, if it
+#' isn't ready or busy: a `render` may arrive mid-run, and the worker
+#' answers it once the run ends, inst/worker.R), or
 #' with `NULL` after `timeout` seconds, or when the worker exits
 #' (`fail_pending_queries()`). A reply that arrives after the timeout (or
 #' after the worker that was asked is gone) finds no entry in `nb$queries`
 #' and is dropped.
-worker_query <- function(nb, msg, callback, timeout = 0.8) {
-  if (!worker_is_idle(nb)) {
+worker_query <- function(nb, msg, callback, timeout = 0.8, busy_ok = FALSE) {
+  st <- nb$state
+  can_ask <- if (busy_ok) {
+    isTRUE(st$allowed) && st$worker$status %in% c("ready", "busy") && !is.null(nb$con)
+  } else {
+    worker_is_idle(nb)
+  }
+  if (!can_ask) {
     callback(NULL)
     return(invisible(NULL))
   }
@@ -981,7 +1012,8 @@ worker_query <- function(nb, msg, callback, timeout = 0.8) {
   invisible(NULL)
 }
 
-#' A `completions`/`help_page`/`signature` reply: find its callback by
+#' A `completions`/`help_page`/`signature` reply, or a `rendered` one with
+#' an `id`: find its callback by
 #' `msg$id` and call it, or drop the message (its query already timed out).
 answer_query <- function(nb, msg) {
   key <- as.character(msg$id)
@@ -1040,7 +1072,8 @@ poll <- function(nb) {
     if (length(framed$messages) > 0) {
       broke <- FALSE
       for (msg in framed$messages) {
-        if (!is.null(msg$type) && msg$type %in% c("completions", "help_page", "signature")) {
+        if (!is.null(msg$type) && (msg$type %in% c("completions", "help_page", "signature") ||
+                                   (identical(msg$type, "rendered") && !is.null(msg$id)))) {
           answer_query(nb, msg)
           next
         }
@@ -1194,6 +1227,7 @@ worker_event <- function(msg, gen, at, secret = NULL) {
     source   = c("token", "path", "text"),
     done     = c("token", "report"),
     rendered = c("cell", "token"),
+    input_set = c("cell", "name", "ok"),
     NULL
   )
   if (is.null(required)) {
@@ -1224,7 +1258,9 @@ worker_event <- function(msg, gen, at, secret = NULL) {
       display <- as_display(msg$display)
       if (!is.null(display)) display$token <- msg$token
       wk_rendered(gen, msg$cell, display, at)
-    }
+    },
+    input_set = wk_input_set(gen, msg$cell, msg$name, isTRUE(msg$ok), msg$value,
+                             msg$error, msg$globals, at)
   )
 }
 

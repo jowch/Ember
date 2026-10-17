@@ -1,0 +1,12 @@
+Package: toyA
+Version: 0.1
+Imports: toyB
+License: MIT
+MD5sum: 55238471fccc8c9c22a4ffb42358e422
+NeedsCompilation: no
+
+Package: toyB
+Version: 1.0
+License: MIT
+MD5sum: eb64b265a795e409c53fe9bbc5f84cee
+NeedsCompilation: no

@@ -6,7 +6,9 @@
 # The GitHub fixture (fixtures/github) is laid out as the GitHub API is:
 # `repos/lab/toyC/commits/<ref>` holds the commit a ref names,
 # `repos/lab/toyC/contents/<sha>/DESCRIPTION` that commit's DESCRIPTION, and
-# `repos/lab/toyC/tarball/<sha>` the package renv installs. toyC imports toyB
+# `repos/lab/toyC/tarball/<sha>` the package renv installs. The contents
+# folders are stored under short shas, so the tarball's paths fit, and
+# `github_fixture_dir()` names them in full in a copy. toyC imports toyB
 # (from the toy CRAN fixture); it is 0.3.0 at C1 (tag v0.3.0, short sha
 # 3f2a1c9) and 0.4.0 at C2 (main, HEAD).
 
@@ -14,7 +16,7 @@ C1 <- "3f2a1c90a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0"
 C2 <- "8e4b7d2c1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c"
 
 github_fixture <- function() {
-  paste0("file://", normalizePath(testthat::test_path("fixtures", "github"), mustWork = TRUE))
+  paste0("file://", github_fixture_dir())
 }
 
 #' A notebook file with `[sources]` and a lock.
@@ -362,7 +364,7 @@ test_that("removing the source sends the package back to CRAN, or to not_found w
   bioc_keys <- vapply(names(bioc_kinds), function(k) repo_key(k, "2026-09-01", "3.23"), character(1))
   expect_setequal(effect_keys(r), bioc_keys)
   for (kind in names(bioc_kinds)) {
-    idx <- read_repo_index(testthat::test_path("fixtures", "repos", "bioc", "2026-09-01", "packages", "3.23",
+    idx <- read_repo_index(testthat::test_path("fixtures", "bioc", "2026-09-01", "packages", "3.23",
                                                bioc_kinds[[kind]], "src", "contrib", "PACKAGES"),
                            key = bioc_keys[[kind]], label = "Bioc")
     r <- drive(r$state, ev_index_fetched(bioc_keys[[kind]], idx, at(5)))

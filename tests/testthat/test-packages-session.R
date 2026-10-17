@@ -177,6 +177,59 @@ test_that("moving the toy date upgrades toyA, restarts the loaded worker, and th
   expect_equal(notebook_state(nb)$file$header$snapshot, "2026-09-30")
 })
 
+# ---- 77: updating one package ------------------------------------------------
+
+test_that("preview_update finds toyA's dates in CRAN's index of its files and previews them, offline (77)", {
+  # toy-meta holds archive.rds and current.rds as CRAN writes them: toyA
+  # 0.1 out on 2026-09-01, 0.2 on 2026-09-30. The toy repo has a snapshot
+  # of 2026-09-29 too (the 09-01 packages), the last day 0.1 was current.
+  meta <- normalizePath(testthat::test_path("fixtures", "repos", "toy-meta"), mustWork = TRUE)
+  repos <- toy_repos()
+  repos$cran_meta <- paste0("file://", meta)
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  path <- write_toy_notebook("2026-09-01")
+
+  nb <- open_notebook(path, repos = repos, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  res <- run_cells(nb, wait = TRUE, timeout = 120)
+  expect_false(res$timed_out)
+
+  up <- preview_update(nb, "toyA", timeout = 120)
+  expect_equal(up$status, "ready")
+  expect_equal(up$date, "2026-09-30")
+  row <- up$changes[up$changes$name == "toyA", ]
+  expect_equal(c(row$from, row$to, row$change), c("0.1", "0.2", "upgraded"))
+  expect_true(file.exists(cran_releases_rds_path(repos$cran_meta, cache)))
+
+  set_date(nb, up$date)
+  expect_equal(notebook_state(nb)$file$header$snapshot, "2026-09-30")
+
+  pin <- preview_update(nb, "toyA", "0.1", timeout = 120)
+  expect_equal(pin$status, "ready")
+  expect_equal(pin$date, "2026-09-29")
+  row <- pin$changes[pin$changes$name == "toyA", ]
+  expect_equal(c(row$from, row$to, row$change), c("0.2", "0.1", "downgraded"))
+
+  expect_error(preview_update(nb, "ggplot2"), "not in this notebook's packages", class = "ember_refused")
+  never <- preview_update(nb, "toyA", "0.3", timeout = 120)
+  expect_equal(never$status, "failed")
+  expect_match(never$message, "never released toyA 0.3")
+})
+
+test_that("release dates that can't be fetched fail the preview and say where from (77)", {
+  repos <- toy_repos()
+  repos$cran_meta <- paste0("file://", tempfile("ember-no-meta-"))
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  nb <- open_notebook(write_toy_notebook("2026-09-01"), repos = repos, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, wait = TRUE, timeout = 120)
+  res <- preview_update(nb, "toyA", timeout = 120)
+  expect_equal(res$status, "failed")
+  expect_match(res$message, "couldn't fetch CRAN's release dates from file://", fixed = TRUE)
+})
+
 # ---- #39: today's index is fetched again --------------------------------------
 
 test_that("an index dated today is fetched again by a preview of today, a later session reads that copy, and the saved copy stands in offline (#39)", {
@@ -389,7 +442,7 @@ test_that("ember::run() on the saved file installs if needed and prints the cell
 #' (main).
 toy_github_repos <- function() {
   toy <- normalizePath(testthat::test_path("fixtures", "repos", "toy"), mustWork = TRUE)
-  gh <- normalizePath(testthat::test_path("fixtures", "github"), mustWork = TRUE)
+  gh <- github_fixture_dir()
   ember_repos(cran = paste0("file://", toy), github = paste0("file://", gh))
 }
 
@@ -461,7 +514,7 @@ test_that("ember::run() installs a saved GitHub lock on a machine that never res
 #' the GitHub fixture also has D1, the same version with other code.
 toy_universe_repos <- function() {
   toy <- normalizePath(testthat::test_path("fixtures", "repos", "toy"), mustWork = TRUE)
-  gh <- normalizePath(testthat::test_path("fixtures", "github"), mustWork = TRUE)
+  gh <- github_fixture_dir()
   u <- normalizePath(testthat::test_path("fixtures", "universe"), mustWork = TRUE)
   ember_repos(cran = paste0("file://", toy), github = paste0("file://", gh),
               universe = paste0("file://", u, "/%s"))
@@ -581,6 +634,40 @@ test_that("[net] a notebook with library(dplyr) at a fixed past date resolves, i
   snap <- notebook_snapshot(nb)
   expect_match(snap_view(snap, "A")$output$text, locked_version, fixed = TRUE)
   expect_equal(notebook_state(nb)$worker$loaded[["dplyr"]], locked_version)
+})
+
+test_that("[net] preview_update(nb, \"dplyr\", \"1.1.4\") finds the date from CRAN's index and lists the changes (77)", {
+  skip_if_not(identical(Sys.getenv("EMBER_TEST_NETWORK"), "1"),
+             "set EMBER_TEST_NETWORK=1 to run the opt-in network test")
+
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  dir <- tempfile("ember-nb-")
+  dir.create(dir, recursive = TRUE)
+  cells <- list(S = list(code = "", kind = "code", folded = FALSE),
+               A = list(code = "library(dplyr)", kind = "code", folded = FALSE))
+  header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
+                       r_version = paste(R.version$major, R.version$minor, sep = "."),
+                       snapshot = "2026-06-01")
+  file <- new_notebook_file(
+    header = header, cells = cells, run_order = names(cells), learned = list(),
+    sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
+    lock = empty_lock(), extra_blocks = list(), format = ember_format)
+  path <- file.path(dir, "nb.R")
+  write_atomic(path, format_notebook(file))
+
+  # Safe preview resolves the lock without installing anything.
+  nb <- open_notebook(path, repos = ember_repos(), cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  expect_true(wait_for(nb, function(snap) "dplyr" %in% snap$packages$packages$name, timeout = 120))
+  expect_equal(package_status(nb)$packages$version[package_status(nb)$packages$name == "dplyr"], "1.2.1")
+
+  # 1.2.0 came out on 2026-02-03, so 1.1.4 was last current on 02-02.
+  res <- preview_update(nb, "dplyr", "1.1.4", timeout = 300)
+  expect_equal(res$status, "ready")
+  expect_equal(res$date, "2026-02-02")
+  row <- res$changes[res$changes$name == "dplyr", ]
+  expect_equal(c(row$from, row$to, row$change), c("1.2.1", "1.1.4", "downgraded"))
 })
 
 test_that("[net] an r-universe package installs from its universe, and a commit it no longer serves from GitHub (#203)", {
@@ -706,11 +793,15 @@ test_that("[net] on macOS and Windows, a Bioconductor package Package Manager ha
   expect_false(res$timed_out)
 
   status <- package_status(nb)
-  expect_equal(status$library$status, "ready")
+  # What a failure needs to explain itself: the problems say why a name
+  # wasn't found, the log why an install went wrong.
+  why <- paste(c(status$library$message, status$problems$message,
+                 notebook_state(nb)$packages$target$log), collapse = "\n")
+  expect_equal(status$library$status, "ready", info = why)
   row <- status$packages$name == "SNPRelate"
-  expect_equal(status$packages$version[row], "1.46.0")
-  expect_equal(status$packages$status[row], "installed")
-  expect_match(snap_view(notebook_snapshot(nb), "A")$output$text, "1.46.0", fixed = TRUE)
+  expect_equal(status$packages$version[row], "1.46.0", info = why)
+  expect_equal(status$packages$status[row], "installed", info = why)
+  expect_match(snap_view(notebook_snapshot(nb), "A")$output$text %||% "", "1.46.0", fixed = TRUE, info = why)
   # It came as a binary, and not Package Manager's, so Bioconductor's: a
   # build on this machine would have been built today, after `started`.
   # (renv's RemoteRepos can't say which repository: Bioconductor's Windows

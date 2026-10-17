@@ -209,6 +209,22 @@ when the notebook restarts. A process a cell starts in a session of its own
 (processx, callr) is outside the group and outlives both a restart and a
 killed server.
 
+Windows has no process groups, and gets the same result another way (#208).
+What a cell starts with `system()` ends with the worker there, since R puts
+each such child in a job object that ends it once the worker ends. processx
+(and so callr) puts its children in a job object of its own that does the
+same, so the worker clears that one setting on processx's job after every
+run, before it says the run is done, and from a thread every half second
+for a cell still running (src/children.c). A processx or callr child then
+outlives a restart and a killed server, as on Unix. Only the first one a
+worker starts can still end with it, if the worker is killed mid-run within
+half a second of starting it; later ones join a job already released.
+
+On every system the worker also drops the `PROCESSX_<id>` marker it
+inherits as the server's process tree (`cleanup_tree`). Otherwise a cell's
+children inherit it, and when the server collects the old worker's process
+object after a restart, its finalizer ends them all (#232).
+
 A stopped worker is killed, so R never removes its temp folder itself. The
 worker names its `tempdir()` in its hello, and the server removes that
 folder once the worker has stopped (closed, restarted, failed or crashed),
@@ -405,8 +421,24 @@ still checked, up to 10,000 bindings a run. A data.table another cell
 defines is fingerprinted by its shape: column names, each column's
 address, its spare column slots and its key. So `dt[, z := x * 2]`,
 `setnames()`, `setkey()`, `setorder()` and dropping a column are noted. A
-write to some rows of an existing column (`dt[i, x := 0]`) keeps the
-column where it was, and isn't (#172).
+write to some rows of an existing column (`dt[i, x := 0]`, `set(dt, i,
+"x", v)`) keeps the column where it was, so the shape can't show it. A
+hash of the table's contents does (#201). Hashing costs about 3.5 ms a
+megabyte, so a run hashes only another cell's tables its code could write:
+the table of a `[` with `:=`, `let()` or `set*()` in it, an argument of
+data.table's `set*()` (under any name, or through `do.call()`), and a
+table passed to one of the notebook's own functions (`add_b(dt)`,
+`lapply(list(dt), add_b)`), or to a function not defined yet. Showing the
+table, reading it with `[` or `$`, and passing it to a package's function
+(`nrow(dt)`, `lm(y ~ x, dt)`, `ggplot(dt)`) hash nothing. Such a run
+hashes the table twice, before its code and after; no hash is kept between
+runs, so a write that was missed is never blamed on a later cell. That cost
+grows with the table and has no cap, on purpose: a cap would bring the
+silent miss back. A 36 MB table adds about 0.17 s to each cell that could
+write it, and a 1 GB table would add about 7 s. A cell that reaches a
+table without naming it (a helper that writes the global, a table in a
+list) isn't hashed, and its write isn't noted (#216). Before R 4.5,
+`tools::md5sum()` can't hash bytes, so row writes aren't noted there.
 
 ### Methods
 
@@ -562,7 +594,9 @@ top-level expression is its output. When that expression is an assignment
 invisibly, so `cars <- mtcars` shows the table. As in Pluto, the value is
 the right-hand side: `df$z <- df$x * 2` shows the new column, not `df`. A
 plot the cell drew still wins over an assigned value, so `h <- hist(x)`
-shows the histogram. Any other invisible value
+shows the histogram. A bound interactive input is the exception: `n <-
+input_slider(1, 10)` shows the widget, not the number, since moving the
+widget changes `n` without rerunning the cell (inputs.md). Any other invisible value
 shows nothing: `invisible()`, `library()`, a function that returns
 invisibly. So `invisible(x <- big)`, or a last line of `invisible()`, is
 how a cell hides its output (Pluto's trailing `;` has no meaning in R).
@@ -856,17 +890,27 @@ the git commit for both (an r-universe serves only its latest build).
   package) moves the notebook to the earliest date on which that version was
   current, so the other packages move only as far as they must. **Update
   all** moves the date to today. **Pinning an older version** moves the date
-  back to when it was current. Each shows every version that changes before
-  applying.
+  back to the last day it was current, so the other packages move back as
+  little as they can. Package Manager takes its snapshots at a set time, so
+  each date is checked against that day's snapshot, and a snapshot that
+  doesn't have the version yet (or, for a pin, already has the next one) is
+  passed over for the next day's. Each shows every version that changes
+  before applying (`preview_update()`).
 - **No solver is needed.** Each package version was current for one span of
   time, from its release to the next. Versions that were all current at one
   moment form a valid lock, and for spans of time, overlapping pairwise
   already means overlapping at one moment; so finding a lock is finding a
-  date. The data is every CRAN version's release date, which
-  crandb.r-pkg.org gives per package (fetching 100 packages took 3 s with 16
-  requests at a time; finding a date took 13 ms). Ember caches it, since
-  crandb is a community service. The installer only ever sees one dated
-  repository URL.
+  date. The data is every CRAN version's release date, which CRAN gives
+  itself: its `src/contrib/Meta/archive.rds` and `current.rds` list every
+  tarball with the time it was published (about 6 MB together, on any CRAN
+  mirror). Ember fetches them in a subprocess and caches the table for a
+  day. crandb.r-pkg.org has the same dates, but it is a community service
+  Ember would depend on. CRAN's files do add one host,
+  cloud.r-project.org (`ember_repos(cran_meta)`), in place of crandb's:
+  Package Manager serves `archive.rds` but not `current.rds`. A machine
+  that reaches only Package Manager gets "couldn't fetch CRAN's release
+  dates" and can still move the whole date. The installer only
+  ever sees one dated repository URL.
 
 CRAN's checks aren't a guarantee (a package can be broken or archived on
 some date), but they are much stronger than minimum versions. Moving the date

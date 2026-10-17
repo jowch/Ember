@@ -125,7 +125,7 @@ test_that("mode fresh at a later date moves every version and lock_diff lists th
 
 bioc_fixture <- function(kind, release = "3.23", date = "2026-09-01") {
   read_repo_index(
-    testthat::test_path("fixtures/repos/bioc", date, "packages", release, bioc_kinds[[kind]],
+    testthat::test_path("fixtures/bioc", date, "packages", release, bioc_kinds[[kind]],
                         "src/contrib/PACKAGES"),
     key = repo_key(kind, date, release), label = "Bioc")
 }

@@ -78,10 +78,10 @@ find_effect <- function(result, type) {
 r46 <- list(version = "4.6.1", minor = "4.6", platform = "x86_64-pc-linux-gnu")
 
 #' The Bioconductor 3.23 fixture index of `kind`
-#' (fixtures/repos/bioc/2026-09-01/packages/3.23/...), keyed as `release`
+#' (fixtures/bioc/2026-09-01/packages/3.23/...), keyed as `release`
 #' at `date`.
 bioc_index <- function(kind, release = "3.23", date = "2026-09-01") {
-  idx <- read_repo_index(testthat::test_path("fixtures", "repos", "bioc", "2026-09-01", "packages",
+  idx <- read_repo_index(testthat::test_path("fixtures", "bioc", "2026-09-01", "packages",
                                              "3.23", bioc_kinds[[kind]], "src", "contrib", "PACKAGES"),
                          key = repo_key(kind, date, release), label = "Bioc")
   idx
@@ -257,7 +257,7 @@ test_that("after allow, a missing target emits exactly one install; a second eve
   expect_equal(sum(effect_types(r) == "install"), 1)
   expect_equal(r$state$packages$target$status, "installing")
 
-  r2 <- drive(r$state, ev_render("nonexistent", 10, 10, at(5)))
+  r2 <- drive(r$state, ev_render("nonexistent", at(5)))
   expect_equal(sum(effect_types(r2) == "install"), 0)
 })
 
@@ -687,6 +687,208 @@ test_that("an edit that changes the wanted set recomputes a ready proposal (54)"
   expect_true("viz" %in% r2$state$packages$proposal$lock$entries$name)
 })
 
+# ---- Updating one package (docs/packages-tests.md, 77) -----------------------
+
+#' CRAN's release dates as `cran_release_table()` gives them, for the
+#' fixture's dplyr: 1.1.4 current from 2026-08-01, 1.1.5 from `new_on`.
+release_table <- function(new_on = "2026-09-30") {
+  data.frame(package = c("dplyr", "dplyr", "dplyr"), version = c("1.1.3", "1.1.4", "1.1.5"),
+             date = as.Date(c("2026-06-01", "2026-08-01", new_on)), stringsAsFactors = FALSE)
+}
+
+#' The fixture's index at `date` (the files of 2026-09-01 or 2026-09-30),
+#' keyed as `as`: a snapshot of a day in between.
+cran_index_as <- function(date, as) {
+  read_repo_index(testthat::test_path("fixtures", "repos", "cran", date, "src", "contrib", "PACKAGES"),
+                  key = repo_key("cran", as), label = "CRAN")
+}
+
+today <- as.Date("2026-10-10")
+
+test_that("update_date takes a newer version's first day and an older one's last", {
+  t <- release_table()
+  up <- update_date(t, "dplyr", NULL, "1.1.4")
+  expect_equal(up$version, "1.1.5")
+  expect_equal(up$date, as.Date("2026-09-30"))
+  expect_equal(up$step, 1L)
+  expect_true(is.na(up$last))
+  pin <- update_date(t, "dplyr", "1.1.3", "1.1.4")
+  expect_equal(pin$date, as.Date("2026-07-31"))
+  expect_equal(pin$step, -1L)
+  expect_equal(pin$last, as.Date("2026-06-01"))
+  mid <- update_date(t, "dplyr", "1.1.4", "1.1.3")
+  expect_equal(mid$date, as.Date("2026-08-01"))
+  expect_equal(mid$last, as.Date("2026-09-29"))
+
+  expect_match(update_date(t, "dplyr", "9.9.9", "1.1.4")$message, "never released dplyr 9.9.9")
+  expect_match(update_date(t, "nope", NULL, "1.0")$message, "no record of a package called 'nope'")
+  expect_match(update_date(t, "dplyr", "1.1.4", "1.1.4")$message, "already at 1.1.4")
+  same_day <- rbind(t, data.frame(package = "dplyr", version = "1.1.6", date = as.Date("2026-09-30")))
+  expect_match(update_date(same_day, "dplyr", "1.1.5", "1.1.4")$message, "replaced by 1.1.6 the day it came out")
+})
+
+test_that("cran_release_table reads archive.rds and current.rds as CRAN writes them", {
+  info <- function(files, times) {
+    data.frame(size = rep(1, length(files)),
+               mtime = as.POSIXct(times, tz = "UTC"), row.names = files)
+  }
+  archive <- list(dplyr = info(c("dplyr/dplyr_1.1.3.tar.gz", "dplyr/dplyr_1.1.4.tar.gz"),
+                               c("2026-06-01 10:00:00", "2026-08-01 23:30:00")),
+                  old.pkg = info("old.pkg/old.pkg_0.1-2.tar.gz", "2020-01-02 03:04:05"))
+  current <- info(c("dplyr_1.1.5.tar.gz", "zoo_1.8-12.tar.gz"), c("2026-09-30 08:00:00", "2026-01-01 00:00:00"))
+  t <- cran_release_table(archive, current)
+  expect_equal(t$package, c("dplyr", "dplyr", "dplyr", "old.pkg", "zoo"))
+  expect_equal(t$version, c("1.1.3", "1.1.4", "1.1.5", "0.1-2", "1.8-12"))
+  expect_equal(t$date, as.Date(c("2026-06-01", "2026-08-01", "2026-09-30", "2020-01-02", "2026-01-01")))
+})
+
+test_that("cran_release_table orders versions released the same day by the time they came out (77)", {
+  # BFS 0.5 at 12:32 and 0.5.1 at 22:23 on 2023-06-08: by file name, 0.5.1
+  # sorts first, and the day alone can't tell them apart.
+  archive <- list(BFS = data.frame(size = c(1, 1),
+                                   mtime = as.POSIXct(c("2023-06-08 22:23:00", "2023-06-08 12:32:00"), tz = "UTC"),
+                                   row.names = c("BFS/BFS_0.5.1.tar.gz", "BFS/BFS_0.5.tar.gz")))
+  current <- data.frame(size = 1, mtime = as.POSIXct("2023-08-11 09:00:00", tz = "UTC"),
+                        row.names = "BFS_0.5.2.tar.gz")
+  t <- cran_release_table(archive, current)
+  expect_equal(t$version, c("0.5", "0.5.1", "0.5.2"))
+  got <- update_date(t, "BFS", "0.5.1", "0.5.2")
+  expect_equal(got$date, as.Date("2023-08-10"))
+  expect_match(update_date(t, "BFS", "0.5", "0.5.2")$message, "replaced by 0.5.1 the day it came out")
+})
+
+test_that("an update whose day isn't published yet isn't moved back a day, as update all is (77)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- open_with_cran(s)
+  r <- drive(r$state, ev_preview_update("dplyr", NULL, today, at(3)))
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(), at(4)))
+  key <- repo_key("cran", "2026-09-30")
+  r <- drive(r$state, ev_index_failed(key, "cran/2026-09-30 isn't published", at(5), unpublished = TRUE))
+  prop <- r$state$packages$proposal
+  expect_equal(prop$date, "2026-09-30")
+  expect_equal(prop$update$version, "1.1.5")
+  expect_equal(prop$status, "failed")
+})
+
+test_that("preview_update fetches CRAN's release dates, then previews the newest version's date (77)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- open_with_cran(s)
+  expect_equal(unname(lock_versions(r$state$file$lock)["dplyr"]), "1.1.4")
+
+  r <- drive(r$state, ev_preview_update("dplyr", NULL, today, at(3)))
+  expect_true(r$reply)
+  expect_equal(effect_types(r), "fetch_cran_releases")
+  expect_equal(r$state$packages$proposal$status, "dates")
+  expect_equal(packages_view(r$state)$proposal$update$name, "dplyr")
+
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(), at(4)))
+  expect_equal(r$state$packages$proposal$date, "2026-09-30")
+  expect_true("fetch_index" %in% effect_types(r))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(5)))
+  prop <- r$state$packages$proposal
+  expect_equal(prop$status, "ready")
+  expect_equal(prop$changes$to[prop$changes$name == "dplyr"], "1.1.5")
+  expect_equal(prop$update$version, "1.1.5")
+
+  # Applied as any preview is.
+  r <- drive(r$state, ev_set_date("2026-09-30", at(6)))
+  expect_equal(r$state$file$header$snapshot, "2026-09-30")
+  expect_equal(unname(lock_versions(r$state$file$lock)["dplyr"]), "1.1.5")
+
+  # A second update uses the dates already fetched.
+  r <- drive(r$state, ev_preview_update("dplyr", "1.1.4", today, at(7)))
+  expect_false("fetch_cran_releases" %in% effect_types(r))
+  expect_equal(r$state$packages$proposal$date, "2026-09-29")
+})
+
+test_that("a snapshot taken before the release reached it is passed over for the next day's", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- open_with_cran(s)
+  r <- drive(r$state, ev_preview_update("dplyr", "1.1.5", today, at(3)))
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(new_on = "2026-09-29"), at(4)))
+  expect_equal(r$state$packages$proposal$date, "2026-09-29")
+  # Package Manager's snapshot of 2026-09-29 still has 1.1.4.
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-29"), cran_index_as("2026-09-01", "2026-09-29"), at(5)))
+  prop <- r$state$packages$proposal
+  expect_equal(prop$date, "2026-09-30")
+  expect_equal(prop$status, "fetching")
+  expect_true("fetch_index" %in% effect_types(r))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(6)))
+  expect_equal(r$state$packages$proposal$status, "ready")
+  expect_equal(r$state$packages$proposal$date, "2026-09-30")
+})
+
+test_that("a pin moves the date back to the last day the old version was current, and passes over a later snapshot", {
+  lock <- new_lock(c("cli", "dplyr", "glue"), c("3.6.6", "1.1.5", "1.8.0"), rep("CRAN", 3))
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")), snapshot = "2026-09-30", lock = lock)
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_preview_update("dplyr", "1.1.4", today, at(2)))
+  # 1.1.5 came out on 2026-09-02, but the snapshot of 09-01 already had it.
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(new_on = "2026-09-02"), at(3)))
+  expect_equal(r$state$packages$proposal$date, "2026-09-01")
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index_as("2026-09-30", "2026-09-01"), at(4)))
+  expect_equal(r$state$packages$proposal$date, "2026-08-31")
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-08-31"), cran_index_as("2026-09-01", "2026-08-31"), at(5)))
+  prop <- r$state$packages$proposal
+  expect_equal(prop$status, "ready")
+  expect_equal(prop$changes$change[prop$changes$name == "dplyr"], "downgraded")
+  expect_equal(prop$changes$to[prop$changes$name == "dplyr"], "1.1.4")
+})
+
+test_that("an update that no snapshot near its date has fails, saying so", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- open_with_cran(s)
+  r <- drive(r$state, ev_preview_update("dplyr", "1.1.5", today, at(3)))
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(new_on = "2026-09-20"), at(4)))
+  for (i in 0:3) {
+    d <- format(as.Date("2026-09-20") + i)
+    expect_equal(r$state$packages$proposal$date, d)
+    r <- drive(r$state, ev_index_fetched(repo_key("cran", d), cran_index_as("2026-09-01", d), at(5 + i)))
+  }
+  prop <- r$state$packages$proposal
+  expect_equal(prop$status, "failed")
+  expect_match(prop$message, "snapshot of 2026-09-23 has dplyr 1.1.4, and no snapshot near it has dplyr 1.1.5")
+  expect_equal(packages_view(r$state)$proposal$status, "failed")
+})
+
+test_that("an update never goes past today's snapshot", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- open_with_cran(s)
+  r <- drive(r$state, ev_preview_update("dplyr", NULL, as.Date("2026-09-30"), at(3)))
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(), at(4)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index_as("2026-09-01", "2026-09-30"), at(5)))
+  expect_equal(r$state$packages$proposal$status, "failed")
+  expect_false("fetch_index" %in% effect_types(r))
+})
+
+test_that("preview_update refuses a package that isn't in the lock or isn't from CRAN", {
+  lock <- new_lock(c("dplyr", "mypkg"), c("1.1.4", "0.1.0"), c("CRAN", "github:me/mypkg@abc123"))
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")), lock = lock)
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_preview_update("ggplot2", NULL, today, at(2)))
+  expect_s3_class(r$reply, "ember_refused")
+  expect_match(conditionMessage(r$reply), "ggplot2 is not in this notebook's packages")
+  r <- drive(r$state, ev_preview_update("mypkg", NULL, today, at(3)))
+  expect_s3_class(r$reply, "ember_refused")
+  expect_match(conditionMessage(r$reply), "not CRAN")
+  expect_length(r$effects, 0)
+})
+
+test_that("release dates that can't be fetched fail the update, and the next one fetches again", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- open_with_cran(s)
+  r <- drive(r$state, ev_preview_update("dplyr", NULL, today, at(3)))
+  r <- drive(r$state, ev_cran_releases_failed("couldn't fetch CRAN's release dates from x", at(4)))
+  expect_equal(r$state$packages$proposal$status, "failed")
+  expect_match(r$state$packages$proposal$message, "couldn't fetch CRAN's release dates")
+  r <- drive(r$state, ev_preview_update("dplyr", NULL, today, at(5)))
+  expect_equal(effect_types(r), "fetch_cran_releases")
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(), at(6)))
+  r <- drive(r$state, ev_preview_update("dplyr", "7.0", today, at(7)))
+  expect_equal(r$state$packages$proposal$status, "failed")
+  expect_match(r$state$packages$proposal$message, "never released dplyr 7.0")
+})
+
 # ---- apply = TRUE previews (ui-3-plan.md, "Update to today's snapshot") -----
 
 test_that("an apply = TRUE preview applies itself once ready with nothing loaded to restart (83)", {
@@ -782,7 +984,7 @@ test_that("packages_changed is notified once per dispatch when the view changes,
   notes <- notifications(r$state, r2$state)
   expect_equal(sum(vapply(notes, function(n) n$kind, character(1)) == "packages_changed"), 1)
 
-  r3 <- drive(r2$state, ev_render("nonexistent", 1, 1, at(3)))
+  r3 <- drive(r2$state, ev_render("nonexistent", at(3)))
   notes2 <- notifications(r2$state, r3$state)
   expect_false("packages_changed" %in% vapply(notes2, function(n) n$kind, character(1)))
 })
