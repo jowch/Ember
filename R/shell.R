@@ -222,10 +222,16 @@ schedule_poll <- function(nb, interval = 0.005) {
 
 #' Seconds until the next poll: fast while the shell is waiting on the
 #' worker (connecting, starting, running, a pending cell or query, bytes
-#' half-read, or anything sent or received in the last second), slow when
-#' nothing is outstanding, since the worker speaks almost only in reply.
+#' half-read, or anything sent or received in the last second); 250 ms while
+#' an install or index job is running, so its progress and its end are read
+#' promptly; otherwise 2 s. An idle worker sends nothing (it speaks only in
+#' reply, or during a run), so the slow poll only notices a worker that died
+#' while idle, and a watched file that changed: each costs about 1.7 ms of
+#' the server's time, so 4 a second cost 0.7% of a core per open notebook
+#' (#46).
 poll_interval <- function(nb, now = Sys.time()) {
-  if (is.null(nb$proc)) return(0.5)
+  jobs_running <- length(ls(jobs, all.names = TRUE)) > 0
+  if (is.null(nb$proc)) return(if (jobs_running) 0.25 else 2)
   st <- nb$state
   waiting <- is.null(nb$con) ||
     !identical(st$worker$status, "ready") ||
@@ -234,20 +240,26 @@ poll_interval <- function(nb, now = Sys.time()) {
     length(ls(nb$queries, all.names = TRUE)) > 0 ||
     nb$rx$n > 0 ||
     (!is.null(nb$last_io) && as.numeric(now - nb$last_io, units = "secs") < 1)
-  if (waiting) 0.005 else 0.25
+  if (waiting) 0.005 else if (jobs_running) 0.25 else 2
+}
+
+#' Bring a poll due later than `interval` forward to `interval`. Inside
+#' `poll()` the poll reschedules itself on the way out, so it is left alone
+#' there.
+hurry_poll <- function(nb, interval) {
+  if (!isTRUE(nb$in_poll) && !is.null(nb$poll_cancel) &&
+      isTRUE(nb$poll_interval > interval)) {
+    cancel_poll(nb)
+    schedule_poll(nb, interval)
+  }
+  invisible(NULL)
 }
 
 #' Note worker traffic, and bring a slow poll forward so the reply is read
-#' within one fast tick. Inside `poll()` the poll reschedules itself on the
-#' way out, so it is left alone there.
+#' within one fast tick.
 note_worker_io <- function(nb) {
   nb$last_io <- Sys.time()
-  if (!isTRUE(nb$in_poll) && !is.null(nb$poll_cancel) &&
-      isTRUE(nb$poll_interval > 0.005)) {
-    cancel_poll(nb)
-    schedule_poll(nb, 0.005)
-  }
-  invisible(NULL)
+  hurry_poll(nb, 0.005)
 }
 
 cancel_poll <- function(nb) {
@@ -926,8 +938,8 @@ fail_pending_queries <- function(nb) {
 }
 
 #' The poll, at the interval `poll_interval()` picks: 5 ms while the shell
-#' waits on the worker, 250 ms with an idle worker, 500 ms with none.
-#' File watching is checked at most every 500 ms regardless of the poll
+#' waits on the worker, 250 ms while a job runs, 2 s otherwise. File
+#' watching is checked at most every 500 ms regardless of the poll
 #' interval, so a busy worker doesn't make it noisier.
 poll <- function(nb) {
   nb$in_poll <- TRUE

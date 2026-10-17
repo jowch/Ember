@@ -169,9 +169,14 @@ started in the background by a shell (`&`) inherits SIGINT as ignored, R then
 never installs its interrupt handler, and interrupts silently do nothing
 (measured: a 10 s loop ran to the end; with the reset, it stopped in 10 ms).
 The reset is a few lines of C, so the server package has compiled code from
-the start. The server polls the worker socket from its `later` loop every
-5 ms (about 2% of a core when idle), and must read a large worker message in
-pieces rather than all at once, so a big output can't stall it.
+the start. The server polls the worker socket from its `later` loop: every 5 ms while
+it waits on the worker (a run, a query, or traffic in the last second),
+every 250 ms while an install or index job runs, and every 2 s otherwise. A
+crash during a run is noticed within 5 ms; one while idle, or an edit to a
+watched file, within about 2 s. At 250 ms an idle notebook cost the server
+0.7% of a core and 4 wake-ups a second; at 2 s it is about 0.12% (#46).
+It must read a large worker message in pieces rather than all at once, so a
+big output can't stall it.
 
 Workers and jobs (installs, index fetches) end when the server does. They
 start with processx's supervisor, a separate process that sends them SIGTERM
