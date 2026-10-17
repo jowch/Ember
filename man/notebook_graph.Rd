@@ -41,11 +41,14 @@ files still read the same; everything else is recomputed. Passing
 \code{previous} never changes the result, only the work done.}
 \item{read_file}{Reader for \code{source()} paths; see \link{read_cell}.}
 \item{columns}{Named list, cell id -> global -> \code{list(frame, names)}: the
-names each data frame or list a cell created had at its last successful run.
-A name read inside \code{subset()}, \code{transform()}, \code{with()} or
-\code{within()} is an edge only when its data doesn't have that column; with
-no entry for the data's cell the edge is soft. \code{list()} means nothing has
-run.}
+names each data frame or list a cell created had at its last run, if that run
+was ok (a failed run removes the cell's entry). A name read inside
+\code{subset()}, \code{transform()}, \code{with()} or \code{within()} is an edge
+when its data doesn't have that column, or when Ember can't tell what the data
+is (no single cell defines it, \code{subset()} or \code{transform()} got
+something that isn't a data frame, or a cell defines the function or a method
+of it). With no entry for the data's cell the edge is soft. \code{list()}
+means nothing has run.}
 \item{graph}{An \code{ember_graph}, as returned by \code{notebook_graph()} or
 \code{graph_learn()}.}
 \item{cell}{The id of the cell the worker ran.}
