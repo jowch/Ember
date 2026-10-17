@@ -807,7 +807,11 @@ outside the rule and are marked unchecked.
   tarball with the time it was published (about 6 MB together, on any CRAN
   mirror). Ember fetches them in a subprocess and caches the table for a
   day. crandb.r-pkg.org has the same dates, but it is a community service
-  Ember would depend on; CRAN's files need no new host. The installer only
+  Ember would depend on. CRAN's files do add one host,
+  cloud.r-project.org (`ember_repos(cran_meta)`), in place of crandb's:
+  Package Manager serves `archive.rds` but not `current.rds`. A machine
+  that reaches only Package Manager gets "couldn't fetch CRAN's release
+  dates" and can still move the whole date. The installer only
   ever sees one dated repository URL.
 
 CRAN's checks aren't a guarantee (a package can be broken or archived on

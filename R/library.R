@@ -484,7 +484,9 @@ cran_release_table <- function(archive, current) {
   out <- data.frame(package = sub(pattern, "\\1", file[ok]), version = sub(pattern, "\\2", file[ok]),
                     date = as.Date(as.POSIXct(mtime[ok], origin = "1970-01-01", tz = "UTC"), tz = "UTC"),
                     stringsAsFactors = FALSE)
-  out <- out[order(out$package, out$date, method = "radix"), , drop = FALSE]
+  # By the time, not the day: two versions released the same day are in
+  # the order they came out (BFS 0.5 and 0.5.1 on 2023-06-08).
+  out <- out[order(out$package, mtime[ok], method = "radix"), , drop = FALSE]
   out <- out[!duplicated(paste(out$package, out$version)), , drop = FALSE]
   rownames(out) <- NULL
   out

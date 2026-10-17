@@ -716,6 +716,21 @@ test_that("cran_release_table reads archive.rds and current.rds as CRAN writes t
   expect_equal(t$date, as.Date(c("2026-06-01", "2026-08-01", "2026-09-30", "2020-01-02", "2026-01-01")))
 })
 
+test_that("cran_release_table orders versions released the same day by the time they came out (77)", {
+  # BFS 0.5 at 12:32 and 0.5.1 at 22:23 on 2023-06-08: by file name, 0.5.1
+  # sorts first, and the day alone can't tell them apart.
+  archive <- list(BFS = data.frame(size = c(1, 1),
+                                   mtime = as.POSIXct(c("2023-06-08 22:23:00", "2023-06-08 12:32:00"), tz = "UTC"),
+                                   row.names = c("BFS/BFS_0.5.1.tar.gz", "BFS/BFS_0.5.tar.gz")))
+  current <- data.frame(size = 1, mtime = as.POSIXct("2023-08-11 09:00:00", tz = "UTC"),
+                        row.names = "BFS_0.5.2.tar.gz")
+  t <- cran_release_table(archive, current)
+  expect_equal(t$version, c("0.5", "0.5.1", "0.5.2"))
+  got <- update_date(t, "BFS", "0.5.1", "0.5.2")
+  expect_equal(got$date, as.Date("2023-08-10"))
+  expect_match(update_date(t, "BFS", "0.5", "0.5.2")$message, "replaced by 0.5.1 the day it came out")
+})
+
 test_that("preview_update fetches CRAN's release dates, then previews the newest version's date (77)", {
   s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
   r <- open_with_cran(s)
