@@ -159,7 +159,7 @@ Any event that changes what the notebook wants reaches the same code, so no hand
 
 One process-wide table, `jobs`, lets two sessions that want the same index or library share one subprocess. It holds processes and subscribers and makes no decisions.
 
-**Jobs end with the server.** A job is killed when its last session leaves (the session closed or cancelled the install), and the server closes its notebooks on the way out, including on Ctrl-C. If the server is killed instead, processx's supervisor ends the job, and on Unix the job runs under `sh`, which takes the job's children (`R CMD INSTALL`, the compiler) with it (`job_process()`, #141). On Windows there is no `sh`: the supervisor ends the job's own process, and whether its children go too is not checked yet. A killed install leaves only its staging folder, which `clean()` removes.
+**Jobs end with the server.** A job is killed when its last session leaves (the session closed or cancelled the install), and the server closes its notebooks on the way out, including on Ctrl-C. If the server is killed instead, processx's supervisor ends the job, and on Unix the job runs under `sh`, which takes the job's children (`R CMD INSTALL`, the compiler) with it (`job_process()`, #141). On Windows there is no `sh`, and none is needed: processx starts the job in a Windows job object, its children join it, and the system ends them all once the server's handle closes, which a killed server's does at once. Cancelling ends them all too (#148). A killed install leaves only its staging folder, which `clean()` removes.
 
 **renv comes from the server's own library** as an Imports dependency. Only the installer subprocess loads it, never the server or the worker.
 

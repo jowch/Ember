@@ -82,7 +82,13 @@ use_installed_ember <- function() {
 
 #' TRUE while `pid` is a running process: not gone and not a zombie (an
 #' orphan's parent is PID 1, which in a container may never reap it).
+#' Windows has no zombies and no `ps`, so there `tasklist` says.
 pid_running <- function(pid) {
+  if (.Platform$OS.type == "windows") {
+    out <- suppressWarnings(system2("tasklist", c("/FI", shQuote(paste("PID eq", pid)), "/FO", "CSV", "/NH"),
+                                    stdout = TRUE, stderr = FALSE))
+    return(any(grepl(paste0('","', pid, '","'), out, fixed = TRUE)))
+  }
   st <- suppressWarnings(system2("ps", c("-o", "stat=", "-p", pid), stdout = TRUE, stderr = FALSE))
   length(st) > 0 && nzchar(trimws(st[1])) && !startsWith(trimws(st[1]), "Z")
 }
