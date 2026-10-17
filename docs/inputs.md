@@ -282,12 +282,18 @@ Each is answerable in a word. My recommendation is marked.
 
 1. **Package name.** `emberui` (recommended: PlutoUI's counterpart, short)
    or `emberinputs`.
-2. **Where it ships.** CRAN (recommended: a shared notebook then installs
-   it like any package, and `Rscript` users get it with
-   `install.packages()`) or r-universe only, like Ember. Until CRAN accepts
-   it, notebooks would name it as a GitHub source in `[sources]`.
-3. **Function names.** `input_slider()` style (recommended: avoids clashes
-   with `dplyr::select()` and `graphics::text()`) or bare `slider()`.
+2. **Where it ships.** CRAN (recommended) or r-universe only, like Ember.
+   Notebooks install packages from CRAN, Bioconductor or a GitHub source
+   in `[sources]` (`ember_repos()` in R/resolve.R); r-universe isn't one of
+   them. So r-universe only would mean every notebook with inputs carries
+   a `[sources]` entry, and `Rscript` users install it by hand. On CRAN it
+   installs like any package. Until CRAN accepts it, `[sources]` is the
+   stopgap either way.
+3. **Function names.** `input_slider()` style (recommended) or bare names
+   (`slider()`, `number()`, `checkbox()`, `text()`, `select()`, `radio()`).
+   Two of the bare names clash with functions R users have attached:
+   `text()` is base graphics' and `select()` is dplyr's, so attaching the
+   package after dplyr would mask `select()`.
 4. **When an input's cell reruns,** keep the value if it is still allowed
    and the cell's code didn't change (recommended), or always reset, as
    marimo does.
