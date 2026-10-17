@@ -618,6 +618,7 @@ invalidate_dependents <- function(state, id, names, queue = TRUE,
   dependents <- setdiff(dependents, id)
 
   autorun <- identical(state$file$header$on_cell_change, "autorun")
+  queued <- character()
   for (cid in dependents) {
     r <- state$results[[cid]]
     if (is.null(r)) next
@@ -626,7 +627,17 @@ invalidate_dependents <- function(state, id, names, queue = TRUE,
     if (queue && autorun && isTRUE(state$allowed) && cell_runs(state$cells[[cid]]) &&
         !(cid %in% names(state$graph$off))) {
       state$pending <- union(state$pending, cid)
+      queued <- c(queued, cid)
     }
+  }
+  # A queued dependent can read a stale cell outside this run (a delete or
+  # an interrupt left it stale). As when it is run by hand, its stale
+  # ancestors run first, with every ancestor between them and it (#176).
+  if (length(queued)) {
+    ancestors <- setdiff(upstream_of_set(state$graph, queued), id)
+    stale <- Filter(function(a) isTRUE(state$results[[a]]$stale) && can_run(state, a), ancestors)
+    between <- reached_from(state$graph, stale, setdiff(ancestors, stale))
+    state$pending <- union(state$pending, Filter(function(a) can_run(state, a), union(stale, between)))
   }
   state
 }
