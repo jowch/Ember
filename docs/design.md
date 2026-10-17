@@ -412,7 +412,10 @@ name, the cell shows a note: "Changed `cnt` in place, which another cell
 defines, so the cells that read it don't rerun." Taking the fingerprint
 forces no promise and calls no active binding. Namespaces are skipped, and
 so is any one environment with more than 1,000 bindings; the others are
-still checked, up to 10,000 bindings a run. A data.table another cell
+still checked, up to 10,000 bindings a run. A reticulate object is read
+by identity only. Its state lives in Python, and the first `py_to_r()`
+caches a binding in its R environment, which isn't a change (#259). A
+data.table another cell
 defines is fingerprinted by its shape: column names, each column's
 address, its spare column slots and its key. So `dt[, z := x * 2]`,
 `setnames()`, `setkey()`, `setorder()` and dropping a column are noted. A
