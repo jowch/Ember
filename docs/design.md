@@ -1182,7 +1182,9 @@ Julia-shaped parts of the state (`nbpkg`, and the package log in
 change, and Endeavor's per-backend page adapter handles them. Notebook IDs
 are full 36-character UUIDs, and so are the cell IDs Ember generates. A
 hand-written file may use short cell IDs (1 to 64 of `[A-Za-z0-9._-]`);
-Ember keeps them.
+Ember keeps them, and Endeavor's tools take them. An ID outside that set
+(`cell:1`) gets a fresh UUID when the file is read, with its lines in the
+footer read under the new ID, and the next save writes that UUID (#82).
 
 Two Endeavor documents describe Pluto's behaviour where Ember's differs, and
 need updating there: `restart` "then every cell runs" (Ember leaves cells not

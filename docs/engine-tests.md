@@ -28,7 +28,7 @@ Four layers. Most tests are in the first two and start no process.
 7. `markdown_prefix`: `#' ` and a bare `#'` are stripped, and a markdown line without the prefix is kept.
 8. `trailing_blank_lines_normalised`: trailing blank lines in a cell are dropped on parse, and the result is then stable.
 9. `plain_script_opens`: a file with no header and no markers becomes one code cell and notes `no_header`.
-10. `markers_without_ids`: `# %%` lines without ids (Positron style) get ids from `new_id` and note `bad_id`.
+10. `markers_without_ids`: `# %%` lines without ids (Positron style) get ids from `new_id` and note `bad_id`. So does an id outside `[A-Za-z0-9._-]{1,64}` (`cell:1`), with the old id as the detail, and the footer's order and learned lines for it follow the new id; a short id such as `B` is kept (#82).
 11. `duplicate_ids_repaired`: the second cell with a repeated id gets a new id and notes `duplicate_id`. The first keeps its id.
 12. `missing_footer`: display order is file order and notes `no_footer`.
 13. `order_block_mismatch`: unknown ids in the order block are dropped, and unlisted cells are placed after their file predecessor.
