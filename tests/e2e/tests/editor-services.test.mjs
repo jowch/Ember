@@ -395,6 +395,27 @@ test("help: a query typed before the Help tab's first effects run keeps its type
   t.after(async () => { await browser.close(); server.stop(); });
 
   const page = await newPage(browser);
+  // Docs requests as they're sent: only a docs request carries the msgpack
+  // key `all_packages`. The message log holds only replies, which can't
+  // arrive inside the evaluate below, so it can't show the order.
+  await page.addInitScript(() => {
+    window.__docs_sent = 0;
+    const marker = new TextEncoder().encode("all_packages");
+    const has_marker = (bytes) => {
+      outer: for (let i = 0; i + marker.length <= bytes.length; i++) {
+        for (let j = 0; j < marker.length; j++) if (bytes[i + j] !== marker[j]) continue outer;
+        return true;
+      }
+      return false;
+    };
+    const send = WebSocket.prototype.send;
+    WebSocket.prototype.send = function (data) {
+      const bytes = data instanceof ArrayBuffer ? new Uint8Array(data)
+        : ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : null;
+      if (bytes != null && has_marker(bytes)) window.__docs_sent++;
+      return send.call(this, data);
+    };
+  });
   await openNotebook(page, server.origin, server.secret, notebook);
   await runCell(page, "A");
   await page.waitForFunction(() => {
@@ -416,7 +437,7 @@ test("help: a query typed before the Help tab's first effects run keeps its type
       input = document.querySelector("#live-docs-search");
     }
     if (input == null) return null;
-    const before = window.pluto_get_message_log().filter((m) => m.message?.doc !== undefined).length;
+    const before = window.__docs_sent;
     input.value = "s";
     input.dispatchEvent(new Event("input", { bubbles: true }));
     return before > 0;
