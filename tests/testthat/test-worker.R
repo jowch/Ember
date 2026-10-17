@@ -1678,7 +1678,7 @@ test_that("a table's warnings come from its print, not again from its cells (#18
   expect_identical(console_texts(r), "formatting")
 })
 
-test_that("a knit_print() result's warnings show once; one that isn't used shows its warnings only when the next step doesn't raise them again (#183, #193)", {
+test_that("a knit_print() result's warnings show once; one that isn't used shows its print's warnings only when the next step doesn't raise them again, and its own never (#183, #193)", {
   skip_if_not_installed("knitr")
   h <- worker_harness(extra_libs = dirname(find.package("knitr")))
   on.exit(h$close())
@@ -1711,8 +1711,9 @@ test_that("a knit_print() result's warnings show once; one that isn't used shows
   r <- run_and_wait(h, "c", 4L, 'structure(1, class = "ember_once")', order = c("m", "c"))
   expect_identical(r$output$kind, "text")
   expect_identical(console_texts(r), "only once")
+  # One that printed nothing is only Ember trying it; plain R never calls it.
   r <- run_and_wait(h, "d", 5L, 'structure(1, class = "ember_own")', order = c("m", "d"))
-  expect_identical(console_texts(r), "from a passed knit_print")
+  expect_identical(console_texts(r), character())
 })
 
 test_that("ggplot2's \"Removed n rows\" warning and geom_smooth()'s message show (#183)", {

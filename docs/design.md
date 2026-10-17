@@ -475,7 +475,8 @@ The worker runs each cell in the global environment:
    prints the value and returns nothing to show (rmarkdown's, for a data
    frame) holds its warnings back while the next step prints the value
    again; any the next step doesn't raise again, such as a warning that
-   fires once a session, show after it.
+   fires once a session, show after it. One that prints nothing is only
+   Ember trying it, which plain R never does, so its warnings are dropped.
 
 **Which values a cell shows** follows Pluto: the value of the cell's last
 top-level expression is its output. When that expression is an assignment

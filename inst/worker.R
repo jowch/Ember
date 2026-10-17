@@ -2327,14 +2327,17 @@ try_knit_print <- function(value, pass = function(held) NULL) {
   # and warnings are held until then: a value that goes on is shown, and
   # warns, by the next step instead (#183).
   held <- list()
-  capture_lines(
+  printed <- capture_lines(
     out <- withCallingHandlers(
       tryCatch(do.call(knitr::knit_print, list(value), quote = TRUE, envir = globalenv()),
                error = function(e) NULL),
       message = function(m) { held[[length(held) + 1L]] <<- m; invokeRestart("muffleMessage") },
       warning = function(w) { held[[length(held) + 1L]] <<- w; invokeRestart("muffleWarning") }))
   if (!inherits(out, "knit_asis")) {
-    pass(held)
+    # Only a call that printed the value raised what the next step's print
+    # would; one that printed nothing is Ember's probe, which plain R never
+    # makes, and its conditions are dropped (#193 review).
+    if (any(nzchar(printed))) pass(held)
     return(NULL)
   }
   for (cnd in held) if (inherits(cnd, "warning")) warning(cnd) else message(cnd)
