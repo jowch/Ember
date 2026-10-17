@@ -1114,6 +1114,7 @@ worker_event <- function(msg, gen, at, secret = NULL) {
     source   = c("token", "path", "text"),
     done     = c("token", "report"),
     rendered = c("cell", "token"),
+    input_set = c("cell", "name", "ok"),
     NULL
   )
   if (is.null(required)) {
@@ -1144,7 +1145,9 @@ worker_event <- function(msg, gen, at, secret = NULL) {
       display <- as_display(msg$display)
       if (!is.null(display)) display$token <- msg$token
       wk_rendered(gen, msg$cell, display, at)
-    }
+    },
+    input_set = wk_input_set(gen, msg$cell, msg$name, isTRUE(msg$ok), msg$value,
+                             msg$error, msg$globals, at)
   )
 }
 

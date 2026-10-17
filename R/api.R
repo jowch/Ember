@@ -324,6 +324,45 @@ restart_notebook <- function(nb) {
   invisible(reply)
 }
 
+#' Give an input a new value, as moving its widget does (docs/inputs.md).
+#'
+#' `name` is the variable the input is bound to (`n` for
+#' `n <- input_slider(10, 500)`). The input's cell must have run and be
+#' neither stale nor edited since. The worker checks the value against the
+#' input (a dropdown's value must be one of its choices) and assigns it;
+#' the input's own cell doesn't rerun. The cells that read `name` rerun in
+#' autorun, or are marked stale in lazy mode. The value lasts for the
+#' session: it is not saved, and editing the input's code resets it.
+#'
+#' @param value The R value, as the input would return it.
+#' @param wait `TRUE` blocks until the worker has answered and the reruns
+#'   have finished, or `timeout` passes (as `run_cells()`'s `wait`). A
+#'   value the input doesn't allow is then an error.
+#' @return Invisibly, `list(accepted, cell, value, cells, timed_out)`:
+#'   `cell` is the input's cell; `value` (the value as assigned) and
+#'   `cells` (the readers rerun or marked stale) are filled in only with
+#'   `wait`. A refused change (no such input, its cell not fresh, another
+#'   value still being set) is an `ember_refused` error.
+#' @export
+set_input <- function(nb, name, value, wait = FALSE, timeout = 60) {
+  if (!is.character(name) || length(name) != 1 || is.na(name)) stop("ember: `name` must be one string")
+  reply <- dispatch(nb, ev_set_input(name, value, at = Sys.time()))
+  if (inherits(reply, "ember_refused")) stop(reply)
+  if (is.null(reply)) stop("ember: the notebook is closed")
+  result <- list(accepted = TRUE, cell = reply$cell, value = NULL, cells = character(), timed_out = FALSE)
+  if (isTRUE(wait)) {
+    ok <- wait_for(nb, function(s) is.null(nb$state$worker$input) && is_idle(s), timeout = timeout)
+    result$timed_out <- !ok
+    out <- nb$state$input_outcome
+    if (ok && !is.null(out) && identical(out$name, name)) {
+      if (!isTRUE(out$ok)) stop(sprintf("ember: %s", out$error), call. = FALSE)
+      result$value <- out$value
+      result$cells <- out$cells
+    }
+  }
+  invisible(result)
+}
+
 # ---- Reading ------------------------------------------------------------------
 
 #' What the notebook looks like now: a plain list, safe to keep.

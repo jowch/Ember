@@ -5,6 +5,7 @@
 \alias{close_notebook}
 \alias{move_notebook}
 \alias{set_cell_change_mode}
+\alias{set_input}
 \alias{allow_execution}
 \alias{run_cells}
 \alias{interrupt_notebook}
@@ -38,6 +39,8 @@ set_cell_change_mode(nb, on_cell_change = c("autorun", "lazy"))
 allow_execution(nb)
 
 run_cells(nb, ids = NULL, wait = FALSE, timeout = 60)
+
+set_input(nb, name, value, wait = FALSE, timeout = 60)
 
 interrupt_notebook(nb)
 
@@ -78,6 +81,10 @@ code already running inside an event callback must use \code{wait = FALSE}
 and \code{on_notebook_event()} instead.}
 \item{timeout}{Seconds to wait before giving up (\code{run_cells()},
 \code{render_png()}) or before \code{wait_for()} returns \code{FALSE}.}
+\item{name}{For \code{set_input()}, the variable an input is bound to
+(\code{n} for \code{n <- input_slider(10, 500)}).}
+\item{value}{For \code{set_input()}, the input's new value, as the input
+would return it.}
 \item{cell}{A cell id or 1-based display index.}
 \item{width, height}{Requested pixel size for \code{render_png()}. \code{NULL} for
 both returns the output's stored image unchanged.}
@@ -105,12 +112,21 @@ directory follows the file, unless the notebook changed it.
 \code{run_cells()} returns, invisibly, \code{list(accepted, queued, skipped,
 finished, timed_out)}.
 
+\code{set_input()} returns, invisibly, \code{list(accepted, cell, value,
+cells, timed_out)}; \code{value} (as assigned) and \code{cells} (the
+readers rerun or marked stale) are filled in only with \code{wait = TRUE},
+which also makes a value the input refuses an error. The input's own cell
+doesn't rerun, and the value isn't saved. A change Ember can't make (no
+such input, or its cell not run since its last edit) is an error.
+
 \code{notebook_snapshot()} returns a plain list describing the notebook's
 current, safe-to-keep state: \code{list(id, path, seq, read_only, allowed,
 process, restart_offered, worker_message, worker_memory, problems, order,
 cells, packages)}, where \code{process} is one of \code{"preview"},
 \code{"starting"}, \code{"ready"}, \code{"busy"}, \code{"stopped"},
-each cell's \code{variables} is a list of \code{list(name, type)} for the
+each cell's \code{inputs} lists the input calls its last run made (name,
+whether bound, spec, default and current value), each cell's
+\code{variables} is a list of \code{list(name, type)} for the
 globals it owns (no \code{value} or \code{kind}: a value the notebook
 never printed stays out of this API), \code{worker_memory} is the worker's
 last-reported memory in bytes (\code{NULL} until sampled for the current
