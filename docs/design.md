@@ -661,7 +661,11 @@ handles `using` in two steps (`PlutoDependencyExplorer.jl`'s
   that attaches packages is added, edited or deleted, it detaches the
   packages the notebook attached (`detach()` without unloading) and attaches
   the current set again. Namespaces stay loaded. Only a change of package
-  version restarts the worker.
+  version restarts the worker. A cell's packages keep the order plain R
+  attached them in, and the worker calls `library()` as the notebook's own
+  code would find it on the search path, so a package that wraps
+  `library()` to keep its own environment in step (conflicted's
+  `.conflicts`) still does.
 - **Masking follows file order.** In R the package attached last wins
   (`dplyr::filter` over `stats::filter`), and that is normal use, so Julia's
   rule that an ambiguous name is an error doesn't fit. The worker attaches in

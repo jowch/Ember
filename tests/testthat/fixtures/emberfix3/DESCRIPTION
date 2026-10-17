@@ -1,0 +1,7 @@
+Package: emberfix3
+Title: Ember worker test fixture 3
+Version: 0.0.1
+Description: A fixture that keeps an environment of its own at position 2
+    of the search path, as conflicted does with `.conflicts`.
+License: MIT
+Encoding: UTF-8
