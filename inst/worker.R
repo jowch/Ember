@@ -3,7 +3,9 @@
 #
 # Started by the server as
 #   Rscript --vanilla -e '<boot>' <port>
-# where <boot> sources this file into a private environment whose parent is
+# where <boot> (worker_boot(), R/shell.R) loads this file's compiled image
+# (EMBER_WORKER_IMAGE, made by compiler::cmpfile(); #229), or sources the
+# file when there is none, into a private environment whose parent is
 # baseenv(), then calls main():
 #   local({e <- new.env(parent = baseenv()); sys.source(Sys.getenv("EMBER_WORKER"), e); e$main()})
 # so nothing here is visible from, or shadowed by, the notebook's globals

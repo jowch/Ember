@@ -12,6 +12,8 @@
 #   libraries/R-4.6/<platform>/<key>.staging-<pid>-<rand>/   in progress
 #   renv-cache/                              RENV_PATHS_CACHE
 #   renv-root/                               RENV_PATHS_ROOT (sandbox etc.)
+#   worker/R-<x.y.z>-<md5 of worker.R>.Rc    the worker's compiled image
+#                                            (shell.R, ready_worker_image())
 #
 # Ember's own renv cache, not the user's: `ember::clean()` deletes cache
 # entries no Ember library uses, which must never touch the user's own renv
