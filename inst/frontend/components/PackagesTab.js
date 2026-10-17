@@ -305,7 +305,7 @@ const PackagesUpdate = ({ update, library_status }) => {
 const PackageStatus = ({ row }) => {
     const text = t(`t_ember_packages_status_${row.status}`)
     if (row.status === "installed") return html`<span class="ember-pill ember-pill-accent">${text}</span>`
-    if (row.status === "failed" || row.status === "not_found" || row.status === "source_failed") {
+    if (row.status === "failed" || row.status === "not_found" || row.status === "lookup_failed" || row.status === "source_failed") {
         return html`<span class="ember-pill ember-pill-red">${text}</span>`
     }
     if (row.status === "installing" || row.status === "looking_up") {
@@ -424,7 +424,7 @@ const SourceDetail = ({ row, read_only }) => {
     const [removing, set_removing] = useState(false)
     const has_spec = row.spec != null
     const failed_message = has_spec && row.message != null ? row.message : null
-    if (!has_spec && row.status !== "not_found") return null
+    if (!has_spec && row.status !== "not_found" && row.status !== "lookup_failed") return null
     if (read_only && failed_message == null) return null
 
     return html`
