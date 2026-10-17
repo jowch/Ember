@@ -215,6 +215,8 @@ new_state <- function(file, path, id, options, at) {
 #'   `begun` turns `TRUE` when the worker says it began the run.
 #' * `interrupt`: `NULL` or `list(at, token)` once the user interrupted that
 #'   run. SIGINT is sent then, or when the run begins if that is later.
+#'   `failed = TRUE` is added if the interrupt couldn't be delivered
+#'   (`wk_interrupt_failed`, Windows).
 #' * `restart_offered`: logical.
 #' * `info`: what the hello said (pid, R version, library paths), or `NULL`.
 #' * `exit`: `NULL` or `list(status, message)` from the last exit.
@@ -334,7 +336,9 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 
 #' The snapshot: the notebook as Endeavor and the console see it.
 #'
-#' `list(cells, process, restart_offered, worker_message, seq)`. Per cell,
+#' `list(cells, process, restart_offered, interrupt_failed, worker_message,
+#' seq)`. `interrupt_failed` is TRUE once an interrupt of the running cell
+#' couldn't be delivered (Windows, #48); `restart_offered` is then TRUE too. Per cell,
 #' an `ember_cell_view`: `id`, `index` (display), `kind`, `code`, `folded`,
 #' `settings` (`list(name, found)` per setting the cell sets, `found` being
 #' `"code"` or `"run"`; empty for an ordinary cell), `settings_found` (the
@@ -369,6 +373,7 @@ snapshot_of <- function(state) {
   process <- if (!isTRUE(state$allowed)) "preview" else state$worker$status
   list(cells = views, process = process,
       restart_offered = isTRUE(state$worker$restart_offered),
+      interrupt_failed = isTRUE(state$worker$interrupt$failed),
       worker_message = if (!is.null(state$worker$exit)) state$worker$exit$message else NULL,
       seq = state$seq, packages = packages_view(state))
 }

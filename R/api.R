@@ -305,7 +305,9 @@ run_cells <- function(nb, ids = NULL, wait = FALSE, timeout = 60) {
 #'
 #' Sends SIGINT. If the cell hasn't stopped `grace` seconds later, the
 #' snapshot's `restart_offered` turns `TRUE` (with the cells a restart would
-#' leave not run); it turns back to `FALSE` if the cell stops after all.
+#' leave not run); it turns back to `FALSE` if the cell stops after all. If
+#' the interrupt can't be delivered at all (Windows, #48), both
+#' `restart_offered` and `interrupt_failed` turn `TRUE` at once.
 #' @export
 interrupt_notebook <- function(nb) {
   dispatch(nb, ev_interrupt(at = Sys.time()))
@@ -327,7 +329,8 @@ restart_notebook <- function(nb) {
 #' What the notebook looks like now: a plain list, safe to keep.
 #'
 #' `list(id, path, seq, read_only, allowed, process, restart_offered,
-#' worker_message, worker_memory, problems, order, cells, packages)` where
+#' interrupt_failed, worker_message, worker_memory, problems, order, cells,
+#' packages)` where
 #' `process` is one of `"preview"`, `"starting"`, `"ready"`, `"busy"`,
 #' `"stopped"`, `cells` is a named list (display order) of `ember_cell_view`
 #' (see `snapshot_of()` in state.R) with each cell's `variables` carrying
@@ -346,6 +349,7 @@ notebook_snapshot <- function(nb) {
   list(id = nb$state$id, path = nb$state$path, seq = s$seq,
       read_only = isTRUE(nb$state$read_only), allowed = isTRUE(nb$state$allowed),
       process = s$process, restart_offered = s$restart_offered,
+      interrupt_failed = s$interrupt_failed,
       worker_message = s$worker_message, worker_memory = worker_memory,
       problems = nb$state$problems,
       order = names(nb$state$cells), cells = cells, packages = s$packages)

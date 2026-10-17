@@ -33,6 +33,11 @@ remove_extra_package <- function(name) list(op = "remove_extra_package", name = 
 #' header stores the `github:` form. The lock records the commit it
 #' resolves to, and that commit stays until the source is changed.
 #'
+#' For a package from an r-universe, `source` is `"universe:name"` (for
+#' `https://name.r-universe.dev`), or a link to the universe or to a page
+#' in it. The lock records the git commit the universe built the package
+#' from; moving the date forward ("update all") takes its latest build.
+#'
 #' `remove_package_source("mypkg")` drops the entry, so mypkg resolves from
 #' CRAN or Bioconductor again.
 #' @export
@@ -162,7 +167,7 @@ run <- function(path, repos = ember_repos(), cache = cache_dir(), echo = TRUE) {
   lib <- if (is.null(file$lock$entries) || nrow(file$lock$entries) == 0) {
     empty_library(r_info(), cache)$path
   } else {
-    ensure_library(file$lock, repo_urls(repos, file$header), cache = cache, echo = echo,
+    ensure_library(file$lock, repo_urls(repos, file$header, file$lock), cache = cache, echo = echo,
                    github = github_api_url(repos))
   }
   touch_library(lib)

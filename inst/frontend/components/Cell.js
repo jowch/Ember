@@ -448,25 +448,46 @@ export const Cell = ({
         is_starting_to_run
     )
 
-    const not_run_yet_now =
+    // A cell that would show "Not run yet" once the page leaves safe
+    // preview. Safe preview says "nothing has run" once, in its banner
+    // (ui-3.md, "Safe preview is one banner"), so these cells show no chip.
+    const unrun_code_cell =
         no_output_yet &&
         !running &&
         !queued &&
         !waiting_to_run &&
         code.trim() !== "" &&
-        !process_waiting_for_permission &&
         kind !== "markdown" &&
         !running_disabled &&
         !depends_on_disabled_cells &&
         !errored
+    const not_run_yet_now = unrun_code_cell && !process_waiting_for_permission
     const not_run_yet = useSettled(not_run_yet_now, wait_for_on)
     // When a cell showing "Not run yet" starts, the chip goes at once but
     // its first result lands later, so the code would move up and then
     // down again. Keep the chip's space, unseen, until that result lands
     // or the run is called off, so the layout moves once (#52).
+    //
+    // Safe preview keeps the same space, unseen, for the cells that will
+    // show "Not run yet" when it ends, so leaving it doesn't push them all
+    // down by a chip at once (#139). The hold lasts while "Not run yet" is
+    // still settling in, so the chip takes its place. A cell that leaves
+    // safe preview queued gives the space back at once, with the banner:
+    // held through its run, it would collapse when a cell with no output
+    // finished, and the page would move up again mid-run.
     const holding_chip_ref = useRef(false)
-    if (not_run_yet) holding_chip_ref.current = true
-    else if (!no_output_yet || !(running || queued || waiting_to_run)) holding_chip_ref.current = false
+    const held_from_preview_ref = useRef(false)
+    const busy = running || queued || waiting_to_run
+    if (not_run_yet) {
+        holding_chip_ref.current = true
+        held_from_preview_ref.current = false
+    } else if (unrun_code_cell && process_waiting_for_permission) {
+        holding_chip_ref.current = true
+        held_from_preview_ref.current = true
+    } else if (!no_output_yet || !(busy || not_run_yet_now) || (busy && held_from_preview_ref.current)) {
+        holding_chip_ref.current = false
+        held_from_preview_ref.current = false
+    }
     const hold_chip_space = holding_chip_ref.current && !not_run_yet
 
     // depends_on_disabled_cells is also true on the disabled cell itself, so

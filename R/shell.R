@@ -421,8 +421,11 @@ run_effect <- function(nb, fx) {
     },
     interrupt = {
       if (identical(nb$proc_gen, fx$gen) && !is.null(nb$proc)) {
-        tryCatch(nb$proc$interrupt(), error = function(e) NULL)
+        sent <- interrupt_worker(nb$proc)
         note_worker_io(nb)
+        if (!sent && isTRUE(tryCatch(nb$proc$is_alive(), error = function(e) FALSE))) {
+          enqueue(nb, wk_interrupt_failed(fx$gen, at = Sys.time()))
+        }
       }
     },
     send = {
@@ -475,8 +478,9 @@ run_effect <- function(nb, fx) {
       unregister_session(nb)
     },
     fetch_index = {
-      # A GitHub key at a moving ref (a branch, a tag, HEAD) is fetched
-      # afresh: the cache could hold an older commit (`github_key()`).
+      # A GitHub key at a moving ref (a branch, a tag, HEAD), or a
+      # universe's latest build, is fetched afresh: the cache could hold an
+      # older commit (`github_key()`, `universe_key()`).
       # A dated key as recent as today (#39) is read from the cache like
       # any other, since fetching it on every open costs seconds, but its
       # slot is marked provisional: Package Manager may still add to that
@@ -484,7 +488,7 @@ run_effect <- function(nb, fx) {
       # fetched again. If that fetch fails (offline), the saved copy
       # stands in.
       provisional <- index_may_change(fx$key)
-      moving <- is_github_key(fx$key) && !is_commit(parse_github_key(fx$key)$ref)
+      moving <- is_moving_source_key(fx$key)
       cache <- nb$state$options$cache
       read_index <- function() {
         if (moving) fresh_index(fx$key, cache)
@@ -701,6 +705,7 @@ start_worker_process <- function(nb, fx) {
   env <- c("current",
            R_LIBS_USER = lib, R_LIBS = "", R_LIBS_SITE = "",
            EMBER_WORKER = system.file("worker.R", package = "ember"),
+           EMBER_DLL = ember_dll_path(),
            EMBER_SECRET = nb$secret)
   wd <- fx$wd
   if (is.null(wd) || !nzchar(wd)) wd <- getwd()
@@ -1169,6 +1174,26 @@ as_display <- function(b) {
 #' default, so workers inherit a working interrupt. C code in src/
 #' (the spike's sigreset.c). Harmless to call more than once.
 reset_sigint <- function() invisible(.Call(C_reset_sigint))
+
+#' Interrupt a worker's running cell. `TRUE` if the interrupt was
+#' delivered, as far as this process can tell. On Unix that's SIGINT to the
+#' worker's own process. On Windows it's the worker's interrupt event
+#' (src/interrupt.c, #48), not processx's `interrupt()`: that one needs a
+#' console the worker may not have, and says it sent an interrupt it lost.
+interrupt_worker <- function(proc) {
+  if (.Platform$OS.type == "windows") {
+    return(isTRUE(tryCatch(.Call(C_interrupt_send, proc$get_pid()), error = function(e) FALSE)))
+  }
+  isTRUE(tryCatch(proc$interrupt(), error = function(e) FALSE))
+}
+
+#' The path of this package's DLL, which a worker on Windows loads for its
+#' interrupt event (worker.R's `listen_for_interrupts()`). The worker doesn't
+#' load the package itself: only this DLL, by path.
+ember_dll_path <- function() {
+  dll <- getLoadedDLLs()[["ember"]]
+  if (is.null(dll)) "" else dll[["path"]]
+}
 
 #' Atomic write: write to a temp file in the same folder, then rename.
 #' Returns `FALSE`, leaving `path` untouched, if either step fails (e.g.

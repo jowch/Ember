@@ -426,6 +426,24 @@ test_that("an interrupt sent as a run is dispatched stops that run", {
   expect_equal(snap_view(notebook_snapshot(nb), "B")$status, "interrupted")
 })
 
+test_that("on Windows an interrupt that can't reach the worker offers the restart at once (#48)", {
+  skip_on_os(c("mac", "linux", "solaris"))
+  # A worker without the package's DLL has no interrupt event to set.
+  local_mocked_bindings(ember_dll_path = function() "")
+  cells <- list(S = cell(""), A = cell("x <- 1"), B = cell("Sys.sleep(20)"))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, "A", wait = TRUE, timeout = 15)
+  run_cells(nb, "B", wait = FALSE)
+  expect_true(wait_for(nb, function(s) isTRUE(nb$state$worker$running$begun), timeout = 15))
+  interrupt_notebook(nb)
+  # Only the failure path sets interrupt_failed: the grace timer sets
+  # restart_offered alone.
+  expect_true(wait_for(nb, function(s) isTRUE(s$interrupt_failed), timeout = 15))
+  expect_true(notebook_snapshot(nb)$restart_offered)
+})
+
 test_that("a crashed worker reports worker_exited, and the next run starts a new one (114)", {
   cells <- list(S = cell(""), A = cell("tools::pskill(Sys.getpid())"))
   path <- write_session_notebook(cells)

@@ -118,24 +118,24 @@ test_that("a locked commit answers a spec of the same repository, and a commit s
 test_that("source_keys keeps a locked commit for an unchanged spec, and looks up the ref otherwise", {
   lock <- new_lock("toyC", "0.3.0", github_source("lab", "toyC", C1))
   header <- list(sources = c(toyC = "github:lab/toyC@main", other = "github:x/other", bad = "cran"))
-  expect_equal(source_keys(header, lock, github_sources(header)),
+  expect_equal(source_keys(header, lock, readable_sources(header)),
                c(other = "github/x/other@HEAD", toyC = paste0("github/lab/toyC@", C1)))
   # The spec changed since the lock was resolved: look the new ref up.
   expect_equal(source_keys(header, lock, c(toyC = "github:lab/toyC@v0.3.0"))[["toyC"]],
                "github/lab/toyC@main")
   # A commit spec the lock doesn't hold.
   header$sources[["toyC"]] <- "github:lab/toyC@8e4b7d2"
-  expect_equal(source_keys(header, lock, github_sources(header))[["toyC"]], "github/lab/toyC@8e4b7d2")
+  expect_equal(source_keys(header, lock, readable_sources(header))[["toyC"]], "github/lab/toyC@8e4b7d2")
 })
 
 test_that("lock_for_sources drops entries that disagree with [sources] and keeps the rest", {
   lock <- new_lock(c("cli", "dplyr", "toyC"), c("3.6.5", "1.1.4", "0.3.0"),
                    c("CRAN", "CRAN", github_source("lab", "toyC", C1)))
   header <- list(sources = c(toyC = "github:lab/toyC"))
-  expect_identical(lock_for_sources(lock, header, github_sources(header)), lock)
+  expect_identical(lock_for_sources(lock, header, readable_sources(header)), lock)
   # dplyr now has a source: its CRAN entry goes.
   header2 <- list(sources = c(toyC = "github:lab/toyC", dplyr = "github:tidy/dplyr"))
-  expect_equal(lock_for_sources(lock, header2, github_sources(header2))$entries$name, c("cli", "toyC"))
+  expect_equal(lock_for_sources(lock, header2, readable_sources(header2))$entries$name, c("cli", "toyC"))
   # toyC's source was removed: its GitHub entry goes.
   expect_equal(lock_for_sources(lock, list(sources = character()), character())$entries$name, c("cli", "dplyr"))
 })

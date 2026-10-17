@@ -48,7 +48,6 @@
 --overlay-button-border
 --overlay-button-border-save
 --black
---white
 --dropruler-bg-color
 --helpbox-bg-color
 --helpbox-box-shadow-color
@@ -59,9 +58,6 @@
 --helpbox-notfound-search-color
 --helpbox-text-color
 --code-section-bg-color
---footer-input-border-color
---footer-filepicker-button-color
---footer-filepicker-focus-color
 --undo-delete-box-shadow-color
 --cm-color-editor-tooltip-border
 --code-background
