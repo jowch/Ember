@@ -2078,9 +2078,10 @@ named_state <- function(cells = list(A = cell("x <- 1"))) {
 test_that("a message saying a package is needed offers to add it, and only then (#184)", {
   s <- named_state()
   # parsnip's set_engine("glmnet"), and tidytext's get_sentiments("afinn").
-  expect_equal(packages_named_in(s, "Package install is required for glmnet."), "glmnet")
-  # As parsnip's message really reads, with cli's colours (trial 5).
+  # As parsnip's message reads in the worker, which turns cli's colours on (trial 5).
   expect_equal(packages_named_in(s, "Package install is required for \033[34mglmnet\033[39m."), "glmnet")
+  # Without the colours nothing marks it as a package.
+  expect_equal(packages_named_in(s, "Package install is required for glmnet."), character())
   expect_equal(packages_named_in(s, "The textdata package is required to download the AFINN lexicon."), "textdata")
   # Installed: in the notebook's library, or R's own (MASS is recommended).
   expect_equal(packages_named_in(s, "The dplyr package is required."), character())
@@ -2089,7 +2090,17 @@ test_that("a message saying a package is needed offers to add it, and only then 
   expect_equal(packages_named_in(s, "could not find the package lexicon"), character())
   expect_equal(packages_named_in(s, "object 'glmnet' not found"), character())
   # Part of a longer word or name.
-  expect_equal(packages_named_in(s, "the package glmnet2 and glmnet_cv and my.glmnet are required"), character())
+  expect_equal(packages_named_in(s, "the packages 'glmnet2' and 'glmnet_cv' and 'my.glmnet' are required"), character())
+  # Ordinary words that are CRAN packages ("not", "here") count only where the
+  # message marks them as one.
+  n <- named_state()
+  idx <- n$packages$indexes[["cran/2026-09-01"]]$index
+  n$packages$indexes[["cran/2026-09-01"]]$index <- new_repo_index("cran/2026-09-01", "CRAN",
+    c(idx$name, "not", "here", "and"), c(idx$version, "1", "1", "1"), c(idx$deps, list(character(), character(), character())),
+    c(idx$needs_compilation, FALSE, FALSE, FALSE))
+  expect_equal(packages_named_in(n, "Package 'glmnet' is not installed."), "glmnet")
+  expect_equal(packages_named_in(n, "Package \u2018glmnet\u2019 and its friends are not installed here."), "glmnet")
+  expect_equal(packages_named_in(n, "No package here and not now."), character())
   # Translated: no match, no fix.
   expect_equal(packages_named_in(s, "Le paquet glmnet est requis."), character())
   # Already named in the code: adding it again would do nothing.
@@ -2099,10 +2110,10 @@ test_that("a message saying a package is needed offers to add it, and only then 
   # Through a run: the error keeps its kind and text, with the fix added.
   r <- drive(s, ev_run("A", at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(), at(3)))
   r <- drive(r$state, wk_done(r$state$worker$gen, r$state$worker$running$token, report(
-    error = list(message = "Package install is required for glmnet.")), at(4)))
+    error = list(message = "Package install is required for \033[34mglmnet\033[39m.")), at(4)))
   err <- r$state$results$A$error
   expect_equal(err$kind, "error")
-  expect_equal(err$message, "Package install is required for glmnet.")
+  expect_equal(err$message, "Package install is required for \033[34mglmnet\033[39m.")
   expect_equal(err$fixes, "Add glmnet to [extra_packages]")
 })
 

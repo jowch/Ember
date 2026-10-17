@@ -1457,17 +1457,27 @@ missing_package_error <- function(state, pkg) {
 #' to [extra_packages]" (#184): tidymodels names its engines only as strings
 #' (`set_engine("glmnet")`, "Package install is required for glmnet."), and
 #' tidytext its lexicons' packages ("The textdata package is required ...").
-#' A text match, so kept narrow: the message has the word "package", and each
-#' name is a whole word in it, is in one of the notebook's loaded indexes, and
-#' isn't installed (the notebook's library or R's own), in the lock, or
-#' already wanted. A message R or a package translated doesn't match, and
-#' gets no fix.
+#' A text match, so kept narrow. The message has the word "package", and a
+#' name counts only where the message marks it as one: quoted ('glmnet'),
+#' styled by cli (parsnip colours it), or just before "package" ("the
+#' textdata package"). Ordinary words that are also CRAN packages ("not",
+#' "here") are never marked so. Each name must also be in one of the
+#' notebook's loaded indexes, and not installed (the notebook's library or
+#' R's own), in the lock, or already wanted. A message R or a package
+#' translated doesn't match, and gets no fix.
 packages_named_in <- function(state, msg) {
-  # cli colours the names in parsnip's message ("for \033[34mglmnet\033[39m").
+  name <- "([A-Za-z][A-Za-z0-9.]*[A-Za-z0-9])"
+  # The name each match of `pattern` (whose one group is `name`) marks.
+  marked <- function(pattern, text) {
+    m <- regmatches(text, gregexpr(pattern, text, perl = TRUE))[[1]]
+    sub(pattern, "\\1", m, perl = TRUE)
+  }
+  styled <- marked(paste0("\033\\[[0-9;]*m", name, "\033\\["), msg)
   msg <- gsub("\033\\[[0-9;?]*[A-Za-z]", "", msg)
   if (!grepl("\\bpackages?\\b", msg, ignore.case = TRUE, perl = TRUE)) return(character())
-  words <- unique(regmatches(msg, gregexpr("(?<![A-Za-z0-9._])[A-Za-z][A-Za-z0-9.]*[A-Za-z0-9](?![A-Za-z0-9_]|\\.[A-Za-z0-9])",
-                                           msg, perl = TRUE))[[1]])
+  words <- unique(c(styled,
+                    marked(paste0("(?:'|\"|`|\u2018|\u201c)", name, "(?:'|\"|`|\u2019|\u201d)"), msg),
+                    marked(paste0("(?<![A-Za-z0-9._])", name, "(?=\\s+(?i:packages?)\\b)"), msg)))
   p <- state$packages
   indexed <- unlist(lapply(p$indexes, function(s) if (identical(s$status, "ready")) s$index$name), use.names = FALSE)
   words <- intersect(words, indexed)
