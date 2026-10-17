@@ -448,8 +448,8 @@ run_cell <- function(msg) {
             # 3` ``, as knitr allows); all of them run, in order, and the
             # line's value is the last one's, with its own visibility.
             r <- withVisible(NULL)
-            for (line_e in line_exprs) r <- withVisible(eval(line_e, globalenv()))
-            inline_values[[li]] <- if (r$visible) inline_text(r$value) else ""
+            for (line_e in line_exprs) { datatable_clear_mark(); r <- withVisible(eval(line_e, globalenv())) }
+            inline_values[[li]] <- if (r$visible && !datatable_assigned(r$value)) inline_text(r$value) else ""
           }
         } else {
           # The last top-level expression's value is the output (shown
@@ -458,12 +458,15 @@ run_cell <- function(msg) {
           # values a cell shows").
           for (k in seq_along(exprs)) {
             at <- k   # the top-level expression index; error$line reads its srcref
+            datatable_clear_mark()
             r <- withVisible(eval(exprs[[k]], globalenv()))
             if (k < length(exprs)) {
-              if (r$visible) console$print(r$value)
+              if (r$visible && !datatable_assigned(r$value)) console$print(r$value)
             } else {
               value <- r$value
-              visible <- r$visible
+              # A data.table `:=` returns its table visibly, but the
+              # console prints nothing for it (#185).
+              visible <- r$visible && !datatable_assigned(r$value)
               assigned <- !r$visible && shows_assignment(exprs[[k]], r$value)
             }
           }
@@ -893,25 +896,84 @@ compare_globals <- function(before_names, before) {
 ENV_FINGERPRINT_MAX <- 10000L
 ENV_FINGERPRINT_ONE_MAX <- 1000L
 
-#' Fingerprints of the environment-valued globals in `before` (a
+#' Fingerprints of the reference-valued globals in `before` (a
 #' `snapshot_globals()` result) named in `names`: a named list of
-#' `list(env, print)`. Environments, R6 objects and reference class objects
-#' are the values a cell can change without rebinding the name, so
-#' `compare_globals()` can't see it (#167). Package namespaces and the
-#' global environment are skipped, and so is an environment too big to
-#' read.
+#' `list(env, print)`. Environments, R6 objects, reference class objects
+#' and data.tables are the values a cell can change without rebinding the
+#' name, so `compare_globals()` can't see it (#167, #172). Package
+#' namespaces and the global environment are skipped, and so is an
+#' environment too big to read.
 env_fingerprints <- function(before, names) {
   budget <- new.env()
   budget$left <- ENV_FINGERPRINT_MAX
   out <- list()
   for (n in intersect(names, names(before))) {
     b <- before[[n]]
-    if (b$active || !is.environment(b$value) || is_shared_env(b$value)) next
-    print <- env_fingerprint(b$value, budget)
+    if (b$active) next
+    print <- ref_fingerprint(b$value, budget)
     if (is.null(print)) next
     out[[n]] <- list(env = b$value, print = print)
   }
   out
+}
+
+#' The fingerprint of one global, or `NULL` when it isn't a value that
+#' changes in place (or is too big to read): an environment's from
+#' `env_fingerprint()`, a data.table's from `datatable_fingerprint()`.
+ref_fingerprint <- function(v, budget) {
+  if (inherits(v, "data.table")) return(datatable_fingerprint(v))
+  if (!is.environment(v) || is_shared_env(v)) return(NULL)
+  env_fingerprint(v, budget)
+}
+
+#' A data.table's shape, read without touching its rows: its own address
+#' (a copy is equal to it, but is a new object), the column names,
+#' each column's address, `truelength()` (the slots `:=` adds columns
+#' into), and the key. `dt[, z := x * 2]`, `set()` on a new column,
+#' `setnames()`, `setkey()`, `setorder()` and dropping a column all change
+#' it. A write to some rows of an existing column (`dt[i, x := 0]`,
+#' `set(dt, i, "x", v)`) keeps the column's address, so it isn't seen;
+#' finding it would mean hashing every column each run (#172). `NULL`
+#' when data.table's namespace isn't loaded or reading fails.
+datatable_fingerprint <- function(dt) {
+  if (!isNamespaceLoaded("data.table")) return(NULL)
+  tryCatch({
+    ns <- asNamespace("data.table")
+    # `setnames()` changes the names vector itself, so keep a copy.
+    list(self = ns$address(dt), names = paste0(names(dt)), truelength = ns$truelength(dt),
+         cols = vapply(seq_along(dt), function(i) ns$address(.subset2(dt, i)), ""),
+         key = attr(dt, "sorted", exact = TRUE))
+  }, error = function(e) NULL)
+}
+
+#' Whether `value` is the data.table a `:=` or `set*()` call just returned,
+#' which the R console doesn't print (#185). data.table marks it itself:
+#' `[.data.table` keeps the table's address in its `.global$print`, and
+#' `print.data.table()` prints nothing for that address once, at top
+#' level. A cell's value isn't printed at top level, so the mark is read
+#' here, and cleared as data.table's own print would.
+datatable_assigned <- function(value) {
+  if (!inherits(value, "data.table") || !isNamespaceLoaded("data.table")) return(FALSE)
+  tryCatch({
+    ns <- asNamespace("data.table")
+    g <- ns$.global
+    mark <- g$print
+    if (!is.character(mark) || length(mark) != 1L || is.na(mark) || !nzchar(mark) ||
+        !identical(mark, ns$address(value))) return(FALSE)
+    g$print <- ""
+    TRUE
+  }, error = function(e) FALSE)
+}
+
+#' Clear data.table's print mark before a top-level expression runs, so
+#' `datatable_assigned()` sees only a mark that expression set. A `:=`
+#' whose value isn't shown (`invisible(dt[, b := 1])`, or one inside a
+#' helper) leaves the mark set, and the next cell that shows the table
+#' would otherwise show nothing (data.table's own FAQ 2.23 at the console).
+datatable_clear_mark <- function() {
+  if (!isNamespaceLoaded("data.table")) return(invisible())
+  tryCatch({ g <- asNamespace("data.table")$.global; g$print <- "" }, error = function(e) NULL)
+  invisible()
 }
 
 #' An environment the notebook doesn't own: a namespace, a package's
@@ -974,7 +1036,7 @@ env_fingerprint_ <- function(e, budget, depth, seen) {
 }
 
 #' Which of `env_before`'s globals the run changed in place: the name is
-#' still bound to the same environment, and its fingerprint differs. A
+#' still bound to the same object, and its fingerprint differs. A
 #' name the run rebound (`changed`) or removed is reported as a change of
 #' the name, not of its contents.
 changed_in_place <- function(env_before, changed) {
@@ -984,7 +1046,9 @@ changed_in_place <- function(env_before, changed) {
     if (!exists(n, envir = globalenv(), inherits = FALSE) || bindingIsActive(n, globalenv())) next
     now <- get(n, envir = globalenv(), inherits = FALSE)
     if (!identical(now, b$env)) next
-    print <- env_fingerprint(now, list2env(list(left = ENV_FINGERPRINT_MAX)))
+    print <- ref_fingerprint(now, list2env(list(left = ENV_FINGERPRINT_MAX)))
+    # `dt <- copy(dt)` binds an equal table, which is a new name, not a change in place.
+    if (inherits(now, "data.table") && !identical(print$self, b$print$self)) next
     if (!identical(print, b$print)) out <- c(out, n)
   }
   out

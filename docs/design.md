@@ -344,8 +344,12 @@ name, the cell shows a note: "Changed `cnt` in place, which another cell
 defines, so the cells that read it don't rerun." Taking the fingerprint
 forces no promise and calls no active binding. Namespaces are skipped, and
 so is any one environment with more than 1,000 bindings; the others are
-still checked, up to 10,000 bindings a run. data.table's in-place changes
-aren't detected yet (#172).
+still checked, up to 10,000 bindings a run. A data.table another cell
+defines is fingerprinted by its shape: column names, each column's
+address, its spare column slots and its key. So `dt[, z := x * 2]`,
+`setnames()`, `setkey()`, `setorder()` and dropping a column are noted. A
+write to some rows of an existing column (`dt[i, x := 0]`) keeps the
+column where it was, and isn't (#172).
 
 ### Methods
 
@@ -497,7 +501,13 @@ how a cell hides its output (Pluto's trailing `;` has no meaning in R).
 `<<-` and `assign()` stay hidden, as does an assigned function (its
 printed form is the cell's code again) or a plain environment (its
 printed form is an address; an R6 object, which has a class, still
-prints). Earlier visible values, `print()`,
+prints). A data.table `:=` or `set*()` call shows nothing, as at the R
+console, although R returns the table visibly: data.table marks the table
+it returned, Ember reads the mark, and `dt[, z := 1][]` shows it (#185).
+The mark is cleared before each top-level expression, so one left by a
+`:=` that wasn't shown (`invisible(dt[, z := 1])`, or a helper's) doesn't
+blank a later cell that shows the table, as it would at the console.
+Earlier visible values, `print()`,
 `cat()`, messages and warnings go to a console area below the output, in
 order. A plot drawn with no visible value after it is the output. R
 Markdown instead shows every visible value inline.
