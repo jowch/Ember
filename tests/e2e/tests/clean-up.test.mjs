@@ -37,7 +37,8 @@ function seedCache() {
   // From a file, not `-e`: on Windows R's front end, `bin\Rscript.exe`,
   // passes `-e` on through cmd.exe, which doesn't carry a newline, and
   // here the seeding R crashed (#220).
-  const script = path.join(root, "seed.R");
+  // Outside the cache root, so the seeded cache holds only what the test made.
+  const script = path.join(mkdtempSync(path.join(tmpdir(), "ember-e2e-seed-")), "seed.R");
   writeFileSync(script, expr);
   const res = spawnSync(process.env.EMBER_RSCRIPT ?? "Rscript", ["--vanilla", script], { encoding: "utf8" });
   assert.equal(res.status, 0, res.stderr);
