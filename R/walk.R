@@ -260,8 +260,8 @@ is_base_qualified <- function(head) {
 #' `"local"` scope, as R evaluates it in an environment made from the data
 #' (so `within(df, z <- x * 2)` defines no global `z`), with its reads at
 #' the top level recorded as masked by the data. A masked read names the
-#' data only when the data argument is a bare name the cell doesn't bind
-#' locally; otherwise `acc$mask` is `NA` and the reads are ordinary ones.
+#' data only when the data argument is a bare name that is a global (the
+#' cell's own or another's), not a function's or `local()`'s; otherwise `acc$mask` is `NA` and the reads are ordinary ones.
 #' The graph turns each masked read into an edge or not
 #' (`resolve_masked()`).
 walk_masking_call <- function(e, scope, acc, name, arg_pids) {
@@ -276,7 +276,7 @@ walk_masking_call <- function(e, scope, acc, name, arg_pids) {
   }
   data <- args[[data_i]]
   if (!missing_arg(data)) walk_expr(data, scope, acc, arg_pids[[data_i]])
-  root <- if (is.symbol(data) && !is_bound(scope, as.character(data))) as.character(data) else NA_character_
+  root <- if (is.symbol(data) && !is_bound_locally(scope, as.character(data))) as.character(data) else NA_character_
   masked_scope <- new_scope("local", character(), parent = scope,
                             home = scope$home, defer_target = scope$defer_target)
   outer <- acc$mask

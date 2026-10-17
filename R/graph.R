@@ -156,7 +156,7 @@ reuse_analysis <- function(prev, code, read_file) {
 #' identical graph, with or without `previous`.
 notebook_graph <- function(cells, exports = list(),
                            learned = NULL, disabled = character(),
-                           previous = NULL, read_file = NULL) {
+                           previous = NULL, read_file = NULL, columns = list()) {
   ids <- names(cells)
   if (is.null(ids) || any(is.na(ids)) || any(ids == "") ||
       any(duplicated(ids))) {
@@ -171,7 +171,6 @@ notebook_graph <- function(cells, exports = list(),
   learned$definitions <- learned$definitions[names(learned$definitions) %in% ids]
   learned$references <- learned$references[names(learned$references) %in% ids]
   learned$settings <- learned$settings[names(learned$settings) %in% ids]
-  learned$columns <- learned$columns[names(learned$columns) %in% ids]
 
   # 1. analyses: reuse previous$analyses[[id]] when code and sourced files
   #    are unchanged; else read_cell(code, read_file). reread <- the rest.
@@ -204,7 +203,10 @@ notebook_graph <- function(cells, exports = list(),
 
   # 3. edges: resolve_edges(cells, exports, disabled). Setting edges come
   #    after the order (step 6).
-  edges <- resolve_edges(cells_resolved, exports, ids, disabled, learned$columns)
+  edges <- resolve_edges(cells_resolved, exports, ids, disabled, columns)
+  masked_none <- attr(edges, "masked_none")
+  attr(edges, "masked_none") <- NULL
+  for (i in seq_along(ids)) cells_resolved[[i]]$masked_none <- masked_none[[i]]
 
   # upstream/downstream from edges, in display order.
   rank <- setNames(seq_along(ids), ids)
@@ -299,25 +301,18 @@ compute_off <- function(ids, disabled, downstream_list) {
 #' reports the full set after each run, so a name that stopped appearing
 #' drops out); `references` replaces its learned references (the formula
 #' check's missing columns); `settings` replaces its learned setting keys
-#' (`character()` drops them); `columns` replaces the names the globals it
-#' defined had at its last run (`list()` when it reported none, `NA` to
-#' forget them; see `resolve_masked()`). `NULL` leaves that part as it
-#' was. Returns a
+#' (`character()` drops them). `NULL` leaves that part as it was.
+#' `columns` is the session's `data_columns` (state.R), passed to
+#' `notebook_graph()` as it is. Returns a
 #' new graph built with `previous = graph`, so nothing is re-read.
 #'
 #' The caller persists `graph$learned$definitions` and
-#' `graph$learned$settings` in the footer. `columns` is not persisted: it
-#' describes the worker's values, which a reopened notebook doesn't have.
+#' `graph$learned$settings` in the footer.
 graph_learn <- function(graph, cell, definitions = NULL, references = NULL,
-                        settings = NULL, columns = NULL) {
+                        settings = NULL, columns = list()) {
   learned <- graph$learned
   if (!is.null(definitions)) learned$definitions[[cell]] <- definitions
   if (!is.null(references)) learned$references[[cell]] <- references
-  if (identical(columns, NA)) {
-    learned$columns[[cell]] <- NULL
-  } else if (!is.null(columns)) {
-    learned$columns[cell] <- list(columns)
-  }
   if (!is.null(settings)) {
     learned$settings[[cell]] <- if (length(settings) > 0) settings else NULL
   }
@@ -325,7 +320,7 @@ graph_learn <- function(graph, cell, definitions = NULL, references = NULL,
                             character(1)), graph$ids)
   notebook_graph(cells, exports = graph$exports,
                  learned = learned, disabled = graph$disabled,
-                 previous = graph, read_file = graph$read_file)
+                 previous = graph, read_file = graph$read_file, columns = columns)
 }
 
 #' Public definitions, references, packages per cell.
@@ -632,6 +627,13 @@ resolve_edges <- function(cells, exports, ids, disabled = character(), columns =
     edges <- add_soft_edges(edges, as_edges(edges_of(soft = TRUE)))
   }
   if (has_methods) edges <- add_method_edges(edges, cells, ids, method_lookup)
+  # Per cell, the masked names its data provides (no edge), for
+  # invalidate_dependents() in step.R: their global's edit changes nothing.
+  attr(edges, "masked_none") <- lapply(seq_along(ids), function(i) {
+    m <- cells[[i]]$masked
+    if (is.null(m) || nrow(m) == 0) return(character())
+    setdiff(unique(m$name), c(masked_refs[[i]]$hard, masked_refs[[i]]$soft))
+  })
   edges
 }
 

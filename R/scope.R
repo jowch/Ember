@@ -146,6 +146,16 @@ is_bound <- function(scope, name) {
   FALSE
 }
 
+#' Is `name` bound in a function or `local()` scope, not the cell's top
+#' level (a global the cell defines)?
+is_bound_locally <- function(scope, name) {
+  while (!is.null(scope) && !identical(scope$kind, "top")) {
+    if (exists(name, envir = scope$bound, inherits = FALSE)) return(TRUE)
+    scope <- scope$parent
+  }
+  FALSE
+}
+
 #' Add names to a scope. `names` keeps their order for the branch logic in
 #' `walk_if()`; `bound` is the hashed set `is_bound()` looks in, so a cell
 #' with thousands of definitions doesn't search a long vector per read.

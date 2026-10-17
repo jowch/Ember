@@ -52,7 +52,7 @@ test_that("the issue's notebook: no false cycle before or after df's cell runs",
   g <- notebook_graph(issue_cells)
   # Unknown columns: the edge is soft, and dropped because it closes a cycle.
   expect_length(g$errors, 0)
-  g2 <- graph_learn(g, "D", columns = list(df = list(frame = TRUE, names = c("x", "y"))))
+  g2 <- graph_learn(g, "D", columns = list(D = list(df = list(frame = TRUE, names = c("x", "y")))))
   expect_length(g2$errors, 0)
   expect_false("X" %in% g2$upstream$F)
   expect_true("F" %in% g2$upstream$X)
@@ -60,15 +60,15 @@ test_that("the issue's notebook: no false cycle before or after df's cell runs",
 
 test_that("a name the data doesn't have is an ordinary edge", {
   g <- notebook_graph(issue_cells)
-  g2 <- graph_learn(g, "D", columns = list(df = list(frame = TRUE, names = "y")))
+  g2 <- graph_learn(g, "D", columns = list(D = list(df = list(frame = TRUE, names = "y"))))
   expect_true("X" %in% g2$upstream$F)
   expect_equal(g2$errors[[1]]$kind, "cycle")
 
   g <- notebook_graph(c(D = "df <- data.frame(y = 1:4)", F = "d2 <- subset(df, x > 1)", X = "x <- 2"))
   expect_true("X" %in% g$upstream$F)  # soft, and closes no cycle
-  g2 <- graph_learn(g, "D", columns = list(df = list(frame = TRUE, names = "y")))
+  g2 <- graph_learn(g, "D", columns = list(D = list(df = list(frame = TRUE, names = "y"))))
   expect_true("X" %in% g2$upstream$F)
-  g3 <- graph_learn(g, "D", columns = list(df = list(frame = TRUE, names = c("x", "y"))))
+  g3 <- graph_learn(g, "D", columns = list(D = list(df = list(frame = TRUE, names = c("x", "y")))))
   expect_false("X" %in% g3$upstream$F)
 })
 
@@ -76,7 +76,7 @@ test_that("the answer is an edge whenever the columns can't decide it", {
   cols <- list(df = list(frame = TRUE, names = c("x", "y")))
   base <- c(D = "df <- data.frame(x = 1:4, y = 1:4)", F = "d2 <- subset(df, x > 1)", X = "x <- 2")
   has_edge <- function(cells, learned_cell = "D", columns = cols) {
-    g <- graph_learn(notebook_graph(cells), learned_cell, columns = columns)
+    g <- graph_learn(notebook_graph(cells), learned_cell, columns = setNames(list(columns), learned_cell))
     "X" %in% g$upstream$F
   }
   expect_false(has_edge(base))
@@ -101,10 +101,10 @@ test_that("a cell that defines its own data settles the name on its first run", 
              X = "x <- 0.5; p <- nrow(d2)")
   g <- notebook_graph(cells)
   expect_length(g$errors, 0)
-  g2 <- graph_learn(g, "F", columns = list(df = list(frame = TRUE, names = "x"),
-                                           d2 = list(frame = TRUE, names = "x")))
+  g2 <- graph_learn(g, "F", columns = list(F = list(df = list(frame = TRUE, names = "x"),
+                                           d2 = list(frame = TRUE, names = "x"))))
   expect_length(g2$errors, 0)
-  g3 <- graph_learn(g, "F", columns = list(df = list(frame = TRUE, names = "y")))
+  g3 <- graph_learn(g, "F", columns = list(F = list(df = list(frame = TRUE, names = "y"))))
   expect_equal(g3$errors[[1]]$kind, "cycle")
 })
 
@@ -112,10 +112,23 @@ test_that("a cell that defines its own data settles the name on its first run", 
 
 frame_cols <- function(...) list(frame = TRUE, names = c(...))
 
+#' Answer each run the core sends with `reports[[cell]]` (an empty report
+#' for a cell not named) until nothing is running.
+run_to_idle <- function(r, reports = list(), at0 = 100) {
+  i <- 0
+  while (identical(r$state$worker$status, "busy")) {
+    cell_id <- r$state$worker$running$cell
+    rep <- reports[[cell_id]] %||% report()
+    i <- i + 1
+    r <- drive(r$state, wk_done(1, r$state$worker$running$token, rep, at(at0 + i)))
+  }
+  r
+}
+
 test_that("the data cell's report decides the edge before the reader runs", {
   s <- fake_state(list(S = cell(""), D = cell("df <- data.frame(y = 1:4)"),
                        F = cell("d2 <- subset(df, x > 1)"), X = cell("x <- 2")))
-  r <- boot(s, NULL)
+  r <- boot(s, c("D", "F"))
   expect_equal(last_sent(r)$cell, "D")
   r <- drive(r$state, wk_done(1, last_token(r), report(created = "df", columns = list(df = frame_cols("y"))), at(10)))
   # df has no x: F reads the global, so X runs first.
@@ -123,18 +136,22 @@ test_that("the data cell's report decides the edge before the reader runs", {
   expect_true("X" %in% r$state$graph$upstream$F)
 })
 
+data_reports <- function(df_cols) {
+  list(D = report(created = "df", columns = list(df = do.call(frame_cols, as.list(df_cols)))),
+       F = report(created = "d2", columns = list(d2 = do.call(frame_cols, as.list(df_cols)))),
+       X = report(created = "x"), K = report(created = "k"))
+}
+
 test_that("editing x doesn't rerun a reader whose data has the column", {
   s <- fake_state(list(S = cell(""), D = cell("df <- data.frame(x = 1:4)"),
                        F = cell("d2 <- subset(df, x > 1)"), X = cell("x <- 2")))
-  r <- boot(s, NULL)
-  r <- drive(r$state, wk_done(1, last_token(r), report(created = "df", columns = list(df = frame_cols("x"))), at(10)))
-  while (length(r$state$pending) > 0 || identical(r$state$worker$status, "busy")) {
-    r <- drive(r$state, wk_done(1, last_token(r), report(), at(11)))
-  }
-  r2 <- drive(r$state, ev_apply(list(op_set_code("X", "x <- 3")), at(12)), ev_run("X", at(13)))
-  r2 <- drive(r2$state, wk_done(1, last_token(r2), report(created = "x"), at(14)))
+  r <- run_to_idle(boot(s, NULL), data_reports("x"))
+  expect_false("X" %in% r$state$graph$upstream$F)
+  r2 <- drive(r$state, ev_apply(list(op_set_code("X", "x <- 3")), at(200)), ev_run("X", at(201)))
+  expect_equal(last_sent(r2)$cell, "X")
+  r2 <- run_to_idle(r2, data_reports("x"), at0 = 210)
   expect_false(isTRUE(r2$state$results$F$stale))
-  expect_false("F" %in% r2$state$pending)
+  expect_false("F" %in% sent_cells(r2))
 })
 
 test_that("a failed run of the data cell forgets its columns", {
@@ -146,7 +163,7 @@ test_that("a failed run of the data cell forgets its columns", {
   r <- drive(r$state, ev_run("D", at(11)))
   r <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "no"), created = "df",
                                                        columns = list(df = frame_cols("x"))), at(12)))
-  expect_null(r$state$graph$learned$columns$D)
+  expect_null(r$state$data_columns$D)
   expect_true("X" %in% r$state$graph$upstream$F)
 })
 
@@ -157,28 +174,37 @@ test_that("an input found after the run was asked for, from a stale cell, leaves
   s <- fake_state(list(S = cell(""), K = cell("k <- 1"), X = cell("x <- k"),
                        D = cell("df <- data.frame(x = 1:4)"), F = cell("d2 <- subset(df, x > 1)")),
                   on_cell_change = "lazy")
-  r <- boot(s, NULL)
-  done <- function(r, ...) drive(r$state, wk_done(1, last_token(r), report(...), at(20)))
-  for (i in 1:4) {
-    cell_id <- last_sent(r)$cell
-    r <- switch(cell_id,
-      K = done(r, created = "k"), X = done(r, created = "x"),
-      D = done(r, created = "df", columns = list(df = frame_cols("x"))),
-      F = done(r, created = "d2", columns = list(d2 = frame_cols("x"))))
-  }
+  r <- run_to_idle(boot(s, NULL), data_reports("x"))
   expect_false("X" %in% r$state$graph$upstream$F)
-  r <- drive(r$state, ev_run("K", at(30)))
-  r <- done(r, created = "k")
+  r <- run_to_idle(drive(r$state, ev_run("K", at(200))), data_reports("x"), at0 = 210)
   expect_true(isTRUE(r$state$results$X$stale))
 
-  r <- drive(r$state, ev_apply(list(op_set_code("D", "df <- data.frame(y = 1:4)")), at(31)), ev_run("F", at(32)))
+  r <- drive(r$state, ev_apply(list(op_set_code("D", "df <- data.frame(y = 1:4)")), at(300)), ev_run("F", at(301)))
   expect_equal(last_sent(r)$cell, "D")
-  r <- done(r, created = "df", columns = list(df = frame_cols("y")))
-  expect_equal(last_sent(r)$cell, "F")
-  r <- done(r, created = "d2", columns = list(d2 = frame_cols("y")))
-  expect_true(isTRUE(r$state$results$F$stale))
+  r <- drive(r$state, wk_done(1, last_token(r), data_reports("y")$D, at(310)))
+  expect_true("X" %in% r$state$graph$upstream$F)
+  expect_equal(last_sent(r)$cell, "X")
+  r <- run_to_idle(r, data_reports("y"), at0 = 320)
+  expect_false(isTRUE(r$state$results$F$stale))
+  expect_false(isTRUE(r$state$results$X$stale))
+})
 
-  r <- drive(r$state, ev_run("F", at(40)))
+test_that("an input a cell's own run finds, from a stale cell, leaves its result stale", {
+  # The formula check is the other way a run finds an input: x is taken
+  # as a column of df until F's run finds it isn't.
+  s <- fake_state(list(S = cell(""), K = cell("k <- 1"), X = cell("x <- k"),
+                       F = cell("fit <- lm(y ~ x, data = df)")),
+                  on_cell_change = "lazy")
+  r <- run_to_idle(boot(s, c("K", "X")))
+  r <- run_to_idle(drive(r$state, ev_run("K", at(200))), at0 = 210)
+  expect_true(isTRUE(r$state$results$X$stale))
+  expect_false("X" %in% r$state$graph$upstream$F)
+  r <- drive(r$state, ev_run("F", at(300)))
+  expect_equal(last_sent(r)$cell, "F")
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "fit", formula_misses = "x"), at(310)))
+  expect_true("X" %in% r$state$graph$upstream$F)
+  expect_true(isTRUE(r$state$results$F$stale))
+  r <- drive(r$state, ev_run("F", at(400)))
   expect_equal(last_sent(r)$cell, "X")
 })
 
@@ -203,10 +229,14 @@ test_that("the issue's notebook runs, and follows R as the data's columns change
   edit_notebook(nb, set_code("D", "df <- data.frame(y = 1:4)"))
   res <- run_cells(nb, "D", wait = TRUE, timeout = 30)
   expect_false(res$timed_out)
-  expect_true(any(vapply(notebook_graph_errors(nb), function(e) identical(e$kind, "cycle"), logical(1))))
+  errs <- snap_view(notebook_snapshot(nb), "F")$error
+  expect_true(any(vapply(errs, function(e) identical(e$kind, "cycle"), logical(1))))
 
-  # And back.
+  # And back. Run all skips F and X while they're still in the cycle
+  # (D hasn't rerun yet), so it takes a second run, as for any cycle.
   edit_notebook(nb, set_code("D", "df <- data.frame(x = 1:4, y = 1:4)"))
+  res <- run_cells(nb, wait = TRUE, timeout = 30)
+  expect_false(res$timed_out)
   res <- run_cells(nb, wait = TRUE, timeout = 30)
   expect_false(res$timed_out)
   snap <- notebook_snapshot(nb)
