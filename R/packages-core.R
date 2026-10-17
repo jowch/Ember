@@ -1458,9 +1458,16 @@ missing_package_error <- function(state, pkg) {
     return(list(state = state, error = err))
   }
 
-  err <- new_run_error("missing_package",
-    message = sprintf("there is no package called '%s'; its install may have failed", pkg),
-    names = pkg, fixes = character())
+  # The install failed: say why, as package_status() does (#182). A missing system
+  # library's message names it and the command that installs it. It is
+  # install_failure_message()'s, which begins "install failed".
+  why <- if (identical(state$packages$target$status, "failed")) state$packages$target$message
+  msg <- if (!is.null(why) && nzchar(why)) {
+    sprintf("there is no package called '%s': %s", pkg, why)
+  } else {
+    sprintf("there is no package called '%s'; its install may have failed", pkg)
+  }
+  err <- new_run_error("missing_package", message = msg, names = pkg, fixes = character())
   list(state = state, error = err)
 }
 

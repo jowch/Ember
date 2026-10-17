@@ -6,8 +6,9 @@
 #
 # where each library holds the ember installed from that checkout.
 # Each round runs one fresh R process per side (order swapped every round)
-# and records each case's median; the reported time is the median over
-# rounds. Exits 1 when any case is more than THRESHOLD slower on head.
+# and records each case's fastest sample (cases.R); the reported time is
+# the median over rounds. Exits 1 when any case is more than THRESHOLD
+# slower on head.
 
 THRESHOLD <- 1.25
 
@@ -44,7 +45,7 @@ verdict <- ifelse(is.na(ratio), "not compared",
 
 fmt <- function(x) ifelse(is.na(x), "n/a", sprintf("%.2f ms", x * 1000))
 table <- c(
-  sprintf("Benchmark: head against base, median of %d alternating rounds; flagged above %.0f%% slower.", rounds, (THRESHOLD - 1) * 100),
+  sprintf("Benchmark: head against base, median of %d alternating rounds of each round's fastest sample; flagged above %.0f%% slower.", rounds, (THRESHOLD - 1) * 100),
   "",
   "| case | base | head | head / base | |",
   "|---|---|---|---|---|",

@@ -515,6 +515,23 @@ test_that("attached_reports_exports", {
   expect_setequal(r$attached$emberfix1, c("shared_fun", "fix1_fun"))
 })
 
+test_that("a file under the worker's own tempdir() isn't reported as a source: the session generated it (Rcpp's cppFunction()) and it is gone next session (#165)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  code <- 'f <- tempfile(fileext = ".R"); writeLines("tv <- 7", f); source(f); tv'
+  h$send(run_msg("a", 1L, code))
+  seen_source <- FALSE
+  r <- wait_for_done(h, on_frame = function(m) {
+    if (identical(m$type, "source")) {
+      seen_source <<- TRUE
+      h$send(list(type = "source_reply", allow = TRUE))
+    }
+  })
+  expect_false(seen_source)
+  expect_identical(r$status, "ok")
+  expect_identical(r$output$text, "[1] 7")
+})
+
 test_that("computed_source_request", {
   h <- worker_harness()
   on.exit(h$close())
@@ -2029,7 +2046,12 @@ test_that("handle_next() answers complete/help/signature with the request's id, 
   h <- worker_harness()
   on.exit(h$close())
 
-  h$send(run_msg("a", 1L, 'source(tempfile(fileext = ".R"))'))
+  # The file is the test's, not the worker's: a file under the worker's
+  # own tempdir() isn't reported as a source (#165), so it wouldn't wait.
+  f <- tempfile(fileext = ".R")
+  file.create(f)
+  on.exit(unlink(f), add = TRUE)
+  h$send(run_msg("a", 1L, sprintf("source(%s)", deparse(f))))
   src <- NULL
   repeat {
     m <- h$receive()
