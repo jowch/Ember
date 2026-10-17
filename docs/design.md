@@ -301,7 +301,10 @@ like part of the cell:
   name another cell defines, removes the cell's old definitions, then lets
   `source` proceed. Before the cell's first run, the paths the footer's
   `learned sources` block records for that cell stand in, until the cell
-  runs again. This happens silently; the user sees no note.
+  runs again. This happens silently; the user sees no note. A file under
+  the worker's own `tempdir()` isn't learned: the session wrote it (Rcpp's
+  `cppFunction()` sources the wrapper it generates there), and the next
+  session's is somewhere else (#165).
 - The notebook's footer records each sourced file's path and hash, so a
   changed or missing helper is reported on open. The helper's code stays in
   its own file; the notebook alone is no longer the whole record, and the
