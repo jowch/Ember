@@ -1761,3 +1761,72 @@ test_that("a pinned notebook waits for the release list before deciding a move",
   expect_null(r$state$packages$proposal)
   expect_true("install" %in% effect_types(r))
 })
+
+# ---- Asking before a large download (#37) -------------------------------------
+
+#' A notebook whose install has just started: `list(state, key, token)`.
+installing_state <- function(options = list()) {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")), options = options)
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(2)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(3)))
+  r <- drive(r$state, ev_allow(at(4)))
+  list(r = r, key = r$state$packages$target$key, token = r$state$packages$install$token)
+}
+
+big_download <- function() {
+  data.frame(package = c("org.Hs.eg.db", "GO.db"), version = c("3.22.0", "3.22.0"),
+             bytes = c(2.1e9, 25e6), stringsAsFactors = FALSE)
+}
+
+test_that("an install asks above ask_above, and installs without asking once approved (130)", {
+  st <- installing_state(options = list(ask_above = 1e8))
+  install_fx <- Filter(function(fx) identical(fx$type, "install"), st$r$effects)
+  expect_equal(install_fx[[1]]$ask_above, 1e8)
+
+  r <- drive(st$r$state, ev_install_done(st$token, st$key, NULL, NULL, character(), at(5),
+                                          download = big_download()))
+  tgt <- r$state$packages$target
+  expect_equal(tgt$status, "asking")
+  expect_equal(tgt$download$package, c("org.Hs.eg.db", "GO.db"))
+  # Nothing failed: no problem row, no new install, the cell still waits.
+  expect_false("install_failed" %in% r$state$packages$problems$kind)
+  expect_null(r$state$packages$install)
+  expect_false(any(vapply(r$effects, function(fx) identical(fx$type, "install"), logical(1))))
+  expect_true("A" %in% names(waiting_cells(r$state)))
+  expect_equal(packages_view(r$state)$library$download$package, c("org.Hs.eg.db", "GO.db"))
+
+  # Running again isn't an OK.
+  r <- drive(r$state, ev_run("A", at(6)))
+  expect_equal(r$state$packages$target$status, "asking")
+
+  r <- drive(r$state, ev_approve_install(at(7)))
+  expect_true(r$reply)
+  expect_equal(r$state$packages$target$status, "installing")
+  expect_null(r$state$packages$target$download)
+  install_fx <- Filter(function(fx) identical(fx$type, "install"), r$effects)
+  expect_length(install_fx, 1)
+  expect_equal(install_fx[[1]]$ask_above, Inf)
+})
+
+test_that("approve_install is refused when nothing waits for an OK (130)", {
+  st <- installing_state()
+  r <- drive(st$r$state, ev_approve_install(at(5)))
+  expect_s3_class(r$reply, "ember_refused")
+  expect_equal(r$state$packages$target$status, "installing")
+})
+
+test_that("ask_above comes from options(ember.ask_above), 500 MB by default (130)", {
+  expect_equal(pkg_state(list(S = cell("")))$options$ask_above, 500e6)
+  withr::local_options(ember.ask_above = Inf)
+  expect_equal(pkg_state(list(S = cell("")))$options$ask_above, Inf)
+})
+
+test_that("download_lines() reads the installer's EMBER-DOWNLOAD lines, largest first (130)", {
+  lines <- c("EMBER-PROGRESS 0 3 - restore", "EMBER-DOWNLOAD GO.db 3.22.0 25248437",
+             "EMBER-DOWNLOAD org.Hs.eg.db 3.22.0 2100000000", "EMBER-DOWNLOAD BSgenome.X 1.0 NA")
+  d <- download_lines(lines)
+  expect_equal(d$package, c("org.Hs.eg.db", "GO.db", "BSgenome.X"))
+  expect_equal(d$bytes, c(2.1e9, 25248437, NA))
+  expect_null(download_lines(c("Error: something else")))
+})

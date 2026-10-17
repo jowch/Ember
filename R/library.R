@@ -784,6 +784,129 @@ cran_releases_fetch_command <- function(url, cache = cache_dir()) {
 
 cran_releases_job_key <- function(url, cache) paste("cran-releases", url, cache, sep = "\u0001")
 
+# ---- Large downloads (#37) -----------------------------------------------------
+
+#' An install that would download more than this many bytes waits for the
+#' user's OK first (design.md, "Large installs ask first"):
+#' `options(ember.ask_above)` changes it for new sessions, and `Inf` never
+#' asks.
+ask_above_default <- 500e6
+
+#' The local path of a `file://` URL: `file:///tmp/x` and, on Windows,
+#' both `file://D:/x` and `file:///D:/x`, as the tests write them.
+#' (`available.packages()` reads `file://D:/x` as `//D:/x`, a network path
+#' that isn't there, so the indexes here are read with `read_contrib()`.)
+file_url_path <- function(url) {
+  path <- sub("^file://", "", url)
+  if (.Platform$OS.type == "windows" && grepl("^/[A-Za-z]:", path)) path <- substring(path, 2L)
+  path
+}
+
+#' The `Package` and `Version` columns of the index at `contrib` (a
+#' `.../src/contrib` URL), or `NULL` when it can't be read.
+read_contrib <- function(contrib) {
+  if (!startsWith(contrib, "file://")) {
+    return(tryCatch(suppressWarnings(utils::available.packages(contriburl = contrib, filters = list())),
+                    error = function(e) NULL))
+  }
+  dir <- file_url_path(contrib)
+  file <- Filter(file.exists, file.path(dir, c("PACKAGES", "PACKAGES.gz")))
+  if (length(file) == 0) return(NULL)
+  tryCatch(read.dcf(file[[1]], fields = c("Package", "Version")), error = function(e) NULL)
+}
+
+#' The size in bytes of the file at `url`, or `NA`: the Content-Length of
+#' a HEAD request (the last response's, after any redirect), or the size
+#' of a `file://` URL's file (the tests' fixtures).
+url_size <- function(url) {
+  if (startsWith(url, "file://")) {
+    size <- file.size(file_url_path(url))
+    return(if (is.na(size)) NA_real_ else as.numeric(size))
+  }
+  headers <- tryCatch(curlGetHeaders(url), error = function(e) NULL)
+  if (is.null(headers) || !identical(as.integer(attr(headers, "status")), 200L)) return(NA_real_)
+  len <- grep("^content-length:", headers, ignore.case = TRUE, value = TRUE)
+  if (length(len) == 0) return(NA_real_)
+  suppressWarnings(as.numeric(trimws(sub("^[^:]*:", "", len[[length(len)]]))))
+}
+
+#' Whether renv's cache already holds `name` at `version` for R `minor`, so
+#' installing it downloads nothing. renv's layout:
+#' `v5/<os>/R-<minor>/<platform>/<name>/<version>/<hash>`.
+in_renv_cache <- function(cache_root, name, version, minor) {
+  length(Sys.glob(file.path(cache_root, "v5", "*", paste0("R-", minor), "*", name, version, "*"))) > 0
+}
+
+#' The packages that make an install large, with their sizes: Bioconductor's
+#' annotation and experiment-data packages (`org.Hs.eg.db`, `BSgenome.*`:
+#' hundreds of MB to several GB) in `lock` that renv's cache doesn't hold
+#' yet. CRAN's and Bioconductor's software packages are kept under 5 MB by
+#' those repositories' rules, and a GitHub package is one repository's
+#' source, so neither is counted. `repos` is the installer's (name -> URL;
+#' `BioCann` and `BioCexp` are there when the notebook has a Bioconductor
+#' pin). One read of each data repository's index, then one HEAD request
+#' per package not yet in the cache.
+#' -> `data.frame(package, version, bytes)`, `bytes` `NA` when the size
+#' couldn't be had.
+large_downloads <- function(lock, repos, cache, minor = r_info()$minor) {
+  out <- data.frame(package = character(), version = character(), bytes = numeric(),
+                    stringsAsFactors = FALSE)
+  bioc <- lock$entries[lock$entries$source == "Bioc", , drop = FALSE]
+  data_repos <- repos[intersect(c("BioCann", "BioCexp"), names(repos))]
+  if (nrow(bioc) == 0 || length(data_repos) == 0) return(out)
+  root <- file.path(cache, "renv-cache")
+  for (repo in data_repos) {
+    contrib <- paste0(sub("/+$", "", repo), "/src/contrib")
+    avail <- read_contrib(contrib)
+    if (is.null(avail) || nrow(avail) == 0) next
+    hit <- match(bioc$name, avail[, "Package"])
+    here <- !is.na(hit) & !(bioc$name %in% out$package)
+    for (i in which(here)) {
+      name <- bioc$name[[i]]
+      version <- bioc$version[[i]]
+      if (!identical(unname(avail[hit[[i]], "Version"]), version)) next
+      if (in_renv_cache(root, name, version, minor)) next
+      bytes <- url_size(paste0(contrib, "/", name, "_", version, ".tar.gz"))
+      out <- rbind(out, data.frame(package = name, version = version, bytes = bytes,
+                                   stringsAsFactors = FALSE))
+    }
+  }
+  out
+}
+
+#' Called by the installer (and the fake one) before anything downloads:
+#' when `plan$ask_above` is finite and `large_downloads()` add up to more,
+#' writes one `EMBER-DOWNLOAD <package> <version> <bytes>` line per package
+#' on stdout and returns `TRUE`, and the installer stops with status 3 (the
+#' shell turns that into the target's `"asking"`, `ev_install_done()`'s
+#' `download`). Sizes that couldn't be had count as 0.
+ask_before_install <- function(plan, lock) {
+  ask_above <- plan$ask_above %||% Inf
+  if (!is.finite(ask_above)) return(FALSE)
+  big <- large_downloads(lock, plan$repos, plan$cache, plan$r$minor %||% r_info()$minor)
+  if (sum(big$bytes, na.rm = TRUE) <= ask_above) return(FALSE)
+  for (i in seq_len(nrow(big))) {
+    cat(sprintf("EMBER-DOWNLOAD %s %s %s\n", big$package[[i]], big$version[[i]],
+                if (is.na(big$bytes[[i]])) "NA" else format(big$bytes[[i]], scientific = FALSE)))
+  }
+  flush(stdout())
+  TRUE
+}
+
+#' The installer's `EMBER-DOWNLOAD` lines as `data.frame(package, version,
+#' bytes)`, largest first; `NULL` when there are none (an ordinary failure).
+download_lines <- function(lines) {
+  m <- regmatches(lines, regexec("^EMBER-DOWNLOAD (\\S+) (\\S+) (\\S+)\\s*$", lines))
+  m <- Filter(function(x) length(x) == 4, m)
+  if (length(m) == 0) return(NULL)
+  out <- data.frame(package = vapply(m, `[[`, "", 2), version = vapply(m, `[[`, "", 3),
+                    bytes = suppressWarnings(as.numeric(vapply(m, `[[`, "", 4))),
+                    stringsAsFactors = FALSE)
+  out <- out[order(-ifelse(is.na(out$bytes), 0, out$bytes), out$package), , drop = FALSE]
+  rownames(out) <- NULL
+  out
+}
+
 # ---- Libraries ---------------------------------------------------------------
 
 #' The manifest of a ready library, or `NULL` when there is no complete
@@ -839,14 +962,17 @@ renv_is_for_the_installer <- function() renv::restore
 #'   binary form), `MAKEFLAGS = -j2` (increment 2 chooses a real core
 #'   count; increment 1's fixtures need no compiler at all).
 #' * Input: a plan file (RDS) with the lock lines, the repo URLs, R info,
-#'   the staging and final paths.
+#'   the staging and final paths, and `ask_above`: past that many bytes of
+#'   large downloads the installer stops first (`ask_before_install()`).
+#'   `Inf`, the default, as for `ember::run()`, never stops.
 #' The installer restores into the staging folder, writes the manifest
 #' (computing exports: see the script), then renames staging to `path`.
 #'
 #' `r` isn't a parameter: it is always this process's own `r_info()`,
 #' since whoever calls `installer_command()` is running on the R the
 #' library must match.
-installer_command <- function(lock, repos, path, cache = cache_dir(), github = "https://api.github.com") {
+installer_command <- function(lock, repos, path, cache = cache_dir(), github = "https://api.github.com",
+                              ask_above = Inf) {
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
   # `tempfile()`'s own unique suffix, not `sample()`: this runs in the
   # server process, and `sample()` would perturb its `.Random.seed` on
@@ -858,7 +984,7 @@ installer_command <- function(lock, repos, path, cache = cache_dir(), github = "
   # untouched).
   staging <- paste0(path, ".staging-", Sys.getpid(), "-", basename(tempfile()))
   plan <- list(lock_lines = format_lock_lines(lock), repos = repos, r = r_info(),
-              staging = staging, path = path, cache = cache, github = github)
+              staging = staging, path = path, cache = cache, github = github, ask_above = ask_above)
   plan_path <- tempfile("ember-install-plan-", fileext = ".rds")
   saveRDS(plan, plan_path)
 

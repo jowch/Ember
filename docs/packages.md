@@ -176,6 +176,7 @@ One process-wide table, `jobs`, lets two sessions that want the same index or li
 - `run` and `clean`
 - `ember_repos` and `cache_dir`, plus `repos`/`cache` arguments to `open_notebook`
 - `preview_update` in increment 3
+- `approve_install`, for a large download (#37)
 
 Behind that sit detection, resolution, index caching, library naming, installs, waiting cells, the worker library switch, restarts, exports for the graph, the missing-package fix and cleanup. No caller ever asks for an install or a resolution: they edit code and run cells, as in Pluto.
 
@@ -206,7 +207,7 @@ Behind that sit detection, resolution, index caching, library naming, installs, 
    - Bioconductor (`bioc_version`, its index keys, the date-window warning): built, see [Bioconductor](#bioconductor)
    - `[sources]` GitHub as one-row indexes: built, see [GitHub sources](#github-sources)
    - `[sources]` r-universe the same way: built, see [r-universe sources](#r-universe-sources)
-   - the install plan job: download size and consent
+   - asking before a large download: built for Bioconductor's annotation and experiment-data packages, see [Large downloads](#large-downloads) (#37). A notice that doesn't stop the install (#19) is not built
    - compiler and system-library checks: built, see [Install checks](#install-checks)
    - old snapshot dates that build from source on a newer R: explained when the build fails, see [Install checks](#install-checks); saying so before the install waits for the install plan
    - disk use: built. The Packages tab shows the libraries', the cache's and the indexes' disk use for all notebooks, from one `du` run so a hard-linked file counts once (`disk_use()`); without `du` (Windows) it sums file sizes and says the libraries' figure includes shared files. (#38)
@@ -214,11 +215,42 @@ Behind that sit detection, resolution, index caching, library naming, installs, 
    - R minor version change with a Bioconductor pin: built, see [Bioconductor](#bioconductor)
 3. **Release dates:** built. `preview_update()` updates one package or pins it to an older version: CRAN's own index of its files gives the date (`cran_release_table()`), checked against that day's snapshot, and the increment-1 preview shows what changes. The Packages tab has no control for it yet (#23).
 
+### Large downloads
+
+Built (#37). design.md's "Large installs ask first": an install that would
+download more than `options(ember.ask_above)` bytes (500 MB by default,
+`Inf` never asks) stops before downloading anything and waits for the
+user's OK.
+
+- **What's counted.** Bioconductor's annotation and experiment-data
+  packages in the lock that renv's cache doesn't hold for this R
+  (`large_downloads()`). Those are the large ones: `org.Hs.eg.db`,
+  `BSgenome.*` and the like run from hundreds of MB to several GB. CRAN's
+  and Bioconductor's software packages are kept under 5 MB by those
+  repositories' rules, and a GitHub package is one repository's source, so
+  neither is counted. The size is the source tarball's: a HEAD request's
+  Content-Length, after one read of each data repository's index. None of
+  the package indexes carries a size.
+- **Where it stops.** The installer (and the fake one) measures after the
+  compiler check and before renv runs. Above the threshold it writes one
+  `EMBER-DOWNLOAD <package> <version> <bytes>` line per package and exits
+  with status 3. The shell turns that into `ev_install_done(download =)`,
+  and the target library goes to `"asking"`: not failed, no problem row.
+  Cells that use the packages wait, as for any install.
+- **The OK.** The Packages tab opens with a card: "This install downloads
+  2.1 GB", the large packages with their sizes, and Install
+  (`ember_approve_install`). From R and for agents, `package_status(nb)`
+  shows `library$status` `"asking"` and `library$download`, and
+  `approve_install(nb)` says yes. The target goes back to `"missing"` with
+  `approved`, and the install runs with no limit. Running cells again
+  isn't an OK. To say no, remove the package from the code.
+- **`ember::run()`** never asks: there may be nobody to answer.
+
 ### Bioconductor
 
 Built from increment 2. Resolution, the lock, the pin and the install's
-repositories; the install plan (download size and consent, compilers) is
-not.
+repositories. Asking before a large download is in
+[Large downloads](#large-downloads).
 
 - **Three repositories per release.** Bioconductor splits a release into
   software (`bioc`), annotation data (`data/annotation`: `GO.db`,
@@ -390,9 +422,9 @@ what was missing.
   Not built: saying so before the install. It is cheap to detect (one
   request on Linux with Package Manager; on macOS and Windows a second
   read of the binary index renv reads anyway), but it shouldn't stop the
-  install, since pure R packages build fine, and there is nowhere yet to
-  show a notice that doesn't stop it: that is the install plan's consent
-  step, which isn't built.
+  install, since pure R packages build fine. The card for a large download
+  ([Large downloads](#large-downloads)) shows only when an install stops,
+  so a notice that doesn't stop it still has nowhere to go (#19).
 - **A compiler missing during a build.** A build that fails because make
   or configure can't find the compiler (`gcc: No such file or directory`,
   `no acceptable C compiler`, `xcrun: error: invalid active developer

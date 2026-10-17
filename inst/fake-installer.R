@@ -25,6 +25,9 @@ main <- function(plan_path) {
   installed <- ember:::lock_versions(lock)
   total <- length(installed)
 
+  # The same stop before a large download as the real installer's.
+  if (ember:::ask_before_install(plan, lock)) quit(status = 3L, save = "no")
+
   dir.create(plan$staging, recursive = TRUE, showWarnings = FALSE)
 
   cat(sprintf("EMBER-PROGRESS 0 %d - restore\n", total))

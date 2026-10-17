@@ -980,8 +980,8 @@ CRAN-only notebook carries no Bioconductor pin and no tie to an R version.
 
 **Large installs ask first.** Annotation and genome packages
 (`org.Hs.eg.db`, `BSgenome.*`) run from hundreds of MB to several GB. Above a
-size threshold the engine shows the download size and waits for the user
-before installing.
+size threshold (500 MB) the engine shows the download size and waits for the
+user before installing (built, #37: packages.md, "Large downloads").
 
 **Installs** link from a shared cache into a per-notebook library, so a
 second notebook with the same packages installs in seconds. A library is
