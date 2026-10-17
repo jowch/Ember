@@ -19,7 +19,7 @@
 # cells). Where that comes from work done once per cell, a test counts the
 # calls instead (test-pluto-state.R); bench/ looks for the rest, by
 # running these fixtures on a pull request and on its base branch on one
-# machine, and flags only slowdowns over 25%.
+# machine, and flags only slowdowns over 20%.
 
 #' Seconds for `inner` calls of `f()`.
 time_calls <- function(f, inner = 1L) {

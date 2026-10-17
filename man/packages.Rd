@@ -42,12 +42,13 @@ set_date(nb, date)
 run(path, repos = ember_repos(), cache = cache_dir(), echo = TRUE)
 
 clean(max_age = 60, cache = TRUE, dry_run = FALSE, dir = cache_dir(),
-      now = Sys.time())
+      now = Sys.time(), keep = active_libraries$paths, indexes = TRUE)
 
 ember_repos(cran = "https://packagemanager.posit.co/cran",
             bioc = "https://packagemanager.posit.co/bioconductor",
             bioc_config = "https://bioconductor.org/config.yaml",
             github = "https://api.github.com",
+            universe = "https://\%s.r-universe.dev",
             cran_meta = "https://cloud.r-project.org/src/contrib/Meta")
 
 cache_dir()
@@ -63,7 +64,8 @@ update it, older to pin it back. \code{NULL} is CRAN's newest.}
 (\code{"user/repo"} reads as the same, and so does a github.com link to the
 repository or to a branch, tag or commit's page,
 \code{".../tree/<ref>"}, \code{".../commit/<sha>"},
-\code{".../releases/tag/<tag>"}).}
+\code{".../releases/tag/<tag>"}); or, for an r-universe, \code{"universe:name"} or a
+link to the universe.}
 \item{date}{A date (anything \code{as.Date()} accepts). \code{preview_date(nb,
 Sys.Date())} is "update all".}
 \item{wait}{\code{TRUE} blocks until the preview is ready (or failed) or
@@ -91,6 +93,10 @@ anything.}
 \item{dir}{The cache directory \code{clean()} operates on.}
 \item{now}{The time \code{clean()} measures ages against; a parameter mainly
 for tests.}
+\item{keep}{Library paths \code{clean()} never deletes, however old. The default is
+every library an open session in this process is using.}
+\item{indexes}{\code{TRUE} also deletes cached index files not read for
+\code{max_age} days.}
 \item{cran, bioc}{Base repository URLs (no date), for \code{ember_repos()}. The
 defaults are the public Posit Package Manager; an institution's own
 Package Manager, or a \code{file://} folder laid out the same way, can
@@ -104,6 +110,9 @@ lookup off, and with it Bioconductor.}
 for \code{ember_repos()}: GitHub's own, a GitHub Enterprise server's
 (\code{https://github.example.org/api/v3}), or a \code{file://} folder laid out
 the same way. \code{GITHUB_PAT} (or \code{GITHUB_TOKEN}) is sent when set.}
+\item{universe}{Where \code{[sources]} r-universe packages come from, for
+\code{ember_repos()}: a URL with \code{\%s} where the universe's name goes,
+r-universe's own by default, or a \code{file://} folder laid out the same way.}
 \item{cran_meta}{Where CRAN's own index of its files is, for \code{ember_repos()}:
 the folder holding \code{archive.rds} and \code{current.rds}, which give each
 version's release date for \code{preview_update()}. Kept in \code{cache} for a day.}
@@ -144,8 +153,9 @@ nothing): edit the code instead.
 \code{ember_op} the same way. They set or drop the package's entry in the
 header's \code{[sources]}. A package with an entry comes from it, never from
 CRAN or Bioconductor; the lock records the commit the entry resolved to
-(\code{github:user/repo@<sha>}), and that commit stays, through date moves
-too, until the entry changes. Its dependencies resolve from CRAN and
+(\code{github:user/repo@<sha>}, or for an r-universe its build's git commit),
+and that commit stays, through date moves back too, until the entry
+changes; moving the date forward takes a branch's or a universe's latest. Its dependencies resolve from CRAN and
 Bioconductor at the notebook's date as usual; one that is itself only on
 GitHub needs its own entry.
 

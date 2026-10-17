@@ -10,7 +10,7 @@
 # the median over rounds. Exits 1 when any case is more than THRESHOLD
 # slower on head.
 
-THRESHOLD <- 1.25
+THRESHOLD <- 1.20
 
 args <- commandArgs(trailingOnly = TRUE)
 libs <- c(base = args[[1]], head = args[[3]])

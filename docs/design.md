@@ -35,7 +35,8 @@ repository depends on them.
   runs.
 - **`Rscript notebook.R` gives the notebook's results.** Running the file top
   to bottom does what running every cell in the notebook does, given the
-  same package versions (`ember::run()` supplies them from the lock). So
+  same package versions (`ember::run()` supplies them from the lock) and
+  every interactive input at its default (see [inputs.md](inputs.md)). So
   cells run in the global environment, as a script's code does, not in a new
   environment per run as Pluto's cells run in a new module: `source()`,
   `<<-`, `data()` and S4 classes all write to the global environment.
@@ -116,7 +117,7 @@ repository depends on them.
   needs building from source and explains what to install; it doesn't install
   compilers itself.
 - **Interactive inputs** (sliders, dropdowns and the like, Pluto's `@bind`)
-  are in scope. Their design comes later.
+  are in scope. The proposed design is in [inputs.md](inputs.md).
 - **No script importer for now.** Converting existing `.R` and `.Rmd` files
   into notebooks may come later.
 
@@ -387,7 +388,9 @@ the rerun the dropped edge misses.
   on a cell that defines `` `r<-` `` (a function or a generic) and on the
   cells that define methods of it. A nested target reads every setter and
   the getters inside it (`names(x)[i] <- v` reads `` `[<-` ``,
-  `` `names<-` `` and `names`). `$` and `@` read neither, as below.
+  `` `names<-` `` and `names`). `x$a <- v` reads `` `$<-` `` (and
+  `$` when nested), so a `` `$<-.rec` `` method orders before it, and
+  `x@a <- v` reads `` `@<-` `` the same way.
 - **Many cells, one generic.** Any number of cells may add methods to one
   generic. The same pair in two cells (`print.foo` in one,
   `registerS3method("print", "foo", …)` in another, or two
@@ -423,10 +426,19 @@ the rerun the dropped edge misses.
   removed, disabled, rerun or failed), it removes a class with
   `removeClass()`: dropping the binding alone leaves the class in the
   methods package's cache, and `new("Circle")` would go on working.
-- **Not covered yet:** group generics (`Ops.money`, `Math.interval`), `$`
-  methods (the walker doesn't read `$` as a call), and further class
-  readers (`slotNames()`, `getSlots()`, `extends()`, `isVirtualClass()`,
-  the signatures of `existsMethod()`, `getMethod()`, `selectMethod()`).
+- **Group generics.** A method of a group generic (`Ops.money`,
+  `Math.interval`, `setMethod("Arith", …)`) is read through any member of
+  the group (`?groupGeneric`, `?S4groupGeneric`): `a + b` reads
+  `Ops.money` and `Arith`'s methods, `sqrt(a)` reads `Math`'s. The table
+  is in `R/rules.R`.
+- **`$` and `@` methods.** `x$a` reads `$` as `x[1]` reads `[`, so a
+  cell using `$` depends on the cells that define `` `$.rec` ``. `@` is
+  an S3 generic too since R 4.3 (S7 uses it), so `x@a` reads `@`. The
+  field or slot name is never read.
+- **More class readers.** `slotNames()`, `getSlots()`, `extends()`,
+  `isVirtualClass()` and the signatures of `existsMethod()`,
+  `hasMethod()`, `getMethod()` and `selectMethod()` read a class named as
+  a string, like `new()`.
 
 ### Formulas
 
@@ -761,9 +773,10 @@ rest:
    translated message gets no offer. The engine
    never installs such a package by itself.
 2. Resolve each against CRAN and Bioconductor at the notebook's snapshot
-   date. GitHub packages can't be inferred; the user records them in the
-   header's `[sources]` as `github:user/repo`, and the Packages tab offers
-   to add one on a name that isn't found.
+   date. GitHub and r-universe packages can't be inferred; the user records
+   them in the header's `[sources]` as `github:user/repo` or
+   `universe:name`, and the Packages tab offers to add one on a name that
+   isn't found.
 3. Update the lock and install into the notebook's library in a subprocess.
    The worker restarts only if a package it has already loaded changed
    version; a new package is just loaded.
@@ -780,8 +793,9 @@ not. R packages declare only minimum versions (`rlang (>= 1.1.0)`), never
 upper bounds, so this is the strictest consistency R's metadata allows, and
 Ember enforces it: the lock never mixes CRAN dates. With a Bioconductor pin,
 the rule is one CRAN date plus one Bioconductor release, whose packages are
-already consistent with each other. GitHub packages have no date; they sit
-outside the rule and are marked unchecked.
+already consistent with each other. GitHub and r-universe packages have no
+date; they sit outside the rule and are marked unchecked. The lock records
+the git commit for both (an r-universe serves only its latest build).
 
 - **Adding a package** resolves it at the notebook's date, with its
   dependencies. On open, packages already in the lock install at exactly the
@@ -819,7 +833,7 @@ some date), but they are much stronger than minimum versions. Moving the date
 can move many packages when a notebook is old; the preview shows it.
 
 **The lock in the file** is one line per package: name, version and source
-(`CRAN`, `Bioc`, or a GitHub commit). Ember converts it to an `renv.lock`
+(`CRAN`, `Bioc`, a GitHub commit, or an r-universe build and its commit). Ember converts it to an `renv.lock`
 when installing. Measured: `renv.lock` runs to about 38 lines per
 package (2201 lines for 58 packages) and `rv.lock` to about 9; either
 conflicts when two people add packages on different branches, and one line
@@ -943,6 +957,20 @@ nobody is watching; a program that downloads R must not quarantine it, or
 must clear the flag (`xattr -dr com.apple.quarantine`). `capabilities()`
 without arguments warns about X11 on Macs without XQuartz; the worker doesn't
 call it.
+
+Measured with rig 0.11.0 user mode on Windows 10 (#49), from an account
+without admin rights: `rig add --user release` installs R into
+`%APPDATA%\rig\data\r\<version>`, and `rig add --user rtools` installs
+Rtools into `%APPDATA%\rig\data\rtools\<version>` and sets `RTOOLS45_HOME`
+for the user. Neither goes on the PATH. A copy of the R tree runs from its
+own `bin\Rscript.exe`, with PNG, Cairo and HTTPS working, and builds a
+package with compiled code from source. CRAN's installers are signed, but
+the files they install aren't, and rig's downloads carry no "downloaded
+from the internet" mark, so nothing asks before R first runs. Rtools' gcc
+is on the PATH only inside `R CMD` (R's Rcmd_environ), so the compiler
+check asks `R CMD` (install-checks.R's `has_compiler()`); it looked on the
+installer's own PATH, found no gcc, and stopped every source build with
+"Install Rtools" on a machine that had it.
 
 **Compilers.** Posit Package Manager serves binaries for macOS, Windows and
 common Linux systems, including Bioconductor software packages since
@@ -1153,7 +1181,8 @@ HTML export (`/notebookexport`), which Endeavor uses.
 
 **Interactive inputs.** Pluto's frontend already has the mechanism (bonds:
 the page reports an input's value, the server sets a variable and reruns its
-dependents). Ember keeps it; the R-side API is to be designed.
+dependents). Ember keeps it; the R-side API is proposed in
+[inputs.md](inputs.md).
 
 **Look distinct:** own colours, fonts and layout. Programs that inject
 scripts into the page (Endeavor does) rely on the DOM hooks Pluto's page has
@@ -1226,8 +1255,9 @@ run), and the snapshot has no stale state.
    the server and worker run on Linux in CI. The server and worker were run
    on Windows 10 in 2026-10, started both with a console and without one:
    interrupts needed a way of their own there (#48, see [Running
-   cells](#running-cells)).
-   Still to run: rig on Windows (#49). Whether any package overwrites a
+   cells](#running-cells)). Rig's user mode was run on Windows in 2026-10
+   too (#49, see [Package environments](#package-environments)). Whether any
+   package overwrites a
    setting the notebook already set (#61) was run on Linux in 2026-10: see
    [Global settings](#running-cells).
    - Server and worker: httpuv serving the UI while a worker runs a long

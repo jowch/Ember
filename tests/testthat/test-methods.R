@@ -157,6 +157,66 @@ test_that("an operator method feeds every cell using the operator", {
   expect_true(has_edge(g, "u", "m", "+", "method"))
 })
 
+test_that("a group generic's method feeds every cell using a member", {
+  g <- notebook_graph(c(m = "Ops.money <- function(e1, e2) e1",
+                        u = "total <- a + b",
+                        v = "a == b",
+                        w = "sqrt(a)"))
+  expect_true(has_edge(g, "u", "m", "Ops", "method"))
+  expect_true(has_edge(g, "v", "m", "Ops", "method"))
+  expect_false(any(g$edges$from == "w"))   # sqrt is Math, not Ops
+  g <- notebook_graph(c(m = "Math.interval <- function(x, ...) x",
+                        u = "y <- sqrt(a)",
+                        s = "Summary.bag <- function(..., na.rm = FALSE) 1",
+                        v = "max(b)"))
+  expect_true(has_edge(g, "u", "m", "Math", "method"))
+  expect_true(has_edge(g, "v", "s", "Summary", "method"))
+})
+
+test_that("an S4 group method feeds only its group's members", {
+  g <- notebook_graph(c(
+    cls = "setClass('M', representation(v = 'numeric'))",
+    m   = "setMethod('Arith', signature('M', 'M'), function(e1, e2) e1)",
+    u   = "x * y",
+    w   = "x < y"
+  ))
+  expect_true(has_edge(g, "u", "m", "Arith", "method"))
+  expect_false(any(g$edges$from == "w"))   # < is Compare
+})
+
+test_that("$ and $<- methods feed the cells that use $", {
+  g <- notebook_graph(c(m = "`$.rec` <- function(x, name) 1",
+                        u = "z <- r$a",
+                        v = "r[['a']]"))
+  expect_true(has_edge(g, "u", "m", "$", "method"))
+  expect_false(any(g$edges$from == "v"))
+  g <- notebook_graph(c(m = "`$<-.rec` <- function(x, name, value) x",
+                        u = "r$a <- 1"))
+  expect_true(has_edge(g, "u", "m", "$<-", "method"))
+})
+
+test_that("@ and @<- methods feed the cells that use @ (an S3 generic since R 4.3)", {
+  g <- notebook_graph(c(m = "`@.rec` <- function(object, name) 1",
+                        n = "`@<-.rec` <- function(object, name, value) object",
+                        u = "z <- r@a",
+                        v = "r@a <- 1"))
+  expect_true(has_edge(g, "u", "m", "@", "method"))
+  expect_true(has_edge(g, "v", "n", "@<-", "method"))
+})
+
+test_that("round, signif and %*% methods feed their callers", {
+  # Members of Math and matrixOps that are generics on their own too.
+  g <- notebook_graph(c(r = "round.money <- function(x, digits = 0) x",
+                        s = "signif.money <- function(x, digits = 6) x",
+                        m = "`%*%.mat` <- function(x, y) x",
+                        u = "round(a)",
+                        v = "signif(a)",
+                        w = "a %*% b"))
+  expect_true(has_edge(g, "u", "r", "round", "method"))
+  expect_true(has_edge(g, "v", "s", "signif", "method"))
+  expect_true(has_edge(g, "w", "m", "%*%", "method"))
+})
+
 test_that("two cells that each define a print method and call print() form no cycle", {
   g <- notebook_graph(c(
     a = "print.foo <- function(x, ...) cat('foo'); print(structure(1, class = 'foo'))",
@@ -402,4 +462,22 @@ test_that("rerunning one registerS3method cell keeps another cell's method on a 
   run_cells(nb, "A", wait = TRUE, timeout = 30)
   run_cells(nb, "U", wait = TRUE, timeout = 30)
   expect_equal(snap_view(notebook_snapshot(nb), "U")$output$text, "[1] 11")
+})
+
+test_that("editing a group method reruns the cell using its operator", {
+  cells <- list(S = cell(""),
+                M = cell("Ops.money <- function(e1, e2) 'old'"),
+                O = cell("a <- structure(1, class = 'money')"),
+                P = cell("a + a"))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, wait = TRUE, timeout = 20)
+  expect_match(snap_view(notebook_snapshot(nb), "P")$output$text, "old")
+
+  edit_notebook(nb, set_code("M", "Ops.money <- function(e1, e2) 'new'"))
+  res <- run_cells(nb, "M", wait = TRUE, timeout = 20)
+
+  expect_false(res$timed_out)
+  expect_match(snap_view(notebook_snapshot(nb), "P")$output$text, "new")
 })
