@@ -1408,6 +1408,13 @@ test_that("a failed Bioconductor index leaves the name not found, says why, and 
   expect_true("DESeq2" %in% probs$package[probs$kind == "not_found"])
   expect_true(any(probs$kind == "index_unavailable" & grepl("network down", probs$message)))
   expect_equal(effect_types(r), character())
+  # The page doesn't call it "not found in any repository": it may be in
+  # the index that failed (#264).
+  row <- packages_view(r$state)$packages
+  row <- row[row$name == "DESeq2", ]
+  expect_equal(row$status, "lookup_failed")
+  expect_match(row$message, "couldn't look in Bioconductor (the package index bioc/2026-09-01/3.23 could not be fetched: network down)",
+               fixed = TRUE)
 
   r2 <- drive(r$state, ev_apply(list(op_set_code("S", "1 + 1")), at(4)))
   expect_equal(effect_types(r2), character())
@@ -1420,6 +1427,23 @@ test_that("a failed Bioconductor index leaves the name not found, says why, and 
   r4 <- drive(r2$state, ev_apply(list(op_set_code("A", "library(dplyr)")), at(5)))
   expect_false("fetch_index" %in% effect_types(r4))
   expect_equal(r4$state$packages$resolved_for, "dplyr")
+})
+
+test_that("running again fetches a failed Bioconductor index and resolves the name it held (#264)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46))
+  r <- open_with_cran(s)
+  for (kind in names(bioc_kinds)) {
+    r <- drive(r$state, ev_index_failed(repo_key(kind, "2026-09-01", "3.23"), "network down", at(3)))
+  }
+  r <- drive(r$state, ev_run(NULL, at(4)))
+  fetched <- Filter(function(e) identical(e$type, "fetch_index"), r$effects)
+  expect_setequal(vapply(fetched, function(e) e$key, character(1)),
+                  c("bioc/2026-09-01/3.23", "bioc-ann/2026-09-01/3.23", "bioc-exp/2026-09-01/3.23"))
+  r <- deliver_bioc(r$state, t = 5)
+  expect_true("DESeq2" %in% r$state$file$lock$entries$name)
+  expect_false(any(r$state$packages$problems$kind %in% c("not_found", "index_unavailable")))
+  expect_equal(packages_view(r$state)$packages$status[packages_view(r$state)$packages$name == "DESeq2"],
+               "missing")
 })
 
 test_that("a reopened notebook with a Bioc lock fetches Bioconductor's indexes when the wanted set changes, not not_in_index (88)", {
@@ -1552,6 +1576,8 @@ test_that("with no release list at all, Bioconductor names are not found and the
   expect_equal(view$problems$message[view$problems$kind == "bioc_releases_unavailable"],
                paste("Bioconductor packages can't be resolved:", msg))
   expect_false("bioc_unavailable" %in% view$problems$kind)
+  expect_equal(view$packages$status[view$packages$name == "DESeq2"], "lookup_failed")
+  expect_match(view$packages$message[view$packages$name == "DESeq2"], msg, fixed = TRUE)
 
   r <- drive(r$state, ev_run(NULL, at(4)))
   expect_true("fetch_bioc_config" %in% effect_types(r))

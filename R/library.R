@@ -180,12 +180,46 @@ fetch_index_main <- function(key, url, path) {
     stop("ember: ", key, " isn't published: ", url, " has no index for that date (404)", call. = FALSE)
   }
   if (!ok) stop("ember: could not fetch the index for ", key, " from ", url, call. = FALSE)
+  # `read.dcf()` reads a cut-off PACKAGES.gz as far as it goes, silently,
+  # and the parse would be cached for good: the packages after the cut
+  # would be "not found" in every session (#264).
+  if (identical(name, "PACKAGES.gz") && !gz_complete(tmp_pkgs)) {
+    stop("ember: the index for ", key, " from ", url, " arrived incomplete", call. = FALSE)
+  }
 
   idx <- read_repo_index(tmp_pkgs, key, index_label_of_key(key))
   tmp_rds <- paste0(path, ".tmp-", Sys.getpid())
   saveRDS(idx, tmp_rds)
   if (!file.rename(tmp_rds, path)) unlink(tmp_rds)
   invisible(NULL)
+}
+
+#' Whether `path` is a whole gzip file: it starts with gzip's magic bytes,
+#' and the length gzip's trailer records (its last four bytes, modulo
+#' 2^32) is what it decompresses to. A file cut off anywhere fails the
+#' second test, except by a 1 in 2^32 chance; a page that isn't gzip (an
+#' error page sent with status 200) fails the first. A file of several
+#' gzip members is checked against its last one only, and fails: no
+#' repository index Ember reads is written that way.
+gz_complete <- function(path) {
+  size <- file.size(path)
+  if (is.na(size) || size < 18) return(FALSE)
+  isTRUE(tryCatch({
+    con <- file(path, "rb")
+    magic <- readBin(con, "raw", 2)
+    seek(con, size - 4)
+    recorded <- readBin(con, "integer", 1, size = 4, endian = "little")
+    close(con)
+    con <- gzfile(path, "rb")
+    on.exit(close(con))
+    n <- 0
+    repeat {
+      chunk <- readBin(con, "raw", 1048576)
+      if (length(chunk) == 0) break
+      n <- n + length(chunk)
+    }
+    identical(magic, as.raw(c(0x1f, 0x8b))) && n %% 2^32 == recorded %% 2^32
+  }, error = function(e) FALSE, warning = function(w) FALSE))
 }
 
 #' Whether the repository answered that it has no index at `base` (a dated

@@ -1739,7 +1739,8 @@ packages_named_in <- function(state, msg) {
 #' (every other row of a library that failed: the staging folder is never
 #' renamed into place, so nothing in that install actually landed, even
 #' the packages that built fine), `"not_found"` (from `problems`, `version`
-#' `NA`), and for a package with a `[sources]` entry, `"looking_up"` and
+#' `NA`), `"lookup_failed"` (a `not_found` name while Bioconductor couldn't
+#' be looked in, so it may be there; its message says why), and for a package with a `[sources]` entry, `"looking_up"` and
 #' `"source_failed"` (`source_rows()`, which also adds `spec`). `direct` is
 #' `TRUE` for wanted names. `plan` is what running would
 #' do; the banner's "installs 3 packages" (a `"not_installed"` row counts
@@ -1771,7 +1772,8 @@ empty_packages_df <- function() {
 #'   `source_problems()`) carries that problem's message;
 #' * a wanted package with a readable spec, its GitHub lookup still
 #'   running, is `"looking_up"`, even while the last resolution's stale
-#'   `not_found` row for it is still in `problems`;
+#'   `not_found` row for it is still in `problems` (shown as `not_found` or
+#'   `lookup_failed`);
 #' * a wanted package with a spec that is neither locked nor `not_found`
 #'   would have no row at all: it gets one, `"looking_up"` while its
 #'   lookup (or, with no problem naming it yet, any index) is being
@@ -1797,7 +1799,7 @@ source_rows <- function(state, wanted, rows) {
 
   hit <- match(rows$name, probs$package)
   rows$message[!is.na(hit)] <- probs$message[hit[!is.na(hit)]]
-  now_looking <- rows$status == "not_found" & rows$name %in% looking_up
+  now_looking <- rows$status %in% c("not_found", "lookup_failed") & rows$name %in% looking_up
   rows$status[now_looking] <- "looking_up"
   rows$message[now_looking] <- NA_character_
 
@@ -1956,12 +1958,34 @@ packages_view <- function(state) {
               message = NA_character_, stringsAsFactors = FALSE)
   }
 
+  problems <- p$problems
+  gap <- releases_gap_message(p, state$file$header$snapshot)
+  # A name CRAN lacks, resolved while Bioconductor couldn't be looked in
+  # (an index of its failed, or no release because the release list
+  # couldn't be fetched), may well be there: it is `"lookup_failed"`,
+  # saying why, rather than "not found in any repository" (#264). Running
+  # again fetches what failed and resolves again (`reduce_run()`). With the
+  # release lookup turned off (`ember_repos(bioc_config = NA)`) there is
+  # nothing to retry, and the name stays `"not_found"`.
+  unlooked <- character()
+  lookup_on <- !is.null(state$options$repos$bioc_config) && !is.na(state$options$repos$bioc_config)
+  if (!is.null(problems) && nrow(problems) > 0) {
+    unlooked <- problems$message[problems$kind == "index_unavailable" & is.na(problems$package)]
+    if (lookup_on && !is.null(gap) && any(problems$kind == "bioc_unavailable")) unlooked <- c(unlooked, gap)
+  }
+  if (length(unlooked) > 0) {
+    nf <- problems$kind == "not_found"
+    problems$message[nf] <- sprintf(
+      "%s isn't on CRAN at this date, and Ember couldn't look in Bioconductor (%s); running again tries again",
+      problems$package[nf], unlooked[[1]])
+  }
   not_found_df <- empty_packages_df()
-  if (!is.null(p$problems) && nrow(p$problems) > 0) {
-    nf <- p$problems[!is.na(p$problems$kind) & p$problems$kind == "not_found", , drop = FALSE]
+  if (!is.null(problems) && nrow(problems) > 0) {
+    nf <- problems[!is.na(problems$kind) & problems$kind == "not_found", , drop = FALSE]
     if (nrow(nf) > 0) {
       not_found_df <- data.frame(name = nf$package, version = NA_character_, source = NA_character_,
-                                 direct = nf$package %in% wanted, status = "not_found",
+                                 direct = nf$package %in% wanted,
+                                 status = if (length(unlooked) > 0) "lookup_failed" else "not_found",
                                  message = nf$message, stringsAsFactors = FALSE)
     }
   }
@@ -1981,8 +2005,6 @@ packages_view <- function(state) {
   # unpinned notebook found no Bioconductor release (`bioc_unavailable`)
   # because the release list was missing or too old for its date, that is
   # the reason given; a CRAN-only or pinned notebook never gets the row.
-  problems <- p$problems
-  gap <- releases_gap_message(p, state$file$header$snapshot)
   if (!is.null(gap) && any(problems$kind == "bioc_unavailable")) {
     problems <- rbind(problems[problems$kind != "bioc_unavailable", , drop = FALSE],
                       package_problem("bioc_releases_unavailable", NA_character_,

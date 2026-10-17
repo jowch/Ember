@@ -134,6 +134,7 @@
     "t_ember_packages_status_missing": "missing",
     "t_ember_packages_status_failed": "failed",
     "t_ember_packages_status_not_found": "not found",
+    "t_ember_packages_status_lookup_failed": "couldn't look up",
     "t_ember_packages_status_not_installed": "not installed",
     "t_ember_packages_status_looking_up": "looking up",
     "t_ember_packages_status_source_failed": "source failed",

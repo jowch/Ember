@@ -735,6 +735,35 @@ test_that("a release-list fetch fails on a missing file and on a file with no re
   expect_false(file.exists(bioc_config_rds_path(other, cache)))
 })
 
+test_that("a cut-off PACKAGES.gz fails the fetch instead of caching half an index (#264)", {
+  dir <- tempfile("ember-index-test-")
+  contrib <- file.path(dir, "src", "contrib"); dir.create(contrib, recursive = TRUE)
+  text <- paste0("Package: p", sprintf("%04d", 1:2000), "\nVersion: 1.0\n\n", collapse = "")
+  con <- gzfile(file.path(contrib, "PACKAGES.gz"), "wb"); writeLines(text, con); close(con)
+  whole <- readBin(file.path(contrib, "PACKAGES.gz"), "raw", file.size(file.path(contrib, "PACKAGES.gz")))
+  expect_true(gz_complete(file.path(contrib, "PACKAGES.gz")))
+  url <- paste0("file://", normalizePath(dir))
+  path <- file.path(dir, "index.rds")
+  fetch_index_main("cran/2026-09-01", url, path)
+  expect_equal(length(readRDS(path)$name), 2000)
+
+  # Cut in the middle, and with only gzip's trailer missing: both read as
+  # far as they go with no error (at most a warning), so only the trailer
+  # check catches them.
+  for (cut in c(length(whole) %/% 2, length(whole) - 4)) {
+    unlink(path)
+    writeBin(whole[seq_len(cut)], file.path(contrib, "PACKAGES.gz"))
+    expect_gt(nrow(suppressWarnings(read.dcf(file.path(contrib, "PACKAGES.gz"), fields = "Package"))), 0)
+    expect_false(gz_complete(file.path(contrib, "PACKAGES.gz")))
+    expect_error(fetch_index_main("cran/2026-09-01", url, path), "arrived incomplete")
+    expect_false(file.exists(path))
+  }
+
+  # A page that isn't gzip at all, sent under the index's name.
+  writeLines("<html>Service Unavailable</html>", file.path(contrib, "PACKAGES.gz"))
+  expect_false(gz_complete(file.path(contrib, "PACKAGES.gz")))
+})
+
 test_that("clean_up() keeps the cache entries an install in progress links to (#128)", {
   skip_on_os("windows")  # symlinks
   d <- make_clean_up_cache()
