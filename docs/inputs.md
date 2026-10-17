@@ -51,8 +51,11 @@ comment. A function is how R users already meet inputs (Shiny's
 arguments.
 
 The cost is the package: a notebook with inputs needs `emberui` installed to
-run as a script. Ember detects and installs it like any other package, and
-locks it in the file, so `ember::run()` supplies it.
+run as a script. Once it is on CRAN, Ember detects, installs and locks it
+like any other package, so `ember::run()` supplies it. Until then, Ember
+can't find it by name (guessing a repository is not built,
+packages.md:515), so the notebook needs a `[sources]` entry; question 2
+covers this.
 
 ## What the user writes
 
@@ -67,21 +70,49 @@ Each function returns a plain R value (no class, no attributes), so `n * 2`,
 `if (show)` and `paste(title)` behave exactly as with a literal. The label
 defaults to the variable's name.
 
-**The binding rule.** A call is bound to a variable when it is the whole
-right-hand side of a top-level assignment in a cell: `name <- input_*(...)`,
-`name = input_*(...)`, or the same with `emberui::`. A cell may hold
-several. One definition per global already makes the name unique, so the
-name is the input's key, as in Pluto's `bonds[name]`.
+**The binding rule.** An input is bound to a variable when all of these
+hold:
 
-Any other call (inside a function, a loop, `round(input_slider(...))`)
-returns its default, as under `Rscript`, and its widget shows greyed with a
-note: "Assign this input to a name at the top of the cell to use it." No R
-warning, since plain R wouldn't give one.
+1. The call is the whole right-hand side of a top-level assignment in a
+   cell, written as such: `name <- input_*(...)`, `name = input_*(...)`, or
+   the same with `emberui::`. This is a check on the code, made by the
+   server from the cell's parse.
+2. When the cell runs, the input is reported by that call itself, not by a
+   function it calls. A user's own function named `input_slider` reports
+   nothing, so it doesn't bind; nor does a nested input
+   (`input_slider(1, input_number(10))` binds only the slider).
+3. Nothing else in the cell reads or redefines `name`.
+
+A cell may hold several. One definition per global already makes the name
+unique, so the name is the input's key, as in Pluto's `bonds[name]`.
+
+Any other input call returns its default, as under `Rscript`, and its
+widget shows greyed with a note naming the fix. A call inside a function, a
+loop or `round(...)` gets "Assign this input to a name at the top of the
+cell to use it." A binding broken by rule 3 gets "Read `n` in another
+cell." No R warning, since plain R wouldn't give one.
 
 Why so strict: Ember sets the variable without rerunning the cell. That is
-only the same as rerunning when the variable *is* the call's value. With
-`x <- round(input_slider(1, 10))`, setting `x` to the slider's value would
-skip `round()`.
+only the same as rerunning when the variable *is* the call's value and the
+rest of the cell doesn't depend on it. With `x <- round(input_slider(1, 10))`,
+setting `x` would skip `round()`. With
+
+```r
+n <- input_slider(10, 500, value = 100)
+m <- n * 2
+```
+
+setting `n` would leave `m` (and any printed value or plot in that cell) at
+the old `n`, silently stale. marimo refuses the same case with an error
+("Accessing the value of a UIElement in the cell that created it is not
+allowed", `marimo/_plugins/ui/_core/ui_element.py`); Ember can't raise one,
+since plain R doesn't, so it greys the widget instead.
+
+The alternative is to rerun the input's own cell on every change, with the
+hook giving back the new value. That makes every form work, but it reruns
+whatever sits next to the input on each step of a drag, and it redraws the
+widget while it is being dragged. Pluto and marimo both avoid that, and so
+does this design.
 
 **Inputs built from data.** Arguments are ordinary R, so
 
@@ -111,20 +142,27 @@ Each function checks its arguments, then returns `value`. That is all.
 - `input_slider(1, 10, value = 20)` is an error, in Ember and in `Rscript`
   alike.
 
-The same holds in an R console, RStudio, `source()` and knitr. Pluto does the
-same: every Pluto file that uses `@bind` starts with a fallback macro that,
-outside Pluto, gives the variable the widget's initial value.
+The same holds in an R console, RStudio, `source()` and knitr. Pluto is
+close: every Pluto file that uses `@bind` starts with a fallback macro that,
+outside Pluto, gives the variable the widget's initial value (or `missing`
+when the widget defines none and AbstractPlutoDingetjes isn't loaded).
 
 So `Rscript notebook.R` gives the results the notebook gives with every
-input at its default. design.md's "`Rscript notebook.R` gives the
-notebook's results" needs that qualifier; the PR that builds this adds it.
+input at its default. This PR adds that qualifier to design.md's
+"`Rscript notebook.R` gives the notebook's results".
 
-**How the package knows it is in Ember.** The worker installs a hook before
-it runs a cell. With the hook, an input function reports its spec (type and
-evaluated arguments) to the worker and returns the value the worker gives
-back. With no hook, it returns `value`. The package never imports Ember, and
-the worker loads nothing extra: the package is in the notebook's own library
-because the notebook calls it.
+**How the package knows it is in Ember.** The package keeps a small
+environment of its own (`.state`, inside its namespace; an environment there
+stays writable after the namespace is locked). The worker sets a hook
+function in it with `setHook(packageEvent("emberui", "onLoad"), ...)`, so
+the hook is in place whenever the notebook loads the package. With the
+hook, an input function reports its spec (type, evaluated arguments, and
+its own call, for binding rule 2) to the worker and returns the value the
+worker gives back. With no hook, it returns `value`. Nothing shows in
+`options()` or in the settings comparison, so user code can't see a
+difference. The package never imports Ember, and the worker loads nothing
+extra: the package is in the notebook's own library because the notebook
+calls it.
 
 ## How a value enters the graph
 
@@ -136,8 +174,11 @@ new is a way to change `n` without editing code.
 
 1. The page sends the new value (Pluto's `set_bond`, which Ember's
    frontend still has; `Editor.js:652`).
-2. The server checks the cell has run and still binds that name, and passes
-   the value to the worker.
+2. The server checks the cell has run, still binds that name, and is
+   neither stale nor edited since it ran, and passes the value to the
+   worker. While the cell is stale or has unrun edits, its widgets are
+   disabled, so a value checked against an old spec can't run dependents
+   as if it were current.
 3. The worker converts and checks it against the input's spec. A dropdown
    sends an index; the worker turns it into the R object in `choices`. A
    value the spec doesn't allow is refused and the page snaps back.
@@ -163,7 +204,16 @@ current value for the session. When the cell reruns, the hook gives the
 function that value if the new spec still allows it, so a dropdown of
 `levels(...)` keeps its choice when the data reloads. If the cell's code was
 edited, or the value is no longer allowed, the input goes back to its
-default. marimo always resets; this keeps more, see question 4.
+default. For a dropdown or radio, the kept value is the chosen element,
+compared with `identical()`, not its position, so a reload that reorders
+the levels keeps the same choice.
+
+This follows Pluto, whose page puts the old value back into a redrawn
+widget (`set_bound_elements_to_their_value`, Ember's `CellOutput.js:564`)
+and sends it as a first value, which the server applies if it differs.
+marimo always resets. One difference from Pluto: Pluto keeps the value even
+after the input's code is edited; Ember resets it, since editing the call
+usually means changing what the input should start at.
 
 **Before the cell has run** there is no widget. That includes safe preview,
 since a widget's arguments may need R to compute. Running a cell that reads
@@ -181,8 +231,10 @@ marimo. A notebook opens with every input at its default, which matches
 `Rscript`. This follows "the code in the file is the authority": a value
 saved beside the code would make the notebook and the script disagree.
 
-To keep a value, the user edits the default (`value = 250`). Question 5 asks
-whether the widget should offer to do that edit.
+To keep a value, the user edits the default (`value = 250`). A widget
+whose value differs from its default is marked, so the user can tell that
+`Rscript` would give different results. A "Make this the default" action,
+which writes the current value into the call, comes later.
 
 ## Widgets in the first version
 
@@ -204,8 +256,16 @@ id.
 - `choices` may be any vector or list. Names, if present, are what the
   widget shows (as in Shiny); the value is the element itself, not its
   label. PlutoUI's `Select` takes pairs for the same reason.
-- The `input_` prefix keeps clear of names R users already have attached:
-  `select()` is dplyr's and `text()` is base graphics'.
+- The `input_` prefix is decided by Ember's promise to match plain R.
+  Bare names would mask functions users already have: `text()` masks
+  `graphics::text`, which every session attaches, so after
+  `library(emberui)` the call `text(x, y, "a")` would return `"a"` and draw
+  nothing, a silently wrong plot. `select()` masks `dplyr::select` and
+  `MASS::select`, and `number()` masks `scales::number`.
+- bslib already uses the prefix (`input_switch`, `input_task_button`,
+  `input_dark_mode`, `input_code_editor`, `input_submit_textarea`). Later
+  widgets avoid those names, so Shiny users who attach both get no
+  masking.
 
 The package only describes inputs. Ember's frontend draws them, in Ember's
 theme, inside Pluto's `<bond>` element, so `Bond.js` handles values and
@@ -215,7 +275,7 @@ its own HTML; Ember's way keeps the package free of HTML and dependencies.
 **Later, not in the first version:** date, range slider, button and run
 button, file picker, forms that send several inputs at once (marimo's
 `form`, PlutoUI's `confirm`), combined inputs (`combine`, `mo.ui.array`),
-inputs inside markdown text, and third-party inputs (an htmlwidget that
+inputs inside markdown text, "Make this the default", and third-party inputs (an htmlwidget that
 reports a value, the way any Julia package can implement
 AbstractPlutoDingetjes' `Bonds`). A password input would also bring back
 Pluto's export check for visible passwords (#36).
@@ -263,10 +323,11 @@ R has no macros, so the binding comes from the assignment instead of from
 
 - **The inputs package:** six functions, the hook check, argument checks.
   Base R only. Tests run it with and without the hook.
-- **Worker:** install the hook; while evaluating a top-level
-  `name <- call`, match an input reported by that call to `name`; keep each
-  input's spec for the cell's current output (as display data is kept);
-  convert, check and assign a new value.
+- **Worker:** install the hook; for each binding the server found
+  (rules 1 and 3), set the expected call before evaluating that top-level
+  assignment, and bind an input only if the call it reports is identical
+  to it (rule 2); keep each input's spec for the cell's current output (as
+  display data is kept); convert, check and assign a new value.
 - **Engine:** `set_input()`; per-session input values, cleared when the
   notebook closes; run or mark stale the cells that read the name.
 - **Server projection:** emit `bonds` from the session's values, and
@@ -278,28 +339,22 @@ R has no macros, so the binding comes from the assignment instead of from
 
 ## Open questions
 
-Each is answerable in a word. My recommendation is marked.
+Two questions are open. The other choices are decided above: `input_*` names (matching plain R), keeping a value on
+rerun (Pluto), lazy mode marking dependents stale (design.md's definition
+of lazy, which marimo applies to inputs), and "Make this the default"
+coming later.
 
 1. **Package name.** `emberui` (recommended: PlutoUI's counterpart, short)
-   or `emberinputs`.
-2. **Where it ships.** CRAN (recommended) or r-universe only, like Ember.
-   Notebooks install packages from CRAN, Bioconductor or a GitHub source
-   in `[sources]` (`ember_repos()` in R/resolve.R); r-universe isn't one of
-   them. So r-universe only would mean every notebook with inputs carries
-   a `[sources]` entry, and `Rscript` users install it by hand. On CRAN it
-   installs like any package. Until CRAN accepts it, `[sources]` is the
-   stopgap either way.
-3. **Function names.** `input_slider()` style (recommended) or bare names
-   (`slider()`, `number()`, `checkbox()`, `text()`, `select()`, `radio()`).
-   Two of the bare names clash with functions R users have attached:
-   `text()` is base graphics' and `select()` is dplyr's, so attaching the
-   package after dplyr would mask `select()`.
-4. **When an input's cell reruns,** keep the value if it is still allowed
-   and the cell's code didn't change (recommended), or always reset, as
-   marimo does.
-5. **"Make this the default"** on a widget, which edits the call's `value`
-   to the current one. Later (recommended: the first version works without
-   it, and the edit needs care when `value` isn't a literal) or Now.
-6. **Lazy mode:** moving an input marks dependents stale (recommended: the
-   setting means the same thing for every change, as in marimo) or runs
-   them anyway.
+   or `emberinputs`. Neither is taken on CRAN.
+2. **Where it ships.** CRAN (recommended) or GitHub/r-universe only, like
+   Ember.
+   - *CRAN:* a notebook installs it like any package, and `Rscript` users
+     get it with `install.packages()`. The cost is upkeep: CRAN's checks
+     and policy changes need answering for as long as it is there. A
+     base-R package with no dependencies and no compiled code keeps that
+     small.
+   - *Not on CRAN:* notebooks can't install from r-universe (`ember_repos()`
+     in R/resolve.R knows CRAN, Bioconductor and GitHub sources), so Ember
+     would write a GitHub `[sources]` entry itself whenever it sees the
+     package, and `Rscript` users install it by hand.
+   - Either way, `[sources]` is the stopgap until a CRAN release.

@@ -35,7 +35,8 @@ repository depends on them.
   runs.
 - **`Rscript notebook.R` gives the notebook's results.** Running the file top
   to bottom does what running every cell in the notebook does, given the
-  same package versions (`ember::run()` supplies them from the lock). So
+  same package versions (`ember::run()` supplies them from the lock) and
+  every interactive input at its default (see [inputs.md](inputs.md)). So
   cells run in the global environment, as a script's code does, not in a new
   environment per run as Pluto's cells run in a new module: `source()`,
   `<<-`, `data()` and S4 classes all write to the global environment.
