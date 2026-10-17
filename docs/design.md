@@ -814,7 +814,8 @@ the lock. The shared cache is what grows, since it keeps every version ever
 installed. The package view shows disk use (libraries, cache and indexes,
 measured when the tab opens; built, #38) and a "Clean up…" button (built,
 #128) that frees space now: it deletes libraries no notebook open in this
-server uses and that weren't used in the last day (every Ember process
+server uses and that weren't used in the last 30 days (Jonathan's pick,
+half the startup sweep's 60; every Ember process
 touches its open notebooks' library markers hourly, and `ember::run()`
 touches its own, so a notebook open elsewhere stays fresh), then the cache
 entries no other library lists, except those made in the last day or

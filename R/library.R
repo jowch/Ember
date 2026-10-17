@@ -1033,11 +1033,13 @@ disk_use_command <- function(dir = cache_dir()) {
 }
 
 #' The Packages tab's clean-up button (#128): `clean()` with the rule
-#' "unused now", libraries no open notebook holds (`keep`) and not used
+#' "unused for 30 days", libraries no open notebook holds (`keep`) and not used
 #' in the last `max_age` days, then the renv cache entries no remaining
-#' library lists. The one-day default is a guard for notebooks open in
-#' another Ember process or run by `ember::run()`, which this process can't
-#' see: a worker touches its library's `ember-last-used` when it starts.
+#' library lists. `max_age` is 30 days (#128; the startup sweep uses 60).
+#' A notebook open in another Ember process or run by `ember::run()`,
+#' which this process can't see, keeps its marker fresh: a worker
+#' touches it when it starts, and each process touches its open
+#' libraries hourly (`touch_active_libraries()`).
 #' Indexes are left to the startup sweep. Returns `list(libraries, cache,
 #' bytes)`: how many libraries (staging folders included) and cache
 #' entries were, or with `dry_run` would be, deleted, and about how many
@@ -1045,7 +1047,7 @@ disk_use_command <- function(dir = cache_dir()) {
 #' the cache entries then the libraries, so a file a library links from a
 #' deleted cache entry counts once; without `du` it is `clean()`'s plain
 #' sum, which counts such a file twice.
-clean_up <- function(dir = cache_dir(), keep = character(), dry_run = TRUE, max_age = 1,
+clean_up <- function(dir = cache_dir(), keep = character(), dry_run = TRUE, max_age = 30,
                      du = Sys.which("du"), now = Sys.time()) {
   plan <- clean(max_age = max_age, cache = TRUE, dry_run = TRUE, dir = dir, now = now,
                 keep = keep, indexes = FALSE)
@@ -1076,7 +1078,7 @@ clean_up_main <- function(dir, keep, dry_run, now = Sys.time()) {
 #' The command that runs `clean_up()` for `dir`, keeping `keep`, like
 #' `disk_use_command()`. `now` (seconds since the epoch) is the time the
 #' rule is judged at: the deletion passes the preview's, so a library that
-#' turns a day old between the two isn't deleted unseen.
+#' turns 30 days old between the two isn't deleted unseen.
 clean_up_command <- function(dir = cache_dir(), keep = character(), dry_run = TRUE,
                              now = as.numeric(Sys.time())) {
   rscript <- file.path(R.home("bin"), "Rscript")

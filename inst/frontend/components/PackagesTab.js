@@ -488,7 +488,7 @@ export const format_bytes = (bytes, lang = getCurrentLanguage()) => {
  *
  * "Clean up…" (#128) frees space now. It first asks the server what it
  * would delete (`ember_clean_up`, a dry run: libraries no open notebook
- * holds and unused for a day, and the cache entries no other library
+ * holds and unused for 30 days, and the cache entries no other library
  * lists) and shows that with Delete and Cancel. Nothing is deleted until
  * Delete, and Delete judges at the preview's time. After the result the
  * button comes back.

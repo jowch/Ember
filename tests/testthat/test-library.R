@@ -536,8 +536,8 @@ test_that("clean(cache = TRUE) deletes only cache entries no manifest lists (66)
 # ---- clean_up(): the Packages tab's clean-up button (#128) --------------------
 
 # A cache dir with two cache entries, each 100 KB: `kept` is listed by an
-# open notebook's library, `stale` by a library last used 3 days ago.
-# A third library, used an hour ago, lists nothing.
+# open notebook's library, `stale` by a library last used 40 days ago.
+# A third library, used 10 days ago, lists nothing.
 make_clean_up_cache <- function() {
   root <- tempfile("ember-cache-")
   dir.create(root)
@@ -552,8 +552,8 @@ make_clean_up_cache <- function() {
   kept <- entry("pkgKept"); stale <- entry("pkgStale")
   list(root = root, kept_entry = kept, stale_entry = stale,
        open_lib = make_fake_library(root, "openkey", last_used_days_ago = 90, cache_entries = kept),
-       stale_lib = make_fake_library(root, "stalekey", last_used_days_ago = 3, cache_entries = stale),
-       recent_lib = make_fake_library(root, "recentkey", last_used_days_ago = 1 / 24))
+       stale_lib = make_fake_library(root, "stalekey", last_used_days_ago = 40, cache_entries = stale),
+       recent_lib = make_fake_library(root, "recentkey", last_used_days_ago = 10))
 }
 
 test_that("clean_up(dry_run = TRUE) counts what it would delete and deletes nothing (#128)", {
@@ -567,7 +567,7 @@ test_that("clean_up(dry_run = TRUE) counts what it would delete and deletes noth
   expect_true(all(dir.exists(c(d$open_lib, d$stale_lib, d$recent_lib, d$kept_entry, d$stale_entry))))
 })
 
-test_that("clean_up() deletes libraries no open notebook holds and unused for a day, then the cache entries only they listed (#128)", {
+test_that("clean_up() deletes libraries no open notebook holds and unused for 30 days, then the cache entries only they listed (#128)", {
   d <- make_clean_up_cache()
   on.exit(unlink(d$root, recursive = TRUE))
   done <- clean_up(d$root, keep = d$open_lib, dry_run = FALSE)
@@ -577,7 +577,7 @@ test_that("clean_up() deletes libraries no open notebook holds and unused for a 
   # The open notebook's library is kept however old, and so is its cache entry.
   expect_true(dir.exists(d$open_lib))
   expect_true(dir.exists(d$kept_entry))
-  # A library used in the last day may belong to a notebook open in
+  # A library used in the last 30 days may belong to a notebook open in
   # another Ember process, which this one can't see.
   expect_true(dir.exists(d$recent_lib))
 })
@@ -610,9 +610,9 @@ test_that("clean_up_command() runs clean_up() in a subprocess and prints JSON (#
   out <- jsonlite::fromJSON(res$stdout)
   expect_equal(c(out$libraries, out$cache), c(1, 1))
   expect_true(dir.exists(d$stale_lib))
-  # `now` reaches the subprocess: judged 2.5 days ago, nothing is old enough.
+  # `now` reaches the subprocess: judged 15 days ago, nothing is old enough.
   cmd <- clean_up_command(d$root, keep = d$open_lib, dry_run = TRUE,
-                          now = as.numeric(Sys.time()) - 2.5 * 86400)
+                          now = as.numeric(Sys.time()) - 15 * 86400)
   res <- processx::run(cmd$command, cmd$args, env = cmd$env, error_on_status = FALSE)
   expect_identical(res$status, 0L)
   expect_equal(jsonlite::fromJSON(res$stdout)$libraries, 0)
@@ -621,7 +621,7 @@ test_that("clean_up_command() runs clean_up() in a subprocess and prints JSON (#
 test_that("the library heartbeat keeps open sessions' markers fresh, and stops with no session open (#128)", {
   root <- tempfile("ember-cache-")
   on.exit(unlink(root, recursive = TRUE))
-  lib <- make_fake_library(root, "openkey", last_used_days_ago = 2)
+  lib <- make_fake_library(root, "openkey", last_used_days_ago = 40)
   old <- active_libraries$paths
   on.exit(set_active_libraries(old), add = TRUE)
   set_active_libraries(lib)
@@ -739,9 +739,9 @@ test_that("clean_up() keeps the cache entries an install in progress links to (#
 test_that("clean_up() judged at an earlier time keeps a library that aged since (#128)", {
   d <- make_clean_up_cache()
   on.exit(unlink(d$root, recursive = TRUE))
-  # stale_lib was last used 3 days ago; judged as of 2.5 days ago it was
-  # used half a day before, so it stays, and so does its entry.
-  done <- clean_up(d$root, keep = d$open_lib, dry_run = FALSE, now = Sys.time() - 2.5 * 86400)
+  # stale_lib was last used 40 days ago; judged as of 15 days ago it was
+  # used 25 days before, so it stays, and so does its entry.
+  done <- clean_up(d$root, keep = d$open_lib, dry_run = FALSE, now = Sys.time() - 15 * 86400)
   expect_equal(done$libraries, 0)
   expect_true(dir.exists(d$stale_lib))
   expect_true(dir.exists(d$stale_entry))

@@ -154,7 +154,7 @@ library_heartbeat <- local({
 #' means "in use", not only "a worker started on it": a notebook left
 #' open for days in one Ember process keeps a fresh marker, and another
 #' process's clean-up (`clean_up()`, which skips libraries used in the
-#' last day, #128) never takes it.
+#' last 30 days, #128) never takes it.
 touch_active_libraries <- function() {
   for (p in active_libraries$paths) touch_library(p)
   invisible(NULL)

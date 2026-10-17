@@ -797,7 +797,7 @@ test_that("ember_clean_up counts first, and deletes only when asked with dry_run
   dir.create(lib, recursive = TRUE)
   saveRDS(list(cache_entries = entry), file.path(lib, "ember-library.rds"))
   file.create(file.path(lib, "ember-last-used"))
-  Sys.setFileTime(file.path(lib, "ember-last-used"), Sys.time() - 3 * 86400)
+  Sys.setFileTime(file.path(lib, "ember-last-used"), Sys.time() - 40 * 86400)
   nb <- open_notebook(path, cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
   server <- new_server("s", throttle = 0)
@@ -818,11 +818,11 @@ test_that("ember_clean_up counts first, and deletes only when asked with dry_run
   expect_true(dir.exists(entry))
   expect_true(is.numeric(plan$as_of))
 
-  # A deletion is judged at the preview's time: as of 2.5 days ago the
-  # library had been used half a day before, so nothing goes.
+  # A deletion is judged at the preview's time: as of 15 days ago the
+  # library had been used 25 days before, so nothing goes.
   ws$messages <- list()
   handle_message(server, ws, wire("ember_clean_up", notebook_id = id, dry_run = FALSE,
-                                  as_of = as.numeric(Sys.time()) - 2.5 * 86400))
+                                  as_of = as.numeric(Sys.time()) - 15 * 86400))
   replies <- await_reply(ws, "ember_clean_up")
   expect_equal(replies[[1]]$message$libraries, 0)
   expect_true(dir.exists(lib))
