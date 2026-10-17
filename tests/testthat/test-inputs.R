@@ -37,6 +37,9 @@ test_that("a name the rest of the cell reads or redefines is blocked, not bound 
   expect_identical(bound_names(input_bindings("n <- input_slider(1, 10)\nn <- 3"), "blocked"), "n")
   # A field named `n` isn't the variable.
   expect_identical(bound_names(input_bindings("n <- input_slider(1, 10)\nm <- x$n")), "n")
+  # Reads the graph finds without a bare symbol count too (review).
+  expect_identical(bound_names(input_bindings("n <- input_slider(1, 10)\nv <- get(\"n\")"), "blocked"), "n")
+  expect_identical(bound_names(input_bindings("n <- input_slider(1, 10)\nglue::glue(\"n is {n}\")"), "blocked"), "n")
   # Two inputs in a cell, one read by the other's arguments.
   b <- input_bindings("a <- input_slider(1, 10)\nb <- input_slider(a, 20)")
   expect_identical(bound_names(b), "b")
@@ -187,6 +190,14 @@ test_that("a kept value goes back to the input's cell when it reruns with the sa
   expect_length(sent[[1]]$msg$inputs$values, 0)
 })
 
+test_that("an answer for a cell deleted meanwhile keeps nothing", {
+  r <- inputs_ran()
+  r <- drive(r$state, ev_set_input("n", 8, at(20)), ev_apply(list(op_delete("I")), at(21)),
+             wk_input_set(1, "I", "n", TRUE, 8, NULL, list(), at(22)))
+  expect_length(r$state$input_values, 0)
+  expect_false(r$state$input_outcome$ok)
+})
+
 test_that("an input back at its default is forgotten", {
   r <- inputs_ran()
   r <- drive(r$state, ev_set_input("n", 8, at(20)), wk_input_set(1, "I", "n", TRUE, 8, NULL, list(), at(21)))
@@ -264,6 +275,17 @@ test_that("the worker binds an input only when the assignment's own call reports
   # A user's own function of the same name reports nothing.
   r <- inputs_run(h, "U", 3L, "input_slider <- function(...) 7\nk <- input_slider(1, 10)")
   expect_length(r$inputs, 0)
+})
+
+test_that("a bound input isn't shown as the cell's output; a blocked one is (review)", {
+  h <- worker_harness(extra_libs = fixture_lib())
+  on.exit(h$close())
+  inputs_run(h, "L", 1L, "library(emberui)")
+  r <- inputs_run(h, "I", 2L, "d <- input_slider(1L, 7L, 3L)")
+  expect_true(r$inputs[[1]]$bound)
+  expect_null(r$output)
+  r <- inputs_run(h, "J", 3L, "e <- input_slider(1L, 7L, 3L)\nf <- e")
+  expect_identical(r$output$text, "[1] 3")
 })
 
 test_that("a blocked binding is reported with its name and gets its default", {
@@ -361,6 +383,8 @@ test_that("set_input through the API reruns the readers with the new value, and 
   expect_false(res$timed_out)
   out_of <- function(id) snap_view(notebook_snapshot(nb), id)$output$text
   expect_identical(out_of("B"), "[1] 10")
+  # The input's own cell shows no value that could go stale.
+  expect_null(snap_view(notebook_snapshot(nb), "I")$output)
 
   out <- set_input(nb, "n", 7, wait = TRUE)
   expect_identical(out$cell, "I")

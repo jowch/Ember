@@ -343,7 +343,9 @@ The first increment is the engine and worker side, driven through Ember's
 R API. Nothing shows on the page yet.
 
 - **Rules 1 and 3**: `input_bindings()` in R/inputs.R reads them from the
-  cell's parse. The run message carries the bindings, each with its
+  cell's parse. Rule 3 uses the graph's own analysis of each top-level
+  expression, so `get("n")` or a glue template reading `n` blocks the
+  binding, as it would give another cell an edge. The run message carries the bindings, each with its
   top-level expression's index, and the value kept for each name.
 - **The hook** (inst/worker.R, "Interactive inputs"). The worker sets
   `.state$hook` when emberui loads. Each input function ends with
@@ -362,6 +364,8 @@ R API. Nothing shows on the page yet.
   It uses `check` both for a kept value when the cell reruns and for a
   new value. The `check` function stays in the worker; the rest of the
   spec goes to the server.
+- **A bound input shows no value** as the cell's output, since moving it
+  doesn't rerun the cell (design.md's output rule names the exception).
 - **Every input call is reported**, bound or not. An unbound one says why:
   `not_assigned` (rule 1 or 2) or `read_elsewhere` (rule 3). The page will
   use this for the greyed widget and its note.

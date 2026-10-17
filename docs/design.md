@@ -501,7 +501,9 @@ top-level expression is its output. When that expression is an assignment
 invisibly, so `cars <- mtcars` shows the table. As in Pluto, the value is
 the right-hand side: `df$z <- df$x * 2` shows the new column, not `df`. A
 plot the cell drew still wins over an assigned value, so `h <- hist(x)`
-shows the histogram. Any other invisible value
+shows the histogram. A bound interactive input is the exception: `n <-
+input_slider(1, 10)` shows the widget, not the number, since moving the
+widget changes `n` without rerunning the cell (inputs.md). Any other invisible value
 shows nothing: `invisible()`, `library()`, a function that returns
 invisibly. So `invisible(x <- big)`, or a last line of `invisible()`, is
 how a cell hides its output (Pluto's trailing `;` has no meaning in R).

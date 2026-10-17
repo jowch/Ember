@@ -21,18 +21,35 @@ input_bindings <- function(code) {
   # Most cells have no input; skip the parse for them, since this runs for
   # every cell sent to the worker.
   if (!grepl("input_", code, fixed = TRUE)) return(none)
-  exprs <- tryCatch(parse(text = code, keep.source = FALSE), error = function(e) NULL)
+  exprs <- tryCatch(parse(text = code, keep.source = TRUE), error = function(e) NULL)
   if (length(exprs) == 0) return(none)
+  targets <- vapply(exprs, function(e) input_assignment(e) %||% NA_character_, character(1))
+  if (all(is.na(targets))) return(none)
+  srcrefs <- attr(exprs, "srcref")
+  # What each top-level expression reads or defines, by the same analysis
+  # the graph uses, each read alone: a read of `n` that would give another
+  # cell an edge to the input's cell (`get("n")`, a glue template) blocks
+  # the binding too.
+  touched <- lapply(seq_along(exprs), function(i) {
+    expression_names(paste(as.character(srcrefs[[i]]), collapse = "\n"))
+  })
   out <- none
-  for (k in seq_along(exprs)) {
-    name <- input_assignment(exprs[[k]])
-    if (is.null(name)) next
-    others <- unlist(lapply(exprs[-k], symbols_read), use.names = FALSE)
-    rhs_reads <- symbols_read(exprs[[k]][[3]])
-    slot <- if (name %in% others || name %in% rhs_reads) "blocked" else "bind"
+  for (k in which(!is.na(targets))) {
+    name <- targets[[k]]
+    rhs <- paste(deparse(exprs[[k]][[3]]), collapse = "\n")
+    blocked <- name %in% unlist(touched[-k], use.names = FALSE) ||
+      name %in% references_of(read_cell(rhs))
+    slot <- if (blocked) "blocked" else "bind"
     out[[slot]][[length(out[[slot]]) + 1L]] <- list(name = name, index = k)
   }
   out
+}
+
+#' The names `text` (one top-level expression) reads or defines, as
+#' `read_cell()` finds them.
+expression_names <- function(text) {
+  a <- read_cell(text)
+  c(references_of(a), definitions_of(a))
 }
 
 #' The name `e` binds an input to under rule 1, or `NULL`: `e` is
@@ -54,19 +71,4 @@ is_input_function <- function(f) {
     f <- f[[3]]
   }
   is.name(f) && as.character(f) %in% paste0("input_", input_types)
-}
-
-#' Every symbol in `e`, leaving out the field names after `$` and `@`
-#' (`x$n` doesn't read `n`). Errs towards finding a name: a symbol in a
-#' formula or a function's body counts, which can only grey a widget, never
-#' bind one that shouldn't be.
-symbols_read <- function(e) {
-  if (is.name(e)) return(as.character(e))
-  if (!is.call(e) && !is.pairlist(e) && !is.expression(e)) return(character())
-  parts <- as.list(e)
-  if (is.call(e) && length(parts) == 3 &&
-      (identical(parts[[1]], as.name("$")) || identical(parts[[1]], as.name("@")))) {
-    parts <- parts[1:2]
-  }
-  unlist(lapply(parts, function(p) if (missing(p)) character() else symbols_read(p)), use.names = FALSE)
 }

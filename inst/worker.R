@@ -503,6 +503,10 @@ run_cell <- function(msg) {
             datatable_clear_mark()
             input_expect <<- input_expectation(msg$inputs, k, exprs[[k]])
             r <- withVisible(eval(exprs[[k]], globalenv()))
+            # A bound input's value changes without the cell rerunning, so
+            # it isn't shown as the assigned value (design.md, "Which
+            # values a cell shows"); the widget will be.
+            bound_here <- !is.null(input_expect) && input_expect$used && !input_expect$blocked
             input_expect <<- NULL
             if (k < length(exprs)) {
               if (r$visible && !datatable_assigned(r$value)) console$print(r$value)
@@ -511,7 +515,7 @@ run_cell <- function(msg) {
               # A data.table `:=` returns its table visibly, but the
               # console prints nothing for it (#185).
               visible <- r$visible && !datatable_assigned(r$value)
-              assigned <- !r$visible && shows_assignment(exprs[[k]], r$value)
+              assigned <- !r$visible && !bound_here && shows_assignment(exprs[[k]], r$value)
             }
           }
         }

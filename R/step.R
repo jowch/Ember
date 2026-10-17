@@ -1248,20 +1248,25 @@ reduce_wk_input_set <- function(state, event) {
   }
   id <- event$cell
   r <- state$results[[id]]
-  default <- NULL
-  if (!is.null(r)) {
-    r$inputs <- lapply(r$inputs, function(i) {
-      if (isTRUE(i$bound) && identical(i$name, name)) {
-        default <<- i$default
-        i$value <- event$value
-      }
-      i
-    })
-    if (length(event$globals)) r$variables[names(event$globals)] <- event$globals
-    state$results[[id]] <- r
+  # The cell was deleted (or its result cleared) while the value was with
+  # the worker: there is nothing left to keep the value for.
+  if (is.null(r)) {
+    state$input_outcome <- list(name = name, ok = FALSE, error = "The input's cell is gone.",
+                                value = NULL, cells = character())
+    return(list(state = state, effects = list(), reply = NULL))
   }
+  default <- NULL
+  r$inputs <- lapply(r$inputs, function(i) {
+    if (isTRUE(i$bound) && identical(i$name, name)) {
+      default <<- i$default
+      i$value <- event$value
+    }
+    i
+  })
+  if (length(event$globals)) r$variables[names(event$globals)] <- event$globals
+  state$results[[id]] <- r
   state$input_values[[name]] <- if (!identical(event$value, default)) {
-    list(cell = id, code = r$code %||% state$cells[[id]]$code, value = event$value)
+    list(cell = id, code = r$code, value = event$value)
   }
   dependents <- setdiff(readers_of(state, id, name), id)
   state <- invalidate_cells(state, id, dependents)

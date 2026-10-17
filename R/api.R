@@ -341,7 +341,7 @@ restart_notebook <- function(nb) {
 #' @return Invisibly, `list(accepted, cell, value, cells, timed_out)`:
 #'   `cell` is the input's cell; `value` (the value as assigned) and
 #'   `cells` (the readers rerun or marked stale) are filled in only with
-#'   `wait`. A refused change (no such input, its cell not fresh, another
+#'   `wait`, and stay empty if the wait timed out. A refused change (no such input, its cell not fresh, another
 #'   value still being set) is an `ember_refused` error.
 #' @export
 set_input <- function(nb, name, value, wait = FALSE, timeout = 60) {
