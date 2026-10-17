@@ -757,6 +757,19 @@ test_that("cran_release_table orders versions released the same day by the time 
   expect_match(update_date(t, "BFS", "0.5", "0.5.2")$message, "replaced by 0.5.1 the day it came out")
 })
 
+test_that("an update whose day isn't published yet isn't moved back a day, as update all is (77)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- open_with_cran(s)
+  r <- drive(r$state, ev_preview_update("dplyr", NULL, today, at(3)))
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(), at(4)))
+  key <- repo_key("cran", "2026-09-30")
+  r <- drive(r$state, ev_index_failed(key, "cran/2026-09-30 isn't published", at(5), unpublished = TRUE))
+  prop <- r$state$packages$proposal
+  expect_equal(prop$date, "2026-09-30")
+  expect_equal(prop$update$version, "1.1.5")
+  expect_equal(prop$status, "failed")
+})
+
 test_that("preview_update fetches CRAN's release dates, then previews the newest version's date (77)", {
   s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
   r <- open_with_cran(s)

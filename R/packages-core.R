@@ -771,7 +771,7 @@ schedule_packages <- function(state, old) {
         }
       } else if (identical(slot$status, "ready") && !is.null(drop_message)) {
         state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
-                                                message = drop_message, kind = prop$kind,
+                                                message = drop_message, kind = prop$kind, update = prop$update,
                                                 asked = prop$asked %||% prop$date)
       } else if (identical(slot$status, "ready") &&
                 (identical(prop$status, "fetching") || !setequal(prop$for_wanted %||% character(), wanted))) {
@@ -829,7 +829,7 @@ schedule_packages <- function(state, old) {
         }
       } else if (identical(slot$status, "failed")) {
         state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
-                                                message = slot$message, kind = prop$kind,
+                                                message = slot$message, kind = prop$kind, update = prop$update,
                                                 asked = prop$asked %||% prop$date)
       }
     }
