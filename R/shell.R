@@ -561,6 +561,28 @@ run_effect <- function(nb, fx) {
           })
       }
     },
+    fetch_cran_releases = {
+      cache <- nb$state$options$cache
+      hit <- tryCatch(cached_cran_releases(fx$url, cache), error = function(e) NULL)
+      if (!is.null(hit)) {
+        enqueue(nb, ev_cran_releases_fetched(hit$table, at = Sys.time()))
+      } else {
+        job_start(cran_releases_job_key(fx$url, cache), cran_releases_fetch_command(fx$url, cache), nb,
+          make_progress = function(line) NULL,
+          make_done = function(status, output) {
+            # A failed fetch falls back to the last table fetched, however
+            # old: it lacks only the releases since.
+            max_age <- if (identical(status, 0L)) cran_releases_max_age else Inf
+            hit <- tryCatch(cached_cran_releases(fx$url, cache, max_age = max_age), error = function(e) NULL)
+            if (!is.null(hit)) {
+              ev_cran_releases_fetched(hit$table, at = Sys.time())
+            } else {
+              ev_cran_releases_failed(sprintf("couldn't fetch CRAN's release dates from %s", fx$url),
+                                      at = Sys.time())
+            }
+          })
+      }
+    },
     check_library = {
       touch_library(fx$path)
       manifest <- tryCatch(read_library_manifest(fx$path), error = function(e) NULL)
@@ -1205,6 +1227,7 @@ worker_event <- function(msg, gen, at, secret = NULL) {
     source   = c("token", "path", "text"),
     done     = c("token", "report"),
     rendered = c("cell", "token"),
+    input_set = c("cell", "name", "ok"),
     NULL
   )
   if (is.null(required)) {
@@ -1235,7 +1258,9 @@ worker_event <- function(msg, gen, at, secret = NULL) {
       display <- as_display(msg$display)
       if (!is.null(display)) display$token <- msg$token
       wk_rendered(gen, msg$cell, display, at)
-    }
+    },
+    input_set = wk_input_set(gen, msg$cell, msg$name, isTRUE(msg$ok), msg$value,
+                             msg$error, msg$globals, at)
   )
 }
 

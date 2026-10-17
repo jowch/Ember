@@ -48,6 +48,10 @@
 #'   running R).
 #' * `bioc_releases`: `ember_releases_slot`, Bioconductor's release list
 #'   as this session knows it.
+#' * `cran_releases`: `list(status, table, message)`, every CRAN version's
+#'   release date (`cran_release_table()`), fetched when a per-package
+#'   update first needs it. `status`: `"unknown"`, `"fetching"`, `"ready"`
+#'   or `"failed"`.
 #' * `bioc_move_tried`: `TRUE` once this session has proposed moving the
 #'   pin to the running R's release (`propose_bioc_move()`), so a move that
 #'   can't be made isn't proposed again on every event.
@@ -97,6 +101,7 @@ new_packages_state <- function(lock, wanted, r, cache, header = NULL, releases =
     install = NULL,
     proposal = NULL,
     bioc_releases = releases,
+    cran_releases = new_cran_releases_slot(),
     bioc_move_tried = FALSE,
     next_token = 1L,
     # Seeded with `wanted` itself (not `NULL`), computed by `new_state()`
@@ -120,6 +125,11 @@ new_index_slot <- function(status, index = NULL, message = NULL, wanted = NULL, 
   structure(list(status = status, index = index, message = message, wanted = wanted,
                  provisional = provisional),
             class = "ember_index_slot")
+}
+
+#' CRAN's release dates as the session knows them (`cran_release_table()`).
+new_cran_releases_slot <- function(status = "unknown", table = NULL, message = NULL) {
+  list(status = status, table = table, message = message)
 }
 
 #' Bioconductor's release list as the session knows it.
@@ -450,11 +460,11 @@ install_failures <- function(lines) {
 new_proposal <- function(date, status = "fetching", lock = NULL, changes = NULL,
                          problems = NULL, for_wanted = NULL, apply = FALSE,
                          restart = character(), message = NULL,
-                         bioc_version = NA_character_, kind = "date", asked = date) {
+                         bioc_version = NA_character_, kind = "date", update = NULL, asked = date) {
   structure(list(date = date, status = status, lock = lock, changes = changes,
                  problems = problems, for_wanted = for_wanted, apply = apply,
                  restart = restart, message = message, bioc_version = bioc_version,
-                 kind = kind, asked = asked),
+                 kind = kind, update = update, asked = asked),
             class = "ember_proposal")
 }
 
@@ -466,6 +476,11 @@ new_proposal <- function(date, status = "fetching", lock = NULL, changes = NULL,
 #' it is ready, unless doing so would restart a loaded package.
 ev_preview_date <- function(date, at, apply = FALSE) event("preview_date", at, date = date, apply = apply)
 ev_set_date     <- function(date, at) event("set_date", at, date = date)
+#' Preview moving the date so that `name` is at `version` (`NULL`: CRAN's
+#' newest), `preview_update()`. `today`: the caller's date, since the core
+#' has no clock; no snapshot is later.
+ev_preview_update <- function(name, version, today, at)
+  event("preview_update", at, name = name, version = version, today = as.Date(today))
 #' Drop the current preview without applying it (the page's Cancel on the
 #' in-tab update question).
 ev_cancel_preview <- function(at) event("cancel_preview", at)
@@ -488,6 +503,8 @@ ev_index_failed  <- function(key, message, at, unpublished = FALSE)
 ev_bioc_releases_fetched <- function(table, fetched, at)
   event("bioc_releases_fetched", at, table = table, fetched = fetched)
 ev_bioc_releases_failed  <- function(message, at) event("bioc_releases_failed", at, message = message)
+ev_cran_releases_fetched <- function(table, at) event("cran_releases_fetched", at, table = table)
+ev_cran_releases_failed  <- function(message, at) event("cran_releases_failed", at, message = message)
 ev_library_checked <- function(key, manifest, at)            # manifest: NULL when absent
   event("library_checked", at, key = key, manifest = manifest)
 ev_install_progress <- function(token, item, at)             # item: list(package, step, done, total)
@@ -506,6 +523,7 @@ fx_fetch_index    <- function(key, url, fresh = FALSE) effect("fetch_index", key
 #' or read it from the disk cache when it is less than a day old and was
 #' fetched no earlier than `date` (the snapshot date it must cover).
 fx_fetch_bioc_config <- function(url, date) effect("fetch_bioc_config", url = url, date = date)
+fx_fetch_cran_releases <- function(url) effect("fetch_cran_releases", url = url)
 fx_check_library  <- function(key, path) effect("check_library", key = key, path = path)
 #' `lock` and `repos` are everything the installer needs; it writes the
 #' renv lockfile itself (lock.R, `renv_lockfile_of()`). `repos` is the
@@ -684,118 +702,138 @@ schedule_packages <- function(state, old) {
 
   # ---- 2. Proposal --------------------------------------------------------
   state <- propose_bioc_move(state)
-  if (!is.null(state$packages$proposal)) {
-    prop <- state$packages$proposal
-    is_move <- identical(prop$kind, "bioc")
-    releases <- releases_at(state$packages, prop$date)
-    wanted <- wanted_packages(state$graph, state$file$header)
-    # The new date's CRAN key first, then Bioconductor's at the release for
-    # the running R at that date: moving the date moves the release too.
-    # Its indexes are fetched only if CRAN lacks a name, as when resolving.
-    date_header <- state$file$header
-    date_header$snapshot <- prop$date
-    date_header$bioc_version <- NA_character_
-    # GitHub packages have no date: moving it back keeps the commits the
-    # lock holds, and moving it forward asks branches again
-    # (`source_keys()`, `refreshes_sources()`).
-    sources_for <- state$packages$sources_for %||% character()
-    gh <- unname(source_keys(state$file$header, state$file$lock, sources_for,
-                             refresh = refreshes_sources(state$file$header, prop$date, prop$kind)))
-    repos_needed <- needed_repos(date_header, state$options$r, releases)
-    needed <- c(gh, repos_needed)
-    key <- repos_needed[[1]]
-    upfront <- c(gh, key)
-    unfetched <- Filter(function(k) is.null(state$packages$indexes[[k]]), upfront)
-    # The up-front keys as one slot: missing (`NULL`) until each has been
-    # asked for, then failed if any failed, ready once all are.
-    slot <- if (length(unfetched) > 0) NULL else {
-      statuses <- vapply(upfront, function(k) state$packages$indexes[[k]]$status, character(1))
-      bad <- upfront[statuses == "failed"]
-      if (length(bad) > 0) {
-        state$packages$indexes[[bad[[1]]]]
-      } else if (all(statuses == "ready")) {
-        state$packages$indexes[[key]]
-      } else {
-        new_index_slot("fetching")
+  # An update that moves to the next day (`step_update()`) goes round
+  # again, so a snapshot already fetched is resolved at once.
+  repeat {
+    stepped <- FALSE
+    # A proposal waiting on CRAN's release dates has no date yet.
+    if (!is.null(state$packages$proposal) && !identical(state$packages$proposal$status, "dates") &&
+        !is.na(state$packages$proposal$date)) {
+      prop <- state$packages$proposal
+      is_move <- identical(prop$kind, "bioc")
+      releases <- releases_at(state$packages, prop$date)
+      wanted <- wanted_packages(state$graph, state$file$header)
+      # The new date's CRAN key first, then Bioconductor's at the release for
+      # the running R at that date: moving the date moves the release too.
+      # Its indexes are fetched only if CRAN lacks a name, as when resolving.
+      date_header <- state$file$header
+      date_header$snapshot <- prop$date
+      date_header$bioc_version <- NA_character_
+      # GitHub packages have no date: moving it back keeps the commits the
+      # lock holds, and moving it forward asks branches again
+      # (`source_keys()`, `refreshes_sources()`).
+      sources_for <- state$packages$sources_for %||% character()
+      gh <- unname(source_keys(state$file$header, state$file$lock, sources_for,
+                               refresh = refreshes_sources(state$file$header, prop$date, prop$kind)))
+      repos_needed <- needed_repos(date_header, state$options$r, releases)
+      needed <- c(gh, repos_needed)
+      key <- repos_needed[[1]]
+      upfront <- c(gh, key)
+      unfetched <- Filter(function(k) is.null(state$packages$indexes[[k]]), upfront)
+      # The up-front keys as one slot: missing (`NULL`) until each has been
+      # asked for, then failed if any failed, ready once all are.
+      slot <- if (length(unfetched) > 0) NULL else {
+        statuses <- vapply(upfront, function(k) state$packages$indexes[[k]]$status, character(1))
+        bad <- upfront[statuses == "failed"]
+        if (length(bad) > 0) {
+          state$packages$indexes[[bad[[1]]]]
+        } else if (all(statuses == "ready")) {
+          state$packages$indexes[[key]]
+        } else {
+          new_index_slot("fetching")
+        }
       }
-    }
-    failed <- Filter(function(k) identical(state$packages$indexes[[k]]$status, "failed"), repos_needed[-1])
-    has_bioc <- any(state$file$lock$entries$source == "Bioc")
-    # Without a Bioconductor index (none fetched, or no release for this R
-    # at that date), the lock's Bioconductor packages would resolve as not
-    # found and silently drop out of the new lock: fail instead. A notebook
-    # with none just resolves without the failed index.
-    drop_message <- if (!has_bioc || identical(prop$status, "failed")) {
-      NULL
-    } else if (is.na(bioc_release_in(needed))) {
-      releases_gap_message(state$packages, prop$date) %||% sprintf(paste("Bioconductor has no release for R %s at %s; moving there would",
-                    "drop this notebook's Bioconductor packages"), state$options$r$minor, prop$date)
-    } else if (length(failed) > 0) {
-      failed_index_problems(state$packages$indexes[failed])$message[[1]]
-    }
-    needed <- setdiff(needed, failed)
-    if (has_bioc && !identical(prop$status, "failed") &&
-        releases_unsettled(state$packages, prop$date)) {
-      # The release at the new date comes from Bioconductor's list.
-      fr <- fetch_releases(state$packages, state$options, prop$date)
-      state$packages <- fr$p
-      effects <- c(effects, fr$effects)
-    } else if (is.null(slot)) {
-      for (k in unfetched) {
-        state$packages$indexes[[k]] <- new_index_slot("fetching")
-        effects <- c(effects, list(fx_fetch_index(k, repo_url(state$options$repos, k), fresh = TRUE)))
+      failed <- Filter(function(k) identical(state$packages$indexes[[k]]$status, "failed"), repos_needed[-1])
+      has_bioc <- any(state$file$lock$entries$source == "Bioc")
+      # Without a Bioconductor index (none fetched, or no release for this R
+      # at that date), the lock's Bioconductor packages would resolve as not
+      # found and silently drop out of the new lock: fail instead. A notebook
+      # with none just resolves without the failed index.
+      drop_message <- if (!has_bioc || identical(prop$status, "failed")) {
+        NULL
+      } else if (is.na(bioc_release_in(needed))) {
+        releases_gap_message(state$packages, prop$date) %||% sprintf(paste("Bioconductor has no release for R %s at %s; moving there would",
+                      "drop this notebook's Bioconductor packages"), state$options$r$minor, prop$date)
+      } else if (length(failed) > 0) {
+        failed_index_problems(state$packages$indexes[failed])$message[[1]]
       }
-    } else if (identical(slot$status, "ready") && !is.null(drop_message)) {
-      state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
-                                              message = drop_message, kind = prop$kind,
-                                              asked = prop$asked %||% prop$date)
-    } else if (identical(slot$status, "ready") &&
-              (identical(prop$status, "fetching") || !setequal(prop$for_wanted %||% character(), wanted))) {
-      indexes_loaded <- Filter(Negate(is.null), lapply(state$packages$indexes[needed], function(s) s$index))
-      res <- resolve_lock(wanted, lock_for_sources(state$file$lock, state$file$header, sources_for),
-                          indexes_loaded, needed = needed, mode = if (is_move) "bioc" else "fresh")
-      if (needs_bioc(res) && releases_unsettled(state$packages, prop$date)) {
+      needed <- setdiff(needed, failed)
+      if (has_bioc && !identical(prop$status, "failed") &&
+          releases_unsettled(state$packages, prop$date)) {
+        # The release at the new date comes from Bioconductor's list.
         fr <- fetch_releases(state$packages, state$options, prop$date)
         state$packages <- fr$p
         effects <- c(effects, fr$effects)
-      } else if (isTRUE(res$complete)) {
-        changes <- lock_diff(state$file$lock, res$lock)
-        new_prop <- new_proposal(prop$date, status = "ready", lock = res$lock, changes = changes,
-                                 problems = res$problems, for_wanted = wanted, apply = prop$apply,
-                                 bioc_version = bioc_pin(res$lock, bioc_release_in(needed)),
-                                 kind = prop$kind, asked = prop$asked %||% prop$date)
-        if (isTRUE(prop$apply)) {
-          loaded <- state$worker$loaded %||% character()
-          restart_names <- intersect(changes$name, names(loaded))
-          # A Bioconductor move doesn't wait on the page: running the
-          # notebook on this R was the consent, and the page's update
-          # question is about dates. `switch_library()` restarts R once the
-          # new library is ready, as for any other change to a loaded package.
-          if (length(restart_names) == 0 || is_move) {
-            state$packages$proposal <- new_prop
-            ap <- apply_proposal(state)
-            state <- ap$state
-            effects <- c(effects, ap$effects)
+      } else if (is.null(slot)) {
+        for (k in unfetched) {
+          state$packages$indexes[[k]] <- new_index_slot("fetching")
+          effects <- c(effects, list(fx_fetch_index(k, repo_url(state$options$repos, k), fresh = TRUE)))
+        }
+      } else if (identical(slot$status, "ready") && !is.null(drop_message)) {
+        state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
+                                                message = drop_message, kind = prop$kind, update = prop$update,
+                                                asked = prop$asked %||% prop$date)
+      } else if (identical(slot$status, "ready") &&
+                (identical(prop$status, "fetching") || !setequal(prop$for_wanted %||% character(), wanted))) {
+        indexes_loaded <- Filter(Negate(is.null), lapply(state$packages$indexes[needed], function(s) s$index))
+        res <- resolve_lock(wanted, lock_for_sources(state$file$lock, state$file$header, sources_for),
+                            indexes_loaded, needed = needed, mode = if (is_move) "bioc" else "fresh")
+        if (needs_bioc(res) && releases_unsettled(state$packages, prop$date)) {
+          fr <- fetch_releases(state$packages, state$options, prop$date)
+          state$packages <- fr$p
+          effects <- c(effects, fr$effects)
+        } else if (isTRUE(res$complete) && !is.null(prop$update) &&
+                   !identical(got <- unname(lock_versions(res$lock)[prop$update$name]), prop$update$version)) {
+          # An update whose date's snapshot doesn't have the version asked
+          # for (taken before the release reached it): the next day.
+          nxt <- step_update(state, prop, got)
+          if (is.null(nxt)) {
+            state$packages$proposal <- new_proposal(prop$date, status = "failed", message = update_failed_message(prop, got),
+                                                    kind = prop$kind, update = prop$update, asked = prop$asked %||% prop$date)
           } else {
-            new_prop$restart <- restart_names
+            state <- nxt
+            stepped <- TRUE
+          }
+        } else if (isTRUE(res$complete)) {
+          changes <- lock_diff(state$file$lock, res$lock)
+          new_prop <- new_proposal(prop$date, status = "ready", lock = res$lock, changes = changes,
+                                   problems = res$problems, for_wanted = wanted, apply = prop$apply,
+                                   bioc_version = bioc_pin(res$lock, bioc_release_in(needed)),
+                                   kind = prop$kind, update = prop$update, asked = prop$asked %||% prop$date)
+          if (isTRUE(prop$apply)) {
+            loaded <- state$worker$loaded %||% character()
+            restart_names <- intersect(changes$name, names(loaded))
+            # A Bioconductor move doesn't wait on the page: running the
+            # notebook on this R was the consent, and the page's update
+            # question is about dates. `switch_library()` restarts R once the
+            # new library is ready, as for any other change to a loaded package.
+            if (length(restart_names) == 0 || is_move) {
+              state$packages$proposal <- new_prop
+              ap <- apply_proposal(state)
+              state <- ap$state
+              effects <- c(effects, ap$effects)
+            } else {
+              new_prop$restart <- restart_names
+              state$packages$proposal <- new_prop
+            }
+          } else {
             state$packages$proposal <- new_prop
           }
         } else {
-          state$packages$proposal <- new_prop
-        }
-      } else {
-        for (k in res$fetch) {
-          if (is.null(state$packages$indexes[[k]])) {
-            state$packages$indexes[[k]] <- new_index_slot("fetching")
-            effects <- c(effects, list(fx_fetch_index(k, repo_url(state$options$repos, k), fresh = TRUE)))
+          for (k in res$fetch) {
+            if (is.null(state$packages$indexes[[k]])) {
+              state$packages$indexes[[k]] <- new_index_slot("fetching")
+              effects <- c(effects, list(fx_fetch_index(k, repo_url(state$options$repos, k), fresh = TRUE)))
+            }
           }
         }
+      } else if (identical(slot$status, "failed")) {
+        state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
+                                                message = slot$message, kind = prop$kind, update = prop$update,
+                                                asked = prop$asked %||% prop$date)
       }
-    } else if (identical(slot$status, "failed")) {
-      state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
-                                              message = slot$message, kind = prop$kind,
-                                              asked = prop$asked %||% prop$date)
     }
+    if (!stepped) break
   }
 
   # ---- 3. Look -------------------------------------------------------------
@@ -1195,9 +1233,10 @@ reduce_index_failed <- function(state, event) {
   # A date preview of a day that isn't published yet ("Update all" is a
   # preview of today) moves back a day the same way, so it offers the
   # newest published date instead of failing with no changes. The same
-  # bound applies.
+  # bound applies. Not for one package's update (`prop$update`): its date
+  # is where that version is, and the day before doesn't have it.
   prop <- state$packages$proposal
-  if (isTRUE(event$unpublished) && !is.null(prop) && identical(prop$kind, "date") &&
+  if (isTRUE(event$unpublished) && !is.null(prop) && identical(prop$kind, "date") && is.null(prop$update) &&
       identical(prop$status, "fetching") && identical(event$key, repo_key("cran", prop$date))) {
     state$packages$indexes[[event$key]] <- NULL
     earlier <- format(as.Date(prop$date) - 1, "%Y-%m-%d")
@@ -1369,6 +1408,153 @@ reduce_preview_date <- function(state, event) {
   }
   state$packages$proposal <- new_proposal(event$date, apply = isTRUE(event$apply))
   list(state = state, effects = list(), reply = TRUE)
+}
+
+#' The date that puts `name` at `version` (`NULL`: the newest), from
+#' `cran_release_table()`'s rows, for a notebook whose lock has `name` at
+#' `from`. Each version was current from its release to the day before the
+#' next one (design.md, "Updating one package"):
+#' * a newer version takes the first day it was current, so the other
+#'   packages move only as far as they must;
+#' * an older one (a pin) takes the last day it was current, so they move
+#'   back as little as they can.
+#' Package Manager takes its snapshots at a set time, so a day's snapshot
+#' can lack a release from that day: `step` is the way to try the next
+#' snapshot (+1 or -1 day), up to `last`, the other end of the span (`NA`:
+#' none, the newest version). Pure. Returns `list(version, date, step,
+#' last)`, or `list(message)` when there is no such date.
+update_date <- function(table, name, version, from) {
+  rows <- if (is.null(table)) NULL else table[table$package == name, , drop = FALSE]
+  if (is.null(rows) || nrow(rows) == 0) {
+    return(list(message = sprintf("CRAN has no record of a package called '%s'", name)))
+  }
+  version <- version %||% rows$version[[nrow(rows)]]
+  i <- match(version, rows$version)
+  if (is.na(i)) return(list(message = sprintf("CRAN never released %s %s", name, version)))
+  if (identical(version, from)) return(list(message = sprintf("%s is already at %s", name, version)))
+  first <- rows$date[[i]]
+  end <- if (i < nrow(rows)) rows$date[[i + 1L]] - 1 else as.Date(NA)
+  if (!is.na(end) && end < first) {
+    return(list(message = sprintf("%s %s was replaced by %s the day it came out, so no snapshot has it",
+                                  name, version, rows$version[[i + 1L]])))
+  }
+  newer <- is.na(from) || package_version(version) > package_version(from)
+  if (newer) list(version = version, date = first, step = 1L, last = end)
+  else list(version = version, date = end, step = -1L, last = first)
+}
+
+#' How many snapshots an update tries past the first date `update_date()`
+#' gives before it gives up: a release reaches Package Manager the same day
+#' or the next.
+update_tries <- 3L
+
+#' Preview moving the date so that `event$name` is at `event$version`.
+#' Refused unless the lock has `name` from CRAN: Bioconductor and GitHub
+#' packages have no CRAN dates. With CRAN's release dates not yet known,
+#' fetches them first (the proposal waits with status `"dates"`); then
+#' `start_update()` turns the version into a date and previews that date
+#' as `preview_date()` does. Reply: `TRUE`.
+reduce_preview_update <- function(state, event) {
+  entries <- state$file$lock$entries
+  row <- if (is.null(entries)) integer() else which(entries$name == event$name)
+  if (length(row) == 0) {
+    return(list(state = state, effects = list(),
+                reply = refused(sprintf("%s is not in this notebook's packages", event$name))))
+  }
+  if (!identical(entries$source[[row]], "CRAN")) {
+    return(list(state = state, effects = list(),
+                reply = refused(sprintf("%s comes from %s, not CRAN", event$name, entries$source[[row]]))))
+  }
+  update <- list(name = event$name, version = event$version, from = entries$version[[row]],
+                 today = event$today)
+  effects <- list()
+  rel <- state$packages$cran_releases
+  if (identical(rel$status, "ready")) {
+    state <- start_update(state, update)
+  } else {
+    state$packages$proposal <- new_proposal(NA_character_, status = "dates", update = update)
+    if (!identical(rel$status, "fetching")) {
+      state$packages$cran_releases <- new_cran_releases_slot("fetching")
+      effects <- list(fx_fetch_cran_releases(state$options$repos$cran_meta))
+    }
+  }
+  list(state = state, effects = effects, reply = TRUE)
+}
+
+#' With CRAN's release dates known: the date for `update`, previewed as
+#' `preview_date()` previews one, with `update` on the proposal so the
+#' Proposal stage of `schedule_packages()` can check the version it gets
+#' (`step_update()`). A version with no date fails the proposal.
+start_update <- function(state, update) {
+  d <- update_date(state$packages$cran_releases$table, update$name, update$version, update$from)
+  if (!is.null(d$message)) {
+    state$packages$proposal <- new_proposal(NA_character_, status = "failed", message = d$message,
+                                            update = update)
+    return(state)
+  }
+  update$version <- d$version
+  update$step <- d$step
+  update$last <- d$last
+  update$tries <- 0L
+  # A date past today has no snapshot yet; a release from today may not.
+  date <- min(d$date, update$today)
+  preview_update_at(state, date, update)
+}
+
+preview_update_at <- function(state, date, update) {
+  state <- reduce_preview_date(state, list(date = format(date, "%Y-%m-%d"), apply = FALSE))$state
+  state$packages$proposal$update <- update
+  state
+}
+
+#' The proposal for an update resolved `got` for its package. When that is
+#' not the version asked for, the snapshot was taken before the release
+#' reached it (or, for a pin, after the next one did): try the next day in
+#' `update$step`'s direction, within the version's span, today and
+#' `update_tries`. Returns the state with the next date's proposal, or
+#' `NULL` when the proposal stands (`got` is right) or there is no day left
+#' (the caller fails it with `update_failed_message()`).
+step_update <- function(state, prop, got) {
+  u <- prop$update
+  if (identical(got, u$version)) return(NULL)
+  date <- as.Date(prop$date) + u$step
+  past <- if (u$step > 0) date > u$today || (!is.na(u$last) && date > u$last) else date < u$last
+  if (past || u$tries >= update_tries) return(NULL)
+  u$tries <- u$tries + 1L
+  preview_update_at(state, date, u)
+}
+
+update_failed_message <- function(prop, got) {
+  u <- prop$update
+  has <- if (is.na(got)) sprintf("no %s", u$name) else sprintf("%s %s", u$name, got)
+  sprintf("Package Manager's snapshot of %s has %s, and no snapshot near it has %s %s",
+          prop$date, has, u$name, u$version)
+}
+
+#' CRAN's release dates arrived: a waiting update goes on.
+reduce_cran_releases_fetched <- function(state, event) {
+  if (!identical(state$packages$cran_releases$status, "fetching")) {
+    return(list(state = state, effects = list(), reply = NULL))
+  }
+  state$packages$cran_releases <- new_cran_releases_slot("ready", event$table)
+  prop <- state$packages$proposal
+  if (!is.null(prop) && identical(prop$status, "dates")) state <- start_update(state, prop$update)
+  list(state = state, effects = list(), reply = NULL)
+}
+
+#' CRAN's release dates couldn't be fetched: a waiting update fails, and
+#' the next one fetches again.
+reduce_cran_releases_failed <- function(state, event) {
+  if (!identical(state$packages$cran_releases$status, "fetching")) {
+    return(list(state = state, effects = list(), reply = NULL))
+  }
+  state$packages$cran_releases <- new_cran_releases_slot("failed", message = event$message)
+  prop <- state$packages$proposal
+  if (!is.null(prop) && identical(prop$status, "dates")) {
+    state$packages$proposal <- new_proposal(NA_character_, status = "failed", message = event$message,
+                                            update = prop$update)
+  }
+  list(state = state, effects = list(), reply = NULL)
 }
 
 #' Drop the current preview without applying it (the in-tab question's
@@ -1787,7 +1973,8 @@ packages_view <- function(state) {
                      changes = p$proposal$changes, problems = p$proposal$problems,
                      apply = isTRUE(p$proposal$apply), restart = p$proposal$restart %||% character(),
                      message = p$proposal$message, kind = p$proposal$kind %||% "date",
-                     asked = p$proposal$asked %||% p$proposal$date)
+                     asked = p$proposal$asked %||% p$proposal$date,
+                     update = if (!is.null(p$proposal$update)) p$proposal$update[c("name", "version")])
   }
   # A Bioconductor move that failed isn't the page's update question
   # (`project_ember()`), so it is said as a problem instead. Where an

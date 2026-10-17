@@ -137,6 +137,13 @@ settings_base <- NULL  # the baseline settings: snapshotted once at boot, then
                        # every change a package load makes is copied in, so a
                        # package's own option survives a reset
 load_stack <- list()   # stack of settings snapshots, one per nested loadNamespace/library
+input_specs <- list()  # cell id -> name -> the spec of each input its last "ok"
+                       # run bound (docs/inputs.md), check function included;
+                       # what a `set_input` message checks a value against
+input_expect <- NULL   # during a run, the binding the top-level expression being
+                       # evaluated can make (input_expectation())
+input_reports <- list() # during a run, every input call the hook saw, in order
+input_bound <- list()  # during a run, name -> spec of each input bound so far
 loader_originals <- list()  # the real loadNamespace/library/require functions
                              # install_traces() replaced, kept so tracebacks can drop
                              # the wrapper's own frame (identified by identity, not text)
@@ -212,6 +219,7 @@ main <- function() {
   con <<- socketConnection("127.0.0.1", port, blocking = TRUE, open = "r+b",
                            timeout = 60 * 60 * 24 * 365)
   install_traces()
+  install_input_hook()
   # Baseline, not a cell's change: a colour terminal under Rscript has these
   # on, and a settings cell can still change them (each run resets to this
   # baseline, same as any other setting).
@@ -294,6 +302,7 @@ handle_next <- function() {
       rebuild_search_path()
     },
     drop_globals = drop_globals(msg$cell),
+    set_input = send(set_input_value(msg)),
     chdir = {
       # getwd() is always the OS's canonical, symlink-resolved form (POSIX
       # getcwd()); `msg$from`/`msg$to` are the engine's own path strings,
@@ -440,7 +449,7 @@ run_cell <- function(msg) {
              runtime = NA_real_, created = character(), changed = character(),
              removed = character(), settings = list(), load_notes = list(),
              attached = list(), formula_misses = character(), loaded = character(),
-             globals = list(), changed_in_place = character(), columns = list())
+             globals = list(), changed_in_place = character(), columns = list(), inputs = list())
 
   # `dev`/`console` are closed here (not just at their normal point of use
   # below) so an interrupt landing anywhere in this function -- including
@@ -482,6 +491,9 @@ run_cell <- function(msg) {
     notebook_options <<- character()
     notebook_attached <<- character()
     attach_requests[[msg$cell]] <<- character()
+    input_reports <<- list()
+    input_bound <<- list()
+    input_expect <<- NULL
     running <<- list(cell = msg$cell, token = msg$token)
     search0 <- search()
     fig <- msg$fig %||% FIGURE_DEFAULT
@@ -528,7 +540,13 @@ run_cell <- function(msg) {
           for (k in seq_along(exprs)) {
             at <- k   # the top-level expression index; error$line reads its srcref
             datatable_clear_mark()
+            input_expect <<- input_expectation(msg$inputs, k, exprs[[k]])
             r <- withVisible(eval(exprs[[k]], globalenv()))
+            # A bound input's value changes without the cell rerunning, so
+            # it isn't shown as the assigned value (design.md, "Which
+            # values a cell shows"); the widget will be.
+            bound_here <- !is.null(input_expect) && input_expect$used && !input_expect$blocked
+            input_expect <<- NULL
             if (k < length(exprs)) {
               if (r$visible && !datatable_assigned(r$value)) console$print(r$value)
             } else {
@@ -536,7 +554,7 @@ run_cell <- function(msg) {
               # A data.table `:=` returns its table visibly, but the
               # console prints nothing for it (#185).
               visible <- r$visible && !datatable_assigned(r$value)
-              assigned <- !r$visible && shows_assignment(exprs[[k]], r$value)
+              assigned <- !r$visible && !bound_here && shows_assignment(exprs[[k]], r$value)
             }
           }
         }
@@ -647,6 +665,13 @@ run_cell <- function(msg) {
     uninterrupted({
       rc$runtime <- unname((proc.time() - t0)[["elapsed"]])
       if (!is.null(err)) rc$error <- err
+      # Only an "ok" run's inputs can be set: a failed run's globals are
+      # dropped (the server sends drop_globals).
+      input_expect <<- NULL
+      rc$inputs <- input_reports
+      input_specs[[msg$cell]] <<- if (identical(rc$status, "ok")) input_bound else NULL
+      input_reports <<- list()
+      input_bound <<- list()
 
       # The cell's settings are what its code changed, taken before the
       # display step: a display method that sets an option when it first
@@ -808,9 +833,110 @@ remove_cell <- function(cell) {
   undo_registrations(cell)
   remove_globals(owned[[cell]])
   owned[[cell]] <<- NULL
+  input_specs[[cell]] <<- NULL
   display[[cell]] <<- NULL
   attached[[cell]] <<- NULL
   cell_settings[[cell]] <<- NULL
+}
+
+# ---- Interactive inputs (docs/inputs.md) -----------------------------------------
+#
+# The emberui package keeps an environment, `.state`, in its namespace. Once
+# the package loads, the worker puts `input_hook()` in it as `.state$hook`.
+# Each input function then ends with
+#
+#   call <- sys.call()
+#   hook <- .state$hook
+#   if (is.function(hook)) hook(spec, call) else spec$value
+#
+# where `spec` is `list(type, value, label, ...)`, `value` being the
+# default, plus `check`, a function that takes a proposed value and returns
+# it as the input would (an integer slider rounds, a dropdown's element)
+# or stops with a message saying what the input allows. Without the hook
+# (plain Rscript, a console) the function returns its default.
+
+#' Put the hook in emberui's `.state` whenever the package loads. A user's
+#' hook on the same event is left alone (setHook() appends).
+install_input_hook <- function() {
+  setHook(packageEvent("emberui", "onLoad"), function(pkgname, pkgpath) {
+    st <- get0(".state", envir = asNamespace(pkgname), inherits = FALSE)
+    if (is.environment(st)) assign("hook", input_hook, envir = st)
+  })
+}
+
+#' What top-level expression `k` of the running cell can bind: the
+#' server's binding for it (`input_bindings()` in R/inputs.R: rules 1 and
+#' 3), with the call it expects (the assignment's right-hand side, rule 2)
+#' and the value kept for the name, if any. `NULL` when it binds nothing.
+input_expectation <- function(inputs, k, expr) {
+  find <- function(bs) Find(function(b) identical(as.integer(b$index), as.integer(k)), bs)
+  b <- find(inputs$bind)
+  blocked <- is.null(b)
+  if (blocked) b <- find(inputs$blocked)
+  if (is.null(b) || !is.call(expr) || length(expr) != 3) return(NULL)
+  kept <- !blocked && b$name %in% names(inputs$values)
+  list(name = b$name, call = expr[[3]], blocked = blocked, used = FALSE,
+       kept = kept, value = if (kept) inputs$values[[b$name]])
+}
+
+#' The hook every emberui input function calls: `spec` as above, `call`
+#' the function's own `sys.call()`. Binds the input only when `call` is
+#' the very call the running top-level assignment expects (rule 2), so a
+#' user's own `input_slider()`, a wrapper or a nested input binds nothing.
+#' Returns the value the cell gets: a kept value its new spec still allows,
+#' or else the default. Every call is reported, bound or not, so the page
+#' can grey the ones that aren't.
+input_hook <- function(spec, call) {
+  if (is.null(running) || !is.list(spec)) return(spec$value)
+  e <- input_expect
+  matched <- !is.null(e) && !e$used && identical(call, e$call)
+  value <- spec$value
+  if (matched) {
+    input_expect$used <<- TRUE
+    if (!e$blocked) {
+      if (e$kept) {
+        v <- input_check(spec, e$value)
+        if (!inherits(v, "error")) value <- v[[1]]
+      }
+      input_bound[[e$name]] <<- spec
+    }
+  }
+  input_reports[[length(input_reports) + 1L]] <<- list(
+    name = if (matched) e$name,
+    bound = matched && !e$blocked,
+    reason = if (!matched) "not_assigned" else if (e$blocked) "read_elsewhere",
+    spec = spec[!vapply(spec, is.function, logical(1))],
+    default = spec$value, value = value)
+  value
+}
+
+#' `list(value)` as `spec$check` returns it, or the error it stopped with.
+input_check <- function(spec, value) {
+  if (!is.function(spec$check)) return(list(value))
+  tryCatch(suppressWarnings(suppressMessages(list(spec$check(value)))),
+           error = function(e) e)
+}
+
+#' A `set_input` message: check the value against the input's spec and
+#' assign it. The reply carries the value as assigned and its summary
+#' (for the cell's variables), or the check's message.
+set_input_value <- function(msg) {
+  reply <- list(type = "input_set", cell = msg$cell, name = msg$name, ok = FALSE)
+  spec <- input_specs[[msg$cell]][[msg$name]]
+  if (is.null(spec)) {
+    reply$error <- sprintf("No input is bound to `%s`.", msg$name)
+    return(reply)
+  }
+  v <- input_check(spec, msg$value)
+  if (inherits(v, "error")) {
+    reply$error <- conditionMessage(v)
+    return(reply)
+  }
+  assign(msg$name, v[[1]], envir = globalenv())
+  reply$ok <- TRUE
+  reply$value <- v[[1]]
+  reply$globals <- tryCatch(summarise_globals(msg$name), error = function(e) list())
+  reply
 }
 
 # ---- Registered methods ------------------------------------------------------
@@ -902,6 +1028,7 @@ undo_registrations <- function(cell) {
 drop_globals <- function(cell) {
   remove_globals(owned[[cell]])
   owned[[cell]] <<- character()
+  input_specs[[cell]] <<- NULL
 }
 
 #' Remove the named globals that still exist. A class's binding
