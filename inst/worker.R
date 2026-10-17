@@ -573,10 +573,14 @@ run_cell <- function(msg) {
       load_log_code <- load_log
 
       # Displaying runs the value's print and format methods, which are
-      # the user's code too, so it can be interrupted like the cell.
+      # the user's code too, so it can be interrupted like the cell, and
+      # its messages and warnings go to the cell's console. ggplot2 builds
+      # a plot only when it's printed, so its "Removed n rows" warning and
+      # geom_smooth()'s message come from here, not from the cell's code
+      # (#183).
       output <- NULL
       if (rc$status == "ok") {
-        output <- tryCatch({
+        output <- tryCatch(withCallingHandlers({
           if (is_text) {
             # A plot drawn by an inline expression is dropped: the display
             # step below only builds text (`inline_text()`, run already,
@@ -594,8 +598,11 @@ run_cell <- function(msg) {
           } else {
             display_plot(msg$cell, msg$token, dev)
           }
-        }, interrupt = function(i) { rc$status <<- "interrupted"; NULL },
-           error = function(e) NULL)
+        },
+        message = function(m) { console$message(m); invokeRestart("muffleMessage") },
+        warning = function(w) { console$warning(w); invokeRestart("muffleWarning") }),
+        interrupt = function(i) { rc$status <<- "interrupted"; NULL },
+        error = function(e) NULL)
       }
       close_device(dev)
       dev <- NULL
@@ -1943,6 +1950,18 @@ capture_lines <- function(expr, n = -1L) {
   readLines(path, n = n, warn = FALSE)
 }
 
+#' `expr` with its messages and warnings dropped. The display step shows a
+#' value by one call of its print method or of the renderer that makes its
+#' view, and that call's messages and warnings go to the console (#183).
+#' Its other calls (the text form beside a plot or HTML view, a table's
+#' cells, a tree's leaves) run the same methods again, and would repeat
+#' them, so they run through this.
+quietly <- function(expr) {
+  withCallingHandlers(expr,
+    message = function(m) invokeRestart("muffleMessage"),
+    warning = function(w) invokeRestart("muffleWarning"))
+}
+
 #' The value's print() text, truncated (first 50 lines, 4000 chars). Colour
 #' is on throughout the worker (boot sets `cli.num_colors`); when truncation
 #' lands inside an escape sequence, the partial sequence is dropped and a
@@ -1972,7 +1991,7 @@ text_form <- function(value) {
 #' cells split by tabs; and for an HTML output with no text at all (a
 #' plotly or leaflet widget, whose data is in a script), what it is.
 html_text_form <- function(value, html) {
-  tf <- text_form(value)
+  tf <- quietly(text_form(value))
   if (nzchar(trimws(tf$text)) && !grepl("^\\s*<", tf$text)) return(tf)
   # The text form must never cost the page its HTML view: a conversion that
   # fails gives the line naming the output.
@@ -2145,7 +2164,7 @@ display_table <- function(value, cell, token, limits = list(rows = 10L, cols = 8
   tf <- text_form(value)
   display[[cell]] <<- list(value = value, token = token, kind = "table",
                            limits = limits, text = tf$text, truncated = tf$truncated)
-  c(build_table(value, limits), list(text = tf$text, truncated = tf$truncated))
+  c(quietly(build_table(value, limits)), list(text = tf$text, truncated = tf$truncated))
 }
 
 #' One line of text for a tree leaf: format() for a length-1 value, else
@@ -2227,7 +2246,7 @@ display_tree <- function(value, cell, token, limits = list()) {
   display[[cell]] <<- list(value = value, token = token, kind = "tree",
                            limits = limits, text = tf$text, truncated = tf$truncated)
   list(kind = "tree", mime = "application/vnd.ember.tree",
-      tree = display_tree_node(value, "", 0, limits), text = tf$text, truncated = tf$truncated)
+      tree = quietly(display_tree_node(value, "", 0, limits)), text = tf$text, truncated = tf$truncated)
 }
 
 #' ggplot, trellis, recordedplot or grob: print to draw it, then PNG
@@ -2246,7 +2265,7 @@ display_plot_value <- function(value, cell, token, dev) {
   grDevices::dev.set(dev$dev)
   eval_in_notebook(quote(print(v)), value)
   rp <- tryCatch(grDevices::recordPlot(), error = function(e) NULL)
-  tf <- text_form(value)
+  tf <- quietly(text_form(value))
   grDevices::dev.off(dev$dev)
   png_bytes <- read_png(dev$path)
   display[[cell]] <<- list(value = rp, token = token, kind = "plot", fig = dev$fig)
@@ -2303,11 +2322,18 @@ try_knit_print <- function(value) {
   # Some methods have nothing for a value outside a report and print it
   # instead (rmarkdown's for data frames and tibbles, data.table's): what
   # they print is dropped, and only a knit_asis result is kept, so the
-  # value goes on to the next step, Ember's table (#154).
+  # value goes on to the next step, Ember's table (#154). Their messages
+  # and warnings are held until then: a value that goes on is shown, and
+  # warns, by the next step instead (#183).
+  held <- list()
   capture_lines(
-    out <- tryCatch(do.call(knitr::knit_print, list(value), quote = TRUE, envir = globalenv()),
-                    error = function(e) NULL))
+    out <- withCallingHandlers(
+      tryCatch(do.call(knitr::knit_print, list(value), quote = TRUE, envir = globalenv()),
+               error = function(e) NULL),
+      message = function(m) { held[[length(held) + 1L]] <<- m; invokeRestart("muffleMessage") },
+      warning = function(w) { held[[length(held) + 1L]] <<- w; invokeRestart("muffleWarning") }))
   if (!inherits(out, "knit_asis")) return(NULL)
+  for (cnd in held) if (inherits(cnd, "warning")) warning(cnd) else message(cnd)
   # For pandoc, some methods (flextable's) wrap their HTML in a raw-HTML
   # fence, ```{=html} ... ```; the page would show the fence lines as text.
   html <- sub("(?s)^\\s*```\\{=html\\}[ \t]*\n(.*)\n```\\s*$", "\\1", paste(out, collapse = "\n"), perl = TRUE)
