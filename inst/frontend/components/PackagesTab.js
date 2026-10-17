@@ -483,40 +483,106 @@ export const format_bytes = (bytes, lang = getCurrentLanguage()) => {
  * How much disk the libraries, the package cache and the indexes use
  * (#38; design.md's "The package view shows disk use"). Measured by the
  * server in a subprocess (`ember_disk_use`, server.R) each time the tab
- * opens; shared by every notebook, so it says so. It only reports:
- * Ember deletes unused libraries on its own after 60 days, and
- * `ember::clean()` does the rest from R.
+ * opens, and again after a clean-up; shared by every notebook, so it
+ * says so. Ember deletes unused libraries on its own after 60 days.
+ *
+ * "Clean up…" (#128) frees space now. It first asks the server what it
+ * would delete (`ember_clean_up`, a dry run: libraries no open notebook
+ * holds and unused for 30 days, and the cache entries no other library
+ * lists) and shows that with Delete and Cancel. Nothing is deleted until
+ * Delete, and Delete judges at the preview's time. After the result the
+ * button comes back.
  */
 const DiskUse = () => {
     const pluto_actions = useContext(PlutoActionsContext)
     const [use, set_use] = useState(/** @type {{ libraries: number, cache: number, indexes: number, exact: boolean }?} */ (null))
     const [failed, set_failed] = useState(false)
-    useEffect(() => {
-        let live = true
+    // null, "checking", "deleting", or the dry run's or the deletion's reply.
+    const [clean, set_clean] = useState(/** @type {any} */ (null))
+    const live = useRef(true)
+    useEffect(
+        () => () => {
+            live.current = false
+        },
+        []
+    )
+    const measure = () => {
         Promise.resolve(pluto_actions.ember_disk_use?.())
             .then((response) => {
-                if (!live) return
+                if (!live.current) return
                 const message = response?.message
                 if (message == null || message.error != null || message.cache == null) set_failed(true)
                 else set_use(message)
             })
-            .catch(() => live && set_failed(true))
-        return () => {
-            live = false
-        }
-    }, [])
+            .catch(() => live.current && set_failed(true))
+    }
+    useEffect(measure, [])
+    // `as_of` is the preview's time, sent back with Delete so the deletion
+    // is judged then and removes nothing the preview didn't count.
+    const clean_up = (dry_run, as_of) => {
+        set_clean(dry_run ? "checking" : "deleting")
+        Promise.resolve(pluto_actions.ember_clean_up?.(dry_run, as_of))
+            .then((response) => {
+                if (!live.current) return
+                const message = response?.message
+                set_clean(message == null || message.cache == null ? { error: message?.error ?? "" } : message)
+                if (!dry_run) {
+                    set_use(null)
+                    set_failed(false)
+                    measure()
+                }
+            })
+            .catch(() => live.current && set_clean({ error: "" }))
+    }
 
-    return html`<p class="ember-packages-disk-use">
-        ${failed
-            ? t("t_ember_packages_disk_use_failed")
-            : use == null
-              ? t("t_ember_packages_disk_use_measuring")
-              : t(use.exact ? "t_ember_packages_disk_use" : "t_ember_packages_disk_use_estimate", {
-                    libraries: format_bytes(use.libraries),
-                    cache: format_bytes(use.cache),
-                    indexes: format_bytes(use.indexes),
-                })}
-    </p>`
+    const nothing = clean != null && typeof clean === "object" && clean.error == null && clean.libraries === 0 && clean.cache === 0
+    // After a result (done, nothing, failed) the button comes back, for another go.
+    const button = html`<button type="button" class="ember-btn" onClick=${() => clean_up(true)}>${t("t_ember_packages_clean_up")}</button>`
+    return html`<div class="ember-packages-disk">
+        <p class="ember-packages-disk-use">
+            ${failed
+                ? t("t_ember_packages_disk_use_failed")
+                : use == null
+                  ? t("t_ember_packages_disk_use_measuring")
+                  : t(use.exact ? "t_ember_packages_disk_use" : "t_ember_packages_disk_use_estimate", {
+                        libraries: format_bytes(use.libraries),
+                        cache: format_bytes(use.cache),
+                        indexes: format_bytes(use.indexes),
+                    })}
+        </p>
+        ${clean == null
+            ? button
+            : clean === "checking"
+              ? html`<p>${t("t_ember_packages_clean_up_checking")}</p>`
+              : clean === "deleting"
+                ? html`<p>${t("t_ember_packages_clean_up_deleting")}</p>`
+                : clean.error != null
+                  ? html`<p class="ember-packages-update-failed">${t("t_ember_packages_clean_up_failed")}</p>
+                        ${button}`
+                  : nothing
+                    ? html`<p>${t("t_ember_packages_clean_up_nothing")}</p>
+                          ${button}`
+                    : clean.dry_run
+                      ? html`<div class="ember-packages-update-question ember-packages-clean-up-question">
+                            <p>
+                                ${t("t_ember_packages_clean_up_question", {
+                                    libraries: t("t_ember_packages_clean_up_libraries", { count: clean.libraries }),
+                                    cache: t("t_ember_packages_clean_up_entries", { count: clean.cache }),
+                                    bytes: format_bytes(clean.bytes),
+                                })}
+                            </p>
+                            <button type="button" class="ember-btn primary" onClick=${() => clean_up(false, clean.as_of)}>${t("t_ember_packages_clean_up_delete")}</button>
+                            <button type="button" class="ember-btn" onClick=${() => set_clean(null)}>${t("t_cancel")}</button>
+                        </div>`
+                      : html`<p>
+                            ${t("t_ember_packages_clean_up_done", {
+                                libraries: t("t_ember_packages_clean_up_libraries", { count: clean.libraries }),
+                                cache: t("t_ember_packages_clean_up_entries", { count: clean.cache }),
+                                bytes: format_bytes(clean.bytes),
+                            })}
+                        </p>
+                        ${button}`}
+    </div>`
 }
 
 /**
