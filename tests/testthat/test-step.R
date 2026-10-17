@@ -516,6 +516,29 @@ test_that("a setting found at run time makes a settings cell, not an error (47, 
   expect_equal(r4$state$graph$settings, character())
 })
 
+test_that("a cell that changes another cell's object in place shows a note, and its readers don't go stale (#167)", {
+  s <- fake_state(list(A = cell("cnt <- make_counter()"), B = cell("cnt$add()"), C = cell("cnt$n")))
+  r <- boot(s, c("A", "B", "C"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "cnt"), at(10)))
+  # The worker reports a name; only one another cell defines gets the note.
+  r <- drive(r$state, wk_done(1, last_token(r), report(changed_in_place = c("cnt", "tmp")), at(11)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(12)))
+  expect_equal(r$state$results$B$status, "ok")
+  expect_equal(r$state$results$B$changed_in_place, "cnt")
+  expect_equal(snapshot_of(r$state)$cells$B$changed_in_place, "cnt")
+  js <- pluto_state(r$state)$js
+  check_wire(js)
+  expect_equal(js$cell_results$B$ember$changed_in_place, as_arr("cnt"))
+  expect_null(js$cell_results$A$ember$changed_in_place)
+  expect_false(isTRUE(r$state$results$C$stale))
+
+  # A run that changes nothing in place clears the note.
+  r2 <- drive(r$state, ev_run("B", at(13)))
+  r2 <- drive(r2$state, wk_done(1, last_token(r2), report(), at(14)))
+  expect_equal(r2$state$results$B$changed_in_place, character())
+  expect_null(pluto_state(r2$state)$js$cell_results$B$ember$changed_in_place)
+})
+
 test_that("a package load that resets a setting a settings cell set shows a note on the loading cell (#61)", {
   # A loads mgcv inside a function, so the fake lock needs no entry for it;
   # the worker's report is what matters here.
@@ -2036,7 +2059,7 @@ test_that("after a failed install, a cell waiting on the package runs instead of
     error = list(message = "there is no package called 'cli'", package = "cli")), at(7)))
   err <- r2$state$results$A$error
   expect_equal(err$kind, "missing_package")
-  expect_match(err$message, "its install may have failed")
+  expect_equal(err$message, "there is no package called 'cli': install failed")
 })
 
 test_that("while a package installs, a cell calling its functions waits for it instead of failing first (#67)", {
@@ -2102,4 +2125,30 @@ test_that("missing_package_error() for a locked, uninstalled package points at t
   out <- missing_package_error(s, "cli")
   expect_equal(out$error$kind, "missing_package")
   expect_match(out$error$message, "there is no package called 'cli'; its install may have failed")
+})
+
+test_that("a failed install's cell error says why it failed, as package_status() does (#182)", {
+  # Before, the cell said only "its install may have failed", though the
+  # Packages status named the missing system libraries and the command.
+  lock <- new_lock(name = c("s2", "sf", "units"), version = c("1.1.9", "1.0-21", "0.8-7"), source = rep("CRAN", 3))
+  s <- fake_state(list(A = cell("library(sf)")), lock = lock)
+  key <- s$packages$target$key
+  why <- paste("install failed:\nError: sf, units need system libraries that aren't installed (libgdal.so.34, libudunits2.so.0).",
+               "Install them with `apt-get install -y libgdal-dev libudunits2-dev`, then try again.")
+  r <- drive(s, ev_run("A", at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(), at(3)))
+  r <- drive(r$state, ev_library_checked(key, NULL, at(4)))
+  tok <- r$state$packages$install$token
+  r <- drive(r$state, ev_install_done(tok, key, NULL, why, character(), at(5),
+                                      failures = data.frame(package = c("units", "sf"), kind = "system_library",
+                                                            detail = "", stringsAsFactors = FALSE)))
+  r <- drive(r$state, wk_done(r$state$worker$gen, r$state$worker$running$token, report(
+    error = list(message = "there is no package called 'sf'", package = "sf")), at(6)))
+  err <- r$state$results$A$error
+  expect_equal(err$kind, "missing_package")
+  expect_equal(err$message, paste0("there is no package called 'sf': ", why))
+  expect_equal(packages_view(r$state)$problems$message[[1]], why)
+
+  # A package the install didn't get to, though it didn't fail itself, says why too.
+  out <- missing_package_error(r$state, "s2")
+  expect_equal(out$error$message, paste0("there is no package called 's2': ", why))
 })

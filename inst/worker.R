@@ -118,6 +118,9 @@ search_added <- character()  # every attach() entry any cell has added this sess
 running <- NULL        # list(cell, token) during a run (for the source trace)
 deferred <- list()     # messages read while waiting for a source_reply
 load_log <- NULL       # settings changes made inside loadNamespace/library during a run
+notebook_options <- character()  # option names an options() call from the
+                       # notebook's own code (top-level, or a function a
+                       # cell defined) set during the current run
 settings_base <- NULL  # the baseline settings: snapshotted once at boot, then
                        # every change a package load makes is copied in, so a
                        # package's own option survives a reset
@@ -342,7 +345,9 @@ trace_line <- function(...) {
 #' or NULL), console (list of items, also streamed), error (NULL or
 #' list(message, call, traceback, span)), runtime, created, changed, removed,
 #' settings, load_notes, attached (package -> exports, for packages newly
-#' attached), formula_misses, globals (see summarise_globals())).
+#' attached), formula_misses, globals (see summarise_globals()),
+#' changed_in_place (names of other cells' environments, R6 objects and
+#' reference class objects this run changed; env_fingerprint())).
 #' `error$span` is set only for role "text": the 1-based index of the
 #' failing line (into `inline_spans()`'s rows).
 #'
@@ -364,7 +369,7 @@ run_cell <- function(msg) {
              runtime = NA_real_, created = character(), changed = character(),
              removed = character(), settings = list(), load_notes = list(),
              attached = list(), formula_misses = character(), loaded = character(),
-             globals = list())
+             globals = list(), changed_in_place = character())
 
   # `dev`/`console` are closed here (not just at their normal point of use
   # below) so an interrupt landing anywhere in this function -- including
@@ -397,8 +402,13 @@ run_cell <- function(msg) {
 
     before_names <- ls(globalenv(), all.names = TRUE)
     before <- snapshot_globals(before_names)
+    # Other cells' reference objects, to tell the user when this cell
+    # changes one in place (design.md, "only reference objects change in
+    # place"; #167). Its own were removed above.
+    env_before <- env_fingerprints(before, unlist(owned, use.names = FALSE))
     settings0 <- snapshot_settings()
     load_log <<- list()
+    notebook_options <<- character()
     attach_requests[[msg$cell]] <<- character()
     running <<- list(cell = msg$cell, token = msg$token)
     search0 <- search()
@@ -555,6 +565,13 @@ run_cell <- function(msg) {
       rc$runtime <- unname((proc.time() - t0)[["elapsed"]])
       if (!is.null(err)) rc$error <- err
 
+      # The cell's settings are what its code changed, taken before the
+      # display step: a display method that sets an option when it first
+      # runs (flextable's knit_print() through gdtools) must not make the
+      # cell a settings cell (#156).
+      settings_code <- snapshot_settings()
+      load_log_code <- load_log
+
       # Displaying runs the value's print and format methods, which are
       # the user's code too, so it can be interrupted like the cell.
       output <- NULL
@@ -593,10 +610,30 @@ run_cell <- function(msg) {
       rc$created <- facts$created
       rc$changed <- facts$changed
       rc$removed <- facts$removed
+      rc$changed_in_place <- changed_in_place(env_before, facts$changed)
 
-      by_code <- settings_by_code(settings0, snapshot_settings(), load_log)
+      by_code <- settings_by_code(settings0, settings_code, load_log_code)
+      # An option a package creates for itself on first use (readr's
+      # `readr.num_threads`) is the package's, as a load's change is (#164).
+      cached <- package_cached_options(by_code$settings, notebook_options)
+      for (d in by_code$settings[cached]) settings_base <<- set_setting(settings_base, d$kind, d$name, d$after)
+      by_code$settings <- by_code$settings[!cached]
+      # What the display step changed is its own, as a package load's
+      # change is: part of the starting values from now on. A package it
+      # loads (knitr, or a table package's dependencies) still gets its
+      # load note, from the same function with the display's start as
+      # the baseline.
+      display_loads <- load_log[seq_along(load_log) > length(load_log_code)]
+      by_display <- settings_by_code(settings_code, snapshot_settings(), display_loads)
+      for (d in by_display$settings) {
+        if (!identical(d$kind, "search")) settings_base <<- set_setting(settings_base, d$kind, d$name, d$after)
+      }
       settings_diffs <- by_code$settings
-      rc$load_notes <- by_code$load_notes
+      notes <- by_code$load_notes
+      for (n in by_display$load_notes) {
+        if (!any(vapply(notes, identical, logical(1), y = n))) notes[[length(notes) + 1]] <- n
+      }
+      rc$load_notes <- notes
 
       # Kept, not reverted: the next run's apply_settings_context() decides
       # whether this cell's changes apply (the server sends which settings
@@ -827,6 +864,111 @@ compare_globals <- function(before_names, before) {
     }
   }
   list(created = created, changed = changed, removed = removed)
+}
+
+#' The most bindings `env_fingerprints()` reads per run, over all the
+#' environments it visits, and the most it reads from one environment. An
+#' environment over the limit (a dictionary of 1e5 keys) is skipped, not
+#' read, and the others are still checked, so a big one costs only a
+#' `length()` call each run.
+ENV_FINGERPRINT_MAX <- 10000L
+ENV_FINGERPRINT_ONE_MAX <- 1000L
+
+#' Fingerprints of the environment-valued globals in `before` (a
+#' `snapshot_globals()` result) named in `names`: a named list of
+#' `list(env, print)`. Environments, R6 objects and reference class objects
+#' are the values a cell can change without rebinding the name, so
+#' `compare_globals()` can't see it (#167). Package namespaces and the
+#' global environment are skipped, and so is an environment too big to
+#' read.
+env_fingerprints <- function(before, names) {
+  budget <- new.env()
+  budget$left <- ENV_FINGERPRINT_MAX
+  out <- list()
+  for (n in intersect(names, names(before))) {
+    b <- before[[n]]
+    if (b$active || !is.environment(b$value) || is_shared_env(b$value)) next
+    print <- env_fingerprint(b$value, budget)
+    if (is.null(print)) next
+    out[[n]] <- list(env = b$value, print = print)
+  }
+  out
+}
+
+#' An environment the notebook doesn't own: a namespace, a package's
+#' attached environment, the global, base or empty environment.
+is_shared_env <- function(e) {
+  isNamespace(e) || identical(e, globalenv()) || identical(e, baseenv()) ||
+    identical(e, emptyenv()) || nzchar(environmentName(e))
+}
+
+#' One environment's bindings: each value as it is (holding it costs no
+#' copy, and `identical()` on the same object is a pointer check), an
+#' active binding by its function, and an environment-valued binding by
+#' its own fingerprint, `depth` levels down. An R6 object's private fields
+#' are two levels down (`.__enclos_env__`, then `private`). Each
+#' environment is read once (`seen`), so `self` doesn't loop.
+#'
+#' A binding is read with `substitute()`, which never forces a promise: a
+#' `delayedAssign()` binding is kept as its expression, so taking the
+#' fingerprint runs no user code. `NULL` when the environment has more
+#' bindings than `ENV_FINGERPRINT_ONE_MAX` or than `budget$left` (counted
+#' with `length()`, before anything is listed), or if reading it fails. An
+#' inner environment that is skipped is kept by identity only.
+env_fingerprint <- function(e, budget, depth = 3L, seen = new.env()) {
+  tryCatch(env_fingerprint_(e, budget, depth, seen), error = function(err) NULL)
+}
+
+env_fingerprint_ <- function(e, budget, depth, seen) {
+  # `identical()` on environments compares the objects, not their contents.
+  for (s in seen$envs) if (identical(s, e)) return("seen")
+  seen$envs <- c(seen$envs, list(e))
+  # A reference class object is an S4 object holding its environment;
+  # `length()` and `substitute()` need the environment itself.
+  if (isS4(e)) e <- as.environment(e)
+  size <- length(e)
+  if (size > ENV_FINGERPRINT_ONE_MAX || size > budget$left) return(NULL)
+  budget$left <- budget$left - size
+  nms <- ls(e, all.names = TRUE, sorted = TRUE)
+  out <- vector("list", length(nms))
+  names(out) <- nms
+  for (n in nms) {
+    if (bindingIsActive(n, e)) {
+      out[[n]] <- list(active = activeBindingFunction(n, e))
+      next
+    }
+    v <- eval(call("substitute", as.name(n), e))
+    # A reference class object copies a method into itself the first time
+    # it's called (`a$get()`), which is no change to the object.
+    if (inherits(v, "refMethodDef")) {
+      out[[n]] <- NULL
+      next
+    }
+    if (is.environment(v) && depth > 1L && !is_shared_env(v)) {
+      inner <- env_fingerprint_(v, budget, depth - 1L, seen)
+      out[[n]] <- if (is.null(inner)) list(env = v) else list(env = v, print = inner)
+    } else {
+      out[[n]] <- list(value = v)
+    }
+  }
+  out
+}
+
+#' Which of `env_before`'s globals the run changed in place: the name is
+#' still bound to the same environment, and its fingerprint differs. A
+#' name the run rebound (`changed`) or removed is reported as a change of
+#' the name, not of its contents.
+changed_in_place <- function(env_before, changed) {
+  out <- character()
+  for (n in setdiff(names(env_before), changed)) {
+    b <- env_before[[n]]
+    if (!exists(n, envir = globalenv(), inherits = FALSE) || bindingIsActive(n, globalenv())) next
+    now <- get(n, envir = globalenv(), inherits = FALSE)
+    if (!identical(now, b$env)) next
+    print <- env_fingerprint(now, list2env(list(left = ENV_FINGERPRINT_MAX)))
+    if (!identical(print, b$print)) out <- c(out, n)
+  }
+  out
 }
 
 #' At most 80 characters, cut with "\u2026" (the whole string, ellipsis
@@ -1104,6 +1246,22 @@ settings_by_code <- function(settings0, after, load_log) {
   list(settings = diff_settings(baseline, after), load_notes = notes)
 }
 
+#' Which of a cell's setting changes are a package caching its own option
+#' on first use (#164): an option that didn't exist before the run, that no
+#' `options()` call from the notebook's own code set (`notebook_set`, from
+#' `protect_options()`). readr sets `readr.num_threads` on its first read
+#' or write and `readr.default_locale` on its first `read_csv2()`. What
+#' decides is who called `options()`, not the option's name: a notebook
+#' helper `quiet <- function() options(readr.show_col_types = FALSE)` makes
+#' the cell that calls it a settings cell, as any setting in a helper does.
+#' Returns a logical vector over `diffs`.
+package_cached_options <- function(diffs, notebook_set) {
+  vapply(diffs, function(d) {
+    identical(d$kind, "option") && is.null(d$before) && !is.null(d$after) &&
+      !(d$name %in% notebook_set)
+  }, logical(1))
+}
+
 #' Before a cell runs (settings-cells.md, What the worker does before each
 #' run): put every setting any cell has changed back to the baseline, then
 #' apply the changes of the settings cells in effect, `ids`, in order.
@@ -1311,6 +1469,42 @@ install_traces <- function() {
           tracer = bquote((.(ember_trace_s4_method))()))
   }
   protect_closeall(base_env)
+  protect_options(base_env)
+  invisible()
+}
+
+#' Replace options() with a version that records, during a run, which
+#' options the notebook's own code set: a call whose caller's top-level
+#' environment is the global one (a cell's code, or a function a cell
+#' defined), not a package namespace (#164). `package_cached_options()`
+#' tells a package caching its own option apart from a setting by this.
+#' A call that sets options returns the old values, named by the options
+#' it set, so nothing else is read. Same binding-replacement approach as
+#' `protect_closeall()`.
+#'
+#' The body ends with base's own `.Internal(options(...))` and records in
+#' `on.exit()`, so an error from a bad value (`options(digits = 0)`) keeps
+#' the caller's call and frames, and a query keeps its visibility. A query
+#' (`options("digits")`) has no names and no list argument and is skipped.
+protect_options <- function(base_env) {
+  wrapped <- function(...) {
+    # `returnValue()` is NULL after an error, before the arguments are
+    # read again here: a failed one would only fail again.
+    on.exit(if (!is.null(running) && !is.null(returnValue(NULL)) &&
+                ...length() > 0 && (!is.null(...names()) || is.list(..1))) {
+      set <- names(returnValue(NULL))
+      if (length(set) && identical(topenv(parent.frame()), globalenv())) {
+        # Not union(): it costs about 20 us a call, and a cell may set an
+        # option in a loop.
+        set <- set[!(set %in% notebook_options)]
+        if (length(set)) notebook_options <<- c(notebook_options, set)
+      }
+    })
+    .Internal(options(...))
+  }
+  unlockBinding("options", base_env)
+  assign("options", wrapped, envir = base_env)
+  lockBinding("options", base_env)
   invisible()
 }
 

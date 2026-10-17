@@ -64,8 +64,10 @@ repository depends on them.
   marimo's `on_cell_change`: "autorun" (the default, as Pluto) reruns the
   cells that depend on an edited cell; "lazy" marks them stale instead,
   keeping their outputs dimmed and labelled until they run. Running a stale
-  cell runs its stale ancestors first. Pluto's safe preview shows editing
-  without running is workable.
+  cell runs its stale ancestors first, and so does running a cell whose
+  ancestor was edited: every ancestor between the edited one and the cell
+  run runs too, since each goes stale once the edited one runs (#169).
+  Pluto's safe preview shows editing without running is workable.
 - **Open without running.** Running a cell runs its unrun ancestors first.
   "Run all" is one click. Long simulations don't start just because a
   notebook was opened.
@@ -325,7 +327,16 @@ makes the same code a visible redefinition, so the rule catches it.
 Only reference objects change in place in R (environments, R6, reference
 classes, data.table's `:=` and `set*()`). Those stay untracked, as mutation
 is in Pluto and marimo; the user docs say so and the engine warns when a
-cell modifies one defined elsewhere.
+cell modifies one defined elsewhere. Before each run the worker keeps a
+fingerprint of every environment another cell defines (its bindings, and
+those of the environments inside it, three levels down, which reaches an
+R6 object's private fields). If a run changes one without rebinding its
+name, the cell shows a note: "Changed `cnt` in place, which another cell
+defines, so the cells that read it don't rerun." Taking the fingerprint
+forces no promise and calls no active binding. Namespaces are skipped, and
+so is any one environment with more than 1,000 bindings; the others are
+still checked, up to 10,000 bindings a run. data.table's in-place changes
+aren't detected yet (#172).
 
 ### Methods
 
@@ -1086,8 +1097,11 @@ dependents). Ember keeps it; the R-side API is to be designed.
 **Look distinct:** own colours, fonts and layout. Programs that inject
 scripts into the page (Endeavor does) rely on the DOM hooks Pluto's page has
 (`pluto-cell` elements with the cell ID, `.code_differs`, the add-cell
-buttons, the error element) and its CSS variable names; renaming them is a
-change to coordinate with them.
+buttons, the error element) and the CSS variable names they read; renaming
+them is a change to coordinate with them. The variable names kept for them
+are the ones Endeavor reads (tests/testthat/fixtures/endeavor-css-variables.txt)
+and the ones in pluto-css-variables.txt that Ember's own frontend reads. The
+themes may drop a Pluto variable that nothing reads (#57).
 
 ## Integration with Endeavor
 

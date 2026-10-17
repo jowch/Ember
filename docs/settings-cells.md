@@ -54,7 +54,9 @@ every draw, so making it a setting would not make results independent of
 what ran before, and resetting it per run would hand every cell the same
 random stream, which `Rscript` doesn't do. `par()` needs no rule, since each
 cell draws on its own device. Changes a package makes while it loads stay
-the package's, as today.
+the package's, as today, and so do changes made while Ember displays the
+cell's value and options a package creates for itself on first use (see
+[Settings found at run time](#settings-found-at-run-time)).
 
 **Calls inside `local()`** no longer count statically, as calls inside a
 function body already don't. The runtime check still sees any change that
@@ -256,6 +258,32 @@ settings cell and ordinary cell from one run to the next, rerunning the
 notebook each time. A cell's settings are its static ones plus its learned
 ones, and both count for the conflict rule. Two cells found to change the
 same setting at run time get the same "set in two cells" error.
+
+The "after" is taken when the cell's code has run, before its value is
+displayed. A display method that changes a setting (flextable's
+`knit_print()` sets a gdtools option the first time) doesn't make the cell a
+settings cell; the change is kept as a package load's is, as part of the
+starting values (#156).
+
+A package that caches its own option the first time it's used is treated
+the same way. readr sets `readr.num_threads` on its first read or write and
+`readr.default_locale` on its first `read_csv2()`, so without this rule a
+plain `read_csv()` cell would become a settings cell, and a second readr
+cell would get "set in two cells" (#164). The rule: an option that didn't
+exist before the cell ran, and that no `options()` call from the
+notebook's own code set, is the package's. The worker wraps `options()`
+and notes the calls whose caller is the notebook's code: a cell's top
+level, or a function a cell defined. So a helper
+`quiet <- function() options(readr.show_col_types = FALSE)` still makes
+the cell that calls it a settings cell, as case 3 above says. What decides
+is who called `options()`, not the option's name.
+
+A package function the user calls to set an option of its own
+(`progressr::handlers("cli")`) is on the package's side the first time,
+when it creates the option, and makes a settings cell once the option
+exists. Nothing in R tells such a setter apart from a cache. A learned
+setting saved in a file before this rule stays until its cell's code
+changes, as any learned setting does.
 
 `theme_set()` is the exception: ggplot2 keeps the theme inside its namespace,
 outside what the worker compares, so only the static check finds it (see

@@ -536,6 +536,29 @@ upstream_of_set <- function(graph, ids) {
   run_order(graph, seen)
 }
 
+#' The cells of `among` downstream of any of `from`, directly or not: one
+#' walk for the whole set, and only through `among`, so a run of every cell
+#' (nothing to walk) stays linear (#169).
+reached_from <- function(graph, from, among) {
+  if (length(from) == 0 || length(among) == 0) return(character())
+  open <- new.env(hash = TRUE, size = length(among))
+  for (a in among) assign(a, TRUE, envir = open)
+  reached <- character()
+  todo <- from
+  while (length(todo)) {
+    i <- todo[[1]]
+    todo <- todo[-1]
+    for (d in graph$downstream[[i]]) {
+      if (exists(d, envir = open, inherits = FALSE)) {
+        rm(list = d, envir = open)
+        reached <- c(reached, d)
+        todo <- c(todo, d)
+      }
+    }
+  }
+  reached
+}
+
 #' Has a result with status "ok", not stale, matching the current code.
 is_fresh <- function(state, id) {
   r <- state$results[[id]]
@@ -976,7 +999,11 @@ reduce_run <- function(state, event) {
   on_ids <- setdiff(ids, off_ids)
   ancestors <- upstream_of_set(state$graph, on_ids)
   unfresh <- Filter(function(a) !is_fresh(state, a), ancestors)
-  want <- union(unfresh, on_ids)
+  # An ancestor downstream of an unfresh one is fresh now but goes stale
+  # once that one runs, after this plan is made: it runs too, or the cells
+  # asked for would use its old values (#169).
+  between <- reached_from(state$graph, unfresh, setdiff(ancestors, unfresh))
+  want <- union(union(unfresh, between), on_ids)
   skipped <- union(off_ids, Filter(function(id) !can_run(state, id), want))
   to_add <- setdiff(want, skipped)
   state$pending <- union(state$pending, to_add)
@@ -1499,6 +1526,12 @@ reduce_wk_done <- function(state, event) {
   settings_found <- if (id %in% state$graph$settings) character()
                     else setting_label(setdiff(reported_keys, known_keys))
   load_notes <- report_load_notes(report$load_notes)
+  # A reference object another cell defines, changed in place: cells that
+  # read it don't rerun, so the cell says so (design.md, Definitions; #167).
+  changed_in_place <- Filter(function(n) {
+    any(vapply(state$graph$ids, function(cid) !identical(cid, id) && n %in% state$graph$cells[[cid]]$definitions,
+               logical(1)))
+  }, as.character(report$changed_in_place %||% character()))
   if (defs_changed || refs_changed || settings_changed) {
     state$graph <- graph_learn(state$graph, id,
                                definitions = if (defs_changed) learned_defs else NULL,
@@ -1518,7 +1551,7 @@ reduce_wk_done <- function(state, event) {
                        defined = report$created %||% character(),
                        variables = if (identical(status, "ok")) report$globals %||% list() else list(),
                        settings_found = settings_found, setting = id %in% state$graph$settings,
-                       load_notes = load_notes)
+                       load_notes = load_notes, changed_in_place = as.character(changed_in_place))
   state$results[[id]] <- result
   if (length(state$footer_sources) && all_code_cells_ran(state)) {
     state$footer_sources <- character()

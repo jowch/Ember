@@ -41,7 +41,8 @@ Tests are listed in [ui-2-tests.md](ui-2-tests.md).
 - **Kept as they are**: the DOM hooks (`pluto-cell[id]`, `pluto-input
   .cm-content`, `button.add_cell`, `pluto-output`, `.code_differs`,
   `header`, `main pluto-notebook`), every CSS variable name in
-  `themes/light.css` and `themes/dark.css` (203 names), `window.editor_state`,
+  `themes/light.css` and `themes/dark.css` (203 names; since #57, only the
+  ones something reads, see design.md, "Look distinct"), `window.editor_state`,
   CodeMirror 6 as one copy, and the URLs `/edit`, `/notebookfile`,
   `/notebookexport`. Endeavor's page code reads all of these
   (endeavor/frontend/src/*.ts; the URLs from endeavor/src/notebook_pane.rs).
@@ -173,7 +174,8 @@ aspect ratio fits. Not every browser has supported SVG favicons (Safari was
 the holdout); if the tab icon is blank there, add a PNG fallback beside it.
 
 **Theme.** `themes/light.css` and `themes/dark.css` get new values for the
-same 203 variable names; none is renamed or removed. Colours, fonts and
+same 203 variable names; none is renamed or removed. (Later, #57 stopped
+requiring the 106 that nothing reads; see design.md, "Look distinct".) Colours, fonts and
 spacing that `editor.css` hard-codes (for example `"Alegreya Sans"` at
 editor.css:130, `"Vollkorn"` at 142, 332, 691) become variables. Variables
 that are new, not renamed, are named `--ember-*`. `--julia-mono-font-stack`

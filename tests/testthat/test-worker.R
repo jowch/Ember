@@ -1536,6 +1536,199 @@ test_that("display_html resolves and dedupes dependencies, skipped without htmlt
   expect_identical(r$output$deps[[1]]$script, "a.js")
 })
 
+test_that("a cell that changes another cell's environment in place reports it; reading it, rebinding it or changing its own doesn't (#167)", {
+  h <- worker_harness()
+  on.exit(h$close())
+
+  # An R6-like object: public fields in one environment, private ones two
+  # levels down, as R6 keeps them.
+  run_and_wait(h, "a", 1L, paste(
+    "cnt <- new.env()",
+    "cnt$n <- 0",
+    "cnt$.__enclos_env__ <- new.env()",
+    "cnt$.__enclos_env__$self <- cnt",
+    "cnt$.__enclos_env__$private <- new.env()",
+    "cnt$.__enclos_env__$private$hits <- 0",
+    "cnt$add <- function() cnt$n <- cnt$n + 1",
+    "cnt$hit <- function() cnt$.__enclos_env__$private$hits <- 1",
+    "x <- 1", sep = "\n"))
+  r <- run_and_wait(h, "b", 2L, "cnt$add()")
+  expect_identical(r$status, "ok")
+  expect_identical(r$changed_in_place, "cnt")
+  r <- run_and_wait(h, "c", 3L, "cnt$hit()")
+  expect_identical(r$changed_in_place, "cnt")
+  r <- run_and_wait(h, "d", 4L, "assign('m', 1, envir = cnt)")
+  expect_identical(r$changed_in_place, "cnt")
+
+  # Reading it, or setting a binding to the value it already has, isn't a change.
+  r <- run_and_wait(h, "e", 5L, "cnt$n\nls(cnt)")
+  expect_length(r$changed_in_place, 0)
+  # A cell's own environment is its own to change.
+  r <- run_and_wait(h, "f", 6L, "mine <- new.env()\nmine$v <- 1")
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "f", 7L, "mine <- new.env()\nmine$v <- 2")
+  expect_length(r$changed_in_place, 0)
+  # Rebinding the name is a change of the name (the server's "Multiple
+  # definitions"), not of its contents.
+  r <- run_and_wait(h, "g", 8L, "cnt <- new.env()")
+  expect_length(r$changed_in_place, 0)
+  # A reference class object copies a method into itself on its first
+  # call, which isn't a change; setting a field is.
+  run_and_wait(h, "r", 9L, paste(
+    'A <- setRefClass("A", fields = list(n = "numeric"), methods = list(get = function() n, inc = function() n <<- n + 1))',
+    "a <- A$new(n = 0)", sep = "\n"))
+  r <- run_and_wait(h, "s", 10L, "a$get()")
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "t", 11L, "a$inc()")
+  expect_identical(r$changed_in_place, "a")
+  # A namespace held in a global isn't read.
+  run_and_wait(h, "h", 12L, "ns <- asNamespace('stats')")
+  r <- run_and_wait(h, "i", 13L, "1")
+  expect_identical(r$status, "ok")
+  expect_length(r$changed_in_place, 0)
+})
+
+test_that("taking the in-place fingerprint forces no promise, and a big environment is skipped without turning the check off for the others (#167)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  run_and_wait(h, "a", 1L, paste(
+    "forced <- 0",
+    "le <- new.env()",
+    "delayedAssign('x', { forced <<- forced + 1; 42 }, assign.env = le)",
+    "delayedAssign('bad', stop('never read'), assign.env = le)",
+    "d <- new.env(hash = TRUE)",
+    "for (i in seq_len(20000)) assign(paste0('k', i), i, envir = d)",
+    "cnt <- new.env()",
+    "cnt$n <- 0", sep = "\n"))
+  r <- run_and_wait(h, "b", 2L, "1")
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "c", 3L, "forced")
+  expect_identical(r$output$text, "[1] 0")
+  # After the skipped dictionary and the environment holding a promise that
+  # errors, a change to the next object is still reported.
+  r <- run_and_wait(h, "e", 4L, "cnt$n <- 1")
+  expect_identical(r$changed_in_place, "cnt")
+  # Forcing a promise isn't a change; assigning over it is.
+  r <- run_and_wait(h, "f", 5L, "le$x")
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "g", 6L, "assign('x', 1, envir = le)")
+  expect_identical(r$changed_in_place, "le")
+})
+
+test_that("a setting the display step changes isn't the cell's: only its code's changes make it a settings cell, and the display's change stays as a package load's would (#156)", {
+  skip_if_not_installed("knitr")
+  h <- worker_harness(extra_libs = dirname(find.package("knitr")))
+  on.exit(h$close())
+
+  # As flextable's knit_print() sets an option through gdtools; this one
+  # changes it on every call, so each cell below changes it.
+  run_and_wait(h, "m", 1L, paste(
+    'registerS3method("knit_print", "ember_sets_opt", function(x, ...) {',
+    '  n <- getOption("ember_display_opt")',
+    '  options(ember_display_opt = if (is.null(n)) 1 else n + 1)',
+    '  knitr::asis_output("<b>shown</b>")',
+    '}, envir = asNamespace("knitr"))', sep = "\n"))
+  r <- run_and_wait(h, "a", 2L, paste(
+    'options(ember_code_opt = 1)',
+    'structure(1, class = "ember_sets_opt")', sep = "\n"))
+  expect_identical(r$output$html, "<b>shown</b>")
+  expect_identical(vapply(r$settings, function(d) d$name, character(1)), "ember_code_opt")
+
+  # A cell that only shows such a value sets nothing.
+  r <- run_and_wait(h, "b", 3L, 'structure(2, class = "ember_sets_opt")')
+  expect_identical(r$output$html, "<b>shown</b>")
+  expect_length(r$settings, 0)
+
+  # The display's change is part of the starting values: putting a settings
+  # cell's change back (cell s not in effect) returns to b's display's 2,
+  # not to unset.
+  run_and_wait(h, "s", 4L, "options(ember_display_opt = 5)")
+  r <- run_and_wait(h, "c", 5L, 'getOption("ember_display_opt")')
+  expect_identical(r$output$text, "[1] 2")
+})
+
+test_that("an option a package's code creates for itself on first use is the package's; one the notebook's code sets, directly or in a helper, makes a settings cell (#164)", {
+  h <- worker_harness()
+  on.exit(h$close())
+
+  # As readr caches `readr.num_threads` on its first read: a function that
+  # lives in a package namespace (stats here) creates an option.
+  run_and_wait(h, "f", 1L, paste(
+    'cache <- function() if (is.null(getOption("stats.ember_cache"))) options(stats.ember_cache = 4L)',
+    'environment(cache) <- asNamespace("stats")',
+    'unprefixed <- function() options(ember_pkg_cache = TRUE)',
+    'environment(unprefixed) <- asNamespace("stats")',
+    'setter <- function(v) options(stats.ember_cache = v)',
+    'environment(setter) <- asNamespace("stats")', sep = "\n"))
+  r <- run_and_wait(h, "a", 2L, "cache()\n1")
+  expect_identical(r$status, "ok")
+  expect_length(r$settings, 0)
+  # It is part of the starting values: putting settings back before the
+  # next run doesn't remove it.
+  r <- run_and_wait(h, "b", 3L, 'getOption("stats.ember_cache")')
+  expect_identical(r$output$text, "[1] 4")
+  # The name doesn't matter, only who set it (evaluate caches
+  # `rlang_trace_top_env`).
+  r <- run_and_wait(h, "u", 4L, "unprefixed()")
+  expect_length(r$settings, 0)
+
+  names_of <- function(r) vapply(r$settings, function(d) d$name, character(1))
+  # The notebook's own code: a direct call, a computed name, and a helper a
+  # cell defines (settings-cells.md, "A setting inside a helper"), even for
+  # a package's option name.
+  r <- run_and_wait(h, "c", 5L, "options(stats.ember_own = 1)")
+  expect_identical(names_of(r), "stats.ember_own")
+  r <- run_and_wait(h, "d", 6L, "op <- list(stats.ember_computed = 1); options(op)")
+  expect_identical(names_of(r), "stats.ember_computed")
+  run_and_wait(h, "q", 7L, "quiet <- function() options(readr.show_col_types = FALSE)")
+  r <- run_and_wait(h, "g", 8L, "quiet()")
+  expect_identical(names_of(r), "readr.show_col_types")
+  # A package's code changing an option that already exists is the cell's.
+  r <- run_and_wait(h, "e", 9L, "setter(5L)")
+  expect_identical(names_of(r), "stats.ember_cache")
+})
+
+test_that("the options() wrapper doesn't show in an error or change a query's visibility (#164)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  # As on main: the caller's call, and no frames of the wrapper's own.
+  r <- run_and_wait(h, "a", 1L, "options(digits = 0)")
+  expect_identical(r$status, "error")
+  expect_identical(r$error$call, "options(digits = 0)")
+  expect_identical(r$error$traceback, "options(digits = 0)")
+  expect_false(r$error$deep)
+  run_and_wait(h, "f", 2L, "f <- function() options(digits = 0)")
+  r <- run_and_wait(h, "b", 3L, "f()")
+  expect_identical(r$error$traceback, c("f()", "options(digits = 0)"))
+  expect_identical(vapply(r$error$frames, function(f) f$call, character(1)), c("f()", "options(digits = 0)"))
+  # A query still prints.
+  r <- run_and_wait(h, "c", 4L, 'options("digits")')
+  expect_identical(r$output$text, "$digits\n[1] 7\n")
+  expect_length(r$settings, 0)
+})
+
+test_that("a package the display step loads still gets its load note when it resets a setting a settings cell set (#156, #61)", {
+  skip_if_not_installed("knitr")
+  h <- worker_harness(extra_libs = c(fixture_lib(), dirname(find.package("knitr"))))
+  on.exit(h$close())
+
+  # knitr is loaded here, so the display step below loads only emberfix1.
+  run_and_wait(h, "m", 1L, paste(
+    'registerS3method("knit_print", "ember_loads", function(x, ...) {',
+    '  loadNamespace("emberfix1")',
+    '  knitr::asis_output("<b>shown</b>")',
+    '}, envir = asNamespace("knitr"))', sep = "\n"))
+  run_and_wait(h, "s", 2L, 'options(emberfix_load_opt = "user")')
+  r <- run_and_wait(h, "b", 3L, 'structure(1, class = "ember_loads")', settings = "s")
+  expect_identical(r$output$html, "<b>shown</b>")
+  expect_length(r$settings, 0)
+  expect_identical(r$load_notes, list(list(package = "emberfix1", kind = "option", name = "emberfix_load_opt")))
+  # The settings cell is applied again before the next run, as for a load
+  # in the cell's code.
+  r2 <- run_and_wait(h, "c", 4L, 'getOption("emberfix_load_opt")', settings = "s")
+  expect_identical(r2$output$text, '[1] "user"')
+})
+
 test_that("a value with a knit_print() method shows as its HTML: registered by a package, defined in the notebook, an HTML kable; a markdown kable keeps its text (#154)", {
   skip_if_not_installed("knitr")
   h <- worker_harness(extra_libs = dirname(find.package("knitr")))
