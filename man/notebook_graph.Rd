@@ -13,10 +13,11 @@ a graph, rebuilding only what that fact can change.
 }
 \usage{
 notebook_graph(cells, exports = list(),
-  learned = NULL, disabled = character(), previous = NULL, read_file = NULL)
+  learned = NULL, disabled = character(), previous = NULL, read_file = NULL,
+  columns = list())
 
 graph_learn(graph, cell, definitions = NULL, references = NULL,
-  settings = NULL)
+  settings = NULL, columns = list())
 }
 \arguments{
 \item{cells}{Named character vector, cell id -> code, in display order.
@@ -39,6 +40,12 @@ Analyses are reused for cells whose code is identical and whose sourced
 files still read the same; everything else is recomputed. Passing
 \code{previous} never changes the result, only the work done.}
 \item{read_file}{Reader for \code{source()} paths; see \link{read_cell}.}
+\item{columns}{Named list, cell id -> global -> \code{list(frame, names)}: the
+names each data frame or list a cell created had at its last successful run.
+A name read inside \code{subset()}, \code{transform()}, \code{with()} or
+\code{within()} is an edge only when its data doesn't have that column; with
+no entry for the data's cell the edge is soft. \code{list()} means nothing has
+run.}
 \item{graph}{An \code{ember_graph}, as returned by \code{notebook_graph()} or
 \code{graph_learn()}.}
 \item{cell}{The id of the cell the worker ran.}
