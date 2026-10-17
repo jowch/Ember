@@ -331,11 +331,10 @@ span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
 #'   `figure` is present, as `list(width, height)` inches, only when the
 #'   output is `image/png`. It comes from `cell_figure_size(view$code)` --
 #'   the cell's own `#|` lines -- never from the stored image's actual
-#'   pixel size: an API `render_png(width, height)` call replaces that
-#'   stored image (it's an Endeavor-facing API, left as is) without
-#'   changing the cell's figure size every other viewer sees, so reading
-#'   the size back out of it would make one such call resize the figure
-#'   on every open page. `code` is already in the key (through `cell`).
+#'   pixel size, which is the last render's: a density redraw stores an
+#'   image at the cell's figure size times the page's `res`, so reading
+#'   the size back out of it would tie the figure to one page's density.
+#'   `code` is already in the key (through `cell`).
 #'   `variables` is present, as `as_arr(view$variables)` (already
 #'   `list(name, type, value, kind)` per global, sorted, dot-names and an
 #'   off cell's excluded by `cell_variables()`), only when non-empty: the

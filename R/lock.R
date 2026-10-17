@@ -11,9 +11,11 @@
 #'
 #' `entries`: data frame `name`, `version`, `source`, `extra`, one row per
 #' package, sorted by `name` (C locale), names unique.
-#' * `source` is `"CRAN"`, `"Bioc"`, or `"github:<user>/<repo>@<sha>"`
+#' * `source` is `"CRAN"`, `"Bioc"`, `"github:<user>/<repo>@<sha>"`
 #'   (the commit the header's `[sources]` entry resolved to; `version` is
-#'   then the package's own DESCRIPTION version at that commit).
+#'   then the package's own DESCRIPTION version at that commit), or
+#'   `"universe:<name>/<host>/<path>[//<subdir>]@<sha>"` (an r-universe's
+#'   build, and the git commit it was built from: `universe_source()`).
 #' * `extra` is the text after the source on the line, verbatim (`""` when
 #'   none). Older Embers ignore it; this one keeps it so a field a newer
 #'   Ember wrote (a SHA-256, say) survives a save.
@@ -89,7 +91,7 @@ is_valid_version <- function(x) {
 #' one (`is_valid_version()`), since `resolve_lock()` and `lock_diff()`
 #' both call `package_version()` on it.
 valid_version_field <- function(version, source) {
-  if (startsWith(source, "github:")) nzchar(version) else is_valid_version(version)
+  if (is_source_entry(source)) nzchar(version) else is_valid_version(version)
 }
 
 # ---- The file block ----------------------------------------------------------
@@ -269,7 +271,15 @@ hash_text <- function(text) {
 #' CRAN entries -> `Source = "Repository", Repository = "CRAN"`; Bioc ->
 #' `Repository = "BioCsoft"`; GitHub -> `Source = "GitHub", RemoteHost,
 #' RemoteUsername, RemoteRepo, RemoteSha`, which renv downloads from
-#' `<github>/repos/<user>/<repo>/tarball/<sha>`. No hash: measured, renv
+#' `<github>/repos/<user>/<repo>/tarball/<sha>`. A universe entry is a
+#' repository record for its universe (`universe-<name>`) while the
+#' universe still serves the locked commit (`served`), since that is where
+#' binaries come from; once it doesn't, a GitHub record for that commit
+#' when the repository is on github.com, else a git one (which needs git on
+#' this machine). The repository record carries no `RemoteSha`: renv would
+#' write the record's over the package's own, and the package's own (which
+#' r-universe writes into every build) is what tells whether the build
+#' renv took was the locked commit (`universe_wrong_builds()`). No hash: measured, renv
 #' restores exact versions from this minimal form (spikes/packages,
 #' section 2).
 #'
@@ -283,9 +293,13 @@ hash_text <- function(text) {
 #'   `Imports`. renv orders installs by them; it asks GitHub for the
 #'   DESCRIPTION itself, and when that fails (no network, the rate limit,
 #'   a `file://` fixture) it would otherwise install the package before its
-#'   dependencies, and the install fails.
-renv_lockfile_of <- function(lock, r, repos, github = "https://api.github.com", deps = list()) {
+#'   dependencies, and the install fails. Universe packages' too.
+#' @param served named character, universe package -> the commit its
+#'   universe serves now (`universe_served()`), `NA` when unknown.
+renv_lockfile_of <- function(lock, r, repos, github = "https://api.github.com", deps = list(),
+                             served = character()) {
   host <- sub("^https://", "", sub("/+$", "", github))
+  github_com <- sub("^https://", "", github_com_api_url(list(github = github)))
   e <- lock$entries
   package_record <- function(name, version, source) {
     if (identical(source, "CRAN")) {
@@ -299,6 +313,23 @@ renv_lockfile_of <- function(lock, r, repos, github = "https://api.github.com", 
       at <- regmatches(rest, regexec("^([^/]+)/([^@]+)@(.+)$", rest))[[1]]
       record <- list(Package = name, Version = version, Source = "GitHub", RemoteHost = host,
                      RemoteUsername = at[[2]], RemoteRepo = at[[3]], RemoteSha = at[[4]])
+      if (length(deps[[name]]) > 0) record$Imports <- paste(deps[[name]], collapse = ", ")
+      record
+    } else if (startsWith(source, "universe:")) {
+      src <- parse_universe_source(source)
+      if (is.null(src)) stop("renv_lockfile_of: unknown source: ", source)
+      gh <- universe_github_repo(src)
+      record <- if (identical(unname(served[name]), src$sha)) {
+        list(Package = name, Version = version, Source = "Repository",
+             Repository = universe_repo_name(src$universe))
+      } else if (!is.null(gh)) {
+        list(Package = name, Version = version, Source = "GitHub", RemoteHost = github_com,
+             RemoteUsername = gh$user, RemoteRepo = gh$repo, RemoteSha = src$sha)
+      } else {
+        list(Package = name, Version = version, Source = "Git", RemoteType = "git",
+             RemoteUrl = src$git, RemoteSha = src$sha)
+      }
+      if (!is.na(src$subdir) && !identical(record$Source, "Repository")) record$RemoteSubdir <- src$subdir
       if (length(deps[[name]]) > 0) record$Imports <- paste(deps[[name]], collapse = ", ")
       record
     } else {

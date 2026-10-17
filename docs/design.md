@@ -164,14 +164,31 @@ This maps one to one onto Pluto's server and workers:
   library, where rig puts pak, is hidden). A worker starts and connects in
   about 115 ms; package loading comes on top.
 
+  The worker loads a byte-compiled image of `worker.R` when there is one
+  (#229). R's JIT compiles a function the second time it's called, so a
+  worker running `worker.R` as source paid for compiling its own run code
+  on its second run: 0.35 to 0.57 s on Linux, and over 5 s on a slow
+  Windows runner. From the image, that run takes 0.09 s. The first notebook
+  opened in a process compiles the image in a separate `Rscript`
+  (`compiler::cmpfile()`, about 1.5 s, nothing waits on it). The image goes
+  in the cache under `worker/`, named by R's version and `worker.R`'s MD5.
+  Workers started before it's ready, or with an image that won't load,
+  source `worker.R` as before. Turning the JIT off instead would make the
+  user's own code slower than in plain R.
+
 The server resets SIGINT to its default before starting workers. A process
 started in the background by a shell (`&`) inherits SIGINT as ignored, R then
 never installs its interrupt handler, and interrupts silently do nothing
 (measured: a 10 s loop ran to the end; with the reset, it stopped in 10 ms).
 The reset is a few lines of C, so the server package has compiled code from
-the start. The server polls the worker socket from its `later` loop every
-5 ms (about 2% of a core when idle), and must read a large worker message in
-pieces rather than all at once, so a big output can't stall it.
+the start. The server polls the worker socket from its `later` loop: every 5 ms while
+it waits on the worker (a run, a query, or traffic in the last second),
+every 250 ms while an install or index job runs, and every 2 s otherwise. A
+crash during a run is noticed within 5 ms; one while idle, or an edit to a
+watched file, within about 2 s. At 250 ms an idle notebook cost the server
+0.7% of a core and 4 wake-ups a second; at 2 s it is about 0.12% (#46).
+It must read a large worker message in pieces rather than all at once, so a
+big output can't stall it.
 
 Workers and jobs (installs, index fetches) end when the server does. They
 start with processx's supervisor, a separate process that sends them SIGTERM
@@ -186,6 +203,22 @@ starts with `system()` or a fork ends with the server, as it already did
 when the notebook restarts. A process a cell starts in a session of its own
 (processx, callr) is outside the group and outlives both a restart and a
 killed server.
+
+Windows has no process groups, and gets the same result another way (#208).
+What a cell starts with `system()` ends with the worker there, since R puts
+each such child in a job object that ends it once the worker ends. processx
+(and so callr) puts its children in a job object of its own that does the
+same, so the worker clears that one setting on processx's job after every
+run, before it says the run is done, and from a thread every half second
+for a cell still running (src/children.c). A processx or callr child then
+outlives a restart and a killed server, as on Unix. Only the first one a
+worker starts can still end with it, if the worker is killed mid-run within
+half a second of starting it; later ones join a job already released.
+
+On every system the worker also drops the `PROCESSX_<id>` marker it
+inherits as the server's process tree (`cleanup_tree`). Otherwise a cell's
+children inherit it, and when the server collects the old worker's process
+object after a restart, its finalizer ends them all (#232).
 
 A stopped worker is killed, so R never removes its temp folder itself. The
 worker names its `tempdir()` in its hello, and the server removes that
@@ -256,6 +289,34 @@ look like references; that only adds an edge when some cell defines a global
 with the same name. The cost is a rerun, or a false cycle when that cell also
 reads the result (`df |> mutate(z = x * 2)`, then a later cell defines `x`
 from it); the error suggests renaming the global.
+
+Base R's own data-masking calls follow R exactly (#107). `subset(df, x > 1)`,
+`transform()`, `with()` and `within()` look `x` up in `df` first and take
+the global only when `df` has no such column, so the edge does the same.
+The worker reports the names of each data frame or list a cell creates,
+and the graph reads a masked `x` by the columns `df` had when the one cell
+that defines it last ran:
+
+- `df` had `x`: no edge. Editing the cell that defines a global `x` reruns
+  nothing, as under `Rscript`, and the false cycle above can't happen.
+- `df` had no `x`: an ordinary edge.
+- `df`'s cell hasn't run in this session, or its last run failed: a soft
+  edge, kept unless it would close a cycle. The cell runs after `df`'s cell
+  (it reads `df`), so `df`'s report settles the name before it runs; a cell
+  that defines its own `df` settles it on its first run.
+- Anything the columns can't decide is an ordinary edge: data that isn't a
+  bare name (`subset(df[rows, ], x > 1)`), a `df` from a package or defined
+  by several cells, a value that isn't a data frame (`subset()` and
+  `transform()`) or a plain list (`with()`, `within()` also), and a
+  notebook that defines `subset()` itself or a method of it.
+
+A call's head (`f` in `subset(df, f(x))`) is never masked, as R skips a
+column that isn't a function, and assignments inside `with()` and
+`within()` define no global. Edges can now appear when an upstream cell
+runs, after a run was asked for: a cell whose result came from a stale
+cell the run didn't include is left stale, so running it again runs that
+cell first. dplyr's verbs keep the behaviour above; they mask through
+rlang, with its own pronouns, and aren't covered.
 
 **Code inside strings and lambdas.** glue and cli interpolate `{…}` in
 strings (`glue("{total} of {n}")`, `cli_alert("{n} files")`), so the
@@ -355,8 +416,24 @@ still checked, up to 10,000 bindings a run. A data.table another cell
 defines is fingerprinted by its shape: column names, each column's
 address, its spare column slots and its key. So `dt[, z := x * 2]`,
 `setnames()`, `setkey()`, `setorder()` and dropping a column are noted. A
-write to some rows of an existing column (`dt[i, x := 0]`) keeps the
-column where it was, and isn't (#172).
+write to some rows of an existing column (`dt[i, x := 0]`, `set(dt, i,
+"x", v)`) keeps the column where it was, so the shape can't show it. A
+hash of the table's contents does (#201). Hashing costs about 3.5 ms a
+megabyte, so a run hashes only another cell's tables its code could write:
+the table of a `[` with `:=`, `let()` or `set*()` in it, an argument of
+data.table's `set*()` (under any name, or through `do.call()`), and a
+table passed to one of the notebook's own functions (`add_b(dt)`,
+`lapply(list(dt), add_b)`), or to a function not defined yet. Showing the
+table, reading it with `[` or `$`, and passing it to a package's function
+(`nrow(dt)`, `lm(y ~ x, dt)`, `ggplot(dt)`) hash nothing. Such a run
+hashes the table twice, before its code and after; no hash is kept between
+runs, so a write that was missed is never blamed on a later cell. That cost
+grows with the table and has no cap, on purpose: a cap would bring the
+silent miss back. A 36 MB table adds about 0.17 s to each cell that could
+write it, and a 1 GB table would add about 7 s. A cell that reaches a
+table without naming it (a helper that writes the global, a table in a
+list) isn't hashed, and its write isn't noted (#216). Before R 4.5,
+`tools::md5sum()` can't hash bytes, so row writes aren't noted there.
 
 ### Methods
 
@@ -388,7 +465,9 @@ the rerun the dropped edge misses.
   on a cell that defines `` `r<-` `` (a function or a generic) and on the
   cells that define methods of it. A nested target reads every setter and
   the getters inside it (`names(x)[i] <- v` reads `` `[<-` ``,
-  `` `names<-` `` and `names`). `$` and `@` read neither, as below.
+  `` `names<-` `` and `names`). `x$a <- v` reads `` `$<-` `` (and
+  `$` when nested), so a `` `$<-.rec` `` method orders before it, and
+  `x@a <- v` reads `` `@<-` `` the same way.
 - **Many cells, one generic.** Any number of cells may add methods to one
   generic. The same pair in two cells (`print.foo` in one,
   `registerS3method("print", "foo", …)` in another, or two
@@ -424,10 +503,19 @@ the rerun the dropped edge misses.
   removed, disabled, rerun or failed), it removes a class with
   `removeClass()`: dropping the binding alone leaves the class in the
   methods package's cache, and `new("Circle")` would go on working.
-- **Not covered yet:** group generics (`Ops.money`, `Math.interval`), `$`
-  methods (the walker doesn't read `$` as a call), and further class
-  readers (`slotNames()`, `getSlots()`, `extends()`, `isVirtualClass()`,
-  the signatures of `existsMethod()`, `getMethod()`, `selectMethod()`).
+- **Group generics.** A method of a group generic (`Ops.money`,
+  `Math.interval`, `setMethod("Arith", …)`) is read through any member of
+  the group (`?groupGeneric`, `?S4groupGeneric`): `a + b` reads
+  `Ops.money` and `Arith`'s methods, `sqrt(a)` reads `Math`'s. The table
+  is in `R/rules.R`.
+- **`$` and `@` methods.** `x$a` reads `$` as `x[1]` reads `[`, so a
+  cell using `$` depends on the cells that define `` `$.rec` ``. `@` is
+  an S3 generic too since R 4.3 (S7 uses it), so `x@a` reads `@`. The
+  field or slot name is never read.
+- **More class readers.** `slotNames()`, `getSlots()`, `extends()`,
+  `isVirtualClass()` and the signatures of `existsMethod()`,
+  `hasMethod()`, `getMethod()` and `selectMethod()` read a class named as
+  a string, like `new()`.
 
 ### Formulas
 
@@ -764,9 +852,10 @@ rest:
    translated message gets no offer. The engine
    never installs such a package by itself.
 2. Resolve each against CRAN and Bioconductor at the notebook's snapshot
-   date. GitHub packages can't be inferred; the user records them in the
-   header's `[sources]` as `github:user/repo`, and the Packages tab offers
-   to add one on a name that isn't found.
+   date. GitHub and r-universe packages can't be inferred; the user records
+   them in the header's `[sources]` as `github:user/repo` or
+   `universe:name`, and the Packages tab offers to add one on a name that
+   isn't found.
 3. Update the lock and install into the notebook's library in a subprocess.
    The worker restarts only if a package it has already loaded changed
    version; a new package is just loaded.
@@ -783,8 +872,9 @@ not. R packages declare only minimum versions (`rlang (>= 1.1.0)`), never
 upper bounds, so this is the strictest consistency R's metadata allows, and
 Ember enforces it: the lock never mixes CRAN dates. With a Bioconductor pin,
 the rule is one CRAN date plus one Bioconductor release, whose packages are
-already consistent with each other. GitHub packages have no date; they sit
-outside the rule and are marked unchecked.
+already consistent with each other. GitHub and r-universe packages have no
+date; they sit outside the rule and are marked unchecked. The lock records
+the git commit for both (an r-universe serves only its latest build).
 
 - **Adding a package** resolves it at the notebook's date, with its
   dependencies. On open, packages already in the lock install at exactly the
@@ -812,7 +902,7 @@ some date), but they are much stronger than minimum versions. Moving the date
 can move many packages when a notebook is old; the preview shows it.
 
 **The lock in the file** is one line per package: name, version and source
-(`CRAN`, `Bioc`, or a GitHub commit). Ember converts it to an `renv.lock`
+(`CRAN`, `Bioc`, a GitHub commit, or an r-universe build and its commit). Ember converts it to an `renv.lock`
 when installing. Measured: `renv.lock` runs to about 38 lines per
 package (2201 lines for 58 packages) and `rv.lock` to about 9; either
 conflicts when two people add packages on different branches, and one line
@@ -936,6 +1026,20 @@ nobody is watching; a program that downloads R must not quarantine it, or
 must clear the flag (`xattr -dr com.apple.quarantine`). `capabilities()`
 without arguments warns about X11 on Macs without XQuartz; the worker doesn't
 call it.
+
+Measured with rig 0.11.0 user mode on Windows 10 (#49), from an account
+without admin rights: `rig add --user release` installs R into
+`%APPDATA%\rig\data\r\<version>`, and `rig add --user rtools` installs
+Rtools into `%APPDATA%\rig\data\rtools\<version>` and sets `RTOOLS45_HOME`
+for the user. Neither goes on the PATH. A copy of the R tree runs from its
+own `bin\Rscript.exe`, with PNG, Cairo and HTTPS working, and builds a
+package with compiled code from source. CRAN's installers are signed, but
+the files they install aren't, and rig's downloads carry no "downloaded
+from the internet" mark, so nothing asks before R first runs. Rtools' gcc
+is on the PATH only inside `R CMD` (R's Rcmd_environ), so the compiler
+check asks `R CMD` (install-checks.R's `has_compiler()`); it looked on the
+installer's own PATH, found no gcc, and stopped every source build with
+"Install Rtools" on a machine that had it.
 
 **Compilers.** Posit Package Manager serves binaries for macOS, Windows and
 common Linux systems, including Bioconductor software packages since
@@ -1220,8 +1324,9 @@ run), and the snapshot has no stale state.
    the server and worker run on Linux in CI. The server and worker were run
    on Windows 10 in 2026-10, started both with a console and without one:
    interrupts needed a way of their own there (#48, see [Running
-   cells](#running-cells)).
-   Still to run: rig on Windows (#49). Whether any package overwrites a
+   cells](#running-cells)). Rig's user mode was run on Windows in 2026-10
+   too (#49, see [Package environments](#package-environments)). Whether any
+   package overwrites a
    setting the notebook already set (#61) was run on Linux in 2026-10: see
    [Global settings](#running-cells).
    - Server and worker: httpuv serving the UI while a worker runs a long

@@ -250,7 +250,7 @@ parse_header_block <- function(lines) {
         # saves it, so the next save writes "github:user/repo" (#85). Any
         # other value stays as written: a bare "user/repo" is not the
         # header's form, and source_problems() names what it can't read.
-        sources[key] <- (if (is_github_link(val)) github_spec(val)) %||% val
+        sources[key] <- (if (is_source_link(val)) source_spec(val)) %||% val
       } else if (key %in% names(known)) {
         known[[key]] <- val
       } else {
