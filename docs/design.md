@@ -68,7 +68,7 @@ repository depends on them.
   ancestor was edited: every ancestor between the edited one and the cell
   run runs too, since each goes stale once the edited one runs (#169).
   The dependents autorun queues follow the same rule: a dependent that
-  also reads a stale cell (one a delete or an interrupt left stale) runs
+  also reads a stale cell (one a delete, a rename or an interrupt left stale) runs
   after it, not with its stale value (#176).
   Pluto's safe preview shows editing without running is workable.
 - **Open without running.** Running a cell runs its unrun ancestors first.
