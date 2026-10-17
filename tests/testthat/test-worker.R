@@ -175,6 +175,29 @@ test_that("run_cell(): an assignment to a failing call's result isn't deep (item
   expect_identical(r$error$deep, FALSE)
 })
 
+test_that("run_cell(): rlang's check_installed() error names its packages, as a packageNotFoundError does (#184)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  # The worker's library has no rlang, so the cell raises the condition the way
+  # check_installed() does: class rlib_error_package_not_found, with `pkg`.
+  r <- run_and_wait(h, "a", 1L, paste0('stop(structure(class = c("rlib_error_package_not_found", "rlib_error", ',
+                                       '"error", "condition"), list(message = "The packages are required.", ',
+                                       'call = NULL, pkg = c("emberabsent1", "emberabsent2"), version = NULL)))'))
+  expect_identical(r$status, "error")
+  expect_identical(r$error$package, c("emberabsent1", "emberabsent2"))
+
+  # One with a version may be installed and only too old: none is named, so the
+  # whole message stays (check_installed("rlang (>= 99.0)")).
+  r <- run_and_wait(h, "a", 2L, paste0('stop(structure(class = c("rlib_error_package_not_found", "rlib_error", ',
+                                       '"error", "condition"), list(message = "The package \\"stats\\" (>= 99.0) is required.", ',
+                                       'call = NULL, pkg = c("stats", "emberabsent1"), version = c("99.0", NA))))'))
+  expect_null(r$error$package)
+  r <- run_and_wait(h, "a", 3L, paste0('stop(structure(class = c("rlib_error_package_not_found", "rlib_error", ',
+                                       '"error", "condition"), list(message = "The package \\"stats\\" (>= 99.0) is required.", ',
+                                       'call = NULL, pkg = "stats", version = "99.0")))'))
+  expect_null(r$error$package)
+})
+
 test_that("run_cell(): a notebook function calling lm() with bad data (ui-3-tests 128)", {
   h <- worker_harness()
   on.exit(h$close())

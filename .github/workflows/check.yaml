@@ -4,6 +4,19 @@ on:
   push:
     branches: [main, 'ci/**']
   pull_request:
+    # A PR that changes only docs/ runs nothing here: no job reads docs/ (the
+    # package build ignores it). No check is required to merge today; if one
+    # ever is, a docs-only PR would wait on it forever, so drop this then.
+    paths-ignore:
+      - 'docs/**'
+
+# A new push to a pull request cancels that PR's older runs, which would only
+# report on a head nobody will merge. Every other run (a push, a run by hand)
+# gets a group of its own, so it is never cancelled and never waits: a shared
+# group would also drop a run still waiting behind another.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
 
 jobs:
   R-CMD-check:
@@ -22,6 +35,9 @@ jobs:
       # OSes would triple the network flakiness and runtime for no extra
       # coverage this suite doesn't already get elsewhere.
       EMBER_TEST_NETWORK: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+      # Off Linux, one network test of its own: Bioconductor's binaries,
+      # which only macOS and Windows install (#22). One small download.
+      EMBER_TEST_BIOC_BINARIES: ${{ matrix.os != 'ubuntu-latest' && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: r-lib/actions/setup-r@v2

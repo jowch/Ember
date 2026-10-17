@@ -176,7 +176,11 @@ function of each call in it, since R runs `r(x) <- v` as
 `names(x)[i] <- v` reads `` `[<-` ``, `` `names<-` `` and the getter
 `names` (`walk_replacement_target()`). So the cell gets a definition edge
 to a cell defining `` `r<-` ``, and method edges to cells defining
-methods of it. `$` and `@` targets read neither, as `df$col` reads no `$`.
+methods of it. A `$` or `@` target reads `` `$<-` `` or `` `@<-` `` (and
+`$` or `@` when nested), as `df$col` reads `$`, so their methods order like
+`[` methods. A method of a group generic (`Ops.money`, `setMethod("Arith")`)
+is read through every member of the group (`group_generics` in
+`R/rules.R`).
 
 **Classes** named as strings read and define `.__C__<name>`, the binding R
 keeps a class in (`class_name_calls` in `R/rules.R`): `setClass("X")`

@@ -39,8 +39,8 @@ test("packages tab: add a GitHub source to a not-found package, fix a typo, remo
   await page.locator("tr.ember-package-row.ember-package-not_found", { hasText: "toyC" }).waitFor({ timeout: 30000 });
 
   // A refusal stays in the form, under the field.
-  await detail.getByRole("button", { name: "Add a GitHub source" }).click();
-  const input = detail.getByLabel("GitHub repository for toyC");
+  await detail.getByRole("button", { name: "Add a source" }).click();
+  const input = detail.getByLabel("Source for toyC");
   // The form focuses its field in an effect, after the click's render.
   await input.evaluate((el) => new Promise((resolve) => {
     const check = () => (el === document.activeElement ? resolve() : requestAnimationFrame(check));
