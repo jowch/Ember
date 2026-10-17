@@ -270,11 +270,20 @@ the same way. readr sets `readr.num_threads` on its first read or write and
 `readr.default_locale` on its first `read_csv2()`, so without this rule a
 plain `read_csv()` cell would become a settings cell, and a second readr
 cell would get "set in two cells" (#164). The rule: an option that didn't
-exist before the cell ran, whose name starts with a loaded package's name
-and a dot, and that the cell's code doesn't name, is the package's. A cell
-that sets a computed name (`options(op)`) keeps all its changes, since any
-of them could be the one it set. A learned setting saved in a file before
-this rule stays until its cell's code changes, as any learned setting does.
+exist before the cell ran, and that no `options()` call from the
+notebook's own code set, is the package's. The worker wraps `options()`
+and notes the calls whose caller is the notebook's code: a cell's top
+level, or a function a cell defined. So a helper
+`quiet <- function() options(readr.show_col_types = FALSE)` still makes
+the cell that calls it a settings cell, as case 3 above says. What decides
+is who called `options()`, not the option's name.
+
+A package function the user calls to set an option of its own
+(`progressr::handlers("cli")`) is on the package's side the first time,
+when it creates the option, and makes a settings cell once the option
+exists. Nothing in R tells such a setter apart from a cache. A learned
+setting saved in a file before this rule stays until its cell's code
+changes, as any learned setting does.
 
 `theme_set()` is the exception: ggplot2 keeps the theme inside its namespace,
 outside what the worker compares, so only the static check finds it (see
