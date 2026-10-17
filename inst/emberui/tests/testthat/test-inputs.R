@@ -23,6 +23,12 @@ test_that("without the hook each input returns its default, as under Rscript", {
   expect_identical(input_select(c(Pearson = "pearson", Spearman = "spearman")), "pearson")
   expect_identical(input_select(c("a", "b", "c"), selected = c("c", "a"), multiple = TRUE), c("c", "a"))
   expect_identical(input_radio(list(1, "x"), selected = "x"), "x")
+  # Numbers match by value, as %in% does, and come back as the choice is.
+  expect_identical(input_select(1:10, selected = 5), 5L)
+  expect_identical(input_radio(c(10, 20, 50), selected = 20L), 20)
+  # No step is NULL or NA in both.
+  expect_identical(input_number(5, step = NULL), 5)
+  expect_identical(input_slider(1, 10, step = NA), 1)
   # A returned value is plain: no class, no attributes.
   expect_null(attributes(input_slider(1, 10, value = 3)))
   expect_null(attributes(input_select(c(A = "a"))))
@@ -41,6 +47,7 @@ test_that("a bad argument or default is an error, in Ember and Rscript alike", {
   expect_error(input_select(c("a", "b"), selected = "z"), "one of the choices")
   expect_error(input_select(character()), "at least one element")
   expect_error(input_select(c("a", "b"), selected = c("a", "z"), multiple = TRUE), "Every value")
+  expect_error(input_select(c("a", "b"), selected = c("a", "a"), multiple = TRUE), "only once")
   expect_error(input_radio(c("a", "b"), selected = "z"), "one of the choices")
   expect_error(input_text(label = 1), "`label`")
   # The error is the same with the hook set: the default is checked first.
@@ -88,6 +95,10 @@ test_that("each spec's check returns a value as the input would, or says what it
   expect_error(slider$check("5"), "whole number")
   expect_error(slider$check(c(1, 2)), "whole number")
 
+  # An integer input rounds before the range is checked.
+  expect_error(spec_of(input_number(2L, max = 2.6))$check(2.55), "at most 2.6")
+  expect_identical(spec_of(input_number(2L, max = 2.6))$check(2.45), 2L)
+
   number <- spec_of(input_number(1.5, max = 2))
   expect_identical(number$check(-100), -100)
   expect_error(number$check(3), "at most 2")
@@ -103,7 +114,9 @@ test_that("each spec's check returns a value as the input would, or says what it
   select <- spec_of(input_select(list(a = 1L, b = c(2, 3), c = "x")))
   expect_identical(select$check(c(2, 3)), c(2, 3))
   expect_identical(select$check(c(z = "x")), "x")
-  expect_error(select$check(1), "one of the choices")  # double, not the integer 1L
+  expect_identical(select$check(1), 1L)  # 1 is the choice 1L, which comes back as it is
+  expect_error(select$check("1"), "one of the choices")  # a string isn't a number
+  expect_error(select$check(factor("x")), "one of the choices")
   many <- spec_of(input_select(c("a", "b", "c"), selected = "a", multiple = TRUE))
   expect_identical(many$check(c("c", "b")), c("c", "b"))
   expect_identical(many$check(character()), character())

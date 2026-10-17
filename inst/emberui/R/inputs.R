@@ -28,7 +28,7 @@ input_slider <- function(min, max, value = min, step = NULL, label = NULL) {
   check_bound(min, "min", na = FALSE)
   check_bound(max, "max", na = FALSE)
   if (min > max) stop("`min` must not be larger than `max`.", call. = FALSE)
-  if (!is.null(step)) check_step(step)
+  check_step(step)
   check_label(label)
   report(list(type = "slider", value = value, min = min, max = max, step = step,
               label = label, check = number_check(value, min, max)), call)
@@ -41,7 +41,7 @@ input_number <- function(value = 0, min = NA, max = NA, step = NA, label = NULL)
   if (!is.na(min) && !is.na(max) && min > max) {
     stop("`min` must not be larger than `max`.", call. = FALSE)
   }
-  if (!(length(step) == 1 && is.na(step))) check_step(step)
+  check_step(step)
   check_label(label)
   report(list(type = "number", value = value, min = min, max = max, step = step,
               label = label, check = number_check(value, min, max)), call)
@@ -98,17 +98,16 @@ input_radio <- function(choices, selected = choices[[1]], label = NULL) {
 number_check <- function(value, min, max) {
   integer <- is.integer(value)
   function(x) {
-    if (!is.numeric(x) || length(x) != 1 || !is.finite(x) ||
-        (!is.na(min) && x < min) || (!is.na(max) && x > max)) {
+    if (!is.numeric(x) || length(x) != 1 || !is.finite(x)) {
       stop(number_allowed(min, max, integer), call. = FALSE)
     }
-    if (integer) {
-      x <- round(x)
-      if (abs(x) > .Machine$integer.max) stop(number_allowed(min, max, integer), call. = FALSE)
-      as.integer(x)
-    } else {
-      as.numeric(x)
+    # An integer input rounds first, so the rounded value is the one in range.
+    x <- if (integer) round(x) else as.numeric(x)
+    if ((!is.na(min) && x < min) || (!is.na(max) && x > max) ||
+        (integer && abs(x) > .Machine$integer.max)) {
+      stop(number_allowed(min, max, integer), call. = FALSE)
     }
+    if (integer) as.integer(x) else x
   }
 }
 
@@ -137,20 +136,27 @@ choices_check <- function(choices) {
 }
 
 # Several of `choices`: a vector (or list, for list choices) whose every
-# element is one of them. Returns them in the order given.
+# element is one of them, each once. Returns them in the order given.
 choices_check_many <- function(choices) {
   function(x) {
     items <- if (is.list(x)) x else as.list(x)
     idx <- vapply(items, function(item) choice_index(choices, item), integer(1))
     if (anyNA(idx)) stop("Every value must be one of the choices.", call. = FALSE)
+    if (anyDuplicated(idx)) stop("Each choice can be picked only once.", call. = FALSE)
     unname(choices[idx])
   }
 }
 
+# Where `x` is in `choices`, or NA. Plain numbers compare by value, as `%in%`
+# does, so 5 is the choice 5L (and JSON's 20 the choice 20); anything else
+# (strings, factors, dates, lists) must be identical().
 choice_index <- function(choices, x) {
   x <- unname(x)
+  plain <- function(v) is.numeric(v) && is.null(attr(v, "class"))
   for (i in seq_along(choices)) {
-    if (identical(unname(choices[[i]]), x)) return(i)
+    ch <- unname(choices[[i]])
+    if (identical(ch, x)) return(i)
+    if (plain(ch) && plain(x) && length(ch) == length(x) && length(x) > 0 && isTRUE(all(ch == x))) return(i)
   }
   NA_integer_
 }
@@ -177,7 +183,9 @@ check_bound <- function(x, what, na) {
   }
 }
 
+# A step, or none: NULL or NA in both functions.
 check_step <- function(step) {
+  if (is.null(step) || (length(step) == 1 && is.na(step) && !is.nan(step))) return(invisible())
   if (!is.numeric(step) || length(step) != 1 || is.na(step) || !is.finite(step) || step <= 0) {
     stop("`step` must be one positive number.", call. = FALSE)
   }

@@ -28,12 +28,15 @@ input_radio(choices, selected = choices[[1]], label = NULL)
   means no limit.}
 \item{value}{The default value. A number keeps its type:
   \code{input_slider(1L, 10L)} returns an integer.}
-\item{step}{The step between values: \code{NULL} for a slider, or \code{NA}
-  for a number box, means none.}
+\item{step}{The step between the widget's values, or \code{NULL} or
+  \code{NA} for none. It shapes the widget only: a value between steps is
+  allowed.}
 \item{label}{The text shown with the widget. By default, the name the input
   is assigned to.}
 \item{choices}{A vector or list. The value is an element itself, not its
-  position. Names, if present, are what the widget shows.}
+  position. Names, if present, are what the widget shows. Numbers match
+  by value, as with \code{\%in\%}: \code{selected = 5} picks the choice
+  \code{5L}.}
 \item{selected}{The default choice: an element of \code{choices}, or with
   \code{multiple = TRUE}, a vector (or list) of them.}
 \item{multiple}{Whether several choices can be picked.}
