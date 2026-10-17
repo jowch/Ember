@@ -78,10 +78,10 @@ find_effect <- function(result, type) {
 r46 <- list(version = "4.6.1", minor = "4.6", platform = "x86_64-pc-linux-gnu")
 
 #' The Bioconductor 3.23 fixture index of `kind`
-#' (fixtures/repos/bioc/2026-09-01/packages/3.23/...), keyed as `release`
+#' (fixtures/bioc/2026-09-01/packages/3.23/...), keyed as `release`
 #' at `date`.
 bioc_index <- function(kind, release = "3.23", date = "2026-09-01") {
-  idx <- read_repo_index(testthat::test_path("fixtures", "repos", "bioc", "2026-09-01", "packages",
+  idx <- read_repo_index(testthat::test_path("fixtures", "bioc", "2026-09-01", "packages",
                                              "3.23", bioc_kinds[[kind]], "src", "contrib", "PACKAGES"),
                          key = repo_key(kind, date, release), label = "Bioc")
   idx

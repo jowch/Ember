@@ -17,7 +17,7 @@ universe_fixture <- function() {
   paste0("file://", normalizePath(testthat::test_path("fixtures", "universe"), mustWork = TRUE), "/%s")
 }
 github_fixture <- function() {
-  paste0("file://", normalizePath(testthat::test_path("fixtures", "github"), mustWork = TRUE))
+  paste0("file://", github_fixture_dir())
 }
 toyd_source <- function(sha) universe_source("lab", "https://github.com/lab/toyD", sha)
 
