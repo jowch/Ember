@@ -37,8 +37,8 @@
 #' cancel function), `closing` (listeners are cleared only after the
 #' closing dispatch's notifications are delivered), `queries` (environment,
 #' id (character) -> callback, for `worker_query()`'s pending completion/
-#' help/signature questions -- outside `ember_state` and the event log, see
-#' `worker_query()`), `next_query_id` (integer, last id handed out),
+#' help/signature questions and one-off renders -- outside `ember_state`
+#' and the event log, see `worker_query()`), `next_query_id` (integer, last id handed out),
 #' `file_inputs`/`watch_inputs` (what the last saved file text and the
 #' last watched paths were made from: `save_if_changed()` and
 #' `after_dispatch()` skip the work when these are unchanged; `NULL` until
@@ -947,16 +947,25 @@ worker_is_idle <- function(nb) {
     is.null(st$worker$running) && length(st$pending) == 0 && !is.null(nb$con)
 }
 
-#' Ask the worker a question (`complete`, `help` or `signature`) outside
-#' `step()` and the event log: these never change the notebook, so they
-#' don't belong in the engine's history. `callback(reply)` runs once, with
-#' the worker's reply, or with `NULL` at once if the worker isn't idle, or
+#' Ask the worker a question (`complete`, `help` or `signature`, or a
+#' `render` at a one-off size for `render_png()`) outside `step()` and the
+#' event log: these never change the notebook, so they don't belong in the
+#' engine's history. `callback(reply)` runs once, with the worker's reply,
+#' or with `NULL` at once if the worker isn't idle (with `busy_ok`, if it
+#' isn't ready or busy: a `render` may arrive mid-run, and the worker
+#' answers it once the run ends, inst/worker.R), or
 #' with `NULL` after `timeout` seconds, or when the worker exits
 #' (`fail_pending_queries()`). A reply that arrives after the timeout (or
 #' after the worker that was asked is gone) finds no entry in `nb$queries`
 #' and is dropped.
-worker_query <- function(nb, msg, callback, timeout = 0.8) {
-  if (!worker_is_idle(nb)) {
+worker_query <- function(nb, msg, callback, timeout = 0.8, busy_ok = FALSE) {
+  st <- nb$state
+  can_ask <- if (busy_ok) {
+    isTRUE(st$allowed) && st$worker$status %in% c("ready", "busy") && !is.null(nb$con)
+  } else {
+    worker_is_idle(nb)
+  }
+  if (!can_ask) {
     callback(NULL)
     return(invisible(NULL))
   }
@@ -981,7 +990,8 @@ worker_query <- function(nb, msg, callback, timeout = 0.8) {
   invisible(NULL)
 }
 
-#' A `completions`/`help_page`/`signature` reply: find its callback by
+#' A `completions`/`help_page`/`signature` reply, or a `rendered` one with
+#' an `id`: find its callback by
 #' `msg$id` and call it, or drop the message (its query already timed out).
 answer_query <- function(nb, msg) {
   key <- as.character(msg$id)
@@ -1040,7 +1050,8 @@ poll <- function(nb) {
     if (length(framed$messages) > 0) {
       broke <- FALSE
       for (msg in framed$messages) {
-        if (!is.null(msg$type) && msg$type %in% c("completions", "help_page", "signature")) {
+        if (!is.null(msg$type) && (msg$type %in% c("completions", "help_page", "signature") ||
+                                   (identical(msg$type, "rendered") && !is.null(msg$id)))) {
           answer_query(nb, msg)
           next
         }

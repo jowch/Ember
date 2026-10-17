@@ -1079,7 +1079,7 @@ handlers <- list(
     res <- as.integer(b$res %||% 96L)
     if (is.na(res)) return(invisible(NULL))
     res <- clamp(res, 72L, 384L)
-    dispatch(hub$nb, ev_render(cell, NULL, NULL, at = Sys.time(), res = res))
+    dispatch(hub$nb, ev_render(cell, at = Sys.time(), res = res))
     flush_clients(server, hub)
   },
 

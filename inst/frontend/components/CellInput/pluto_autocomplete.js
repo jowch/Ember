@@ -172,7 +172,7 @@ const not_explicit_and_too_boring = (/** @type {autocomplete.CompletionContext} 
     // Not ":" alone: "pkg::" and "pkg:::" must keep completing.
     if (ctx.matchBefore(/[\s=)+\-/,*'(;\[\]{}"]$/)) return true
     if (ctx.matchBefore(/[^:]:$/)) return true
-    if (ctx.tokenBefore(["IntegerLiteral", "FloatLiteral"]) != null) return true
+    if (ctx.tokenBefore(["Number"]) != null) return true
     if (in_comment(ctx)) return true
     if (ctx.tokenBefore([...R_STRING_NODE_NAMES]) != null) return true
     return false

@@ -408,9 +408,12 @@ notebook_state <- function(nb) nb$state
 
 #' A PNG of a cell's output, for Endeavor's `view_cell_output`.
 #'
-#' Plots are already PNGs and come back at once. With `width`/`height`
-#' different from the stored image, the worker re-renders the recorded
-#' plot (the call waits up to `timeout`). Other outputs return `NULL`; the
+#' Plots are already PNGs and come back at once. With `width`/`height`,
+#' the worker re-renders the recorded plot at that size (the call waits up
+#' to `timeout`, and a busy worker answers once its run ends). The new
+#' image is only returned: the cell's stored image, the one every page
+#' shows, stays as it was (#28). `png` is `NULL` when no answer came in
+#' time, or the cell ran again meanwhile. Other outputs return `NULL`; the
 #' caller reads their `text/plain` form from the snapshot.
 #' @return `list(png = <raw> | NULL, mime = <the output's mime type>)`.
 #' @export
@@ -428,18 +431,20 @@ render_png <- function(nb, cell, width = NULL, height = NULL, res = 96, timeout 
     return(list(png = view$output$data, mime = "image/png"))
   }
 
-  before <- view$output
-  dispatch(nb, ev_render(id, width, height, at = Sys.time(), res = res))
-  deadline <- Sys.time() + timeout
-  repeat {
-    now_view <- find_view()
-    if (!is.null(now_view$output) && !identical(now_view$output, before)) {
-      return(list(png = now_view$output$data, mime = "image/png"))
-    }
-    remaining <- as.numeric(deadline - Sys.time(), units = "secs")
-    if (remaining <= 0) return(list(png = NULL, mime = "image/png"))
-    later::run_now(timeout = remaining)
+  # A worker query, not an event: the reply goes to this call alone and
+  # never reaches the state, so the page keeps the cell's own image.
+  token <- nb$state$results[[id]]$output$token
+  msg <- c(list(type = "render", cell = id, res = res),
+          if (!is.null(width)) list(width = width),
+          if (!is.null(height)) list(height = height))
+  reply <- "unset"
+  worker_query(nb, msg, function(r) reply <<- r, timeout = timeout, busy_ok = TRUE)
+  while (identical(reply, "unset")) later::run_now(timeout = timeout)
+  display <- if (!is.null(reply) && eq(reply$token, token)) as_display(reply$display)
+  if (is.null(display) || !identical(display$mime, "image/png")) {
+    return(list(png = NULL, mime = "image/png"))
   }
+  list(png = display$data, mime = "image/png")
 }
 
 # ---- Events and waiting -------------------------------------------------------
