@@ -75,7 +75,8 @@ repository depends on them.
   A cell edited but not yet run still holds what its old code made, so
   until it runs, its edges are both its old code's and its new code's:
   rerunning a cell its old code read marks it stale, and its going stale
-  marks stale the readers of what its old code defined (#175).
+  marks stale the readers of what its old code defined (#175), and in a
+  run it goes before the cells that read what its old code defined (#174).
   Pluto's safe preview shows editing without running is workable.
 - **Open without running.** Running a cell runs its unrun ancestors first.
   "Run all" is one click. Long simulations don't start just because a

@@ -249,13 +249,13 @@ schedule <- function(state) {
   repeat {
     queue <- run_order(state$graph, state$pending)
     if (length(queue) == 0) return(list(state = state, effects = list()))
-    candidate <- queue[1]
+    candidate <- first_to_run(state, queue)
     if (!is.null(waiting[[candidate]])) {
       # Leave it queued (it isn't blocked, just not ready yet) and look
       # further down the queue for something that can run now, dropping
       # anything else along the way that can't (same rule as below).
       found <- NULL
-      for (q in queue[-1]) {
+      for (q in setdiff(queue, candidate)) {
         if (!is.null(waiting[[q]])) next
         if (can_run(state, q)) { found <- q; break }
         state$pending <- setdiff(state$pending, q)
@@ -572,43 +572,83 @@ reached_from <- function(graph, from, among) {
 run_graph <- function(state, edited = edited_cells(state)) {
   g <- state$graph
   if (length(edited) == 0) return(g)
-  add <- function(from, to) {
-    if (identical(from, to)) return()
-    g$upstream[[from]] <<- union(g$upstream[[from]], to)
-    g$downstream[[to]] <<- union(g$downstream[[to]], from)
-  }
+  # Asked for several times per step, and the answer only changes when the
+  # graph or what the edited cells last ran does: keep the last one.
+  key <- lapply(edited, function(id) state$results[[id]][c("code", "defined")])
+  names(key) <- edited
+  if (identical(run_graph_memo$key, key) && identical(run_graph_memo$graph, g)) return(run_graph_memo$value)
+  ids <- g$ids
   # What the last run defined, or would have: a failed run defines nothing,
   # but its readers' results still came from that failure.
   old_defs <- lapply(edited, function(id) {
-    r <- state$results[[id]]
-    union(r$defined, definitions_of(read_cell(r$code)))
+    union(state$results[[id]]$defined, code_edges(state$results[[id]]$code)$definitions)
   })
   names(old_defs) <- edited
-  # Readers of a name an edited cell's last run defined.
-  for (id in g$ids) {
-    refs <- g$cells[[id]]$references
-    for (e in edited) if (any(old_defs[[e]] %in% refs)) add(id, e)
-  }
-  # What an edited cell's last run read, from whoever defines it now or
-  # defined it in their last run.
+  refs <- lapply(g$cells[ids], `[[`, "references")
+  defs <- lapply(g$cells[ids], `[[`, "definitions")
+  defs[edited] <- Map(union, defs[edited], old_defs)
+  # Name to the cells that read it, and to the cells that define it now or
+  # did in their last run: one pass each, so this stays linear in the
+  # notebook however many cells are edited.
+  readers_of <- split(rep(ids, lengths(refs)), unlist(refs, use.names = FALSE))
+  definers_of <- split(rep(ids, lengths(defs)), unlist(defs, use.names = FALSE))
+  from <- character(); to <- character()
   for (e in edited) {
-    refs <- ran_references(state, e)
-    for (id in g$ids) {
-      defs <- union(g$cells[[id]]$definitions, old_defs[[id]])
-      if (any(refs %in% defs)) add(e, id)
-    }
+    # Readers of a name its last run defined.
+    r <- setdiff(unique(unlist(readers_of[old_defs[[e]]], use.names = FALSE)), e)
+    # What its last run read, from whoever defines it now or did last run.
+    d <- setdiff(unique(unlist(definers_of[ran_references(state, e)], use.names = FALSE)), e)
+    from <- c(from, r, rep(e, length(d)))
+    to <- c(to, rep(e, length(r)), d)
   }
+  for (f in unique(from)) g$upstream[[f]] <- union(g$upstream[[f]], to[from == f])
+  for (t in unique(to)) g$downstream[[t]] <- union(g$downstream[[t]], from[to == t])
+  run_graph_memo$graph <- state$graph
+  run_graph_memo$key <- key
+  run_graph_memo$value <- g
   g
 }
+run_graph_memo <- new.env(parent = emptyenv())
 
-#' The cells edited since they last ran: their result came from other code.
-#' Runs at every cell start, so it compares in one vectorised step.
+#' The cell of `queue` to run first. `queue` is in the graph's run order,
+#' which has no edges for what edited cells last ran: the head can read a
+#' name a pending cell's last run defined (an edit renamed or removed it),
+#' or a cell run by hand can pull in an edited ancestor the order puts
+#' after it. That cell runs first, after whatever it waits on, so the head
+#' doesn't use the old value or go stale as soon as it ran (#174).
+first_to_run <- function(state, queue) {
+  head <- queue[1]
+  edited <- edited_cells(state)
+  if (length(edited) == 0) return(head)
+  g <- run_graph(state, edited)
+  seen <- character()
+  repeat {
+    seen <- c(seen, head)
+    first <- queue[queue %in% upstream(g, head, transitive = TRUE)][1]
+    if (is.na(first) || first %in% seen) return(head)
+    head <- first
+  }
+}
+
+#' The cells edited since they last ran whose last run read or defined a
+#' name their current code doesn't: their result came from code with other
+#' edges. Runs at every cell start, so the code comparison is vectorised.
 edited_cells <- function(state) {
   ids <- intersect(state$graph$ids, names(state$results))
   ran <- lapply(state$results[ids], `[[`, "code")
   ids <- ids[lengths(ran) == 1L]
   if (length(ids) == 0) return(character())
-  ids[unlist(ran[ids], use.names = FALSE) != vapply(state$cells[ids], `[[`, "", "code")]
+  ids <- ids[unlist(ran[ids], use.names = FALSE) != vapply(state$cells[ids], `[[`, "", "code")]
+  # Only an edit that drops a reference or a definition leaves edges the
+  # graph doesn't have. Most edits keep the names (a changed number, a new
+  # argument), and those cells add nothing, so they aren't returned.
+  Filter(function(id) {
+    r <- state$results[[id]]
+    old <- code_edges(r$code)
+    now <- state$graph$cells[[id]]
+    !all(old$references %in% now$references) ||
+      !all(union(r$defined, old$definitions) %in% now$definitions)
+  }, ids)
 }
 
 #' What a cell's result read: its references, plus those of the code it
@@ -617,8 +657,24 @@ ran_references <- function(state, id) {
   refs <- state$graph$cells[[id]]$references
   r <- state$results[[id]]
   if (is.null(r) || is.null(r$code) || identical(r$code, state$cells[[id]]$code)) return(refs)
-  union(refs, references_of(read_cell(r$code)))
+  union(refs, code_edges(r$code)$references)
 }
+
+#' The static references and definitions of `code`, parsed once per code
+#' text: `run_graph()` asks for an edited cell's old code at every cell
+#' start, and parsing it each time made a run with many staged edits
+#' several times slower.
+code_edges <- function(code) {
+  key <- paste0("c", code)  # an environment name can't be empty
+  hit <- edges_cache[[key]]
+  if (!is.null(hit)) return(hit)
+  if (length(edges_cache) >= 1000) rm(list = ls(edges_cache, all.names = TRUE), envir = edges_cache)
+  parsed <- read_cell(code)
+  hit <- list(references = references_of(parsed), definitions = definitions_of(parsed))
+  assign(key, hit, envir = edges_cache)
+  hit
+}
+edges_cache <- new.env(hash = TRUE, parent = emptyenv())
 
 #' Has a result with status "ok", not stale, matching the current code.
 is_fresh <- function(state, id) {
