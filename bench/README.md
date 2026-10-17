@@ -21,11 +21,21 @@ R CMD INSTALL --library=/tmp/lib-head .
 Rscript bench/compare.R /tmp/lib-base path/to/base/checkout /tmp/lib-head .
 ```
 
-It prints a table of each case's median time on both sides and exits 1
-when a case is more than 25% slower on head. Two identical builds read
-within about 8% of each other on a 4-core cloud container, so 25% is about
-the smallest change it can flag without flagging noise; anything smaller
-shows in the table but doesn't fail. The `bench` workflow runs it on
+Each process times a case 15 times and keeps its fastest sample, each
+sample at least 50 ms long (enough calls of a fast case to cover the 1 ms
+clock). The fastest, not the median: noise on a shared runner only adds
+time, and the first samples in a fresh process run slower than later
+ones, so the median of a few samples moved by up to 26% between
+identical builds while the fastest moved by under 10% (#163). A change
+that makes every call slower still moves the fastest sample. A change
+that only makes some calls slower, such as more garbage collection,
+may not, and the tests in `tests/testthat` don't time that either.
+
+It prints a table of each case's time on both sides (the median over
+rounds) and exits 1 when a case is more than 25% slower on head.
+Identical builds read within 5% of each other on a 4-core cloud
+container under a bursty background load, and a build made 30% slower
+fails (#163); anything under 25% shows in the table but doesn't fail. The `bench` workflow runs it on
 every pull request that changes package code (R/, inst/, src/) or the
 fixtures. It is a separate workflow so that it can stay out of the
 required checks: a red `bench` means "look at this table", and a change that
