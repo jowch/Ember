@@ -1536,6 +1536,49 @@ test_that("display_html resolves and dedupes dependencies, skipped without htmlt
   expect_identical(r$output$deps[[1]]$script, "a.js")
 })
 
+test_that("a cell that changes another cell's environment in place reports it; reading it, rebinding it or changing its own doesn't (#167)", {
+  h <- worker_harness()
+  on.exit(h$close())
+
+  # An R6-like object: public fields in one environment, private ones two
+  # levels down, as R6 keeps them.
+  run_and_wait(h, "a", 1L, paste(
+    "cnt <- new.env()",
+    "cnt$n <- 0",
+    "cnt$.__enclos_env__ <- new.env()",
+    "cnt$.__enclos_env__$self <- cnt",
+    "cnt$.__enclos_env__$private <- new.env()",
+    "cnt$.__enclos_env__$private$hits <- 0",
+    "cnt$add <- function() cnt$n <- cnt$n + 1",
+    "cnt$hit <- function() cnt$.__enclos_env__$private$hits <- 1",
+    "x <- 1", sep = "\n"))
+  r <- run_and_wait(h, "b", 2L, "cnt$add()")
+  expect_identical(r$status, "ok")
+  expect_identical(r$changed_in_place, "cnt")
+  r <- run_and_wait(h, "c", 3L, "cnt$hit()")
+  expect_identical(r$changed_in_place, "cnt")
+  r <- run_and_wait(h, "d", 4L, "assign('m', 1, envir = cnt)")
+  expect_identical(r$changed_in_place, "cnt")
+
+  # Reading it, or setting a binding to the value it already has, isn't a change.
+  r <- run_and_wait(h, "e", 5L, "cnt$n\nls(cnt)")
+  expect_length(r$changed_in_place, 0)
+  # A cell's own environment is its own to change.
+  r <- run_and_wait(h, "f", 6L, "mine <- new.env()\nmine$v <- 1")
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "f", 7L, "mine <- new.env()\nmine$v <- 2")
+  expect_length(r$changed_in_place, 0)
+  # Rebinding the name is a change of the name (the server's "Multiple
+  # definitions"), not of its contents.
+  r <- run_and_wait(h, "g", 8L, "cnt <- new.env()")
+  expect_length(r$changed_in_place, 0)
+  # A namespace held in a global isn't read.
+  run_and_wait(h, "h", 9L, "ns <- asNamespace('stats')")
+  r <- run_and_wait(h, "i", 10L, "1")
+  expect_identical(r$status, "ok")
+  expect_length(r$changed_in_place, 0)
+})
+
 test_that("a setting the display step changes isn't the cell's: only its code's changes make it a settings cell, and the display's change stays as a package load's would (#156)", {
   skip_if_not_installed("knitr")
   h <- worker_harness(extra_libs = dirname(find.package("knitr")))
