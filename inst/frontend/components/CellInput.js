@@ -68,7 +68,6 @@ import { RunButton } from "./RunButton.js"
 import { alt_or_options_name } from "../common/KeyboardShortcuts.js"
 import { MoreIcon } from "../common/Icons.js"
 import { DEFAULT_SETTINGS, get_settings } from "./Settings.js"
-import { highlightKwargsPlugin } from "./CellInput/highlight_kwargs.js"
 import { hash_quote_continue, hash_quote_highlight } from "./CellInput/text_cell.js"
 import { highlight_assigned } from "./CellInput/highlight_assigned.js"
 import { is_dark_theme } from "../common/theme.js"
@@ -599,7 +598,6 @@ export const CellInput = ({
                     syntaxHighlighting(pluto_syntax_colors_css),
                     lineNumbers(),
                     highlightSpecialChars(),
-                    highlightKwargsPlugin(),
                     highlight_assigned,
                     history(),
                     drawSelection(),

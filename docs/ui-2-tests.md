@@ -314,7 +314,9 @@ New fixtures:
     Mean"; clicking a link inside it loads that page in the panel; an
     example block has `.hljs-keyword` spans.
 62. Signature: with the cursor after `lm(`, a tooltip containing
-    `formula` appears within 1 s.
+    `formula` appears within 1 s. Brackets: next to any R bracket (a
+    call's `(`, `{`, `[`, `[[` and each closing one) it and its partner
+    are marked; a `(` inside a string isn't paired with one outside it (#246).
 63. Go-to-definition: Ctrl/Cmd-click on `x` in B focuses cell A; typing
     in B removes the marks until B is run again. No module
     `scopestate_statefield.js` is loaded.

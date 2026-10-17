@@ -150,6 +150,9 @@ reuse_analysis <- function(prev, code, read_file) {
 #'   sourced files still read the same; everything else is recomputed.
 #'   Passing `previous` never changes the result, only the work done.
 #' @param read_file Reader for `source()` paths; see `read_cell()`.
+#' @param columns Named list, cell id -> global -> `list(frame, names)`:
+#'   the session's `data_columns` (state.R), which decide masked reads
+#'   (`resolve_masked()`).
 #' @return An `ember_graph`.
 #'
 #' The build is deterministic and idempotent: the same inputs give an

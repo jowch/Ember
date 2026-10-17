@@ -423,16 +423,30 @@ megabyte, so a run hashes only another cell's tables its code could write:
 the table of a `[` with `:=`, `let()` or `set*()` in it, an argument of
 data.table's `set*()` (under any name, or through `do.call()`), and a
 table passed to one of the notebook's own functions (`add_b(dt)`,
-`lapply(list(dt), add_b)`), or to a function not defined yet. Showing the
-table, reading it with `[` or `$`, and passing it to a package's function
-(`nrow(dt)`, `lm(y ~ x, dt)`, `ggplot(dt)`) hash nothing. Such a run
+`lapply(list(dt), add_b)`), or to a function not defined yet. The body of
+each notebook function the cell calls is read the same way, so a helper
+that writes the global itself (`zero_dt <- function() dt[1L, x := 0]`)
+counts where it's called. A table can also sit in a list or an
+environment another cell defines, up to three levels down
+(`tabs$flights[1L, x := 0]`, an R6 object's field); the note then names
+the list or environment, and so does `with(tabs, flights[1L, x := 0])`.
+Code run from text (`eval(parse(text = ...))`,
+`source()`) can't be read, so such a run hashes every other cell's table.
+A write found is noted under every name another cell binds the table to,
+and every list or environment another cell defines that holds it, so
+after `alias <- dt` or `held <- list(t = dt)`, a write through `dt` names
+`alias` and `held` too (#216). A table two globals hold is hashed once.
+Showing the table, reading it with `[` or `$`, and passing it to a
+package's function (`nrow(dt)`, `lm(y ~ x, dt)`, `ggplot(dt)`) hash
+nothing. Such a run
 hashes the table twice, before its code and after; no hash is kept between
 runs, so a write that was missed is never blamed on a later cell. That cost
 grows with the table and has no cap, on purpose: a cap would bring the
 silent miss back. A 36 MB table adds about 0.17 s to each cell that could
-write it, and a 1 GB table would add about 7 s. A cell that reaches a
-table without naming it (a helper that writes the global, a table in a
-list) isn't hashed, and its write isn't noted (#216). Before R 4.5,
+write it, and a 1 GB table would add about 7 s. A table the code reaches
+only through `get()` or `assign()` by name, or through a package's
+function that writes a global, isn't hashed, and its write isn't noted.
+Before R 4.5,
 `tools::md5sum()` can't hash bytes, so row writes aren't noted there.
 
 ### Methods
@@ -589,7 +603,9 @@ top-level expression is its output. When that expression is an assignment
 invisibly, so `cars <- mtcars` shows the table. As in Pluto, the value is
 the right-hand side: `df$z <- df$x * 2` shows the new column, not `df`. A
 plot the cell drew still wins over an assigned value, so `h <- hist(x)`
-shows the histogram. Any other invisible value
+shows the histogram. A bound interactive input is the exception: `n <-
+input_slider(1, 10)` shows the widget, not the number, since moving the
+widget changes `n` without rerunning the cell (inputs.md). Any other invisible value
 shows nothing: `invisible()`, `library()`, a function that returns
 invisibly. So `invisible(x <- big)`, or a last line of `invisible()`, is
 how a cell hides its output (Pluto's trailing `;` has no meaning in R).
