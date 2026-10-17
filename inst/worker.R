@@ -1548,10 +1548,17 @@ ember_trace_source <- function() {
 #' already exempt from cell-code rules the same way a setting change
 #' inside a package load is (a deviation from the sketch, which checked
 #' only `running`).
+#'
+#' A file under the worker's own `tempdir()` isn't reported either: the
+#' session wrote it (Rcpp's `cppFunction()` sources the R wrapper it
+#' generates there), it isn't the user's helper, and it is gone when the
+#' session ends, so learning it would put a new path in the file every
+#' session (#165).
 trace_source <- function(file) {
   if (is.null(running) || length(load_stack) > 0 || inherits(file, "connection")) return(invisible())
   trace_line("source", file)
   path <- tryCatch(normalizePath(file, mustWork = FALSE), error = function(e) as.character(file))
+  if (in_session_tempdir(path)) return(invisible())
   text <- tryCatch(paste(readLines(path, warn = FALSE), collapse = "\n"), error = function(e) NA_character_)
   send(list(type = "source", cell = running$cell, token = running$token, path = path, text = text))
   reply <- NULL
@@ -1566,6 +1573,14 @@ trace_source <- function(file) {
     stop(msg, call. = FALSE)
   }
   invisible()
+}
+
+#' Whether `path` is inside this process's `tempdir()`.
+in_session_tempdir <- function(path) {
+  slash <- function(p) tryCatch(normalizePath(p, winslash = "/", mustWork = FALSE), error = function(e) NA_character_)
+  if (length(path) != 1 || is.na(path)) return(FALSE)
+  tmp <- slash(tempdir())
+  !is.na(tmp) && startsWith(slash(path), paste0(sub("/+$", "", tmp), "/"))
 }
 
 # ---- Attached packages ---------------------------------------------------------
