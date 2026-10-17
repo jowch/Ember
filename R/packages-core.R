@@ -193,13 +193,23 @@ install_failure_message <- function(lines, status) {
 #' ASCII depending on locale; both are matched.
 #' -> data.frame(package, kind, detail, libraries): `libraries` is the
 #'    system libraries not found (", "-separated) on the rows the installer's
-#'    system-library check made, `NA` otherwise; kind "missing_compiler" (the
+#'    system-library check made (for "newer_system", those that are too
+#'    old), `NA` otherwise; kind "missing_compiler" (the
 #'    installer's own compiler check, an `EMBER-MISSING compiler` line, or
 #'    while a package builds from source a line saying the compiler itself
 #'    isn't there: `compiler_patterns` below; detail = what to install,
 #'    `compiler_instructions()`), "missing_system" (the installer's
 #'    system-library check, `EMBER-MISSING system`; detail = the command
-#'    that installs every package's, the same on each row), "system" (an
+#'    that installs every package's, the same on each row),
+#'    "library_version" (`EMBER-MISSING soname`, #76: a library it was
+#'    built against is here only as another version; libraries = the ones
+#'    it wants, detail = the versions this system has), "newer_system"
+#'    (`EMBER-MISSING newer`, #76: built for a newer system; detail = the
+#'    symbol versions it needs, `GLIBC_2.38`, libraries = the libraries
+#'    here that lack them), "symbol_version" (`EMBER-MISSING symbols`,
+#'    #76: a library's own symbol versions, `CURL_OPENSSL_4`, that the
+#'    copy here lacks; detail and libraries as for "newer_system"),
+#'    "system" (an
 #'    `EMBER-MISSING library` line, detail = the libraries not found; or,
 #'    while a package
 #'    builds from source, a line saying a system library or header is
@@ -268,6 +278,9 @@ install_failures <- function(lines) {
   # aren't installed.
   compiler_patterns <- c("(^|[ /])(gcc|g\\+\\+|cc|c\\+\\+|clang|clang\\+\\+|gfortran|f95)(-[0-9.]+)?: (No such file or directory|command not found|not found)$",
                          "^configure: error: no acceptable C compiler found",
+                         # A compiler is named (often a stub or a broken
+                         # toolchain) but can't link anything.
+                         "compiler cannot create executables",
                          "^xcrun: error: invalid active developer path")
   building <- NA_character_
 
@@ -276,6 +289,24 @@ install_failures <- function(lines) {
     if (grepl("^EMBER-MISSING binary [A-Za-z0-9.]+ ", line)) {
       m <- regmatches(line, regexec("^EMBER-MISSING binary ([A-Za-z0-9.]+) (\\S+)", line))[[1]]
       no_binary[[m[[2]]]] <- m[[3]]
+      next
+    }
+    if (grepl("^EMBER-MISSING (newer|symbols) [A-Za-z0-9.]+ ", line)) {
+      m <- regmatches(line, regexec("^EMBER-MISSING (newer|symbols) ([A-Za-z0-9.]+) (\\S+) (.*)$", line))[[1]]
+      if (length(m) == 5) {
+        add(m[[3]], if (m[[2]] == "newer") "newer_system" else "symbol_version",
+            gsub(",", ", ", m[[4]]), gsub(",", ", ", m[[5]]))
+      }
+      next
+    }
+    if (grepl("^EMBER-MISSING soname [A-Za-z0-9.]+ ", line)) {
+      m <- regmatches(line, regexec("^EMBER-MISSING soname ([A-Za-z0-9.]+) (\\S+)$", line))[[1]]
+      if (length(m) == 3) {
+        pairs <- strsplit(strsplit(m[[3]], ";", fixed = TRUE)[[1]], "=", fixed = TRUE)
+        add(m[[2]], "library_version",
+            paste(gsub(",", ", ", vapply(pairs, function(p) p[[2]] %||% "", "")), collapse = ", "),
+            paste(vapply(pairs, `[[`, "", 1L), collapse = ", "))
+      }
       next
     }
     if (grepl("^EMBER-MISSING (compiler|system|library) [A-Za-z0-9.]+ ", line)) {
@@ -371,7 +402,8 @@ install_failures <- function(lines) {
   # was seen with, in the order the loop above checks patterns in
   # (a missing compiler or system library, then compile/configure/
   # dependency, before the catch-all summary line).
-  kind_rank <- c(missing_compiler = 0L, missing_system = 0L, system = 1L, compile = 2L,
+  kind_rank <- c(missing_compiler = 0L, missing_system = 0L, library_version = 1L, newer_system = 1L, symbol_version = 1L,
+                 system = 1L, compile = 2L,
                  configure = 3L, dependency = 4L, download = 5L, unavailable = 6L, other = 7L)
   df <- data.frame(package = pkg, kind = kind, detail = detail, libraries = libs, stringsAsFactors = FALSE)
   df <- df[order(kind_rank[df$kind]), ]
@@ -1408,9 +1440,16 @@ missing_package_error <- function(state, pkg) {
     return(list(state = state, error = err))
   }
 
-  err <- new_run_error("missing_package",
-    message = sprintf("there is no package called '%s'; its install may have failed", pkg),
-    names = pkg, fixes = character())
+  # The install failed: say why, as package_status() does (#182). A missing system
+  # library's message names it and the command that installs it. It is
+  # install_failure_message()'s, which begins "install failed".
+  why <- if (identical(state$packages$target$status, "failed")) state$packages$target$message
+  msg <- if (!is.null(why) && nzchar(why)) {
+    sprintf("there is no package called '%s': %s", pkg, why)
+  } else {
+    sprintf("there is no package called '%s'; its install may have failed", pkg)
+  }
+  err <- new_run_error("missing_package", message = msg, names = pkg, fixes = character())
   list(state = state, error = err)
 }
 

@@ -38,7 +38,11 @@
 #' closing dispatch's notifications are delivered), `queries` (environment,
 #' id (character) -> callback, for `worker_query()`'s pending completion/
 #' help/signature questions -- outside `ember_state` and the event log, see
-#' `worker_query()`), `next_query_id` (integer, last id handed out).
+#' `worker_query()`), `next_query_id` (integer, last id handed out),
+#' `file_inputs`/`watch_inputs` (what the last saved file text and the
+#' last watched paths were made from: `save_if_changed()` and
+#' `after_dispatch()` skip the work when these are unchanged; `NULL` until
+#' the first drain).
 #' The poll runs on `later`'s global loop, so an interactive console
 #' services it whenever R is at the prompt.
 session_start <- function(state) {
@@ -51,6 +55,7 @@ session_start <- function(state) {
   nb$save_failed_text <- NULL
   nb$listeners <- list()
   nb$proc <- NULL
+  nb$reaper <- NULL
   nb$proc_gen <- 0L
   nb$listen <- NULL
   nb$port <- NULL
@@ -72,6 +77,7 @@ session_start <- function(state) {
   register_session(nb)
   sync_active_libraries()
   maybe_start_cleanup()
+  maybe_start_heartbeat()
   schedule_poll(nb)
   nb
 }
@@ -134,6 +140,44 @@ maybe_start_cleanup <- function() {
   if (isTRUE(startup_clean$scheduled)) return(invisible(NULL))
   startup_clean$scheduled <- TRUE
   later::later(function() tryCatch(clean(cache = FALSE), error = function(e) NULL), 0)
+  invisible(NULL)
+}
+
+#' Whether the library heartbeat is running in this process.
+library_heartbeat <- local({
+  env <- new.env(parent = emptyenv())
+  env$scheduled <- FALSE
+  env
+})
+
+#' Touch every library an open session holds, so `ember-last-used`
+#' means "in use", not only "a worker started on it": a notebook left
+#' open for days in one Ember process keeps a fresh marker, and another
+#' process's clean-up (`clean_up()`, which skips libraries used in the
+#' last 30 days, #128) never takes it.
+touch_active_libraries <- function() {
+  for (p in active_libraries$paths) touch_library(p)
+  invisible(NULL)
+}
+
+#' Start the heartbeat the first time a notebook opens: every
+#' `ember.library_heartbeat` seconds (default an hour) it touches the
+#' open sessions' libraries, and it stops once no session is open (the
+#' next `session_start()` starts it again).
+maybe_start_heartbeat <- function() {
+  if (isTRUE(library_heartbeat$scheduled)) return(invisible(NULL))
+  library_heartbeat$scheduled <- TRUE
+  later::later(heartbeat_tick, getOption("ember.library_heartbeat", 3600))
+  invisible(NULL)
+}
+
+heartbeat_tick <- function() {
+  if (length(ls(open_sessions, all.names = TRUE)) == 0L) {
+    library_heartbeat$scheduled <- FALSE
+    return(invisible(NULL))
+  }
+  tryCatch(touch_active_libraries(), error = function(e) NULL)
+  later::later(heartbeat_tick, getOption("ember.library_heartbeat", 3600))
   invisible(NULL)
 }
 
@@ -268,11 +312,10 @@ drain <- function(nb) {
 #' Save the file if its text changed. Called inside the drain, after the
 #' inbox empties.
 #'
-#' Formatting the whole file per drain is cheap only because
-#' `notebook_file_of()` is skipped when `cells`, `graph$order`,
-#' `graph$learned`, `files` and `file` are identical to the previous
-#' drain's (handled by `notebook_graph()`'s analysis cache and R's
-#' `identical()` short cuts on unchanged parts).
+#' The file is formatted again only when something it is made from
+#' (`file_inputs()`) differs from the last drain's. Most drains during Run
+#' all change only results, and formatting a 2000-cell file costs about
+#' 0.17 s (#44).
 #'
 #' A failed write (the file's new folder is gone, permissions changed, the
 #' disk is full) is not retried with the same text: `ev_save_failed()` joins
@@ -285,6 +328,9 @@ drain <- function(nb) {
 save_if_changed <- function(nb) {
   s <- nb$state
   if (isTRUE(s$read_only)) return(invisible(NULL))
+  inputs <- file_inputs(s)
+  if (identical(inputs, nb$file_inputs)) return(invisible(NULL))
+  nb$file_inputs <- inputs
   text <- format_notebook(notebook_file_of(s))
   if (identical(text, nb$written)) return(invisible(NULL))
   if (!is.null(nb$save_failed_text) && identical(text, nb$save_failed_text)) return(invisible(NULL))
@@ -298,6 +344,21 @@ save_if_changed <- function(nb) {
     enqueue(nb, ev_save_failed("could not write the notebook file", at = Sys.time()))
   }
   invisible(NULL)
+}
+
+#' What `notebook_file_of()` reads from a state. Equal inputs give the same
+#' text, so `save_if_changed()` skips formatting the file when they are
+#' identical to the last drain's: the previous text was then either written
+#' already or failed to write.
+file_inputs <- function(state) {
+  list(state$cells, state$graph, state$file, state$files, state$computed_sources,
+       state$footer_sources, state$problems, state$read_only)
+}
+
+#' What `watched_files()` reads from a state, for the same skip in
+#' `after_dispatch()`.
+watch_inputs <- function(state) {
+  list(state$graph$analyses, state$computed_sources, state$footer_sources)
 }
 
 #' Notify and re-watch: derived from the state change over a dispatch.
@@ -318,7 +379,13 @@ after_dispatch <- function(nb, before) {
       })
     }
   }
-  sync_watch(nb, watched_files(nb$state))
+  # Gathering the watched paths walks every cell's analysis (about 24 ms at
+  # 2000 cells), so it is skipped when nothing it reads changed (#44).
+  inputs <- watch_inputs(nb$state)
+  if (!identical(inputs, nb$watch_inputs)) {
+    nb$watch_inputs <- inputs
+    sync_watch(nb, watched_files(nb$state))
+  }
   # Any dispatch can have changed `target`/`active` (an install finished, a
   # switch happened, a close unregistered this session already): keep
   # `clean()`'s view of what's in use current.
@@ -346,6 +413,7 @@ run_effect <- function(nb, fx) {
           nb$con <- NULL
         }
         nb$proc <- NULL
+        end_reaper(nb)
         nb$rx <- list(chunks = list(), n = 0L)
         fail_pending_queries(nb)
       }
@@ -634,9 +702,19 @@ start_worker_process <- function(nb, fx) {
   wd <- fx$wd
   if (is.null(wd) || !nzchar(wd)) wd <- getwd()
 
+  # `supervise = TRUE`: processx's supervisor sends the worker SIGTERM once
+  # the server has gone, however it went, so a worker busy in a long cell
+  # doesn't outlive a killed server (#147; the jobs' `job_process()` does
+  # the same, #141). Not under `job_process()`'s `sh`: the server
+  # interrupts a cell with SIGINT to this process (`interrupt`), which must
+  # reach the worker itself. Processes a cell started go with the worker's
+  # process group, through `start_reaper()` (#150).
   proc <- processx::process$new(
     rscript, c("--vanilla", "-e", boot, as.character(nb$port)),
-    env = env, wd = wd, stdout = "|", stderr = "2>&1", cleanup_tree = TRUE)
+    env = env, wd = wd, stdout = "|", stderr = "2>&1", cleanup_tree = TRUE,
+    supervise = TRUE)
+  end_reaper(nb)
+  nb$reaper <- start_reaper(proc)
 
   if (!is.null(nb$con)) tryCatch(close(nb$con), error = function(e) NULL)
   nb$proc <- proc
@@ -652,6 +730,37 @@ start_worker_process <- function(nb, fx) {
   nb$last_mem_check <- NULL
   nb$worker_rss_reported <- NULL
   enqueue(nb, wk_started(fx$gen, proc$get_pid(), at = Sys.time()))
+  invisible(NULL)
+}
+
+#' On Unix, a small `sh` (the reaper) outside the worker's process group
+#' that ends the group once the server has gone (#150). The supervisor (`supervise =
+#' TRUE` above) ends only the worker's own R process, and what a cell
+#' started with `system()`, a pipe or a fork (`parallel::mclapply()`) is in
+#' the worker's group and would carry on. The reaper waits on a pipe from
+#' the server: its read returns only when the server's end closes, which
+#' happens however the server ends, SIGKILL included. Then it sends the
+#' group SIGTERM, and SIGKILL 5 s later, as the supervisor does. This is
+#' what stopping a worker already does while the server lives (`kill()`
+#' ends the group). A process a cell put in a session of its own (processx,
+#' callr) is outside the group and stays, as it does when the notebook
+#' restarts. `NULL` on Windows, or if the reaper can't start.
+start_reaper <- function(proc) {
+  if (.Platform$OS.type != "unix") return(NULL)
+  tryCatch(processx::process$new("/bin/sh", c("-c", WORKER_REAPER_SH, as.character(proc$get_pid())),
+                                 stdin = "|", stdout = NULL, stderr = NULL),
+           error = function(e) NULL)
+}
+
+#' The `sh -c` script `start_reaper()` runs, with the worker's pid (its
+#' process group, since processx made it a session leader) as `$0`.
+WORKER_REAPER_SH <- 'read _; kill -TERM -"$0" 2>/dev/null; sleep 5; kill -KILL -"$0" 2>/dev/null'
+
+#' Stop the reaper of a worker that has ended or is being replaced, so it
+#' can never signal a process group whose number has been reused.
+end_reaper <- function(nb) {
+  if (!is.null(nb$reaper)) tryCatch(nb$reaper$kill(), error = function(e) NULL)
+  nb$reaper <- NULL
   invisible(NULL)
 }
 
@@ -838,6 +947,7 @@ poll <- function(nb) {
             nb$con <- NULL
           }
           nb$proc <- NULL
+          end_reaper(nb)
           fail_pending_queries(nb)
           broke <- TRUE
           break
@@ -857,6 +967,7 @@ poll <- function(nb) {
     tail <- nb$out_tail
     gen <- nb$proc_gen
     nb$proc <- NULL
+    end_reaper(nb)
     nb$out_tail <- ""
     if (!is.null(nb$con)) {
       tryCatch(close(nb$con), error = function(e) NULL)

@@ -1,125 +1,214 @@
 import { html, useState, useContext, useEffect, useRef } from "../imports/Preact.js"
-import { t } from "../common/lang.js"
+import { t, getCurrentLanguage } from "../common/lang.js"
+import { install_cards, cause_groups, sentence_kind, reads_same, join_names } from "../common/install_cards.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 
 /**
- * The sentence under a failure card's title, built from `kind`/`package`/
- * `detail`/`version` and `packages$r_version` -- R sends no prose.
- * `rows` is
- * `packages.rows`, used to look up a named dependency's own locked
- * version for the "dependency" sentence.
+ * A card package's own sentence ("It ..."), built from `kind`/`detail`
+ * and `packages$r_version` -- R sends no prose.
  *
  * @param {import("./Editor.js").EmberInstallFailure} failure
- * @param {Array<import("./Editor.js").EmberPackageRow>} rows
  * @param {string?} r_version
  */
-const failure_sentence = (failure, rows, r_version) => {
-    switch (failure.kind) {
-        case "dependency": {
-            const dep_version = rows.find((r) => r.name === failure.detail)?.version
-            return t("t_ember_install_failed_compile_dependency", {
-                dep: failure.detail,
-                version: dep_version ?? "",
-                r_version: r_version ?? "",
-            })
-        }
+const own_sentence = (failure, r_version) => {
+    switch (sentence_kind(failure)) {
         case "compile":
             return t("t_ember_install_failed_compile", { r_version: r_version ?? "" })
-        case "configure":
-            return t("t_ember_install_failed_configure", { r_version: r_version ?? "" })
         case "download":
             return t("t_ember_install_failed_download")
         case "unavailable":
             return t("t_ember_install_failed_unavailable")
         case "system":
-            return failure.libraries == null
-                ? t("t_ember_install_failed_system")
-                : t("t_ember_install_failed_missing_system", { libraries: failure.libraries })
+            return t("t_ember_install_failed_system")
         case "missing_system":
             return t("t_ember_install_failed_missing_system", { libraries: failure.libraries ?? "" })
         case "missing_compiler":
             return t("t_ember_install_failed_missing_compiler")
         case "no_binary":
             return t("t_ember_install_failed_no_binary", { version: failure.detail ?? "", r_version: r_version ?? "" })
+        case "newer_system":
+            return t("t_ember_install_failed_newer_system", { versions: failure.detail ?? "", libraries: failure.libraries ?? "" })
+        case "symbol_version":
+            return t("t_ember_install_failed_symbol_version", { versions: failure.detail ?? "", libraries: failure.libraries ?? "" })
+        case "library_version":
+            return t("t_ember_install_failed_library_version", { libraries: failure.libraries ?? "", have: failure.detail ?? "" })
         default:
             return t("t_ember_install_failed_other")
     }
 }
 
+/** The sentence for packages a card's package needs, by `sentence_kind()`. */
+const DEP_SENTENCE = {
+    compile: "t_ember_install_failed_dep_compile",
+    download: "t_ember_install_failed_dep_download",
+    unavailable: "t_ember_install_failed_dep_unavailable",
+    system: "t_ember_install_failed_dep_system",
+    missing_system: "t_ember_install_failed_dep_missing_system",
+    missing_compiler: "t_ember_install_failed_dep_missing_compiler",
+    no_binary: "t_ember_install_failed_dep_no_binary",
+    newer_system: "t_ember_install_failed_dep_newer_system",
+    symbol_version: "t_ember_install_failed_dep_symbol_version",
+    library_version: "t_ember_install_failed_dep_library_version",
+    other: "t_ember_install_failed_dep_other",
+}
+
+/** The same sentences for a card naming several packages the notebook loads ("Packages they need, ..."). */
+const THEY_SENTENCE = {
+    compile: "t_ember_install_failed_they_compile",
+    download: "t_ember_install_failed_they_download",
+    unavailable: "t_ember_install_failed_they_unavailable",
+    system: "t_ember_install_failed_they_system",
+    missing_system: "t_ember_install_failed_they_missing_system",
+    missing_compiler: "t_ember_install_failed_they_missing_compiler",
+    no_binary: "t_ember_install_failed_they_no_binary",
+    newer_system: "t_ember_install_failed_they_newer_system",
+    symbol_version: "t_ember_install_failed_they_symbol_version",
+    library_version: "t_ember_install_failed_they_library_version",
+    other: "t_ember_install_failed_they_other",
+}
+
+/** A list of names for a sentence, the first few and then "and 38 more": Show the error has them all. */
+const MAX_NAMES = 5
+const name_list = (names) =>
+    join_names(
+        names.length <= MAX_NAMES ? names : [...names.slice(0, MAX_NAMES - 1), t("t_ember_install_failed_more", { count: names.length - (MAX_NAMES - 1) })],
+        getCurrentLanguage()
+    )
+
 /**
- * What to do about a missing compiler or system library
- * (R/install-checks.R). System libraries: every package's row carries the
- * same command, which installs them all, so only the first card
- * (`show_command`) shows it, with the sentence for people who can't run
- * it; without a command (not Package Manager), the package-manager
- * sentence instead. A compiler: `detail` is a sentence whose
- * `backticked` parts are commands. A package with no binary for this R
- * (#19): update the date, or use an older R. Nothing for other kinds,
- * whose `detail` is a line of the log.
+ * One sentence per kind of failure among the packages a card's package
+ * needs (#91): "A package it needs, rlang 1.1.6, doesn't build on R
+ * 4.6.1." Each is named with its locked version from `rows`
+ * (`packages.rows`); a missing-system sentence lists every library its
+ * packages lack. `they`: the card names several packages the notebook
+ * loads. `same`: the card's own package failed the same way, so its
+ * sentence already gave the reason and the advice, and this one only
+ * names the rest (`reads_same()`: never for missing system libraries).
  *
- * @param {import("./Editor.js").EmberInstallFailure} failure
- * @param {boolean} show_command
+ * @param {{ kind: string, failures: Array<import("./Editor.js").EmberInstallFailure> }} group
+ * @param {Array<import("./Editor.js").EmberPackageRow>} rows
+ * @param {string?} r_version
+ * @param {{ they?: boolean, same?: boolean }} how
  */
-const failure_fix = (failure, show_command) => {
-    if (failure.kind === "missing_system" || (failure.kind === "system" && failure.libraries != null)) {
-        if (!show_command) return null
-        return html`
-            ${failure.kind === "missing_system" && failure.detail != null
-                ? html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_system_command")}</p>
-                      <pre class="ember-install-failure-command">${failure.detail}</pre>`
-                : html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_system_manager")}</p>`}
-            <p class="ember-install-failure-fix">${t("t_ember_install_failed_no_admin")}</p>
-        `
-    }
-    if (failure.kind === "no_binary") {
-        return html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_no_binary_fix")}</p>`
-    }
-    if (failure.detail == null) return null
-    if (failure.kind === "missing_compiler") {
-        const parts = failure.detail.split("`")
-        return html`<p class="ember-install-failure-fix">${parts.map((part, i) => (i % 2 === 1 ? html`<code>${part}</code>` : part))}</p>`
-    }
-    return null
+const dep_sentence = (group, rows, r_version, { they = false, same = false } = {}) => {
+    const names = group.failures.map((f) => {
+        const version = f.version ?? rows.find((r) => r.name === f.package)?.version
+        return version == null ? f.package : `${f.package} ${version}`
+    })
+    const unique_list = (field) => [...new Set(group.failures.flatMap((f) => (f[field] ?? "").split(",").map((l) => l.trim()).filter((l) => l !== "")))].join(", ")
+    const key = same ? "t_ember_install_failed_dep_same" : (they ? THEY_SENTENCE : DEP_SENTENCE)[group.kind]
+    return t(key, {
+        count: names.length,
+        packages: name_list(names),
+        libraries: unique_list("libraries"),
+        // newer_system, symbol_version: the symbol versions; library_version: the versions this system has.
+        versions: unique_list("detail"),
+        have: unique_list("detail"),
+        r_version: r_version ?? "",
+    })
 }
 
 /**
- * One failed package's card: title, a sentence depending
- * on `kind`, the packages the notebook loads that need it (#17), for a
- * missing compiler or system library what to
- * install, then Update (build failures), Try again (downloads, packages
- * the repositories didn't list, and anything the user installs on the
- * computer) and
- * Show the error (always). `ember_update_packages` and `ember_run_all`
- * are plain requests (server.R); neither is this component's to answer.
+ * What to do about a missing compiler or system library
+ * (R/install-checks.R), over a card's own failure and its causes. System
+ * libraries: every covered package's row ("missing_system") carries the
+ * same command, which installs them all, so only the first card
+ * (`show_command`) shows it, with the sentence for people who can't run
+ * it. A package the command doesn't cover ("system" with libraries: a
+ * GitHub package, or no Package Manager) gets the package-manager
+ * sentence on its own card (#76). A library here only as another version
+ * ("library_version", #76): the command would install the version
+ * already here. A binary built for a newer system ("newer_system") or
+ * against another build of a library ("symbol_version"): a library from
+ * conda or a module may be the cause. A compiler:
+ * `detail` is a sentence whose `backticked` parts are commands. A package
+ * with no binary for this R (#19): update the date, or use an older R.
+ * Nothing for other kinds, whose `detail` is a line of the log.
+ *
+ * @param {Array<import("./Editor.js").EmberInstallFailure>} failures
+ * @param {boolean} show_command
+ */
+const failure_fixes = (failures, show_command) => {
+    const command = failures.find((f) => f.kind === "missing_system" && f.detail != null)?.detail
+    const uncovered = failures.some((f) => f.kind === "system" && f.libraries != null)
+    const compiler = failures.find((f) => f.kind === "missing_compiler" && f.detail != null)?.detail
+    const command_shown = show_command && command != null
+    return html`
+        ${command_shown
+            ? html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_system_command")}</p>
+                  <pre class="ember-install-failure-command">${command}</pre>`
+            : null}
+        ${uncovered
+            ? html`<p class="ember-install-failure-fix">
+                  ${t(command_shown ? "t_ember_install_failed_system_uncovered" : "t_ember_install_failed_system_manager")}
+              </p>`
+            : null}
+        ${command_shown || uncovered ? html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_no_admin")}</p>` : null}
+        ${failures.some((f) => f.kind === "library_version")
+            ? html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_library_version_fix")}</p>`
+            : null}
+        ${failures.some((f) => f.kind === "newer_system")
+            ? html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_newer_system_fix")}</p>`
+            : null}
+        ${failures.some((f) => f.kind === "symbol_version")
+            ? html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_symbol_version_fix")}</p>`
+            : null}
+        ${failures.some((f) => f.kind === "no_binary")
+            ? html`<p class="ember-install-failure-fix">${t("t_ember_install_failed_no_binary_fix")}</p>`
+            : null}
+        ${compiler != null
+            ? html`<p class="ember-install-failure-fix">${compiler.split("`").map((part, i) => (i % 2 === 1 ? html`<code>${part}</code>` : part))}</p>`
+            : null}
+    `
+}
+
+/**
+ * One card per package the notebook loads whose install failed, or that
+ * needs one that failed (`install_cards()`, #91; ui-3-plan.md's "A
+ * failed install"): "DESeq2 couldn't install", its own sentence if it
+ * failed itself, one sentence per kind of failure among the packages it
+ * needs, for a missing compiler or system library what to install, then
+ * Update (build failures), Try again (downloads, packages the
+ * repositories didn't list, and anything the user installs on the
+ * computer) and Show the error (always). `ember_update_packages` and
+ * `ember_retry_install` are plain requests (server.R); neither is this
+ * component's to answer.
  *
  * @param {{
- *  failure: import("./Editor.js").EmberInstallFailure,
+ *  card: import("../common/install_cards.js").InstallCard,
  *  rows: Array<import("./Editor.js").EmberPackageRow>,
  *  r_version: string?,
  *  log: string?,
  *  show_command: boolean,
  * }} props
  */
-const InstallFailureCard = ({ failure, rows, r_version, log, show_command }) => {
+const InstallFailureCard = ({ card, rows, r_version, log, show_command }) => {
     const pluto_actions = useContext(PlutoActionsContext)
     const [show_error, set_show_error] = useState(false)
-    const can_update = ["compile", "configure", "no_binary"].includes(failure.kind)
+    const failures = card.own == null ? card.causes : [card.own, ...card.causes]
+    const can_update = failures.some((f) => ["compile", "configure", "no_binary"].includes(f.kind))
     // "unavailable" is most often a repository index that couldn't be
     // read, which can be passing, so it gets Try again too.
     // The missing-piece kinds are fixed outside Ember, then retried.
-    const can_retry = ["download", "unavailable", "system", "missing_system", "missing_compiler"].includes(failure.kind)
-    // The packages the notebook loads that need this one (#17); a package
-    // the notebook loads itself names itself there, which says nothing.
-    const needed_by = (failure.needed_by ?? []).filter((name) => name !== failure.package)
+    const can_retry = failures.some((f) => ["download", "unavailable", "system", "missing_system", "missing_compiler", "library_version"].includes(f.kind))
 
     return html`
         <div class="ember-install-failure-card">
-            <p class="ember-install-failure-title">${t("t_ember_install_failed_title", { package: failure.package })}</p>
-            <p class="ember-install-failure-sentence">${failure_sentence(failure, rows, r_version)}</p>
-            ${needed_by.length === 0
-                ? null
-                : html`<p class="ember-install-failure-needed-by">${t("t_ember_install_failed_needed_by", { packages: needed_by.join(", ") })}</p>`}
-            ${failure_fix(failure, show_command)}
+            <p class="ember-install-failure-title">
+                ${t("t_ember_install_failed_title", { package: card.package ?? name_list(card.packages ?? []) })}
+            </p>
+            ${card.own != null || card.causes.length === 0
+                ? html`<p class="ember-install-failure-sentence">${own_sentence(card.own ?? { kind: "other" }, r_version)}</p>`
+                : null}
+            ${cause_groups(card.causes).map(
+                (group) => html`<p class="ember-install-failure-sentence">
+                    ${dep_sentence(group, rows, r_version, {
+                        they: card.package == null,
+                        same: reads_same(card.own, group),
+                    })}
+                </p>`
+            )}
+            ${failure_fixes(failures, show_command)}
             <div class="ember-install-failure-actions">
                 ${can_update
                     ? html`<button
@@ -132,7 +221,7 @@ const InstallFailureCard = ({ failure, rows, r_version, log, show_command }) => 
                       </button>`
                     : null}
                 ${can_retry
-                    ? html`<button type="button" class="ember-btn" onClick=${() => pluto_actions.ember_run_all()}>${t("t_ember_try_again")}</button>`
+                    ? html`<button type="button" class="ember-btn" onClick=${() => pluto_actions.ember_retry_install()}>${t("t_ember_try_again")}</button>`
                     : null}
                 <button type="button" class="ember-btn" onClick=${() => set_show_error(!show_error)}>${t("t_ember_show_the_error")}</button>
             </div>
@@ -377,12 +466,134 @@ const SourceDetail = ({ row, read_only }) => {
     `
 }
 
+/** Bytes as "512 KB", "3.4 MB", "1.2 GB" (powers of 1000, as file managers show them). */
+export const format_bytes = (bytes, lang = getCurrentLanguage()) => {
+    const units = ["B", "KB", "MB", "GB", "TB"]
+    let value = bytes
+    let unit = 0
+    while (value >= 1000 && unit < units.length - 1) {
+        value /= 1000
+        unit += 1
+    }
+    const digits = unit === 0 || value >= 10 ? 0 : 1
+    return `${new Intl.NumberFormat(lang, { maximumFractionDigits: digits, minimumFractionDigits: digits }).format(value)} ${units[unit]}`
+}
+
+/**
+ * How much disk the libraries, the package cache and the indexes use
+ * (#38; design.md's "The package view shows disk use"). Measured by the
+ * server in a subprocess (`ember_disk_use`, server.R) each time the tab
+ * opens, and again after a clean-up; shared by every notebook, so it
+ * says so. Ember deletes unused libraries on its own after 60 days.
+ *
+ * "Clean up…" (#128) frees space now. It first asks the server what it
+ * would delete (`ember_clean_up`, a dry run: libraries no open notebook
+ * holds and unused for 30 days, and the cache entries no other library
+ * lists) and shows that with Delete and Cancel. Nothing is deleted until
+ * Delete, and Delete judges at the preview's time. After the result the
+ * button comes back.
+ */
+const DiskUse = () => {
+    const pluto_actions = useContext(PlutoActionsContext)
+    const [use, set_use] = useState(/** @type {{ libraries: number, cache: number, indexes: number, exact: boolean }?} */ (null))
+    const [failed, set_failed] = useState(false)
+    // null, "checking", "deleting", or the dry run's or the deletion's reply.
+    const [clean, set_clean] = useState(/** @type {any} */ (null))
+    const live = useRef(true)
+    useEffect(
+        () => () => {
+            live.current = false
+        },
+        []
+    )
+    const measure = () => {
+        Promise.resolve(pluto_actions.ember_disk_use?.())
+            .then((response) => {
+                if (!live.current) return
+                const message = response?.message
+                if (message == null || message.error != null || message.cache == null) set_failed(true)
+                else set_use(message)
+            })
+            .catch(() => live.current && set_failed(true))
+    }
+    useEffect(measure, [])
+    // `as_of` is the preview's time, sent back with Delete so the deletion
+    // is judged then and removes nothing the preview didn't count.
+    const clean_up = (dry_run, as_of) => {
+        set_clean(dry_run ? "checking" : "deleting")
+        Promise.resolve(pluto_actions.ember_clean_up?.(dry_run, as_of))
+            .then((response) => {
+                if (!live.current) return
+                const message = response?.message
+                set_clean(message == null || message.cache == null ? { error: message?.error ?? "" } : message)
+                if (!dry_run) {
+                    set_use(null)
+                    set_failed(false)
+                    measure()
+                }
+            })
+            .catch(() => live.current && set_clean({ error: "" }))
+    }
+
+    const nothing = clean != null && typeof clean === "object" && clean.error == null && clean.libraries === 0 && clean.cache === 0
+    // After a result (done, nothing, failed) the button comes back, for another go.
+    const button = html`<button type="button" class="ember-btn" onClick=${() => clean_up(true)}>${t("t_ember_packages_clean_up")}</button>`
+    return html`<div class="ember-packages-disk">
+        <p class="ember-packages-disk-use">
+            ${failed
+                ? t("t_ember_packages_disk_use_failed")
+                : use == null
+                  ? t("t_ember_packages_disk_use_measuring")
+                  : t(use.exact ? "t_ember_packages_disk_use" : "t_ember_packages_disk_use_estimate", {
+                        libraries: format_bytes(use.libraries),
+                        cache: format_bytes(use.cache),
+                        indexes: format_bytes(use.indexes),
+                    })}
+        </p>
+        ${clean == null
+            ? button
+            : clean === "checking"
+              ? html`<p>${t("t_ember_packages_clean_up_checking")}</p>`
+              : clean === "deleting"
+                ? html`<p>${t("t_ember_packages_clean_up_deleting")}</p>`
+                : clean.error != null
+                  ? html`<p class="ember-packages-update-failed">${t("t_ember_packages_clean_up_failed")}</p>
+                        ${button}`
+                  : nothing
+                    ? html`<p>${t("t_ember_packages_clean_up_nothing")}</p>
+                          ${button}`
+                    : clean.dry_run
+                      ? html`<div class="ember-packages-update-question ember-packages-clean-up-question">
+                            <p>
+                                ${t("t_ember_packages_clean_up_question", {
+                                    libraries: t("t_ember_packages_clean_up_libraries", { count: clean.libraries }),
+                                    cache: t("t_ember_packages_clean_up_entries", { count: clean.cache }),
+                                    bytes: format_bytes(clean.bytes),
+                                })}
+                            </p>
+                            <button type="button" class="ember-btn primary" onClick=${() => clean_up(false, clean.as_of)}>${t("t_ember_packages_clean_up_delete")}</button>
+                            <button type="button" class="ember-btn" onClick=${() => set_clean(null)}>${t("t_cancel")}</button>
+                        </div>`
+                      : html`<p>
+                            ${t("t_ember_packages_clean_up_done", {
+                                libraries: t("t_ember_packages_clean_up_libraries", { count: clean.libraries }),
+                                cache: t("t_ember_packages_clean_up_entries", { count: clean.cache }),
+                                bytes: format_bytes(clean.bytes),
+                            })}
+                        </p>
+                        ${button}`}
+    </div>`
+}
+
 /**
  * The "Packages" tab (ui-2.md, 5; ui-3-plan.md, piece 4 and piece 5's
  * "Packages tab"): "Versions as of <date>" with Update, a description
- * line, the library's install status, a card per install failure, and
+ * line, the library's install status, a card per package the notebook
+ * loads whose install failed (`install_cards()`), and
  * one row per *direct* package (dependencies hidden), each followed by its
- * GitHub source line when it has one (`SourceDetail`). Reads
+ * GitHub source line when it has one (`SourceDetail`), then the disk use
+ * of every notebook's libraries and the shared cache (`DiskUse`; not in
+ * a read-only export, which has no server to ask). Reads
  * `notebook.ember.packages` (project_ember(), pluto-state.R); `nbpkg`
  * stays filled beside it for Endeavor and isn't read here.
  *
@@ -392,6 +603,9 @@ export const PackagesTab = ({ packages, read_only = false }) => {
     if (packages == null) return null
     const { snapshot, r_version, library, rows, update } = packages
     const direct_rows = rows.filter((row) => row.direct)
+    const cards = install_cards(library.failures, direct_rows.map((row) => row.name))
+    // The one card that shows the system-library command (`failure_fixes()`).
+    const command_card = cards.findIndex((card) => [card.own, ...card.causes].some((f) => f != null && f.kind === "missing_system" && f.detail != null))
 
     return html`
         <div id="ember-packages-tab">
@@ -413,17 +627,17 @@ export const PackagesTab = ({ packages, read_only = false }) => {
                           ? html`<br /><span class="ember-packages-library-message">${library.message}</span>`
                           : null}
                   </p>`}
-            ${library.failures.length === 0
+            ${cards.length === 0
                 ? null
                 : html`<div class="ember-install-failure-cards">
-                      ${library.failures.map(
-                          (failure, i) => html`<${InstallFailureCard}
-                              key=${failure.package}
-                              failure=${failure}
+                      ${cards.map(
+                          (card, i) => html`<${InstallFailureCard}
+                              key=${card.package ?? "(several)"}
+                              card=${card}
                               rows=${rows}
                               r_version=${r_version}
                               log=${library.log}
-                              show_command=${i === library.failures.findIndex((f) => f.libraries != null)}
+                              show_command=${i === command_card}
                           />`
                       )}
                   </div>`}
@@ -448,6 +662,7 @@ export const PackagesTab = ({ packages, read_only = false }) => {
                           )}
                       </tbody>
                   </table>`}
+            ${read_only ? null : html`<${DiskUse} />`}
         </div>
     `
 }

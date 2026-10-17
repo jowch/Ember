@@ -64,8 +64,10 @@ repository depends on them.
   marimo's `on_cell_change`: "autorun" (the default, as Pluto) reruns the
   cells that depend on an edited cell; "lazy" marks them stale instead,
   keeping their outputs dimmed and labelled until they run. Running a stale
-  cell runs its stale ancestors first. Pluto's safe preview shows editing
-  without running is workable.
+  cell runs its stale ancestors first, and so does running a cell whose
+  ancestor was edited: every ancestor between the edited one and the cell
+  run runs too, since each goes stale once the edited one runs (#169).
+  Pluto's safe preview shows editing without running is workable.
 - **Open without running.** Running a cell runs its unrun ancestors first.
   "Run all" is one click. Long simulations don't start just because a
   notebook was opened.
@@ -164,6 +166,19 @@ The reset is a few lines of C, so the server package has compiled code from
 the start. The server polls the worker socket from its `later` loop every
 5 ms (about 2% of a core when idle), and must read a large worker message in
 pieces rather than all at once, so a big output can't stall it.
+
+Workers and jobs (installs, index fetches) end when the server does. They
+start with processx's supervisor, a separate process that sends them SIGTERM
+once the server is gone, even after a SIGKILL (#141, #147). On Unix a job
+also takes its own children with it (docs/packages.md); on Windows that isn't
+checked yet (#148). For a worker, a small `sh` outside its process group
+waits on a pipe from the server and ends the group once the server is gone
+(#150), since the worker itself can't run under a wrapper: the server
+interrupts a cell with SIGINT to the worker's own process. So what a cell
+starts with `system()` or a fork ends with the server, as it already did
+when the notebook restarts. A process a cell starts in a session of its own
+(processx, callr) is outside the group and outlives both a restart and a
+killed server.
 
 The server runs two ways. From an interactive R session, the R API starts
 it as a background process (processx) and returns a handle to get its URL and
@@ -286,7 +301,10 @@ like part of the cell:
   name another cell defines, removes the cell's old definitions, then lets
   `source` proceed. Before the cell's first run, the paths the footer's
   `learned sources` block records for that cell stand in, until the cell
-  runs again. This happens silently; the user sees no note.
+  runs again. This happens silently; the user sees no note. A file under
+  the worker's own `tempdir()` isn't learned: the session wrote it (Rcpp's
+  `cppFunction()` sources the wrapper it generates there), and the next
+  session's is somewhere else (#165).
 - The notebook's footer records each sourced file's path and hash, so a
   changed or missing helper is reported on open. The helper's code stays in
   its own file; the notebook alone is no longer the whole record, and the
@@ -312,7 +330,16 @@ makes the same code a visible redefinition, so the rule catches it.
 Only reference objects change in place in R (environments, R6, reference
 classes, data.table's `:=` and `set*()`). Those stay untracked, as mutation
 is in Pluto and marimo; the user docs say so and the engine warns when a
-cell modifies one defined elsewhere.
+cell modifies one defined elsewhere. Before each run the worker keeps a
+fingerprint of every environment another cell defines (its bindings, and
+those of the environments inside it, three levels down, which reaches an
+R6 object's private fields). If a run changes one without rebinding its
+name, the cell shows a note: "Changed `cnt` in place, which another cell
+defines, so the cells that read it don't rerun." Taking the fingerprint
+forces no promise and calls no active binding. Namespaces are skipped, and
+so is any one environment with more than 1,000 bindings; the others are
+still checked, up to 10,000 bindings a run. data.table's in-place changes
+aren't detected yet (#172).
 
 ### Methods
 
@@ -440,6 +467,11 @@ The worker runs each cell in the global environment:
    changed by the window; they redraw only when the screen's pixel density
    goes up.
 4. Turn the output value into a display (see "How values display" below).
+   Its messages and warnings go to the console too, after the cell's own:
+   ggplot2 builds a plot only when it's printed, so its "Removed n rows"
+   warning comes from this step. The value is shown by one call of its
+   print method or renderer, so each shows once, though the text form and
+   the table's cells run the same methods again.
 
 **Which values a cell shows** follows Pluto: the value of the cell's last
 top-level expression is its output. When that expression is an assignment
@@ -482,7 +514,12 @@ order, as marimo does with `_display_`, its own formatters, `_mime_` and
 Every rich output also carries a `text/plain` form, the value's `print()`
 text truncated, as a Jupyter MIME bundle does, so programs that read outputs
 as text (Endeavor's agent) see the first rows of a table rather than "HTML
-output". The UI accepts HTML, PNG, SVG, markdown and LaTeX. Steps 2 and 3
+output". When `print()` gives nothing (an htmlwidget) or gives the HTML
+source itself (gt, an HTML kable), the text form is the HTML's own text
+instead: style and script blocks dropped, a table row per line, cells split
+by tabs. HTML with no text at all, such as a plotly or leaflet chart whose
+data is in a script, gets a line naming what it is, so the agent knows a
+chart is there. The UI accepts HTML, PNG, SVG, markdown and LaTeX. Steps 2 and 3
 need knitr or repr loaded; the worker loads them from the notebook's library
 only when they are there and a value needs them. That changes no results, so
 the `Rscript` target holds. Measured: knitr is in the dependencies of common
@@ -565,8 +602,22 @@ allowed; `Rscript` makes them too. The rest belong to the cell's code and
 make it a settings cell. A package that overwrites a setting the notebook
 already changed gets a note, since in the notebook it may load at a different point
 than in the script. In a clean process none of the 199 changed an existing
-option or variable, only added new ones; whether any overwrite a value the
-notebook set is still untested. None changed the working directory or
+option or variable, only added new ones. Set beforehand, a package's own
+options are a different story (#61, 383 packages): 33 reset one of their
+own options, or a dependency's, when they load (mgcv's `mgcv.vc.logrange`,
+lme4, `spam.*`, fixest and others), and keras and modeltime reset an
+environment variable. None touched a common setting such as `digits`,
+`warn` or `TZ`. So a settings cell that sets `mgcv.vc.logrange` keeps its
+value in the notebook, which applies settings cells before each run, but
+under `Rscript` the settings cells come first in the file and
+`library(mgcv)` resets it. The cell that loads the package gets a note:
+"Loading mgcv resets mgcv.vc.logrange, which a settings cell sets. Under
+Rscript the setting is lost, because settings cells come first in the
+file. Move it into this cell, after mgcv loads." Moved there, the loading
+cell becomes the one settings cell for that option (leaving it in both
+would be the "set in two cells" conflict), and within one cell the
+notebook and `Rscript` keep the order as written. The note shows on the
+run that loads the package. None changed the working directory or
 locale. RcppArmadillo, rstan and V8 create `.Random.seed` when loaded, which
 the global-environment check already skips.
 
@@ -610,7 +661,11 @@ handles `using` in two steps (`PlutoDependencyExplorer.jl`'s
   that attaches packages is added, edited or deleted, it detaches the
   packages the notebook attached (`detach()` without unloading) and attaches
   the current set again. Namespaces stay loaded. Only a change of package
-  version restarts the worker.
+  version restarts the worker. A cell's packages keep the order plain R
+  attached them in, and the worker calls `library()` as the notebook's own
+  code would find it on the search path, so a package that wraps
+  `library()` to keep its own environment in step (conflicted's
+  `.conflicts`) still does.
 - **Masking follows file order.** In R the package attached last wins
   (`dplyr::filter` over `stats::filter`), and that is normal use, so Julia's
   rule that an ambiguous name is an error doesn't fit. The worker attaches in
@@ -779,10 +834,24 @@ Ember never has to track where notebooks live.
 server starts, deletes those unused for 60 days; they hold only links, so a
 returning notebook's library is rebuilt from the cache in seconds, or from
 the lock. The shared cache is what grows, since it keeps every version ever
-installed. The package view shows disk use (libraries and cache) with a
-"clean up" button, and `ember::clean()` does the same from R, also clearing
-cache entries no library uses; hosts such as Endeavor call it through the R
-API.
+installed. The package view shows disk use (libraries, cache and indexes,
+measured when the tab opens; built, #38) and a "Clean up…" button (built,
+#128) that frees space now: it deletes libraries no notebook open in this
+server uses and that weren't used in the last 30 days (Jonathan's pick,
+half the startup sweep's 60; every Ember process
+touches its open notebooks' library markers hourly, and `ember::run()`
+touches its own, so a notebook open elsewhere stays fresh), then the cache
+entries no other library lists, except those made in the last day or
+linked from an install still running. It shows the counts and
+an estimate of the space first, and deletes nothing until Delete, judged
+at the preview's time. The cost
+of a wrong guess: a notebook whose library was deleted installs its lock
+again when it next opens, downloading what the cache no longer holds. With
+binaries (macOS, Windows, Linux with Package Manager binaries) that is a
+download; on Linux without them, or for Bioconductor packages pinned to
+another R, it builds from source, which for a Bioconductor set takes far
+longer. Indexes are left to the startup sweep. `ember::clean()` does the same from R with any
+age; hosts such as Endeavor call it through the R API.
 
 **Installer: renv.** pak copies instead of linking, so it's out. The
 spike installed the same 42 packages (dplyr, ggplot2, data.table, lme4, sf)
@@ -1040,8 +1109,11 @@ dependents). Ember keeps it; the R-side API is to be designed.
 **Look distinct:** own colours, fonts and layout. Programs that inject
 scripts into the page (Endeavor does) rely on the DOM hooks Pluto's page has
 (`pluto-cell` elements with the cell ID, `.code_differs`, the add-cell
-buttons, the error element) and its CSS variable names; renaming them is a
-change to coordinate with them.
+buttons, the error element) and the CSS variable names they read; renaming
+them is a change to coordinate with them. The variable names kept for them
+are the ones Endeavor reads (tests/testthat/fixtures/endeavor-css-variables.txt)
+and the ones in pluto-css-variables.txt that Ember's own frontend reads. The
+themes may drop a Pluto variable that nothing reads (#57).
 
 ## Integration with Endeavor
 
@@ -1074,8 +1146,8 @@ cover what the adapter needs:
 - **A PNG of a cell's output** for `view_cell_output`. Plots already are
   PNGs. Other outputs have none, as with Pluto, where the tool refuses
   Markdown, HTML and text and points the agent to `read_cell`, which gets
-  the `text/plain` form. So an htmlwidget chart (plotly, leaflet) is text to
-  the agent.
+  the `text/plain` form. So an htmlwidget chart (plotly, leaflet) reaches
+  the agent only as a line naming it.
 
 Endeavor also relies on the page. Its injected script reads Pluto's DOM hooks
 (`pluto-cell` elements with the cell UUID, `.code_differs`, `.selected`,
@@ -1101,8 +1173,9 @@ run), and the snapshot has no stale state.
    worker, the frontend stub, rig, rv against renv, and package loading.
    Since then the URL secret and rich outputs in the browser are built, and
    the server and worker run on Linux in CI. Still to run: the server and
-   worker, and rig, on Windows (#48, #49); whether any package overwrites a
-   setting the notebook already set (#61).
+   worker, and rig, on Windows (#48, #49). Whether any package overwrites a
+   setting the notebook already set (#61) was run on Linux in 2026-10: see
+   [Global settings](#running-cells).
    - Server and worker: httpuv serving the UI while a worker runs a long
      cell; interrupting a running cell and restarting its worker, on macOS,
      Linux and Windows. Pluto's unmodified frontend talking to a stub R

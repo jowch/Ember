@@ -159,6 +159,8 @@ Any event that changes what the notebook wants reaches the same code, so no hand
 
 One process-wide table, `jobs`, lets two sessions that want the same index or library share one subprocess. It holds processes and subscribers and makes no decisions.
 
+**Jobs end with the server.** A job is killed when its last session leaves (the session closed or cancelled the install), and the server closes its notebooks on the way out, including on Ctrl-C. If the server is killed instead, processx's supervisor ends the job, and on Unix the job runs under `sh`, which takes the job's children (`R CMD INSTALL`, the compiler) with it (`job_process()`, #141). On Windows there is no `sh`: the supervisor ends the job's own process, and whether its children go too is not checked yet. A killed install leaves only its staging folder, which `clean()` removes.
+
 **renv comes from the server's own library** as an Imports dependency. Only the installer subprocess loads it, never the server or the worker.
 
 **The test seam is the repository URL.** `ember_repos(cran = "file://…/fixtures/repos/cran")` drives the same code that reads PPM, with no mock. Resolution unit tests call `resolve_lock()` with a parsed fixture index. An offline end-to-end test installs two toy source packages from a `file://` repo. One opt-in test uses PPM.
@@ -203,7 +205,8 @@ Behind that sit detection, resolution, index caching, library naming, installs, 
    - the install plan job: download size and consent
    - compiler and system-library checks: built, see [Install checks](#install-checks)
    - old snapshot dates that build from source on a newer R: explained when the build fails, see [Install checks](#install-checks); saying so before the install waits for the install plan
-   - disk use
+   - disk use: built. The Packages tab shows the libraries', the cache's and the indexes' disk use for all notebooks, from one `du` run so a hard-linked file counts once (`disk_use()`); without `du` (Windows) it sums file sizes and says the libraries' figure includes shared files. (#38)
+   - clean up: built. "Clean up…" in the Packages tab deletes libraries no open notebook in this server uses and unused for 30 days, then the cache entries no remaining library lists (`clean_up()`, `clean()` with `max_age = 30` and the open notebooks' libraries kept; indexes are left to the startup sweep). Each Ember process touches its open notebooks' `ember-last-used` markers hourly, so a notebook open in another process counts as used. `clean()` keeps cache entries made in the last day and those a young staging folder links to, so an install in progress keeps its packages. It shows the counts and the space it frees (`du` over what it would delete), deletes nothing until Delete and judges the deletion at the preview's time; a read-only notebook can't (#128)
    - R minor version change with a Bioconductor pin: built, see [Bioconductor](#bioconductor)
 3. **Release dates:** crandb, `preview_update()` for per-package update and pinning.
 
@@ -299,8 +302,10 @@ session's install and `ember::run()` both get them. A check that fails
 stops the install before the library is made: no cell runs with a package
 that can't load. The installer prints one `EMBER-MISSING` line per package
 and an `Error:` line; `install_failures()` turns the first into rows and
-`install_failure_message()` shows the second. Try again (`ev_run()`)
-retries once the user has installed what was missing.
+`install_failure_message()` shows the second. The card's Try again
+(`ember_retry_install`, server.R) reruns the cells that stopped on the
+missing package, which retries the install once the user has installed
+what was missing.
 
 - **Compiler, before renv.** When this machine has no compiler
   (`has_compiler()`: `xcode-select -p` on macOS, the `R CMD config CC`
@@ -368,13 +373,46 @@ retries once the user has installed what was missing.
   `sudo` unless the installer runs as root or there is no `sudo`. Rows:
   `missing_system`, `detail` = that command (the same on every row, so the
   Packages tab shows it once), `libraries` = the package's own libraries
-  not found; or `system`, with `libraries` but no command, when the
-  repository isn't Package Manager or the system isn't one it builds for.
+  not found; or `system`, with `libraries` but no command, for a package
+  the command doesn't cover: the repository isn't Package Manager, the
+  system isn't one it builds for, or the package comes from GitHub, which
+  Package Manager knows nothing about (#76). Its card says to install
+  those with the system's package manager.
   The card and the message also tell someone who can't run the command
   (most clusters have `sudo`, but its users may not use it) to ask the
   administrator or load a module that provides the libraries. Other load errors (an
   `.onLoad` that fails) now show when a cell loads the package, as they
   always have on macOS and Windows, where renv doesn't test.
+- **A binary that doesn't fit this system (Linux, #76).** The same `ldd`
+  run catches two cases where Package Manager's binary doesn't match the
+  machine, which would otherwise install as ready and fail when a cell
+  loads the package:
+  - *Built for a newer system.* `ldd` finds the library but not one of
+    the toolchain's symbol versions the binary needs (``version
+    `GLIBC_2.38' not found``; `GLIBC_`, `GLIBCXX_`, `CXXABI_`, `GCC_`).
+    Rows: `newer_system`, `detail` = the highest version of each family,
+    `libraries` = the libraries here that lack them. The card adds that
+    an older library from conda or a module is the usual cause, else a
+    newer Linux release than this one.
+  - *Built against another build of a library.* The same, for a
+    library's own symbol versions (`CURL_OPENSSL_4`, `LIBXML2_2.9`).
+    These don't say the system is older: libcurl's name its TLS backend,
+    for one. Rows: `symbol_version`; the card says the copy here lacks
+    them, and that a library from conda or a module may be the cause.
+  - *Built against another version of a library.* A library not found
+    (`libgdal.so.34`) that the distribution's own folders (`/lib`,
+    `/usr/lib`, `/lib64`, `/usr/lib64` and their multiarch folders) have
+    under another number (`libgdal.so.36`, from `ldconfig -p` and
+    `LD_LIBRARY_PATH`: `loader_libraries()`) isn't one to install: the
+    command would install the version already there (ubuntugis's GDAL,
+    for one). It is left out of the command, and the row is
+    `library_version`, `libraries` = the ones wanted, `detail` = those
+    here, by soname. The card says so, and to install a package that
+    provides the wanted version if this Linux has one. Another number
+    elsewhere (`/usr/local`, conda, a module) says nothing about what the
+    distribution ships, so the library stays one to install. A package
+    with a library missing as well keeps the `missing_system` row.
+  Neither offers Update; `library_version` offers Try again.
 
 ### GitHub sources
 

@@ -301,7 +301,7 @@ test_that("an option a package sets when it loads survives the reset before each
 
 test_that("library(ggplot2) and theme_set() in one cell: the theme is that cell's setting (review)", {
   skip_if_not_installed("ggplot2")
-  h <- worker_harness()
+  h <- worker_harness(extra_libs = .libPaths())
   on.exit(h$close())
   r <- run_and_wait(h, "t", 1L, "library(ggplot2); theme_set(theme_minimal(base_size = 21))", timeout = 30)
   expect_identical(r$status, "ok")
@@ -327,7 +327,7 @@ test_that("library(ggplot2) and theme_set() in one cell: the theme is that cell'
 
 test_that("ggplot2's theme is a setting the worker resets and reapplies", {
   skip_if_not_installed("ggplot2")
-  h <- worker_harness()
+  h <- worker_harness(extra_libs = .libPaths())
   on.exit(h$close())
   run_and_wait(h, "l", 1L, "loadNamespace('ggplot2')", timeout = 30)
   r <- run_and_wait(h, "t", 2L, "ggplot2::theme_set(ggplot2::theme_minimal(base_size = 21))")
@@ -391,6 +391,53 @@ test_that("chdir to a folder that no longer exists doesn't kill the worker", {
   # working from where it already was.
   r2 <- run_and_wait(h, "y", 2L, "getwd()")
   expect_identical(r2$output$text, sprintf('[1] "%s"', f0))
+})
+
+test_that("a package load that resets a setting a settings cell set leaves a note naming the package (#61)", {
+  h <- worker_harness(extra_libs = fixture_lib())
+  on.exit(h$close())
+  run_and_wait(h, "s", 1L, 'options(emberfix_load_opt = "user")')
+  # library() loads through an inner loadNamespace(package): the note names
+  # the package, not the loader's argument.
+  r <- run_and_wait(h, "l", 2L, "library(emberfix1)", settings = "s")
+  expect_identical(r$status, "ok")
+  expect_identical(r$settings, list())
+  expect_identical(r$load_notes, list(list(package = "emberfix1", kind = "option", name = "emberfix_load_opt")))
+  # The settings cell is applied again before the next run, as before.
+  r2 <- run_and_wait(h, "c", 3L, 'getOption("emberfix_load_opt")', settings = "s")
+  expect_identical(r2$output$text, '[1] "user"')
+  # Already loaded: nothing resets it, so no note.
+  r3 <- run_and_wait(h, "l", 4L, "library(emberfix1)", settings = "s")
+  expect_identical(r3$load_notes, list())
+})
+
+test_that("the note's advice: the setting moved into the loading cell, after the load, keeps it and gives no note (#61)", {
+  h <- worker_harness(extra_libs = fixture_lib())
+  on.exit(h$close())
+  r <- run_and_wait(h, "l", 1L, 'library(emberfix1); options(emberfix_load_opt = "user")')
+  expect_identical(r$load_notes, list())
+  expect_identical(r$settings[[1]]$name, "emberfix_load_opt")
+  r2 <- run_and_wait(h, "c", 2L, 'getOption("emberfix_load_opt")', settings = "l")
+  expect_identical(r2$output$text, '[1] "user"')
+})
+
+test_that("a load through requireNamespace() names the package in its note (#61)", {
+  h <- worker_harness(extra_libs = fixture_lib())
+  on.exit(h$close())
+  run_and_wait(h, "s", 1L, 'options(emberfix_load_opt = "user")')
+  r <- run_and_wait(h, "l", 2L, 'requireNamespace("emberfix1", quietly = TRUE)', settings = "s")
+  expect_identical(r$load_notes, list(list(package = "emberfix1", kind = "option", name = "emberfix_load_opt")))
+})
+
+test_that("a package load gets no note when no settings cell set what it changes (#61)", {
+  h <- worker_harness(extra_libs = fixture_lib())
+  on.exit(h$close())
+  # attach() in a settings cell makes the search path differ from the
+  # start; library() attaching a package is not a reset of it.
+  run_and_wait(h, "s", 1L, "attach(data.frame(emberfix_col = 1))")
+  r <- run_and_wait(h, "l", 2L, "library(emberfix1)", settings = "s")
+  expect_identical(r$status, "ok")
+  expect_identical(r$load_notes, list())
 })
 
 test_that("package_load_changes_allowed", {
@@ -466,6 +513,23 @@ test_that("attached_reports_exports", {
   r <- run_and_wait(h, "a", 1L, "library(emberfix1)", order = "a")
   expect_identical(names(r$attached), "emberfix1")
   expect_setequal(r$attached$emberfix1, c("shared_fun", "fix1_fun"))
+})
+
+test_that("a file under the worker's own tempdir() isn't reported as a source: the session generated it (Rcpp's cppFunction()) and it is gone next session (#165)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  code <- 'f <- tempfile(fileext = ".R"); writeLines("tv <- 7", f); source(f); tv'
+  h$send(run_msg("a", 1L, code))
+  seen_source <- FALSE
+  r <- wait_for_done(h, on_frame = function(m) {
+    if (identical(m$type, "source")) {
+      seen_source <<- TRUE
+      h$send(list(type = "source_reply", allow = TRUE))
+    }
+  })
+  expect_false(seen_source)
+  expect_identical(r$status, "ok")
+  expect_identical(r$output$text, "[1] 7")
 })
 
 test_that("computed_source_request", {
@@ -1210,6 +1274,56 @@ test_that("require_and_character_only_library_tracked_for_search_path", {
   expect_false(grepl("package:emberfix2", r$output$text, fixed = TRUE))
 })
 
+test_that("a package that attaches others keeps plain R's search order after a rebuild (#180)", {
+  # emberfix4 attaches emberfix2 (Depends) before itself and emberfix1
+  # (.onAttach) after, so plain R has emberfix1 above emberfix4 above
+  # emberfix2. Rebuilding in the order the library() calls returned put
+  # emberfix4 on top.
+  flib <- fixture_lib()
+  h <- worker_harness(extra_libs = flib)
+  on.exit(h$close())
+  run_and_wait(h, "a", 1L, "library(emberfix4)", order = c("a", "b"))
+  run_and_wait(h, "b", 2L, "library(tools)", order = c("a", "b"))
+  h$send(list(type = "remove_cell", cell = "b", order = "a"))
+  r <- run_and_wait(h, "chk", 3L, 'grep("emberfix|tools", search(), value = TRUE)', order = c("a", "chk"))
+  expect_identical(r$output$text, '[1] "package:emberfix1" "package:emberfix4" "package:emberfix2"')
+})
+
+test_that("a library() wrapper on the search path is used, missing arguments and all (#180)", {
+  # emberfix3 is conflicted's case: `.emberfix3` at position 2, with a
+  # library() that passes its missing arguments on, and a name that fails
+  # when base library() reads it. Through Ember's own library() the
+  # missing `exclude` arrived as given ("only one of 'include.only' and
+  # 'exclude' can be used"), and the rebuild's base library() failed on
+  # the name, so every package it attached again was lost.
+  flib <- fixture_lib()
+  h <- worker_harness(extra_libs = flib)
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "library(emberfix1); library(emberfix2); emberfix3::shield()",
+                    order = c("a", "b", "chk"))
+  expect_identical(r$status, "ok")
+  r <- run_and_wait(h, "b", 2L, "library(tools)", order = c("a", "b", "chk"), settings = "a")
+  expect_identical(r$status, "ok")
+  h$send(list(type = "remove_cell", cell = "b", order = c("a", "chk")))
+  r <- run_and_wait(h, "chk", 3L, 'grep("emberfix|tools", search(), value = TRUE)',
+                    order = c("a", "chk"), settings = "a")
+  expect_identical(r$output$text, '[1] ".emberfix3"        "package:emberfix2" "package:emberfix1"')
+})
+
+test_that("a caller's own default passed on to library() or require() is kept (#180 review)", {
+  # Only a formal with no default is left out of the call; `lr` and `q`
+  # have defaults, which base's must not replace.
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L,
+    'ld <- function(p, lr = TRUE) library(p, character.only = TRUE, logical.return = lr); ld("tools")')
+  expect_identical(r$output$text, "[1] TRUE")
+  r <- run_and_wait(h, "b", 2L,
+    'rq <- function(p, q = TRUE) require(p, character.only = TRUE, quietly = q); print(rq("stats4"))')
+  expect_true(any(grepl("[1] TRUE", unlist(r$console), fixed = TRUE)))
+  expect_false(any(grepl("Loading required package", unlist(r$console), fixed = TRUE)))
+})
+
 test_that("drop_globals removes a cell's globals but keeps its attached packages (ui-3 12)", {
   h <- worker_harness()
   on.exit(h$close())
@@ -1489,6 +1603,376 @@ test_that("display_html resolves and dedupes dependencies, skipped without htmlt
   expect_identical(r$output$deps[[1]]$script, "a.js")
 })
 
+test_that("a cell that changes another cell's environment in place reports it; reading it, rebinding it or changing its own doesn't (#167)", {
+  h <- worker_harness()
+  on.exit(h$close())
+
+  # An R6-like object: public fields in one environment, private ones two
+  # levels down, as R6 keeps them.
+  run_and_wait(h, "a", 1L, paste(
+    "cnt <- new.env()",
+    "cnt$n <- 0",
+    "cnt$.__enclos_env__ <- new.env()",
+    "cnt$.__enclos_env__$self <- cnt",
+    "cnt$.__enclos_env__$private <- new.env()",
+    "cnt$.__enclos_env__$private$hits <- 0",
+    "cnt$add <- function() cnt$n <- cnt$n + 1",
+    "cnt$hit <- function() cnt$.__enclos_env__$private$hits <- 1",
+    "x <- 1", sep = "\n"))
+  r <- run_and_wait(h, "b", 2L, "cnt$add()")
+  expect_identical(r$status, "ok")
+  expect_identical(r$changed_in_place, "cnt")
+  r <- run_and_wait(h, "c", 3L, "cnt$hit()")
+  expect_identical(r$changed_in_place, "cnt")
+  r <- run_and_wait(h, "d", 4L, "assign('m', 1, envir = cnt)")
+  expect_identical(r$changed_in_place, "cnt")
+
+  # Reading it, or setting a binding to the value it already has, isn't a change.
+  r <- run_and_wait(h, "e", 5L, "cnt$n\nls(cnt)")
+  expect_length(r$changed_in_place, 0)
+  # A cell's own environment is its own to change.
+  r <- run_and_wait(h, "f", 6L, "mine <- new.env()\nmine$v <- 1")
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "f", 7L, "mine <- new.env()\nmine$v <- 2")
+  expect_length(r$changed_in_place, 0)
+  # Rebinding the name is a change of the name (the server's "Multiple
+  # definitions"), not of its contents.
+  r <- run_and_wait(h, "g", 8L, "cnt <- new.env()")
+  expect_length(r$changed_in_place, 0)
+  # A reference class object copies a method into itself on its first
+  # call, which isn't a change; setting a field is.
+  run_and_wait(h, "r", 9L, paste(
+    'A <- setRefClass("A", fields = list(n = "numeric"), methods = list(get = function() n, inc = function() n <<- n + 1))',
+    "a <- A$new(n = 0)", sep = "\n"))
+  r <- run_and_wait(h, "s", 10L, "a$get()")
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "t", 11L, "a$inc()")
+  expect_identical(r$changed_in_place, "a")
+  # A namespace held in a global isn't read.
+  run_and_wait(h, "h", 12L, "ns <- asNamespace('stats')")
+  r <- run_and_wait(h, "i", 13L, "1")
+  expect_identical(r$status, "ok")
+  expect_length(r$changed_in_place, 0)
+})
+
+test_that("taking the in-place fingerprint forces no promise, and a big environment is skipped without turning the check off for the others (#167)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  run_and_wait(h, "a", 1L, paste(
+    "forced <- 0",
+    "le <- new.env()",
+    "delayedAssign('x', { forced <<- forced + 1; 42 }, assign.env = le)",
+    "delayedAssign('bad', stop('never read'), assign.env = le)",
+    "d <- new.env(hash = TRUE)",
+    "for (i in seq_len(20000)) assign(paste0('k', i), i, envir = d)",
+    "cnt <- new.env()",
+    "cnt$n <- 0", sep = "\n"))
+  r <- run_and_wait(h, "b", 2L, "1")
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "c", 3L, "forced")
+  expect_identical(r$output$text, "[1] 0")
+  # After the skipped dictionary and the environment holding a promise that
+  # errors, a change to the next object is still reported.
+  r <- run_and_wait(h, "e", 4L, "cnt$n <- 1")
+  expect_identical(r$changed_in_place, "cnt")
+  # Forcing a promise isn't a change; assigning over it is.
+  r <- run_and_wait(h, "f", 5L, "le$x")
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "g", 6L, "assign('x', 1, envir = le)")
+  expect_identical(r$changed_in_place, "le")
+})
+
+console_kinds <- function(r) vapply(r$console, `[[`, character(1), "kind")
+console_texts <- function(r) vapply(r$console, `[[`, character(1), "text")
+
+test_that("a value's print method's warnings and messages go to the console once, after the cell's own (#183)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  run_and_wait(h, "m", 1L, paste(
+    'print.noisy <- function(x, ...) {',
+    '  warning("from print"); message("said by print"); cat("noisy\\n"); invisible(x)',
+    '}', sep = "\n"))
+  r <- run_and_wait(h, "a", 2L, 'warning("own"); structure(1, class = "noisy")', order = c("m", "a"))
+  expect_identical(r$status, "ok")
+  expect_identical(r$output$text, "noisy")
+  expect_identical(console_kinds(r), c("warning", "warning", "message"))
+  expect_identical(console_texts(r), c("own", "from print", "said by print\n"))
+  # A list with a class prints too, through the same one call.
+  r <- run_and_wait(h, "b", 3L, 'structure(list(a = 1), class = "noisy")', order = c("m", "b"))
+  expect_identical(console_texts(r), c("from print", "said by print\n"))
+})
+
+test_that("a plot's warnings come from its one draw, not again from its text form (#183)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  # As ggplot2's print method: it builds the plot, and warns, when it draws.
+  run_and_wait(h, "m", 1L, paste(
+    'print.gg <- function(x, ...) { warning("Removed 2 rows"); plot(1:3); invisible(x) }', sep = "\n"))
+  r <- run_and_wait(h, "a", 2L, 'structure(list(), class = "gg")', order = c("m", "a"))
+  expect_identical(r$status, "ok")
+  expect_identical(r$output$kind, "plot")
+  expect_identical(console_kinds(r), "warning")
+  expect_identical(console_texts(r), "Removed 2 rows")
+  # So does an assigned one.
+  r <- run_and_wait(h, "b", 3L, 'p <- structure(list(), class = "gg")', order = c("m", "b"))
+  expect_identical(r$output$kind, "plot")
+  expect_identical(console_texts(r), "Removed 2 rows")
+})
+
+test_that("a table's warnings come from its print, not again from its cells (#183)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  run_and_wait(h, "m", 1L, 'format.loud <- function(x, ...) { warning("formatting"); rep("L", length(x)) }')
+  r <- run_and_wait(h, "a", 2L, 'data.frame(a = structure(1:2, class = "loud"))', order = c("m", "a"))
+  expect_identical(r$output$kind, "table")
+  expect_identical(console_texts(r), "formatting")
+})
+
+test_that("a knit_print() result's warnings show; one that isn't used is quiet, and the next step's show instead (#183)", {
+  skip_if_not_installed("knitr")
+  h <- worker_harness(extra_libs = dirname(find.package("knitr")))
+  on.exit(h$close())
+  run_and_wait(h, "m", 1L, paste(
+    'registerS3method("knit_print", "ember_kept", function(x, ...) {',
+    '  warning("from knit_print"); knitr::asis_output("<b>shown</b>")',
+    '}, envir = asNamespace("knitr"))',
+    'registerS3method("knit_print", "ember_passed", function(x, ...) {',
+    '  warning("from a passed knit_print"); print(unclass(x)); invisible(NULL)',
+    '}, envir = asNamespace("knitr"))',
+    'print.ember_passed <- function(x, ...) { warning("from print"); print(unclass(x)) }', sep = "\n"))
+  r <- run_and_wait(h, "a", 2L, 'structure(1, class = "ember_kept")', order = c("m", "a"))
+  expect_identical(r$output$html, "<b>shown</b>")
+  expect_identical(console_texts(r), "from knit_print")
+  r <- run_and_wait(h, "b", 3L, 'structure(1, class = "ember_passed")', order = c("m", "b"))
+  expect_identical(r$output$kind, "text")
+  expect_identical(console_texts(r), "from print")
+})
+
+test_that("ggplot2's \"Removed n rows\" warning and geom_smooth()'s message show (#183)", {
+  skip_if_not_installed("ggplot2")
+  h <- worker_harness(extra_libs = .libPaths())
+  on.exit(h$close())
+  run_and_wait(h, "l", 1L, "library(ggplot2)", order = c("l", "a", "b"), timeout = 30)
+  r <- run_and_wait(h, "a", 2L, paste(
+    'd <- data.frame(x = c(1, 2, NA), y = c(1, NA, 3))',
+    'ggplot(d, aes(x, y)) + geom_point()', sep = "\n"), order = c("l", "a", "b"), timeout = 30)
+  expect_identical(r$output$kind, "plot")
+  expect_identical(console_kinds(r), "warning")
+  expect_match(console_texts(r), "Removed 2 rows")
+  r <- run_and_wait(h, "b", 3L, "ggplot(mtcars, aes(wt, mpg)) + geom_smooth()", order = c("l", "a", "b"), timeout = 30)
+  expect_identical(r$output$kind, "plot")
+  expect_identical(console_kinds(r), "message")
+  expect_match(console_texts(r), "geom_smooth()", fixed = TRUE)
+})
+
+test_that("a setting the display step changes isn't the cell's: only its code's changes make it a settings cell, and the display's change stays as a package load's would (#156)", {
+  skip_if_not_installed("knitr")
+  h <- worker_harness(extra_libs = dirname(find.package("knitr")))
+  on.exit(h$close())
+
+  # As flextable's knit_print() sets an option through gdtools; this one
+  # changes it on every call, so each cell below changes it.
+  run_and_wait(h, "m", 1L, paste(
+    'registerS3method("knit_print", "ember_sets_opt", function(x, ...) {',
+    '  n <- getOption("ember_display_opt")',
+    '  options(ember_display_opt = if (is.null(n)) 1 else n + 1)',
+    '  knitr::asis_output("<b>shown</b>")',
+    '}, envir = asNamespace("knitr"))', sep = "\n"))
+  r <- run_and_wait(h, "a", 2L, paste(
+    'options(ember_code_opt = 1)',
+    'structure(1, class = "ember_sets_opt")', sep = "\n"))
+  expect_identical(r$output$html, "<b>shown</b>")
+  expect_identical(vapply(r$settings, function(d) d$name, character(1)), "ember_code_opt")
+
+  # A cell that only shows such a value sets nothing.
+  r <- run_and_wait(h, "b", 3L, 'structure(2, class = "ember_sets_opt")')
+  expect_identical(r$output$html, "<b>shown</b>")
+  expect_length(r$settings, 0)
+
+  # The display's change is part of the starting values: putting a settings
+  # cell's change back (cell s not in effect) returns to b's display's 2,
+  # not to unset.
+  run_and_wait(h, "s", 4L, "options(ember_display_opt = 5)")
+  r <- run_and_wait(h, "c", 5L, 'getOption("ember_display_opt")')
+  expect_identical(r$output$text, "[1] 2")
+})
+
+test_that("an option a package's code creates for itself on first use is the package's; one the notebook's code sets, directly or in a helper, makes a settings cell (#164)", {
+  h <- worker_harness()
+  on.exit(h$close())
+
+  # As readr caches `readr.num_threads` on its first read: a function that
+  # lives in a package namespace (stats here) creates an option.
+  run_and_wait(h, "f", 1L, paste(
+    'cache <- function() if (is.null(getOption("stats.ember_cache"))) options(stats.ember_cache = 4L)',
+    'environment(cache) <- asNamespace("stats")',
+    'unprefixed <- function() options(ember_pkg_cache = TRUE)',
+    'environment(unprefixed) <- asNamespace("stats")',
+    'setter <- function(v) options(stats.ember_cache = v)',
+    'environment(setter) <- asNamespace("stats")', sep = "\n"))
+  r <- run_and_wait(h, "a", 2L, "cache()\n1")
+  expect_identical(r$status, "ok")
+  expect_length(r$settings, 0)
+  # It is part of the starting values: putting settings back before the
+  # next run doesn't remove it.
+  r <- run_and_wait(h, "b", 3L, 'getOption("stats.ember_cache")')
+  expect_identical(r$output$text, "[1] 4")
+  # The name doesn't matter, only who set it (evaluate caches
+  # `rlang_trace_top_env`).
+  r <- run_and_wait(h, "u", 4L, "unprefixed()")
+  expect_length(r$settings, 0)
+
+  names_of <- function(r) vapply(r$settings, function(d) d$name, character(1))
+  # The notebook's own code: a direct call, a computed name, and a helper a
+  # cell defines (settings-cells.md, "A setting inside a helper"), even for
+  # a package's option name.
+  r <- run_and_wait(h, "c", 5L, "options(stats.ember_own = 1)")
+  expect_identical(names_of(r), "stats.ember_own")
+  r <- run_and_wait(h, "d", 6L, "op <- list(stats.ember_computed = 1); options(op)")
+  expect_identical(names_of(r), "stats.ember_computed")
+  run_and_wait(h, "q", 7L, "quiet <- function() options(readr.show_col_types = FALSE)")
+  r <- run_and_wait(h, "g", 8L, "quiet()")
+  expect_identical(names_of(r), "readr.show_col_types")
+  # A package's code changing an option that already exists is the cell's.
+  r <- run_and_wait(h, "e", 9L, "setter(5L)")
+  expect_identical(names_of(r), "stats.ember_cache")
+})
+
+test_that("the options() wrapper doesn't show in an error or change a query's visibility (#164)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  # As on main: the caller's call, and no frames of the wrapper's own.
+  r <- run_and_wait(h, "a", 1L, "options(digits = 0)")
+  expect_identical(r$status, "error")
+  expect_identical(r$error$call, "options(digits = 0)")
+  expect_identical(r$error$traceback, "options(digits = 0)")
+  expect_false(r$error$deep)
+  run_and_wait(h, "f", 2L, "f <- function() options(digits = 0)")
+  r <- run_and_wait(h, "b", 3L, "f()")
+  expect_identical(r$error$traceback, c("f()", "options(digits = 0)"))
+  expect_identical(vapply(r$error$frames, function(f) f$call, character(1)), c("f()", "options(digits = 0)"))
+  # A query still prints.
+  r <- run_and_wait(h, "c", 4L, 'options("digits")')
+  expect_identical(r$output$text, "$digits\n[1] 7\n")
+  expect_length(r$settings, 0)
+})
+
+test_that("a package the display step loads still gets its load note when it resets a setting a settings cell set (#156, #61)", {
+  skip_if_not_installed("knitr")
+  h <- worker_harness(extra_libs = c(fixture_lib(), dirname(find.package("knitr"))))
+  on.exit(h$close())
+
+  # knitr is loaded here, so the display step below loads only emberfix1.
+  run_and_wait(h, "m", 1L, paste(
+    'registerS3method("knit_print", "ember_loads", function(x, ...) {',
+    '  loadNamespace("emberfix1")',
+    '  knitr::asis_output("<b>shown</b>")',
+    '}, envir = asNamespace("knitr"))', sep = "\n"))
+  run_and_wait(h, "s", 2L, 'options(emberfix_load_opt = "user")')
+  r <- run_and_wait(h, "b", 3L, 'structure(1, class = "ember_loads")', settings = "s")
+  expect_identical(r$output$html, "<b>shown</b>")
+  expect_length(r$settings, 0)
+  expect_identical(r$load_notes, list(list(package = "emberfix1", kind = "option", name = "emberfix_load_opt")))
+  # The settings cell is applied again before the next run, as for a load
+  # in the cell's code.
+  r2 <- run_and_wait(h, "c", 4L, 'getOption("emberfix_load_opt")', settings = "s")
+  expect_identical(r2$output$text, '[1] "user"')
+})
+
+test_that("a value with a knit_print() method shows as its HTML: registered by a package, defined in the notebook, an HTML kable; a markdown kable keeps its text (#154)", {
+  skip_if_not_installed("knitr")
+  h <- worker_harness(extra_libs = dirname(find.package("knitr")))
+  on.exit(h$close())
+
+  # As gt registers knit_print.gt_tbl: in knitr's S3 table, out of sight
+  # of the search path.
+  r <- run_and_wait(h, "a", 1L, paste(
+    'registerS3method("knit_print", "ember_registered", function(x, ...) knitr::asis_output("<b>registered</b>"), envir = asNamespace("knitr"))',
+    'structure(1, class = "ember_registered")', sep = "\n"))
+  expect_identical(r$output$kind, "html")
+  expect_identical(r$output$html, "<b>registered</b>")
+  expect_match(r$output$text, "ember_registered")
+
+  r <- run_and_wait(h, "b", 2L, paste(
+    'knit_print.ember_own <- function(x, ...) knitr::asis_output("<i>own</i>")',
+    'structure(1, class = "ember_own")', sep = "\n"))
+  expect_identical(r$output$kind, "html")
+  expect_identical(r$output$html, "<i>own</i>")
+
+  r <- run_and_wait(h, "c", 3L, 'knitr::kable(data.frame(x = 1:2), format = "html")')
+  expect_identical(r$output$kind, "html")
+  expect_match(r$output$html, "<table")
+
+  r <- run_and_wait(h, "d", 4L, 'knitr::kable(data.frame(x = 1:2))')
+  expect_false(identical(r$output$kind, "html"))
+  expect_match(r$output$text, "|", fixed = TRUE)
+
+  # As huxtable's: the format comes from knitr::is_html_output().
+  r <- run_and_wait(h, "e", 5L, paste(
+    'knit_print.ember_fmt <- function(x, ...) knitr::asis_output(if (knitr::is_html_output()) "<p>html</p>" else "screen")',
+    'structure(1, class = "ember_fmt")', sep = "\n"))
+  expect_identical(r$output$html, "<p>html</p>")
+
+  # As flextable's for pandoc: the HTML in a raw-HTML fence.
+  r <- run_and_wait(h, "g", 7L, paste(
+    'knit_print.ember_fenced <- function(x, ...) knitr::asis_output("\\n```{=html}\\n<p>fenced</p>\\n```\\n")',
+    'structure(1, class = "ember_fenced")', sep = "\n"))
+  expect_identical(r$output$html, "<p>fenced</p>")
+
+  # As rmarkdown's knit_print.data.frame outside a report: it prints the
+  # value and returns it, which isn't knit_asis. The data frame stays
+  # Ember's table, and nothing is printed to the console.
+  r <- run_and_wait(h, "f", 6L, paste(
+    'registerS3method("knit_print", "data.frame", function(x, ...) { print(x); x }, envir = asNamespace("knitr"))',
+    'data.frame(x = 1:3)', sep = "\n"))
+  expect_identical(r$output$kind, "table")
+  expect_false(any(vapply(r$console, function(e) identical(e$kind, "stdout"), logical(1))))
+})
+
+test_that("an HTML output whose print() text is its source or empty gets the HTML's text as its text form (#157)", {
+  skip_if_not_installed("knitr")
+  skip_if_not_installed("htmltools")
+  h <- worker_harness(extra_libs = unique(dirname(c(find.package("knitr"), find.package("htmltools")))))
+  on.exit(h$close())
+
+  # As gt: print() gives the HTML source, CSS first. The text form is the
+  # table's text, a row per line and its cells split by tabs.
+  src <- paste0('<div id="t"><style>#t .x { color: red; }</style><table><caption>Fits &amp; tests</caption>',
+                '<tr><th>term</th><th>p</th></tr>\n<tr>\n  <td>wt</td>\n  <td>&lt;0.001</td>\n</tr>',
+                '<tr><td>hp&#39;s</td><td>0.01</td></tr></table><script>var x = 1;</script></div>')
+  r <- run_and_wait(h, "a", 1L, paste(
+    sprintf('src <- %s', deparse(src)),
+    'print.ember_src <- function(x, ...) cat(src, "\\n")',
+    'knit_print.ember_src <- function(x, ...) knitr::asis_output(src)',
+    'structure(1, class = "ember_src")', sep = "\n"))
+  expect_identical(r$output$kind, "html")
+  expect_identical(r$output$text, "Fits & tests\nterm\tp\nwt\t<0.001\nhp's\t0.01")
+
+  # print() text that isn't HTML stays, as flextable's summary does.
+  r <- run_and_wait(h, "b", 2L, paste(
+    'print.ember_sum <- function(x, ...) cat("a table of 2 rows\\n")',
+    'knit_print.ember_sum <- function(x, ...) knitr::asis_output("<table><tr><td>1</td></tr></table>")',
+    'structure(1, class = "ember_sum")', sep = "\n"))
+  expect_identical(r$output$text, "a table of 2 rows")
+
+  # A code point UTF-8 can't hold is U+FFFD; the HTML view stays.
+  r <- run_and_wait(h, "d", 4L, 'htmltools::HTML("<p>a &#xD800; b &#1114112; c</p>")')
+  expect_identical(r$output$kind, "html")
+  expect_identical(r$output$text, "a \uFFFD b \uFFFD c")
+
+  # A long table is read only to its 60th row: the text form keeps 50 lines.
+  r <- run_and_wait(h, "e", 5L, paste0('htmltools::HTML(paste0("<table>", strrep("<tr><td>x</td><td>1</td></tr>", 1e5), "</table>"))'), timeout = 30)
+  expect_identical(r$output$kind, "html")
+  expect_identical(r$output$text, paste(rep("x\t1", 50), collapse = "\n"))
+  expect_true(r$output$truncated)
+
+  # HTML with no text at all, as a widget whose data is in a script: the
+  # text form says what it is rather than being empty.
+  r <- run_and_wait(h, "c", 6L, 'htmltools::tags$div(htmltools::tags$script("var data = [1, 2];"))')
+  expect_identical(r$output$kind, "html")
+  expect_identical(r$output$text, "<HTML output: no text form; it shows in the notebook's page>")
+})
+
 test_that("render_plot() redraws at the cell's own figure size and a new res; width/height pixels override (ui-3 65)", {
   h <- worker_harness()
   on.exit(h$close())
@@ -1522,6 +2006,28 @@ test_that("colours are on at boot and text_form never ends in a partial escape (
     'paste(rep("\\033[31mx\\033[39m", 2000), collapse = "")')
   expect_true(r2$output$truncated)
   expect_match(r2$output$text, "\033\\[0m$")
+})
+
+test_that("a value that prints many lines shows at once, and print() keeps every line (#160)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  # capture.output() is quadratic in the lines printed: 20,000 took 16.5 s,
+  # so 150,000 would take many minutes; the temp-file capture takes well
+  # under a second.
+  run_and_wait(h, "a", 1L, paste(
+    'print.many_lines <- function(x, ...) { cat(sprintf("line %d\\n", seq_len(attr(x, "n"))), sep = ""); invisible(x) }',
+    'x <- structure(list(), class = "many_lines", n = 150000)',
+    'y <- structure(list(), class = "many_lines", n = 50000)', "invisible()", sep = "\n"))
+  r <- run_and_wait(h, "b", 2L, "x", timeout = 30)
+  expect_identical(r$status, "ok")
+  expect_true(r$output$truncated)
+  expect_identical(strsplit(r$output$text, "\n")[[1]][c(1, 50)], c("line 1", "line 50\033[0m"))
+
+  r2 <- run_and_wait(h, "c", 3L, "print(y); invisible()", timeout = 30)
+  printed <- Filter(function(i) identical(i$kind, "stdout"), r2$console)
+  lines <- strsplit(paste(vapply(printed, `[[`, "", "text"), collapse = "\n"), "\n")[[1]]
+  expect_identical(length(lines), 50000L)
+  expect_identical(lines[c(1, 50000)], c("line 1", "line 50000"))
 })
 
 # ---- Editor services (ui-2.md, 4) ---------------------------------------------
@@ -1630,6 +2136,14 @@ test_that("help() searches installed but unattached packages only when all_packa
   m2 <- h$receive()
   expect_true(m2$found)
   expect_identical(m2$package, "codetools")
+
+  # The reply says how far each lookup looked, found or not (#121).
+  expect_false(m$tried_all_packages)
+  expect_true(m2$tried_all_packages)
+  h$send(list(type = "help", id = 3L, topic = "zzznotatopic", package = NULL, all_packages = TRUE))
+  m3 <- h$receive()
+  expect_false(m3$found)
+  expect_true(m3$tried_all_packages)
 })
 
 test_that("signature() (46)", {
@@ -1665,7 +2179,12 @@ test_that("handle_next() answers complete/help/signature with the request's id, 
   h <- worker_harness()
   on.exit(h$close())
 
-  h$send(run_msg("a", 1L, 'source(tempfile(fileext = ".R"))'))
+  # The file is the test's, not the worker's: a file under the worker's
+  # own tempdir() isn't reported as a source (#165), so it wouldn't wait.
+  f <- tempfile(fileext = ".R")
+  file.create(f)
+  on.exit(unlink(f), add = TRUE)
+  h$send(run_msg("a", 1L, sprintf("source(%s)", deparse(f))))
   src <- NULL
   repeat {
     m <- h$receive()

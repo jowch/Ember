@@ -63,7 +63,8 @@
 #   rendered     cell, token, display   display is NULL when the cell has no
 #                                       kept value to page or re-render
 #   completions  id, token, items = list(name, kind, notebook), too_long
-#   help_page    id, found, topic, package, html, matches (packages, when several)
+#   help_page    id, found, topic, package, html, matches (packages, when several),
+#                error, tried_all_packages
 #   signature    id, text             NULL if not a function
 #
 # complete/help/signature are answered outside the run loop's ordering
@@ -117,6 +118,9 @@ search_added <- character()  # every attach() entry any cell has added this sess
 running <- NULL        # list(cell, token) during a run (for the source trace)
 deferred <- list()     # messages read while waiting for a source_reply
 load_log <- NULL       # settings changes made inside loadNamespace/library during a run
+notebook_options <- character()  # option names an options() call from the
+                       # notebook's own code (top-level, or a function a
+                       # cell defined) set during the current run
 settings_base <- NULL  # the baseline settings: snapshotted once at boot, then
                        # every change a package load makes is copied in, so a
                        # package's own option survives a reset
@@ -265,7 +269,8 @@ handle_next <- function() {
     help = {
       r <- help_lookup(msg$topic, msg$package, isTRUE(msg$all_packages))
       send(list(type = "help_page", id = msg$id, found = r$found, topic = r$topic,
-               package = r$package, html = r$html, matches = r$matches))
+               package = r$package, html = r$html, matches = r$matches, error = r$error,
+               tried_all_packages = r$tried_all_packages))
     },
     signature = send(list(type = "signature", id = msg$id, text = worker_signature(msg$name, msg$package))),
     quit = quit(save = "no"),
@@ -340,7 +345,9 @@ trace_line <- function(...) {
 #' or NULL), console (list of items, also streamed), error (NULL or
 #' list(message, call, traceback, span)), runtime, created, changed, removed,
 #' settings, load_notes, attached (package -> exports, for packages newly
-#' attached), formula_misses, globals (see summarise_globals())).
+#' attached), formula_misses, globals (see summarise_globals()),
+#' changed_in_place (names of other cells' environments, R6 objects and
+#' reference class objects this run changed; env_fingerprint())).
 #' `error$span` is set only for role "text": the 1-based index of the
 #' failing line (into `inline_spans()`'s rows).
 #'
@@ -360,9 +367,9 @@ run_cell <- function(msg) {
 
   rc <- list(status = "ok", output = NULL, console = list(), error = NULL,
              runtime = NA_real_, created = character(), changed = character(),
-             removed = character(), settings = list(), load_notes = character(),
+             removed = character(), settings = list(), load_notes = list(),
              attached = list(), formula_misses = character(), loaded = character(),
-             globals = list())
+             globals = list(), changed_in_place = character())
 
   # `dev`/`console` are closed here (not just at their normal point of use
   # below) so an interrupt landing anywhere in this function -- including
@@ -395,8 +402,13 @@ run_cell <- function(msg) {
 
     before_names <- ls(globalenv(), all.names = TRUE)
     before <- snapshot_globals(before_names)
+    # Other cells' reference objects, to tell the user when this cell
+    # changes one in place (design.md, "only reference objects change in
+    # place"; #167). Its own were removed above.
+    env_before <- env_fingerprints(before, unlist(owned, use.names = FALSE))
     settings0 <- snapshot_settings()
     load_log <<- list()
+    notebook_options <<- character()
     attach_requests[[msg$cell]] <<- character()
     running <<- list(cell = msg$cell, token = msg$token)
     search0 <- search()
@@ -553,11 +565,22 @@ run_cell <- function(msg) {
       rc$runtime <- unname((proc.time() - t0)[["elapsed"]])
       if (!is.null(err)) rc$error <- err
 
+      # The cell's settings are what its code changed, taken before the
+      # display step: a display method that sets an option when it first
+      # runs (flextable's knit_print() through gdtools) must not make the
+      # cell a settings cell (#156).
+      settings_code <- snapshot_settings()
+      load_log_code <- load_log
+
       # Displaying runs the value's print and format methods, which are
-      # the user's code too, so it can be interrupted like the cell.
+      # the user's code too, so it can be interrupted like the cell, and
+      # its messages and warnings go to the cell's console. ggplot2 builds
+      # a plot only when it's printed, so its "Removed n rows" warning and
+      # geom_smooth()'s message come from here, not from the cell's code
+      # (#183).
       output <- NULL
       if (rc$status == "ok") {
-        output <- tryCatch({
+        output <- tryCatch(withCallingHandlers({
           if (is_text) {
             # A plot drawn by an inline expression is dropped: the display
             # step below only builds text (`inline_text()`, run already,
@@ -575,8 +598,11 @@ run_cell <- function(msg) {
           } else {
             display_plot(msg$cell, msg$token, dev)
           }
-        }, interrupt = function(i) { rc$status <<- "interrupted"; NULL },
-           error = function(e) NULL)
+        },
+        message = function(m) { console$message(m); invokeRestart("muffleMessage") },
+        warning = function(w) { console$warning(w); invokeRestart("muffleWarning") }),
+        interrupt = function(i) { rc$status <<- "interrupted"; NULL },
+        error = function(e) NULL)
       }
       close_device(dev)
       dev <- NULL
@@ -591,10 +617,30 @@ run_cell <- function(msg) {
       rc$created <- facts$created
       rc$changed <- facts$changed
       rc$removed <- facts$removed
+      rc$changed_in_place <- changed_in_place(env_before, facts$changed)
 
-      by_code <- settings_by_code(settings0, snapshot_settings(), load_log)
+      by_code <- settings_by_code(settings0, settings_code, load_log_code)
+      # An option a package creates for itself on first use (readr's
+      # `readr.num_threads`) is the package's, as a load's change is (#164).
+      cached <- package_cached_options(by_code$settings, notebook_options)
+      for (d in by_code$settings[cached]) settings_base <<- set_setting(settings_base, d$kind, d$name, d$after)
+      by_code$settings <- by_code$settings[!cached]
+      # What the display step changed is its own, as a package load's
+      # change is: part of the starting values from now on. A package it
+      # loads (knitr, or a table package's dependencies) still gets its
+      # load note, from the same function with the display's start as
+      # the baseline.
+      display_loads <- load_log[seq_along(load_log) > length(load_log_code)]
+      by_display <- settings_by_code(settings_code, snapshot_settings(), display_loads)
+      for (d in by_display$settings) {
+        if (!identical(d$kind, "search")) settings_base <<- set_setting(settings_base, d$kind, d$name, d$after)
+      }
       settings_diffs <- by_code$settings
-      rc$load_notes <- by_code$load_notes
+      notes <- by_code$load_notes
+      for (n in by_display$load_notes) {
+        if (!any(vapply(notes, identical, logical(1), y = n))) notes[[length(notes) + 1]] <- n
+      }
+      rc$load_notes <- notes
 
       # Kept, not reverted: the next run's apply_settings_context() decides
       # whether this cell's changes apply (the server sends which settings
@@ -629,7 +675,7 @@ run_cell <- function(msg) {
       # was a no-op because it was already on the path (a plain search()
       # diff would miss that case, and so would wrongly drop the package
       # from the desired path on the next rebuild).
-      attached[[msg$cell]] <<- attach_requests[[msg$cell]]
+      attached[[msg$cell]] <<- in_attach_order(attach_requests[[msg$cell]])
       ever_attached <<- union(ever_attached, attach_requests[[msg$cell]])
       rc$loaded <- loaded_namespace_versions()
 
@@ -827,6 +873,111 @@ compare_globals <- function(before_names, before) {
   list(created = created, changed = changed, removed = removed)
 }
 
+#' The most bindings `env_fingerprints()` reads per run, over all the
+#' environments it visits, and the most it reads from one environment. An
+#' environment over the limit (a dictionary of 1e5 keys) is skipped, not
+#' read, and the others are still checked, so a big one costs only a
+#' `length()` call each run.
+ENV_FINGERPRINT_MAX <- 10000L
+ENV_FINGERPRINT_ONE_MAX <- 1000L
+
+#' Fingerprints of the environment-valued globals in `before` (a
+#' `snapshot_globals()` result) named in `names`: a named list of
+#' `list(env, print)`. Environments, R6 objects and reference class objects
+#' are the values a cell can change without rebinding the name, so
+#' `compare_globals()` can't see it (#167). Package namespaces and the
+#' global environment are skipped, and so is an environment too big to
+#' read.
+env_fingerprints <- function(before, names) {
+  budget <- new.env()
+  budget$left <- ENV_FINGERPRINT_MAX
+  out <- list()
+  for (n in intersect(names, names(before))) {
+    b <- before[[n]]
+    if (b$active || !is.environment(b$value) || is_shared_env(b$value)) next
+    print <- env_fingerprint(b$value, budget)
+    if (is.null(print)) next
+    out[[n]] <- list(env = b$value, print = print)
+  }
+  out
+}
+
+#' An environment the notebook doesn't own: a namespace, a package's
+#' attached environment, the global, base or empty environment.
+is_shared_env <- function(e) {
+  isNamespace(e) || identical(e, globalenv()) || identical(e, baseenv()) ||
+    identical(e, emptyenv()) || nzchar(environmentName(e))
+}
+
+#' One environment's bindings: each value as it is (holding it costs no
+#' copy, and `identical()` on the same object is a pointer check), an
+#' active binding by its function, and an environment-valued binding by
+#' its own fingerprint, `depth` levels down. An R6 object's private fields
+#' are two levels down (`.__enclos_env__`, then `private`). Each
+#' environment is read once (`seen`), so `self` doesn't loop.
+#'
+#' A binding is read with `substitute()`, which never forces a promise: a
+#' `delayedAssign()` binding is kept as its expression, so taking the
+#' fingerprint runs no user code. `NULL` when the environment has more
+#' bindings than `ENV_FINGERPRINT_ONE_MAX` or than `budget$left` (counted
+#' with `length()`, before anything is listed), or if reading it fails. An
+#' inner environment that is skipped is kept by identity only.
+env_fingerprint <- function(e, budget, depth = 3L, seen = new.env()) {
+  tryCatch(env_fingerprint_(e, budget, depth, seen), error = function(err) NULL)
+}
+
+env_fingerprint_ <- function(e, budget, depth, seen) {
+  # `identical()` on environments compares the objects, not their contents.
+  for (s in seen$envs) if (identical(s, e)) return("seen")
+  seen$envs <- c(seen$envs, list(e))
+  # A reference class object is an S4 object holding its environment;
+  # `length()` and `substitute()` need the environment itself.
+  if (isS4(e)) e <- as.environment(e)
+  size <- length(e)
+  if (size > ENV_FINGERPRINT_ONE_MAX || size > budget$left) return(NULL)
+  budget$left <- budget$left - size
+  nms <- ls(e, all.names = TRUE, sorted = TRUE)
+  out <- vector("list", length(nms))
+  names(out) <- nms
+  for (n in nms) {
+    if (bindingIsActive(n, e)) {
+      out[[n]] <- list(active = activeBindingFunction(n, e))
+      next
+    }
+    v <- eval(call("substitute", as.name(n), e))
+    # A reference class object copies a method into itself the first time
+    # it's called (`a$get()`), which is no change to the object.
+    if (inherits(v, "refMethodDef")) {
+      out[[n]] <- NULL
+      next
+    }
+    if (is.environment(v) && depth > 1L && !is_shared_env(v)) {
+      inner <- env_fingerprint_(v, budget, depth - 1L, seen)
+      out[[n]] <- if (is.null(inner)) list(env = v) else list(env = v, print = inner)
+    } else {
+      out[[n]] <- list(value = v)
+    }
+  }
+  out
+}
+
+#' Which of `env_before`'s globals the run changed in place: the name is
+#' still bound to the same environment, and its fingerprint differs. A
+#' name the run rebound (`changed`) or removed is reported as a change of
+#' the name, not of its contents.
+changed_in_place <- function(env_before, changed) {
+  out <- character()
+  for (n in setdiff(names(env_before), changed)) {
+    b <- env_before[[n]]
+    if (!exists(n, envir = globalenv(), inherits = FALSE) || bindingIsActive(n, globalenv())) next
+    now <- get(n, envir = globalenv(), inherits = FALSE)
+    if (!identical(now, b$env)) next
+    print <- env_fingerprint(now, list2env(list(left = ENV_FINGERPRINT_MAX)))
+    if (!identical(print, b$print)) out <- c(out, n)
+  }
+  out
+}
+
 #' At most 80 characters, cut with "\u2026" (the whole string, ellipsis
 #' included, never exceeds 80).
 truncate80 <- function(text) {
@@ -939,6 +1090,18 @@ search_non_package <- function() {
 #' Package names currently on the search path, in `search()` order.
 packages_on_search <- function(s = search()) {
   sub("^package:", "", grep("^package:", s, value = TRUE))
+}
+
+#' `pkgs` in the order they were attached, as the search path shows it:
+#' the lowest first. A package's own library() calls finish in a
+#' different order: one that attaches others in its .onAttach
+#' (tidymodels) is attached before them but its call returns after, and
+#' Depends are attached before the package. Attaching again in call order
+#' would put the package above the ones it attached, which plain R
+#' doesn't. Packages not on the path keep their order, at the end.
+in_attach_order <- function(pkgs) {
+  pos <- match(pkgs, packages_on_search())
+  pkgs[order(-pos, na.last = TRUE)]
 }
 
 #' The locale categories snapshotted and restored individually. Not every
@@ -1073,18 +1236,26 @@ revert_search <- function(target) {
 
 #' Changes made by the cell's own code: settings changes not explained by
 #' package loads. Returns list(settings = list(kind, name, before, after),
-#' load_notes = character()).
+#' load_notes = list(list(package, kind, name))).
+#'
+#' A load note is a package load that changed a setting the notebook had
+#' already set (a settings cell, applied before this run): the notebook
+#' keeps the settings cell's value for the cells after this one, but under
+#' `Rscript` the settings cells come first in the file, so the load
+#' overwrites it there (#61). The search path is left out: attaching is
+#' tracked on its own, and a package that `attach()`es something while
+#' loading isn't overwriting a value the user set.
 settings_by_code <- function(settings0, after, load_log) {
   baseline <- settings0
-  notes <- character()
+  notes <- list()
   for (entry in load_log) {
     for (chg in entry$changes) {
       baseline_val <- get_setting(baseline, chg$kind, chg$name)
       start_val <- get_setting(settings_base, chg$kind, chg$name)
       notebook_set <- !identical(baseline_val, start_val)
-      if (notebook_set && !identical(baseline_val, chg$after)) {
-        notes <- c(notes, sprintf("package %s changed %s %s, which the notebook set",
-                                   entry$package, chg$kind, chg$name))
+      if (!identical(chg$kind, "search") && notebook_set && !identical(baseline_val, chg$after)) {
+        note <- list(package = entry$package, kind = chg$kind, name = chg$name)
+        if (!any(vapply(notes, identical, logical(1), y = note))) notes[[length(notes) + 1]] <- note
       }
       baseline <- set_setting(baseline, chg$kind, chg$name, chg$after)
       # A package's own change is part of the starting values from now on.
@@ -1092,6 +1263,22 @@ settings_by_code <- function(settings0, after, load_log) {
     }
   }
   list(settings = diff_settings(baseline, after), load_notes = notes)
+}
+
+#' Which of a cell's setting changes are a package caching its own option
+#' on first use (#164): an option that didn't exist before the run, that no
+#' `options()` call from the notebook's own code set (`notebook_set`, from
+#' `protect_options()`). readr sets `readr.num_threads` on its first read
+#' or write and `readr.default_locale` on its first `read_csv2()`. What
+#' decides is who called `options()`, not the option's name: a notebook
+#' helper `quiet <- function() options(readr.show_col_types = FALSE)` makes
+#' the cell that calls it a settings cell, as any setting in a helper does.
+#' Returns a logical vector over `diffs`.
+package_cached_options <- function(diffs, notebook_set) {
+  vapply(diffs, function(d) {
+    identical(d$kind, "option") && is.null(d$before) && !is.null(d$after) &&
+      !(d$name %in% notebook_set)
+  }, logical(1))
 }
 
 #' Before a cell runs (settings-cells.md, What the worker does before each
@@ -1136,10 +1323,14 @@ ember_load_enter <- function(pkg) {
 #' snapshot `ember_load_enter()` pushed, records the change in `load_log`,
 #' and forward-propagates it onto any still-open outer frame (a nested
 #' load, from a Depends/Imports chain) so the outer frame's own diff
-#' doesn't report the same change again.
-ember_load_exit <- function() {
+#' doesn't report the same change again. `pkg`, when known, is the name
+#' the call actually loaded or attached, which replaces the one read off
+#' the call text: a nested `loadNamespace(package)` or an Imports load's
+#' `loadNamespace(i[[1L]])` has a variable there, not the name.
+ember_load_exit <- function(pkg = NA_character_) {
   if (!length(load_stack)) return(invisible())
   frame <- load_stack[[length(load_stack)]]
+  if (length(pkg) == 1 && !is.na(pkg)) frame$package <- pkg
   stack <- load_stack[-length(load_stack)]
   after <- snapshot_settings()
   diffs <- diff_settings(frame$before, after)
@@ -1245,11 +1436,31 @@ install_traces <- function() {
         }, error = function(e) NA_character_)
       } else NA_character_
       ember_load_enter(pkg)
-      on.exit(ember_load_exit(), add = TRUE)
+      # Evaluated when this wrapper returns, so it sees the name set below.
+      loaded_name <- NA_character_
+      on.exit(ember_load_exit(loaded_name), add = TRUE)
       # Called as the notebook wrote it (`library(x)`, not `original(...)`),
       # so the error call and the function's own sys.call() are the user's.
       real_call <- mc
       real_call[[1]] <- as.name(name)
+      # An argument the caller passes on from its own missing formal
+      # (`exclude = exclude` in conflicted's library() wrapper) is left out,
+      # so it stays missing: evaluated in this child environment, R's
+      # missing() would no longer see through it to the caller's frame.
+      # Only a formal with no default: `missing()` is TRUE for an unsupplied
+      # `quietly = q` with a default too, and that default must be passed.
+      caller_formals <- if (sys.parent() > 0) {
+        tryCatch(formals(sys.function(sys.parent())), error = function(e) NULL)
+      }
+      for (arg in rev(which(nzchar(names(real_call) %||% character(length(real_call)))))) {
+        val <- real_call[[arg]]
+        if (is.symbol(val) && nzchar(as.character(val)) &&
+            as.character(val) %in% names(caller_formals) &&
+            identical(caller_formals[[as.character(val)]], quote(expr = )) &&
+            isTRUE(tryCatch(eval(call("missing", val), call_env), error = function(e) FALSE))) {
+          real_call[[arg]] <- NULL
+        }
+      }
       result <- withVisible(eval(real_call, list2env(stats::setNames(list(original), name),
                                                      parent = call_env)))
       # library()/require(): record that this cell named a package for
@@ -1257,12 +1468,21 @@ install_traces <- function() {
       # already on the path (a plain search() diff would miss that case,
       # and so would wrongly drop the package from the desired path on
       # the next rebuild -- see the note at attach_requests's use).
-      if (attachable && !is.null(running) && !is.null(pe)) {
+      # Also outside a cell run, for the load's name: resolve_attach_name()
+      # evaluates `pe` only for `character.only = TRUE`, where the caller
+      # declared it a value, and reads no more than the call already did.
+      if (attachable && !is.null(pe)) {
         after_search <- packages_on_search(search())
         resolved <- resolve_attach_name(pe, char_only, call_env, before_search, after_search)
         if (!is.na(resolved)) {
-          attach_requests[[running$cell]] <<- union(attach_requests[[running$cell]], resolved)
+          loaded_name <- resolved
+          if (!is.null(running)) {
+            attach_requests[[running$cell]] <<- union(attach_requests[[running$cell]], resolved)
+          }
         }
+      } else if (identical(name, "loadNamespace")) {
+        # The namespace it returns names itself; no argument is evaluated again.
+        loaded_name <- tryCatch(unname(getNamespaceName(result$value)), error = function(e) NA_character_)
       }
       if (result$visible) result$value else invisible(result$value)
     }
@@ -1286,6 +1506,42 @@ install_traces <- function() {
           tracer = bquote((.(ember_trace_s4_method))()))
   }
   protect_closeall(base_env)
+  protect_options(base_env)
+  invisible()
+}
+
+#' Replace options() with a version that records, during a run, which
+#' options the notebook's own code set: a call whose caller's top-level
+#' environment is the global one (a cell's code, or a function a cell
+#' defined), not a package namespace (#164). `package_cached_options()`
+#' tells a package caching its own option apart from a setting by this.
+#' A call that sets options returns the old values, named by the options
+#' it set, so nothing else is read. Same binding-replacement approach as
+#' `protect_closeall()`.
+#'
+#' The body ends with base's own `.Internal(options(...))` and records in
+#' `on.exit()`, so an error from a bad value (`options(digits = 0)`) keeps
+#' the caller's call and frames, and a query keeps its visibility. A query
+#' (`options("digits")`) has no names and no list argument and is skipped.
+protect_options <- function(base_env) {
+  wrapped <- function(...) {
+    # `returnValue()` is NULL after an error, before the arguments are
+    # read again here: a failed one would only fail again.
+    on.exit(if (!is.null(running) && !is.null(returnValue(NULL)) &&
+                ...length() > 0 && (!is.null(...names()) || is.list(..1))) {
+      set <- names(returnValue(NULL))
+      if (length(set) && identical(topenv(parent.frame()), globalenv())) {
+        # Not union(): it costs about 20 us a call, and a cell may set an
+        # option in a loop.
+        set <- set[!(set %in% notebook_options)]
+        if (length(set)) notebook_options <<- c(notebook_options, set)
+      }
+    })
+    .Internal(options(...))
+  }
+  unlockBinding("options", base_env)
+  assign("options", wrapped, envir = base_env)
+  lockBinding("options", base_env)
   invisible()
 }
 
@@ -1329,10 +1585,17 @@ ember_trace_source <- function() {
 #' already exempt from cell-code rules the same way a setting change
 #' inside a package load is (a deviation from the sketch, which checked
 #' only `running`).
+#'
+#' A file under the worker's own `tempdir()` isn't reported either: the
+#' session wrote it (Rcpp's `cppFunction()` sources the R wrapper it
+#' generates there), it isn't the user's helper, and it is gone when the
+#' session ends, so learning it would put a new path in the file every
+#' session (#165).
 trace_source <- function(file) {
   if (is.null(running) || length(load_stack) > 0 || inherits(file, "connection")) return(invisible())
   trace_line("source", file)
   path <- tryCatch(normalizePath(file, mustWork = FALSE), error = function(e) as.character(file))
+  if (in_session_tempdir(path)) return(invisible())
   text <- tryCatch(paste(readLines(path, warn = FALSE), collapse = "\n"), error = function(e) NA_character_)
   send(list(type = "source", cell = running$cell, token = running$token, path = path, text = text))
   reply <- NULL
@@ -1347,6 +1610,14 @@ trace_source <- function(file) {
     stop(msg, call. = FALSE)
   }
   invisible()
+}
+
+#' Whether `path` is inside this process's `tempdir()`.
+in_session_tempdir <- function(path) {
+  slash <- function(p) tryCatch(normalizePath(p, winslash = "/", mustWork = FALSE), error = function(e) NA_character_)
+  if (length(path) != 1 || is.na(path)) return(FALSE)
+  tmp <- slash(tempdir())
+  !is.na(tmp) && startsWith(slash(path), paste0(sub("/+$", "", tmp), "/"))
 }
 
 # ---- Attached packages ---------------------------------------------------------
@@ -1370,8 +1641,14 @@ rebuild_search_path <- function() {
     tryCatch(detach(paste0("package:", p), character.only = TRUE, unload = FALSE, force = TRUE),
              error = function(e) NULL)
   }
+  # library() as the notebook's own code finds it, on the search path: a
+  # package can wrap it to keep an environment of its own in step.
+  # conflicted's `.conflicts` holds a library() that detaches it, attaches,
+  # and puts it back at position 2. Base library() with `.conflicts` still
+  # attached fails on its unresolved names, and the package is lost (#180).
+  attach_one <- get("library", envir = parent.env(globalenv()), mode = "function")
   for (p in desired) {
-    tryCatch(library(p, character.only = TRUE), error = function(e) NULL)
+    tryCatch(attach_one(p, character.only = TRUE), error = function(e) NULL)
   }
   invisible()
 }
@@ -1575,7 +1852,7 @@ console_collector <- function(cell, token) {
   }
   self$print <- function(v) {
     flush_stdout()
-    txt <- paste(utils::capture.output(eval_in_notebook(quote(print(v)), v)), collapse = "\n")
+    txt <- paste(capture_lines(eval_in_notebook(quote(print(v)), v)), collapse = "\n")
     add_item("stdout", txt)
   }
   self$finish <- function() {
@@ -1688,12 +1965,46 @@ eval_in_notebook <- function(expr, v, extra = list()) {
   eval(expr, c(list(v = v), extra), globalenv())
 }
 
+#' What `expr` prints, as lines, like `utils::capture.output(expr)` but
+#' through a temp file: a textConnection grows quadratically with the lines
+#' written, so a value that prints 20,000 lines took 16.5 s to capture, and
+#' a 50,000-row table minutes (#160); a file takes milliseconds. `n` keeps
+#' only the first lines. As with capture.output(), a visible value is
+#' printed too.
+capture_lines <- function(expr, n = -1L) {
+  path <- tempfile("ember_capture_")
+  on.exit(unlink(path))
+  out <- file(path, open = "wt")
+  sink(out, type = "output")
+  sunk <- TRUE
+  on.exit(if (sunk) { sink(type = "output"); close(out) }, add = TRUE, after = FALSE)
+  shown <- withVisible(expr)
+  if (shown$visible) print(shown$value)
+  sink(type = "output")
+  close(out)
+  sunk <- FALSE
+  readLines(path, n = n, warn = FALSE)
+}
+
+#' `expr` with its messages and warnings dropped. The display step shows a
+#' value by one call of its print method or of the renderer that makes its
+#' view, and that call's messages and warnings go to the console (#183).
+#' Its other calls (the text form beside a plot or HTML view, a table's
+#' cells, a tree's leaves) run the same methods again, and would repeat
+#' them, so they run through this.
+quietly <- function(expr) {
+  withCallingHandlers(expr,
+    message = function(m) invokeRestart("muffleMessage"),
+    warning = function(w) invokeRestart("muffleWarning"))
+}
+
 #' The value's print() text, truncated (first 50 lines, 4000 chars). Colour
 #' is on throughout the worker (boot sets `cli.num_colors`); when truncation
 #' lands inside an escape sequence, the partial sequence is dropped and a
 #' reset code appended so the cut text never leaves the terminal mid-colour.
 text_form <- function(value) {
-  txt <- tryCatch(utils::capture.output(eval_in_notebook(quote(print(v)), value)),
+  # 51 lines are enough to know it is cut.
+  txt <- tryCatch(capture_lines(eval_in_notebook(quote(print(v)), value), n = 51L),
                    error = function(e) "<unprintable>")
   truncated <- length(txt) > 50
   if (truncated) txt <- txt[1:50]
@@ -1707,6 +2018,70 @@ text_form <- function(value) {
     txt <- paste0(txt, "\033[0m")
   }
   list(text = txt, truncated = truncated)
+}
+
+#' The text form of an HTML output (design.md, How values display): the
+#' value's print() text, unless that is empty (an htmlwidget's) or is the
+#' HTML source itself (gt's, an HTML kable's). Then it is the HTML's own
+#' text, with style and script blocks dropped, a table row per line and its
+#' cells split by tabs; and for an HTML output with no text at all (a
+#' plotly or leaflet widget, whose data is in a script), what it is.
+html_text_form <- function(value, html) {
+  tf <- quietly(text_form(value))
+  if (nzchar(trimws(tf$text)) && !grepl("^\\s*<", tf$text)) return(tf)
+  # The text form must never cost the page its HTML view: a conversion that
+  # fails gives the line naming the output.
+  txt <- tryCatch(html_to_text(html), error = function(e) "")
+  if (!nzchar(txt)) {
+    kind <- if (inherits(value, "htmlwidget")) paste(class(value)[1], "htmlwidget") else "HTML output"
+    return(list(text = sprintf("<%s: no text form; it shows in the notebook's page>", kind), truncated = FALSE))
+  }
+  lines <- strsplit(txt, "\n", fixed = TRUE)[[1]]
+  truncated <- length(lines) > 50 || isTRUE(attr(txt, "cut"))
+  if (length(lines) > 50) lines <- lines[1:50]
+  txt <- paste(lines, collapse = "\n")
+  if (nchar(txt) > 4000) {
+    txt <- substr(txt, 1, 4000)
+    truncated <- TRUE
+  }
+  list(text = txt, truncated = truncated)
+}
+
+#' The text of an HTML fragment: no style, script or comments; a line per
+#' table row, block or <br>, table cells split by tabs; entities decoded.
+html_to_text <- function(html) {
+  h <- paste(html, collapse = "\n")
+  h <- gsub("(?is)<(style|script)\\b.*?</\\1\\s*>|<!--.*?-->", "", h, perl = TRUE)
+  # The text form keeps 50 lines, so only the start of a long table is read:
+  # up to its 60th row, and at most 200,000 characters.
+  # `cut` says so, for the text form's `truncated`.
+  rows <- gregexpr("(?i)</tr\\s*>", h, perl = TRUE)[[1]]
+  cut <- length(rows) > 60 || nchar(h) > 200000
+  if (length(rows) > 60) h <- substr(h, 1, rows[60] + attr(rows, "match.length")[60] - 1)
+  if (nchar(h) > 200000) h <- substr(h, 1, 200000)
+  # Line breaks in HTML source are spaces; the lines below come from the markup.
+  h <- gsub("[\r\n]+", " ", h, perl = TRUE)
+  h <- gsub("(?i)</t[dh]\\s*>", "\t", h, perl = TRUE)
+  h <- gsub("(?i)<br\\s*/?>|</(tr|p|div|li|caption|h[1-6]|thead|tbody|tfoot|table)\\s*>", "\n", h, perl = TRUE)
+  h <- gsub("(?s)<[^>]*>", "", h, perl = TRUE)
+  entities <- c("&nbsp;" = " ", "&lt;" = "<", "&gt;" = ">", "&quot;" = "\"", "&#39;" = "'", "&apos;" = "'", "&minus;" = "-")
+  for (e in names(entities)) h <- gsub(e, entities[[e]], h, fixed = TRUE)
+  num <- gregexpr("&#(x?)([0-9a-fA-F]+);", h, perl = TRUE)
+  regmatches(h, num) <- lapply(regmatches(h, num), function(m) {
+    hex <- grepl("^&#x", m)
+    code <- ifelse(hex, strtoi(sub("^&#x([0-9a-fA-F]+);$", "\\1", m), 16L), suppressWarnings(as.integer(sub("^&#([0-9]+);$", "\\1", m))))
+    # A code point UTF-8 can't hold (a lone surrogate, above U+10FFFF) is U+FFFD.
+    out <- vapply(code, function(cp) if (is.na(cp)) "" else { u <- intToUtf8(cp); if (is.na(u)) "\uFFFD" else u }, "")
+    ifelse(is.na(code), m, out)
+  })
+  h <- gsub("&amp;", "&", h, fixed = TRUE)
+  lines <- strsplit(h, "\n", fixed = TRUE)[[1]]
+  lines <- vapply(lines, function(l) {
+    cells <- trimws(gsub("[ \r\f\v]+", " ", strsplit(l, "\t", fixed = TRUE)[[1]]))
+    paste(cells, collapse = "\t")
+  }, "", USE.NAMES = FALSE)
+  lines <- sub("\t+$", "", lines)
+  structure(paste(lines[nzchar(trimws(lines))], collapse = "\n"), cut = cut)
 }
 
 #' print() text, with colour on so tibble/cli output keeps its colours.
@@ -1825,7 +2200,7 @@ display_table <- function(value, cell, token, limits = list(rows = 10L, cols = 8
   tf <- text_form(value)
   display[[cell]] <<- list(value = value, token = token, kind = "table",
                            limits = limits, text = tf$text, truncated = tf$truncated)
-  c(build_table(value, limits), list(text = tf$text, truncated = tf$truncated))
+  c(quietly(build_table(value, limits)), list(text = tf$text, truncated = tf$truncated))
 }
 
 #' One line of text for a tree leaf: format() for a length-1 value, else
@@ -1907,7 +2282,7 @@ display_tree <- function(value, cell, token, limits = list()) {
   display[[cell]] <<- list(value = value, token = token, kind = "tree",
                            limits = limits, text = tf$text, truncated = tf$truncated)
   list(kind = "tree", mime = "application/vnd.ember.tree",
-      tree = display_tree_node(value, "", 0, limits), text = tf$text, truncated = tf$truncated)
+      tree = quietly(display_tree_node(value, "", 0, limits)), text = tf$text, truncated = tf$truncated)
 }
 
 #' ggplot, trellis, recordedplot or grob: print to draw it, then PNG
@@ -1926,7 +2301,7 @@ display_plot_value <- function(value, cell, token, dev) {
   grDevices::dev.set(dev$dev)
   eval_in_notebook(quote(print(v)), value)
   rp <- tryCatch(grDevices::recordPlot(), error = function(e) NULL)
-  tf <- text_form(value)
+  tf <- quietly(text_form(value))
   grDevices::dev.off(dev$dev)
   png_bytes <- read_png(dev$path)
   display[[cell]] <<- list(value = rp, token = token, kind = "plot", fig = dev$fig)
@@ -1950,8 +2325,15 @@ display_plot <- function(cell, token, dev) {
       text = "<plot>", truncated = FALSE)
 }
 
+#' Whether `knit_print()` has a method for class `cl`, looked up from
+#' knitr's namespace. The worker's own functions live in an environment
+#' whose parent is `baseenv()` (line 8), which sees neither the generic nor
+#' the search path, so a lookup from here found nothing, even with knitr
+#' attached (#154). From knitr's namespace it sees knitr's S3 table, where
+#' packages such as gt register their methods, and `globalenv()`, where a
+#' notebook defines its own.
 knit_print_method_exists <- function(cl) {
-  length(utils::getS3method("knit_print", cl, optional = TRUE)) > 0
+  length(utils::getS3method("knit_print", cl, optional = TRUE, envir = asNamespace("knitr"))) > 0
 }
 
 #' `knit_print()`, tried only when knitr is in the notebook's library and
@@ -1960,10 +2342,39 @@ knit_print_method_exists <- function(cl) {
 try_knit_print <- function(value) {
   if (!requireNamespace("knitr", quietly = TRUE)) return(NULL)
   if (!any(vapply(class(value), knit_print_method_exists, logical(1)))) return(NULL)
-  out <- tryCatch(knitr::knit_print(value), error = function(e) NULL)
-  if (is.null(out)) return(NULL)
-  tf <- text_form(value)
-  list(kind = "html", mime = "text/html", html = paste(out, collapse = "\n"),
+  # knit_print() gives a kable in the kable's own format, which is markdown
+  # ("pipe") unless the cell asked for HTML. Only an HTML one is shown as
+  # HTML; the others keep their print() text, which is the same table.
+  if (inherits(value, "knitr_kable") && !identical(attr(value, "format"), "html")) return(NULL)
+  # Called from globalenv(), as in a report, so the dispatch sees a method
+  # the notebook defined; called from here it would see only knitr's table.
+  # The report is HTML for the call (rmarkdown.pandoc.to), so a method
+  # that picks its format from knitr::is_html_output(), as huxtable's
+  # does, gives HTML rather than screen text.
+  old_to <- knitr::opts_knit$get("rmarkdown.pandoc.to")
+  knitr::opts_knit$set(rmarkdown.pandoc.to = "html")
+  on.exit(knitr::opts_knit$set(rmarkdown.pandoc.to = old_to), add = TRUE)
+  out <- NULL
+  # Some methods have nothing for a value outside a report and print it
+  # instead (rmarkdown's for data frames and tibbles, data.table's): what
+  # they print is dropped, and only a knit_asis result is kept, so the
+  # value goes on to the next step, Ember's table (#154). Their messages
+  # and warnings are held until then: a value that goes on is shown, and
+  # warns, by the next step instead (#183).
+  held <- list()
+  capture_lines(
+    out <- withCallingHandlers(
+      tryCatch(do.call(knitr::knit_print, list(value), quote = TRUE, envir = globalenv()),
+               error = function(e) NULL),
+      message = function(m) { held[[length(held) + 1L]] <<- m; invokeRestart("muffleMessage") },
+      warning = function(w) { held[[length(held) + 1L]] <<- w; invokeRestart("muffleWarning") }))
+  if (!inherits(out, "knit_asis")) return(NULL)
+  for (cnd in held) if (inherits(cnd, "warning")) warning(cnd) else message(cnd)
+  # For pandoc, some methods (flextable's) wrap their HTML in a raw-HTML
+  # fence, ```{=html} ... ```; the page would show the fence lines as text.
+  html <- sub("(?s)^\\s*```\\{=html\\}[ \t]*\n(.*)\n```\\s*$", "\\1", paste(out, collapse = "\n"), perl = TRUE)
+  tf <- html_text_form(value, html)
+  list(kind = "html", mime = "text/html", html = html,
        text = tf$text, truncated = tf$truncated)
 }
 
@@ -1972,7 +2383,7 @@ try_repr <- function(value) {
   if (!requireNamespace("repr", quietly = TRUE)) return(NULL)
   html <- tryCatch(repr::repr_html(value), error = function(e) NULL)
   if (is.null(html)) return(NULL)
-  tf <- text_form(value)
+  tf <- html_text_form(value, html)
   list(kind = "html", mime = "text/html", html = html, text = tf$text, truncated = tf$truncated)
 }
 
@@ -2002,7 +2413,7 @@ display_html <- function(value) {
   if (!requireNamespace("htmltools", quietly = TRUE)) return(display_text(value))
   rendered <- tryCatch(htmltools::renderTags(value), error = function(e) NULL)
   if (is.null(rendered)) return(display_text(value))
-  tf <- text_form(value)
+  tf <- html_text_form(value, rendered$html)
   deps <- tryCatch({
     resolved <- htmltools::resolveDependencies(rendered$dependencies %||% list())
     lapply(resolved, dep_to_wire)
@@ -2355,7 +2766,11 @@ complete_line <- function(line, cursor) {
 #' Rd, `Rd2HTML()` renders it to a temp file (`dynamic = TRUE`, so
 #' cross-reference links are the short `../../pkg/help/topic` form the
 #' server's `rewrite_help_links()` expects), and only the `<body>` is
-#' returned -- the page already has its own `<html>`/`<head>`.
+#' returned -- the page already has its own `<html>`/`<head>`. An error
+#' anywhere in the lookup comes back as `error`, its message, so the page
+#' can say so instead of looking like no match (#121). `tried_all_packages`
+#' is `help()`'s own attribute of that name: whether it searched every
+#' installed package, so a "not found" says how far it looked (#121).
 help_lookup <- function(topic, package, all_packages = FALSE) {
   tryCatch({
     matches <- if (!is.null(package)) {
@@ -2367,8 +2782,10 @@ help_lookup <- function(topic, package, all_packages = FALSE) {
       }
       found
     }
+    tried <- isTRUE(attr(matches, "tried_all_packages"))
     if (length(matches) == 0) {
-      return(list(found = FALSE, topic = topic, package = package, html = NULL, matches = list()))
+      return(list(found = FALSE, topic = topic, package = package, html = NULL, matches = list(),
+                  tried_all_packages = tried))
     }
 
     # A help path is <libpath>/<package>/help/<topic> (index.search()'s
@@ -2379,7 +2796,7 @@ help_lookup <- function(topic, package, all_packages = FALSE) {
       matches_list <- Map(function(p, path) list(package = p, topic = basename(path)),
                           pkgs, as.character(matches))
       return(list(found = TRUE, topic = topic, package = package, html = NULL,
-                  matches = unname(matches_list)))
+                  matches = unname(matches_list), tried_all_packages = tried))
     }
 
     rd_path <- as.character(matches)[1]
@@ -2391,8 +2808,10 @@ help_lookup <- function(topic, package, all_packages = FALSE) {
     full <- paste(readLines(out, warn = FALSE), collapse = "\n")
     body <- sub("(?s).*<body>", "", full, perl = TRUE)
     body <- sub("(?s)</body>.*", "", body, perl = TRUE)
-    list(found = TRUE, topic = topic, package = pkg_name, html = body, matches = list())
-  }, error = function(e) list(found = FALSE, topic = topic, package = package, html = NULL, matches = list()))
+    list(found = TRUE, topic = topic, package = pkg_name, html = body, matches = list(),
+         tried_all_packages = tried)
+  }, error = function(e) list(found = FALSE, topic = topic, package = package, html = NULL, matches = list(),
+                              error = conditionMessage(e)))
 }
 
 #' `args(fn)` deparsed into `name(arg1, arg2 = default, ...)`, the trailing

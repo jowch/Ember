@@ -21,6 +21,16 @@ THUMBS_DOWN <- "\U0001F44E"
 WAVE <- "\U0001F44B"
 HOURGLASS <- "\u231B"
 
+#' How long a Help lookup may take in an idle worker before the reply says
+#' R didn't answer in time. Completions and signatures keep
+#' `worker_query()`'s 0.8 s: they answer as you type, and a late one is
+#' useless. A help page is asked for once and its answer is still wanted,
+#' and a search typed in the Help box reads every installed package's help
+#' index (`help_lookup()`, inst/worker.R), which can take seconds on a big
+#' library. With 0.8 s that lookup's reply was dropped, and each new ask
+#' queued in the worker behind it and was dropped too (#92 review).
+DOCS_QUERY_TIMEOUT <- 10
+
 # ---- Public API --------------------------------------------------------------
 
 #' Run the UI server in this process, blocking until it is stopped.
@@ -61,18 +71,24 @@ serve <- function(paths = character(), port = 0L, secret = random_secret(32),
     if (is.null(first_url)) first_url <- url
   }
 
+  # On the way out, however it comes: stop_server(), or an interrupt
+  # (Ctrl-C, SIGINT) or an error, which skip anything after the loop.
+  # Closing an owned notebook ends its installs and index fetches
+  # (`job_leave()`), so none outlives the server (#141).
+  on.exit({
+    for (hub in mget(ls(server$hubs), envir = server$hubs, ifnotfound = list(NULL))) {
+      if (is.null(hub)) next
+      if (!is.null(hub$unsubscribe)) hub$unsubscribe()
+      if (isTRUE(hub$owned)) close_notebook(hub$nb)
+    }
+    httpuv::stopServer(server$http)
+  }, add = TRUE)
+
   cat("ember: listening on ", server_url(server), "\n", sep = "")
   if (!is.null(on_ready)) on_ready(server)
   if (isTRUE(launch_browser)) utils::browseURL(first_url %||% server_url(server))
 
   while (!isTRUE(server$stopped)) later::run_now(timeout = 1)
-
-  for (hub in mget(ls(server$hubs), envir = server$hubs, ifnotfound = list(NULL))) {
-    if (is.null(hub)) next
-    if (!is.null(hub$unsubscribe)) hub$unsubscribe()
-    if (isTRUE(hub$owned)) close_notebook(hub$nb)
-  }
-  httpuv::stopServer(server$http)
   invisible(NULL)
 }
 
@@ -204,15 +220,18 @@ started_text <- function(link, path = NULL) {
 #' How many of the child's output lines an `ember_server_handle` keeps.
 CHILD_OUTPUT_KEEP <- 1000L
 
-#' Read the child's output every `interval` seconds while it runs, through
-#' later, so it happens whenever the console is idle: reprint the link
-#' when the child reports a request refused for its key (`KEY_HINT_LINE`,
-#' see `note_key_refused()`), and keep every other line in `handle$output`.
-#' Reading also keeps the pipe drained, so the child never blocks writing
-#' to a full one.
+#' Read the child's output as it arrives, through later, so it happens
+#' whenever the console is idle: reprint the link when the child reports a
+#' request refused for its key (`KEY_HINT_LINE`, see `note_key_refused()`),
+#' and keep every other line in `handle$output`. Reading also keeps the
+#' pipe drained, so the child never blocks writing to a full one.
+#'
+#' On macOS and Linux this waits on the pipe (`later::later_fd()`), so an
+#' idle server costs this session nothing. Windows pipes can't be waited on
+#' that way, so there it reads every `interval` seconds (#47). Returns
+#' `"pipe"` or `"poll"`, invisibly, for the tests.
 watch_child <- function(handle, interval = 0.5) {
-  poll <- function() {
-    if (isTRUE(handle$stopped) || !handle$process$is_alive()) return(invisible(NULL))
+  read <- function() {
     for (ln in handle$process$read_output_lines()) {
       if (startsWith(ln, KEY_HINT_LINE)) {
         message(KEY_HINT, handle$url)
@@ -220,9 +239,30 @@ watch_child <- function(handle, interval = 0.5) {
         handle$output <- utils::tail(c(handle$output, ln), CHILD_OUTPUT_KEEP)
       }
     }
-    later::later(poll, interval)
   }
-  later::later(poll, interval)
+  fd <- if (.Platform$OS.type != "windows") {
+    tryCatch(processx::conn_get_fileno(handle$process$get_output_connection()), error = function(e) NULL)
+  }
+  if (is.null(fd)) {
+    poll <- function() {
+      if (isTRUE(handle$stopped) || !handle$process$is_alive()) return(invisible(NULL))
+      read()
+      later::later(poll, interval)
+    }
+    later::later(poll, interval)
+    return(invisible("poll"))
+  }
+  # Called when the pipe has something to read, or is closed: the child
+  # exited, or stop() killed it. Once the pipe is at its end there is
+  # nothing more to wait for (a closed pipe is always readable, so waiting
+  # again would spin).
+  wait <- function(ready) {
+    if (isTRUE(handle$stopped)) return(invisible(NULL))
+    read()
+    if (handle$process$is_incomplete_output()) later::later_fd(wait, readfds = fd)
+  }
+  later::later_fd(wait, readfds = fd)
+  invisible("pipe")
 }
 
 #' @export
@@ -787,6 +827,30 @@ on_run <- function(server, cl, hub, req) {
   flush_clients(server, hub)
 }
 
+#' Run `cmd` (a `list(command, args, env)`) in a subprocess and call
+#' `answer()` once it exits: with `ok(<its JSON output>)`, or with
+#' `list(error = <stderr, else failure>)` when it fails or `ok()` returns
+#' NULL. Polled with `later`, so the server never blocks. Both pipes are
+#' drained while it runs, so a child that writes more than a pipe buffer
+#' can't block on a full stderr.
+answer_from_subprocess <- function(cmd, answer, ok, failure) {
+  proc <- tryCatch(job_process(cmd, stderr = "|"), error = function(e) e)
+  if (inherits(proc, "error")) return(answer(list(error = conditionMessage(proc))))
+  out <- ""; err <- ""
+  poll <- function() {
+    out <<- paste0(out, tryCatch(proc$read_output(), error = function(e) ""))
+    err <<- paste0(err, tryCatch(proc$read_error(), error = function(e) ""))
+    if (proc$is_alive()) return(later::later(poll, 0.1))
+    out <<- paste0(out, tryCatch(proc$read_all_output(), error = function(e) ""))
+    err <<- paste0(err, tryCatch(proc$read_all_error(), error = function(e) ""))
+    parsed <- tryCatch(jsonlite::fromJSON(out), error = function(e) NULL)
+    message <- if (identical(proc$get_exit_status(), 0L) && is.list(parsed)) ok(parsed)
+    answer(message %||% list(error = if (nzchar(err)) err else failure))
+  }
+  later::later(poll, 0.1)
+  invisible(NULL)
+}
+
 #' The request table. Every row the frontend sends (Editor.js, Cell.js,
 #' CellInput.js, PlutoConnection.js, LiveDocsTab.js, ...), what it does here:
 #'
@@ -806,11 +870,12 @@ on_run <- function(server, cl, hub, req) {
 #' | complete_symbols              | reply {latex = {}, emoji = {}} (Julia's symbol tables; none for R) |
 #' | docs                          | a notebook definition from state; else worker_query(help); else "needs R running" (ui-2.md, 4c) |
 #' | all_registered_package_names  | reply {results = []}                                            |
-#' | completepath                  | {query, ember_dirs_only?}: reply complete_path()'s {start, stop, results} |
+#' | completepath                  | {query, ember_dirs_only?}: reply complete_path()'s {start, stop, results, ember_truncated} |
 #' | get_all_notebooks             | reply "notebook_list" {notebooks = hosted notebooks}           |
 #' | reshow_cell                   | "more" paging (ui-2.md, 3b/3c): dispatch ev_show_more(cell, objectid, dim); flush. No reply (the frontend sends without awaiting one) |
 #' | ember_render_plot             | {cell_id, res}, res clamped: dispatch ev_render() at the cell's own figure size; flush |
 #' | ember_run_all                 | the "N cells not run" bar's button (ui-2.md, 5): run_cells() on not_run_ids(), the same set the bar counts; flush. No reply |
+#' | ember_retry_install           | the failure card's Try again (#106): run_cells() on retry_install_ids(), cells that stopped on a missing package plus not_run_ids(); asks even when empty, which retries a failed install (never in safe preview); flush. No reply |
 #' | ember_split_cell              | {cell_id, code}: split a mixed_text cell at each text/code change (split_mixed()); nothing if code is stale or the cell isn't mixed. Flush. No reply |
 #' | ember_signature                | worker_query(signature); else signature_fallback() (ui-2.md, 4d)   |
 #' | ember_update_packages          | dispatch ev_preview_date(today, apply = TRUE); flush. No reply       |
@@ -818,6 +883,8 @@ on_run <- function(server, cl, hub, req) {
 #' | ember_cancel_update            | dispatch ev_cancel_preview(); flush. No reply                        |
 #' | ember_set_package_source       | {name, source}: edit_notebook(set_package_source()); reply {ok} or {error}; flush |
 #' | ember_remove_package_source    | {name}: edit_notebook(remove_package_source()); reply {ok} or {error}; flush |
+#' | ember_disk_use                 | {}: measure disk use of the notebook's cache dir in a subprocess (disk_use()); reply {libraries, cache, indexes, exact} or {error} when it exits (#38) |
+#' | ember_clean_up                 | {dry_run, as_of}: clean_up() of the notebook's cache dir in a subprocess, keeping open notebooks' libraries; dry_run (default true) only counts; a deletion is judged at the preview's as_of. Reply {libraries, cache, bytes, dry_run, as_of} or {error} when it exits; refused when read-only (#128) |
 #' | ember_move_notebook            | {name, folder}: notebook_target_path() + move_notebook(); reply {path} or {error}; flush |
 #' | ember_start_page               | {}: reply start_page_reply() -- start_dir, new_name, open and recent notebooks. No hub |
 #' | ember_new_notebook             | {name, folder}: notebook_target_path() + new_notebook() + host_notebook(owned = TRUE); reply {url} or {error}. No hub |
@@ -955,13 +1022,17 @@ handlers <- list(
     was_idle <- worker_is_idle(hub$nb)
     help_msg <- list(type = "help", topic = parsed$name, package = parsed$package,
                      all_packages = isTRUE(req$body$all_packages))
-    worker_query(hub$nb, help_msg, function(reply) {
+    worker_query(hub$nb, help_msg, timeout = DOCS_QUERY_TIMEOUT, callback = function(reply) {
       if (!is.null(reply)) {
         doc <- help_reply_html(reply)
         # `package` NULL when ambiguous (reply$matches non-empty): the page
         # then shows the pkg::topic choices, not one page to attribute.
         pkg <- if (length(reply$matches %||% list()) > 0) NULL else reply$package
-        send(cl, reply_message(req, "docs", list(status = THUMBS_UP, doc = doc, package = pkg)))
+        # How far the lookup looked: the scope the page asked for, and
+        # whether help() searched every installed package (#121).
+        send(cl, reply_message(req, "docs", list(status = THUMBS_UP, doc = doc, package = pkg,
+                                                 all_packages = help_msg$all_packages,
+                                                 tried_all_packages = isTRUE(reply$tried_all_packages))))
       } else if (was_idle) {
         msg <- "<p>R didn't answer in time. Trying again\u2026</p>"
         send(cl, reply_message(req, "docs", list(status = HOURGLASS, doc = msg)))
@@ -1024,6 +1095,20 @@ handlers <- list(
     flush_clients(server, hub)
   },
 
+  #' The failure card's Try again (#106): `retry_install_ids()`, the
+  #' cells that stopped on a missing package and the ones not run yet.
+  #' Asks to run even when there are none: `reduce_run()` resets a failed
+  #' target library, so the install is retried all the same. Never in safe
+  #' preview, where nothing has run or installed yet and asking to run
+  #' would allow it.
+  ember_retry_install = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    st <- notebook_state(hub$nb)
+    if (!isTRUE(st$allowed)) return(invisible(NULL))
+    run_cells(hub$nb, retry_install_ids(st, view_context(st)))
+    flush_clients(server, hub)
+  },
+
   #' The "Split into n cells" button (ember$split, pluto-state.R): leaves
   #' the text in `cell_id` and puts each further piece in a new cell right
   #' after it, in order. A no-op when `cell_id` isn't a single string, the
@@ -1072,6 +1157,50 @@ handlers <- list(
       text <- if (!is.null(reply)) reply$text else signature_fallback(name, package)
       send(cl, reply_message(req, "ember_signature", list(text = text)))
     })
+  },
+
+  #' The Packages tab's disk use line (#38): `disk_use()` of the
+  #' notebook's cache dir, in a subprocess (`disk_use_command()`), since
+  #' walking a large cache can take seconds and the server never blocks.
+  #' The reply comes when it exits, to the caller only. Nothing is
+  #' deleted: this only reports.
+  ember_disk_use = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    answer_from_subprocess(disk_use_command(hub$nb$state$options$cache %||% cache_dir()),
+      function(message) send(cl, reply_message(req, "ember_disk_use", message)),
+      function(use) if (!is.null(use$cache))
+        list(libraries = use$libraries, cache = use$cache, indexes = use$indexes,
+             exact = isTRUE(use$exact)),
+      "could not measure disk use")
+  },
+
+  #' The Packages tab's clean-up button (#128): `clean_up()` of the
+  #' notebook's cache dir in a subprocess, keeping every library an open
+  #' notebook in this process holds. `dry_run` (the default) only counts:
+  #' the tab shows that and asks before it sends `dry_run = false`.
+  #' Refused for a read-only notebook, like every other edit from the tab.
+  ember_clean_up = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    answer <- function(message) send(cl, reply_message(req, "ember_clean_up", message))
+    if (isTRUE(notebook_snapshot(hub$nb)$read_only))
+      return(answer(list(error = "read-only notebook")))
+    sync_active_libraries()
+    dry_run <- !identical(req$body$dry_run, FALSE)
+    # The deletion is judged at the preview's time (`as_of`, which the
+    # preview's reply carries), never later, so it deletes nothing the
+    # preview didn't count for having aged since.
+    now <- as.numeric(Sys.time())
+    as_of <- req$body$as_of
+    if (!dry_run && is.numeric(as_of) && length(as_of) == 1L && is.finite(as_of))
+      now <- min(as_of, now)
+    answer_from_subprocess(
+      clean_up_command(hub$nb$state$options$cache %||% cache_dir(),
+                       keep = active_libraries$paths, dry_run = dry_run, now = now),
+      answer,
+      function(done) if (!is.null(done$cache))
+        list(libraries = done$libraries, cache = done$cache, bytes = done$bytes,
+             dry_run = dry_run, as_of = now),
+      "could not clean up")
   },
 
   get_all_notebooks = function(server, cl, hub, req) {

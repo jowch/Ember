@@ -1,12 +1,19 @@
-// Corpus test: parses every R file in spikes/corpus/files with the Lezer
-// grammar, and compares its top-level statement boundaries against R's
-// own parser (via test/r_boundaries.R, run as a prerequisite step here).
+// Corpus test: parses every R file in the corpus with the Lezer grammar,
+// and compares its top-level statement boundaries against R's own parser
+// (via test/r_boundaries.R, run as a prerequisite step here).
 //
-// Usage: node test/corpus.mjs
+// The corpus is every .R file the installed R packages ship in doc/,
+// demo/ and tests/ (r_boundaries.R finds them), so this runs on any
+// machine with R and jsonlite. EMBER_CORPUS=<dir> uses a folder with a
+// manifest.csv and files/ instead, such as the gitignored spikes/corpus
+// of a few hundred scripts this test was first written against (#58).
 //
-// Writes test/corpus-failures.txt with per-file detail and prints a
-// summary (error-node count, boundary match rate, R parse failures,
-// total parse time).
+// Usage: npm run corpus   (or node test/corpus.mjs)
+//
+// Fails (exit 1) if Lezer finds an error node, or a different top-level
+// boundary, in any file R parses. Writes test/corpus-failures.txt with
+// per-file detail and prints a summary (error-node count, boundary match
+// rate, R parse failures, total parse time).
 import { execFileSync } from "node:child_process"
 import { readFileSync, writeFileSync, existsSync } from "node:fs"
 import { fileURLToPath } from "node:url"
@@ -14,41 +21,8 @@ import { dirname, join } from "node:path"
 import { rParser } from "../dist/index.js"
 
 const here = dirname(fileURLToPath(import.meta.url))
-const repoRoot = join(here, "..", "..")
-const corpusDir = join(repoRoot, "spikes", "corpus")
-const manifestPath = join(corpusDir, "manifest.csv")
-const filesDir = join(corpusDir, "files")
+const corpusDir = process.env.EMBER_CORPUS
 const boundariesJson = join(here, "r-boundaries.json")
-
-function parseCsv(text) {
-  // Minimal CSV parser sufficient for manifest.csv (quoted fields, no
-  // embedded commas-in-quotes edge cases beyond plain quoting).
-  const lines = text.split("\n").filter(l => l.length > 0)
-  const header = splitCsvLine(lines[0])
-  return lines.slice(1).map(line => {
-    const cells = splitCsvLine(line)
-    const row = {}
-    header.forEach((h, i) => { row[h] = cells[i] })
-    return row
-  })
-}
-function splitCsvLine(line) {
-  const out = []
-  let cur = "", inQ = false
-  for (let i = 0; i < line.length; i++) {
-    const c = line[i]
-    if (inQ) {
-      if (c == '"') { if (line[i + 1] == '"') { cur += '"'; i++ } else inQ = false }
-      else cur += c
-    } else {
-      if (c == '"') inQ = true
-      else if (c == ",") { out.push(cur); cur = "" }
-      else cur += c
-    }
-  }
-  out.push(cur)
-  return out
-}
 
 function findRscript() {
   const candidates = [
@@ -64,10 +38,10 @@ function findRscript() {
 
 console.log("Running R to get reference top-level boundaries...")
 const rscript = findRscript()
-execFileSync(rscript, ["--vanilla", join(here, "r_boundaries.R"), manifestPath, filesDir, boundariesJson], { stdio: "inherit" })
+const rArgs = [join(here, "r_boundaries.R"), boundariesJson]
+if (corpusDir) rArgs.push(join(corpusDir, "manifest.csv"), join(corpusDir, "files"))
+execFileSync(rscript, ["--vanilla", ...rArgs], { stdio: "inherit" })
 const rBoundaries = JSON.parse(readFileSync(boundariesJson, "utf8"))
-
-const manifest = parseCsv(readFileSync(manifestPath, "utf8"))
 
 let totalFiles = 0
 let rParseFailures = 0
@@ -78,10 +52,8 @@ let matchedBoundaries = 0
 let totalParseTimeMs = 0
 const failureLines = []
 
-for (const row of manifest) {
-  const id = row.id
-  const fileName = row.file.split("/").pop()
-  const filePath = join(filesDir, fileName)
+for (const [id, rInfo] of Object.entries(rBoundaries)) {
+  const filePath = rInfo.path
   if (!existsSync(filePath)) { failureLines.push(`${id}: file missing`); continue }
   totalFiles++
 
@@ -92,16 +64,17 @@ for (const row of manifest) {
 
   let errorNodes = 0
   tree.iterate({ enter: n => { if (n.type.isError) errorNodes++ } })
+
+  // A file R can't parse has no reference to compare against, and Lezer's
+  // error nodes in it are expected.
+  if (rInfo.error) {
+    rParseFailures++
+    continue
+  }
   if (errorNodes > 0) {
     filesWithErrorNodes++
     totalErrorNodes += errorNodes
     failureLines.push(`${id}: ${errorNodes} error node(s)`)
-  }
-
-  const rInfo = rBoundaries[id]
-  if (!rInfo || rInfo.error) {
-    rParseFailures++
-    continue
   }
 
   const lezerBoundaries = []
@@ -137,3 +110,15 @@ Corpus summary (${totalFiles} files)
   Total Lezer parse time: ${totalParseTimeMs.toFixed(1)} ms for ${totalFiles} files
   Per-file failure detail: test/corpus-failures.txt
 `)
+
+if (totalFiles === 0) {
+  console.error("No corpus files found")
+  process.exit(1)
+}
+if (failureLines.length > 0) {
+  // Print them too: CI keeps the log, not corpus-failures.txt.
+  const shown = failureLines.slice(0, 20)
+  console.error(`${failureLines.length} failure(s):\n  ` + shown.join("\n  ") +
+    (failureLines.length > shown.length ? `\n  ... and ${failureLines.length - shown.length} more` : ""))
+  process.exit(1)
+}

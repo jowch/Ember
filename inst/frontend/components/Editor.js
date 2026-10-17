@@ -141,7 +141,7 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  *  precedence_heuristic: number?,
  *  depends_on_disabled_cells: boolean,
  *  depends_on_skipped_cells: boolean,
- *  ember: { stale: boolean, code_changed: boolean, upstream_error?: {name: string, cell: string}[], disabled_by?: string, can_disable: boolean, settings?: {name: string, found: string}[], settings_found?: string[], split?: number },
+ *  ember: { stale: boolean, code_changed: boolean, upstream_error?: {name: string, cell: string}[], disabled_by?: string, can_disable: boolean, settings?: {name: string, found: string}[], settings_found?: string[], load_notes?: {package: string, setting: string}[], changed_in_place?: string[], split?: number },
  *  output: {
  *      body: string | Object,
  *      persist_js_state: boolean,
@@ -223,10 +223,13 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  */
 
 /**
- * `kind`: "missing_compiler", "missing_system", "system", "compile",
- * "configure", "no_binary", "dependency", "download", "unavailable" or
- * "other" (install_failures(), R/packages-core.R). `libraries`: the system
- * libraries not found, on rows from the installer's system-library check.
+ * `kind`: "missing_compiler", "missing_system", "library_version",
+ * "newer_system", "symbol_version", "system", "compile", "configure", "no_binary",
+ * "dependency", "download", "unavailable" or "other" (install_failures(),
+ * R/packages-core.R). `libraries`: the system libraries not found, on rows
+ * from the installer's system-library check (for "library_version" the
+ * versions wanted, for "newer_system" and "symbol_version" the ones
+ * lacking the symbol versions in `detail`).
  * `detail` of a "no_binary" row: the locked version that had no binary.
  *
  * @typedef EmberInstallFailure
@@ -311,6 +314,7 @@ export const url_logo_small = get_included_external_source("pluto-logo-small")?.
  * notebook: NotebookData,
  * cell_inputs_local: { [uuid: string]: { code: String } },
  * desired_doc_query: ?String,
+ * doc_query_explicit: boolean,
  * recently_deleted: ?Array<{ index: number, cell: CellInputData }>,
  * last_update_time: number,
  * disable_ui: boolean,
@@ -347,6 +351,7 @@ export class Editor extends Component {
             notebook: initial_notebook_state,
             cell_inputs_local: {},
             desired_doc_query: null,
+            doc_query_explicit: false,
             recently_deleted: [],
             last_update_time: 0,
 
@@ -389,7 +394,11 @@ export class Editor extends Component {
             get_published_object: (objectid) => this.state.notebook.published_objects[objectid],
             //@ts-ignore
             update_notebook: (...args) => this.update_notebook(...args),
-            set_doc_query: (query) => this.setState({ desired_doc_query: query }),
+            // `explicit`: typed in the Help box, Back/Forward or a link in a
+            // help page, not the cursor moving. It lives here with the query,
+            // not in the Help tab, so the tab keeps a typed query's scope
+            // when it is closed and opened again (#121).
+            set_doc_query: (query, explicit = false) => this.setState({ desired_doc_query: query, doc_query_explicit: explicit }),
             set_local_cell: (cell_id, new_val) => {
                 return this.setStatePromise(
                     immer((/** @type {EditorState} */ state) => {
@@ -672,6 +681,10 @@ export class Editor extends Component {
                 run_started()
                 return this.client.send("ember_run_all", {}, { notebook_id: this.state.notebook.notebook_id }, false)
             },
+            ember_retry_install: () => {
+                run_started()
+                return this.client.send("ember_retry_install", {}, { notebook_id: this.state.notebook.notebook_id }, false)
+            },
             ember_set_mode: (mode) =>
                 this.client.send("ember_set_mode", { mode }, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_update_packages: () =>
@@ -684,6 +697,8 @@ export class Editor extends Component {
                 this.client.send("ember_set_package_source", { name, source }, { notebook_id: this.state.notebook.notebook_id }),
             ember_remove_package_source: (name) =>
                 this.client.send("ember_remove_package_source", { name }, { notebook_id: this.state.notebook.notebook_id }),
+            ember_disk_use: () => this.client.send("ember_disk_use", {}, { notebook_id: this.state.notebook.notebook_id }),
+            ember_clean_up: (dry_run, as_of) => this.client.send("ember_clean_up", { dry_run, as_of }, { notebook_id: this.state.notebook.notebook_id }),
             ember_split_cell: (cell_id, code) =>
                 this.client.send("ember_split_cell", { cell_id, code }, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_move_notebook: (name, folder) =>
@@ -1540,6 +1555,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                     }
                     <${BottomRightPanel}
                         desired_doc_query=${this.state.desired_doc_query}
+                        doc_query_explicit=${this.state.doc_query_explicit}
                         on_update_doc_query=${this.actions.set_doc_query}
                         connected=${this.state.connected}
                         key_refused=${this.state.key_refused}

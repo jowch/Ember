@@ -697,10 +697,12 @@ test_that("every request type in the handler table is answered as documented (36
                "ember_open_notebook", "ember_forget_recent", "ember_set_package_source",
                "ember_remove_package_source")
   silent <- c("interrupt_all", "restart_process", "shutdown_notebook", "reshow_cell", "ember_render_plot",
-             "ember_run_all", "ember_split_cell", "ember_apply_update", "ember_cancel_update",
+             "ember_run_all", "ember_retry_install", "ember_split_cell", "ember_apply_update", "ember_cancel_update",
              "ember_set_mode", "request_js_link_response", "nbpkg_available_versions",
              "nbpkg_get_project_toml", "nbpkg_set_project_toml", "pkg_update")
-  expect_setequal(names(handlers), c(answered, silent))
+  # Answered once a subprocess exits, so not counted here: see its own test.
+  answered_later <- c("ember_disk_use", "ember_clean_up")
+  expect_setequal(names(handlers), c(answered, silent, answered_later))
 
   # A fresh notebook and server per type: some requests change engine state
   # (run_multiple_cells, ember_run_notebook), which would otherwise leak into
@@ -734,6 +736,134 @@ test_that("every request type in the handler table is answered as documented (36
 
   for (type in answered) expect_gt(one_request(type), 0, label = type)
   for (type in silent) expect_equal(one_request(type), 0, label = type)   # idempotent: nothing changed
+})
+
+test_that("ember_disk_use replies with the disk use of the notebook's cache dir and deletes nothing (#38)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  cache <- tempfile("ember-pkg-cache-")
+  dir.create(file.path(cache, "indexes"), recursive = TRUE)
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  index <- file.path(cache, "indexes", "cran-2026-09-01.rds")
+  writeBin(as.raw(rep(3L, 50000)), index)
+  nb <- open_notebook(path, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  baseline <- length(ws$messages)
+  handle_message(server, ws, wire("ember_disk_use", notebook_id = id))
+  expect_equal(length(ws$messages), baseline)  # the reply comes when the subprocess exits
+  # A guard against a hang, not a timing check.
+  deadline <- Sys.time() + 60
+  replies <- list()
+  while (length(replies) == 0 && Sys.time() < deadline) {
+    later::run_now(timeout = 0.5)
+    replies <- Filter(function(m) identical(m$type, "ember_disk_use"), ws$messages)
+  }
+  expect_length(replies, 1)
+  msg <- replies[[1]]$message
+  expect_null(msg$error)
+  expect_gte(msg$indexes, 50000)
+  expect_equal(msg$libraries, 0)
+  expect_equal(msg$cache, 0)
+  expect_true(file.exists(index))
+})
+
+# Wait for one reply of `type` to reach `ws`: the clean-up and disk use
+# replies come when their subprocess exits. A guard against a hang, not
+# a timing check.
+await_reply <- function(ws, type) {
+  deadline <- Sys.time() + 60
+  replies <- list()
+  while (length(replies) == 0 && Sys.time() < deadline) {
+    later::run_now(timeout = 0.5)
+    replies <- Filter(function(m) identical(m$type, type), ws$messages)
+  }
+  replies
+}
+
+test_that("ember_clean_up counts first, and deletes only when asked with dry_run = false (#128)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  cache <- tempfile("ember-pkg-cache-")
+  dir.create(cache)
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  entry <- file.path(cache, "renv-cache", "v5", "os", "R-4.6", "triplet", "pkgOld", "1.0", "hashOld")
+  dir.create(file.path(entry, "pkgOld"), recursive = TRUE)
+  writeBin(raw(80000), file.path(entry, "pkgOld", "R.rdb"))
+  Sys.setFileTime(entry, Sys.time() - 7 * 86400)
+  lib <- file.path(cache, "libraries", "R-4.6", "testplat", "oldkey")
+  dir.create(lib, recursive = TRUE)
+  saveRDS(list(cache_entries = entry), file.path(lib, "ember-library.rds"))
+  file.create(file.path(lib, "ember-last-used"))
+  Sys.setFileTime(file.path(lib, "ember-last-used"), Sys.time() - 40 * 86400)
+  nb <- open_notebook(path, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+
+  handle_message(server, ws, wire("ember_clean_up", notebook_id = id))
+  replies <- await_reply(ws, "ember_clean_up")
+  expect_length(replies, 1)
+  plan <- replies[[1]]$message
+  expect_null(plan$error)
+  expect_true(plan$dry_run)
+  expect_equal(c(plan$libraries, plan$cache), c(1, 1))
+  expect_gte(plan$bytes, 80000)
+  expect_true(dir.exists(lib))
+  expect_true(dir.exists(entry))
+  expect_true(is.numeric(plan$as_of))
+
+  # A deletion is judged at the preview's time: as of 15 days ago the
+  # library had been used 25 days before, so nothing goes.
+  ws$messages <- list()
+  handle_message(server, ws, wire("ember_clean_up", notebook_id = id, dry_run = FALSE,
+                                  as_of = as.numeric(Sys.time()) - 15 * 86400))
+  replies <- await_reply(ws, "ember_clean_up")
+  expect_equal(replies[[1]]$message$libraries, 0)
+  expect_true(dir.exists(lib))
+
+  ws$messages <- list()
+  handle_message(server, ws, wire("ember_clean_up", notebook_id = id, dry_run = FALSE,
+                                  as_of = plan$as_of))
+  replies <- await_reply(ws, "ember_clean_up")
+  expect_length(replies, 1)
+  done <- replies[[1]]$message
+  expect_null(done$error)
+  expect_false(done$dry_run)
+  expect_equal(c(done$libraries, done$cache), c(1, 1))
+  expect_false(dir.exists(lib))
+  expect_false(dir.exists(entry))
+})
+
+test_that("ember_clean_up on a read-only notebook replies with the refusal and starts nothing (#128)", {
+  ro_dir <- tempfile("ember-nb-ro-")
+  dir.create(ro_dir, recursive = TRUE)
+  on.exit(unlink(ro_dir, recursive = TRUE), add = TRUE)
+  header <- new_header(ember_version = "99.0.0", r_version = "4.5.1", snapshot = "2026-01-01")
+  cells <- list(a = list(code = "1", kind = "code", folded = FALSE))
+  file0 <- new_notebook_file(header = header, cells = cells, run_order = "a",
+                             learned = list(),
+                             sourced = data.frame(path = character(), hash = character(),
+                                                  stringsAsFactors = FALSE),
+                             lock = empty_lock(), extra_blocks = list(), format = ember_format)
+  ro_path <- file.path(ro_dir, "nb.R")
+  write_file_exact(ro_path, format_notebook(file0))
+  nb <- open_notebook(ro_path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("ember_clean_up", notebook_id = id, dry_run = FALSE))
+  replies <- Filter(function(m) identical(m$type, "ember_clean_up"), ws$messages)
+  expect_length(replies, 1)  # at once: no subprocess was started
+  expect_equal(replies[[1]]$message$error, "read-only notebook")
 })
 
 # ---- HTTP: secret, cookie, redirect, file download, websocket gate ----------
@@ -1815,7 +1945,7 @@ test_that("docs: an idle worker that doesn't answer in time says so, not 'needs 
   # The worker is idle (worker_is_idle(nb) is TRUE), but its connection is
   # broken right before asking, so worker_query()'s write fails and its
   # callback runs with NULL immediately -- the same shape a real answer
-  # timing out would have, without waiting out the real 0.8s. The reply
+  # timing out would have, without waiting out DOCS_QUERY_TIMEOUT. The reply
   # must name a timeout, not "Help pages need R running": R *is* running.
   close(nb$con)
   handle_message(server, ws, wire("docs", notebook_id = id, query = "mean"))
@@ -1823,6 +1953,107 @@ test_that("docs: an idle worker that doesn't answer in time says so, not 'needs 
   expect_identical(r$status, "\u231B")
   expect_match(r$doc, "answer in time")
   expect_no_match(r$doc, "Run a cell")
+})
+
+test_that("docs: a help lookup slower than a completion's timeout is waited for, not dropped (#92 review)", {
+  # Every help() lookup in this worker sleeps 1.5 s first: a cold
+  # `try.all.packages` search on a big library, as on the macOS runner.
+  # With the 0.8 s completion timeout the reply was dropped and the page
+  # asked again, queued behind the lookup still running, for ever.
+  slow <- 'trace("index.search", quote(Sys.sleep(1.5)), where = asNamespace("utils"), print = FALSE)'
+  path <- write_session_notebook(list(S = cell(""), A = cell(slow)))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  allow_execution(nb)
+  expect_true(run_cells(nb, wait = TRUE, timeout = 20)$accepted)
+
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  handle_message(server, ws, wire("docs", notebook_id = id, query = "mean", all_packages = TRUE))
+  deadline <- Sys.time() + 20
+  docs_msgs <- list()
+  while (length(docs_msgs) == 0 && Sys.time() < deadline) {
+    later::run_now(timeout = 1)
+    docs_msgs <- Filter(function(m) identical(m$type, "docs"), ws$messages)
+  }
+  expect_length(docs_msgs, 1)
+  r <- docs_msgs[[1]]$message
+  expect_identical(r$status, "\U0001F44D")
+  expect_match(r$doc, "Arithmetic Mean")
+})
+
+test_that("docs: a help lookup that fails says so, with R's message, instead of looking like no match (#121)", {
+  # Every help page this worker renders fails: the reply must carry the
+  # error, where it used to be the same empty page as "not found".
+  broken <- 'trace(".getHelpFile", quote(stop("the help database is broken")), where = asNamespace("utils"), print = FALSE)'
+  path <- write_session_notebook(list(S = cell(""), A = cell(broken)))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  allow_execution(nb)
+  expect_true(run_cells(nb, wait = TRUE, timeout = 20)$accepted)
+
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  handle_message(server, ws, wire("docs", notebook_id = id, query = "mean", all_packages = TRUE))
+  deadline <- Sys.time() + 20
+  docs_msgs <- list()
+  while (length(docs_msgs) == 0 && Sys.time() < deadline) {
+    later::run_now(timeout = 1)
+    docs_msgs <- Filter(function(m) identical(m$type, "docs"), ws$messages)
+  }
+  expect_length(docs_msgs, 1)
+  r <- docs_msgs[[1]]$message
+  expect_identical(r$status, "\U0001F44D")
+  expect_match(r$doc, "R couldn't open this help page: .*the help database is broken")
+})
+
+test_that("docs: a reply says whether the lookup was asked to, and did, search every installed package (#121)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  allow_execution(nb)
+  expect_true(run_cells(nb, wait = TRUE, timeout = 20)$accepted)
+
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  docs_reply <- function(...) {
+    ws$messages <- list()
+    handle_message(server, ws, wire("docs", notebook_id = id, query = "zzznotatopic", ...))
+    deadline <- Sys.time() + 20
+    docs_msgs <- list()
+    while (length(docs_msgs) == 0 && Sys.time() < deadline) {
+      later::run_now(timeout = 1)
+      docs_msgs <- Filter(function(m) identical(m$type, "docs"), ws$messages)
+    }
+    expect_length(docs_msgs, 1)
+    docs_msgs[[1]]$message
+  }
+  # Both find nothing; only the reply says how far each looked.
+  typed <- docs_reply(all_packages = TRUE)
+  expect_identical(typed$status, "\U0001F44D")
+  expect_identical(typed$doc, "")
+  expect_true(typed$all_packages)
+  expect_true(typed$tried_all_packages)
+
+  cursor <- docs_reply(all_packages = FALSE)
+  expect_identical(cursor$doc, "")
+  expect_false(cursor$all_packages)
+  expect_false(cursor$tried_all_packages)
 })
 
 test_that("docs: a busy worker answers with an hourglass, so the help panel asks again (61)", {
@@ -1947,6 +2178,36 @@ test_that("start_server() prints its link, and prints it again when a browser as
     })
   }
   expect_equal(seen, paste0("A browser asked for Ember without its key. Open: ", handle$url, "\n"))
+})
+
+test_that("start_server()'s watcher waits on the child's pipe instead of reading it on a timer (#47)", {
+  skip_on_os("windows")  # Windows pipes can't be waited on: it reads every 0.5 s there
+  proc <- processx::process$new(
+    file.path(R.home("bin"), "Rscript"),
+    c("--vanilla", "-e", "cat('one\\n'); Sys.sleep(2); cat('two\\n'); Sys.sleep(2)"),
+    stdout = "|", stderr = "2>&1", cleanup = TRUE)
+  on.exit(proc$kill(), add = TRUE)
+  reads <- 0L
+  handle <- new.env(parent = emptyenv())
+  handle$url <- "http://127.0.0.1:1/?secret=s"
+  handle$output <- character()
+  handle$stopped <- FALSE
+  handle$process <- list(
+    read_output_lines = function() { reads <<- reads + 1L; proc$read_output_lines() },
+    get_output_connection = function() proc$get_output_connection(),
+    is_incomplete_output = function() proc$is_incomplete_output(),
+    is_alive = function() proc$is_alive())
+
+  expect_equal(watch_child(handle), "pipe")
+  # Until the watcher has read the pipe to its end. The deadline only keeps
+  # a broken watcher from hanging the suite.
+  deadline <- Sys.time() + 60
+  while (proc$is_incomplete_output() && Sys.time() < deadline) later::run_now(0.1)
+  expect_false(proc$is_incomplete_output())
+  expect_equal(handle$output, c("one", "two"))
+  # A read per line and one at the end, not one every 0.5 s through the
+  # child's 4 s of silence.
+  expect_lte(reads, 5L)
 })
 
 # ---- Cache headers: immutable for hashed vendor files, no-cache for the ----

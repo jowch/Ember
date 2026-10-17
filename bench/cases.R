@@ -23,7 +23,8 @@ env <- new.env(parent = ns)
 for (f in c("helper-core.R", "helper-perf.R")) sys.source(helper(f), envir = env)
 
 # Each case: `setup()` builds the input once, untimed; `run(x)` is timed,
-# `inner` calls to a sample, as its median over `samples` samples.
+# `inner` calls to a sample at least (more if a sample would last under
+# MIN_SAMPLE_SECS), and the case's time is its fastest of SAMPLES samples.
 cases <- local(envir = env, list(
   pluto_state_one_change_2000 = list(
     setup = function() perf_projection(2000),
@@ -40,16 +41,48 @@ cases <- local(envir = env, list(
   packages_view_150 = list(
     setup = function() perf_packages(150),
     run = function(st) packages_view(st), inner = 10L),
+  graph_edit_2000 = list(
+    setup = function() perf_graph_edit(2000),
+    run = function(x) notebook_graph(x$code, previous = x$previous), inner = 1L),
   run_all_chain_2000 = list(
     setup = function() fake_state(make_chain_cells(2000)),
-    run = function(s) step(s, ev_run(NULL, at(1))), inner = 1L)
+    run = function(s) step(s, ev_run(NULL, at(1))), inner = 1L),
+  # One worker message during Run all: the step, then what the shell
+  # derives from it (#44).
+  worker_message_2000 = list(
+    setup = function() {
+      st <- perf_running(2000)
+      list(st = st, done = wk_done(1, st$worker$running$token, report(), at(10)))
+    },
+    run = function(x) { r <- step(x$st, x$done); notifications(x$st, r$state) }, inner = 1L)
 ))
+
+# The fastest sample, not the median: noise on a shared runner (another
+# job, a GC, the first calls before R has compiled the code) only ever
+# adds time, so the minimum moves least between two runs of the same code,
+# while a change that makes every call slower still moves it (#163). A
+# sample lasts at least MIN_SAMPLE_SECS so the clock's 1 ms ticks stay a
+# small part of it.
+SAMPLES <- 15L
+MIN_SAMPLE_SECS <- 0.05
+
+time_calls <- function(f, inner) {
+  t0 <- proc.time()[["elapsed"]]
+  for (i in seq_len(inner)) f()
+  proc.time()[["elapsed"]] - t0
+}
+
+time_min <- function(f, inner) {
+  f()
+  while (inner < 1e6 && time_calls(f, inner) < MIN_SAMPLE_SECS) inner <- inner * 2L
+  min(vapply(seq_len(SAMPLES), function(i) time_calls(f, inner), numeric(1))) / inner
+}
 
 rows <- lapply(names(cases), function(name) {
   case <- cases[[name]]
   secs <- tryCatch({
     x <- case$setup()
-    env$time_median(function() case$run(x), samples = 7L, inner = case$inner)
+    time_min(function() case$run(x), case$inner)
   }, error = function(e) {
     message(name, ": ", conditionMessage(e))
     NA_real_

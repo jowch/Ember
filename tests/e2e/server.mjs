@@ -72,7 +72,21 @@ for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]]) {
   process.once(signal, () => process.exit(code));
 }
 
-async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port: fixedPort, secret = SECRET, repos }) {
+/** `R_LIBS` for a server child: the library run.mjs installed this
+ * checkout into, ahead of anything already on `R_LIBS`, so `ember::`
+ * loads the code under test and not whatever the default library has
+ * (#55). The worker finds ember through the server's own install
+ * (`system.file()`, R/shell.R), so it follows. */
+function emberLibs() {
+  const lib = process.env.EMBER_E2E_LIB;
+  if (!lib) {
+    throw new Error("EMBER_E2E_LIB is not set: run the browser tests with `npm test` (or `node run.mjs <files>`), " +
+      "which installs this checkout into a temp library, or set it to a library holding the ember to test");
+  }
+  return [path.resolve(lib), process.env.R_LIBS].filter(Boolean).join(path.delimiter);
+}
+
+async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port: fixedPort, secret = SECRET, repos, cacheDir }) {
   const rscript = process.env.EMBER_RSCRIPT ?? "Rscript";
   const quoted = notebookPaths.map((p) => JSON.stringify(p)).join(", ");
   const port = fixedPort ?? await freePort();
@@ -80,6 +94,9 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   // reads the option when `library.R` builds each install's command, so it
   // must already be set the first time a notebook tries to install.
   let prelude = installerScript ? `options(ember.installer_script = ${JSON.stringify(installerScript)}); ` : "";
+  // A test that seeds the cache itself (clean-up.test.mjs) names it; the
+  // folder is the test's, so it is not removed here.
+  if (cacheDir) prelude += `options(ember.cache_dir = ${JSON.stringify(cacheDir)}); `;
   let expr;
   let cache = null;
   if (repos) {
@@ -89,8 +106,10 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
     // before the server answers any request. Their indexes go to a cache
     // of their own, never the shared one: a fixture's index is saved under
     // the same key ("cran/2026-09-01") a real one would be.
-    cache = mkdtempSync(path.join(tmpdir(), "ember-e2e-cache-"));
-    prelude += `options(ember.cache_dir = ${JSON.stringify(cache)}); `;
+    if (!cacheDir) {
+      cache = mkdtempSync(path.join(tmpdir(), "ember-e2e-cache-"));
+      prelude += `options(ember.cache_dir = ${JSON.stringify(cache)}); `;
+    }
     const args = Object.entries(repos).map(([k, v]) => `${k} = ${v === null ? "NA" : JSON.stringify(v)}`).join(", ");
     const onReady = `function(server) for (p in c(${quoted})) ember::host_notebook(server, ember::open_notebook(p, repos = ember::ember_repos(${args})), owned = TRUE)`;
     expr = `${prelude}ember::serve(port = ${port}, secret = ${JSON.stringify(secret)}, on_ready = ${onReady})`;
@@ -105,7 +124,7 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   const dataDir = mkdtempSync(path.join(tmpdir(), "ember-e2e-data-"));
   const child = spawn(rscript, ["--vanilla", "-e", expr], {
     stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, R_USER_DATA_DIR: dataDir },
+    env: { ...process.env, R_USER_DATA_DIR: dataDir, R_LIBS: emberLibs() },
     // `new_server()`'s `start_dir` (the start page's default Folder for a
     // new notebook) is wherever this child's cwd is; default to the
     // parent's own, same as spawn()'s own default, so tests that care
@@ -114,8 +133,14 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   });
   liveChildren.add(child);
   child.on("exit", () => liveChildren.delete(child));
-  // The private index cache goes with the server that used it.
-  if (cache) child.on("exit", () => rmSync(cache, { recursive: true, force: true }));
+  // The private index cache goes with the server that used it. `stop()`
+  // interrupts the server, whose `serve()` then closes its notebooks and
+  // so ends their installs and index fetches before it exits (#141): a
+  // removal that still fails means something the server started outlived
+  // it, a leak, and its throw here fails the test file (#138).
+  // `maxRetries` covers only the moment between a killed job's last
+  // write and its exit.
+  if (cache) child.on("exit", () => rmSync(cache, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
   // Unreferenced so a test file whose test failed before `stop()` still
   // lets node exit, which kills the child through the "exit" handler.
   child.unref();
@@ -159,16 +184,20 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
     port,
     child,
     log: () => buffer,
-    /** SIGTERM, then SIGKILL if the child is still alive 2 s later.
-     * Resolves once it has exited. */
+    /** SIGINT, as Ctrl-C would, so `serve()` closes its notebooks and
+     * ends their jobs on the way out; SIGKILL if the child is still alive
+     * 2 s later. Resolves once it has exited. */
     stop() {
       if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+      // Referenced again, so node waits for the child's exit, and the
+      // cleanup above, even when the test doesn't await this.
+      child.ref();
       return new Promise((resolve) => {
         const timer = setTimeout(() => {
           try { child.kill("SIGKILL"); } catch { /* already gone */ }
         }, 2000);
         child.once("exit", () => { clearTimeout(timer); resolve(); });
-        try { child.kill("SIGTERM"); } catch { clearTimeout(timer); resolve(); }
+        try { child.kill("SIGINT"); } catch { clearTimeout(timer); resolve(); }
       });
     },
   };
@@ -185,13 +214,14 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
  * `port` and `secret` pin what the server uses, for a test that restarts
  * a server at the same address with a new secret. `repos` (an object of
  * `ember_repos()` arguments, `null` for `NA`) opens the notebooks against
- * those repositories instead of the real ones. */
+ * those repositories instead of the real ones. `cacheDir` points the
+ * server's cache (`options(ember.cache_dir)`) at a folder the test owns. */
 export async function startServer(notebookPaths, opts = {}) {
-  const { timeoutMs = 30000, logFile, retries = 3, installerScript, cwd, port, secret, repos } = opts;
+  const { timeoutMs = 30000, logFile, retries = 3, installerScript, cwd, port, secret, repos, cacheDir } = opts;
   let lastErr;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      return await startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port, secret, repos });
+      return await startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port, secret, repos, cacheDir });
     } catch (err) {
       if (!err.bindFailure || attempt === retries) throw err;
       lastErr = err;

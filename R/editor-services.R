@@ -371,11 +371,50 @@ strip_rd_header <- function(html) {
       "", html, perl = TRUE)
 }
 
+#' Two of Rd2HTML's sections as the Help tab's board (Panel3) draws them
+#' (#51). The "Description" heading goes: the description is the page's
+#' first paragraph, under its title. "See Also" becomes a row of its links,
+#' each in code type; the prose between them goes. A name R sets in code
+#' type without a link (`which.max` on `?max`) stays in the row as a plain
+#' code chip, so the row never loses a name the section had. A See Also
+#' with no links stays as R wrote it. Run after `rewrite_help_links()`, so
+#' a link left in the section is one the Help tab can follow. Pure.
+tidy_help_sections <- function(html) {
+  html <- sub("(?is)<h3>\\s*Description\\s*</h3>\\s*", "", html, perl = TRUE)
+  m <- regexpr("(?is)<h3>\\s*See Also\\s*</h3>.*?(?=<h3|<hr|</main|$)", html, perl = TRUE)
+  if (m < 0) return(html)
+  section <- regmatches(html, m)
+  # Links and code names in the order R wrote them, each kept whole: a
+  # <code> around one link (R's \\code{\\link{x}}, or \\code{\\link{f}(a)})
+  # becomes that link with all of the code as its text; a <code> with
+  # more than one link keeps its links inside it.
+  items <- regmatches(section, gregexpr("(?is)<code>.*?</code>|<a\\b[^>]*>.*?</a>", section, perl = TRUE))[[1]]
+  n_links <- lengths(regmatches(items, gregexpr("(?i)<a\\b", items, perl = TRUE)))
+  is_link <- n_links > 0
+  if (!any(is_link)) return(html)
+  text <- trimws(gsub("(?s)<[^>]*>", "", items, perl = TRUE))
+  open_tag <- regmatches(items, regexpr("(?i)<a\\b[^>]*>", items, perl = TRUE))
+  chips <- sprintf('<code class="ember-help-seealso-name">%s</code>', text)
+  one <- n_links == 1
+  chips[one] <- sprintf("%s<code>%s</code></a>", open_tag[one[is_link]], text[one])
+  many <- n_links > 1
+  chips[many] <- sub("(?is)^<code>", '<code class="ember-help-seealso-name">', items[many], perl = TRUE)
+  # One chip per name; a name both linked and plain keeps its link.
+  keep <- nzchar(text) & !duplicated(chips) & !(!is_link & (text %in% text[is_link] | duplicated(text)))
+  row <- sprintf('<h3>See Also</h3>\n<p class="ember-help-seealso">%s</p>\n', paste(chips[keep], collapse = " "))
+  regmatches(html, m) <- row
+  html
+}
+
 #' The `docs` reply body for a worker's `help_page` message: the sanitized,
-#' rewritten page without its header row, or, when the topic exists in
+#' rewritten page without its header row, its "Description" heading, and
+#' with See Also as a row of links (`tidy_help_sections()`), or, when the topic exists in
 #' more than one package, a list of `pkg::topic` links for the user to
-#' choose from.
+#' choose from. A lookup that failed says so, with R's message (#121).
 help_reply_html <- function(reply) {
+  if (!is.null(reply$error)) {
+    return(sprintf("<p>R couldn't open this help page: %s</p>", html_escape(reply$error)))
+  }
   if (length(reply$matches %||% list()) > 0) {
     items <- vapply(reply$matches, function(m) {
       ref <- sprintf("%s::%s", m$package, m$topic)
@@ -383,7 +422,7 @@ help_reply_html <- function(reply) {
     }, character(1))
     return(sprintf("<p>More than one package has this topic:</p><ul>%s</ul>", paste(items, collapse = "")))
   }
-  rewrite_help_links(strip_rd_header(sanitize_help_html(reply$html %||% "")))
+  tidy_help_sections(rewrite_help_links(strip_rd_header(sanitize_help_html(reply$html %||% ""))))
 }
 
 #' `formals()` of a base-R function, for the `docs`/`ember_signature`

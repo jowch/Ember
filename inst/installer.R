@@ -14,8 +14,10 @@
 # manifest, not the progress, says what got installed):
 #   EMBER-PROGRESS <done> <total> <package> <step>
 #   EMBER-MISSING <what> <package> <detail>
-# when a compiler or a system library is missing, or a package that failed
-# to build had no binary for this R (install-checks.R).
+# when a compiler or a system library is missing or doesn't fit (a binary
+# built for a newer system, or against another version of a library), or
+# a package that failed to build had no binary for this R
+# (install-checks.R).
 # Exit status 0 iff the manifest was written and the rename made (which
 # includes losing a race to another process: see `finish_library()`).
 

@@ -310,3 +310,23 @@ test_that("view_context() and the snapshot have no blocked/blocked_by fields (ui
   expect_false("blocked" %in% names(v))
   expect_false("blocked_by" %in% names(v))
 })
+
+# ---- retry_install_ids(): the failure card's Try again (#106) -----------------
+
+test_that("retry_install_ids() reruns cells that stopped on a missing package, not ones that ran (#106)", {
+  s <- fake_state(list(S = cell(""), A = cell("library(pkgx)"), B = cell("qux(1)"), C = cell("5"), D = cell("6")),
+                  on_cell_change = "lazy")
+  s$packages$active$installed <- c(pkgx = "1.0.0")
+  r <- boot(s, c("A", "B", "C"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(error = list(message = "irrelevant", package = "pkgx")), at(10)))
+  expect_equal(r$state$results$A$error$kind, "missing_package")
+  r <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "boom")), at(11)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(12)))
+  expect_equal(r$state$results$C$status, "ok")
+
+  ctx <- view_context(r$state)
+  # Every cell that ran has a result, so "Run all"'s set has only D.
+  expect_identical(not_run_ids(r$state, ctx), "D")
+  ids <- retry_install_ids(r$state, ctx)
+  expect_setequal(ids, c("A", "D"))
+})

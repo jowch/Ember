@@ -115,6 +115,16 @@ perf_projection <- function(n, results = FALSE) {
        previous = previous)
 }
 
+#' The graph of an `n`-cell notebook (`previous`) and its code after one
+#' cell's code changed (`code`), for `notebook_graph(code, previous =
+#' previous)`: the rebuild after an edit (#43).
+perf_graph_edit <- function(n) {
+  code <- code_of(perf_cells(n))
+  previous <- notebook_graph(code)
+  code[["c7"]] <- "x7 <- 999"
+  list(code = code, previous = previous)
+}
+
 #' An `n`-cell notebook partway through "run all": the worker is running a
 #' cell, so `wk_done()` for it is the common event that touches no cell,
 #' export or file and so rebuilds no graph.

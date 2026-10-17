@@ -72,7 +72,8 @@ See [Order of implementation](#order-of-implementation) for why.
   `pluto-shoulder > button.foldcode`, `#helpbox-wrapper`, `pluto-helpbox`,
   `#live-docs-search`, the `open_bottom_right_panel` event), every CSS
   variable name in `themes/light.css` and `themes/dark.css` (Ember's new
-  values are `--ember-*` tokens that the kept names point at),
+  values are `--ember-*` tokens that the kept names point at; since #57,
+  only the names something reads, see design.md, "Look distinct"),
   `window.editor_state` and `selected_cells`, and the URLs `/edit`,
   `/notebookfile`, `/notebookexport`.
 - **No native pop-ups.** After piece 7a no new `alert()` or `confirm()` is
@@ -1617,7 +1618,7 @@ worker message (`chdir`).
   closure includes the failed one, from the snapshot's index when loaded,
   `deps`, resolve.R:78-80, else `character()`; since #17 a failure with
   no index loaded, as on a notebook opened with its lock, fetches it and
-  walks again when it arrives, and the card says "Needed by ..."). Per-row status is
+  walks again when it arrives). Per-row status is
   `"failed"` for failed packages and the direct packages that need one;
   every other row in a failed library is `"not_installed"`, not
   `"failed"` (the staging folder is never renamed, so none is installed).
@@ -1638,9 +1639,21 @@ worker message (`chdir`).
   Endeavor reads (drawer.ts:218, 244).
 - The page builds the card sentences from `kind`, `package`, `version` and
   `packages$r_version` with translation keys
-  (`t_ember_install_failed_title`, `_compile`, `_compile_dependency`,
-  `_configure`, `_download`, `_other`, `t_ember_show_the_error`). R sends
-  no prose.
+  (`t_ember_install_failed_title`, `_compile`, `_download`, `_other`,
+  ..., one `_dep_<kind>_one`/`_other` pair per kind for the packages a
+  card's package needs, `t_ember_show_the_error`). R sends no prose.
+- Since #91 the page groups `failures` into one card per package named
+  in a `needed_by` (common/install_cards.js): its own sentence if it
+  failed itself, then one sentence per kind among the failed packages it
+  needs. A `"dependency"` row is a consequence and gets no sentence of
+  its own. Until `needed_by` fills in, a card follows the `"dependency"`
+  rows' `detail` to the package that failed. A failure still left over
+  (offline, where the index never comes) is needed by some package the
+  notebook loads: with one, its card takes them all; with several, one
+  card names them together ("Packages they need, ..."). A sentence names
+  at most five packages ("and 40 more"); one of the card's own kind only
+  names them ("failed the same way"), except for missing system
+  libraries, where each sentence lists its own.
 
 **B. Update to today's snapshot.** The engine applies the proposal itself,
 so the API, the page and Endeavor behave the same, and it stays pure.
@@ -1671,8 +1684,11 @@ so the API, the page and Endeavor behave the same, and it stays pure.
   `ember_apply_update {date}` calls `set_date(hub$nb, date)`; a refusal is
   logged and flushed. `ember_cancel_update {}` dispatches a new
   `ev_cancel_preview` (`proposal <- NULL`). The card's Update sends
-  `ember_update_packages`; "Try again" sends `ember_run_all`, since
-  `reduce_run()` already retries a failed library (step.R:629-632).
+  `ember_update_packages`; "Try again" sends `ember_retry_install`
+  (#106), which runs the cells that stopped on a missing package and the
+  ones not run yet. `reduce_run()` already retries a failed library, but
+  `ember_run_all` alone runs only cells with no result, and after a failed
+  install every cell has one.
 
 **C. Move keeps R running and follows the folder.**
 
@@ -1759,7 +1775,7 @@ server.mjs passes it to the child.
   | `ember_new_notebook` | `{name, folder}` | `notebook_target_path()`, `new_notebook()`, `host_notebook(owned = TRUE)` -> `{url: "edit?id=..&secret=.."}` (relative, as `http_open()`, server.R:1119-1126) or `{error}` |
   | `ember_open_notebook` | `{path}` | `{url}` or `{error}`; `http_open()`'s find-or-open body (server.R:1101-1117) moves into `open_or_find(server, path)`, used by both |
   | `ember_forget_recent` | `{path}` | `forget_notebook()`, then the `ember_start_page` reply |
-  | `completepath` (Pluto's, stubbed at server.R:789-792) | `{query, ember_dirs_only?}` | Pluto's `{start, stop, results}`: entries of `dirname(query)` starting with its last part, folders with a trailing "/", at most 200, hidden files only when the typed part starts with "." |
+  | `completepath` (Pluto's, stubbed at server.R:789-792) | `{query, ember_dirs_only?}` | Pluto's `{start, stop, results}`: entries of `dirname(query)` starting with its last part, folders with a trailing "/", at most 200 (`ember_truncated` says when more matched, and FilePicker then asks again with the typed part, #124), hidden files only when the typed part starts with "." |
 
   Closing an open notebook reuses `shutdown_notebook` with the row's
   `notebook_id` (server.R:701-711), which already refuses notebooks a host
@@ -1948,7 +1964,8 @@ pluto-notebook`, `#helpbox-wrapper`, `pluto-helpbox`, `pluto-helpbox >
 header`, `pluto-helpbox > section`, `.live-docs-searchbox`,
 `#live-docs-search` (drawer.ts:83-93, 156), the `open_bottom_right_panel`
 event with detail `"docs"` (drawer.ts:147, 318), and every CSS variable
-name. Endeavor reads `--main-bg-color`, `--pluto-cell-spacing`,
+name (since #57, only the names something reads; see design.md, "Look
+distinct"). Endeavor reads `--main-bg-color`, `--pluto-cell-spacing`,
 `--sans-serif-font-stack`, `--indented` (set by CodeMirror, not the
 themes), `--normal-cell-color`, `--selected-cell-color` and
 `--code-differs-cell-color` (errors.ts:29-31, diff.ts:21, asking.ts:14,

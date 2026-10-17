@@ -206,6 +206,11 @@ test_that("sanitize_help_html() drops unquoted event handlers and unquoted javas
   expect_match(clean, '<img src=x>', fixed = TRUE)
 })
 
+test_that("help_reply_html() says a failed lookup failed, with its message escaped (#121)", {
+  html <- help_reply_html(list(found = FALSE, html = NULL, matches = list(), error = "can't read <db>"))
+  expect_identical(html, "<p>R couldn't open this help page: can&#39;t read &lt;db&gt;</p>")
+})
+
 test_that("help_reply_html() drops Rd2HTML's 'topic {pkg} | R Documentation' header table", {
   rd <- utils:::.getHelpFile(utils::help("mean", package = "base"))
   out <- tempfile(fileext = ".html")
@@ -223,6 +228,62 @@ test_that("help_reply_html() drops Rd2HTML's 'topic {pkg} | R Documentation' hea
 
   older <- '<table width="100%" summary="page for lm {stats}"><tr><td>lm {stats}</td><td style="text-align: right;">R Documentation</td></tr></table><h2>T</h2>'
   expect_identical(help_reply_html(list(html = older)), "<h2>T</h2>")
+})
+
+test_that("help_reply_html() drops the Description heading and makes See Also a row of its links (#51)", {
+  rd <- utils:::.getHelpFile(utils::help("mean", package = "base"))
+  out <- tempfile(fileext = ".html")
+  on.exit(unlink(out))
+  tools::Rd2HTML(rd, out, package = "base", dynamic = TRUE)
+  html <- help_reply_html(list(html = paste(readLines(out, warn = FALSE), collapse = "\n"), matches = list()))
+  expect_no_match(html, "<h3>Description</h3>", fixed = TRUE)
+  expect_match(html, "<h2>Arithmetic Mean</h2>\\s*<p>Generic function", perl = TRUE)
+  row <- regmatches(html, regexpr('(?s)<p class="ember-help-seealso">.*?</p>', html, perl = TRUE))
+  expect_length(row, 1)
+  expect_match(row, '<a href="@ref base::weighted.mean"><code>weighted.mean</code></a>', fixed = TRUE)
+  expect_no_match(row, "for row and column means", fixed = TRUE)
+  # The section after it is untouched.
+  expect_match(html, "<h3>Examples</h3>", fixed = TRUE)
+})
+
+test_that("See Also keeps a name R sets in code without a link, as a plain chip (#51)", {
+  # ?max mentions which.max only as code: "which.min (which.max)".
+  rd <- utils:::.getHelpFile(utils::help("max", package = "base"))
+  out <- tempfile(fileext = ".html")
+  on.exit(unlink(out))
+  tools::Rd2HTML(rd, out, package = "base", dynamic = TRUE)
+  html <- help_reply_html(list(html = paste(readLines(out, warn = FALSE), collapse = "\n"), matches = list()))
+  row <- regmatches(html, regexpr('(?s)<p class="ember-help-seealso">.*?</p>', html, perl = TRUE))
+  expect_length(row, 1)
+  expect_match(row, '<a href="@ref base::which.min"><code>which.min</code></a> <code class="ember-help-seealso-name">which.max</code>', fixed = TRUE)
+  # A name that is linked once and also written plain is one link.
+  both <- '<h3>See Also</h3><p><code>a</code>, <code><a href="@ref p::a">a</a></code> and <code>b</code>, <code>b</code>.</p>'
+  expect_identical(tidy_help_sections(both),
+    '<h3>See Also</h3>\n<p class="ember-help-seealso"><a href="@ref p::a"><code>a</code></a> <code class="ember-help-seealso-name">b</code></p>\n')
+})
+
+test_that("See Also keeps a code expression around a link whole (#51)", {
+  # ?Memory writes \\code{\\link{object.size}(a)}: the chip is the link,
+  # reading object.size(a), not just object.size.
+  rd <- utils:::.getHelpFile(utils::help("Memory", package = "base"))
+  out <- tempfile(fileext = ".html")
+  on.exit(unlink(out))
+  tools::Rd2HTML(rd, out, package = "base", dynamic = TRUE)
+  html <- help_reply_html(list(html = paste(readLines(out, warn = FALSE), collapse = "\n"), matches = list()))
+  row <- regmatches(html, regexpr('(?s)<p class="ember-help-seealso">.*?</p>', html, perl = TRUE))
+  expect_match(row, '<a href="@ref base::object.size"><code>object.size(a)</code></a>', fixed = TRUE)
+  # Code with two links keeps both, inside one chip.
+  two <- '<h3>See Also</h3><p><code><a href="@ref p::f">f</a>(<a href="@ref p::g">g</a>())</code></p>'
+  expect_identical(tidy_help_sections(two),
+    '<h3>See Also</h3>\n<p class="ember-help-seealso"><code class="ember-help-seealso-name"><a href="@ref p::f">f</a>(<a href="@ref p::g">g</a>())</code></p>\n')
+})
+
+test_that("tidy_help_sections() leaves a See Also with no links, and one that is the last section (#51)", {
+  plain <- "<h2>T</h2><h3>See Also</h3><p>Nothing to link.</p><h3>Examples</h3>"
+  expect_identical(tidy_help_sections(plain), plain)
+  last <- '<h3>See Also</h3><p><code><a href="@ref a::b">b</a></code> and <code><a href="@ref a::b">b</a></code>.</p><hr><div>[Package]</div>'
+  expect_identical(tidy_help_sections(last),
+    '<h3>See Also</h3>\n<p class="ember-help-seealso"><a href="@ref a::b"><code>b</code></a></p>\n<hr><div>[Package]</div>')
 })
 
 test_that("signature_fallback() (56)", {

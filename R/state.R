@@ -256,14 +256,26 @@ new_worker_state <- function() {
 #'   run found that the cell wasn't known to set, so it became a settings
 #'   cell (settings-cells.md, Settings found at run time); `character()`
 #'   otherwise. Shown once, on this run's result.
+#' * `load_notes`: `list(package, setting)` per package this run loaded
+#'   that overwrote a setting a settings cell set (step.R's
+#'   `report_load_notes()`, #61). Under `Rscript` the settings cells come
+#'   first in the file, so the load would lose the user's value there.
+#'   Shown once, on this run's result: a later run finds the package
+#'   already loaded.
+#' * `changed_in_place`: names of environments, R6 objects or reference
+#'   class objects another cell defines that this run changed without
+#'   rebinding them (the worker's report, #167). Cells that read them don't
+#'   rerun, so the cell shows a note.
 new_result <- function(code, status, output, console, error, started_at,
                        runtime, defined, stale = FALSE, variables = list(),
-                       settings_found = character(), setting = FALSE) {
+                       settings_found = character(), setting = FALSE,
+                       load_notes = list(), changed_in_place = character()) {
   structure(list(code = code, status = status, output = output,
                  console = console, error = error, started_at = started_at,
                  runtime = runtime, defined = defined, stale = stale,
                  variables = variables, settings_found = settings_found,
-                 setting = setting),
+                 setting = setting, load_notes = load_notes,
+                 changed_in_place = changed_in_place),
             class = "ember_result")
 }
 
@@ -326,7 +338,9 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 #' an `ember_cell_view`: `id`, `index` (display), `kind`, `code`, `folded`,
 #' `settings` (`list(name, found)` per setting the cell sets, `found` being
 #' `"code"` or `"run"`; empty for an ordinary cell), `settings_found` (the
-#' last result's, `character()` when none), `queued`, `running`, `status` (`"not_run"`, `"ok"`, `"error"`,
+#' last result's, `character()` when none), `load_notes` (the last
+#' result's, `list()` when none), `changed_in_place` (the last result's,
+#' `character()` when none), `queued`, `running`, `status` (`"not_run"`, `"ok"`, `"error"`,
 #' `"interrupted"`), `stale`, `code_differs`, `errors` (graph errors, or
 #' else the run error, each with `kind`, `message`, `fixes`, `names`, and, for an
 #' `"upstream"` run error, `cells`; a plain "error" also carries `call`,
@@ -507,6 +521,8 @@ cell_view <- function(state, ctx, i) {
     id = id, index = i, kind = cell$kind, code = cell$code,
     folded = isTRUE(cell$folded), settings = ctx$settings[[i]] %||% list(),
     settings_found = if (!is.null(result)) result$settings_found %||% character() else character(),
+    load_notes = if (!is.null(result)) result$load_notes %||% list() else list(),
+    changed_in_place = if (!is.null(result)) result$changed_in_place %||% character() else character(),
     queued = ctx$queued[[i]], running = is_running,
     status = if (!is.null(result)) result$status else "not_run",
     stale = !is.null(result) && isTRUE(result$stale),
@@ -537,6 +553,10 @@ is_idle <- function(snapshot) {
 #' from `computed_sources`, sourced-file hashes from `files` for every
 #' literal and computed `source()` path, the lock and header unchanged.
 #' The header's `ember_version` is the running Ember's.
+#'
+#' Reads only the parts of `state` that `file_inputs()` (shell.R) lists:
+#' `save_if_changed()` skips this when they are unchanged, so a new read
+#' here must be added there too.
 notebook_file_of <- function(state) {
   header <- state$file$header
   header$ember_version <- as.character(utils::packageVersion("ember"))
@@ -596,9 +616,9 @@ notebook_file_of <- function(state) {
 #' each kind.
 #'
 #' * `notebook_opened` when `old` is `NULL`.
-#' * `cell_state` with the ids whose `ember_cell_view` differs (compare
-#'   `snapshot_of(old)$cells` with `snapshot_of(new)$cells` per id, after
-#'   an `identical()` short cut on `cells`, `results`, `pending`, `worker`).
+#' * `cell_state` with the ids whose `ember_cell_view` differs
+#'   (`changed_views()`, after an `identical()` short cut on `cells`,
+#'   `results`, `pending`, `worker`, `graph` and `allowed`).
 #' * `topology_changed` with `changed_cells(old$graph, new$graph)` when
 #'   non-empty.
 #' * `execution_done` when `old` had a running cell or pending ids and
@@ -617,10 +637,7 @@ notifications <- function(old, new) {
     identical(old$graph, new$graph) &&
     identical(old$allowed, new$allowed)
   if (!quick_same) {
-    old_views <- snapshot_of(old)$cells
-    new_views <- snapshot_of(new)$cells
-    ids <- union(names(old_views), names(new_views))
-    changed <- Filter(function(id) !identical(old_views[[id]], new_views[[id]]), ids)
+    changed <- changed_views(old, new)
     if (length(changed) > 0) nts <- c(nts, list(list(kind = "cell_state", cells = changed)))
   }
 
@@ -649,6 +666,35 @@ notifications <- function(old, new) {
   nts
 }
 
+#' Ids whose `cell_view()` differs between two states: cells in `old`
+#' order, then cells only in `new`. A cell at the same position in both
+#' whose inputs are unchanged (`key_unchanged()`, pluto-state.R: the code,
+#' result, run and queue state, errors, settings and what disables it) has
+#' the same view, so only the others have their views built and compared.
+#' Building every view of both states, as this did before, cost about
+#' 0.37 s a worker message at 2000 cells, during Run all once per cell
+#' (#44).
+changed_views <- function(old, new) {
+  old_ctx <- view_context(old)
+  new_ctx <- view_context(new)
+  old_ids <- old_ctx$ids
+  new_ids <- new_ctx$ids
+  ids <- union(old_ids, new_ids)
+  in_old <- match(ids, old_ids)
+  in_new <- match(ids, new_ids)
+  differs <- logical(length(ids))
+  for (k in seq_along(ids)) {
+    j <- in_old[k]
+    i <- in_new[k]
+    if (is.na(j) || is.na(i)) {
+      differs[k] <- TRUE
+    } else if (i != j || !key_unchanged(new, new_ctx, i, cell_key(old, old_ctx, j))) {
+      differs[k] <- !identical(cell_view(old, old_ctx, j), cell_view(new, new_ctx, i))
+    }
+  }
+  ids[differs]
+}
+
 #' Code cells with non-blank code, no result, and neither queued nor
 #' running: the set the "N cells not run" bar counts
 #' (`project_ember()`, pluto-state.R) and `ember_run_all` runs
@@ -665,11 +711,15 @@ notifications <- function(old, new) {
 not_run_ids <- function(state, ctx) {
   if (!isTRUE(state$allowed)) return(character())
   ids <- ctx$ids
+  # Whether the code has anything but blanks, for every cell at once: a
+  # trimws() per cell cost most of a 2000-cell projection (#44).
+  codes <- vapply(state$cells, function(cell) cell$code %||% "", character(1), USE.NAMES = FALSE)
+  has_code <- grepl("[^ \t\r\n]", codes, perl = TRUE)
   out <- character()
   for (i in seq_along(ids)) {
     cell <- state$cells[[i]]
     if (!cell_runs(cell)) next
-    if (!nzchar(trimws(cell$code %||% ""))) next
+    if (!has_code[[i]]) next
     if (!is.null(ctx$results[[i]])) next
     if (isTRUE(ctx$queued[[i]])) next
     if (!is.na(ctx$running_idx) && ctx$running_idx == i) next
@@ -680,12 +730,34 @@ not_run_ids <- function(state, ctx) {
   out
 }
 
+#' The cells the failure card's Try again runs (`ember_retry_install`,
+#' server.R; #106): every cell whose last run stopped on a package that
+#' isn't installed (run error kind `"missing_package"`), and the cells
+#' `not_run_ids()` counts. Without the first, a failed install is never
+#' retried once its cells have run: `library(DESeq2)` and everything after
+#' it already has a result. Running one asks for the library again
+#' (`reduce_run()` resets a failed target), and its dependents follow
+#' once it runs, as for Shift+Enter.
+retry_install_ids <- function(state, ctx) {
+  if (!isTRUE(state$allowed)) return(character())
+  failed <- Filter(function(id) {
+    r <- state$results[[id]]
+    !is.null(r) && !is.null(r$error) && identical(r$error$kind, "missing_package") &&
+      can_run(state, id)
+  }, ctx$ids)
+  union(failed, not_run_ids(state, ctx))
+}
+
 #' Paths the shell should watch: every literal `source()` path in the
 #' analyses plus `computed_sources` and `footer_sources`, relative to the notebook's folder.
+#' Reads only what `watch_inputs()` (shell.R) lists: `after_dispatch()`
+#' skips this when they are unchanged, so a new read here must be added
+#' there too.
 watched_files <- function(state) {
-  lit <- unlist(lapply(state$graph$analyses, function(a) {
-    if (is.null(a$sourced) || nrow(a$sourced) == 0) character() else a$sourced$path
-  }), use.names = FALSE)
+  # `.subset2()`, not `nrow()` and `$`: those dispatch on the data frame,
+  # and `step()` runs this for every message (#44).
+  lit <- unlist(lapply(state$graph$analyses, function(a) .subset2(.subset2(a, "sourced"), "path")),
+                use.names = FALSE)
   comp <- unlist(state$computed_sources, use.names = FALSE)
   unique(c(lit, comp, state$footer_sources))
 }

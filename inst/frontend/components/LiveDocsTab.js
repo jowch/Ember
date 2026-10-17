@@ -6,20 +6,23 @@ import { RawHTMLContainer, highlight } from "./CellOutput.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { cl } from "../common/ClassTable.js"
 import { t } from "../common/lang.js"
-import { BackIcon, ForwardIcon } from "../common/Icons.js"
+import { BackIcon, ForwardIcon, SearchIcon } from "../common/Icons.js"
 
 const DOCS_RETRY_MS = 1000
+
+const escape_html = (/** @type {string} */ s) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
 /**
  * @param {{
  * focus_on_open: boolean,
  * desired_doc_query: string?,
- * on_update_doc_query: (query: string) => void,
+ * doc_query_explicit: boolean,
+ * on_update_doc_query: (query: string, explicit?: boolean) => void,
  * notebook: import("./Editor.js").NotebookData,
  * sanitize_html?: boolean,
  * }} props
  */
-export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_query, notebook, sanitize_html = true }) => {
+export let LiveDocsTab = ({ focus_on_open, desired_doc_query, doc_query_explicit, on_update_doc_query, notebook, sanitize_html = true }) => {
     let pluto_actions = useContext(PlutoActionsContext)
     let live_doc_search_ref = useRef(/** @type {HTMLInputElement?} */ (null))
 
@@ -34,24 +37,19 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
     let go_to = (/** @type {number} */ i) => {
         if (i < 0 || i >= history.length) return
         navigating_ref.current = true
-        explicit_ref.current = true
         set_history_index(i)
-        on_update_doc_query(history[i])
+        on_update_doc_query(history[i], true)
     }
 
-    // Set by this component's own explicit actions (typing in the search
-    // box, Back/Forward) right before they change desired_doc_query, so
-    // fetch_docs() can tell those apart from the cursor just moving: the
+    // This component's own actions (typing in the search box, Back/Forward,
+    // a link clicked in a help page, #30) set the query as explicit, so
+    // fetch_docs() can tell them apart from the cursor just moving: only an
+    // explicit query searches every installed package, and the
     // "{{package}} . follows the cursor" line (ui-3-plan.md piece 5's
-    // "Help tab") only makes sense for the latter.
-    let explicit_ref = useRef(false)
-
-    // A link clicked in a help page is an explicit action too, not the
-    // cursor moving (#30).
-    let follow_link = (/** @type {string} */ query) => {
-        explicit_ref.current = true
-        on_update_doc_query(query)
-    }
+    // "Help tab") only makes sense for the cursor. `doc_query_explicit`
+    // comes with the query from the Editor, so it holds for every retry and
+    // survives this tab being closed and opened again (#121).
+    let follow_link = (/** @type {string} */ query) => on_update_doc_query(query, true)
 
     // This is all in a single state object so that we can update multiple field simultaneously
     let [state, set_state] = useState({
@@ -102,10 +100,17 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
 
     let retry_timer = useRef(/** @type {any} */ (null))
     useEffect(() => () => clearTimeout(retry_timer.current), [])
+    // Each request's number. A reply can come after a later request has
+    // gone out (a slow reply loses the race below, and the next query is
+    // asked while it's still on the way). Only the latest request's reply
+    // may change the page or the retry timer: an older one's "R is busy"
+    // would otherwise cancel the current query's retry and leave the
+    // panel saying R is busy for good (#132).
+    let latest_request = useRef(0)
 
     let fetch_docs = (new_query) => {
-        const from_cursor = !explicit_ref.current
-        explicit_ref.current = false
+        const from_cursor = !doc_query_explicit
+        const request = ++latest_request.current
         update_state((state) => {
             state.loading = true
             state.searched_query = new_query
@@ -114,6 +119,7 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
         Promise.race([
             observablehq.Promises.delay(2000, false),
             pluto_actions.send("docs", { query: new_query.replace(/^\?/, ""), all_packages: !from_cursor }, { notebook_id: notebook.notebook_id }).then((u) => {
+                if (request !== latest_request.current) return false
                 if (u.message.status === "⌛") {
                     // R couldn't answer yet (busy, not started, or slow). The
                     // query only changes when the cursor moves, so ask again.
@@ -126,6 +132,8 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
                             state.waiting = true
                         })
                     }
+                    // The retry asks for the same query, with the scope
+                    // that comes with it (#92).
                     clearTimeout(retry_timer.current)
                     retry_timer.current = setTimeout(() => {
                         update_state((state) => {
@@ -138,7 +146,13 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
                     // An empty `doc` is a real "not found" (help_reply_html(),
                     // R/editor-services.R, from a worker help_lookup() with
                     // nothing matching): not a page to show or add to history.
+                    // The page shown stays, unless it's a message about R
+                    // ("R is busy…"), which is no longer true (#121).
                     update_state((state) => {
+                        if (!u.message.doc && state.waiting) {
+                            state.body = `<p>${t("t_live_docs_not_found", { query: escape_html(new_query) })}</p>`
+                            state.package = null
+                        }
                         state.waiting = false
                     })
                     if (u.message.doc) {
@@ -194,14 +208,14 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, on_update_doc_quer
                 })}
                 translate=${false}
             >
+                <span class="ember-help-search-icon" aria-hidden="true"><${SearchIcon} /></span>
                 <input
                     title=${no_docs_found ? `"${state.searched_query}" not found` : ""}
                     id="live-docs-search"
                     placeholder=${t("t_live_docs_search_placeholder")}
                     ref=${live_doc_search_ref}
                     onInput=${(e) => {
-                        explicit_ref.current = true
-                        on_update_doc_query(e.target.value)
+                        on_update_doc_query(e.target.value, true)
                     }}
                     value=${desired_doc_query}
                     type="search"

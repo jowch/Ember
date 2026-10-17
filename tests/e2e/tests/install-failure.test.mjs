@@ -32,6 +32,17 @@ test('failing.R: the Packages tab shows a failure card with "Show the error" (99
   await page.getByRole("button", { name: "Packages", exact: true }).click();
   await page.waitForSelector(".ember-install-failure-card", { timeout: 30000 });
 
+  // Red-tinted, as Panel3 draws a failure (#51).
+  const border = await page.locator(".ember-install-failure-card").evaluate((el) => {
+    const probe = document.createElement("div");
+    probe.style.color = "var(--ember-err-line)";
+    document.body.append(probe);
+    const want = getComputedStyle(probe).color;
+    probe.remove();
+    return { got: getComputedStyle(el).borderTopColor, want };
+  });
+  assert.equal(border.got, border.want, "the card's border is the error line colour");
+
   const title = await page.locator(".ember-install-failure-title").innerText();
   assert.match(title, /brokenpkg couldn't install/);
 
