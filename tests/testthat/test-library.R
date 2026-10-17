@@ -823,7 +823,7 @@ go_lock <- function() {
            source = c("Bioc", "Bioc", "CRAN"))
 }
 
-test_that("large_downloads() sizes the data packages renv's cache lacks (78)", {
+test_that("large_downloads() sizes the data packages renv's cache lacks (130)", {
   fx <- large_download_repos(2048)
   big <- large_downloads(go_lock(), fx$repos, fx$cache, minor = "4.6")
   expect_equal(big$package, "GO.db")
@@ -837,14 +837,14 @@ test_that("large_downloads() sizes the data packages renv's cache lacks (78)", {
   expect_equal(nrow(large_downloads(go_lock(), fx$repos, fx$cache, minor = "4.5")), 1)
 })
 
-test_that("large_downloads() skips CRAN-only installs and notebooks without a Bioconductor pin (78)", {
+test_that("large_downloads() skips CRAN-only installs and notebooks without a Bioconductor pin (130)", {
   fx <- large_download_repos(2048)
   cran_only <- new_lock(name = "dplyr", version = "1.1.4", source = "CRAN")
   expect_equal(nrow(large_downloads(cran_only, fx$repos, fx$cache)), 0)
   expect_equal(nrow(large_downloads(go_lock(), fx$repos["CRAN"], fx$cache)), 0)
 })
 
-test_that("ask_before_install() asks only above ask_above, and never with Inf (78)", {
+test_that("ask_before_install() asks only above ask_above, and never with Inf (130)", {
   fx <- large_download_repos(2048)
   plan <- list(repos = fx$repos, cache = fx$cache, r = list(minor = "4.6"), ask_above = 1000)
   expect_output(expect_true(ask_before_install(plan, go_lock())), "EMBER-DOWNLOAD GO.db 3.22.0 2048")
@@ -856,7 +856,7 @@ test_that("ask_before_install() asks only above ask_above, and never with Inf (7
   expect_false(ask_before_install(plan, go_lock()))
 })
 
-test_that("url_size() reads a file:// URL's size and gives NA for a missing one (78)", {
+test_that("url_size() reads a file:// URL's size and gives NA for a missing one (130)", {
   path <- withr::local_tempfile()
   writeBin(raw(10), path)
   expect_equal(url_size(paste0("file://", normalizePath(path, winslash = "/"))), 10)

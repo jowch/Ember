@@ -862,7 +862,7 @@ test_that("a notebook with the failing-installer option reports the real compile
 
 # ---- 78: a large download waits for an OK ------------------------------------
 
-test_that("an install of a large Bioconductor data package waits for approve_install() (78)", {
+test_that("an install of a large Bioconductor data package waits for approve_install() (130)", {
   withr::local_options(ember.installer_script = system.file("fake-installer.R", package = "ember"),
                        ember.ask_above = 1000)
   cache <- toy_cache()

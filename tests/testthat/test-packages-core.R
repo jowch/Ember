@@ -1693,7 +1693,7 @@ big_download <- function() {
              bytes = c(2.1e9, 25e6), stringsAsFactors = FALSE)
 }
 
-test_that("an install asks above ask_above, and installs without asking once approved (78)", {
+test_that("an install asks above ask_above, and installs without asking once approved (130)", {
   st <- installing_state(options = list(ask_above = 1e8))
   install_fx <- Filter(function(fx) identical(fx$type, "install"), st$r$effects)
   expect_equal(install_fx[[1]]$ask_above, 1e8)
@@ -1723,20 +1723,20 @@ test_that("an install asks above ask_above, and installs without asking once app
   expect_equal(install_fx[[1]]$ask_above, Inf)
 })
 
-test_that("approve_install is refused when nothing waits for an OK (78)", {
+test_that("approve_install is refused when nothing waits for an OK (130)", {
   st <- installing_state()
   r <- drive(st$r$state, ev_approve_install(at(5)))
   expect_s3_class(r$reply, "ember_refused")
   expect_equal(r$state$packages$target$status, "installing")
 })
 
-test_that("ask_above comes from options(ember.ask_above), 500 MB by default (78)", {
+test_that("ask_above comes from options(ember.ask_above), 500 MB by default (130)", {
   expect_equal(pkg_state(list(S = cell("")))$options$ask_above, 500e6)
   withr::local_options(ember.ask_above = Inf)
   expect_equal(pkg_state(list(S = cell("")))$options$ask_above, Inf)
 })
 
-test_that("download_lines() reads the installer's EMBER-DOWNLOAD lines, largest first (78)", {
+test_that("download_lines() reads the installer's EMBER-DOWNLOAD lines, largest first (130)", {
   lines <- c("EMBER-PROGRESS 0 3 - restore", "EMBER-DOWNLOAD GO.db 3.22.0 25248437",
              "EMBER-DOWNLOAD org.Hs.eg.db 3.22.0 2100000000", "EMBER-DOWNLOAD BSgenome.X 1.0 NA")
   d <- download_lines(lines)
