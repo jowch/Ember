@@ -1182,8 +1182,9 @@ reduce_index_failed <- function(state, event) {
   # today, before Package Manager has that day's snapshot, #162). While
   # nothing is locked, no package came from that date, so the date moves
   # back a day and resolution fetches that one. The shell says
-  # `unpublished` only for a date `index_may_change()` covers, so this
-  # stops by the day before yesterday in UTC, and then the failure shows.
+  # `unpublished` only from yesterday to tomorrow in UTC
+  # (`may_be_unpublished()`), so this stops by the day before yesterday,
+  # and then the failure shows; a date further ahead fails at once.
   if (isTRUE(event$unpublished) && nrow(state$file$lock$entries) == 0 &&
       !is.null(header$snapshot) && !is.na(header$snapshot) &&
       identical(event$key, repo_key("cran", header$snapshot))) {
@@ -1199,7 +1200,15 @@ reduce_index_failed <- function(state, event) {
   if (isTRUE(event$unpublished) && !is.null(prop) && identical(prop$kind, "date") &&
       identical(prop$status, "fetching") && identical(event$key, repo_key("cran", prop$date))) {
     state$packages$indexes[[event$key]] <- NULL
-    state$packages$proposal <- new_proposal(format(as.Date(prop$date) - 1, "%Y-%m-%d"),
+    earlier <- format(as.Date(prop$date) - 1, "%Y-%m-%d")
+    # The earlier day may still be gaining packages too: a copy this
+    # session holds from before is fetched again, as reduce_preview_date()
+    # does for the date asked.
+    held <- state$packages$indexes[[repo_key("cran", earlier)]]
+    if (isTRUE(held$provisional) && identical(held$status, "ready")) {
+      state$packages$indexes[[repo_key("cran", earlier)]] <- NULL
+    }
+    state$packages$proposal <- new_proposal(earlier,
                                             apply = prop$apply, kind = prop$kind,
                                             asked = prop$asked %||% prop$date)
     return(list(state = state, effects = list(), reply = NULL))

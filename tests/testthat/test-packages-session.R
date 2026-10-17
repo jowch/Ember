@@ -307,6 +307,34 @@ test_that("updating to a day the repository hasn't published yet offers the day 
   expect_equal(package_status(nb)$snapshot, yesterday)
 })
 
+test_that("Update with nothing loaded applies the newest published date and preview_date() returns at once with it (#221)", {
+  today <- as.Date(format(Sys.time(), tz = "UTC"))
+  yesterday <- format(today - 1)
+  toy <- normalizePath(testthat::test_path("fixtures", "repos", "toy"), mustWork = TRUE)
+  root <- tempfile("ember-unpublished-repo-")
+  dir.create(root)
+  on.exit(unlink(root, recursive = TRUE), add = TRUE)
+  stopifnot(file.copy(file.path(toy, c("2026-09-01", "2026-09-30")), root, recursive = TRUE),
+            file.rename(file.path(root, "2026-09-30"), file.path(root, yesterday)))
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+
+  path <- write_toy_notebook("2026-09-01")
+  nb <- open_notebook(path, repos = ember_repos(cran = paste0("file://", root)), cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+
+  res <- preview_date(nb, format(today), apply = TRUE, wait = TRUE, timeout = 60)
+  expect_equal(res$status, "ready")
+  expect_equal(res$date, yesterday)
+  expect_equal(package_status(nb)$snapshot, yesterday)
+
+  # A date further ahead than tomorrow in UTC is no clock's today: it fails
+  # at once instead of stepping back day by day.
+  far <- preview_date(nb, format(today + 30), wait = TRUE, timeout = 60)
+  expect_equal(far$status, "failed")
+  expect_equal(far$date, format(today + 30))
+})
+
 # ---- 73: the saved lock round-trips -----------------------------------------
 
 test_that("the saved file's lock block lists toyA and toyB and round-trips unchanged on reopen (73)", {
