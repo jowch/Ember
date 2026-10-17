@@ -1600,7 +1600,7 @@ console_collector <- function(cell, token) {
   }
   self$print <- function(v) {
     flush_stdout()
-    txt <- paste(utils::capture.output(eval_in_notebook(quote(print(v)), v)), collapse = "\n")
+    txt <- paste(capture_lines(eval_in_notebook(quote(print(v)), v)), collapse = "\n")
     add_item("stdout", txt)
   }
   self$finish <- function() {
@@ -1713,12 +1713,34 @@ eval_in_notebook <- function(expr, v, extra = list()) {
   eval(expr, c(list(v = v), extra), globalenv())
 }
 
+#' What `expr` prints, as lines, like `utils::capture.output(expr)` but
+#' through a temp file: a textConnection grows quadratically with the lines
+#' written, so a value that prints 20,000 lines took 16.5 s to capture, and
+#' a 50,000-row table minutes (#160); a file takes milliseconds. `n` keeps
+#' only the first lines. As with capture.output(), a visible value is
+#' printed too.
+capture_lines <- function(expr, n = -1L) {
+  path <- tempfile("ember_capture_")
+  on.exit(unlink(path))
+  out <- file(path, open = "wt")
+  sink(out, type = "output")
+  sunk <- TRUE
+  on.exit(if (sunk) { sink(type = "output"); close(out) }, add = TRUE, after = FALSE)
+  shown <- withVisible(expr)
+  if (shown$visible) print(shown$value)
+  sink(type = "output")
+  close(out)
+  sunk <- FALSE
+  readLines(path, n = n, warn = FALSE)
+}
+
 #' The value's print() text, truncated (first 50 lines, 4000 chars). Colour
 #' is on throughout the worker (boot sets `cli.num_colors`); when truncation
 #' lands inside an escape sequence, the partial sequence is dropped and a
 #' reset code appended so the cut text never leaves the terminal mid-colour.
 text_form <- function(value) {
-  txt <- tryCatch(utils::capture.output(eval_in_notebook(quote(print(v)), value)),
+  # 51 lines are enough to know it is cut.
+  txt <- tryCatch(capture_lines(eval_in_notebook(quote(print(v)), value), n = 51L),
                    error = function(e) "<unprintable>")
   truncated <- length(txt) > 50
   if (truncated) txt <- txt[1:50]
@@ -2073,7 +2095,7 @@ try_knit_print <- function(value) {
   # instead (rmarkdown's for data frames and tibbles, data.table's): what
   # they print is dropped, and only a knit_asis result is kept, so the
   # value goes on to the next step, Ember's table (#154).
-  utils::capture.output(
+  capture_lines(
     out <- tryCatch(do.call(knitr::knit_print, list(value), quote = TRUE, envir = globalenv()),
                     error = function(e) NULL))
   if (!inherits(out, "knit_asis")) return(NULL)
