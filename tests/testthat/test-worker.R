@@ -1568,6 +1568,66 @@ test_that("a setting the display step changes isn't the cell's: only its code's 
   expect_identical(r$output$text, "[1] 2")
 })
 
+test_that("an option a package's code creates for itself on first use is the package's; one the notebook's code sets, directly or in a helper, makes a settings cell (#164)", {
+  h <- worker_harness()
+  on.exit(h$close())
+
+  # As readr caches `readr.num_threads` on its first read: a function that
+  # lives in a package namespace (stats here) creates an option.
+  run_and_wait(h, "f", 1L, paste(
+    'cache <- function() if (is.null(getOption("stats.ember_cache"))) options(stats.ember_cache = 4L)',
+    'environment(cache) <- asNamespace("stats")',
+    'unprefixed <- function() options(ember_pkg_cache = TRUE)',
+    'environment(unprefixed) <- asNamespace("stats")',
+    'setter <- function(v) options(stats.ember_cache = v)',
+    'environment(setter) <- asNamespace("stats")', sep = "\n"))
+  r <- run_and_wait(h, "a", 2L, "cache()\n1")
+  expect_identical(r$status, "ok")
+  expect_length(r$settings, 0)
+  # It is part of the starting values: putting settings back before the
+  # next run doesn't remove it.
+  r <- run_and_wait(h, "b", 3L, 'getOption("stats.ember_cache")')
+  expect_identical(r$output$text, "[1] 4")
+  # The name doesn't matter, only who set it (evaluate caches
+  # `rlang_trace_top_env`).
+  r <- run_and_wait(h, "u", 4L, "unprefixed()")
+  expect_length(r$settings, 0)
+
+  names_of <- function(r) vapply(r$settings, function(d) d$name, character(1))
+  # The notebook's own code: a direct call, a computed name, and a helper a
+  # cell defines (settings-cells.md, "A setting inside a helper"), even for
+  # a package's option name.
+  r <- run_and_wait(h, "c", 5L, "options(stats.ember_own = 1)")
+  expect_identical(names_of(r), "stats.ember_own")
+  r <- run_and_wait(h, "d", 6L, "op <- list(stats.ember_computed = 1); options(op)")
+  expect_identical(names_of(r), "stats.ember_computed")
+  run_and_wait(h, "q", 7L, "quiet <- function() options(readr.show_col_types = FALSE)")
+  r <- run_and_wait(h, "g", 8L, "quiet()")
+  expect_identical(names_of(r), "readr.show_col_types")
+  # A package's code changing an option that already exists is the cell's.
+  r <- run_and_wait(h, "e", 9L, "setter(5L)")
+  expect_identical(names_of(r), "stats.ember_cache")
+})
+
+test_that("the options() wrapper doesn't show in an error or change a query's visibility (#164)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  # As on main: the caller's call, and no frames of the wrapper's own.
+  r <- run_and_wait(h, "a", 1L, "options(digits = 0)")
+  expect_identical(r$status, "error")
+  expect_identical(r$error$call, "options(digits = 0)")
+  expect_identical(r$error$traceback, "options(digits = 0)")
+  expect_false(r$error$deep)
+  run_and_wait(h, "f", 2L, "f <- function() options(digits = 0)")
+  r <- run_and_wait(h, "b", 3L, "f()")
+  expect_identical(r$error$traceback, c("f()", "options(digits = 0)"))
+  expect_identical(vapply(r$error$frames, function(f) f$call, character(1)), c("f()", "options(digits = 0)"))
+  # A query still prints.
+  r <- run_and_wait(h, "c", 4L, 'options("digits")')
+  expect_identical(r$output$text, "$digits\n[1] 7\n")
+  expect_length(r$settings, 0)
+})
+
 test_that("a package the display step loads still gets its load note when it resets a setting a settings cell set (#156, #61)", {
   skip_if_not_installed("knitr")
   h <- worker_harness(extra_libs = c(fixture_lib(), dirname(find.package("knitr"))))
