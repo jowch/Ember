@@ -111,6 +111,22 @@ write_frame <- function(con, msg) {
   flush(con)
 }
 
+#' worker.R compiled once per test run (compiler::cmpfile(), into the
+#' session's temporary directory), so the tests run the worker users run
+#' (#229): a change to worker.R that behaves differently compiled fails
+#' here.
+test_worker_image <- local({
+  path <- NULL
+  function() {
+    if (is.null(path) || !file.exists(path)) {
+      out <- tempfile("ember-worker-", fileext = ".Rc")
+      utils::capture.output(compiler::cmpfile(worker_script_path(), out, verbose = FALSE))
+      path <<- out
+    }
+    path
+  }
+})
+
 #' Start the real inst/worker.R under processx, accept its connection,
 #' and return a harness object:
 #'
@@ -123,10 +139,11 @@ write_frame <- function(con, msg) {
 #' `extra_libs` are prepended to R_LIBS_USER (ahead of the private temp
 #' library), for tests that need a package installed (fixture_lib()).
 #' `detached = TRUE` starts the worker with no console (Windows only).
-#' `image` is a compiled worker image to boot from (worker_boot()); by
-#' default there is none, so the worker sources worker.R.
+#' `image` is the compiled worker image to boot from (worker_boot()). By
+#' default it is test_worker_image(), as a real worker boots once its
+#' image exists; `image = ""` sources worker.R instead.
 worker_harness <- function(secret = "ember-test-secret", extra_libs = character(), detached = FALSE,
-                            connect_timeout = 10, hello_timeout = 10, image = "") {
+                            connect_timeout = 10, hello_timeout = 10, image = test_worker_image()) {
   srv <- open_server_socket()
 
   user_lib <- tempfile("ember-worker-lib-")

@@ -51,7 +51,7 @@ test_that("ready_worker_image(): one compile per image, then the image's path; o
   expect_false(is_compiled(sourced$run_cell))
 })
 
-test_that("a worker booted from the image runs cells; a broken image falls back to worker.R", {
+test_that("a worker booted from the image runs cells; so does one sourced from worker.R, and a broken image falls back to it", {
   local_image_build()
   dir <- withr::local_tempdir()
   src <- worker_script_path()
@@ -59,8 +59,8 @@ test_that("a worker booted from the image runs cells; a broken image falls back 
   worker_image_build$proc$wait()
   path <- ready_worker_image(src, dir)
 
-  for (image in c(path, file.path(dir, "broken.Rc"))) {
-    if (!file.exists(image)) writeBin(as.raw(1:200), image)
+  for (image in c(path, "", file.path(dir, "broken.Rc"))) {
+    if (nzchar(image) && !file.exists(image)) writeBin(as.raw(1:200), image)
     h <- worker_harness(image = image)
     for (i in 1:2) {
       h$send(list(type = "run", cell = paste0("c", i), token = i, code = paste0(i, " + 1"), role = "cell",

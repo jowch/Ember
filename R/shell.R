@@ -77,7 +77,7 @@ session_start <- function(state) {
   register_session(nb)
   sync_active_libraries()
   maybe_start_cleanup()
-  ready_worker_image()
+  ready_worker_image(dir = nb$state$options$cache %||% cache_dir())
   maybe_start_heartbeat()
   schedule_poll(nb)
   nb
@@ -772,7 +772,7 @@ start_worker_process <- function(nb, fx) {
            R_LIBS_USER = lib, R_LIBS = "", R_LIBS_SITE = "",
            EMBER_WORKER = system.file("worker.R", package = "ember"),
            EMBER_DLL = ember_dll_path(),
-           EMBER_WORKER_IMAGE = ready_worker_image() %||% "",
+           EMBER_WORKER_IMAGE = ready_worker_image(dir = nb$state$options$cache %||% cache_dir()) %||% "",
            EMBER_SECRET = nb$secret)
   wd <- fx$wd
   if (is.null(wd) || !nzchar(wd)) wd <- getwd()
