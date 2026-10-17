@@ -44,5 +44,9 @@ fixtures. It is a separate workflow so that it can stay out of the
 required checks: a red `bench` means "look at this table", and a change that
 is slower on purpose can merge with it red.
 
+It can also be run by hand on any two refs (Actions, bench, Run workflow).
+With both left at `main` it is an A/A run: identical code on both sides,
+which shows how far apart one runner reads the same build (#179).
+
 To add a case, add its fixture to `helper-perf.R` (so the test and the
 benchmark time the same notebook) and an entry to `cases.R`.
