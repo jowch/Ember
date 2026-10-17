@@ -1,7 +1,6 @@
 # Interactive inputs (docs/inputs.md), first increment: the binding rules,
 # the worker's hook, and set_input() through the core. The worker tests
-# load tests/testthat/fixtures/emberui, a stand-in that speaks the hook
-# protocol (inst/worker.R, "Interactive inputs"), not the real package.
+# load emberui from inst/emberui, installed by fixture_lib().
 
 # ---- Rules 1 and 3, from the parse --------------------------------------------
 
@@ -325,7 +324,7 @@ test_that("set_input checks the value against the input, assigns it, and answers
   h$send(list(type = "set_input", cell = "I", name = "n", value = 70))
   a <- reply_of(h, "input_set")
   expect_false(a$ok)
-  expect_identical(a$error, "The value must be a number from 1 to 10.")
+  expect_identical(a$error, "The value must be a whole number from 1 to 10.")
   h$send(list(type = "set_input", cell = "I", name = "g", value = 2))
   expect_true(reply_of(h, "input_set")$ok)
   h$send(list(type = "set_input", cell = "I", name = "zz", value = 1))
@@ -350,19 +349,31 @@ test_that("without the hook, an input returns its default", {
   expect_identical(out$stdout, "4 a")
 })
 
+test_that("emberui's own tests pass", {
+  lib <- fixture_lib()
+  tests <- file.path(emberui_source(), "tests", "testthat")
+  out <- processx::run(file.path(R.home("bin"), "Rscript"),
+    c("--vanilla", "-e", sprintf(
+      "testthat::test_dir(%s, package = 'emberui', load_package = 'installed', reporter = 'summary', stop_on_failure = TRUE)",
+      deparse(tests))),
+    env = c("current", R_LIBS = paste(c(lib, .libPaths()), collapse = .Platform$path.sep)),
+    error_on_status = FALSE, stderr_to_stdout = TRUE)
+  expect_identical(out$status, 0L, info = out$stdout)
+})
+
 # ---- End to end ------------------------------------------------------------------
 
-#' A `file://` CRAN-like repository holding the stand-in emberui, built
-#' from tests/testthat/fixtures/emberui, dated `date` (as the toy repo in
+#' A `file://` CRAN-like repository holding emberui, built from
+#' inst/emberui, dated `date` (as the toy repo in
 #' test-packages-session.R is laid out). Returns the root.
 ui_repo <- function(date = "2026-09-01") {
   root <- tempfile("ember-ui-repo-")
   contrib <- file.path(root, date, "src", "contrib")
   dir.create(contrib, recursive = TRUE)
-  src <- normalizePath(testthat::test_path("fixtures", "emberui"), mustWork = TRUE)
+  src <- emberui_source()
   res <- processx::run(file.path(R.home("bin"), "R"), c("CMD", "build", "--no-manual", "--no-build-vignettes", src),
                        wd = contrib, error_on_status = FALSE, timeout = 120)
-  if (res$status != 0) stop("could not build the emberui fixture:\n", res$stderr)
+  if (res$status != 0) stop("could not build emberui:\n", res$stderr)
   tools::write_PACKAGES(contrib, type = "source")
   root
 }

@@ -36,6 +36,12 @@ open_server_socket <- function() pick_listen_socket()
 
 fixture_lib_cache <- new.env()
 
+#' The emberui package's source, which ember ships in inst/emberui. The
+#' fixture library installs it with the fixtures.
+emberui_source <- function() {
+  normalizePath(system.file("emberui", package = "ember", mustWork = TRUE))
+}
+
 #' Path to a library containing the built & installed fixture packages.
 #' Cached: the install (an R CMD INSTALL subprocess) runs once.
 fixture_lib <- function() {
@@ -45,7 +51,7 @@ fixture_lib <- function() {
   lib <- file.path(tempdir(), "ember-fixture-lib")
   dir.create(lib, showWarnings = FALSE, recursive = TRUE)
   fixtures_dir <- normalizePath(testthat::test_path("fixtures"), mustWork = TRUE)
-  pkgs <- list.dirs(fixtures_dir, recursive = FALSE)
+  pkgs <- c(list.dirs(fixtures_dir, recursive = FALSE), emberui_source())
   r_bin <- file.path(R.home("bin"), "R")
   res <- processx::run(r_bin,
     c("CMD", "INSTALL", "--no-byte-compile", "--no-help", "--no-docs",
