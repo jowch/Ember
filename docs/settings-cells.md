@@ -297,7 +297,9 @@ package's. The worker traces `attach()` to tell who called it, as it wraps
 it sits at position 2 and its `filter()` hides dplyr's and stats', so
 `tidymodels_prefer()` still makes a settings cell: it changes what names
 mean in every later cell. `attach(survey)` in a cell is always a setting,
-whatever it holds.
+whatever it holds. The check happens once, at the end of the run that attached the
+entry. After that the entry is part of the baseline, so a name the package
+later puts in it goes unnoticed even if it hides one below.
 
 `theme_set()` is the exception: ggplot2 keeps the theme inside its namespace,
 outside what the worker compares, so only the static check finds it (see
