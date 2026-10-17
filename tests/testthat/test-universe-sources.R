@@ -128,9 +128,8 @@ test_that("renv installs from the universe only while it serves the locked commi
   r <- list(version = "4.6.1", minor = "4.6", platform = "x")
   repos <- c(CRAN = "x", "universe-lab" = "https://lab.r-universe.dev")
   served <- renv_lockfile_of(lock, r, repos, deps = list(toyD = "toyB"), served = c(toyD = D1))$Packages$toyD
-  expect_equal(served[c("Source", "Repository", "RemoteUrl", "RemoteSha", "Imports")],
-               list(Source = "Repository", Repository = "universe-lab", RemoteUrl = "https://github.com/lab/toyD",
-                    RemoteSha = D1, Imports = "toyB"))
+  expect_equal(served, list(Package = "toyD", Version = "0.2.0", Source = "Repository",
+                            Repository = "universe-lab", Imports = "toyB"))
   # The universe moved on (same version, another commit), or can't be asked.
   for (now in list(c(toyD = D2), c(toyD = NA_character_), character())) {
     rec <- renv_lockfile_of(lock, r, repos, served = now)$Packages$toyD
@@ -147,6 +146,28 @@ test_that("renv installs from the universe only while it serves the locked commi
   expect_equal(rec[c("Source", "RemoteType", "RemoteUrl", "RemoteSha", "RemoteSubdir")],
                list(Source = "Git", RemoteType = "git", RemoteUrl = "https://codeberg.org/a/b",
                     RemoteSha = D1, RemoteSubdir = "pkg"))
+})
+
+test_that("universe_wrong_builds names a universe build that isn't the locked commit", {
+  lib <- tempfile("ember-u-lib-")
+  on.exit(unlink(lib, recursive = TRUE), add = TRUE)
+  write_desc <- function(pkg, sha) {
+    dir.create(file.path(lib, pkg), recursive = TRUE)
+    fields <- c(Package = pkg, Version = "0.2.0")
+    if (!is.null(sha)) fields[["RemoteSha"]] <- sha
+    write.dcf(t(fields), file.path(lib, pkg, "DESCRIPTION"))
+  }
+  write_desc("right", D1)
+  write_desc("lagging", D2)
+  write_desc("unsaid", NULL)
+  write_desc("fallback", D2)
+  src <- function(pkg) universe_source("lab", paste0("https://github.com/lab/", pkg), D1)
+  lock <- new_lock(c("fallback", "lagging", "right", "toyB", "unsaid"), rep("0.2.0", 5),
+                   c(src("fallback"), src("lagging"), src("right"), "CRAN", src("unsaid")))
+  # `fallback` wasn't installed from its universe (served another commit), so
+  # its record named the commit itself.
+  served <- c(fallback = D2, lagging = D1, right = D1, unsaid = D1)
+  expect_equal(universe_wrong_builds(lock, lib, served), c("lagging", "unsaid"))
 })
 
 test_that("repo_urls names each universe the lock's packages come from", {

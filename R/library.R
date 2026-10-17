@@ -499,7 +499,7 @@ universe_info_index <- function(info, key, universe) {
   }
   deps <- info[["_dependencies"]]
   deps <- if (is.data.frame(deps) && all(c("package", "role") %in% names(deps))) {
-    unique(setdiff(deps$package[deps$role %in% c("Depends", "Imports", "LinkingTo")], "R"))
+    unique(setdiff(deps$package[deps$role %in% c("Depends", "Imports", "LinkingTo")], c("R", base_packages)))
   } else {
     character()
   }
@@ -540,6 +540,28 @@ universe_served <- function(lock, repos) {
     sha <- if (is.na(url[1])) NULL else tryCatch(universe_package_info(url, src$universe, e$name[[i]])$RemoteSha,
                                                  error = function(e) NULL)
     out[[e$name[[i]]]] <- if (is.null(sha)) NA_character_ else tolower(sha)
+  }
+  out
+}
+
+#' Run in the installer after renv: the universe packages renv installed
+#' from their universe (`served` names the locked commit) whose installed
+#' build isn't the locked commit. r-universe writes the commit it built
+#' from (`RemoteSha`) into every build's DESCRIPTION, and binaries are
+#' separate builds: one can lag the source build while it is still being
+#' made or after it failed, and the universe can rebuild between
+#' `universe_served()` and renv's download, all under the same version.
+#' A build that doesn't say its commit counts as wrong. -> character.
+universe_wrong_builds <- function(lock, library, served) {
+  e <- lock$entries
+  out <- character()
+  for (i in which(startsWith(e$source, "universe:"))) {
+    name <- e$name[[i]]
+    src <- parse_universe_source(e$source[[i]])
+    if (is.null(src) || !identical(unname(served[name]), src$sha)) next
+    path <- file.path(library, name, "DESCRIPTION")
+    sha <- if (file.exists(path)) unname(read.dcf(path, fields = "RemoteSha")[1, 1]) else NA_character_
+    if (is.na(sha) || !identical(tolower(sha), src$sha)) out <- c(out, name)
   }
   out
 }
@@ -778,8 +800,12 @@ library_cache_entries <- function(staging, installed, cache_root) {
       out <- c(out, candidates)
       next
     }
+    # Base R's `file.info()` has no `ino` column, so this is `NULL` and the
+    # newest candidate stands in; `is.na(NULL)` used to stop the install
+    # whenever two cache entries shared a package and version (two builds
+    # of one universe version, #203).
     target_ino <- tryCatch(file.info(pkg_dir)$ino, error = function(e) NA)
-    matched <- if (!is.na(target_ino)) {
+    matched <- if (length(target_ino) == 1 && !is.na(target_ino)) {
       Filter(function(c) isTRUE(file.info(file.path(c, pkg))$ino == target_ino), candidates)
     } else character()
     out <- c(out, if (length(matched) > 0) matched else candidates[length(candidates)])

@@ -106,6 +106,27 @@ main <- function(plan_path) {
     quit(status = 1L, save = "no")
   }
 
+  # A universe package taken from its universe must be the locked commit's
+  # build; one that isn't (a binary that lags the source, a rebuild during
+  # the install) is installed again from the commit itself.
+  wrong <- ember:::universe_wrong_builds(lock, plan$staging, served)
+  if (length(wrong) > 0) {
+    unlink(file.path(plan$staging, wrong), recursive = TRUE)
+    served[wrong] <- NA_character_
+    lf <- ember:::renv_lockfile_of(lock, plan$r, repos, github = github, deps = deps, served = served)
+    renv::lockfile_write(lf, file = lockfile_tmp)
+    again <- tryCatch(withCallingHandlers(
+      renv::restore(lockfile = lockfile_tmp, library = plan$staging, packages = wrong,
+                    project = project_dir, prompt = FALSE, clean = FALSE),
+      message = function(m) invokeRestart("muffleMessage")),
+      error = function(e) e)
+    if (inherits(again, "error")) {
+      writeLines(paste("Error:", conditionMessage(again)), con = stderr())
+      flush(stderr())
+      quit(status = 1L, save = "no")
+    }
+  }
+
   ember:::copy_from_r_library(plan$staging, wanted)
 
   installed <- character()

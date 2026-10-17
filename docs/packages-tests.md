@@ -196,7 +196,8 @@ In test-universe-sources.R:
 
 In test-packages-session.R:
 
-128. A package from a `[sources]` universe entry installs from the universe's own build (`RemoteType: repository`) and runs; a locked commit the universe no longer serves, under the same version, installs from GitHub at that commit.
+128. A package from a `[sources]` universe entry installs from the universe's own build (its DESCRIPTION's `Repository` and `RemoteSha`) and runs; a universe whose build isn't the commit its API names gets the package installed again from GitHub at that commit (`universe_wrong_builds()`, also unit-tested); a locked commit the universe no longer serves, under the same version, installs from GitHub at that commit.
+129. **[net]** highr from yihui's universe resolves, its lock source names github.com/yihui/highr, and the installed build is the locked commit; pinned to v0.11's commit, which the universe no longer serves, `ember::run()` installs it from GitHub.
 
 ## Network, opt-in
 

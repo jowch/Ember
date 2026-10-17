@@ -554,6 +554,15 @@ r-universe.
   across commits. So renv gets a GitHub record for the locked commit,
   which builds from source, or for a repository elsewhere a git record,
   which needs git on the machine.
+- **The build is checked, not trusted.** Binaries are separate builds: one
+  can lag the source build while it is made, or stay behind when it
+  fails, and the universe can rebuild during the install, all under the
+  same version. r-universe writes the commit into every build's
+  DESCRIPTION, so after renv the installer reads it
+  (`universe_wrong_builds()`) and installs any package whose build isn't
+  the locked commit again from the commit itself. The repository record
+  carries no `RemoteSha` for that reason: renv would write the record's
+  over the build's own.
 - **Unchecked**, as GitHub packages are: the Packages tab's line under the
   version reads "r-universe jowch@<sha>".
 - **The test seam** is `ember_repos(universe = "file://.../%s")`:

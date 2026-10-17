@@ -272,12 +272,14 @@ hash_text <- function(text) {
 #' `Repository = "BioCsoft"`; GitHub -> `Source = "GitHub", RemoteHost,
 #' RemoteUsername, RemoteRepo, RemoteSha`, which renv downloads from
 #' `<github>/repos/<user>/<repo>/tarball/<sha>`. A universe entry is a
-#' repository record for its universe (`universe-<name>`, with `RemoteUrl`
-#' and `RemoteSha`, from which renv falls back to a git checkout of the
-#' commit) while the universe still serves the locked commit (`served`),
-#' since that is where binaries come from; once it doesn't, a GitHub record
-#' for that commit when the repository is on github.com, else a git one
-#' (which needs git on this machine). No hash: measured, renv
+#' repository record for its universe (`universe-<name>`) while the
+#' universe still serves the locked commit (`served`), since that is where
+#' binaries come from; once it doesn't, a GitHub record for that commit
+#' when the repository is on github.com, else a git one (which needs git on
+#' this machine). The repository record carries no `RemoteSha`: renv would
+#' write the record's over the package's own, and the package's own (which
+#' r-universe writes into every build) is what tells whether the build
+#' renv took was the locked commit (`universe_wrong_builds()`). No hash: measured, renv
 #' restores exact versions from this minimal form (spikes/packages,
 #' section 2).
 #'
@@ -319,7 +321,7 @@ renv_lockfile_of <- function(lock, r, repos, github = "https://api.github.com", 
       gh <- universe_github_repo(src)
       record <- if (identical(unname(served[name]), src$sha)) {
         list(Package = name, Version = version, Source = "Repository",
-             Repository = universe_repo_name(src$universe), RemoteUrl = src$git, RemoteSha = src$sha)
+             Repository = universe_repo_name(src$universe))
       } else if (!is.null(gh)) {
         list(Package = name, Version = version, Source = "GitHub", RemoteHost = github_com,
              RemoteUsername = gh$user, RemoteRepo = gh$repo, RemoteSha = src$sha)
@@ -327,7 +329,7 @@ renv_lockfile_of <- function(lock, r, repos, github = "https://api.github.com", 
         list(Package = name, Version = version, Source = "Git", RemoteType = "git",
              RemoteUrl = src$git, RemoteSha = src$sha)
       }
-      if (!is.na(src$subdir)) record$RemoteSubdir <- src$subdir
+      if (!is.na(src$subdir) && !identical(record$Source, "Repository")) record$RemoteSubdir <- src$subdir
       if (length(deps[[name]]) > 0) record$Imports <- paste(deps[[name]], collapse = ", ")
       record
     } else {
