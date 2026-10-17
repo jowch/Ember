@@ -343,10 +343,11 @@ R has no macros, so the binding comes from the assignment instead of from
   archival if one is missed), and everyone who sees a widget already has
   Ember, which ships the same way. The `Rscript` fallback needs only the
   package, from wherever it comes. This needs notebooks to be able to
-  install from r-universe, which is separate work; today `ember_repos()` in
-  R/resolve.R knows only CRAN, Bioconductor and GitHub sources. Until it
-  lands, Ember writes a GitHub `[sources]` entry itself when it sees the
-  package.
+  install from r-universe (#203); today `ember_repos()` in R/resolve.R
+  knows only CRAN, Bioconductor and GitHub sources. #203 plans a
+  `[sources]` entry `emberui = "universe:jowch"`, which Ember writes itself
+  when it sees the package. Until it lands, Ember writes a GitHub
+  `[sources]` entry instead.
 
 The other choices are decided above: `input_*` names (matching plain R),
 keeping a value on rerun (Pluto), lazy mode marking dependents stale
