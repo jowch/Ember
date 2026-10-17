@@ -1765,6 +1765,51 @@ test_that("ggplot2's \"Removed n rows\" warning and geom_smooth()'s message show
   expect_match(console_texts(r), "geom_smooth()", fixed = TRUE)
 })
 
+test_that("a cell that changes another cell's data.table in place with := or set*() reports it; reading it or rebinding it doesn't (#172)", {
+  skip_if_not_installed("data.table")
+  h <- worker_harness(extra_libs = dirname(find.package("data.table")))
+  on.exit(h$close())
+  ord <- c("l", letters[1:6])
+  run_and_wait(h, "l", 1L, "library(data.table)", order = ord)
+  run_and_wait(h, "a", 2L, "dt <- data.table(a = 1:3, x = c(1, 2, 3))", order = ord)
+  for (code in c("dt[, b := a * 2]", "dt[, a := a * 10L]", "set(dt, j = 'c', value = 0)",
+                 "setnames(dt, 'x', 'y')", "setkey(dt, a)", "setorder(dt, -a)", "dt[, b := NULL]")) {
+    r <- run_and_wait(h, "c", 3L, code, order = ord)
+    expect_identical(r$status, "ok", info = code)
+    expect_identical(r$changed_in_place, "dt", info = code)
+  }
+  r <- run_and_wait(h, "d", 4L, "dt[a > 10L, .N]\nnames(dt)", order = ord)
+  expect_length(r$changed_in_place, 0)
+  # A rebinding is a change of the name, not of its contents.
+  r <- run_and_wait(h, "e", 5L, "dt <- copy(dt)", order = ord)
+  expect_length(r$changed_in_place, 0)
+  # A cell's own table is its own to change.
+  r <- run_and_wait(h, "f", 6L, "mine <- data.table(v = 1)\nmine[, w := 2]", order = ord)
+  expect_length(r$changed_in_place, 0)
+})
+
+test_that("a cell ending in a data.table := shows nothing, as at the R console, and a later print() of the table still prints (#185)", {
+  skip_if_not_installed("data.table")
+  h <- worker_harness(extra_libs = dirname(find.package("data.table")))
+  on.exit(h$close())
+  ord <- c("l", letters[1:6])
+  run_and_wait(h, "l", 1L, "library(data.table)\ndt <- data.table(a = 1:3)", order = ord)
+  r <- run_and_wait(h, "a", 2L, "dt[, b := a * 2]", order = ord)
+  expect_identical(r$status, "ok")
+  expect_null(r$output)
+  # Not the last expression: nothing goes to the console either.
+  r <- run_and_wait(h, "a", 3L, "dt[, c := 1]\nncol(dt)", order = ord)
+  expect_identical(r$output$text, "[1] 3")
+  expect_length(r$console, 0)
+  # `[]` after it shows the table, as at the console.
+  r <- run_and_wait(h, "a", 4L, "dt[, d := 1][]", order = ord)
+  expect_false(is.null(r$output))
+  # The mark is cleared, so the table shows in the next cell.
+  run_and_wait(h, "a", 5L, "dt[, e := 1]", order = ord)
+  r <- run_and_wait(h, "b", 6L, "dt", order = ord)
+  expect_false(is.null(r$output))
+})
+
 test_that("a setting the display step changes isn't the cell's: only its code's changes make it a settings cell, and the display's change stays as a package load's would (#156)", {
   skip_if_not_installed("knitr")
   h <- worker_harness(extra_libs = dirname(find.package("knitr")))
