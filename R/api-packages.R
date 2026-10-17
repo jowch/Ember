@@ -52,6 +52,11 @@ remove_package_source <- function(name) list(op = "remove_package_source", name 
 #'
 #' "Update all" is `preview_date(nb, Sys.Date())`.
 #'
+#' A `date` Package Manager hasn't published yet (today, early in the day
+#' in UTC) is previewed at the newest published date before it, so the
+#' result's `date` can be earlier than the one asked for (#162);
+#' `set_date()` takes the result's `date`.
+#'
 #' `apply = TRUE` is what the Packages tab's Update button does
 #' (`ember_update_packages`, server.R): once the preview is ready,
 #' `schedule_packages()` applies it itself (`apply_proposal()`,
@@ -74,13 +79,13 @@ preview_date <- function(nb, date = Sys.Date(), wait = TRUE, apply = FALSE, time
   if (isTRUE(wait)) {
     wait_for(nb, function(snap) {
       prop <- snap$packages$proposal
-      if (!is.null(prop) && identical(prop$date, date)) return(prop$status %in% c("ready", "failed"))
+      if (!is.null(prop) && identical(prop$asked %||% prop$date, date)) return(prop$status %in% c("ready", "failed"))
       isTRUE(apply) && identical(snap$packages$snapshot, date)
     }, timeout = timeout)
   }
 
   prop <- package_status(nb)$proposal
-  if (!is.null(prop) && identical(prop$date, date)) {
+  if (!is.null(prop) && identical(prop$asked %||% prop$date, date)) {
     return(list(date = prop$date, status = prop$status, changes = prop$changes,
                problems = prop$problems, restart = prop$restart %||% character()))
   }

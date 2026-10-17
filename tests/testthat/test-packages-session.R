@@ -280,6 +280,33 @@ test_that("a new notebook dated a day the repository hasn't published yet instal
   expect_true(wait_for(nb, function(snap) any(grepl(yesterday, readLines(path), fixed = TRUE)), timeout = 30))
 })
 
+test_that("updating to a day the repository hasn't published yet offers the day before, and set_date() applies it (#162)", {
+  # The repository has 2026-09-01 and yesterday (UTC, toyA 0.2), and no
+  # folder for today: "Update all" early in a new day.
+  today <- as.Date(format(Sys.time(), tz = "UTC"))
+  yesterday <- format(today - 1)
+  toy <- normalizePath(testthat::test_path("fixtures", "repos", "toy"), mustWork = TRUE)
+  root <- tempfile("ember-unpublished-repo-")
+  dir.create(root)
+  on.exit(unlink(root, recursive = TRUE), add = TRUE)
+  stopifnot(file.copy(file.path(toy, c("2026-09-01", "2026-09-30")), root, recursive = TRUE),
+            file.rename(file.path(root, "2026-09-30"), file.path(root, yesterday)))
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+
+  path <- write_toy_notebook("2026-09-01")
+  nb <- open_notebook(path, repos = ember_repos(cran = paste0("file://", root)), cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, "A", wait = TRUE, timeout = 120)
+
+  preview <- preview_date(nb, format(today), wait = TRUE, timeout = 120)
+  expect_equal(preview$status, "ready")
+  expect_equal(preview$date, yesterday)
+  expect_equal(preview$changes$to[preview$changes$name == "toyA"], "0.2")
+  set_date(nb, preview$date)
+  expect_equal(package_status(nb)$snapshot, yesterday)
+})
+
 # ---- 73: the saved lock round-trips -----------------------------------------
 
 test_that("the saved file's lock block lists toyA and toyB and round-trips unchanged on reopen (73)", {
