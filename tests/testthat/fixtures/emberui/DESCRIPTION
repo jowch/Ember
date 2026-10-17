@@ -1,0 +1,8 @@
+Package: emberui
+Title: Ember test stand-in for the emberui inputs package
+Version: 0.0.1
+Description: Two inputs that speak the worker's hook protocol (docs/inputs.md,
+    inst/worker.R's "Interactive inputs"), for ember's tests. Not the real
+    package.
+License: MIT
+Encoding: UTF-8

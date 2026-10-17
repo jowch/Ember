@@ -44,6 +44,8 @@ ev_restart     <- function(at) event("restart", at)
 ev_shutdown    <- function(at) event("shutdown", at)
 ev_move        <- function(path, at) event("move", at, path = path)
 ev_set_mode    <- function(mode, at) event("set_mode", at, mode = mode)
+#' A new value for the input bound to `name` (docs/inputs.md).
+ev_set_input   <- function(name, value, at) event("set_input", at, name = name, value = value)
 #' A redraw at the cell's own figure size and a new pixel density
 #' (`ember_render_plot`, a density change: 3a). `render_png()`'s one-off
 #' pixel sizes don't come through here: they never change the state (#28).
@@ -69,6 +71,11 @@ wk_done     <- function(gen, token, report, at)
   event("wk_done", at, gen = gen, token = token, report = report)
 wk_rendered <- function(gen, cell, display, at)
   event("wk_rendered", at, gen = gen, cell = cell, display = display)
+#' The worker's answer to a `set_input` message: `ok`, the value as
+#' assigned and its summary (`globals`), or the input's `error`.
+wk_input_set <- function(gen, cell, name, ok, value, error, globals, at)
+  event("wk_input_set", at, gen = gen, cell = cell, name = name, ok = ok,
+        value = value, error = error, globals = globals)
 wk_exited   <- function(gen, status, message, at)
   event("wk_exited", at, gen = gen, status = status, message = message)
 #' The shell couldn't deliver an `fx_interrupt` to a live worker (on
@@ -168,6 +175,7 @@ reduce <- function(state, event) {
     shutdown         = reduce_shutdown(state, event),
     move             = reduce_move(state, event),
     set_mode         = reduce_set_mode(state, event),
+    set_input        = reduce_set_input(state, event),
     render           = reduce_render(state, event),
     show_more        = reduce_show_more(state, event),
     files_read       = reduce_files_read(state, event),
@@ -180,6 +188,7 @@ reduce <- function(state, event) {
     wk_source        = reduce_wk_source(state, event),
     wk_done          = reduce_wk_done(state, event),
     wk_rendered      = reduce_wk_rendered(state, event),
+    wk_input_set     = reduce_wk_input_set(state, event),
     wk_exited        = reduce_wk_exited(state, event),
     wk_interrupt_failed = reduce_wk_interrupt_failed(state, event),
     worker_usage     = reduce_worker_usage(state, event),
@@ -219,6 +228,9 @@ schedule <- function(state) {
   # (switch_library() in packages-core.R): send nothing new meanwhile, so no
   # further cell loads the version about to be replaced.
   if (switch_pending(state)) return(list(state = state, effects = list()))
+  # A new input value is with the worker: what runs next must see it, and
+  # its answer decides which cells that is (reduce_wk_input_set()).
+  if (!is.null(state$worker$input)) return(list(state = state, effects = list()))
   w <- state$worker
   if (identical(w$status, "off") ||
       (identical(w$status, "stopped") && length(state$pending) > 0)) {
@@ -228,6 +240,7 @@ schedule <- function(state) {
     state$worker$running <- NULL
     state$worker$interrupt <- NULL
     state$worker$restart_offered <- FALSE
+    state$worker$input <- NULL
     # The worker that answers `gen` has nothing loaded yet; a stale value
     # here (left by whatever worker just stopped) would read as a version
     # conflict the moment the new one reports anything, restarting it for a
@@ -474,7 +487,21 @@ run_message <- function(state, id, token) {
       code = if (is_text) inline_code(cell$code) else cell$code,
       role = if (is_text) "text" else "cell",
       order = order, settings = settings_in_effect(state, id), formulas = state$graph$analyses[[id]]$formulas,
-      library = state$packages$active$path, fig = cell_figure_size(cell$code))
+      library = state$packages$active$path, fig = cell_figure_size(cell$code),
+      inputs = if (!is_text) run_inputs(state, id))
+}
+
+#' The inputs part of a run message: the cell's bindings
+#' (`input_bindings()`, R/inputs.R) and, for each, the value the user gave
+#' it this session, if the cell's code hasn't changed since. `NULL` for a
+#' cell with no input.
+run_inputs <- function(state, id) {
+  code <- state$cells[[id]]$code
+  b <- input_bindings(code)
+  if (length(b$bind) == 0 && length(b$blocked) == 0) return(NULL)
+  kept <- Filter(function(v) identical(v$cell, id) && identical(v$code, code), state$input_values)
+  b$values <- lapply(kept, function(v) v$value)
+  b
 }
 
 #' The settings cells in effect before `id`: settings cells before it in
@@ -616,18 +643,26 @@ invalidate_dependents <- function(state, id, names, queue = TRUE,
     pos <- match(id, state$graph$order)
     if (!is.na(pos)) dependents <- union(dependents, state$graph$order[-seq_len(pos)])
   }
-  if (length(names) > 0) {
-    readers <- Filter(function(cid) {
-      c <- state$graph$cells[[cid]]
-      !identical(cid, id) && length(intersect(names, setdiff(c$references, c$masked_none))) > 0
-    }, state$graph$ids)
-    extra <- unlist(lapply(readers, function(r) {
-      c(r, downstream(state$graph, r, transitive = TRUE))
-    }), use.names = FALSE)
-    dependents <- union(dependents, extra)
-  }
-  dependents <- setdiff(dependents, id)
+  if (length(names) > 0) dependents <- union(dependents, readers_of(state, id, names))
+  invalidate_cells(state, id, setdiff(dependents, id), queue = queue)
+}
 
+#' The cells other than `id` that read any of `names`, and everything
+#' downstream of them.
+readers_of <- function(state, id, names) {
+  readers <- Filter(function(cid) {
+    c <- state$graph$cells[[cid]]
+    !identical(cid, id) && length(intersect(names, setdiff(c$references, c$masked_none))) > 0
+  }, state$graph$ids)
+  unique(unlist(lapply(readers, function(r) {
+    c(r, downstream(state$graph, r, transitive = TRUE))
+  }), use.names = FALSE))
+}
+
+#' Mark `dependents` (of `id`) stale and, in autorun when `queue`, queue
+#' them: `invalidate_dependents()`'s rule, for a set of cells already
+#' worked out.
+invalidate_cells <- function(state, id, dependents, queue = TRUE) {
   autorun <- identical(state$file$header$on_cell_change, "autorun")
   queued <- character()
   for (cid in dependents) {
@@ -1164,6 +1199,106 @@ reduce_set_mode <- function(state, event) {
   list(state = state, effects = list(), reply = NULL)
 }
 
+#' A new value for an input (docs/inputs.md, "How a value enters the
+#' graph"). The input's cell must have run, still bind the name, and be
+#' neither stale, edited since, queued nor running: a value checked against
+#' an old spec must not run dependents as if it were current. The worker
+#' checks and assigns the value; its answer (`reduce_wk_input_set()`)
+#' reruns or marks stale the readers. One value at a time: the page holds
+#' back new ones while a run is in progress (Pluto's `set_bond` queue).
+#' Reply: `list(accepted = TRUE, cell)` or `ember_refused`.
+reduce_set_input <- function(state, event) {
+  no <- function(reason) list(state = state, effects = list(), reply = refused(reason, op = "set_input"))
+  if (isTRUE(state$read_only)) return(no("notebook is read-only"))
+  name <- event$name
+  id <- input_cell(state, name)
+  if (is.null(id)) return(no(sprintf("No input is bound to `%s`.", name)))
+  w <- state$worker
+  if (!is.null(w$input)) return(no("Another input value is still being set."))
+  if (!is_fresh(state, id) || id %in% state$pending || identical(w$running$cell, id)) {
+    return(no(sprintf("Run the cell of input `%s` before changing its value.", name)))
+  }
+  if (!(w$status %in% c("ready", "busy"))) return(no("R isn't running."))
+  state$worker$input <- list(cell = id, name = name, value = event$value)
+  state$input_outcome <- NULL
+  list(state = state,
+       effects = list(fx_send(w$gen, list(type = "set_input", cell = id, name = name, value = event$value))),
+       reply = list(accepted = TRUE, cell = id))
+}
+
+#' The cell whose last result binds an input to `name`, or `NULL`.
+input_cell <- function(state, name) {
+  for (id in names(state$results)) {
+    for (i in state$results[[id]]$inputs) {
+      if (isTRUE(i$bound) && identical(i$name, name)) return(id)
+    }
+  }
+  NULL
+}
+
+#' The worker answered a new input value. Accepted: the value is kept for
+#' the session (or forgotten, back at its default), shown on the cell's
+#' result, and the cells that read the name rerun (autorun) or turn stale
+#' (lazy), as if the input's cell had just run, but not that cell itself.
+#' Only readers of this name: a cell reading another input of the same
+#' cell is left alone.
+reduce_wk_input_set <- function(state, event) {
+  nothing <- list(state = state, effects = list(), reply = NULL)
+  sent <- state$worker$input
+  if (!eq(event$gen, state$worker$gen) || is.null(sent) ||
+      !identical(sent$cell, event$cell) || !identical(sent$name, event$name)) {
+    return(nothing)
+  }
+  state$worker$input <- NULL
+  name <- event$name
+  if (!isTRUE(event$ok)) {
+    state$input_outcome <- list(name = name, ok = FALSE, error = event$error %||% "The value was refused.",
+                                value = NULL, cells = character())
+    return(list(state = state, effects = list(), reply = NULL))
+  }
+  id <- event$cell
+  r <- state$results[[id]]
+  # The cell was deleted (or its result cleared) while the value was with
+  # the worker: there is nothing left to keep the value for.
+  if (is.null(r)) {
+    state$input_outcome <- list(name = name, ok = FALSE, error = "The input's cell is gone.",
+                                value = NULL, cells = character())
+    return(list(state = state, effects = list(), reply = NULL))
+  }
+  default <- NULL
+  r$inputs <- lapply(r$inputs, function(i) {
+    if (isTRUE(i$bound) && identical(i$name, name)) {
+      default <<- i$default
+      i$value <- event$value
+    }
+    i
+  })
+  if (length(event$globals)) r$variables[names(event$globals)] <- event$globals
+  state$results[[id]] <- r
+  state$input_values[[name]] <- if (!identical(event$value, default)) {
+    list(cell = id, code = r$code, value = event$value)
+  }
+  dependents <- setdiff(readers_of(state, id, name), id)
+  state <- invalidate_cells(state, id, dependents)
+  state$input_outcome <- list(name = name, ok = TRUE, error = NULL, value = event$value,
+                              cells = Filter(function(cid) !is.null(state$results[[cid]]), dependents))
+  list(state = state, effects = list(), reply = NULL)
+}
+
+#' Keep the values a cell's "ok" run gave its bound inputs (a kept value
+#' the new spec still allows, or the default): an input back at its
+#' default has no entry. Entries for the cell's inputs that are gone go too.
+keep_input_values <- function(state, id, code, inputs) {
+  vals <- Filter(function(v) !identical(v$cell, id), state$input_values)
+  for (i in inputs) {
+    if (isTRUE(i$bound) && !identical(i$value, i$default)) {
+      vals[[i$name]] <- list(cell = id, code = code, value = i$value)
+    }
+  }
+  state$input_values <- vals
+  state
+}
+
 #' Re-render a plot at a new pixel density: `fx_send(render)` if the
 #' cell's output is an image and the worker is alive; the answer comes as
 #' `wk_rendered`. The message has no `width`/`height`, so the worker draws
@@ -1623,9 +1758,11 @@ reduce_wk_done <- function(state, event) {
                        defined = report$created %||% character(),
                        variables = if (identical(status, "ok")) report$globals %||% list() else list(),
                        settings_found = settings_found, setting = id %in% state$graph$settings,
-                       load_notes = load_notes, changed_in_place = as.character(changed_in_place))
+                       load_notes = load_notes, changed_in_place = as.character(changed_in_place),
+                       inputs = if (identical(status, "ok")) report$inputs %||% list() else list())
   if (late_stale) result$stale <- TRUE
   state$results[[id]] <- result
+  if (identical(status, "ok")) state <- keep_input_values(state, id, w$running$code, result$inputs)
   if (length(state$footer_sources) && all_code_cells_ran(state)) {
     state$footer_sources <- character()
   }
@@ -1789,6 +1926,7 @@ reduce_wk_exited <- function(state, event) {
   state$pending <- character()
   state$worker$status <- "stopped"
   state$worker$running <- NULL
+  state$worker$input <- NULL
   state$worker$restart_offered <- FALSE
   state$worker$exit <- list(status = event$status, message = event$message)
   # The process that answered `started_at`/`info` (r_version) is gone; a

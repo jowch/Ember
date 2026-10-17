@@ -1,6 +1,8 @@
 # Interactive inputs
 
-_Design, 2026-10-17, for #36 (build step 5). Not built._
+_Design, 2026-10-17, for #36 (build step 5). The engine and worker side is
+built; the package, the page and the agent tool are not. See "Built so
+far" at the end._
 
 ## Summary
 
@@ -334,6 +336,52 @@ R has no macros, so the binding comes from the assignment instead of from
 - **Frontend:** draw the six widgets from a new output type,
   `application/vnd.ember.inputs+json`, inside `<bond>` elements.
 - **EndeavorMCP:** the tool and `read_cell` text, above.
+
+## Built so far
+
+The first increment is the engine and worker side, driven through Ember's
+R API. Nothing shows on the page yet.
+
+- **Rules 1 and 3**: `input_bindings()` in R/inputs.R reads them from the
+  cell's parse. Rule 3 uses the graph's own analysis of each top-level
+  expression, so `get("n")` or a glue template reading `n` blocks the
+  binding, as it would give another cell an edge. The run message carries the bindings, each with its
+  top-level expression's index, and the value kept for each name.
+- **The hook** (inst/worker.R, "Interactive inputs"). The worker sets
+  `.state$hook` when emberui loads. Each input function ends with
+
+  ```r
+  call <- sys.call()
+  hook <- .state$hook
+  if (is.function(hook)) hook(spec, call) else spec$value
+  ```
+
+  `spec` is `list(type, value, label, ...)` with `value` the default, plus
+  `check`: a function that takes a proposed value and returns it as the
+  input would (an integer slider rounds it), or stops with a message
+  saying what the input allows. The worker binds the input only when
+  `call` is `identical()` to the assignment's right-hand side (rule 2).
+  It uses `check` both for a kept value when the cell reruns and for a
+  new value. The `check` function stays in the worker; the rest of the
+  spec goes to the server.
+- **A bound input shows no value** as the cell's output, since moving it
+  doesn't rerun the cell (design.md's output rule names the exception).
+- **Every input call is reported**, bound or not. An unbound one says why:
+  `not_assigned` (rule 1 or 2) or `read_elsewhere` (rule 3). The page will
+  use this for the greyed widget and its note.
+- **`set_input(nb, name, value, wait = FALSE)`** goes through steps 2 to
+  5 above. One value is with the worker at a time; nothing new is sent to
+  run until it answers. With `wait = TRUE` a refused value is an error,
+  and the result names the cells that reran or turned stale.
+- **The snapshot** has each cell's `inputs`: name, whether bound, why not,
+  spec, default and current value.
+- **Tests** use a stand-in emberui with two inputs
+  (tests/testthat/fixtures/emberui), not the real package. One test
+  installs it from a `file://` repository and drives `set_input()` end to
+  end.
+
+Next: the emberui package itself, then the widgets on the page (the
+`bonds` projection), then EndeavorMCP's tool.
 
 ## Decided with Jonathan (2026-10-17)
 
