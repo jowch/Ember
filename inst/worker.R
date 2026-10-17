@@ -118,6 +118,9 @@ search_added <- character()  # every attach() entry any cell has added this sess
 running <- NULL        # list(cell, token) during a run (for the source trace)
 deferred <- list()     # messages read while waiting for a source_reply
 load_log <- NULL       # settings changes made inside loadNamespace/library during a run
+notebook_options <- character()  # option names an options() call from the
+                       # notebook's own code (top-level, or a function a
+                       # cell defined) set during the current run
 settings_base <- NULL  # the baseline settings: snapshotted once at boot, then
                        # every change a package load makes is copied in, so a
                        # package's own option survives a reset
@@ -399,6 +402,7 @@ run_cell <- function(msg) {
     before <- snapshot_globals(before_names)
     settings0 <- snapshot_settings()
     load_log <<- list()
+    notebook_options <<- character()
     attach_requests[[msg$cell]] <<- character()
     running <<- list(cell = msg$cell, token = msg$token)
     search0 <- search()
@@ -602,6 +606,11 @@ run_cell <- function(msg) {
       rc$removed <- facts$removed
 
       by_code <- settings_by_code(settings0, settings_code, load_log_code)
+      # An option a package creates for itself on first use (readr's
+      # `readr.num_threads`) is the package's, as a load's change is (#164).
+      cached <- package_cached_options(by_code$settings, notebook_options)
+      for (d in by_code$settings[cached]) settings_base <<- set_setting(settings_base, d$kind, d$name, d$after)
+      by_code$settings <- by_code$settings[!cached]
       # What the display step changed is its own, as a package load's
       # change is: part of the starting values from now on. A package it
       # loads (knitr, or a table package's dependencies) still gets its
@@ -1125,6 +1134,22 @@ settings_by_code <- function(settings0, after, load_log) {
   list(settings = diff_settings(baseline, after), load_notes = notes)
 }
 
+#' Which of a cell's setting changes are a package caching its own option
+#' on first use (#164): an option that didn't exist before the run, that no
+#' `options()` call from the notebook's own code set (`notebook_set`, from
+#' `protect_options()`). readr sets `readr.num_threads` on its first read
+#' or write and `readr.default_locale` on its first `read_csv2()`. What
+#' decides is who called `options()`, not the option's name: a notebook
+#' helper `quiet <- function() options(readr.show_col_types = FALSE)` makes
+#' the cell that calls it a settings cell, as any setting in a helper does.
+#' Returns a logical vector over `diffs`.
+package_cached_options <- function(diffs, notebook_set) {
+  vapply(diffs, function(d) {
+    identical(d$kind, "option") && is.null(d$before) && !is.null(d$after) &&
+      !(d$name %in% notebook_set)
+  }, logical(1))
+}
+
 #' Before a cell runs (settings-cells.md, What the worker does before each
 #' run): put every setting any cell has changed back to the baseline, then
 #' apply the changes of the settings cells in effect, `ids`, in order.
@@ -1332,6 +1357,42 @@ install_traces <- function() {
           tracer = bquote((.(ember_trace_s4_method))()))
   }
   protect_closeall(base_env)
+  protect_options(base_env)
+  invisible()
+}
+
+#' Replace options() with a version that records, during a run, which
+#' options the notebook's own code set: a call whose caller's top-level
+#' environment is the global one (a cell's code, or a function a cell
+#' defined), not a package namespace (#164). `package_cached_options()`
+#' tells a package caching its own option apart from a setting by this.
+#' A call that sets options returns the old values, named by the options
+#' it set, so nothing else is read. Same binding-replacement approach as
+#' `protect_closeall()`.
+#'
+#' The body ends with base's own `.Internal(options(...))` and records in
+#' `on.exit()`, so an error from a bad value (`options(digits = 0)`) keeps
+#' the caller's call and frames, and a query keeps its visibility. A query
+#' (`options("digits")`) has no names and no list argument and is skipped.
+protect_options <- function(base_env) {
+  wrapped <- function(...) {
+    # `returnValue()` is NULL after an error, before the arguments are
+    # read again here: a failed one would only fail again.
+    on.exit(if (!is.null(running) && !is.null(returnValue(NULL)) &&
+                ...length() > 0 && (!is.null(...names()) || is.list(..1))) {
+      set <- names(returnValue(NULL))
+      if (length(set) && identical(topenv(parent.frame()), globalenv())) {
+        # Not union(): it costs about 20 us a call, and a cell may set an
+        # option in a loop.
+        set <- set[!(set %in% notebook_options)]
+        if (length(set)) notebook_options <<- c(notebook_options, set)
+      }
+    })
+    .Internal(options(...))
+  }
+  unlockBinding("options", base_env)
+  assign("options", wrapped, envir = base_env)
+  lockBinding("options", base_env)
   invisible()
 }
 
