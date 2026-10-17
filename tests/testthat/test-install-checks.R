@@ -49,6 +49,50 @@ test_that("compiler_instructions() says what to install on each platform, with s
   expect_equal(sudo_prefix("someone", has_sudo = FALSE), "")
 })
 
+test_that("on Windows has_compiler() asks R CMD, whose PATH has Rtools (#49)", {
+  cc <- strsplit(r_config("CC"), "\\s+")[[1]]
+  skip_if(!any(nzchar(cc)), "R CMD config CC says nothing here")
+  seen <- NULL
+  expect_true(has_compiler("windows", r_cmd_runs = function(args) { seen <<- args; TRUE }))
+  expect_identical(seen, c(cc[nzchar(cc)][[1]], "--version"))
+  expect_false(has_compiler("windows", r_cmd_runs = function(args) FALSE))
+})
+
+test_that("on Windows with Rtools off the PATH, has_compiler() still finds it (#49)", {
+  # Rtools' gcc is on R CMD's PATH only (R's Rcmd_environ); rig's user
+  # mode, and a standard Rtools install, leave it off everyone else's.
+  # The installer runs in a fresh Rscript, as here. This R's PATH may have
+  # Rtools on it (pkgbuild adds it for load_all()), so the Rscript first
+  # drops every PATH folder that has a gcc.exe.
+  skip_on_os(c("mac", "linux", "solaris"))
+  skip_if_not(r_cmd_succeeds(c("gcc", "--version")), "no Rtools here")
+  use_installed_ember()
+  code <- paste(
+    "p <- strsplit(Sys.getenv('PATH'), ';', fixed = TRUE)[[1]];",
+    "Sys.setenv(PATH = paste(p[!file.exists(file.path(p, 'gcc.exe'))], collapse = ';'));",
+    "cat(nzchar(Sys.which('gcc')), ember:::has_compiler())")
+  res <- processx::run(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
+                       env = c("current", R_LIBS = paste(.libPaths(), collapse = ";")))
+  expect_identical(res$stdout, "FALSE TRUE")
+})
+
+test_that("on Windows without Rtools, has_compiler() says so (#49)", {
+  # No Rtools for R CMD: R_CUSTOM_TOOLS_PATH replaces Rtools' folders on R
+  # CMD's PATH (R's Rcmd_environ), and every folder with a gcc.exe or an
+  # sh.exe (Git's usr\bin has one) leaves the PATH. R CMD config then
+  # can't run its sh, or finds no gcc, as on a machine without Rtools.
+  skip_on_os(c("mac", "linux", "solaris"))
+  use_installed_ember()
+  code <- paste(
+    "p <- strsplit(Sys.getenv('PATH'), ';', fixed = TRUE)[[1]];",
+    "p <- p[!file.exists(file.path(p, 'gcc.exe')) & !file.exists(file.path(p, 'sh.exe'))];",
+    "Sys.setenv(PATH = paste(p, collapse = ';'), R_CUSTOM_TOOLS_PATH = 'C:/no-such-tools');",
+    "cat(ember:::has_compiler())")
+  res <- processx::run(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
+                       env = c("current", R_LIBS = paste(.libPaths(), collapse = ";")))
+  expect_identical(res$stdout, "FALSE")
+})
+
 test_that("source_builds() names the compiled packages with no binary at the locked version (92)", {
   src <- cbind(Package = c("Rcpp", "glue", "units", "cli"),
                Version = c("1.0.12", "1.8.0", "0.8-5", "3.6.5"),
