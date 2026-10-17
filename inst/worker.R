@@ -1440,9 +1440,16 @@ install_traces <- function() {
       # (`exclude = exclude` in conflicted's library() wrapper) is left out,
       # so it stays missing: evaluated in this child environment, R's
       # missing() would no longer see through it to the caller's frame.
+      # Only a formal with no default: `missing()` is TRUE for an unsupplied
+      # `quietly = q` with a default too, and that default must be passed.
+      caller_formals <- if (sys.parent() > 0) {
+        tryCatch(formals(sys.function(sys.parent())), error = function(e) NULL)
+      }
       for (arg in rev(which(nzchar(names(real_call) %||% character(length(real_call)))))) {
         val <- real_call[[arg]]
         if (is.symbol(val) && nzchar(as.character(val)) &&
+            as.character(val) %in% names(caller_formals) &&
+            identical(caller_formals[[as.character(val)]], quote(expr = )) &&
             isTRUE(tryCatch(eval(call("missing", val), call_env), error = function(e) FALSE))) {
           real_call[[arg]] <- NULL
         }

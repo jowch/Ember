@@ -1293,6 +1293,20 @@ test_that("a library() wrapper on the search path is used, missing arguments and
   expect_identical(r$output$text, '[1] ".emberfix3"        "package:emberfix2" "package:emberfix1"')
 })
 
+test_that("a caller's own default passed on to library() or require() is kept (#180 review)", {
+  # Only a formal with no default is left out of the call; `lr` and `q`
+  # have defaults, which base's must not replace.
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L,
+    'ld <- function(p, lr = TRUE) library(p, character.only = TRUE, logical.return = lr); ld("tools")')
+  expect_identical(r$output$text, "[1] TRUE")
+  r <- run_and_wait(h, "b", 2L,
+    'rq <- function(p, q = TRUE) require(p, character.only = TRUE, quietly = q); print(rq("stats4"))')
+  expect_true(any(grepl("[1] TRUE", unlist(r$console), fixed = TRUE)))
+  expect_false(any(grepl("Loading required package", unlist(r$console), fixed = TRUE)))
+})
+
 test_that("drop_globals removes a cell's globals but keeps its attached packages (ui-3 12)", {
   h <- worker_harness()
   on.exit(h$close())
