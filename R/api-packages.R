@@ -106,13 +106,45 @@ set_date <- function(nb, date) {
   invisible(reply)
 }
 
-#' Increment 3. Move the date so that `name` is at `version` (the latest
-#' when `NULL`): the earliest date on which that version was current, from
-#' CRAN's release dates (crandb.r-pkg.org, cached), so the other packages
-#' move only as far as they must. Returns the preview; `set_date()` with
-#' its date applies it. Pinning an older version is the same call.
+#' What updating one package, or pinning it to an older version, would
+#' change.
+#'
+#' Moves the date so that `name` is at `version` (CRAN's newest when
+#' `NULL`), as design.md's "Updating one package" says: a newer version
+#' takes the first date it was current, so the other packages move only as
+#' far as they must, and an older one takes the last date it was current,
+#' so they move back as little as they can. The dates come from CRAN's own
+#' index of its files (`ember_repos(cran_meta)`, cached for a day), and
+#' each is checked against that date's snapshot: a snapshot taken before a
+#' release reached Package Manager is passed over for the next day's.
+#'
+#' Refused (an `ember_refused` condition) unless the notebook's lock has
+#' `name` from CRAN. Otherwise the same preview as `preview_date()`, which
+#' `set_date()` with the returned `date` applies; `status` `"failed"` with
+#' `message` when there is no such date (a version CRAN never released, or
+#' release dates that couldn't be fetched).
+#'
+#' @return `list(date, status, changes, problems, message)`, as
+#'   `preview_date()`'s.
+#' @export
 preview_update <- function(nb, name, version = NULL, wait = TRUE, timeout = 60) {
-  stop("not implemented")
+  if (!is.null(version)) version <- as.character(version)
+  reply <- dispatch(nb, ev_preview_update(name, version, today = Sys.Date(), at = Sys.time()))
+  if (inherits(reply, "ember_refused")) stop(reply)
+  mine <- function(prop) {
+    !is.null(prop) && identical(prop$update$name, name) &&
+      (is.null(version) || identical(prop$update$version, version))
+  }
+  if (isTRUE(wait)) {
+    wait_for(nb, function(snap) {
+      prop <- snap$packages$proposal
+      mine(prop) && prop$status %in% c("ready", "failed")
+    }, timeout = timeout)
+  }
+  prop <- package_status(nb)$proposal
+  if (!mine(prop)) return(list(date = NA_character_, status = "fetching", changes = NULL, problems = NULL, message = NULL))
+  list(date = prop$date, status = prop$status, changes = prop$changes, problems = prop$problems,
+       message = prop$message)
 }
 
 # ---- Running a notebook file -------------------------------------------------

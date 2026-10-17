@@ -466,6 +466,89 @@ bioc_config_fetch_command <- function(url, cache = cache_dir()) {
 #' keep it apart from `index_job_key()`'s.
 bioc_config_job_key <- function(url, cache) paste("bioc-config", url, cache, sep = "\u0001")
 
+# ---- CRAN's release dates ----------------------------------------------------
+
+#' Every CRAN version's release date, from CRAN's own index of its files
+#' (`ember_repos(cran_meta)`): `archive.rds` lists each archived tarball and
+#' `current.rds` each current one, with the time CRAN published it. A
+#' `data.frame(package, version, date)`, `date` the UTC day, one row per
+#' version, oldest first within a package. Pure; `archive` and `current` are
+#' what `readRDS()` gives for those files.
+cran_release_table <- function(archive, current) {
+  paths <- c(unlist(lapply(archive, rownames), use.names = FALSE), rownames(current))
+  mtime <- c(unlist(lapply(archive, function(info) as.numeric(info$mtime)), use.names = FALSE),
+             as.numeric(current$mtime))
+  file <- basename(paths)
+  pattern <- "^(.+)_([^_]+)\\.tar\\.gz$"
+  ok <- grepl(pattern, file)
+  out <- data.frame(package = sub(pattern, "\\1", file[ok]), version = sub(pattern, "\\2", file[ok]),
+                    date = as.Date(as.POSIXct(mtime[ok], origin = "1970-01-01", tz = "UTC"), tz = "UTC"),
+                    stringsAsFactors = FALSE)
+  out <- out[order(out$package, out$date, method = "radix"), , drop = FALSE]
+  out <- out[!duplicated(paste(out$package, out$version)), , drop = FALSE]
+  rownames(out) <- NULL
+  out
+}
+
+#' Where the release table from `url` is cached, as the Bioconductor list is.
+cran_releases_rds_path <- function(url, cache = cache_dir()) {
+  file.path(cache, "cran-releases", paste0(hash_text(url), ".rds"))
+}
+
+#' A day, as for Bioconductor's list: a copy fetched yesterday lacks only
+#' today's releases, which Package Manager's snapshots may not have yet.
+cran_releases_max_age <- 24 * 60 * 60
+
+#' The cached release table for `url`: `list(table, fetched_at)`, or `NULL`
+#' when there is none, or it is older than `max_age` seconds.
+cached_cran_releases <- function(url, cache = cache_dir(), max_age = cran_releases_max_age) {
+  path <- cran_releases_rds_path(url, cache)
+  if (!file.exists(path)) return(NULL)
+  hit <- tryCatch(readRDS(path), error = function(e) NULL)
+  if (is.null(hit) || !is.data.frame(hit$table)) return(NULL)
+  age <- as.numeric(difftime(Sys.time(), hit$fetched_at, units = "secs"))
+  if (is.na(age) || age > max_age) return(NULL)
+  hit
+}
+
+#' Run in a subprocess (`cran_releases_fetch_command()`): download
+#' `archive.rds` and `current.rds` from `url` (about 6 MB together), build
+#' `cran_release_table()` and save `list(table, fetched_at)` at a temporary
+#' name, then rename into place.
+fetch_cran_releases_main <- function(url, path) {
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  read <- function(name) {
+    tmp <- tempfile("ember-cran-meta-")
+    on.exit(unlink(tmp))
+    ok <- isTRUE(tryCatch({
+      utils::download.file(paste0(url, "/", name), tmp, quiet = TRUE, mode = "wb")
+      TRUE
+    }, error = function(e) FALSE, warning = function(w) FALSE))
+    if (!ok) stop("ember: could not fetch ", paste0(url, "/", name), call. = FALSE)
+    readRDS(tmp)
+  }
+  table <- cran_release_table(read("archive.rds"), read("current.rds"))
+  if (nrow(table) == 0) stop("ember: no CRAN releases found at ", url, call. = FALSE)
+  tmp_rds <- paste0(path, ".tmp-", Sys.getpid())
+  saveRDS(list(table = table, fetched_at = Sys.time()), tmp_rds)
+  if (!file.rename(tmp_rds, path)) unlink(tmp_rds)
+  invisible(NULL)
+}
+
+#' The command that fetches the release table from `url`, as a job.
+cran_releases_fetch_command <- function(url, cache = cache_dir()) {
+  path <- cran_releases_rds_path(url, cache)
+  rscript <- file.path(R.home("bin"), "Rscript")
+  code <- paste0(
+    "local({library(ember); ember:::fetch_cran_releases_main(",
+    deparse(url), ", ", deparse(path), ")})")
+  env <- c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep),
+           R_LIBS_USER = "", R_LIBS_SITE = "")
+  list(command = rscript, args = c("--vanilla", "-e", code), env = env)
+}
+
+cran_releases_job_key <- function(url, cache) paste("cran-releases", url, cache, sep = "\u0001")
+
 # ---- Libraries ---------------------------------------------------------------
 
 #' The manifest of a ready library, or `NULL` when there is no complete

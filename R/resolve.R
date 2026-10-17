@@ -27,13 +27,20 @@
 #' (`https://github.example.org/api/v3`), or a `file://` folder laid out
 #' the same way (`repos/<user>/<repo>/commits/<ref>` holding the commit,
 #' `repos/<user>/<repo>/tarball/<sha>` the package), which is the test seam.
+#'
+#' `cran_meta` is where CRAN's own index of its files is: `archive.rds` and
+#' `current.rds`, which give every version's release date for
+#' `preview_update()` (`cran_release_table()`). Any CRAN mirror's
+#' `src/contrib/Meta`, or a `file://` folder holding the two files.
 #' @export
 ember_repos <- function(cran = "https://packagemanager.posit.co/cran",
                         bioc = "https://packagemanager.posit.co/bioconductor",
                         bioc_config = "https://bioconductor.org/config.yaml",
-                        github = "https://api.github.com") {
+                        github = "https://api.github.com",
+                        cran_meta = "https://cloud.r-project.org/src/contrib/Meta") {
   structure(list(cran = sub("/+$", "", cran), bioc = sub("/+$", "", bioc),
-                 bioc_config = bioc_config, github = sub("/+$", "", github)),
+                 bioc_config = bioc_config, github = sub("/+$", "", github),
+                 cran_meta = sub("/+$", "", cran_meta)),
             class = "ember_repos")
 }
 

@@ -792,17 +792,23 @@ outside the rule and are marked unchecked.
   package) moves the notebook to the earliest date on which that version was
   current, so the other packages move only as far as they must. **Update
   all** moves the date to today. **Pinning an older version** moves the date
-  back to when it was current. Each shows every version that changes before
-  applying.
+  back to the last day it was current, so the other packages move back as
+  little as they can. Package Manager takes its snapshots at a set time, so
+  each date is checked against that day's snapshot, and a snapshot that
+  doesn't have the version yet (or, for a pin, already has the next one) is
+  passed over for the next day's. Each shows every version that changes
+  before applying (`preview_update()`).
 - **No solver is needed.** Each package version was current for one span of
   time, from its release to the next. Versions that were all current at one
   moment form a valid lock, and for spans of time, overlapping pairwise
   already means overlapping at one moment; so finding a lock is finding a
-  date. The data is every CRAN version's release date, which
-  crandb.r-pkg.org gives per package (fetching 100 packages took 3 s with 16
-  requests at a time; finding a date took 13 ms). Ember caches it, since
-  crandb is a community service. The installer only ever sees one dated
-  repository URL.
+  date. The data is every CRAN version's release date, which CRAN gives
+  itself: its `src/contrib/Meta/archive.rds` and `current.rds` list every
+  tarball with the time it was published (about 6 MB together, on any CRAN
+  mirror). Ember fetches them in a subprocess and caches the table for a
+  day. crandb.r-pkg.org has the same dates, but it is a community service
+  Ember would depend on; CRAN's files need no new host. The installer only
+  ever sees one dated repository URL.
 
 CRAN's checks aren't a guarantee (a package can be broken or archived on
 some date), but they are much stronger than minimum versions. Moving the date

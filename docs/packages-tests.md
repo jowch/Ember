@@ -188,4 +188,4 @@ In test-packages-session.R:
 
 75. **[net]** A notebook with `library(dplyr)` at a fixed past date resolves from PPM, installs with renv, and the worker loads exactly the locked versions.
 76. **[net]** (2) A Bioconductor package resolves and installs from the dated Bioconductor URL.
-77. **[net]** (3) `preview_update(nb, "dplyr", "1.1.4")` finds the date from crandb and lists the changes.
+77. **[net]** (3) `preview_update(nb, "dplyr", "1.1.4")` finds the date from CRAN's index of its files and lists the changes. Offline, the toy repo's `toy-meta` stands in for CRAN's files; the core tests cover a snapshot that lags a release.
