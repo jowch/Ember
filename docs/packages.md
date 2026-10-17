@@ -309,7 +309,9 @@ what was missing.
 
 - **Compiler, before renv.** When this machine has no compiler
   (`has_compiler()`: `xcode-select -p` on macOS, the `R CMD config CC`
-  compiler on the PATH elsewhere), the installer reads the source and
+  compiler on the PATH on Linux, and on the PATH `R CMD` builds with on
+  Windows, since only that PATH has Rtools, #49), the installer reads the
+  source and
   binary indexes and names the locked packages that have code to compile
   and no binary at their locked version (`source_builds()`). On Linux with
   Package Manager binaries this check is skipped: almost nothing builds from
