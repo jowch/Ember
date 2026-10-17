@@ -867,16 +867,20 @@ compare_globals <- function(before_names, before) {
 }
 
 #' The most bindings `env_fingerprints()` reads per run, over all the
-#' environments it visits, so a cell after a global holding a namespace or
-#' a huge environment doesn't pay for reading it on every run.
+#' environments it visits, and the most it reads from one environment. An
+#' environment over the limit (a dictionary of 1e5 keys) is skipped, not
+#' read, and the others are still checked, so a big one costs only a
+#' `length()` call each run.
 ENV_FINGERPRINT_MAX <- 10000L
+ENV_FINGERPRINT_ONE_MAX <- 1000L
 
 #' Fingerprints of the environment-valued globals in `before` (a
 #' `snapshot_globals()` result) named in `names`: a named list of
 #' `list(env, print)`. Environments, R6 objects and reference class objects
 #' are the values a cell can change without rebinding the name, so
 #' `compare_globals()` can't see it (#167). Package namespaces and the
-#' global environment are skipped.
+#' global environment are skipped, and so is an environment too big to
+#' read.
 env_fingerprints <- function(before, names) {
   budget <- new.env()
   budget$left <- ENV_FINGERPRINT_MAX
@@ -885,7 +889,7 @@ env_fingerprints <- function(before, names) {
     b <- before[[n]]
     if (b$active || !is.environment(b$value) || is_shared_env(b$value)) next
     print <- env_fingerprint(b$value, budget)
-    if (is.null(print)) break
+    if (is.null(print)) next
     out[[n]] <- list(env = b$value, print = print)
   }
   out
@@ -903,9 +907,14 @@ is_shared_env <- function(e) {
 #' active binding by its function, and an environment-valued binding by
 #' its own fingerprint, `depth` levels down. An R6 object's private fields
 #' are two levels down (`.__enclos_env__`, then `private`). Each
-#' environment is read once (`seen`), so `self` doesn't loop. `NULL` once
-#' `budget$left` runs out, or if reading a binding fails (a promise that
-#' errors when forced).
+#' environment is read once (`seen`), so `self` doesn't loop.
+#'
+#' A binding is read with `substitute()`, which never forces a promise: a
+#' `delayedAssign()` binding is kept as its expression, so taking the
+#' fingerprint runs no user code. `NULL` when the environment has more
+#' bindings than `ENV_FINGERPRINT_ONE_MAX` or than `budget$left` (counted
+#' with `length()`, before anything is listed), or if reading it fails. An
+#' inner environment that is skipped is kept by identity only.
 env_fingerprint <- function(e, budget, depth = 3L, seen = new.env()) {
   tryCatch(env_fingerprint_(e, budget, depth, seen), error = function(err) NULL)
 }
@@ -914,9 +923,13 @@ env_fingerprint_ <- function(e, budget, depth, seen) {
   # `identical()` on environments compares the objects, not their contents.
   for (s in seen$envs) if (identical(s, e)) return("seen")
   seen$envs <- c(seen$envs, list(e))
+  # A reference class object is an S4 object holding its environment;
+  # `length()` and `substitute()` need the environment itself.
+  if (isS4(e)) e <- as.environment(e)
+  size <- length(e)
+  if (size > ENV_FINGERPRINT_ONE_MAX || size > budget$left) return(NULL)
+  budget$left <- budget$left - size
   nms <- ls(e, all.names = TRUE, sorted = TRUE)
-  budget$left <- budget$left - length(nms)
-  if (budget$left < 0) return(NULL)
   out <- vector("list", length(nms))
   names(out) <- nms
   for (n in nms) {
@@ -924,7 +937,7 @@ env_fingerprint_ <- function(e, budget, depth, seen) {
       out[[n]] <- list(active = activeBindingFunction(n, e))
       next
     }
-    v <- get(n, envir = e, inherits = FALSE)
+    v <- eval(call("substitute", as.name(n), e))
     # A reference class object copies a method into itself the first time
     # it's called (`a$get()`), which is no change to the object.
     if (inherits(v, "refMethodDef")) {
@@ -933,8 +946,7 @@ env_fingerprint_ <- function(e, budget, depth, seen) {
     }
     if (is.environment(v) && depth > 1L && !is_shared_env(v)) {
       inner <- env_fingerprint_(v, budget, depth - 1L, seen)
-      if (is.null(inner)) return(NULL)
-      out[[n]] <- list(env = v, print = inner)
+      out[[n]] <- if (is.null(inner)) list(env = v) else list(env = v, print = inner)
     } else {
       out[[n]] <- list(value = v)
     }

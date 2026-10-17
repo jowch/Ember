@@ -1588,6 +1588,33 @@ test_that("a cell that changes another cell's environment in place reports it; r
   expect_length(r$changed_in_place, 0)
 })
 
+test_that("taking the in-place fingerprint forces no promise, and a big environment is skipped without turning the check off for the others (#167)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  run_and_wait(h, "a", 1L, paste(
+    "forced <- 0",
+    "le <- new.env()",
+    "delayedAssign('x', { forced <<- forced + 1; 42 }, assign.env = le)",
+    "delayedAssign('bad', stop('never read'), assign.env = le)",
+    "d <- new.env(hash = TRUE)",
+    "for (i in seq_len(20000)) assign(paste0('k', i), i, envir = d)",
+    "cnt <- new.env()",
+    "cnt$n <- 0", sep = "\n"))
+  r <- run_and_wait(h, "b", 2L, "1")
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "c", 3L, "forced")
+  expect_identical(r$output$text, "[1] 0")
+  # After the skipped dictionary and the environment holding a promise that
+  # errors, a change to the next object is still reported.
+  r <- run_and_wait(h, "e", 4L, "cnt$n <- 1")
+  expect_identical(r$changed_in_place, "cnt")
+  # Forcing a promise isn't a change; assigning over it is.
+  r <- run_and_wait(h, "f", 5L, "le$x")
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "g", 6L, "assign('x', 1, envir = le)")
+  expect_identical(r$changed_in_place, "le")
+})
+
 test_that("a setting the display step changes isn't the cell's: only its code's changes make it a settings cell, and the display's change stays as a package load's would (#156)", {
   skip_if_not_installed("knitr")
   h <- worker_harness(extra_libs = dirname(find.package("knitr")))
