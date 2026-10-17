@@ -57,7 +57,8 @@
 #   quit
 #
 # Worker -> server
-#   hello        secret, pid, r_version, lib_paths, tempdir, interrupts
+#   hello        secret, pid, r_version, lib_paths, tempdir, interrupts,
+#                cell_children
 #   console      cell, token, item = list(kind, text)   streamed during a run
 #   source       cell, token, path, text                before a computed
 #                                                       source() runs; waits
@@ -120,6 +121,8 @@ search_added <- character()  # every attach() entry any cell has added this sess
 running <- NULL        # list(cell, token) during a run (for the source trace)
 deferred <- list()     # messages read while waiting for a source_reply
 interrupt_drain <- NULL # Windows: the DLL routine that drops a late interrupt (listen_for_interrupts())
+release_children <- NULL # Windows: the DLL routine that releases a cell's processx children (#208)
+keeping_children <- FALSE  # Windows: whether the thread that releases them runs
 load_log <- NULL       # settings changes made inside loadNamespace/library during a run
 notebook_options <- character()  # option names an options() call from the
                        # notebook's own code (top-level, or a function a
@@ -154,7 +157,10 @@ loaded_namespace_versions <- function() {
 #' hello, from the package's DLL (src/interrupt.c, #48): loaded by path
 #' (`EMBER_DLL`), since the worker never loads the package. If that fails,
 #' the server finds no event to set and says the interrupt couldn't be
-#' delivered. Elsewhere the server sends SIGINT and this does nothing.
+#' delivered. The same DLL keeps a cell's processx and callr children
+#' alive past this process (src/children.c, #208). Elsewhere the server
+#' sends SIGINT, those children are in sessions of their own, and this
+#' does nothing.
 listen_for_interrupts <- function() {
   path <- Sys.getenv("EMBER_DLL")
   Sys.unsetenv("EMBER_DLL")
@@ -162,6 +168,11 @@ listen_for_interrupts <- function() {
   invisible(tryCatch({
     dll <- dyn.load(path)
     interrupt_drain <<- getNativeSymbolInfo("C_interrupt_drain", dll)
+    # So a cell's processx and callr children outlive this process, as
+    # they do on Unix (src/children.c, #208).
+    release_children <<- getNativeSymbolInfo("C_release_cell_children", dll)
+    keeping_children <<- isTRUE(tryCatch(.Call(getNativeSymbolInfo("C_keep_cell_children", dll)),
+                                         error = function(e) FALSE))
     isTRUE(.Call(getNativeSymbolInfo("C_interrupt_listen", dll)))
   }, error = function(e) FALSE))
 }
@@ -175,7 +186,23 @@ drain_late_interrupt <- function() {
   invisible(NULL)
 }
 
+#' processx marks the worker as the server's process tree (`cleanup_tree`,
+#' shell.R): `PROCESSX_<id>=YES` in its environment, which everything it
+#' starts inherits. When the server collects the old worker's process
+#' object after a restart, its finalizer ends every process with that
+#' marker, a cell's processx and callr children too, which are meant to
+#' outlive a restart (design.md, #150). Dropped before any cell runs, so
+#' a cell's children don't carry it; what a cell starts with `system()`
+#' still ends with the worker, through the process group and reaper on
+#' Unix and R's job object on Windows (#232).
+drop_processx_marker <- function() {
+  marks <- grep("^PROCESSX_", names(Sys.getenv()), value = TRUE)
+  if (length(marks)) Sys.unsetenv(marks)
+  invisible(marks)
+}
+
 main <- function() {
+  drop_processx_marker()
   listening <- listen_for_interrupts()
   port <- as.integer(commandArgs(trailingOnly = TRUE)[1])
   con <<- socketConnection("127.0.0.1", port, blocking = TRUE, open = "r+b",
@@ -202,7 +229,8 @@ main <- function() {
     send(list(type = "hello", secret = secret,
               pid = Sys.getpid(), r_version = R.version.string,
               lib_paths = .libPaths(), loaded = loaded_namespace_versions(),
-              tempdir = tempdir(), interrupts = listening))
+              tempdir = tempdir(), interrupts = listening,
+              cell_children = keeping_children))
     # This frame stays on the stack while every cell runs, so a cell
     # walking sys.frames() would find the secret here.
     rm(secret)
@@ -250,8 +278,11 @@ handle_next <- function() {
   switch(msg$type,
     run = {
       drain_late_interrupt()
-      send(list(type = "done", cell = msg$cell, token = msg$token,
-                report = run_cell(msg)))
+      report <- run_cell(msg)
+      # Before "done": the children a finished cell started are released
+      # by the time the server hears it ended (src/children.c, #208).
+      if (!is.null(release_children)) .Call(release_children)
+      send(list(type = "done", cell = msg$cell, token = msg$token, report = report))
     },
     remove_cell = {
       remove_cell(msg$cell)
