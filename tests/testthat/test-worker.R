@@ -1609,6 +1609,25 @@ test_that("an option a package's code creates for itself on first use is the pac
   expect_identical(names_of(r), "stats.ember_cache")
 })
 
+test_that("the options() wrapper doesn't show in an error or change a query's visibility (#164)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  # As on main: the caller's call, and no frames of the wrapper's own.
+  r <- run_and_wait(h, "a", 1L, "options(digits = 0)")
+  expect_identical(r$status, "error")
+  expect_identical(r$error$call, "options(digits = 0)")
+  expect_identical(r$error$traceback, "options(digits = 0)")
+  expect_false(r$error$deep)
+  run_and_wait(h, "f", 2L, "f <- function() options(digits = 0)")
+  r <- run_and_wait(h, "b", 3L, "f()")
+  expect_identical(r$error$traceback, c("f()", "options(digits = 0)"))
+  expect_identical(vapply(r$error$frames, function(f) f$call, character(1)), c("f()", "options(digits = 0)"))
+  # A query still prints.
+  r <- run_and_wait(h, "c", 4L, 'options("digits")')
+  expect_identical(r$output$text, "$digits\n[1] 7\n")
+  expect_length(r$settings, 0)
+})
+
 test_that("a package the display step loads still gets its load note when it resets a setting a settings cell set (#156, #61)", {
   skip_if_not_installed("knitr")
   h <- worker_harness(extra_libs = c(fixture_lib(), dirname(find.package("knitr"))))

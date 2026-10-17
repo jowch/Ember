@@ -1366,21 +1366,29 @@ install_traces <- function() {
 #' environment is the global one (a cell's code, or a function a cell
 #' defined), not a package namespace (#164). `package_cached_options()`
 #' tells a package caching its own option apart from a setting by this.
-#' A call that sets options returns the old values invisibly, named by the
-#' options it set, so nothing else is read. Same binding-replacement
-#' approach as `protect_closeall()`.
+#' A call that sets options returns the old values, named by the options
+#' it set, so nothing else is read. Same binding-replacement approach as
+#' `protect_closeall()`.
+#'
+#' The body ends with base's own `.Internal(options(...))` and records in
+#' `on.exit()`, so an error from a bad value (`options(digits = 0)`) keeps
+#' the caller's call and frames, and a query keeps its visibility. A query
+#' (`options("digits")`) has no names and no list argument and is skipped.
 protect_options <- function(base_env) {
-  original <- get("options", envir = base_env)
   wrapped <- function(...) {
-    r <- withVisible(original(...))
-    if (!r$visible && !is.null(running) && identical(topenv(parent.frame()), globalenv())) {
-      # Not union(): it costs about 20 us a call, and a cell may set an
-      # option in a loop.
-      set <- names(r$value)
-      set <- set[!(set %in% notebook_options)]
-      if (length(set)) notebook_options <<- c(notebook_options, set)
-    }
-    if (r$visible) r$value else invisible(r$value)
+    # `returnValue()` is NULL after an error, before the arguments are
+    # read again here: a failed one would only fail again.
+    on.exit(if (!is.null(running) && !is.null(returnValue(NULL)) &&
+                ...length() > 0 && (!is.null(...names()) || is.list(..1))) {
+      set <- names(returnValue(NULL))
+      if (length(set) && identical(topenv(parent.frame()), globalenv())) {
+        # Not union(): it costs about 20 us a call, and a cell may set an
+        # option in a loop.
+        set <- set[!(set %in% notebook_options)]
+        if (length(set)) notebook_options <<- c(notebook_options, set)
+      }
+    })
+    .Internal(options(...))
   }
   unlockBinding("options", base_env)
   assign("options", wrapped, envir = base_env)
