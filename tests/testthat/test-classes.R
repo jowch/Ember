@@ -167,6 +167,17 @@ test_that("a dot-name that is no class binding stays private", {
   expect_equal(g$errors[[1]]$kind, "private_name")
 })
 
+test_that("slotNames(), extends() and the method lookups read their class", {
+  g <- notebook_graph(c(
+    c = "setClass('Circle', representation(r = 'numeric'))",
+    u = "slotNames('Circle')",
+    v = "extends('Circle', 'Shape')",
+    w = "getMethod('area', 'Circle')",
+    x = "isVirtualClass('Circle')"
+  ))
+  for (id in c("u", "v", "w", "x")) expect_true(has_edge(g, id, "c", ".__C__Circle", "definition"), info = id)
+})
+
 # ---- Running -------------------------------------------------------------------
 
 test_that("a class cell placed last still runs before the cells that use it", {

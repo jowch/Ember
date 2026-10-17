@@ -280,6 +280,61 @@ test_that("a new notebook dated a day the repository hasn't published yet instal
   expect_true(wait_for(nb, function(snap) any(grepl(yesterday, readLines(path), fixed = TRUE)), timeout = 30))
 })
 
+test_that("updating to a day the repository hasn't published yet offers the day before, and set_date() applies it (#162)", {
+  # The repository has 2026-09-01 and yesterday (UTC, toyA 0.2), and no
+  # folder for today: "Update all" early in a new day.
+  today <- as.Date(format(Sys.time(), tz = "UTC"))
+  yesterday <- format(today - 1)
+  toy <- normalizePath(testthat::test_path("fixtures", "repos", "toy"), mustWork = TRUE)
+  root <- tempfile("ember-unpublished-repo-")
+  dir.create(root)
+  on.exit(unlink(root, recursive = TRUE), add = TRUE)
+  stopifnot(file.copy(file.path(toy, c("2026-09-01", "2026-09-30")), root, recursive = TRUE),
+            file.rename(file.path(root, "2026-09-30"), file.path(root, yesterday)))
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+
+  path <- write_toy_notebook("2026-09-01")
+  nb <- open_notebook(path, repos = ember_repos(cran = paste0("file://", root)), cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, "A", wait = TRUE, timeout = 120)
+
+  preview <- preview_date(nb, format(today), wait = TRUE, timeout = 120)
+  expect_equal(preview$status, "ready")
+  expect_equal(preview$date, yesterday)
+  expect_equal(preview$changes$to[preview$changes$name == "toyA"], "0.2")
+  set_date(nb, preview$date)
+  expect_equal(package_status(nb)$snapshot, yesterday)
+})
+
+test_that("Update with nothing loaded applies the newest published date and preview_date() returns at once with it (#221)", {
+  today <- as.Date(format(Sys.time(), tz = "UTC"))
+  yesterday <- format(today - 1)
+  toy <- normalizePath(testthat::test_path("fixtures", "repos", "toy"), mustWork = TRUE)
+  root <- tempfile("ember-unpublished-repo-")
+  dir.create(root)
+  on.exit(unlink(root, recursive = TRUE), add = TRUE)
+  stopifnot(file.copy(file.path(toy, c("2026-09-01", "2026-09-30")), root, recursive = TRUE),
+            file.rename(file.path(root, "2026-09-30"), file.path(root, yesterday)))
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+
+  path <- write_toy_notebook("2026-09-01")
+  nb <- open_notebook(path, repos = ember_repos(cran = paste0("file://", root)), cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+
+  res <- preview_date(nb, format(today), apply = TRUE, wait = TRUE, timeout = 60)
+  expect_equal(res$status, "ready")
+  expect_equal(res$date, yesterday)
+  expect_equal(package_status(nb)$snapshot, yesterday)
+
+  # A date further ahead than tomorrow in UTC is no clock's today: it fails
+  # at once instead of stepping back day by day.
+  far <- preview_date(nb, format(today + 30), wait = TRUE, timeout = 60)
+  expect_equal(far$status, "failed")
+  expect_equal(far$date, format(today + 30))
+})
+
 # ---- 73: the saved lock round-trips -----------------------------------------
 
 test_that("the saved file's lock block lists toyA and toyB and round-trips unchanged on reopen (73)", {
@@ -399,6 +454,97 @@ test_that("ember::run() installs a saved GitHub lock on a machine that never res
   expect_match(out, "toyC 0.4.0 says: hello from toyB", fixed = TRUE)
 })
 
+# ---- r-universe sources ([sources], #203) ------------------------------------
+
+#' `toy_repos()` plus the `file://` universe and GitHub fixtures: lab's
+#' universe serves toyD 0.2.0 built from commit D2 of github.com/lab/toyD;
+#' the GitHub fixture also has D1, the same version with other code.
+toy_universe_repos <- function() {
+  toy <- normalizePath(testthat::test_path("fixtures", "repos", "toy"), mustWork = TRUE)
+  gh <- normalizePath(testthat::test_path("fixtures", "github"), mustWork = TRUE)
+  u <- normalizePath(testthat::test_path("fixtures", "universe"), mustWork = TRUE)
+  ember_repos(cran = paste0("file://", toy), github = paste0("file://", gh),
+              universe = paste0("file://", u, "/%s"))
+}
+
+#' A notebook using toyD from `universe` (fixtures/universe), with `lock`
+#' (none: empty).
+write_toyd_notebook <- function(lock = empty_lock(), universe = "lab") {
+  dir <- tempfile("ember-nb-")
+  dir.create(dir, recursive = TRUE)
+  cells <- list(S = list(code = "", kind = "code", folded = FALSE),
+               A = list(code = "library(toyD)\ntoyD_hello()", kind = "code", folded = FALSE))
+  header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
+                       r_version = paste(R.version$major, R.version$minor, sep = "."),
+                       snapshot = "2026-09-01", sources = c(toyD = paste0("universe:", universe)))
+  file <- new_notebook_file(
+    header = header, cells = cells, run_order = names(cells), learned = list(),
+    sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
+    lock = lock, extra_blocks = list(), format = ember_format)
+  path <- file.path(dir, "nb.R")
+  stopifnot(write_atomic(path, format_notebook(file)))
+  path
+}
+
+test_that("a package from a [sources] universe entry installs from the universe at the commit it built, and runs", {
+  repos <- toy_universe_repos()
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  path <- write_toyd_notebook()
+
+  nb <- open_notebook(path, repos = repos, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  res <- run_cells(nb, wait = TRUE, timeout = 120)
+  expect_false(res$timed_out)
+
+  status <- package_status(nb)
+  expect_equal(status$library$status, "ready",
+               info = paste(c(status$library$message, notebook_state(nb)$packages$target$log), collapse = "\n"))
+  expect_equal(snap_view(notebook_snapshot(nb), "A")$output$text, "[1] \"toyD at 2e1f5a9 says: hello from toyB\"")
+  pkgs <- status$packages
+  expect_equal(pkgs$source[pkgs$name == "toyD"],
+               "universe:lab/github.com/lab/toyD@2e1f5a9c3b8a7f6e5d4c3b2a1908f7e6d5c4b3a2")
+  # The universe's own build (its DESCRIPTION says so), not GitHub's.
+  desc <- read.dcf(file.path(notebook_state(nb)$packages$target$path, "toyD", "DESCRIPTION"))
+  expect_equal(unname(desc[, "Repository"]), "https://lab.r-universe.dev")
+  expect_equal(unname(desc[, "RemoteSha"]), "2e1f5a9c3b8a7f6e5d4c3b2a1908f7e6d5c4b3a2")
+  expect_false(identical(unname(desc[1, "RemoteType"]), "github"))
+})
+
+test_that("a universe build that isn't the commit its universe names is installed again from that commit", {
+  # The stale universe says it built D2, but its tarball is D1's build, as a
+  # binary that lags the source build would be.
+  repos <- toy_universe_repos()
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  path <- write_toyd_notebook(universe = "stale")
+
+  nb <- open_notebook(path, repos = repos, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  res <- run_cells(nb, wait = TRUE, timeout = 120)
+  expect_false(res$timed_out)
+  status <- package_status(nb)
+  expect_equal(status$library$status, "ready",
+               info = paste(c(status$library$message, notebook_state(nb)$packages$target$log), collapse = "\n"))
+  expect_equal(snap_view(notebook_snapshot(nb), "A")$output$text, "[1] \"toyD at 2e1f5a9 says: hello from toyB\"")
+  desc <- read.dcf(file.path(notebook_state(nb)$packages$target$path, "toyD", "DESCRIPTION"))
+  expect_equal(unname(desc[, "RemoteType"]), "github")
+})
+
+test_that("a locked commit the universe no longer serves installs from GitHub, even under the same version", {
+  repos <- toy_universe_repos()
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  d1 <- "1d0c4e8b2a7f6e5d4c3b2a1908f7e6d5c4b3a291"
+  lock <- new_lock(c("toyB", "toyD"), c("1.0", "0.2.0"),
+                   c("CRAN", universe_source("lab", "https://github.com/lab/toyD", d1)))
+  path <- write_toyd_notebook(lock)
+
+  out <- testthat::capture_output(status <- run(path, repos = repos, cache = cache, echo = TRUE))
+  expect_equal(status, 0L)
+  expect_match(out, "toyD at 1d0c4e8 says: hello from toyB", fixed = TRUE)
+})
+
 # ---- 75: network, opt-in -----------------------------------------------------
 
 test_that("[net] a notebook with library(dplyr) at a fixed past date resolves, installs and loads from PPM (75)", {
@@ -437,6 +583,56 @@ test_that("[net] a notebook with library(dplyr) at a fixed past date resolves, i
   expect_equal(notebook_state(nb)$worker$loaded[["dplyr"]], locked_version)
 })
 
+test_that("[net] an r-universe package installs from its universe, and a commit it no longer serves from GitHub (#203)", {
+  skip_if_not(identical(Sys.getenv("EMBER_TEST_NETWORK"), "1"),
+             "set EMBER_TEST_NETWORK=1 to run the opt-in network test")
+
+  # highr, from yihui's universe: small, pure R, one CRAN dependency
+  # (xfun). The universe serves only its latest build, so the date is
+  # recent enough for that build's xfun.
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  dir <- tempfile("ember-nb-")
+  dir.create(dir, recursive = TRUE)
+  cells <- list(A = list(code = "library(highr)\ncat(\"highr\", format(packageVersion(\"highr\")), \"\\n\")",
+                        kind = "code", folded = FALSE))
+  header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
+                       r_version = paste(R.version$major, R.version$minor, sep = "."),
+                       snapshot = format(Sys.Date() - 3), sources = c(highr = "https://yihui.r-universe.dev/highr"))
+  file <- new_notebook_file(
+    header = header, cells = cells, run_order = names(cells), learned = list(),
+    sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
+    lock = empty_lock(), extra_blocks = list(), format = ember_format)
+  path <- file.path(dir, "nb.R")
+  write_atomic(path, format_notebook(file))
+
+  nb <- open_notebook(path, cache = cache)
+  res <- run_cells(nb, wait = TRUE, timeout = 300)
+  expect_false(res$timed_out)
+  status <- package_status(nb)
+  expect_equal(status$library$status, "ready",
+               info = paste(c(status$library$message, notebook_state(nb)$packages$target$log), collapse = "\n"))
+  src <- parse_universe_source(status$packages$source[status$packages$name == "highr"])
+  expect_equal(src$universe, "yihui")
+  expect_equal(src$git, "https://github.com/yihui/highr")
+  desc <- read.dcf(file.path(notebook_state(nb)$packages$target$path, "highr", "DESCRIPTION"))
+  expect_equal(unname(desc[, "RemoteSha"]), src$sha)
+  close_notebook(nb)
+  expect_match(read_file_utf8(path), '# highr = "universe:yihui"', fixed = TRUE)
+
+  # Pinned to v0.11's commit (c77ef6d), which the universe no longer serves:
+  # a machine that never resolved it installs that commit from GitHub.
+  text <- sub("# highr [^\n]+ universe:[^\n]+",
+              "# highr 0.11 universe:yihui/github.com/yihui/highr@c77ef6daa04895918f3577cb291880ae8154e3e4",
+              read_file_utf8(path))
+  writeLines(text, path, sep = "")
+  cache2 <- toy_cache()
+  on.exit(unlink(cache2, recursive = TRUE), add = TRUE)
+  out <- testthat::capture_output(code <- run(path, cache = cache2, echo = TRUE))
+  expect_equal(code, 0L)
+  expect_match(out, "highr 0.11", fixed = TRUE)
+})
+
 test_that("[net] a notebook with library(S4Vectors) installs from Bioconductor on PPM and loads", {
   # On Linux, renv's own binary rewrite turned Bioconductor's URL into one
   # Package Manager answers with a 404, so every Bioconductor package
@@ -472,6 +668,60 @@ test_that("[net] a notebook with library(S4Vectors) installs from Bioconductor o
   expect_equal(status$packages$status[row], "installed")
   expect_match(snap_view(notebook_snapshot(nb), "A")$output$text,
                status$packages$version[row], fixed = TRUE)
+})
+
+test_that("[net] on macOS and Windows, a Bioconductor package Package Manager has no binary of installs Bioconductor's (#22)", {
+  # Package Manager's Bioconductor 3.23 has no macOS arm64 or Windows
+  # binary of SNPRelate 1.46.0, so it built from source: on a Mac without
+  # the Fortran runtime a package like that failed to link (`ld: library
+  # 'emutls_w' not found`). CI's runners have the compilers, so the source
+  # build would pass there too: the test checks where the package came from.
+  # Bioconductor's repository isn't dated: once a 3.23 point release moves
+  # SNPRelate past 1.46.0, its binary no longer matches the lock made at
+  # 2026-10-08 and this fails. Then pick another package and date.
+  skip_if_not(identical(Sys.getenv("EMBER_TEST_NETWORK"), "1") || identical(Sys.getenv("EMBER_TEST_BIOC_BINARIES"), "1"),
+             "set EMBER_TEST_NETWORK=1 or EMBER_TEST_BIOC_BINARIES=1 to run the opt-in network test")
+  skip_if(identical(os_kind(), "linux"), "Bioconductor's own binaries are for macOS and Windows")
+
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  dir <- tempfile("ember-nb-")
+  dir.create(dir, recursive = TRUE)
+  cells <- list(A = list(code = "library(SNPRelate)\npackageVersion(\"SNPRelate\")",
+                        kind = "code", folded = FALSE))
+  header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
+                       r_version = paste(R.version$major, R.version$minor, sep = "."),
+                       snapshot = "2026-10-08")
+  file <- new_notebook_file(
+    header = header, cells = cells, run_order = names(cells), learned = list(),
+    sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
+    lock = empty_lock(), extra_blocks = list(), format = ember_format)
+  path <- file.path(dir, "nb.R")
+  write_atomic(path, format_notebook(file))
+
+  started <- Sys.time()
+  nb <- open_notebook(path, repos = ember_repos(), cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  res <- run_cells(nb, wait = TRUE, timeout = 600)
+  expect_false(res$timed_out)
+
+  status <- package_status(nb)
+  expect_equal(status$library$status, "ready")
+  row <- status$packages$name == "SNPRelate"
+  expect_equal(status$packages$version[row], "1.46.0")
+  expect_equal(status$packages$status[row], "installed")
+  expect_match(snap_view(notebook_snapshot(nb), "A")$output$text, "1.46.0", fixed = TRUE)
+  # It came as a binary, and not Package Manager's, so Bioconductor's: a
+  # build on this machine would have been built today, after `started`.
+  # (renv's RemoteRepos can't say which repository: Bioconductor's Windows
+  # binaries carry RemoteUrl, RemoteRef and RemoteSha of their own, and
+  # renv then adds none.)
+  ppm <- read_available(repo_url(ember_repos(), repo_key("bioc", "2026-10-08", "3.23")), .Platform$pkgType)
+  expect_false(is.null(ppm))
+  expect_false("SNPRelate" %in% ppm[, "Package"])
+  built <- read.dcf(file.path(status$library$path, "SNPRelate", "DESCRIPTION"), fields = "Built")[1, 1]
+  built_at <- as.POSIXct(trimws(strsplit(built, ";", fixed = TRUE)[[1]][[3]]), tz = "UTC")
+  expect_lt(as.numeric(built_at), as.numeric(started))
 })
 
 # ---- 90: the empty-log regression, with the failing-installer fixture ------

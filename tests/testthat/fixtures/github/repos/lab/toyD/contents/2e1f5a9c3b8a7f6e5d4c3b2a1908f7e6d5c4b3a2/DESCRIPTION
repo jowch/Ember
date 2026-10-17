@@ -1,0 +1,10 @@
+Package: toyD
+Type: Package
+Title: Toy D
+Version: 0.2.0
+Authors@R: person("T", "Est", email="t@example.com", role=c("aut","cre"))
+Description: Toy package D, on an r-universe, for Ember tests.
+Imports: toyB
+License: MIT
+Encoding: UTF-8
+NeedsCompilation: no

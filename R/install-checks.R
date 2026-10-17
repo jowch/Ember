@@ -45,12 +45,15 @@ r_config <- function(var) {
 #' On a Mac, Apple's command line tools: `xcode-select -p` fails without
 #' them. `Sys.which("clang")` is no test there, since `/usr/bin/clang` is
 #' a stub that offers to install the tools. Elsewhere, the C compiler R
-#' was configured with (`R CMD config CC`, `gcc` or `clang`; on Windows
-#' Rtools' gcc, which R's own Renviron puts on the PATH) must be on the
-#' PATH. The Fortran compiler isn't checked here: only some packages need
-#' it, and nothing says which before their source is unpacked, so its
-#' absence is caught from the build's own output (`install_failures()`).
-has_compiler <- function(os = os_kind()) {
+#' was configured with (`R CMD config CC`, `gcc` or `clang`) must be on the
+#' PATH. On Windows that's the PATH `R CMD` builds with: R's Rcmd_environ
+#' puts Rtools there (`RTOOLS45_HOME`, which rig's user mode sets, or
+#' `C:/rtools45`), and only for `R CMD`, so Rtools' gcc is on no other
+#' process's PATH (#49). The Fortran compiler isn't checked here: only some
+#' packages need it, and nothing says which before their source is
+#' unpacked, so its absence is caught from the build's own output
+#' (`install_failures()`). `r_cmd_runs` is a parameter for tests.
+has_compiler <- function(os = os_kind(), r_cmd_runs = r_cmd_succeeds) {
   if (identical(os, "macos")) {
     status <- tryCatch(suppressWarnings(system2("xcode-select", "-p", stdout = FALSE, stderr = FALSE)),
                        error = function(e) 1L)
@@ -58,8 +61,20 @@ has_compiler <- function(os = os_kind()) {
   }
   cc <- strsplit(r_config("CC"), "\\s+")[[1]]
   cc <- cc[nzchar(cc)]
+  # On Windows `R CMD config` runs Rtools' `sh`, so saying nothing there
+  # means no Rtools.
+  if (identical(os, "windows")) return(length(cc) > 0 && r_cmd_runs(c(cc[[1]], "--version")))
   if (length(cc) == 0) return(TRUE)  # R can't say; don't stop an install over it
   nzchar(Sys.which(cc[[1]]))
+}
+
+#' Whether `R CMD <args>` runs and exits 0: R CMD runs any command with
+#' the environment R's own builds get.
+r_cmd_succeeds <- function(args) {
+  status <- tryCatch(suppressWarnings(system2(file.path(R.home("bin"), "R"), c("CMD", args),
+                                              stdout = FALSE, stderr = FALSE)),
+                     error = function(e) 1L)
+  identical(as.integer(status), 0L)
 }
 
 #' Which Linux this is, from `/etc/os-release`: `list(id, version, like)`,
@@ -186,7 +201,9 @@ read_available <- function(repos, type) {
 #' (Measured: at 2024-06-01 Package Manager sent R 4.6 the source of every
 #' package asked about, pure R ones too; at 2026-09-01, binaries.)
 #' `binary_type`: the binary repositories' type on macOS and Windows (a
-#' parameter so tests on Linux can ask for a Mac's). GitHub sources aren't
+#' parameter so tests on Linux can ask for a Mac's), whose binary index is
+#' read from `binary_repos`, so Bioconductor's own binaries count
+#' (`bioc_binary_repos()`). GitHub sources aren't
 #' counted: whether they have code to compile is known only once they're
 #' downloaded, so a missing compiler shows up from their build instead.
 compiler_check <- function(lock, repos, linux_binaries = FALSE, os = os_kind(),
@@ -212,7 +229,7 @@ compiler_check <- function(lock, repos, linux_binaries = FALSE, os = os_kind(),
   if (is.null(source_index)) return(NULL)
   # On Linux without Package Manager binaries everything builds from
   # source; elsewhere an unreadable binary index leaves it to renv.
-  binary_index <- if (linux) NULL else read_available(repos, binary_type)
+  binary_index <- if (linux) NULL else read_available(binary_repos, binary_type)
   if (!linux && is.null(binary_index)) return(NULL)
   pkgs <- source_builds(wanted, source_index, binary_index)
   if (length(pkgs) == 0) return(NULL)
@@ -273,8 +290,8 @@ failed_builds <- function(failed, index) {
   failed[!vapply(failed, function(p) any(deps[[p]] %in% failed), logical(1))]
 }
 
-#' Which of the locked packages in `failed` had no binary for this R at the
-#' snapshot date, so renv built them from source: named character,
+#' Which of the locked CRAN packages in `failed` had no binary for this R
+#' at the snapshot date, so renv built them from source: named character,
 #' package -> locked version.
 #'
 #' * macOS and Windows: not in the binary index (`binary_type`) of `repos`
@@ -285,23 +302,22 @@ failed_builds <- function(failed, index) {
 #' * Linux without them: none. Everything builds from source there, so a
 #'   failed build says nothing about the date.
 #'
-#' GitHub sources aren't counted: they always build from source.
+#' Only CRAN packages: the report blames a snapshot date older than this
+#' R, and a Bioconductor pin is always a release built for this R (or
+#' moves to one, `propose_bioc_move()`). A Bioconductor package with no
+#' binary fails with its build's own error instead (#22). GitHub sources
+#' aren't counted either: they always build from source.
 no_binary_packages <- function(failed, lock, repos, binary_repos = repos, linux_binaries = FALSE,
                                os = os_kind(), binary_type = .Platform$pkgType,
                                serves_binary = ppm_serves_binary) {
   e <- lock$entries
-  e <- e[e$name %in% failed & e$source %in% c("CRAN", "Bioc"), , drop = FALSE]
+  e <- e[e$name %in% failed & e$source == "CRAN", , drop = FALSE]
   none <- stats::setNames(character(), character())
   if (nrow(e) == 0) return(none)
   if (identical(os, "linux")) {
-    if (!linux_binaries) return(none)
-    repo_names <- list(CRAN = "CRAN", Bioc = c("BioCsoft", "BioCann", "BioCexp"))
+    if (!linux_binaries || !"CRAN" %in% names(binary_repos)) return(none)
     no_binary <- vapply(seq_len(nrow(e)), function(i) {
-      for (r in intersect(repo_names[[e$source[[i]]]], names(binary_repos))) {
-        got <- serves_binary(package_url(binary_repos[[r]], e$name[[i]], e$version[[i]]))
-        if (!is.na(got)) return(!got)
-      }
-      FALSE
+      identical(serves_binary(package_url(binary_repos[["CRAN"]], e$name[[i]], e$version[[i]])), FALSE)
     }, logical(1))
   } else {
     index <- read_available(repos, binary_type)
