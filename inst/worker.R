@@ -427,7 +427,8 @@ trace_line <- function(...) {
 #' attached), formula_misses, columns (see global_columns()), globals (see
 #' summarise_globals()),
 #' changed_in_place (names of other cells' environments, R6 objects and
-#' reference class objects this run changed; env_fingerprint())).
+#' reference class objects this run changed; env_fingerprint()), from_lock
+#' (the packages of the install calls it didn't run, `msg$installs`)).
 #' `error$span` is set only for role "text": the 1-based index of the
 #' failing line (into `inline_spans()`'s rows).
 #'
@@ -449,7 +450,8 @@ run_cell <- function(msg) {
              runtime = NA_real_, created = character(), changed = character(),
              removed = character(), settings = list(), load_notes = list(),
              attached = list(), formula_misses = character(), loaded = character(),
-             globals = list(), changed_in_place = character(), columns = list(), inputs = list())
+             globals = list(), changed_in_place = character(), columns = list(), inputs = list(),
+             from_lock = character())
 
   # `dev`/`console` are closed here (not just at their normal point of use
   # below) so an interrupt landing anywhere in this function -- including
@@ -537,9 +539,18 @@ run_cell <- function(msg) {
           # even when it's an assignment, as in Pluto); an earlier visible
           # value prints to the console when it's made (design.md, "Which
           # values a cell shows").
+          skip <- vapply(msg$installs %||% list(), function(s) as.integer(s$index), integer(1))
           for (k in seq_along(exprs)) {
             at <- k   # the top-level expression index; error$line reads its srcref
             datatable_clear_mark()
+            if (k %in% skip) {
+              # An install call: the lock already answers it, so it doesn't
+              # run (packages.md, "Install calls"). The cell says so; ""
+              # stands for a call whose packages couldn't be read.
+              s <- msg$installs[[match(k, skip)]]
+              rc$from_lock <- union(rc$from_lock, if (length(s$packages)) as.character(s$packages) else "")
+              next
+            }
             input_expect <<- input_expectation(msg$inputs, k, exprs[[k]])
             r <- withVisible(eval(exprs[[k]], globalenv()))
             # A bound input's value changes without the cell rerunning, so

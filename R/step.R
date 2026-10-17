@@ -503,7 +503,20 @@ run_message <- function(state, id, token) {
       role = if (is_text) "text" else "cell",
       order = order, settings = settings_in_effect(state, id), formulas = state$graph$analyses[[id]]$formulas,
       library = state$packages$active$path, fig = cell_figure_size(cell$code),
-      inputs = if (!is_text) run_inputs(state, id))
+      inputs = if (!is_text) run_inputs(state, id),
+      installs = if (!is_text) run_installs(state$graph$analyses[[id]]))
+}
+
+#' The install part of a run message: the cell's top-level install calls,
+#' which the worker doesn't run (packages.md, "Install calls"), as
+#' `list(list(index, packages))`. `NULL` for a cell with none.
+run_installs <- function(analysis) {
+  r <- analysis$installs
+  if (is.null(r) || !any(r$top)) return(NULL)
+  r <- r[r$top, , drop = FALSE]
+  lapply(unique(r$index), function(k) {
+    list(index = k, packages = unique(r$package[r$index == k & !is.na(r$package)]))
+  })
 }
 
 #' The inputs part of a run message: the cell's bindings
@@ -951,6 +964,10 @@ reduce_apply <- function(state, event) {
       spec <- source_spec(op$source)
       if (!is_one_package_name(op$name)) {
         bad <- refused("not a package name", op)
+      } else if (op$name %in% code_sources(state$graph, header)) {
+        # As remove_extra_package: schedule_packages() would just put the
+        # code's back (sync_sources()).
+        bad <- refused(sprintf("%s's source is named by an install call in code; change it there instead", op$name), op)
       } else if (is.null(spec)) {
         bad <- refused("a source is written \"github:user/repo\", optionally with @ and a branch, tag or commit, or as a github.com link to the repository or to a branch, tag or commit; or, for an r-universe, \"universe:name\" or a link to it", op)
       } else {
@@ -961,6 +978,8 @@ reduce_apply <- function(state, event) {
     } else if (identical(op$op, "remove_package_source")) {
       if (!is_one_package_name(op$name)) {
         bad <- refused("not a package name", op)
+      } else if (op$name %in% code_sources(state$graph, header)) {
+        bad <- refused(sprintf("%s's source is named by an install call in code; remove it there instead", op$name), op)
       } else {
         src <- header$sources %||% character()
         header$sources <- src[names(src) != op$name]
@@ -1774,7 +1793,8 @@ reduce_wk_done <- function(state, event) {
                        variables = if (identical(status, "ok")) report$globals %||% list() else list(),
                        settings_found = settings_found, setting = id %in% state$graph$settings,
                        load_notes = load_notes, changed_in_place = as.character(changed_in_place),
-                       inputs = if (identical(status, "ok")) report$inputs %||% list() else list())
+                       inputs = if (identical(status, "ok")) report$inputs %||% list() else list(),
+                       from_lock = as.character(report$from_lock %||% character()))
   if (late_stale) result$stale <- TRUE
   state$results[[id]] <- result
   if (identical(status, "ok")) state <- keep_input_values(state, id, w$running$code, result$inputs)

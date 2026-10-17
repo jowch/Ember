@@ -59,12 +59,14 @@ report <- function(status = "ok", output = NULL, console = list(), error = NULL,
                    runtime = 0, created = character(), changed = character(),
                    removed = character(), settings = list(), load_notes = character(),
                    attached = list(), formula_misses = NULL, loaded = character(),
-                   globals = list(), changed_in_place = character(), columns = list(), inputs = list()) {
+                   globals = list(), changed_in_place = character(), columns = list(), inputs = list(),
+                   from_lock = character()) {
   list(status = status, output = output, console = console, error = error,
       runtime = runtime, created = created, changed = changed, removed = removed,
       settings = settings, load_notes = load_notes, attached = attached,
       formula_misses = formula_misses, loaded = loaded, globals = globals,
-      changed_in_place = changed_in_place, columns = columns, inputs = inputs)
+      changed_in_place = changed_in_place, columns = columns, inputs = inputs,
+      from_lock = from_lock)
 }
 
 #' Fold `step()` over a sequence of events, checking invariants after each
