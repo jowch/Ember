@@ -55,7 +55,7 @@
 #   quit
 #
 # Worker -> server
-#   hello        secret, pid, r_version, lib_paths
+#   hello        secret, pid, r_version, lib_paths, tempdir
 #   console      cell, token, item = list(kind, text)   streamed during a run
 #   source       cell, token, path, text                before a computed
 #                                                       source() runs; waits
@@ -170,7 +170,8 @@ main <- function() {
   withCallingHandlers({
     send(list(type = "hello", secret = secret,
               pid = Sys.getpid(), r_version = R.version.string,
-              lib_paths = .libPaths(), loaded = loaded_namespace_versions()))
+              lib_paths = .libPaths(), loaded = loaded_namespace_versions(),
+              tempdir = tempdir()))
     # This frame stays on the stack while every cell runs, so a cell
     # walking sys.frames() would find the secret here.
     rm(secret)
