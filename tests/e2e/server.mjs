@@ -3,7 +3,7 @@
 // spikes/server-worker/server3.R's shape but drives the real ember::serve()
 // (docs/ui-tests.md, "Running locally" / "In CI").
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, copyFileSync, mkdirSync, appendFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -86,8 +86,24 @@ function emberLibs() {
   return [path.resolve(lib), process.env.R_LIBS].filter(Boolean).join(path.delimiter);
 }
 
-async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port: fixedPort, secret = SECRET, repos, cacheDir }) {
+/** The Rscript to start servers with: EMBER_RSCRIPT, or Rscript from the
+ * PATH. On Windows both are usually R's `bin\Rscript.exe`, a front end
+ * that runs the real `bin\x64\Rscript.exe` through cmd.exe. `stop()`
+ * would then end only the front end, leaving the server running with its
+ * port and its worker (#219). So R is asked once for the real one. */
+let realRscript = null;
+function serverRscript() {
   const rscript = process.env.EMBER_RSCRIPT ?? "Rscript";
+  if (process.platform !== "win32") return rscript;
+  if (realRscript === null) {
+    const res = spawnSync(rscript, ["--vanilla", "-e", "cat(file.path(R.home('bin'), 'Rscript.exe'))"], { encoding: "utf8" });
+    realRscript = res.status === 0 && res.stdout.trim() ? res.stdout.trim() : rscript;
+  }
+  return realRscript;
+}
+
+async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port: fixedPort, secret = SECRET, repos, cacheDir }) {
+  const rscript = serverRscript();
   const quoted = notebookPaths.map((p) => JSON.stringify(p)).join(", ");
   const port = fixedPort ?? await freePort();
   // Set before `ember::serve()` starts: `installer_script()` (R/library.R)
