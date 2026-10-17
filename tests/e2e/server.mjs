@@ -97,7 +97,9 @@ function serverRscript() {
   if (process.platform !== "win32") return rscript;
   if (realRscript === null) {
     const res = spawnSync(rscript, ["--vanilla", "-e", "cat(file.path(R.home('bin'), 'Rscript.exe'))"], { encoding: "utf8" });
-    realRscript = res.status === 0 && res.stdout.trim() ? res.stdout.trim() : rscript;
+    const found = res.status === 0 && res.stdout.trim();
+    realRscript = found ? res.stdout.trim() : rscript;
+    if (!found) console.error(`server.mjs: could not ask ${rscript} for R's own Rscript.exe; using it as is, so a stopped server may keep running (#219)`);
   }
   return realRscript;
 }
