@@ -654,7 +654,7 @@ export const PackagesTab = ({ packages, read_only = false }) => {
                       <tbody>
                           ${direct_rows.map(
                               (row) => html`<tr class="ember-package-row ember-package-${row.status}" key=${row.name}>
-                                      <td class="ember-mono">${row.name}</td>
+                                      <td class="ember-mono" title=${row.name}>${row.name}</td>
                                       <td class="ember-mono">${row.version ?? "—"}${github_source_label(row.source)}</td>
                                       <td title=${row.message ?? ""}><${PackageStatus} row=${row} /></td>
                                   </tr>

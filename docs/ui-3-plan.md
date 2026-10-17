@@ -2277,7 +2277,12 @@ package name the reply carries. Piece 2's notebook-function page
 of {{snapshot}}" with piece 4's Update, "The packages this notebook loads,
 installed for it alone.", a table Package / Version / Status with pills
 (accent-bg "Installed", a run-coloured bar for "Installing", red-bg
-"Failed", faint "Missing"), and piece 4's failure cards. Only `row.direct`
+"Failed", faint "Missing"), and piece 4's failure cards. The table is the
+board's: 12.5 px rows in fixed columns of 32 % and 24 % with the rest for
+Status, an 11.5 px weight-500 header in the faint colour, the panel's line
+colour between rows, and a long name or version cut short with an ellipsis.
+Every status reads in sentence case, and the Installed pill is at full
+strength (#51). Only `row.direct`
 rows are listed (dependencies hidden). `#ember-packages-tab` and
 `.ember-package-row` stay (status-views.test.mjs reads them).
 
