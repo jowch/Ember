@@ -940,6 +940,7 @@ forget_run <- function(state, id) {
   old_result <- state$results[[id]]
   state$results[[id]] <- NULL
   state$computed_sources[[id]] <- NULL
+  state <- forget_columns(state, id)
   state$pending <- setdiff(state$pending, id)
   state <- invalidate_dependents(state, id,
                                  if (!is.null(old_result)) old_result$defined else character(),
@@ -1074,6 +1075,7 @@ restart_worker <- function(state, reason = NULL) {
                             class = "ember_worker_state")
   effects <- c(effects, list(fx_start_worker(gen, state$packages$active$path, dirname(state$path))))
   state$results <- list()
+  state <- forget_columns(state)
   state$pending <- character()
   list(state = state, effects = effects)
 }
@@ -1634,6 +1636,19 @@ report_columns <- function(columns) {
 
 #' Does any cell read one of `globals` as the data of a masked read
 #' (`df` in `subset(df, x > 1)`)?
+#' Drop the data columns of `ids` (every cell's by default): their values
+#' are gone (a restart, R exiting, an edit), so masked reads of them go back
+#' to a soft edge until the cell runs again. Rebuilds the graph only when a
+#' masked read used them.
+forget_columns <- function(state, ids = names(state$data_columns)) {
+  ids <- intersect(ids, names(state$data_columns))
+  if (length(ids) == 0) return(state)
+  globals <- unique(unlist(lapply(state$data_columns[ids], names)))
+  state$data_columns[ids] <- NULL
+  if (masked_data_read(state$graph, globals)) state <- rebuild_graph(state)
+  state
+}
+
 masked_data_read <- function(graph, globals) {
   if (length(globals) == 0) return(FALSE)
   any(vapply(graph$cells, function(c) any(c$masked$data %in% globals), logical(1)))
@@ -1726,6 +1741,7 @@ reduce_wk_exited <- function(state, event) {
   if (!eq(event$gen, state$worker$gen)) return(list(state = state, effects = list(), reply = NULL))
   running <- state$worker$running
   state$results <- list()
+  state <- forget_columns(state)
   if (!is.null(running)) {
     state$results[[running$cell]] <- new_result(
       code = running$code, status = "error", output = NULL, console = running$console,

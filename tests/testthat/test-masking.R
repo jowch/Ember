@@ -167,6 +167,19 @@ test_that("a failed run of the data cell forgets its columns", {
   expect_true("X" %in% r$state$graph$upstream$F)
 })
 
+test_that("a restart or R exiting forgets every cell's columns", {
+  s <- fake_state(list(S = cell(""), D = cell("df <- data.frame(x = 1:4)"),
+                       F = cell("d2 <- subset(df, x > 1)"), X = cell("x <- 2")))
+  r <- run_to_idle(boot(s, NULL), data_reports("x"))
+  expect_false("X" %in% r$state$graph$upstream$F)
+  r2 <- drive(r$state, ev_restart(at(200)))
+  expect_length(r2$state$data_columns, 0)
+  expect_true("X" %in% r2$state$graph$upstream$F)
+  r3 <- drive(r$state, wk_exited(1, status = 1L, message = "gone", at = at(200)))
+  expect_length(r3$state$data_columns, 0)
+  expect_true("X" %in% r3$state$graph$upstream$F)
+})
+
 test_that("an input found after the run was asked for, from a stale cell, leaves the result stale", {
   # Lazy: K's rerun leaves X stale. Running F reruns D, whose new df has
   # no column x, so F now reads X; X wasn't asked for, so F's result
