@@ -1463,6 +1463,8 @@ missing_package_error <- function(state, pkg) {
 #' already wanted. A message R or a package translated doesn't match, and
 #' gets no fix.
 packages_named_in <- function(state, msg) {
+  # cli colours the names in parsnip's message ("for \033[34mglmnet\033[39m").
+  msg <- gsub("\033\\[[0-9;?]*[A-Za-z]", "", msg)
   if (!grepl("\\bpackages?\\b", msg, ignore.case = TRUE, perl = TRUE)) return(character())
   words <- unique(regmatches(msg, gregexpr("(?<![A-Za-z0-9._])[A-Za-z][A-Za-z0-9.]*[A-Za-z0-9](?![A-Za-z0-9_]|\\.[A-Za-z0-9])",
                                            msg, perl = TRUE))[[1]])

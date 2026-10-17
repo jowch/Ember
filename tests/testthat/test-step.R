@@ -2079,6 +2079,8 @@ test_that("a message saying a package is needed offers to add it, and only then 
   s <- named_state()
   # parsnip's set_engine("glmnet"), and tidytext's get_sentiments("afinn").
   expect_equal(packages_named_in(s, "Package install is required for glmnet."), "glmnet")
+  # As parsnip's message really reads, with cli's colours (trial 5).
+  expect_equal(packages_named_in(s, "Package install is required for \033[34mglmnet\033[39m."), "glmnet")
   expect_equal(packages_named_in(s, "The textdata package is required to download the AFINN lexicon."), "textdata")
   # Installed: in the notebook's library, or R's own (MASS is recommended).
   expect_equal(packages_named_in(s, "The dplyr package is required."), character())
