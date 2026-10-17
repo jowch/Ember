@@ -163,13 +163,9 @@ test_that("every variable the themes define is read somewhere (6b)", {
 # silently isn't there. A name a frontend file outside themes/ reads must
 # be defined in both themes, defined by the frontend itself (a declaration
 # in its CSS, or setProperty() from JS), or read with a fallback,
-# var(--x, ...). `known` lists today's gaps, each with its issue.
+# var(--x, ...).
 test_that("every variable the frontend reads is defined in both themes or has a fallback (6c)", {
   dir <- frontend_dir()
-  known <- c(
-    "--code-section-border-color" = "#195",  # dark.css only
-    "--nav-filepicker-focus-color" = "#195"  # neither theme
-  )
   defined <- function(text) {
     m <- regmatches(text, gregexpr("--[A-Za-z0-9_-]+\\s*:", text, perl = TRUE))[[1]]
     unique(sub("\\s*:$", "", m))
@@ -192,12 +188,10 @@ test_that("every variable the frontend reads is defined in both themes or has a 
     # `var(--x)` with no fallback; `var(--x, ...)` is fine.
     m <- regmatches(texts[[i]], gregexpr("var\\(\\s*--[A-Za-z0-9_-]+\\s*\\)", texts[[i]], perl = TRUE))[[1]]
     reads <- unique(sub("\\s*\\)$", "", sub("^var\\(\\s*", "", m)))
-    bad <- setdiff(reads, c(ok, names(known)))
+    bad <- setdiff(reads, ok)
     if (length(bad)) missing <- c(missing, paste0(basename(others[i]), ": ", bad))
   }
   expect_equal(missing, character(0))
-  # A gap that's been fixed comes off the list.
-  for (name in names(known)) expect_false(all(vapply(themes, function(t) name %in% t, logical(1))), info = name)
 })
 
 # ---- 105. Endeavor's variables too, no media query, one dark selector ----

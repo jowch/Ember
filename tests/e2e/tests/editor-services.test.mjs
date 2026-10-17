@@ -187,6 +187,37 @@ test("completion still works on the notebook's names and base R while a cell run
   assertNoProblems(page);
 });
 
+test("completion: typing a number asks R for nothing; a name typed after it still does (#35)", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-complete-number.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  // Each completion request's query_full (the cell's text up to the
+  // cursor), read from the socket's msgpack: the string after its key,
+  // whose header is one byte (fixstr) or two (str8).
+  const queries = [];
+  page.on("websocket", (ws) => ws.on("framesent", (frame) => {
+    const m = Buffer.from(frame.payload).toString("latin1").match(/query_full(?:[\xa0-\xbf]|\xd9[\s\S])([\s\S]*?)\xabnotebook_id/);
+    if (m) queries.push(m[1]);
+  }));
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  // At a person's pace: CodeMirror asks its sources 100 ms after the last
+  // keystroke, so typing faster than that would never ask after a digit.
+  await page.locator(`${cellSelector("B")} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+  await page.keyboard.type("z <- c(12345, 2L, 3.14, 0x1F, 1i) + me", { delay: 150 });
+  await page.waitForSelector(".cm-tooltip-autocomplete .cm-completionLabel", { timeout: 10000 });
+  const labels = await page.locator(".cm-tooltip-autocomplete .cm-completionLabel").allInnerTexts();
+  assert.ok(labels.includes("mean"), `expected "mean" among ${JSON.stringify(labels)}`);
+  assert.ok(queries.some((q) => /\+ me?$/.test(q)), `a request for "me": ${JSON.stringify(queries)}`);
+  assert.deepEqual(queries.filter((q) => /[0-9]$/.test(q)), [], "no request after a digit");
+
+  assertNoProblems(page);
+});
+
 test("help: the cursor inside mean( shows Arithmetic Mean; a link loads another page; examples highlight as R (61)", { timeout: 120000 }, async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help.server.log") });
@@ -378,6 +409,82 @@ test("help: a typed query keeps its scope when the Help tab is closed and reopen
   await page.waitForFunction(
     () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("mgcv"),
     null, { timeout: 30000 });
+  assert.equal(await page.locator(".ember-help-package").count(), 0, "no 'follows the cursor' line on a typed query");
+  assertNoProblems(page);
+});
+
+// #121's cause on macOS: the #92 test's fill() lands before the newly
+// opened Help tab has run its first effects. Those effects then fetch the
+// query the cursor had set (`sum`) before the typed `s`. The typed flag
+// was once a one-shot ref that the first fetch used up, so `sum` went out
+// as typed and `s` as a cursor query, which can't see mgcv. Here the
+// typing comes in the same task as the opening, so it always comes first.
+test("help: a query typed before the Help tab's first effects run keeps its typed scope (#121)", { timeout: 120000 }, async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help-typed-first.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  // Docs requests as they're sent: only a docs request carries the msgpack
+  // key `all_packages`. The message log holds only replies, which can't
+  // arrive inside the evaluate below, so it can't show the order.
+  await page.addInitScript(() => {
+    window.__docs_sent = 0;
+    const marker = new TextEncoder().encode("all_packages");
+    const has_marker = (bytes) => {
+      outer: for (let i = 0; i + marker.length <= bytes.length; i++) {
+        for (let j = 0; j < marker.length; j++) if (bytes[i + j] !== marker[j]) continue outer;
+        return true;
+      }
+      return false;
+    };
+    const send = WebSocket.prototype.send;
+    WebSocket.prototype.send = function (data) {
+      const bytes = data instanceof ArrayBuffer ? new Uint8Array(data)
+        : ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : null;
+      if (bytes != null && has_marker(bytes)) window.__docs_sent++;
+      return send.call(this, data);
+    };
+  });
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await runCell(page, "A");
+  await page.waitForFunction(() => {
+    const nb = window.editor_state?.notebook;
+    return nb?.process_status === "ready" && nb.cell_results?.A?.runtime != null &&
+      Object.values(nb.cell_results).every((r) => !r.running && !r.queued);
+  }, null, { timeout: 30000 });
+
+  await page.locator(`${cellSelector("B")} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
+  await page.keyboard.press("Home");
+
+  const effects_ran_first = await page.evaluate(async () => {
+    window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" }));
+    // Preact renders in a microtask and runs effects after the next frame,
+    // so waiting on microtasks alone gets the search box but no effects.
+    let input = null;
+    for (let i = 0; i < 100 && input == null; i++) {
+      await Promise.resolve();
+      input = document.querySelector("#live-docs-search");
+    }
+    if (input == null) return null;
+    const before = window.__docs_sent;
+    input.value = "s";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    return before > 0;
+  });
+  assert.equal(effects_ran_first, false, "the search box was there, and no docs request had gone out, when `s` was typed");
+
+  await page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("mgcv"),
+    null, { timeout: 30000 }).catch(async (e) => {
+    const seen = await page.evaluate(() => ({
+      page: document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.slice(0, 300),
+      replies: window.pluto_get_message_log().filter((m) => m.message?.doc !== undefined)
+        .map((m) => [m.message.status, String(m.message.doc).replace(/<[^>]*>/g, "").slice(0, 80), m.message.all_packages]),
+    }));
+    throw new Error(`${e.message}\nthe panel: ${JSON.stringify(seen, null, 1)}`);
+  });
   assert.equal(await page.locator(".ember-help-package").count(), 0, "no 'follows the cursor' line on a typed query");
   assertNoProblems(page);
 });

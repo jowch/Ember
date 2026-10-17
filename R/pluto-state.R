@@ -331,11 +331,10 @@ span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
 #'   `figure` is present, as `list(width, height)` inches, only when the
 #'   output is `image/png`. It comes from `cell_figure_size(view$code)` --
 #'   the cell's own `#|` lines -- never from the stored image's actual
-#'   pixel size: an API `render_png(width, height)` call replaces that
-#'   stored image (it's an Endeavor-facing API, left as is) without
-#'   changing the cell's figure size every other viewer sees, so reading
-#'   the size back out of it would make one such call resize the figure
-#'   on every open page. `code` is already in the key (through `cell`).
+#'   pixel size, which is the last render's: a density redraw stores an
+#'   image at the cell's figure size times the page's `res`, so reading
+#'   the size back out of it would tie the figure to one page's density.
+#'   `code` is already in the key (through `cell`).
 #'   `variables` is present, as `as_arr(view$variables)` (already
 #'   `list(name, type, value, kind)` per global, sorted, dot-names and an
 #'   off cell's excluded by `cell_variables()`), only when non-empty: the
@@ -884,7 +883,10 @@ project_process_status <- function(state) {
 #' * `restart_recommended_msg`: when the snapshot's `restart_offered` (a
 #'   cell ignored the interrupt), "The running cell hasn't stopped. Restart R
 #'   to stop it; every cell will be left not run." Pluto's banner for this
-#'   has a restart link, which is the action Ember offers.
+#'   has a restart link, which is the action Ember offers. If the interrupt
+#'   couldn't be delivered (Windows, #48) it says so instead: "The interrupt
+#'   couldn't reach R. Restart R to stop the running cell; every cell will
+#'   be left not run."
 #' * `install_time_ns = NULL`, `instantiated = library status is "ready"`.
 #'
 #' Kept filled alongside Ember's own `ember$packages` (project_ember(),
@@ -917,7 +919,9 @@ project_nbpkg <- function(state) {
   restart_required <- if (!is.null(pv$plan) && length(pv$plan$restart) > 0) {
     sprintf("Restart R to use the new versions of: %s", paste(pv$plan$restart, collapse = ", "))
   } else NULL
-  restart_recommended <- if (isTRUE(state$worker$restart_offered)) {
+  restart_recommended <- if (isTRUE(state$worker$interrupt$failed) && isTRUE(state$worker$restart_offered)) {
+    "The interrupt couldn't reach R. Restart R to stop the running cell; every cell will be left not run."
+  } else if (isTRUE(state$worker$restart_offered)) {
     "The running cell hasn't stopped. Restart R to stop it; every cell will be left not run."
   } else NULL
 

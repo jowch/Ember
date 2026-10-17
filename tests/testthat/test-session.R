@@ -426,6 +426,24 @@ test_that("an interrupt sent as a run is dispatched stops that run", {
   expect_equal(snap_view(notebook_snapshot(nb), "B")$status, "interrupted")
 })
 
+test_that("on Windows an interrupt that can't reach the worker offers the restart at once (#48)", {
+  skip_on_os(c("mac", "linux", "solaris"))
+  # A worker without the package's DLL has no interrupt event to set.
+  local_mocked_bindings(ember_dll_path = function() "")
+  cells <- list(S = cell(""), A = cell("x <- 1"), B = cell("Sys.sleep(20)"))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, "A", wait = TRUE, timeout = 15)
+  run_cells(nb, "B", wait = FALSE)
+  expect_true(wait_for(nb, function(s) isTRUE(nb$state$worker$running$begun), timeout = 15))
+  interrupt_notebook(nb)
+  # Only the failure path sets interrupt_failed: the grace timer sets
+  # restart_offered alone.
+  expect_true(wait_for(nb, function(s) isTRUE(s$interrupt_failed), timeout = 15))
+  expect_true(notebook_snapshot(nb)$restart_offered)
+})
+
 test_that("a crashed worker reports worker_exited, and the next run starts a new one (114)", {
   cells <- list(S = cell(""), A = cell("tools::pskill(Sys.getpid())"))
   path <- write_session_notebook(cells)
@@ -480,6 +498,37 @@ test_that("Endeavor-shaped calls: apply with expected, run(wait = FALSE), seq, r
   png <- render_png(nb2, "P")
   expect_equal(png$mime, "image/png")
   expect_true(is.raw(png$png))
+})
+
+test_that("render_png() at a pixel size returns that image and leaves the stored one, also while busy (#28)", {
+  path <- write_session_notebook(list(S = cell(""), P = cell("plot(1:10)"), B = cell("Sys.sleep(1)")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  allow_execution(nb)
+  run_cells(nb, wait = TRUE, timeout = 20)
+  # PNG width and height: big-endian integers at bytes 17-24 (IHDR).
+  png_px <- function(b) c(sum(as.integer(b[17:20]) * 256^(3:0)), sum(as.integer(b[21:24]) * 256^(3:0)))
+
+  stored <- nb$state$results$P$output
+  seen <- character()
+  unsub <- on_notebook_event(nb, function(note) {
+    if (identical(note$kind, "cell_state")) seen <<- c(seen, unlist(note$cells))
+  })
+  r <- render_png(nb, "P", width = 200, height = 100)
+  expect_equal(r$mime, "image/png")
+  expect_equal(png_px(r$png), c(200, 100))
+  expect_identical(nb$state$results$P$output, stored)
+  expect_identical(render_png(nb, "P")$png, stored$data)
+
+  # A busy worker answers once its run ends.
+  run_cells(nb, "B", wait = FALSE)
+  expect_true(wait_for(nb, function(s) identical(s$process, "busy"), timeout = 15))
+  r2 <- render_png(nb, "P", width = 300, height = 150, timeout = 15)
+  expect_equal(png_px(r2$png), c(300, 150))
+  expect_true(wait_for(nb, timeout = 20))
+  unsub()
+  expect_identical(nb$state$results$P$output, stored)
+  expect_false("P" %in% seen)
 })
 
 test_that("two consecutive notebook_state() values share unchanged cells (116)", {
@@ -739,7 +788,6 @@ test_that("disabling a cell removes it from R; Rscript on the saved file still r
 })
 
 test_that("a worker busy in a long cell ends when the server that started it is killed (#147)", {
-  skip_on_os("windows")
   use_installed_ember()
   pidfile <- tempfile("worker-pid-")
   path <- write_session_notebook(list(S = cell(""), A = cell(sprintf(
@@ -765,7 +813,121 @@ test_that("a worker busy in a long cell ends when the server that started it is 
   expect_true(wait_pid_gone(worker))
 })
 
+#' A cell `name <- eval(parse(text = code))`: Ember's package scan can't
+#' read inside the string, so `code` may name processx or callr without
+#' the notebook resolving and installing them (helper-session.R's note).
+#' The cell still defines `name`, for a later cell to depend on.
+unscanned_cell <- function(name, code) {
+  cell(sprintf("%s <- eval(parse(text = %s))", name, paste(deparse(code), collapse = "")))
+}
+
+test_that("a cell's processx child outlives a restart, also once the server collects the old worker (#232)", {
+  # The old worker's process object ends its marked tree when collected;
+  # the worker drops processx's marker so its cell's children aren't in it.
+  pidfile <- tempfile("cell-pid-")
+  libs <- paste(deparse(normalizePath(.libPaths(), winslash = "/")), collapse = "")
+  rscript <- normalizePath(file.path(R.home("bin"), "Rscript"), winslash = "/", mustWork = FALSE)
+  path <- write_session_notebook(list(S = cell(""), A = unscanned_cell("p", sprintf(paste0(
+    ".libPaths(c(%s, .libPaths())); ",
+    "p <- processx::process$new('%s', c('-e', 'Sys.sleep(300)')); ",
+    "writeLines(as.character(c(Sys.getpid(), p$get_pid())), '%s'); p"),
+    libs, rscript, normalizePath(pidfile, winslash = "/", mustWork = FALSE)))))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  # Nothing to resolve or install: the default cache stays untouched.
+  expect_identical(nrow(notebook_snapshot(nb)$packages$packages), 0L)
+  run_cells(nb, "A", wait = TRUE, timeout = 60)
+  expect_identical(snap_view(notebook_snapshot(nb), "A")$status, "ok")
+  pids <- as.integer(readLines(pidfile))
+  on.exit(tools::pskill(pids[2]), add = TRUE)
+  expect_true(pid_running(pids[2]))
+
+  restart_notebook(nb)
+  invisible(gc())
+
+  expect_true(wait_pid_gone(pids[1]))  # the old worker
+  expect_true(pid_running(pids[2]))    # the cell's processx child
+})
+
+#' On Windows, a cell that starts three children, each `Sys.sleep(300)`: one
+#' with `processx::process$new()`, one with `callr::r_bg()` (both with their
+#' default `cleanup = TRUE`) and one with `system2(wait = FALSE)`, which
+#' writes its own pid. The cell writes the worker's pid and the three
+#' children's to `pidfile`, and finishes, defining `a` as the two process
+#' objects (`unscanned_cell()`). The worker's library doesn't have
+#' processx and callr, so the cell uses this R's.
+windows_children_cell <- function(pidfile) {
+  rscript <- normalizePath(file.path(R.home("bin"), "Rscript.exe"), winslash = "/")
+  sys_pidfile <- normalizePath(paste0(pidfile, ".sys"), winslash = "/", mustWork = FALSE)
+  libs <- paste(deparse(normalizePath(.libPaths(), winslash = "/")), collapse = "")
+  unscanned_cell("a", sprintf(paste0(
+    ".libPaths(c(%1$s, .libPaths())); ",
+    "a <- processx::process$new('%2$s', c('-e', 'Sys.sleep(300)')); ",
+    "b <- callr::r_bg(function() Sys.sleep(300)); ",
+    "system2('%2$s', c('-e', shQuote(\"writeLines(as.character(Sys.getpid()), '%3$s.tmp'); file.rename('%3$s.tmp', '%3$s'); Sys.sleep(300)\")), wait = FALSE); ",
+    "while (!file.exists('%3$s')) Sys.sleep(0.05); ",
+    "writeLines(as.character(c(Sys.getpid(), a$get_pid(), b$get_pid(), readLines('%3$s'))), '%4$s.tmp'); ",
+    "file.rename('%4$s.tmp', '%4$s'); list(a, b)"),
+    libs, rscript, sys_pidfile, normalizePath(pidfile, winslash = "/", mustWork = FALSE)))
+}
+
+test_that("on Windows a cell's processx and callr children outlive a restart; its system() child doesn't (#208)", {
+  skip_on_os(c("mac", "linux", "solaris"))
+  pidfile <- tempfile("cell-pids-")
+  path <- write_session_notebook(list(S = cell(""), A = windows_children_cell(pidfile)))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  # The worker releases processx's job before it says a run is done.
+  run_cells(nb, "A", wait = TRUE, timeout = 60)
+  expect_identical(snap_view(notebook_snapshot(nb), "A")$status, "ok")
+  pids <- as.integer(readLines(pidfile))
+  on.exit(for (p in pids[-1]) tools::pskill(p), add = TRUE)
+  expect_true(all(vapply(pids, pid_running, logical(1))))
+
+  restart_notebook(nb)
+  # Collecting the old worker's process object runs its finalizer, which
+  # ends the tree processx marked as the worker's (#232).
+  invisible(gc())
+
+  expect_true(wait_pid_gone(pids[1]))  # the old worker
+  expect_true(wait_pid_gone(pids[4]))  # system2()'s child
+  expect_true(pid_running(pids[2]))    # processx's
+  expect_true(pid_running(pids[3]))    # callr's
+})
+
+test_that("on Windows a busy worker's processx and callr children outlive a killed server; its system() child doesn't (#208)", {
+  skip_on_os(c("mac", "linux", "solaris"))
+  use_installed_ember()
+  pidfile <- tempfile("cell-pids-")
+  marker <- normalizePath(tempfile("busy-"), winslash = "/", mustWork = FALSE)
+  # A starts the children and finishes. B uses A's `a`, so it runs after
+  # A, and is busy when the server is killed. Once B has begun, A's
+  # children have been released.
+  path <- write_session_notebook(list(S = cell(""), A = windows_children_cell(pidfile),
+                                      B = cell(sprintf("a; writeLines('x', '%s'); Sys.sleep(300)", marker))))
+  code <- paste0("library(ember); nb <- open_notebook(", deparse(path), "); run_cells(nb, c('A', 'B')); ",
+                 "repeat later::run_now(1)")
+  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
+                                  env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
+                                  stdout = "|", stderr = "2>&1")
+  on.exit(if (server$is_alive()) server$kill(), add = TRUE)
+  deadline <- Sys.time() + 60
+  while (!file.exists(marker) && server$is_alive() && Sys.time() < deadline) Sys.sleep(0.05)
+  expect_true(file.exists(marker), info = server$read_all_output())
+  pids <- as.integer(readLines(pidfile))
+  on.exit(for (p in pids) tools::pskill(p), add = TRUE)
+  expect_true(all(vapply(pids, pid_running, logical(1))))
+
+  server$kill()
+
+  expect_true(wait_pid_gone(pids[1]))  # the worker
+  expect_true(wait_pid_gone(pids[4]))  # system2()'s child
+  expect_true(pid_running(pids[2]))    # processx's
+  expect_true(pid_running(pids[3]))    # callr's
+})
+
 test_that("what a busy cell started with system() ends when the server is killed (#150)", {
+  # `sleep &` and `$!` need sh; the Windows tests above cover Windows.
   skip_on_os("windows")
   use_installed_ember()
   pidfile <- tempfile("cell-pids-")

@@ -3,7 +3,9 @@
 #
 # Started by the server as
 #   Rscript --vanilla -e '<boot>' <port>
-# where <boot> sources this file into a private environment whose parent is
+# where <boot> (worker_boot(), R/shell.R) loads this file's compiled image
+# (EMBER_WORKER_IMAGE, made by compiler::cmpfile(); #229), or sources the
+# file when there is none, into a private environment whose parent is
 # baseenv(), then calls main():
 #   local({e <- new.env(parent = baseenv()); sys.source(Sys.getenv("EMBER_WORKER"), e); e$main()})
 # so nothing here is visible from, or shadowed by, the notebook's globals
@@ -46,22 +48,27 @@
 #   source_reply allow, message      only while a `source` request waits
 #   more         cell, path, dim     grow a table's or tree's paging limit
 #                                    at `path` (dim 1 rows/items, 2 columns)
-#   render       cell, res, width?, height?   re-render the cell's recorded
-#                plot at its own figure size and `res`, or at `width`/
-#                `height` pixels when both are given (render_png())
+#   render       cell, res, width?, height?, id?   re-render the cell's
+#                recorded plot at its own figure size and `res`, or at
+#                `width`/`height` pixels when both are given. With `id`
+#                (render_png(), a worker_query()), the `rendered` reply
+#                carries it back and the shell hands it to that query
+#                instead of the state (#28).
 #   complete     id, line, cursor     line: the current line up to the cursor
 #   help         id, topic, package   package NULL: search attached, then all installed
 #   signature    id, name, package
 #   quit
 #
 # Worker -> server
-#   hello        secret, pid, r_version, lib_paths, tempdir
+#   hello        secret, pid, r_version, lib_paths, tempdir, interrupts,
+#                cell_children
 #   console      cell, token, item = list(kind, text)   streamed during a run
 #   source       cell, token, path, text                before a computed
 #                                                       source() runs; waits
 #   done         cell, token, report (see run_cell())
-#   rendered     cell, token, display   display is NULL when the cell has no
-#                                       kept value to page or re-render
+#   rendered     cell, token, display, id?   display is NULL when the cell
+#                                       has no kept value to page or
+#                                       re-render; id as the render's
 #   completions  id, token, items = list(name, kind, notebook), too_long
 #   help_page    id, found, topic, package, html, matches (packages, when several),
 #                error, tried_all_packages
@@ -117,6 +124,9 @@ touched <- list()       # every list(kind, name) any cell has changed this sessi
 search_added <- character()  # every attach() entry any cell has added this session
 running <- NULL        # list(cell, token) during a run (for the source trace)
 deferred <- list()     # messages read while waiting for a source_reply
+interrupt_drain <- NULL # Windows: the DLL routine that drops a late interrupt (listen_for_interrupts())
+release_children <- NULL # Windows: the DLL routine that releases a cell's processx children (#208)
+keeping_children <- FALSE  # Windows: whether the thread that releases them runs
 load_log <- NULL       # settings changes made inside loadNamespace/library during a run
 notebook_options <- character()  # option names an options() call from the
                        # notebook's own code (top-level, or a function a
@@ -147,7 +157,57 @@ loaded_namespace_versions <- function() {
   stats::setNames(vapply(ns, function(n) as.character(getNamespaceVersion(n)), character(1)), ns)
 }
 
+#' On Windows, start listening for the server's interrupts before the
+#' hello, from the package's DLL (src/interrupt.c, #48): loaded by path
+#' (`EMBER_DLL`), since the worker never loads the package. If that fails,
+#' the server finds no event to set and says the interrupt couldn't be
+#' delivered. The same DLL keeps a cell's processx and callr children
+#' alive past this process (src/children.c, #208). Elsewhere the server
+#' sends SIGINT, those children are in sessions of their own, and this
+#' does nothing.
+listen_for_interrupts <- function() {
+  path <- Sys.getenv("EMBER_DLL")
+  Sys.unsetenv("EMBER_DLL")
+  if (.Platform$OS.type != "windows" || !nzchar(path)) return(invisible(FALSE))
+  invisible(tryCatch({
+    dll <- dyn.load(path)
+    interrupt_drain <<- getNativeSymbolInfo("C_interrupt_drain", dll)
+    # So a cell's processx and callr children outlive this process, as
+    # they do on Unix (src/children.c, #208).
+    release_children <<- getNativeSymbolInfo("C_release_cell_children", dll)
+    keeping_children <<- isTRUE(tryCatch(.Call(getNativeSymbolInfo("C_keep_cell_children", dll)),
+                                         error = function(e) FALSE))
+    isTRUE(.Call(getNativeSymbolInfo("C_interrupt_listen", dll)))
+  }, error = function(e) FALSE))
+}
+
+#' Drop an interrupt still pending as a run starts: it is late, for the
+#' run before, since the server interrupts a run only once it has
+#' "running" (src/interrupt.c's `C_interrupt_drain()`). On Unix a SIGINT
+#' that late was already handled where it landed, between runs.
+drain_late_interrupt <- function() {
+  if (!is.null(interrupt_drain)) .Call(interrupt_drain)
+  invisible(NULL)
+}
+
+#' processx marks the worker as the server's process tree (`cleanup_tree`,
+#' shell.R): `PROCESSX_<id>=YES` in its environment, which everything it
+#' starts inherits. When the server collects the old worker's process
+#' object after a restart, its finalizer ends every process with that
+#' marker, a cell's processx and callr children too, which are meant to
+#' outlive a restart (design.md, #150). Dropped before any cell runs, so
+#' a cell's children don't carry it; what a cell starts with `system()`
+#' still ends with the worker, through the process group and reaper on
+#' Unix and R's job object on Windows (#232).
+drop_processx_marker <- function() {
+  marks <- grep("^PROCESSX_", names(Sys.getenv()), value = TRUE)
+  if (length(marks)) Sys.unsetenv(marks)
+  invisible(marks)
+}
+
 main <- function() {
+  drop_processx_marker()
+  listening <- listen_for_interrupts()
   port <- as.integer(commandArgs(trailingOnly = TRUE)[1])
   con <<- socketConnection("127.0.0.1", port, blocking = TRUE, open = "r+b",
                            timeout = 60 * 60 * 24 * 365)
@@ -173,7 +233,8 @@ main <- function() {
     send(list(type = "hello", secret = secret,
               pid = Sys.getpid(), r_version = R.version.string,
               lib_paths = .libPaths(), loaded = loaded_namespace_versions(),
-              tempdir = tempdir()))
+              tempdir = tempdir(), interrupts = listening,
+              cell_children = keeping_children))
     # This frame stays on the stack while every cell runs, so a cell
     # walking sys.frames() would find the secret here.
     rm(secret)
@@ -219,8 +280,14 @@ handle_next <- function() {
   trace_line("message", msg$type)
   on.exit(trace_line("handled", msg$type))
   switch(msg$type,
-    run = send(list(type = "done", cell = msg$cell, token = msg$token,
-                     report = run_cell(msg))),
+    run = {
+      drain_late_interrupt()
+      report <- run_cell(msg)
+      # Before "done": the children a finished cell started are released
+      # by the time the server hears it ended (src/children.c, #208).
+      if (!is.null(release_children)) .Call(release_children)
+      send(list(type = "done", cell = msg$cell, token = msg$token, report = report))
+    },
     remove_cell = {
       remove_cell(msg$cell)
       cell_order <<- msg$order
@@ -264,7 +331,7 @@ handle_next <- function() {
       })
     },
     more = send(show_more(msg)),
-    render = send(render_plot(msg)),
+    render = send(c(render_plot(msg), if (!is.null(msg$id)) list(id = msg$id))),
     complete = {
       r <- complete_line(msg$line, msg$cursor)
       send(list(type = "completions", id = msg$id, token = r$token, items = r$items, too_long = r$too_long))
@@ -348,7 +415,8 @@ trace_line <- function(...) {
 #' or NULL), console (list of items, also streamed), error (NULL or
 #' list(message, call, traceback, span)), runtime, created, changed, removed,
 #' settings, load_notes, attached (package -> exports, for packages newly
-#' attached), formula_misses, globals (see summarise_globals()),
+#' attached), formula_misses, columns (see global_columns()), globals (see
+#' summarise_globals()),
 #' changed_in_place (names of other cells' environments, R6 objects and
 #' reference class objects this run changed; env_fingerprint())).
 #' `error$span` is set only for role "text": the 1-based index of the
@@ -372,7 +440,7 @@ run_cell <- function(msg) {
              runtime = NA_real_, created = character(), changed = character(),
              removed = character(), settings = list(), load_notes = list(),
              attached = list(), formula_misses = character(), loaded = character(),
-             globals = list(), changed_in_place = character())
+             globals = list(), changed_in_place = character(), columns = list())
 
   # `dev`/`console` are closed here (not just at their normal point of use
   # below) so an interrupt landing anywhere in this function -- including
@@ -437,6 +505,7 @@ run_cell <- function(msg) {
     if (!is_text) exprs <- parse(text = msg$code, keep.source = TRUE,
                                  srcfile = srcfilecopy(msg$cell, msg$code))
     trace_line("eval", msg$cell)
+    dt_before <- datatable_before(env_before, if (is_text) text_lines else exprs)
 
     tryCatch(
       withCallingHandlers({
@@ -543,8 +612,15 @@ run_cell <- function(msg) {
                      # `e$package` is set by R's own loadNamespace()/library()
                      # for a packageNotFoundError regardless of locale, so the
                      # server can recognise a missing package without matching
-                     # the (locale-translated) message text.
-                     package = if (inherits(e, "packageNotFoundError")) e$package else NULL,
+                     # the (locale-translated) message text. rlang's
+                     # check_installed() names its packages the same way (#184),
+                     # unless one has a version (`"rlang (>= 99.0)"`): that one
+                     # may be installed and only too old, so the error stays as
+                     # it is, its message whole (the server can still offer a
+                     # fix for a quoted name in it that isn't installed).
+                     package = if (inherits(e, "packageNotFoundError")) e$package
+                               else if (inherits(e, "rlib_error_package_not_found") &&
+                                        (is.null(e$version) || all(is.na(e$version)))) as.character(e$pkg),
                      # Which text line (`inline_spans()$line` of the cell's
                      # analysed code) failed, for a text cell only.
                      span = if (is_text) at else NULL,
@@ -624,7 +700,7 @@ run_cell <- function(msg) {
       rc$created <- facts$created
       rc$changed <- facts$changed
       rc$removed <- facts$removed
-      rc$changed_in_place <- changed_in_place(env_before, facts$changed)
+      rc$changed_in_place <- changed_in_place(env_before, facts$changed, dt_before)
 
       by_code <- settings_by_code(settings0, settings_code, load_log_code)
       # An option a package creates for itself on first use (readr's
@@ -702,6 +778,8 @@ run_cell <- function(msg) {
       rebuild_search_path()
 
       rc$formula_misses <- check_formulas(msg$formulas)
+      # No names (every masked read an edge) if reading them fails.
+      rc$columns <- tryCatch(global_columns(facts$created), error = function(e) list())
       trace_line("bookkept", msg$cell)
     })
 
@@ -932,8 +1010,8 @@ ref_fingerprint <- function(v, budget) {
 #' into), and the key. `dt[, z := x * 2]`, `set()` on a new column,
 #' `setnames()`, `setkey()`, `setorder()` and dropping a column all change
 #' it. A write to some rows of an existing column (`dt[i, x := 0]`,
-#' `set(dt, i, "x", v)`) keeps the column's address, so it isn't seen;
-#' finding it would mean hashing every column each run (#172). `NULL`
+#' `set(dt, i, "x", v)`) keeps the column's address, so it isn't seen
+#' here; a hash of its contents finds those (#201). `NULL`
 #' when data.table's namespace isn't loaded or reading fails.
 datatable_fingerprint <- function(dt) {
   if (!isNamespaceLoaded("data.table")) return(NULL)
@@ -974,6 +1052,132 @@ datatable_clear_mark <- function() {
   if (!isNamespaceLoaded("data.table")) return(invisible())
   tryCatch({ g <- asNamespace("data.table")$.global; g$print <- "" }, error = function(e) NULL)
   invisible()
+}
+
+# ---- data.table row writes (#201) ------------------------------------------
+#
+# A write to some rows (`dt[i, x := 0]`, `set(dt, i, "x", v)`) keeps every
+# column's address, so the shape fingerprint can't see it. A hash of the
+# table's contents can, but costs about 3.5 ms a megabyte, so a run hashes
+# only another cell's tables that its code could write
+# (`datatable_could_write()`), once before its code and once after. No
+# other run hashes anything, and no hash is kept between runs: a write the
+# code check misses would leave a kept hash stale, and the next hashed run
+# would report that write as its own. A table the code reaches without
+# naming it (in a list, or a global a helper reads) isn't hashed (#216).
+
+#' A data.table's contents as one MD5 per column: each column's bytes
+#' (`writeBin()`, which for a character column writes its strings, plus
+#' where its NAs are), or its serialization for a list column. `NULL` if
+#' reading fails, or before R 4.5, whose `md5sum()` can't hash bytes.
+datatable_hash <- function(dt) {
+  if (getRversion() < "4.5.0") return(NULL)
+  tryCatch(vapply(seq_along(dt), function(i) {
+    col <- .subset2(dt, i)
+    bytes <- if (is.character(col)) c(writeBin(col, raw()), writeBin(which(is.na(col)), raw()))
+             else if (is.atomic(col)) writeBin(as.vector(col), raw())
+             else serialize(col, NULL, xdr = FALSE)
+    unname(tools::md5sum(bytes = bytes))
+  }, ""), error = function(e) NULL)
+}
+
+#' The hashes, before the run, of the other cells' tables (in
+#' `env_before`) that `code` (parsed expressions, or the lines of a text
+#' cell) could write: a named list, empty when it can write none.
+datatable_before <- function(env_before, code) {
+  tables <- Filter(function(b) inherits(b$env, "data.table"), env_before)
+  if (length(tables) == 0L) return(list())
+  tryCatch({
+    if (is.character(code)) code <- unlist(lapply(code, function(l) tryCatch(as.list(parse(text = l)), error = function(e) list())))
+    out <- list()
+    for (n in datatable_could_write(code, names(tables))) out[n] <- list(datatable_hash(tables[[n]]$env))
+    out
+  }, error = function(e) list())
+}
+
+#' data.table's functions that write a table in place: `:=`, `let()` and
+#' its exported `set*()` (`set`, `setkey`, `setnames`, ...).
+datatable_setters <- function() {
+  exports <- tryCatch(getNamespaceExports("data.table"), error = function(e) character())
+  c(":=", "let", exports[startsWith(exports, "set")])
+}
+
+#' The function a call's head names, looked up from `env` without
+#' running anything but a package's lazy load: a symbol, or `pkg::f` for a
+#' package already loaded (the check never loads one). `NULL` when it
+#' isn't bound to a function yet, or is anything else (`obj$f`, `f()()`).
+datatable_callee <- function(f, env) {
+  if (is.symbol(f)) return(get0(as.character(f), envir = env, mode = "function"))
+  if (is.call(f) && length(f) == 3L && (identical(f[[1L]], quote(`::`)) || identical(f[[1L]], quote(`:::`))) &&
+      (is.symbol(f[[2L]]) || is.character(f[[2L]])) && isNamespaceLoaded(as.character(f[[2L]])))
+    return(tryCatch(get(as.character(f[[3L]]), envir = asNamespace(as.character(f[[2L]]))), error = function(e) NULL))
+  NULL
+}
+
+#' Whether `fun` comes from a package (a primitive, or a closure made in a
+#' namespace) rather than from the notebook.
+datatable_package_fun <- function(fun) {
+  e <- environment(fun)
+  is.null(e) || isNamespace(topenv(e))
+}
+
+#' Which of `names` the parsed `exprs` could write in place. A table is
+#' written by `:=`, `let()` or a `set*()` function inside a `[` on it, by
+#' data.table's `set*()` functions (under any name, and passed to
+#' `do.call()`), and by the notebook's own functions,
+#' which can do either. So a name counts wherever it is an argument of a
+#' call to anything but a package function (`add_b(dt)`, `dt |> add_b()`,
+#' a function not defined yet), of data.table's `set*()`, or of a package
+#' function that is also passed a function of the notebook's
+#' (`lapply(list(dt), add_b)`, `Map(function(d) d[1, x := 0], list(dt))`),
+#' at any depth in its arguments, and as the table of a `[` with a write
+#' in it. Showing the table, a `[`
+#' read (`dt[x > 1]`), `dt$x`, and a package function (`nrow(dt)`,
+#' `lm(y ~ x, dt)`, `ggplot(dt)`) don't count.
+datatable_could_write <- function(exprs, names, env = globalenv()) {
+  found <- character()
+  setters <- datatable_setters()
+  writes_marked <- function(used) any(used %in% setters)
+  # A setter under another name (`upd <- data.table::set`) is found by
+  # what it is, not by its name.
+  setter_funs <- lapply(setdiff(setters, c(":=", "let")), function(n) get0(n, envir = asNamespace("data.table"), inherits = FALSE))
+  is_setter <- function(fun) any(vapply(setter_funs, function(s) identical(s, fun), NA))
+  # `f(x, )` and `function(a)` hold the empty symbol, which can't be bound
+  # to a variable, so arguments are read by index.
+  visit_each <- function(l, read) {
+    for (j in seq_along(l)) if (!identical(l[[j]], quote(expr = ))) visit(l[[j]], read)
+  }
+  notebook_fun <- function(a) {
+    if (is.call(a) && identical(a[[1L]], quote(`function`))) return(TRUE)
+    fun <- datatable_callee(a, env)
+    !is.null(fun) && (!datatable_package_fun(fun) || is_setter(fun))
+  }
+  visit <- function(e, read) {
+    if (is.symbol(e)) {
+      if (!read && as.character(e) %in% names) found <<- union(found, as.character(e))
+      return()
+    }
+    if (is.pairlist(e) || is.expression(e) || is.list(e)) return(visit_each(as.list(e), FALSE))
+    if (!is.call(e)) return()
+    f <- e[[1L]]
+    args <- as.list(e)[-1L]
+    fname <- if (is.symbol(f)) as.character(f)
+             else if (is.call(f) && length(f) == 3L && is.symbol(f[[3L]])) as.character(f[[3L]]) else ""
+    if (is.symbol(f) && fname %in% c("[", "[[", "$") && length(args) > 0L && !identical(args[[1L]], quote(expr = ))) {
+      visit(args[[1L]], !writes_marked(all.names(e)))
+      return(visit_each(args[-1L], FALSE))
+    }
+    if (!is.symbol(f)) visit(f, FALSE)
+    fun <- datatable_callee(f, env)
+    writer <- is.null(fun) || !datatable_package_fun(fun) ||
+      is_setter(fun) ||
+      any(vapply(seq_along(args), function(j) !identical(args[[j]], quote(expr = )) && notebook_fun(args[[j]]), NA))
+    # A writer can reach any table in its arguments (`lapply(list(dt), f)`).
+    if (writer) found <<- union(found, intersect(all.names(as.call(c(quote(c), args))), names))
+    visit_each(args, TRUE)
+  }
+  for (e in exprs) visit(e, TRUE)
+  found
 }
 
 #' An environment the notebook doesn't own: a namespace, a package's
@@ -1039,7 +1243,7 @@ env_fingerprint_ <- function(e, budget, depth, seen) {
 #' still bound to the same object, and its fingerprint differs. A
 #' name the run rebound (`changed`) or removed is reported as a change of
 #' the name, not of its contents.
-changed_in_place <- function(env_before, changed) {
+changed_in_place <- function(env_before, changed, dt_before = list()) {
   out <- character()
   for (n in setdiff(names(env_before), changed)) {
     b <- env_before[[n]]
@@ -1049,7 +1253,12 @@ changed_in_place <- function(env_before, changed) {
     print <- ref_fingerprint(now, list2env(list(left = ENV_FINGERPRINT_MAX)))
     # `dt <- copy(dt)` binds an equal table, which is a new name, not a change in place.
     if (inherits(now, "data.table") && !identical(print$self, b$print$self)) next
-    if (!identical(print, b$print)) out <- c(out, n)
+    if (!identical(print, b$print)) { out <- c(out, n); next }
+    # A write to some rows keeps the shape; the hash shows it (#201).
+    if (n %in% names(dt_before) && !is.null(dt_before[[n]])) {
+      h <- datatable_hash(now)
+      if (!is.null(h) && !identical(h, dt_before[[n]])) out <- c(out, n)
+    }
   }
   out
 }
@@ -1903,6 +2112,30 @@ data_call_name <- function(head) {
     if (!is.null(exported) && identical(fn, exported)) return(name)
   }
   NULL
+}
+
+#' The most names `global_columns()` reports for one value. A name past
+#' it is taken for a global, which costs an extra edge, never a missing one.
+GLOBAL_COLUMNS_MAX <- 10000L
+
+#' After the run: the names each global the cell created has as data, for
+#' the graph's reading of `subset(df, x > 1)` and the like (graph.R,
+#' `resolve_masked()`). A data frame (`frame = TRUE`) or a plain list gets
+#' its `names()`; any other value gets none, so every name read under it
+#' is a reference. An active binding isn't read, nor reported: a global
+#' with no entry counts as having no names.
+global_columns <- function(names) {
+  out <- list()
+  for (n in names) {
+    if (bindingIsActive(n, globalenv())) next
+    v <- tryCatch(get(n, envir = globalenv(), inherits = FALSE), error = function(e) NULL)
+    frame <- is.data.frame(v)
+    cols <- if (frame || (is.list(v) && !is.object(v))) names(v) else NULL
+    cols <- if (is.character(cols)) cols[!is.na(cols) & nzchar(cols)] else character()
+    if (length(cols) > GLOBAL_COLUMNS_MAX) cols <- cols[seq_len(GLOBAL_COLUMNS_MAX)]
+    out[[n]] <- list(frame = frame, names = cols)
+  }
+  out
 }
 
 #' After the run: which names taken as columns are not in the data. The

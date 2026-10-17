@@ -84,6 +84,11 @@ exports_of <- function(state) {
 #'   edit or a learned definition during a run reorders the queue for free.
 #' * `results`: named list, id -> `ember_result`, for cells that ran in the
 #'   current worker. A cell with no entry is "not run".
+#' * `data_columns`: named list, id -> global -> `list(frame, names)`: the
+#'   names each data frame or list a cell created had at its last "ok"
+#'   run in the current worker session (worker.R's `global_columns()`),
+#'   for masked reads (graph.R, `resolve_masked()`). Not saved: it
+#'   describes the worker's values. Deleted cells' entries are ignored.
 #' * `clock`: the `at` of the last event; the only time the core knows.
 #' * `seq`: integer, advanced by every event that changed the state
 #'   (Endeavor's `seq`).
@@ -91,7 +96,8 @@ exports_of <- function(state) {
 #'
 #' Invariants (checked by `check_state()` in tests after every step):
 #' * `graph` is `notebook_graph(code_of(cells), exports,
-#'   graph$learned, read_file = reader_of(files))` for the current fields:
+#'   graph$learned, read_file = reader_of(files), columns = data_columns)`
+#'   for the current fields:
 #'   every step that changes `cells`, `exports` or `files` rebuilds
 #'   it with `previous = graph` (`rebuild_graph()` in step.R) and nothing
 #'   else assigns it.
@@ -196,7 +202,7 @@ new_state <- function(file, path, id, options, at) {
     exports = list(), graph = graph, options = options, packages = packages,
     allowed = FALSE, closed = FALSE, worker = new_worker_state(),
     worker_usage = NULL,
-    pending = character(), results = list(), clock = at, seq = 0L,
+    pending = character(), results = list(), data_columns = list(), clock = at, seq = 0L,
     next_token = 1L
   ), class = "ember_state")
 }
@@ -215,6 +221,8 @@ new_state <- function(file, path, id, options, at) {
 #'   `begun` turns `TRUE` when the worker says it began the run.
 #' * `interrupt`: `NULL` or `list(at, token)` once the user interrupted that
 #'   run. SIGINT is sent then, or when the run begins if that is later.
+#'   `failed = TRUE` is added if the interrupt couldn't be delivered
+#'   (`wk_interrupt_failed`, Windows).
 #' * `restart_offered`: logical.
 #' * `info`: what the hello said (pid, R version, library paths), or `NULL`.
 #' * `exit`: `NULL` or `list(status, message)` from the last exit.
@@ -334,7 +342,9 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 
 #' The snapshot: the notebook as Endeavor and the console see it.
 #'
-#' `list(cells, process, restart_offered, worker_message, seq)`. Per cell,
+#' `list(cells, process, restart_offered, interrupt_failed, worker_message,
+#' seq)`. `interrupt_failed` is TRUE once an interrupt of the running cell
+#' couldn't be delivered (Windows, #48); `restart_offered` is then TRUE too. Per cell,
 #' an `ember_cell_view`: `id`, `index` (display), `kind`, `code`, `folded`,
 #' `settings` (`list(name, found)` per setting the cell sets, `found` being
 #' `"code"` or `"run"`; empty for an ordinary cell), `settings_found` (the
@@ -369,6 +379,7 @@ snapshot_of <- function(state) {
   process <- if (!isTRUE(state$allowed)) "preview" else state$worker$status
   list(cells = views, process = process,
       restart_offered = isTRUE(state$worker$restart_offered),
+      interrupt_failed = isTRUE(state$worker$interrupt$failed),
       worker_message = if (!is.null(state$worker$exit)) state$worker$exit$message else NULL,
       seq = state$seq, packages = packages_view(state))
 }
@@ -812,7 +823,8 @@ check_state <- function(state) {
   expected <- notebook_graph(code_of(state$cells),
                              exports = exports_of(state), learned = state$graph$learned,
                              disabled = disabled_ids(state$cells),
-                             previous = state$graph, read_file = reader_of(state$files))
+                             previous = state$graph, read_file = reader_of(state$files),
+                             columns = state$data_columns)
   # `read_file` is a closure freshly made over `state$files`; it is never
   # the same object as the one already stored on the graph even when it
   # behaves identically. `reread` records what was recomputed relative to

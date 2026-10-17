@@ -305,7 +305,9 @@ run_cells <- function(nb, ids = NULL, wait = FALSE, timeout = 60) {
 #'
 #' Sends SIGINT. If the cell hasn't stopped `grace` seconds later, the
 #' snapshot's `restart_offered` turns `TRUE` (with the cells a restart would
-#' leave not run); it turns back to `FALSE` if the cell stops after all.
+#' leave not run); it turns back to `FALSE` if the cell stops after all. If
+#' the interrupt can't be delivered at all (Windows, #48), both
+#' `restart_offered` and `interrupt_failed` turn `TRUE` at once.
 #' @export
 interrupt_notebook <- function(nb) {
   dispatch(nb, ev_interrupt(at = Sys.time()))
@@ -327,7 +329,8 @@ restart_notebook <- function(nb) {
 #' What the notebook looks like now: a plain list, safe to keep.
 #'
 #' `list(id, path, seq, read_only, allowed, process, restart_offered,
-#' worker_message, worker_memory, problems, order, cells, packages)` where
+#' interrupt_failed, worker_message, worker_memory, problems, order, cells,
+#' packages)` where
 #' `process` is one of `"preview"`, `"starting"`, `"ready"`, `"busy"`,
 #' `"stopped"`, `cells` is a named list (display order) of `ember_cell_view`
 #' (see `snapshot_of()` in state.R) with each cell's `variables` carrying
@@ -346,6 +349,7 @@ notebook_snapshot <- function(nb) {
   list(id = nb$state$id, path = nb$state$path, seq = s$seq,
       read_only = isTRUE(nb$state$read_only), allowed = isTRUE(nb$state$allowed),
       process = s$process, restart_offered = s$restart_offered,
+      interrupt_failed = s$interrupt_failed,
       worker_message = s$worker_message, worker_memory = worker_memory,
       problems = nb$state$problems,
       order = names(nb$state$cells), cells = cells, packages = s$packages)
@@ -404,9 +408,12 @@ notebook_state <- function(nb) nb$state
 
 #' A PNG of a cell's output, for Endeavor's `view_cell_output`.
 #'
-#' Plots are already PNGs and come back at once. With `width`/`height`
-#' different from the stored image, the worker re-renders the recorded
-#' plot (the call waits up to `timeout`). Other outputs return `NULL`; the
+#' Plots are already PNGs and come back at once. With `width`/`height`,
+#' the worker re-renders the recorded plot at that size (the call waits up
+#' to `timeout`, and a busy worker answers once its run ends). The new
+#' image is only returned: the cell's stored image, the one every page
+#' shows, stays as it was (#28). `png` is `NULL` when no answer came in
+#' time, or the cell ran again meanwhile. Other outputs return `NULL`; the
 #' caller reads their `text/plain` form from the snapshot.
 #' @return `list(png = <raw> | NULL, mime = <the output's mime type>)`.
 #' @export
@@ -424,18 +431,20 @@ render_png <- function(nb, cell, width = NULL, height = NULL, res = 96, timeout 
     return(list(png = view$output$data, mime = "image/png"))
   }
 
-  before <- view$output
-  dispatch(nb, ev_render(id, width, height, at = Sys.time(), res = res))
-  deadline <- Sys.time() + timeout
-  repeat {
-    now_view <- find_view()
-    if (!is.null(now_view$output) && !identical(now_view$output, before)) {
-      return(list(png = now_view$output$data, mime = "image/png"))
-    }
-    remaining <- as.numeric(deadline - Sys.time(), units = "secs")
-    if (remaining <= 0) return(list(png = NULL, mime = "image/png"))
-    later::run_now(timeout = remaining)
+  # A worker query, not an event: the reply goes to this call alone and
+  # never reaches the state, so the page keeps the cell's own image.
+  token <- nb$state$results[[id]]$output$token
+  msg <- c(list(type = "render", cell = id, res = res),
+          if (!is.null(width)) list(width = width),
+          if (!is.null(height)) list(height = height))
+  reply <- "unset"
+  worker_query(nb, msg, function(r) reply <<- r, timeout = timeout, busy_ok = TRUE)
+  while (identical(reply, "unset")) later::run_now(timeout = timeout)
+  display <- if (!is.null(reply) && eq(reply$token, token)) as_display(reply$display)
+  if (is.null(display) || !identical(display$mime, "image/png")) {
+    return(list(png = NULL, mime = "image/png"))
   }
+  list(png = display$data, mime = "image/png")
 }
 
 # ---- Events and waiting -------------------------------------------------------

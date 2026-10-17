@@ -37,8 +37,8 @@
 #' cancel function), `closing` (listeners are cleared only after the
 #' closing dispatch's notifications are delivered), `queries` (environment,
 #' id (character) -> callback, for `worker_query()`'s pending completion/
-#' help/signature questions -- outside `ember_state` and the event log, see
-#' `worker_query()`), `next_query_id` (integer, last id handed out),
+#' help/signature questions and one-off renders -- outside `ember_state`
+#' and the event log, see `worker_query()`), `next_query_id` (integer, last id handed out),
 #' `file_inputs`/`watch_inputs` (what the last saved file text and the
 #' last watched paths were made from: `save_if_changed()` and
 #' `after_dispatch()` skip the work when these are unchanged; `NULL` until
@@ -77,6 +77,7 @@ session_start <- function(state) {
   register_session(nb)
   sync_active_libraries()
   maybe_start_cleanup()
+  ready_worker_image(dir = nb$state$options$cache %||% cache_dir())
   maybe_start_heartbeat()
   schedule_poll(nb)
   nb
@@ -222,10 +223,16 @@ schedule_poll <- function(nb, interval = 0.005) {
 
 #' Seconds until the next poll: fast while the shell is waiting on the
 #' worker (connecting, starting, running, a pending cell or query, bytes
-#' half-read, or anything sent or received in the last second), slow when
-#' nothing is outstanding, since the worker speaks almost only in reply.
+#' half-read, or anything sent or received in the last second); 250 ms while
+#' an install or index job is running, so its progress and its end are read
+#' promptly; otherwise 2 s. An idle worker sends nothing (it speaks only in
+#' reply, or during a run), so the slow poll only notices a worker that died
+#' while idle, and a watched file that changed: each costs about 1.7 ms of
+#' the server's time, so 4 a second cost 0.7% of a core per open notebook
+#' (#46).
 poll_interval <- function(nb, now = Sys.time()) {
-  if (is.null(nb$proc)) return(0.5)
+  jobs_running <- length(ls(jobs, all.names = TRUE)) > 0
+  if (is.null(nb$proc)) return(if (jobs_running) 0.25 else 2)
   st <- nb$state
   waiting <- is.null(nb$con) ||
     !identical(st$worker$status, "ready") ||
@@ -234,20 +241,26 @@ poll_interval <- function(nb, now = Sys.time()) {
     length(ls(nb$queries, all.names = TRUE)) > 0 ||
     nb$rx$n > 0 ||
     (!is.null(nb$last_io) && as.numeric(now - nb$last_io, units = "secs") < 1)
-  if (waiting) 0.005 else 0.25
+  if (waiting) 0.005 else if (jobs_running) 0.25 else 2
+}
+
+#' Bring a poll due later than `interval` forward to `interval`. Inside
+#' `poll()` the poll reschedules itself on the way out, so it is left alone
+#' there.
+hurry_poll <- function(nb, interval) {
+  if (!isTRUE(nb$in_poll) && !is.null(nb$poll_cancel) &&
+      isTRUE(nb$poll_interval > interval)) {
+    cancel_poll(nb)
+    schedule_poll(nb, interval)
+  }
+  invisible(NULL)
 }
 
 #' Note worker traffic, and bring a slow poll forward so the reply is read
-#' within one fast tick. Inside `poll()` the poll reschedules itself on the
-#' way out, so it is left alone there.
+#' within one fast tick.
 note_worker_io <- function(nb) {
   nb$last_io <- Sys.time()
-  if (!isTRUE(nb$in_poll) && !is.null(nb$poll_cancel) &&
-      isTRUE(nb$poll_interval > 0.005)) {
-    cancel_poll(nb)
-    schedule_poll(nb, 0.005)
-  }
-  invisible(NULL)
+  hurry_poll(nb, 0.005)
 }
 
 cancel_poll <- function(nb) {
@@ -421,8 +434,11 @@ run_effect <- function(nb, fx) {
     },
     interrupt = {
       if (identical(nb$proc_gen, fx$gen) && !is.null(nb$proc)) {
-        tryCatch(nb$proc$interrupt(), error = function(e) NULL)
+        sent <- interrupt_worker(nb$proc)
         note_worker_io(nb)
+        if (!sent && isTRUE(tryCatch(nb$proc$is_alive(), error = function(e) FALSE))) {
+          enqueue(nb, wk_interrupt_failed(fx$gen, at = Sys.time()))
+        }
       }
     },
     send = {
@@ -475,8 +491,9 @@ run_effect <- function(nb, fx) {
       unregister_session(nb)
     },
     fetch_index = {
-      # A GitHub key at a moving ref (a branch, a tag, HEAD) is fetched
-      # afresh: the cache could hold an older commit (`github_key()`).
+      # A GitHub key at a moving ref (a branch, a tag, HEAD), or a
+      # universe's latest build, is fetched afresh: the cache could hold an
+      # older commit (`github_key()`, `universe_key()`).
       # A dated key as recent as today (#39) is read from the cache like
       # any other, since fetching it on every open costs seconds, but its
       # slot is marked provisional: Package Manager may still add to that
@@ -484,7 +501,7 @@ run_effect <- function(nb, fx) {
       # fetched again. If that fetch fails (offline), the saved copy
       # stands in.
       provisional <- index_may_change(fx$key)
-      moving <- is_github_key(fx$key) && !is_commit(parse_github_key(fx$key)$ref)
+      moving <- is_moving_source_key(fx$key)
       cache <- nb$state$options$cache
       read_index <- function() {
         if (moving) fresh_index(fx$key, cache)
@@ -512,7 +529,7 @@ run_effect <- function(nb, fx) {
             } else {
               msg <- fetch_error_message(output)
               ev_index_failed(fx$key, msg, at = Sys.time(),
-                              unpublished = provisional && grepl("has no index for that date (404)", msg, fixed = TRUE))
+                              unpublished = may_be_unpublished(fx$key) && grepl("has no index for that date (404)", msg, fixed = TRUE))
             }
           })
       }
@@ -676,6 +693,73 @@ loopback_reaches <- function(s, port, wait = 1) {
   identical(heard, nonce)
 }
 
+# ---- The worker's compiled image (#229) ---------------------------------------
+# R's JIT compiles a closure the second time it is called. A worker that
+# sys.source()s worker.R runs its own functions uncompiled, so its second
+# run pays for compiling run_cell() and everything it calls: about 0.4 s
+# on Linux, and over 5 s on a slow Windows runner. compiler::cmpfile()
+# compiles the whole file once (about 1.5 s) into the cache, and a worker
+# that loadcmp()s it runs compiled code from its first cell. The compile
+# runs in an Rscript of its own, so nothing waits for it: a worker started
+# before it finishes sys.source()s worker.R, as before.
+
+#' Where the image of `src` lives: one per worker.R content and R version
+#' (bytecode is R's own format), under `cache_dir()`/worker. The content
+#' hash, not Ember's version: a development build keeps its version
+#' across changes to worker.R.
+worker_image_path <- function(src = system.file("worker.R", package = "ember"), dir = cache_dir()) {
+  key <- paste0("R-", R.version$major, ".", R.version$minor, "-", unname(tools::md5sum(src)))
+  file.path(dir, "worker", paste0(key, ".Rc"))
+}
+
+#' The compile this process started, if any: at most one per image path.
+worker_image_build <- local({
+  env <- new.env(parent = emptyenv())
+  env$path <- NULL
+  env$proc <- NULL
+  env
+})
+
+#' The image's path when it exists. Otherwise start compiling it, once per
+#' process, and return `NULL`. The compile writes a private name and
+#' renames it into place, so a worker never loads half a file and two
+#' processes compiling at once both end with the same image (library.R's
+#' concurrency rule). It then deletes other images and leftovers more than
+#' a day old: images of earlier worker.R versions, and a compile that was
+#' killed with its server.
+ready_worker_image <- function(src = system.file("worker.R", package = "ember"), dir = cache_dir()) {
+  if (!nzchar(src) || !file.exists(src)) return(NULL)
+  path <- tryCatch(worker_image_path(src, dir), error = function(e) NULL)
+  if (is.null(path)) return(NULL)
+  if (file.exists(path)) return(path)
+  if (identical(worker_image_build$path, path)) return(NULL)
+  worker_image_build$path <- path
+  code <- paste(
+    "args <- commandArgs(TRUE)",
+    "dir.create(dirname(args[2]), recursive = TRUE, showWarnings = FALSE)",
+    "tmp <- tempfile('build-', dirname(args[2]), '.tmp')",
+    "compiler::cmpfile(args[1], tmp, verbose = FALSE)",
+    "if (!file.rename(tmp, args[2])) unlink(tmp)",
+    "old <- setdiff(list.files(dirname(args[2]), full.names = TRUE), args[2])",
+    "unlink(old[difftime(Sys.time(), file.info(old)$mtime, units = 'days') > 1])",
+    sep = "; ")
+  worker_image_build$proc <- tryCatch(
+    processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code, src, path)),
+    error = function(e) NULL)
+  NULL
+}
+
+#' The `-e` line a worker starts with: load the compiled image named by
+#' EMBER_WORKER_IMAGE into a private environment whose parent is
+#' baseenv(), or, with no image or one that fails to load, source
+#' worker.R there (worker.R's header), then call main().
+worker_boot <- function() {
+  paste0(
+    "local({e <- new.env(parent = baseenv()); img <- Sys.getenv('EMBER_WORKER_IMAGE'); ",
+    "if (!nzchar(img) || inherits(tryCatch(compiler::loadcmp(img, e), error = identity), 'error')) ",
+    "sys.source(Sys.getenv('EMBER_WORKER'), e); e$main()})")
+}
+
 #' Spawn a worker. Never waits for it: the connection is accepted by the
 #' poll once the listening socket is readable.
 start_worker_process <- function(nb, fx) {
@@ -695,12 +779,12 @@ start_worker_process <- function(nb, fx) {
   tryCatch(touch_library(lib), error = function(e) NULL)
 
   rscript <- file.path(R.home("bin"), "Rscript")
-  boot <- paste0(
-    "local({e <- new.env(parent = baseenv()); ",
-    "sys.source(Sys.getenv('EMBER_WORKER'), e); e$main()})")
+  boot <- worker_boot()
   env <- c("current",
            R_LIBS_USER = lib, R_LIBS = "", R_LIBS_SITE = "",
            EMBER_WORKER = system.file("worker.R", package = "ember"),
+           EMBER_DLL = ember_dll_path(),
+           EMBER_WORKER_IMAGE = ready_worker_image(dir = nb$state$options$cache %||% cache_dir()) %||% "",
            EMBER_SECRET = nb$secret)
   wd <- fx$wd
   if (is.null(wd) || !nzchar(wd)) wd <- getwd()
@@ -863,16 +947,25 @@ worker_is_idle <- function(nb) {
     is.null(st$worker$running) && length(st$pending) == 0 && !is.null(nb$con)
 }
 
-#' Ask the worker a question (`complete`, `help` or `signature`) outside
-#' `step()` and the event log: these never change the notebook, so they
-#' don't belong in the engine's history. `callback(reply)` runs once, with
-#' the worker's reply, or with `NULL` at once if the worker isn't idle, or
+#' Ask the worker a question (`complete`, `help` or `signature`, or a
+#' `render` at a one-off size for `render_png()`) outside `step()` and the
+#' event log: these never change the notebook, so they don't belong in the
+#' engine's history. `callback(reply)` runs once, with the worker's reply,
+#' or with `NULL` at once if the worker isn't idle (with `busy_ok`, if it
+#' isn't ready or busy: a `render` may arrive mid-run, and the worker
+#' answers it once the run ends, inst/worker.R), or
 #' with `NULL` after `timeout` seconds, or when the worker exits
 #' (`fail_pending_queries()`). A reply that arrives after the timeout (or
 #' after the worker that was asked is gone) finds no entry in `nb$queries`
 #' and is dropped.
-worker_query <- function(nb, msg, callback, timeout = 0.8) {
-  if (!worker_is_idle(nb)) {
+worker_query <- function(nb, msg, callback, timeout = 0.8, busy_ok = FALSE) {
+  st <- nb$state
+  can_ask <- if (busy_ok) {
+    isTRUE(st$allowed) && st$worker$status %in% c("ready", "busy") && !is.null(nb$con)
+  } else {
+    worker_is_idle(nb)
+  }
+  if (!can_ask) {
     callback(NULL)
     return(invisible(NULL))
   }
@@ -897,7 +990,8 @@ worker_query <- function(nb, msg, callback, timeout = 0.8) {
   invisible(NULL)
 }
 
-#' A `completions`/`help_page`/`signature` reply: find its callback by
+#' A `completions`/`help_page`/`signature` reply, or a `rendered` one with
+#' an `id`: find its callback by
 #' `msg$id` and call it, or drop the message (its query already timed out).
 answer_query <- function(nb, msg) {
   key <- as.character(msg$id)
@@ -921,8 +1015,8 @@ fail_pending_queries <- function(nb) {
 }
 
 #' The poll, at the interval `poll_interval()` picks: 5 ms while the shell
-#' waits on the worker, 250 ms with an idle worker, 500 ms with none.
-#' File watching is checked at most every 500 ms regardless of the poll
+#' waits on the worker, 250 ms while a job runs, 2 s otherwise. File
+#' watching is checked at most every 500 ms regardless of the poll
 #' interval, so a busy worker doesn't make it noisier.
 poll <- function(nb) {
   nb$in_poll <- TRUE
@@ -956,7 +1050,8 @@ poll <- function(nb) {
     if (length(framed$messages) > 0) {
       broke <- FALSE
       for (msg in framed$messages) {
-        if (!is.null(msg$type) && msg$type %in% c("completions", "help_page", "signature")) {
+        if (!is.null(msg$type) && (msg$type %in% c("completions", "help_page", "signature") ||
+                                   (identical(msg$type, "rendered") && !is.null(msg$id)))) {
           answer_query(nb, msg)
           next
         }
@@ -1169,6 +1264,26 @@ as_display <- function(b) {
 #' default, so workers inherit a working interrupt. C code in src/
 #' (the spike's sigreset.c). Harmless to call more than once.
 reset_sigint <- function() invisible(.Call(C_reset_sigint))
+
+#' Interrupt a worker's running cell. `TRUE` if the interrupt was
+#' delivered, as far as this process can tell. On Unix that's SIGINT to the
+#' worker's own process. On Windows it's the worker's interrupt event
+#' (src/interrupt.c, #48), not processx's `interrupt()`: that one needs a
+#' console the worker may not have, and says it sent an interrupt it lost.
+interrupt_worker <- function(proc) {
+  if (.Platform$OS.type == "windows") {
+    return(isTRUE(tryCatch(.Call(C_interrupt_send, proc$get_pid()), error = function(e) FALSE)))
+  }
+  isTRUE(tryCatch(proc$interrupt(), error = function(e) FALSE))
+}
+
+#' The path of this package's DLL, which a worker on Windows loads for its
+#' interrupt event (worker.R's `listen_for_interrupts()`). The worker doesn't
+#' load the package itself: only this DLL, by path.
+ember_dll_path <- function() {
+  dll <- getLoadedDLLs()[["ember"]]
+  if (is.null(dll)) "" else dll[["path"]]
+}
 
 #' Atomic write: write to a temp file in the same folder, then rename.
 #' Returns `FALSE`, leaving `path` untouched, if either step fails (e.g.
