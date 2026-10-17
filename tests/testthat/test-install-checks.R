@@ -76,6 +76,23 @@ test_that("on Windows with Rtools off the PATH, has_compiler() still finds it (#
   expect_identical(res$stdout, "FALSE TRUE")
 })
 
+test_that("on Windows without Rtools, has_compiler() says so (#49)", {
+  # No Rtools for R CMD: R_CUSTOM_TOOLS_PATH replaces Rtools' folders on R
+  # CMD's PATH (R's Rcmd_environ), and every folder with a gcc.exe or an
+  # sh.exe (Git's usr\bin has one) leaves the PATH. R CMD config then
+  # can't run its sh, or finds no gcc, as on a machine without Rtools.
+  skip_on_os(c("mac", "linux", "solaris"))
+  use_installed_ember()
+  code <- paste(
+    "p <- strsplit(Sys.getenv('PATH'), ';', fixed = TRUE)[[1]];",
+    "p <- p[!file.exists(file.path(p, 'gcc.exe')) & !file.exists(file.path(p, 'sh.exe'))];",
+    "Sys.setenv(PATH = paste(p, collapse = ';'), R_CUSTOM_TOOLS_PATH = 'C:/no-such-tools');",
+    "cat(ember:::has_compiler())")
+  res <- processx::run(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
+                       env = c("current", R_LIBS = paste(.libPaths(), collapse = ";")))
+  expect_identical(res$stdout, "FALSE")
+})
+
 test_that("source_builds() names the compiled packages with no binary at the locked version (92)", {
   src <- cbind(Package = c("Rcpp", "glue", "units", "cli"),
                Version = c("1.0.12", "1.8.0", "0.8-5", "3.6.5"),

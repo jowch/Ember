@@ -61,8 +61,10 @@ has_compiler <- function(os = os_kind(), r_cmd_runs = r_cmd_succeeds) {
   }
   cc <- strsplit(r_config("CC"), "\\s+")[[1]]
   cc <- cc[nzchar(cc)]
+  # On Windows `R CMD config` runs Rtools' `sh`, so saying nothing there
+  # means no Rtools.
+  if (identical(os, "windows")) return(length(cc) > 0 && r_cmd_runs(c(cc[[1]], "--version")))
   if (length(cc) == 0) return(TRUE)  # R can't say; don't stop an install over it
-  if (identical(os, "windows")) return(r_cmd_runs(c(cc[[1]], "--version")))
   nzchar(Sys.which(cc[[1]]))
 }
 
