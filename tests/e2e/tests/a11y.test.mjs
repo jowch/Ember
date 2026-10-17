@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, runCell, setCellCode } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, runCell, setCellCode, waitIdle } from "../browser.mjs";
 import { AxeBuilder } from "@axe-core/playwright";
 
 /** Every visible button, menu item and link inside `scope` whose name is
@@ -51,13 +51,6 @@ async function recordAnnouncements(page) {
 /** The `n`th announcement since recordAnnouncements(), once it is made. */
 const announcement = (page, n) =>
   page.waitForFunction((n) => window.ember_announcements[n] ?? false, n, { timeout: 30000 }).then((h) => h.jsonValue());
-
-async function waitIdle(page) {
-  await page.waitForFunction(() => {
-    const nb = window.editor_state?.notebook;
-    return nb?.process_status === "ready" && Object.values(nb.cell_results).every((r) => !r.running && !r.queued);
-  }, null, { timeout: 30000 });
-}
 
 test("names: every visible control has a name, and an icon's name is its tooltip (160)", async (t) => {
   const notebook = tempNotebook("basic.R");
