@@ -2059,7 +2059,7 @@ test_that("after a failed install, a cell waiting on the package runs instead of
     error = list(message = "there is no package called 'cli'", package = "cli")), at(7)))
   err <- r2$state$results$A$error
   expect_equal(err$kind, "missing_package")
-  expect_match(err$message, "its install may have failed")
+  expect_equal(err$message, "there is no package called 'cli': install failed")
 })
 
 test_that("while a package installs, a cell calling its functions waits for it instead of failing first (#67)", {
@@ -2125,4 +2125,30 @@ test_that("missing_package_error() for a locked, uninstalled package points at t
   out <- missing_package_error(s, "cli")
   expect_equal(out$error$kind, "missing_package")
   expect_match(out$error$message, "there is no package called 'cli'; its install may have failed")
+})
+
+test_that("a failed install's cell error says why it failed, as package_status() does (#182)", {
+  # Before, the cell said only "its install may have failed", though the
+  # Packages status named the missing system libraries and the command.
+  lock <- new_lock(name = c("s2", "sf", "units"), version = c("1.1.9", "1.0-21", "0.8-7"), source = rep("CRAN", 3))
+  s <- fake_state(list(A = cell("library(sf)")), lock = lock)
+  key <- s$packages$target$key
+  why <- paste("install failed:\nError: sf, units need system libraries that aren't installed (libgdal.so.34, libudunits2.so.0).",
+               "Install them with `apt-get install -y libgdal-dev libudunits2-dev`, then try again.")
+  r <- drive(s, ev_run("A", at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(), at(3)))
+  r <- drive(r$state, ev_library_checked(key, NULL, at(4)))
+  tok <- r$state$packages$install$token
+  r <- drive(r$state, ev_install_done(tok, key, NULL, why, character(), at(5),
+                                      failures = data.frame(package = c("units", "sf"), kind = "system_library",
+                                                            detail = "", stringsAsFactors = FALSE)))
+  r <- drive(r$state, wk_done(r$state$worker$gen, r$state$worker$running$token, report(
+    error = list(message = "there is no package called 'sf'", package = "sf")), at(6)))
+  err <- r$state$results$A$error
+  expect_equal(err$kind, "missing_package")
+  expect_equal(err$message, paste0("there is no package called 'sf': ", why))
+  expect_equal(packages_view(r$state)$problems$message[[1]], why)
+
+  # A package the install didn't get to, though it didn't fail itself, says why too.
+  out <- missing_package_error(r$state, "s2")
+  expect_equal(out$error$message, paste0("there is no package called 's2': ", why))
 })
