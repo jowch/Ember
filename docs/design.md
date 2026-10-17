@@ -499,6 +499,9 @@ printed form is an address; an R6 object, which has a class, still
 prints). A data.table `:=` or `set*()` call shows nothing, as at the R
 console, although R returns the table visibly: data.table marks the table
 it returned, Ember reads the mark, and `dt[, z := 1][]` shows it (#185).
+The mark is cleared before each top-level expression, so one left by a
+`:=` that wasn't shown (`invisible(dt[, z := 1])`, or a helper's) doesn't
+blank a later cell that shows the table, as it would at the console.
 Earlier visible values, `print()`,
 `cat()`, messages and warnings go to a console area below the output, in
 order. A plot drawn with no visible value after it is the output. R

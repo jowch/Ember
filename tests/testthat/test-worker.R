@@ -1808,6 +1808,18 @@ test_that("a cell ending in a data.table := shows nothing, as at the R console, 
   run_and_wait(h, "a", 5L, "dt[, e := 1]", order = ord)
   r <- run_and_wait(h, "b", 6L, "dt", order = ord)
   expect_false(is.null(r$output))
+  # A mark left by a := that wasn't shown (inside invisible(), or in a
+  # helper) doesn't blank the next cell that shows the table (review).
+  run_and_wait(h, "a", 7L, "invisible(dt[, f := 1])", order = ord)
+  r <- run_and_wait(h, "b", 8L, "dt", order = ord)
+  expect_false(is.null(r$output))
+  run_and_wait(h, "c", 9L, "add_g <- function(d) { d[, g := 1]; invisible(NULL) }", order = ord)
+  run_and_wait(h, "a", 10L, "add_g(dt)", order = ord)
+  r <- run_and_wait(h, "b", 11L, "dt", order = ord)
+  expect_false(is.null(r$output))
+  # Nor the same cell's last value.
+  r <- run_and_wait(h, "a", 12L, "invisible(dt[, h := 1])\ndt", order = ord)
+  expect_false(is.null(r$output))
 })
 
 test_that("a setting the display step changes isn't the cell's: only its code's changes make it a settings cell, and the display's change stays as a package load's would (#156)", {

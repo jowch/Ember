@@ -445,7 +445,7 @@ run_cell <- function(msg) {
             # 3` ``, as knitr allows); all of them run, in order, and the
             # line's value is the last one's, with its own visibility.
             r <- withVisible(NULL)
-            for (line_e in line_exprs) r <- withVisible(eval(line_e, globalenv()))
+            for (line_e in line_exprs) { datatable_clear_mark(); r <- withVisible(eval(line_e, globalenv())) }
             inline_values[[li]] <- if (r$visible && !datatable_assigned(r$value)) inline_text(r$value) else ""
           }
         } else {
@@ -455,6 +455,7 @@ run_cell <- function(msg) {
           # values a cell shows").
           for (k in seq_along(exprs)) {
             at <- k   # the top-level expression index; error$line reads its srcref
+            datatable_clear_mark()
             r <- withVisible(eval(exprs[[k]], globalenv()))
             if (k < length(exprs)) {
               if (r$visible && !datatable_assigned(r$value)) console$print(r$value)
@@ -951,6 +952,17 @@ datatable_assigned <- function(value) {
     g$print <- ""
     TRUE
   }, error = function(e) FALSE)
+}
+
+#' Clear data.table's print mark before a top-level expression runs, so
+#' `datatable_assigned()` sees only a mark that expression set. A `:=`
+#' whose value isn't shown (`invisible(dt[, b := 1])`, or one inside a
+#' helper) leaves the mark set, and the next cell that shows the table
+#' would otherwise show nothing (data.table's own FAQ 2.23 at the console).
+datatable_clear_mark <- function() {
+  if (!isNamespaceLoaded("data.table")) return(invisible())
+  tryCatch({ g <- asNamespace("data.table")$.global; g$print <- "" }, error = function(e) NULL)
+  invisible()
 }
 
 #' An environment the notebook doesn't own: a namespace, a package's
