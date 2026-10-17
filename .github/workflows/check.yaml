@@ -86,7 +86,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # Windows too: until it ran here, Windows e2e failures reached main
+        # unseen, and only a run on a Windows machine by hand found them.
+        os: [ubuntu-latest, macos-latest, windows-latest]
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
       # Only on ubuntu-latest, for the same reason as EMBER_TEST_NETWORK
