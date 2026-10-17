@@ -34,15 +34,21 @@
 #' folder with one subfolder per universe laid out as r-universe is
 #' (`api/packages/<package>` holding the package's JSON, `src/contrib` its
 #' tarball), which is the test seam.
+#'
+#' `cran_meta` is where CRAN's own index of its files is: `archive.rds` and
+#' `current.rds`, which give every version's release date for
+#' `preview_update()` (`cran_release_table()`). Any CRAN mirror's
+#' `src/contrib/Meta`, or a `file://` folder holding the two files.
 #' @export
 ember_repos <- function(cran = "https://packagemanager.posit.co/cran",
                         bioc = "https://packagemanager.posit.co/bioconductor",
                         bioc_config = "https://bioconductor.org/config.yaml",
                         github = "https://api.github.com",
-                        universe = "https://%s.r-universe.dev") {
+                        universe = "https://%s.r-universe.dev",
+                        cran_meta = "https://cloud.r-project.org/src/contrib/Meta") {
   structure(list(cran = sub("/+$", "", cran), bioc = sub("/+$", "", bioc),
                  bioc_config = bioc_config, github = sub("/+$", "", github),
-                 universe = sub("/+$", "", universe)),
+                 universe = sub("/+$", "", universe), cran_meta = sub("/+$", "", cran_meta)),
             class = "ember_repos")
 }
 

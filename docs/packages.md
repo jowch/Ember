@@ -183,7 +183,7 @@ Behind that sit detection, resolution, index caching, library naming, installs, 
 
 - **Recommended packages are locked when the notebook needs them.** They are ordinary CRAN packages whose bundled copy changes with each R release. Leaving them out would let `ember::run()` on another R pick a different Matrix, and newer CRAN packages often need a newer Matrix than R ships. Base packages are never locked.
 - **renv is an Imports dependency** and runs only in the installer subprocess with the server's library.
-- **Moving the date:** "update all" and "move to date D" (preview, then apply) are in increment 1. They are the same `resolve_lock(mode = "fresh")` with no new data source, and the preview/apply flow is needed anyway. Per-package update and pinning an older version need CRAN release dates from crandb, so they are in increment 3. That brings a community service, its cache and its failure modes, but it only produces a date that feeds the increment-1 flow, so it adds nothing structural.
+- **Moving the date:** "update all" and "move to date D" (preview, then apply) are in increment 1. They are the same `resolve_lock(mode = "fresh")` with no new data source, and the preview/apply flow is needed anyway. Per-package update and pinning an older version need CRAN release dates, so they are in increment 3. They come from CRAN's own `archive.rds` and `current.rds` (`ember_repos(cran_meta)`), not crandb, so no community service is involved; the table only produces a date that feeds the increment-1 flow, so it adds nothing structural.
 
 ### Increments
 
@@ -212,7 +212,7 @@ Behind that sit detection, resolution, index caching, library naming, installs, 
    - disk use: built. The Packages tab shows the libraries', the cache's and the indexes' disk use for all notebooks, from one `du` run so a hard-linked file counts once (`disk_use()`); without `du` (Windows) it sums file sizes and says the libraries' figure includes shared files. (#38)
    - clean up: built. "Clean up…" in the Packages tab deletes libraries no open notebook in this server uses and unused for 30 days, then the cache entries no remaining library lists (`clean_up()`, `clean()` with `max_age = 30` and the open notebooks' libraries kept; indexes are left to the startup sweep). Each Ember process touches its open notebooks' `ember-last-used` markers hourly, so a notebook open in another process counts as used. `clean()` keeps cache entries made in the last day and those a young staging folder links to, so an install in progress keeps its packages. It shows the counts and the space it frees (`du` over what it would delete), deletes nothing until Delete and judges the deletion at the preview's time; a read-only notebook can't (#128)
    - R minor version change with a Bioconductor pin: built, see [Bioconductor](#bioconductor)
-3. **Release dates:** crandb, `preview_update()` for per-package update and pinning.
+3. **Release dates:** built. `preview_update()` updates one package or pins it to an older version: CRAN's own index of its files gives the date (`cran_release_table()`), checked against that day's snapshot, and the increment-1 preview shows what changes. The Packages tab has no control for it yet (#23).
 
 ### Bioconductor
 
@@ -635,14 +635,14 @@ packages without loading them; the worker switching `.libPaths()` and
 restarting only when a loaded package's version changes; cells waiting per
 package while unrelated cells run; recommended packages locked, base
 packages never; renv only in a subprocess; moving to a date (and "update
-all") in the first increment, crandb release dates later.
+all") in the first increment, CRAN release dates later.
 
 Taken from B: the test installer seam (a fake installer that writes an
 empty library with a manifest), so core and shell tests need no renv run.
 
 Build order: increment 1 below. Bioconductor, GitHub sources, install
 consent (increment 2) and per-package
-update and pin through crandb (increment 3) follow.
+update and pin through CRAN's release dates (increment 3) follow.
 
 ## Tradeoffs accepted
 
