@@ -43,6 +43,22 @@ a rebuild with no source change leaves `git diff` clean.
 `scripts/check-imports.mjs` then checks that every name the frontend imports
 from `CodemirrorPlutoSetup.js` is actually exported by the trimmed bundle.
 
+## Release tarball
+
+`sh scripts/release-tarball.sh [out dir]` (from the repository root:
+`sh frontend-build/scripts/release-tarball.sh`) makes the source tarball for
+a CRAN release. It exports the committed HEAD into a temporary folder, runs
+`scripts/minify-release.mjs` on its `inst/frontend`, and runs `R CMD build`
+there. The minify step runs terser on Ember's own JavaScript (not
+`imports/`, already minified). Each file keeps its name and place, the
+translation functions keep the names `t` and `th`, and the CSS and HTML stay
+readable. The repository's files are never changed. Run `npm ci` here first.
+
+r-universe builds its own tarballs from `main` and runs no script of ours,
+so its builds, and the Apple Silicon binary, ship the readable files. CI's
+`release tarball (minified)` job runs `R CMD check` and the browser tests on
+the minified tarball.
+
 The build output is committed. CI (`.github/workflows/check.yaml`, job
 `frontend-build`) rebuilds it and fails if the committed copy differs, or if
 any file under `inst/frontend/imports` or `inst/frontend/img/icons` is
