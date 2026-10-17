@@ -1572,9 +1572,18 @@ test_that("a cell that changes another cell's environment in place reports it; r
   # definitions"), not of its contents.
   r <- run_and_wait(h, "g", 8L, "cnt <- new.env()")
   expect_length(r$changed_in_place, 0)
+  # A reference class object copies a method into itself on its first
+  # call, which isn't a change; setting a field is.
+  run_and_wait(h, "r", 9L, paste(
+    'A <- setRefClass("A", fields = list(n = "numeric"), methods = list(get = function() n, inc = function() n <<- n + 1))',
+    "a <- A$new(n = 0)", sep = "\n"))
+  r <- run_and_wait(h, "s", 10L, "a$get()")
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "t", 11L, "a$inc()")
+  expect_identical(r$changed_in_place, "a")
   # A namespace held in a global isn't read.
-  run_and_wait(h, "h", 9L, "ns <- asNamespace('stats')")
-  r <- run_and_wait(h, "i", 10L, "1")
+  run_and_wait(h, "h", 12L, "ns <- asNamespace('stats')")
+  r <- run_and_wait(h, "i", 13L, "1")
   expect_identical(r$status, "ok")
   expect_length(r$changed_in_place, 0)
 })

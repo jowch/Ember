@@ -925,6 +925,12 @@ env_fingerprint_ <- function(e, budget, depth, seen) {
       next
     }
     v <- get(n, envir = e, inherits = FALSE)
+    # A reference class object copies a method into itself the first time
+    # it's called (`a$get()`), which is no change to the object.
+    if (inherits(v, "refMethodDef")) {
+      out[[n]] <- NULL
+      next
+    }
     if (is.environment(v) && depth > 1L && !is_shared_env(v)) {
       inner <- env_fingerprint_(v, budget, depth - 1L, seen)
       if (is.null(inner)) return(NULL)

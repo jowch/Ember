@@ -332,7 +332,7 @@ R6 object's private fields). If a run changes one without rebinding its
 name, the cell shows a note: "Changed `cnt` in place, which another cell
 defines, so the cells that read it don't rerun." Namespaces are skipped,
 and the worker stops reading after 10,000 bindings a run. data.table's
-in-place changes aren't detected yet.
+in-place changes aren't detected yet (#172).
 
 ### Methods
 
