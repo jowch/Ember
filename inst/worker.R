@@ -55,7 +55,7 @@
 #   quit
 #
 # Worker -> server
-#   hello        secret, pid, r_version, lib_paths, tempdir
+#   hello        secret, pid, r_version, lib_paths, tempdir, interrupts
 #   console      cell, token, item = list(kind, text)   streamed during a run
 #   source       cell, token, path, text                before a computed
 #                                                       source() runs; waits
@@ -117,10 +117,13 @@ touched <- list()       # every list(kind, name) any cell has changed this sessi
 search_added <- character()  # every attach() entry any cell has added this session
 running <- NULL        # list(cell, token) during a run (for the source trace)
 deferred <- list()     # messages read while waiting for a source_reply
+interrupt_drain <- NULL # Windows: the DLL routine that drops a late interrupt (listen_for_interrupts())
 load_log <- NULL       # settings changes made inside loadNamespace/library during a run
 notebook_options <- character()  # option names an options() call from the
                        # notebook's own code (top-level, or a function a
                        # cell defined) set during the current run
+notebook_attached <- character()  # search entries an attach() call from the
+                       # notebook's own code added during the current run
 settings_base <- NULL  # the baseline settings: snapshotted once at boot, then
                        # every change a package load makes is copied in, so a
                        # package's own option survives a reset
@@ -145,7 +148,33 @@ loaded_namespace_versions <- function() {
   stats::setNames(vapply(ns, function(n) as.character(getNamespaceVersion(n)), character(1)), ns)
 }
 
+#' On Windows, start listening for the server's interrupts before the
+#' hello, from the package's DLL (src/interrupt.c, #48): loaded by path
+#' (`EMBER_DLL`), since the worker never loads the package. If that fails,
+#' the server finds no event to set and says the interrupt couldn't be
+#' delivered. Elsewhere the server sends SIGINT and this does nothing.
+listen_for_interrupts <- function() {
+  path <- Sys.getenv("EMBER_DLL")
+  Sys.unsetenv("EMBER_DLL")
+  if (.Platform$OS.type != "windows" || !nzchar(path)) return(invisible(FALSE))
+  invisible(tryCatch({
+    dll <- dyn.load(path)
+    interrupt_drain <<- getNativeSymbolInfo("C_interrupt_drain", dll)
+    isTRUE(.Call(getNativeSymbolInfo("C_interrupt_listen", dll)))
+  }, error = function(e) FALSE))
+}
+
+#' Drop an interrupt still pending as a run starts: it is late, for the
+#' run before, since the server interrupts a run only once it has
+#' "running" (src/interrupt.c's `C_interrupt_drain()`). On Unix a SIGINT
+#' that late was already handled where it landed, between runs.
+drain_late_interrupt <- function() {
+  if (!is.null(interrupt_drain)) .Call(interrupt_drain)
+  invisible(NULL)
+}
+
 main <- function() {
+  listening <- listen_for_interrupts()
   port <- as.integer(commandArgs(trailingOnly = TRUE)[1])
   con <<- socketConnection("127.0.0.1", port, blocking = TRUE, open = "r+b",
                            timeout = 60 * 60 * 24 * 365)
@@ -171,7 +200,7 @@ main <- function() {
     send(list(type = "hello", secret = secret,
               pid = Sys.getpid(), r_version = R.version.string,
               lib_paths = .libPaths(), loaded = loaded_namespace_versions(),
-              tempdir = tempdir()))
+              tempdir = tempdir(), interrupts = listening))
     # This frame stays on the stack while every cell runs, so a cell
     # walking sys.frames() would find the secret here.
     rm(secret)
@@ -217,8 +246,11 @@ handle_next <- function() {
   trace_line("message", msg$type)
   on.exit(trace_line("handled", msg$type))
   switch(msg$type,
-    run = send(list(type = "done", cell = msg$cell, token = msg$token,
-                     report = run_cell(msg))),
+    run = {
+      drain_late_interrupt()
+      send(list(type = "done", cell = msg$cell, token = msg$token,
+                report = run_cell(msg)))
+    },
     remove_cell = {
       remove_cell(msg$cell)
       cell_order <<- msg$order
@@ -410,6 +442,7 @@ run_cell <- function(msg) {
     settings0 <- snapshot_settings()
     load_log <<- list()
     notebook_options <<- character()
+    notebook_attached <<- character()
     attach_requests[[msg$cell]] <<- character()
     running <<- list(cell = msg$cell, token = msg$token)
     search0 <- search()
@@ -445,8 +478,8 @@ run_cell <- function(msg) {
             # 3` ``, as knitr allows); all of them run, in order, and the
             # line's value is the last one's, with its own visibility.
             r <- withVisible(NULL)
-            for (line_e in line_exprs) r <- withVisible(eval(line_e, globalenv()))
-            inline_values[[li]] <- if (r$visible) inline_text(r$value) else ""
+            for (line_e in line_exprs) { datatable_clear_mark(); r <- withVisible(eval(line_e, globalenv())) }
+            inline_values[[li]] <- if (r$visible && !datatable_assigned(r$value)) inline_text(r$value) else ""
           }
         } else {
           # The last top-level expression's value is the output (shown
@@ -455,12 +488,15 @@ run_cell <- function(msg) {
           # values a cell shows").
           for (k in seq_along(exprs)) {
             at <- k   # the top-level expression index; error$line reads its srcref
+            datatable_clear_mark()
             r <- withVisible(eval(exprs[[k]], globalenv()))
             if (k < length(exprs)) {
-              if (r$visible) console$print(r$value)
+              if (r$visible && !datatable_assigned(r$value)) console$print(r$value)
             } else {
               value <- r$value
-              visible <- r$visible
+              # A data.table `:=` returns its table visibly, but the
+              # console prints nothing for it (#185).
+              visible <- r$visible && !datatable_assigned(r$value)
               assigned <- !r$visible && shows_assignment(exprs[[k]], r$value)
             }
           }
@@ -626,6 +662,14 @@ run_cell <- function(msg) {
       cached <- package_cached_options(by_code$settings, notebook_options)
       for (d in by_code$settings[cached]) settings_base <<- set_setting(settings_base, d$kind, d$name, d$after)
       by_code$settings <- by_code$settings[!cached]
+      # Likewise a search entry a package attaches for itself (tune's
+      # `org:r-lib`, which holds `.Last.tune.result`), if it hides nothing
+      # (#181).
+      own <- package_own_entries(by_code$settings, notebook_attached)
+      if (length(own)) {
+        settings_base$search <<- union(settings_base$search, own)
+        by_code$settings <- drop_search_entries(by_code$settings, own)
+      }
       # What the display step changed is its own, as a package load's
       # change is: part of the starting values from now on. A package it
       # loads (knitr, or a table package's dependencies) still gets its
@@ -882,25 +926,84 @@ compare_globals <- function(before_names, before) {
 ENV_FINGERPRINT_MAX <- 10000L
 ENV_FINGERPRINT_ONE_MAX <- 1000L
 
-#' Fingerprints of the environment-valued globals in `before` (a
+#' Fingerprints of the reference-valued globals in `before` (a
 #' `snapshot_globals()` result) named in `names`: a named list of
-#' `list(env, print)`. Environments, R6 objects and reference class objects
-#' are the values a cell can change without rebinding the name, so
-#' `compare_globals()` can't see it (#167). Package namespaces and the
-#' global environment are skipped, and so is an environment too big to
-#' read.
+#' `list(env, print)`. Environments, R6 objects, reference class objects
+#' and data.tables are the values a cell can change without rebinding the
+#' name, so `compare_globals()` can't see it (#167, #172). Package
+#' namespaces and the global environment are skipped, and so is an
+#' environment too big to read.
 env_fingerprints <- function(before, names) {
   budget <- new.env()
   budget$left <- ENV_FINGERPRINT_MAX
   out <- list()
   for (n in intersect(names, names(before))) {
     b <- before[[n]]
-    if (b$active || !is.environment(b$value) || is_shared_env(b$value)) next
-    print <- env_fingerprint(b$value, budget)
+    if (b$active) next
+    print <- ref_fingerprint(b$value, budget)
     if (is.null(print)) next
     out[[n]] <- list(env = b$value, print = print)
   }
   out
+}
+
+#' The fingerprint of one global, or `NULL` when it isn't a value that
+#' changes in place (or is too big to read): an environment's from
+#' `env_fingerprint()`, a data.table's from `datatable_fingerprint()`.
+ref_fingerprint <- function(v, budget) {
+  if (inherits(v, "data.table")) return(datatable_fingerprint(v))
+  if (!is.environment(v) || is_shared_env(v)) return(NULL)
+  env_fingerprint(v, budget)
+}
+
+#' A data.table's shape, read without touching its rows: its own address
+#' (a copy is equal to it, but is a new object), the column names,
+#' each column's address, `truelength()` (the slots `:=` adds columns
+#' into), and the key. `dt[, z := x * 2]`, `set()` on a new column,
+#' `setnames()`, `setkey()`, `setorder()` and dropping a column all change
+#' it. A write to some rows of an existing column (`dt[i, x := 0]`,
+#' `set(dt, i, "x", v)`) keeps the column's address, so it isn't seen;
+#' finding it would mean hashing every column each run (#172). `NULL`
+#' when data.table's namespace isn't loaded or reading fails.
+datatable_fingerprint <- function(dt) {
+  if (!isNamespaceLoaded("data.table")) return(NULL)
+  tryCatch({
+    ns <- asNamespace("data.table")
+    # `setnames()` changes the names vector itself, so keep a copy.
+    list(self = ns$address(dt), names = paste0(names(dt)), truelength = ns$truelength(dt),
+         cols = vapply(seq_along(dt), function(i) ns$address(.subset2(dt, i)), ""),
+         key = attr(dt, "sorted", exact = TRUE))
+  }, error = function(e) NULL)
+}
+
+#' Whether `value` is the data.table a `:=` or `set*()` call just returned,
+#' which the R console doesn't print (#185). data.table marks it itself:
+#' `[.data.table` keeps the table's address in its `.global$print`, and
+#' `print.data.table()` prints nothing for that address once, at top
+#' level. A cell's value isn't printed at top level, so the mark is read
+#' here, and cleared as data.table's own print would.
+datatable_assigned <- function(value) {
+  if (!inherits(value, "data.table") || !isNamespaceLoaded("data.table")) return(FALSE)
+  tryCatch({
+    ns <- asNamespace("data.table")
+    g <- ns$.global
+    mark <- g$print
+    if (!is.character(mark) || length(mark) != 1L || is.na(mark) || !nzchar(mark) ||
+        !identical(mark, ns$address(value))) return(FALSE)
+    g$print <- ""
+    TRUE
+  }, error = function(e) FALSE)
+}
+
+#' Clear data.table's print mark before a top-level expression runs, so
+#' `datatable_assigned()` sees only a mark that expression set. A `:=`
+#' whose value isn't shown (`invisible(dt[, b := 1])`, or one inside a
+#' helper) leaves the mark set, and the next cell that shows the table
+#' would otherwise show nothing (data.table's own FAQ 2.23 at the console).
+datatable_clear_mark <- function() {
+  if (!isNamespaceLoaded("data.table")) return(invisible())
+  tryCatch({ g <- asNamespace("data.table")$.global; g$print <- "" }, error = function(e) NULL)
+  invisible()
 }
 
 #' An environment the notebook doesn't own: a namespace, a package's
@@ -963,7 +1066,7 @@ env_fingerprint_ <- function(e, budget, depth, seen) {
 }
 
 #' Which of `env_before`'s globals the run changed in place: the name is
-#' still bound to the same environment, and its fingerprint differs. A
+#' still bound to the same object, and its fingerprint differs. A
 #' name the run rebound (`changed`) or removed is reported as a change of
 #' the name, not of its contents.
 changed_in_place <- function(env_before, changed) {
@@ -973,7 +1076,9 @@ changed_in_place <- function(env_before, changed) {
     if (!exists(n, envir = globalenv(), inherits = FALSE) || bindingIsActive(n, globalenv())) next
     now <- get(n, envir = globalenv(), inherits = FALSE)
     if (!identical(now, b$env)) next
-    print <- env_fingerprint(now, list2env(list(left = ENV_FINGERPRINT_MAX)))
+    print <- ref_fingerprint(now, list2env(list(left = ENV_FINGERPRINT_MAX)))
+    # `dt <- copy(dt)` binds an equal table, which is a new name, not a change in place.
+    if (inherits(now, "data.table") && !identical(print$self, b$print$self)) next
     if (!identical(print, b$print)) out <- c(out, n)
   }
   out
@@ -1282,6 +1387,54 @@ package_cached_options <- function(diffs, notebook_set) {
   }, logical(1))
 }
 
+#' Which search entries a cell's change added are a package's own (#181):
+#' attached by package code, not by an `attach()` call from the notebook's
+#' own code (`notebook_set`, from `trace_attach()`), and hiding no name
+#' further down the path. tune attaches `org:r-lib` near the bottom of the
+#' path the first time it runs, to keep its last result there. conflicted's
+#' `.conflicts` is attached by package code too, but at position 2, where
+#' it decides what `filter()` and other names mean for every later cell, so
+#' it stays a setting. As for options, who called `attach()` decides, so
+#' `attach(survey)` in a cell or a helper a cell defined is always one.
+package_own_entries <- function(diffs, notebook_set) {
+  own <- character()
+  for (d in diffs) {
+    if (!identical(d$kind, "search")) next
+    for (nm in setdiff(d$after, d$before)) {
+      if (!(nm %in% notebook_set) && !entry_hides(nm)) own <- c(own, nm)
+    }
+  }
+  own
+}
+
+#' Whether the search entry `nm` holds a name that some entry below it on
+#' the path also has, so that a lookup from the notebook finds it first.
+entry_hides <- function(nm) {
+  s <- search()
+  pos <- match(nm, s)
+  if (is.na(pos)) return(FALSE)
+  here <- ls(pos.to.env(pos), all.names = TRUE)
+  if (!length(here)) return(FALSE)
+  for (i in seq_along(s)[-seq_len(pos)]) {
+    if (any(here %in% ls(pos.to.env(i), all.names = TRUE))) return(TRUE)
+  }
+  FALSE
+}
+
+#' `diffs` without the search entries `entries`: a search diff that changed
+#' nothing else is dropped.
+drop_search_entries <- function(diffs, entries) {
+  out <- list()
+  for (d in diffs) {
+    if (identical(d$kind, "search")) {
+      d$after <- setdiff(d$after, entries)
+      if (identical(d$after, d$before)) next
+    }
+    out[[length(out) + 1]] <- d
+  }
+  out
+}
+
 #' Before a cell runs (settings-cells.md, What the worker does before each
 #' run): put every setting any cell has changed back to the baseline, then
 #' apply the changes of the settings cells in effect, `ids`, in order.
@@ -1500,6 +1653,10 @@ install_traces <- function() {
   trace(sys.source, where = base_env, print = FALSE, tracer = source_call)
   trace(registerS3method, where = base_env, print = FALSE,
         tracer = bquote((.(ember_trace_s3_method))()))
+  # On exit, for the environment attach() returns, named as it's on the
+  # path. attach() has no on.exit() of its own to clear this one.
+  trace(attach, where = base_env, print = FALSE,
+        exit = bquote((.(trace_attach))(environment(), returnValue(NULL))))
   # methods may not be loaded yet (Rscript loads it, but a bare R might
   # not); without it there is no setMethod() to trace.
   if (requireNamespace("methods", quietly = TRUE)) {
@@ -1508,6 +1665,25 @@ install_traces <- function() {
   }
   protect_closeall(base_env)
   protect_options(base_env)
+  invisible()
+}
+
+#' Exit tracer for attach(): during a run, note the entry an `attach()`
+#' call from the notebook's own code added (its caller's top-level
+#' environment is the global one: a cell's code, or a function a cell
+#' defined), for `package_own_entries()`. `frame` is attach()'s own frame,
+#' `value` the environment it attached. The caller is found from the frame
+#' by number: `parent.frame()` in an exit tracer is `.doTrace()`'s.
+trace_attach <- function(frame, value) {
+  if (is.null(running) || !is.environment(value)) return(invisible())
+  i <- which(vapply(sys.frames(), identical, logical(1), y = frame))
+  caller <- if (length(i)) sys.frame(sys.parents()[[i[1]]]) else NULL
+  if (identical(tryCatch(topenv(caller), error = function(e) NULL), globalenv())) {
+    nm <- attr(value, "name")
+    if (is.character(nm) && length(nm) == 1 && !(nm %in% notebook_attached)) {
+      notebook_attached <<- c(notebook_attached, nm)
+    }
+  }
   invisible()
 }
 

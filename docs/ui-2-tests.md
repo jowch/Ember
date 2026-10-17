@@ -61,8 +61,7 @@ New fixtures:
    Endeavor (`endeavor-css-variables.txt`).
    6c. The other direction: every `var(--x)` a frontend file outside
    `themes/` reads is defined in both themes, defined by the frontend
-   itself, or written with a fallback, `var(--x, ...)`. Two known gaps
-   are listed in the test under #195.
+   itself, or written with a fallback, `var(--x, ...)`.
 7. `inst/COPYRIGHTS` exists and names "Pluto.jl"; DESCRIPTION's
    `Authors@R` has a person with role `"cph"` whose name mentions Pluto.jl.
 

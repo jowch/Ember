@@ -1024,7 +1024,7 @@ test_that("an interrupt sent on the running frame stops that run", {
   for (i in 1:10) {
     h$send(run_msg(paste0("c", i), i, "Sys.sleep(5)"))
     r <- wait_for_done(h, timeout = 30, on_frame = function(m) {
-      if (identical(m$type, "running")) h$process$interrupt()
+      if (identical(m$type, "running")) h$interrupt()
     })
     expect_identical(r$status, "interrupted")
   }
@@ -1045,7 +1045,7 @@ test_that("interrupt_r_code", {
   while (!file.exists(started) && Sys.time() < deadline) Sys.sleep(0.05)
   expect_true(file.exists(started))
   t0 <- Sys.time()
-  h$process$interrupt()
+  h$interrupt()
   r <- wait_for_done(h, timeout = 5)
   elapsed <- as.numeric(Sys.time() - t0, units = "secs")
   expect_identical(r$status, "interrupted")
@@ -1057,13 +1057,52 @@ test_that("interrupt_r_code", {
   expect_identical(check$output$text, "[1] 1 2")
 })
 
-test_that("interrupt_between_runs_swallowed", {
-  # On Windows the interrupt arrives later than the 0.2 s this test waits,
-  # so it lands in the next cell; tracked in #48.
-  skip_on_os("windows")
+test_that("on Windows a worker with no console is interrupted all the same (#48)", {
+  # processx's interrupt() needs the worker to have a console, and one
+  # started by a server without a console has none: every interrupt was
+  # lost, while interrupt() said it was sent. The interrupt event needs no
+  # console.
+  skip_on_os(c("mac", "linux", "solaris"))
+  h <- worker_harness(detached = TRUE)
+  expect_true(isTRUE(h$hello$interrupts))
+  on.exit(h$close())
+  for (code in c("Sys.sleep(20)", "t0 <- Sys.time(); repeat if (Sys.time() - t0 > 20) break")) {
+    h$send(run_msg("a", 1L, code))
+    r <- wait_for_done(h, timeout = 10, on_frame = function(m) {
+      if (identical(m$type, "running")) expect_true(h$interrupt())
+    })
+    expect_identical(r$status, "interrupted")
+  }
+})
+
+test_that("on Windows interrupting a process with no interrupt event says it wasn't delivered (#48)", {
+  skip_on_os(c("mac", "linux", "solaris"))
+  p <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", "Sys.sleep(30)"))
+  on.exit(p$kill())
+  expect_false(interrupt_worker(p))
+  expect_true(p$is_alive())
+})
+
+test_that("an interrupt just after a run's done doesn't stop the next run (#48)", {
+  # The server sends the next run as soon as it has "done", so a late
+  # interrupt and the next run can reach the worker together. One still
+  # pending when the run starts is late, and must not stop it.
   h <- worker_harness()
   on.exit(h$close())
-  h$process$interrupt()
+  for (i in 1:50) {
+    h$send(run_msg(paste0("c", i), i, "1 + 1"))
+    r <- wait_for_done(h, timeout = 10)
+    expect_identical(r$status, "ok")
+    h$interrupt()
+  }
+  r <- run_and_wait(h, "last", 51L, "1 + 1")
+  expect_identical(r$status, "ok")
+})
+
+test_that("interrupt_between_runs_swallowed", {
+  h <- worker_harness()
+  on.exit(h$close())
+  h$interrupt()
   Sys.sleep(0.2)
   r <- run_and_wait(h, "a", 1L, "1 + 1")
   expect_identical(r$status, "ok")
@@ -1172,16 +1211,13 @@ test_that("known_attached_packages_never_shrink", {
 })
 
 test_that("interrupt_during_display_still_completes_bookkeeping", {
-  # Windows delivers the interrupt through processx's CTRL+C helper, too late
-  # for this test's timing; tracked in #48.
-  skip_on_os("windows")
   h <- worker_harness()
   on.exit(h$close())
   run_and_wait(h, "a", 1L,
     'registerS3method("print", "slowprint", function(x, ...) { Sys.sleep(3); cat("slow\\n") })')
   h$send(run_msg("b", 2L, 'options(digits = 3); orphan <- 42; structure(1, class = "slowprint")'))
   Sys.sleep(1)
-  h$process$interrupt()
+  h$interrupt()
   r <- wait_for_done(h, timeout = 10)
   expect_identical(r$status, "interrupted")
   expect_true("orphan" %in% r$created)
@@ -1201,14 +1237,11 @@ test_that("interrupt_during_display_still_completes_bookkeeping", {
 })
 
 test_that("sigint_during_remove_cell_does_not_crash_worker", {
-  # On Windows a late interrupt between cells can still stop the worker;
-  # tracked in #48.
-  skip_on_os("windows")
   h <- worker_harness()
   on.exit(h$close())
   run_and_wait(h, "a", 1L, "x <- 1")
   h$send(list(type = "remove_cell", cell = "a", order = character()))
-  h$process$interrupt()
+  h$interrupt()
   # a SIGINT landing in the remove_cell/rebuild_search_path bookkeeping (or
   # anywhere else between runs) has nothing to interrupt there and must be
   # swallowed, not reach top level and kill the worker.
@@ -1322,6 +1355,36 @@ test_that("a caller's own default passed on to library() or require() is kept (#
     'rq <- function(p, q = TRUE) require(p, character.only = TRUE, quietly = q); print(rq("stats4"))')
   expect_true(any(grepl("[1] TRUE", unlist(r$console), fixed = TRUE)))
   expect_false(any(grepl("Loading required package", unlist(r$console), fixed = TRUE)))
+})
+
+test_that("a search entry a package attaches for itself and that hides nothing is the package's (#181)", {
+  flib <- fixture_lib()
+  h <- worker_harness(extra_libs = flib)
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "emberfix5::stash(1)", order = c("a", "b"))
+  expect_identical(r$status, "ok")
+  expect_length(r$settings, 0)
+  # It stays: the next cell's reset keeps it, as a package load's change.
+  r <- run_and_wait(h, "b", 2L, '"org:emberfix5" %in% search()', order = c("a", "b"))
+  expect_identical(r$output$text, "[1] TRUE")
+})
+
+test_that("a search entry that hides a name, or that the notebook attached, is still a setting (#181)", {
+  flib <- fixture_lib()
+  h <- worker_harness(extra_libs = flib)
+  on.exit(h$close())
+  # Package code attached it, but its nchar() wins over base's.
+  r <- run_and_wait(h, "a", 1L, "emberfix5::prefer()", order = c("a", "b", "c"))
+  expect_identical(r$settings[[1]]$kind, "search")
+  expect_true(".emberfix5" %in% r$settings[[1]]$after)
+  # Hides nothing, but a function a cell defined attached it.
+  r <- run_and_wait(h, "b", 2L,
+    'keep <- function() attach(list(.emberfix_kept = 1), name = "kept", pos = length(search())); keep()',
+    order = c("a", "b", "c"))
+  expect_true("kept" %in% r$settings[[1]]$after)
+  # Not in effect for this run, so the reset takes both off again.
+  r <- run_and_wait(h, "c", 3L, 'c(".emberfix5", "kept") %in% search()', order = c("a", "b", "c"))
+  expect_identical(r$output$text, "[1] FALSE FALSE")
 })
 
 test_that("drop_globals removes a cell's globals but keeps its attached packages (ui-3 12)", {
@@ -1781,6 +1844,63 @@ test_that("ggplot2's \"Removed n rows\" warning and geom_smooth()'s message show
   expect_identical(r$output$kind, "plot")
   expect_identical(console_kinds(r), "message")
   expect_match(console_texts(r), "geom_smooth()", fixed = TRUE)
+})
+
+test_that("a cell that changes another cell's data.table in place with := or set*() reports it; reading it or rebinding it doesn't (#172)", {
+  skip_if_not_installed("data.table")
+  h <- worker_harness(extra_libs = dirname(find.package("data.table")))
+  on.exit(h$close())
+  ord <- c("l", letters[1:6])
+  run_and_wait(h, "l", 1L, "library(data.table)", order = ord)
+  run_and_wait(h, "a", 2L, "dt <- data.table(a = 1:3, x = c(1, 2, 3))", order = ord)
+  for (code in c("dt[, b := a * 2]", "dt[, a := a * 10L]", "set(dt, j = 'c', value = 0)",
+                 "setnames(dt, 'x', 'y')", "setkey(dt, a)", "setorder(dt, -a)", "dt[, b := NULL]")) {
+    r <- run_and_wait(h, "c", 3L, code, order = ord)
+    expect_identical(r$status, "ok", info = code)
+    expect_identical(r$changed_in_place, "dt", info = code)
+  }
+  r <- run_and_wait(h, "d", 4L, "dt[a > 10L, .N]\nnames(dt)", order = ord)
+  expect_length(r$changed_in_place, 0)
+  # A rebinding is a change of the name, not of its contents.
+  r <- run_and_wait(h, "e", 5L, "dt <- copy(dt)", order = ord)
+  expect_length(r$changed_in_place, 0)
+  # A cell's own table is its own to change.
+  r <- run_and_wait(h, "f", 6L, "mine <- data.table(v = 1)\nmine[, w := 2]", order = ord)
+  expect_length(r$changed_in_place, 0)
+})
+
+test_that("a cell ending in a data.table := shows nothing, as at the R console, and a later print() of the table still prints (#185)", {
+  skip_if_not_installed("data.table")
+  h <- worker_harness(extra_libs = dirname(find.package("data.table")))
+  on.exit(h$close())
+  ord <- c("l", letters[1:6])
+  run_and_wait(h, "l", 1L, "library(data.table)\ndt <- data.table(a = 1:3)", order = ord)
+  r <- run_and_wait(h, "a", 2L, "dt[, b := a * 2]", order = ord)
+  expect_identical(r$status, "ok")
+  expect_null(r$output)
+  # Not the last expression: nothing goes to the console either.
+  r <- run_and_wait(h, "a", 3L, "dt[, c := 1]\nncol(dt)", order = ord)
+  expect_identical(r$output$text, "[1] 3")
+  expect_length(r$console, 0)
+  # `[]` after it shows the table, as at the console.
+  r <- run_and_wait(h, "a", 4L, "dt[, d := 1][]", order = ord)
+  expect_false(is.null(r$output))
+  # The mark is cleared, so the table shows in the next cell.
+  run_and_wait(h, "a", 5L, "dt[, e := 1]", order = ord)
+  r <- run_and_wait(h, "b", 6L, "dt", order = ord)
+  expect_false(is.null(r$output))
+  # A mark left by a := that wasn't shown (inside invisible(), or in a
+  # helper) doesn't blank the next cell that shows the table (review).
+  run_and_wait(h, "a", 7L, "invisible(dt[, f := 1])", order = ord)
+  r <- run_and_wait(h, "b", 8L, "dt", order = ord)
+  expect_false(is.null(r$output))
+  run_and_wait(h, "c", 9L, "add_g <- function(d) { d[, g := 1]; invisible(NULL) }", order = ord)
+  run_and_wait(h, "a", 10L, "add_g(dt)", order = ord)
+  r <- run_and_wait(h, "b", 11L, "dt", order = ord)
+  expect_false(is.null(r$output))
+  # Nor the same cell's last value.
+  r <- run_and_wait(h, "a", 12L, "invisible(dt[, h := 1])\ndt", order = ord)
+  expect_false(is.null(r$output))
 })
 
 test_that("a setting the display step changes isn't the cell's: only its code's changes make it a settings cell, and the display's change stays as a package load's would (#156)", {

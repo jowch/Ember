@@ -494,6 +494,15 @@ parse_learned_block <- function(lines, known_ids) {
   learned
 }
 
+#' `lines` with each line's first word, a cell id, replaced by its entry in
+#' `renamed` (old id -> new id) when it has one.
+rename_first_word <- function(lines, renamed) {
+  vapply(lines, function(ln) {
+    m <- regmatches(ln, regexec("^(\\s*)(\\S+)(.*)$", ln))[[1]]
+    if (length(m) == 4 && m[[3]] %in% names(renamed)) paste0(m[[2]], renamed[[m[[3]]]], m[[4]]) else ln
+  }, character(1), USE.NAMES = FALSE)
+}
+
 #' The lines of a learned footer block, one per cell in `learned`'s order.
 format_learned_block <- function(name, learned) {
   if (length(learned) == 0) return(character())
@@ -540,6 +549,10 @@ parse_notebook_core <- function(text, new_id) {
   mode <- "none"
   leading_noted <- FALSE
   used_ids <- character()
+  # A marker id outside the safe set (`is_cell_id()`, such as `cell:1`) gets
+  # a fresh UUID, and the footer's lines for it are read under the new id
+  # (#82). A file Ember wrote never has one: it writes UUIDs.
+  renamed <- character()
   has_marker <- any(vapply(lines, function(l) !is.null(parse_marker(l)), logical(1)))
 
   # The raw lines are kept as read; whether they need un-commenting isn't
@@ -574,9 +587,13 @@ parse_notebook_core <- function(text, new_id) {
       if (is.na(id) || !nchar(id)) {
         id <- new_id()
         problems <- add_problem(problems, "bad_id")
-      } else if (id %in% used_ids) {
+      } else if (id %in% used_ids || id %in% names(renamed)) {
         problems <- add_problem(problems, "duplicate_id", id)
         id <- new_id()
+      } else if (!is_cell_id(id)) {
+        problems <- add_problem(problems, "bad_id", id)
+        renamed[[id]] <- new_id()
+        id <- renamed[[id]]
       }
       used_ids <- c(used_ids, id)
       cur_id <- id
@@ -617,6 +634,12 @@ parse_notebook_core <- function(text, new_id) {
   if (mode == "cell") flush_cell()
   if (mode == "footer") flush_footer()
 
+  if (length(renamed) > 0) {
+    blocks <- intersect(names(footer_blocks),
+                        c("cell order", "learned definitions", "learned references",
+                          "learned settings", "learned sources"))
+    for (name in blocks) footer_blocks[[name]] <- rename_first_word(footer_blocks[[name]], renamed)
+  }
   order_block <- footer_blocks[["cell order"]]
   resolved <- resolve_order(file_order, order_block, problems)
   problems <- resolved$problems
