@@ -62,7 +62,8 @@ test_that("an install call inside a condition is read but isn't the top-level ex
   a <- read_cell('if (!requireNamespace("toyD")) remotes::install_github("lab/toyD")')
   expect_equal(a$installs$source, "github:lab/toyD")
   expect_false(a$installs$top)
-  expect_equal(a$packages$name, "toyD")
+  # It runs when reached, so remotes is needed too.
+  expect_setequal(a$packages$name, c("toyD", "remotes"))
 
   # A wrapped call runs too, so its package is needed.
   for (code in c('suppressMessages(remotes::install_github("lab/toyD"))', 'x <- pak::pak("lab/toyD")',
