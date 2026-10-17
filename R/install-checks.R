@@ -45,12 +45,15 @@ r_config <- function(var) {
 #' On a Mac, Apple's command line tools: `xcode-select -p` fails without
 #' them. `Sys.which("clang")` is no test there, since `/usr/bin/clang` is
 #' a stub that offers to install the tools. Elsewhere, the C compiler R
-#' was configured with (`R CMD config CC`, `gcc` or `clang`; on Windows
-#' Rtools' gcc, which R's own Renviron puts on the PATH) must be on the
-#' PATH. The Fortran compiler isn't checked here: only some packages need
-#' it, and nothing says which before their source is unpacked, so its
-#' absence is caught from the build's own output (`install_failures()`).
-has_compiler <- function(os = os_kind()) {
+#' was configured with (`R CMD config CC`, `gcc` or `clang`) must be on the
+#' PATH. On Windows that's the PATH `R CMD` builds with: R's Rcmd_environ
+#' puts Rtools there (`RTOOLS45_HOME`, which rig's user mode sets, or
+#' `C:/rtools45`), and only for `R CMD`, so Rtools' gcc is on no other
+#' process's PATH (#49). The Fortran compiler isn't checked here: only some
+#' packages need it, and nothing says which before their source is
+#' unpacked, so its absence is caught from the build's own output
+#' (`install_failures()`). `r_cmd_runs` is a parameter for tests.
+has_compiler <- function(os = os_kind(), r_cmd_runs = r_cmd_succeeds) {
   if (identical(os, "macos")) {
     status <- tryCatch(suppressWarnings(system2("xcode-select", "-p", stdout = FALSE, stderr = FALSE)),
                        error = function(e) 1L)
@@ -59,7 +62,17 @@ has_compiler <- function(os = os_kind()) {
   cc <- strsplit(r_config("CC"), "\\s+")[[1]]
   cc <- cc[nzchar(cc)]
   if (length(cc) == 0) return(TRUE)  # R can't say; don't stop an install over it
+  if (identical(os, "windows")) return(r_cmd_runs(c(cc[[1]], "--version")))
   nzchar(Sys.which(cc[[1]]))
+}
+
+#' Whether `R CMD <args>` runs and exits 0: R CMD runs any command with
+#' the environment R's own builds get.
+r_cmd_succeeds <- function(args) {
+  status <- tryCatch(suppressWarnings(system2(file.path(R.home("bin"), "R"), c("CMD", args),
+                                              stdout = FALSE, stderr = FALSE)),
+                     error = function(e) 1L)
+  identical(as.integer(status), 0L)
 }
 
 #' Which Linux this is, from `/etc/os-release`: `list(id, version, like)`,
