@@ -1,7 +1,7 @@
 name: bench
 
 # Times the pull request against its base branch on one runner and flags a
-# case more than 25% slower (bench/README.md). Kept apart from check.yaml so
+# case more than 20% slower (bench/README.md). Kept apart from check.yaml so
 # it can stay out of the required checks.
 
 on:
@@ -46,9 +46,18 @@ jobs:
       - name: Install base and head into separate libraries
         env:
           BASE: ${{ github.event.pull_request.base.sha || inputs.base }}
+          SAME: ${{ github.event_name == 'workflow_dispatch' && inputs.base == inputs.head }}
         run: |
-          # A branch name by hand resolves on origin; a sha (the PR's base) as is.
-          base=$(git rev-parse --verify -q "origin/$BASE^{commit}" || git rev-parse --verify -q "$BASE^{commit}")
+          # The same ref on both sides is an A/A run, so the base is the
+          # commit checked out as head: a branch that moves while the run
+          # waits for a runner would otherwise put different commits on the
+          # two sides. Otherwise a branch name by hand resolves on origin; a
+          # sha (the PR's base) as is.
+          if [ "$SAME" = true ]; then
+            base=$(git rev-parse HEAD)
+          else
+            base=$(git rev-parse --verify -q "origin/$BASE^{commit}" || git rev-parse --verify -q "$BASE^{commit}")
+          fi
           git worktree add --detach "$RUNNER_TEMP/base" "$base"
           mkdir -p "$RUNNER_TEMP/lib-base" "$RUNNER_TEMP/lib-head"
           R CMD INSTALL --library="$RUNNER_TEMP/lib-base" "$RUNNER_TEMP/base"
