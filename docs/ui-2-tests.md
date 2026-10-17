@@ -307,7 +307,9 @@ New fixtures:
 60. Completion: typing `me` then Ctrl+Space in a new cell shows a list
     containing `mean`; Enter inserts it. After running `DF`, typing `df$`
     shows `mpg`. While `LOOP` (basic.R) runs, typing `su` shows `sum`
-    within 1 s.
+    within 1 s. Typing numbers (`12345`, `2L`, `3.14`, `0x1F`, `1i`) at a
+    person's pace sends no completion request; `me` typed after them
+    still lists `mean` (#35).
 61. Help: with the cursor inside `mean(`, the Help tab shows "Arithmetic
     Mean"; clicking a link inside it loads that page in the panel; an
     example block has `.hljs-keyword` spans.

@@ -3,21 +3,22 @@
 // link pasted from the browser, #85) locks the package from GitHub, saved
 // as a github: source; Remove source sends it back to not found. The
 // notebook resolves against the toy CRAN repository and the file://
-// GitHub fixture (tests/testthat/fixtures), so nothing touches the network.
+// GitHub fixture (tests/testthat/fixtures, through githubFixtureDir()), so
+// nothing touches the network.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
+import { startServer, tempNotebook, artifactsDir, githubFixtureDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook } from "../browser.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(HERE, "..", "..", "testthat", "fixtures");
 const REPOS = {
   cran: `file://${path.join(FIXTURES, "repos", "toy")}`,
-  github: `file://${path.join(FIXTURES, "github")}`,
+  github: `file://${githubFixtureDir()}`,
   bioc_config: null,
 };
 

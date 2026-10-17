@@ -78,10 +78,10 @@ find_effect <- function(result, type) {
 r46 <- list(version = "4.6.1", minor = "4.6", platform = "x86_64-pc-linux-gnu")
 
 #' The Bioconductor 3.23 fixture index of `kind`
-#' (fixtures/repos/bioc/2026-09-01/packages/3.23/...), keyed as `release`
+#' (fixtures/bioc/2026-09-01/packages/3.23/...), keyed as `release`
 #' at `date`.
 bioc_index <- function(kind, release = "3.23", date = "2026-09-01") {
-  idx <- read_repo_index(testthat::test_path("fixtures", "repos", "bioc", "2026-09-01", "packages",
+  idx <- read_repo_index(testthat::test_path("fixtures", "bioc", "2026-09-01", "packages",
                                              "3.23", bioc_kinds[[kind]], "src", "contrib", "PACKAGES"),
                          key = repo_key(kind, date, release), label = "Bioc")
   idx
@@ -257,7 +257,7 @@ test_that("after allow, a missing target emits exactly one install; a second eve
   expect_equal(sum(effect_types(r) == "install"), 1)
   expect_equal(r$state$packages$target$status, "installing")
 
-  r2 <- drive(r$state, ev_render("nonexistent", 10, 10, at(5)))
+  r2 <- drive(r$state, ev_render("nonexistent", at(5)))
   expect_equal(sum(effect_types(r2) == "install"), 0)
 })
 
@@ -782,7 +782,7 @@ test_that("packages_changed is notified once per dispatch when the view changes,
   notes <- notifications(r$state, r2$state)
   expect_equal(sum(vapply(notes, function(n) n$kind, character(1)) == "packages_changed"), 1)
 
-  r3 <- drive(r2$state, ev_render("nonexistent", 1, 1, at(3)))
+  r3 <- drive(r2$state, ev_render("nonexistent", at(3)))
   notes2 <- notifications(r2$state, r3$state)
   expect_false("packages_changed" %in% vapply(notes2, function(n) n$kind, character(1)))
 })

@@ -44,11 +44,11 @@ ev_restart     <- function(at) event("restart", at)
 ev_shutdown    <- function(at) event("shutdown", at)
 ev_move        <- function(path, at) event("move", at, path = path)
 ev_set_mode    <- function(mode, at) event("set_mode", at, mode = mode)
-#' `width`/`height` are pixel sizes for `render_png()`'s API, or `NULL` to
-#' redraw at the cell's own figure size (`ember_render_plot`, a density
-#' change: 3a).
-ev_render      <- function(cell, width, height, at, res = 96)
-  event("render", at, cell = cell, width = width, height = height, res = res)
+#' A redraw at the cell's own figure size and a new pixel density
+#' (`ember_render_plot`, a density change: 3a). `render_png()`'s one-off
+#' pixel sizes don't come through here: they never change the state (#28).
+ev_render      <- function(cell, at, res = 96)
+  event("render", at, cell = cell, res = res)
 ev_show_more   <- function(cell, path, dim, at)
   event("show_more", at, cell = cell, path = path, dim = dim)
 
@@ -1161,20 +1161,17 @@ reduce_set_mode <- function(state, event) {
   list(state = state, effects = list(), reply = NULL)
 }
 
-#' Re-render a plot at a new size and pixel density: `fx_send(render)` if
-#' the cell's output is an image and the worker is alive; the answer comes
-#' as `wk_rendered`. `width`/`height` NULL (a density-only redraw) drop out
-#' of the message instead of being sent as `NULL`, so the worker falls
-#' back to the cell's own figure size.
+#' Re-render a plot at a new pixel density: `fx_send(render)` if the
+#' cell's output is an image and the worker is alive; the answer comes as
+#' `wk_rendered`. The message has no `width`/`height`, so the worker draws
+#' at the cell's own figure size.
 reduce_render <- function(state, event) {
   r <- state$results[[event$cell]]
   alive <- state$worker$status %in% c("ready", "busy")
   if (is.null(r) || is.null(r$output) || !identical(r$output$mime, "image/png") || !alive) {
     return(list(state = state, effects = list(), reply = NULL))
   }
-  msg <- c(list(type = "render", cell = event$cell, res = event$res %||% 96),
-          if (!is.null(event$width)) list(width = event$width),
-          if (!is.null(event$height)) list(height = event$height))
+  msg <- list(type = "render", cell = event$cell, res = event$res %||% 96)
   list(state = state, effects = list(fx_send(state$worker$gen, msg)), reply = NULL)
 }
 

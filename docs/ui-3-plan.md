@@ -1355,8 +1355,9 @@ message and `done` report gain fields, worker and server in one commit; the
 - **Bigger images.** A 2x PNG is 2-3 times today's bytes, in the state,
   every page sync and every HTML export: a page with 50 plots grows by a
   few MB.
-- **`render_png()` with a pixel size replaces the stored image**, so the
-  page then shows that image. Unchanged from today; tracked in #28.
+- **`render_png()` with a pixel size replaced the stored image**, so the
+  page then showed that image. Fixed in #28: it now asks the worker
+  directly and only returns the image.
 - **Summaries run user code** (`str` and `format` methods) after every
   run. The 0.25 s budget, per-name `tryCatch` and interruptibility bound
   it; a slow `class()` is not bounded.

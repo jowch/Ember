@@ -1372,13 +1372,13 @@ test_that("an off cell has no variables in its view, even though its result keep
   expect_equal(cell_view(r2$state, ctx, va)$variables, list())
 })
 
-test_that("reduce_render() with NULL width and height sends render {cell, res} without those fields (ui-3 66)", {
+test_that("reduce_render() sends render {cell, res} with no width or height (ui-3 66)", {
   s <- fake_state(list(S = cell(""), A = cell("plot(1)")))
   out <- new_display("image/png", "bytes", "[plot]", size = list(width = 1440, height = 960, res = 192))
   r <- boot(s, "A")
   r <- drive(r$state, wk_done(1, last_token(r), report(output = out), at(10)))
 
-  r2 <- drive(r$state, ev_render("A", NULL, NULL, at(11), res = 288))
+  r2 <- drive(r$state, ev_render("A", at(11), res = 288))
   msg <- last_sent(r2)
   expect_equal(msg$type, "render")
   expect_equal(msg$cell, "A")

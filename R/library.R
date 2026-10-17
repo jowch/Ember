@@ -702,6 +702,13 @@ installer_script <- function() {
   getOption("ember.installer_script", system.file("installer.R", package = "ember"))
 }
 
+#' Never called. renv is in Imports for inst/installer.R, which R CMD check
+#' doesn't read, so without a `renv::` call in R/ the check notes renv as
+#' unused (#24). A `::` here satisfies it, and unlike `importFrom()` it
+#' doesn't load renv when ember loads: the server never loads renv (see
+#' `installer_command()`).
+renv_is_for_the_installer <- function() renv::restore
+
 #' The command for the installer subprocess (inst/installer.R):
 #' `list(command = <Rscript>, args, env)`.
 #'

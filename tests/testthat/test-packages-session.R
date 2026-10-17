@@ -389,7 +389,7 @@ test_that("ember::run() on the saved file installs if needed and prints the cell
 #' (main).
 toy_github_repos <- function() {
   toy <- normalizePath(testthat::test_path("fixtures", "repos", "toy"), mustWork = TRUE)
-  gh <- normalizePath(testthat::test_path("fixtures", "github"), mustWork = TRUE)
+  gh <- github_fixture_dir()
   ember_repos(cran = paste0("file://", toy), github = paste0("file://", gh))
 }
 
@@ -461,7 +461,7 @@ test_that("ember::run() installs a saved GitHub lock on a machine that never res
 #' the GitHub fixture also has D1, the same version with other code.
 toy_universe_repos <- function() {
   toy <- normalizePath(testthat::test_path("fixtures", "repos", "toy"), mustWork = TRUE)
-  gh <- normalizePath(testthat::test_path("fixtures", "github"), mustWork = TRUE)
+  gh <- github_fixture_dir()
   u <- normalizePath(testthat::test_path("fixtures", "universe"), mustWork = TRUE)
   ember_repos(cran = paste0("file://", toy), github = paste0("file://", gh),
               universe = paste0("file://", u, "/%s"))

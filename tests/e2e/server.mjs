@@ -4,7 +4,7 @@
 // (docs/ui-tests.md, "Running locally" / "In CI").
 
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, copyFileSync, mkdirSync, appendFileSync, rmSync } from "node:fs";
+import { mkdtempSync, copyFileSync, mkdirSync, appendFileSync, rmSync, cpSync, readdirSync, renameSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,6 +42,30 @@ export function tempNotebook(name = "basic.R") {
   const dest = path.join(dir, name);
   copyFileSync(path.join(FIXTURES, name), dest);
   return dest;
+}
+
+/** A copy of tests/testthat/fixtures/github with each `contents/<short sha>`
+ * folder renamed to the full sha `github_description_url()` asks for (the
+ * one in that repository's `tarball/` starting with it), as the R tests'
+ * `github_fixture_dir()` does. The folders are stored short because a
+ * package tarball holds no path over 100 bytes (#244). */
+export function githubFixtureDir() {
+  const out = path.join(mkdtempSync(path.join(tmpdir(), "ember-e2e-gh-")), "github");
+  cpSync(path.join(HERE, "..", "testthat", "fixtures", "github"), out, { recursive: true });
+  const repos = path.join(out, "repos");
+  for (const user of readdirSync(repos)) {
+    for (const repo of readdirSync(path.join(repos, user))) {
+      const contents = path.join(repos, user, repo, "contents");
+      if (!existsSync(contents)) continue;
+      const shas = readdirSync(path.join(repos, user, repo, "tarball"));
+      for (const short of readdirSync(contents)) {
+        const full = shas.filter((sha) => sha.startsWith(short));
+        if (full.length !== 1) throw new Error(`no single tarball sha starts with ${short} in ${user}/${repo}`);
+        renameSync(path.join(contents, short), path.join(contents, full[0]));
+      }
+    }
+  }
+  return out;
 }
 
 /** Start `ember::serve()` in a child Rscript process, hosting
