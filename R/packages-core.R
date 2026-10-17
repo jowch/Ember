@@ -1471,6 +1471,43 @@ missing_package_error <- function(state, pkg) {
   list(state = state, error = err)
 }
 
+#' The packages a run error's message names as needed, for the fix "Add pkg
+#' to [extra_packages]" (#184): tidymodels names its engines only as strings
+#' (`set_engine("glmnet")`, "Package install is required for glmnet."), and
+#' tidytext its lexicons' packages ("The textdata package is required ...").
+#' A text match, so kept narrow. The message has the word "package", and a
+#' name counts only where the message marks it as one: quoted ('glmnet'),
+#' styled by cli (parsnip colours it), or just before "package" ("the
+#' textdata package", only when nothing is quoted or styled). Ordinary words
+#' that are also CRAN packages ("not", "here", "optional") are never marked so. Each name must also be in one of the
+#' notebook's loaded indexes, and not installed (the notebook's library or
+#' R's own), in the lock, or already wanted. A message R or a package
+#' translated doesn't match, and gets no fix.
+packages_named_in <- function(state, msg) {
+  name <- "([A-Za-z][A-Za-z0-9.]*[A-Za-z0-9])"
+  # The name each match of `pattern` (whose one group is `name`) marks.
+  marked <- function(pattern, text) {
+    m <- regmatches(text, gregexpr(pattern, text, perl = TRUE))[[1]]
+    sub(pattern, "\\1", m, perl = TRUE)
+  }
+  styled <- marked(paste0("\033\\[[0-9;]*m", name, "\033\\["), msg)
+  msg <- gsub("\033\\[[0-9;?]*[A-Za-z]", "", msg)
+  if (!grepl("\\bpackages?\\b", msg, ignore.case = TRUE, perl = TRUE)) return(character())
+  words <- unique(c(styled, marked(paste0("(?:'|\"|`|\u2018|\u201c)", name, "(?:'|\"|`|\u2019|\u201d)"), msg)))
+  # Only when nothing is quoted or styled: in "The optional package "ranger"", the
+  # quotes already say which word is the package ("optional" is one on CRAN too).
+  if (length(words) == 0) words <- marked(paste0("(?<![A-Za-z0-9._])", name, "(?=\\s+(?i:packages?)\\b)"), msg)
+  p <- state$packages
+  indexed <- unlist(lapply(p$indexes, function(s) if (identical(s$status, "ready")) s$index$name), use.names = FALSE)
+  words <- intersect(words, indexed)
+  lock <- state$file$lock$entries
+  words <- setdiff(words, c(names(p$active$installed), names(p$target$installed),
+                            if (!is.null(lock) && nrow(lock) > 0) lock$name,
+                            wanted_packages(state$graph, state$file$header)))
+  if (length(words) == 0) return(character())
+  setdiff(words, rownames(utils::installed.packages(c(.Library, .Library.site), noCache = TRUE)))
+}
+
 # ---- Projection --------------------------------------------------------------
 
 #' The packages part of the snapshot (and `package_status()`): plain data.
