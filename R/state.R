@@ -84,6 +84,11 @@ exports_of <- function(state) {
 #'   edit or a learned definition during a run reorders the queue for free.
 #' * `results`: named list, id -> `ember_result`, for cells that ran in the
 #'   current worker. A cell with no entry is "not run".
+#' * `data_columns`: named list, id -> global -> `list(frame, names)`: the
+#'   names each data frame or list a cell created had at its last "ok"
+#'   run in the current worker session (worker.R's `global_columns()`),
+#'   for masked reads (graph.R, `resolve_masked()`). Not saved: it
+#'   describes the worker's values. Deleted cells' entries are ignored.
 #' * `clock`: the `at` of the last event; the only time the core knows.
 #' * `seq`: integer, advanced by every event that changed the state
 #'   (Endeavor's `seq`).
@@ -91,7 +96,8 @@ exports_of <- function(state) {
 #'
 #' Invariants (checked by `check_state()` in tests after every step):
 #' * `graph` is `notebook_graph(code_of(cells), exports,
-#'   graph$learned, read_file = reader_of(files))` for the current fields:
+#'   graph$learned, read_file = reader_of(files), columns = data_columns)`
+#'   for the current fields:
 #'   every step that changes `cells`, `exports` or `files` rebuilds
 #'   it with `previous = graph` (`rebuild_graph()` in step.R) and nothing
 #'   else assigns it.
@@ -196,7 +202,7 @@ new_state <- function(file, path, id, options, at) {
     exports = list(), graph = graph, options = options, packages = packages,
     allowed = FALSE, closed = FALSE, worker = new_worker_state(),
     worker_usage = NULL,
-    pending = character(), results = list(), clock = at, seq = 0L,
+    pending = character(), results = list(), data_columns = list(), clock = at, seq = 0L,
     next_token = 1L
   ), class = "ember_state")
 }
@@ -817,7 +823,8 @@ check_state <- function(state) {
   expected <- notebook_graph(code_of(state$cells),
                              exports = exports_of(state), learned = state$graph$learned,
                              disabled = disabled_ids(state$cells),
-                             previous = state$graph, read_file = reader_of(state$files))
+                             previous = state$graph, read_file = reader_of(state$files),
+                             columns = state$data_columns)
   # `read_file` is a closure freshly made over `state$files`; it is never
   # the same object as the one already stored on the graph even when it
   # behaves identically. `reread` records what was recomputed relative to
