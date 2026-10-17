@@ -33,8 +33,6 @@ test("packages tab: an installing row keeps its cells side by side; Update is a 
   assert.ok(cells.every((c) => c.top === cells[0].top), `name, version and status share a line: ${JSON.stringify(cells)}`);
   assert.ok(cells[0].left < cells[1].left && cells[1].left < cells[2].left, "name, then version, then status");
   assert.equal(await row.locator("td").first().innerText(), "brokenpkg");
-  // A name too long for its 32 % column is cut short; the full name is its tooltip.
-  assert.equal(await row.locator("td").first().getAttribute("title"), "brokenpkg");
 
   // Panel3's table: a quiet 11.5 px header on the panel's line colour,
   // 12.5 px rows, and fixed columns of 32 % and 24 % with the rest for Status.
@@ -51,6 +49,19 @@ test("packages tab: an installing row keeps its cells side by side; Update is a 
   });
   assert.deepEqual({ ...table, widths: undefined }, { size: "11.5px", weight: "500", colorIsFaint: true, bodySize: "12.5px", layout: "fixed", widths: undefined });
   assert.ok(Math.abs(table.widths[0] - 0.32) < 0.01 && Math.abs(table.widths[1] - 0.24) < 0.01, `columns 32 % and 24 %: ${JSON.stringify(table.widths)}`);
+
+  // A name longer than its column wraps inside it: the column stays 32 %
+  // and nothing of the name is hidden.
+  const long = await row.locator("td").first().evaluate((td) => {
+    td.textContent = "TxDb.Hsapiens.UCSC.hg38.knownGene";
+    const table = td.closest("table");
+    return {
+      fits: td.scrollWidth <= td.clientWidth,
+      width: table.querySelector("th").getBoundingClientRect().width / table.getBoundingClientRect().width,
+    };
+  });
+  assert.ok(long.fits, `the long name fits its cell: ${JSON.stringify(long)}`);
+  assert.ok(Math.abs(long.width - 0.32) < 0.01, `the name column stays 32 %: ${JSON.stringify(long)}`);
 
   const update = page.locator(".ember-packages-update button");
   const style = await update.evaluate((el) => {

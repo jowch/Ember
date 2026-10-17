@@ -1260,14 +1260,12 @@ nav#at_the_top .ember-menu {
     padding-right: 0;
 }
 
-/* A long name or version ends in an ellipsis rather than widening its
-   fixed column; so does a GitHub source line under the version, whose
-   title holds all of it. */
+/* A long name, version or GitHub source line breaks onto another line
+   inside its fixed column rather than widening it or being cut short.
+   Mono names have no spaces, so it may break anywhere. */
 .ember-package-row td:nth-child(-n + 2),
 .ember-package-row .ember-package-source {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
 }
 
 .ember-package-row.ember-package-missing td:last-child,
