@@ -995,7 +995,7 @@ env_fingerprints <- function(before, names) {
 #' `env_fingerprint()`, a data.table's from `datatable_fingerprint()`.
 ref_fingerprint <- function(v, budget) {
   if (inherits(v, "data.table")) return(datatable_fingerprint(v))
-  if (!is.environment(v) || is_shared_env(v)) return(NULL)
+  if (!is.environment(v) || is_shared_env(v) || is_python_object(v)) return(NULL)
   env_fingerprint(v, budget)
 }
 
@@ -1049,6 +1049,13 @@ datatable_clear_mark <- function() {
   invisible()
 }
 
+#' A reticulate object: an R environment holding a pointer to a Python
+#' object (`pyobj`). Its state lives in Python, so its R bindings can't
+#' show a change in place, and the first `py_to_r()` caches one more
+#' binding (`simple`) there, which isn't a change (#259). Read by
+#' identity only.
+is_python_object <- function(v) inherits(v, "python.builtin.object")
+
 #' An environment the notebook doesn't own: a namespace, a package's
 #' attached environment, the global, base or empty environment.
 is_shared_env <- function(e) {
@@ -1098,7 +1105,7 @@ env_fingerprint_ <- function(e, budget, depth, seen) {
       out[[n]] <- NULL
       next
     }
-    if (is.environment(v) && depth > 1L && !is_shared_env(v)) {
+    if (is.environment(v) && depth > 1L && !is_shared_env(v) && !is_python_object(v)) {
       inner <- env_fingerprint_(v, budget, depth - 1L, seen)
       out[[n]] <- if (is.null(inner)) list(env = v) else list(env = v, print = inner)
     } else {

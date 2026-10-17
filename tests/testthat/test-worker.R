@@ -1731,6 +1731,17 @@ test_that("a cell that changes another cell's environment in place reports it; r
   expect_length(r$changed_in_place, 0)
   r <- run_and_wait(h, "t", 11L, "a$inc()")
   expect_identical(r$changed_in_place, "a")
+  # A reticulate object caches `simple` in its environment on its first
+  # py_to_r(), which isn't a change (#259). Shaped like one, so the test
+  # needs no Python; held inside another environment too.
+  run_and_wait(h, "p", 14L, paste(
+    "py <- structure(new.env(), class = c('pandas.DataFrame', 'python.builtin.object'))",
+    "py$pyobj <- 1\npy$convert <- TRUE",
+    "holder <- new.env()\nholder$py <- py", sep = "\n"))
+  r <- run_and_wait(h, "q", 15L, "assign('simple', TRUE, envir = py)")
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "q", 16L, "assign('simple2', TRUE, envir = holder$py)")
+  expect_length(r$changed_in_place, 0)
   # A namespace held in a global isn't read.
   run_and_wait(h, "h", 12L, "ns <- asNamespace('stats')")
   r <- run_and_wait(h, "i", 13L, "1")
