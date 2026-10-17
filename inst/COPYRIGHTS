@@ -5,6 +5,12 @@ The frontend in inst/frontend is forked from Pluto.jl's frontend
 (https://github.com/fonsp/Pluto.jl), used and modified under the MIT
 licence. Its text is at inst/frontend/LICENSE.
 
+A CRAN release ships Ember's own frontend JavaScript (inst/frontend, except
+imports/) minified with terser, each file under its own name. The readable
+source of every file is in the package's repository,
+https://github.com/jowch/Ember, at the release's commit;
+frontend-build/scripts/release-tarball.sh makes the tarball from it.
+
 - Pluto.jl: MIT, Copyright (c) 2020-2026 the Pluto.jl authors.
 - codemirror-pluto-setup: MIT, Copyright (c) 2021 Pluto.jl authors. Its
   source, which inst/frontend/imports/vendor/codemirror-ember-setup-*.js is

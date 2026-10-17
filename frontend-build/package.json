@@ -51,6 +51,7 @@
     "@rollup/plugin-node-resolve": "^15.2.3",
     "@rollup/plugin-terser": "^0.4.4",
     "rollup": "^4.24.0",
-    "rollup-plugin-license": "^3.5.3"
+    "rollup-plugin-license": "^3.5.3",
+    "terser": "^5.51.2"
   }
 }

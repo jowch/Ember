@@ -443,7 +443,12 @@ version so its source can be found.
   in place (same names, same layout, so the live page and exports work
   the same way) before `R CMD build`, and CI runs the browser tests
   against that build as well. About 0.7 MB becomes about 0.3 MB.
-  Tracked in #60; not part of this piece.
+  Built in #60, for CRAN tarballs only: r-universe makes its own tarball
+  from `main` and runs no script of ours, so its builds and the Apple
+  Silicon binary ship the readable files. `frontend-build/README.md`,
+  "Release tarball", says how. Terser takes the JavaScript from 647 KB to
+  about 280 KB; the CSS (153 KB) stays readable, since no CSS minifier is
+  in the build.
 
 ### Tests
 
