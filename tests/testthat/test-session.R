@@ -802,6 +802,9 @@ test_that("a worker busy in a long cell ends when the server that started it is 
   # from hanging the suite.
   deadline <- Sys.time() + 60
   while (!file.exists(pidfile) && server$is_alive() && Sys.time() < deadline) Sys.sleep(0.05)
+  # read_all_output() waits for the server to end, so a server still
+  # running without the file is ended first.
+  if (!file.exists(pidfile) && server$is_alive()) server$kill()
   expect_true(file.exists(pidfile), info = server$read_all_output())
   worker <- as.integer(readLines(pidfile))
   on.exit(tools::pskill(worker, tools::SIGKILL), add = TRUE)
@@ -913,6 +916,9 @@ test_that("on Windows a busy worker's processx and callr children outlive a kill
   on.exit(if (server$is_alive()) server$kill(), add = TRUE)
   deadline <- Sys.time() + 60
   while (!file.exists(marker) && server$is_alive() && Sys.time() < deadline) Sys.sleep(0.05)
+  # read_all_output() waits for the server to end, so a server still
+  # running without the file is ended first.
+  if (!file.exists(marker) && server$is_alive()) server$kill()
   expect_true(file.exists(marker), info = server$read_all_output())
   pids <- as.integer(readLines(pidfile))
   on.exit(for (p in pids) tools::pskill(p), add = TRUE)
@@ -922,6 +928,46 @@ test_that("on Windows a busy worker's processx and callr children outlive a kill
 
   expect_true(wait_pid_gone(pids[1]))  # the worker
   expect_true(wait_pid_gone(pids[4]))  # system2()'s child
+  expect_true(pid_running(pids[2]))    # processx's
+  expect_true(pid_running(pids[3]))    # callr's
+})
+
+test_that("on Windows a busy cell's own processx and callr children outlive a killed server (#274)", {
+  # Released by the worker's thread while the cell still runs, not by the
+  # release after a run: the cell waits until that has happened
+  # (`C_cell_children_released()`, test-only) and only then says it's busy.
+  skip_on_os(c("mac", "linux", "solaris"))
+  use_installed_ember()
+  pidfile <- normalizePath(tempfile("cell-pids-"), winslash = "/", mustWork = FALSE)
+  rscript <- normalizePath(file.path(R.home("bin"), "Rscript.exe"), winslash = "/")
+  libs <- paste(deparse(normalizePath(.libPaths(), winslash = "/")), collapse = "")
+  path <- write_session_notebook(list(S = cell(""), A = unscanned_cell("a", sprintf(paste0(
+    ".libPaths(c(%1$s, .libPaths())); ",
+    "a <- processx::process$new('%2$s', c('-e', 'Sys.sleep(300)')); ",
+    "b <- callr::r_bg(function() Sys.sleep(300)); ",
+    "while (!.Call(getNativeSymbolInfo('C_cell_children_released', 'ember'))) Sys.sleep(0.05); ",
+    "writeLines(as.character(c(Sys.getpid(), a$get_pid(), b$get_pid())), '%3$s.tmp'); ",
+    "file.rename('%3$s.tmp', '%3$s'); Sys.sleep(300); list(a, b)"),
+    libs, rscript, pidfile))))
+  code <- paste0("library(ember); nb <- open_notebook(", deparse(path), "); run_cells(nb, 'A'); ",
+                 "repeat later::run_now(1)")
+  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
+                                  env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
+                                  stdout = "|", stderr = "2>&1")
+  on.exit(if (server$is_alive()) server$kill(), add = TRUE)
+  deadline <- Sys.time() + 60
+  while (!file.exists(pidfile) && server$is_alive() && Sys.time() < deadline) Sys.sleep(0.05)
+  # read_all_output() waits for the server to end, so a server still
+  # running without the file is ended first.
+  if (!file.exists(pidfile) && server$is_alive()) server$kill()
+  expect_true(file.exists(pidfile), info = server$read_all_output())
+  pids <- as.integer(readLines(pidfile))
+  on.exit(for (p in pids) tools::pskill(p), add = TRUE)
+  expect_true(all(vapply(pids, pid_running, logical(1))))
+
+  server$kill()
+
+  expect_true(wait_pid_gone(pids[1]))  # the worker
   expect_true(pid_running(pids[2]))    # processx's
   expect_true(pid_running(pids[3]))    # callr's
 })
@@ -947,6 +993,9 @@ test_that("what a busy cell started with system() ends when the server is killed
   # from hanging the suite.
   deadline <- Sys.time() + 60
   while (!file.exists(pidfile) && server$is_alive() && Sys.time() < deadline) Sys.sleep(0.05)
+  # read_all_output() waits for the server to end, so a server still
+  # running without the file is ended first.
+  if (!file.exists(pidfile) && server$is_alive()) server$kill()
   expect_true(file.exists(pidfile), info = server$read_all_output())
   pids <- as.integer(readLines(pidfile))
   on.exit(for (p in pids) tools::pskill(p, tools::SIGKILL), add = TRUE)

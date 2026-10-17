@@ -104,3 +104,20 @@ SEXP C_cell_children_running(SEXP on) {
 #endif
   return R_NilValue;
 }
+
+/* Test-only: TRUE once no job this process holds is still processx's
+   kill-on-close one, that is once the release has run on every job there
+   is (test-session.R, #274). */
+SEXP C_cell_children_released(void) {
+#if defined(_WIN32)
+  for (ULONG_PTR v = 4; v < LAST_HANDLE_VALUE; v += 4) {
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION info;
+    if (!QueryInformationJobObject((HANDLE) v, JobObjectExtendedLimitInformation,
+                                   &info, sizeof info, NULL)) continue;
+    DWORD flags = info.BasicLimitInformation.LimitFlags;
+    if ((flags & JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK) && (flags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE))
+      return ScalarLogical(0);
+  }
+#endif
+  return ScalarLogical(1);
+}
