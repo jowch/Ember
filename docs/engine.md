@@ -16,7 +16,7 @@ The design adds rules that cut across those inputs:
 
 - safe preview
 - autorun versus lazy
-- unrun or stale ancestors run first
+- unrun, edited or stale ancestors run first, with every ancestor between them and the cell run
 - dependents of a failed cell run anyway (as Pluto); a failed cell's globals are removed
 - restart leaves every cell not run
 - deleting a cell removes its globals
