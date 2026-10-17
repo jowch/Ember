@@ -304,7 +304,9 @@ not.
   on macOS and Windows (`bioc_binary_repos()`). It isn't dated and holds
   only each package's latest version in the release, but renv takes a
   binary only at the locked version, so a package whose version has moved
-  on since the snapshot date builds from source as before. At 2026-06-01,
+  on since the snapshot date builds from source as before. Bioconductor
+  rebuilds a binary when its dependencies change, so at the same version
+  the binary can be a later build than the one out at the snapshot date. At 2026-06-01,
   2161 of 2324 versions still matched. Its name doesn't start with "BioC",
   since renv reads binaries from no such repository but BioCsoft. The
   compiler check counts its binaries too.

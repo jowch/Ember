@@ -448,18 +448,23 @@ test_that("[net] a notebook with library(S4Vectors) installs from Bioconductor o
 })
 
 test_that("[net] on macOS and Windows, a Bioconductor package Package Manager has no binary of installs Bioconductor's (#22)", {
-  # Package Manager's Bioconductor 3.23 has no macOS arm64 binary of
-  # preprocessCore 1.74.0, so it built from source, and failed on a Mac
-  # without the Fortran runtime (`ld: library 'emutls_w' not found`).
-  skip_if_not(identical(Sys.getenv("EMBER_TEST_NETWORK"), "1"),
-             "set EMBER_TEST_NETWORK=1 to run the opt-in network test")
+  # Package Manager's Bioconductor 3.23 has no macOS arm64 or Windows
+  # binary of SNPRelate 1.46.0, so it built from source: on a Mac without
+  # the Fortran runtime a package like that failed to link (`ld: library
+  # 'emutls_w' not found`). CI's runners have the compilers, so the source
+  # build would pass there too: the test checks where the package came from.
+  # Bioconductor's repository isn't dated: once a 3.23 point release moves
+  # SNPRelate past 1.46.0, its binary no longer matches the lock made at
+  # 2026-10-08 and this fails. Then pick another package and date.
+  skip_if_not(identical(Sys.getenv("EMBER_TEST_NETWORK"), "1") || identical(Sys.getenv("EMBER_TEST_BIOC_BINARIES"), "1"),
+             "set EMBER_TEST_NETWORK=1 or EMBER_TEST_BIOC_BINARIES=1 to run the opt-in network test")
   skip_if(identical(os_kind(), "linux"), "Bioconductor's own binaries are for macOS and Windows")
 
   cache <- toy_cache()
   on.exit(unlink(cache, recursive = TRUE), add = TRUE)
   dir <- tempfile("ember-nb-")
   dir.create(dir, recursive = TRUE)
-  cells <- list(A = list(code = "library(preprocessCore)\npackageVersion(\"preprocessCore\")",
+  cells <- list(A = list(code = "library(SNPRelate)\npackageVersion(\"SNPRelate\")",
                         kind = "code", folded = FALSE))
   header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
                        r_version = paste(R.version$major, R.version$minor, sep = "."),
@@ -478,11 +483,16 @@ test_that("[net] on macOS and Windows, a Bioconductor package Package Manager ha
 
   status <- package_status(nb)
   expect_equal(status$library$status, "ready")
-  row <- status$packages$name == "preprocessCore"
-  expect_equal(status$packages$source[row], "Bioc")
+  row <- status$packages$name == "SNPRelate"
+  expect_equal(status$packages$version[row], "1.46.0")
   expect_equal(status$packages$status[row], "installed")
-  expect_match(snap_view(notebook_snapshot(nb), "A")$output$text,
-               status$packages$version[row], fixed = TRUE)
+  expect_match(snap_view(notebook_snapshot(nb), "A")$output$text, "1.46.0", fixed = TRUE)
+  # renv records the repository it installed from: a build from Package
+  # Manager's source would say BioCsoft.
+  desc <- read.dcf(file.path(status$library$path, "SNPRelate", "DESCRIPTION"),
+                   fields = c("RemoteReposName", "RemoteRepos"))
+  expect_equal(unname(desc[1, "RemoteReposName"]), "Bioconductor")
+  expect_equal(unname(desc[1, "RemoteRepos"]), "https://bioconductor.org/packages/3.23/bioc")
 })
 
 # ---- 90: the empty-log regression, with the failing-installer fixture ------
