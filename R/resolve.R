@@ -164,6 +164,35 @@ ppm_binary_repos <- function(urls, cran_binary) {
   urls
 }
 
+#' Bioconductor's own repositories, one per release
+#' (`<bioconductor_url>/3.23/bioc`). Not dated: each holds only the
+#' latest version of a package in that release.
+bioconductor_url <- "https://bioconductor.org/packages"
+
+#' `urls` with Bioconductor's own software repository for the pinned
+#' release added after Package Manager's, on macOS and Windows (#22).
+#'
+#' Package Manager doesn't build every Bioconductor binary that
+#' Bioconductor does: for 3.23 on macOS arm64 it lacks 123 packages that
+#' have code to compile and that Bioconductor has as binaries
+#' (preprocessCore, affy, flowCore, ...). Those then build from source,
+#' which on a Mac often needs a Fortran compiler it doesn't have
+#' (`ld: library 'emutls_w' not found`). renv takes a binary only at the
+#' locked version, so a package whose version has moved on since the
+#' snapshot date still builds from source, as before.
+#'
+#' The name mustn't start with "BioC": renv reads no binaries from such a
+#' repository unless it is BioCsoft. Only a dated Package Manager-style
+#' `BioCsoft` URL over http(s) gets the addition, so `file://`
+#' repositories (tests) never reach the network.
+bioc_binary_repos <- function(urls, os = os_kind()) {
+  if (identical(os, "linux") || !"BioCsoft" %in% names(urls)) return(urls)
+  release <- regmatches(urls[["BioCsoft"]],
+                        regexec("^https?://.*/[0-9]{4}-[0-9]{2}-[0-9]{2}/packages/([^/]+)/bioc$", urls[["BioCsoft"]]))[[1]]
+  if (length(release) < 2) return(urls)
+  c(urls, Bioconductor = paste0(bioconductor_url, "/", release[[2]], "/bioc"))
+}
+
 # ---- Bioconductor releases ---------------------------------------------------
 
 #' Bioconductor's releases come from bioconductor.org's own list
