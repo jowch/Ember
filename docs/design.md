@@ -170,10 +170,11 @@ pieces rather than all at once, so a big output can't stall it.
 Workers and jobs (installs, index fetches) end when the server does. They
 start with processx's supervisor, a separate process that sends them SIGTERM
 once the server is gone, even after a SIGKILL (#141, #147). A job also takes
-its own children with it: on Unix through `sh`, on Windows through the job
-object processx starts it in (docs/packages.md, #148). For a worker, a small `sh` outside its process group
-waits on a pipe from the server and ends the group once the server is gone
-(#150), since the worker itself can't run under a wrapper: the server
+its own children with it: on Unix through `sh`; on Windows because R's
+`system()` ends a child it started once the R that started it ends
+(docs/packages.md, #148). For a worker, a small `sh` outside its process
+group waits on a pipe from the server and ends the group once the server is
+gone (#150), since the worker itself can't run under a wrapper: the server
 interrupts a cell with SIGINT to the worker's own process. So what a cell
 starts with `system()` or a fork ends with the server, as it already did
 when the notebook restarts. A process a cell starts in a session of its own
