@@ -979,7 +979,8 @@ pluto-log-truncated {
 pluto-editor.disable_ui button.ember-run,
 pluto-editor.disable_ui button.input_context_menu,
 pluto-editor.disable_ui ember-runtime,
-pluto-editor.disable_ui pluto-cell.not_run_yet > ember-chip {
+pluto-editor.disable_ui pluto-cell.not_run_yet > ember-chip,
+pluto-editor.disable_ui pluto-cell > ember-chip.held {
     display: none;
 }
 
