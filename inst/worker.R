@@ -48,9 +48,12 @@
 #   source_reply allow, message      only while a `source` request waits
 #   more         cell, path, dim     grow a table's or tree's paging limit
 #                                    at `path` (dim 1 rows/items, 2 columns)
-#   render       cell, res, width?, height?   re-render the cell's recorded
-#                plot at its own figure size and `res`, or at `width`/
-#                `height` pixels when both are given (render_png())
+#   render       cell, res, width?, height?, id?   re-render the cell's
+#                recorded plot at its own figure size and `res`, or at
+#                `width`/`height` pixels when both are given. With `id`
+#                (render_png(), a worker_query()), the `rendered` reply
+#                carries it back and the shell hands it to that query
+#                instead of the state (#28).
 #   complete     id, line, cursor     line: the current line up to the cursor
 #   help         id, topic, package   package NULL: search attached, then all installed
 #   signature    id, name, package
@@ -63,8 +66,9 @@
 #   source       cell, token, path, text                before a computed
 #                                                       source() runs; waits
 #   done         cell, token, report (see run_cell())
-#   rendered     cell, token, display   display is NULL when the cell has no
-#                                       kept value to page or re-render
+#   rendered     cell, token, display, id?   display is NULL when the cell
+#                                       has no kept value to page or
+#                                       re-render; id as the render's
 #   completions  id, token, items = list(name, kind, notebook), too_long
 #   help_page    id, found, topic, package, html, matches (packages, when several),
 #                error, tried_all_packages
@@ -327,7 +331,7 @@ handle_next <- function() {
       })
     },
     more = send(show_more(msg)),
-    render = send(render_plot(msg)),
+    render = send(c(render_plot(msg), if (!is.null(msg$id)) list(id = msg$id))),
     complete = {
       r <- complete_line(msg$line, msg$cursor)
       send(list(type = "completions", id = msg$id, token = r$token, items = r$items, too_long = r$too_long))
