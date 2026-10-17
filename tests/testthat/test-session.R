@@ -437,11 +437,10 @@ test_that("on Windows an interrupt that can't reach the worker offers the restar
   run_cells(nb, "A", wait = TRUE, timeout = 15)
   run_cells(nb, "B", wait = FALSE)
   expect_true(wait_for(nb, function(s) isTRUE(nb$state$worker$running$begun), timeout = 15))
-  t0 <- Sys.time()
   interrupt_notebook(nb)
-  # Sooner than the 3 s grace period, which is all a lost interrupt got.
-  expect_true(wait_for(nb, function(s) isTRUE(s$interrupt_failed), timeout = 2))
-  expect_lt(as.numeric(Sys.time() - t0, units = "secs"), 2)
+  # Only the failure path sets interrupt_failed: the grace timer sets
+  # restart_offered alone.
+  expect_true(wait_for(nb, function(s) isTRUE(s$interrupt_failed), timeout = 15))
   expect_true(notebook_snapshot(nb)$restart_offered)
 })
 

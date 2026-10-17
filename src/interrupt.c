@@ -64,6 +64,19 @@ SEXP C_interrupt_listen(void) {
 #endif
 }
 
+/* Worker side, just before a run starts: drop an interrupt still pending.
+   The server interrupts a run only once the worker has said it began, so
+   one pending now is late, meant for the run before. R on Windows looks
+   for one only every 200 ms while it waits on the socket, so a late one can
+   still be pending when the next run is read, and would stop that run. */
+SEXP C_interrupt_drain(void) {
+#if defined(_WIN32)
+  if (interrupt_event) ResetEvent(interrupt_event);
+  UserBreak = 0;
+#endif
+  return R_NilValue;
+}
+
 /* Server side: interrupt the worker with process id `pid`. TRUE if its
    event was set; FALSE if it has none (not listening, or gone). */
 SEXP C_interrupt_send(SEXP pid) {

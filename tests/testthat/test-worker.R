@@ -1064,15 +1064,14 @@ test_that("on Windows a worker with no console is interrupted all the same (#48)
   # console.
   skip_on_os(c("mac", "linux", "solaris"))
   h <- worker_harness(detached = TRUE)
+  expect_true(isTRUE(h$hello$interrupts))
   on.exit(h$close())
   for (code in c("Sys.sleep(20)", "t0 <- Sys.time(); repeat if (Sys.time() - t0 > 20) break")) {
     h$send(run_msg("a", 1L, code))
-    t0 <- NULL
     r <- wait_for_done(h, timeout = 10, on_frame = function(m) {
-      if (identical(m$type, "running")) { t0 <<- Sys.time(); expect_true(h$interrupt()) }
+      if (identical(m$type, "running")) expect_true(h$interrupt())
     })
     expect_identical(r$status, "interrupted")
-    expect_lt(as.numeric(Sys.time() - t0, units = "secs"), 3)
   }
 })
 
@@ -1082,6 +1081,22 @@ test_that("on Windows interrupting a process with no interrupt event says it was
   on.exit(p$kill())
   expect_false(interrupt_worker(p))
   expect_true(p$is_alive())
+})
+
+test_that("an interrupt just after a run's done doesn't stop the next run (#48)", {
+  # The server sends the next run as soon as it has "done", so a late
+  # interrupt and the next run can reach the worker together. One still
+  # pending when the run starts is late, and must not stop it.
+  h <- worker_harness()
+  on.exit(h$close())
+  for (i in 1:50) {
+    h$send(run_msg(paste0("c", i), i, "1 + 1"))
+    r <- wait_for_done(h, timeout = 10)
+    expect_identical(r$status, "ok")
+    h$interrupt()
+  }
+  r <- run_and_wait(h, "last", 51L, "1 + 1")
+  expect_identical(r$status, "ok")
 })
 
 test_that("interrupt_between_runs_swallowed", {

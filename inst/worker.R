@@ -55,7 +55,7 @@
 #   quit
 #
 # Worker -> server
-#   hello        secret, pid, r_version, lib_paths, tempdir
+#   hello        secret, pid, r_version, lib_paths, tempdir, interrupts
 #   console      cell, token, item = list(kind, text)   streamed during a run
 #   source       cell, token, path, text                before a computed
 #                                                       source() runs; waits
@@ -117,6 +117,7 @@ touched <- list()       # every list(kind, name) any cell has changed this sessi
 search_added <- character()  # every attach() entry any cell has added this session
 running <- NULL        # list(cell, token) during a run (for the source trace)
 deferred <- list()     # messages read while waiting for a source_reply
+interrupt_drain <- NULL # Windows: the DLL routine that drops a late interrupt (listen_for_interrupts())
 load_log <- NULL       # settings changes made inside loadNamespace/library during a run
 notebook_options <- character()  # option names an options() call from the
                        # notebook's own code (top-level, or a function a
@@ -156,12 +157,22 @@ listen_for_interrupts <- function() {
   if (.Platform$OS.type != "windows" || !nzchar(path)) return(invisible(FALSE))
   invisible(tryCatch({
     dll <- dyn.load(path)
+    interrupt_drain <<- getNativeSymbolInfo("C_interrupt_drain", dll)
     isTRUE(.Call(getNativeSymbolInfo("C_interrupt_listen", dll)))
   }, error = function(e) FALSE))
 }
 
+#' Drop an interrupt still pending as a run starts: it is late, for the
+#' run before, since the server interrupts a run only once it has
+#' "running" (src/interrupt.c's `C_interrupt_drain()`). On Unix a SIGINT
+#' that late was already handled where it landed, between runs.
+drain_late_interrupt <- function() {
+  if (!is.null(interrupt_drain)) .Call(interrupt_drain)
+  invisible(NULL)
+}
+
 main <- function() {
-  listen_for_interrupts()
+  listening <- listen_for_interrupts()
   port <- as.integer(commandArgs(trailingOnly = TRUE)[1])
   con <<- socketConnection("127.0.0.1", port, blocking = TRUE, open = "r+b",
                            timeout = 60 * 60 * 24 * 365)
@@ -187,7 +198,7 @@ main <- function() {
     send(list(type = "hello", secret = secret,
               pid = Sys.getpid(), r_version = R.version.string,
               lib_paths = .libPaths(), loaded = loaded_namespace_versions(),
-              tempdir = tempdir()))
+              tempdir = tempdir(), interrupts = listening))
     # This frame stays on the stack while every cell runs, so a cell
     # walking sys.frames() would find the secret here.
     rm(secret)
@@ -233,8 +244,11 @@ handle_next <- function() {
   trace_line("message", msg$type)
   on.exit(trace_line("handled", msg$type))
   switch(msg$type,
-    run = send(list(type = "done", cell = msg$cell, token = msg$token,
-                     report = run_cell(msg))),
+    run = {
+      drain_late_interrupt()
+      send(list(type = "done", cell = msg$cell, token = msg$token,
+                report = run_cell(msg)))
+    },
     remove_cell = {
       remove_cell(msg$cell)
       cell_order <<- msg$order
