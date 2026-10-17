@@ -120,6 +120,86 @@ test_that("every name in pluto-css-variables.txt is defined in both themes (6)",
   }
 })
 
+# ---- 6b. Every name a theme defines is read -------------------------------
+
+# A theme variable nothing reads is dead weight that no test notices
+# (#57: about a hundred of Pluto's were kept after Ember stopped using
+# them). A name counts as read if a frontend file outside themes/ uses it
+# in var(), if another read theme variable's value does, or if
+# endeavor-css-variables.txt names it (Endeavor's page code reads those).
+test_that("every variable the themes define is read somewhere (6b)", {
+  dir <- frontend_dir()
+  reads <- function(text) {
+    m <- regmatches(text, gregexpr("var\\(\\s*--[A-Za-z0-9_-]+", text, perl = TRUE))[[1]]
+    unique(sub("^var\\(\\s*", "", m))
+  }
+  others <- frontend_files(dir)
+  others <- others[grepl("\\.(css|js|html)$", others) & !grepl("[/\\\\]themes[/\\\\]", others)]
+  live <- unique(unlist(lapply(others, function(f) {
+    reads(strip_comments(readChar(f, file.info(f)$size, useBytes = TRUE), tools::file_ext(f)))
+  })))
+  endeavor <- readLines(testthat::test_path("fixtures", "endeavor-css-variables.txt"))
+  live <- union(live, endeavor[nzchar(endeavor)])
+
+  for (theme in c("light.css", "dark.css")) {
+    text <- strip_comments(readChar(file.path(dir, "themes", theme), file.info(file.path(dir, "themes", theme))$size), "css")
+    decl <- regmatches(text, gregexpr("--[A-Za-z0-9_-]+\\s*:[^;]*;", text, perl = TRUE))[[1]]
+    names <- sub("\\s*:.*", "", decl)
+    uses <- lapply(sub("^[^:]*:", "", decl), reads)
+    theme_live <- live
+    repeat {
+      more <- unique(unlist(uses[names %in% theme_live]))
+      if (all(more %in% theme_live)) break
+      theme_live <- union(theme_live, more)
+    }
+    expect_equal(setdiff(names, theme_live), character(0), info = theme)
+  }
+})
+
+# ---- 6c. Every variable the frontend reads is defined --------------------
+
+# The other direction of 6b. A var() with no value and no fallback drops
+# its whole declaration, so a missing name shows up only as a style that
+# silently isn't there. A name a frontend file outside themes/ reads must
+# be defined in both themes, defined by the frontend itself (a declaration
+# in its CSS, or setProperty() from JS), or read with a fallback,
+# var(--x, ...). `known` lists today's gaps, each with its issue.
+test_that("every variable the frontend reads is defined in both themes or has a fallback (6c)", {
+  dir <- frontend_dir()
+  known <- c(
+    "--code-section-border-color" = "#195",  # dark.css only
+    "--nav-filepicker-focus-color" = "#195"  # neither theme
+  )
+  defined <- function(text) {
+    m <- regmatches(text, gregexpr("--[A-Za-z0-9_-]+\\s*:", text, perl = TRUE))[[1]]
+    unique(sub("\\s*:$", "", m))
+  }
+  themes <- lapply(c("light.css", "dark.css"), function(theme) {
+    f <- file.path(dir, "themes", theme)
+    defined(strip_comments(readChar(f, file.info(f)$size, useBytes = TRUE), "css"))
+  })
+  others <- frontend_files(dir)
+  others <- others[grepl("\\.(css|js|html)$", others) & !grepl("[/\\\\]themes[/\\\\]", others)]
+  texts <- lapply(others, function(f) strip_comments(readChar(f, file.info(f)$size, useBytes = TRUE), tools::file_ext(f)))
+  own <- unique(unlist(lapply(texts, function(text) {
+    set <- regmatches(text, gregexpr("setProperty\\(\\s*[\"'`]--[A-Za-z0-9_-]+", text, perl = TRUE))[[1]]
+    c(defined(text), sub("^.*[\"'`]", "", set))
+  })))
+  ok <- union(intersect(themes[[1]], themes[[2]]), own)
+
+  missing <- character(0)
+  for (i in seq_along(others)) {
+    # `var(--x)` with no fallback; `var(--x, ...)` is fine.
+    m <- regmatches(texts[[i]], gregexpr("var\\(\\s*--[A-Za-z0-9_-]+\\s*\\)", texts[[i]], perl = TRUE))[[1]]
+    reads <- unique(sub("\\s*\\)$", "", sub("^var\\(\\s*", "", m)))
+    bad <- setdiff(reads, c(ok, names(known)))
+    if (length(bad)) missing <- c(missing, paste0(basename(others[i]), ": ", bad))
+  }
+  expect_equal(missing, character(0))
+  # A gap that's been fixed comes off the list.
+  for (name in names(known)) expect_false(all(vapply(themes, function(t) name %in% t, logical(1))), info = name)
+})
+
 # ---- 105. Endeavor's variables too, no media query, one dark selector ----
 
 test_that("pluto and endeavor CSS variables are defined in both themes with no media query (105)", {
@@ -257,11 +337,9 @@ test_that("RunArea.js and ember-cell-label are gone; cells.css is wired in (138)
     expect_false(grepl("ember-cell-label", text, fixed = TRUE), info = f)
   }
 
-  # Excludes themes/: light.css and dark.css still carry Pluto's own
-  # --pluto-runarea-bg-color/--pluto-runarea-span-color variable names,
-  # kept even though nothing points at them now (since #57 the themes
-  # may drop a Pluto name nothing reads, but nobody has dropped these).
-  css_files <- Filter(function(f) endsWith(f, ".css") && !grepl("/themes/", f, fixed = TRUE), frontend_files(dir))
+  # The themes too: #57 dropped Pluto's --pluto-runarea-bg-color and
+  # --pluto-runarea-span-color from them, since nothing read them.
+  css_files <- Filter(function(f) endsWith(f, ".css"), frontend_files(dir))
   for (f in css_files) {
     text <- strip_comments(readChar(f, file.info(f)$size, useBytes = TRUE), "css")
     expect_false(grepl("pluto-runarea", text, fixed = TRUE), info = f)

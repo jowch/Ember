@@ -344,8 +344,12 @@ name, the cell shows a note: "Changed `cnt` in place, which another cell
 defines, so the cells that read it don't rerun." Taking the fingerprint
 forces no promise and calls no active binding. Namespaces are skipped, and
 so is any one environment with more than 1,000 bindings; the others are
-still checked, up to 10,000 bindings a run. data.table's in-place changes
-aren't detected yet (#172).
+still checked, up to 10,000 bindings a run. A data.table another cell
+defines is fingerprinted by its shape: column names, each column's
+address, its spare column slots and its key. So `dt[, z := x * 2]`,
+`setnames()`, `setkey()`, `setorder()` and dropping a column are noted. A
+write to some rows of an existing column (`dt[i, x := 0]`) keeps the
+column where it was, and isn't (#172).
 
 ### Methods
 
@@ -477,7 +481,12 @@ The worker runs each cell in the global environment:
    ggplot2 builds a plot only when it's printed, so its "Removed n rows"
    warning comes from this step. The value is shown by one call of its
    print method or renderer, so each shows once, though the text form and
-   the table's cells run the same methods again.
+   the table's cells run the same methods again. A `knit_print()` that
+   prints the value and returns nothing to show (rmarkdown's, for a data
+   frame) holds its warnings back while the next step prints the value
+   again; any the next step doesn't raise again, such as a warning that
+   fires once a session, show after it. One that prints nothing is only
+   Ember trying it, which plain R never does, so its warnings are dropped.
 
 **Which values a cell shows** follows Pluto: the value of the cell's last
 top-level expression is its output. When that expression is an assignment
@@ -492,7 +501,13 @@ how a cell hides its output (Pluto's trailing `;` has no meaning in R).
 `<<-` and `assign()` stay hidden, as does an assigned function (its
 printed form is the cell's code again) or a plain environment (its
 printed form is an address; an R6 object, which has a class, still
-prints). Earlier visible values, `print()`,
+prints). A data.table `:=` or `set*()` call shows nothing, as at the R
+console, although R returns the table visibly: data.table marks the table
+it returned, Ember reads the mark, and `dt[, z := 1][]` shows it (#185).
+The mark is cleared before each top-level expression, so one left by a
+`:=` that wasn't shown (`invisible(dt[, z := 1])`, or a helper's) doesn't
+blank a later cell that shows the table, as it would at the console.
+Earlier visible values, `print()`,
 `cat()`, messages and warnings go to a console area below the output, in
 order. A plot drawn with no visible value after it is the output. R
 Markdown instead shows every visible value inline.
@@ -729,8 +744,9 @@ rest:
    to that list.
 2. Resolve each against CRAN and Bioconductor at the notebook's snapshot
    date. GitHub and r-universe packages can't be inferred; the user records
-   `user/repo` or the universe for them, and the Packages tab offers to add
-   one on a name that isn't found.
+   them in the header's `[sources]` as `github:user/repo` or
+   `universe:name`, and the Packages tab offers to add one on a name that
+   isn't found.
 3. Update the lock and install into the notebook's library in a subprocess.
    The worker restarts only if a package it has already loaded changed
    version; a new package is just loaded.
@@ -1120,7 +1136,7 @@ buttons, the error element) and the CSS variable names they read; renaming
 them is a change to coordinate with them. The variable names kept for them
 are the ones Endeavor reads (tests/testthat/fixtures/endeavor-css-variables.txt)
 and the ones in pluto-css-variables.txt that Ember's own frontend reads. The
-themes may drop a Pluto variable that nothing reads (#57).
+themes define only variables that something reads (#57), and a test checks it.
 
 ## Integration with Endeavor
 

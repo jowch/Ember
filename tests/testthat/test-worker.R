@@ -1324,6 +1324,36 @@ test_that("a caller's own default passed on to library() or require() is kept (#
   expect_false(any(grepl("Loading required package", unlist(r$console), fixed = TRUE)))
 })
 
+test_that("a search entry a package attaches for itself and that hides nothing is the package's (#181)", {
+  flib <- fixture_lib()
+  h <- worker_harness(extra_libs = flib)
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "emberfix5::stash(1)", order = c("a", "b"))
+  expect_identical(r$status, "ok")
+  expect_length(r$settings, 0)
+  # It stays: the next cell's reset keeps it, as a package load's change.
+  r <- run_and_wait(h, "b", 2L, '"org:emberfix5" %in% search()', order = c("a", "b"))
+  expect_identical(r$output$text, "[1] TRUE")
+})
+
+test_that("a search entry that hides a name, or that the notebook attached, is still a setting (#181)", {
+  flib <- fixture_lib()
+  h <- worker_harness(extra_libs = flib)
+  on.exit(h$close())
+  # Package code attached it, but its nchar() wins over base's.
+  r <- run_and_wait(h, "a", 1L, "emberfix5::prefer()", order = c("a", "b", "c"))
+  expect_identical(r$settings[[1]]$kind, "search")
+  expect_true(".emberfix5" %in% r$settings[[1]]$after)
+  # Hides nothing, but a function a cell defined attached it.
+  r <- run_and_wait(h, "b", 2L,
+    'keep <- function() attach(list(.emberfix_kept = 1), name = "kept", pos = length(search())); keep()',
+    order = c("a", "b", "c"))
+  expect_true("kept" %in% r$settings[[1]]$after)
+  # Not in effect for this run, so the reset takes both off again.
+  r <- run_and_wait(h, "c", 3L, 'c(".emberfix5", "kept") %in% search()', order = c("a", "b", "c"))
+  expect_identical(r$output$text, "[1] FALSE FALSE")
+})
+
 test_that("drop_globals removes a cell's globals but keeps its attached packages (ui-3 12)", {
   h <- worker_harness()
   on.exit(h$close())
@@ -1728,7 +1758,7 @@ test_that("a table's warnings come from its print, not again from its cells (#18
   expect_identical(console_texts(r), "formatting")
 })
 
-test_that("a knit_print() result's warnings show; one that isn't used is quiet, and the next step's show instead (#183)", {
+test_that("a knit_print() result's warnings show once; one that isn't used shows its print's warnings only when the next step doesn't raise them again, and its own never (#183, #193)", {
   skip_if_not_installed("knitr")
   h <- worker_harness(extra_libs = dirname(find.package("knitr")))
   on.exit(h$close())
@@ -1736,16 +1766,34 @@ test_that("a knit_print() result's warnings show; one that isn't used is quiet, 
     'registerS3method("knit_print", "ember_kept", function(x, ...) {',
     '  warning("from knit_print"); knitr::asis_output("<b>shown</b>")',
     '}, envir = asNamespace("knitr"))',
-    'registerS3method("knit_print", "ember_passed", function(x, ...) {',
-    '  warning("from a passed knit_print"); print(unclass(x)); invisible(NULL)',
-    '}, envir = asNamespace("knitr"))',
-    'print.ember_passed <- function(x, ...) { warning("from print"); print(unclass(x)) }', sep = "\n"))
+    # As rmarkdown's knit_print() for data frames: it prints the value and
+    # returns no knit_asis, so the value goes on to the next step.
+    'registerS3method("knit_print", "ember_passed", function(x, ...) { print(x); invisible(NULL) },',
+    '  envir = asNamespace("knitr"))',
+    'print.ember_passed <- function(x, ...) { warning("from print"); print(unclass(x)) }',
+    # A warning that fires once a session, as lifecycle's deprecate_warn().
+    'print.ember_once <- function(x, ...) {',
+    '  if (is.null(getOption("ember_warned"))) { options(ember_warned = TRUE); warning("only once") }',
+    '  print(unclass(x))',
+    '}',
+    'registerS3method("knit_print", "ember_once", function(x, ...) { print(x); invisible(NULL) },',
+    '  envir = asNamespace("knitr"))',
+    'registerS3method("knit_print", "ember_own", function(x, ...) { warning("from a passed knit_print"); invisible(NULL) },',
+    '  envir = asNamespace("knitr"))', sep = "\n"))
   r <- run_and_wait(h, "a", 2L, 'structure(1, class = "ember_kept")', order = c("m", "a"))
   expect_identical(r$output$html, "<b>shown</b>")
   expect_identical(console_texts(r), "from knit_print")
+  # The next step's print raises it again: once.
   r <- run_and_wait(h, "b", 3L, 'structure(1, class = "ember_passed")', order = c("m", "b"))
   expect_identical(r$output$kind, "text")
   expect_identical(console_texts(r), "from print")
+  # Raised only by the knit_print() that wasn't used: still shown.
+  r <- run_and_wait(h, "c", 4L, 'structure(1, class = "ember_once")', order = c("m", "c"))
+  expect_identical(r$output$kind, "text")
+  expect_identical(console_texts(r), "only once")
+  # One that printed nothing is only Ember trying it; plain R never calls it.
+  r <- run_and_wait(h, "d", 5L, 'structure(1, class = "ember_own")', order = c("m", "d"))
+  expect_identical(console_texts(r), character())
 })
 
 test_that("ggplot2's \"Removed n rows\" warning and geom_smooth()'s message show (#183)", {
@@ -1763,6 +1811,63 @@ test_that("ggplot2's \"Removed n rows\" warning and geom_smooth()'s message show
   expect_identical(r$output$kind, "plot")
   expect_identical(console_kinds(r), "message")
   expect_match(console_texts(r), "geom_smooth()", fixed = TRUE)
+})
+
+test_that("a cell that changes another cell's data.table in place with := or set*() reports it; reading it or rebinding it doesn't (#172)", {
+  skip_if_not_installed("data.table")
+  h <- worker_harness(extra_libs = dirname(find.package("data.table")))
+  on.exit(h$close())
+  ord <- c("l", letters[1:6])
+  run_and_wait(h, "l", 1L, "library(data.table)", order = ord)
+  run_and_wait(h, "a", 2L, "dt <- data.table(a = 1:3, x = c(1, 2, 3))", order = ord)
+  for (code in c("dt[, b := a * 2]", "dt[, a := a * 10L]", "set(dt, j = 'c', value = 0)",
+                 "setnames(dt, 'x', 'y')", "setkey(dt, a)", "setorder(dt, -a)", "dt[, b := NULL]")) {
+    r <- run_and_wait(h, "c", 3L, code, order = ord)
+    expect_identical(r$status, "ok", info = code)
+    expect_identical(r$changed_in_place, "dt", info = code)
+  }
+  r <- run_and_wait(h, "d", 4L, "dt[a > 10L, .N]\nnames(dt)", order = ord)
+  expect_length(r$changed_in_place, 0)
+  # A rebinding is a change of the name, not of its contents.
+  r <- run_and_wait(h, "e", 5L, "dt <- copy(dt)", order = ord)
+  expect_length(r$changed_in_place, 0)
+  # A cell's own table is its own to change.
+  r <- run_and_wait(h, "f", 6L, "mine <- data.table(v = 1)\nmine[, w := 2]", order = ord)
+  expect_length(r$changed_in_place, 0)
+})
+
+test_that("a cell ending in a data.table := shows nothing, as at the R console, and a later print() of the table still prints (#185)", {
+  skip_if_not_installed("data.table")
+  h <- worker_harness(extra_libs = dirname(find.package("data.table")))
+  on.exit(h$close())
+  ord <- c("l", letters[1:6])
+  run_and_wait(h, "l", 1L, "library(data.table)\ndt <- data.table(a = 1:3)", order = ord)
+  r <- run_and_wait(h, "a", 2L, "dt[, b := a * 2]", order = ord)
+  expect_identical(r$status, "ok")
+  expect_null(r$output)
+  # Not the last expression: nothing goes to the console either.
+  r <- run_and_wait(h, "a", 3L, "dt[, c := 1]\nncol(dt)", order = ord)
+  expect_identical(r$output$text, "[1] 3")
+  expect_length(r$console, 0)
+  # `[]` after it shows the table, as at the console.
+  r <- run_and_wait(h, "a", 4L, "dt[, d := 1][]", order = ord)
+  expect_false(is.null(r$output))
+  # The mark is cleared, so the table shows in the next cell.
+  run_and_wait(h, "a", 5L, "dt[, e := 1]", order = ord)
+  r <- run_and_wait(h, "b", 6L, "dt", order = ord)
+  expect_false(is.null(r$output))
+  # A mark left by a := that wasn't shown (inside invisible(), or in a
+  # helper) doesn't blank the next cell that shows the table (review).
+  run_and_wait(h, "a", 7L, "invisible(dt[, f := 1])", order = ord)
+  r <- run_and_wait(h, "b", 8L, "dt", order = ord)
+  expect_false(is.null(r$output))
+  run_and_wait(h, "c", 9L, "add_g <- function(d) { d[, g := 1]; invisible(NULL) }", order = ord)
+  run_and_wait(h, "a", 10L, "add_g(dt)", order = ord)
+  r <- run_and_wait(h, "b", 11L, "dt", order = ord)
+  expect_false(is.null(r$output))
+  # Nor the same cell's last value.
+  r <- run_and_wait(h, "a", 12L, "invisible(dt[, h := 1])\ndt", order = ord)
+  expect_false(is.null(r$output))
 })
 
 test_that("a setting the display step changes isn't the cell's: only its code's changes make it a settings cell, and the display's change stays as a package load's would (#156)", {

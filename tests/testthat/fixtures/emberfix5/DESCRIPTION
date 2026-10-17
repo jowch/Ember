@@ -1,0 +1,8 @@
+Package: emberfix5
+Title: Ember worker test fixture 5
+Version: 0.0.1
+Description: A fixture that attaches search entries of its own when its
+    functions run: one near the bottom of the path that hides nothing, as
+    tune does, and one at position 2 that hides a base function.
+License: MIT
+Encoding: UTF-8

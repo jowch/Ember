@@ -174,8 +174,8 @@ aspect ratio fits. Not every browser has supported SVG favicons (Safari was
 the holdout); if the tab icon is blank there, add a PNG fallback beside it.
 
 **Theme.** `themes/light.css` and `themes/dark.css` get new values for the
-same 203 variable names; none is renamed or removed. (Later, #57 stopped
-requiring the 106 that nothing reads; see design.md, "Look distinct".) Colours, fonts and
+same 203 variable names; none is renamed or removed. (Later, #57 removed
+the ones nothing reads; see design.md, "Look distinct".) Colours, fonts and
 spacing that `editor.css` hard-codes (for example `"Alegreya Sans"` at
 editor.css:130, `"Vollkorn"` at 142, 332, 691) become variables. Variables
 that are new, not renamed, are named `--ember-*`. `--julia-mono-font-stack`

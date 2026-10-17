@@ -473,7 +473,11 @@ ev_cancel_preview <- function(at) event("cancel_preview", at)
 #' to change (`index_may_change()`); the core has no clock to judge it.
 ev_index_fetched <- function(key, index, at, provisional = FALSE)
   event("index_fetched", at, key = key, index = index, provisional = isTRUE(provisional))
-ev_index_failed  <- function(key, message, at) event("index_failed", at, key = key, message = message)
+#' `unpublished`: the shell's word that the repository answered 404 for a
+#' date recent enough to be one it hasn't published yet (#162); the core
+#' has no clock to judge either.
+ev_index_failed  <- function(key, message, at, unpublished = FALSE)
+  event("index_failed", at, key = key, message = message, unpublished = isTRUE(unpublished))
 #' `table`: `parse_bioc_config()`'s result, as fetched (or cached).
 #' `fetched`: the day that list was fetched, a `Date` (a cached copy's own
 #' day, not today's).
@@ -1167,7 +1171,21 @@ reduce_index_failed <- function(state, event) {
   if (is.null(slot) || !identical(slot$status, "fetching")) {
     return(list(state = state, effects = list(), reply = NULL))
   }
-  wanted <- wanted_packages(state$graph, state$file$header)
+  header <- state$file$header
+  # The notebook's own date isn't published yet (a new notebook dated
+  # today, before Package Manager has that day's snapshot, #162). While
+  # nothing is locked, no package came from that date, so the date moves
+  # back a day and resolution fetches that one. The shell says
+  # `unpublished` only for a date `index_may_change()` covers, so this
+  # stops by the day before yesterday in UTC, and then the failure shows.
+  if (isTRUE(event$unpublished) && nrow(state$file$lock$entries) == 0 &&
+      !is.null(header$snapshot) && !is.na(header$snapshot) &&
+      identical(event$key, repo_key("cran", header$snapshot))) {
+    state$packages$indexes[[event$key]] <- NULL
+    state$file$header$snapshot <- format(as.Date(header$snapshot) - 1, "%Y-%m-%d")
+    return(list(state = state, effects = list(), reply = NULL))
+  }
+  wanted <- wanted_packages(state$graph, header)
   state$packages$indexes[[event$key]] <- new_index_slot("failed", message = event$message, wanted = wanted)
   list(state = state, effects = list(), reply = NULL)
 }
