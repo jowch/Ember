@@ -6,6 +6,7 @@
 \alias{set_package_source}
 \alias{remove_package_source}
 \alias{preview_date}
+\alias{preview_update}
 \alias{set_date}
 \alias{run}
 \alias{clean}
@@ -34,6 +35,8 @@ remove_package_source(name)
 
 preview_date(nb, date = Sys.Date(), wait = TRUE, apply = FALSE, timeout = 60)
 
+preview_update(nb, name, version = NULL, wait = TRUE, timeout = 60)
+
 set_date(nb, date)
 
 run(path, repos = ember_repos(), cache = cache_dir(), echo = TRUE)
@@ -44,14 +47,17 @@ clean(max_age = 60, cache = TRUE, dry_run = FALSE, dir = cache_dir(),
 ember_repos(cran = "https://packagemanager.posit.co/cran",
             bioc = "https://packagemanager.posit.co/bioconductor",
             bioc_config = "https://bioconductor.org/config.yaml",
-            github = "https://api.github.com")
+            github = "https://api.github.com",
+            cran_meta = "https://cloud.r-project.org/src/contrib/Meta")
 
 cache_dir()
 }
 \arguments{
 \item{nb}{An \code{ember_notebook} handle.}
-\item{name}{A package name, for \code{add_extra_package()}/\code{remove_extra_package()}
-and \code{set_package_source()}/\code{remove_package_source()}.}
+\item{name}{A package name, for \code{add_extra_package()}/\code{remove_extra_package()},
+\code{set_package_source()}/\code{remove_package_source()} and \code{preview_update()}.}
+\item{version}{The version \code{preview_update()} moves \code{name} to: newer to
+update it, older to pin it back. \code{NULL} is CRAN's newest.}
 \item{source}{Where the package comes from, for \code{set_package_source()}:
 \code{"github:user/repo"}, optionally with \code{@} and a branch, tag or commit
 (\code{"user/repo"} reads as the same, and so does a github.com link to the
@@ -98,6 +104,9 @@ lookup off, and with it Bioconductor.}
 for \code{ember_repos()}: GitHub's own, a GitHub Enterprise server's
 (\code{https://github.example.org/api/v3}), or a \code{file://} folder laid out
 the same way. \code{GITHUB_PAT} (or \code{GITHUB_TOKEN}) is sent when set.}
+\item{cran_meta}{Where CRAN's own index of its files is, for \code{ember_repos()}:
+the folder holding \code{archive.rds} and \code{current.rds}, which give each
+version's release date for \code{preview_update()}. Kept in \code{cache} for a day.}
 }
 \value{
 \code{package_status()} returns a plain list, the same value as
@@ -147,6 +156,14 @@ where \code{status} is \code{"fetching"}, \code{"ready"} or \code{"failed"}, and
 \code{character()} unless \code{apply = TRUE} left the proposal waiting rather than
 applying it on its own: then it names the loaded packages applying would
 restart.
+
+\code{preview_update()} moves the date just far enough that \code{name} is at
+\code{version}: a newer version takes the first day it was CRAN's current one,
+an older one the last, each checked against that day's snapshot. It
+returns \code{list(date, status, changes, problems, message)}, as
+\code{preview_date()}'s, which \code{set_date()} with the returned \code{date}
+applies; \code{status} is \code{"failed"} with \code{message} when there is no
+such date. It is refused unless the lock has \code{name} from CRAN.
 
 \code{set_date()} returns, invisibly, the applied \code{changes} (the same shape
 as \code{preview_date()}'s). It is refused (an \code{ember_refused} condition) unless
