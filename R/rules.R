@@ -172,7 +172,15 @@ class_name_calls <- list(
   as = list(formals = c("object", "Class"), read = "Class"),
   setAs = list(formals = c("from", "to"), read = c("from", "to")),
   getClass = list(formals = "Class", read = "Class"),
-  getClassDef = list(formals = "Class", read = "Class")
+  getClassDef = list(formals = "Class", read = "Class"),
+  slotNames = list(formals = "x", read = "x"),
+  getSlots = list(formals = "x", read = "x"),
+  extends = list(formals = c("class1", "class2"), read = c("class1", "class2")),
+  isVirtualClass = list(formals = "Class", read = "Class"),
+  existsMethod = list(formals = c("f", "signature"), read = "signature"),
+  hasMethod = list(formals = c("f", "signature"), read = "signature"),
+  getMethod = list(formals = c("f", "signature"), read = "signature"),
+  selectMethod = list(formals = c("f", "signature"), read = "signature")
 )
 
 #' The arguments of `class_name_calls` that hold slot or field classes,
@@ -209,12 +217,12 @@ display_names <- function(names) {
 #' of R 4.6.1 (`utils::isS3stdGeneric()`), the internal and primitive
 #' generics (`?InternalMethods`, `.S3PrimitiveGenerics`), and the members of
 #' the group generics, so `+.money` and `max.interval` count. The group
-#' generics themselves (`Ops.money`, `Math.interval`) are not methods of
-#' any one name and are left out.
+#' generics themselves (`Ops.money`, `Math.interval`) are in
+#' `group_generics`.
 s3_generics <- c(
   "-", "!", "!=", ".AtNames", ".DollarNames", "[", "[[", "[[<-", "[<-", "*",
-  "/", "&", "%/%", "%%", "^", "+", "<", "<=", "==", ">", ">=", "|", "$",
-  "$<-", "abs", "acos", "acosh", "add1", "aggregate", "AIC", "alias", "all",
+  "/", "&", "%/%", "%%", "%*%", "^", "+", "<", "<=", "==", ">", ">=", "|", "$",
+  "$<-", "@", "@<-", "abs", "acos", "acosh", "add1", "aggregate", "AIC", "alias", "all",
   "all.equal", "anova", "ansari.test", "any", "anyDuplicated", "anyNA",
   "aperm", "ar.burg", "ar.yw", "Arg", "as.array", "as.call", "as.character",
   "as.complex", "as.data.frame", "as.Date", "as.dendrogram", "as.dist",
@@ -251,9 +259,9 @@ s3_generics <- c(
   "princomp", "print", "prod", "profile", "proj", "prompt", "qqnorm", "qr",
   "quade.test", "quantile", "quarters", "range", "rbind", "Re", "relevel",
   "reorder", "rep", "rep_len", "rep.int", "resid", "residuals", "rev",
-  "row.names", "row.names<-", "rowsum", "rstandard", "rstudent", "scale",
+  "round", "row.names", "row.names<-", "rowsum", "rstandard", "rstudent", "scale",
   "screeplot", "se.contrast", "seek", "selfStart", "seq", "seq.int",
-  "sequence", "sigma", "sign", "simulate", "sin", "sinh", "sinpi", "solve",
+  "sequence", "sigma", "sign", "signif", "simulate", "sin", "sinh", "sinpi", "solve",
   "sort_by", "sortedXyData", "spineplot", "split", "split<-", "sqrt", "SSD",
   "stack", "start", "str", "stripchart", "subset", "sum", "summary",
   "sunflowerplot", "t", "t.test", "tail", "tan", "tanh", "tanpi", "terms",
@@ -263,6 +271,25 @@ s3_generics <- c(
   "var.test", "variable.names", "vcov", "weekdays", "weighted.mean",
   "weights", "wilcox.test", "window", "window<-", "with", "within", "xtfrm"
 )
+
+#' The group generics and their members, S3 (`?groupGeneric`) and S4
+#' (`?S4groupGeneric`). A method of a group (`Ops.money`,
+#' `setMethod("Arith", "Money", ...)`) runs for each member, so it feeds
+#' every cell that reads one (#41).
+group_generics <- local({
+  arith <- c("+", "-", "*", "^", "%%", "%/%", "/")
+  compare <- c("==", ">", "<", "!=", "<=", ">=")
+  logic <- c("&", "|")
+  math <- c("abs", "sign", "sqrt", "ceiling", "floor", "trunc", "cummax", "cummin",
+            "cumprod", "cumsum", "exp", "expm1", "log", "log10", "log2", "log1p",
+            "cos", "cosh", "sin", "sinh", "tan", "tanh", "acos", "acosh", "asin",
+            "asinh", "atan", "atanh", "cospi", "sinpi", "tanpi", "gamma", "lgamma",
+            "digamma", "trigamma")
+  list(Ops = c(arith, compare, logic, "!"), Arith = arith, Compare = compare,
+       Logic = logic, Math = c(math, "round", "signif"), Math2 = c("round", "signif"),
+       Summary = c("max", "min", "range", "prod", "sum", "any", "all"),
+       Complex = c("Arg", "Conj", "Im", "Mod", "Re"), matrixOps = "%*%")
+})
 
 #' Formula operators whose every argument is a term.
 #'
