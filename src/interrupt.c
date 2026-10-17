@@ -25,17 +25,35 @@
 #include <Rembedded.h>   /* UserBreak */
 
 static HANDLE interrupt_event = NULL;
+/* The drain's handshake with the listener (#238): the main thread sets
+   flush_event and waits for flushed_event. */
+static HANDLE flush_event = NULL, flushed_event = NULL;
 static DWORD main_thread = 0;
 
 static void event_name(char *buf, size_t size, unsigned long pid) {
   snprintf(buf, size, "Local\\ember-interrupt-%lu", pid);
 }
 
+/* One wake at a time, so the drain can't land between this thread taking
+   an interrupt (the auto-reset event clears as the wait returns) and
+   setting UserBreak. WaitForMultipleObjects reports the lowest signalled
+   index, so an interrupt set before a drain is applied first and then
+   cleared by the flush, or taken by the flush itself; one set after the
+   drain still reaches the run. */
 static DWORD WINAPI interrupt_listener(LPVOID unused) {
+  HANDLE both[2] = { interrupt_event, flush_event };
   for (;;) {
-    if (WaitForSingleObject(interrupt_event, INFINITE) != WAIT_OBJECT_0) return 0;
-    UserBreak = 1;
-    PostThreadMessage(main_thread, 0, 0, 0);
+    DWORD w = WaitForMultipleObjects(2, both, FALSE, INFINITE);
+    if (w == WAIT_OBJECT_0) {
+      UserBreak = 1;
+      PostThreadMessage(main_thread, 0, 0, 0);
+    } else if (w == WAIT_OBJECT_0 + 1) {
+      WaitForSingleObject(interrupt_event, 0);  /* drop one still pending */
+      UserBreak = 0;
+      SetEvent(flushed_event);
+    } else {
+      return 0;
+    }
   }
 }
 #endif
@@ -49,12 +67,24 @@ SEXP C_interrupt_listen(void) {
   event_name(name, sizeof name, (unsigned long) GetCurrentProcessId());
   HANDLE ev = CreateEventA(NULL, FALSE, FALSE, name);
   if (!ev) return ScalarLogical(0);
+  HANDLE flush = CreateEventA(NULL, FALSE, FALSE, NULL);
+  HANDLE flushed = CreateEventA(NULL, FALSE, FALSE, NULL);
+  if (!flush || !flushed) {
+    if (flush) CloseHandle(flush);
+    if (flushed) CloseHandle(flushed);
+    CloseHandle(ev);
+    return ScalarLogical(0);
+  }
+  flush_event = flush;
+  flushed_event = flushed;
   interrupt_event = ev;
   main_thread = GetCurrentThreadId();
   HANDLE thread = CreateThread(NULL, 0, interrupt_listener, NULL, 0, NULL);
   if (!thread) {
     CloseHandle(ev);
-    interrupt_event = NULL;
+    CloseHandle(flush_event);
+    CloseHandle(flushed_event);
+    interrupt_event = flush_event = flushed_event = NULL;
     return ScalarLogical(0);
   }
   CloseHandle(thread);
@@ -68,11 +98,17 @@ SEXP C_interrupt_listen(void) {
    The server interrupts a run only once the worker has said it began, so
    one pending now is late, meant for the run before. R on Windows looks
    for one only every 200 ms while it waits on the socket, so a late one can
-   still be pending when the next run is read, and would stop that run. */
+   still be pending when the next run is read, and would stop that run.
+   The listener does the clearing, so a late interrupt it has already
+   taken but not yet applied is cleared too (#238). */
 SEXP C_interrupt_drain(void) {
 #if defined(_WIN32)
-  if (interrupt_event) ResetEvent(interrupt_event);
-  UserBreak = 0;
+  if (interrupt_event) {
+    SetEvent(flush_event);
+    WaitForSingleObject(flushed_event, INFINITE);
+  } else {
+    UserBreak = 0;
+  }
 #endif
   return R_NilValue;
 }
