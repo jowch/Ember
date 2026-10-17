@@ -1,7 +1,6 @@
 # Interactive inputs
 
-_Design, 2026-10-17, for #36 (build step 5). Not built. Nothing here is
-decided until the open questions at the end are answered._
+_Design, 2026-10-17, for #36 (build step 5). Not built._
 
 ## Summary
 
@@ -35,8 +34,7 @@ hist(rnorm(n))
   each input, with its current value, in `read_cell`.
 
 The functions live in a separate package with no dependencies, the R
-counterpart of PlutoUI (design.md:536). Its name is an open question;
-`emberui` is used in this doc.
+counterpart of PlutoUI (design.md:536), named `emberui`.
 
 ## Why a function, and not a `#|` line
 
@@ -55,7 +53,7 @@ run as a script. Once Ember can find it by name (on CRAN, or on
 r-universe once notebooks can install from there), Ember detects, installs
 and locks it like any other package, so `ember::run()` supplies it. Until
 then (guessing a repository is not built, packages.md:515), the notebook
-needs a `[sources]` entry; question 2 covers this.
+needs a `[sources]` entry; see the decisions at the end.
 
 ## What the user writes
 
@@ -337,26 +335,20 @@ R has no macros, so the binding comes from the assignment instead of from
   `application/vnd.ember.inputs+json`, inside `<bond>` elements.
 - **EndeavorMCP:** the tool and `read_cell` text, above.
 
-## Open questions
+## Decided with Jonathan (2026-10-17)
 
-Two questions are open. The other choices are decided above: `input_*`
-names (matching plain R), keeping a value on rerun (Pluto), lazy mode marking dependents stale (design.md's definition
-of lazy, which marimo applies to inputs), and "Make this the default"
-coming later.
+- **The package is `emberui`**, PlutoUI's counterpart.
+- **It ships on r-universe only, like Ember.** CRAN would add standing
+  upkeep (policy changes, R-devel check failures with fix-by deadlines,
+  archival if one is missed), and everyone who sees a widget already has
+  Ember, which ships the same way. The `Rscript` fallback needs only the
+  package, from wherever it comes. This needs notebooks to be able to
+  install from r-universe, which is separate work; today `ember_repos()` in
+  R/resolve.R knows only CRAN, Bioconductor and GitHub sources. Until it
+  lands, Ember writes a GitHub `[sources]` entry itself when it sees the
+  package.
 
-1. **Package name.** `emberui` (recommended: PlutoUI's counterpart, short)
-   or `emberinputs`. Neither is taken on CRAN.
-2. **Where it ships.** r-universe only, like Ember (recommended), or CRAN.
-   - *r-universe only:* no standing upkeep beyond Ember's own. CRAN would
-     add policy changes, R-devel check failures with fix-by deadlines, and
-     archival if one is missed, even for a package with no dependencies.
-     Everyone who sees a widget already has Ember, which ships the same
-     way. This waits on notebooks being able to install from r-universe:
-     today `ember_repos()` in R/resolve.R knows only CRAN, Bioconductor and
-     GitHub sources, and that work is being filed as its own issue. Until
-     then, Ember writes a GitHub `[sources]` entry itself when it sees the
-     package.
-   - *CRAN:* someone running a shared notebook with plain `Rscript` and no
-     Ember gets the package with a bare `install.packages()`, instead of
-     naming the r-universe repository. That is the only reach CRAN adds:
-     the `Rscript` fallback needs only the package, from wherever it comes.
+The other choices are decided above: `input_*` names (matching plain R),
+keeping a value on rerun (Pluto), lazy mode marking dependents stale
+(design.md's definition of lazy, which marimo applies to inputs; Jonathan
+confirmed it), and "Make this the default" coming later.
