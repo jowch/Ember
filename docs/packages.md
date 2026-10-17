@@ -54,6 +54,8 @@ on_notebook_event(nb, function(note) {
 # A cell failed with `ggsave("x.svg")`:
 err <- notebook_snapshot(nb)$cells[[7]]$errors[[1]]
 err$kind; err$names; err$fixes   # "missing_package", "svglite", "Add svglite to [extra_packages]"
+# A cell failed with "Package install is required for glmnet." (set_engine("glmnet")):
+err$kind; err$fixes              # "error", "Add glmnet to [extra_packages]"
 edit_notebook(nb, add_extra_package("svglite"))
 ```
 

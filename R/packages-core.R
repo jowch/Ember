@@ -1453,6 +1453,30 @@ missing_package_error <- function(state, pkg) {
   list(state = state, error = err)
 }
 
+#' The packages a run error's message names as needed, for the fix "Add pkg
+#' to [extra_packages]" (#184): tidymodels names its engines only as strings
+#' (`set_engine("glmnet")`, "Package install is required for glmnet."), and
+#' tidytext its lexicons' packages ("The textdata package is required ...").
+#' A text match, so kept narrow: the message has the word "package", and each
+#' name is a whole word in it, is in one of the notebook's loaded indexes, and
+#' isn't installed (the notebook's library or R's own), in the lock, or
+#' already wanted. A message R or a package translated doesn't match, and
+#' gets no fix.
+packages_named_in <- function(state, msg) {
+  if (!grepl("\\bpackages?\\b", msg, ignore.case = TRUE, perl = TRUE)) return(character())
+  words <- unique(regmatches(msg, gregexpr("(?<![A-Za-z0-9._])[A-Za-z][A-Za-z0-9.]*[A-Za-z0-9](?![A-Za-z0-9_]|\\.[A-Za-z0-9])",
+                                           msg, perl = TRUE))[[1]])
+  p <- state$packages
+  indexed <- unlist(lapply(p$indexes, function(s) if (identical(s$status, "ready")) s$index$name), use.names = FALSE)
+  words <- intersect(words, indexed)
+  lock <- state$file$lock$entries
+  words <- setdiff(words, c(names(p$active$installed), names(p$target$installed),
+                            if (!is.null(lock) && nrow(lock) > 0) lock$name,
+                            wanted_packages(state$graph, state$file$header)))
+  if (length(words) == 0) return(character())
+  setdiff(words, rownames(utils::installed.packages(c(.Library, .Library.site), noCache = TRUE)))
+}
+
 # ---- Projection --------------------------------------------------------------
 
 #' The packages part of the snapshot (and `package_status()`): plain data.

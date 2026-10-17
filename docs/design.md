@@ -708,7 +708,12 @@ rest:
    `[extra_packages]` list for packages the code can't reveal: some are only
    needed at run time (`ggsave("x.svg")` needs svglite). When a cell fails
    with "there is no package called 'svglite'", the engine offers to add it
-   to that list.
+   to that list. It offers the same when rlang's `check_installed()` names
+   the packages, and when an error's message says a package is needed and
+   names one in the snapshot that isn't installed: tidymodels names its
+   engines only as strings (`set_engine("glmnet")`). That last one matches
+   the message's text, so a translated message gets no offer. The engine
+   never installs such a package by itself.
 2. Resolve each against CRAN and Bioconductor at the notebook's snapshot
    date. GitHub packages can't be inferred; the user records `user/repo` for
    them, and the Packages tab offers to add one on a name that isn't

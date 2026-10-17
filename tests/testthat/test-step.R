@@ -2062,6 +2062,59 @@ test_that("after a failed install, a cell waiting on the package runs instead of
   expect_equal(err$message, "there is no package called 'cli': install failed")
 })
 
+# ---- A package the error names but the code doesn't (#184) -----------------
+
+# A state whose CRAN index has glmnet, textdata, dplyr and MASS, with dplyr
+# installed in the notebook's library and MASS in R's own.
+named_state <- function(cells = list(A = cell("x <- 1"))) {
+  s <- fake_state(cells)
+  idx <- new_repo_index("cran/2026-09-01", "CRAN", c("glmnet", "textdata", "dplyr", "MASS", "lexicon2"),
+                        rep("1.0", 5), rep(list(character()), 5), rep(FALSE, 5))
+  s$packages$indexes[["cran/2026-09-01"]] <- new_index_slot("ready", index = idx)
+  s$packages$active$installed <- c(dplyr = "1.1.4")
+  s
+}
+
+test_that("a message saying a package is needed offers to add it, and only then (#184)", {
+  s <- named_state()
+  # parsnip's set_engine("glmnet"), and tidytext's get_sentiments("afinn").
+  expect_equal(packages_named_in(s, "Package install is required for glmnet."), "glmnet")
+  expect_equal(packages_named_in(s, "The textdata package is required to download the AFINN lexicon."), "textdata")
+  # Installed: in the notebook's library, or R's own (MASS is recommended).
+  expect_equal(packages_named_in(s, "The dplyr package is required."), character())
+  expect_equal(packages_named_in(s, "The MASS package is required."), character())
+  # "package" next to a word that is no package, or a name in the index without "package".
+  expect_equal(packages_named_in(s, "could not find the package lexicon"), character())
+  expect_equal(packages_named_in(s, "object 'glmnet' not found"), character())
+  # Part of a longer word or name.
+  expect_equal(packages_named_in(s, "the package glmnet2 and glmnet_cv and my.glmnet are required"), character())
+  # Translated: no match, no fix.
+  expect_equal(packages_named_in(s, "Le paquet glmnet est requis."), character())
+  # Already named in the code: adding it again would do nothing.
+  w <- named_state(list(A = cell("library(glmnet)")))
+  expect_equal(packages_named_in(w, "Package install is required for glmnet."), character())
+
+  # Through a run: the error keeps its kind and text, with the fix added.
+  r <- drive(s, ev_run("A", at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(), at(3)))
+  r <- drive(r$state, wk_done(r$state$worker$gen, r$state$worker$running$token, report(
+    error = list(message = "Package install is required for glmnet.")), at(4)))
+  err <- r$state$results$A$error
+  expect_equal(err$kind, "error")
+  expect_equal(err$message, "Package install is required for glmnet.")
+  expect_equal(err$fixes, "Add glmnet to [extra_packages]")
+})
+
+test_that("rlang's check_installed() error is a missing package, with each one's fix (#184)", {
+  s <- named_state()
+  r <- drive(s, ev_run("A", at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(), at(3)))
+  r <- drive(r$state, wk_done(r$state$worker$gen, r$state$worker$running$token, report(
+    error = list(message = "The packages \"glmnet\" and \"textdata\" are required.", package = c("glmnet", "textdata"))), at(4)))
+  err <- r$state$results$A$error
+  expect_equal(err$kind, "missing_package")
+  expect_equal(err$names, c("glmnet", "textdata"))
+  expect_equal(err$fixes, c("Add glmnet to [extra_packages]", "Add textdata to [extra_packages]"))
+})
+
 test_that("while a package installs, a cell calling its functions waits for it instead of failing first (#67)", {
   # Before dplyr is installed its exports are unknown, so B has no edge to
   # A. B's `summarise` resolves to nothing, so B waits for dplyr with A;
