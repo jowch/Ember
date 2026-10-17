@@ -1122,6 +1122,26 @@ test_that("an interrupt just after a run's done doesn't stop the next run (#48)"
   expect_identical(r$status, "ok")
 })
 
+test_that("on Windows a late interrupt the listener took but hasn't applied doesn't stop the next run (#238)", {
+  # The window between the listener taking an interrupt and setting
+  # UserBreak is a thread switch long; a test-only delay widens it to
+  # 20 ms, so a drain that doesn't wait for the listener fails almost
+  # every round.
+  skip_on_os(c("mac", "linux", "solaris"))
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "delay", 1L, '.Call(getNativeSymbolInfo("C_interrupt_test_delay", "ember"), 20L)')
+  expect_identical(r$status, "ok")
+  for (i in 1:10) {
+    h$send(run_msg(paste0("c", i), i + 1L, "1 + 1"))
+    r <- wait_for_done(h, timeout = 10)
+    expect_identical(r$status, "ok")
+    h$interrupt()
+  }
+  r <- run_and_wait(h, "last", 12L, "1 + 1")
+  expect_identical(r$status, "ok")
+})
+
 test_that("interrupt_between_runs_swallowed", {
   h <- worker_harness()
   on.exit(h$close())
