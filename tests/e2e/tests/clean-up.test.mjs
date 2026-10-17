@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, existsSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook } from "../browser.mjs";
@@ -34,7 +34,12 @@ function seedCache() {
     Sys.setFileTime(${JSON.stringify(entry)}, Sys.time() - 7 * 86400)
     lib(${JSON.stringify(stale)}, 40, ${JSON.stringify(entry)})
     lib(${JSON.stringify(recent)}, 10, character())`;
-  const res = spawnSync(process.env.EMBER_RSCRIPT ?? "Rscript", ["--vanilla", "-e", expr], { encoding: "utf8" });
+  // From a file, not `-e`: on Windows R's front end, `bin\Rscript.exe`,
+  // passes `-e` on through cmd.exe, which doesn't carry a newline, and
+  // here the seeding R crashed (#220).
+  const script = path.join(root, "seed.R");
+  writeFileSync(script, expr);
+  const res = spawnSync(process.env.EMBER_RSCRIPT ?? "Rscript", ["--vanilla", script], { encoding: "utf8" });
   assert.equal(res.status, 0, res.stderr);
   return { root, stale, recent, entry };
 }
