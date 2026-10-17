@@ -164,6 +164,17 @@ test_that("two installs of one key racing in two processes leave one library and
 
 # ---- The index memo (61) ---------------------------------------------------
 
+test_that("a 404 can mean not published yet only from yesterday to tomorrow in UTC (#162, #221)", {
+  now <- as.POSIXct("2026-10-16 01:30:00", tz = "UTC")
+  expect_true(may_be_unpublished("cran/2026-10-15", now))
+  expect_true(may_be_unpublished("cran/2026-10-16", now))
+  expect_true(may_be_unpublished("cran/2026-10-17", now))   # a clock east of UTC
+  expect_false(may_be_unpublished("cran/2026-10-18", now))  # further ahead: a plain failure
+  expect_false(may_be_unpublished("cran/2062-10-16", now))
+  expect_false(may_be_unpublished("cran/2026-10-14", now))
+  expect_false(may_be_unpublished("github/lab/toyC@main", now))
+})
+
 test_that("an index dated yesterday or later in UTC may still change, and an older one or a GitHub key doesn't (#39)", {
   now <- as.POSIXct("2026-10-16 01:30:00", tz = "UTC")
   expect_true(index_may_change("cran/2026-10-16", now))

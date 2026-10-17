@@ -95,6 +95,17 @@ index_may_change <- function(key, now = Sys.time()) {
   !is.na(date) && date >= as.Date(format(now, tz = "UTC", usetz = FALSE)) - 1
 }
 
+#' Whether a 404 for `key` can mean "not published yet" (#162): a date
+#' `index_may_change()` covers, and no later than tomorrow in UTC, which is
+#' as far ahead as a clock east of UTC can be. A 404 for a date further
+#' ahead (a typo, a year off) is just a failure, so nothing steps back
+#' from it day by day.
+may_be_unpublished <- function(key, now = Sys.time()) {
+  if (!index_may_change(key, now)) return(FALSE)
+  date <- as.Date(strsplit(key, "/", fixed = TRUE)[[1]][[2]])
+  date <= as.Date(format(now, tz = "UTC", usetz = FALSE)) + 1
+}
+
 #' The label a dated repo key resolves to (`read_repo_index()`'s `label`,
 #' and the lock's `source` field): the kind before the first `/`, mapped to
 #' its lock spelling. Unknown kinds (a future `[sources]` key) pass through

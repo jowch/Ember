@@ -516,7 +516,7 @@ run_effect <- function(nb, fx) {
             } else {
               msg <- fetch_error_message(output)
               ev_index_failed(fx$key, msg, at = Sys.time(),
-                              unpublished = provisional && grepl("has no index for that date (404)", msg, fixed = TRUE))
+                              unpublished = may_be_unpublished(fx$key) && grepl("has no index for that date (404)", msg, fixed = TRUE))
             }
           })
       }
