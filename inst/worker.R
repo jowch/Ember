@@ -55,7 +55,7 @@
 #   quit
 #
 # Worker -> server
-#   hello        secret, pid, r_version, lib_paths
+#   hello        secret, pid, r_version, lib_paths, tempdir
 #   console      cell, token, item = list(kind, text)   streamed during a run
 #   source       cell, token, path, text                before a computed
 #                                                       source() runs; waits
@@ -170,7 +170,8 @@ main <- function() {
   withCallingHandlers({
     send(list(type = "hello", secret = secret,
               pid = Sys.getpid(), r_version = R.version.string,
-              lib_paths = .libPaths(), loaded = loaded_namespace_versions()))
+              lib_paths = .libPaths(), loaded = loaded_namespace_versions(),
+              tempdir = tempdir()))
     # This frame stays on the stack while every cell runs, so a cell
     # walking sys.frames() would find the secret here.
     rm(secret)
@@ -580,10 +581,14 @@ run_cell <- function(msg) {
       load_log_code <- load_log
 
       # Displaying runs the value's print and format methods, which are
-      # the user's code too, so it can be interrupted like the cell.
+      # the user's code too, so it can be interrupted like the cell, and
+      # its messages and warnings go to the cell's console. ggplot2 builds
+      # a plot only when it's printed, so its "Removed n rows" warning and
+      # geom_smooth()'s message come from here, not from the cell's code
+      # (#183).
       output <- NULL
       if (rc$status == "ok") {
-        output <- tryCatch({
+        output <- tryCatch(withCallingHandlers({
           if (is_text) {
             # A plot drawn by an inline expression is dropped: the display
             # step below only builds text (`inline_text()`, run already,
@@ -601,8 +606,11 @@ run_cell <- function(msg) {
           } else {
             display_plot(msg$cell, msg$token, dev)
           }
-        }, interrupt = function(i) { rc$status <<- "interrupted"; NULL },
-           error = function(e) NULL)
+        },
+        message = function(m) { console$message(m); invokeRestart("muffleMessage") },
+        warning = function(w) { console$warning(w); invokeRestart("muffleWarning") }),
+        interrupt = function(i) { rc$status <<- "interrupted"; NULL },
+        error = function(e) NULL)
       }
       close_device(dev)
       dev <- NULL
@@ -675,7 +683,7 @@ run_cell <- function(msg) {
       # was a no-op because it was already on the path (a plain search()
       # diff would miss that case, and so would wrongly drop the package
       # from the desired path on the next rebuild).
-      attached[[msg$cell]] <<- attach_requests[[msg$cell]]
+      attached[[msg$cell]] <<- in_attach_order(attach_requests[[msg$cell]])
       ever_attached <<- union(ever_attached, attach_requests[[msg$cell]])
       rc$loaded <- loaded_namespace_versions()
 
@@ -1092,6 +1100,18 @@ packages_on_search <- function(s = search()) {
   sub("^package:", "", grep("^package:", s, value = TRUE))
 }
 
+#' `pkgs` in the order they were attached, as the search path shows it:
+#' the lowest first. A package's own library() calls finish in a
+#' different order: one that attaches others in its .onAttach
+#' (tidymodels) is attached before them but its call returns after, and
+#' Depends are attached before the package. Attaching again in call order
+#' would put the package above the ones it attached, which plain R
+#' doesn't. Packages not on the path keep their order, at the end.
+in_attach_order <- function(pkgs) {
+  pos <- match(pkgs, packages_on_search())
+  pkgs[order(-pos, na.last = TRUE)]
+}
+
 #' The locale categories snapshotted and restored individually. Not every
 #' category exists on every platform (LC_MESSAGES is absent on Windows),
 #' so `snapshot_locale()` only keeps the ones `Sys.getlocale()` answers.
@@ -1431,6 +1451,24 @@ install_traces <- function() {
       # so the error call and the function's own sys.call() are the user's.
       real_call <- mc
       real_call[[1]] <- as.name(name)
+      # An argument the caller passes on from its own missing formal
+      # (`exclude = exclude` in conflicted's library() wrapper) is left out,
+      # so it stays missing: evaluated in this child environment, R's
+      # missing() would no longer see through it to the caller's frame.
+      # Only a formal with no default: `missing()` is TRUE for an unsupplied
+      # `quietly = q` with a default too, and that default must be passed.
+      caller_formals <- if (sys.parent() > 0) {
+        tryCatch(formals(sys.function(sys.parent())), error = function(e) NULL)
+      }
+      for (arg in rev(which(nzchar(names(real_call) %||% character(length(real_call)))))) {
+        val <- real_call[[arg]]
+        if (is.symbol(val) && nzchar(as.character(val)) &&
+            as.character(val) %in% names(caller_formals) &&
+            identical(caller_formals[[as.character(val)]], quote(expr = )) &&
+            isTRUE(tryCatch(eval(call("missing", val), call_env), error = function(e) FALSE))) {
+          real_call[[arg]] <- NULL
+        }
+      }
       result <- withVisible(eval(real_call, list2env(stats::setNames(list(original), name),
                                                      parent = call_env)))
       # library()/require(): record that this cell named a package for
@@ -1555,10 +1593,17 @@ ember_trace_source <- function() {
 #' already exempt from cell-code rules the same way a setting change
 #' inside a package load is (a deviation from the sketch, which checked
 #' only `running`).
+#'
+#' A file under the worker's own `tempdir()` isn't reported either: the
+#' session wrote it (Rcpp's `cppFunction()` sources the R wrapper it
+#' generates there), it isn't the user's helper, and it is gone when the
+#' session ends, so learning it would put a new path in the file every
+#' session (#165).
 trace_source <- function(file) {
   if (is.null(running) || length(load_stack) > 0 || inherits(file, "connection")) return(invisible())
   trace_line("source", file)
   path <- tryCatch(normalizePath(file, mustWork = FALSE), error = function(e) as.character(file))
+  if (in_session_tempdir(path)) return(invisible())
   text <- tryCatch(paste(readLines(path, warn = FALSE), collapse = "\n"), error = function(e) NA_character_)
   send(list(type = "source", cell = running$cell, token = running$token, path = path, text = text))
   reply <- NULL
@@ -1573,6 +1618,14 @@ trace_source <- function(file) {
     stop(msg, call. = FALSE)
   }
   invisible()
+}
+
+#' Whether `path` is inside this process's `tempdir()`.
+in_session_tempdir <- function(path) {
+  slash <- function(p) tryCatch(normalizePath(p, winslash = "/", mustWork = FALSE), error = function(e) NA_character_)
+  if (length(path) != 1 || is.na(path)) return(FALSE)
+  tmp <- slash(tempdir())
+  !is.na(tmp) && startsWith(slash(path), paste0(sub("/+$", "", tmp), "/"))
 }
 
 # ---- Attached packages ---------------------------------------------------------
@@ -1596,8 +1649,14 @@ rebuild_search_path <- function() {
     tryCatch(detach(paste0("package:", p), character.only = TRUE, unload = FALSE, force = TRUE),
              error = function(e) NULL)
   }
+  # library() as the notebook's own code finds it, on the search path: a
+  # package can wrap it to keep an environment of its own in step.
+  # conflicted's `.conflicts` holds a library() that detaches it, attaches,
+  # and puts it back at position 2. Base library() with `.conflicts` still
+  # attached fails on its unresolved names, and the package is lost (#180).
+  attach_one <- get("library", envir = parent.env(globalenv()), mode = "function")
   for (p in desired) {
-    tryCatch(library(p, character.only = TRUE), error = function(e) NULL)
+    tryCatch(attach_one(p, character.only = TRUE), error = function(e) NULL)
   }
   invisible()
 }
@@ -1935,6 +1994,18 @@ capture_lines <- function(expr, n = -1L) {
   readLines(path, n = n, warn = FALSE)
 }
 
+#' `expr` with its messages and warnings dropped. The display step shows a
+#' value by one call of its print method or of the renderer that makes its
+#' view, and that call's messages and warnings go to the console (#183).
+#' Its other calls (the text form beside a plot or HTML view, a table's
+#' cells, a tree's leaves) run the same methods again, and would repeat
+#' them, so they run through this.
+quietly <- function(expr) {
+  withCallingHandlers(expr,
+    message = function(m) invokeRestart("muffleMessage"),
+    warning = function(w) invokeRestart("muffleWarning"))
+}
+
 #' The value's print() text, truncated (first 50 lines, 4000 chars). Colour
 #' is on throughout the worker (boot sets `cli.num_colors`); when truncation
 #' lands inside an escape sequence, the partial sequence is dropped and a
@@ -1964,7 +2035,7 @@ text_form <- function(value) {
 #' cells split by tabs; and for an HTML output with no text at all (a
 #' plotly or leaflet widget, whose data is in a script), what it is.
 html_text_form <- function(value, html) {
-  tf <- text_form(value)
+  tf <- quietly(text_form(value))
   if (nzchar(trimws(tf$text)) && !grepl("^\\s*<", tf$text)) return(tf)
   # The text form must never cost the page its HTML view: a conversion that
   # fails gives the line naming the output.
@@ -2137,7 +2208,7 @@ display_table <- function(value, cell, token, limits = list(rows = 10L, cols = 8
   tf <- text_form(value)
   display[[cell]] <<- list(value = value, token = token, kind = "table",
                            limits = limits, text = tf$text, truncated = tf$truncated)
-  c(build_table(value, limits), list(text = tf$text, truncated = tf$truncated))
+  c(quietly(build_table(value, limits)), list(text = tf$text, truncated = tf$truncated))
 }
 
 #' One line of text for a tree leaf: format() for a length-1 value, else
@@ -2219,7 +2290,7 @@ display_tree <- function(value, cell, token, limits = list()) {
   display[[cell]] <<- list(value = value, token = token, kind = "tree",
                            limits = limits, text = tf$text, truncated = tf$truncated)
   list(kind = "tree", mime = "application/vnd.ember.tree",
-      tree = display_tree_node(value, "", 0, limits), text = tf$text, truncated = tf$truncated)
+      tree = quietly(display_tree_node(value, "", 0, limits)), text = tf$text, truncated = tf$truncated)
 }
 
 #' ggplot, trellis, recordedplot or grob: print to draw it, then PNG
@@ -2238,7 +2309,7 @@ display_plot_value <- function(value, cell, token, dev) {
   grDevices::dev.set(dev$dev)
   eval_in_notebook(quote(print(v)), value)
   rp <- tryCatch(grDevices::recordPlot(), error = function(e) NULL)
-  tf <- text_form(value)
+  tf <- quietly(text_form(value))
   grDevices::dev.off(dev$dev)
   png_bytes <- read_png(dev$path)
   display[[cell]] <<- list(value = rp, token = token, kind = "plot", fig = dev$fig)
@@ -2295,11 +2366,18 @@ try_knit_print <- function(value) {
   # Some methods have nothing for a value outside a report and print it
   # instead (rmarkdown's for data frames and tibbles, data.table's): what
   # they print is dropped, and only a knit_asis result is kept, so the
-  # value goes on to the next step, Ember's table (#154).
+  # value goes on to the next step, Ember's table (#154). Their messages
+  # and warnings are held until then: a value that goes on is shown, and
+  # warns, by the next step instead (#183).
+  held <- list()
   capture_lines(
-    out <- tryCatch(do.call(knitr::knit_print, list(value), quote = TRUE, envir = globalenv()),
-                    error = function(e) NULL))
+    out <- withCallingHandlers(
+      tryCatch(do.call(knitr::knit_print, list(value), quote = TRUE, envir = globalenv()),
+               error = function(e) NULL),
+      message = function(m) { held[[length(held) + 1L]] <<- m; invokeRestart("muffleMessage") },
+      warning = function(w) { held[[length(held) + 1L]] <<- w; invokeRestart("muffleWarning") }))
   if (!inherits(out, "knit_asis")) return(NULL)
+  for (cnd in held) if (inherits(cnd, "warning")) warning(cnd) else message(cnd)
   # For pandoc, some methods (flextable's) wrap their HTML in a raw-HTML
   # fence, ```{=html} ... ```; the page would show the fence lines as text.
   html <- sub("(?s)^\\s*```\\{=html\\}[ \t]*\n(.*)\n```\\s*$", "\\1", paste(out, collapse = "\n"), perl = TRUE)

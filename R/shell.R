@@ -77,6 +77,7 @@ session_start <- function(state) {
   register_session(nb)
   sync_active_libraries()
   maybe_start_cleanup()
+  maybe_start_heartbeat()
   schedule_poll(nb)
   nb
 }
@@ -139,6 +140,44 @@ maybe_start_cleanup <- function() {
   if (isTRUE(startup_clean$scheduled)) return(invisible(NULL))
   startup_clean$scheduled <- TRUE
   later::later(function() tryCatch(clean(cache = FALSE), error = function(e) NULL), 0)
+  invisible(NULL)
+}
+
+#' Whether the library heartbeat is running in this process.
+library_heartbeat <- local({
+  env <- new.env(parent = emptyenv())
+  env$scheduled <- FALSE
+  env
+})
+
+#' Touch every library an open session holds, so `ember-last-used`
+#' means "in use", not only "a worker started on it": a notebook left
+#' open for days in one Ember process keeps a fresh marker, and another
+#' process's clean-up (`clean_up()`, which skips libraries used in the
+#' last 30 days, #128) never takes it.
+touch_active_libraries <- function() {
+  for (p in active_libraries$paths) touch_library(p)
+  invisible(NULL)
+}
+
+#' Start the heartbeat the first time a notebook opens: every
+#' `ember.library_heartbeat` seconds (default an hour) it touches the
+#' open sessions' libraries, and it stops once no session is open (the
+#' next `session_start()` starts it again).
+maybe_start_heartbeat <- function() {
+  if (isTRUE(library_heartbeat$scheduled)) return(invisible(NULL))
+  library_heartbeat$scheduled <- TRUE
+  later::later(heartbeat_tick, getOption("ember.library_heartbeat", 3600))
+  invisible(NULL)
+}
+
+heartbeat_tick <- function() {
+  if (length(ls(open_sessions, all.names = TRUE)) == 0L) {
+    library_heartbeat$scheduled <- FALSE
+    return(invisible(NULL))
+  }
+  tryCatch(touch_active_libraries(), error = function(e) NULL)
+  later::later(heartbeat_tick, getOption("ember.library_heartbeat", 3600))
   invisible(NULL)
 }
 
@@ -375,6 +414,7 @@ run_effect <- function(nb, fx) {
         }
         nb$proc <- NULL
         end_reaper(nb)
+        remove_worker_tempdir(nb)
         nb$rx <- list(chunks = list(), n = 0L)
         fail_pending_queries(nb)
       }
@@ -725,6 +765,29 @@ end_reaper <- function(nb) {
   invisible(NULL)
 }
 
+#' The worker's `tempdir()` from its hello, kept to remove once the worker
+#' has stopped (#166): a killed R never runs its exit cleanup, so its temp
+#' folder (an Rcpp build, plot files) would stay. Only a folder R itself
+#' would make (`Rtmp` then letters and digits) that exists and isn't this
+#' process's own is kept; anything else is `NULL`.
+worker_tempdir <- function(path) {
+  if (!is.character(path) || length(path) != 1 || is.na(path) || !nzchar(path)) return(NULL)
+  if (!grepl("^Rtmp[A-Za-z0-9]+$", basename(path)) || !dir.exists(path)) return(NULL)
+  norm <- function(p) normalizePath(p, winslash = "/", mustWork = FALSE)
+  if (identical(norm(path), norm(tempdir()))) return(NULL)
+  path
+}
+
+#' Remove the stopped worker's temp folder, if its hello named one. Called
+#' wherever the shell lets go of a worker process: stopped, failed or
+#' exited on its own (an R that quits cleans up its own folder, so then
+#' there is nothing left to remove).
+remove_worker_tempdir <- function(nb) {
+  if (!is.null(nb$worker_tmp)) tryCatch(unlink(nb$worker_tmp, recursive = TRUE, force = TRUE), error = function(e) NULL)
+  nb$worker_tmp <- NULL
+  invisible(NULL)
+}
+
 #' Whatever the worker has written to stdout or stderr since the last poll.
 #' Cell output is captured inside the worker; this is R's own and native
 #' code's output, and the pipe must be drained or the worker blocks once
@@ -896,6 +959,7 @@ poll <- function(nb) {
           next
         }
         ev <- worker_event(msg, nb$proc_gen, Sys.time(), secret = nb$secret)
+        if (identical(ev$type, "wk_hello")) nb$worker_tmp <- worker_tempdir(msg$tempdir)
         enqueue(nb, ev)
         if (identical(ev$type, "wk_failed")) {
           # A worker that speaks nonsense, or gives the wrong secret, can't
@@ -909,6 +973,7 @@ poll <- function(nb) {
           }
           nb$proc <- NULL
           end_reaper(nb)
+          remove_worker_tempdir(nb)
           fail_pending_queries(nb)
           broke <- TRUE
           break
@@ -929,6 +994,7 @@ poll <- function(nb) {
     gen <- nb$proc_gen
     nb$proc <- NULL
     end_reaper(nb)
+    remove_worker_tempdir(nb)
     nb$out_tail <- ""
     if (!is.null(nb$con)) {
       tryCatch(close(nb$con), error = function(e) NULL)

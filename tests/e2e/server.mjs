@@ -86,7 +86,7 @@ function emberLibs() {
   return [path.resolve(lib), process.env.R_LIBS].filter(Boolean).join(path.delimiter);
 }
 
-async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port: fixedPort, secret = SECRET, repos }) {
+async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port: fixedPort, secret = SECRET, repos, cacheDir }) {
   const rscript = process.env.EMBER_RSCRIPT ?? "Rscript";
   const quoted = notebookPaths.map((p) => JSON.stringify(p)).join(", ");
   const port = fixedPort ?? await freePort();
@@ -94,6 +94,9 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   // reads the option when `library.R` builds each install's command, so it
   // must already be set the first time a notebook tries to install.
   let prelude = installerScript ? `options(ember.installer_script = ${JSON.stringify(installerScript)}); ` : "";
+  // A test that seeds the cache itself (clean-up.test.mjs) names it; the
+  // folder is the test's, so it is not removed here.
+  if (cacheDir) prelude += `options(ember.cache_dir = ${JSON.stringify(cacheDir)}); `;
   let expr;
   let cache = null;
   if (repos) {
@@ -103,8 +106,10 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
     // before the server answers any request. Their indexes go to a cache
     // of their own, never the shared one: a fixture's index is saved under
     // the same key ("cran/2026-09-01") a real one would be.
-    cache = mkdtempSync(path.join(tmpdir(), "ember-e2e-cache-"));
-    prelude += `options(ember.cache_dir = ${JSON.stringify(cache)}); `;
+    if (!cacheDir) {
+      cache = mkdtempSync(path.join(tmpdir(), "ember-e2e-cache-"));
+      prelude += `options(ember.cache_dir = ${JSON.stringify(cache)}); `;
+    }
     const args = Object.entries(repos).map(([k, v]) => `${k} = ${v === null ? "NA" : JSON.stringify(v)}`).join(", ");
     const onReady = `function(server) for (p in c(${quoted})) ember::host_notebook(server, ember::open_notebook(p, repos = ember::ember_repos(${args})), owned = TRUE)`;
     expr = `${prelude}ember::serve(port = ${port}, secret = ${JSON.stringify(secret)}, on_ready = ${onReady})`;
@@ -209,13 +214,14 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
  * `port` and `secret` pin what the server uses, for a test that restarts
  * a server at the same address with a new secret. `repos` (an object of
  * `ember_repos()` arguments, `null` for `NA`) opens the notebooks against
- * those repositories instead of the real ones. */
+ * those repositories instead of the real ones. `cacheDir` points the
+ * server's cache (`options(ember.cache_dir)`) at a folder the test owns. */
 export async function startServer(notebookPaths, opts = {}) {
-  const { timeoutMs = 30000, logFile, retries = 3, installerScript, cwd, port, secret, repos } = opts;
+  const { timeoutMs = 30000, logFile, retries = 3, installerScript, cwd, port, secret, repos, cacheDir } = opts;
   let lastErr;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      return await startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port, secret, repos });
+      return await startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port, secret, repos, cacheDir });
     } catch (err) {
       if (!err.bindFailure || attempt === retries) throw err;
       lastErr = err;

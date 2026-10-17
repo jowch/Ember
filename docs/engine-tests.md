@@ -157,3 +157,12 @@ Four layers. Most tests are in the first two and start no process.
 115. `endeavor_calls`: apply with `expected` (refused and accepted), `run(wait = FALSE)` followed by `execution_done`, a snapshot `seq` that never goes down, and `render_png`.
 116. `ui_projection_shares_unchanged`: two consecutive `notebook_state()` values share `cells[[id]]` (`identical()` and the same address via `.Internal(address)` in the test) for cells that didn't change.
 117. `server_never_blocks`: during a 2 s busy cell, a `later` callback scheduled every 10 ms keeps firing (max gap under 50 ms).
+
+## Randomized scheduling (test-scheduling-fuzz.R, real worker through the API)
+
+Random notebooks (chains, diamonds, fans, random graphs, cells that define two names or none, cells that fail) get random edits (edit, rename a variable with or without its readers, delete, insert, move, up to three before a run) and then a run of one cell, of every cell, or of nothing, in autorun and in lazy mode. After each step every cell is checked against a run of the notebook from scratch, in dependency order, of the code each cell last ran (helper-fuzz.R):
+
+- A cell that ran and isn't stale shows what the reference gives (status, and the text output when it's ok), and nothing it read from is stale.
+- After a run, the cell and its ancestors are fresh: they ran, aren't stale and match their code. In autorun so are its dependents that had run. After running every cell, every cell is fresh.
+
+Seeds are fixed. A failure prints its seed, mode and step, and a shrunk trace that replays the same kind of failure; once the bug is fixed, the shrunk trace becomes an ordinary regression test in that file. CI runs seeds 1 to 6 in both modes, plus the seeds in `fuzz_known`: known failures, listed by mode and seed with their issue, step and reason, at least one per open issue. Each must still fail that way, and any other failure is new, so a fix removes its entries in the same PR. A known trace stops at its failure, so its later steps aren't checked. After an edit, half the runs pick a cell that reads the edited one, which is where a stale value can leak in; with #169's fix undone, lazy seeds 1 and 5 fail. For a long run, set `EMBER_FUZZ_SEEDS` (an R expression, such as `1:200`) and `EMBER_FUZZ_STEPS`.

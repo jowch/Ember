@@ -701,7 +701,7 @@ test_that("every request type in the handler table is answered as documented (36
              "ember_set_mode", "request_js_link_response", "nbpkg_available_versions",
              "nbpkg_get_project_toml", "nbpkg_set_project_toml", "pkg_update")
   # Answered once a subprocess exits, so not counted here: see its own test.
-  answered_later <- "ember_disk_use"
+  answered_later <- c("ember_disk_use", "ember_clean_up")
   expect_setequal(names(handlers), c(answered, silent, answered_later))
 
   # A fresh notebook and server per type: some requests change engine state
@@ -769,6 +769,101 @@ test_that("ember_disk_use replies with the disk use of the notebook's cache dir 
   expect_equal(msg$libraries, 0)
   expect_equal(msg$cache, 0)
   expect_true(file.exists(index))
+})
+
+# Wait for one reply of `type` to reach `ws`: the clean-up and disk use
+# replies come when their subprocess exits. A guard against a hang, not
+# a timing check.
+await_reply <- function(ws, type) {
+  deadline <- Sys.time() + 60
+  replies <- list()
+  while (length(replies) == 0 && Sys.time() < deadline) {
+    later::run_now(timeout = 0.5)
+    replies <- Filter(function(m) identical(m$type, type), ws$messages)
+  }
+  replies
+}
+
+test_that("ember_clean_up counts first, and deletes only when asked with dry_run = false (#128)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  cache <- tempfile("ember-pkg-cache-")
+  dir.create(cache)
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  entry <- file.path(cache, "renv-cache", "v5", "os", "R-4.6", "triplet", "pkgOld", "1.0", "hashOld")
+  dir.create(file.path(entry, "pkgOld"), recursive = TRUE)
+  writeBin(raw(80000), file.path(entry, "pkgOld", "R.rdb"))
+  Sys.setFileTime(entry, Sys.time() - 7 * 86400)
+  lib <- file.path(cache, "libraries", "R-4.6", "testplat", "oldkey")
+  dir.create(lib, recursive = TRUE)
+  saveRDS(list(cache_entries = entry), file.path(lib, "ember-library.rds"))
+  file.create(file.path(lib, "ember-last-used"))
+  Sys.setFileTime(file.path(lib, "ember-last-used"), Sys.time() - 40 * 86400)
+  nb <- open_notebook(path, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+
+  handle_message(server, ws, wire("ember_clean_up", notebook_id = id))
+  replies <- await_reply(ws, "ember_clean_up")
+  expect_length(replies, 1)
+  plan <- replies[[1]]$message
+  expect_null(plan$error)
+  expect_true(plan$dry_run)
+  expect_equal(c(plan$libraries, plan$cache), c(1, 1))
+  expect_gte(plan$bytes, 80000)
+  expect_true(dir.exists(lib))
+  expect_true(dir.exists(entry))
+  expect_true(is.numeric(plan$as_of))
+
+  # A deletion is judged at the preview's time: as of 15 days ago the
+  # library had been used 25 days before, so nothing goes.
+  ws$messages <- list()
+  handle_message(server, ws, wire("ember_clean_up", notebook_id = id, dry_run = FALSE,
+                                  as_of = as.numeric(Sys.time()) - 15 * 86400))
+  replies <- await_reply(ws, "ember_clean_up")
+  expect_equal(replies[[1]]$message$libraries, 0)
+  expect_true(dir.exists(lib))
+
+  ws$messages <- list()
+  handle_message(server, ws, wire("ember_clean_up", notebook_id = id, dry_run = FALSE,
+                                  as_of = plan$as_of))
+  replies <- await_reply(ws, "ember_clean_up")
+  expect_length(replies, 1)
+  done <- replies[[1]]$message
+  expect_null(done$error)
+  expect_false(done$dry_run)
+  expect_equal(c(done$libraries, done$cache), c(1, 1))
+  expect_false(dir.exists(lib))
+  expect_false(dir.exists(entry))
+})
+
+test_that("ember_clean_up on a read-only notebook replies with the refusal and starts nothing (#128)", {
+  ro_dir <- tempfile("ember-nb-ro-")
+  dir.create(ro_dir, recursive = TRUE)
+  on.exit(unlink(ro_dir, recursive = TRUE), add = TRUE)
+  header <- new_header(ember_version = "99.0.0", r_version = "4.5.1", snapshot = "2026-01-01")
+  cells <- list(a = list(code = "1", kind = "code", folded = FALSE))
+  file0 <- new_notebook_file(header = header, cells = cells, run_order = "a",
+                             learned = list(),
+                             sourced = data.frame(path = character(), hash = character(),
+                                                  stringsAsFactors = FALSE),
+                             lock = empty_lock(), extra_blocks = list(), format = ember_format)
+  ro_path <- file.path(ro_dir, "nb.R")
+  write_file_exact(ro_path, format_notebook(file0))
+  nb <- open_notebook(ro_path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("ember_clean_up", notebook_id = id, dry_run = FALSE))
+  replies <- Filter(function(m) identical(m$type, "ember_clean_up"), ws$messages)
+  expect_length(replies, 1)  # at once: no subprocess was started
+  expect_equal(replies[[1]]$message$error, "read-only notebook")
 })
 
 # ---- HTTP: secret, cookie, redirect, file download, websocket gate ----------

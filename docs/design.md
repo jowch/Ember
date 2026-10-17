@@ -180,6 +180,12 @@ when the notebook restarts. A process a cell starts in a session of its own
 (processx, callr) is outside the group and outlives both a restart and a
 killed server.
 
+A stopped worker is killed, so R never removes its temp folder itself. The
+worker names its `tempdir()` in its hello, and the server removes that
+folder once the worker has stopped (closed, restarted, failed or crashed),
+#166. A worker whose server was killed outright leaves its folder to the
+OS's temp cleaner.
+
 The server runs two ways. From an interactive R session, the R API starts
 it as a background process (processx) and returns a handle to get its URL and
 stop it; running httpuv inside the caller's session would freeze the UI
@@ -301,7 +307,10 @@ like part of the cell:
   name another cell defines, removes the cell's old definitions, then lets
   `source` proceed. Before the cell's first run, the paths the footer's
   `learned sources` block records for that cell stand in, until the cell
-  runs again. This happens silently; the user sees no note.
+  runs again. This happens silently; the user sees no note. A file under
+  the worker's own `tempdir()` isn't learned: the session wrote it (Rcpp's
+  `cppFunction()` sources the wrapper it generates there), and the next
+  session's is somewhere else (#165).
 - The notebook's footer records each sourced file's path and hash, so a
   changed or missing helper is reported on open. The helper's code stays in
   its own file; the notebook alone is no longer the whole record, and the
@@ -464,6 +473,11 @@ The worker runs each cell in the global environment:
    changed by the window; they redraw only when the screen's pixel density
    goes up.
 4. Turn the output value into a display (see "How values display" below).
+   Its messages and warnings go to the console too, after the cell's own:
+   ggplot2 builds a plot only when it's printed, so its "Removed n rows"
+   warning comes from this step. The value is shown by one call of its
+   print method or renderer, so each shows once, though the text form and
+   the table's cells run the same methods again.
 
 **Which values a cell shows** follows Pluto: the value of the cell's last
 top-level expression is its output. When that expression is an assignment
@@ -653,7 +667,11 @@ handles `using` in two steps (`PlutoDependencyExplorer.jl`'s
   that attaches packages is added, edited or deleted, it detaches the
   packages the notebook attached (`detach()` without unloading) and attaches
   the current set again. Namespaces stay loaded. Only a change of package
-  version restarts the worker.
+  version restarts the worker. A cell's packages keep the order plain R
+  attached them in, and the worker calls `library()` as the notebook's own
+  code would find it on the search path, so a package that wraps
+  `library()` to keep its own environment in step (conflicted's
+  `.conflicts`) still does.
 - **Masking follows file order.** In R the package attached last wins
   (`dplyr::filter` over `stats::filter`), and that is normal use, so Julia's
   rule that an ambiguous name is an error doesn't fit. The worker attaches in
@@ -716,9 +734,9 @@ rest:
    translated message gets no offer. The engine
    never installs such a package by itself.
 2. Resolve each against CRAN and Bioconductor at the notebook's snapshot
-   date. GitHub packages can't be inferred; the user records `user/repo` for
-   them, and the Packages tab offers to add one on a name that isn't
-   found.
+   date. GitHub packages can't be inferred; the user records them in the
+   header's `[sources]` as `github:user/repo`, and the Packages tab offers
+   to add one on a name that isn't found.
 3. Update the lock and install into the notebook's library in a subprocess.
    The worker restarts only if a package it has already loaded changed
    version; a new package is just loaded.
@@ -829,10 +847,23 @@ server starts, deletes those unused for 60 days; they hold only links, so a
 returning notebook's library is rebuilt from the cache in seconds, or from
 the lock. The shared cache is what grows, since it keeps every version ever
 installed. The package view shows disk use (libraries, cache and indexes,
-measured when the tab opens; built, #38). It only reports for now: the
-"clean up" button is not built (#128), so `ember::clean()` is the way to delete
-from R, also clearing cache entries no library uses; hosts such as Endeavor
-call it through the R API.
+measured when the tab opens; built, #38) and a "Clean up…" button (built,
+#128) that frees space now: it deletes libraries no notebook open in this
+server uses and that weren't used in the last 30 days (Jonathan's pick,
+half the startup sweep's 60; every Ember process
+touches its open notebooks' library markers hourly, and `ember::run()`
+touches its own, so a notebook open elsewhere stays fresh), then the cache
+entries no other library lists, except those made in the last day or
+linked from an install still running. It shows the counts and
+an estimate of the space first, and deletes nothing until Delete, judged
+at the preview's time. The cost
+of a wrong guess: a notebook whose library was deleted installs its lock
+again when it next opens, downloading what the cache no longer holds. With
+binaries (macOS, Windows, Linux with Package Manager binaries) that is a
+download; on Linux without them, or for Bioconductor packages pinned to
+another R, it builds from source, which for a Bioconductor set takes far
+longer. Indexes are left to the startup sweep. `ember::clean()` does the same from R with any
+age; hosts such as Endeavor call it through the R API.
 
 **Installer: renv.** pak copies instead of linking, so it's out. The
 spike installed the same 42 packages (dplyr, ggplot2, data.table, lme4, sf)
