@@ -34,8 +34,10 @@ open_server_socket <- function(tries = 30) {
 # name as emberfix1's, for masking-order tests) and sets nothing.
 # emberfix3 keeps an environment at position 2 with its own library(), as
 # conflicted does. emberfix4 attaches emberfix2 (Depends) and emberfix1
-# (from .onAttach) itself, as tidymodels does. Built once per test session
-# into a cached temp library.
+# (from .onAttach) itself, as tidymodels does. emberfix5 attaches entries
+# of its own when its functions run: one that hides nothing, as tune does,
+# and one that hides base's nchar(). Built once per test session into a
+# cached temp library.
 
 fixture_lib_cache <- new.env()
 

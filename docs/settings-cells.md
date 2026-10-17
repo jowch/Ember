@@ -55,7 +55,8 @@ what ran before, and resetting it per run would hand every cell the same
 random stream, which `Rscript` doesn't do. `par()` needs no rule, since each
 cell draws on its own device. Changes a package makes while it loads stay
 the package's, as today, and so do changes made while Ember displays the
-cell's value and options a package creates for itself on first use (see
+cell's value, options a package creates for itself on first use, and
+search-path entries a package attaches for itself that hide nothing (see
 [Settings found at run time](#settings-found-at-run-time)).
 
 **Calls inside `local()`** no longer count statically, as calls inside a
@@ -284,6 +285,19 @@ when it creates the option, and makes a settings cell once the option
 exists. Nothing in R tells such a setter apart from a cache. A learned
 setting saved in a file before this rule stays until its cell's code
 changes, as any learned setting does.
+
+A search-path entry a package attaches for itself is the package's too, if
+it hides nothing. tune attaches `org:r-lib` near the bottom of the path the
+first time it runs, to keep `.Last.tune.result` there, so without this rule
+the first tuning cell became a settings cell that every later cell depended
+on (#181). The rule: an entry that no `attach()` call from the notebook's
+own code added, and that holds no name an entry below it also has, is the
+package's. The worker traces `attach()` to tell who called it, as it wraps
+`options()`. conflicted's `.conflicts` is attached by package code too, but
+it sits at position 2 and its `filter()` hides dplyr's and stats', so
+`tidymodels_prefer()` still makes a settings cell: it changes what names
+mean in every later cell. `attach(survey)` in a cell is always a setting,
+whatever it holds.
 
 `theme_set()` is the exception: ggplot2 keeps the theme inside its namespace,
 outside what the worker compares, so only the static check finds it (see

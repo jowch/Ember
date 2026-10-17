@@ -121,6 +121,8 @@ load_log <- NULL       # settings changes made inside loadNamespace/library duri
 notebook_options <- character()  # option names an options() call from the
                        # notebook's own code (top-level, or a function a
                        # cell defined) set during the current run
+notebook_attached <- character()  # search entries an attach() call from the
+                       # notebook's own code added during the current run
 settings_base <- NULL  # the baseline settings: snapshotted once at boot, then
                        # every change a package load makes is copied in, so a
                        # package's own option survives a reset
@@ -409,6 +411,7 @@ run_cell <- function(msg) {
     settings0 <- snapshot_settings()
     load_log <<- list()
     notebook_options <<- character()
+    notebook_attached <<- character()
     attach_requests[[msg$cell]] <<- character()
     running <<- list(cell = msg$cell, token = msg$token)
     search0 <- search()
@@ -625,6 +628,14 @@ run_cell <- function(msg) {
       cached <- package_cached_options(by_code$settings, notebook_options)
       for (d in by_code$settings[cached]) settings_base <<- set_setting(settings_base, d$kind, d$name, d$after)
       by_code$settings <- by_code$settings[!cached]
+      # Likewise a search entry a package attaches for itself (tune's
+      # `org:r-lib`, which holds `.Last.tune.result`), if it hides nothing
+      # (#181).
+      own <- package_own_entries(by_code$settings, notebook_attached)
+      if (length(own)) {
+        settings_base$search <<- union(settings_base$search, own)
+        by_code$settings <- drop_search_entries(by_code$settings, own)
+      }
       # What the display step changed is its own, as a package load's
       # change is: part of the starting values from now on. A package it
       # loads (knitr, or a table package's dependencies) still gets its
@@ -1281,6 +1292,54 @@ package_cached_options <- function(diffs, notebook_set) {
   }, logical(1))
 }
 
+#' Which search entries a cell's change added are a package's own (#181):
+#' attached by package code, not by an `attach()` call from the notebook's
+#' own code (`notebook_set`, from `trace_attach()`), and hiding no name
+#' further down the path. tune attaches `org:r-lib` near the bottom of the
+#' path the first time it runs, to keep its last result there. conflicted's
+#' `.conflicts` is attached by package code too, but at position 2, where
+#' it decides what `filter()` and other names mean for every later cell, so
+#' it stays a setting. As for options, who called `attach()` decides, so
+#' `attach(survey)` in a cell or a helper a cell defined is always one.
+package_own_entries <- function(diffs, notebook_set) {
+  own <- character()
+  for (d in diffs) {
+    if (!identical(d$kind, "search")) next
+    for (nm in setdiff(d$after, d$before)) {
+      if (!(nm %in% notebook_set) && !entry_hides(nm)) own <- c(own, nm)
+    }
+  }
+  own
+}
+
+#' Whether the search entry `nm` holds a name that some entry below it on
+#' the path also has, so that a lookup from the notebook finds it first.
+entry_hides <- function(nm) {
+  s <- search()
+  pos <- match(nm, s)
+  if (is.na(pos)) return(FALSE)
+  here <- ls(pos.to.env(pos), all.names = TRUE)
+  if (!length(here)) return(FALSE)
+  for (i in seq_along(s)[-seq_len(pos)]) {
+    if (any(here %in% ls(pos.to.env(i), all.names = TRUE))) return(TRUE)
+  }
+  FALSE
+}
+
+#' `diffs` without the search entries `entries`: a search diff that changed
+#' nothing else is dropped.
+drop_search_entries <- function(diffs, entries) {
+  out <- list()
+  for (d in diffs) {
+    if (identical(d$kind, "search")) {
+      d$after <- setdiff(d$after, entries)
+      if (identical(d$after, d$before)) next
+    }
+    out[[length(out) + 1]] <- d
+  }
+  out
+}
+
 #' Before a cell runs (settings-cells.md, What the worker does before each
 #' run): put every setting any cell has changed back to the baseline, then
 #' apply the changes of the settings cells in effect, `ids`, in order.
@@ -1499,6 +1558,10 @@ install_traces <- function() {
   trace(sys.source, where = base_env, print = FALSE, tracer = source_call)
   trace(registerS3method, where = base_env, print = FALSE,
         tracer = bquote((.(ember_trace_s3_method))()))
+  # On exit, for the environment attach() returns, named as it's on the
+  # path. attach() has no on.exit() of its own to clear this one.
+  trace(attach, where = base_env, print = FALSE,
+        exit = bquote((.(trace_attach))(environment(), returnValue(NULL))))
   # methods may not be loaded yet (Rscript loads it, but a bare R might
   # not); without it there is no setMethod() to trace.
   if (requireNamespace("methods", quietly = TRUE)) {
@@ -1507,6 +1570,25 @@ install_traces <- function() {
   }
   protect_closeall(base_env)
   protect_options(base_env)
+  invisible()
+}
+
+#' Exit tracer for attach(): during a run, note the entry an `attach()`
+#' call from the notebook's own code added (its caller's top-level
+#' environment is the global one: a cell's code, or a function a cell
+#' defined), for `package_own_entries()`. `frame` is attach()'s own frame,
+#' `value` the environment it attached. The caller is found from the frame
+#' by number: `parent.frame()` in an exit tracer is `.doTrace()`'s.
+trace_attach <- function(frame, value) {
+  if (is.null(running) || !is.environment(value)) return(invisible())
+  i <- which(vapply(sys.frames(), identical, logical(1), y = frame))
+  caller <- if (length(i)) sys.frame(sys.parents()[[i[1]]]) else NULL
+  if (identical(tryCatch(topenv(caller), error = function(e) NULL), globalenv())) {
+    nm <- attr(value, "name")
+    if (is.character(nm) && length(nm) == 1 && !(nm %in% notebook_attached)) {
+      notebook_attached <<- c(notebook_attached, nm)
+    }
+  }
   invisible()
 }
 
