@@ -1621,6 +1621,28 @@ test_that("colours are on at boot and text_form never ends in a partial escape (
   expect_match(r2$output$text, "\033\\[0m$")
 })
 
+test_that("a value that prints many lines shows at once, and print() keeps every line (#160)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  # capture.output() is quadratic in the lines printed: 20,000 took 16.5 s,
+  # so 150,000 would take many minutes; the temp-file capture takes well
+  # under a second.
+  run_and_wait(h, "a", 1L, paste(
+    'print.many_lines <- function(x, ...) { cat(sprintf("line %d\\n", seq_len(attr(x, "n"))), sep = ""); invisible(x) }',
+    'x <- structure(list(), class = "many_lines", n = 150000)',
+    'y <- structure(list(), class = "many_lines", n = 50000)', "invisible()", sep = "\n"))
+  r <- run_and_wait(h, "b", 2L, "x", timeout = 30)
+  expect_identical(r$status, "ok")
+  expect_true(r$output$truncated)
+  expect_identical(strsplit(r$output$text, "\n")[[1]][c(1, 50)], c("line 1", "line 50\033[0m"))
+
+  r2 <- run_and_wait(h, "c", 3L, "print(y); invisible()", timeout = 30)
+  printed <- Filter(function(i) identical(i$kind, "stdout"), r2$console)
+  lines <- strsplit(paste(vapply(printed, `[[`, "", "text"), collapse = "\n"), "\n")[[1]]
+  expect_identical(length(lines), 50000L)
+  expect_identical(lines[c(1, 50000)], c("line 1", "line 50000"))
+})
+
 # ---- Editor services (ui-2.md, 4) ---------------------------------------------
 
 test_that("complete_line() (44)", {
