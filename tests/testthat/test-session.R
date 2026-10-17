@@ -782,19 +782,29 @@ test_that("a worker busy in a long cell ends when the server that started it is 
   expect_true(wait_pid_gone(worker))
 })
 
+#' A cell `name <- eval(parse(text = code))`: Ember's package scan can't
+#' read inside the string, so `code` may name processx or callr without
+#' the notebook resolving and installing them (helper-session.R's note).
+#' The cell still defines `name`, for a later cell to depend on.
+unscanned_cell <- function(name, code) {
+  cell(sprintf("%s <- eval(parse(text = %s))", name, paste(deparse(code), collapse = "")))
+}
+
 test_that("a cell's processx child outlives a restart, also once the server collects the old worker (#232)", {
   # The old worker's process object ends its marked tree when collected;
   # the worker drops processx's marker so its cell's children aren't in it.
   pidfile <- tempfile("cell-pid-")
   libs <- paste(deparse(normalizePath(.libPaths(), winslash = "/")), collapse = "")
   rscript <- normalizePath(file.path(R.home("bin"), "Rscript"), winslash = "/", mustWork = FALSE)
-  path <- write_session_notebook(list(S = cell(""), A = cell(sprintf(paste0(
+  path <- write_session_notebook(list(S = cell(""), A = unscanned_cell("p", sprintf(paste0(
     ".libPaths(c(%s, .libPaths())); ",
     "p <- processx::process$new('%s', c('-e', 'Sys.sleep(300)')); ",
-    "writeLines(as.character(c(Sys.getpid(), p$get_pid())), '%s')"),
+    "writeLines(as.character(c(Sys.getpid(), p$get_pid())), '%s'); p"),
     libs, rscript, normalizePath(pidfile, winslash = "/", mustWork = FALSE)))))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
+  # Nothing to resolve or install: the default cache stays untouched.
+  expect_identical(nrow(notebook_snapshot(nb)$packages$packages), 0L)
   run_cells(nb, "A", wait = TRUE, timeout = 60)
   expect_identical(snap_view(notebook_snapshot(nb), "A")$status, "ok")
   pids <- as.integer(readLines(pidfile))
@@ -812,20 +822,21 @@ test_that("a cell's processx child outlives a restart, also once the server coll
 #' with `processx::process$new()`, one with `callr::r_bg()` (both with their
 #' default `cleanup = TRUE`) and one with `system2(wait = FALSE)`, which
 #' writes its own pid. The cell writes the worker's pid and the three
-#' children's to `pidfile`, and finishes. The worker's library doesn't have
+#' children's to `pidfile`, and finishes, defining `a` as the two process
+#' objects (`unscanned_cell()`). The worker's library doesn't have
 #' processx and callr, so the cell uses this R's.
 windows_children_cell <- function(pidfile) {
   rscript <- normalizePath(file.path(R.home("bin"), "Rscript.exe"), winslash = "/")
   sys_pidfile <- normalizePath(paste0(pidfile, ".sys"), winslash = "/", mustWork = FALSE)
   libs <- paste(deparse(normalizePath(.libPaths(), winslash = "/")), collapse = "")
-  cell(sprintf(paste0(
+  unscanned_cell("a", sprintf(paste0(
     ".libPaths(c(%1$s, .libPaths())); ",
     "a <- processx::process$new('%2$s', c('-e', 'Sys.sleep(300)')); ",
     "b <- callr::r_bg(function() Sys.sleep(300)); ",
     "system2('%2$s', c('-e', shQuote(\"writeLines(as.character(Sys.getpid()), '%3$s.tmp'); file.rename('%3$s.tmp', '%3$s'); Sys.sleep(300)\")), wait = FALSE); ",
     "while (!file.exists('%3$s')) Sys.sleep(0.05); ",
     "writeLines(as.character(c(Sys.getpid(), a$get_pid(), b$get_pid(), readLines('%3$s'))), '%4$s.tmp'); ",
-    "file.rename('%4$s.tmp', '%4$s')"),
+    "file.rename('%4$s.tmp', '%4$s'); list(a, b)"),
     libs, rscript, sys_pidfile, normalizePath(pidfile, winslash = "/", mustWork = FALSE)))
 }
 

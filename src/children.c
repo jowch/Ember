@@ -12,9 +12,9 @@
    So on Windows the worker clears that one setting on processx's job:
    after every run, before it says the run is done, and from a thread that
    looks every half second, for a cell still running. processx makes the
-   job only when a cell first starts a process, and keeps it while loaded. processx's job is the one that
-   lets its members' children leave it silently
-   (JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK); R's `system()` makes a
+   job only when a cell first starts a process, and keeps it while loaded.
+   processx's job is the one that lets its members' children leave it
+   silently (JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK); R's `system()` makes a
    kill-on-close job per child without that setting, and it is left alone,
    so what a cell starts with `system()` still ends with the worker, as on
    Unix. processx still ends its children itself when R exits normally or
