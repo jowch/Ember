@@ -372,6 +372,74 @@ test_that("ember::run() installs a saved GitHub lock on a machine that never res
   expect_match(out, "toyC 0.4.0 says: hello from toyB", fixed = TRUE)
 })
 
+# ---- r-universe sources ([sources], #203) ------------------------------------
+
+#' `toy_repos()` plus the `file://` universe and GitHub fixtures: lab's
+#' universe serves toyD 0.2.0 built from commit D2 of github.com/lab/toyD;
+#' the GitHub fixture also has D1, the same version with other code.
+toy_universe_repos <- function() {
+  toy <- normalizePath(testthat::test_path("fixtures", "repos", "toy"), mustWork = TRUE)
+  gh <- normalizePath(testthat::test_path("fixtures", "github"), mustWork = TRUE)
+  u <- normalizePath(testthat::test_path("fixtures", "universe"), mustWork = TRUE)
+  ember_repos(cran = paste0("file://", toy), github = paste0("file://", gh),
+              universe = paste0("file://", u, "/%s"))
+}
+
+#' A notebook using toyD from lab's universe, with `lock` (none: empty).
+write_toyd_notebook <- function(lock = empty_lock()) {
+  dir <- tempfile("ember-nb-")
+  dir.create(dir, recursive = TRUE)
+  cells <- list(S = list(code = "", kind = "code", folded = FALSE),
+               A = list(code = "library(toyD)\ntoyD_hello()", kind = "code", folded = FALSE))
+  header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
+                       r_version = paste(R.version$major, R.version$minor, sep = "."),
+                       snapshot = "2026-09-01", sources = c(toyD = "universe:lab"))
+  file <- new_notebook_file(
+    header = header, cells = cells, run_order = names(cells), learned = list(),
+    sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
+    lock = lock, extra_blocks = list(), format = ember_format)
+  path <- file.path(dir, "nb.R")
+  stopifnot(write_atomic(path, format_notebook(file)))
+  path
+}
+
+test_that("a package from a [sources] universe entry installs from the universe at the commit it built, and runs", {
+  repos <- toy_universe_repos()
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  path <- write_toyd_notebook()
+
+  nb <- open_notebook(path, repos = repos, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  res <- run_cells(nb, wait = TRUE, timeout = 120)
+  expect_false(res$timed_out)
+
+  status <- package_status(nb)
+  expect_equal(status$library$status, "ready",
+               info = paste(c(status$library$message, notebook_state(nb)$packages$target$log), collapse = "\n"))
+  expect_equal(snap_view(notebook_snapshot(nb), "A")$output$text, "[1] \"toyD at 2e1f5a9 says: hello from toyB\"")
+  pkgs <- status$packages
+  expect_equal(pkgs$source[pkgs$name == "toyD"],
+               "universe:lab/github.com/lab/toyD@2e1f5a9c3b8a7f6e5d4c3b2a1908f7e6d5c4b3a2")
+  # From the universe's own build, not from GitHub.
+  desc <- read.dcf(file.path(notebook_state(nb)$packages$target$path, "toyD", "DESCRIPTION"))
+  expect_equal(unname(desc[, "RemoteType"]), "repository")
+})
+
+test_that("a locked commit the universe no longer serves installs from GitHub, even under the same version", {
+  repos <- toy_universe_repos()
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  d1 <- "1d0c4e8b2a7f6e5d4c3b2a1908f7e6d5c4b3a291"
+  lock <- new_lock(c("toyB", "toyD"), c("1.0", "0.2.0"),
+                   c("CRAN", universe_source("lab", "https://github.com/lab/toyD", d1)))
+  path <- write_toyd_notebook(lock)
+
+  out <- testthat::capture_output(status <- run(path, repos = repos, cache = cache, echo = TRUE))
+  expect_equal(status, 0L)
+  expect_match(out, "toyD at 1d0c4e8 says: hello from toyB", fixed = TRUE)
+})
+
 # ---- 75: network, opt-in -----------------------------------------------------
 
 test_that("[net] a notebook with library(dplyr) at a fixed past date resolves, installs and loads from PPM (75)", {

@@ -475,8 +475,9 @@ run_effect <- function(nb, fx) {
       unregister_session(nb)
     },
     fetch_index = {
-      # A GitHub key at a moving ref (a branch, a tag, HEAD) is fetched
-      # afresh: the cache could hold an older commit (`github_key()`).
+      # A GitHub key at a moving ref (a branch, a tag, HEAD), or a
+      # universe's latest build, is fetched afresh: the cache could hold an
+      # older commit (`github_key()`, `universe_key()`).
       # A dated key as recent as today (#39) is read from the cache like
       # any other, since fetching it on every open costs seconds, but its
       # slot is marked provisional: Package Manager may still add to that
@@ -484,7 +485,7 @@ run_effect <- function(nb, fx) {
       # fetched again. If that fetch fails (offline), the saved copy
       # stands in.
       provisional <- index_may_change(fx$key)
-      moving <- is_github_key(fx$key) && !is_commit(parse_github_key(fx$key)$ref)
+      moving <- is_moving_source_key(fx$key)
       cache <- nb$state$options$cache
       read_index <- function() {
         if (moving) fresh_index(fx$key, cache)

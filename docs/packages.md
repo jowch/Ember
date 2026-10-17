@@ -202,6 +202,7 @@ Behind that sit detection, resolution, index caching, library naming, installs, 
 2. **Bioconductor, GitHub and source builds:**
    - Bioconductor (`bioc_version`, its index keys, the date-window warning): built, see [Bioconductor](#bioconductor)
    - `[sources]` GitHub as one-row indexes: built, see [GitHub sources](#github-sources)
+   - `[sources]` r-universe the same way: built, see [r-universe sources](#r-universe-sources)
    - the install plan job: download size and consent
    - compiler and system-library checks: built, see [Install checks](#install-checks)
    - old snapshot dates that build from source on a newer R: explained when the build fails, see [Install checks](#install-checks); saying so before the install waits for the install plan
@@ -498,8 +499,8 @@ Built from increment 2 (#20).
   outside the one-date rule. The Packages tab's "GitHub user/repo@sha"
   line under the version is that mark, and its tooltip says so.
 - **The Packages tab** (#78). A not-found package's row offers "Add a
-  GitHub source": a field for `user/repo`, optionally with `@` and a
-  branch, tag or commit, sent as the `set_package_source` op
+  source": a field for `user/repo`, optionally with `@` and a
+  branch, tag or commit, or an r-universe link (#203), sent as the `set_package_source` op
   (`ember_set_package_source`, server.R). A refused source shows Ember's
   refusal under the field. A row with an entry offers "Change source"
   (the same op, starting from the entry) and "Remove source"
@@ -516,6 +517,52 @@ Not built: guessing the repository for a name that isn't found (from a
 CRAN archive record, or a search); following a GitHub package's
 `Remotes` (each needs its own entry); packages in a
 subdirectory of a repository; GitLab and other hosts.
+
+### r-universe sources
+
+Built for #203. emberui, the inputs package (docs/inputs.md), ships on
+r-universe.
+
+- **The header names them.** `emberui = "universe:jowch"`, for
+  `https://jowch.r-universe.dev`. The op and the header reader also take
+  a link to the universe or to any page in it, saved in the `universe:`
+  form (`source_spec()`). There is no ref: a universe serves only its
+  latest build of each package. A package with an entry comes from it,
+  never from CRAN.
+- **One request.** The fetch (`fetch_universe_main()`) reads the
+  universe's JSON for the package (`<universe>/api/packages/<name>`),
+  which gives the version, the dependencies, and the git commit the
+  build came from (`RemoteUrl`, `RemoteSha`, `RemoteSubdir`). The key is
+  `universe/<name>/<package>`, and it always moves, like a GitHub branch.
+- **The lock fixes the commit, not the build.** The lock line is
+  `emberui 0.1.0 universe:jowch/github.com/jowch/emberui@<sha>`: the
+  universe, then the repository without `https://`, then the commit, with
+  `//<subdir>` before the `@` for a package in a subdirectory. So the
+  file alone says where the code is after the universe has moved on.
+  Once locked, a package keeps its commit, under the key
+  `universe-commit/<package>/...`, which never changes. A machine that
+  never resolved it reads that commit's DESCRIPTION from GitHub when the
+  repository is there (a universe keeps no old builds); off GitHub, it
+  can only while the universe still serves that commit, and otherwise
+  the row says to update the package. Update all takes the latest build;
+  moving the date back keeps the commit.
+- **Installing.** The installer asks the universe which commit it serves
+  now (`universe_served()`). When that is the locked one, renv installs
+  the universe's own build, binaries included, as a repository record for
+  `universe-<name>` (`repo_urls()`). When it isn't, the version alone
+  can't say: a development version (`0.0.0.9000`) keeps its version
+  across commits. So renv gets a GitHub record for the locked commit,
+  which builds from source, or for a repository elsewhere a git record,
+  which needs git on the machine.
+- **Unchecked**, as GitHub packages are: the Packages tab's line under the
+  version reads "r-universe jowch@<sha>".
+- **The test seam** is `ember_repos(universe = "file://.../%s")`:
+  `fixtures/universe/lab` is laid out as an r-universe is, and its
+  package's commits are in the GitHub fixture.
+
+Not built: guessing the universe for a name that isn't found; a
+universe's own dependencies resolve from CRAN, so a dependency only on
+r-universe needs its own entry.
 
 ## Where the direction strains
 

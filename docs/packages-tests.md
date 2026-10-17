@@ -184,6 +184,20 @@ In test-packages-session.R:
 112. A package from a `[sources]` entry installs at the ref's commit with its CRAN dependency from the toy repo, and the cell runs.
 113. `ember::run()` installs a saved GitHub lock into a cache that never resolved it.
 
+## r-universe sources (#203)
+
+In test-universe-sources.R:
+
+123. A `universe:` spec, or a link to an r-universe or any page in it, reads as `universe:<name>` (lower case); anything else reads as GitHub's or as nothing. The lock source names the universe, the git repository, a subdirectory after `//`, and the commit, and reads back.
+124. `source_keys` keeps a locked universe commit's key while the spec is unchanged, and asks for the latest build otherwise or on refresh; `lock_for_sources` drops a universe entry whose source is gone or changed; a move to another commit is a source change.
+125. renv's record is the universe's repository while it serves the locked commit, else a GitHub record for that commit (github.com, even with a GitHub Enterprise API set), else a git record with the subdirectory; `repo_urls` names each universe the lock uses.
+126. `fetch_universe_main` on the `file://` fixture reads the latest build's JSON and saves it under both keys; a commit the universe no longer serves is read from GitHub; a missing package, a build that doesn't say its commit, and a moved commit off GitHub each stop with a message; `universe_served` and `github_install_deps` read the fixture.
+127. In the core: a universe entry is fetched with CRAN's index and the lock holds its commit; the install gets the universe's URL; a reopened notebook asks for the commit's key; update all takes the latest build and moving back keeps the commit; `set_package_source` saves a link as `universe:`; a failed lookup names the package and doesn't fall back to CRAN.
+
+In test-packages-session.R:
+
+128. A package from a `[sources]` universe entry installs from the universe's own build (`RemoteType: repository`) and runs; a locked commit the universe no longer serves, under the same version, installs from GitHub at that commit.
+
 ## Network, opt-in
 
 75. **[net]** A notebook with `library(dplyr)` at a fixed past date resolves from PPM, installs with renv, and the worker loads exactly the locked versions.

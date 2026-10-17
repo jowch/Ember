@@ -27,13 +27,22 @@
 #' (`https://github.example.org/api/v3`), or a `file://` folder laid out
 #' the same way (`repos/<user>/<repo>/commits/<ref>` holding the commit,
 #' `repos/<user>/<repo>/tarball/<sha>` the package), which is the test seam.
+#'
+#' `universe` is where `[sources]` r-universe packages come from
+#' (`universe_url()`): a URL with `%s` where the universe's name goes,
+#' r-universe's own `https://%s.r-universe.dev` by default, or a `file://`
+#' folder with one subfolder per universe laid out as r-universe is
+#' (`api/packages/<package>` holding the package's JSON, `src/contrib` its
+#' tarball), which is the test seam.
 #' @export
 ember_repos <- function(cran = "https://packagemanager.posit.co/cran",
                         bioc = "https://packagemanager.posit.co/bioconductor",
                         bioc_config = "https://bioconductor.org/config.yaml",
-                        github = "https://api.github.com") {
+                        github = "https://api.github.com",
+                        universe = "https://%s.r-universe.dev") {
   structure(list(cran = sub("/+$", "", cran), bioc = sub("/+$", "", bioc),
-                 bioc_config = bioc_config, github = sub("/+$", "", github)),
+                 bioc_config = bioc_config, github = sub("/+$", "", github),
+                 universe = sub("/+$", "", universe)),
             class = "ember_repos")
 }
 
@@ -73,6 +82,15 @@ repo_url <- function(repos, key) {
   if (identical(kind, "github")) {
     src <- parse_github_key(key)
     paste0(github_api_url(repos), "/repos/", src$user, "/", src$repo)
+  } else if (identical(kind, "universe")) {
+    universe_url(repos, parts[[2]])
+  } else if (identical(kind, "universe-commit")) {
+    # A commit the universe built: read from GitHub when that is where the
+    # code lives, since the universe keeps only its latest build.
+    src <- parse_universe_source(universe_source_of_key(key))
+    gh <- universe_github_repo(src)
+    if (is.null(gh)) universe_url(repos, src$universe)
+    else paste0(github_com_api_url(repos), "/repos/", gh$user, "/", gh$repo)
   } else if (kind %in% names(bioc_kinds)) {
     date <- parts[[2]]
     bioc_version <- parts[[3]]
@@ -88,13 +106,22 @@ repo_url <- function(repos, key) {
 #' header has a `bioc_version`. A lock entry says only `Bioc`, not which of
 #' the three it came from; renv looks a package up in every repository
 #' listed here, so that is enough (lock.R, `renv_lockfile_of()`).
-repo_urls <- function(repos, header) {
+#'
+#' With `lock`, each universe its r-universe packages came from is listed
+#' too, as `universe-<name>` (`universe_repo_name()`): the installer
+#' installs from it while it still serves the locked commit
+#' (`universe_served()`).
+repo_urls <- function(repos, header, lock = NULL) {
   out <- c(CRAN = repo_url(repos, repo_key("cran", header$snapshot)))
   if (!is.na(header$bioc_version)) {
     for (kind in names(bioc_kinds)) {
       out[[bioc_repo_names[[kind]]]] <-
         repo_url(repos, repo_key(kind, header$snapshot, header$bioc_version))
     }
+  }
+  sources <- if (is.null(lock$entries)) character() else lock$entries$source
+  for (src in Filter(Negate(is.null), lapply(sources, parse_universe_source))) {
+    out[[universe_repo_name(src$universe)]] <- universe_url(repos, src$universe)
   }
   out
 }
@@ -358,6 +385,146 @@ is_github_key <- function(keys) startsWith(keys, "github/")
 #' `TRUE` for a full, 40-character commit SHA.
 is_commit <- function(x) grepl("^[0-9a-fA-F]{40}$", x)
 
+# ---- r-universe sources ------------------------------------------------------
+
+#' A package from an r-universe (#203) is named the same way:
+#' `emberui = "universe:jowch"`, for `https://jowch.r-universe.dev`. A
+#' universe serves only the latest build of each package, so the entry has
+#' no ref, and the snapshot date doesn't apply: like a GitHub package, it
+#' sits outside the one-date rule. Its one-row index
+#' (`fetch_universe_main()`, library.R) is read from the universe's API,
+#' which also says which git commit the build came from, and the lock
+#' records that commit (`universe_source()`), so the lock still fixes the
+#' code once the universe has moved on.
+#'
+#' The universe's URL, from `ember_repos(universe)`: `%s` is its name.
+universe_url <- function(repos, universe) {
+  sprintf(repos$universe %||% "https://%s.r-universe.dev", universe)
+}
+
+#' The repository name the installer gives a universe (`repo_urls()`).
+universe_repo_name <- function(universe) paste0("universe-", universe)
+
+#' A `universe:` header spec -> `list(universe)`, or `NULL` when `x`
+#' isn't one. Names are r-universe's, which are lower case (a GitHub
+#' account's name, as its subdomain).
+parse_universe_spec <- function(x) {
+  if (length(x) != 1 || is.na(x)) return(NULL)
+  m <- regmatches(x, regexec("^universe:([a-z0-9][a-z0-9-]*)$", x))[[1]]
+  if (length(m) == 0) NULL else list(universe = m[[2]])
+}
+
+#' `TRUE` for a string that starts as an r-universe link does.
+is_universe_link <- function(x) {
+  grepl("^(https?://)?[A-Za-z0-9][A-Za-z0-9-]*\\.r-universe\\.dev(/|$)", trimws(x), ignore.case = TRUE)
+}
+
+#' An r-universe link -> its `universe:` spec: the universe's page,
+#' `https://jowch.r-universe.dev`, or any page in it (a package's,
+#' `.../emberui`), is `"universe:jowch"`.
+universe_link_spec <- function(x) {
+  x <- sub("[?#].*$", "", trimws(x))
+  m <- regmatches(x, regexec("^(https?://)?([A-Za-z0-9][A-Za-z0-9-]*)\\.r-universe\\.dev(/.*)?$",
+                             x, ignore.case = TRUE))[[1]]
+  if (length(m) == 0) NULL else paste0("universe:", tolower(m[[3]]))
+}
+
+#' The lock source for a package a universe built from a git commit:
+#' `"universe:<name>/<host>/<path>@<sha>"`, the git repository written
+#' without its `https://` (`universe:jowch/github.com/jowch/emberui@<sha>`),
+#' and, for a package in a subdirectory of the repository, `//<subdir>`
+#' after it, as Terraform writes one. The lock alone then says where to get
+#' the code again: from the universe while it still serves that commit, and
+#' from the repository itself after (`renv_lockfile_of()`). `NULL` when
+#' `git` isn't an https URL.
+universe_source <- function(universe, git, sha, subdir = NA_character_) {
+  if (!is.character(git) || length(git) != 1 || is.na(git) || !grepl("^https://", git)) return(NULL)
+  where <- sub("\\.git$", "", sub("/+$", "", sub("^https://", "", git)))
+  sub_part <- if (!is.na(subdir) && nzchar(subdir)) paste0("//", sub("^/+|/+$", "", subdir)) else ""
+  out <- paste0("universe:", universe, "/", where, sub_part, "@", tolower(sha))
+  if (is.null(parse_universe_source(out))) NULL else out
+}
+
+#' A `universe:` lock source -> `list(universe, git, subdir, sha)`, `git`
+#' the repository's https URL, `subdir` `NA` when the package is at its
+#' top. `NULL` when `x` isn't one.
+parse_universe_source <- function(x) {
+  if (length(x) != 1 || is.na(x)) return(NULL)
+  m <- regmatches(x, regexec(paste0("^universe:([a-z0-9][a-z0-9-]*)/",
+                                    "([A-Za-z0-9.-]+(/[A-Za-z0-9._~-]+)+)",
+                                    "(//([A-Za-z0-9._~/-]+))?@([0-9a-f]{40})$"), x))[[1]]
+  if (length(m) == 0) return(NULL)
+  list(universe = m[[2]], git = paste0("https://", m[[3]]),
+       subdir = if (nzchar(m[[6]])) m[[6]] else NA_character_, sha = m[[7]])
+}
+
+#' `list(user, repo)` when a universe source's repository is on
+#' github.com, else `NULL`.
+universe_github_repo <- function(src) {
+  m <- regmatches(src$git, regexec("^https://github\\.com/([^/]+)/([^/]+)$", src$git, ignore.case = TRUE))[[1]]
+  if (length(m) == 0) NULL else list(user = m[[2]], repo = m[[3]])
+}
+
+#' The GitHub API that github.com repositories are read from: GitHub's own,
+#' unless `ember_repos(github)` is a `file://` fixture (the test seam). A
+#' GitHub Enterprise server set there serves its own repositories, not
+#' github.com's.
+github_com_api_url <- function(repos) {
+  api <- github_api_url(repos)
+  if (startsWith(api, "file://")) api else "https://api.github.com"
+}
+
+#' The repo key of a universe's latest build of `package`:
+#' `"universe/<name>/<package>"`. It always moves, so its index is fetched
+#' again by each session that needs it, as a GitHub branch's is.
+universe_key <- function(universe, package) paste0("universe/", universe, "/", package)
+
+#' The repo key of one commit a universe built, from the package's name
+#' and its lock source: `"universe-commit/<package>/<name>/<host>/<path>@<sha>"`.
+#' It never changes, so its index is cached on disk for good, and fetching
+#' it needs nothing but the key (`repo_url()`): from GitHub when the
+#' repository is there, else from the universe while it still serves that
+#' commit.
+universe_commit_key <- function(source, package) {
+  sub("^universe:", paste0("universe-commit/", package, "/"), source)
+}
+
+#' `universe_commit_key()`'s inverse: the lock source.
+universe_source_of_key <- function(key) sub("^universe-commit/[^/]+/", "universe:", key)
+
+is_universe_key <- function(keys) startsWith(keys, "universe/") | startsWith(keys, "universe-commit/")
+
+# ---- Either kind ---------------------------------------------------------------
+
+#' A `[sources]` spec as the user gave it, normalised (`github_spec()`,
+#' `universe_link_spec()`): `"universe:name"` or an r-universe link as
+#' `"universe:name"`, anything else as GitHub's. `NULL` when it is none.
+source_spec <- function(x) {
+  if (!is.character(x) || length(x) != 1 || is.na(x)) return(NULL)
+  x <- trimws(x)
+  if (is_universe_link(x)) return(universe_link_spec(x))
+  if (grepl("^universe:", x, ignore.case = TRUE)) {
+    x <- paste0("universe:", tolower(sub("^universe:", "", x, ignore.case = TRUE)))
+    return(if (is.null(parse_universe_spec(x))) NULL else x)
+  }
+  github_spec(x)
+}
+
+#' `TRUE` for a link `source_spec()` reads (a github.com or r-universe one).
+is_source_link <- function(x) is_github_link(x) || is_universe_link(x)
+
+#' `TRUE` for a readable `[sources]` spec of either kind.
+is_readable_spec <- function(x) !is.null(parse_github_source(x)) || !is.null(parse_universe_spec(x))
+
+#' `TRUE` for each lock source that came from a `[sources]` entry.
+is_source_entry <- function(sources) startsWith(sources, "github:") | startsWith(sources, "universe:")
+
+#' `TRUE` for a key whose index may hold another commit next time: a
+#' GitHub branch, tag or `HEAD`, or a universe's latest build.
+is_moving_source_key <- function(key) {
+  (is_github_key(key) && !is_commit(parse_github_key(key)$ref)) || startsWith(key, "universe/")
+}
+
 #' Whether the lock's `source` still answers the header's `spec`: the same
 #' repository (GitHub's names ignore case), and, when the spec names a
 #' commit (7 to 40 hex digits), that commit. A branch or tag can't be
@@ -365,6 +532,11 @@ is_commit <- function(x) grepl("^[0-9a-fA-F]{40}$", x)
 #' it: the lock is what fixes the code, and a moving branch moves only when
 #' the spec is changed (`source_keys()`).
 source_satisfied <- function(spec, source) {
+  u <- parse_universe_spec(spec)
+  if (!is.null(u)) {
+    l <- parse_universe_source(source)
+    return(!is.null(l) && identical(l$universe, u$universe))
+  }
   s <- parse_github_source(spec)
   l <- parse_github_source(source)
   if (is.null(s) || is.null(l) || is.na(l$ref)) return(FALSE)
@@ -376,12 +548,12 @@ source_satisfied <- function(spec, source) {
 }
 
 #' The header's readable `[sources]`: named character, package -> spec,
-#' sorted by name. Entries `parse_github_source()` can't read are left out
+#' sorted by name. Entries `is_readable_spec()` can't read are left out
 #' (`source_problems()` reports them).
-github_sources <- function(header) {
+readable_sources <- function(header) {
   src <- header$sources %||% character()
   if (length(src) == 0) return(character())
-  ok <- vapply(src, function(x) !is.null(parse_github_source(x)), logical(1))
+  ok <- vapply(src, is_readable_spec, logical(1))
   src <- src[ok]
   src[order(names(src), method = "radix")]
 }
@@ -398,13 +570,26 @@ github_sources <- function(header) {
 #' asks again for every entry whose ref can move (a branch, a tag, `HEAD`:
 #' anything but a commit), so a branch comes forward with everything else.
 #' A tag usually names the same commit again.
+#'
+#' A universe entry (`universe:name`) works the same way: a package locked
+#' from that universe keeps its commit's key (`universe_commit_key()`), and
+#' any other, or any at all on `refresh`, is looked up at the universe's
+#' latest build (`universe_key()`).
 source_keys <- function(header, lock, sources_for = character(), refresh = FALSE) {
-  src <- github_sources(header)
+  src <- readable_sources(header)
   if (length(src) == 0) return(character())
   e <- lock$entries
   keys <- vapply(names(src), function(name) {
-    spec <- parse_github_source(src[[name]])
     row <- match(name, e$name)
+    universe <- parse_universe_spec(src[[name]])
+    if (!is.null(universe)) {
+      if (!refresh && !is.na(row) && source_unchanged(name, src, sources_for) &&
+          source_satisfied(src[[name]], e$source[[row]])) {
+        return(universe_commit_key(e$source[[row]], name))
+      }
+      return(universe_key(universe$universe, name))
+    }
+    spec <- parse_github_source(src[[name]])
     moving <- is.na(spec$ref) || !grepl("^[0-9a-fA-F]{7,40}$", spec$ref)
     if (!(refresh && moving) && !is.na(row) && source_unchanged(name, src, sources_for) &&
         source_satisfied(src[[name]], e$source[[row]])) {
@@ -434,21 +619,21 @@ source_unchanged <- function(name, sources, sources_for) {
 
 #' The lock `resolve_lock()` keeps entries from, given the header's
 #' `[sources]`: an entry stays only when its source still agrees with them.
-#' A package with a spec keeps a GitHub entry that answers the unchanged
-#' spec; one whose spec changed, or that was locked from CRAN or
-#' Bioconductor, is dropped so it resolves again from its own index. A
-#' GitHub entry whose spec was removed is dropped too, so the package comes
+#' A package with a spec keeps a GitHub or universe entry that answers the
+#' unchanged spec; one whose spec changed, or that was locked from CRAN or
+#' Bioconductor, is dropped so it resolves again from its own index. An
+#' entry whose spec was removed is dropped too, so the package comes
 #' from CRAN or Bioconductor again (or is `not_found`).
 lock_for_sources <- function(lock, header, sources_for = character()) {
   e <- lock$entries
   if (is.null(e) || nrow(e) == 0) return(lock)
-  src <- github_sources(header)
+  src <- readable_sources(header)
   keep <- vapply(seq_len(nrow(e)), function(i) {
     name <- e$name[[i]]
     if (name %in% names(src)) {
       source_unchanged(name, src, sources_for) && source_satisfied(src[[name]], e$source[[i]])
     } else {
-      !startsWith(e$source[[i]], "github:")
+      !is_source_entry(e$source[[i]])
     }
   }, logical(1))
   if (all(keep)) return(lock)
@@ -456,17 +641,18 @@ lock_for_sources <- function(lock, header, sources_for = character()) {
 }
 
 #' Problem rows for `[sources]`: a `"source"` row per entry that isn't a
-#' readable `github:user/repo[@ref]` (it is ignored, so its package resolves
-#' from CRAN or Bioconductor as if it had none), and per GitHub index whose
+#' readable `github:user/repo[@ref]` or `universe:name` (it is ignored, so
+#' its package resolves from CRAN or Bioconductor as if it had none), and
+#' per GitHub or universe index whose
 #' package isn't the one the spec was written for (`indexes`: named list,
 #' key -> loaded `ember_repo_index`).
 source_problems <- function(header, keys = character(), indexes = list()) {
   out <- empty_package_problems()
   src <- header$sources %||% character()
   for (name in names(src)) {
-    if (is.null(parse_github_source(src[[name]]))) {
+    if (!is_readable_spec(src[[name]])) {
       out <- rbind(out, package_problem("source", name, sprintf(
-        "can't read the source %s for %s: write it as \"github:user/repo\", optionally with @ and a branch, tag or commit",
+        "can't read the source %s for %s: write it as \"github:user/repo\", optionally with @ and a branch, tag or commit, or as \"universe:name\" for an r-universe",
         src[[name]], name)))
     }
   }

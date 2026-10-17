@@ -1,0 +1,6 @@
+Package: toyD
+Version: 0.2.0
+Imports: toyB
+License: MIT
+MD5sum: 16d51accae1f6dbc42236b01645f0e49
+NeedsCompilation: no

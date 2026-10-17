@@ -868,11 +868,11 @@ reduce_apply <- function(state, event) {
         header$extra_packages <- setdiff(header$extra_packages, op$name)
       }
     } else if (identical(op$op, "set_package_source")) {
-      spec <- github_spec(op$source)
+      spec <- source_spec(op$source)
       if (!is_one_package_name(op$name)) {
         bad <- refused("not a package name", op)
       } else if (is.null(spec)) {
-        bad <- refused("a source is written \"github:user/repo\", optionally with @ and a branch, tag or commit, or as a github.com link to the repository or to a branch, tag or commit", op)
+        bad <- refused("a source is written \"github:user/repo\", optionally with @ and a branch, tag or commit, or as a github.com link to the repository or to a branch, tag or commit; or, for an r-universe, \"universe:name\" or a link to it", op)
       } else {
         src <- header$sources %||% character()
         src[[op$name]] <- spec

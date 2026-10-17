@@ -5,7 +5,8 @@
 #   Rscript --vanilla installer.R <plan.rds>
 #
 # Plan: list(lock_lines, repos (name -> dated URL), r, staging, path, cache,
-# github (the GitHub API GitHub packages install from)).
+# github (the GitHub API GitHub packages install from)). `repos` also names
+# each universe the lock's r-universe packages come from (`repo_urls()`).
 #
 # Output on stdout, one per line, for the shell to turn into
 # `ev_install_progress` (best effort: renv's own per-package reporting
@@ -61,8 +62,11 @@ main <- function(plan_path) {
   if (!is.null(compiler)) stop_missing(plan, compiler = compiler)
 
   github <- if (is.null(plan$github)) "https://api.github.com" else plan$github
-  deps <- ember:::github_install_deps(lock, plan$cache, github)
-  lf <- ember:::renv_lockfile_of(lock, plan$r, repos, github = github, deps = deps)
+  deps <- ember:::github_install_deps(lock, plan$cache, github, plan$repos)
+  # A universe serves only its latest build: it installs from there only
+  # while that build is the locked commit (`universe_served()`).
+  served <- ember:::universe_served(lock, plan$repos)
+  lf <- ember:::renv_lockfile_of(lock, plan$r, repos, github = github, deps = deps, served = served)
   lockfile_tmp <- tempfile("ember-lockfile-", fileext = ".json")
   renv::lockfile_write(lf, file = lockfile_tmp)
 
