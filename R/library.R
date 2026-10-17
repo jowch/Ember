@@ -639,6 +639,19 @@ library_cache_entries <- function(staging, installed, cache_root) {
   unique(out)
 }
 
+#' The cache entries a staging folder's package symlinks point at, for
+#' `clean()` to keep while that install runs. Hard links have nothing to
+#' follow, and need nothing: the library's copy outlives the entry.
+staging_link_targets <- function(staging) {
+  out <- character()
+  for (pkg_dir in list.files(staging, full.names = TRUE)) {
+    link <- tryCatch(Sys.readlink(pkg_dir), error = function(e) "")
+    if (!is.na(link) && nzchar(link))
+      out <- c(out, dirname(normalizePath(link, mustWork = FALSE)))
+  }
+  unique(out)
+}
+
 #' Write the manifest into `staging` and rename it to `path`: the one
 #' rename every installer (real or fake) ends with. If `path` already has
 #' a valid manifest, another process's installer won the race while this
@@ -876,20 +889,28 @@ dir_size <- function(path) {
 #' of what was (or with `dry_run`, would be) deleted.
 #'
 #' * Libraries whose `ember-last-used` is older than `max_age` days, except
-#'   any an open session in this process has as `active` or `target`. They
+#'   those in `keep`. They
 #'   hold only links, so a returning notebook gets its library back from
 #'   the cache in seconds, or from the lock.
 #' * Staging folders older than one day (an installer that crashed).
 #' * With `cache = TRUE`: renv cache entries listed in no remaining
 #'   library's manifest (`cache_entries`), so deleting one never breaks a
-#'   library whether renv linked with hard links or symlinks.
-#' * Index RDS files not read for `max_age` days.
+#'   library whether renv linked with hard links or symlinks. An entry
+#'   made in the last day, or one a staging folder younger than a day
+#'   links to, is kept too: an install still running has no manifest yet.
+#' * With `indexes = TRUE`: index RDS files not read for `max_age` days.
+#'
+#' `keep` is the library paths never to delete: by default every library
+#' an open session in this process holds. The Packages tab's clean-up
+#' (`clean_up()`, #128) runs this in a subprocess, so it passes the
+#' server's set.
 #'
 #' The first `open_notebook()` in a process runs it once, in a job, with
 #' `cache = FALSE` (design.md: "when the server starts").
 #' @export
 clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
-                  dir = cache_dir(), now = Sys.time()) {
+                  dir = cache_dir(), now = Sys.time(), keep = active_libraries$paths,
+                  indexes = TRUE) {
   out <- data.frame(path = character(), kind = character(), bytes = numeric(),
                     last_used = as.POSIXct(character()), stringsAsFactors = FALSE)
   record <- function(path, kind, bytes, last_used) {
@@ -902,6 +923,9 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
 
   kept_cache_entries <- character()
 
+  # Resolved like the paths it is compared with, so a `dir` spelled
+  # through a symlink still matches an open session's library path.
+  keep_resolved <- normalizePath(as.character(keep), mustWork = FALSE)
   lib_root <- file.path(dir, "libraries")
   if (dir.exists(lib_root)) {
     key_dirs <- Sys.glob(file.path(lib_root, "*", "*", "*"))
@@ -912,6 +936,11 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
         if (is.na(age) || age >= 1) {
           record(entry, "staging", dir_size(entry), file.info(entry)$mtime)
           if (!dry_run) unlink(entry, recursive = TRUE)
+        } else {
+          # An install in progress: it has no manifest yet, so the cache
+          # entries it links to are listed nowhere. Keep the ones its
+          # symlinks point at (a hard link survives its entry's deletion).
+          kept_cache_entries <- c(kept_cache_entries, staging_link_targets(entry))
         }
         next
       }
@@ -919,7 +948,7 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
       manifest <- read_library_manifest(entry)
       if (is.null(manifest)) next
 
-      if (entry %in% active_libraries$paths) {
+      if (normalizePath(entry, mustWork = FALSE) %in% keep_resolved) {
         kept_cache_entries <- c(kept_cache_entries, manifest$cache_entries)
         next
       }
@@ -936,7 +965,7 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
   }
 
   idx_root <- file.path(dir, "indexes")
-  if (dir.exists(idx_root)) {
+  if (isTRUE(indexes) && dir.exists(idx_root)) {
     for (f in list.files(idx_root, full.names = TRUE, pattern = "\\.rds$")) {
       info <- file.info(f)
       last_used <- if (!is.na(info$atime)) info$atime else info$mtime
@@ -952,9 +981,15 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
     cache_root <- file.path(dir, "renv-cache")
     if (dir.exists(cache_root)) {
       hash_dirs <- Sys.glob(file.path(cache_root, "v5", "*", "*", "*", "*", "*", "*"))
-      kept <- unique(kept_cache_entries)
+      # Compared resolved: a manifest can name an entry through a symlink
+      # target (`library_cache_entries()` follows renv's links) while the
+      # glob spells it through `dir` (/var vs /private/var on macOS).
+      kept <- unique(normalizePath(kept_cache_entries, mustWork = FALSE))
       for (h in hash_dirs) {
-        if (!(h %in% kept)) {
+        # A cache entry made in the last day may belong to an install
+        # still running, which renv fills before it links the library.
+        age <- age_days(file.info(h)$mtime)
+        if (!(normalizePath(h, mustWork = FALSE) %in% kept) && !is.na(age) && age >= 1) {
           record(h, "cache", dir_size(h), file.info(h)$mtime)
           if (!dry_run) unlink(h, recursive = TRUE)
         }
@@ -1008,6 +1043,64 @@ disk_use_main <- function(dir) {
 disk_use_command <- function(dir = cache_dir()) {
   rscript <- file.path(R.home("bin"), "Rscript")
   code <- paste0("local({library(ember); ember:::disk_use_main(", deparse(dir), ")})")
+  env <- c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep),
+           R_LIBS_USER = "", R_LIBS_SITE = "")
+  list(command = rscript, args = c("--vanilla", "-e", code), env = env)
+}
+
+#' The Packages tab's clean-up button (#128): `clean()` with the rule
+#' "unused for 30 days", libraries no open notebook holds (`keep`) and not used
+#' in the last `max_age` days, then the renv cache entries no remaining
+#' library lists. `max_age` is 30 days (#128; the startup sweep uses 60).
+#' A notebook open in another Ember process or run by `ember::run()`,
+#' which this process can't see, keeps its marker fresh: a worker
+#' touches it when it starts, and each process touches its open
+#' libraries hourly (`touch_active_libraries()`).
+#' Indexes are left to the startup sweep. Returns `list(libraries, cache,
+#' bytes)`: how many libraries (staging folders included) and cache
+#' entries were, or with `dry_run` would be, deleted, and about how many
+#' bytes that frees. `bytes` is measured before deleting, by one `du` over
+#' the cache entries then the libraries, so a file a library links from a
+#' deleted cache entry counts once; without `du` it is `clean()`'s plain
+#' sum, which counts such a file twice.
+clean_up <- function(dir = cache_dir(), keep = character(), dry_run = TRUE, max_age = 30,
+                     du = Sys.which("du"), now = Sys.time()) {
+  plan <- clean(max_age = max_age, cache = TRUE, dry_run = TRUE, dir = dir, now = now,
+                keep = keep, indexes = FALSE)
+  libs <- plan$path[plan$kind %in% c("library", "staging")]
+  entries <- plan$path[plan$kind == "cache"]
+  bytes <- sum(plan$bytes)
+  paths <- c(entries, libs)
+  if (length(paths) > 0L && nzchar(du)) {
+    res <- processx::run(du, c("-sck", paths), error_on_status = FALSE)
+    lines <- strsplit(res$stdout, "\n")[[1]]
+    total <- grep("\ttotal$", lines, value = TRUE)
+    if (identical(res$status, 0L) && length(total) == 1L)
+      bytes <- as.numeric(sub("\t.*$", "", total)) * 1024
+  }
+  if (!isTRUE(dry_run) && length(paths) > 0L)
+    clean(max_age = max_age, cache = TRUE, dry_run = FALSE, dir = dir, now = now,
+          keep = keep, indexes = FALSE)
+  list(libraries = length(libs), cache = length(entries), bytes = bytes)
+}
+
+#' Run in a subprocess (`clean_up_command()`): print `clean_up()` as JSON.
+clean_up_main <- function(dir, keep, dry_run, now = Sys.time()) {
+  cat(jsonlite::toJSON(clean_up(dir, keep = keep, dry_run = dry_run, now = as.POSIXct(now)),
+                       auto_unbox = TRUE, digits = NA))
+  invisible(NULL)
+}
+
+#' The command that runs `clean_up()` for `dir`, keeping `keep`, like
+#' `disk_use_command()`. `now` (seconds since the epoch) is the time the
+#' rule is judged at: the deletion passes the preview's, so a library that
+#' turns 30 days old between the two isn't deleted unseen.
+clean_up_command <- function(dir = cache_dir(), keep = character(), dry_run = TRUE,
+                             now = as.numeric(Sys.time())) {
+  rscript <- file.path(R.home("bin"), "Rscript")
+  code <- paste0("local({library(ember); ember:::clean_up_main(", deparse(dir), ", ",
+                 paste(deparse(as.character(keep)), collapse = ""), ", ",
+                 deparse(isTRUE(dry_run)), ", ", format(as.numeric(now), digits = 17), ")})")
   env <- c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep),
            R_LIBS_USER = "", R_LIBS_SITE = "")
   list(command = rscript, args = c("--vanilla", "-e", code), env = env)

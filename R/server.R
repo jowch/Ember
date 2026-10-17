@@ -827,6 +827,30 @@ on_run <- function(server, cl, hub, req) {
   flush_clients(server, hub)
 }
 
+#' Run `cmd` (a `list(command, args, env)`) in a subprocess and call
+#' `answer()` once it exits: with `ok(<its JSON output>)`, or with
+#' `list(error = <stderr, else failure>)` when it fails or `ok()` returns
+#' NULL. Polled with `later`, so the server never blocks. Both pipes are
+#' drained while it runs, so a child that writes more than a pipe buffer
+#' can't block on a full stderr.
+answer_from_subprocess <- function(cmd, answer, ok, failure) {
+  proc <- tryCatch(job_process(cmd, stderr = "|"), error = function(e) e)
+  if (inherits(proc, "error")) return(answer(list(error = conditionMessage(proc))))
+  out <- ""; err <- ""
+  poll <- function() {
+    out <<- paste0(out, tryCatch(proc$read_output(), error = function(e) ""))
+    err <<- paste0(err, tryCatch(proc$read_error(), error = function(e) ""))
+    if (proc$is_alive()) return(later::later(poll, 0.1))
+    out <<- paste0(out, tryCatch(proc$read_all_output(), error = function(e) ""))
+    err <<- paste0(err, tryCatch(proc$read_all_error(), error = function(e) ""))
+    parsed <- tryCatch(jsonlite::fromJSON(out), error = function(e) NULL)
+    message <- if (identical(proc$get_exit_status(), 0L) && is.list(parsed)) ok(parsed)
+    answer(message %||% list(error = if (nzchar(err)) err else failure))
+  }
+  later::later(poll, 0.1)
+  invisible(NULL)
+}
+
 #' The request table. Every row the frontend sends (Editor.js, Cell.js,
 #' CellInput.js, PlutoConnection.js, LiveDocsTab.js, ...), what it does here:
 #'
@@ -860,6 +884,7 @@ on_run <- function(server, cl, hub, req) {
 #' | ember_set_package_source       | {name, source}: edit_notebook(set_package_source()); reply {ok} or {error}; flush |
 #' | ember_remove_package_source    | {name}: edit_notebook(remove_package_source()); reply {ok} or {error}; flush |
 #' | ember_disk_use                 | {}: measure disk use of the notebook's cache dir in a subprocess (disk_use()); reply {libraries, cache, indexes, exact} or {error} when it exits (#38) |
+#' | ember_clean_up                 | {dry_run, as_of}: clean_up() of the notebook's cache dir in a subprocess, keeping open notebooks' libraries; dry_run (default true) only counts; a deletion is judged at the preview's as_of. Reply {libraries, cache, bytes, dry_run, as_of} or {error} when it exits; refused when read-only (#128) |
 #' | ember_move_notebook            | {name, folder}: notebook_target_path() + move_notebook(); reply {path} or {error}; flush |
 #' | ember_start_page               | {}: reply start_page_reply() -- start_dir, new_name, open and recent notebooks. No hub |
 #' | ember_new_notebook             | {name, folder}: notebook_target_path() + new_notebook() + host_notebook(owned = TRUE); reply {url} or {error}. No hub |
@@ -1137,33 +1162,45 @@ handlers <- list(
   #' The Packages tab's disk use line (#38): `disk_use()` of the
   #' notebook's cache dir, in a subprocess (`disk_use_command()`), since
   #' walking a large cache can take seconds and the server never blocks.
-  #' Polled with `later` until it exits; the reply comes then, to the
-  #' caller only. Nothing is deleted: the tab only reports.
+  #' The reply comes when it exits, to the caller only. Nothing is
+  #' deleted: this only reports.
   ember_disk_use = function(server, cl, hub, req) {
     if (is.null(hub)) return(invisible(NULL))
-    cmd <- disk_use_command(hub$nb$state$options$cache %||% cache_dir())
-    proc <- tryCatch(job_process(cmd, stderr = "|"), error = function(e) e)
-    answer <- function(message) send(cl, reply_message(req, "ember_disk_use", message))
-    if (inherits(proc, "error")) return(answer(list(error = conditionMessage(proc))))
-    out <- ""; err <- ""
-    poll <- function() {
-      # Both pipes are drained while it runs, so a child that writes more
-      # than a pipe buffer can't block on a full stderr.
-      out <<- paste0(out, tryCatch(proc$read_output(), error = function(e) ""))
-      err <<- paste0(err, tryCatch(proc$read_error(), error = function(e) ""))
-      if (proc$is_alive()) return(later::later(poll, 0.1))
-      out <<- paste0(out, tryCatch(proc$read_all_output(), error = function(e) ""))
-      err <<- paste0(err, tryCatch(proc$read_all_error(), error = function(e) ""))
-      use <- tryCatch(jsonlite::fromJSON(out), error = function(e) NULL)
-      if (identical(proc$get_exit_status(), 0L) && is.list(use) && !is.null(use$cache)) {
-        answer(list(libraries = use$libraries, cache = use$cache, indexes = use$indexes,
-                    exact = isTRUE(use$exact)))
-      } else {
-        answer(list(error = if (nzchar(err)) err else "could not measure disk use"))
-      }
-    }
-    later::later(poll, 0.1)
-    invisible(NULL)
+    answer_from_subprocess(disk_use_command(hub$nb$state$options$cache %||% cache_dir()),
+      function(message) send(cl, reply_message(req, "ember_disk_use", message)),
+      function(use) if (!is.null(use$cache))
+        list(libraries = use$libraries, cache = use$cache, indexes = use$indexes,
+             exact = isTRUE(use$exact)),
+      "could not measure disk use")
+  },
+
+  #' The Packages tab's clean-up button (#128): `clean_up()` of the
+  #' notebook's cache dir in a subprocess, keeping every library an open
+  #' notebook in this process holds. `dry_run` (the default) only counts:
+  #' the tab shows that and asks before it sends `dry_run = false`.
+  #' Refused for a read-only notebook, like every other edit from the tab.
+  ember_clean_up = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    answer <- function(message) send(cl, reply_message(req, "ember_clean_up", message))
+    if (isTRUE(notebook_snapshot(hub$nb)$read_only))
+      return(answer(list(error = "read-only notebook")))
+    sync_active_libraries()
+    dry_run <- !identical(req$body$dry_run, FALSE)
+    # The deletion is judged at the preview's time (`as_of`, which the
+    # preview's reply carries), never later, so it deletes nothing the
+    # preview didn't count for having aged since.
+    now <- as.numeric(Sys.time())
+    as_of <- req$body$as_of
+    if (!dry_run && is.numeric(as_of) && length(as_of) == 1L && is.finite(as_of))
+      now <- min(as_of, now)
+    answer_from_subprocess(
+      clean_up_command(hub$nb$state$options$cache %||% cache_dir(),
+                       keep = active_libraries$paths, dry_run = dry_run, now = now),
+      answer,
+      function(done) if (!is.null(done$cache))
+        list(libraries = done$libraries, cache = done$cache, bytes = done$bytes,
+             dry_run = dry_run, as_of = now),
+      "could not clean up")
   },
 
   get_all_notebooks = function(server, cl, hub, req) {
