@@ -2525,7 +2525,11 @@ be; Figtree 12 px, weight 500, a 12 px icon, pill, padding
 - "Not run yet": a circle icon, panel background, line border, muted text,
   no output. Shown when the cell has never run, isn't queued or running,
   isn't blank, isn't off, isn't text, and the page isn't in safe preview
-  (piece 5's banner says it once).
+  (piece 5's banner says it once). In safe preview such a cell keeps the
+  chip's space, unseen and hidden from screen readers, so the first run
+  doesn't push every unrun cell down by a chip at once (#139). The same
+  unseen chip holds the space while a cell's first run is on its way, so
+  its code moves once, when the output lands (#52).
 - "Stale · `x` changed": a clock icon, `#f5ecd6` background, `#e6d3a3`
   border, `#6f5210` text (dark `#352d1b`, `#58492a`, `#dcb35a`). The old
   output is greyscale at 0.32 opacity on a wash (`--ember-wash`) joined to
