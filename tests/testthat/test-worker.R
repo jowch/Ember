@@ -1640,6 +1640,50 @@ test_that("a value with a knit_print() method shows as its HTML: registered by a
   expect_false(any(vapply(r$console, function(e) identical(e$kind, "stdout"), logical(1))))
 })
 
+test_that("an HTML output whose print() text is its source or empty gets the HTML's text as its text form (#157)", {
+  skip_if_not_installed("knitr")
+  skip_if_not_installed("htmltools")
+  h <- worker_harness(extra_libs = unique(dirname(c(find.package("knitr"), find.package("htmltools")))))
+  on.exit(h$close())
+
+  # As gt: print() gives the HTML source, CSS first. The text form is the
+  # table's text, a row per line and its cells split by tabs.
+  src <- paste0('<div id="t"><style>#t .x { color: red; }</style><table><caption>Fits &amp; tests</caption>',
+                '<tr><th>term</th><th>p</th></tr>\n<tr>\n  <td>wt</td>\n  <td>&lt;0.001</td>\n</tr>',
+                '<tr><td>hp&#39;s</td><td>0.01</td></tr></table><script>var x = 1;</script></div>')
+  r <- run_and_wait(h, "a", 1L, paste(
+    sprintf('src <- %s', deparse(src)),
+    'print.ember_src <- function(x, ...) cat(src, "\\n")',
+    'knit_print.ember_src <- function(x, ...) knitr::asis_output(src)',
+    'structure(1, class = "ember_src")', sep = "\n"))
+  expect_identical(r$output$kind, "html")
+  expect_identical(r$output$text, "Fits & tests\nterm\tp\nwt\t<0.001\nhp's\t0.01")
+
+  # print() text that isn't HTML stays, as flextable's summary does.
+  r <- run_and_wait(h, "b", 2L, paste(
+    'print.ember_sum <- function(x, ...) cat("a table of 2 rows\\n")',
+    'knit_print.ember_sum <- function(x, ...) knitr::asis_output("<table><tr><td>1</td></tr></table>")',
+    'structure(1, class = "ember_sum")', sep = "\n"))
+  expect_identical(r$output$text, "a table of 2 rows")
+
+  # A code point UTF-8 can't hold is U+FFFD; the HTML view stays.
+  r <- run_and_wait(h, "d", 4L, 'htmltools::HTML("<p>a &#xD800; b &#1114112; c</p>")')
+  expect_identical(r$output$kind, "html")
+  expect_identical(r$output$text, "a \uFFFD b \uFFFD c")
+
+  # A long table is read only to its 60th row: the text form keeps 50 lines.
+  r <- run_and_wait(h, "e", 5L, paste0('htmltools::HTML(paste0("<table>", strrep("<tr><td>x</td><td>1</td></tr>", 1e5), "</table>"))'), timeout = 30)
+  expect_identical(r$output$kind, "html")
+  expect_identical(r$output$text, paste(rep("x\t1", 50), collapse = "\n"))
+  expect_true(r$output$truncated)
+
+  # HTML with no text at all, as a widget whose data is in a script: the
+  # text form says what it is rather than being empty.
+  r <- run_and_wait(h, "c", 6L, 'htmltools::tags$div(htmltools::tags$script("var data = [1, 2];"))')
+  expect_identical(r$output$kind, "html")
+  expect_identical(r$output$text, "<HTML output: no text form; it shows in the notebook's page>")
+})
+
 test_that("render_plot() redraws at the cell's own figure size and a new res; width/height pixels override (ui-3 65)", {
   h <- worker_harness()
   on.exit(h$close())
@@ -1673,6 +1717,28 @@ test_that("colours are on at boot and text_form never ends in a partial escape (
     'paste(rep("\\033[31mx\\033[39m", 2000), collapse = "")')
   expect_true(r2$output$truncated)
   expect_match(r2$output$text, "\033\\[0m$")
+})
+
+test_that("a value that prints many lines shows at once, and print() keeps every line (#160)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  # capture.output() is quadratic in the lines printed: 20,000 took 16.5 s,
+  # so 150,000 would take many minutes; the temp-file capture takes well
+  # under a second.
+  run_and_wait(h, "a", 1L, paste(
+    'print.many_lines <- function(x, ...) { cat(sprintf("line %d\\n", seq_len(attr(x, "n"))), sep = ""); invisible(x) }',
+    'x <- structure(list(), class = "many_lines", n = 150000)',
+    'y <- structure(list(), class = "many_lines", n = 50000)', "invisible()", sep = "\n"))
+  r <- run_and_wait(h, "b", 2L, "x", timeout = 30)
+  expect_identical(r$status, "ok")
+  expect_true(r$output$truncated)
+  expect_identical(strsplit(r$output$text, "\n")[[1]][c(1, 50)], c("line 1", "line 50\033[0m"))
+
+  r2 <- run_and_wait(h, "c", 3L, "print(y); invisible()", timeout = 30)
+  printed <- Filter(function(i) identical(i$kind, "stdout"), r2$console)
+  lines <- strsplit(paste(vapply(printed, `[[`, "", "text"), collapse = "\n"), "\n")[[1]]
+  expect_identical(length(lines), 50000L)
+  expect_identical(lines[c(1, 50000)], c("line 1", "line 50000"))
 })
 
 # ---- Editor services (ui-2.md, 4) ---------------------------------------------
