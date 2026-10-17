@@ -2101,6 +2101,15 @@ test_that("a message saying a package is needed offers to add it, and only then 
   expect_equal(packages_named_in(n, "Package 'glmnet' is not installed."), "glmnet")
   expect_equal(packages_named_in(n, "Package \u2018glmnet\u2019 and its friends are not installed here."), "glmnet")
   expect_equal(packages_named_in(n, "No package here and not now."), character())
+  # A word before "package" counts only when nothing is quoted ("optional" is on CRAN).
+  n$packages$indexes[["cran/2026-09-01"]]$index <- new_repo_index("cran/2026-09-01", "CRAN",
+    c(idx$name, "not", "here", "and", "optional", "ranger"), c(idx$version, rep("1", 5)),
+    c(idx$deps, rep(list(character()), 5)), c(idx$needs_compilation, rep(FALSE, 5)))
+  expect_equal(packages_named_in(n, "The optional package \"ranger\" is required."), "ranger")
+  expect_equal(packages_named_in(n, "The ranger package is required."), "ranger")
+  # rlang's message for check_installed(c("glmnet", "rlang"), version = c(NA, "99.0")):
+  # the worker names neither, and the quoted glmnet still gets its fix.
+  expect_equal(packages_named_in(n, "The packages \"glmnet\" and \"rlang\" (>= 99.0) are required."), "glmnet")
   # Translated: no match, no fix.
   expect_equal(packages_named_in(s, "Le paquet glmnet est requis."), character())
   # Already named in the code: adding it again would do nothing.

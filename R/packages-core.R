@@ -1460,8 +1460,8 @@ missing_package_error <- function(state, pkg) {
 #' A text match, so kept narrow. The message has the word "package", and a
 #' name counts only where the message marks it as one: quoted ('glmnet'),
 #' styled by cli (parsnip colours it), or just before "package" ("the
-#' textdata package"). Ordinary words that are also CRAN packages ("not",
-#' "here") are never marked so. Each name must also be in one of the
+#' textdata package", only when nothing is quoted or styled). Ordinary words
+#' that are also CRAN packages ("not", "here", "optional") are never marked so. Each name must also be in one of the
 #' notebook's loaded indexes, and not installed (the notebook's library or
 #' R's own), in the lock, or already wanted. A message R or a package
 #' translated doesn't match, and gets no fix.
@@ -1475,9 +1475,10 @@ packages_named_in <- function(state, msg) {
   styled <- marked(paste0("\033\\[[0-9;]*m", name, "\033\\["), msg)
   msg <- gsub("\033\\[[0-9;?]*[A-Za-z]", "", msg)
   if (!grepl("\\bpackages?\\b", msg, ignore.case = TRUE, perl = TRUE)) return(character())
-  words <- unique(c(styled,
-                    marked(paste0("(?:'|\"|`|\u2018|\u201c)", name, "(?:'|\"|`|\u2019|\u201d)"), msg),
-                    marked(paste0("(?<![A-Za-z0-9._])", name, "(?=\\s+(?i:packages?)\\b)"), msg)))
+  words <- unique(c(styled, marked(paste0("(?:'|\"|`|\u2018|\u201c)", name, "(?:'|\"|`|\u2019|\u201d)"), msg)))
+  # Only when nothing is quoted or styled: in "The optional package "ranger"", the
+  # quotes already say which word is the package ("optional" is one on CRAN too).
+  if (length(words) == 0) words <- marked(paste0("(?<![A-Za-z0-9._])", name, "(?=\\s+(?i:packages?)\\b)"), msg)
   p <- state$packages
   indexed <- unlist(lapply(p$indexes, function(s) if (identical(s$status, "ready")) s$index$name), use.names = FALSE)
   words <- intersect(words, indexed)

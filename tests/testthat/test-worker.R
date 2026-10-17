@@ -186,12 +186,12 @@ test_that("run_cell(): rlang's check_installed() error names its packages, as a 
   expect_identical(r$status, "error")
   expect_identical(r$error$package, c("emberabsent1", "emberabsent2"))
 
-  # One with a version may be installed and only too old: not named, so its
-  # own message stays (check_installed("rlang (>= 99.0)")).
+  # One with a version may be installed and only too old: none is named, so the
+  # whole message stays (check_installed("rlang (>= 99.0)")).
   r <- run_and_wait(h, "a", 2L, paste0('stop(structure(class = c("rlib_error_package_not_found", "rlib_error", ',
                                        '"error", "condition"), list(message = "The package \\"stats\\" (>= 99.0) is required.", ',
                                        'call = NULL, pkg = c("stats", "emberabsent1"), version = c("99.0", NA))))'))
-  expect_identical(r$error$package, "emberabsent1")
+  expect_null(r$error$package)
   r <- run_and_wait(h, "a", 3L, paste0('stop(structure(class = c("rlib_error_package_not_found", "rlib_error", ',
                                        '"error", "condition"), list(message = "The package \\"stats\\" (>= 99.0) is required.", ',
                                        'call = NULL, pkg = "stats", version = "99.0")))'))

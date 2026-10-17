@@ -538,14 +538,13 @@ run_cell <- function(msg) {
                      # server can recognise a missing package without matching
                      # the (locale-translated) message text. rlang's
                      # check_installed() names its packages the same way (#184),
-                     # but one with a version (`"rlang (>= 99.0)"`) may be
-                     # installed and only too old, so only those without.
+                     # unless one has a version (`"rlang (>= 99.0)"`): that one
+                     # may be installed and only too old, so the error stays as
+                     # it is, its message whole (the server can still offer a
+                     # fix for a quoted name in it that isn't installed).
                      package = if (inherits(e, "packageNotFoundError")) e$package
-                               else if (inherits(e, "rlib_error_package_not_found")) {
-                                 pkg <- as.character(e$pkg)
-                                 if (!is.null(e$version)) pkg <- pkg[is.na(e$version)]
-                                 if (length(pkg)) pkg
-                               },
+                               else if (inherits(e, "rlib_error_package_not_found") &&
+                                        (is.null(e$version) || all(is.na(e$version)))) as.character(e$pkg),
                      # Which text line (`inline_spans()$line` of the cell's
                      # analysed code) failed, for a text cell only.
                      span = if (is_text) at else NULL,
