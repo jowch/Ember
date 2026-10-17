@@ -180,6 +180,12 @@ when the notebook restarts. A process a cell starts in a session of its own
 (processx, callr) is outside the group and outlives both a restart and a
 killed server.
 
+A stopped worker is killed, so R never removes its temp folder itself. The
+worker names its `tempdir()` in its hello, and the server removes that
+folder once the worker has stopped (closed, restarted, failed or crashed),
+#166. A worker whose server was killed outright leaves its folder to the
+OS's temp cleaner.
+
 The server runs two ways. From an interactive R session, the R API starts
 it as a background process (processx) and returns a handle to get its URL and
 stop it; running httpuv inside the caller's session would freeze the UI

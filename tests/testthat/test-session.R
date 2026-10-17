@@ -796,3 +796,39 @@ test_that("what a busy cell started with system() ends when the server is killed
   expect_true(wait_pid_gone(pids[1]))  # the worker
   expect_true(wait_pid_gone(pids[2]))  # what its cell started
 })
+
+test_that("closing or restarting a notebook removes the stopped worker's temp folder (#166)", {
+  cells <- list(S = cell(""), A = cell("writeLines('x', file.path(tempdir(), 'kept.txt')); tempdir()"))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  closed <- FALSE
+  on.exit(if (!closed) close_notebook(nb), add = TRUE)
+  worker_tmp <- function() {
+    run_cells(nb, "A", wait = TRUE, timeout = 20)
+    eval(parse(text = sub("^\\[1\\] ", "", snap_view(notebook_snapshot(nb), "A")$output$text)))
+  }
+
+  first <- worker_tmp()
+  expect_true(file.exists(file.path(first, "kept.txt")))
+  restart_notebook(nb)
+  expect_false(dir.exists(first))
+
+  second <- worker_tmp()
+  expect_false(identical(second, first))
+  expect_true(dir.exists(second))
+  close_notebook(nb)
+  closed <- TRUE
+  expect_false(dir.exists(second))
+})
+
+test_that("worker_tempdir() keeps only an existing R temp folder that isn't the server's own (#166)", {
+  d <- file.path(tempfile("ember-"), "RtmpAbC123")
+  dir.create(d, recursive = TRUE)
+  on.exit(unlink(dirname(d), recursive = TRUE), add = TRUE)
+  expect_identical(worker_tempdir(d), d)
+  expect_null(worker_tempdir(tempdir()))
+  expect_null(worker_tempdir(dirname(d)))
+  expect_null(worker_tempdir(file.path(dirname(d), "RtmpMissing")))
+  expect_null(worker_tempdir(NULL))
+  expect_null(worker_tempdir(c(d, d)))
+})
