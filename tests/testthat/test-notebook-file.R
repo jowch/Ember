@@ -287,6 +287,27 @@ test_that("markers_without_ids get ids from new_id and note bad_id", {
   expect_equal(sum(problem_kinds(file) == "bad_id"), 2)
 })
 
+test_that("short ids are kept; an id outside the safe set gets a fresh one, under which the footer reads it (#82)", {
+  text <- paste("### An Ember notebook ###", "# /// environment", "# ///", "",
+                "# %% id=B", "b <- 1", "", "# %% id=cell:1", "a <- b", "",
+                "# %% id=cell:1", "c <- 3", "",
+                "# /// cell order", "# cell:1 folded", "# B", "# ///", "",
+                "# /// learned definitions", "# cell:1 a", "# ///", "", sep = "\n")
+  file <- parse_notebook(text, new_id = new_id_seq("fresh"), version = "0.1.0")
+  # The second cell:1 is a duplicate of the first, which keeps the footer's lines.
+  expect_equal(names(file$cells), c("fresh-001", "fresh-002", "B"))
+  expect_true(file$cells[["fresh-001"]]$folded)
+  expect_identical(file$cells[["fresh-001"]]$code, "a <- b")
+  expect_identical(file$learned, list(`fresh-001` = "a"))
+  expect_equal(problem_detail(file, "bad_id"), "cell:1")
+  expect_equal(problem_detail(file, "duplicate_id"), "cell:1")
+  expect_false("unknown_order_id" %in% problem_kinds(file))
+  expect_equal(problem_detail(file, "cell_missing_from_order"), "fresh-002")
+  out <- format_notebook(file)
+  expect_match(out, "# %% id=B\n", fixed = TRUE)
+  expect_false(grepl("cell:1", out, fixed = TRUE))
+})
+
 test_that("duplicate_ids_repaired gives the second cell a new id; the first keeps its id", {
   text <- paste("# %% id=x", "a <- 1", "", "# %% id=x", "b <- 2", "", sep = "\n")
   gen <- new_id_seq("fresh")

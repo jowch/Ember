@@ -163,6 +163,9 @@ fetch_index_main <- function(key, url, path) {
     }, error = function(e) FALSE, warning = function(w) FALSE))
     if (ok) break
   }
+  if (!ok && index_not_published(base)) {
+    stop("ember: ", key, " isn't published: ", url, " has no index for that date (404)", call. = FALSE)
+  }
   if (!ok) stop("ember: could not fetch the index for ", key, " from ", url, call. = FALSE)
 
   idx <- read_repo_index(tmp_pkgs, key, index_label_of_key(key))
@@ -170,6 +173,19 @@ fetch_index_main <- function(key, url, path) {
   saveRDS(idx, tmp_rds)
   if (!file.rename(tmp_rds, path)) unlink(tmp_rds)
   invisible(NULL)
+}
+
+#' Whether the repository answered that it has no index at `base` (a dated
+#' `.../src/contrib/` URL): HTTP 404, or no such folder for a `file://` one.
+#' Package Manager says 404 for a date whose snapshot it hasn't published
+#' yet, which is most of a new day east of UTC (#162); `fetch_index_main()`
+#' says so in its message, and the shell tells the core
+#' (`ev_index_failed()`'s `unpublished`). Anything else (offline, a proxy
+#' refusing, a 500) is `FALSE`: those say nothing about the date.
+index_not_published <- function(base) {
+  if (startsWith(base, "file://")) return(!dir.exists(sub("^file://", "", base)))
+  status <- tryCatch(attr(curlGetHeaders(paste0(base, "PACKAGES.gz")), "status"), error = function(e) NA)
+  identical(as.integer(status), 404L)
 }
 
 #' The command that downloads and parses the index for `key`, as a job
@@ -701,8 +717,13 @@ index_job_key <- function(key, url, cache) paste(key, url, cache, sep = "\u0001"
 #' only the child itself, and an install's child (the installer's Rscript)
 #' has children of its own (`R CMD INSTALL`, the compiler) in its session.
 #' So on Unix the command runs under `sh`, which passes a SIGTERM on to its
-#' whole process group, the job's tree. On Windows the supervisor ends the
-#' child; whether its children go too is not checked there yet.
+#' whole process group, the job's tree. Windows needs no wrapper: R's
+#' `system()` and `system2()` start each child in a job object of their own
+#' that ends it once the R process that started it ends. So when processx's
+#' job object (`cleanup = TRUE`), the supervisor or `$kill()` ends the
+#' job's process, `R CMD INSTALL` and the compiler go too. That covers
+#' children started through `system()`/`system2()` (renv's `R CMD INSTALL`)
+#' or processx; one a job starts some other way isn't covered (#148).
 #'
 #' Ending an install halfway is safe: a library is built in a staging
 #' folder and renamed into place only once complete (docs/packages.md), and

@@ -893,6 +893,27 @@ test_that("a stale restart-offer timer does nothing (59)", {
   expect_identical(r3$state, at_clock(r2$state, 11))
 })
 
+test_that("an interrupt that couldn't be delivered offers the restart at once and says so (#48)", {
+  s <- fake_state(list(S = cell(""), A = cell("Sys.sleep(30)")))
+  r <- boot(s, "A")
+  tok <- r$state$worker$running$token
+  r2 <- drive(r$state, ev_interrupt(at(10)))
+  r3 <- drive(r2$state, wk_interrupt_failed(1, at(10.1)))
+  expect_true(r3$state$worker$restart_offered)
+  expect_true(r3$state$worker$interrupt$failed)
+  expect_true(snapshot_of(r3$state)$interrupt_failed)
+
+  # From an older worker, or once the run is over, it does nothing.
+  expect_identical(drive(r2$state, wk_interrupt_failed(2, at(10.1)))$state, at_clock(r2$state, 10.1))
+  r4 <- drive(r2$state, wk_done(1, tok, report(status = "interrupted"), at(10.1)))
+  expect_identical(drive(r4$state, wk_interrupt_failed(1, at(10.2)))$state, at_clock(r4$state, 10.2))
+
+  # The run ending clears it with the offer.
+  r5 <- drive(r3$state, wk_done(1, tok, report(status = "interrupted"), at(12)))
+  expect_false(r5$state$worker$restart_offered)
+  expect_false(snapshot_of(r5$state)$interrupt_failed)
+})
+
 test_that("restart leaves every cell not run (60)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1")))
   r <- boot(s, "A")

@@ -177,6 +177,36 @@ test_that("index_failed keeps the lock and adds index_unavailable; same wanted s
   expect_true("index_unavailable" %in% r3$state$packages$problems$kind)
 })
 
+test_that("a date not published yet moves back a day while nothing is locked, and resolves there (#162)", {
+  s <- pkg_state(list(A = cell("library(dplyr)")), snapshot = "2026-10-01")
+  r <- drive(s, ev_open(at(1)))
+  expect_equal(find_effect(r, "fetch_index")$key, repo_key("cran", "2026-10-01"))
+  r <- drive(r$state, ev_index_failed(repo_key("cran", "2026-10-01"), "cran/2026-10-01 isn't published",
+                                      at(2), unpublished = TRUE))
+  expect_equal(r$state$file$header$snapshot, "2026-09-30")
+  expect_null(r$state$packages$indexes[[repo_key("cran", "2026-10-01")]])
+  expect_equal(find_effect(r, "fetch_index")$key, repo_key("cran", "2026-09-30"))
+  expect_equal(nrow(r$state$packages$problems), 0)
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(3)))
+  expect_setequal(r$state$file$lock$entries$name, c("dplyr", "cli", "glue"))
+})
+
+test_that("an unpublished date stays, with the failure shown, when the lock has packages or the fetch just failed (#162)", {
+  key <- repo_key("cran", "2026-10-01")
+  locked <- new_lock("cli", "3.6.3", "CRAN")
+  s <- pkg_state(list(A = cell("library(dplyr)")), snapshot = "2026-10-01", lock = locked)
+  r <- drive(s, ev_open(at(1)), ev_index_failed(key, "cran/2026-10-01 isn't published", at(2), unpublished = TRUE))
+  expect_equal(r$state$file$header$snapshot, "2026-10-01")
+  expect_true("index_unavailable" %in% r$state$packages$problems$kind)
+
+  # Offline, or anything but a 404 for a recent date: nothing says the date
+  # is the problem, so it stays.
+  s <- pkg_state(list(A = cell("library(dplyr)")), snapshot = "2026-10-01")
+  r <- drive(s, ev_open(at(1)), ev_index_failed(key, "could not resolve host", at(2)))
+  expect_equal(r$state$file$header$snapshot, "2026-10-01")
+  expect_true("index_unavailable" %in% r$state$packages$problems$kind)
+})
+
 # ---- Looking at and installing the library ------------------------------------
 
 test_that("in safe preview a missing library is checked but never installed (34)", {

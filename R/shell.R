@@ -421,8 +421,11 @@ run_effect <- function(nb, fx) {
     },
     interrupt = {
       if (identical(nb$proc_gen, fx$gen) && !is.null(nb$proc)) {
-        tryCatch(nb$proc$interrupt(), error = function(e) NULL)
+        sent <- interrupt_worker(nb$proc)
         note_worker_io(nb)
+        if (!sent && isTRUE(tryCatch(nb$proc$is_alive(), error = function(e) FALSE))) {
+          enqueue(nb, wk_interrupt_failed(fx$gen, at = Sys.time()))
+        }
       }
     },
     send = {
@@ -510,7 +513,9 @@ run_effect <- function(nb, fx) {
             } else if (identical(status, 0L)) {
               ev_index_failed(fx$key, "index fetch produced no index", at = Sys.time())
             } else {
-              ev_index_failed(fx$key, fetch_error_message(output), at = Sys.time())
+              msg <- fetch_error_message(output)
+              ev_index_failed(fx$key, msg, at = Sys.time(),
+                              unpublished = provisional && grepl("has no index for that date (404)", msg, fixed = TRUE))
             }
           })
       }
@@ -699,6 +704,7 @@ start_worker_process <- function(nb, fx) {
   env <- c("current",
            R_LIBS_USER = lib, R_LIBS = "", R_LIBS_SITE = "",
            EMBER_WORKER = system.file("worker.R", package = "ember"),
+           EMBER_DLL = ember_dll_path(),
            EMBER_SECRET = nb$secret)
   wd <- fx$wd
   if (is.null(wd) || !nzchar(wd)) wd <- getwd()
@@ -1167,6 +1173,26 @@ as_display <- function(b) {
 #' default, so workers inherit a working interrupt. C code in src/
 #' (the spike's sigreset.c). Harmless to call more than once.
 reset_sigint <- function() invisible(.Call(C_reset_sigint))
+
+#' Interrupt a worker's running cell. `TRUE` if the interrupt was
+#' delivered, as far as this process can tell. On Unix that's SIGINT to the
+#' worker's own process. On Windows it's the worker's interrupt event
+#' (src/interrupt.c, #48), not processx's `interrupt()`: that one needs a
+#' console the worker may not have, and says it sent an interrupt it lost.
+interrupt_worker <- function(proc) {
+  if (.Platform$OS.type == "windows") {
+    return(isTRUE(tryCatch(.Call(C_interrupt_send, proc$get_pid()), error = function(e) FALSE)))
+  }
+  isTRUE(tryCatch(proc$interrupt(), error = function(e) FALSE))
+}
+
+#' The path of this package's DLL, which a worker on Windows loads for its
+#' interrupt event (worker.R's `listen_for_interrupts()`). The worker doesn't
+#' load the package itself: only this DLL, by path.
+ember_dll_path <- function() {
+  dll <- getLoadedDLLs()[["ember"]]
+  if (is.null(dll)) "" else dll[["path"]]
+}
 
 #' Atomic write: write to a temp file in the same folder, then rename.
 #' Returns `FALSE`, leaving `path` untouched, if either step fails (e.g.

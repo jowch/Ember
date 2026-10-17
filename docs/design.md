@@ -67,6 +67,11 @@ repository depends on them.
   cell runs its stale ancestors first, and so does running a cell whose
   ancestor was edited: every ancestor between the edited one and the cell
   run runs too, since each goes stale once the edited one runs (#169).
+  The dependents autorun queues follow the same rule: a dependent that
+  also reads a stale cell (one a delete, a rename or an interrupt left
+  stale) runs after it, not with its stale value (#176). Autorun doesn't
+  restart an ancestor that failed or was interrupted while it ran, so a
+  dependent that needs one ends as an error until that ancestor is run.
   Pluto's safe preview shows editing without running is workable.
 - **Open without running.** Running a cell runs its unrun ancestors first.
   "Run all" is one click. Long simulations don't start just because a
@@ -169,11 +174,12 @@ pieces rather than all at once, so a big output can't stall it.
 
 Workers and jobs (installs, index fetches) end when the server does. They
 start with processx's supervisor, a separate process that sends them SIGTERM
-once the server is gone, even after a SIGKILL (#141, #147). On Unix a job
-also takes its own children with it (docs/packages.md); on Windows that isn't
-checked yet (#148). For a worker, a small `sh` outside its process group
-waits on a pipe from the server and ends the group once the server is gone
-(#150), since the worker itself can't run under a wrapper: the server
+once the server is gone, even after a SIGKILL (#141, #147). A job also takes
+its own children with it: on Unix through `sh`; on Windows because R's
+`system()` ends a child it started once the R that started it ends
+(docs/packages.md, #148). For a worker, a small `sh` outside its process
+group waits on a pipe from the server and ends the group once the server is
+gone (#150), since the worker itself can't run under a wrapper: the server
 interrupts a cell with SIGINT to the worker's own process. So what a cell
 starts with `system()` or a fork ends with the server, as it already did
 when the notebook restarts. A process a cell starts in a session of its own
@@ -372,8 +378,12 @@ name, the cell shows a note: "Changed `cnt` in place, which another cell
 defines, so the cells that read it don't rerun." Taking the fingerprint
 forces no promise and calls no active binding. Namespaces are skipped, and
 so is any one environment with more than 1,000 bindings; the others are
-still checked, up to 10,000 bindings a run. data.table's in-place changes
-aren't detected yet (#172).
+still checked, up to 10,000 bindings a run. A data.table another cell
+defines is fingerprinted by its shape: column names, each column's
+address, its spare column slots and its key. So `dt[, z := x * 2]`,
+`setnames()`, `setkey()`, `setorder()` and dropping a column are noted. A
+write to some rows of an existing column (`dt[i, x := 0]`) keeps the
+column where it was, and isn't (#172).
 
 ### Methods
 
@@ -525,7 +535,13 @@ how a cell hides its output (Pluto's trailing `;` has no meaning in R).
 `<<-` and `assign()` stay hidden, as does an assigned function (its
 printed form is the cell's code again) or a plain environment (its
 printed form is an address; an R6 object, which has a class, still
-prints). Earlier visible values, `print()`,
+prints). A data.table `:=` or `set*()` call shows nothing, as at the R
+console, although R returns the table visibly: data.table marks the table
+it returned, Ember reads the mark, and `dt[, z := 1][]` shows it (#185).
+The mark is cleared before each top-level expression, so one left by a
+`:=` that wasn't shown (`invisible(dt[, z := 1])`, or a helper's) doesn't
+blank a later cell that shows the table, as it would at the console.
+Earlier visible values, `print()`,
 `cat()`, messages and warnings go to a console area below the output, in
 order. A plot drawn with no visible value after it is the output. R
 Markdown instead shows every visible value inline.
@@ -584,8 +600,14 @@ these only for each cell's current output and drops them when the cell
 reruns or is deleted, so a removed variable isn't kept alive by its display.
 
 Interrupts go to the worker as SIGINT on macOS and Linux (processx). Windows
-has no SIGINT; processx sends CTRL+C through a helper (to verify in the
-spike). Compiled code often ignores interrupts, so "restart worker" is always
+has no SIGINT, and processx's CTRL+C helper needs the worker to have a
+console, which it lacks whenever the server does: the interrupt was then
+lost, while processx said it sent it. So on Windows the worker waits on a
+named event of its own, on a thread of its own, and the server sets it; the
+thread sets R's `UserBreak`, as R's own CTRL+C handler does, and R raises
+the interrupt as for CTRL+C (src/interrupt.c, #48). If the server can't set
+the event, it offers the restart at once and says the interrupt couldn't
+reach R. Compiled code often ignores interrupts, so "restart worker" is always
 available, as in Pluto. If a cell hasn't stopped a few seconds after an
 interrupt, the UI offers the restart and lists the cells that will need to
 run again, as RStudio's "Terminate R" does. An interrupt isn't lost: R acts
@@ -1199,7 +1221,9 @@ Julia-shaped parts of the state (`nbpkg`, and the package log in
 change, and Endeavor's per-backend page adapter handles them. Notebook IDs
 are full 36-character UUIDs, and so are the cell IDs Ember generates. A
 hand-written file may use short cell IDs (1 to 64 of `[A-Za-z0-9._-]`);
-Ember keeps them.
+Ember keeps them, and Endeavor's tools take them. An ID outside that set
+(`cell:1`) gets a fresh UUID when the file is read, with its lines in the
+footer read under the new ID, and the next save writes that UUID (#82).
 
 Two Endeavor documents describe Pluto's behaviour where Ember's differs, and
 need updating there: `restart` "then every cell runs" (Ember leaves cells not
@@ -1211,8 +1235,11 @@ run), and the snapshot has no stale state.
    (2026-09-29; results are folded into the sections above): server and
    worker, the frontend stub, rig, rv against renv, and package loading.
    Since then the URL secret and rich outputs in the browser are built, and
-   the server and worker run on Linux in CI. Still to run: the server and
-   worker, and rig, on Windows (#48, #49). Whether any package overwrites a
+   the server and worker run on Linux in CI. The server and worker were run
+   on Windows 10 in 2026-10, started both with a console and without one:
+   interrupts needed a way of their own there (#48, see [Running
+   cells](#running-cells)).
+   Still to run: rig on Windows (#49). Whether any package overwrites a
    setting the notebook already set (#61) was run on Linux in 2026-10: see
    [Global settings](#running-cells).
    - Server and worker: httpuv serving the UI while a worker runs a long

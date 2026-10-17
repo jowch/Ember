@@ -298,21 +298,33 @@ test_that("job_leave by the last subscriber kills the process (63)", {
 
 #' A job command that starts a grandchild (`sleep`, in the job's process
 #' group, as `R CMD INSTALL` is for an install), prints its pid, and waits.
+#' Windows has no `sleep` or `$!`: there the grandchild is another Rscript
+#' that prints its own pid, started by `system2()` and waited for, as
+#' `install.packages()` waits for `R CMD INSTALL` (#148).
 grandchild_cmd <- function() {
-  list(command = file.path(R.home("bin"), "Rscript"),
-       args = c("--vanilla", "-e", "system('sleep 300 & echo $!'); Sys.sleep(300)"),
-       env = "current")
+  rscript <- file.path(R.home("bin"), "Rscript")
+  code <- if (.Platform$OS.type == "windows") {
+    sprintf("system2('%s', c('--vanilla', '-e', shQuote('cat(Sys.getpid(), fill = TRUE); flush(stdout()); Sys.sleep(300)')))",
+            normalizePath(rscript, winslash = "/", mustWork = FALSE))
+  } else {
+    "system('sleep 300 & echo $!'); Sys.sleep(300)"
+  }
+  list(command = rscript, args = c("--vanilla", "-e", code), env = "current")
 }
 
 test_that("job_leave by the last subscriber kills the job's children too (#141)", {
-  skip_on_os("windows")
   key <- paste0("job-kill-tree-", uuid())
   nb <- fake_sub()
   job_start(key, grandchild_cmd(), nb, make_progress = function(line) NULL,
            make_done = function(status, output) NULL)
   proc <- jobs[[key]]$proc
-  proc$poll_io(30000)
-  pid <- as.integer(proc$read_output_lines()[1])
+  # On Windows a poll can say ready before a whole line has come.
+  line <- character()
+  while (length(line) == 0 && proc$is_alive()) {
+    proc$poll_io(30000)
+    line <- proc$read_output_lines()
+  }
+  pid <- as.integer(line[1])
   expect_true(pid_running(pid))
 
   job_leave(key, nb)
@@ -321,14 +333,14 @@ test_that("job_leave by the last subscriber kills the job's children too (#141)"
 })
 
 test_that("a job and its children end when the server that started it is killed (#141)", {
-  skip_on_os("windows")
   use_installed_ember()
   cmd <- grandchild_cmd()
   code <- paste0(
     "library(ember); cmd <- ", paste(deparse(cmd), collapse = " "), "; ",
     "ember:::job_start('k', cmd, new.env(), function(line) NULL, function(status, output) NULL); ",
-    "p <- ember:::jobs[['k']]$proc; invisible(p$poll_io(30000)); ",
-    "cat(p$get_pid(), p$read_output_lines()[1], '\\n'); flush(stdout()); Sys.sleep(300)")
+    "p <- ember:::jobs[['k']]$proc; l <- character(); ",
+    "while (!length(l) && p$is_alive()) { invisible(p$poll_io(30000)); l <- p$read_output_lines() }; ",
+    "cat(p$get_pid(), l[1], '\\n'); flush(stdout()); Sys.sleep(300)")
   server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
                                   env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
                                   stdout = "|", stderr = "2>&1")
