@@ -670,6 +670,60 @@ test_that("[net] a notebook with library(S4Vectors) installs from Bioconductor o
                status$packages$version[row], fixed = TRUE)
 })
 
+test_that("[net] on macOS and Windows, a Bioconductor package Package Manager has no binary of installs Bioconductor's (#22)", {
+  # Package Manager's Bioconductor 3.23 has no macOS arm64 or Windows
+  # binary of SNPRelate 1.46.0, so it built from source: on a Mac without
+  # the Fortran runtime a package like that failed to link (`ld: library
+  # 'emutls_w' not found`). CI's runners have the compilers, so the source
+  # build would pass there too: the test checks where the package came from.
+  # Bioconductor's repository isn't dated: once a 3.23 point release moves
+  # SNPRelate past 1.46.0, its binary no longer matches the lock made at
+  # 2026-10-08 and this fails. Then pick another package and date.
+  skip_if_not(identical(Sys.getenv("EMBER_TEST_NETWORK"), "1") || identical(Sys.getenv("EMBER_TEST_BIOC_BINARIES"), "1"),
+             "set EMBER_TEST_NETWORK=1 or EMBER_TEST_BIOC_BINARIES=1 to run the opt-in network test")
+  skip_if(identical(os_kind(), "linux"), "Bioconductor's own binaries are for macOS and Windows")
+
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  dir <- tempfile("ember-nb-")
+  dir.create(dir, recursive = TRUE)
+  cells <- list(A = list(code = "library(SNPRelate)\npackageVersion(\"SNPRelate\")",
+                        kind = "code", folded = FALSE))
+  header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
+                       r_version = paste(R.version$major, R.version$minor, sep = "."),
+                       snapshot = "2026-10-08")
+  file <- new_notebook_file(
+    header = header, cells = cells, run_order = names(cells), learned = list(),
+    sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
+    lock = empty_lock(), extra_blocks = list(), format = ember_format)
+  path <- file.path(dir, "nb.R")
+  write_atomic(path, format_notebook(file))
+
+  started <- Sys.time()
+  nb <- open_notebook(path, repos = ember_repos(), cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  res <- run_cells(nb, wait = TRUE, timeout = 600)
+  expect_false(res$timed_out)
+
+  status <- package_status(nb)
+  expect_equal(status$library$status, "ready")
+  row <- status$packages$name == "SNPRelate"
+  expect_equal(status$packages$version[row], "1.46.0")
+  expect_equal(status$packages$status[row], "installed")
+  expect_match(snap_view(notebook_snapshot(nb), "A")$output$text, "1.46.0", fixed = TRUE)
+  # It came as a binary, and not Package Manager's, so Bioconductor's: a
+  # build on this machine would have been built today, after `started`.
+  # (renv's RemoteRepos can't say which repository: Bioconductor's Windows
+  # binaries carry RemoteUrl, RemoteRef and RemoteSha of their own, and
+  # renv then adds none.)
+  ppm <- read_available(repo_url(ember_repos(), repo_key("bioc", "2026-10-08", "3.23")), .Platform$pkgType)
+  expect_false(is.null(ppm))
+  expect_false("SNPRelate" %in% ppm[, "Package"])
+  built <- read.dcf(file.path(status$library$path, "SNPRelate", "DESCRIPTION"), fields = "Built")[1, 1]
+  built_at <- as.POSIXct(trimws(strsplit(built, ";", fixed = TRUE)[[1]][[3]]), tz = "UTC")
+  expect_lt(as.numeric(built_at), as.numeric(started))
+})
+
 # ---- 90: the empty-log regression, with the failing-installer fixture ------
 
 #' A notebook naming `brokenpkg`, already locked (no index needed: the

@@ -53,6 +53,9 @@ main <- function(plan_path) {
     unname(utils::getFromNamespace("renv_ppm_transform", "renv")(plan$repos[["CRAN"]])),
     error = function(e) NULL)
   repos <- ember:::ppm_binary_repos(plan$repos, cran_binary)
+  # Bioconductor's own binaries, for those Package Manager doesn't build
+  # on macOS and Windows (`bioc_binary_repos()`).
+  repos <- ember:::bioc_binary_repos(repos)
 
   # A package that builds from source needs a compiler. Checked before
   # renv downloads anything, so a missing one says what to install

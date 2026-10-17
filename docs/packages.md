@@ -296,6 +296,24 @@ not.
   that date's release) is the way out. A move whose index can't be
   fetched keeps the pin, shows a `bioc_move_failed` row, lets the old
   library install, and is proposed again on the next run.
+- **Bioconductor's own binaries on macOS and Windows (#22).** Package
+  Manager doesn't build every binary Bioconductor does. For 3.23 on macOS
+  arm64 it lacked 123 packages with code to compile that Bioconductor
+  builds (preprocessCore, affy, flowCore, csaw, ...), and about as many on
+  Intel Macs; on Windows, 10. Those built from source, and on a Mac
+  without the Fortran runtime preprocessCore failed to link (`ld: library
+  'emutls_w' not found`), so WGCNA didn't install. The installer adds
+  Bioconductor's own software repository for the pinned release
+  (`https://bioconductor.org/packages/3.23/bioc`) after Package Manager's
+  on macOS and Windows (`bioc_binary_repos()`). It isn't dated and holds
+  only each package's latest version in the release, but renv takes a
+  binary only at the locked version, so a package whose version has moved
+  on since the snapshot date builds from source as before. Bioconductor
+  rebuilds a binary when its dependencies change, so at the same version
+  the binary can be a later build than the one out at the snapshot date. At 2026-06-01,
+  2161 of 2324 versions still matched. Its name doesn't start with "BioC",
+  since renv reads binaries from no such repository but BioCsoft. The
+  compiler check counts its binaries too.
 
 Not built: asking before large downloads.
 
@@ -313,7 +331,9 @@ what was missing.
 
 - **Compiler, before renv.** When this machine has no compiler
   (`has_compiler()`: `xcode-select -p` on macOS, the `R CMD config CC`
-  compiler on the PATH elsewhere), the installer reads the source and
+  compiler on the PATH on Linux, and on the PATH `R CMD` builds with on
+  Windows, since only that PATH has Rtools, #49), the installer reads the
+  source and
   binary indexes and names the locked packages that have code to compile
   and no binary at their locked version (`source_builds()`). On Linux with
   Package Manager binaries this check is skipped: almost nothing builds from
@@ -341,11 +361,15 @@ what was missing.
   say why. When renv stops with "failed to install", the installer takes
   the packages it names, drops the dependents renv never built (those
   that need another failed package, from the source index:
-  `failed_builds()`), and asks which of the rest had no binary at their
-  locked version (`no_binary_packages()`: the binary index on macOS and
+  `failed_builds()`), and asks which of the CRAN packages among the rest
+  had no binary at their locked version (`no_binary_packages()`: the
+  binary index on macOS and
   Windows, Package Manager per package on Linux with its binaries; on
   Linux without them everything builds from source, so a failed build
-  says nothing about the date). Rows: `no_binary`, `detail` = the locked
+  says nothing about the date). A Bioconductor package isn't asked
+  about: its pin is a release built for this R, so the date isn't why,
+  and its row keeps the build's own error (#22). Rows: `no_binary`,
+  `detail` = the locked
   version; it replaces the row's `compile`, `configure` or `other` kind,
   not a missing compiler, system library, dependency or download. renv's
   `- [lifecycle]: dependency failed (cli, rlang)` is a `dependency` row

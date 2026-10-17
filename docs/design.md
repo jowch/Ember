@@ -948,6 +948,20 @@ must clear the flag (`xattr -dr com.apple.quarantine`). `capabilities()`
 without arguments warns about X11 on Macs without XQuartz; the worker doesn't
 call it.
 
+Measured with rig 0.11.0 user mode on Windows 10 (#49), from an account
+without admin rights: `rig add --user release` installs R into
+`%APPDATA%\rig\data\r\<version>`, and `rig add --user rtools` installs
+Rtools into `%APPDATA%\rig\data\rtools\<version>` and sets `RTOOLS45_HOME`
+for the user. Neither goes on the PATH. A copy of the R tree runs from its
+own `bin\Rscript.exe`, with PNG, Cairo and HTTPS working, and builds a
+package with compiled code from source. CRAN's installers are signed, but
+the files they install aren't, and rig's downloads carry no "downloaded
+from the internet" mark, so nothing asks before R first runs. Rtools' gcc
+is on the PATH only inside `R CMD` (R's Rcmd_environ), so the compiler
+check asks `R CMD` (install-checks.R's `has_compiler()`); it looked on the
+installer's own PATH, found no gcc, and stopped every source build with
+"Install Rtools" on a machine that had it.
+
 **Compilers.** Posit Package Manager serves binaries for macOS, Windows and
 common Linux systems, including Bioconductor software packages since
 2026.08. Source builds are still needed for GitHub packages with compiled
@@ -1231,8 +1245,9 @@ run), and the snapshot has no stale state.
    the server and worker run on Linux in CI. The server and worker were run
    on Windows 10 in 2026-10, started both with a console and without one:
    interrupts needed a way of their own there (#48, see [Running
-   cells](#running-cells)).
-   Still to run: rig on Windows (#49). Whether any package overwrites a
+   cells](#running-cells)). Rig's user mode was run on Windows in 2026-10
+   too (#49, see [Package environments](#package-environments)). Whether any
+   package overwrites a
    setting the notebook already set (#61) was run on Linux in 2026-10: see
    [Global settings](#running-cells).
    - Server and worker: httpuv serving the UI while a worker runs a long
