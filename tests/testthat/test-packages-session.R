@@ -793,11 +793,15 @@ test_that("[net] on macOS and Windows, a Bioconductor package Package Manager ha
   expect_false(res$timed_out)
 
   status <- package_status(nb)
-  expect_equal(status$library$status, "ready")
+  # What a failure needs to explain itself: the problems say why a name
+  # wasn't found, the log why an install went wrong.
+  why <- paste(c(status$library$message, status$problems$message,
+                 notebook_state(nb)$packages$target$log), collapse = "\n")
+  expect_equal(status$library$status, "ready", info = why)
   row <- status$packages$name == "SNPRelate"
-  expect_equal(status$packages$version[row], "1.46.0")
-  expect_equal(status$packages$status[row], "installed")
-  expect_match(snap_view(notebook_snapshot(nb), "A")$output$text, "1.46.0", fixed = TRUE)
+  expect_equal(status$packages$version[row], "1.46.0", info = why)
+  expect_equal(status$packages$status[row], "installed", info = why)
+  expect_match(snap_view(notebook_snapshot(nb), "A")$output$text %||% "", "1.46.0", fixed = TRUE, info = why)
   # It came as a binary, and not Package Manager's, so Bioconductor's: a
   # build on this machine would have been built today, after `started`.
   # (renv's RemoteRepos can't say which repository: Bioconductor's Windows
