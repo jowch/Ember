@@ -69,6 +69,70 @@ test_that("lazy mode marks dependents stale, then runs them on request (109)", {
   expect_equal(snap_view(snap2, "B")$output$text, "[1] 50")
 })
 
+test_that("lazy mode: running a cell runs every ancestor between an edited one and it, at any depth, and only those; nothing shown is wrong and unmarked (#169)", {
+  cells <- list(S = cell(""), A = cell("x <- 1"), B = cell("y <- x * 10"), C = cell("z <- y + 1"),
+                D = cell("z * 2"), E = cell("x + 100"))
+  path <- write_session_notebook(cells, on_cell_change = "lazy")
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, wait = TRUE, timeout = 20)
+
+  # Every cell's text, and whether it is shown stale: one with no stale mark
+  # must show what its current code gives.
+  views <- function() {
+    snap <- notebook_snapshot(nb)
+    lapply(stats::setNames(nm = c("A", "B", "C", "D", "E")), function(id) {
+      v <- snap_view(snap, id)
+      list(text = v$output$text, stale = isTRUE(v$stale))
+    })
+  }
+  shown <- function(v) vapply(v, function(x) x$text, character(1))
+  stale <- function(v) vapply(v, function(x) x$stale, logical(1))
+
+  # Edit three steps up from D: A, B and C all run before it.
+  edit_notebook(nb, set_code("A", "x <- 2"))
+  r <- run_cells(nb, "D", wait = TRUE, timeout = 20)
+  expect_identical(r$queued, c("A", "B", "C", "D"))
+  v <- views()
+  expect_identical(shown(v)[c("A", "B", "C", "D")], c(A = "[1] 2", B = "[1] 20", C = "[1] 21", D = "[1] 42"))
+  # E isn't on the way to D: it isn't run, and shows its old result stale.
+  expect_identical(c(shown(v)[["E"]], stale(v)[["E"]]), c("[1] 101", "TRUE"))
+  expect_false(any(stale(v)[c("A", "B", "C", "D")]))
+
+  # Edit two steps up: B and C run, A doesn't.
+  edit_notebook(nb, set_code("B", "y <- x * 100"))
+  r <- run_cells(nb, "D", wait = TRUE, timeout = 20)
+  expect_identical(r$queued, c("B", "C", "D"))
+  expect_identical(shown(views())[c("B", "C", "D")], c(B = "[1] 200", C = "[1] 201", D = "[1] 402"))
+
+  # The cell run is in the middle of the chain: D isn't run, and is stale.
+  edit_notebook(nb, set_code("A", "x <- 3"))
+  r <- run_cells(nb, "C", wait = TRUE, timeout = 20)
+  expect_identical(r$queued, c("A", "B", "C"))
+  v <- views()
+  expect_identical(shown(v)[c("A", "B", "C")], c(A = "[1] 3", B = "[1] 300", C = "[1] 301"))
+  expect_identical(stale(v)[c("A", "B", "C", "D")], c(A = FALSE, B = FALSE, C = FALSE, D = TRUE))
+})
+
+test_that("autorun: running a cell after editing its grandparent runs each cell once and ends right (#169)", {
+  log <- normalizePath(tempfile("ember-runs-"), winslash = "/", mustWork = FALSE)
+  logged <- function(id, code) cell(sprintf('cat("%s\\n", file = "%s", append = TRUE); %s', id, log, code))
+  cells <- list(S = cell(""), A = logged("A", "x <- 1"), B = logged("B", "y <- x * 10"), C = logged("C", "y + 1"))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, wait = TRUE, timeout = 20)
+  unlink(log)
+
+  edit_notebook(nb, set_code("A", sprintf('cat("A\\n", file = "%s", append = TRUE); x <- 2', log)))
+  run_cells(nb, "C", wait = TRUE, timeout = 20)
+  wait_for(nb, is_idle, timeout = 20)
+  snap <- notebook_snapshot(nb)
+  expect_identical(vapply(c("B", "C"), function(id) snap_view(snap, id)$output$text, character(1)),
+                   c(B = "[1] 20", C = "[1] 21"))
+  expect_identical(sort(readLines(log)), c("A", "B", "C"))
+})
+
 test_that("the file on disk matches the state after an edit, and file_saved fires (110)", {
   cells <- list(S = cell(""), A = cell("1"))
   path <- write_session_notebook(cells)

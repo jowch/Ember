@@ -64,8 +64,10 @@ repository depends on them.
   marimo's `on_cell_change`: "autorun" (the default, as Pluto) reruns the
   cells that depend on an edited cell; "lazy" marks them stale instead,
   keeping their outputs dimmed and labelled until they run. Running a stale
-  cell runs its stale ancestors first. Pluto's safe preview shows editing
-  without running is workable.
+  cell runs its stale ancestors first, and so does running a cell whose
+  ancestor was edited: every ancestor between the edited one and the cell
+  run runs too, since each goes stale once the edited one runs (#169).
+  Pluto's safe preview shows editing without running is workable.
 - **Open without running.** Running a cell runs its unrun ancestors first.
   "Run all" is one click. Long simulations don't start just because a
   notebook was opened.

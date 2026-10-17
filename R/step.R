@@ -536,6 +536,29 @@ upstream_of_set <- function(graph, ids) {
   run_order(graph, seen)
 }
 
+#' The cells of `among` downstream of any of `from`, directly or not: one
+#' walk for the whole set, and only through `among`, so a run of every cell
+#' (nothing to walk) stays linear (#169).
+reached_from <- function(graph, from, among) {
+  if (length(from) == 0 || length(among) == 0) return(character())
+  open <- new.env(hash = TRUE, size = length(among))
+  for (a in among) assign(a, TRUE, envir = open)
+  reached <- character()
+  todo <- from
+  while (length(todo)) {
+    i <- todo[[1]]
+    todo <- todo[-1]
+    for (d in graph$downstream[[i]]) {
+      if (exists(d, envir = open, inherits = FALSE)) {
+        rm(list = d, envir = open)
+        reached <- c(reached, d)
+        todo <- c(todo, d)
+      }
+    }
+  }
+  reached
+}
+
 #' Has a result with status "ok", not stale, matching the current code.
 is_fresh <- function(state, id) {
   r <- state$results[[id]]
@@ -976,7 +999,11 @@ reduce_run <- function(state, event) {
   on_ids <- setdiff(ids, off_ids)
   ancestors <- upstream_of_set(state$graph, on_ids)
   unfresh <- Filter(function(a) !is_fresh(state, a), ancestors)
-  want <- union(unfresh, on_ids)
+  # An ancestor downstream of an unfresh one is fresh now but goes stale
+  # once that one runs, after this plan is made: it runs too, or the cells
+  # asked for would use its old values (#169).
+  between <- reached_from(state$graph, unfresh, setdiff(ancestors, unfresh))
+  want <- union(union(unfresh, between), on_ids)
   skipped <- union(off_ids, Filter(function(id) !can_run(state, id), want))
   to_add <- setdiff(want, skipped)
   state$pending <- union(state$pending, to_add)
