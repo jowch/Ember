@@ -2295,7 +2295,7 @@ test_that("every hashed vendor file a shim or editor.html names exists, and no o
 test_that("ember_set_package_source replies ok and the row looks the source up; a refusal is the reply; remove sends it back (122)", {
   fixtures <- normalizePath(testthat::test_path("fixtures"), mustWork = TRUE)
   repos <- ember_repos(cran = paste0("file://", file.path(fixtures, "repos", "toy")), bioc_config = NA,
-                       github = paste0("file://", file.path(fixtures, "github")))
+                       github = paste0("file://", github_fixture_dir()))
   cache <- tempfile("ember-pkg-cache-")
   dir.create(cache, recursive = TRUE)
   on.exit(unlink(cache, recursive = TRUE), add = TRUE)

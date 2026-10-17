@@ -521,7 +521,10 @@ Built from increment 2 (#20).
   (`repos/lab/toyC/commits/<ref>`, `repos/lab/toyC/tarball/<sha>`), so the
   same fetch and the same renv install run offline. A `file://` base
   can't take a query, so the DESCRIPTION is read from
-  `contents/<sha>/DESCRIPTION` there (`github_description_url()`).
+  `contents/<sha>/DESCRIPTION` there (`github_description_url()`). Those
+  folders are stored under 7-character shas, since a package tarball
+  can't hold a path over 100 bytes, and `github_fixture_dir()` renames
+  them in a copy (#244).
 - **Unchecked.** design.md marks GitHub packages unchecked: they sit
   outside the one-date rule. The Packages tab's "GitHub user/repo@sha"
   line under the version is that mark, and its tooltip says so.
