@@ -869,7 +869,7 @@ test_that("an install of a large Bioconductor data package waits for approve_ins
   on.exit(unlink(cache, recursive = TRUE), add = TRUE)
   # The fixture repositories, with a 2 kB GO.db tarball for the size.
   root <- withr::local_tempdir()
-  file.copy(testthat::test_path("fixtures", "repos", "bioc"), root, recursive = TRUE)
+  file.copy(testthat::test_path("fixtures", "bioc"), root, recursive = TRUE)
   writeBin(raw(2048), file.path(root, "bioc", "2026-09-01", "packages", "3.23", "data", "annotation",
                                 "src", "contrib", "GO.db_3.22.0.tar.gz"))
   fixture <- function(...) paste0("file://", normalizePath(testthat::test_path("fixtures", ...), winslash = "/"))

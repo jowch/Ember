@@ -808,7 +808,7 @@ test_that("clean_up() through a symlinked cache dir keeps an open library's own 
 #' `list(repos, cache)`, `repos` named as the installer's.
 large_download_repos <- function(bytes) {
   root <- withr::local_tempdir(.local_envir = parent.frame())
-  file.copy(testthat::test_path("fixtures", "repos", "bioc"), root, recursive = TRUE)
+  file.copy(testthat::test_path("fixtures", "bioc"), root, recursive = TRUE)
   base <- file.path(root, "bioc", "2026-09-01", "packages", "3.23")
   ann <- file.path(base, "data", "annotation", "src", "contrib")
   writeBin(raw(bytes), file.path(ann, "GO.db_3.22.0.tar.gz"))

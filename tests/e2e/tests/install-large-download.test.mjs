@@ -19,7 +19,7 @@ const FIXTURES = path.join(HERE, "..", "..", "testthat", "fixtures");
 
 test("large-download.R: the install asks first, and Install installs it", async (t) => {
   const bioc = mkdtempSync(path.join(tmpdir(), "ember-e2e-bioc-"));
-  cpSync(path.join(FIXTURES, "repos", "bioc"), bioc, { recursive: true });
+  cpSync(path.join(FIXTURES, "bioc"), bioc, { recursive: true });
   writeFileSync(path.join(bioc, "2026-09-01", "packages", "3.23", "data", "annotation", "src", "contrib", "GO.db_3.22.0.tar.gz"), Buffer.alloc(2048));
 
   const notebook = tempNotebook("large-download.R");
