@@ -447,6 +447,44 @@ test_that("[net] a notebook with library(S4Vectors) installs from Bioconductor o
                status$packages$version[row], fixed = TRUE)
 })
 
+test_that("[net] on macOS and Windows, a Bioconductor package Package Manager has no binary of installs Bioconductor's (#22)", {
+  # Package Manager's Bioconductor 3.23 has no macOS arm64 binary of
+  # preprocessCore 1.74.0, so it built from source, and failed on a Mac
+  # without the Fortran runtime (`ld: library 'emutls_w' not found`).
+  skip_if_not(identical(Sys.getenv("EMBER_TEST_NETWORK"), "1"),
+             "set EMBER_TEST_NETWORK=1 to run the opt-in network test")
+  skip_if(identical(os_kind(), "linux"), "Bioconductor's own binaries are for macOS and Windows")
+
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  dir <- tempfile("ember-nb-")
+  dir.create(dir, recursive = TRUE)
+  cells <- list(A = list(code = "library(preprocessCore)\npackageVersion(\"preprocessCore\")",
+                        kind = "code", folded = FALSE))
+  header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
+                       r_version = paste(R.version$major, R.version$minor, sep = "."),
+                       snapshot = "2026-10-08")
+  file <- new_notebook_file(
+    header = header, cells = cells, run_order = names(cells), learned = list(),
+    sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
+    lock = empty_lock(), extra_blocks = list(), format = ember_format)
+  path <- file.path(dir, "nb.R")
+  write_atomic(path, format_notebook(file))
+
+  nb <- open_notebook(path, repos = ember_repos(), cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  res <- run_cells(nb, wait = TRUE, timeout = 600)
+  expect_false(res$timed_out)
+
+  status <- package_status(nb)
+  expect_equal(status$library$status, "ready")
+  row <- status$packages$name == "preprocessCore"
+  expect_equal(status$packages$source[row], "Bioc")
+  expect_equal(status$packages$status[row], "installed")
+  expect_match(snap_view(notebook_snapshot(nb), "A")$output$text,
+               status$packages$version[row], fixed = TRUE)
+})
+
 # ---- 90: the empty-log regression, with the failing-installer fixture ------
 
 #' A notebook naming `brokenpkg`, already locked (no index needed: the

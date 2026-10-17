@@ -186,7 +186,9 @@ read_available <- function(repos, type) {
 #' (Measured: at 2024-06-01 Package Manager sent R 4.6 the source of every
 #' package asked about, pure R ones too; at 2026-09-01, binaries.)
 #' `binary_type`: the binary repositories' type on macOS and Windows (a
-#' parameter so tests on Linux can ask for a Mac's). GitHub sources aren't
+#' parameter so tests on Linux can ask for a Mac's), whose binary index is
+#' read from `binary_repos`, so Bioconductor's own binaries count
+#' (`bioc_binary_repos()`). GitHub sources aren't
 #' counted: whether they have code to compile is known only once they're
 #' downloaded, so a missing compiler shows up from their build instead.
 compiler_check <- function(lock, repos, linux_binaries = FALSE, os = os_kind(),
@@ -212,7 +214,7 @@ compiler_check <- function(lock, repos, linux_binaries = FALSE, os = os_kind(),
   if (is.null(source_index)) return(NULL)
   # On Linux without Package Manager binaries everything builds from
   # source; elsewhere an unreadable binary index leaves it to renv.
-  binary_index <- if (linux) NULL else read_available(repos, binary_type)
+  binary_index <- if (linux) NULL else read_available(binary_repos, binary_type)
   if (!linux && is.null(binary_index)) return(NULL)
   pkgs <- source_builds(wanted, source_index, binary_index)
   if (length(pkgs) == 0) return(NULL)
@@ -273,8 +275,8 @@ failed_builds <- function(failed, index) {
   failed[!vapply(failed, function(p) any(deps[[p]] %in% failed), logical(1))]
 }
 
-#' Which of the locked packages in `failed` had no binary for this R at the
-#' snapshot date, so renv built them from source: named character,
+#' Which of the locked CRAN packages in `failed` had no binary for this R
+#' at the snapshot date, so renv built them from source: named character,
 #' package -> locked version.
 #'
 #' * macOS and Windows: not in the binary index (`binary_type`) of `repos`
@@ -285,23 +287,22 @@ failed_builds <- function(failed, index) {
 #' * Linux without them: none. Everything builds from source there, so a
 #'   failed build says nothing about the date.
 #'
-#' GitHub sources aren't counted: they always build from source.
+#' Only CRAN packages: the report blames a snapshot date older than this
+#' R, and a Bioconductor pin is always a release built for this R (or
+#' moves to one, `propose_bioc_move()`). A Bioconductor package with no
+#' binary fails with its build's own error instead (#22). GitHub sources
+#' aren't counted either: they always build from source.
 no_binary_packages <- function(failed, lock, repos, binary_repos = repos, linux_binaries = FALSE,
                                os = os_kind(), binary_type = .Platform$pkgType,
                                serves_binary = ppm_serves_binary) {
   e <- lock$entries
-  e <- e[e$name %in% failed & e$source %in% c("CRAN", "Bioc"), , drop = FALSE]
+  e <- e[e$name %in% failed & e$source == "CRAN", , drop = FALSE]
   none <- stats::setNames(character(), character())
   if (nrow(e) == 0) return(none)
   if (identical(os, "linux")) {
-    if (!linux_binaries) return(none)
-    repo_names <- list(CRAN = "CRAN", Bioc = c("BioCsoft", "BioCann", "BioCexp"))
+    if (!linux_binaries || !"CRAN" %in% names(binary_repos)) return(none)
     no_binary <- vapply(seq_len(nrow(e)), function(i) {
-      for (r in intersect(repo_names[[e$source[[i]]]], names(binary_repos))) {
-        got <- serves_binary(package_url(binary_repos[[r]], e$name[[i]], e$version[[i]]))
-        if (!is.na(got)) return(!got)
-      }
-      FALSE
+      identical(serves_binary(package_url(binary_repos[["CRAN"]], e$name[[i]], e$version[[i]])), FALSE)
     }, logical(1))
   } else {
     index <- read_available(repos, binary_type)

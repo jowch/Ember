@@ -88,6 +88,33 @@ test_that("compiler_check() reads no index when the compiler is there or Linux g
   expect_null(compiler_check(gh, c(CRAN = repo), os = "linux", compiler = FALSE))
 })
 
+test_that("compiler_check() on macOS counts a binary from any of binary_repos, so Bioconductor's own count (#22)", {
+  lock <- parse_lock_lines(c("Rcpp 1.0.12 CRAN", "preprocessCore 1.74.0 Bioc"))$lock
+  type <- "mac.binary.big-sur-arm64"
+  file_url <- function(dir) paste0(if (.Platform$OS.type == "windows") "file:///" else "file://", normalizePath(dir, winslash = "/"))
+  # Package Manager-like repository: both sources, a binary of Rcpp only.
+  ppm <- tempfile("ember-ppm-")
+  bioc <- tempfile("ember-bioc-")
+  on.exit(unlink(c(ppm, bioc), recursive = TRUE))
+  for (d in c(file.path(ppm, "src", "contrib"), sub("^file://", "", utils::contrib.url(paste0("file://", ppm), type)),
+              sub("^file://", "", utils::contrib.url(paste0("file://", bioc), type)))) {
+    dir.create(d, recursive = TRUE)
+  }
+  writeLines(c("Package: Rcpp", "Version: 1.0.12", "NeedsCompilation: yes", "",
+               "Package: preprocessCore", "Version: 1.74.0", "NeedsCompilation: yes", ""),
+             file.path(ppm, "src", "contrib", "PACKAGES"))
+  writeLines(c("Package: Rcpp", "Version: 1.0.12", ""),
+             file.path(sub("^file://", "", utils::contrib.url(paste0("file://", ppm), type)), "PACKAGES"))
+  writeLines(c("Package: preprocessCore", "Version: 1.74.0", ""),
+             file.path(sub("^file://", "", utils::contrib.url(paste0("file://", bioc), type)), "PACKAGES"))
+  repos <- c(CRAN = file_url(ppm))
+
+  got <- compiler_check(lock, repos, os = "macos", compiler = FALSE, binary_type = type)
+  expect_equal(got$packages, "preprocessCore")
+  expect_null(compiler_check(lock, repos, os = "macos", compiler = FALSE, binary_type = type,
+                             binary_repos = c(repos, Bioconductor = file_url(bioc))))
+})
+
 test_that("compiler_check() on Linux with Package Manager binaries asks about one package, and counts source builds when it comes as source (117)", {
   lock <- parse_lock_lines(c("Rcpp 1.0.12 CRAN", "glue 1.8.0 CRAN"))$lock
   repo <- paste0(if (.Platform$OS.type == "windows") "file:///" else "file://",
@@ -124,7 +151,7 @@ test_that("renv_failed_packages() reads renv's \"failed to install\" error, in e
   expect_equal(renv_failed_packages('failed to retrieve package "cli"'), character())
 })
 
-test_that("no_binary_packages() names the failed packages with no binary for this R, per platform (118)", {
+test_that("no_binary_packages() names the failed CRAN packages with no binary for this R, per platform (118, #22)", {
   lock <- parse_lock_lines(c("cli 3.6.2 CRAN", "glue 1.7.0 CRAN", "S4Vectors 0.40.0 Bioc",
                              "mypkg 3f2a1c9 github:lab/mypkg@3f2a1c9"))$lock
   failed <- c("cli", "glue", "S4Vectors", "mypkg", "notlocked")
@@ -140,26 +167,28 @@ test_that("no_binary_packages() names the failed packages with no binary for thi
   on.exit(unlink(root, recursive = TRUE))
   repos <- c(CRAN = paste0(if (.Platform$OS.type == "windows") "file:///" else "file://", normalizePath(root, winslash = "/")))
   got <- no_binary_packages(failed, lock, repos, os = "macos", binary_type = type)
-  # cli has a binary only at another version; S4Vectors has none; glue
-  # has one; mypkg is GitHub; notlocked isn't in the lock.
-  expect_equal(got, c(S4Vectors = "0.40.0", cli = "3.6.2"))
+  # cli has a binary only at another version; glue has one; S4Vectors
+  # has none, but its pin is a release for this R, so the snapshot date
+  # isn't why (#22); mypkg is GitHub; notlocked isn't in the lock.
+  expect_equal(got, c(cli = "3.6.2"))
   # An unreadable index names none.
   expect_equal(length(no_binary_packages(failed, lock, c(CRAN = "file:///nonexistent/ember-test-repo"),
                                          os = "macos", binary_type = type)), 0)
 
   # Linux with Package Manager binaries: Package Manager is asked, at the
-  # rewritten URL, through Bioconductor's three repositories in turn.
+  # rewritten URL, about the CRAN packages only.
   binary_repos <- c(CRAN = "https://ppm.example/cran/__linux__/noble/2024-06-01",
                     BioCsoft = "https://ppm.example/bioc/soft", BioCann = "https://ppm.example/bioc/ann")
   asked <- character()
   serves <- function(url) {
     asked <<- c(asked, url)
-    if (grepl("glue_", url)) TRUE else if (grepl("bioc/soft", url)) NA else FALSE
+    grepl("glue_", url)
   }
   got <- no_binary_packages(failed, lock, repos, binary_repos = binary_repos, linux_binaries = TRUE,
                             os = "linux", serves_binary = serves)
-  expect_equal(got, c(S4Vectors = "0.40.0", cli = "3.6.2"))
-  expect_true("https://ppm.example/bioc/ann/src/contrib/S4Vectors_0.40.0.tar.gz" %in% asked)
+  expect_equal(got, c(cli = "3.6.2"))
+  expect_setequal(asked, c("https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/cli_3.6.2.tar.gz",
+                           "https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/glue_1.7.0.tar.gz"))
   # Linux without them: everything builds from source there anyway.
   expect_equal(length(no_binary_packages(failed, lock, repos, linux_binaries = FALSE, os = "linux",
                                          serves_binary = function(url) stop("not asked"))), 0)

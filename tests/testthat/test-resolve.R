@@ -190,6 +190,25 @@ test_that("ppm_binary_repos() changes nothing where renv didn't rewrite CRAN", {
   expect_identical(ppm_binary_repos(local, "file:///repos/cran/__linux__/noble/2026-10-08"), local)
 })
 
+test_that("bioc_binary_repos() adds Bioconductor's own repository for the pinned release on macOS and Windows (#22)", {
+  urls <- repo_urls(ember_repos(), header_at("2026-10-08", "3.23"))
+  for (os in c("macos", "windows")) {
+    out <- bioc_binary_repos(urls, os = os)
+    expect_equal(out[names(urls)], urls)
+    expect_equal(unname(out[["Bioconductor"]]), "https://bioconductor.org/packages/3.23/bioc")
+  }
+  # renv reads binaries from no repository named BioC... but BioCsoft.
+  expect_false(any(grepl("^BioC", setdiff(names(bioc_binary_repos(urls, os = "macos")), names(urls)))))
+
+  # Linux, no pin, or file:// repositories: unchanged.
+  expect_identical(bioc_binary_repos(urls, os = "linux"), urls)
+  cran_only <- repo_urls(ember_repos(), header_at("2026-10-08"))
+  expect_identical(bioc_binary_repos(cran_only, os = "macos"), cran_only)
+  local <- repo_urls(ember_repos(cran = "file:///repos/cran", bioc = "file:///repos/bioconductor"),
+                     header_at("2026-10-08", "3.23"))
+  expect_identical(bioc_binary_repos(local, os = "macos"), local)
+})
+
 test_that("the release is the latest one for the running R out by the snapshot date (79)", {
   expect_equal(bioc_release_for("4.5", "2025-09-01", rel), "3.21")
   expect_equal(bioc_release_for("4.5", "2025-10-30", rel), "3.22")
