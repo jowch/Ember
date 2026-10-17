@@ -85,8 +85,9 @@ exports_of <- function(state) {
 #' * `results`: named list, id -> `ember_result`, for cells that ran in the
 #'   current worker. A cell with no entry is "not run".
 #' * `data_columns`: named list, id -> global -> `list(frame, names)`: the
-#'   names each data frame or list a cell created had at its last "ok"
-#'   run in the current worker session (worker.R's `global_columns()`),
+#'   names each data frame or list a cell created had at its last run in
+#'   the current worker session, if that run was ok; a failed run, a
+#'   restart or R exiting removes the entry (worker.R's `global_columns()`),
 #'   for masked reads (graph.R, `resolve_masked()`). Not saved: it
 #'   describes the worker's values. Deleted cells' entries are ignored.
 #' * `clock`: the `at` of the last event; the only time the core knows.
