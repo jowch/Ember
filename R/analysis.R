@@ -49,8 +49,9 @@
 #'   spec it gives (`"github:user/repo"`, `"universe:name"`; `NA` for one
 #'   that names no source, such as `install.packages("x")`). `index` is
 #'   the top-level expression's position and `top` whether the call is
-#'   that whole expression, which the worker then doesn't run. The call's
-#'   own package (remotes, pak) isn't in `packages`.
+#'   that whole expression, which the worker then doesn't run. For such a
+#'   call its own package (remotes, pak) isn't in `packages`; for any other
+#'   it is, since that one runs when reached.
 #' * `settings`: data frame `fn`, `setting`, `line`, `col`, `end_col`:
 #'   top-level calls to a global setting function (see
 #'   `setting_functions`), positioned at the function name token (for

@@ -627,10 +627,11 @@ library(mypkg)
   name before `=` for pak; when it differs from the package's only in
   case, the wanted name is used.
 - **Where they count.** In a cell's own code, outside function bodies,
-  including inside `if`. One in a function or a `source()`d file is an
-  ordinary call: it runs when it is reached, and its package (remotes,
-  pak) is one the notebook needs. A top-level one's own package isn't:
-  the call never runs.
+  including inside `if` or a wrapper such as `suppressMessages()`. One in
+  a function or a `source()`d file is an ordinary call. Only a call that
+  is a whole top-level expression is skipped (below), so only its own
+  package (remotes, pak) isn't one the notebook needs; any other runs
+  when it is reached, and its package is locked like any other.
 - **The header stays the record.** Each step writes the sources the code
   gives, for the packages the notebook wants, into `[sources]`
   (`declared_sources()`, `sync_sources()`, packages-core.R stage 1). The
@@ -659,12 +660,15 @@ library(mypkg)
 - **`ember::run()` does the same.** It runs a copy of the file with the
   top-level install calls replaced by `invisible(NULL)`, every other line
   where it was, from the file's own folder, and says once which packages
-  the lock gives (`without_install_calls()`). A package missing from the
+  the lock gives (`without_install_calls()`). The copy is a temporary
+  file, so `commandArgs()` names it, not the notebook. A package missing from the
   lock still only warns: `run()` doesn't resolve.
 
-Not built: an install call's subdirectory (`"user/repo/pkg"`) or pull
-request (`"user/repo#12"`), which can't be a source yet; it is still
-skipped. The note can be noisy with many such packages; it is one line
+Not built: an install call's subdirectory (`"user/repo/pkg"` or
+`subdir =`) or pull request (`"user/repo#12"`), which can't be a source
+yet; it is still skipped. So is `install.packages("pkg.tar.gz", repos =
+NULL)`, a local file the lock can't answer: `library(pkg)` then doesn't
+resolve. The note can be noisy with many such packages; it is one line
 per cell, and to be revisited once in use.
 
 ## Where the direction strains

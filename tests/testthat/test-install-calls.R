@@ -64,6 +64,15 @@ test_that("an install call inside a condition is read but isn't the top-level ex
   expect_false(a$installs$top)
   expect_equal(a$packages$name, "toyD")
 
+  # A wrapped call runs too, so its package is needed.
+  for (code in c('suppressMessages(remotes::install_github("lab/toyD"))', 'x <- pak::pak("lab/toyD")',
+                 'if (update) remotes::install_github("lab/toyD")')) {
+    a <- read_cell(code)
+    expect_equal(a$installs$source, "github:lab/toyD", info = code)
+    expect_false(a$installs$top, info = code)
+    expect_true(any(a$packages$name %in% c("remotes", "pak")), info = code)
+  }
+
   a <- read_cell('setup <- function() remotes::install_github("lab/toyD")')
   expect_equal(nrow(a$installs), 0)
   expect_equal(a$packages$name, "remotes")
@@ -73,6 +82,7 @@ test_that("a call that names no readable package, or a subdirectory, is still on
   i <- installs_of('remotes::install_github("lab/repo/pkgdir")\ninstall.packages(pkgs)')
   expect_equal(i$package, c(NA_character_, NA_character_))
   expect_equal(i$top, c(TRUE, TRUE))
+  expect_equal(installs_of('remotes::install_github("lab/repo", subdir = "pkg")')$package, NA_character_)
 })
 
 # ---- The graph ---------------------------------------------------------------
@@ -172,6 +182,10 @@ test_that("run() takes top-level install calls out of the file, keeping every li
   expect_equal(strsplit(out$text, "\n")[[1]],
                c("x <- 1", "library(remotes); invisible(NULL)", "invisible(NULL)", "", "; y <- 2",
                  'if (FALSE) install.packages("x2")'))
+  # Columns, not bytes: a multibyte character or a tab before the call.
+  out <- without_install_calls('y <- "\u00e9"; install.packages("bar")\nz <- "\u65e5\u672c"; install.packages("bar"); w <- 2\n\tq <- 1;\tinstall.packages("x2")\n')
+  expect_equal(strsplit(out$text, "\n")[[1]],
+               c('y <- "\u00e9"; invisible(NULL)', 'z <- "\u65e5\u672c"; invisible(NULL); w <- 2', "\tq <- 1;\tinvisible(NULL)"))
   expect_null(without_install_calls("x <- 1\n"))
   expect_null(without_install_calls("x <- (\n"))
 })

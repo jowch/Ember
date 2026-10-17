@@ -31,8 +31,9 @@ use_functions <- c("requireNamespace", "loadNamespace", "use")
 #' names only: Bioconductor's are found without a source). The worker
 #' doesn't run one at a cell's top level: the lock already answers it.
 #'
-#' `install_calls` are matched as `pkg::fn` (the package isn't one the
-#' notebook needs: the call doesn't run); `install_calls_bare` by the bare
+#' `install_calls` are matched as `pkg::fn` (as a whole top-level
+#' expression the package isn't one the notebook needs: the call doesn't
+#' run); `install_calls_bare` by the bare
 #' name, for code that attached the package first. `BiocManager::install`
 #' has no bare form: `install()` alone is too common a name.
 install_calls <- c("remotes::install_github" = "github", "devtools::install_github" = "github",

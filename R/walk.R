@@ -111,7 +111,10 @@ walk_qualified_call <- function(e, scope, acc, q, pid = NA_integer_) {
     parts <- pd_call_parts(acc$pd, e, pid)
     walk_box_use_args(e, scope, acc, parts$args)
   } else if (reads_install_calls(scope, acc) && paste0(q$pkg, "::", q$fn) %in% names(install_calls)) {
-    # Not a package the notebook needs: the call doesn't run (rules.R).
+    # As the whole top-level expression the call doesn't run (rules.R), so
+    # its package isn't one the notebook needs; anywhere else
+    # (`suppressMessages(...)`, inside `if`) it runs when reached.
+    if (!identical(e, acc$top_expr)) record_package(acc, q$pkg, attached = FALSE)
     parts <- pd_call_parts(acc$pd, e, pid)
     walk_install_call(e, scope, acc, install_calls[[paste0(q$pkg, "::", q$fn)]], parts$args)
   } else {

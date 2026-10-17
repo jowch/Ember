@@ -239,18 +239,21 @@ without_install_calls <- function(text) {
   lines <- strsplit(text, "\n", fixed = TRUE)[[1]]
   packages <- character()
   found <- FALSE
-  # From the last call back, so an earlier call's byte positions still hold.
+  # From the last call back, so an earlier call's positions still hold.
   for (i in rev(seq_along(exprs))) {
     kind <- install_call_kind(exprs[[i]])
     if (is.null(kind)) next
     found <- TRUE
     p <- install_targets(exprs[[i]], kind)$package
     packages <- union(p[!is.na(p)], packages)
+    # The srcref's columns, not its bytes: R's byte fields over-count a
+    # multibyte character, while its columns count characters, with a tab
+    # moving to the next multiple of 8 (`column_char()`).
     r <- as.integer(refs[[i]])
-    first <- charToRaw(lines[[r[1]]])
-    last <- charToRaw(lines[[r[3]]])
-    before <- rawToChar(first[seq_len(r[2] - 1)])
-    after <- if (r[4] < length(last)) rawToChar(last[(r[4] + 1):length(last)]) else ""
+    first <- lines[[r[1]]]
+    last <- lines[[r[3]]]
+    before <- substr(first, 1, column_char(first, r[5]) - 1)
+    after <- substr(last, column_char(last, r[6]) + 1, nchar(last))
     if (r[3] == r[1]) {
       lines[[r[1]]] <- paste0(before, "invisible(NULL)", after)
     } else {
@@ -261,6 +264,18 @@ without_install_calls <- function(text) {
   }
   if (!found) return(NULL)
   list(text = paste(lines, collapse = "\n"), packages = as.character(packages))
+}
+
+#' The character of `line` at the parser's column `col`: columns count
+#' characters, a tab moving to the next multiple of 8.
+column_char <- function(line, col) {
+  chars <- strsplit(line, "", fixed = TRUE)[[1]]
+  at <- 0L
+  for (k in seq_along(chars)) {
+    at <- if (identical(chars[[k]], "\t")) (at %/% 8L + 1L) * 8L else at + 1L
+    if (at >= col) return(k)
+  }
+  length(chars)
 }
 
 #' The `install_calls` kind (rules.R) of a call, or `NULL` when it isn't

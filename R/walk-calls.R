@@ -817,8 +817,9 @@ walk_install_call <- function(e, scope, acc, kind, arg_pids = NULL) {
 #'   of them (`repo =` or the first argument), with `ref =` for a string
 #'   that has no `@`. The package is the repository's name: a repository
 #'   holding a package of another name is reported when it is resolved
-#'   (`source_problems()`). A subdirectory (`"user/repo/pkg"`) or a pull
-#'   request (`"user/repo#12"`) can't be a source, so it names nothing.
+#'   (`source_problems()`). A subdirectory (`"user/repo/pkg"`, or
+#'   `subdir =`) or a pull request (`"user/repo#12"`) can't be a source, so
+#'   it names nothing.
 #' * `"pak"`: `pak("user/repo")`, `"github::user/repo"`, `"pkg=user/repo"`
 #'   (`pkg =` or the first argument). A plain name, or `"cran::name"` and
 #'   `"bioc::name"`, names the package with no source.
@@ -845,6 +846,8 @@ install_targets <- function(e, kind) {
     ref <- literal_strings(arg("ref"))
     if (length(ref) == 1) specs <- ifelse(grepl("@", specs, fixed = TRUE), specs, paste0(specs, "@", ref))
     src <- vapply(specs, function(x) source_spec(x) %||% NA_character_, character(1), USE.NAMES = FALSE)
+    # A subdirectory can't be a source yet, as in "user/repo/pkg".
+    if ("subdir" %in% nms) src <- rep(NA_character_, length(src))
     return(rows(github_package(src), src))
   }
   if (identical(kind, "pak")) {
