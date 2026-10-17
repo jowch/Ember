@@ -126,6 +126,7 @@ running <- NULL        # list(cell, token) during a run (for the source trace)
 deferred <- list()     # messages read while waiting for a source_reply
 interrupt_drain <- NULL # Windows: the DLL routine that drops a late interrupt (listen_for_interrupts())
 release_children <- NULL # Windows: the DLL routine that releases a cell's processx children (#208)
+children_running <- NULL # Windows: the DLL routine that tells the release thread a run is going (#273)
 keeping_children <- FALSE  # Windows: whether the thread that releases them runs
 load_log <- NULL       # settings changes made inside loadNamespace/library during a run
 notebook_options <- character()  # option names an options() call from the
@@ -182,6 +183,7 @@ listen_for_interrupts <- function() {
     # So a cell's processx and callr children outlive this process, as
     # they do on Unix (src/children.c, #208).
     release_children <<- getNativeSymbolInfo("C_release_cell_children", dll)
+    children_running <<- getNativeSymbolInfo("C_cell_children_running", dll)
     keeping_children <<- isTRUE(tryCatch(.Call(getNativeSymbolInfo("C_keep_cell_children", dll)),
                                          error = function(e) FALSE))
     isTRUE(.Call(getNativeSymbolInfo("C_interrupt_listen", dll)))
@@ -290,9 +292,12 @@ handle_next <- function() {
   switch(msg$type,
     run = {
       drain_late_interrupt()
+      # The release thread scans only while a run is going (#273).
+      if (!is.null(children_running)) .Call(children_running, TRUE)
       report <- run_cell(msg)
       # Before "done": the children a finished cell started are released
       # by the time the server hears it ended (src/children.c, #208).
+      if (!is.null(children_running)) .Call(children_running, FALSE)
       if (!is.null(release_children)) .Call(release_children)
       send(list(type = "done", cell = msg$cell, token = msg$token, report = report))
     },

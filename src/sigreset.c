@@ -29,6 +29,7 @@ extern SEXP C_interrupt_test_delay(SEXP ms);
 /* Defined in children.c. */
 extern SEXP C_keep_cell_children(void);
 extern SEXP C_release_cell_children(void);
+extern SEXP C_cell_children_running(SEXP on);
 
 static const R_CallMethodDef call_methods[] = {
   {"C_reset_sigint", (DL_FUNC) &C_reset_sigint, 0},
@@ -39,6 +40,7 @@ static const R_CallMethodDef call_methods[] = {
   {"C_interrupt_test_delay", (DL_FUNC) &C_interrupt_test_delay, 1},
   {"C_keep_cell_children", (DL_FUNC) &C_keep_cell_children, 0},
   {"C_release_cell_children", (DL_FUNC) &C_release_cell_children, 0},
+  {"C_cell_children_running", (DL_FUNC) &C_cell_children_running, 1},
   {NULL, NULL, 0}
 };
 
