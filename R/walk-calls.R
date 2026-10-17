@@ -792,3 +792,109 @@ setting_keys <- function(name, e) {
   if (length(keys) == 0) keys <- NA_character_
   ifelse(is.na(keys), NA_character_, paste0(kind, ":", keys))
 }
+
+#' An install call (`install_calls`, rules.R) in a cell's own code, outside
+#' a function body: each package it names is an install row, with the
+#' source it gives. A call that names no package it can read (a computed
+#' argument, a subdirectory) is one row with `package` `NA`, so the worker
+#' still knows not to run it. The call's other arguments are walked as
+#' code; the names themselves are strings, so they read nothing.
+walk_install_call <- function(e, scope, acc, kind, arg_pids = NULL) {
+  targets <- install_targets(e, kind)
+  top <- identical(e, acc$top_expr)
+  if (nrow(targets) == 0) record_install(acc, NA_character_, NA_character_, top)
+  for (i in seq_len(nrow(targets))) {
+    record_install(acc, targets$package[[i]], targets$source[[i]], top)
+  }
+  walk_call_args(e, scope, acc, arg_pids)
+}
+
+#' The packages an install call names, as a data frame `package`,
+#' `source` (a `source_spec()`, or `NA`). Only literal strings are read;
+#' a computed argument names nothing. By `kind`:
+#'
+#' * `"github"`: `install_github("user/repo@ref")`, one string or a `c()`
+#'   of them (`repo =` or the first argument), with `ref =` for a string
+#'   that has no `@`. The package is the repository's name: a repository
+#'   holding a package of another name is reported when it is resolved
+#'   (`source_problems()`). A subdirectory (`"user/repo/pkg"`) or a pull
+#'   request (`"user/repo#12"`) can't be a source, so it names nothing.
+#' * `"pak"`: `pak("user/repo")`, `"github::user/repo"`, `"pkg=user/repo"`
+#'   (`pkg =` or the first argument). A plain name, or `"cran::name"` and
+#'   `"bioc::name"`, names the package with no source.
+#' * `"repos"`: `install.packages(c("a", "b"), repos = ...)`: the names
+#'   (`pkgs =` or the first argument), with the r-universe among `repos`
+#'   (`repos =` or the second argument) as their source when there is
+#'   exactly one besides CRAN's own (`cran.r-universe.dev`).
+#' * `"names"`: the names only (`BiocManager::install("DESeq2")`).
+install_targets <- function(e, kind) {
+  args <- as.list(e)[-1]
+  nms <- names2(args)
+  arg <- function(name, pos = NA) {
+    if (name %in% nms) return(args[[which(nms == name)[1]]])
+    unnamed <- which(nms == "")
+    if (!is.na(pos) && length(unnamed) >= pos && !missing_arg(args[[unnamed[pos]]])) args[[unnamed[pos]]] else NULL
+  }
+  rows <- function(package, source = rep(NA_character_, length(package))) {
+    keep <- !is.na(package) & vapply(package, is_one_package_name, logical(1))
+    data.frame(package = as.character(package[keep]), source = as.character(source[keep]),
+               stringsAsFactors = FALSE)
+  }
+  if (identical(kind, "github")) {
+    specs <- literal_strings(arg("repo", 1))
+    ref <- literal_strings(arg("ref"))
+    if (length(ref) == 1) specs <- ifelse(grepl("@", specs, fixed = TRUE), specs, paste0(specs, "@", ref))
+    src <- vapply(specs, function(x) source_spec(x) %||% NA_character_, character(1), USE.NAMES = FALSE)
+    return(rows(github_package(src), src))
+  }
+  if (identical(kind, "pak")) {
+    specs <- literal_strings(arg("pkg", 1))
+    package <- character()
+    src <- character()
+    for (x in specs) {
+      named <- regmatches(x, regexec("^([A-Za-z0-9.]+)=(.+)$", x))[[1]]
+      name <- if (length(named) == 3) named[[2]] else NA_character_
+      x <- if (length(named) == 3) named[[3]] else x
+      x <- sub("^github::", "", x)
+      if (grepl("^(cran|bioc|standard)::", x)) x <- sub("^[a-z]+::", "", x)
+      if (grepl("/", x, fixed = TRUE)) {
+        s <- source_spec(x) %||% NA_character_
+        package <- c(package, if (!is.na(name)) name else github_package(s))
+        src <- c(src, s)
+      } else {
+        package <- c(package, if (!is.na(name)) name else sub("@.*$", "", x))
+        src <- c(src, NA_character_)
+      }
+    }
+    return(rows(package, src))
+  }
+  names <- literal_strings(arg("pkgs", 1))
+  if (identical(kind, "repos")) {
+    repos <- literal_strings(arg("repos", 2))
+    repos <- repos[vapply(repos, is_universe_link, logical(1))]
+    universes <- setdiff(unique(vapply(repos, universe_link_spec, character(1))), "universe:cran")
+    if (length(universes) == 1) return(rows(names, rep(universes, length(names))))
+  }
+  rows(names)
+}
+
+#' A literal string, or a `c()` of them, as character; the elements that
+#' aren't literal strings are left out. `character()` for anything else.
+literal_strings <- function(x) {
+  if (is.character(x)) return(x[!is.na(x)])
+  if (is.call(x) && identical(x[[1]], as.name("c"))) {
+    parts <- as.list(x)[-1]
+    return(unlist(Filter(function(a) is.character(a) && length(a) == 1 && !is.na(a), parts),
+                  use.names = FALSE) %||% character())
+  }
+  character()
+}
+
+#' The package a GitHub source names: its repository's name. `NA` for no
+#' source.
+github_package <- function(src) {
+  out <- rep(NA_character_, length(src))
+  ok <- !is.na(src)
+  out[ok] <- sub("@.*$", "", sub("^github:[^/]+/", "", src[ok]))
+  out
+}

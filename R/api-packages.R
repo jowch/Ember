@@ -174,6 +174,12 @@ preview_update <- function(nb, name, version = NULL, wait = TRUE, timeout = 60) 
 #' code names packages the lock lacks, it says so and runs anyway (R will
 #' report the missing package), since resolving would change the file.
 #'
+#' Install calls (`remotes::install_github()`, `install.packages()`, ...)
+#' at a cell's top level don't run, as in a session (packages.md, "Install
+#' calls"): the lock already answers them. The file runs from a copy with
+#' those calls taken out, line numbers unchanged, from the file's own
+#' folder; one message names the packages.
+#'
 #' @return The exit status, invisibly.
 #' @export
 run <- function(path, repos = ember_repos(), cache = cache_dir(), echo = TRUE) {
@@ -204,11 +210,73 @@ run <- function(path, repos = ember_repos(), cache = cache_dir(), echo = TRUE) {
   }
   touch_library(lib)
 
+  script <- path
+  skipped <- without_install_calls(text)
+  if (!is.null(skipped)) {
+    message("ember: install calls don't run; the lock gives ",
+            if (length(skipped$packages)) paste(skipped$packages, collapse = ", ") else "their packages")
+    script <- tempfile("ember-run-", fileext = ".R")
+    on.exit(unlink(script), add = TRUE)
+    writeBin(charToRaw(enc2utf8(skipped$text)), script)
+  }
+
   rscript <- file.path(R.home("bin"), "Rscript")
-  res <- processx::run(rscript, c("--vanilla", path), wd = dirname(path),
+  res <- processx::run(rscript, c("--vanilla", script), wd = dirname(path),
                        env = c("current", R_LIBS_USER = lib, R_LIBS = "", R_LIBS_SITE = ""),
                        echo = echo, error_on_status = FALSE)
   invisible(res$status)
+}
+
+#' A notebook file's text with its top-level install calls replaced by
+#' `invisible(NULL)`, keeping every other line where it was:
+#' `list(text, packages)`, or `NULL` when it has none (or doesn't parse:
+#' `Rscript` then reports that itself). Each file-level expression is a
+#' cell's top-level one, since text and off cells are comments.
+without_install_calls <- function(text) {
+  exprs <- tryCatch(parse(text = text, keep.source = TRUE), error = function(e) NULL)
+  if (length(exprs) == 0) return(NULL)
+  refs <- attr(exprs, "srcref")
+  lines <- strsplit(text, "\n", fixed = TRUE)[[1]]
+  packages <- character()
+  found <- FALSE
+  # From the last call back, so an earlier call's byte positions still hold.
+  for (i in rev(seq_along(exprs))) {
+    kind <- install_call_kind(exprs[[i]])
+    if (is.null(kind)) next
+    found <- TRUE
+    p <- install_targets(exprs[[i]], kind)$package
+    packages <- union(p[!is.na(p)], packages)
+    r <- as.integer(refs[[i]])
+    first <- charToRaw(lines[[r[1]]])
+    last <- charToRaw(lines[[r[3]]])
+    before <- rawToChar(first[seq_len(r[2] - 1)])
+    after <- if (r[4] < length(last)) rawToChar(last[(r[4] + 1):length(last)]) else ""
+    if (r[3] == r[1]) {
+      lines[[r[1]]] <- paste0(before, "invisible(NULL)", after)
+    } else {
+      lines[[r[1]]] <- paste0(before, "invisible(NULL)")
+      lines[(r[1] + 1):r[3]] <- ""
+      lines[[r[3]]] <- after
+    }
+  }
+  if (!found) return(NULL)
+  list(text = paste(lines, collapse = "\n"), packages = as.character(packages))
+}
+
+#' The `install_calls` kind (rules.R) of a call, or `NULL` when it isn't
+#' an install call.
+install_call_kind <- function(e) {
+  if (!is.call(e)) return(NULL)
+  q <- qualified_head(e[[1]])
+  if (!is.null(q)) {
+    key <- paste0(q$pkg, "::", q$fn)
+    return(if (key %in% names(install_calls)) install_calls[[key]])
+  }
+  head <- e[[1]]
+  if (is.symbol(head) && as.character(head) %in% names(install_calls_bare)) {
+    return(install_calls_bare[[as.character(head)]])
+  }
+  NULL
 }
 
 # `clean()` is exported from library.R. Endeavor calls it through the

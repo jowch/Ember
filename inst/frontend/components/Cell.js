@@ -520,6 +520,7 @@ export const Cell = ({
     const settings_found = ember?.settings_found ?? []
     const load_notes = ember?.load_notes ?? []
     const changed_in_place = ember?.changed_in_place ?? []
+    const from_lock = ember?.from_lock
 
     const cell_state =
         running_disabled || depends_on_disabled_cells
@@ -603,6 +604,9 @@ export const Cell = ({
                 : null}
             ${changed_in_place.length > 0
                 ? html`<ember-settings-note class="in-place-note" role="status">${t("t_changed_in_place_note", { names: join_names(changed_in_place) })}</ember-settings-note>`
+                : null}
+            ${from_lock != null
+                ? html`<ember-settings-note class="from-lock-note" role="status">${from_lock.length > 0 ? t("t_from_lock_note", { names: join_names(from_lock) }) : t("t_from_lock_note_unnamed")}</ember-settings-note>`
                 : null}
             ${load_notes.map(
                 (note) => html`<ember-settings-note class="load-note" role="status">${t("t_load_note", { package: note.package, name: note.setting })}</ember-settings-note>`

@@ -200,6 +200,9 @@ new_state <- function(file, path, id, options, at) {
   wanted <- wanted_packages(graph, file$header)
   packages <- new_packages_state(file$lock, wanted, options$r, options$cache, file$header,
                                  releases_slot_for(options))
+  # Seeded as `wanted_cache` is, for the same reason; the first step writes
+  # it into the header (`sync_sources()`).
+  packages$declared_cache <- declared_sources(graph, wanted)
 
   structure(list(
     id = id, path = path, read_only = isTRUE(file$read_only),
@@ -293,17 +296,21 @@ new_worker_state <- function() {
 #'   a top-level assignment) or `"read_elsewhere"` (the cell reads or
 #'   redefines `name` too). `spec` is the input's type and arguments.
 #'   `value` follows `set_input()`.
+#' * `from_lock`: the packages of the install calls the worker didn't run
+#'   (packages.md, "Install calls"): the cell shows a note that they come
+#'   from the lock.
 new_result <- function(code, status, output, console, error, started_at,
                        runtime, defined, stale = FALSE, variables = list(),
                        settings_found = character(), setting = FALSE,
                        load_notes = list(), changed_in_place = character(),
-                       inputs = list()) {
+                       inputs = list(), from_lock = character()) {
   structure(list(code = code, status = status, output = output,
                  console = console, error = error, started_at = started_at,
                  runtime = runtime, defined = defined, stale = stale,
                  variables = variables, settings_found = settings_found,
                  setting = setting, load_notes = load_notes,
-                 changed_in_place = changed_in_place, inputs = inputs),
+                 changed_in_place = changed_in_place, inputs = inputs,
+                 from_lock = from_lock),
             class = "ember_result")
 }
 
@@ -370,7 +377,7 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 #' `"code"` or `"run"`; empty for an ordinary cell), `settings_found` (the
 #' last result's, `character()` when none), `load_notes` (the last
 #' result's, `list()` when none), `changed_in_place` (the last result's,
-#' `character()` when none), `inputs` (the last result's, `list()` when
+#' `character()` when none), `from_lock` (likewise), `inputs` (the last result's, `list()` when
 #' none; see `new_result()`), `queued`, `running`, `status` (`"not_run"`, `"ok"`, `"error"`,
 #' `"interrupted"`), `stale`, `code_differs`, `errors` (graph errors, or
 #' else the run error, each with `kind`, `message`, `fixes`, `names`, and, for an
@@ -555,6 +562,7 @@ cell_view <- function(state, ctx, i) {
     settings_found = if (!is.null(result)) result$settings_found %||% character() else character(),
     load_notes = if (!is.null(result)) result$load_notes %||% list() else list(),
     changed_in_place = if (!is.null(result)) result$changed_in_place %||% character() else character(),
+    from_lock = if (!is.null(result)) result$from_lock %||% character() else character(),
     inputs = if (!is.null(result)) result$inputs %||% list() else list(),
     queued = ctx$queued[[i]], running = is_running,
     status = if (!is.null(result)) result$status else "not_run",

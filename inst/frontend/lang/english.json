@@ -240,6 +240,8 @@
     "t_chip_settings_hover": "This cell changes a global setting. It runs before the cells that don't feed it, and they rerun when it changes.",
     "t_chip_settings_found_hover": "Found when it ran.",
     "t_settings_found_note": "Found a global setting ({{names}}) when this cell ran; the cells after it rerun.",
+    "t_from_lock_note": "Install calls don't run in Ember: it installs {{names}} from the notebook's lock when a cell uses them. To get a newer version, use the Packages tab.",
+    "t_from_lock_note_unnamed": "Install calls don't run in Ember: it installs packages from the notebook's lock when a cell uses them. To get a newer version, use the Packages tab.",
     "t_changed_in_place_note": "Changed {{names}} in place, which another cell defines, so the cells that read it don't rerun. Make the change in the cell that defines it.",
     "t_load_note": "Loading {{package}} resets {{name}}, which a settings cell sets. Under Rscript the setting is lost, because settings cells come first in the file. Move it into this cell, after {{package}} loads.",
     "t_chip_depends_on_disabled": "Depends on a disabled cell. {{link}}",

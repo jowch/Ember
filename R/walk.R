@@ -85,6 +85,11 @@ walk_expr <- function(e, scope, acc, pid = NA_integer_) {
   dispatch_call_by_name(e, scope, acc, name, pid = pid)
 }
 
+#' Install calls are read in the cell's own code, outside function bodies
+#' (rules.R, `install_calls`). One in a sourced file or a function is an
+#' ordinary call: it runs when it is reached.
+reads_install_calls <- function(scope, acc) is.na(acc$file) && !in_function(scope)
+
 #' `pkg::fn(...)` or `pkg:::fn(...)` used as a call head: not a plain symbol
 #' head, so dispatch on a symbol head never sees it.
 qualified_head <- function(head) {
@@ -105,6 +110,10 @@ walk_qualified_call <- function(e, scope, acc, q, pid = NA_integer_) {
     record_package(acc, "box", attached = FALSE)
     parts <- pd_call_parts(acc$pd, e, pid)
     walk_box_use_args(e, scope, acc, parts$args)
+  } else if (reads_install_calls(scope, acc) && paste0(q$pkg, "::", q$fn) %in% names(install_calls)) {
+    # Not a package the notebook needs: the call doesn't run (rules.R).
+    parts <- pd_call_parts(acc$pd, e, pid)
+    walk_install_call(e, scope, acc, install_calls[[paste0(q$pkg, "::", q$fn)]], parts$args)
   } else {
     record_package(acc, q$pkg, attached = FALSE)
     dispatch_call_by_name(e, scope, acc, q$fn, qualified = TRUE, pid = pid)
@@ -166,6 +175,11 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
   if (is_str_interp_function(name)) {
     maybe_record_name_read()
     walk_str_interp_call(e, scope, acc, name, arg_pids)
+    return(invisible())
+  }
+  if (!qualified && name %in% names(install_calls_bare) && reads_install_calls(scope, acc)) {
+    maybe_record_name_read()
+    walk_install_call(e, scope, acc, install_calls_bare[[name]], arg_pids)
     return(invisible())
   }
   if (name %in% attach_functions) {

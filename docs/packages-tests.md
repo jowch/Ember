@@ -199,6 +199,23 @@ In test-packages-session.R:
 128. A package from a `[sources]` universe entry installs from the universe's own build (its DESCRIPTION's `Repository` and `RemoteSha`) and runs; a universe whose build isn't the commit its API names gets the package installed again from GitHub at that commit (`universe_wrong_builds()`, also unit-tested); a locked commit the universe no longer serves, under the same version, installs from GitHub at that commit.
 129. **[net]** highr from yihui's universe resolves, its lock source names github.com/yihui/highr, and the installed build is the locked commit; pinned to v0.11's commit, which the universe no longer serves, `ember::run()` installs it from GitHub.
 
+## Install calls (#79)
+
+In test-install-calls.R:
+
+130. The walker reads `install_github` (with `@ref` or `ref =`), pak's forms, `install.packages()` with one r-universe besides CRAN's, and `BiocManager::install()`; the call's own package isn't one the notebook needs; one inside `if` is read but isn't top-level, one in a function is an ordinary call; a call it can't read is still one the worker skips.
+131. Two install calls giving one package different sources are a `source_conflict` on their cells, and neither is declared; the same source twice, or a call in a disabled cell, is no conflict. Declared sources are for wanted packages, match the repository's name ignoring case, and fill in a built-in source; the code wins over the header, a built-in fills only a gap, and an entry whose call is gone stays.
+132. In the core: an install call's source goes into the header and is fetched with CRAN's index; changing the call moves it, removing it keeps it; the source ops are refused for a package an install call names. The run message lists the top-level install calls, and the worker's report becomes the cell's note, with or without names.
+133. `without_install_calls()` replaces top-level install calls with `invisible(NULL)`, keeping every line where it was.
+
+In test-worker.R:
+
+134. A top-level install call doesn't run (remotes isn't installed), and the report names its packages, `""` for one it couldn't read.
+
+In test-packages-session.R:
+
+135. `install.packages("toyA")` before `library(toyA)` runs neither in the session nor in `ember::run()`: the cell shows the note and its output, and `run()` says once that the lock gives toyA.
+
 ## Network, opt-in
 
 75. **[net]** A notebook with `library(dplyr)` at a fixed past date resolves from PPM, installs with renv, and the worker loads exactly the locked versions.
