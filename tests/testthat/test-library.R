@@ -856,6 +856,20 @@ test_that("ask_before_install() asks only above ask_above, and never with Inf (1
   expect_false(ask_before_install(plan, go_lock()))
 })
 
+test_that("file_url_path() and read_contrib() read a file:// index with two slashes or three (130)", {
+  # On Windows the tests' URLs are file://D:/..., which available.packages()
+  # reads as the network path //D:/... (the first Windows CI run of #267).
+  expect_equal(file_url_path("file:///tmp/x"), "/tmp/x")
+  if (.Platform$OS.type == "windows") {
+    expect_equal(file_url_path("file:///D:/x"), "D:/x")
+    expect_equal(file_url_path("file://D:/x"), "D:/x")
+  }
+  fx <- large_download_repos(2048)
+  contrib <- paste0(fx$repos[["BioCann"]], "/src/contrib")
+  expect_true("GO.db" %in% read_contrib(contrib)[, "Package"])
+  expect_null(read_contrib("file:///no/such/src/contrib"))
+})
+
 test_that("url_size() reads a file:// URL's size and gives NA for a missing one (130)", {
   path <- withr::local_tempfile()
   writeBin(raw(10), path)

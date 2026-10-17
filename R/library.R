@@ -758,12 +758,35 @@ cran_releases_job_key <- function(url, cache) paste("cran-releases", url, cache,
 #' asks.
 ask_above_default <- 500e6
 
+#' The local path of a `file://` URL: `file:///tmp/x` and, on Windows,
+#' both `file://D:/x` and `file:///D:/x`, as the tests write them.
+#' (`available.packages()` reads `file://D:/x` as `//D:/x`, a network path
+#' that isn't there, so the indexes here are read with `read_contrib()`.)
+file_url_path <- function(url) {
+  path <- sub("^file://", "", url)
+  if (.Platform$OS.type == "windows" && grepl("^/[A-Za-z]:", path)) path <- substring(path, 2L)
+  path
+}
+
+#' The `Package` and `Version` columns of the index at `contrib` (a
+#' `.../src/contrib` URL), or `NULL` when it can't be read.
+read_contrib <- function(contrib) {
+  if (!startsWith(contrib, "file://")) {
+    return(tryCatch(suppressWarnings(utils::available.packages(contriburl = contrib, filters = list())),
+                    error = function(e) NULL))
+  }
+  dir <- file_url_path(contrib)
+  file <- Filter(file.exists, file.path(dir, c("PACKAGES", "PACKAGES.gz")))
+  if (length(file) == 0) return(NULL)
+  tryCatch(read.dcf(file[[1]], fields = c("Package", "Version")), error = function(e) NULL)
+}
+
 #' The size in bytes of the file at `url`, or `NA`: the Content-Length of
 #' a HEAD request (the last response's, after any redirect), or the size
 #' of a `file://` URL's file (the tests' fixtures).
 url_size <- function(url) {
   if (startsWith(url, "file://")) {
-    size <- file.size(sub("^file://", "", url))
+    size <- file.size(file_url_path(url))
     return(if (is.na(size)) NA_real_ else as.numeric(size))
   }
   headers <- tryCatch(curlGetHeaders(url), error = function(e) NULL)
@@ -800,8 +823,7 @@ large_downloads <- function(lock, repos, cache, minor = r_info()$minor) {
   root <- file.path(cache, "renv-cache")
   for (repo in data_repos) {
     contrib <- paste0(sub("/+$", "", repo), "/src/contrib")
-    avail <- tryCatch(suppressWarnings(utils::available.packages(contriburl = contrib, filters = list())),
-                      error = function(e) NULL)
+    avail <- read_contrib(contrib)
     if (is.null(avail) || nrow(avail) == 0) next
     hit <- match(bioc$name, avail[, "Package"])
     here <- !is.na(hit) & !(bioc$name %in% out$package)
