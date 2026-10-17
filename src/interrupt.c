@@ -29,6 +29,11 @@ static HANDLE interrupt_event = NULL;
    flush_event and waits for flushed_event. */
 static HANDLE flush_event = NULL, flushed_event = NULL;
 static DWORD main_thread = 0;
+static HANDLE listener_thread = NULL;
+/* Test-only (C_interrupt_test_delay()): how long the listener waits
+   between taking an interrupt and applying it, to widen #238's window.
+   0, so no wait, unless a test sets it. */
+static volatile LONG test_delay_ms = 0;
 
 static void event_name(char *buf, size_t size, unsigned long pid) {
   snprintf(buf, size, "Local\\ember-interrupt-%lu", pid);
@@ -45,6 +50,7 @@ static DWORD WINAPI interrupt_listener(LPVOID unused) {
   for (;;) {
     DWORD w = WaitForMultipleObjects(2, both, FALSE, INFINITE);
     if (w == WAIT_OBJECT_0) {
+      if (test_delay_ms > 0) Sleep((DWORD) test_delay_ms);
       UserBreak = 1;
       PostThreadMessage(main_thread, 0, 0, 0);
     } else if (w == WAIT_OBJECT_0 + 1) {
@@ -87,7 +93,7 @@ SEXP C_interrupt_listen(void) {
     interrupt_event = flush_event = flushed_event = NULL;
     return ScalarLogical(0);
   }
-  CloseHandle(thread);
+  listener_thread = thread;  /* kept: the drain watches it */
   return ScalarLogical(1);
 #else
   return ScalarLogical(0);
@@ -105,7 +111,10 @@ SEXP C_interrupt_drain(void) {
 #if defined(_WIN32)
   if (interrupt_event) {
     SetEvent(flush_event);
-    WaitForSingleObject(flushed_event, INFINITE);
+    /* If the listener has somehow ended, nothing would answer: clear
+       UserBreak here instead of waiting forever. */
+    HANDLE wait[2] = { flushed_event, listener_thread };
+    if (WaitForMultipleObjects(2, wait, FALSE, INFINITE) != WAIT_OBJECT_0) UserBreak = 0;
   } else {
     UserBreak = 0;
   }
@@ -129,4 +138,13 @@ SEXP C_interrupt_send(SEXP pid) {
 #else
   return ScalarLogical(0);
 #endif
+}
+
+/* Test-only: make the listener wait `ms` between taking an interrupt and
+   applying it (test-worker.R, #238). Nothing else sets it. */
+SEXP C_interrupt_test_delay(SEXP ms) {
+#if defined(_WIN32)
+  InterlockedExchange(&test_delay_ms, (LONG) Rf_asInteger(ms));
+#endif
+  return R_NilValue;
 }

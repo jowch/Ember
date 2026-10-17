@@ -25,6 +25,7 @@ extern SEXP C_random_bytes(SEXP n);
 extern SEXP C_interrupt_listen(void);
 extern SEXP C_interrupt_drain(void);
 extern SEXP C_interrupt_send(SEXP pid);
+extern SEXP C_interrupt_test_delay(SEXP ms);
 
 static const R_CallMethodDef call_methods[] = {
   {"C_reset_sigint", (DL_FUNC) &C_reset_sigint, 0},
@@ -32,6 +33,7 @@ static const R_CallMethodDef call_methods[] = {
   {"C_interrupt_listen", (DL_FUNC) &C_interrupt_listen, 0},
   {"C_interrupt_drain", (DL_FUNC) &C_interrupt_drain, 0},
   {"C_interrupt_send", (DL_FUNC) &C_interrupt_send, 1},
+  {"C_interrupt_test_delay", (DL_FUNC) &C_interrupt_test_delay, 1},
   {NULL, NULL, 0}
 };
 
