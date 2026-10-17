@@ -1568,6 +1568,28 @@ test_that("a setting the display step changes isn't the cell's: only its code's 
   expect_identical(r$output$text, "[1] 2")
 })
 
+test_that("a package the display step loads still gets its load note when it resets a setting a settings cell set (#156, #61)", {
+  skip_if_not_installed("knitr")
+  h <- worker_harness(extra_libs = c(fixture_lib(), dirname(find.package("knitr"))))
+  on.exit(h$close())
+
+  # knitr is loaded here, so the display step below loads only emberfix1.
+  run_and_wait(h, "m", 1L, paste(
+    'registerS3method("knit_print", "ember_loads", function(x, ...) {',
+    '  loadNamespace("emberfix1")',
+    '  knitr::asis_output("<b>shown</b>")',
+    '}, envir = asNamespace("knitr"))', sep = "\n"))
+  run_and_wait(h, "s", 2L, 'options(emberfix_load_opt = "user")')
+  r <- run_and_wait(h, "b", 3L, 'structure(1, class = "ember_loads")', settings = "s")
+  expect_identical(r$output$html, "<b>shown</b>")
+  expect_length(r$settings, 0)
+  expect_identical(r$load_notes, list(list(package = "emberfix1", kind = "option", name = "emberfix_load_opt")))
+  # The settings cell is applied again before the next run, as for a load
+  # in the cell's code.
+  r2 <- run_and_wait(h, "c", 4L, 'getOption("emberfix_load_opt")', settings = "s")
+  expect_identical(r2$output$text, '[1] "user"')
+})
+
 test_that("a value with a knit_print() method shows as its HTML: registered by a package, defined in the notebook, an HTML kable; a markdown kable keeps its text (#154)", {
   skip_if_not_installed("knitr")
   h <- worker_harness(extra_libs = dirname(find.package("knitr")))
