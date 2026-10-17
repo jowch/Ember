@@ -336,17 +336,13 @@ fuzz_check <- function(snap, ran, mode, run, res) {
 
   # Every output not marked stale is what running the code behind the
   # outputs from scratch gives, so the reference uses the code each cell
-  # ran. A cell edited since it ran keeps its old output, marked as edited;
-  # what it and its readers show depends on what ran while the edit was
-  # staged, which nothing marks, so neither is checked here (#175).
+  # ran. A cell edited since it ran keeps its old output, marked as edited.
   shown <- Filter(function(id) has_run(views[[id]]) && !is.null(ran[[id]]), names(views))
   ref <- fuzz_reference(ran[shown])
-  edited <- Filter(function(id) isTRUE(views[[id]]$code_differs), shown)
   for (id in shown) {
     v <- views[[id]]
-    if (isTRUE(v$stale) || id %in% edited) next
+    if (isTRUE(v$stale)) next
     reads <- fuzz_ancestors(ran[shown], id)
-    if (length(intersect(reads, edited))) next
     want <- ref[[id]]
     got <- v$output$text
     if (!identical(v$status, want$status)) {
