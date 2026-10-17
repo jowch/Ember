@@ -423,6 +423,25 @@ test_that("a waiting settings cell marks later cells stale without letting them 
   expect_null(last_sent(r))
 })
 
+test_that("while another cell runs, a cell waiting for an install costs an event nothing (#248)", {
+  # A chain of n cells below A, which waits on dplyr, while C runs.
+  busy_state <- function(n, a_code) {
+    chain <- setNames(lapply(seq_len(n), function(i) cell(sprintf("b%d <- %s + 1", i, if (i == 1) "x" else paste0("b", i - 1)))),
+                      paste0("B", seq_len(n)))
+    s <- pkg_state(c(list(S = cell(""), C = cell("z <- 1"), A = cell(a_code)), chain))
+    r <- boot(s, c("C", "A"))
+    expect_equal(last_sent(r)$cell, "C")
+    r$state
+  }
+  waiting <- busy_state(300, "library(dplyr)\nx <- 1")
+  plain <- busy_state(300, "x <- 1")
+  expect_false(is.null(waiting_cells(waiting)$A))
+  r <- time_ratio(function() schedule(waiting), function() schedule(plain), samples = 11L)
+  cat(sprintf("\n[timing] schedule() with a busy worker, 300-cell chain: A waiting %.3f ms, not waiting %.3f ms (%.1fx)\n",
+              r$a * 1000, r$b * 1000, r$ratio))
+  expect_lt(r$ratio, 3)
+})
+
 # ---- Library readiness and restarts -------------------------------------------
 
 #' Get a notebook using dplyr through install, the worker started and the
