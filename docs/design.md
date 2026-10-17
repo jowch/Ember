@@ -567,8 +567,14 @@ these only for each cell's current output and drops them when the cell
 reruns or is deleted, so a removed variable isn't kept alive by its display.
 
 Interrupts go to the worker as SIGINT on macOS and Linux (processx). Windows
-has no SIGINT; processx sends CTRL+C through a helper (to verify in the
-spike). Compiled code often ignores interrupts, so "restart worker" is always
+has no SIGINT, and processx's CTRL+C helper needs the worker to have a
+console, which it lacks whenever the server does: the interrupt was then
+lost, while processx said it sent it. So on Windows the worker waits on a
+named event of its own, on a thread of its own, and the server sets it; the
+thread sets R's `UserBreak`, as R's own CTRL+C handler does, and R raises
+the interrupt as for CTRL+C (src/interrupt.c, #48). If the server can't set
+the event, it offers the restart at once and says the interrupt couldn't
+reach R. Compiled code often ignores interrupts, so "restart worker" is always
 available, as in Pluto. If a cell hasn't stopped a few seconds after an
 interrupt, the UI offers the restart and lists the cells that will need to
 run again, as RStudio's "Terminate R" does. An interrupt isn't lost: R acts
@@ -1196,8 +1202,11 @@ run), and the snapshot has no stale state.
    (2026-09-29; results are folded into the sections above): server and
    worker, the frontend stub, rig, rv against renv, and package loading.
    Since then the URL secret and rich outputs in the browser are built, and
-   the server and worker run on Linux in CI. Still to run: the server and
-   worker, and rig, on Windows (#48, #49). Whether any package overwrites a
+   the server and worker run on Linux in CI. The server and worker were run
+   on Windows 10 in 2026-10, started both with a console and without one:
+   interrupts needed a way of their own there (#48, see [Running
+   cells](#running-cells)).
+   Still to run: rig on Windows (#49). Whether any package overwrites a
    setting the notebook already set (#61) was run on Linux in 2026-10: see
    [Global settings](#running-cells).
    - Server and worker: httpuv serving the UI while a worker runs a long

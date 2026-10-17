@@ -552,6 +552,11 @@ test_that("nbpkg reflects missing, installing and failed packages, and a restart
   s$worker$restart_offered <- TRUE
   v4 <- project_nbpkg(s)
   expect_match(v4$restart_recommended_msg, "Restart R to stop it")
+
+  # An interrupt that couldn't be delivered says so (#48).
+  s$worker$interrupt <- list(at = 1, token = 1L, failed = TRUE)
+  v5 <- project_nbpkg(s)
+  expect_match(v5$restart_recommended_msg, "The interrupt couldn't reach R")
 })
 
 # ---- 14. cell_dependencies ------------------------------------------------------
