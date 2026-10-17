@@ -120,10 +120,10 @@ test_that("NSE: a piped mutate() reads the piped object and its argument", {
 })
 
 test_that("$ and @ read the object, never the field or slot name", {
-  # `$` is also read as a function, like `[`, so a `$.foo` method can
-  # order after it (#41). `@` has no S3 methods to find.
+  # `$` and `@` are also read as functions, like `[`, so a `$.foo` or
+  # `@.foo` method can order before them (#41).
   a <- read_cell("x <- df$a + df@b")
-  expect_setequal(refs(a), c("df", "+", "$"))
+  expect_setequal(refs(a), c("df", "+", "$", "@"))
   expect_false("a" %in% refs(a))
   expect_false("b" %in% refs(a))
 })

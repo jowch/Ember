@@ -22,9 +22,11 @@ test_that("a nested replacement call reads each setter and the inner getters", {
   expect_setequal(refs(a), c("x", "i", "nm", "names<-", "names", "[<-"))
 })
 
-test_that("a $ target reads $<- (and $ when nested); @ reads neither", {
+test_that("$ and @ targets read $<- and @<- (and $ or @ when nested)", {
   a <- read_cell("df$col <- v; s@slot <- w")
-  expect_setequal(refs(a), c("df", "v", "s", "w", "$<-"))
+  expect_setequal(refs(a), c("df", "v", "s", "w", "$<-", "@<-"))
+  a <- read_cell("r(s@x) <- v")
+  expect_setequal(refs(a), c("s", "v", "r<-", "@<-", "@"))
   a <- read_cell("r(df$col) <- v")
   expect_setequal(refs(a), c("df", "v", "r<-", "$<-", "$"))
 })

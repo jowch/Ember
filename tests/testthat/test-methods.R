@@ -195,6 +195,28 @@ test_that("$ and $<- methods feed the cells that use $", {
   expect_true(has_edge(g, "u", "m", "$<-", "method"))
 })
 
+test_that("@ and @<- methods feed the cells that use @ (an S3 generic since R 4.3)", {
+  g <- notebook_graph(c(m = "`@.rec` <- function(object, name) 1",
+                        n = "`@<-.rec` <- function(object, name, value) object",
+                        u = "z <- r@a",
+                        v = "r@a <- 1"))
+  expect_true(has_edge(g, "u", "m", "@", "method"))
+  expect_true(has_edge(g, "v", "n", "@<-", "method"))
+})
+
+test_that("round, signif and %*% methods feed their callers", {
+  # Members of Math and matrixOps that are generics on their own too.
+  g <- notebook_graph(c(r = "round.money <- function(x, digits = 0) x",
+                        s = "signif.money <- function(x, digits = 6) x",
+                        m = "`%*%.mat` <- function(x, y) x",
+                        u = "round(a)",
+                        v = "signif(a)",
+                        w = "a %*% b"))
+  expect_true(has_edge(g, "u", "r", "round", "method"))
+  expect_true(has_edge(g, "v", "s", "signif", "method"))
+  expect_true(has_edge(g, "w", "m", "%*%", "method"))
+})
+
 test_that("two cells that each define a print method and call print() form no cycle", {
   g <- notebook_graph(c(
     a = "print.foo <- function(x, ...) cat('foo'); print(structure(1, class = 'foo'))",

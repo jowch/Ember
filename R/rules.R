@@ -221,8 +221,8 @@ display_names <- function(names) {
 #' `group_generics`.
 s3_generics <- c(
   "-", "!", "!=", ".AtNames", ".DollarNames", "[", "[[", "[[<-", "[<-", "*",
-  "/", "&", "%/%", "%%", "^", "+", "<", "<=", "==", ">", ">=", "|", "$",
-  "$<-", "abs", "acos", "acosh", "add1", "aggregate", "AIC", "alias", "all",
+  "/", "&", "%/%", "%%", "%*%", "^", "+", "<", "<=", "==", ">", ">=", "|", "$",
+  "$<-", "@", "@<-", "abs", "acos", "acosh", "add1", "aggregate", "AIC", "alias", "all",
   "all.equal", "anova", "ansari.test", "any", "anyDuplicated", "anyNA",
   "aperm", "ar.burg", "ar.yw", "Arg", "as.array", "as.call", "as.character",
   "as.complex", "as.data.frame", "as.Date", "as.dendrogram", "as.dist",
@@ -259,9 +259,9 @@ s3_generics <- c(
   "princomp", "print", "prod", "profile", "proj", "prompt", "qqnorm", "qr",
   "quade.test", "quantile", "quarters", "range", "rbind", "Re", "relevel",
   "reorder", "rep", "rep_len", "rep.int", "resid", "residuals", "rev",
-  "row.names", "row.names<-", "rowsum", "rstandard", "rstudent", "scale",
+  "round", "row.names", "row.names<-", "rowsum", "rstandard", "rstudent", "scale",
   "screeplot", "se.contrast", "seek", "selfStart", "seq", "seq.int",
-  "sequence", "sigma", "sign", "simulate", "sin", "sinh", "sinpi", "solve",
+  "sequence", "sigma", "sign", "signif", "simulate", "sin", "sinh", "sinpi", "solve",
   "sort_by", "sortedXyData", "spineplot", "split", "split<-", "sqrt", "SSD",
   "stack", "start", "str", "stripchart", "subset", "sum", "summary",
   "sunflowerplot", "t", "t.test", "tail", "tan", "tanh", "tanpi", "terms",

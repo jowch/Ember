@@ -378,8 +378,8 @@ the rerun the dropped edge misses.
   cells that define methods of it. A nested target reads every setter and
   the getters inside it (`names(x)[i] <- v` reads `` `[<-` ``,
   `` `names<-` `` and `names`). `x$a <- v` reads `` `$<-` `` (and
-  `$` when nested), so a `` `$<-.rec` `` method orders before it; `@`
-  has no S3 methods and reads neither.
+  `$` when nested), so a `` `$<-.rec` `` method orders before it, and
+  `x@a <- v` reads `` `@<-` `` the same way.
 - **Many cells, one generic.** Any number of cells may add methods to one
   generic. The same pair in two cells (`print.foo` in one,
   `registerS3method("print", "foo", …)` in another, or two
@@ -420,9 +420,10 @@ the rerun the dropped edge misses.
   the group (`?groupGeneric`, `?S4groupGeneric`): `a + b` reads
   `Ops.money` and `Arith`'s methods, `sqrt(a)` reads `Math`'s. The table
   is in `R/rules.R`.
-- **`$` methods.** `x$a` reads `$` as `x[1]` reads `[`, so a cell using
-  `$` depends on the cells that define `` `$.rec` ``. The field name is
-  never read.
+- **`$` and `@` methods.** `x$a` reads `$` as `x[1]` reads `[`, so a
+  cell using `$` depends on the cells that define `` `$.rec` ``. `@` is
+  an S3 generic too since R 4.3 (S7 uses it), so `x@a` reads `@`. The
+  field or slot name is never read.
 - **More class readers.** `slotNames()`, `getSlots()`, `extends()`,
   `isVirtualClass()` and the signatures of `existsMethod()`,
   `hasMethod()`, `getMethod()` and `selectMethod()` read a class named as
