@@ -207,6 +207,32 @@ test_that("an unpublished date stays, with the failure shown, when the lock has 
   expect_true("index_unavailable" %in% r$state$packages$problems$kind)
 })
 
+test_that("a preview of a date not published yet moves back a day and offers that one; any other failure fails it (#162)", {
+  s <- pkg_state(list(A = cell("library(dplyr)")), snapshot = "2026-09-01")
+  r <- drive(s, ev_open(at(1)), ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index("2026-09-01"), at(2)))
+  expect_setequal(r$state$file$lock$entries$name, c("dplyr", "cli", "glue"))
+
+  key <- repo_key("cran", "2026-10-01")
+  p <- drive(r$state, ev_preview_date("2026-10-01", at(3)))
+  expect_equal(find_effect(p, "fetch_index")$key, key)
+  p <- drive(p$state, ev_index_failed(key, "cran/2026-10-01 isn't published", at(4), unpublished = TRUE))
+  expect_equal(p$state$packages$proposal$date, "2026-09-30")
+  expect_equal(p$state$packages$proposal$asked, "2026-10-01")
+  expect_null(p$state$packages$indexes[[key]])
+  expect_equal(find_effect(p, "fetch_index")$key, repo_key("cran", "2026-09-30"))
+  p <- drive(p$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(5)))
+  expect_equal(p$state$packages$proposal$status, "ready")
+  expect_equal(packages_view(p$state)$proposal$asked, "2026-10-01")
+  expect_equal(p$state$file$header$snapshot, "2026-09-01")
+
+  # Offline, or anything but a 404 for a recent date: the preview fails for
+  # the date it was asked for, as before.
+  p <- drive(r$state, ev_preview_date("2026-10-01", at(3)),
+             ev_index_failed(key, "could not resolve host", at(4)))
+  expect_equal(p$state$packages$proposal$date, "2026-10-01")
+  expect_equal(p$state$packages$proposal$status, "failed")
+})
+
 # ---- Looking at and installing the library ------------------------------------
 
 test_that("in safe preview a missing library is checked but never installed (34)", {

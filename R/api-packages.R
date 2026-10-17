@@ -57,6 +57,11 @@ remove_package_source <- function(name) list(op = "remove_package_source", name 
 #'
 #' "Update all" is `preview_date(nb, Sys.Date())`.
 #'
+#' A `date` Package Manager hasn't published yet (today, early in the day
+#' in UTC) is previewed at the newest published date before it, so the
+#' result's `date` can be earlier than the one asked for (#162);
+#' `set_date()` takes the result's `date`.
+#'
 #' `apply = TRUE` is what the Packages tab's Update button does
 #' (`ember_update_packages`, server.R): once the preview is ready,
 #' `schedule_packages()` applies it itself (`apply_proposal()`,
@@ -74,23 +79,29 @@ remove_package_source <- function(name) list(op = "remove_package_source", name 
 #' @export
 preview_date <- function(nb, date = Sys.Date(), wait = TRUE, apply = FALSE, timeout = 60) {
   date <- format(as.Date(date), "%Y-%m-%d")
+  # An applied proposal is cleared as it applies, and a preview of a day
+  # not published yet applies an earlier date than `date` (#221), so a
+  # change of the snapshot from this one is what says it applied.
+  before <- package_status(nb)$snapshot
+  moved <- function(snapshot) isTRUE(apply) && !identical(snapshot, before) && !is.null(snapshot)
   dispatch(nb, ev_preview_date(date, at = Sys.time(), apply = apply))
 
   if (isTRUE(wait)) {
     wait_for(nb, function(snap) {
       prop <- snap$packages$proposal
-      if (!is.null(prop) && identical(prop$date, date)) return(prop$status %in% c("ready", "failed"))
-      isTRUE(apply) && identical(snap$packages$snapshot, date)
+      if (!is.null(prop) && identical(prop$asked %||% prop$date, date)) return(prop$status %in% c("ready", "failed"))
+      moved(snap$packages$snapshot) || isTRUE(apply) && identical(snap$packages$snapshot, date)
     }, timeout = timeout)
   }
 
   prop <- package_status(nb)$proposal
-  if (!is.null(prop) && identical(prop$date, date)) {
+  if (!is.null(prop) && identical(prop$asked %||% prop$date, date)) {
     return(list(date = prop$date, status = prop$status, changes = prop$changes,
                problems = prop$problems, restart = prop$restart %||% character()))
   }
-  if (isTRUE(apply) && identical(package_status(nb)$snapshot, date)) {
-    return(list(date = date, status = "ready", changes = NULL, problems = NULL, restart = character()))
+  now <- package_status(nb)$snapshot
+  if (moved(now) || isTRUE(apply) && identical(now, date)) {
+    return(list(date = now, status = "ready", changes = NULL, problems = NULL, restart = character()))
   }
   list(date = date, status = "fetching", changes = NULL, problems = NULL, restart = character())
 }

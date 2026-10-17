@@ -29,7 +29,8 @@
 #' * `references`: data frame `name`, `line`, `col`, `end_col`, `where`,
 #'   `file`. Names read at the top level before the cell defines them, plus
 #'   free names inside function bodies that the cell never defines. `where`
-#'   is `"code"`, `"formula"` or `"slot"` (a slot or field class,
+#'   is `"code"`, `"formula"`, `"masked"` (read inside a data-masking
+#'   call, see `masked`) or `"slot"` (a slot or field class,
 #'   `representation(r = "Shape")`: a soft read; see `add_soft_edges()`). Names local to functions, `local()`, and
 #'   formula columns are not here. Function heads (`helper()`) are
 #'   references. A name read more than once is one row per distinct
@@ -51,6 +52,12 @@
 #'   `pkg::fn(...)` counts when `fn` is a setting function.
 #' * `formulas`: list of `formula_site` (see below): each formula that was
 #'   read with the column rule, for the worker to check after the run.
+#' * `masked`: data frame `name`, `data`, `fn`: each name read at the top
+#'   level inside a data-masking call's other arguments (`x` in
+#'   `subset(df, x > 1)`: name `x`, data `df`, fn `subset`), when the data
+#'   is a bare name (`data_masking_calls`, `walk_masking_call()`). The same
+#'   name is also in `references`, with `where` `"masked"`; the graph
+#'   decides whether it is an edge (`resolve_masked()`).
 #' * `sourced`: data frame `path`, `text`, `found`: literal `source()` paths
 #'   and the contents the reader returned (`NA` when not found). The graph
 #'   compares `text` to decide whether a cached analysis is still valid.
@@ -91,14 +98,15 @@ new_cell_analysis <- function(code,
                               packages = empty_packages(),
                               settings = empty_settings(),
                               formulas = list(),
+                              masked = empty_masked(),
                               sourced = empty_sourced(),
                               notes = empty_notes(),
                               methods = no_methods) {
   structure(list(code = code, parse_error = parse_error,
                  definitions = definitions, references = references,
                  packages = packages, settings = settings,
-                 formulas = formulas, sourced = sourced, notes = notes,
-                 methods = methods),
+                 formulas = formulas, masked = masked, sourced = sourced,
+                 notes = notes, methods = methods),
             class = "ember_cell_analysis")
 }
 
@@ -111,6 +119,10 @@ empty_references <- function() {
   data.frame(name = character(), line = integer(), col = integer(),
              end_col = integer(), where = character(),
              file = character(), stringsAsFactors = FALSE)
+}
+empty_masked <- function() {
+  data.frame(name = character(), data = character(), fn = character(),
+             stringsAsFactors = FALSE)
 }
 empty_packages <- function() {
   data.frame(name = character(), attached = logical(), line = integer(),
@@ -351,9 +363,19 @@ finish <- function(acc, code) {
     row.names(methods) <- NULL
   }
 
+  masked <- empty_masked()
+  if (length(acc$mask_rows) > 0) {
+    masked <- data.frame(name = vapply(acc$mask_rows, `[[`, character(1), "name"),
+                         data = vapply(acc$mask_rows, `[[`, character(1), "data"),
+                         fn = vapply(acc$mask_rows, `[[`, character(1), "fn"),
+                         stringsAsFactors = FALSE)
+    masked <- masked[!vapply(masked$name, is_ignored, logical(1)) & !duplicated(masked), , drop = FALSE]
+    row.names(masked) <- NULL
+  }
+
   new_cell_analysis(code, parse_error = NULL, definitions = defs,
                      references = refs, packages = pkgs, settings = settings,
-                     formulas = acc$formulas, sourced = sourced, notes = notes,
+                     formulas = acc$formulas, masked = masked, sourced = sourced, notes = notes,
                      methods = methods)
 }
 

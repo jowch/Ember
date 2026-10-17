@@ -282,7 +282,8 @@ schedule <- function(state) {
   state <- invalidate_dependents(state, id, if (!is.null(prev)) prev$defined else character())
   state$worker$status <- "busy"
   state$worker$running <- list(cell = id, token = token, code = state$cells[[id]]$code,
-                               started_at = state$clock, console = list(), begun = FALSE)
+                               started_at = state$clock, console = list(), begun = FALSE,
+                               upstream = state$graph$upstream[[id]])
   list(state = state, effects = c(dg$effects, list(fx_send(state$worker$gen, run_message(state, id, token)))))
 }
 
@@ -580,7 +581,9 @@ is_fresh <- function(state, id) {
 #' whose references include any of `names` (what the cell's previous run
 #' defined; a cell that read a name the edit removed has no edge any more
 #' but its result was computed from that name), plus their transitive
-#' downstream. Only cells with a result are touched: a cell that hasn't run
+#' downstream. A masked name the reader's data provides (`x` in
+#' `subset(df, x > 1)` with a column `x`, `masked_none`) doesn't count: R
+#' never read the global. Only cells with a result are touched: a cell that hasn't run
 #' stays not run, in both modes.
 #'
 #' Every touched result gets `stale = TRUE`. In autorun, and when `queue` is
@@ -615,7 +618,8 @@ invalidate_dependents <- function(state, id, names, queue = TRUE,
   }
   if (length(names) > 0) {
     readers <- Filter(function(cid) {
-      !identical(cid, id) && length(intersect(names, state$graph$cells[[cid]]$references)) > 0
+      c <- state$graph$cells[[cid]]
+      !identical(cid, id) && length(intersect(names, setdiff(c$references, c$masked_none))) > 0
     }, state$graph$ids)
     extra <- unlist(lapply(readers, function(r) {
       c(r, downstream(state$graph, r, transitive = TRUE))
@@ -675,7 +679,8 @@ rebuild_graph <- function(state) {
                               learned = state$graph$learned,
                               disabled = disabled_ids(state$cells),
                               previous = state$graph,
-                              read_file = reader_of(state$files))
+                              read_file = reader_of(state$files),
+                              columns = state$data_columns)
   old_cmp <- state$graph; old_cmp$read_file <- NULL; old_cmp$reread <- NULL
   new_cmp <- new_graph; new_cmp$read_file <- NULL; new_cmp$reread <- NULL
   if (!identical(old_cmp, new_cmp)) state$graph <- new_graph
@@ -960,6 +965,7 @@ forget_run <- function(state, id) {
   old_result <- state$results[[id]]
   state$results[[id]] <- NULL
   state$computed_sources[[id]] <- NULL
+  state <- forget_columns(state, id)
   state$pending <- setdiff(state$pending, id)
   state <- invalidate_dependents(state, id,
                                  if (!is.null(old_result)) old_result$defined else character(),
@@ -1094,6 +1100,7 @@ restart_worker <- function(state, reason = NULL) {
                             class = "ember_worker_state")
   effects <- c(effects, list(fx_start_worker(gen, state$packages$active$path, dirname(state$path))))
   state$results <- list()
+  state <- forget_columns(state)
   state$pending <- character()
   list(state = state, effects = effects)
 }
@@ -1360,7 +1367,8 @@ reduce_wk_source <- function(state, event) {
     # an `NA` written straight to the footer.
   }
   prev_learned <- state$graph$learned$definitions[[id]] %||% character()
-  state$graph <- graph_learn(state$graph, id, definitions = union(prev_learned, defs))
+  state$graph <- graph_learn(state$graph, id, definitions = union(prev_learned, defs),
+                             columns = state$data_columns)
   effects <- list(fx_send(w$gen, list(type = "source_reply", allow = TRUE)))
   list(state = state, effects = effects, reply = NULL)
 }
@@ -1569,12 +1577,42 @@ reduce_wk_done <- function(state, event) {
     any(vapply(state$graph$ids, function(cid) !identical(cid, id) && n %in% state$graph$cells[[cid]]$definitions,
                logical(1)))
   }, as.character(report$changed_in_place %||% character()))
-  if (defs_changed || refs_changed || settings_changed) {
+  # The names the cell's globals have as data (worker.R's
+  # global_columns()), for masked reads such as `x` in `subset(df, x > 1)`
+  # (graph.R, resolve_masked()), kept in `data_columns` (state.R). Only
+  # an "ok" run's globals are kept, so a failed run forgets them. They
+  # change an edge only when some cell reads one of these globals as data,
+  # so only then is the graph rebuilt.
+  cur_columns <- state$data_columns[[id]]
+  new_columns <- if (identical(status, "ok")) report_columns(report$columns) else NULL
+  columns_changed <- !identical(cur_columns, new_columns) &&
+    masked_data_read(state$graph, union(names(cur_columns), names(new_columns)))
+  if (is.null(new_columns)) state$data_columns[[id]] <- NULL
+  else state$data_columns[id] <- list(new_columns)
+  if (defs_changed || refs_changed || settings_changed || columns_changed) {
     state$graph <- graph_learn(state$graph, id,
                                definitions = if (defs_changed) learned_defs else NULL,
                                references = if (refs_changed) report$formula_misses else NULL,
-                               settings = if (settings_changed) learned_settings else NULL)
+                               settings = if (settings_changed) learned_settings else NULL,
+                               columns = state$data_columns)
+    # The new graph can give a cell waiting to run an ancestor it didn't
+    # have when the run was asked for (a masked name the data lost). A
+    # stale one runs first, as reduce_run() would have queued it.
+    if (length(state$pending) > 0) {
+      stale_anc <- Filter(function(u) {
+        isTRUE(state$results[[u]]$stale) && !(u %in% state$pending) && can_run(state, u)
+      }, upstream_of_set(state$graph, state$pending))
+      state$pending <- union(state$pending, stale_anc)
+    }
   }
+  # An input found after the cell was sent (a formula term that isn't a
+  # column, or a masked name the data turned out not to have, learned from
+  # this run or an upstream one) from a cell that is stale and not about
+  # to run: the result came from that cell's old value, so it is stale
+  # too, as it would be had the edge been there when the run was asked for.
+  late <- setdiff(state$graph$upstream[[id]], w$running$upstream)
+  late_stale <- any(vapply(late, function(u) isTRUE(state$results[[u]]$stale) && !(u %in% state$pending),
+                           logical(1)))
 
   runtime <- as.numeric(event$at) - as.numeric(w$running$started_at)
   # Variables are kept only for an "ok" result: a run the worker itself
@@ -1589,6 +1627,7 @@ reduce_wk_done <- function(state, event) {
                        variables = if (identical(status, "ok")) report$globals %||% list() else list(),
                        settings_found = settings_found, setting = id %in% state$graph$settings,
                        load_notes = load_notes, changed_in_place = as.character(changed_in_place))
+  if (late_stale) result$stale <- TRUE
   state$results[[id]] <- result
   if (length(state$footer_sources) && all_code_cells_ran(state)) {
     state$footer_sources <- character()
@@ -1619,6 +1658,37 @@ reduce_wk_done <- function(state, event) {
     state <- invalidate_dependents(state, id, report$created %||% character())
   }
   list(state = state, effects = effects, reply = NULL)
+}
+
+#' The worker's `columns` report (`global_columns()`) in the graph's form:
+#' global -> `list(frame, names)`, `names` always character. msgpack turns
+#' a one-name vector into a string and an empty one into an empty list.
+report_columns <- function(columns) {
+  if (!is.list(columns) || length(columns) == 0 || is.null(names(columns))) return(list())
+  out <- lapply(columns, function(c) {
+    list(frame = isTRUE(c$frame), names = as.character(unlist(c$names, use.names = FALSE)))
+  })
+  out[order(names(out))]
+}
+
+#' Drop the data columns of `ids` (every cell's by default): their values
+#' are gone (a restart, R exiting, a forgotten run), so masked reads of them go back
+#' to a soft edge until the cell runs again. Rebuilds the graph only when a
+#' masked read used them.
+forget_columns <- function(state, ids = names(state$data_columns)) {
+  ids <- intersect(ids, names(state$data_columns))
+  if (length(ids) == 0) return(state)
+  globals <- unique(unlist(lapply(state$data_columns[ids], names)))
+  state$data_columns[ids] <- NULL
+  if (masked_data_read(state$graph, globals)) state <- rebuild_graph(state)
+  state
+}
+
+#' Does any cell read one of `globals` as the data of a masked read
+#' (`df` in `subset(df, x > 1)`)?
+masked_data_read <- function(graph, globals) {
+  if (length(globals) == 0) return(FALSE)
+  any(vapply(graph$cells, function(c) any(c$masked$data %in% globals), logical(1)))
 }
 
 #' The setting keys (`setting_keys()`'s form) of the worker's `settings`
@@ -1708,6 +1778,7 @@ reduce_wk_exited <- function(state, event) {
   if (!eq(event$gen, state$worker$gen)) return(list(state = state, effects = list(), reply = NULL))
   running <- state$worker$running
   state$results <- list()
+  state <- forget_columns(state)
   if (!is.null(running)) {
     state$results[[running$cell]] <- new_result(
       code = running$code, status = "error", output = NULL, console = running$console,
