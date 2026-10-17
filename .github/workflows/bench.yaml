@@ -47,7 +47,9 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha || inputs.base }}
         run: |
-          git worktree add --detach "$RUNNER_TEMP/base" "$(git rev-parse "origin/$BASE" 2>/dev/null || echo "$BASE")"
+          # A branch name by hand resolves on origin; a sha (the PR's base) as is.
+          base=$(git rev-parse --verify -q "origin/$BASE^{commit}" || git rev-parse --verify -q "$BASE^{commit}")
+          git worktree add --detach "$RUNNER_TEMP/base" "$base"
           mkdir -p "$RUNNER_TEMP/lib-base" "$RUNNER_TEMP/lib-head"
           R CMD INSTALL --library="$RUNNER_TEMP/lib-base" "$RUNNER_TEMP/base"
           R CMD INSTALL --library="$RUNNER_TEMP/lib-head" .
