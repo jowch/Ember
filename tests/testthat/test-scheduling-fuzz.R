@@ -19,43 +19,52 @@ fuzz_steps <- function() {
   if (nzchar(s)) as.integer(s) else 12L
 }
 
-# Known failures, by mode and seed (at the default 12 steps): each must
-# still fail at its step for its recorded reason, so a fix shows up here as
-# a failure until its entry is removed, and any other failure is new.
+# Known failures, by mode and seed (at the default 12 steps), one or more
+# per open issue: each must still fail at its step for its recorded reason,
+# so a fix shows up here as a failure until its entry is removed, and any
+# other failure is new. Their seeds run along with fuzz_seeds(). A known
+# trace stops at its failure, so its later steps aren't checked.
 fuzz_known <- list(
-  "lazy 3" = list(issue = 174, step = 4L, kind = "after running every cell, _ isn't fresh"),
-  "autorun 6" = list(issue = 176, step = 10L, kind = "_ isn't stale but reads from _, which is")
+  "lazy 8" = list(issue = 175, step = 4L, kind = "_ shows ok but running from scratch gives error"),
+  "autorun 10" = list(issue = 175, step = 8L, kind = "_ shows _ but running from scratch gives _"),
+  "lazy 30" = list(issue = 174, step = 5L, kind = "after running every cell, _ isn't fresh"),
+  "autorun 31" = list(issue = 176, step = 3L, kind = "_ isn't stale but reads from _, which is")
 )
 
+known_seeds <- function(mode) {
+  keys <- strsplit(names(fuzz_known), " ")
+  as.integer(vapply(Filter(function(k) identical(k[1], mode), keys), `[`, "", 2))
+}
+
 expect_known_failure <- function(trace, known) {
-  fail <- fuzz_replay(trace)
-  ok <- !is.null(fail) && identical(fail$step, known$step) && known$kind %in% fuzz_kind(fail$problems)
+  res <- fuzz_replay(trace)
+  ok <- !is.null(res) && identical(res$step, known$step) && known$kind %in% fuzz_kind(res$problems)
   if (ok) return(succeed())
-  got <- if (is.null(fail)) "it passed" else
-    paste0("it failed at step ", fail$step, ": ", paste(fail$problems, collapse = "; "))
+  got <- if (is.null(res)) "it passed" else
+    paste0("it failed at step ", res$step, ": ", paste(res$problems, collapse = "; "))
   fail(paste0("seed ", trace$seed, ", ", trace$mode, " mode was expected to fail at step ",
               known$step, " for #", known$issue, " (", known$kind, "), but ", got,
               ". If #", known$issue, " is fixed, remove its entry from fuzz_known."))
 }
 
 expect_trace_passes <- function(trace) {
-  fail <- fuzz_replay(trace)
-  if (is.null(fail)) return(succeed())
+  res <- fuzz_replay(trace)
+  if (is.null(res)) return(succeed())
   label <- "Trace"
   if (!identical(Sys.getenv("EMBER_FUZZ_NO_SHRINK"), "1")) {
     trace <- fuzz_shrink(trace)
-    fail <- fuzz_replay(trace) %||% fail
+    res <- fuzz_replay(trace) %||% res
     label <- "Shrunk trace"
   }
   fail(paste0(
-    "seed ", trace$seed %||% "(fixed trace)", ", ", trace$mode, " mode, step ", fail$step, ":\n",
-    paste0("  ", fail$problems, collapse = "\n"),
+    "seed ", trace$seed %||% "(fixed trace)", ", ", trace$mode, " mode, step ", res$step, ":\n",
+    paste0("  ", res$problems, collapse = "\n"),
     "\n", label, ":\n", fuzz_format(trace)))
 }
 
 for (mode in c("autorun", "lazy")) {
   test_that(paste("random edits and runs match a run from scratch,", mode, "mode"), {
-    for (seed in fuzz_seeds()) {
+    for (seed in union(fuzz_seeds(), known_seeds(mode))) {
       trace <- fuzz_trace(seed, mode, steps = fuzz_steps())
       known <- fuzz_known[[paste(mode, seed)]]
       if (!is.null(known) && fuzz_steps() >= known$step) expect_known_failure(trace, known)

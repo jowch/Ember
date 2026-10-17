@@ -35,8 +35,15 @@ fuzz_trace <- function(seed, mode, steps = 12, cells = 6) {
         ops <- c(ops, out$ops)
       }
       live <- setdiff(g$order, "S")
+      # Half the time after an edit, run something that reads the edited
+      # cell: that is where a stale value can leak into a result (#169).
+      edited <- intersect(unlist(lapply(ops, function(op) if (identical(op$op, "set_code")) op$cell)), live)
+      below <- unique(unlist(lapply(edited, function(id) {
+        fuzz_descendants(lapply(g$cells[live], `[[`, "code"), id)
+      })))
       u <- stats::runif(1)
-      run <- if (u < 0.6 && length(live)) sample(live, 1) else if (u < 0.8) "all" else NULL
+      run <- if (length(below) && stats::runif(1) < 0.5) sample(below, 1)
+        else if (u < 0.6 && length(live)) sample(live, 1) else if (u < 0.8) "all" else NULL
       trace$steps[[s]] <- list(ops = ops, run = run)
     }
     trace
@@ -389,7 +396,7 @@ fuzz_format <- function(trace) {
 #' A problem without its cell ids and values, so shrinking keeps the same
 #' kind of failure rather than drifting to another one.
 fuzz_kind <- function(problems) {
-  unique(gsub('"[^"]*"|\\bC[0-9]+\\b|\\b(ok|error|not_run)\\b', "_", problems))
+  unique(gsub('"[^"]*"|\\bC[0-9]+\\b', "_", problems))
 }
 
 #' Make a failing trace smaller while it still fails the same way: drop
