@@ -348,8 +348,20 @@ still checked, up to 10,000 bindings a run. A data.table another cell
 defines is fingerprinted by its shape: column names, each column's
 address, its spare column slots and its key. So `dt[, z := x * 2]`,
 `setnames()`, `setkey()`, `setorder()` and dropping a column are noted. A
-write to some rows of an existing column (`dt[i, x := 0]`) keeps the
-column where it was, and isn't (#172).
+write to some rows of an existing column (`dt[i, x := 0]`, `set(dt, i,
+"x", v)`) keeps the column where it was, so the shape can't show it. A
+hash of the table's contents does (#201). Hashing costs about 3 ms a
+megabyte, so a run hashes only another cell's tables its code could write:
+the table of a `[` with `:=`, `let()` or `set*()` in it, an argument of
+data.table's `set*()`, and a table passed to one of the notebook's own
+functions (`add_b(dt)`, `lapply(list(dt), add_b)`), or to a function not
+defined yet. Showing the table, reading it with `[` or `$`, and passing it
+to a package's function (`nrow(dt)`, `lm(y ~ x, dt)`, `ggplot(dt)`) hash
+nothing. Such a run hashes the table after its code, and before it unless
+the last such run left a hash of the table as it is. A cell that reaches a
+table without naming it (a helper that writes the global, a table in a
+list) isn't hashed, and its write isn't noted (#216). Before R 4.5,
+`tools::md5sum()` can't hash bytes, so row writes aren't noted there.
 
 ### Methods
 

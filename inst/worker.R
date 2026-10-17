@@ -437,6 +437,7 @@ run_cell <- function(msg) {
     if (!is_text) exprs <- parse(text = msg$code, keep.source = TRUE,
                                  srcfile = srcfilecopy(msg$cell, msg$code))
     trace_line("eval", msg$cell)
+    dt_before <- datatable_before(env_before, if (is_text) text_lines else exprs)
 
     tryCatch(
       withCallingHandlers({
@@ -624,7 +625,8 @@ run_cell <- function(msg) {
       rc$created <- facts$created
       rc$changed <- facts$changed
       rc$removed <- facts$removed
-      rc$changed_in_place <- changed_in_place(env_before, facts$changed)
+      rc$changed_in_place <- changed_in_place(env_before, facts$changed, dt_before)
+      datatable_keep_hashes(facts$removed, facts$changed)
 
       by_code <- settings_by_code(settings0, settings_code, load_log_code)
       # An option a package creates for itself on first use (readr's
@@ -932,8 +934,8 @@ ref_fingerprint <- function(v, budget) {
 #' into), and the key. `dt[, z := x * 2]`, `set()` on a new column,
 #' `setnames()`, `setkey()`, `setorder()` and dropping a column all change
 #' it. A write to some rows of an existing column (`dt[i, x := 0]`,
-#' `set(dt, i, "x", v)`) keeps the column's address, so it isn't seen;
-#' finding it would mean hashing every column each run (#172). `NULL`
+#' `set(dt, i, "x", v)`) keeps the column's address, so it isn't seen
+#' here; a hash of its contents finds those (#201). `NULL`
 #' when data.table's namespace isn't loaded or reading fails.
 datatable_fingerprint <- function(dt) {
   if (!isNamespaceLoaded("data.table")) return(NULL)
@@ -974,6 +976,146 @@ datatable_clear_mark <- function() {
   if (!isNamespaceLoaded("data.table")) return(invisible())
   tryCatch({ g <- asNamespace("data.table")$.global; g$print <- "" }, error = function(e) NULL)
   invisible()
+}
+
+# ---- data.table row writes (#201) ------------------------------------------
+#
+# A write to some rows (`dt[i, x := 0]`, `set(dt, i, "x", v)`) keeps every
+# column's address, so the shape fingerprint can't see it. A hash of the
+# table's contents can, but costs about 3 ms a megabyte, so a run hashes
+# only another cell's tables that its code could write
+# (`datatable_could_write()`): before its code, unless the last such run
+# left a hash of the table as it is, and after. No other run hashes
+# anything. A table the code reaches without naming it (in a list, or a
+# global a helper reads) isn't hashed (#216).
+
+#' The last hash of each data.table global, by name: `list(print, hash)`.
+#' Only used while `print`, the table's shape fingerprint (which holds its
+#' address and its columns'), is the same.
+datatable_hashes <- new.env(parent = emptyenv())
+
+#' A data.table's contents as one MD5 per column: each column's bytes
+#' (`writeBin()`, which for a character column writes its strings, plus
+#' where its NAs are), or its serialization for a list column. `NULL` if
+#' reading fails, or before R 4.5, whose `md5sum()` can't hash bytes.
+datatable_hash <- function(dt) {
+  if (getRversion() < "4.5.0") return(NULL)
+  tryCatch(vapply(seq_along(dt), function(i) {
+    col <- .subset2(dt, i)
+    bytes <- if (is.character(col)) c(writeBin(col, raw()), writeBin(which(is.na(col)), raw()))
+             else if (is.atomic(col)) writeBin(as.vector(col), raw())
+             else serialize(col, NULL, xdr = FALSE)
+    unname(tools::md5sum(bytes = bytes))
+  }, ""), error = function(e) NULL)
+}
+
+#' Hash the data.table bound to `name` and keep it as its last hash.
+datatable_rehash <- function(name, value) {
+  h <- datatable_hash(value)
+  if (is.null(h)) return(NULL)
+  assign(name, list(print = datatable_fingerprint(value), hash = h), envir = datatable_hashes)
+  h
+}
+
+#' The last hash of `name`'s table with shape fingerprint `print`, hashing
+#' it now if there is none.
+datatable_hash_before <- function(name, value, print) {
+  kept <- get0(name, envir = datatable_hashes, inherits = FALSE)
+  if (!is.null(kept) && identical(kept$print, print)) return(kept$hash)
+  datatable_rehash(name, value)
+}
+
+#' The hashes, before the run, of the other cells' tables (in
+#' `env_before`) that `code` (parsed expressions, or the lines of a text
+#' cell) could write: a named list, empty when it can write none.
+datatable_before <- function(env_before, code) {
+  tables <- Filter(function(b) inherits(b$env, "data.table"), env_before)
+  if (length(tables) == 0L) return(list())
+  tryCatch({
+    if (is.character(code)) code <- unlist(lapply(code, function(l) tryCatch(as.list(parse(text = l)), error = function(e) list())))
+    out <- list()
+    for (n in datatable_could_write(code, names(tables))) out[n] <- list(datatable_hash_before(n, tables[[n]]$env, tables[[n]]$print))
+    out
+  }, error = function(e) list())
+}
+
+#' After a run: forget the hashes of names it removed or rebound.
+datatable_keep_hashes <- function(removed, changed) {
+  gone <- intersect(c(removed, changed), ls(datatable_hashes, all.names = TRUE))
+  if (length(gone)) rm(list = gone, envir = datatable_hashes)
+  invisible()
+}
+
+#' The function a call's head names, looked up from `env` without
+#' running anything but a package's lazy load: a symbol, or `pkg::f`.
+#' `NULL` when it isn't bound to a function yet, or is anything else
+#' (`obj$f`, `f()()`).
+datatable_callee <- function(f, env) {
+  if (is.symbol(f)) return(get0(as.character(f), envir = env, mode = "function"))
+  if (is.call(f) && length(f) == 3L && (identical(f[[1L]], quote(`::`)) || identical(f[[1L]], quote(`:::`))))
+    return(tryCatch(get(as.character(f[[3L]]), envir = asNamespace(as.character(f[[2L]]))), error = function(e) NULL))
+  NULL
+}
+
+#' Whether `fun` comes from a package (a primitive, or a closure made in a
+#' namespace) rather than from the notebook.
+datatable_package_fun <- function(fun) {
+  e <- environment(fun)
+  is.null(e) || isNamespace(topenv(e))
+}
+
+#' Which of `names` the parsed `exprs` could write in place. A table is
+#' written by `:=`, `let()` or a `set*()` function inside a `[` on it, by
+#' data.table's `set*()` functions, and by the notebook's own functions,
+#' which can do either. So a name counts wherever it is an argument of a
+#' call to anything but a package function (`add_b(dt)`, `dt |> add_b()`,
+#' a function not defined yet), of data.table's `set*()`, or of a package
+#' function that is also passed a function of the notebook's
+#' (`lapply(list(dt), add_b)`, `Map(function(d) d[1, x := 0], list(dt))`),
+#' at any depth in its arguments, and as the table of a `[` with a write
+#' in it. Showing the table, a `[`
+#' read (`dt[x > 1]`), `dt$x`, and a package function (`nrow(dt)`,
+#' `lm(y ~ x, dt)`, `ggplot(dt)`) don't count.
+datatable_could_write <- function(exprs, names, env = globalenv()) {
+  found <- character()
+  writes_marked <- function(used) any(used %in% c(":=", "let")) || any(startsWith(used, "set"))
+  # `f(x, )` and `function(a)` hold the empty symbol, which can't be bound
+  # to a variable, so arguments are read by index.
+  visit_each <- function(l, read) {
+    for (j in seq_along(l)) if (!identical(l[[j]], quote(expr = ))) visit(l[[j]], read)
+  }
+  notebook_fun <- function(a) {
+    if (is.call(a) && identical(a[[1L]], quote(`function`))) return(TRUE)
+    if (!is.symbol(a)) return(FALSE)
+    fun <- get0(as.character(a), envir = env, mode = "function")
+    !is.null(fun) && !datatable_package_fun(fun)
+  }
+  visit <- function(e, read) {
+    if (is.symbol(e)) {
+      if (!read && as.character(e) %in% names) found <<- union(found, as.character(e))
+      return()
+    }
+    if (is.pairlist(e) || is.expression(e) || is.list(e)) return(visit_each(as.list(e), FALSE))
+    if (!is.call(e)) return()
+    f <- e[[1L]]
+    args <- as.list(e)[-1L]
+    fname <- if (is.symbol(f)) as.character(f)
+             else if (is.call(f) && length(f) == 3L && is.symbol(f[[3L]])) as.character(f[[3L]]) else ""
+    if (is.symbol(f) && fname %in% c("[", "[[", "$") && length(args) > 0L && !identical(args[[1L]], quote(expr = ))) {
+      visit(args[[1L]], !writes_marked(all.names(e)))
+      return(visit_each(args[-1L], FALSE))
+    }
+    if (!is.symbol(f)) visit(f, FALSE)
+    fun <- datatable_callee(f, env)
+    writer <- is.null(fun) || !datatable_package_fun(fun) ||
+      (identical(topenv(environment(fun) %||% baseenv()), asNamespace("data.table")) && writes_marked(fname)) ||
+      any(vapply(seq_along(args), function(j) !identical(args[[j]], quote(expr = )) && notebook_fun(args[[j]]), NA))
+    # A writer can reach any table in its arguments (`lapply(list(dt), f)`).
+    if (writer) found <<- union(found, intersect(all.names(as.call(c(quote(c), args))), names))
+    visit_each(args, TRUE)
+  }
+  for (e in exprs) visit(e, TRUE)
+  found
 }
 
 #' An environment the notebook doesn't own: a namespace, a package's
@@ -1039,7 +1181,7 @@ env_fingerprint_ <- function(e, budget, depth, seen) {
 #' still bound to the same object, and its fingerprint differs. A
 #' name the run rebound (`changed`) or removed is reported as a change of
 #' the name, not of its contents.
-changed_in_place <- function(env_before, changed) {
+changed_in_place <- function(env_before, changed, dt_before = list()) {
   out <- character()
   for (n in setdiff(names(env_before), changed)) {
     b <- env_before[[n]]
@@ -1049,7 +1191,12 @@ changed_in_place <- function(env_before, changed) {
     print <- ref_fingerprint(now, list2env(list(left = ENV_FINGERPRINT_MAX)))
     # `dt <- copy(dt)` binds an equal table, which is a new name, not a change in place.
     if (inherits(now, "data.table") && !identical(print$self, b$print$self)) next
-    if (!identical(print, b$print)) out <- c(out, n)
+    if (!identical(print, b$print)) { out <- c(out, n); if (n %in% names(dt_before)) datatable_rehash(n, now); next }
+    # A write to some rows keeps the shape; the hash shows it (#201).
+    if (n %in% names(dt_before) && !is.null(dt_before[[n]])) {
+      h <- datatable_rehash(n, now)
+      if (!is.null(h) && !identical(h, dt_before[[n]])) out <- c(out, n)
+    }
   }
   out
 }
