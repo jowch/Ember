@@ -55,6 +55,7 @@ session_start <- function(state) {
   nb$save_failed_text <- NULL
   nb$listeners <- list()
   nb$proc <- NULL
+  nb$reaper <- NULL
   nb$proc_gen <- 0L
   nb$listen <- NULL
   nb$port <- NULL
@@ -412,6 +413,7 @@ run_effect <- function(nb, fx) {
           nb$con <- NULL
         }
         nb$proc <- NULL
+        end_reaper(nb)
         nb$rx <- list(chunks = list(), n = 0L)
         fail_pending_queries(nb)
       }
@@ -700,9 +702,19 @@ start_worker_process <- function(nb, fx) {
   wd <- fx$wd
   if (is.null(wd) || !nzchar(wd)) wd <- getwd()
 
+  # `supervise = TRUE`: processx's supervisor sends the worker SIGTERM once
+  # the server has gone, however it went, so a worker busy in a long cell
+  # doesn't outlive a killed server (#147; the jobs' `job_process()` does
+  # the same, #141). Not under `job_process()`'s `sh`: the server
+  # interrupts a cell with SIGINT to this process (`interrupt`), which must
+  # reach the worker itself. Processes a cell started go with the worker's
+  # process group, through `start_reaper()` (#150).
   proc <- processx::process$new(
     rscript, c("--vanilla", "-e", boot, as.character(nb$port)),
-    env = env, wd = wd, stdout = "|", stderr = "2>&1", cleanup_tree = TRUE)
+    env = env, wd = wd, stdout = "|", stderr = "2>&1", cleanup_tree = TRUE,
+    supervise = TRUE)
+  end_reaper(nb)
+  nb$reaper <- start_reaper(proc)
 
   if (!is.null(nb$con)) tryCatch(close(nb$con), error = function(e) NULL)
   nb$proc <- proc
@@ -718,6 +730,37 @@ start_worker_process <- function(nb, fx) {
   nb$last_mem_check <- NULL
   nb$worker_rss_reported <- NULL
   enqueue(nb, wk_started(fx$gen, proc$get_pid(), at = Sys.time()))
+  invisible(NULL)
+}
+
+#' On Unix, a small `sh` (the reaper) outside the worker's process group
+#' that ends the group once the server has gone (#150). The supervisor (`supervise =
+#' TRUE` above) ends only the worker's own R process, and what a cell
+#' started with `system()`, a pipe or a fork (`parallel::mclapply()`) is in
+#' the worker's group and would carry on. The reaper waits on a pipe from
+#' the server: its read returns only when the server's end closes, which
+#' happens however the server ends, SIGKILL included. Then it sends the
+#' group SIGTERM, and SIGKILL 5 s later, as the supervisor does. This is
+#' what stopping a worker already does while the server lives (`kill()`
+#' ends the group). A process a cell put in a session of its own (processx,
+#' callr) is outside the group and stays, as it does when the notebook
+#' restarts. `NULL` on Windows, or if the reaper can't start.
+start_reaper <- function(proc) {
+  if (.Platform$OS.type != "unix") return(NULL)
+  tryCatch(processx::process$new("/bin/sh", c("-c", WORKER_REAPER_SH, as.character(proc$get_pid())),
+                                 stdin = "|", stdout = NULL, stderr = NULL),
+           error = function(e) NULL)
+}
+
+#' The `sh -c` script `start_reaper()` runs, with the worker's pid (its
+#' process group, since processx made it a session leader) as `$0`.
+WORKER_REAPER_SH <- 'read _; kill -TERM -"$0" 2>/dev/null; sleep 5; kill -KILL -"$0" 2>/dev/null'
+
+#' Stop the reaper of a worker that has ended or is being replaced, so it
+#' can never signal a process group whose number has been reused.
+end_reaper <- function(nb) {
+  if (!is.null(nb$reaper)) tryCatch(nb$reaper$kill(), error = function(e) NULL)
+  nb$reaper <- NULL
   invisible(NULL)
 }
 
@@ -904,6 +947,7 @@ poll <- function(nb) {
             nb$con <- NULL
           }
           nb$proc <- NULL
+          end_reaper(nb)
           fail_pending_queries(nb)
           broke <- TRUE
           break
@@ -923,6 +967,7 @@ poll <- function(nb) {
     tail <- nb$out_tail
     gen <- nb$proc_gen
     nb$proc <- NULL
+    end_reaper(nb)
     nb$out_tail <- ""
     if (!is.null(nb$con)) {
       tryCatch(close(nb$con), error = function(e) NULL)

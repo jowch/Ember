@@ -165,6 +165,19 @@ the start. The server polls the worker socket from its `later` loop every
 5 ms (about 2% of a core when idle), and must read a large worker message in
 pieces rather than all at once, so a big output can't stall it.
 
+Workers and jobs (installs, index fetches) end when the server does. They
+start with processx's supervisor, a separate process that sends them SIGTERM
+once the server is gone, even after a SIGKILL (#141, #147). On Unix a job
+also takes its own children with it (docs/packages.md); on Windows that isn't
+checked yet (#148). For a worker, a small `sh` outside its process group
+waits on a pipe from the server and ends the group once the server is gone
+(#150), since the worker itself can't run under a wrapper: the server
+interrupts a cell with SIGINT to the worker's own process. So what a cell
+starts with `system()` or a fork ends with the server, as it already did
+when the notebook restarts. A process a cell starts in a session of its own
+(processx, callr) is outside the group and outlives both a restart and a
+killed server.
+
 The server runs two ways. From an interactive R session, the R API starts
 it as a background process (processx) and returns a handle to get its URL and
 stop it; running httpuv inside the caller's session would freeze the UI
@@ -482,7 +495,12 @@ order, as marimo does with `_display_`, its own formatters, `_mime_` and
 Every rich output also carries a `text/plain` form, the value's `print()`
 text truncated, as a Jupyter MIME bundle does, so programs that read outputs
 as text (Endeavor's agent) see the first rows of a table rather than "HTML
-output". The UI accepts HTML, PNG, SVG, markdown and LaTeX. Steps 2 and 3
+output". When `print()` gives nothing (an htmlwidget) or gives the HTML
+source itself (gt, an HTML kable), the text form is the HTML's own text
+instead: style and script blocks dropped, a table row per line, cells split
+by tabs. HTML with no text at all, such as a plotly or leaflet chart whose
+data is in a script, gets a line naming what it is, so the agent knows a
+chart is there. The UI accepts HTML, PNG, SVG, markdown and LaTeX. Steps 2 and 3
 need knitr or repr loaded; the worker loads them from the notebook's library
 only when they are there and a value needs them. That changes no results, so
 the `Rscript` target holds. Measured: knitr is in the dependencies of common
@@ -1101,8 +1119,8 @@ cover what the adapter needs:
 - **A PNG of a cell's output** for `view_cell_output`. Plots already are
   PNGs. Other outputs have none, as with Pluto, where the tool refuses
   Markdown, HTML and text and points the agent to `read_cell`, which gets
-  the `text/plain` form. So an htmlwidget chart (plotly, leaflet) is text to
-  the agent.
+  the `text/plain` form. So an htmlwidget chart (plotly, leaflet) reaches
+  the agent only as a line naming it.
 
 Endeavor also relies on the page. Its injected script reads Pluto's DOM hooks
 (`pluto-cell` elements with the cell UUID, `.code_differs`, `.selected`,

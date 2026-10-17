@@ -200,7 +200,8 @@ test("help: the page fits the panel, is padded, and has no Rd header table or qu
 });
 
 // #51: the Help tab as Panel3 draws it. No "Description" heading (the
-// description sits under the title); See Also is a row of links; the
+// description sits under the title); See Also is a row of links (and of
+// names R didn't link, tested in R on ?max); the
 // search field is 30 px on the page's background with a search icon.
 test("help: no Description heading, See Also is a row of links, and the search field matches Panel3 (#51)", { timeout: 120000 }, async (t) => {
   const page = await open_idle_notebook(t, "help-panel3.server.log");
@@ -227,8 +228,8 @@ test("help: no Description heading, See Also is a row of links, and the search f
       headings,
       first_after_title: page_el.querySelector("h2")?.nextElementSibling?.tagName,
       see_also_display: see_also && getComputedStyle(see_also).display,
-      link_tags: links.map((a) => a.tagName),
-      link_refs: links.map((a) => /^(@ref |https?:)/.test(a.getAttribute("href") ?? "")),
+      link_tags: links.map((a) => a.tagName === "CODE" && a.classList.contains("ember-help-seealso-name") ? "NAME" : a.tagName),
+      link_refs: links.filter((a) => a.tagName === "A").map((a) => /^(@ref |https?:)/.test(a.getAttribute("href") ?? "")),
       see_also_text: see_also?.innerText.replace(/\s+/g, " ").trim(),
       link_text: links.map((a) => a.innerText.trim()).join(" "),
       input_height: input.getBoundingClientRect().height,
@@ -244,7 +245,8 @@ test("help: no Description heading, See Also is a row of links, and the search f
   assert.equal(m.first_after_title, "P", "the description is the first paragraph under the title");
   assert.ok(m.headings.includes("See Also"), `See Also is still a section: ${m.headings}`);
   assert.equal(m.see_also_display, "flex");
-  assert.ok(m.link_tags.length > 3 && m.link_tags.every((tag) => tag === "A"), `See Also holds only links: ${m.link_tags}`);
+  assert.ok(m.link_tags.filter((tag) => tag === "A").length > 3 && m.link_tags.every((tag) => tag === "A" || tag === "NAME"),
+    `See Also holds only links and unlinked names: ${m.link_tags}`);
   // lm's links are other help pages, plus biglm's CRAN page.
   assert.ok(m.link_refs.every(Boolean), "every See Also link is another help page or an outside page");
   assert.equal(m.see_also_text, m.link_text, "no prose between the links");

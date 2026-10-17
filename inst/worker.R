@@ -1600,7 +1600,7 @@ console_collector <- function(cell, token) {
   }
   self$print <- function(v) {
     flush_stdout()
-    txt <- paste(utils::capture.output(eval_in_notebook(quote(print(v)), v)), collapse = "\n")
+    txt <- paste(capture_lines(eval_in_notebook(quote(print(v)), v)), collapse = "\n")
     add_item("stdout", txt)
   }
   self$finish <- function() {
@@ -1713,12 +1713,34 @@ eval_in_notebook <- function(expr, v, extra = list()) {
   eval(expr, c(list(v = v), extra), globalenv())
 }
 
+#' What `expr` prints, as lines, like `utils::capture.output(expr)` but
+#' through a temp file: a textConnection grows quadratically with the lines
+#' written, so a value that prints 20,000 lines took 16.5 s to capture, and
+#' a 50,000-row table minutes (#160); a file takes milliseconds. `n` keeps
+#' only the first lines. As with capture.output(), a visible value is
+#' printed too.
+capture_lines <- function(expr, n = -1L) {
+  path <- tempfile("ember_capture_")
+  on.exit(unlink(path))
+  out <- file(path, open = "wt")
+  sink(out, type = "output")
+  sunk <- TRUE
+  on.exit(if (sunk) { sink(type = "output"); close(out) }, add = TRUE, after = FALSE)
+  shown <- withVisible(expr)
+  if (shown$visible) print(shown$value)
+  sink(type = "output")
+  close(out)
+  sunk <- FALSE
+  readLines(path, n = n, warn = FALSE)
+}
+
 #' The value's print() text, truncated (first 50 lines, 4000 chars). Colour
 #' is on throughout the worker (boot sets `cli.num_colors`); when truncation
 #' lands inside an escape sequence, the partial sequence is dropped and a
 #' reset code appended so the cut text never leaves the terminal mid-colour.
 text_form <- function(value) {
-  txt <- tryCatch(utils::capture.output(eval_in_notebook(quote(print(v)), value)),
+  # 51 lines are enough to know it is cut.
+  txt <- tryCatch(capture_lines(eval_in_notebook(quote(print(v)), value), n = 51L),
                    error = function(e) "<unprintable>")
   truncated <- length(txt) > 50
   if (truncated) txt <- txt[1:50]
@@ -1732,6 +1754,70 @@ text_form <- function(value) {
     txt <- paste0(txt, "\033[0m")
   }
   list(text = txt, truncated = truncated)
+}
+
+#' The text form of an HTML output (design.md, How values display): the
+#' value's print() text, unless that is empty (an htmlwidget's) or is the
+#' HTML source itself (gt's, an HTML kable's). Then it is the HTML's own
+#' text, with style and script blocks dropped, a table row per line and its
+#' cells split by tabs; and for an HTML output with no text at all (a
+#' plotly or leaflet widget, whose data is in a script), what it is.
+html_text_form <- function(value, html) {
+  tf <- text_form(value)
+  if (nzchar(trimws(tf$text)) && !grepl("^\\s*<", tf$text)) return(tf)
+  # The text form must never cost the page its HTML view: a conversion that
+  # fails gives the line naming the output.
+  txt <- tryCatch(html_to_text(html), error = function(e) "")
+  if (!nzchar(txt)) {
+    kind <- if (inherits(value, "htmlwidget")) paste(class(value)[1], "htmlwidget") else "HTML output"
+    return(list(text = sprintf("<%s: no text form; it shows in the notebook's page>", kind), truncated = FALSE))
+  }
+  lines <- strsplit(txt, "\n", fixed = TRUE)[[1]]
+  truncated <- length(lines) > 50 || isTRUE(attr(txt, "cut"))
+  if (length(lines) > 50) lines <- lines[1:50]
+  txt <- paste(lines, collapse = "\n")
+  if (nchar(txt) > 4000) {
+    txt <- substr(txt, 1, 4000)
+    truncated <- TRUE
+  }
+  list(text = txt, truncated = truncated)
+}
+
+#' The text of an HTML fragment: no style, script or comments; a line per
+#' table row, block or <br>, table cells split by tabs; entities decoded.
+html_to_text <- function(html) {
+  h <- paste(html, collapse = "\n")
+  h <- gsub("(?is)<(style|script)\\b.*?</\\1\\s*>|<!--.*?-->", "", h, perl = TRUE)
+  # The text form keeps 50 lines, so only the start of a long table is read:
+  # up to its 60th row, and at most 200,000 characters.
+  # `cut` says so, for the text form's `truncated`.
+  rows <- gregexpr("(?i)</tr\\s*>", h, perl = TRUE)[[1]]
+  cut <- length(rows) > 60 || nchar(h) > 200000
+  if (length(rows) > 60) h <- substr(h, 1, rows[60] + attr(rows, "match.length")[60] - 1)
+  if (nchar(h) > 200000) h <- substr(h, 1, 200000)
+  # Line breaks in HTML source are spaces; the lines below come from the markup.
+  h <- gsub("[\r\n]+", " ", h, perl = TRUE)
+  h <- gsub("(?i)</t[dh]\\s*>", "\t", h, perl = TRUE)
+  h <- gsub("(?i)<br\\s*/?>|</(tr|p|div|li|caption|h[1-6]|thead|tbody|tfoot|table)\\s*>", "\n", h, perl = TRUE)
+  h <- gsub("(?s)<[^>]*>", "", h, perl = TRUE)
+  entities <- c("&nbsp;" = " ", "&lt;" = "<", "&gt;" = ">", "&quot;" = "\"", "&#39;" = "'", "&apos;" = "'", "&minus;" = "-")
+  for (e in names(entities)) h <- gsub(e, entities[[e]], h, fixed = TRUE)
+  num <- gregexpr("&#(x?)([0-9a-fA-F]+);", h, perl = TRUE)
+  regmatches(h, num) <- lapply(regmatches(h, num), function(m) {
+    hex <- grepl("^&#x", m)
+    code <- ifelse(hex, strtoi(sub("^&#x([0-9a-fA-F]+);$", "\\1", m), 16L), suppressWarnings(as.integer(sub("^&#([0-9]+);$", "\\1", m))))
+    # A code point UTF-8 can't hold (a lone surrogate, above U+10FFFF) is U+FFFD.
+    out <- vapply(code, function(cp) if (is.na(cp)) "" else { u <- intToUtf8(cp); if (is.na(u)) "\uFFFD" else u }, "")
+    ifelse(is.na(code), m, out)
+  })
+  h <- gsub("&amp;", "&", h, fixed = TRUE)
+  lines <- strsplit(h, "\n", fixed = TRUE)[[1]]
+  lines <- vapply(lines, function(l) {
+    cells <- trimws(gsub("[ \r\f\v]+", " ", strsplit(l, "\t", fixed = TRUE)[[1]]))
+    paste(cells, collapse = "\t")
+  }, "", USE.NAMES = FALSE)
+  lines <- sub("\t+$", "", lines)
+  structure(paste(lines[nzchar(trimws(lines))], collapse = "\n"), cut = cut)
 }
 
 #' print() text, with colour on so tibble/cli output keeps its colours.
@@ -1975,8 +2061,15 @@ display_plot <- function(cell, token, dev) {
       text = "<plot>", truncated = FALSE)
 }
 
+#' Whether `knit_print()` has a method for class `cl`, looked up from
+#' knitr's namespace. The worker's own functions live in an environment
+#' whose parent is `baseenv()` (line 8), which sees neither the generic nor
+#' the search path, so a lookup from here found nothing, even with knitr
+#' attached (#154). From knitr's namespace it sees knitr's S3 table, where
+#' packages such as gt register their methods, and `globalenv()`, where a
+#' notebook defines its own.
 knit_print_method_exists <- function(cl) {
-  length(utils::getS3method("knit_print", cl, optional = TRUE)) > 0
+  length(utils::getS3method("knit_print", cl, optional = TRUE, envir = asNamespace("knitr"))) > 0
 }
 
 #' `knit_print()`, tried only when knitr is in the notebook's library and
@@ -1985,10 +2078,32 @@ knit_print_method_exists <- function(cl) {
 try_knit_print <- function(value) {
   if (!requireNamespace("knitr", quietly = TRUE)) return(NULL)
   if (!any(vapply(class(value), knit_print_method_exists, logical(1)))) return(NULL)
-  out <- tryCatch(knitr::knit_print(value), error = function(e) NULL)
-  if (is.null(out)) return(NULL)
-  tf <- text_form(value)
-  list(kind = "html", mime = "text/html", html = paste(out, collapse = "\n"),
+  # knit_print() gives a kable in the kable's own format, which is markdown
+  # ("pipe") unless the cell asked for HTML. Only an HTML one is shown as
+  # HTML; the others keep their print() text, which is the same table.
+  if (inherits(value, "knitr_kable") && !identical(attr(value, "format"), "html")) return(NULL)
+  # Called from globalenv(), as in a report, so the dispatch sees a method
+  # the notebook defined; called from here it would see only knitr's table.
+  # The report is HTML for the call (rmarkdown.pandoc.to), so a method
+  # that picks its format from knitr::is_html_output(), as huxtable's
+  # does, gives HTML rather than screen text.
+  old_to <- knitr::opts_knit$get("rmarkdown.pandoc.to")
+  knitr::opts_knit$set(rmarkdown.pandoc.to = "html")
+  on.exit(knitr::opts_knit$set(rmarkdown.pandoc.to = old_to), add = TRUE)
+  out <- NULL
+  # Some methods have nothing for a value outside a report and print it
+  # instead (rmarkdown's for data frames and tibbles, data.table's): what
+  # they print is dropped, and only a knit_asis result is kept, so the
+  # value goes on to the next step, Ember's table (#154).
+  capture_lines(
+    out <- tryCatch(do.call(knitr::knit_print, list(value), quote = TRUE, envir = globalenv()),
+                    error = function(e) NULL))
+  if (!inherits(out, "knit_asis")) return(NULL)
+  # For pandoc, some methods (flextable's) wrap their HTML in a raw-HTML
+  # fence, ```{=html} ... ```; the page would show the fence lines as text.
+  html <- sub("(?s)^\\s*```\\{=html\\}[ \t]*\n(.*)\n```\\s*$", "\\1", paste(out, collapse = "\n"), perl = TRUE)
+  tf <- html_text_form(value, html)
+  list(kind = "html", mime = "text/html", html = html,
        text = tf$text, truncated = tf$truncated)
 }
 
@@ -1997,7 +2112,7 @@ try_repr <- function(value) {
   if (!requireNamespace("repr", quietly = TRUE)) return(NULL)
   html <- tryCatch(repr::repr_html(value), error = function(e) NULL)
   if (is.null(html)) return(NULL)
-  tf <- text_form(value)
+  tf <- html_text_form(value, html)
   list(kind = "html", mime = "text/html", html = html, text = tf$text, truncated = tf$truncated)
 }
 
@@ -2027,7 +2142,7 @@ display_html <- function(value) {
   if (!requireNamespace("htmltools", quietly = TRUE)) return(display_text(value))
   rendered <- tryCatch(htmltools::renderTags(value), error = function(e) NULL)
   if (is.null(rendered)) return(display_text(value))
-  tf <- text_form(value)
+  tf <- html_text_form(value, rendered$html)
   deps <- tryCatch({
     resolved <- htmltools::resolveDependencies(rendered$dependencies %||% list())
     lapply(resolved, dep_to_wire)

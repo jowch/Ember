@@ -318,7 +318,9 @@ test_that("interrupting a stuck cell offers a restart after the grace period (11
   on.exit(close_notebook(nb), add = TRUE)
 
   run_cells(nb, "A", wait = FALSE)
-  busy <- wait_for(nb, function(s) identical(s$process, "busy"), timeout = 15)
+  # Wait for A itself to run: "busy" is already true while S runs, and an
+  # interrupt then would clear the queue before A starts (#149).
+  busy <- wait_for(nb, function(s) isTRUE(snap_view(s, "A")$running), timeout = 15)
   expect_true(busy)
   # Give the cell a moment to truly be inside the C loop (not still
   # starting up) before interrupting, via the later loop rather than a
@@ -328,7 +330,10 @@ test_that("interrupting a stuck cell offers a restart after the grace period (11
 
   interrupt_notebook(nb)
   offered <- wait_for(nb, function(s) isTRUE(s$restart_offered), timeout = 15)
-  expect_true(offered)
+  # On a failure, say whether A stopped cleanly or the worker died (#149).
+  snap <- notebook_snapshot(nb)
+  expect_true(offered, info = sprintf("process %s, worker_message %s, A %s",
+    snap$process, format(snap$worker_message %||% "NULL"), snap_view(snap, "A")$status))
 
   restart_notebook(nb)
   ready <- wait_for(nb, function(s) identical(s$process, "ready"), timeout = 15)
@@ -667,4 +672,63 @@ test_that("disabling a cell removes it from R; Rscript on the saved file still r
   # stale flag is down and its run time has moved on.
   expect_false(isTRUE(b_after$stale))
   expect_true(b_after$last_run > b_before$last_run)
+})
+
+test_that("a worker busy in a long cell ends when the server that started it is killed (#147)", {
+  skip_on_os("windows")
+  use_installed_ember()
+  pidfile <- tempfile("worker-pid-")
+  path <- write_session_notebook(list(S = cell(""), A = cell(sprintf(
+    "writeLines(as.character(Sys.getpid()), %s); Sys.sleep(300)", deparse(pidfile)))))
+  code <- paste0("library(ember); nb <- open_notebook(", deparse(path), "); run_cells(nb, 'A'); ",
+                 "repeat later::run_now(1)")
+  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
+                                  env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
+                                  stdout = "|", stderr = "2>&1")
+  on.exit(if (server$is_alive()) server$kill(), add = TRUE)
+  # Until the cell is running. The deadline only keeps a broken server
+  # from hanging the suite.
+  deadline <- Sys.time() + 60
+  while (!file.exists(pidfile) && server$is_alive() && Sys.time() < deadline) Sys.sleep(0.05)
+  expect_true(file.exists(pidfile), info = server$read_all_output())
+  worker <- as.integer(readLines(pidfile))
+  on.exit(tools::pskill(worker, tools::SIGKILL), add = TRUE)
+  expect_true(pid_running(worker))
+
+  # SIGKILL: no handler, no finalizer, nothing in the server runs.
+  server$kill()
+
+  expect_true(wait_pid_gone(worker))
+})
+
+test_that("what a busy cell started with system() ends when the server is killed (#150)", {
+  skip_on_os("windows")
+  use_installed_ember()
+  pidfile <- tempfile("cell-pids-")
+  # The child's pid and the worker's, written to a temporary name and
+  # renamed, so the test never reads half a file.
+  path <- write_session_notebook(list(S = cell(""), A = cell(sprintf(paste0(
+    "child <- system('sleep 300 > /dev/null 2>&1 & echo $!', intern = TRUE); ",
+    "writeLines(c(Sys.getpid(), child), %1$s); file.rename(%1$s, %2$s); Sys.sleep(300)"),
+    deparse(paste0(pidfile, ".tmp")), deparse(pidfile)))))
+  code <- paste0("library(ember); nb <- open_notebook(", deparse(path), "); run_cells(nb, 'A'); ",
+                 "repeat later::run_now(1)")
+  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
+                                  env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
+                                  stdout = "|", stderr = "2>&1")
+  on.exit(if (server$is_alive()) server$kill(), add = TRUE)
+  # Until the cell is running. The deadline only keeps a broken server
+  # from hanging the suite.
+  deadline <- Sys.time() + 60
+  while (!file.exists(pidfile) && server$is_alive() && Sys.time() < deadline) Sys.sleep(0.05)
+  expect_true(file.exists(pidfile), info = server$read_all_output())
+  pids <- as.integer(readLines(pidfile))
+  on.exit(for (p in pids) tools::pskill(p, tools::SIGKILL), add = TRUE)
+  expect_true(all(vapply(pids, pid_running, logical(1))))
+
+  # SIGKILL: no handler, no finalizer, nothing in the server runs.
+  server$kill()
+
+  expect_true(wait_pid_gone(pids[1]))  # the worker
+  expect_true(wait_pid_gone(pids[2]))  # what its cell started
 })
