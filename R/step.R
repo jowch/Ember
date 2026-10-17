@@ -563,6 +563,63 @@ reached_from <- function(graph, from, among) {
   reached
 }
 
+#' The graph with the edges of what edited cells last ran (#175).
+#' A cell edited since it ran still holds the result of its old code: it
+#' read what that code read, and its readers read the names that code
+#' defined. The graph only has the edited code's edges, so staleness and
+#' run plans use this one instead. With nothing edited, it is
+#' the graph itself.
+run_graph <- function(state, edited = edited_cells(state)) {
+  g <- state$graph
+  if (length(edited) == 0) return(g)
+  add <- function(from, to) {
+    if (identical(from, to)) return()
+    g$upstream[[from]] <<- union(g$upstream[[from]], to)
+    g$downstream[[to]] <<- union(g$downstream[[to]], from)
+  }
+  # What the last run defined, or would have: a failed run defines nothing,
+  # but its readers' results still came from that failure.
+  old_defs <- lapply(edited, function(id) {
+    r <- state$results[[id]]
+    union(r$defined, definitions_of(read_cell(r$code)))
+  })
+  names(old_defs) <- edited
+  # Readers of a name an edited cell's last run defined.
+  for (id in g$ids) {
+    refs <- g$cells[[id]]$references
+    for (e in edited) if (any(old_defs[[e]] %in% refs)) add(id, e)
+  }
+  # What an edited cell's last run read, from whoever defines it now or
+  # defined it in their last run.
+  for (e in edited) {
+    refs <- ran_references(state, e)
+    for (id in g$ids) {
+      defs <- union(g$cells[[id]]$definitions, old_defs[[id]])
+      if (any(refs %in% defs)) add(e, id)
+    }
+  }
+  g
+}
+
+#' The cells edited since they last ran: their result came from other code.
+#' Runs at every cell start, so it compares in one vectorised step.
+edited_cells <- function(state) {
+  ids <- intersect(state$graph$ids, names(state$results))
+  ran <- lapply(state$results[ids], `[[`, "code")
+  ids <- ids[lengths(ran) == 1L]
+  if (length(ids) == 0) return(character())
+  ids[unlist(ran[ids], use.names = FALSE) != vapply(state$cells[ids], `[[`, "", "code")]
+}
+
+#' What a cell's result read: its references, plus those of the code it
+#' last ran when it was edited since (#175).
+ran_references <- function(state, id) {
+  refs <- state$graph$cells[[id]]$references
+  r <- state$results[[id]]
+  if (is.null(r) || is.null(r$code) || identical(r$code, state$cells[[id]]$code)) return(refs)
+  union(refs, references_of(read_cell(r$code)))
+}
+
 #' Has a result with status "ok", not stale, matching the current code.
 is_fresh <- function(state, id) {
   r <- state$results[[id]]
@@ -605,7 +662,9 @@ is_fresh <- function(state, id) {
 #' directly.
 invalidate_dependents <- function(state, id, names, queue = TRUE,
                                   was_setting = isTRUE(state$results[[id]]$setting)) {
-  dependents <- downstream(state$graph, id, transitive = TRUE)
+  edited <- edited_cells(state)
+  g <- run_graph(state, edited)
+  dependents <- downstream(g, id, transitive = TRUE)
   if (was_setting) {
     pos <- match(id, state$graph$order)
     if (!is.na(pos)) dependents <- union(dependents, state$graph$order[-seq_len(pos)])
@@ -614,8 +673,12 @@ invalidate_dependents <- function(state, id, names, queue = TRUE,
     readers <- Filter(function(cid) {
       !identical(cid, id) && length(intersect(names, state$graph$cells[[cid]]$references)) > 0
     }, state$graph$ids)
+    # An edited cell's result read what its old code read (#175).
+    readers <- union(readers, Filter(function(cid) {
+      !identical(cid, id) && length(intersect(names, ran_references(state, cid))) > 0
+    }, edited))
     extra <- unlist(lapply(readers, function(r) {
-      c(r, downstream(state$graph, r, transitive = TRUE))
+      c(r, downstream(g, r, transitive = TRUE))
     }), use.names = FALSE)
     dependents <- union(dependents, extra)
   }
@@ -645,9 +708,9 @@ invalidate_dependents <- function(state, id, names, queue = TRUE,
     isTRUE(state$results[[a]]$stale) && !(a %in% state$pending) && !identical(a, id)
   }, names(state$results)) else character()
   if (length(outside)) {
-    ancestors <- setdiff(upstream_of_set(state$graph, queued), id)
+    ancestors <- setdiff(upstream_of_set(g, queued), id)
     stale <- Filter(function(a) can_run(state, a), intersect(outside, ancestors))
-    between <- reached_from(state$graph, stale, setdiff(ancestors, stale))
+    between <- reached_from(g, stale, setdiff(ancestors, stale))
     state$pending <- union(state$pending, Filter(function(a) can_run(state, a), union(stale, between)))
   }
   state
@@ -1019,12 +1082,13 @@ reduce_run <- function(state, event) {
   # exactly this request (run the cell) after every disable/enable toggle.
   off_ids <- Filter(function(id) id %in% names(state$graph$off), ids)
   on_ids <- setdiff(ids, off_ids)
-  ancestors <- upstream_of_set(state$graph, on_ids)
+  g <- run_graph(state)
+  ancestors <- upstream_of_set(g, on_ids)
   unfresh <- Filter(function(a) !is_fresh(state, a), ancestors)
   # An ancestor downstream of an unfresh one is fresh now but goes stale
   # once that one runs, after this plan is made: it runs too, or the cells
   # asked for would use its old values (#169).
-  between <- reached_from(state$graph, unfresh, setdiff(ancestors, unfresh))
+  between <- reached_from(g, unfresh, setdiff(ancestors, unfresh))
   want <- union(union(unfresh, between), on_ids)
   skipped <- union(off_ids, Filter(function(id) !can_run(state, id), want))
   to_add <- setdiff(want, skipped)

@@ -25,8 +25,6 @@ fuzz_steps <- function() {
 # other failure is new. Their seeds run along with fuzz_seeds(). A known
 # trace stops at its failure, so its later steps aren't checked.
 fuzz_known <- list(
-  "lazy 8" = list(issue = 175, step = 4L, kind = "_ shows ok but running from scratch gives error"),
-  "autorun 10" = list(issue = 175, step = 8L, kind = "_ shows _ but running from scratch gives _"),
   "lazy 30" = list(issue = 174, step = 5L, kind = "after running every cell, _ isn't fresh")
 )
 
@@ -80,4 +78,16 @@ test_that("autorun runs a queued dependent's stale ancestors first (#176)", {
     steps = list(list(ops = list(), run = "all"),
                  list(ops = list(list(op = "delete", cell = "C1"),
                                  list(op = "set_code", cell = "C3", code = "v3 <- 20")), run = "C3"))))
+})
+
+test_that("a staged edit that drops a reference or a definition doesn't hide staleness (#175)", {
+  staged <- function(mode, code) list(mode = mode,
+    cells = list(C1 = "v1 <- 1", C2 = "v2 <- v1 + 1", C3 = "v2 * 10"),
+    steps = list(list(ops = list(), run = "all"),
+                 list(ops = list(list(op = "set_code", cell = "C2", code = code),
+                                 list(op = "set_code", cell = "C1", code = "v1 <- 2")), run = "C1")))
+  for (mode in c("autorun", "lazy")) {
+    expect_trace_passes(staged(mode, "v2 <- 5"))        # drops the reference to v1
+    expect_trace_passes(staged(mode, "v3 <- v1 + 1"))   # drops the definition of v2
+  }
 })
