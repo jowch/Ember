@@ -17,7 +17,9 @@
 //   spills         a control's contents stick out of its own box, or the
 //                  control sticks out of the framed box (border or
 //                  background) it sits in.
-//   covered        something else is on top of the control's centre.
+//   covered        something else is on top of the control's centre (an
+//                  open menu, dialog or scrim may be, and the side panel
+//                  where it overlays the notebook).
 //   scrollbar      a control sits in the bottom 14 px of a box that
 //                  scrolls sideways, where an overlay scrollbar (macOS,
 //                  WebKit embeds) draws over it. Checked by geometry, so
@@ -59,6 +61,9 @@ export async function viewportProblems(page) {
     if (document.documentElement.scrollWidth > vw + TOL) {
       problems.push({ rule: "page-scroll", where: "html", detail: `scrollWidth ${document.documentElement.scrollWidth} > ${vw}` });
     }
+
+    const scrimEl = document.querySelector(".ember-scrim");
+    const scrim = !!scrimEl && getComputedStyle(scrimEl).display !== "none";
 
     // Anything above this line is under the sticky header on purpose.
     const header = document.querySelector("header#pluto-nav");
@@ -120,7 +125,14 @@ export async function viewportProblems(page) {
       // The "add cell" buttons above and below the gap between two cells
       // overlap by design (Pluto's); either one adds a cell there.
       const both_add = el.matches(".add_cell") && hit?.closest(".add_cell");
-      if (hit && hit !== el && !el.contains(hit) && !hit.contains(el) && !both_add) add("covered", el, `by ${where(hit)}`);
+      // An open menu, dialog or scrim covers what's under it on purpose,
+      // and so does the side panel where it overlays the notebook (narrow
+      // widths, where its scrim shows); where it docks beside the column
+      // it must not cover anything.
+      const OVERLAY = "dialog[open], [role=menu], .ember-menu, .ember-scrim" + (scrim ? ", #helpbox-wrapper" : "");
+      const over = hit?.closest(OVERLAY);
+      const overlaid = over && !over.contains(el);
+      if (hit && hit !== el && !el.contains(hit) && !hit.contains(el) && !both_add && !overlaid) add("covered", el, `by ${where(hit)}`);
     }
 
     // Boxes that scroll sideways: their bottom band is where an overlay

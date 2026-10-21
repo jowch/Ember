@@ -169,7 +169,9 @@ that fixes one removes its entry. `node tests/e2e/shots.mjs [notebook]
 [--run] [--dark] [--mac]` saves screenshots of any notebook with the same
 checks, for looking at a change before and after
 (`.claude/skills/verify`). What automation can't judge is in
-`docs/ui-checklist.md`.
+`docs/ui-checklist.md`. `node tests/e2e/audit.mjs` walks the main journeys
+with screenshots and measurements for the periodic UI audit
+(`.claude/skills/ui-audit`).
 
 **In CI**: a job `e2e` on ubuntu-latest and macos-latest:
 `r-lib/actions/setup-r` and `setup-r-dependencies`,
