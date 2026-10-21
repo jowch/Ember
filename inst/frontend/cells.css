@@ -467,6 +467,14 @@ ember-chip {
     line-height: 1.5;
     animation: ember-fade-in 0.15s ease-out;
 }
+/* Chips and notes are status, not content: dragging across a cell or
+   double-clicking near one doesn't select their text (#285). Links in
+   them still work. */
+ember-chip,
+ember-settings-note {
+    -webkit-user-select: none;
+    user-select: none;
+}
 ember-chip .ember-chip-icon {
     display: inline-flex;
     width: 12px;

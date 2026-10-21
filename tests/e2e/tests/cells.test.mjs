@@ -1443,3 +1443,48 @@ test("cell menu: text-only one-line items with a right-aligned key hint, panel a
 
   assertNoProblems(page);
 });
+
+test("chips: a chip's text can't be selected, by double-click or by dragging across the cell (#285)", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chip-select.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await runCell(page, "A");
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.classList.contains("not_run_yet"),
+    cellSelector("NEVER"), { timeout: 20000 });
+  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached", timeout: 15000 });
+
+  const chip = page.locator(`${cellSelector("NEVER")} > ember-chip`);
+  await chip.scrollIntoViewIfNeeded();
+  assert.equal(await chip.innerText(), "Not run yet");
+  const selection = () => page.evaluate(() => window.getSelection().toString());
+
+  // A double-click on the chip's words selects nothing.
+  await page.locator(`${cellSelector("NEVER")} > ember-chip span:not(.ember-chip-icon)`).dblclick();
+  assert.equal(await selection(), "", "double-clicking a chip selects none of its text");
+
+  // A drag from above the chip into the cell's code skips the chip.
+  const box = await chip.boundingBox();
+  const code = await page.locator(`${cellSelector("NEVER")} .cm-content`).boundingBox();
+  await page.mouse.move(box.x + 2, box.y - 4);
+  await page.mouse.down();
+  await page.mouse.move(code.x + code.width / 2, code.y + code.height / 2, { steps: 8 });
+  await page.mouse.up();
+  assert.doesNotMatch(await selection(), /Not run yet/, "a drag across the cell leaves the chip out");
+
+  // Settings and load notes follow the same rule.
+  const noteSelect = await page.evaluate(() => {
+    const note = document.createElement("ember-settings-note");
+    document.querySelector("pluto-cell").append(note);
+    const value = getComputedStyle(note).userSelect;
+    note.remove();
+    return value;
+  });
+  assert.equal(noteSelect, "none");
+
+  assertNoProblems(page);
+});
