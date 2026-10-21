@@ -1251,6 +1251,13 @@ reduce_index_fetched <- function(state, event) {
   list(state = state, effects = list(), reply = NULL)
 }
 
+#' The date part of each repo key (`"cran/2026-10-01"` -> `"2026-10-01"`;
+#' `NA` for a key with none).
+key_date <- function(keys) {
+  vapply(strsplit(keys, "/", fixed = TRUE), function(p) if (length(p) >= 2) p[[2]] else NA_character_,
+         character(1))
+}
+
 reduce_index_failed <- function(state, event) {
   slot <- state$packages$indexes[[event$key]]
   if (is.null(slot) || !identical(slot$status, "fetching")) {
@@ -1264,10 +1271,20 @@ reduce_index_failed <- function(state, event) {
   # `unpublished` only from yesterday to tomorrow in UTC
   # (`may_be_unpublished()`), so this stops by the day before yesterday,
   # and then the failure shows; a date further ahead fails at once.
+  #
+  # The same for one of Bioconductor's indexes at the notebook's date,
+  # which Package Manager publishes days after CRAN's (#282): the whole
+  # date moves back, so CRAN and Bioconductor resolve at one date. Its
+  # other Bioconductor indexes at the old date are dropped too, so their
+  # answers are ignored. `may_be_unpublished()` gives Bioconductor a few
+  # days more before it stops.
   if (isTRUE(event$unpublished) && nrow(state$file$lock$entries) == 0 &&
       !is.null(header$snapshot) && !is.na(header$snapshot) &&
-      identical(event$key, repo_key("cran", header$snapshot))) {
-    state$packages$indexes[[event$key]] <- NULL
+      identical(key_date(event$key), header$snapshot) &&
+      (identical(event$key, repo_key("cran", header$snapshot)) || is_bioc_key(event$key))) {
+    keys <- names(state$packages$indexes)
+    drop <- keys[keys == event$key | (is_bioc_key(keys) & key_date(keys) == header$snapshot)]
+    for (k in drop) state$packages$indexes[[k]] <- NULL
     state$file$header$snapshot <- format(as.Date(header$snapshot) - 1, "%Y-%m-%d")
     return(list(state = state, effects = list(), reply = NULL))
   }
@@ -1692,6 +1709,31 @@ reduce_set_date <- function(state, event) {
 #' Called from `reduce_wk_done()`. Returns `list(state, error)` (the
 #' sketch's signature only names the inputs; a reducer needs to update both
 #' the state, for the "check again" case, and produce the run error).
+#' Why Bioconductor couldn't be looked in, or `character()`. A name CRAN
+#' lacks, resolved while Bioconductor couldn't be looked in (an index of its
+#' failed, or no release because the release list couldn't be fetched), may
+#' well be there: the package view calls it `"lookup_failed"` and a cell's
+#' error says the same (`unlooked_message()`), rather than "not found in any
+#' repository" (#264, #282). Running again fetches what failed and resolves
+#' again (`reduce_run()`). With the release lookup turned off
+#' (`ember_repos(bioc_config = NA)`) there is nothing to retry, and the name
+#' stays `"not_found"`.
+unlooked_reason <- function(state) {
+  problems <- state$packages$problems
+  if (is.null(problems) || nrow(problems) == 0) return(character())
+  unlooked <- problems$message[problems$kind == "index_unavailable" & is.na(problems$package)]
+  lookup_on <- !is.null(state$options$repos$bioc_config) && !is.na(state$options$repos$bioc_config)
+  gap <- releases_gap_message(state$packages, state$file$header$snapshot)
+  if (lookup_on && !is.null(gap) && any(problems$kind == "bioc_unavailable")) unlooked <- c(unlooked, gap)
+  if (length(unlooked) > 0) unlooked[[1]] else character()
+}
+
+#' What `unlooked_reason()` makes of a name not found.
+unlooked_message <- function(pkg, reason) {
+  sprintf("%s isn't on CRAN at this date, and Ember couldn't look in Bioconductor (%s); running again tries again",
+          pkg, reason)
+}
+
 missing_package_error <- function(state, pkg) {
   lock_entries <- state$file$lock$entries
   lock_names <- if (is.null(lock_entries) || nrow(lock_entries) == 0) character() else lock_entries$name
@@ -1711,7 +1753,10 @@ missing_package_error <- function(state, pkg) {
              (identical(probs$kind[[i]], "not_found") && identical(probs$package[[i]], pkg)),
           seq_len(nrow(probs)))
     } else NULL
-    msg <- if (!is.null(row)) {
+    unlooked <- unlooked_reason(state)
+    msg <- if (!is.null(row) && identical(probs$kind[[row]], "not_found") && length(unlooked) > 0) {
+      sprintf("there is no package called '%s': %s", pkg, unlooked_message(pkg, unlooked))
+    } else if (!is.null(row)) {
       sprintf("there is no package called '%s': %s", pkg, probs$message[[row]])
     } else {
       sprintf("there is no package called '%s'", pkg)
@@ -2025,24 +2070,10 @@ packages_view <- function(state) {
 
   problems <- p$problems
   gap <- releases_gap_message(p, state$file$header$snapshot)
-  # A name CRAN lacks, resolved while Bioconductor couldn't be looked in
-  # (an index of its failed, or no release because the release list
-  # couldn't be fetched), may well be there: it is `"lookup_failed"`,
-  # saying why, rather than "not found in any repository" (#264). Running
-  # again fetches what failed and resolves again (`reduce_run()`). With the
-  # release lookup turned off (`ember_repos(bioc_config = NA)`) there is
-  # nothing to retry, and the name stays `"not_found"`.
-  unlooked <- character()
-  lookup_on <- !is.null(state$options$repos$bioc_config) && !is.na(state$options$repos$bioc_config)
-  if (!is.null(problems) && nrow(problems) > 0) {
-    unlooked <- problems$message[problems$kind == "index_unavailable" & is.na(problems$package)]
-    if (lookup_on && !is.null(gap) && any(problems$kind == "bioc_unavailable")) unlooked <- c(unlooked, gap)
-  }
+  unlooked <- unlooked_reason(state)
   if (length(unlooked) > 0) {
     nf <- problems$kind == "not_found"
-    problems$message[nf] <- sprintf(
-      "%s isn't on CRAN at this date, and Ember couldn't look in Bioconductor (%s); running again tries again",
-      problems$package[nf], unlooked[[1]])
+    problems$message[nf] <- unlooked_message(problems$package[nf], unlooked)
   }
   not_found_df <- empty_packages_df()
   if (!is.null(problems) && nrow(problems) > 0) {

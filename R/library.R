@@ -102,10 +102,19 @@ index_may_change <- function(key, now = Sys.time()) {
 #' as far ahead as a clock east of UTC can be. A 404 for a date further
 #' ahead (a typo, a year off) is just a failure, so nothing steps back
 #' from it day by day.
+#'
+#' Package Manager publishes a day's Bioconductor snapshot about two days
+#' after CRAN's (#282), so for a Bioconductor key the window starts three
+#' days before today in UTC instead of one.
 may_be_unpublished <- function(key, now = Sys.time()) {
+  today <- as.Date(format(now, tz = "UTC", usetz = FALSE))
+  if (is_bioc_key(key)) {
+    date <- tryCatch(as.Date(strsplit(key, "/", fixed = TRUE)[[1]][[2]]), error = function(e) NA)
+    return(!is.na(date) && date >= today - 3 && date <= today + 1)
+  }
   if (!index_may_change(key, now)) return(FALSE)
   date <- as.Date(strsplit(key, "/", fixed = TRUE)[[1]][[2]])
-  date <= as.Date(format(now, tz = "UTC", usetz = FALSE)) + 1
+  date <= today + 1
 }
 
 #' The label a dated repo key resolves to (`read_repo_index()`'s `label`,
