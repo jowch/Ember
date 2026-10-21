@@ -474,12 +474,15 @@ export const Cell = ({
     // preview queued gives the chip's space back at once, with the banner:
     // held through its run, it would collapse when a cell with no output
     // finished, and the page would move up again mid-run.
+    // "Run this notebook" can clear the preview a render before the cell
+    // is queued, so the preview counts for a moment after it ends.
+    const in_preview = useSettled(!!process_waiting_for_permission, (value, shown) => !value && shown)
     const holding_chip_ref = useRef(false)
     const held_from_preview_ref = useRef(false)
     const busy = running || queued || waiting_to_run
     if (not_run_yet) {
         holding_chip_ref.current = true
-        held_from_preview_ref.current = !!process_waiting_for_permission
+        held_from_preview_ref.current = in_preview
     } else if (unrun_code_cell && process_waiting_for_permission) {
         holding_chip_ref.current = true
         held_from_preview_ref.current = true
