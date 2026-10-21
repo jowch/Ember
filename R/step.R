@@ -371,10 +371,15 @@ failed_definers <- function(state, id) {
 }
 
 #' For every cell in `blocked_cells(graph)` that still has a result: drop
-#' the result, mark its dependents stale (`invalidate_dependents(...,
-#' queue = FALSE)`: nothing is queued, as for an edit), and send
-#' `drop_globals`. Returns `list(state, effects)`; a no-op when there are
-#' none.
+#' the result, mark its dependents stale, and send `drop_globals`. Returns
+#' `list(state, effects)`; a no-op when there are none.
+#'
+#' `queue` is passed on to `invalidate_dependents()`. From `schedule()` it
+#' is `FALSE`: nothing is queued, as for an edit, since the cell dropped
+#' was not asked to run. `reduce_run()` passes `TRUE`: a cell submitted
+#' into a graph error has its dependents queued in autorun, as for a cell
+#' that ran and failed, so they rerun and fail on their own if they need
+#' what it would have provided (#272).
 #'
 #' A cell that ran and then gained a graph error (an edit made `x` defined
 #' twice, or a learned definition did) still holds its result, and the
@@ -387,7 +392,7 @@ failed_definers <- function(state, id) {
 #' asked to run: a run request is not an edit, and once it is made the
 #' cell's code is what was submitted, so a cell with a graph error shows
 #' only the error, not `code_differs` against an earlier run's code.
-drop_graph_error_results <- function(state, ids = NULL) {
+drop_graph_error_results <- function(state, ids = NULL, queue = FALSE) {
   blocked <- blocked_cells(state$graph)
   if (!is.null(ids)) blocked <- intersect(blocked, ids)
   stale_results <- Filter(function(id) !is.null(state$results[[id]]), blocked)
@@ -395,7 +400,7 @@ drop_graph_error_results <- function(state, ids = NULL) {
   for (id in stale_results) {
     old <- state$results[[id]]
     state$results[[id]] <- NULL
-    state <- invalidate_dependents(state, id, old$defined, queue = FALSE,
+    state <- invalidate_dependents(state, id, old$defined, queue = queue,
                                    was_setting = isTRUE(old$setting))
     if (state$worker$status %in% c("starting", "ready", "busy")) {
       effects <- c(effects, list(fx_send(state$worker$gen, list(type = "drop_globals", cell = id))))
@@ -1228,7 +1233,7 @@ reduce_run <- function(state, event) {
   skipped <- union(off_ids, Filter(function(id) !can_run(state, id), want))
   to_add <- setdiff(want, skipped)
   state$pending <- union(state$pending, to_add)
-  dg <- drop_graph_error_results(state, on_ids)
+  dg <- drop_graph_error_results(state, on_ids, queue = TRUE)
   state <- dg$state
   reply <- list(accepted = TRUE, queued = run_order(state$graph, state$pending), skipped = skipped)
   list(state = state, effects = dg$effects, reply = reply)

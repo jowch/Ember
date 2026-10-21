@@ -392,6 +392,56 @@ test_that("drop_graph_error_results clears a stale graph-error cell before the n
   }, logical(1))))
 })
 
+test_that("running a cell into a parse error queues its dependents in autorun (#272)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1")))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(11)))
+  expect_equal(r$state$results$B$status, "ok")
+
+  r1 <- drive(r$state, ev_apply(list(op_set_code("A", "x <- (")), at(20)))
+  expect_true("A" %in% blocked_cells(r1$state$graph))
+  r2 <- drive(r1$state, ev_run("A", at(21)))
+  expect_equal(r2$replies[[1]]$skipped, "A")
+  expect_null(r2$state$results$A)
+  expect_equal(r2$replies[[1]]$queued, "B")
+  expect_equal(last_sent(r2)$cell, "B")   # after A's drop_globals
+  r3 <- drive(r2$state, wk_done(1, last_token(r2),
+                                report(status = "error", error = list(message = "object 'x' not found")), at(22)))
+  # A no longer parses, so it defines nothing and B has no edge to it: B
+  # fails with its own error, not an upstream one.
+  expect_equal(r3$state$results$B$status, "error")
+  expect_false(isTRUE(r3$state$results$B$stale))
+})
+
+test_that("running a cell into a multiple definition queues the name's readers in autorun (#272)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("y <- 2"), C = cell("x + 1")))
+  r <- boot(s, c("A", "B", "C"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(11)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(12)))
+  expect_equal(r$state$results$C$status, "ok")
+
+  r1 <- drive(r$state, ev_apply(list(op_set_code("B", "x <- 2")), at(20)))
+  r2 <- drive(r1$state, ev_run("B", at(21)))
+  expect_equal(r2$replies[[1]]$skipped, "B")
+  expect_equal(last_sent(r2)$cell, "C")
+  expect_false("C" %in% r2$state$pending)
+})
+
+test_that("running a cell into a graph error leaves its dependents stale, not queued, when lazy (#272)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1")), on_cell_change = "lazy")
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(11)))
+
+  r1 <- drive(r$state, ev_apply(list(op_set_code("A", "x <- (")), at(20)))
+  r2 <- drive(r1$state, ev_run("A", at(21)))
+  expect_true(isTRUE(r2$state$results$B$stale))
+  expect_equal(r2$state$pending, character())
+  expect_null(last_sent(r2)$token)
+})
+
 test_that("two definers of the same name give one upstream entry, the first in display order (ui-3 7c, fix 2)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1"), A2 = cell("x <- 2"), C = cell("x + 1")))
   r <- boot(s, "C")
