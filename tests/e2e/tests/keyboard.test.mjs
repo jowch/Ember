@@ -168,7 +168,12 @@ test("keyboard: Tab passes through cells' code without editing it, and indents o
   await openNotebook(page, server.origin, server.secret, notebook);
   const code = () => page.evaluate(() => Object.fromEntries(
     Object.entries(window.editor_state.notebook.cell_inputs).map(([id, c]) => [id, c.code])));
-  const local = () => page.evaluate(() => [...document.querySelectorAll("pluto-cell .cm-content")].map((el) => el.textContent));
+  // An empty editor's placeholder ("Type R code here") isn't code.
+  const local = () => page.evaluate(() => [...document.querySelectorAll("pluto-cell .cm-content")].map((el) => {
+    const copy = el.cloneNode(true);
+    copy.querySelectorAll(".cm-placeholder").forEach((p) => p.remove());
+    return copy.textContent;
+  }));
   const before = await local();
 
   const visited = new Set();
