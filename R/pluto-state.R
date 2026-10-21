@@ -328,8 +328,9 @@ span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
 #'   rerun (#167). `split` is present, as `length(split_mixed(view$code))`,
 #'   only when `view$errors` has a `mixed_text` error: the Split button's
 #'   label (Cell.js), answered by the `ember_split_cell` request (server.R).
-#'   `figure` is present, as `list(width, height)` inches, only when the
-#'   output is `image/png`. It comes from `cell_figure_size(view$code)` --
+#'   `figure` is present, as `list(width, height)` inches plus `alt` when
+#'   the cell's `#| fig-alt`/`fig-cap` gives one (cell_figure_alt()), only
+#'   when the output is `image/png`. It comes from `cell_figure_size(view$code)` --
 #'   the cell's own `#|` lines -- never from the stored image's actual
 #'   pixel size, which is the last render's: a density redraw stores an
 #'   image at the cell's figure size times the page's `res`, so reading
@@ -356,7 +357,8 @@ project_cell_result <- function(view, known_ids = NULL) {
   can_disable <- identical(view$kind, "code")
   figure <- if (!is.null(view$output) && identical(view$output$mime, "image/png")) {
     fig <- cell_figure_size(view$code)
-    list(width = fig$width, height = fig$height)
+    alt <- cell_figure_alt(view$code)
+    c(list(width = fig$width, height = fig$height), if (!is.null(alt)) list(alt = alt))
   } else {
     NULL
   }

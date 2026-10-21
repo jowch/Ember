@@ -94,9 +94,12 @@ export const EmberPlot = ({ mime, body, cell_id, last_run_timestamp, figure }) =
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [figure?.width, figure?.height])
 
+    // R gives no description of a plot, so without the cell's own
+    // `#| fig-alt` or `fig-cap` it is named as what it is (#294).
+    const alt = figure?.alt || "Plot"
     if (figure == null) {
-        return html`<div><${PlutoImage} mime=${mime} body=${body} /></div>`
+        return html`<div><${PlutoImage} mime=${mime} body=${body} alt=${alt} /></div>`
     }
 
-    return html`<div ref=${container_ref}><${PlutoImage} mime=${mime} body=${body} /></div>`
+    return html`<div ref=${container_ref}><${PlutoImage} mime=${mime} body=${body} alt=${alt} /></div>`
 }

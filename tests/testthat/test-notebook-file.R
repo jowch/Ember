@@ -581,6 +581,17 @@ test_that("an old setup cell marked disabled stays disabled: no cell is special 
   expect_false("disabled_setup_cell" %in% problem_kinds(file))
 })
 
+test_that("cell_figure_alt(): fig-alt, else fig-cap, from the top #| lines; NULL without (#294)", {
+  expect_null(cell_figure_alt("plot(1)"))
+  expect_null(cell_figure_alt("#| fig-width: 8\nplot(1)"))
+  expect_equal(cell_figure_alt("#| fig-cap: Sales by month\nplot(1)"), "Sales by month")
+  expect_equal(cell_figure_alt("#| fig-cap: A caption\n#| fig-alt: \"Line chart, rising\"\nplot(1)"), "Line chart, rising")
+  expect_equal(cell_figure_alt("\n#| fig.alt: 'knitr key'\nplot(1)"), "knitr key")
+  # Only the run at the top counts, as for the size; an empty value is none.
+  expect_null(cell_figure_alt("plot(1)\n#| fig-alt: too late"))
+  expect_null(cell_figure_alt("#| fig-alt:\nplot(1)"))
+})
+
 test_that("cell_figure_size(): no #| lines gives the default, 7.5 x 5 (ui-3 62)", {
   fig <- cell_figure_size("plot(1)")
   expect_equal(fig$width, 7.5)
