@@ -18,8 +18,10 @@ Find the open issue titled **"UI audit log"** (label `ui-audit`). Create it
 if it doesn't exist (title "UI audit log", label `ui-audit`, body: a line
 saying each comment is one audit run). Read its last few comments:
 - which focus areas were audited, and when, so you can pick the next one (step 4);
-- the **Declined** list: findings the maintainer decided not to act on.
-  Never file those again;
+- the **Declined** list in the log's description: findings the maintainer
+  decided not to act on. Never file those again. The maintainer adds to
+  it by editing the description; an issue from an earlier audit that was
+  closed as not planned counts as declined too;
 - the metrics from earlier runs, to spot trends (step 3).
 
 ## 2. Run the scripted journeys

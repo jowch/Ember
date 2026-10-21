@@ -169,8 +169,12 @@ try {
       const icons = await page.locator("header#pluto-nav button").evaluateAll((bs) =>
         bs.filter((b) => b.getClientRects().length).map((b) => b.getAttribute("aria-label") || b.innerText.trim()));
       note(`${width}-header-buttons`, icons);
-      for (const tab of ["Variables", "Packages", "Help", "Status"]) {
-        await page.evaluate((t) => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: t.toLowerCase() })), tab);
+      // Open the panel the way Endeavor's drawer does, then switch tabs by
+      // clicking them, as a person would.
+      await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "variables" })));
+      await page.waitForSelector("#helpbox-wrapper.open", { timeout: 5000 });
+      for (const tab of ["Variables", "Help", "Packages", "Status"]) {
+        await page.locator("#helpbox-wrapper").getByRole("tab", { name: tab, exact: true }).click();
         await page.waitForTimeout(600);
         await shot(page, `${width}-2-panel-${tab}`);
         const problems = await pageProblems(page);
