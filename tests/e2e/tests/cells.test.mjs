@@ -1467,24 +1467,22 @@ test("chips: a chip's text can't be selected, by double-click or by dragging acr
   await page.locator(`${cellSelector("NEVER")} > ember-chip span:not(.ember-chip-icon)`).dblclick();
   assert.equal(await selection(), "", "double-clicking a chip selects none of its text");
 
-  // A drag from above the chip into the cell's code skips the chip.
+  // A drag from the chip's row into the cell's code copies the code but
+  // not the chip. This reads the clipboard, not getSelection(): Chromium's
+  // Selection.toString() still lists user-select: none text that a copy
+  // leaves out.
   const box = await chip.boundingBox();
+  const cell = await page.locator(cellSelector("NEVER")).boundingBox();
   const code = await page.locator(`${cellSelector("NEVER")} .cm-content`).boundingBox();
-  await page.mouse.move(box.x + 2, box.y - 4);
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.mouse.move(cell.x + cell.width - 4, box.y + box.height / 2);
   await page.mouse.down();
-  await page.mouse.move(code.x + code.width / 2, code.y + code.height / 2, { steps: 8 });
+  await page.mouse.move(code.x + 2, code.y + code.height / 2, { steps: 8 });
   await page.mouse.up();
-  assert.doesNotMatch(await selection(), /Not run yet/, "a drag across the cell leaves the chip out");
-
-  // Settings and load notes follow the same rule.
-  const noteSelect = await page.evaluate(() => {
-    const note = document.createElement("ember-settings-note");
-    document.querySelector("pluto-cell").append(note);
-    const value = getComputedStyle(note).userSelect;
-    note.remove();
-    return value;
-  });
-  assert.equal(noteSelect, "none");
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C");
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  assert.match(copied, /3 \+ 3/, "the drag reached NEVER's code");
+  assert.doesNotMatch(copied, /Not run yet/, "a drag across the cell leaves the chip out");
 
   assertNoProblems(page);
 });

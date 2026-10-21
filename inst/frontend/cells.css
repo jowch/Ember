@@ -467,11 +467,11 @@ ember-chip {
     line-height: 1.5;
     animation: ember-fade-in 0.15s ease-out;
 }
-/* Chips and notes are status, not content: dragging across a cell or
-   double-clicking near one doesn't select their text (#285). Links in
-   them still work. */
-ember-chip,
-ember-settings-note {
+/* Chips are status, not content: dragging across a cell or
+   double-clicking near one doesn't select its text (#285). Links in a
+   chip still work. Settings and load notes stay selectable, since they
+   give advice and name settings a reader may copy. */
+ember-chip {
     -webkit-user-select: none;
     user-select: none;
 }
