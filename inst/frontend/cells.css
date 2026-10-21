@@ -812,6 +812,12 @@ pluto-output table.pluto-table tr.empty div {
     flex-flow: column nowrap;
     align-items: center;
 }
+/* A wide table scrolls in its own box, so the buttons under it stay put
+   and clear of an overlay scrollbar (#286). */
+.ember-table-scroll {
+    min-width: 0;
+    overflow-x: auto;
+}
 .ember-table-more {
     display: flex;
     align-self: flex-start;

@@ -324,10 +324,15 @@ export const TableView = ({ mime, body, cell_id, persist_js_state, sanitize_html
         })}
     </tbody>`
 
+    // The table scrolls sideways in its own box, and the Show more buttons
+    // sit under that box, so an overlay scrollbar (macOS, WebKit embeds)
+    // draws over the table's edge, not over the buttons (#286).
     return html`<div class="ember-table" ref=${node_ref}>
-        <table class="pluto-table">
-            ${thead}${tbody}
-        </table>
+        <div class="ember-table-scroll">
+            <table class="pluto-table">
+                ${thead}${tbody}
+            </table>
+        </div>
         ${can_load && (more_rows > 0 || more_cols > 0)
             ? html`<div class="ember-table-more">
                   ${more_rows > 0 ? show_more(1, t("t_show_more_rows", { count: more_rows })) : null}
