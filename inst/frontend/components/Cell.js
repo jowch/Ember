@@ -294,8 +294,9 @@ export const Cell = ({
             pluto_actions.fold_remote_cells(pluto_actions.get_selected_cells(cell_id, selected), !code_folded)
         }
     }, [pluto_actions, cell_id, selected, code_folded, inspecting_hidden_code_here, inspecting_hidden_code])
-    // The show/hide code toggle (#287) shows the eye struck through while
-    // the code is hidden, as Pluto's shoulder eye did.
+    // The show/hide code toggle (#287): struck through, pressed and titled
+    // "Show code" while the code is hidden, as Pluto's shoulder eye was.
+    // Inspecting a hidden cell's code shows it, so the eye is open then.
     const eye_hidden = code_folded && !inspecting_hidden_code_here
     const on_run = useCallback(async () => {
         return await pluto_actions.set_and_run_multiple(pluto_actions.get_selected_cells(cell_id, selected))
@@ -668,9 +669,9 @@ export const Cell = ({
                     type="button"
                     class=${cl({ "ember-eye": true, "code-hidden": eye_hidden })}
                     onClick=${on_code_fold}
-                    title=${code_folded ? t("t_show_code") : t("t_hide_code")}
+                    title=${eye_hidden ? t("t_show_code") : t("t_hide_code")}
                     aria-label=${t("t_hide_code")}
-                    aria-pressed=${code_folded ? "true" : "false"}
+                    aria-pressed=${eye_hidden ? "true" : "false"}
                 >
                     ${eye_hidden ? html`<${EyeOffIcon} />` : html`<${EyeIcon} />`}
                 </button>
