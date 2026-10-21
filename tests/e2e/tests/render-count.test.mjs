@@ -17,9 +17,9 @@ test("adding a cell re-renders O(1) cells, not every cell", async (t) => {
 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
-  const total = await page.locator("pluto-cell").count();
-  assert.ok(total >= 30, `fixture has 30+ cells (got ${total})`);
   // Past 20 cells the rest render after a short delay; wait for all.
+  const total = await page.evaluate(() => Object.keys(window.editor_state?.notebook?.cell_inputs ?? {}).length);
+  assert.ok(total >= 30, `fixture has 30+ cells (got ${total})`);
   await page.waitForFunction((n) => document.querySelectorAll("pluto-cell").length === n, total);
   await page.waitForTimeout(500);
 
