@@ -275,12 +275,6 @@ export const CellInput = ({
     runtime,
     on_run,
     on_interrupt,
-    can_disable,
-    set_cell_disabled,
-    code_folded,
-    on_code_fold,
-    on_move_up,
-    on_move_down,
 }) => {
     let pluto_actions = useContext(PlutoActionsContext)
     let [error, set_error] = useState(null)
@@ -862,17 +856,6 @@ export const CellInput = ({
             ${running_disabled || depends_on_disabled_cells
                 ? null
                 : html`<${RunButton} running=${running} queued=${queued} runtime=${runtime} on_run=${on_run} on_interrupt=${on_interrupt} />`}
-            <${InputContextMenu}
-                cell_id=${cell_id}
-                on_delete=${on_delete}
-                code_folded=${code_folded}
-                on_code_fold=${on_code_fold}
-                can_disable=${can_disable}
-                running_disabled=${running_disabled}
-                set_cell_disabled=${set_cell_disabled}
-                on_move_up=${on_move_up}
-                on_move_down=${on_move_down}
-            />
             ${PreviewHiddenCode}
         </pluto-input>
     `
@@ -885,9 +868,11 @@ const PreviewHiddenCode = html`<div class="preview_hidden_code_info">${t("t_read
  * cell, Copy output, Move up, Move down, a separator, Delete cell. Built
  * on useMenu.js (piece 7a), which gives it arrow-key navigation, Esc and
  * click-outside; the DOM hooks (button.input_context_menu,
- * div.input_context_menu) are kept as Pluto named them.
+ * div.input_context_menu) are kept as Pluto named them. Rendered by Cell.js
+ * in the cell's tools, not inside pluto-input, so it stays at the cell's
+ * top right whether the code is shown or hidden (#287).
  */
-const InputContextMenu = ({ cell_id, on_delete, code_folded, on_code_fold, can_disable, running_disabled, set_cell_disabled, on_move_up, on_move_down }) => {
+export const InputContextMenu = ({ cell_id, on_delete, code_folded, on_code_fold, can_disable, running_disabled, set_cell_disabled, on_move_up, on_move_down }) => {
     let pluto_actions = useContext(PlutoActionsContext)
 
     const is_copy_output_supported = () => {

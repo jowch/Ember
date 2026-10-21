@@ -10,6 +10,9 @@ need execution allowed: click "Run this notebook"
 - Run: `runCell(page, id)` (Shift+Enter) or the cell's run button
   (`button.ember-run`, shown on hover).
 - Add: the "+" between cells (`button.add_cell.after` / `.before`).
+- Show/hide code: `ember-cell-tools > button.ember-eye` (aria-label
+  "Hide code", `aria-pressed` true while hidden), at the cell's top right
+  next to the menu.
 - Cell menu: `button.input_context_menu` (aria-label "Cell options")
   opens `div.input_context_menu[role=menu]`; items are
   `button[role=menuitem]` (Hide code, Disable, Delete, ...).

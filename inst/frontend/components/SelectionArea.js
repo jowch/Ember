@@ -90,7 +90,7 @@ export const SelectionArea = ({ on_selection, set_scroller, cell_order }) => {
                         // @ts-ignore
                         const tag = e.tagName
                         if (e instanceof HTMLElement)
-                            return e.matches("pluto-shoulder, button.input_context_menu, button.foldcode") || e.closest(".input_context_menu")
+                            return e.matches("pluto-shoulder, button.input_context_menu, button.foldcode, button.ember-eye") || e.closest(".input_context_menu")
                     })
                 ) {
                     // ...clear the selection

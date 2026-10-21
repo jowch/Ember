@@ -2,14 +2,14 @@ import _ from "../imports/lodash-es.js"
 import { html, useState, useEffect, useMemo, useRef, useContext, useLayoutEffect, useErrorBoundary, useCallback } from "../imports/Preact.js"
 
 import { CellOutput } from "./CellOutput.js"
-import { CellInput } from "./CellInput.js"
+import { CellInput, InputContextMenu } from "./CellInput.js"
 import { Logs } from "./Logs.js"
 import { RunButton, useDebouncedTruth } from "./RunButton.js"
 import { cl } from "../common/ClassTable.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { t, th } from "../common/lang.js"
-import { CircleIcon, ClockIcon, SlashCircleIcon, SlidersIcon } from "../common/Icons.js"
+import { CircleIcon, ClockIcon, EyeIcon, EyeOffIcon, SlashCircleIcon, SlidersIcon } from "../common/Icons.js"
 import { stale_names } from "../common/stale_names.js"
 import { display_name } from "../common/display_name.js"
 import { useSettled, wait_for_on } from "../common/useSettled.js"
@@ -294,6 +294,9 @@ export const Cell = ({
             pluto_actions.fold_remote_cells(pluto_actions.get_selected_cells(cell_id, selected), !code_folded)
         }
     }, [pluto_actions, cell_id, selected, code_folded, inspecting_hidden_code_here, inspecting_hidden_code])
+    // The show/hide code toggle (#287) shows the eye struck through while
+    // the code is hidden, as Pluto's shoulder eye did.
+    const eye_hidden = code_folded && !inspecting_hidden_code_here
     const on_run = useCallback(async () => {
         return await pluto_actions.set_and_run_multiple(pluto_actions.get_selected_cells(cell_id, selected))
     }, [pluto_actions, cell_id, selected])
@@ -393,8 +396,12 @@ export const Cell = ({
             else window.dispatchEvent(new CustomEvent("cell_focus", { detail: { cell_id, line: 0, ch: 0 } }))
         } else if (e.key === "Tab" && !e.shiftKey) {
             // The code comes first in the DOM; from the selected cell, Tab
-            // goes on past it to the run button and the menu.
-            const next = /** @type {HTMLElement?} */ (cell.querySelector("pluto-input button.ember-run, pluto-input button.input_context_menu"))
+            // goes on past it to the run button, then the cell's tools (the
+            // show/hide code toggle and the menu). With the code hidden the
+            // run button isn't shown, so the toggle is first.
+            const next = /** @type {HTMLElement?} */ (
+                Array.from(cell.querySelectorAll("pluto-input button.ember-run, ember-cell-tools > button")).find((b) => b.getClientRects().length > 0)
+            )
             if (next == null) return false
             next.focus()
         } else {
@@ -650,18 +657,35 @@ export const Cell = ({
                 onerror=${remount}
                 running_disabled=${running_disabled}
                 depends_on_disabled_cells=${depends_on_disabled_cells}
-                can_disable=${ember?.can_disable ?? false}
-                set_cell_disabled=${set_cell_disabled}
-                code_folded=${code_folded}
-                on_code_fold=${on_code_fold}
-                on_move_up=${on_move_up}
-                on_move_down=${on_move_down}
                 running=${running}
                 queued=${queued || (waiting_to_run && is_process_ready)}
                 runtime=${runtime}
                 on_run=${on_run}
                 on_interrupt=${on_interrupt}
             />
+            <ember-cell-tools>
+                <button
+                    type="button"
+                    class=${cl({ "ember-eye": true, "code-hidden": eye_hidden })}
+                    onClick=${on_code_fold}
+                    title=${code_folded ? t("t_show_code") : t("t_hide_code")}
+                    aria-label=${t("t_hide_code")}
+                    aria-pressed=${code_folded ? "true" : "false"}
+                >
+                    ${eye_hidden ? html`<${EyeOffIcon} />` : html`<${EyeIcon} />`}
+                </button>
+                <${InputContextMenu}
+                    cell_id=${cell_id}
+                    on_delete=${on_delete}
+                    code_folded=${code_folded}
+                    on_code_fold=${on_code_fold}
+                    can_disable=${ember?.can_disable ?? false}
+                    running_disabled=${running_disabled}
+                    set_cell_disabled=${set_cell_disabled}
+                    on_move_up=${on_move_up}
+                    on_move_down=${on_move_down}
+                />
+            </ember-cell-tools>
             ${show_logs && cell_api_ready
                 ? html`<${Logs}
                       logs=${Object.values(logs)}

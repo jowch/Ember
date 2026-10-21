@@ -1750,13 +1750,10 @@ pluto-input .cm-editor .cm-line.cm-highlighted-line {
     border-radius: 3px;
 }
 
-/* Folded: only the cell menu stays, since its Show code item is how a
-   folded cell is unfolded. It then sits at the cell's top right. */
-pluto-cell:not(.show_input) > pluto-input {
-    position: static;
-}
-/* !important: CodeMirror's own theme sets .cm-editor's display with it. */
-pluto-cell:not(.show_input) > pluto-input > :not(.input_context_menu) {
+/* Folded: the code box goes; the cell's tools (cells.css, ember-cell-tools)
+   are outside it and stay. !important: CodeMirror's own theme sets
+   .cm-editor's display with it. */
+pluto-cell:not(.show_input) > pluto-input > * {
     display: none !important;
 }
 pluto-cell.code_folded.show_input > pluto-input:not(:focus-within) {

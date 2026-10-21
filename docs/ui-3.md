@@ -76,8 +76,12 @@ out of the way of the data, the code and the results.
   overlapping the rail, shown on hover or focus (always on the focused cell
   on touch screens). It becomes Stop while the cell runs. The last run time
   is a small chip on the code's bottom-right corner, also on hover or focus.
-- **Cell menu** (⋯ at the code's top right, in the interface font): Hide
-  code, Disable cell, Copy output, Move up, Move down, Delete cell.
+- **Cell tools** (at the cell's top right, on hover or focus, the same spot
+  whether the code is shown or hidden, #287): an eye that hides or shows the
+  code in one click (struck through while the code is hidden), then the ⋯.
+  On a cell with output they sit over the output's top-right corner.
+- **Cell menu** (the ⋯, in the interface font): Hide code, Disable cell,
+  Copy output, Move up, Move down, Delete cell.
 - **Disable cell** (any code cell): the cell and the
   cells that depend on it stop running, keep their last output dimmed, and
   their variables are removed from R. A disabled cell does not count as
