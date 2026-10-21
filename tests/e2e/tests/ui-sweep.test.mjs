@@ -25,11 +25,7 @@ const WIDTHS = [600, 900, 1440];
 
 /** Known open bugs: { rule, where (a substring of the problem's where),
  * issue }. */
-const KNOWN = [
-  { rule: "off-screen", where: "#saveall-container > button.runallchanged", issue: 290 },
-  { rule: "clipped", where: "#saveall-container > button.runallchanged", issue: 290 },
-  { rule: "spills", where: "#saveall-container > button.runallchanged", issue: 290 },
-];
+const KNOWN = [];
 const used = new Set();
 
 /** Check the page at each width (and in dark mode at 900), save a

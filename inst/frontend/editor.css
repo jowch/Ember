@@ -1435,7 +1435,8 @@ main > preamble {
     display: flex;
     height: 20px;
     position: sticky;
-    top: 5px;
+    /* Under Ember's sticky header, not over its buttons (#290). */
+    top: calc(var(--ember-header-height) + 5px);
     margin-top: 5px;
     padding-right: 5px;
     z-index: 200;
@@ -1460,18 +1461,28 @@ main > preamble {
     color: var(--overlay-button-color, currentcolor);
 }
 
+/* At the right edge of the notebook column; on a window wide enough, out in
+   the margin, its right edge 24px from the window's (a little more than a
+   classic scrollbar, which 100vw includes). The shift is the margin's
+   width, not a guess at the button's: Pluto's fixed offsets assumed the
+   narrow "⌘ S" label and put "Ctrl+S" past the window's edge (#290). With
+   the side panel docked, the margin is the panel's, so it stays put. */
 main > preamble #saveall-container {
     margin-left: auto;
+    height: auto;
+    min-height: 2.4rem;
+    align-items: center;
 }
-pluto-editor.fullscreen main > preamble #saveall-container {
-    transform: translateX(max(0px, 100vw - 700px - 25px));
-    /* position: relative; */
-}
-
-@media screen and (min-width: calc(700px + 25px + 6px + 500px)) {
-    pluto-editor.fullscreen main > preamble #saveall-container {
-        transform: translateX(500px);
+@media screen and (min-width: 1240px) {
+    pluto-editor.fullscreen:not(:has(#helpbox-wrapper.open)) main > preamble #saveall-container {
+        transform: translateX(calc((100vw - var(--ember-column) - 25px - 6px) / 2 - 24px));
     }
+}
+/* The keys are laid out as boxes, so the button is as tall as they are
+   instead of the keys spilling out of it (#290). */
+main > preamble #saveall-container > button.runallchanged {
+    display: inline-flex;
+    align-items: center;
 }
 
 main > preamble #saveall-container.ask_to_save {
