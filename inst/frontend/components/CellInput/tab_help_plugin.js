@@ -82,7 +82,6 @@ export const tab_help_plugin = ViewPlugin.define(
 /** Editors that keyboard focus arrived in (Tab or Shift+Tab) and that the
  * person hasn't worked in since: no typing, clicking or cursor keys. */
 const passing_through = new WeakMap()
-const pointer_down = new WeakSet()
 
 const pass_through = (view, on) => {
     passing_through.set(view, on)
@@ -91,39 +90,53 @@ const pass_through = (view, on) => {
     if (get_settings().CM_TAB_KEY_FOR_INDENT) view.setTabFocusMode(on)
 }
 
+// Whether a Tab or Shift+Tab keydown is being handled right now. The
+// browser moves focus as that keydown's default action, in the same task,
+// so a focus while it's set was moved by Tab.
+let tab_pressed = false
+if (typeof document !== "undefined") {
+    document.addEventListener(
+        "keydown",
+        (event) => {
+            if (event.key !== "Tab" || event.ctrlKey || event.metaKey || event.altKey) return
+            tab_pressed = true
+            setTimeout(() => {
+                tab_pressed = false
+            })
+        },
+        { capture: true }
+    )
+}
+
+// Keys that start a shortcut rather than do anything on their own.
+const MODIFIERS = ["Shift", "Control", "Alt", "Meta", "AltGraph", "CapsLock"]
+
 /** Tab passes through a cell's editor until the person starts working in
  * it (#297). With Tab set to indent, tabbing through the page used to land
- * in the first cell and indent its code on every further press. Now Tab and
- * Shift+Tab move on from an editor that focus only passed into, the way
- * JupyterLab's cells do; once the person types, clicks or moves the cursor
- * there, Tab indents as before. Focus Ember moves into an editor itself (a
- * new cell, go to definition), and Enter on a selected cell, count as
- * working in it. */
+ * in the first cell and indent its code on every further press. Now, when
+ * Tab or Shift+Tab moves focus into an editor, the next Tab moves on, the
+ * way JupyterLab's cells do; once the person types, clicks or moves the
+ * cursor there, Tab indents as before. Focus that arrives any other way (a
+ * click, Enter on a selected cell, arrow keys from the next cell, a new
+ * cell, coming back to the window) is working there. */
 export const tab_pass_through = EditorView.domEventHandlers({
     mousedown(event, view) {
-        pointer_down.add(view)
         if (passing_through.get(view)) pass_through(view, false)
         return false
     },
     focus(event, view) {
-        const by_pointer = pointer_down.has(view)
-        pointer_down.delete(view)
-        // Enter on a selected cell (focus on the pluto-cell itself) asks
-        // to edit it, like JupyterLab's Enter.
-        const from_own_cell = event.relatedTarget != null && event.relatedTarget === view.dom.closest("pluto-cell")
-        const on = !by_pointer && !from_own_cell && !view.state.field(LastFocusWasForced, false)
+        const on = tab_pressed
         if (on || passing_through.get(view)) pass_through(view, on)
         return false
     },
     blur(event, view) {
-        pointer_down.delete(view)
         if (passing_through.get(view)) pass_through(view, false)
         return false
     },
     keydown(event, view) {
-        // Tab moves on, and Shift on its own is the start of Shift+Tab;
-        // any other key is work in this editor.
-        if (!["Tab", "Shift"].includes(event.key) && passing_through.get(view)) pass_through(view, false)
+        // Tab moves on, and a modifier on its own is the start of Shift+Tab
+        // or a shortcut; any other key is work in this editor.
+        if (event.key !== "Tab" && !MODIFIERS.includes(event.key) && passing_through.get(view)) pass_through(view, false)
         return false
     },
 })
