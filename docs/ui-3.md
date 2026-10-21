@@ -148,8 +148,9 @@ out of the way of the data, the code and the results.
   tab, or closes it), Export, and ⋯ (Keyboard shortcuts, Settings, Open
   another notebook). See Menus and Settings below.
 - While R is busy: "Running 2 of 5 cells" and Stop.
-- Safe preview is one banner with "Run this notebook", not a label on every
-  cell.
+- Safe preview is one banner with "Run this notebook". Each code cell also
+  shows its "Not run yet" chip, as Pluto marks every cell in safe preview,
+  so the first view has no unexplained gaps (#298).
 - Restart R lives only in Status: restarting shouldn't become a habit.
 
 ## Side panel
