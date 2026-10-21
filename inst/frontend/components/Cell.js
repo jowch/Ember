@@ -397,13 +397,13 @@ export const Cell = ({
             else if (kind === "markdown") set_text_open(true)
             else window.dispatchEvent(new CustomEvent("cell_focus", { detail: { cell_id, line: 0, ch: 0 } }))
         } else if (e.key === "Tab" && !e.shiftKey) {
-            // From the selected cell, Tab goes to the show/hide code eye in
-            // the shoulder (#287), then on past the code to the run button
-            // and the menu: the first of them that is shown.
+            // The code comes first in the DOM; from the selected cell, Tab
+            // goes on past it to the run button and the menu, whichever is
+            // shown first (a cell with hidden code has no run button). The
+            // show/hide code eye comes before the code, in the shoulder, so
+            // Tab reaches it on the way into the cell (#287).
             const next = /** @type {HTMLElement?} */ (
-                Array.from(cell.querySelectorAll("pluto-shoulder > button.foldcode, pluto-input button.ember-run, pluto-input button.input_context_menu")).find(
-                    (b) => b.getClientRects().length > 0
-                )
+                Array.from(cell.querySelectorAll("pluto-input button.ember-run, pluto-input button.input_context_menu")).find((b) => b.getClientRects().length > 0)
             )
             if (next == null) return false
             next.focus()

@@ -72,7 +72,7 @@ test("eye: one click hides the code, a second click in the same place shows it",
   assertNoProblems(page);
 });
 
-test("eye: reachable by Tab from a selected cell, toggled with Enter, focus stays on it", async (t) => {
+test("eye: reached by Tab on the way into a cell, toggled with Enter, focus stays on it", async (t) => {
   const notebook = tempNotebook("ui-sweep.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "eye-toggle-keys.server.log") });
   const browser = await launchBrowser();
@@ -84,35 +84,37 @@ test("eye: reachable by Tab from a selected cell, toggled with Enter, focus stay
   await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(() => document.querySelectorAll("pluto-cell.running, pluto-cell.queued").length === 0
     && document.getElementById("A")?.classList.contains("no_output_yet") === false, null, { timeout: 60000 });
-  await page.locator(`${cellSelector("A")} .cm-content`).click();
-  await page.keyboard.press("Escape");
   const active = () => page.evaluate(() => {
     const el = document.activeElement;
     return { cell: el?.closest("pluto-cell")?.id, cls: el?.className.trim(), label: el?.getAttribute("aria-label") };
   });
-  // From the selected cell, Tab goes to the eye first: it leads the cell.
-  await page.keyboard.press("Tab");
-  assert.deepEqual(await active(), { cell: "A", cls: "foldcode", label: "Hide code" });
+  // Tab from the cell above (MD's ⋯) walks into A: its eye leads it.
+  const tabToEye = async () => {
+    await page.locator(`${cellSelector("MD")} button.input_context_menu`).focus();
+    for (let i = 0; i < 4; i++) {
+      await page.keyboard.press("Tab");
+      const a = await active();
+      if (a.cell === "A") return a;
+    }
+    return active();
+  };
+  assert.deepEqual(await tabToEye(), { cell: "A", cls: "foldcode", label: "Hide code" }, "the eye is the first stop in A");
   // Shown while it has keyboard focus (after the 0.15 s fade in).
   await page.waitForFunction(() => getComputedStyle(document.querySelector('pluto-cell[id="A"] pluto-shoulder > button.foldcode')).opacity === "1",
     null, { timeout: 3000 });
 
   await page.keyboard.press("Enter");
   await folded(page, "A", true);
-  const after = await active();
-  assert.equal(after.cell, "A", "focus stays in A");
-  assert.equal(after.cls, "foldcode", "focus stays on the eye");
+  assert.deepEqual(await active(), { cell: "A", cls: "foldcode", label: "Hide code" }, "focus stays on the eye");
   assert.equal(await page.locator(`${cellSelector("A")} pluto-shoulder > button.foldcode`).getAttribute("aria-pressed"), "true");
   await page.keyboard.press("Enter");
   await folded(page, "A", false);
+  assert.equal(await page.locator(`${cellSelector("A")} pluto-shoulder > button.foldcode`).getAttribute("aria-pressed"), "false");
 
-  // With the code hidden, Tab from the selected cell still reaches the eye.
+  // With the code hidden, Tab still reaches the eye on the way in.
   await page.keyboard.press("Enter");
   await folded(page, "A", true);
-  await page.evaluate(() => document.querySelector('pluto-cell[id="A"]').focus());
-  await page.keyboard.press("Tab");
-  assert.equal((await active()).cell, "A");
-  assert.equal((await active()).cls, "foldcode");
+  assert.deepEqual(await tabToEye(), { cell: "A", cls: "foldcode", label: "Hide code" });
 
   assertNoProblems(page);
 });

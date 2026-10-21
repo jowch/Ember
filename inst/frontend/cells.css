@@ -367,8 +367,8 @@ pluto-notebook.ember-empty-notebook pluto-input .cm-editor {
 /* The show/hide code eye (#287), where Pluto has it: in the left shoulder,
    level with the cell's top, so it stays in place whether the code is
    shown or hidden. It sits left of the run button, which reaches 15px into
-   the gutter at the code's top-left corner; main's left padding
-   (--ember-gutter, editor.css) leaves room for both. Endeavor (folded.ts)
+   the gutter at the code's top-left corner; main's margin and padding
+   (editor.css) leave 46px for both at every width. Endeavor (folded.ts)
    reads this element, so it keeps Pluto's tag and class. The menu's
    Hide/Show code item stays as a second way in. */
 pluto-cell > pluto-shoulder > button.foldcode {

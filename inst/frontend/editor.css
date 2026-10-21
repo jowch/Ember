@@ -65,15 +65,13 @@ pluto-editor {
 
 main {
     flex: 1;
-    /* --ember-gutter and 6px are the padding either side of the column. The
-       gutter holds the cell's left controls: the show/hide code eye in the
-       shoulder (cells.css, #287) and the run button's corner, side by side
-       (18px + 24px + 4px). */
-    --ember-gutter: 46px;
-    max-width: calc(var(--ember-column) + var(--ember-gutter) + 6px);
+    /* 25px and 6px are Pluto's own padding, where the cell's left controls
+       sit; piece 6 removes them when it moves the run button, making the
+       column exactly --ember-column wide. */
+    max-width: calc(var(--ember-column) + 25px + 6px);
     padding-top: 0px;
     padding-bottom: 4rem;
-    padding-left: var(--ember-gutter);
+    padding-left: 25px;
     padding-right: 6px;
     width: 100%;
 }
@@ -89,7 +87,7 @@ body:has(pluto-editor:not(.disable_ui)) {
 /* The column is centred. With the side panel docked, it moves left only as
    far as it must to clear the panel, as Pluto's main does for live docs. */
 pluto-editor main {
-    --ember-main-free: calc(100% - (var(--ember-column) + var(--ember-gutter) + 6px));
+    --ember-main-free: calc(100% - (var(--ember-column) + 25px + 6px));
     align-self: flex-start;
     margin-left: auto;
     margin-right: max(0px, var(--ember-main-free) / 2);
@@ -102,10 +100,19 @@ pluto-editor main {
     }
 }
 
+/* The cell's left controls, the show/hide code eye in the shoulder
+   (cells.css, #287) and the run button's corner, need 46px left of the
+   column (24px + 18px + 4px). Above 800px the centred column's margin
+   gives that; below, main's own padding does. */
+@media (max-width: 800px) {
+    pluto-editor main {
+        padding-left: 46px;
+    }
+}
 @media (max-width: 640px) {
     pluto-editor main {
         margin-left: 0;
-        padding-left: var(--ember-gutter);
+        padding-left: 46px;
         padding-right: 16px;
         max-width: none;
     }
