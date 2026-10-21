@@ -36,11 +36,13 @@ test("adding a cell re-renders O(1) cells, not every cell", async (t) => {
   await page.hover(cellSelector(anchor));
   await page.locator(`${cellSelector(anchor)} button.add_cell.after`).click({ force: true });
   await page.waitForFunction((n) => document.querySelectorAll("pluto-cell").length === n + 1, total);
-  // Let the server's reply (cell_dependencies, cell_execution_order) land.
-  await page.waitForTimeout(1500);
+  const newId = await page.evaluate((a) => document.getElementById(a)?.nextElementSibling?.id, anchor);
+  // The re-renders came with the server's reply, which adds the new cell's
+  // cell_dependencies (#289): wait for it, then let renders settle.
+  await page.waitForFunction((id) => window.editor_state?.notebook?.cell_dependencies?.[id] != null, newId, { timeout: 15000 });
+  await page.waitForTimeout(500);
 
   const renders = await page.evaluate(() => window.__ember_renders);
-  const newId = await page.evaluate((a) => document.getElementById(a)?.nextElementSibling?.id, anchor);
   const others = Object.keys(renders).filter((id) => id !== newId && id !== anchor);
   assert.ok(renders[newId] >= 1, "the new cell rendered");
   assert.ok(others.length <= 2,
