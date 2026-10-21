@@ -429,6 +429,23 @@ test_that("running a cell into a multiple definition queues the name's readers i
   expect_false("C" %in% r2$state$pending)
 })
 
+test_that("running a cell into a cycle queues its readers, and drops the blocked cycle peer unsent (#272)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("y <- 2"), C = cell("x + 1")))
+  r <- boot(s, c("A", "B", "C"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(11)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(12)))
+
+  r1 <- drive(r$state, ev_apply(list(op_set_code("B", "y <- x"), op_set_code("A", "x <- y")), at(20)))
+  expect_true(all(c("A", "B") %in% blocked_cells(r1$state$graph)))
+  r2 <- drive(r1$state, ev_run("A", at(21)))
+  expect_setequal(r2$replies[[1]]$skipped, c("A", "B"))   # B is an ancestor of A now
+  expect_equal(sent_cells(r2), "C")   # B is queued as A's dependent but blocked: dropped, not sent
+  expect_false("B" %in% r2$state$pending)
+  expect_null(r2$state$results$A)
+  expect_null(r2$state$results$B)
+})
+
 test_that("running a cell into a graph error leaves its dependents stale, not queued, when lazy (#272)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1")), on_cell_change = "lazy")
   r <- boot(s, c("A", "B"))
