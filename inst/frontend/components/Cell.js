@@ -113,6 +113,8 @@ export const Cell = ({
     is_first_cell,
     inspecting_hidden_code,
 }) => {
+    // For tests that count which cells re-render (render-count.test.mjs, #289).
+    /** @type {any} */ (window).__ember_on_cell_render?.(cell_id)
     const { show_logs, disabled: running_disabled, skip_as_script } = metadata
     const code_changed = !!ember?.code_changed
     const stale = useSettled(!code_changed && !!ember?.stale, wait_for_on)
