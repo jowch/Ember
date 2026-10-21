@@ -179,7 +179,7 @@ pluto-input:is(:focus-within, :has(.cm-tooltip)) {
 /* An open cell menu can overflow below a short cell into the next one;
    this is the one time the *whole* cell needs to outrank its neighbour,
    not just something inside it. */
-pluto-cell:has(> ember-cell-tools > div.input_context_menu[role="menu"]) {
+pluto-cell:has(> pluto-input > div.input_context_menu[role="menu"]) {
     z-index: 50;
 }
 
@@ -233,8 +233,7 @@ ember-runtime {
 }
 
 button.ember-run,
-button.input_context_menu,
-button.ember-eye {
+button.input_context_menu {
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.15s ease-in-out;
@@ -248,8 +247,8 @@ ember-runtime {
 /* Shown while typing in the code, while the cell's menu is open, or on the
    button Tab reached; a selected cell (focus on pluto-cell itself) shows
    neither (board A11y6). */
-pluto-cell:has(.cm-editor.cm-focused, div.input_context_menu[role="menu"]) :is(button.ember-run, button.input_context_menu, button.ember-eye),
-pluto-cell :is(button.ember-run, button.input_context_menu, button.ember-eye):focus-visible {
+pluto-cell:has(.cm-editor.cm-focused, div.input_context_menu[role="menu"]) :is(button.ember-run, button.input_context_menu),
+pluto-cell :is(button.ember-run, button.input_context_menu):focus-visible {
     opacity: 1;
     pointer-events: auto;
 }
@@ -259,8 +258,7 @@ pluto-cell:has(.cm-editor.cm-focused) ember-runtime {
 
 @media (hover: hover) {
     pluto-cell:hover button.ember-run,
-    pluto-cell:hover button.input_context_menu,
-    pluto-cell:hover button.ember-eye {
+    pluto-cell:hover button.input_context_menu {
         opacity: 1;
         pointer-events: auto;
     }
@@ -366,36 +364,68 @@ pluto-notebook.ember-empty-notebook pluto-input .cm-editor {
     box-shadow: 0 0 0 1px var(--ember-line);
 }
 
-/* The shoulder's fold eye is replaced by the eye in the cell's tools
-   (#287), which has no room in the left gutter at narrow widths; the
-   element stays for Endeavor (folded.ts), just not shown. */
-pluto-shoulder > button.foldcode {
+/* The show/hide code eye (#287), where Pluto has it: in the left shoulder,
+   level with the cell's top, so it stays in place whether the code is
+   shown or hidden. It sits left of the run button, which reaches 15px into
+   the gutter at the code's top-left corner; main's left padding
+   (--ember-gutter, editor.css) leaves room for both. Endeavor (folded.ts)
+   reads this element, so it keeps Pluto's tag and class. The menu's
+   Hide/Show code item stays as a second way in. */
+pluto-cell > pluto-shoulder > button.foldcode {
+    position: relative;
+    top: 1px;
+    margin-right: 18px;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ember-muted);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease-in-out;
+}
+pluto-cell > pluto-shoulder > button.foldcode > span {
+    display: flex;
+}
+/* Pluto's icon is a background image on span::after; Ember's is an SVG. */
+pluto-cell > pluto-shoulder > button.foldcode > span::after {
+    content: none !important;
     display: none;
+}
+pluto-cell > pluto-shoulder > button.foldcode:hover {
+    background: var(--ember-hover);
+    color: var(--ember-text);
+}
+/* Shown when the run button and the menu are (below), and while the code is
+   hidden and the cell has focus, so a keyboard user sees the state. */
+pluto-cell:has(.cm-editor.cm-focused, div.input_context_menu[role="menu"]) > pluto-shoulder > button.foldcode,
+pluto-cell > pluto-shoulder > button.foldcode:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+@media (hover: hover) {
+    pluto-cell:hover > pluto-shoulder > button.foldcode {
+        opacity: 1;
+        pointer-events: auto;
+    }
+}
+@media (hover: none) {
+    pluto-cell:focus-within > pluto-shoulder > button.foldcode {
+        opacity: 1;
+        pointer-events: auto;
+    }
 }
 
 /* ---- Cell menu (ui-3.md "Cell menu") ----------------------------------- */
 
-/* The cell's tools: the show/hide code toggle and the ⋯ menu, at the
-   cell's top right, so they stay in the same place whether the code is
-   shown or hidden (#287). */
-ember-cell-tools {
+button.input_context_menu {
     position: absolute;
     right: 6px;
     top: 5px;
     z-index: 40;
-    display: flex;
-    gap: 2px;
-    /* Over the output's corner: only the buttons, once shown, and the open
-       menu take the pointer. */
-    pointer-events: none;
-}
-ember-cell-tools > div.input_context_menu[role="menu"] {
-    pointer-events: auto;
-}
-
-button.ember-eye,
-button.input_context_menu {
-    position: relative;
     width: 26px;
     height: 26px;
     border-radius: 6px;
@@ -408,7 +438,6 @@ button.input_context_menu {
     cursor: pointer;
     padding: 0;
 }
-button.ember-eye:hover,
 button.input_context_menu:hover {
     background: var(--ember-hover);
 }
@@ -421,8 +450,8 @@ button.input_context_menu.on {
 
 div.input_context_menu[role="menu"] {
     position: absolute;
-    right: 0;
-    top: 29px;
+    right: 6px;
+    top: 34px;
     z-index: 1400;
     width: 200px;
     padding: 4px;
@@ -1003,7 +1032,7 @@ pluto-log-truncated {
 /* ---- Not shown in a static export or an isolated cell ------------------ */
 
 pluto-editor.disable_ui button.ember-run,
-pluto-editor.disable_ui ember-cell-tools,
+pluto-editor.disable_ui button.input_context_menu,
 pluto-editor.disable_ui ember-runtime,
 pluto-editor.disable_ui pluto-cell.not_run_yet > ember-chip,
 pluto-editor.disable_ui pluto-cell > ember-chip.held {

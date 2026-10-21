@@ -58,8 +58,8 @@ export const MoreIcon = ({ size = 18 }) => html`
     </svg>
 `
 
-// The cell's show/hide code toggle (#287): an open eye while the code shows,
-// struck through while it's hidden.
+// The cell's show/hide code toggle in the left shoulder (#287): an open eye
+// while the code shows, struck through while it's hidden.
 export const EyeIcon = ({ size = 16 }) =>
     icon(size, html`<path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"></path><circle cx="12" cy="12" r="2.75"></circle>`)
 export const EyeOffIcon = ({ size = 16 }) =>

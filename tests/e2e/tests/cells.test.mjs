@@ -1330,11 +1330,7 @@ test('"+": each gap\'s live button is the lower cell\'s .before, and the last ce
   assertNoProblems(page);
 });
 
-// #287: the show/hide code toggle and the ⋯ sit together at the cell's top
-// right, outside pluto-input, so they stay put when the code is hidden.
-// (Before, the ⋯ was on the code box, under an error or plot; anchored to
-// the cell it now sits over the output's corner, on hover.)
-test("cell tools: the eye and ⋯ come after the code, at the cell's top right, and the menu opens on a folded cell", async (t) => {
+test("cell menu: the ⋯ is in pluto-input after the code, on the code box even under an error, and opens on a folded cell", async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-geometry-menu-place.server.log") });
   const browser = await launchBrowser();
@@ -1345,30 +1341,21 @@ test("cell tools: the eye and ⋯ come after the code, at the cell's top right, 
   await page.locator("#ember-safe-preview button").click();
   await page.waitForSelector(`${cellSelector("ERR")}.errored`, { timeout: 20000 });
 
-  const cells = await page.locator("pluto-cell").count();
-  assert.equal(await page.locator("pluto-input button.input_context_menu").count(), 0);
-  assert.equal(await page.locator("pluto-cell > ember-cell-tools > button.input_context_menu").count(), cells);
-  assert.equal(await page.locator("pluto-cell > ember-cell-tools > button.ember-eye").count(), cells);
-  const order = await page.locator(cellSelector("A")).evaluate((cell) => {
-    const input = cell.querySelector(":scope > pluto-input");
-    const tools = cell.querySelector(":scope > ember-cell-tools");
-    const inInput = [...input.children].map((c) => c.matches(".cm-editor") ? "code" : c.matches("button.ember-run") ? "run" : null);
-    const inTools = [...tools.children].map((c) => c.matches("button.ember-eye") ? "eye" : c.matches("button.input_context_menu") ? "menu" : null);
-    const after = input.compareDocumentPosition(tools) & Node.DOCUMENT_POSITION_FOLLOWING;
-    return [...inInput, ...(after ? inTools : [])].filter(Boolean);
-  });
-  assert.deepEqual(order, ["code", "run", "eye", "menu"], "Tab reaches the code first, then run, the eye and ⋯");
+  assert.equal(await page.locator("pluto-cell > button.input_context_menu").count(), 0);
+  assert.equal(await page.locator("pluto-cell > pluto-input > button.input_context_menu").count(), await page.locator("pluto-cell").count());
+  const order = await page.locator(`${cellSelector("A")} > pluto-input`).evaluate((input) =>
+    [...input.children].map((c) => c.matches(".cm-editor") ? "code" : c.matches("button.ember-run") ? "run" : c.matches("button.input_context_menu") ? "menu" : null).filter(Boolean));
+  assert.deepEqual(order, ["code", "run", "menu"], "Tab reaches the code first, then run, then ⋯");
 
   await page.hover(`${cellSelector("ERR")} .cm-content`);
-  const { cell, eye, more } = await rects(page, {
-    cell: cellSelector("ERR"),
-    eye: `${cellSelector("ERR")} button.ember-eye`,
+  const { box, more, output } = await rects(page, {
+    box: `${cellSelector("ERR")} .cm-editor`,
     more: `${cellSelector("ERR")} button.input_context_menu`,
+    output: `${cellSelector("ERR")} > pluto-output`,
   });
-  near(cell.right - more.right, 6, "⋯ right inset");
-  near(more.top - cell.top, 5, "⋯ top inset");
-  near(eye.top, more.top, "the eye is level with the ⋯");
-  assert.ok(eye.right <= more.left, "the eye is left of the ⋯");
+  near(box.right - more.right, 6, "⋯ right inset");
+  near(more.top - box.top, 5, "⋯ top inset");
+  assert.ok(more.top >= output.bottom, "the ⋯ is below the error output, not over it");
 
   await page.hover(cellSelector("B"));
   await page.locator(`${cellSelector("B")} button.input_context_menu`).click();

@@ -65,13 +65,15 @@ pluto-editor {
 
 main {
     flex: 1;
-    /* 25px and 6px are Pluto's own padding, where the cell's left controls
-       sit; piece 6 removes them when it moves the run button, making the
-       column exactly --ember-column wide. */
-    max-width: calc(var(--ember-column) + 25px + 6px);
+    /* --ember-gutter and 6px are the padding either side of the column. The
+       gutter holds the cell's left controls: the show/hide code eye in the
+       shoulder (cells.css, #287) and the run button's corner, side by side
+       (18px + 24px + 4px). */
+    --ember-gutter: 46px;
+    max-width: calc(var(--ember-column) + var(--ember-gutter) + 6px);
     padding-top: 0px;
     padding-bottom: 4rem;
-    padding-left: 25px;
+    padding-left: var(--ember-gutter);
     padding-right: 6px;
     width: 100%;
 }
@@ -87,7 +89,7 @@ body:has(pluto-editor:not(.disable_ui)) {
 /* The column is centred. With the side panel docked, it moves left only as
    far as it must to clear the panel, as Pluto's main does for live docs. */
 pluto-editor main {
-    --ember-main-free: calc(100% - (var(--ember-column) + 25px + 6px));
+    --ember-main-free: calc(100% - (var(--ember-column) + var(--ember-gutter) + 6px));
     align-self: flex-start;
     margin-left: auto;
     margin-right: max(0px, var(--ember-main-free) / 2);
@@ -103,7 +105,7 @@ pluto-editor main {
 @media (max-width: 640px) {
     pluto-editor main {
         margin-left: 0;
-        padding-left: 16px;
+        padding-left: var(--ember-gutter);
         padding-right: 16px;
         max-width: none;
     }
@@ -1750,10 +1752,13 @@ pluto-input .cm-editor .cm-line.cm-highlighted-line {
     border-radius: 3px;
 }
 
-/* Folded: the code box goes; the cell's tools (cells.css, ember-cell-tools)
-   are outside it and stay. !important: CodeMirror's own theme sets
-   .cm-editor's display with it. */
-pluto-cell:not(.show_input) > pluto-input > * {
+/* Folded: only the cell menu stays, since its Show code item is how a
+   folded cell is unfolded. It then sits at the cell's top right. */
+pluto-cell:not(.show_input) > pluto-input {
+    position: static;
+}
+/* !important: CodeMirror's own theme sets .cm-editor's display with it. */
+pluto-cell:not(.show_input) > pluto-input > :not(.input_context_menu) {
     display: none !important;
 }
 pluto-cell.code_folded.show_input > pluto-input:not(:focus-within) {

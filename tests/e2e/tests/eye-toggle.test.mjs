@@ -1,7 +1,8 @@
 // #287: a one-click show/hide code toggle (Pluto's eye) that stays in the
 // same place whether the code is shown or hidden, so a second click where
-// the first one was undoes it. It sits with the ⋯ at the cell's top right;
-// the menu's Hide/Show code item stays as a second way in.
+// the first one was undoes it. It sits where Pluto has it, in the left
+// shoulder, beside the run button's corner, at every width; the menu's
+// Hide/Show code item stays as a second way in.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -37,20 +38,22 @@ test("eye: one click hides the code, a second click in the same place shows it",
     await page.setViewportSize({ width, height: 800 });
     // A, with a short output, and PLT, with a plot.
     for (const id of ["A", "PLT"]) {
-      const eye = `${cellSelector(id)} button.ember-eye`;
-      const more = `${cellSelector(id)} button.input_context_menu`;
+      const eye = `${cellSelector(id)} pluto-shoulder > button.foldcode`;
       await page.locator(cellSelector(id)).scrollIntoViewIfNeeded();
       await page.hover(cellSelector(id));
       assert.deepEqual(await state(page, eye), { label: "Hide code", pressed: "false", title: "Hide code" });
       const eye0 = await rect(page, eye);
-      const more0 = await rect(page, more);
+      // Left of the cell, clear of the run button's corner and on the page.
+      const cell0 = await rect(page, cellSelector(id));
+      const run0 = await rect(page, `${cellSelector(id)} button.ember-run`);
+      assert.ok(eye0.x >= 0 && eye0.x + eye0.w <= cell0.x, `${id} at ${width} px: the eye is in the left gutter: ${JSON.stringify(eye0)}`);
+      assert.ok(eye0.x + eye0.w <= run0.x, `${id} at ${width} px: the eye is left of the run button`);
 
       await page.mouse.click(eye0.x + eye0.w / 2, eye0.y + eye0.h / 2);
       await folded(page, id, true);
       assert.equal(await page.locator(`${cellSelector(id)} .cm-editor`).isVisible(), false, `${id}'s code is hidden`);
       assert.deepEqual(await state(page, eye), { label: "Hide code", pressed: "true", title: "Show code" });
       same(await rect(page, eye), eye0, `${id} at ${width} px: the eye stays put when the code hides`);
-      same(await rect(page, more), more0, `${id} at ${width} px: the ⋯ stays put when the code hides`);
 
       await page.mouse.click(eye0.x + eye0.w / 2, eye0.y + eye0.h / 2);
       await folded(page, id, false);
@@ -60,7 +63,7 @@ test("eye: one click hides the code, a second click in the same place shows it",
   }
 
   // The file records the fold, as with the menu's Hide code.
-  await page.locator(`${cellSelector("A")} button.ember-eye`).click({ force: true });
+  await page.locator(`${cellSelector("A")} pluto-shoulder > button.foldcode`).click({ force: true });
   await folded(page, "A", true);
   const deadline = Date.now() + 10000;
   while (!savedFolded(notebook, "A") && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
@@ -87,32 +90,29 @@ test("eye: reachable by Tab from a selected cell, toggled with Enter, focus stay
     const el = document.activeElement;
     return { cell: el?.closest("pluto-cell")?.id, cls: el?.className.trim(), label: el?.getAttribute("aria-label") };
   });
-  // From the selected cell, Tab goes to the run button, then the eye.
+  // From the selected cell, Tab goes to the eye first: it leads the cell.
   await page.keyboard.press("Tab");
-  assert.match((await active()).cls, /ember-run/);
-  await page.keyboard.press("Tab");
-  assert.deepEqual(await active(), { cell: "A", cls: "ember-eye", label: "Hide code" });
+  assert.deepEqual(await active(), { cell: "A", cls: "foldcode", label: "Hide code" });
   // Shown while it has keyboard focus (after the 0.15 s fade in).
-  await page.waitForFunction(() => getComputedStyle(document.querySelector('pluto-cell[id="A"] button.ember-eye')).opacity === "1",
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('pluto-cell[id="A"] pluto-shoulder > button.foldcode')).opacity === "1",
     null, { timeout: 3000 });
 
   await page.keyboard.press("Enter");
   await folded(page, "A", true);
   const after = await active();
   assert.equal(after.cell, "A", "focus stays in A");
-  assert.match(after.cls, /\bember-eye\b/, "focus stays on the eye");
-  assert.match(after.cls, /\bcode-hidden\b/, "the eye shows the hidden state");
+  assert.equal(after.cls, "foldcode", "focus stays on the eye");
+  assert.equal(await page.locator(`${cellSelector("A")} pluto-shoulder > button.foldcode`).getAttribute("aria-pressed"), "true");
   await page.keyboard.press("Enter");
   await folded(page, "A", false);
 
-  // With the code hidden there's no run button: Tab from the selected cell
-  // reaches the eye first.
+  // With the code hidden, Tab from the selected cell still reaches the eye.
   await page.keyboard.press("Enter");
   await folded(page, "A", true);
   await page.evaluate(() => document.querySelector('pluto-cell[id="A"]').focus());
   await page.keyboard.press("Tab");
   assert.equal((await active()).cell, "A");
-  assert.match((await active()).cls, /ember-eye/);
+  assert.equal((await active()).cls, "foldcode");
 
   assertNoProblems(page);
 });
