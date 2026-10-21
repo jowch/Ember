@@ -1496,6 +1496,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                     html`<${MoveDialog} path=${notebook.path} shortpath=${notebook.shortpath} on_close=${() => this.setState({ move_dialog_open: false })} />`}
                     <${SafePreviewUI}
                         process_waiting_for_permission=${status.process_waiting_for_permission}
+                        static_preview=${this.state.static_preview}
                         run_notebook=${() => {
                             run_started()
                             return run_notebook()
