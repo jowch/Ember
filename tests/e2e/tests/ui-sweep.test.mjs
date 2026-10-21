@@ -29,7 +29,6 @@ const KNOWN = [
   { rule: "off-screen", where: "#saveall-container > button.runallchanged", issue: 290 },
   { rule: "clipped", where: "#saveall-container > button.runallchanged", issue: 290 },
   { rule: "spills", where: "#saveall-container > button.runallchanged", issue: 290 },
-  { rule: "scrollbar", where: "div.ember-table-more > button.ember-show-more", issue: 286 },
 ];
 const used = new Set();
 
