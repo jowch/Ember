@@ -177,17 +177,22 @@ export const Notebook = ({
         }
     }, [cell_outputs_delayed, notebook.cell_order.length])
 
-    let global_definition_locations = useMemo(
-        () =>
-            Object.fromEntries(
-                Object.values(notebook?.cell_dependencies ?? {}).flatMap((x) =>
-                    Object.keys(x.downstream_cells_map)
-                        .filter((variable) => !variable.includes("."))
-                        .map((variable) => [variable, x.cell_id])
-                )
-            ),
-        [notebook?.cell_dependencies]
-    )
+    // Each defined name to its cell, for CodeMirror's GlobalDefinitionsFacet.
+    // Every add, delete or run replaces cell_dependencies, so the previous
+    // object is kept while the map is equal: a new one re-renders every cell
+    // and reconfigures every editor (#289).
+    const global_definition_locations_ref = useRef({})
+    let global_definition_locations = useMemo(() => {
+        const out = Object.fromEntries(
+            Object.values(notebook?.cell_dependencies ?? {}).flatMap((x) =>
+                Object.keys(x.downstream_cells_map)
+                    .filter((variable) => !variable.includes("."))
+                    .map((variable) => [variable, x.cell_id])
+            )
+        )
+        if (!_.isEqual(out, global_definition_locations_ref.current)) global_definition_locations_ref.current = out
+        return global_definition_locations_ref.current
+    }, [notebook?.cell_dependencies])
 
     // Go-to-definition's targets: each name to the first cell defining it,
     // from the engine's analysis (CellInput/go_to_definition_plugin.js).
