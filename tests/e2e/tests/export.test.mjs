@@ -135,3 +135,30 @@ test("export: an htmlwidget's dependency files are inlined and run (20)", {
   assertNoProblems(page);
   await page.close();
 });
+
+// #122: a notebook exported while still in safe preview keeps
+// `process_waiting_for_permission` in its state, but the exported page is
+// static and can't run anything, so it shows no safe-preview banner.
+test("export: a notebook exported in safe preview shows no safe-preview banner", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "export-safe-preview.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const livePage = await newPage(browser);
+  const id = await openNotebook(livePage, server.origin, server.secret, notebook);
+  await livePage.waitForSelector("#ember-safe-preview button", { timeout: 20000 });
+  await livePage.close();
+
+  const html = await fetchExport(server, id);
+  const file = saveExport(html, "safe-preview-export.html");
+
+  const page = await openFileOffline(browser, file);
+  await page.waitForSelector("pluto-cell", { timeout: 20000 });
+  // The flag the banner used to key on is still in the exported state.
+  assert.equal(await page.evaluate(() => window.editor_state.notebook.process_status), "waiting_for_permission");
+  assert.equal(await page.locator("#ember-safe-preview").count(), 0, "a static export shows no safe-preview banner");
+
+  assertNoProblems(page);
+  await page.close();
+});
