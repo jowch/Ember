@@ -137,6 +137,9 @@ out of the way of the data, the code and the results.
   card or frame; plots in dark mode stay exactly as R draws them. No size
   label or copy/save buttons: the browser's right-click covers that. Plain
   `Rscript` ignores the `#|` lines; scripts use `ggsave()` for sized files.
+  A screen reader reads a plot as "Plot", or as the cell's
+  `#| fig-alt: ...` (Quarto's alt text key), or failing that its
+  `#| fig-cap: ...` (#294).
 
 ## Header
 

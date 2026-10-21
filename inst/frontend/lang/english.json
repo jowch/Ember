@@ -240,6 +240,8 @@
     "t_n_more_one": "{{count}} more",
     "t_n_more_other": "{{count}} more",
     "t_chip_disabled": "Disabled",
+    "t_plot_alt": "Plot",
+    "t_image_alt": "Image",
     "t_chip_setting": "Setting · {{names}}",
     "t_chip_settings": "Settings · {{names}}",
     "t_chip_settings_hover": "This cell changes a global setting. It runs before the cells that don't feed it, and they rerun when it changes.",

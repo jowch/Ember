@@ -1,5 +1,6 @@
 import { html, useRef, useEffect, useLayoutEffect, useState, useContext } from "../imports/Preact.js"
 import { PlutoImage } from "./CellOutput.js"
+import { t } from "../common/lang.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 
 /**
@@ -94,9 +95,12 @@ export const EmberPlot = ({ mime, body, cell_id, last_run_timestamp, figure }) =
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [figure?.width, figure?.height])
 
+    // R gives no description of a plot, so without the cell's own
+    // `#| fig-alt` or `fig-cap` it is named as what it is (#294).
+    const alt = figure?.alt || t("t_plot_alt")
     if (figure == null) {
-        return html`<div><${PlutoImage} mime=${mime} body=${body} /></div>`
+        return html`<div><${PlutoImage} mime=${mime} body=${body} alt=${alt} /></div>`
     }
 
-    return html`<div ref=${container_ref}><${PlutoImage} mime=${mime} body=${body} /></div>`
+    return html`<div ref=${container_ref}><${PlutoImage} mime=${mime} body=${body} alt=${alt} /></div>`
 }
