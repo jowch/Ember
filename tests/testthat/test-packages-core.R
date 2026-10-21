@@ -442,6 +442,29 @@ test_that("while another cell runs, a cell waiting for an install costs an event
   expect_lt(r$ratio, 3)
 })
 
+test_that("waiting_cells() stays linear in the number of cells while one waits for an install (#258)", {
+  # A waits on dplyr, whose exports aren't known yet; every cell below it
+  # also has a reference that resolves to nothing, so each one goes through
+  # the unknown-exports check and is a waiting cell with its own downstream.
+  waiting <- function(n) {
+    chain <- setNames(lapply(seq_len(n), function(i) {
+      cell(sprintf("b%d <- %s + nrow(mtcars) + typo%d", i, if (i == 1) "1" else paste0("b", i - 1), i))
+    }), paste0("B", seq_len(n)))
+    fake_state(c(list(S = cell(""), A = cell("library(dplyr)")), chain),
+               lock = new_lock(name = "dplyr", version = "1.1.4", source = "CRAN"))
+  }
+  big <- waiting(300)
+  small <- waiting(100)
+  w <- waiting_cells(big)
+  expect_equal(length(w), 301)
+  expect_equal(w$B300, "dplyr")
+  r <- time_ratio(function() waiting_cells(big), function() waiting_cells(small), samples = 11L)
+  cat(sprintf("\n[timing] waiting_cells(): 300-cell chain %.2f ms, 100-cell chain %.2f ms (%.1fx)\n",
+              r$a * 1000, r$b * 1000, r$ratio))
+  expect_lt(r$ratio, 6)   # linear is 3x; the per-cell walk this replaced was ~10x
+  expect_lt(r$a, 0.3)
+})
+
 # ---- Library readiness and restarts -------------------------------------------
 
 #' Get a notebook using dplyr through install, the worker started and the
