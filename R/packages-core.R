@@ -1190,20 +1190,44 @@ waiting_cells <- function(state) {
     intersect(direct[[id]], state$graph$cells[[id]]$attaches)
   }), use.names = FALSE))
   unknown <- setdiff(unknown, names(state$graph$exports))
+  # One vectorised pass over every candidate cell's references, not a
+  # `setdiff()` against base R's thousands of names per cell (#258): this
+  # runs on every event while a cell waits for an install.
   if (length(unknown) > 0) {
-    edges <- state$graph$edges
-    known <- base_names()
-    for (id in setdiff(runnable_ids, names(direct))) {
-      refs <- state$graph$cells[[id]]$references
-      if (length(refs) == 0) next
-      unresolved <- setdiff(refs, c(edges$name[edges$from == id], known))
-      if (length(unresolved) > 0) direct[[id]] <- unknown
+    ids <- setdiff(runnable_ids, names(direct))
+    refs <- lapply(ids, function(id) state$graph$cells[[id]]$references)
+    owner <- rep(ids, lengths(refs))
+    refs <- unlist(refs, use.names = FALSE)
+    if (length(refs) > 0) {
+      edges <- state$graph$edges
+      keep <- !(refs %in% base_names()) &
+        !(paste(owner, refs, sep = "\r") %in% paste(edges$from, edges$name, sep = "\r"))
+      for (id in unique(owner[keep])) direct[[id]] <- unknown
     }
   }
 
+  # A waiting cell's downstream waits for the same packages, taking those of
+  # the first waiting cell (in `direct`'s order) that reaches it. One walk
+  # for all of them: a cell already reached needs no second visit, since
+  # everything below it was reached then too (#258).
+  # Each walk's new cells are added in run order, as `downstream()` gives them.
   out <- direct
+  seen <- new.env(hash = TRUE)
   for (id in names(direct)) {
-    for (d in downstream(state$graph, id, transitive = TRUE)) {
+    assign(id, TRUE, envir = seen)
+    reached <- character()
+    todo <- id
+    while (length(todo)) {
+      i <- todo[[1]]
+      todo <- todo[-1]
+      for (d in state$graph$downstream[[i]]) {
+        if (exists(d, envir = seen, inherits = FALSE)) next
+        assign(d, TRUE, envir = seen)
+        reached <- c(reached, d)
+        todo <- c(todo, d)
+      }
+    }
+    for (d in run_order(state$graph, reached)) {
       if (is.null(out[[d]])) out[[d]] <- direct[[id]]
     }
   }
