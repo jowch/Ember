@@ -122,7 +122,7 @@ export class CellOutput extends Component {
 
 /** An image output. `alt` is its text alternative (#294): a plot's comes
  * from its cell's `#| fig-alt` or `fig-cap`, or is "Plot". */
-export let PlutoImage = ({ body, mime, alt = "Image" }) => {
+export let PlutoImage = ({ body, mime, alt = t("t_image_alt") }) => {
     // I know I know, this looks stupid.
     // BUT it is necessary to make sure the object url is only created when we are actually attaching to the DOM,
     // and is removed when we are detatching from the DOM
