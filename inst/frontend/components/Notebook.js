@@ -46,7 +46,7 @@ const CellMemo = ({
     nbpkg,
     global_definition_locations,
     definition_cells,
-    is_first_cell,
+    top_of_page,
     inspecting_hidden_code,
 }) => {
     const { body, last_run_timestamp, mime, persist_js_state, rootassignee } = cell_result?.output || {}
@@ -71,7 +71,7 @@ const CellMemo = ({
                 nbpkg=${nbpkg}
                 global_definition_locations=${global_definition_locations}
                 definition_cells=${definition_cells}
-                is_first_cell=${is_first_cell}
+                top_of_page=${top_of_page}
                 inspecting_hidden_code=${inspecting_hidden_code}
             />
         `
@@ -111,7 +111,7 @@ const CellMemo = ({
         global_definition_locations,
         definition_cells,
         cell_input?.ember_spans,
-        is_first_cell,
+        top_of_page,
         inspecting_hidden_code,
     ])
 }
@@ -269,7 +269,7 @@ export const Notebook = ({
                             nbpkg=${notebook.nbpkg}
                             global_definition_locations=${global_definition_locations}
                             definition_cells=${definition_cells}
-                            is_first_cell=${i === 0}
+                            top_of_page=${i === 0}
                             inspecting_hidden_code=${inspecting_hidden_code}
                         />`
                 )}

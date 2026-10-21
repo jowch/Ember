@@ -110,7 +110,7 @@ export const Cell = ({
     nbpkg,
     global_definition_locations,
     definition_cells,
-    is_first_cell,
+    top_of_page,
     inspecting_hidden_code,
 }) => {
     // For tests that count which cells re-render (render-count.test.mjs, #289).
@@ -586,7 +586,13 @@ export const Cell = ({
                 class="add_cell before"
                 title=${t("t_add_cell_here")}
                 aria-label=${t("t_add_cell_here")}
-                tabindex=${is_first_cell ? undefined : "-1"}
+                tabindex=${
+                    // Only the topmost "add cell" button is a tab stop: the
+                    // others share their spot with the "after" button of the
+                    // cell above, which is one. A matter of where the button
+                    // sits on the page, not of the cell (#284).
+                    top_of_page ? undefined : "-1"
+                }
             >
                 <span></span>
             </button>
@@ -624,7 +630,7 @@ export const Cell = ({
                 cm_forced_focus=${cm_forced_focus}
                 set_cm_forced_focus=${set_cm_forced_focus}
                 show_input=${show_input}
-                skip_static_fake=${is_first_cell || (kind === "markdown" && text_open)}
+                skip_static_fake=${kind === "markdown" && text_open}
                 on_submit=${on_submit}
                 on_delete=${on_delete}
                 on_add_after=${on_add_after}
