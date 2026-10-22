@@ -183,6 +183,11 @@ test("delete from the cell menu by keyboard, and inside a selection, focuses the
     return el != null && el.tagName === "PLUTO-CELL" ? el.id : null;
   }, null, { timeout: 5000 }).then((h) => h.jsonValue());
   const selected = () => page.evaluate(() => window.editor_state.selected_cells);
+  // The menu focuses its first item a frame after it opens. An End pressed
+  // before that goes to the ⋯ button, where it scrolls the page instead.
+  const menuFocused = (id) => page.waitForFunction((id) =>
+    document.querySelector(`pluto-cell[id="${id}"] div.input_context_menu[role="menu"]`)?.contains(document.activeElement),
+  id, { timeout: 5000 });
   // End moves focus to the menu's last item, Delete; wait for it before Enter.
   const deleteFocused = (id) => page.waitForFunction((id) =>
     document.activeElement === document.querySelector(`pluto-cell[id="${id}"] div.input_context_menu button.delete`),
@@ -196,6 +201,7 @@ test("delete from the cell menu by keyboard, and inside a selection, focuses the
   await menuButton.focus();
   await page.keyboard.press("Enter");
   await page.locator(`pluto-cell[id="${first}"] div.input_context_menu button.delete`).waitFor({ state: "visible", timeout: 5000 });
+  await menuFocused(first);
   await page.keyboard.press("End");
   await deleteFocused(first);
   await page.keyboard.press("Enter");
@@ -212,6 +218,7 @@ test("delete from the cell menu by keyboard, and inside a selection, focuses the
   await page.keyboard.press("Enter");
   await cell.locator("div.input_context_menu button.delete").waitFor({ state: "visible", timeout: 5000 });
   assert.deepEqual(await selected(), [second, third], "opening the menu by keyboard keeps the selection");
+  await menuFocused(second);
   await page.keyboard.press("End");
   await deleteFocused(second);
   await page.keyboard.press("Enter");
