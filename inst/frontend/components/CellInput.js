@@ -5,7 +5,16 @@ import { utf8index_to_ut16index } from "../common/UnicodeTools.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { get_selected_doc_from_state } from "./CellInput/LiveDocsFromCursor.js"
 import { GlobalDefinitionsFacet, DefinitionCellsFacet, EmberSpansFacet, current_spans, go_to_definition_plugin } from "./CellInput/go_to_definition_plugin.js"
-import { cell_undo, is_returning, take_returning, register_view, unregister_view, undo_or_restore_unhosted } from "./CellInput/cell_undo.js"
+import {
+    cell_undo,
+    is_returning,
+    take_returning,
+    register_view,
+    unregister_view,
+    mark_returned,
+    undo_or_restore_unhosted,
+    redo_or_redelete_returned,
+} from "./CellInput/cell_undo.js"
 // import { debug_syntax_plugin } from "./CellInput/debug_syntax_plugin.js"
 
 import {
@@ -564,6 +573,19 @@ export const CellInput = ({
                 run: (/** @type {EditorView} */ cm) => !cm.state.facet(EditorState.readOnly) && undo_or_restore_unhosted(cm),
                 preventDefault: true,
             },
+            // Redo, on historyKeymap's keys. In a cell that just came back,
+            // with nothing left to redo, it deletes the cell again.
+            {
+                key: "Mod-y",
+                mac: "Mod-Shift-z",
+                run: (/** @type {EditorView} */ cm) => !cm.state.facet(EditorState.readOnly) && redo_or_redelete_returned(cm),
+                preventDefault: true,
+            },
+            {
+                linux: "Ctrl-Shift-z",
+                run: (/** @type {EditorView} */ cm) => !cm.state.facet(EditorState.readOnly) && redo_or_redelete_returned(cm),
+                preventDefault: true,
+            },
             { key: "Shift-Enter", run: keyMapSubmit },
             { key: "Ctrl-Enter", mac: "Cmd-Enter", run: keyMapRun },
             { key: "Ctrl-Enter", run: keyMapRun },
@@ -785,6 +807,7 @@ export const CellInput = ({
             parent: dom_node_ref.current,
         }))
         register_view(cell_id, newcm)
+        if (returning != null) mark_returned(newcm, returning.record_id)
         // EditorView appends; the run button and ⋯ must follow the code in Tab order.
         dom_node_ref.current.prepend(newcm.dom)
 

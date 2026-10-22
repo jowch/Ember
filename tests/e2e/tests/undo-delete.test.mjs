@@ -76,12 +76,16 @@ test("Ctrl+Z in an editor steps back through typing and the cell deleted from it
   await waitText(page, "A", "x <- 1:10");
   assert.equal(await page.locator(`${cellSelector("B")}.code_differs`).count(), 0, "B is back in step with its run code");
 
-  // Redo in B empties it again, and redo in A deletes B again.
+  // Redo goes forward again from where undo left the cursor: in B, first
+  // its text goes, then B itself, and the cursor is back in A. Ctrl+Z in A
+  // then brings B back once more.
   await page.keyboard.press(`${MOD}+Shift+Z`);
   await waitText(page, "B", "");
-  await page.locator(`${cellSelector("A")} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.keyboard.press(`${MOD}+Shift+Z`);
   await page.locator(cellSelector("B")).waitFor({ state: "detached", timeout: 10000 });
+  await page.waitForFunction(() => document.activeElement?.closest("pluto-cell")?.id === "A", null, { timeout: 5000 });
+  await page.keyboard.press(`${MOD}+Z`);
+  await waitOrder(page, original);
 
   assertNoProblems(page);
 });
@@ -139,6 +143,34 @@ test("menu Delete, then two quick Backspaces, removes three cells (#353)", async
   await page.keyboard.press("Backspace");
   await page.keyboard.press("Backspace");
   await waitOrder(page, original.filter((id) => !["A", "B", "ERR"].includes(id)));
+
+  assertNoProblems(page);
+});
+
+test("deletes undone out of order go back next to their old neighbours (#349)", async (t) => {
+  const page = await setup(t, "undo-delete-order");
+  const original = await order(page);
+  const deleteWithDeleteKey = async (id) => {
+    await page.locator(cellSelector(id)).scrollIntoViewIfNeeded();
+    await page.locator(`${cellSelector(id)} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
+    await page.keyboard.press(`${MOD}+A`);
+    await page.keyboard.press("Backspace");
+    await page.keyboard.press("Delete");
+    await page.locator(cellSelector(id)).waitFor({ state: "detached", timeout: 10000 });
+  };
+  const undoIn = async (id) => {
+    await page.locator(`${cellSelector(id)} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
+    await page.keyboard.press(`${MOD}+Z`);
+  };
+
+  // ERR's delete goes into LOOP's history, then A's into B's. A's delete
+  // moved ERR's old index, so ERR goes back after B, not at index 3.
+  await deleteWithDeleteKey("ERR");
+  await deleteWithDeleteKey("A");
+  await undoIn("LOOP");
+  await waitOrder(page, original.filter((id) => id !== "A"));
+  await undoIn("B");
+  await waitOrder(page, original);
 
   assertNoProblems(page);
 });

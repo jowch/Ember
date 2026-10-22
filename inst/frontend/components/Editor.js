@@ -1193,7 +1193,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
          * deleted cells with the positions they had; `editor_states` the
          * states of their editors, history included; `host` the cell whose
          * editor history holds the delete as a step, if any.
-         * @type {Array<{ id: string, cells: Array<{ index: number, cell: CellInputData }>, editor_states: Map<string, any>, host: string?, restored: boolean }>}
+         * @type {Array<{ id: string, cells: Array<{ index: number, prev: string?, next: string?, cell: CellInputData }>, editor_states: Map<string, any>, host: string?, restored: boolean }>}
          */
         this.deleted_records = []
         /** Ids of deletes brought back by Ctrl+Z outside the editors, for Ctrl+Shift+Z there. */
@@ -1221,7 +1221,14 @@ all patches: ${JSON.stringify(patches, null, 1)}
                 const view = live_view(id)
                 if (view != null) editor_states.set(id, view.state)
             }
-            const cells = cell_ids.map((id, i) => ({ index: indices[i], cell: this.state.notebook.cell_inputs[id] }))
+            // Each cell keeps the cells around it as well as its index, so it
+            // goes back next to them even after other cells came or went.
+            const cells = cell_ids.map((id, i) => ({
+                index: indices[i],
+                prev: order[indices[i] - 1] ?? null,
+                next: order.slice(indices[i] + 1).find(kept) ?? null,
+                cell: this.state.notebook.cell_inputs[id],
+            }))
             if (record == null) {
                 const host_view = neighbor == null ? null : live_view(neighbor)
                 record = { id: uuidv4(), cells, editor_states, host: host_view == null ? null : neighbor, restored: false }
@@ -1276,12 +1283,22 @@ all patches: ${JSON.stringify(patches, null, 1)}
             record.restored = true
             const cells = _.sortBy(record.cells, "index")
             const ids = cells.map(({ cell }) => cell.cell_id)
-            ids.forEach((id, i) => expect_return(id, record.editor_states.get(id) ?? null, focus === "editor" && i === 0))
+            ids.forEach((id, i) => expect_return(id, record.editor_states.get(id) ?? null, focus === "editor" && i === 0, record.id))
             if (this.state.recently_deleted === record.cells) this.setState({ recently_deleted: null })
             this.update_notebook((notebook) => {
-                for (let { index, cell } of cells) {
+                // In their old order, each after the cell that was before it
+                // (another restored cell, perhaps), else before the cell
+                // that was after them, else at its old index.
+                for (let { index, prev, next, cell } of cells) {
                     notebook.cell_inputs[cell.cell_id] = cell
-                    notebook.cell_order = [...notebook.cell_order.slice(0, index), cell.cell_id, ...notebook.cell_order.slice(index, Infinity)]
+                    const order = notebook.cell_order
+                    const at =
+                        prev != null && order.includes(prev)
+                            ? order.indexOf(prev) + 1
+                            : next != null && order.includes(next)
+                              ? order.indexOf(next)
+                              : Math.min(index, order.length)
+                    notebook.cell_order = [...order.slice(0, at), cell.cell_id, ...order.slice(at)]
                 }
             }).then(() => {
                 if (focus === "select") {
@@ -1295,22 +1312,34 @@ all patches: ${JSON.stringify(patches, null, 1)}
             return true
         }
 
-        /** Delete a restored record's cells again (redo). Returns false when they're already gone. */
-        this.redelete_cells = (/** @type {string} */ record_id) => {
+        /**
+         * Delete a restored record's cells again (redo). Returns false when
+         * they're already gone. `from_returned`: the redo came from one of
+         * those cells, so the delete goes back into its host's history (its
+         * step there was undone) and the cursor goes back to the host, as
+         * a redo in one editor puts it back where the undo found it.
+         */
+        this.redelete_cells = (/** @type {string} */ record_id, { from_returned = false } = {}) => {
             const record = this.deleted_records.find((r) => r.id === record_id)
             if (record == null || !record.restored) return false
             const ids = record.cells.map(({ cell }) => cell.cell_id)
             if (!ids.every((id) => this.state.notebook.cell_inputs[id] != null)) return false
             this.delete_cells(ids, { record })
+            const host_view = from_returned && record.host != null ? live_view(record.host) : null
+            if (host_view != null) {
+                record_delete(host_view, record.id)
+                host_view.focus()
+            }
             return true
         }
 
         set_cell_undo_handlers({
             restore: (id) => this.restore_cells(id),
             redelete: (id) => this.redelete_cells(id),
+            redelete_returned: (id) => this.redelete_cells(id, { from_returned: true }),
             restore_unhosted: () => {
-                const record = this.deleted_records.at(-1)
-                return record != null && !record.restored && (record.host == null || live_view(record.host) == null) && this.restore_cells(record.id)
+                const record = _.findLast(this.deleted_records, (r) => !r.restored && (r.host == null || live_view(r.host) == null))
+                return record != null && this.restore_cells(record.id)
             },
         })
 

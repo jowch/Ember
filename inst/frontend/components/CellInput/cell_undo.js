@@ -44,17 +44,27 @@ export const live_view = (/** @type {string} */ cell_id) => live_views.get(cell_
 
 /**
  * Editor states of deleted cells that are on their way back, taken by the
- * cell's CellInput when it makes its editor. `focus` puts the cursor in it.
- * @type {Map<string, { state: import("../../imports/CodemirrorPlutoSetup.js").EditorState?, focus: boolean }>}
+ * cell's CellInput when it makes its editor. `focus` puts the cursor in it;
+ * `record_id` is the delete it comes back from.
+ * @type {Map<string, { state: import("../../imports/CodemirrorPlutoSetup.js").EditorState?, focus: boolean, record_id: string }>}
  */
 const returning = new Map()
-export const expect_return = (cell_id, state, focus) => returning.set(cell_id, { state, focus })
+export const expect_return = (cell_id, state, focus, record_id) => returning.set(cell_id, { state, focus, record_id })
 export const is_returning = (/** @type {string} */ cell_id) => returning.has(cell_id)
 export const take_returning = (/** @type {string} */ cell_id) => {
     const entry = returning.get(cell_id) ?? null
     returning.delete(cell_id)
     return entry
 }
+
+/**
+ * Editors of cells that came back, with the delete they came back from,
+ * until they're edited: redo there with nothing left to redo deletes them
+ * again, as redo would in the host's history.
+ * @type {WeakMap<EditorView, string>}
+ */
+const returned_from = new WeakMap()
+export const mark_returned = (/** @type {EditorView} */ view, /** @type {string} */ record_id) => returned_from.set(view, record_id)
 
 /**
  * Set by the Editor. `restore` and `redelete` act on a delete record and
@@ -66,6 +76,7 @@ export const take_returning = (/** @type {string} */ cell_id) => {
 let handlers = {
     restore: (/** @type {string} */ _id) => false,
     redelete: (/** @type {string} */ _id, /** @type {EditorView} */ _view) => false,
+    redelete_returned: (/** @type {string} */ _id) => false,
     restore_unhosted: () => false,
 }
 export const set_cell_undo_handlers = (h) => {
@@ -92,6 +103,7 @@ export const cell_undo = [
     }),
     EditorView.updateListener.of((update) => {
         for (const tr of update.transactions) {
+            if (tr.docChanged && !tr.isUserEvent("undo") && !tr.isUserEvent("redo")) returned_from.delete(update.view)
             const undoing = tr.isUserEvent("undo")
             if (!undoing && !tr.isUserEvent("redo")) continue
             for (const e of tr.effects) {
@@ -111,3 +123,10 @@ export const cell_undo = [
 
 /** Ctrl+Z in an editor with nothing left to undo brings back a delete no editor holds. */
 export const undo_or_restore_unhosted = (/** @type {EditorView} */ view) => undo_command(view) || handlers.restore_unhosted()
+
+/** Redo in a cell that came back, with nothing left to redo there, deletes it again (see `mark_returned`). */
+export const redo_or_redelete_returned = (/** @type {EditorView} */ view) => {
+    if (redo_command(view)) return true
+    const record_id = returned_from.get(view)
+    return record_id != null && handlers.redelete_returned(record_id)
+}
