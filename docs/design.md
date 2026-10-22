@@ -189,9 +189,16 @@ The reset is a few lines of C, so the server package has compiled code from
 the start. The server polls the worker socket from its `later` loop: every 5 ms while
 it waits on the worker (a run, a query, or traffic in the last second),
 every 250 ms while an install or index job runs, and every 2 s otherwise. A
-crash during a run is noticed within 5 ms; one while idle, or an edit to a
-watched file, within about 2 s. At 250 ms an idle notebook cost the server
-0.7% of a core and 4 wake-ups a second; at 2 s it is about 0.12% (#46).
+crash during a run is noticed within 5 ms, and an edit to a watched file
+within about 2 s. At 250 ms an idle notebook cost the server 0.7% of a core
+and 4 wake-ups a second; at 2 s it is about 0.12% (#46). On macOS and Linux
+the server also waits on the worker's stdout pipe (`later::later_fd()`), which
+closes when the worker ends, so a crash while idle is noticed at once too
+(#209). The slow poll stays: a process a cell started with `system()` holds
+the pipe open after the worker has gone, and watched files need it. On
+Windows a crash while idle is noticed within about 2 s, since its pipes can't
+be waited on. An idle worker sends nothing on its socket, so that needs no
+wake of its own.
 It must read a large worker message in pieces rather than all at once, so a
 big output can't stall it.
 
