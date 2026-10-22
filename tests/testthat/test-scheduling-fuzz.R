@@ -25,10 +25,12 @@ fuzz_steps <- function() {
 # so a fix shows up here as a failure until its entry is removed, and any
 # other failure is new. Their seeds run along with fuzz_seeds(). A known
 # trace stops at its failure, so its later steps aren't checked.
-# None is open now; entries look like
-#   "lazy 30" = list(issue = 174, step = 5L, kind = "after running every cell, _ isn't fresh")
-#   "conflicts autorun 1" = list(issue = 272, step = 6L, kind = "after submitting _ with a graph error in autorun, its dependent _ isn't fresh")
-fuzz_known <- list()
+# Both open ones fail after step 12, so they're checked only with
+# EMBER_FUZZ_STEPS=20.
+fuzz_known <- list(
+  "conflicts autorun 21" = list(issue = 326, step = 13L, kind = "_ isn't stale but reads from _, which is"),
+  "conflicts autorun 57" = list(issue = 325, step = 15L, kind = "after submitting _ with a graph error in autorun, its dependent _ isn't fresh")
+)
 
 known_seeds <- function(mode) {
   keys <- as.character(names(fuzz_known))
