@@ -57,7 +57,7 @@ Check `notes.json` against these thresholds:
 |---|---|---|
 | `console` | empty | any entry |
 | layout problems | only those in `KNOWN` (ui-sweep.test.mjs) | any other |
-| A `run-all.cls` | ≤ 0.15 | > 0.2, or up ≥ 0.05 since the last run |
+| A `run-all.cls` | < 0.1 | ≥ 0.1, or up ≥ 0.05 since the last run |
 | B `add-ms`, F `add-cell-ms` | < 200 | ≥ 300 (Chromium, headless) |
 | F `type-10-chars-ms` | < 300 | ≥ 500 |
 | F `perf.long` | none over 100 ms | any task ≥ 200 ms |
@@ -65,11 +65,10 @@ Check `notes.json` against these thresholds:
 | E `axe-dark` | empty | any serious or critical rule |
 
 A's CLS counts every shift after the safe-preview banner has gone, so it
-reads the same each run. About 0.15 of it is `ui-sweep.R`'s outputs
-landing in order and pushing the cells below them down, which #139
-accepts (the page only moves down); look at `shifts` for anything else.
-Audits up to 2026-10-22 counted only shifts more than 500 ms after
-the click, so they read 0.07 to 0.17 for the same page.
+reads the same each run. Outputs landing and pushing the cells below them
+down count: as little of the page moving as possible is the goal. Audits
+up to 2026-10-22 counted only shifts more than 500 ms after the click, so
+they read 0.07 to 0.17 for the same page.
 
 Headless timings are a floor: Endeavor's WebKit pane is slower. Trends
 between runs matter more than one number.
