@@ -149,6 +149,11 @@ it matters.
 43. Error: `stop("boom")` shows the error element with "boom".
 44. Two tabs: an edit run in one appears in the other.
 45. No secret: `/edit` without it gives 403.
+46. Undo a delete: Ctrl+Z in the editor the cursor went to after a delete
+    undoes the typing there since, then brings the cell back with its own
+    undo history; outside the editors, Ctrl+Z brings back deletes, last
+    first. Backspace pressed while a delete is in flight still deletes
+    (#349, #353, `undo-delete.test.mjs`).
 
 **Running locally**: `npm --prefix tests/e2e ci` then `npm --prefix
 tests/e2e test`. `npm test` (tests/e2e/run.mjs) installs the working tree
