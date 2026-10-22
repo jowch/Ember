@@ -939,7 +939,25 @@ const InputContextMenu = ({ cell_id, on_delete, code_folded, on_code_fold, can_d
         { tag: "delete", contents: t("t_delete_cell_action"), onClick: on_delete, danger: true },
     ].filter((item) => item != null)
 
-    const { button_props, menu_props, item_props, close, is_open } = useMenu({ count: items.length })
+    const { button_props, menu_props, item_props, close, is_open, button_ref, menu_ref } = useMenu({ count: items.length })
+
+    // The menu opens below the button (cells.css). On a cell near the bottom
+    // of the window that puts "Move down" and "Delete cell" below the fold,
+    // so open it above the button instead when it doesn't fit below and does
+    // fit above, clear of the header.
+    useLayoutEffect(() => {
+        const menu = menu_ref.current
+        const button = button_ref.current
+        if (!is_open || menu == null || button == null) return
+        menu.style.top = ""
+        const gap = 3
+        const b = button.getBoundingClientRect()
+        const height = menu.getBoundingClientRect().height
+        const header_bottom = document.querySelector("header#pluto-nav")?.getBoundingClientRect().bottom ?? 0
+        const fits_below = b.bottom + gap + height <= window.innerHeight
+        const fits_above = b.top - gap - height >= Math.max(0, header_bottom)
+        if (!fits_below && fits_above) menu.style.top = `${button.offsetTop - gap - height}px`
+    }, [is_open, items.length])
 
     return html`
         <button
