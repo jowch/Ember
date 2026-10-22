@@ -355,6 +355,7 @@ drain <- function(nb) {
   while (length(nb$inbox) > 0) {
     e <- nb$inbox[[1]]
     nb$inbox <- nb$inbox[-1]
+    if (e$type %in% c("wk_running", "wk_done", "install_done")) forget_finished_help(nb)
     r <- step(nb$state, e)
     nb$state <- r$state
     if (first) {
@@ -1085,6 +1086,21 @@ answer_query <- function(nb, msg) {
       cb(msg)
       break
     }
+  }
+  invisible(NULL)
+}
+
+#' Drop the help pages kept from lookups that finished after the docs
+#' timeout (`nb$help_lookups`, server.R's `docs`) once a run starts or ends
+#' or an install finishes: what the session can see may have changed since,
+#' and a kept "no help page" must not show hours later for a package
+#' installed in between. Lookups still running stay; they answer the next
+#' ask with what they find.
+forget_finished_help <- function(nb) {
+  lookups <- nb$help_lookups
+  if (!is.environment(lookups)) return(invisible(NULL))
+  for (key in ls(lookups, all.names = TRUE)) {
+    if (!is.null(get(key, envir = lookups, inherits = FALSE)$reply)) rm(list = key, envir = lookups)
   }
   invisible(NULL)
 }

@@ -2052,6 +2052,45 @@ test_that("docs: a lookup slower than the docs timeout is kept for the next ask,
   expect_length(ls(nb$help_lookups), 0)
 })
 
+test_that("docs: a late help page is not kept past a run, which may have changed what R can find (#356)", {
+  local_mocked_bindings(DOCS_QUERY_TIMEOUT = 0.5)
+  slow <- 'trace("index.search", quote(Sys.sleep(1.5)), where = asNamespace("utils"), print = FALSE)'
+  path <- write_session_notebook(list(S = cell(""), A = cell(slow), B = cell("1 + 1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  allow_execution(nb)
+  expect_true(run_cells(nb, wait = TRUE, timeout = 20)$accepted)
+
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+  docs_replies <- function() Filter(function(m) identical(m$type, "docs"), ws$messages)
+  wait_until <- function(done) {
+    deadline <- Sys.time() + 20
+    while (!done() && Sys.time() < deadline) later::run_now(timeout = 0.1)
+    expect_true(done())
+  }
+
+  handle_message(server, ws, wire("docs", notebook_id = id, query = "mean", all_packages = TRUE))
+  wait_until(function() length(docs_replies()) == 1)
+  wait_until(function() {
+    entry <- mget("mean\r\rTRUE", envir = nb$help_lookups, ifnotfound = list(NULL))[[1]]
+    !is.null(entry$reply)
+  })
+
+  # A run in between: the kept page goes, and the next ask looks it up again.
+  expect_true(run_cells(nb, "B", wait = TRUE, timeout = 20)$accepted)
+  expect_length(ls(nb$help_lookups), 0)
+  handle_message(server, ws, wire("docs", notebook_id = id, query = "mean", all_packages = TRUE))
+  wait_until(function() length(docs_replies()) == 2)
+  r2 <- docs_replies()[[2]]$message
+  expect_identical(r2$status, "\u231B")
+  expect_match(r2$doc, "answer in time")
+})
+
 test_that("docs: a help lookup that fails says so, with R's message, instead of looking like no match (#121)", {
   # Every help page this worker renders fails: the reply must carry the
   # error, where it used to be the same empty page as "not found".

@@ -1013,7 +1013,8 @@ handlers <- list(
   #' (ui-2.md, 4c). A lookup that outlives `DOCS_QUERY_TIMEOUT` stays in
   #' `nb$help_lookups`: an ask for the same query while it runs gets
   #' "still looking" instead of a second lookup queued behind it, and the
-  #' first ask after it ends gets its page (#356).
+  #' first ask after it ends gets its page, unless a run or an install came
+  #' in between (`forget_finished_help()`, #356).
   docs = function(server, cl, hub, req) {
     if (is.null(hub)) {
       send(cl, reply_message(req, "docs", list(status = "not_found")))

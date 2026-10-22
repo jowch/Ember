@@ -956,6 +956,8 @@ Page, `CellInput/pluto_autocomplete.js` rewritten for R:
      thrown away: while it runs, an ask for the same query gets "R is
      still looking this up…" and no second lookup; once it ends, the next
      ask gets its page from what the server kept (`nb$help_lookups`, #356).
+     A run starting or ending, or an install finishing, drops a kept page,
+     since what R can find may have changed; the next ask looks again.
 - `rewrite_help_links(html)` (pure): Rd2HTML's `../../pkg/help/topic`
   links become `@ref pkg::topic`, which LiveDocsTab already turns into a
   new query (LiveDocsTab.js:126-135). No link may navigate the editor
