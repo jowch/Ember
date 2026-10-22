@@ -496,6 +496,34 @@ test_that("disk_use() without du sums file sizes, which counts a linked file twi
   expect_gte(use$indexes, 50000)
 })
 
+#' A `du` that runs the real one and exits as `status`, after printing
+#' only the lines `keep` selects: a folder vanishing mid-walk, without the
+#' race.
+fake_du <- function(status, keep = "cat") {
+  path <- tempfile("du-")
+  writeLines(c("#!/bin/sh", sprintf("%s \"$@\" 2>/dev/null | %s", Sys.which("du"), keep),
+               sprintf("exit %d", status)), path)
+  Sys.chmod(path, "755")
+  path
+}
+
+test_that("disk_use() keeps du's totals when it exits 1 because a folder vanished (#332)", {
+  skip_if(!nzchar(Sys.which("du")) || .Platform$OS.type == "windows", "no du on this system")
+  d <- make_disk_use_cache()
+  on.exit(unlink(d$root, recursive = TRUE))
+  exact <- disk_use(d$root)
+  du <- fake_du(1L)
+  on.exit(unlink(du), add = TRUE)
+  use <- disk_use(d$root, du = du)
+  expect_true(use$exact)
+  expect_equal(use[c("libraries", "cache", "indexes")], exact[c("libraries", "cache", "indexes")])
+
+  # A root with no total of its own still falls back to summing.
+  partial <- fake_du(1L, keep = "grep -v libraries")
+  on.exit(unlink(partial), add = TRUE)
+  expect_false(disk_use(d$root, du = partial)$exact)
+})
+
 test_that("disk_use() of a cache dir with nothing in it is all zero (#38)", {
   root <- tempfile("ember-cache-")
   dir.create(root)
@@ -684,6 +712,16 @@ test_that("clean_up() without du estimates bytes from file sizes (#128)", {
   on.exit(unlink(d$root, recursive = TRUE))
   plan <- clean_up(d$root, keep = d$open_lib, dry_run = TRUE, du = "")
   expect_gte(plan$bytes, 100000)
+})
+
+test_that("clean_up() keeps du's total when it exits 1 because a path vanished (#332)", {
+  skip_if(!nzchar(Sys.which("du")) || .Platform$OS.type == "windows", "no du on this system")
+  d <- make_clean_up_cache()
+  on.exit(unlink(d$root, recursive = TRUE))
+  # A total no sum of file sizes gives, so the test sees which was used.
+  du <- fake_du(1L, keep = "sed 's/^[0-9]*\\(.total\\)$/7\\1/'")
+  on.exit(unlink(du), add = TRUE)
+  expect_equal(clean_up(d$root, keep = d$open_lib, dry_run = TRUE, du = du)$bytes, 7 * 1024)
 })
 
 test_that("clean_up_command() runs clean_up() in a subprocess and prints JSON (#128)", {
