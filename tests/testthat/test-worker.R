@@ -284,6 +284,27 @@ test_that("an options change is reported, and applies only where its cell is in 
   expect_identical(without$output$text, "[1] 7")
 })
 
+test_that("an environment variable change is reported each run, and applies only where its cell is in effect (#369)", {
+  # The worker keeps the parsed environment while it is unchanged, so check
+  # the change is seen on a rerun too, and that the reset before the next
+  # cell undoes it.
+  h <- worker_harness()
+  on.exit(h$close())
+  for (gen in 1:2) {
+    r <- run_and_wait(h, "a", gen, 'Sys.setenv(EMBER_TEST_369 = "on")')
+    expect_length(r$settings, 1)
+    expect_identical(r$settings[[1]]$kind, "env")
+    expect_identical(r$settings[[1]]$name, "EMBER_TEST_369")
+    expect_null(r$settings[[1]]$before)
+    expect_identical(r$settings[[1]]$after, "on")
+  }
+  with_a <- run_and_wait(h, "b", 3L, 'Sys.getenv("EMBER_TEST_369")', settings = "a")
+  expect_identical(with_a$output$text, '[1] "on"')
+  expect_length(with_a$settings, 0)
+  without <- run_and_wait(h, "b", 4L, 'Sys.getenv("EMBER_TEST_369")')
+  expect_identical(without$output$text, '[1] ""')
+})
+
 test_that("a settings cell rerun starts from the baseline, and a deleted one stops applying", {
   h <- worker_harness()
   on.exit(h$close())
