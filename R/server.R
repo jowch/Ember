@@ -832,7 +832,8 @@ on_run <- function(server, cl, hub, req) {
 #' `list(error = <stderr, else failure>)` when it fails or `ok()` returns
 #' NULL. Polled with `later`, so the server never blocks. Both pipes are
 #' drained while it runs, so a child that writes more than a pipe buffer
-#' can't block on a full stderr.
+#' can't block on a full stderr. A failure is logged too, with the exit
+#' status, since the page only says it failed (#327).
 answer_from_subprocess <- function(cmd, answer, ok, failure) {
   proc <- tryCatch(job_process(cmd, stderr = "|"), error = function(e) e)
   if (inherits(proc, "error")) return(answer(list(error = conditionMessage(proc))))
@@ -844,8 +845,13 @@ answer_from_subprocess <- function(cmd, answer, ok, failure) {
     out <<- paste0(out, tryCatch(proc$read_all_output(), error = function(e) ""))
     err <<- paste0(err, tryCatch(proc$read_all_error(), error = function(e) ""))
     parsed <- tryCatch(jsonlite::fromJSON(out), error = function(e) NULL)
-    message <- if (identical(proc$get_exit_status(), 0L) && is.list(parsed)) ok(parsed)
-    answer(message %||% list(error = if (nzchar(err)) err else failure))
+    status <- proc$get_exit_status()
+    reply <- if (identical(status, 0L) && is.list(parsed)) ok(parsed)
+    if (is.null(reply)) {
+      message("ember: ", failure, " (exit status ", status, ")", if (nzchar(err)) paste0(": ", trimws(err)))
+      reply <- list(error = if (nzchar(err)) err else failure)
+    }
+    answer(reply)
   }
   later::later(poll, 0.1)
   invisible(NULL)
