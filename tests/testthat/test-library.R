@@ -311,7 +311,9 @@ test_that("a job that ends before the first poll still hands every line to make_
   # Ended before poll_jobs() ever read it: all its output comes with the exit.
   jobs[[key]]$proc$wait()
   poll_jobs(NULL)
-  expect_equal(seen, c("EMBER-NO-BINARY cli=3.6.2", "last line", "done"))
+  # Windows ends the lines with "\r\n" (the parsers trim it), as it does
+  # the lines read while a job runs.
+  expect_equal(sub("\r$", "", seen), c("EMBER-NO-BINARY cli=3.6.2", "last line", "done"))
   expect_null(jobs[[key]])
 })
 

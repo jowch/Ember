@@ -356,6 +356,8 @@ test_that("the EMBER-NO-BINARY line reads back as it was written (#19)", {
   line <- no_binary_notice_line(c(cli = "3.6.2", data.table = "1.15.4"))
   expect_equal(line, "EMBER-NO-BINARY cli=3.6.2 data.table=1.15.4")
   expect_equal(parse_no_binary_notice(line), c(cli = "3.6.2", data.table = "1.15.4"))
+  # As the shell reads it on Windows, where the line ends in "\r\n".
+  expect_equal(parse_no_binary_notice(paste0(line, "\r")), c(cli = "3.6.2", data.table = "1.15.4"))
   expect_equal(no_binary_notice_line(character()), character())
   expect_null(parse_no_binary_notice("EMBER-PROGRESS 0 3 - restore"))
   expect_null(parse_no_binary_notice("EMBER-NO-BINARY"))
