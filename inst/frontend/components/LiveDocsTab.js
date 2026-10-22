@@ -10,6 +10,18 @@ import { BackIcon, ForwardIcon, SearchIcon } from "../common/Icons.js"
 
 const DOCS_RETRY_MS = 1000
 
+// The last docs requests and what came of each, for a host or a test to
+// read when the Help tab doesn't show what it should (#110): when each
+// went out, its query and scope, and whether a reply came, was too late to
+// count, or wasn't waited for. Like window.ember_dialogs (common/dialogs.js).
+const docs_log = []
+const DOCS_LOG_LENGTH = 50
+const note_docs = (/** @type {Record<string, any>} */ entry) => {
+    docs_log.push({ at: Math.round(performance.now()), ...entry })
+    if (docs_log.length > DOCS_LOG_LENGTH) docs_log.splice(0, docs_log.length - DOCS_LOG_LENGTH)
+}
+if (!Object.prototype.hasOwnProperty.call(window, "ember_docs")) Object.defineProperty(window, "ember_docs", { value: docs_log })
+
 const escape_html = (/** @type {string} */ s) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 
 /**
@@ -116,9 +128,11 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, doc_query_explicit
             state.searched_query = new_query
             state.from_cursor = from_cursor
         })
+        note_docs({ request, event: "sent", query: new_query, all_packages: !from_cursor })
         Promise.race([
-            observablehq.Promises.delay(2000, false),
+            observablehq.Promises.delay(2000, "gave up waiting"),
             pluto_actions.send("docs", { query: new_query.replace(/^\?/, ""), all_packages: !from_cursor }, { notebook_id: notebook.notebook_id }).then((u) => {
+                note_docs({ request, event: request === latest_request.current ? "reply" : "stale reply", status: u.message.status, has_doc: !!u.message.doc })
                 if (request !== latest_request.current) return false
                 if (u.message.status === "⌛") {
                     // R couldn't answer yet (busy, not started, or slow). The
@@ -165,7 +179,12 @@ export let LiveDocsTab = ({ focus_on_open, desired_doc_query, doc_query_explicit
                     return true
                 }
             }),
-        ]).then(() => {
+        ]).then(
+            (result) => {
+                if (result === "gave up waiting") note_docs({ request, event: "gave up waiting" })
+            },
+            (error) => note_docs({ request, event: "failed", error: String(error) })
+        ).then(() => {
             update_state((state) => {
                 state.loading = false
             })
