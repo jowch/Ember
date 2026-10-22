@@ -356,9 +356,11 @@ export let pluto_autocomplete = ({ request_autocomplete, on_update_doc_query, re
         autocompletion({
             activateOnTyping: activate_on_typing,
             // CodeMirror waits this long after a keystroke before asking the
-            // sources, 100 ms by default. Ours only ask where a name starts
-            // (`validFor` filters as it grows), so a shorter wait adds few
-            // requests, and the list shows about 70 ms sooner (#288).
+            // sources, 100 ms by default. Ours mostly ask only where a name
+            // starts (`validFor` filters as it grows), so a shorter wait adds
+            // few requests, and the list shows about 70 ms sooner (#288). A
+            // reply cut off as too long has no `validFor`, so after one of
+            // those each keystroke asks again.
             activateOnTypingDelay: 30,
             icons: false,
             override: [
