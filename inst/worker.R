@@ -1752,6 +1752,9 @@ snapshot_settings <- function() {
 #' (non-package) search path that differ, plus the working directory.
 diff_settings <- function(before, after) {
   diff_named <- function(b, a, kind) {
+    # Most cells change nothing: one comparison of the whole list instead
+    # of one per option (#316).
+    if (identical(b, a)) return(list())
     diffs <- list()
     for (n in union(names(b), names(a))) {
       bv <- if (n %in% names(b)) b[[n]] else NULL

@@ -64,6 +64,14 @@ Check `notes.json` against these thresholds:
 | D `tab-stops` | every stop has `ring`, none at `body` | a stop without a ring, focus lost to body, or `cells-edited-by-tabbing` non-empty with the Tab setting on "focus" |
 | E `axe-dark` | empty | any serious or critical rule |
 
+A's CLS counts every shift after the safe-preview banner has gone, so it
+reads the same each run. Outputs landing and pushing the cells below them
+down count: as little of the page moving as possible is the goal. Audits
+up to 2026-10-22 skipped the shifts the browser flagged as following
+input (`hadRecentInput`, up to 500 ms after the click), so the same page
+read 0.074 to 0.173 in the #295 audit. Don't apply the "up ≥ 0.05" check
+against a log entry from before then.
+
 Headless timings are a floor: Endeavor's WebKit pane is slower. Trends
 between runs matter more than one number.
 

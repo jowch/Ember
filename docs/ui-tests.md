@@ -147,7 +147,9 @@ it matters.
     survive the reload and match the file.
 42. Plot: a `plot(1:10)` cell shows an `<img>` with a blob URL.
 43. Error: `stop("boom")` shows the error element with "boom".
-44. Two tabs: an edit run in one appears in the other.
+44. Two tabs: an edit run in one appears in the other. Typing in that cell
+    in the other tab that wasn't run yet comes back with one Ctrl+Z, and
+    the cell says so (#318, `edit-sync.test.mjs`).
 45. No secret: `/edit` without it gives 403.
 
 **Running locally**: `npm --prefix tests/e2e ci` then `npm --prefix
