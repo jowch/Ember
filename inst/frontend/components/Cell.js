@@ -9,7 +9,7 @@ import { cl } from "../common/ClassTable.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { t, th } from "../common/lang.js"
-import { CircleIcon, ClockIcon, SlashCircleIcon, SlidersIcon } from "../common/Icons.js"
+import { CircleIcon, ClockIcon, EyeIcon, EyeOffIcon, SlashCircleIcon, SlidersIcon } from "../common/Icons.js"
 import { stale_names } from "../common/stale_names.js"
 import { display_name } from "../common/display_name.js"
 import { useSettled, wait_for_on } from "../common/useSettled.js"
@@ -294,6 +294,11 @@ export const Cell = ({
             pluto_actions.fold_remote_cells(pluto_actions.get_selected_cells(cell_id, selected), !code_folded)
         }
     }, [pluto_actions, cell_id, selected, code_folded, inspecting_hidden_code_here, inspecting_hidden_code])
+    // The show/hide code toggle, Pluto's eye in the left shoulder (#287):
+    // struck through, pressed and titled "Show code" while the code is
+    // hidden. Inspecting a hidden cell's code shows it, so the eye is open
+    // then.
+    const eye_hidden = code_folded && !inspecting_hidden_code_here
     const on_run = useCallback(async () => {
         return await pluto_actions.set_and_run_multiple(pluto_actions.get_selected_cells(cell_id, selected))
     }, [pluto_actions, cell_id, selected])
@@ -393,8 +398,13 @@ export const Cell = ({
             else window.dispatchEvent(new CustomEvent("cell_focus", { detail: { cell_id, line: 0, ch: 0 } }))
         } else if (e.key === "Tab" && !e.shiftKey) {
             // The code comes first in the DOM; from the selected cell, Tab
-            // goes on past it to the run button and the menu.
-            const next = /** @type {HTMLElement?} */ (cell.querySelector("pluto-input button.ember-run, pluto-input button.input_context_menu"))
+            // goes on past it to the run button and the menu, whichever is
+            // shown first (a cell with hidden code has no run button). The
+            // show/hide code eye comes before the code, in the shoulder, so
+            // Tab reaches it on the way into the cell (#287).
+            const next = /** @type {HTMLElement?} */ (
+                Array.from(cell.querySelectorAll("pluto-input button.ember-run, pluto-input button.input_context_menu")).find((b) => b.getClientRects().length > 0)
+            )
             if (next == null) return false
             next.focus()
         } else {
@@ -599,8 +609,15 @@ export const Cell = ({
                 <span></span>
             </button>
             <pluto-shoulder draggable="true" title=${t("t_drag_to_move_cell")}>
-                <button onClick=${on_code_fold} class="foldcode" title=${code_folded ? t("t_show_code") : t("t_hide_code")}>
-                    <span></span>
+                <button
+                    type="button"
+                    onClick=${on_code_fold}
+                    class="foldcode"
+                    title=${eye_hidden ? t("t_show_code") : t("t_hide_code")}
+                    aria-label=${t("t_hide_code")}
+                    aria-pressed=${eye_hidden ? "true" : "false"}
+                >
+                    <span>${eye_hidden ? html`<${EyeOffIcon} />` : html`<${EyeIcon} />`}</span>
                 </button>
             </pluto-shoulder>
             <pluto-trafficlight></pluto-trafficlight>

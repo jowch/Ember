@@ -10,6 +10,8 @@ need execution allowed: click "Run this notebook"
 - Run: `runCell(page, id)` (Shift+Enter) or the cell's run button
   (`button.ember-run`, shown on hover).
 - Add: the "+" between cells (`button.add_cell.after` / `.before`).
+- Show/hide code: `pluto-shoulder > button.foldcode` (aria-label "Hide
+  code", `aria-pressed` true while hidden), left of the cell, on hover.
 - Cell menu: `button.input_context_menu` (aria-label "Cell options")
   opens `div.input_context_menu[role=menu]`; items are
   `button[role=menuitem]` (Hide code, Disable, Delete, ...).

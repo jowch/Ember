@@ -76,6 +76,11 @@ out of the way of the data, the code and the results.
   overlapping the rail, shown on hover or focus (always on the focused cell
   on touch screens). It becomes Stop while the cell runs. The last run time
   is a small chip on the code's bottom-right corner, also on hover or focus.
+- **Show/hide code eye** (#287): Pluto's eye, in the left shoulder level
+  with the cell's top, left of the run button's corner; on hover or focus.
+  One click hides or shows the code, and it stays in place either way
+  (struck through while the code is hidden). The column's left gutter is
+  46px so both fit at every width.
 - **Cell menu** (⋯ at the code's top right, in the interface font): Hide
   code, Disable cell, Copy output, Move up, Move down, Delete cell.
 - **Disable cell** (any code cell): the cell and the

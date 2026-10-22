@@ -100,10 +100,19 @@ pluto-editor main {
     }
 }
 
+/* The cell's left controls, the show/hide code eye in the shoulder
+   (cells.css, #287) and the run button's corner, need 46px left of the
+   column (24px + 18px + 4px). Above 800px the centred column's margin
+   gives that; below, main's own padding does. */
+@media (max-width: 800px) {
+    pluto-editor main {
+        padding-left: 46px;
+    }
+}
 @media (max-width: 640px) {
     pluto-editor main {
         margin-left: 0;
-        padding-left: 16px;
+        padding-left: 46px;
         padding-right: 16px;
         max-width: none;
     }
