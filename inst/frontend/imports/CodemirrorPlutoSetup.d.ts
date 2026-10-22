@@ -3602,6 +3602,14 @@ Default key bindings for the undo history.
 */
 declare const historyKeymap: readonly KeyBinding[];
 /**
+Transaction annotation that will prevent that transaction from
+being combined with other transactions in the undo history. Given
+`"before"`, it'll prevent merging with previous transactions. With
+`"after"`, subsequent transactions won't be combined with this one.
+With `"full"`, the transaction is isolated on both sides.
+*/
+declare const isolateHistory: AnnotationType<"before" | "after" | "full">;
+/**
 Move the selected lines up one line.
 */
 declare const moveLineUp: StateCommand;
@@ -8646,5 +8654,5 @@ declare namespace index_d {
 
 declare const toml: StreamParser<unknown>
 
-export { Annotation, ChangeSet, Compartment, Decoration, EditorSelection, EditorState, EditorView, Facet, HighlightStyle, MatchDecorator, NodeProp, NodeWeakMap, PostgreSQL, Prec, SelectionRange, StateEffect, StateEffectType, StateField, StreamLanguage, Text, Transaction, Tree, TreeCursor, ViewPlugin, ViewUpdate, WidgetType, index_d$1 as autocomplete, bracketMatching, closeBrackets, closeBracketsKeymap, collab, combineConfig, completionKeymap, css, cssLanguage, defaultHighlightStyle, defaultKeymap, delimitedIndent, drawSelection, foldGutter, foldKeymap, getClientID, getSyncedVersion, highlightActiveLine, highlightSelectionMatches, highlightSpecialChars, history, historyKeymap, html, htmlLanguage, indentLess, indentMore, indentOnInput, indentUnit, invertedEffects, javascript, javascriptLanguage, julia, keymap, lineNumbers, linter, markdown, markdownLanguage, index_d as merge, moveLineDown, moveLineUp, parseCode, parseMixed, placeholder, python, pythonLanguage, receiveUpdates, rectangularSelection, searchKeymap, selectNextOccurrence, sendableUpdates, setDiagnostics, showTooltip, sql, syntaxHighlighting, syntaxTree, syntaxTreeAvailable, tags, toml, tooltips };
+export { Annotation, ChangeSet, Compartment, Decoration, EditorSelection, EditorState, EditorView, Facet, HighlightStyle, MatchDecorator, NodeProp, NodeWeakMap, PostgreSQL, Prec, SelectionRange, StateEffect, StateEffectType, StateField, StreamLanguage, Text, Transaction, Tree, TreeCursor, ViewPlugin, ViewUpdate, WidgetType, index_d$1 as autocomplete, bracketMatching, closeBrackets, closeBracketsKeymap, collab, combineConfig, completionKeymap, css, cssLanguage, defaultHighlightStyle, defaultKeymap, delimitedIndent, drawSelection, foldGutter, foldKeymap, getClientID, getSyncedVersion, highlightActiveLine, highlightSelectionMatches, highlightSpecialChars, history, historyKeymap, html, htmlLanguage, indentLess, indentMore, indentOnInput, indentUnit, invertedEffects, isolateHistory, javascript, javascriptLanguage, julia, keymap, lineNumbers, linter, markdown, markdownLanguage, index_d as merge, moveLineDown, moveLineUp, parseCode, parseMixed, placeholder, python, pythonLanguage, receiveUpdates, rectangularSelection, searchKeymap, selectNextOccurrence, sendableUpdates, setDiagnostics, showTooltip, sql, syntaxHighlighting, syntaxTree, syntaxTreeAvailable, tags, toml, tooltips };
 export type { Diagnostic, Tooltip };
