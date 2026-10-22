@@ -228,10 +228,11 @@ schedule_poll <- function(nb, interval = 0.005) {
 #' half-read, or anything sent or received in the last second); 250 ms while
 #' an install or index job is running, so its progress and its end are read
 #' promptly; otherwise 2 s. An idle worker sends nothing (it speaks only in
-#' reply, or during a run), so the slow poll only notices a worker that died
-#' while idle, and a watched file that changed: each costs about 1.7 ms of
-#' the server's time, so 4 a second cost 0.7% of a core per open notebook
-#' (#46).
+#' reply, or during a run), so the slow poll only notices a watched file that
+#' changed, and a worker that died while idle on Windows (elsewhere its
+#' stdout pipe wakes the poll at once, `watch_worker_output()`, #209): each
+#' poll costs about 1.7 ms of the server's time, so 4 a second cost 0.7% of
+#' a core per open notebook (#46).
 poll_interval <- function(nb, now = Sys.time()) {
   jobs_running <- length(ls(jobs, all.names = TRUE)) > 0
   if (is.null(nb$proc)) return(if (jobs_running) 0.25 else 2)
