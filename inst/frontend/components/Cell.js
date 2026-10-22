@@ -691,6 +691,7 @@ export const Cell = ({
             ${show_logs && cell_api_ready
                 ? html`<${Logs}
                       logs=${Object.values(logs)}
+                      run=${running ? "running" : (output?.last_run_timestamp ?? null)}
                       line_heights=${line_heights}
                       set_cm_highlighted_line=${set_cm_highlighted_line}
                       sanitize_html=${sanitize_html}

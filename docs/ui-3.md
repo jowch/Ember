@@ -132,7 +132,11 @@ out of the way of the data, the code and the results.
 - Anything else: exactly what R prints, in mono, with no box.
 - Console output below the code, as in Pluto, with no dark box: `message()`
   muted, cli/ANSI colours from a palette checked for contrast in both themes,
-  warnings on an amber wash.
+  warnings on an amber wash. A long console shows its first 60 and last 20
+  lines (a message, a warning, or one line of printed output each), as Pluto
+  shows its first 60 and last 20 logs, with "N lines not shown" and "Show 500
+  more" between them, so a big print never puts every line in the page
+  unless someone asks for it (#350).
 - **Figures** (board "Figure size: #| lines in the cell"): a fixed size that
   the window never changes, so what you see is the figure you would paste
   into slides. Default 7.5 × 5 in (3:2, the column width). A cell sets its own

@@ -894,6 +894,46 @@ test("console: a muted message, a warning with its call, and ANSI colours from t
   assertNoProblems(page);
 });
 
+test("console: a long print shows its first 60 and last 20 lines, and \"Show more\" reveals 500 at a time (350)", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-long-console.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const logs = `${cellSelector("W")} pluto-logs`;
+  const marker = `${logs} > pluto-log-truncated`;
+  await setCellCode(page, "W", 'message("start")\ncat(sprintf("line %d\\n", 1:1000), sep = "")');
+  await page.keyboard.press("Shift+Enter");
+  await page.waitForSelector(marker, { timeout: 30000 });
+
+  // Every line on the page, in order: a message is one, a stdout block one per line.
+  const shown = () => page.locator(logs).evaluate((el) => [...el.children].flatMap((child) =>
+    child.localName === "pluto-log-truncated" ? ["--"] : child.innerText.split("\n")));
+  const lines = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => `line ${from + i}`);
+
+  // 1001 lines: the message, then 1000 of stdout.
+  assert.deepEqual(await shown(), ["start", ...lines(1, 59), "--", ...lines(981, 1000)]);
+  assert.equal(await page.locator(`${marker}`).innerText().then((s) => s.replace(/\s+/g, " ").trim()), "921 lines not shown Show 500 more");
+  assert.equal(await page.locator(`${logs} > ember-log.stdout`).count(), 2, "the stdout either side of the cut stays one block each");
+
+  await page.locator(marker).getByRole("button", { name: "Show 500 more", exact: true }).click();
+  await page.locator(marker).getByRole("button", { name: "Show 421 more", exact: true }).waitFor();
+  assert.deepEqual(await shown(), ["start", ...lines(1, 559), "--", ...lines(981, 1000)]);
+  await page.locator(marker).getByRole("button", { name: "Show 421 more", exact: true }).click();
+  await page.waitForSelector(marker, { state: "detached", timeout: 5000 });
+  assert.deepEqual(await shown(), ["start", ...lines(1, 1000)]);
+  assert.equal(await page.locator(`${logs} > ember-log.stdout`).count(), 1);
+
+  // A rerun starts the cut over.
+  await runCell(page, "W");
+  await page.waitForSelector(marker, { timeout: 30000 });
+  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("921 lines not shown"), marker, { timeout: 10000 });
+
+  assertNoProblems(page);
+});
+
 test("figures: no border, background or filter in either theme; at most the column wide; a default plot is 708px, 14px above the code; fig-width 4 is 384px (148)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-figures.server.log") });
