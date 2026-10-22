@@ -68,7 +68,7 @@ export const export_items = ({ links, item_props, first_index = 0, note_on_items
         html`<a
             class="ember-menuitem"
             href=${html_url}
-            download=""
+            download=${file_name.replace(/\.[^.]*$/, "") + ".html"}
             ...${item_props(first_index + 1)}
             ...${item("ember-export-html", t("t_export_download_html"), safe_preview ? code_only : t("t_export_download_html_description"), note)}
             onClick=${() => close()}

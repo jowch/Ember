@@ -899,6 +899,13 @@ test_that("the secret cookie is set on /edit, and the file's content matches the
   file_resp <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id)))
   expect_equal(file_resp$status, 200L)
   expect_equal(file_resp$body, format_notebook(notebook_file_of(notebook_state(nb))))
+  stem <- tools::file_path_sans_ext(basename(path))
+  expect_equal(file_resp$headers[["Content-Disposition"]], sprintf('inline; filename="%s"', basename(path)))
+
+  # the HTML export is named after the notebook too, not "notebookexport"
+  export_resp <- http_call(server, fake_req("/notebookexport", sprintf("id=%s&secret=s", id)))
+  expect_equal(export_resp$status, 200L)
+  expect_equal(export_resp$headers[["Content-Disposition"]], sprintf('inline; filename="%s.html"', stem))
 
   # the cookie alone (no query secret) is also accepted
   resp2 <- http_call(server, fake_req("/notebookfile", sprintf("id=%s", id), cookie = "ember_secret=s"))
