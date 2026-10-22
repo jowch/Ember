@@ -332,7 +332,8 @@ repositories. Asking before a large download is in
   only the Bioconductor packages at the same date (`resolve_lock(mode =
   "bioc")`, CRAN entries kept) and applies itself, restarting R if a
   loaded package changes. The old pin's library isn't installed while the
-  move is pending. With no release for the running R at that date, the
+  move is pending, and a date preview is refused until the move is done
+  (#323): replacing it would drop the move for the session. With no release for the running R at that date, the
   pin stays and the row says so; moving the date (which moves the pin to
   that date's release) is the way out. A move whose index can't be
   fetched keeps the pin, shows a `bioc_move_failed` row, lets the old

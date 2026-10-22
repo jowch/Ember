@@ -1465,7 +1465,19 @@ reduce_approve_install <- function(state, event) {
 #' the user asking to preview again (the same "I want this to work now" as
 #' `ev_run()` retrying a failed library or index, reduce_run()) is exactly
 #' when a retry belongs.
+#'
+#' Refused while a Bioconductor move is pending (#323).
 reduce_preview_date <- function(state, event) {
+  # A pending Bioconductor move (`propose_bioc_move()`) is tried once a
+  # session: replaced by this preview it would never be proposed again, and
+  # with nothing pending the old pin's library would install, building
+  # every Bioconductor package from source on this R (#323). It applies by
+  # itself once its indexes arrive, so the preview waits for that.
+  prop <- state$packages$proposal
+  if (!is.null(prop) && identical(prop$kind, "bioc") && !identical(prop$status, "failed")) {
+    return(list(state = state, effects = list(),
+                reply = refused("the notebook's Bioconductor packages are moving to the release for this R; preview a date once that is done")))
+  }
   date_header <- state$file$header
   date_header$snapshot <- event$date
   date_header$bioc_version <- NA_character_

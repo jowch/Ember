@@ -878,7 +878,7 @@ answer_from_subprocess <- function(cmd, answer, ok, failure) {
 #' | ember_retry_install           | the failure card's Try again (#106): run_cells() on retry_install_ids(), cells that stopped on a missing package plus not_run_ids(); asks even when empty, which retries a failed install (never in safe preview); flush. No reply |
 #' | ember_split_cell              | {cell_id, code}: split a mixed_text cell at each text/code change (split_mixed()); nothing if code is stale or the cell isn't mixed. Flush. No reply |
 #' | ember_signature                | worker_query(signature); else signature_fallback() (ui-2.md, 4d)   |
-#' | ember_update_packages          | dispatch ev_preview_date(today, apply = TRUE); flush. No reply       |
+#' | ember_update_packages          | dispatch ev_preview_date(today, apply = TRUE) (refused, logged, while a Bioconductor move is pending); flush. No reply |
 #' | ember_apply_update             | {date}: set_date(hub$nb, date); a refusal is logged. Flush. No reply |
 #' | ember_cancel_update            | dispatch ev_cancel_preview(); flush. No reply                        |
 #' | ember_approve_install          | the large-download card's Install (#37): dispatch ev_approve_install() (refused when nothing waits); flush. No reply |
@@ -1221,7 +1221,8 @@ handlers <- list(
   #' (packages-core.R). No reply; the page watches `packages.update`.
   ember_update_packages = function(server, cl, hub, req) {
     if (is.null(hub)) return(invisible(NULL))
-    dispatch(hub$nb, ev_preview_date(format(Sys.time(), "%Y-%m-%d"), at = Sys.time(), apply = TRUE))
+    reply <- dispatch(hub$nb, ev_preview_date(format(Sys.time(), "%Y-%m-%d"), at = Sys.time(), apply = TRUE))
+    if (inherits(reply, "ember_refused")) message("ember: refused ember_update_packages: ", conditionMessage(reply))
     flush_clients(server, hub)
   },
 

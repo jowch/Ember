@@ -1790,6 +1790,36 @@ test_that("running on the new R moves the pin and the Bioconductor packages befo
   expect_match(inst$repos[["BioCsoft"]], "/2026-09-01/packages/3.23/bioc", fixed = TRUE)
 })
 
+test_that("a date preview waits for a pending move instead of cancelling it (323)", {
+  r <- drive(pinned_322(), ev_open(at(1)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(2)), ev_allow(at(3)))
+  expect_equal(r$state$packages$proposal$kind, "bioc")
+  r <- drive(r$state, ev_preview_date("2026-10-01", at(4)))
+  expect_s3_class(r$reply, "ember_refused")
+  expect_match(conditionMessage(r$reply), "Bioconductor packages are moving", fixed = TRUE)
+  expect_equal(r$state$packages$proposal$kind, "bioc")
+  expect_false("install" %in% effect_types(r))
+
+  # The move goes on and applies; then a preview is taken.
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(5)))
+  r <- deliver_bioc(r$state, t = 6)
+  expect_equal(r$state$file$header$bioc_version, "3.23")
+  r <- drive(r$state, ev_preview_date("2026-10-01", at(7)))
+  expect_true(isTRUE(r$reply))
+  expect_equal(r$state$packages$proposal$kind, "date")
+})
+
+test_that("a date preview replaces a move that failed", {
+  r <- drive(pinned_322(), ev_open(at(1)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(2)), ev_allow(at(3)),
+             ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(4)),
+             ev_index_failed("bioc/2026-09-01/3.23", "network down", at(5)))
+  expect_equal(r$state$packages$proposal$status, "failed")
+  r <- drive(r$state, ev_preview_date("2026-10-01", at(6)))
+  expect_true(isTRUE(r$reply))
+  expect_equal(r$state$packages$proposal$kind, "date")
+})
+
 test_that("a move that would change a loaded package applies anyway and restarts R once installed", {
   r <- drive(pinned_322(), ev_open(at(1)), ev_allow(at(2)))
   r$state$worker$loaded <- c(DESeq2 = "1.48.0")
