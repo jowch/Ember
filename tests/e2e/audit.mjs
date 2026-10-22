@@ -55,13 +55,14 @@ const shot = async (page, step, full = false) => {
  * and long tasks on `page`; read them back with `measured(page)`. Not
  * every engine has both APIs; a missing one reads as null.
  *
- * `cls` counts the shifts after `settled(page)`, input or not, when a
- * journey calls it, and otherwise the shifts not marked as following
- * input. The browser marks a shift as following input for 500 ms after a
- * click, so after "Run this notebook" the first outputs landing were
- * counted on some runs and not others (0.074 to 0.173 for the same
- * shifts, #295); counting from a fixed point instead gives the same number
- * each run. */
+ * `cls` counts the shifts after `settled(page)`, input or not, once
+ * `runAll()` has called it, and otherwise the shifts not marked as
+ * following input. The browser marks a shift as following input for 500
+ * ms after a click, so after "Run this notebook" the first outputs landing
+ * were counted on some runs and not others (the #295 audit read 0.074 to
+ * 0.173; locally the same shifts summed to 0.058 to 0.149 under that
+ * rule); counting from a fixed point instead gives the same number each
+ * run. */
 async function measure(page) {
   await page.evaluate(() => {
     window.__audit = { cls: null, since: null, shifts: [], long: null };
@@ -69,7 +70,7 @@ async function measure(page) {
       window.__audit.cls = 0;
       new PerformanceObserver((list) => {
         for (const e of list.getEntries()) {
-          window.__audit.shifts.push({ value: Number(e.value.toFixed(4)), at: Math.round(e.startTime), input: e.hadRecentInput,
+          window.__audit.shifts.push({ value: Number(e.value.toFixed(4)), at: Math.round(e.startTime), start: e.startTime, input: e.hadRecentInput,
             moved: (e.sources ?? []).map((s) => s.node?.nodeName?.toLowerCase() + (s.node?.className ? "." + String(s.node.className).split(" ")[0] : "")).slice(0, 3) });
         }
       }).observe({ type: "layout-shift" });
@@ -86,7 +87,7 @@ const settled = (page) => page.evaluate(() => { if (window.__audit) window.__aud
 const measured = (page) => page.evaluate(() => {
   const a = window.__audit;
   if (a.cls == null) return { ...a };
-  const counted = a.since == null ? a.shifts.filter((s) => !s.input) : a.shifts.filter((s) => s.at >= a.since);
+  const counted = a.since == null ? a.shifts.filter((s) => !s.input) : a.shifts.filter((s) => s.start >= a.since);
   return { ...a, since: a.since == null ? null : Math.round(a.since), cls: Number(counted.reduce((sum, s) => sum + s.value, 0).toFixed(3)) };
 });
 

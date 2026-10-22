@@ -67,8 +67,10 @@ Check `notes.json` against these thresholds:
 A's CLS counts every shift after the safe-preview banner has gone, so it
 reads the same each run. Outputs landing and pushing the cells below them
 down count: as little of the page moving as possible is the goal. Audits
-up to 2026-10-22 counted only shifts more than 500 ms after the click, so
-they read 0.07 to 0.17 for the same page.
+up to 2026-10-22 skipped the shifts the browser flagged as following
+input (`hadRecentInput`, up to 500 ms after the click), so the same page
+read 0.074 to 0.173 in the #295 audit. Don't apply the "up ≥ 0.05" check
+against a log entry from before then.
 
 Headless timings are a floor: Endeavor's WebKit pane is slower. Trends
 between runs matter more than one number.
