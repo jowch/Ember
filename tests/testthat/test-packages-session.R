@@ -891,10 +891,17 @@ test_that("an install of a large Bioconductor data package waits for approve_ins
   file.copy(testthat::test_path("fixtures", "bioc"), root, recursive = TRUE)
   writeBin(raw(2048), file.path(root, "bioc", "2026-09-01", "packages", "3.23", "data", "annotation",
                                 "src", "contrib", "GO.db_3.22.0.tar.gz"))
+  # They hold Bioconductor 3.23, R 4.6's release. A copy of the fixture config
+  # maps 3.23 to the running R, so the notebook looks there on any R.
+  config <- readLines(testthat::test_path("fixtures", "bioc-config", "config.yaml"))
+  config <- sub('^(  "3\\.23": )"4\\.6"$', sprintf('\\1"%s"', r_info()$minor), config)
+  expect_equal(bioc_release_for(r_info()$minor, "2026-09-01", parse_bioc_config(config)), "3.23")
+  config_path <- file.path(root, "config.yaml")
+  writeLines(config, config_path)
   fixture <- function(...) paste0("file://", normalizePath(testthat::test_path("fixtures", ...), winslash = "/"))
   repos <- ember_repos(cran = fixture("repos", "cran"),
                        bioc = paste0("file://", normalizePath(file.path(root, "bioc"), winslash = "/")),
-                       bioc_config = fixture("bioc-config", "config.yaml"))
+                       bioc_config = paste0("file://", normalizePath(config_path, winslash = "/")))
 
   dir <- withr::local_tempdir()
   cells <- list(S = list(code = "", kind = "code", folded = FALSE),
