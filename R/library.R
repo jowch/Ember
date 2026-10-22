@@ -102,10 +102,19 @@ index_may_change <- function(key, now = Sys.time()) {
 #' as far ahead as a clock east of UTC can be. A 404 for a date further
 #' ahead (a typo, a year off) is just a failure, so nothing steps back
 #' from it day by day.
+#'
+#' Package Manager publishes a day's Bioconductor snapshot about two days
+#' after CRAN's (#282), so for a Bioconductor key the window starts three
+#' days before today in UTC instead of one.
 may_be_unpublished <- function(key, now = Sys.time()) {
+  today <- as.Date(format(now, tz = "UTC", usetz = FALSE))
+  if (is_bioc_key(key)) {
+    date <- tryCatch(as.Date(strsplit(key, "/", fixed = TRUE)[[1]][[2]]), error = function(e) NA)
+    return(!is.na(date) && date >= today - 3 && date <= today + 1)
+  }
   if (!index_may_change(key, now)) return(FALSE)
   date <- as.Date(strsplit(key, "/", fixed = TRUE)[[1]][[2]])
-  date <= as.Date(format(now, tz = "UTC", usetz = FALSE)) + 1
+  date <= today + 1
 }
 
 #' The label a dated repo key resolves to (`read_repo_index()`'s `label`,
@@ -1121,6 +1130,15 @@ finish_library <- function(staging, path, manifest) {
     unlink(staging, recursive = TRUE)
     return(invisible(FALSE))
   }
+  # A folder with no manifest is no library: what a delete cut short leaves
+  # (`delete_library()`, #152). A rename can't replace a folder that isn't
+  # empty, so it goes first, or the library could never be installed again.
+  # Checked again just before: another installer may have finished since.
+  # A rename landing between that check and the unlink is not ruled out: this
+  # one then deletes that library and renames its own copy, the same lock, in
+  # its place. Only a worker starting on the other copy in that instant would
+  # notice; rare enough to accept.
+  if (dir.exists(path) && is.null(read_library_manifest(path))) unlink(path, recursive = TRUE)
   if (suppressWarnings(file.rename(staging, path))) return(invisible(TRUE))
   # Lost a race that started after the check above.
   if (!is.null(read_library_manifest(path))) {
@@ -1355,6 +1373,9 @@ dir_size <- function(path) {
 #'   hold only links, so a returning notebook gets its library back from
 #'   the cache in seconds, or from the lock.
 #' * Staging folders older than one day (an installer that crashed).
+#' * Library folders without a manifest older than one day, except those in
+#'   `keep`: what a delete cut short leaves. A library is deleted manifest
+#'   first, so such a folder never reads as a ready library (#152).
 #' * With `cache = TRUE`: renv cache entries listed in no remaining
 #'   library's manifest (`cache_entries`), so deleting one never breaks a
 #'   library whether renv linked with hard links or symlinks. An entry
@@ -1408,7 +1429,18 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
       }
 
       manifest <- read_library_manifest(entry)
-      if (is.null(manifest)) next
+      if (is.null(manifest)) {
+        # No manifest, so not a library anything uses: what an interrupted
+        # delete leaves (below), or a manifest that can't be read. Left a
+        # day, as a staging folder is, before it goes (#152).
+        if (normalizePath(entry, mustWork = FALSE) %in% keep_resolved) next
+        age <- age_days(file.info(entry)$mtime)
+        if (is.na(age) || age >= 1) {
+          record(entry, "library", dir_size(entry), file.info(entry)$mtime)
+          if (!dry_run) delete_library(entry)
+        }
+        next
+      }
 
       if (normalizePath(entry, mustWork = FALSE) %in% keep_resolved) {
         kept_cache_entries <- c(kept_cache_entries, manifest$cache_entries)
@@ -1422,7 +1454,7 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
         next
       }
       record(entry, "library", dir_size(entry), last_used)
-      if (!dry_run) unlink(entry, recursive = TRUE)
+      if (!dry_run) delete_library(entry)
     }
   }
 
@@ -1462,6 +1494,20 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
   invisible(out)
 }
 
+#' Delete the library folder `path`, its manifest first (#152): a delete cut
+#' short (the server stopping mid clean-up, a file that can't be removed)
+#' then leaves a folder `read_library_manifest()` reads as no library, which
+#' is installed again, never one it reads as ready with packages missing.
+#' If the manifest can't be removed, nothing else is. Returns whether the
+#' folder is gone.
+delete_library <- function(path) {
+  manifest <- file.path(path, "ember-library.rds")
+  unlink(manifest)
+  if (file.exists(manifest)) return(invisible(FALSE))
+  unlink(path, recursive = TRUE)
+  invisible(!dir.exists(path))
+}
+
 #' Disk use for the package view (#38): `list(libraries, cache, indexes,
 #' exact)`, the first three in bytes. R's `file.info()` has no inode or
 #' link count, so this runs one `du -sk` over the cache, the indexes and
@@ -1473,6 +1519,11 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
 #' `exact` is `FALSE`. A folder that doesn't exist is 0. Run in a
 #' subprocess when asked (`disk_use_command()`): walking a large cache
 #' can take seconds.
+#'
+#' `du` exits 1 when a folder vanishes during its walk, as an install's
+#' staging folder does when the install ends, but still prints a total for
+#' each root: those totals are kept (#332), since what vanished was going
+#' away anyway. Only a missing total falls back to summing.
 disk_use <- function(dir = cache_dir(), du = Sys.which("du")) {
   roots <- c(cache = file.path(dir, "renv-cache"), indexes = file.path(dir, "indexes"),
              libraries = file.path(dir, "libraries"))
@@ -1483,8 +1534,8 @@ disk_use <- function(dir = cache_dir(), du = Sys.which("du")) {
     res <- processx::run(du, c("-sk", unname(present)), error_on_status = FALSE)
     lines <- strsplit(res$stdout, "\n")[[1]]
     lines <- lines[nzchar(lines)]
-    if (identical(res$status, 0L) && length(lines) == length(present)) {
-      kb <- as.numeric(sub("\t.*$", "", lines))
+    kb <- suppressWarnings(as.numeric(sub("\t.*$", "", lines)))
+    if (identical(sub("^[^\t]*\t", "", lines), unname(present)) && !anyNA(kb)) {
       for (i in seq_along(present)) use[[names(present)[i]]] <- kb[i] * 1024
       return(use)
     }
@@ -1537,7 +1588,9 @@ clean_up <- function(dir = cache_dir(), keep = character(), dry_run = TRUE, max_
     res <- processx::run(du, c("-sck", paths), error_on_status = FALSE)
     lines <- strsplit(res$stdout, "\n")[[1]]
     total <- grep("\ttotal$", lines, value = TRUE)
-    if (identical(res$status, 0L) && length(total) == 1L)
+    # A path that vanished during the walk makes du exit 1 with the total
+    # still printed: that total is kept, as disk_use() keeps its own (#332).
+    if (length(total) == 1L)
       bytes <- as.numeric(sub("\t.*$", "", total)) * 1024
   }
   if (!isTRUE(dry_run) && length(paths) > 0L)

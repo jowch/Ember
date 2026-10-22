@@ -224,7 +224,11 @@ tab's.
 names a package the lock lacks, \code{run()} says so and runs anyway (R
 reports the missing package), since resolving would change the file.
 Building the library blocks the caller, the same installer and layout a
-session uses.
+session uses. Install calls (\code{remotes::install_github()},
+\code{install.packages()}, ...) at a cell's top level don't run, as in a
+session: \code{run()} runs a copy of the file without them, from the file's
+own folder, and says once which packages the lock gives. The copy is a
+temporary file, so \code{commandArgs()} names it, not the notebook.
 
 \code{clean()} never deletes a library an open session in this process is using,
 and never touches a user's own renv projects: Ember keeps its own renv

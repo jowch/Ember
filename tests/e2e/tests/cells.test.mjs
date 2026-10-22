@@ -404,7 +404,7 @@ test("empty notebook: placeholder and hints show, and typing removes them (151)"
   assertNoProblems(page);
 });
 
-test('chips: "Not run yet" before running, none in safe preview, "Stale" after an upstream edit (144)', async (t) => {
+test('chips: "Not run yet" in safe preview and before running, "Stale" after an upstream edit (144, #298)', async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-safe.server.log") });
   const browser = await launchBrowser();
@@ -413,10 +413,11 @@ test('chips: "Not run yet" before running, none in safe preview, "Stale" after a
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  // Safe preview: B has never run, but it's not shown yet. Its chip's
-  // space is kept, unseen (#139).
-  assert.equal(await page.locator(`${cellSelector("B")} ember-chip:not(.held)`).count(), 0, "no chip in safe preview");
-  assert.equal(await page.locator(`${cellSelector("B")} ember-chip.held`).isVisible(), false, "only its space");
+  // Safe preview: B has never run, and says so, as Pluto marks every
+  // cell in safe preview (#298).
+  const chip = page.locator(`${cellSelector("B")} > ember-chip:not(.held)`);
+  await chip.waitFor({ state: "visible", timeout: 10000 });
+  assert.equal(await chip.innerText(), "Not run yet");
 
   await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(
@@ -528,12 +529,12 @@ test('chips: a "Not run yet" cell that runs moves its code once, when the output
   assertNoProblems(page);
 });
 
-// #139: safe preview shows no "Not run yet" chip (its banner says it once),
-// so the first run used to give every unrun cell its chip at once and push
-// the page down by a chip per cell. Safe preview now keeps the chip's space,
-// unseen. NEVER, LOOP and W stay unrun when A runs; the code's place in
-// each, read once a frame from safe preview through A's run, must not move.
-test('chips: leaving safe preview doesn\'t move unrun cells: their chip\'s space is kept unseen (#139)', async (t) => {
+// #139: the first run used to give every unrun cell its chip at once and
+// push the page down by a chip per cell. Safe preview now shows the chip
+// already (#298). NEVER, LOOP and W stay unrun when A runs; the code's
+// place in each, read once a frame from safe preview through A's run, must
+// not move.
+test('chips: leaving safe preview doesn\'t move unrun cells: their chip is already there (#139, #298)', async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-preview-space.server.log") });
   const browser = await launchBrowser();
@@ -542,10 +543,10 @@ test('chips: leaving safe preview doesn\'t move unrun cells: their chip\'s space
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
   const ids = ["NEVER", "LOOP", "W"];
-  const held = page.locator(`${cellSelector("NEVER")} > ember-chip.held`);
-  assert.equal(await held.count(), 1, "safe preview keeps the chip's space");
-  assert.equal(await held.isVisible(), false, "and doesn't show it");
-  assert.equal(await held.getAttribute("aria-hidden"), "true", "and doesn't read it out");
+  const shown = page.locator(`${cellSelector("NEVER")} > ember-chip:not(.held)`);
+  await shown.waitFor({ state: "visible", timeout: 10000 });
+  assert.equal(await shown.innerText(), "Not run yet", "safe preview shows the chip");
+  assert.equal(await shown.getAttribute("aria-hidden"), null, "and reads it out");
 
   await page.evaluate((sels) => {
     window.__code_tops = Object.fromEntries(sels.map((sel) => [sel, []]));
@@ -573,7 +574,7 @@ test('chips: leaving safe preview doesn\'t move unrun cells: their chip\'s space
     assert.equal(tops[cellSelector(id)].length, 1, `${id}'s code didn't move: ${JSON.stringify(tops[cellSelector(id)])}`);
   }
   assert.equal(await page.locator(`${cellSelector("NEVER")} > ember-chip`).innerText(), "Not run yet");
-  assert.equal(await page.locator(`${cellSelector("NEVER")} > ember-chip.held`).count(), 0, "the chip shows once the run starts");
+  assert.equal(await page.locator(`${cellSelector("NEVER")} > ember-chip.held`).count(), 0, "the chip still shows once the run starts");
   assertNoProblems(page);
 });
 
@@ -590,7 +591,7 @@ test('chips: "Run this notebook" moves the page up only at the click, then only 
 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
-  await page.locator(`${cellSelector("NEVER")} > ember-chip.held`).waitFor({ state: "attached", timeout: 15000 });
+  await page.locator(`${cellSelector("NEVER")} > ember-chip:not(.held)`).waitFor({ state: "visible", timeout: 15000 });
 
   await page.evaluate((sel) => {
     window.__txt_tops = [];

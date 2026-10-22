@@ -16,6 +16,8 @@ import {
     keymap,
     history,
     historyKeymap,
+    isolateHistory,
+    Annotation,
     defaultKeymap,
     indentMore,
     indentLess,
@@ -57,7 +59,7 @@ import { commentKeymap } from "./CellInput/comment_mixed_parsers.js"
 import { mod_d_command } from "./CellInput/mod_d_command.js"
 import { open_bottom_right_panel } from "./BottomRightPanel.js"
 import { assert_not_null, timeout_promise } from "../common/PlutoConnection.js"
-import { LastFocusWasForcedEffect, tab_help_plugin } from "./CellInput/tab_help_plugin.js"
+import { LastFocusWasForcedEffect, tab_help_plugin, tab_pass_through } from "./CellInput/tab_help_plugin.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { moveLineDown } from "../imports/CodemirrorPlutoSetup.js"
 import { detect_indent_unit, indent_unit_of_setting } from "./CellInput/detect_indent_unit.js"
@@ -162,6 +164,9 @@ const setValue6 = (/** @type {EditorView} */ cm, value) =>
     cm.dispatch({
         changes: { from: 0, to: cm.state.doc.length, insert: value },
     })
+// Marks the transaction that puts code run elsewhere into the editor (#318).
+const RemoteCodeAnnotation = Annotation.define()
+
 const replaceRange6 = (/** @type {EditorView} */ cm, text, from, to) =>
     cm.dispatch({
         changes: { from, to, insert: text },
@@ -255,8 +260,10 @@ export const CellInput = ({
     skip_static_fake = false,
     on_submit,
     on_delete,
+    on_menu_delete,
     on_add_after,
     on_change,
+    on_remote_replace = (/** @type {boolean} */ _replaced) => {},
     on_update_doc_query,
     on_focus_neighbor,
     on_line_heights,
@@ -299,6 +306,15 @@ export const CellInput = ({
     const newcm_ref = useRef(/** @type {EditorView?} */ (null))
     const dom_node_ref = useRef(/** @type {HTMLElement?} */ (null))
     const remote_code_ref = useRef(/** @type {string?} */ (null))
+    // The run code the editor's text was last in step with: what it was
+    // created from, then each remote_code applied. Text that differs from it
+    // is typing that hasn't been run yet. Unlike remote_code_ref, this is
+    // set even when remote_code arrived before the editor existed (the
+    // editor is made only once the cell scrolls into view).
+    const synced_code_ref = useRef(/** @type {string?} */ (null))
+    // The unrun typing a remote change last replaced, while the notice for
+    // it shows. Undoing back to it clears the notice.
+    const replaced_text_ref = useRef(/** @type {string?} */ (null))
 
     const [dark_theme, set_dark_theme] = useState(is_dark_theme())
     useEventListener(window, "ember theme change", () => set_dark_theme(is_dark_theme()), [])
@@ -326,10 +342,21 @@ export const CellInput = ({
         useMemo(() => {
             return EditorView.updateListener.of((update) => {
                 if (update.docChanged) {
-                    on_change(update.state.doc.toString())
+                    const doc = update.state.doc.toString()
+                    on_change(doc)
+                    // The notice about replaced typing stays through later
+                    // remote changes, and through undo and redo until the
+                    // typing is back; any other edit clears it (#318).
+                    const trs = update.transactions.filter((tr) => tr.docChanged)
+                    const remote = trs.some((tr) => tr.annotation(RemoteCodeAnnotation))
+                    const history_step = trs.every((tr) => tr.isUserEvent("undo") || tr.isUserEvent("redo"))
+                    if (!remote && (!history_step || doc === replaced_text_ref.current)) {
+                        replaced_text_ref.current = null
+                        on_remote_replace(false)
+                    }
                 }
             })
-        }, [on_change])
+        }, [on_change, on_remote_replace])
     )
 
     // Settings apply to open editors at once: one compartment holds every
@@ -568,6 +595,7 @@ export const CellInput = ({
             }
         })
 
+        synced_code_ref.current = remote_code
         const newcm = (newcm_ref.current = new EditorView({
             state: EditorState.create({
                 doc: local_code,
@@ -618,6 +646,7 @@ export const CellInput = ({
                     bracketMatching(),
                     docs_updater,
                     tab_help_plugin,
+                    tab_pass_through,
                     // Remove selection on blur
                     EditorView.domEventHandlers({
                         blur: (event, view) => {
@@ -788,9 +817,11 @@ export const CellInput = ({
         cm.dispatch(setDiagnostics(cm.state, diagnostics))
     }, [cm_diagnostics])
 
-    // Effect to apply "remote_code" to the cell when it changes...
-    // ideally this won't be necessary as we'll have actual multiplayer,
-    // or something to tell the user that the cell is out of sync.
+    // Effect to apply "remote_code" to the cell when it changes. Like Pluto,
+    // every tab shows the code that was last run, wherever it was run (#318).
+    // If this tab had typing that wasn't run yet, the new code replaces it
+    // as an undo step of its own, so Ctrl+Z brings the typing back, and the
+    // cell says so until the typing is back or this tab edits or runs it.
     useEffect(() => {
         if (newcm_ref.current == null) return // Not sure when and why this gave an error, but now it doesn't
 
@@ -800,9 +831,18 @@ export const CellInput = ({
             // this happens when pasting or dropping cells
             return
         }
+        const had_local_edit = synced_code_ref.current != null && current_value !== synced_code_ref.current
         remote_code_ref.current = remote_code
+        synced_code_ref.current = remote_code
         if (current_value !== remote_code) {
-            setValue6(newcm_ref.current, remote_code)
+            newcm_ref.current.dispatch({
+                changes: { from: 0, to: newcm_ref.current.state.doc.length, insert: remote_code },
+                annotations: [isolateHistory.of("full"), RemoteCodeAnnotation.of(true)],
+            })
+            if (had_local_edit) {
+                replaced_text_ref.current = current_value
+                on_remote_replace(true)
+            }
         }
     }, [remote_code])
 
@@ -863,7 +903,7 @@ export const CellInput = ({
                 : html`<${RunButton} running=${running} queued=${queued} runtime=${runtime} on_run=${on_run} on_interrupt=${on_interrupt} />`}
             <${InputContextMenu}
                 cell_id=${cell_id}
-                on_delete=${on_delete}
+                on_delete=${on_menu_delete}
                 code_folded=${code_folded}
                 on_code_fold=${on_code_fold}
                 can_disable=${can_disable}

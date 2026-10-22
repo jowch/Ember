@@ -164,6 +164,16 @@ test_that("two installs of one key racing in two processes leave one library and
 
 # ---- The index memo (61) ---------------------------------------------------
 
+test_that("a Bioconductor 404 can mean not published yet from three days back to tomorrow in UTC (#282)", {
+  now <- as.POSIXct("2026-10-20 01:30:00", tz = "UTC")
+  expect_true(may_be_unpublished("bioc/2026-10-18/3.23", now))
+  expect_true(may_be_unpublished("bioc-ann/2026-10-17/3.23", now))
+  expect_true(may_be_unpublished("bioc-exp/2026-10-21/3.23", now))
+  expect_false(may_be_unpublished("bioc/2026-10-16/3.23", now))
+  expect_false(may_be_unpublished("bioc/2026-10-22/3.23", now))
+  expect_false(may_be_unpublished("cran/2026-10-17", now))   # CRAN's window is unchanged
+})
+
 test_that("a 404 can mean not published yet only from yesterday to tomorrow in UTC (#162, #221)", {
   now <- as.POSIXct("2026-10-16 01:30:00", tz = "UTC")
   expect_true(may_be_unpublished("cran/2026-10-15", now))
@@ -486,6 +496,34 @@ test_that("disk_use() without du sums file sizes, which counts a linked file twi
   expect_gte(use$indexes, 50000)
 })
 
+#' A `du` that runs the real one and exits as `status`, after printing
+#' only the lines `keep` selects: a folder vanishing mid-walk, without the
+#' race.
+fake_du <- function(status, keep = "cat") {
+  path <- tempfile("du-")
+  writeLines(c("#!/bin/sh", sprintf("%s \"$@\" 2>/dev/null | %s", Sys.which("du"), keep),
+               sprintf("exit %d", status)), path)
+  Sys.chmod(path, "755")
+  path
+}
+
+test_that("disk_use() keeps du's totals when it exits 1 because a folder vanished (#332)", {
+  skip_if(!nzchar(Sys.which("du")) || .Platform$OS.type == "windows", "no du on this system")
+  d <- make_disk_use_cache()
+  on.exit(unlink(d$root, recursive = TRUE))
+  exact <- disk_use(d$root)
+  du <- fake_du(1L)
+  on.exit(unlink(du), add = TRUE)
+  use <- disk_use(d$root, du = du)
+  expect_true(use$exact)
+  expect_equal(use[c("libraries", "cache", "indexes")], exact[c("libraries", "cache", "indexes")])
+
+  # A root with no total of its own still falls back to summing.
+  partial <- fake_du(1L, keep = "grep -v libraries")
+  on.exit(unlink(partial), add = TRUE)
+  expect_false(disk_use(d$root, du = partial)$exact)
+})
+
 test_that("disk_use() of a cache dir with nothing in it is all zero (#38)", {
   root <- tempfile("ember-cache-")
   dir.create(root)
@@ -556,6 +594,59 @@ test_that("clean(cache = TRUE) deletes only cache entries no manifest lists (66)
   expect_true(dir.exists(used_entry))
 })
 
+test_that("clean() deletes a library folder without a manifest once it is a day old, unless kept (#152)", {
+  root <- tempfile("ember-cache-")
+  dir.create(root)
+  on.exit(unlink(root, recursive = TRUE), add = TRUE)
+  # What a delete cut short leaves: the manifest gone first, packages left.
+  half <- function(key, age_days) {
+    path <- make_fake_library(root, key, last_used_days_ago = 90)
+    unlink(file.path(path, "ember-library.rds"))
+    dir.create(file.path(path, "pkgA"))
+    writeLines("x", file.path(path, "pkgA", "DESCRIPTION"))
+    Sys.setFileTime(path, Sys.time() - age_days * 86400)
+    path
+  }
+  old <- half("oldhalf", 2)
+  young <- half("younghalf", 0.1)
+  kept <- half("kepthalf", 2)
+  expect_null(read_library_manifest(old))
+
+  plan <- clean(max_age = 60, cache = FALSE, dry_run = TRUE, dir = root, keep = kept)
+  expect_equal(plan$path, old)
+  expect_equal(plan$kind, "library")
+  expect_true(dir.exists(old))
+
+  out <- clean(max_age = 60, cache = FALSE, dry_run = FALSE, dir = root, keep = kept)
+  expect_equal(out$path, old)
+  expect_false(dir.exists(old))
+  expect_true(dir.exists(young))
+  expect_true(dir.exists(kept))
+})
+
+test_that("delete_library() removes the manifest and the folder; an install replaces a half-deleted one (#152)", {
+  root <- tempfile("ember-cache-")
+  dir.create(root)
+  on.exit(unlink(root, recursive = TRUE), add = TRUE)
+  path <- make_fake_library(root, "gone", last_used_days_ago = 90)
+  expect_true(delete_library(path))
+  expect_false(dir.exists(path))
+
+  # A folder left by a delete cut short doesn't stop the next install's
+  # rename: it is no library, so the new one replaces it.
+  path <- make_fake_library(root, "half")
+  unlink(file.path(path, "ember-library.rds"))
+  writeLines("x", file.path(path, "leftover"))
+  staging <- paste0(path, ".staging-1")
+  dir.create(staging)
+  manifest <- list(lock_lines = character(), r = r_info(), installed = character(),
+                   exports = list(), cache_entries = character(), created = Sys.time())
+  expect_true(finish_library(staging, path, manifest))
+  expect_false(is.null(read_library_manifest(path)))
+  expect_false(file.exists(file.path(path, "leftover")))
+  expect_false(dir.exists(staging))
+})
+
 # ---- clean_up(): the Packages tab's clean-up button (#128) --------------------
 
 # A cache dir with two cache entries, each 100 KB: `kept` is listed by an
@@ -621,6 +712,16 @@ test_that("clean_up() without du estimates bytes from file sizes (#128)", {
   on.exit(unlink(d$root, recursive = TRUE))
   plan <- clean_up(d$root, keep = d$open_lib, dry_run = TRUE, du = "")
   expect_gte(plan$bytes, 100000)
+})
+
+test_that("clean_up() keeps du's total when it exits 1 because a path vanished (#332)", {
+  skip_if(!nzchar(Sys.which("du")) || .Platform$OS.type == "windows", "no du on this system")
+  d <- make_clean_up_cache()
+  on.exit(unlink(d$root, recursive = TRUE))
+  # A total no sum of file sizes gives, so the test sees which was used.
+  du <- fake_du(1L, keep = "sed 's/^[0-9]*\\(.total\\)$/7\\1/'")
+  on.exit(unlink(du), add = TRUE)
+  expect_equal(clean_up(d$root, keep = d$open_lib, dry_run = TRUE, du = du)$bytes, 7 * 1024)
 })
 
 test_that("clean_up_command() runs clean_up() in a subprocess and prints JSON (#128)", {

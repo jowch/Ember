@@ -39,14 +39,14 @@ toy_cache <- function() {
 #' A notebook file naming `toyA`, at `snapshot`, written to a fresh temp
 #' folder. The lock starts empty: resolution and the install are exactly
 #' what `open_notebook()` + `run_cells()` are being tested to do.
-write_toy_notebook <- function(snapshot = "2026-09-01", dir = NULL) {
+write_toy_notebook <- function(snapshot = "2026-09-01", dir = NULL, code = "library(toyA)\ntoyA_hello()") {
   if (is.null(dir)) {
     dir <- tempfile("ember-nb-")
     dir.create(dir, recursive = TRUE)
   }
   cell_id <- "A"
   cells <- list(S = list(code = "", kind = "code", folded = FALSE),
-               A = list(code = "library(toyA)\ntoyA_hello()", kind = "code", folded = FALSE))
+               A = list(code = code, kind = "code", folded = FALSE))
   header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
                        r_version = paste(R.version$major, R.version$minor, sep = "."),
                        snapshot = snapshot)
@@ -435,6 +435,32 @@ test_that("ember::run() on the saved file installs if needed and prints the cell
   expect_match(out, "toyA 0.1 says: hello from toyB", fixed = TRUE)
 })
 
+test_that("an install call runs neither in the session nor in ember::run(): the lock answers it (#79)", {
+  repos <- toy_repos()
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  # Run, install.packages() would fail: no repository is set under
+  # `Rscript --vanilla`, and the session's library isn't one to install
+  # into.
+  path <- write_toy_notebook("2026-09-01", code = 'install.packages("toyA")\nlibrary(toyA)\ntoyA_hello()')
+  nb <- open_notebook(path, repos = repos, cache = cache)
+  res <- run_cells(nb, wait = TRUE, timeout = 120)
+  expect_false(res$timed_out)
+  view <- snap_view(notebook_snapshot(nb), "A")
+  expect_equal(view$status, "ok")
+  expect_equal(view$from_lock, "toyA")
+  expect_match(view$output$text, "toyA 0.1 says: hello from toyB", fixed = TRUE)
+  close_notebook(nb)
+
+  msgs <- character()
+  out <- testthat::capture_output(withCallingHandlers(
+    status <- run(path, repos = repos, cache = cache, echo = TRUE),
+    message = function(m) { msgs <<- c(msgs, conditionMessage(m)); invokeRestart("muffleMessage") }))
+  expect_equal(status, 0L)
+  expect_match(out, "toyA 0.1 says: hello from toyB", fixed = TRUE)
+  expect_true(any(grepl("ember: install calls don't run; the lock gives toyA", msgs, fixed = TRUE)))
+})
+
 # ---- GitHub sources ([sources], #20) -----------------------------------------
 
 #' `toy_repos()` plus the `file://` GitHub fixture (fixtures/github): toyC,
@@ -697,10 +723,29 @@ test_that("[net] an r-universe package installs from its universe, and a commit 
   res <- run_cells(nb, wait = TRUE, timeout = 300)
   expect_false(res$timed_out)
   status <- package_status(nb)
-  expect_equal(status$library$status, "ready",
-               info = paste(c(status$library$message, notebook_state(nb)$packages$target$log), collapse = "\n"))
+  # A failed universe lookup is reported (highr's row is "source_failed"),
+  # not passed off as success, and running again retries it. r-universe
+  # sometimes fails a request, so give it one more try before asserting
+  # (#312).
+  failed <- function(status) {
+    any(status$packages$status[status$packages$name == "highr"] == "source_failed")
+  }
+  if (failed(status)) {
+    res <- run_cells(nb, wait = TRUE, timeout = 300)
+    expect_false(res$timed_out)
+    status <- package_status(nb)
+  }
+  why <- function(status) {
+    paste(c(status$library$message,
+            utils::capture.output(print(status$problems)),
+            utils::capture.output(print(status$packages[, intersect(c("name", "status", "source", "message"),
+                                                                   names(status$packages))])),
+            notebook_state(nb)$packages$target$log), collapse = "\n")
+  }
+  expect_false(failed(status), info = why(status))
+  expect_equal(status$library$status, "ready", info = why(status))
   src <- parse_universe_source(status$packages$source[status$packages$name == "highr"])
-  expect_equal(src$universe, "yihui")
+  expect_equal(src$universe, "yihui", info = why(status))
   expect_equal(src$git, "https://github.com/yihui/highr")
   desc <- read.dcf(file.path(notebook_state(nb)$packages$target$path, "highr", "DESCRIPTION"))
   expect_equal(unname(desc[, "RemoteSha"]), src$sha)
@@ -872,10 +917,17 @@ test_that("an install of a large Bioconductor data package waits for approve_ins
   file.copy(testthat::test_path("fixtures", "bioc"), root, recursive = TRUE)
   writeBin(raw(2048), file.path(root, "bioc", "2026-09-01", "packages", "3.23", "data", "annotation",
                                 "src", "contrib", "GO.db_3.22.0.tar.gz"))
+  # They hold Bioconductor 3.23, R 4.6's release. A copy of the fixture config
+  # maps 3.23 to the running R, so the notebook looks there on any R.
+  config <- readLines(testthat::test_path("fixtures", "bioc-config", "config.yaml"))
+  config <- sub('^(  "3\\.23": )"4\\.6"$', sprintf('\\1"%s"', r_info()$minor), config)
+  expect_equal(bioc_release_for(r_info()$minor, "2026-09-01", parse_bioc_config(config)), "3.23")
+  config_path <- file.path(root, "config.yaml")
+  writeLines(config, config_path)
   fixture <- function(...) paste0("file://", normalizePath(testthat::test_path("fixtures", ...), winslash = "/"))
   repos <- ember_repos(cran = fixture("repos", "cran"),
                        bioc = paste0("file://", normalizePath(file.path(root, "bioc"), winslash = "/")),
-                       bioc_config = fixture("bioc-config", "config.yaml"))
+                       bioc_config = paste0("file://", normalizePath(config_path, winslash = "/")))
 
   dir <- withr::local_tempdir()
   cells <- list(S = list(code = "", kind = "code", folded = FALSE),

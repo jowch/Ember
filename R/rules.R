@@ -20,6 +20,34 @@ attach_functions <- c("library", "require", "p_load")
 #' through this table.
 use_functions <- c("requireNamespace", "loadNamespace", "use")
 
+#' Install calls: the way R users say where a package lives
+#' (packages.md, "Install calls"). `library(pkg)` is what fetches it; an
+#' install call only names the source, which goes into the header's
+#' `[sources]`. The walker reads one in a cell's own code, outside function
+#' bodies, by the kind of argument it takes: `"github"` (`"user/repo"`,
+#' optionally with `@ref`, or a `ref =` argument), `"pak"` (`"user/repo"`,
+#' `"github::user/repo"`, `"pkg=user/repo"`, or a plain name), `"repos"`
+#' (package names, with an r-universe among `repos`), `"names"` (package
+#' names only: Bioconductor's are found without a source). The worker
+#' doesn't run one at a cell's top level: the lock already answers it.
+#'
+#' `install_calls` are matched as `pkg::fn` (as a whole top-level
+#' expression the package isn't one the notebook needs: the call doesn't
+#' run); `install_calls_bare` by the bare
+#' name, for code that attached the package first. `BiocManager::install`
+#' has no bare form: `install()` alone is too common a name.
+install_calls <- c("remotes::install_github" = "github", "devtools::install_github" = "github",
+                   "pak::pak" = "pak", "pak::pkg_install" = "pak",
+                   "utils::install.packages" = "repos", "BiocManager::install" = "names")
+install_calls_bare <- c(install_github = "github", pak = "pak", pkg_install = "pak",
+                        install.packages = "repos")
+
+#' Sources Ember knows without an install call: its own packages, which
+#' aren't on CRAN. emberui (docs/inputs.md) goes here as
+#' `"universe:jowch"` once its universe builds it; until then an entry
+#' would send `library(emberui)` to a universe that doesn't have it.
+builtin_sources <- stats::setNames(character(), character())
+
 #' Functions whose top-level call changes a global setting.
 #'
 #' A call counts only when it changes something: `options()` and

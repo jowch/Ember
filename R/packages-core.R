@@ -55,6 +55,9 @@
 #' * `bioc_move_tried`: `TRUE` once this session has proposed moving the
 #'   pin to the running R's release (`propose_bioc_move()`), so a move that
 #'   can't be made isn't proposed again on every event.
+#' * `held`: absent, or the `preview_date`/`preview_update` event asked
+#'   for while a Bioconductor move was pending, made once it is over
+#'   (`hold_preview()`).
 #' * `next_token`: integer, install job tokens.
 #'
 #' Invariants (added to `check_state()`):
@@ -610,14 +613,17 @@ schedule_packages <- function(state, old) {
   # still correct. Measured: without this, a 2000-cell notebook with no
   # packages regressed step()'s per-event cost past the engine's 50ms budget
   # (test-projections.R), since `wanted_packages()` walks every cell.
+  #
+  # The sources the code's install calls give go into the header first
+  # (`sync_sources()`, packages.md "Install calls"), cached the same way.
   {
-    wanted <- if (identical(state$graph, old$graph) && identical(state$file$header, old$file$header) &&
-                 !is.null(p$wanted_cache)) {
-      p$wanted_cache
-    } else {
-      wanted_packages(state$graph, state$file$header)
-    }
+    unchanged <- identical(state$graph, old$graph) && identical(state$file$header, old$file$header) &&
+      !is.null(p$wanted_cache)
+    wanted <- if (unchanged) p$wanted_cache else wanted_packages(state$graph, state$file$header)
     p$wanted_cache <- wanted
+    declared <- if (unchanged && !is.null(p$declared_cache)) p$declared_cache else declared_sources(state$graph, wanted)
+    p$declared_cache <- declared
+    state$file$header <- sync_sources(state$file$header, declared)
     sources <- readable_sources(state$file$header)
     if (!setequal(wanted, p$resolved_for) || !identical(sources, p$sources_for %||% character())) {
       if (length(wanted) > 0 && (is.null(state$file$header$snapshot) || is.na(state$file$header$snapshot))) {
@@ -847,6 +853,14 @@ schedule_packages <- function(state, old) {
                                                 asked = prop$asked %||% prop$date)
       }
     }
+    # A preview held for a Bioconductor move (`hold_preview()`) is made
+    # once the move has applied or failed, and goes round to be resolved.
+    if (!stepped && !is.null(state$packages$held) && !bioc_move_pending(state)) {
+      rp <- replay_held(state)
+      state <- rp$state
+      effects <- c(effects, rp$effects)
+      stepped <- TRUE
+    }
     if (!stepped) break
   }
 
@@ -961,18 +975,23 @@ fetch_releases <- function(p, options, date) {
 #' (`bioc_problems()`'s `bioc_r_version` row names the release it moves to).
 #'
 #' Once a session: a move that fails (an index fetch) isn't proposed again
-#' until `reduce_run()` retries it. None while another proposal is open (a
-#' date move moves the pin itself), while the release list is unsettled,
-#' or when there is no release for this R at that date (the row says so).
+#' until `reduce_run()` retries it. None while the release list is
+#' unsettled, or when there is no release for this R at that date (the row
+#' says so). A preview already open (one taken in safe preview, say) waits
+#' for the move, as one asked for during it does (`hold_preview()`, #323):
+#' left open, it kept the move from being proposed while the old pin's
+#' library installed.
 propose_bioc_move <- function(state) {
   p <- state$packages
   header <- state$file$header
-  if (!isTRUE(state$allowed) || isTRUE(state$read_only) || !is.null(p$proposal) ||
+  if (!isTRUE(state$allowed) || isTRUE(state$read_only) || identical(p$proposal$kind, "bioc") ||
       isTRUE(p$bioc_move_tried) || is.na(header$bioc_version) || is.na(header$snapshot) ||
       !lock_has_bioc(state$file$lock) || releases_unsettled(p, header$snapshot)) {
     return(state)
   }
   if (is.na(bioc_move_target(header, state$options$r, releases_at(p, header$snapshot)))) return(state)
+  # A request already held is newer than the open preview: it wins.
+  if (!is.null(p$proposal) && is.null(p$held)) p$held <- preview_event(p$proposal)
   p$proposal <- new_proposal(header$snapshot, apply = TRUE, kind = "bioc")
   p$bioc_move_tried <- TRUE
   state$packages <- p
@@ -1190,20 +1209,44 @@ waiting_cells <- function(state) {
     intersect(direct[[id]], state$graph$cells[[id]]$attaches)
   }), use.names = FALSE))
   unknown <- setdiff(unknown, names(state$graph$exports))
+  # One vectorised pass over every candidate cell's references, not a
+  # `setdiff()` against base R's thousands of names per cell (#258): this
+  # runs on every event while a cell waits for an install.
   if (length(unknown) > 0) {
-    edges <- state$graph$edges
-    known <- base_names()
-    for (id in setdiff(runnable_ids, names(direct))) {
-      refs <- state$graph$cells[[id]]$references
-      if (length(refs) == 0) next
-      unresolved <- setdiff(refs, c(edges$name[edges$from == id], known))
-      if (length(unresolved) > 0) direct[[id]] <- unknown
+    ids <- setdiff(runnable_ids, names(direct))
+    refs <- lapply(ids, function(id) state$graph$cells[[id]]$references)
+    owner <- rep(ids, lengths(refs))
+    refs <- unlist(refs, use.names = FALSE)
+    if (length(refs) > 0) {
+      edges <- state$graph$edges
+      keep <- !(refs %in% base_names()) &
+        !(paste(owner, refs, sep = "\r") %in% paste(edges$from, edges$name, sep = "\r"))
+      for (id in unique(owner[keep])) direct[[id]] <- unknown
     }
   }
 
+  # A waiting cell's downstream waits for the same packages, taking those of
+  # the first waiting cell (in `direct`'s order) that reaches it. One walk
+  # for all of them: a cell already reached needs no second visit, since
+  # everything below it was reached then too (#258).
+  # Each walk's new cells are added in run order, as `downstream()` gives them.
   out <- direct
+  seen <- new.env(hash = TRUE)
   for (id in names(direct)) {
-    for (d in downstream(state$graph, id, transitive = TRUE)) {
+    assign(id, TRUE, envir = seen)
+    reached <- character()
+    todo <- id
+    while (length(todo)) {
+      i <- todo[[1]]
+      todo <- todo[-1]
+      for (d in state$graph$downstream[[i]]) {
+        if (exists(d, envir = seen, inherits = FALSE)) next
+        assign(d, TRUE, envir = seen)
+        reached <- c(reached, d)
+        todo <- c(todo, d)
+      }
+    }
+    for (d in run_order(state$graph, reached)) {
       if (is.null(out[[d]])) out[[d]] <- direct[[id]]
     }
   }
@@ -1227,6 +1270,13 @@ reduce_index_fetched <- function(state, event) {
   list(state = state, effects = list(), reply = NULL)
 }
 
+#' The date part of each repo key (`"cran/2026-10-01"` -> `"2026-10-01"`;
+#' `NA` for a key with none).
+key_date <- function(keys) {
+  vapply(strsplit(keys, "/", fixed = TRUE), function(p) if (length(p) >= 2) p[[2]] else NA_character_,
+         character(1))
+}
+
 reduce_index_failed <- function(state, event) {
   slot <- state$packages$indexes[[event$key]]
   if (is.null(slot) || !identical(slot$status, "fetching")) {
@@ -1240,10 +1290,20 @@ reduce_index_failed <- function(state, event) {
   # `unpublished` only from yesterday to tomorrow in UTC
   # (`may_be_unpublished()`), so this stops by the day before yesterday,
   # and then the failure shows; a date further ahead fails at once.
+  #
+  # The same for one of Bioconductor's indexes at the notebook's date,
+  # which Package Manager publishes days after CRAN's (#282): the whole
+  # date moves back, so CRAN and Bioconductor resolve at one date. Its
+  # other Bioconductor indexes at the old date are dropped too, so their
+  # answers are ignored. `may_be_unpublished()` gives Bioconductor a few
+  # days more before it stops.
   if (isTRUE(event$unpublished) && nrow(state$file$lock$entries) == 0 &&
       !is.null(header$snapshot) && !is.na(header$snapshot) &&
-      identical(event$key, repo_key("cran", header$snapshot))) {
-    state$packages$indexes[[event$key]] <- NULL
+      identical(key_date(event$key), header$snapshot) &&
+      (identical(event$key, repo_key("cran", header$snapshot)) || is_bioc_key(event$key))) {
+    keys <- names(state$packages$indexes)
+    drop <- keys[keys == event$key | (is_bioc_key(keys) & key_date(keys) == header$snapshot)]
+    for (k in drop) state$packages$indexes[[k]] <- NULL
     state$file$header$snapshot <- format(as.Date(header$snapshot) - 1, "%Y-%m-%d")
     return(list(state = state, effects = list(), reply = NULL))
   }
@@ -1424,7 +1484,49 @@ reduce_approve_install <- function(state, event) {
 #' the user asking to preview again (the same "I want this to work now" as
 #' `ev_run()` retrying a failed library or index, reduce_run()) is exactly
 #' when a retry belongs.
+#'
+#' Waits while a Bioconductor move is pending (`hold_preview()`, #323).
 reduce_preview_date <- function(state, event) {
+  if (bioc_move_pending(state)) return(hold_preview(state, event))
+  list(state = preview_date_now(state, event), effects = list(), reply = TRUE)
+}
+
+#' A preview asked for while a Bioconductor move is pending
+#' (`bioc_move_pending()`) waits for it (#323): replacing the move would
+#' drop it for the session (it is proposed once), and with nothing pending
+#' the old pin's library would install, building every Bioconductor
+#' package from source on this R. `held` keeps the latest such request,
+#' and `schedule_packages()` makes it once the move has applied or failed
+#' (`replay_held()`). Reply: `TRUE`, as the request itself replies.
+hold_preview <- function(state, event) {
+  state$packages$held <- event
+  list(state = state, effects = list(), reply = TRUE)
+}
+
+#' The request `held` for a Bioconductor move, made now that the move is
+#' over. Returns `list(state, effects)`.
+replay_held <- function(state) {
+  event <- state$packages$held
+  state$packages$held <- NULL
+  # The reply is dropped: a held request has passed its refusals already
+  # (they come before the hold), and the move keeps the lock's CRAN
+  # entries, so nothing replayed here is refused today. A refusal added
+  # after the hold would be lost, so keep them before it.
+  r <- if (identical(event$type, "preview_update")) reduce_preview_update(state, event) else reduce_preview_date(state, event)
+  list(state = r$state, effects = r$effects)
+}
+
+#' The request that would make date proposal `prop` again: its package
+#' update, or its date as asked for.
+preview_event <- function(prop) {
+  u <- prop$update
+  if (!is.null(u)) return(event("preview_update", NA, name = u$name, version = u$version, today = u$today))
+  event("preview_date", NA, date = prop$asked %||% prop$date, apply = isTRUE(prop$apply))
+}
+
+#' `reduce_preview_date()`'s preview, made now: the proposal for
+#' `event$date` replaces any other. Returns the state.
+preview_date_now <- function(state, event) {
   date_header <- state$file$header
   date_header$snapshot <- event$date
   date_header$bioc_version <- NA_character_
@@ -1448,7 +1550,7 @@ reduce_preview_date <- function(state, event) {
 
   }
   state$packages$proposal <- new_proposal(event$date, apply = isTRUE(event$apply))
-  list(state = state, effects = list(), reply = TRUE)
+  state
 }
 
 #' The date that puts `name` at `version` (`NULL`: the newest), from
@@ -1494,7 +1596,8 @@ update_tries <- 3L
 #' packages have no CRAN dates. With CRAN's release dates not yet known,
 #' fetches them first (the proposal waits with status `"dates"`); then
 #' `start_update()` turns the version into a date and previews that date
-#' as `preview_date()` does. Reply: `TRUE`.
+#' as `preview_date()` does. Waits while a Bioconductor move is pending
+#' (`hold_preview()`). Reply: `TRUE`.
 reduce_preview_update <- function(state, event) {
   entries <- state$file$lock$entries
   row <- if (is.null(entries)) integer() else which(entries$name == event$name)
@@ -1506,6 +1609,7 @@ reduce_preview_update <- function(state, event) {
     return(list(state = state, effects = list(),
                 reply = refused(sprintf("%s comes from %s, not CRAN", event$name, entries$source[[row]]))))
   }
+  if (bioc_move_pending(state)) return(hold_preview(state, event))
   update <- list(name = event$name, version = event$version, from = entries$version[[row]],
                  today = event$today)
   effects <- list()
@@ -1543,7 +1647,7 @@ start_update <- function(state, update) {
 }
 
 preview_update_at <- function(state, date, update) {
-  state <- reduce_preview_date(state, list(date = format(date, "%Y-%m-%d"), apply = FALSE))$state
+  state <- preview_date_now(state, list(date = format(date, "%Y-%m-%d"), apply = FALSE))
   state$packages$proposal$update <- update
   state
 }
@@ -1599,8 +1703,15 @@ reduce_cran_releases_failed <- function(state, event) {
 }
 
 #' Drop the current preview without applying it (the in-tab question's
-#' Cancel, `ember_cancel_update`). A no-op if there is none.
+#' Cancel, `ember_cancel_update`). A no-op if there is none. A pending
+#' Bioconductor move isn't a preview, so it stays (#323); a preview held
+#' for it is dropped instead.
 reduce_cancel_preview <- function(state, event) {
+  if (!is.null(state$packages$held)) state$packages$held <- NULL
+  prop <- state$packages$proposal
+  if (!is.null(prop) && identical(prop$kind, "bioc") && !identical(prop$status, "failed")) {
+    return(list(state = state, effects = list(), reply = NULL))
+  }
   state$packages$proposal <- NULL
   list(state = state, effects = list(), reply = NULL)
 }
@@ -1649,6 +1760,31 @@ reduce_set_date <- function(state, event) {
   list(state = ap$state, effects = ap$effects, reply = changes)
 }
 
+#' Why Bioconductor couldn't be looked in, or `character()`. A name CRAN
+#' lacks, resolved while Bioconductor couldn't be looked in (an index of its
+#' failed, or no release because the release list couldn't be fetched), may
+#' well be there: the package view calls it `"lookup_failed"` and a cell's
+#' error says the same (`unlooked_message()`), rather than "not found in any
+#' repository" (#264, #282). Running again fetches what failed and resolves
+#' again (`reduce_run()`). With the release lookup turned off
+#' (`ember_repos(bioc_config = NA)`) there is nothing to retry, and the name
+#' stays `"not_found"`.
+unlooked_reason <- function(state) {
+  problems <- state$packages$problems
+  if (is.null(problems) || nrow(problems) == 0) return(character())
+  unlooked <- problems$message[problems$kind == "index_unavailable" & is.na(problems$package)]
+  lookup_on <- !is.null(state$options$repos$bioc_config) && !is.na(state$options$repos$bioc_config)
+  gap <- releases_gap_message(state$packages, state$file$header$snapshot)
+  if (lookup_on && !is.null(gap) && any(problems$kind == "bioc_unavailable")) unlooked <- c(unlooked, gap)
+  if (length(unlooked) > 0) unlooked[[1]] else character()
+}
+
+#' What `unlooked_reason()` makes of a name not found.
+unlooked_message <- function(pkg, reason) {
+  sprintf("%s isn't on CRAN at this date, and Ember couldn't look in Bioconductor (%s); running again tries again",
+          pkg, reason)
+}
+
 #' `wk_done` with `report$error$package` set (the worker saw R's
 #' `packageNotFoundError`, which carries the name, so this is not a message
 #' match and works in every locale):
@@ -1687,7 +1823,10 @@ missing_package_error <- function(state, pkg) {
              (identical(probs$kind[[i]], "not_found") && identical(probs$package[[i]], pkg)),
           seq_len(nrow(probs)))
     } else NULL
-    msg <- if (!is.null(row)) {
+    unlooked <- unlooked_reason(state)
+    msg <- if (!is.null(row) && identical(probs$kind[[row]], "not_found") && length(unlooked) > 0) {
+      sprintf("there is no package called '%s': %s", pkg, unlooked_message(pkg, unlooked))
+    } else if (!is.null(row)) {
       sprintf("there is no package called '%s': %s", pkg, probs$message[[row]])
     } else {
       sprintf("there is no package called '%s'", pkg)
@@ -2001,24 +2140,10 @@ packages_view <- function(state) {
 
   problems <- p$problems
   gap <- releases_gap_message(p, state$file$header$snapshot)
-  # A name CRAN lacks, resolved while Bioconductor couldn't be looked in
-  # (an index of its failed, or no release because the release list
-  # couldn't be fetched), may well be there: it is `"lookup_failed"`,
-  # saying why, rather than "not found in any repository" (#264). Running
-  # again fetches what failed and resolves again (`reduce_run()`). With the
-  # release lookup turned off (`ember_repos(bioc_config = NA)`) there is
-  # nothing to retry, and the name stays `"not_found"`.
-  unlooked <- character()
-  lookup_on <- !is.null(state$options$repos$bioc_config) && !is.na(state$options$repos$bioc_config)
-  if (!is.null(problems) && nrow(problems) > 0) {
-    unlooked <- problems$message[problems$kind == "index_unavailable" & is.na(problems$package)]
-    if (lookup_on && !is.null(gap) && any(problems$kind == "bioc_unavailable")) unlooked <- c(unlooked, gap)
-  }
+  unlooked <- unlooked_reason(state)
   if (length(unlooked) > 0) {
     nf <- problems$kind == "not_found"
-    problems$message[nf] <- sprintf(
-      "%s isn't on CRAN at this date, and Ember couldn't look in Bioconductor (%s); running again tries again",
-      problems$package[nf], unlooked[[1]])
+    problems$message[nf] <- unlooked_message(problems$package[nf], unlooked)
   }
   not_found_df <- empty_packages_df()
   if (!is.null(problems) && nrow(problems) > 0) {

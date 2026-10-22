@@ -189,9 +189,16 @@ The reset is a few lines of C, so the server package has compiled code from
 the start. The server polls the worker socket from its `later` loop: every 5 ms while
 it waits on the worker (a run, a query, or traffic in the last second),
 every 250 ms while an install or index job runs, and every 2 s otherwise. A
-crash during a run is noticed within 5 ms; one while idle, or an edit to a
-watched file, within about 2 s. At 250 ms an idle notebook cost the server
-0.7% of a core and 4 wake-ups a second; at 2 s it is about 0.12% (#46).
+crash during a run is noticed within 5 ms, and an edit to a watched file
+within about 2 s. At 250 ms an idle notebook cost the server 0.7% of a core
+and 4 wake-ups a second; at 2 s it is about 0.12% (#46). On macOS and Linux
+the server also waits on the worker's stdout pipe (`later::later_fd()`), which
+closes when the worker ends, so a crash while idle is noticed at once too
+(#209). The slow poll stays: a process a cell started with `system()` holds
+the pipe open after the worker has gone, and watched files need it. On
+Windows a crash while idle is noticed within about 2 s, since its pipes can't
+be waited on. An idle worker sends nothing on its socket, so that needs no
+wake of its own.
 It must read a large worker message in pieces rather than all at once, so a
 big output can't stall it.
 
@@ -215,10 +222,11 @@ each such child in a job object that ends it once the worker ends. processx
 (and so callr) puts its children in a job object of its own that does the
 same, so the worker clears that one setting on processx's job after every
 run, before it says the run is done, and from a thread every half second
-for a cell still running (src/children.c). A processx or callr child then
-outlives a restart and a killed server, as on Unix. Only the first one a
-worker starts can still end with it, if the worker is killed mid-run within
-half a second of starting it; later ones join a job already released.
+for a cell still running (src/children.c). processx makes that job only as
+it starts its first child, so when processx loads in the worker, the worker
+has it start one that only exits (System32's `cmd /d /c exit`) and
+releases the job at once (#235). A processx or callr child then outlives a
+restart and a killed server, as on Unix, the first one included.
 
 On every system the worker also drops the `PROCESSX_<id>` marker it
 inherits as the server's process tree (`cleanup_tree`). Otherwise a cell's
@@ -407,12 +415,16 @@ as something to avoid rather than something they prevent. R's copy-on-modify
 makes the same code a visible redefinition, so the rule catches it.
 
 Only reference objects change in place in R (environments, R6, reference
-classes, data.table's `:=` and `set*()`). Those stay untracked, as mutation
+classes, data.table's `:=` and `set*()`, and a closure's environment, such
+as a function factory's counter or a memoised function's cache). Those stay untracked, as mutation
 is in Pluto and marimo; the user docs say so and the engine warns when a
 cell modifies one defined elsewhere. Before each run the worker keeps a
 fingerprint of every environment another cell defines (its bindings, and
 those of the environments inside it, three levels down, which reaches an
-R6 object's private fields). If a run changes one without rebinding its
+R6 object's private fields), and of the environment each function another
+cell defines was made in, unless that is the global environment or a
+package's (#333). An S4 generic is skipped: it caches the methods it
+dispatched to in its own environment. If a run changes one without rebinding its
 name, the cell shows a note: "Changed `cnt` in place, which another cell
 defines, so the cells that read it don't rerun." Taking the fingerprint
 forces no promise and calls no active binding. Namespaces are skipped, and
@@ -874,10 +886,14 @@ rest:
    translated message gets no offer. The engine
    never installs such a package by itself.
 2. Resolve each against CRAN and Bioconductor at the notebook's snapshot
-   date. GitHub and r-universe packages can't be inferred; the user records
-   them in the header's `[sources]` as `github:user/repo` or
-   `universe:name`, and the Packages tab offers to add one on a name that
-   isn't found.
+   date. GitHub and r-universe packages can't be inferred. The code names
+   them the way R users already do, with an install call
+   (`remotes::install_github("user/repo")`, `install.packages("pkg", repos
+   = "https://name.r-universe.dev")`), and Ember records the source in the
+   header's `[sources]` as `github:user/repo` or `universe:name`; the user
+   can also add one there, and the Packages tab offers to on a name that
+   isn't found. Install calls don't run in Ember: the lock answers them
+   (packages.md, "Install calls").
 3. Update the lock and install into the notebook's library in a subprocess.
    The worker restarts only if a package it has already loaded changed
    version; a new package is just loaded.

@@ -729,6 +729,25 @@ test_that("worker_query() answers when idle, NULL at once while busy, NULL in pr
   expect_identical(length(ls(nb$queries)), 0L)
 })
 
+test_that("a worker that dies while idle is noticed at once, not at the next slow poll (#209)", {
+  # The wake is the worker's stdout pipe closing; Windows pipes can't be
+  # waited on, so there the poll still notices it.
+  skip_on_os("windows")
+  path <- write_session_notebook(list(S = cell(""), A = cell("x <- 1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, NULL, wait = TRUE, timeout = 20)
+  expect_true(watch_worker_output(nb))
+
+  # Nothing would poll for an hour: only the pipe can bring it forward.
+  cancel_poll(nb)
+  schedule_poll(nb, 3600)
+  nb$proc$kill()
+  expect_true(wait_for(nb, function(s) identical(s$process, "stopped"), timeout = 15))
+  expect_null(nb$proc)
+  expect_null(nb$output_watch)
+})
+
 test_that("a dependent of a failed cell runs on its own and reruns once the ancestor is fixed (ui-3 13)", {
   cells <- list(S = cell(""), A = cell('a <- 1; stop("boom")'), B = cell("a + 1"), C = cell('exists("a")'))
   path <- write_session_notebook(cells)
@@ -970,6 +989,41 @@ test_that("on Windows a busy cell's own processx and callr children outlive a ki
   expect_true(wait_pid_gone(pids[1]))  # the worker
   expect_true(pid_running(pids[2]))    # processx's
   expect_true(pid_running(pids[3]))    # callr's
+})
+
+test_that("on Windows a cell's first processx child outlives a server killed right after it starts (#235)", {
+  skip_on_os(c("mac", "linux", "solaris"))
+  use_installed_ember()
+  pidfile <- normalizePath(tempfile("cell-pids-"), winslash = "/", mustWork = FALSE)
+  rscript <- normalizePath(file.path(R.home("bin"), "Rscript.exe"), winslash = "/")
+  libs <- paste(deparse(normalizePath(.libPaths(), winslash = "/")), collapse = "")
+  # The worker's first processx child, and the cell stays busy: the server
+  # is killed as soon as the pids are written, well inside the half second
+  # the worker's thread takes to find a job made only now.
+  path <- write_session_notebook(list(S = cell(""), A = unscanned_cell("a", sprintf(paste0(
+    ".libPaths(c(%1$s, .libPaths())); ",
+    "a <- processx::process$new('%2$s', c('-e', 'Sys.sleep(300)')); ",
+    "writeLines(as.character(c(Sys.getpid(), a$get_pid())), '%3$s.tmp'); ",
+    "file.rename('%3$s.tmp', '%3$s'); Sys.sleep(300)"),
+    libs, rscript, pidfile))))
+  code <- paste0("library(ember); nb <- open_notebook(", deparse(path), "); run_cells(nb, 'A'); ",
+                 "repeat later::run_now(1)")
+  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
+                                  env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
+                                  stdout = "|", stderr = "2>&1")
+  on.exit(if (server$is_alive()) server$kill(), add = TRUE)
+  deadline <- Sys.time() + 60
+  while (!file.exists(pidfile) && server$is_alive() && Sys.time() < deadline) Sys.sleep(0.01)
+  # read_all_output() waits for the server to end, so a server still
+  # running without the file is ended first.
+  if (!file.exists(pidfile) && server$is_alive()) server$kill()
+  expect_true(file.exists(pidfile), info = server$read_all_output())
+  server$kill()
+  pids <- as.integer(readLines(pidfile))
+  on.exit(for (p in pids) tools::pskill(p), add = TRUE)
+
+  expect_true(wait_pid_gone(pids[1]))  # the worker
+  expect_true(pid_running(pids[2]))    # processx's
 })
 
 test_that("what a busy cell started with system() ends when the server is killed (#150)", {

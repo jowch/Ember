@@ -7,7 +7,7 @@
 // discovery, by not passing `executablePath` at all. Mirrors
 // spikes/server-worker/browser3.mjs's local-Mac path.
 
-import { chromium } from "playwright-core";
+import { chromium, webkit } from "playwright-core";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,7 +24,11 @@ function resolveExecutable() {
   return existsSync(mac) ? mac : undefined;
 }
 
+/** `EMBER_BROWSER=webkit` runs the suite in Playwright's WebKit instead
+ * (on Linux, the WebKitGTK engine Endeavor's notebook pane uses). Only the
+ * UI sweep runs there in CI; the rest of the suite assumes Chromium. */
 export async function launchBrowser() {
+  if (process.env.EMBER_BROWSER === "webkit") return webkit.launch({ headless: true });
   const executablePath = resolveExecutable();
   return chromium.launch({ executablePath, headless: true });
 }
@@ -66,6 +70,24 @@ export async function openNotebook(page, origin, secret, notebookPath) {
 }
 
 export function cellSelector(id) { return `pluto-cell[id="${id}"]`; }
+
+/** Wait until the worker is ready and no cell is running or queued. */
+export async function waitIdle(page) {
+  await page.waitForFunction(() => {
+    const nb = window.editor_state?.notebook;
+    return nb?.process_status === "ready" && Object.values(nb.cell_results).every((r) => !r.running && !r.queued);
+  }, null, { timeout: 30000 });
+}
+
+/** Hover a cell (at `part` inside it, if given) and wait until the cell is
+ * :hover, which is what lets its run button and menu take the pointer
+ * (cells.css). Call it once the cells above have stopped changing size: a
+ * run's outputs arriving after the hover move the cell out from under a
+ * pointer that doesn't move (#271). */
+export async function hoverCell(page, id, part = "") {
+  await page.locator(part ? `${cellSelector(id)} ${part}` : cellSelector(id)).hover();
+  await page.waitForFunction((sel) => document.querySelector(sel)?.matches(":hover"), cellSelector(id), { timeout: 15000 });
+}
 
 /** Click into a cell's editor and select-all + type new code, the way a
  * person retyping a cell would (CellInput's CodeMirror instance). */

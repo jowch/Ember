@@ -186,8 +186,30 @@ listen_for_interrupts <- function() {
     children_running <<- getNativeSymbolInfo("C_cell_children_running", dll)
     keeping_children <<- isTRUE(tryCatch(.Call(getNativeSymbolInfo("C_keep_cell_children", dll)),
                                          error = function(e) FALSE))
+    setHook(packageEvent("processx", "onLoad"), function(pkgname, pkgpath) release_processx_job())
     isTRUE(.Call(getNativeSymbolInfo("C_interrupt_listen", dll)))
   }, error = function(e) FALSE))
+}
+
+#' On Windows, as processx loads: have it make its job object now, with a
+#' child that only exits, and release the job at once, so a cell's first
+#' processx or callr child joins a job already released and outlives a
+#' worker killed right after starting it (#235). processx makes the job
+#' only as it starts a child, and Windows says nothing when it does, so the
+#' half-second thread in src/children.c could miss that first child.
+#' System32's cmd with `/d`, so no AutoRun command (conda's, say) runs
+#' first. The job exists once the child has started, so a child that hangs
+#' anyway is killed after two seconds and the job released all the same.
+#' Silent: an error or warning here never reaches the cell, and the job is
+#' released whatever happened (the thread is left for a start that failed).
+release_processx_job <- function() {
+  tryCatch({
+    cmd <- file.path(Sys.getenv("SystemRoot", "C:/Windows"), "System32", "cmd.exe")
+    p <- processx::process$new(cmd, c("/d", "/c", "exit"), cleanup = TRUE, windows_hide_window = TRUE)
+    p$wait(2000)
+    if (p$is_alive()) p$kill()
+  }, warning = function(w) NULL, error = function(e) NULL, finally = .Call(release_children))
+  invisible(NULL)
 }
 
 #' Drop an interrupt still pending as a run starts: it is late, for the
@@ -218,8 +240,9 @@ main <- function() {
   drop_processx_marker()
   listening <- listen_for_interrupts()
   port <- as.integer(commandArgs(trailingOnly = TRUE)[1])
+  # No-delay: see write_frame() in R/shell.R.
   con <<- socketConnection("127.0.0.1", port, blocking = TRUE, open = "r+b",
-                           timeout = 60 * 60 * 24 * 365)
+                           timeout = 60 * 60 * 24 * 365, options = "no-delay")
   install_traces()
   install_input_hook()
   # Baseline, not a cell's change: a colour terminal under Rscript has these
@@ -372,8 +395,8 @@ send <- function(msg) {
   on.exit(trace_line("sent", msg$type))
   uninterrupted({
     payload <- serialize(msg, NULL)
-    writeBin(length(payload), con, endian = "big")
-    writeBin(payload, con)
+    # One write: see write_frame() in R/shell.R.
+    writeBin(c(writeBin(length(payload), raw(), endian = "big"), payload), con)
     flush(con)
   })
   invisible()
@@ -432,7 +455,8 @@ trace_line <- function(...) {
 #' attached), formula_misses, columns (see global_columns()), globals (see
 #' summarise_globals()),
 #' changed_in_place (names of other cells' environments, R6 objects and
-#' reference class objects this run changed; env_fingerprint())).
+#' reference class objects this run changed; env_fingerprint()), from_lock
+#' (the packages of the install calls it didn't run, `msg$installs`)).
 #' `error$span` is set only for role "text": the 1-based index of the
 #' failing line (into `inline_spans()`'s rows).
 #'
@@ -454,7 +478,8 @@ run_cell <- function(msg) {
              runtime = NA_real_, created = character(), changed = character(),
              removed = character(), settings = list(), load_notes = list(),
              attached = list(), formula_misses = character(), loaded = character(),
-             globals = list(), changed_in_place = character(), columns = list(), inputs = list())
+             globals = list(), changed_in_place = character(), columns = list(), inputs = list(),
+             from_lock = character())
 
   # `dev`/`console` are closed here (not just at their normal point of use
   # below) so an interrupt landing anywhere in this function -- including
@@ -542,9 +567,18 @@ run_cell <- function(msg) {
           # even when it's an assignment, as in Pluto); an earlier visible
           # value prints to the console when it's made (design.md, "Which
           # values a cell shows").
+          skip <- vapply(msg$installs %||% list(), function(s) as.integer(s$index), integer(1))
           for (k in seq_along(exprs)) {
             at <- k   # the top-level expression index; error$line reads its srcref
             datatable_clear_mark()
+            if (k %in% skip) {
+              # An install call: the lock already answers it, so it doesn't
+              # run (packages.md, "Install calls"). The cell says so; ""
+              # stands for a call whose packages couldn't be read.
+              s <- msg$installs[[match(k, skip)]]
+              rc$from_lock <- union(rc$from_lock, if (length(s$packages)) as.character(s$packages) else "")
+              next
+            }
             input_expect <<- input_expectation(msg$inputs, k, exprs[[k]])
             r <- withVisible(eval(exprs[[k]], globalenv()))
             # A bound input's value changes without the cell rerunning, so
@@ -1108,9 +1142,10 @@ ENV_FINGERPRINT_ONE_MAX <- 1000L
 
 #' Fingerprints of the reference-valued globals in `before` (a
 #' `snapshot_globals()` result) named in `names`: a named list of
-#' `list(env, print)`. Environments, R6 objects, reference class objects
-#' and data.tables are the values a cell can change without rebinding the
-#' name, so `compare_globals()` can't see it (#167, #172). Package
+#' `list(env, print)`. Environments, R6 objects, reference class objects,
+#' data.tables and closures' environments are the values a cell can change
+#' without rebinding the name, so `compare_globals()` can't see it (#167,
+#' #172, #333). Package
 #' namespaces and the global environment are skipped, and so is an
 #' environment too big to read.
 env_fingerprints <- function(before, names) {
@@ -1129,9 +1164,19 @@ env_fingerprints <- function(before, names) {
 
 #' The fingerprint of one global, or `NULL` when it isn't a value that
 #' changes in place (or is too big to read): an environment's from
-#' `env_fingerprint()`, a data.table's from `datatable_fingerprint()`.
+#' `env_fingerprint()`, a data.table's from `datatable_fingerprint()`, and a
+#' closure's from its enclosing environment's.
 ref_fingerprint <- function(v, budget) {
   if (inherits(v, "data.table")) return(datatable_fingerprint(v))
+  # A closure keeps its state in the environment it was made in, which a
+  # call changes in place (a function factory's `n <<- n + 1`, a memoised
+  # function's cache; #333). One made at top level or in a package has a
+  # shared environment, skipped below. An S4 generic caches the methods it
+  # dispatched to in its own environment when called, which isn't a change.
+  if (is.function(v) && !is.primitive(v)) {
+    if (isS4(v)) return(NULL)
+    v <- environment(v)
+  }
   if (!is.environment(v) || is_shared_env(v) || is_python_object(v)) return(NULL)
   env_fingerprint(v, budget)
 }

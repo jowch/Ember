@@ -784,6 +784,22 @@ await_reply <- function(ws, type) {
   replies
 }
 
+test_that("a failed subprocess answers with its stderr and logs its exit status (#327)", {
+  cmd <- list(command = file.path(R.home("bin"), "Rscript"),
+              args = c("--vanilla", "-e", "cat('no du here', file = stderr()); quit(status = 3)"),
+              env = "current")
+  got <- NULL
+  logged <- character()
+  withCallingHandlers({
+    answer_from_subprocess(cmd, function(m) got <<- m, function(x) x, "could not measure disk use")
+    # A guard against a hang, not a timing check.
+    deadline <- Sys.time() + 60
+    while (is.null(got) && Sys.time() < deadline) later::run_now(timeout = 0.5)
+  }, message = function(m) { logged <<- c(logged, conditionMessage(m)); invokeRestart("muffleMessage") })
+  expect_equal(got, list(error = "no du here"))
+  expect_match(logged, "ember: could not measure disk use (exit status 3): no du here", fixed = TRUE, all = FALSE)
+})
+
 test_that("ember_clean_up counts first, and deletes only when asked with dry_run = false (#128)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1")))
   cache <- tempfile("ember-pkg-cache-")

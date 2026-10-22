@@ -156,13 +156,14 @@ Any event that changes what the notebook wants reaches the same code, so no hand
 
 - The index cache is a dated index saved as RDS forever, plus a memo per process so sessions share one R object. The exception is an index dated yesterday or later in UTC (`index_may_change()`, #39): Package Manager may still add to that day's snapshot. Opening still reads the saved copy (fetching a CRAN index costs about 11 s), but the slot is marked `provisional` (the shell judges the date; the core has no clock), and a date preview fetches it again: the preview asks for every index it fetches `fresh`, and the shell skips the saved copy of a `fresh` key whose date may change, whether or not the session held it. That fetch replaces the saved copy and the memo, so sessions opened later read it. When it fails (offline), the saved copy stands in.
 - A new notebook is dated today, and Package Manager publishes a day's snapshot hours after that day starts in UTC. Until then the date's index is a 404, and east of UTC that is most of a local morning (#162). `fetch_index_main()` says so when the server answers 404 (`index_not_published()`), and the shell passes `unpublished` on `index_failed` for a date from yesterday to tomorrow in UTC (`may_be_unpublished()`). A date further ahead is no clock's today, so its 404 is a plain failure. While the lock is empty, nothing came from that date, so the core moves the notebook's date back a day and resolves there. The saved file then carries the date its packages came from. It stops at the day before yesterday in UTC, where the failure shows as `index_unavailable`. Offline, the fetch fails without a 404, so the date stays today; the next fetch once online moves it if the snapshot still isn't out. A notebook with locked packages keeps its date: its lock was resolved from that date's index, so the date was published. A date preview of a day that isn't published yet moves back the same way: "Update all" is a preview of today, so early in a day it offers the newest published date instead of failing with no changes. The proposal keeps the date it was asked for as `asked`, and its `date` is the one it would move to.
+- Package Manager publishes a day's Bioconductor snapshot about two days after CRAN's (#282), so a notebook dated today can find CRAN's index and get a 404 from Bioconductor's. For a Bioconductor key `may_be_unpublished()` covers three days back to tomorrow in UTC, and while the lock is empty a 404 for one of Bioconductor's indexes at the notebook's date moves the whole date back a day as CRAN's does, so both resolve at one date. With packages locked the date stays, and the failed index shows as `index_unavailable`; a cell that needs a name CRAN lacks says Bioconductor couldn't be looked in (`unlooked_message()`, as the Packages tab does since #264) rather than that the package is in no repository.
 - Libraries are built in a staging folder and then renamed into place. A process that loses the race deletes its copy, so no locks are needed.
 - The renv cache is Ember's own, so `clean()` can never break the user's renv projects.
 - `clean()` and `ember::run()` sit outside the core.
 
 One process-wide table, `jobs`, lets two sessions that want the same index or library share one subprocess. It holds processes and subscribers and makes no decisions.
 
-**Jobs end with the server.** A job is killed when its last session leaves (the session closed or cancelled the install), and the server closes its notebooks on the way out, including on Ctrl-C. If the server is killed instead, processx's supervisor ends the job, and on Unix the job runs under `sh`, which takes the job's children (`R CMD INSTALL`, the compiler) with it (`job_process()`, #141). On Windows there is no `sh`, and none is needed: R's `system()` and `system2()` start each child in a job object that ends it once the R process that started it ends. So when processx's job object, the supervisor or a cancel ends the job's process, `R CMD INSTALL` and the compiler go too. That covers children started through `system()`/`system2()`, as renv starts `R CMD INSTALL`, or through processx; a child started some other way isn't covered (#148). A killed install leaves only its staging folder, which `clean()` removes.
+**Jobs end with the server.** A job is killed when its last session leaves (the session closed or cancelled the install), and the server closes its notebooks on the way out, including on Ctrl-C. If the server is killed instead, processx's supervisor ends the job, and on Unix the job runs under `sh`, which takes the job's children (`R CMD INSTALL`, the compiler) with it (`job_process()`, #141). On Windows there is no `sh`, and none is needed: R's `system()` and `system2()` start each child in a job object that ends it once the R process that started it ends. So when processx's job object, the supervisor or a cancel ends the job's process, `R CMD INSTALL` and the compiler go too. That covers children started through `system()`/`system2()`, as renv starts `R CMD INSTALL`, or through processx; a child started some other way isn't covered (#148). A killed install leaves only its staging folder, which `clean()` removes. A library is deleted manifest first (`delete_library()`, #152), so a delete cut short leaves a folder that reads as no library: the next install replaces it, and `clean()` removes it once it is a day old.
 
 **renv comes from the server's own library** as an Imports dependency. Only the installer subprocess loads it, never the server or the worker.
 
@@ -207,6 +208,7 @@ Behind that sit detection, resolution, index caching, library naming, installs, 
    - Bioconductor (`bioc_version`, its index keys, the date-window warning): built, see [Bioconductor](#bioconductor)
    - `[sources]` GitHub as one-row indexes: built, see [GitHub sources](#github-sources)
    - `[sources]` r-universe the same way: built, see [r-universe sources](#r-universe-sources)
+   - install calls name the source: built, see [Install calls](#install-calls) (#79)
    - asking before a large download: built for Bioconductor's annotation and experiment-data packages, see [Large downloads](#large-downloads) (#37). A notice that doesn't stop the install (#19) is not built
    - compiler and system-library checks: built, see [Install checks](#install-checks)
    - old snapshot dates that build from source on a newer R: explained when the build fails, see [Install checks](#install-checks); saying so before the install waits for the install plan
@@ -331,7 +333,11 @@ repositories. Asking before a large download is in
   only the Bioconductor packages at the same date (`resolve_lock(mode =
   "bioc")`, CRAN entries kept) and applies itself, restarting R if a
   loaded package changes. The old pin's library isn't installed while the
-  move is pending. With no release for the running R at that date, the
+  move is pending, or while the release list that decides one is being
+  fetched. A date preview or a package update asked for meanwhile (the
+  page's Update, `preview_date()`, `preview_update()`) waits and is made
+  once the move has applied or failed, and Cancel leaves the move alone
+  (#323): replacing it would drop the move for the session. With no release for the running R at that date, the
   pin stays and the row says so; moving the date (which moves the pin to
   that date's release) is the way out. A move whose index can't be
   fetched keeps the pin, shows a `bioc_move_failed` row, lets the old
@@ -642,6 +648,73 @@ r-universe.
 Not built: guessing the universe for a name that isn't found; a
 universe's own dependencies resolve from CRAN, so a dependency only on
 r-universe needs its own entry.
+
+### Install calls
+
+Built for #79. A package that isn't on CRAN or Bioconductor is named the
+way R users already do it: an install call says where it lives, and
+`library(pkg)` is what fetches it. Nobody has to edit `[sources]`.
+
+```r
+remotes::install_github("lab/mypkg")
+install.packages("emberui", repos = "https://jowch.r-universe.dev")
+library(mypkg)
+```
+
+- **What counts** (`install_calls`, rules.R): `remotes::` or
+  `devtools::install_github("user/repo")`, with `@ref` or `ref =`;
+  `pak::pak()` and `pak::pkg_install()` with `"user/repo"`,
+  `"github::user/repo"` or `"pkg=user/repo"`; `install.packages()` with
+  one r-universe among `repos` (CRAN's own, `cran.r-universe.dev`, isn't
+  one); `BiocManager::install()`, which names no source. `install_github`,
+  `pak`, `pkg_install` and `install.packages` also count bare. Only
+  literal strings are read. The package is the repository's name, or the
+  name before `=` for pak; when it differs from the package's only in
+  case, the wanted name is used.
+- **Where they count.** In a cell's own code, outside function bodies,
+  including inside `if` or a wrapper such as `suppressMessages()`. One in
+  a function or a `source()`d file is an ordinary call. Only a call that
+  is a whole top-level expression is skipped (below), so only its own
+  package (remotes, pak) isn't one the notebook needs; any other runs
+  when it is reached, and its package is locked like any other.
+- **The header stays the record.** Each step writes the sources the code
+  gives, for the packages the notebook wants, into `[sources]`
+  (`declared_sources()`, `sync_sources()`, packages-core.R stage 1). The
+  code wins over a hand-written entry, and the source ops refuse to
+  change a package's entry while an install call names it ("change it
+  there instead"); an entry whose call is gone stays, so deleting the
+  line doesn't move a package. Two calls giving one
+  package different sources are a graph error on their cells
+  (`source_conflict`, "Keep one install call for pkg"), and neither is
+  written: which one is meant is the user's to say. A call in a disabled
+  cell doesn't count.
+- **Ember's own packages are built in** (`builtin_sources`): one there
+  needs no install call, and its source only fills a gap (an entry
+  already in the header stays). The table is empty for now: emberui goes
+  in as `universe:jowch` once that universe builds it, since until then
+  the entry would send `library(emberui)` to a universe without it.
+- **They don't run.** The lock already answers them, and running one would
+  install behind the lock's back into a shared library. The run message
+  lists the top-level install calls (`run_installs()`); the worker skips
+  them and reports their packages, and the cell shows one muted line
+  ("Install calls don't run in Ember: it installs mypkg from the
+  notebook's lock when a cell uses them. To get a newer version, use the
+  Packages tab."). One inside `if` isn't skipped: in the usual
+  `if (!requireNamespace("mypkg")) remotes::install_github(...)` the
+  package is installed from the lock, so the call isn't reached.
+- **`ember::run()` does the same.** It runs a copy of the file with the
+  top-level install calls replaced by `invisible(NULL)`, every other line
+  where it was, from the file's own folder, and says once which packages
+  the lock gives (`without_install_calls()`). The copy is a temporary
+  file, so `commandArgs()` names it, not the notebook. A package missing from the
+  lock still only warns: `run()` doesn't resolve.
+
+Not built: an install call's subdirectory (`"user/repo/pkg"` or
+`subdir =`) or pull request (`"user/repo#12"`), which can't be a source
+yet; it is still skipped. So is `install.packages("pkg.tar.gz", repos =
+NULL)`, a local file the lock can't answer: `library(pkg)` then doesn't
+resolve. The note can be noisy with many such packages; it is one line
+per cell, and to be revisited once in use.
 
 ## Where the direction strains
 

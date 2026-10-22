@@ -1769,6 +1769,37 @@ test_that("a cell that changes another cell's environment in place reports it; r
   expect_length(r$changed_in_place, 0)
 })
 
+test_that("a call that changes a closure's environment reports the closure; calling a top-level function, an S4 generic or a package's doesn't (#333)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  run_and_wait(h, "a", 1L, paste(
+    "counter <- local({ n <- 0L; function() { n <<- n + 1L; n } })",
+    "memo <- (function(f) { cache <- new.env(); function(x) { k <- as.character(x); if (is.null(cache[[k]])) cache[[k]] <- f(x); cache[[k]] } })(sqrt)",
+    "shown <- (function(x) function() x)(42)",
+    "top <- function() 1",
+    "setGeneric('area', function(s) standardGeneric('area'))",
+    "setClass('Sq', representation(w = 'numeric'))",
+    "setMethod('area', 'Sq', function(s) s@w^2)",
+    "setClass('Sq2', contains = 'Sq')",
+    "sd_of <- stats::sd", sep = "\n"))
+  r <- run_and_wait(h, "b", 2L, "counter()")
+  expect_identical(r$status, "ok")
+  expect_identical(r$changed_in_place, "counter")
+  r <- run_and_wait(h, "c", 3L, "memo(4)")
+  expect_identical(r$changed_in_place, "memo")
+  # A second call finds it in the cache, which changes nothing.
+  r <- run_and_wait(h, "c", 4L, "memo(4)")
+  expect_length(r$changed_in_place, 0)
+  # Forcing the promise a factory's argument is kept in isn't a change.
+  r <- run_and_wait(h, "d", 5L, "shown()")
+  expect_length(r$changed_in_place, 0)
+  # Dispatch on a subclass caches the inherited method in the generic's
+  # environment, which isn't a change.
+  r <- run_and_wait(h, "e", 6L, "top()\narea(new('Sq2', w = 2))\nsd_of(1:3)")
+  expect_identical(r$status, "ok")
+  expect_length(r$changed_in_place, 0)
+})
+
 test_that("taking the in-place fingerprint forces no promise, and a big environment is skipped without turning the check off for the others (#167)", {
   h <- worker_harness()
   on.exit(h$close())
@@ -2579,4 +2610,21 @@ test_that("run_cell(): a text cell's error traceback drops the worker's own eval
   expect_identical(r$status, "error")
   expect_identical(r$error$traceback, c("f()", 'stop("boom")'))
   expect_false(any(grepl("line_e|handleSimpleError|eval\\(line_e", r$error$traceback)))
+})
+
+test_that("run_cell(): a top-level install call doesn't run, and the report names its packages (#79)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  m <- run_msg("a", 1L, 'x <- 1\nremotes::install_github("lab/toyD")\ninstall.packages(pkgs)')
+  m$installs <- list(list(index = 2L, packages = "toyD"), list(index = 3L, packages = character()))
+  h$send(m)
+  r <- wait_for_done(h)
+  # remotes isn't installed and `pkgs` doesn't exist: either would fail.
+  expect_identical(r$status, "ok")
+  expect_null(r$output)
+  expect_identical(r$from_lock, c("toyD", ""))
+  expect_identical(r$created, "x")
+
+  r <- run_and_wait(h, "b", 2L, "y <- 2")
+  expect_identical(r$from_lock, character())
 })
