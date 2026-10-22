@@ -48,7 +48,10 @@ test("Ctrl+Z in an editor steps back through typing and the cell deleted from it
   await page.keyboard.press("Backspace");
   await page.keyboard.press("Backspace");
   await page.locator(cellSelector("B")).waitFor({ state: "detached", timeout: 10000 });
-  assert.equal(await page.evaluate(focusedCell), "A");
+  // The cursor moves to A once its editor takes the forced focus, which
+  // can land after B is gone.
+  await page.waitForFunction(() => document.activeElement?.closest("pluto-cell")?.id === "A", null, { timeout: 5000 })
+    .catch(async () => assert.equal(await page.evaluate(focusedCell), "A"));
 
   // Type in A after the delete.
   await page.keyboard.type(" # more");
