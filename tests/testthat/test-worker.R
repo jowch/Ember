@@ -2633,7 +2633,7 @@ test_that("a package the library doesn't have is looked up once, until a library
   e <- new.env(parent = baseenv())
   sys.source(worker_script_path(), e)
   lib <- withr::local_tempdir()
-  withr::local_libpaths(lib)
+  withr::local_libpaths(lib, action = "prefix")
   asked <- 0L
   e$requireNamespace <- function(package, ..., quietly = TRUE) { asked <<- asked + 1L; FALSE }
   for (i in 1:5) expect_false(e$has_namespace("notapkg.ember316"))
