@@ -65,10 +65,12 @@ export const export_items = ({ links, item_props, first_index = 0, note_on_items
             onClick=${() => close()}
             onKeyDown=${space_clicks}
         />`,
+        // The extension rule matches R's tools::file_path_sans_ext(), which
+        // names the same file in /notebookexport's Content-Disposition.
         html`<a
             class="ember-menuitem"
             href=${html_url}
-            download=${file_name.replace(/\.[^.]*$/, "") + ".html"}
+            download=${file_name.replace(/\.[A-Za-z0-9]+$/, "") + ".html"}
             ...${item_props(first_index + 1)}
             ...${item("ember-export-html", t("t_export_download_html"), safe_preview ? code_only : t("t_export_download_html_description"), note)}
             onClick=${() => close()}
