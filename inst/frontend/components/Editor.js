@@ -37,6 +37,7 @@ import { ConfirmBeforeLongRuntime, maybe_abort_long_runtime } from "./ConfirmBef
 import { RunTracker, run_started } from "./RunTracker.js"
 import { Settings } from "./Settings.js"
 import { ShortcutsSheet } from "./ShortcutsSheet.js"
+import { keep_view_anchored } from "../common/view_anchor.js"
 
 // This is imported asynchronously - uncomment for development
 // import environment from "../common/Environment.js"
@@ -1378,6 +1379,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
         } else {
             this.connect()
         }
+        keep_view_anchored()
 
         // The Variables tab's name links (VariablesTab.js): scroll to and
         // select the cell that defines a variable.
