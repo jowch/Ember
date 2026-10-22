@@ -1217,6 +1217,19 @@ test_that("running all of a 2000-cell chain grows about linearly, not with the s
   expect_equal(length(step(big, ev_run(NULL, at(1)))$reply$skipped), 0)
 })
 
+test_that("rerunning a chain marks each cell's dependents stale in linear time, not square (#316)", {
+  # Every cell that starts marks all later cells stale again. The walk
+  # looked names up in growing vectors and `union()`ed one cell at a time,
+  # so one step grew with the square of the chain: about 20x from 250 to
+  # 2000 cells (1 s a step at 2000), against about 7x now. Timed against
+  # the smaller chain rather than a fixed budget (helper-perf.R).
+  done <- function(r) function() step(r$state, perf_done(r))
+  r <- time_ratio(done(perf_chain_rerun(2000)), done(perf_chain_rerun(250)), samples = 5L, inner_b = 4L)
+  cat(sprintf("\n[timing] a step during a chain rerun: 2000 cells %.1f ms, 250 cells %.1f ms (%.1fx)\n",
+              1000 * r$a, 1000 * r$b, r$ratio))
+  expect_lt(r$ratio, 12)
+})
+
 test_that("requesting a dependent re-queues its failed ancestor; it runs once the ancestor fails again (ui-3 3)", {
   s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- a")))
   r <- boot(s, "A")
