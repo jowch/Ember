@@ -3,7 +3,8 @@ import { ansi_to_html } from "../imports/AnsiUp.js"
 import { t, th } from "../common/lang.js"
 
 // The console shows its first 60 and last 20 lines, as Pluto shows its first
-// 60 and last 20 logs; a line is a message, a warning or one line of stdout.
+// 60 and last 20 logs; a line is one line of a message, a warning or stdout,
+// and a very long line is cut at LINE_MAX_CHARS.
 // "Show more" reveals the hidden middle 500 lines at a time, so the page only
 // holds a long console when someone asks for it (#350).
 const LOGS_VISIBLE_START = 60
@@ -33,22 +34,36 @@ const group_logs = (logs) =>
         return grouped
     }, [])
 
-/** One row per message or warning and one per line of stdout, so a long print is cut like many messages are. */
+/**
+ * A line longer than this shows its start and a count of the rest: `cat()`
+ * doesn't wrap, so `cat(1:1e6)` is one line of about 7 MB.
+ */
+const LINE_MAX_CHARS = 10000
+
+/** A line's first LINE_MAX_CHARS characters, then how many are left out. An escape cut in half is dropped. */
+const cut_line = (text) =>
+    text.length <= LINE_MAX_CHARS
+        ? text
+        : `${text.slice(0, LINE_MAX_CHARS).replace(/\x1b\[[0-9;]*$/, "")}… ${t("t_log_line_truncated", { count: text.length - LINE_MAX_CHARS })}`
+
+/**
+ * One row per line of every entry, so a long print or a long message is cut
+ * like many short ones are. A row keeps its entry (`of`) and whether it is
+ * the entry's first line, which is where a warning's "Warning in f():" goes.
+ */
 const rows_of = (entries) =>
     entries.flatMap((entry) =>
-        entry.kind === "stdout"
-            ? entry.text
-                  .replace(/\n$/, "")
-                  .split("\n")
-                  .map((text, i) => ({ id: `${entry.id}:${i}`, kind: "stdout", text, call: null }))
-            : [entry]
+        entry.text
+            .replace(/\n$/, "")
+            .split("\n")
+            .map((text, i) => ({ id: `${entry.id}:${i}`, of: entry.id, first: i === 0, kind: entry.kind, call: entry.call, text: cut_line(text) }))
     )
 
-/** Consecutive stdout rows joined back into one entry, so a run of lines is one block, as before the cut. */
-const join_stdout = (rows) =>
+/** Consecutive rows of one entry joined back into one, so an entry's lines are one block, as before the cut. */
+const join_rows = (rows) =>
     rows.reduce((joined, row) => {
         const last = joined[joined.length - 1]
-        if (row.kind === "stdout" && last?.kind === "stdout") {
+        if (row.of === last?.of) {
             last.text += `\n${row.text}`
         } else {
             joined.push({ ...row })
@@ -66,13 +81,14 @@ const AnsiText = ({ text }) => {
 
 const LogLine = ({ entry }) => {
     const text = entry.text.replace(/\n$/, "")
-    if (entry.kind === "warning") {
+    if (entry.kind === "warning" && entry.first) {
         const warning = html`<b>${t("t_warning_word")}</b>`
         const message = html`<${AnsiText} text=${text} />`
         return html`<ember-log class="warning"
             >${entry.call == null ? th("t_warning", { warning, message }) : th("t_warning_in", { warning, call: html`<code>${entry.call}</code>`, message })}</ember-log
         >`
     }
+    // A warning's lines after a cut keep its wash (class "warning"), not its prefix.
     const styled = entry.kind === "message" && ANSI_PATTERN.test(text)
     return html`<ember-log class=${styled ? `${entry.kind} styled` : entry.kind}><${AnsiText} text=${text} /></ember-log>`
 }
@@ -97,16 +113,16 @@ export const Logs = ({ logs, run = null, line_heights, set_cm_highlighted_line, 
         <pluto-logs-container>
             <pluto-logs>
                 ${hidden <= 0
-                    ? join_stdout(rows).map(line)
+                    ? join_rows(rows).map(line)
                     : [
-                          ...join_stdout(rows.slice(0, head)).map(line),
+                          ...join_rows(rows.slice(0, head)).map(line),
                           html`<pluto-log-truncated key="truncated"
                               >${t("t_logs_truncated", { count: hidden })}
                               <button type="button" class="ember-show-more" onClick=${() => set_revealed((n) => n + LOGS_SHOW_MORE_STEP)}>
                                   ${t("t_show_more_items", { count: Math.min(hidden, LOGS_SHOW_MORE_STEP) })}
                               </button></pluto-log-truncated
                           >`,
-                          ...join_stdout(rows.slice(-LOGS_VISIBLE_END)).map(line),
+                          ...join_rows(rows.slice(-LOGS_VISIBLE_END)).map(line),
                       ]}
             </pluto-logs>
         </pluto-logs-container>

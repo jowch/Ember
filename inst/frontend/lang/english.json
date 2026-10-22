@@ -388,6 +388,8 @@
     "t_bonds_static_warning_inner": "Run this notebook",
     "t_logs_truncated_one": "{{count}} line not shown",
     "t_logs_truncated_other": "{{count}} lines not shown",
+    "t_log_line_truncated_one": "{{count}} more character not shown",
+    "t_log_line_truncated_other": "{{count}} more characters not shown",
     "t_warning_word": "Warning",
     "t_warning": "{{warning}}: {{message}}",
     "t_warning_in": "{{warning}} in {{call}}: {{message}}",

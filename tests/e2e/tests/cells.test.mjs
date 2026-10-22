@@ -934,6 +934,31 @@ test("console: a long print shows its first 60 and last 20 lines, and \"Show mor
   assertNoProblems(page);
 });
 
+test("console: one very long line shows its first 10,000 characters, and a long message is cut by its lines (350)", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-long-line.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const logs = `${cellSelector("W")} pluto-logs`;
+  // cat() doesn't wrap: 25,000 characters on one line, then a 200-line message.
+  await setCellCode(page, "W", 'cat(strrep("x", 25000))\nmessage(paste("m", 1:200, collapse = "\\n"))');
+  await page.keyboard.press("Shift+Enter");
+  await page.waitForSelector(`${logs} > pluto-log-truncated`, { timeout: 30000 });
+
+  const stdout = await page.locator(`${logs} > ember-log.stdout`).innerText();
+  assert.equal(stdout, `${"x".repeat(10000)}… 15,000 more characters not shown`);
+  const messages = await page.locator(`${logs} > ember-log.message`).allInnerTexts();
+  assert.equal(messages.length, 2, "the message on either side of the cut");
+  assert.deepEqual(messages[0].split("\n"), Array.from({ length: 59 }, (_, i) => `m ${i + 1}`));
+  assert.deepEqual(messages[1].split("\n"), Array.from({ length: 20 }, (_, i) => `m ${i + 181}`));
+  assert.match(await page.locator(`${logs} > pluto-log-truncated`).innerText(), /^121 lines not shown/);
+
+  assertNoProblems(page);
+});
+
 test("figures: no border, background or filter in either theme; at most the column wide; a default plot is 708px, 14px above the code; fig-width 4 is 384px (148)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-figures.server.log") });
