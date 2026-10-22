@@ -1452,6 +1452,64 @@ test_that("a failed Bioconductor index leaves the name not found, says why, and 
   expect_equal(r4$state$packages$resolved_for, "dplyr")
 })
 
+test_that("a cell's missing-package error says Bioconductor couldn't be looked in, as the page does (#282)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46))
+  r <- open_with_cran(s)
+  for (kind in names(bioc_kinds)) {
+    r <- drive(r$state, ev_index_failed(repo_key(kind, "2026-09-01", "3.23"), "network down", at(3)))
+  }
+  err <- missing_package_error(r$state, "DESeq2")$error
+  expect_equal(err$kind, "missing_package")
+  expect_match(err$message, "there is no package called 'DESeq2': DESeq2 isn't on CRAN at this date, and Ember couldn't look in Bioconductor (the package index bioc/2026-09-01/3.23 could not be fetched: network down)",
+               fixed = TRUE)
+  expect_false(grepl("not found in any repository", err$message, fixed = TRUE))
+})
+
+test_that("a Bioconductor index not published yet at the notebook's date moves the date back while nothing is locked (#282)", {
+  # CRAN's index is there at 2026-10-01 (the 2026-09-30 fixture stands in);
+  # Bioconductor's isn't yet.
+  cran_at <- function(date) {
+    read_repo_index(testthat::test_path("fixtures", "repos", "cran", "2026-09-30", "src", "contrib", "PACKAGES"),
+                    key = repo_key("cran", date), label = "CRAN")
+  }
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46), snapshot = "2026-10-01")
+  r <- drive(s, ev_open(at(1)), ev_index_fetched(repo_key("cran", "2026-10-01"), cran_at("2026-10-01"), at(2)))
+  expect_setequal(vapply(r$effects, function(e) e$key %||% NA_character_, character(1)) |> stats::na.omit() |> as.character(),
+                  c("cran/2026-10-01", "bioc/2026-10-01/3.23", "bioc-ann/2026-10-01/3.23", "bioc-exp/2026-10-01/3.23"))
+
+  r <- drive(r$state, ev_index_failed("bioc/2026-10-01/3.23", "bioc/2026-10-01/3.23 isn't published: no index for that date (404)",
+                                      at(3), unpublished = TRUE))
+  expect_equal(r$state$file$header$snapshot, "2026-09-30")
+  expect_false(any(grepl("2026-10-01", names(r$state$packages$indexes)) &
+                     is_bioc_key(names(r$state$packages$indexes))))
+  expect_equal(find_effect(r, "fetch_index")$key, repo_key("cran", "2026-09-30"))
+  # The old date's other Bioconductor answers are ignored.
+  r <- drive(r$state, ev_index_failed("bioc-ann/2026-10-01/3.23", "404", at(4), unpublished = TRUE),
+             ev_index_failed("bioc-exp/2026-10-01/3.23", "404", at(4), unpublished = TRUE))
+  expect_equal(r$state$file$header$snapshot, "2026-09-30")
+  expect_equal(nrow(r$state$packages$problems), 0)
+
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_at("2026-09-30"), at(5)))
+  r <- deliver_bioc(r$state, release = "3.23", date = "2026-09-30", t = 6)
+  expect_true("DESeq2" %in% r$state$file$lock$entries$name)
+  expect_equal(r$state$file$header$snapshot, "2026-09-30")
+  expect_false(any(r$state$packages$problems$kind %in% c("not_found", "index_unavailable")))
+})
+
+test_that("a Bioconductor index not published yet leaves the date alone when the lock has packages (#282)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46),
+                 lock = new_lock("cli", "3.6.3", "CRAN"))
+  r <- open_with_cran(s)
+  for (kind in names(bioc_kinds)) {
+    r <- drive(r$state, ev_index_failed(repo_key(kind, "2026-09-01", "3.23"),
+                                        sprintf("%s isn't published: no index for that date (404)", repo_key(kind, "2026-09-01", "3.23")),
+                                        at(3), unpublished = TRUE))
+  }
+  expect_equal(r$state$file$header$snapshot, "2026-09-01")
+  expect_true(any(r$state$packages$problems$kind == "index_unavailable" &
+                    grepl("bioc/2026-09-01/3.23 isn't published", r$state$packages$problems$message, fixed = TRUE)))
+})
+
 test_that("running again fetches a failed Bioconductor index and resolves the name it held (#264)", {
   s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46))
   r <- open_with_cran(s)

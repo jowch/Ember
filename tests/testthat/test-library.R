@@ -164,6 +164,16 @@ test_that("two installs of one key racing in two processes leave one library and
 
 # ---- The index memo (61) ---------------------------------------------------
 
+test_that("a Bioconductor 404 can mean not published yet from three days back to tomorrow in UTC (#282)", {
+  now <- as.POSIXct("2026-10-20 01:30:00", tz = "UTC")
+  expect_true(may_be_unpublished("bioc/2026-10-18/3.23", now))
+  expect_true(may_be_unpublished("bioc-ann/2026-10-17/3.23", now))
+  expect_true(may_be_unpublished("bioc-exp/2026-10-21/3.23", now))
+  expect_false(may_be_unpublished("bioc/2026-10-16/3.23", now))
+  expect_false(may_be_unpublished("bioc/2026-10-22/3.23", now))
+  expect_false(may_be_unpublished("cran/2026-10-17", now))   # CRAN's window is unchanged
+})
+
 test_that("a 404 can mean not published yet only from yesterday to tomorrow in UTC (#162, #221)", {
   now <- as.POSIXct("2026-10-16 01:30:00", tz = "UTC")
   expect_true(may_be_unpublished("cran/2026-10-15", now))
