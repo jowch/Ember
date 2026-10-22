@@ -1410,6 +1410,12 @@ test("cell menu: on a cell at the bottom of the window it opens upwards, so ever
   near(top.menu.top - top.more.bottom, 3, "3px below the ⋯");
   await page.keyboard.press("Escape");
 
+  // Too short a window for either way: it stays below, and the page scrolls.
+  await page.setViewportSize({ width: 900, height: 200 });
+  const short = await open(first);
+  near(short.menu.top - short.more.bottom, 3, "3px below the ⋯ in a 200px window");
+  await page.keyboard.press("Escape");
+
   assertNoProblems(page);
 });
 

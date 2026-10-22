@@ -957,6 +957,8 @@ const InputContextMenu = ({ cell_id, on_delete, code_folded, on_code_fold, can_d
         const header_bottom = document.querySelector("header#pluto-nav")?.getBoundingClientRect().bottom ?? 0
         const fits_below = b.bottom + gap + height <= window.innerHeight
         const fits_above = b.top - gap - height >= Math.max(0, header_bottom)
+        // The button and the menu are siblings in pluto-input, the menu's
+        // offset parent, so the button's offsetTop is in the menu's terms.
         if (!fits_below && fits_above) menu.style.top = `${button.offsetTop - gap - height}px`
     }, [is_open, items.length])
 
