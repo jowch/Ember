@@ -585,14 +585,8 @@ export class Editor extends Component {
                     }
                 }
             },
-            /**
-             * Delete `cell_ids` (after the same confirmation), then select
-             * the cell after them, or before them when they were last, so
-             * focus doesn't fall to the page (#317). Esc + Backspace and the
-             * cell menu's Delete both go through here; deleting an empty
-             * cell from its editor moves the cursor itself instead.
-             */
-            confirm_delete_and_select_neighbor: async (cell_ids) => {
+            /** Delete `cell_ids` (asking first, as `confirm_delete_multiple` does), then select the cell after them, or the one before when they were last, so focus stays on a cell (#317). */
+            delete_and_select_neighbor: async (cell_ids) => {
                 const order = this.state.notebook.cell_order
                 const indices = cell_ids.map((id) => order.indexOf(id))
                 const kept = (id) => !cell_ids.includes(id)
@@ -602,7 +596,7 @@ export class Editor extends Component {
                         .slice(0, Math.max(0, Math.min(...indices)))
                         .reverse()
                         .find(kept)
-                return await this.actions.confirm_delete_multiple(cell_ids, () => {
+                await this.actions.confirm_delete_multiple(cell_ids, () => {
                     if (neighbor != null) this.actions.select_cell(neighbor)
                 })
             },
@@ -1192,7 +1186,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
             const typing = active != null && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable)
             const ids = this.state.selected_cells
             if (ids.length > 0 && !typing) {
-                this.actions.confirm_delete_and_select_neighbor(ids)
+                this.actions.delete_and_select_neighbor(ids)
                 return true
             }
         }

@@ -259,10 +259,9 @@ export const Cell = ({
     const on_delete = useCallback(() => {
         pluto_actions.confirm_delete_multiple(pluto_actions.get_selected_cells(cell_id, selected))
     }, [pluto_actions, selected, cell_id])
-    // The cell menu's Delete: the menu and the cell holding focus both go,
-    // so focus moves on to a neighbouring cell, as with Esc + Backspace (#317).
+    // The ⋯ menu's Delete: the menu item that had focus goes with the cell, so a neighbour is selected, as Backspace on a selected cell does (#317).
     const on_menu_delete = useCallback(() => {
-        pluto_actions.confirm_delete_and_select_neighbor(pluto_actions.get_selected_cells(cell_id, selected))
+        pluto_actions.delete_and_select_neighbor(pluto_actions.get_selected_cells(cell_id, selected))
     }, [pluto_actions, selected, cell_id])
     const on_submit = useCallback(async () => {
         set_text_open(false)
