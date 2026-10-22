@@ -14,6 +14,7 @@ import { stale_names } from "../common/stale_names.js"
 import { display_name } from "../common/display_name.js"
 import { useSettled, wait_for_on } from "../common/useSettled.js"
 import { EditorSelection, EditorView } from "../imports/CodemirrorPlutoSetup.js"
+import { ctrl_or_cmd_name } from "../common/KeyboardShortcuts.js"
 
 /**
  * The "Stale" chip's text: "Stale" alone when no names are known, else
@@ -203,6 +204,11 @@ export const Cell = ({
     const activate_animation = useDebouncedTruth(running || queued || waiting_to_run)
 
     const class_code_differs = code !== (cell_input_local?.code ?? code)
+    // Set when code run elsewhere (another tab, or the agent) replaced typing
+    // in this cell that wasn't run yet (#318). Ctrl+Z brings the typing
+    // back; CellInput clears it then, or on this tab's next edit, and a run
+    // here clears it too.
+    const [remote_replaced, set_remote_replaced] = useState(false)
     // Markdown cells never run: their output is always the rendered text.
     const no_output_yet = kind !== "markdown" && (output?.last_run_timestamp ?? 0) === 0
     const code_not_trusted_yet = process_waiting_for_permission && no_output_yet
@@ -273,6 +279,7 @@ export const Cell = ({
     }, [pluto_actions, selected, cell_id])
     const on_submit = useCallback(async () => {
         set_text_open(false)
+        set_remote_replaced(false)
         if (!disable_input_ref.current) {
             return await pluto_actions.set_and_run_multiple([cell_id])
         }
@@ -671,6 +678,7 @@ export const Cell = ({
                 on_menu_delete=${on_menu_delete}
                 on_add_after=${on_add_after}
                 on_change=${on_change_cell_input}
+                on_remote_replace=${set_remote_replaced}
                 on_update_doc_query=${on_update_doc_query}
                 on_focus_neighbor=${on_focus_neighbor}
                 on_line_heights=${set_line_heights}
@@ -696,6 +704,9 @@ export const Cell = ({
                 on_run=${on_run}
                 on_interrupt=${on_interrupt}
             />
+            ${remote_replaced
+                ? html`<ember-settings-note class="remote-replace-note" role="status">${t("t_remote_replace_note", { mod: ctrl_or_cmd_name })}</ember-settings-note>`
+                : null}
             ${show_logs && cell_api_ready
                 ? html`<${Logs}
                       logs=${Object.values(logs)}
