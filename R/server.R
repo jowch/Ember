@@ -881,6 +881,7 @@ answer_from_subprocess <- function(cmd, answer, ok, failure) {
 #' | ember_update_packages          | dispatch ev_preview_date(today, apply = TRUE); flush. No reply       |
 #' | ember_apply_update             | {date}: set_date(hub$nb, date); a refusal is logged. Flush. No reply |
 #' | ember_cancel_update            | dispatch ev_cancel_preview(); flush. No reply                        |
+#' | ember_approve_install          | the large-download card's Install (#37): dispatch ev_approve_install() (refused when nothing waits); flush. No reply |
 #' | ember_set_package_source       | {name, source}: edit_notebook(set_package_source()); reply {ok} or {error}; flush |
 #' | ember_remove_package_source    | {name}: edit_notebook(remove_package_source()); reply {ok} or {error}; flush |
 #' | ember_disk_use                 | {}: measure disk use of the notebook's cache dir in a subprocess (disk_use()); reply {libraries, cache, indexes, exact} or {error} when it exits (#38) |
@@ -1243,6 +1244,15 @@ handlers <- list(
   ember_cancel_update = function(server, cl, hub, req) {
     if (is.null(hub)) return(invisible(NULL))
     dispatch(hub$nb, ev_cancel_preview(at = Sys.time()))
+    flush_clients(server, hub)
+  },
+
+  #' The large-download card's Install (#37): the user's OK, after which
+  #' the install runs without stopping again. A refusal (nothing waiting,
+  #' as when a second page clicked first) changes nothing.
+  ember_approve_install = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    dispatch(hub$nb, ev_approve_install(at = Sys.time()))
     flush_clients(server, hub)
   },
 

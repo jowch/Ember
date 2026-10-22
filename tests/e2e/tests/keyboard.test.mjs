@@ -4,6 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
+import fs from "node:fs";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector } from "../browser.mjs";
 
@@ -149,6 +150,89 @@ test("keyboard path: skip link, Esc selects the cell, arrows, Enter, Tab to run,
   await page.waitForFunction(() => window.editor_state.notebook.cell_inputs.ERR.code_folded, null, { timeout: 5000 });
   await page.waitForTimeout(500);
   assert.deepEqual(await page.evaluate(() => ["A", "ERR"].map((id) => window.editor_state.notebook.cell_inputs[id].code_folded)), [false, true]);
+  assertNoProblems(page);
+});
+
+// #297: with Tab set to indent (the default), tabbing through the page
+// used to land in the first cell's code and indent it on every press.
+// Tab now passes through code that focus only arrived in, and indents
+// once the person works there: a click, or Enter on a selected cell.
+test("keyboard: Tab passes through cells' code without editing it, and indents once you're working there (#297)", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const on_disk = fs.readFileSync(notebook, "utf8");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "keyboard-297.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const code = () => page.evaluate(() => Object.fromEntries(
+    Object.entries(window.editor_state.notebook.cell_inputs).map(([id, c]) => [id, c.code])));
+  // An empty editor's placeholder ("Type R code here") isn't code.
+  const local = () => page.evaluate(() => [...document.querySelectorAll("pluto-cell .cm-content")].map((el) => {
+    const copy = el.cloneNode(true);
+    copy.querySelectorAll(".cm-placeholder").forEach((p) => p.remove());
+    return copy.textContent;
+  }));
+  const before = await local();
+
+  const visited = new Set();
+  for (let i = 0; i < 40; i++) {
+    await page.keyboard.press("Tab");
+    const f = await focused(page);
+    if (f.cm_content) visited.add(f.cell);
+  }
+  assert.ok(visited.size >= 3, `Tab went through several cells' code: ${[...visited]}`);
+  assert.deepEqual(await local(), before, "no cell's code changed");
+  assert.equal(await page.locator("pluto-cell.code_differs").count(), 0, "no cell is marked edited");
+  // Shift+Tab goes back the same way.
+  for (let i = 0; i < 10; i++) await page.keyboard.press("Shift+Tab");
+  assert.deepEqual(await local(), before, "Shift+Tab didn't change code either");
+
+  // Clicked into: Tab indents.
+  const a = page.locator(`${cellSelector("A")} .cm-editor:not(.cm-ssr-fake) .cm-content`);
+  await page.locator(cellSelector("A")).scrollIntoViewIfNeeded();
+  await a.click();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("Tab");
+  await page.waitForFunction(() => document.querySelector('pluto-cell[id="A"]').classList.contains("code_differs"), null, { timeout: 5000 });
+  assert.match(await a.textContent(), /^\s+x <- 1:10/, "Tab indented A after a click");
+  assert.equal((await focused(page)).cell, "A", "and focus stayed in A");
+
+  // Entered with Enter on a selected cell: Tab indents.
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("ArrowDown");
+  const f = await focused(page);
+  assert.equal(f.tag, "pluto-cell");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Home");
+  await page.keyboard.press("Tab");
+  await page.waitForFunction((id) => document.querySelector(`pluto-cell[id="${id}"]`).classList.contains("code_differs"), f.cell, { timeout: 5000 });
+  assert.equal((await focused(page)).cell, f.cell, "Tab indented the cell Enter went into");
+
+  // Arrowed down into the next cell's code: Tab indents there too.
+  const next = await page.evaluate((id) => document.getElementById(id).nextElementSibling.id, f.cell);
+  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowDown");
+  await page.waitForFunction((id) => document.activeElement?.closest("pluto-cell")?.id === id, next, { timeout: 5000 });
+  await page.keyboard.press("Home");
+  await page.keyboard.press("Tab");
+  await page.waitForFunction((id) => document.querySelector(`pluto-cell[id="${id}"]`).classList.contains("code_differs"), next, { timeout: 5000 });
+  assert.equal((await focused(page)).cell, next, "Tab indented the cell ArrowDown went into");
+
+  // Away to another window and back: still working there, so Tab indents.
+  const content_sel = `${cellSelector(next)} .cm-editor:not(.cm-ssr-fake) .cm-content`;
+  const content = page.locator(content_sel);
+  const text = await content.textContent();
+  await content.evaluate((el) => el.dispatchEvent(new FocusEvent("blur", { relatedTarget: null })));
+  await page.waitForTimeout(500);
+  await content.evaluate((el) => el.dispatchEvent(new FocusEvent("focus", { relatedTarget: null })));
+  await page.keyboard.press("Tab");
+  assert.equal((await focused(page)).cell, next, "Tab after coming back stayed in the cell");
+  await page.waitForFunction(([sel, t]) => document.querySelector(sel).textContent !== t,
+    [content_sel, text], { timeout: 5000 });
+
+  assert.equal(fs.readFileSync(notebook, "utf8"), on_disk, "nothing was saved: the edits were never run");
   assertNoProblems(page);
 });
 

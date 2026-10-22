@@ -46,7 +46,7 @@ const CellMemo = ({
     nbpkg,
     global_definition_locations,
     definition_cells,
-    is_first_cell,
+    top_of_page,
     inspecting_hidden_code,
 }) => {
     const { body, last_run_timestamp, mime, persist_js_state, rootassignee } = cell_result?.output || {}
@@ -71,7 +71,7 @@ const CellMemo = ({
                 nbpkg=${nbpkg}
                 global_definition_locations=${global_definition_locations}
                 definition_cells=${definition_cells}
-                is_first_cell=${is_first_cell}
+                top_of_page=${top_of_page}
                 inspecting_hidden_code=${inspecting_hidden_code}
             />
         `
@@ -111,7 +111,7 @@ const CellMemo = ({
         global_definition_locations,
         definition_cells,
         cell_input?.ember_spans,
-        is_first_cell,
+        top_of_page,
         inspecting_hidden_code,
     ])
 }
@@ -177,17 +177,22 @@ export const Notebook = ({
         }
     }, [cell_outputs_delayed, notebook.cell_order.length])
 
-    let global_definition_locations = useMemo(
-        () =>
-            Object.fromEntries(
-                Object.values(notebook?.cell_dependencies ?? {}).flatMap((x) =>
-                    Object.keys(x.downstream_cells_map)
-                        .filter((variable) => !variable.includes("."))
-                        .map((variable) => [variable, x.cell_id])
-                )
-            ),
-        [notebook?.cell_dependencies]
-    )
+    // Each defined name to its cell, for CodeMirror's GlobalDefinitionsFacet.
+    // Every add, delete or run replaces cell_dependencies, so the previous
+    // object is kept while the map is equal: a new one re-renders every cell
+    // and reconfigures every editor (#289).
+    const global_definition_locations_ref = useRef({})
+    let global_definition_locations = useMemo(() => {
+        const out = Object.fromEntries(
+            Object.values(notebook?.cell_dependencies ?? {}).flatMap((x) =>
+                Object.keys(x.downstream_cells_map)
+                    .filter((variable) => !variable.includes("."))
+                    .map((variable) => [variable, x.cell_id])
+            )
+        )
+        if (!_.isEqual(out, global_definition_locations_ref.current)) global_definition_locations_ref.current = out
+        return global_definition_locations_ref.current
+    }, [notebook?.cell_dependencies])
 
     // Go-to-definition's targets: each name to the first cell defining it,
     // from the engine's analysis (CellInput/go_to_definition_plugin.js).
@@ -264,7 +269,7 @@ export const Notebook = ({
                             nbpkg=${notebook.nbpkg}
                             global_definition_locations=${global_definition_locations}
                             definition_cells=${definition_cells}
-                            is_first_cell=${i === 0}
+                            top_of_page=${i === 0}
                             inspecting_hidden_code=${inspecting_hidden_code}
                         />`
                 )}

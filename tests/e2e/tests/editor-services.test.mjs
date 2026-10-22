@@ -838,3 +838,37 @@ test("brackets: the bracket at the cursor and its partner are marked, for every 
 
   assertNoProblems(page);
 });
+
+// #314: select all and retype while the tooltip shows. The first key
+// shortens the code below the tooltip's anchor; the tooltip must follow
+// the edit instead of being measured at a position past the end, which
+// threw, rebuilt the editor and dropped every later keystroke.
+test("signature: select all and retype inside a call keeps every key (#314)", async (t) => {
+  const notebook = tempNotebook();
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-signature-retype.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await runCell(page, "A");
+  await page.waitForFunction(() => window.editor_state.notebook.cell_results.A?.output?.last_run_timestamp > 0, null, { timeout: 30000 });
+
+  // A call over two lines: the cell gets shorter on the first key, so
+  // CodeMirror measures the tooltip straight away (on a one-line cell it
+  // waits for the next scroll, which in a person's session comes soon
+  // enough but not in a test).
+  await setCellCode(page, "B", "mean(c(x,\n1, 2, 3, 4))");
+  const content = page.locator(`${cellSelector("B")} .cm-editor:not(.cm-ssr-fake) .cm-content`);
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await page.waitForSelector(".cm-ember-signature-tooltip", { timeout: 30000 });
+
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+  await page.keyboard.type("x * 10", { delay: 120 });
+
+  assert.equal(await content.innerText(), "x * 10");
+  assert.ok(await page.evaluate(() => document.activeElement?.closest?.("pluto-cell")?.id === "B"), "focus stays in the cell");
+  assertNoProblems(page);
+});

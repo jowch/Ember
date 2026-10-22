@@ -129,7 +129,7 @@ In test-packages-core.R, with `drive()`:
 82. A CRAN-only notebook never fetches a Bioconductor index and carries no pin.
 83. `library(DESeq2)` fetches the three Bioconductor indexes after CRAN's, locks it as `Bioc`, pins the release in the header, and the install gets all four repositories.
 84. Removing the last Bioconductor package drops the pin.
-85. A failed Bioconductor index leaves the name `not_found` with an `index_unavailable` row, and is refetched only when the wanted set changes.
+85. A failed Bioconductor index leaves the name `not_found` with an `index_unavailable` row, shown as `lookup_failed`, and is refetched when the wanted set changes or on run (#264).
 86. A pinned release is kept on another R and flagged `bioc_r_version`; an R with no known release fetches no Bioconductor index and gets a `bioc_unavailable` row.
 87. A date move keeps Bioconductor packages at the new date's release, and fails rather than dropping them when a Bioconductor index can't be fetched.
 88. A reopened notebook with a Bioc lock fetches the Bioconductor indexes when its wanted set changes, and reports no `not_in_index`.
@@ -204,3 +204,4 @@ In test-packages-session.R:
 75. **[net]** A notebook with `library(dplyr)` at a fixed past date resolves from PPM, installs with renv, and the worker loads exactly the locked versions.
 76. **[net]** (2) A Bioconductor package resolves and installs from the dated Bioconductor URL.
 77. **[net]** (3) `preview_update(nb, "dplyr", "1.1.4")` finds the date from CRAN's index of its files and lists the changes. Offline, the toy repo's `toy-meta` stands in for CRAN's files; the core tests cover a snapshot that lags a release.
+130. (#37) An install whose Bioconductor data packages add up to more than `ask_above` stops before downloading, with the library `"asking"` and the sizes, and installs after `approve_install()`; nothing in renv's cache is counted, and running again isn't an OK. Offline: a copy of the Bioconductor fixture with a sized GO.db tarball and the fake installer (test-packages-session.R), plus the core and `large_downloads()` tests.

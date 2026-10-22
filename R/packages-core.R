@@ -158,8 +158,9 @@ new_releases_slot <- function(status = "unknown", table = empty_bioc_releases(),
 #'
 #' * `key`, `path`: from `library_for()`.
 #' * `status`: `"unknown"` (not looked at), `"checking"`, `"missing"`
-#'   (looked at: no complete library there), `"installing"`, `"ready"`,
-#'   `"failed"`.
+#'   (looked at: no complete library there), `"installing"`, `"asking"`
+#'   (the installer stopped before a large download and waits for the
+#'   user's OK, #37), `"ready"`, `"failed"`.
 #' * `installed`: named character, package -> version, from the library's
 #'   manifest; empty unless `"ready"`.
 #' * `exports`: named list, package -> exported names, from the manifest:
@@ -167,15 +168,19 @@ new_releases_slot <- function(status = "unknown", table = empty_bioc_releases(),
 #'   lazy-load index (no package is loaded in the server).
 #' * `progress`: `NULL` or `list(done, total, current)` while installing.
 #' * `message`, `log`: why it failed, and the installer's last lines.
+#' * `download`: while `"asking"`, the large packages and their sizes
+#'   (`download_lines()`); else `NULL`. `approved`: the user said yes, so
+#'   the next install doesn't stop to ask.
 #'
 #' Readiness is one fact on disk: the manifest exists. The installer writes
 #' it last, into a staging folder that is then renamed into place (library.R).
 new_library_slot <- function(key, path, status = "unknown", installed = character(),
                              exports = list(), progress = NULL, message = NULL,
-                             log = character(), failures = empty_install_failures()) {
+                             log = character(), failures = empty_install_failures(),
+                             download = NULL, approved = FALSE) {
   structure(list(key = key, path = path, status = status, installed = installed,
                  exports = exports, progress = progress, message = message, log = log,
-                 failures = failures),
+                 failures = failures, download = download, approved = approved),
             class = "ember_library_slot")
 }
 
@@ -512,9 +517,14 @@ ev_install_progress <- function(token, item, at)             # item: list(packag
 #' `failures` is `install_failures()`'s result (empty when the install
 #' succeeded, or when the caller doesn't have one -- tests that build this
 #' event directly don't need to).
-ev_install_done <- function(token, key, manifest, message, log, at, failures = empty_install_failures())
+#' `download`: the installer's `EMBER-DOWNLOAD` lines (`download_lines()`)
+#' when it stopped before a large download; else `NULL`.
+ev_install_done <- function(token, key, manifest, message, log, at, failures = empty_install_failures(),
+                            download = NULL)
   event("install_done", at, token = token, key = key, manifest = manifest,
-        message = message, log = log, failures = failures)
+        message = message, log = log, failures = failures, download = download)
+#' The user's OK for the large download the target library waits on.
+ev_approve_install <- function(at) event("approve_install", at)
 
 #' `fresh`: asked for by a date preview, so the shell fetches again when the
 #' saved copy may have changed since (`index_may_change()`, #39).
@@ -533,8 +543,12 @@ fx_check_library  <- function(key, path) effect("check_library", key = key, path
 #' against by name ("CRAN", "BioCsoft").
 #' `github` is the GitHub API the lock's GitHub packages install from
 #' (`github_api_url()`).
-fx_install        <- function(token, key, path, lock, repos, github = "https://api.github.com")
-  effect("install", token = token, key = key, path = path, lock = lock, repos = repos, github = github)
+#' `ask_above`: the installer stops before downloading more than this many
+#' bytes of large packages (`ask_before_install()`); `Inf` never stops.
+fx_install        <- function(token, key, path, lock, repos, github = "https://api.github.com",
+                              ask_above = Inf)
+  effect("install", token = token, key = key, path = path, lock = lock, repos = repos, github = github,
+         ask_above = ask_above)
 #' Deviation from the sketch: `fx_cancel_install()` also carries `key` and
 #' `path`, not just `token`. The shell's job table (library.R) is keyed by
 #' the install's library path, not the token (two notebooks installing the
@@ -863,9 +877,12 @@ schedule_packages <- function(state, old) {
     tgt$status <- "installing"
     tgt$progress <- NULL
     state$packages$target <- tgt
+    # Asked once: after the user's OK (`reduce_approve_install()`), the
+    # same library installs without stopping again.
+    ask_above <- if (isTRUE(tgt$approved)) Inf else state$options$ask_above %||% Inf
     effects <- c(effects, list(fx_install(token, tgt$key, tgt$path, state$file$lock,
                                           repo_urls(state$options$repos, state$file$header, state$file$lock),
-                                          github_api_url(state$options$repos))))
+                                          github_api_url(state$options$repos), ask_above = ask_above)))
   }
 
   # ---- 5. Switch -------------------------------------------------------------
@@ -1173,20 +1190,44 @@ waiting_cells <- function(state) {
     intersect(direct[[id]], state$graph$cells[[id]]$attaches)
   }), use.names = FALSE))
   unknown <- setdiff(unknown, names(state$graph$exports))
+  # One vectorised pass over every candidate cell's references, not a
+  # `setdiff()` against base R's thousands of names per cell (#258): this
+  # runs on every event while a cell waits for an install.
   if (length(unknown) > 0) {
-    edges <- state$graph$edges
-    known <- base_names()
-    for (id in setdiff(runnable_ids, names(direct))) {
-      refs <- state$graph$cells[[id]]$references
-      if (length(refs) == 0) next
-      unresolved <- setdiff(refs, c(edges$name[edges$from == id], known))
-      if (length(unresolved) > 0) direct[[id]] <- unknown
+    ids <- setdiff(runnable_ids, names(direct))
+    refs <- lapply(ids, function(id) state$graph$cells[[id]]$references)
+    owner <- rep(ids, lengths(refs))
+    refs <- unlist(refs, use.names = FALSE)
+    if (length(refs) > 0) {
+      edges <- state$graph$edges
+      keep <- !(refs %in% base_names()) &
+        !(paste(owner, refs, sep = "\r") %in% paste(edges$from, edges$name, sep = "\r"))
+      for (id in unique(owner[keep])) direct[[id]] <- unknown
     }
   }
 
+  # A waiting cell's downstream waits for the same packages, taking those of
+  # the first waiting cell (in `direct`'s order) that reaches it. One walk
+  # for all of them: a cell already reached needs no second visit, since
+  # everything below it was reached then too (#258).
+  # Each walk's new cells are added in run order, as `downstream()` gives them.
   out <- direct
+  seen <- new.env(hash = TRUE)
   for (id in names(direct)) {
-    for (d in downstream(state$graph, id, transitive = TRUE)) {
+    assign(id, TRUE, envir = seen)
+    reached <- character()
+    todo <- id
+    while (length(todo)) {
+      i <- todo[[1]]
+      todo <- todo[-1]
+      for (d in state$graph$downstream[[i]]) {
+        if (exists(d, envir = seen, inherits = FALSE)) next
+        assign(d, TRUE, envir = seen)
+        reached <- c(reached, d)
+        todo <- c(todo, d)
+      }
+    }
+    for (d in run_order(state$graph, reached)) {
       if (is.null(out[[d]])) out[[d]] <- direct[[id]]
     }
   }
@@ -1210,6 +1251,13 @@ reduce_index_fetched <- function(state, event) {
   list(state = state, effects = list(), reply = NULL)
 }
 
+#' The date part of each repo key (`"cran/2026-10-01"` -> `"2026-10-01"`;
+#' `NA` for a key with none).
+key_date <- function(keys) {
+  vapply(strsplit(keys, "/", fixed = TRUE), function(p) if (length(p) >= 2) p[[2]] else NA_character_,
+         character(1))
+}
+
 reduce_index_failed <- function(state, event) {
   slot <- state$packages$indexes[[event$key]]
   if (is.null(slot) || !identical(slot$status, "fetching")) {
@@ -1223,10 +1271,20 @@ reduce_index_failed <- function(state, event) {
   # `unpublished` only from yesterday to tomorrow in UTC
   # (`may_be_unpublished()`), so this stops by the day before yesterday,
   # and then the failure shows; a date further ahead fails at once.
+  #
+  # The same for one of Bioconductor's indexes at the notebook's date,
+  # which Package Manager publishes days after CRAN's (#282): the whole
+  # date moves back, so CRAN and Bioconductor resolve at one date. Its
+  # other Bioconductor indexes at the old date are dropped too, so their
+  # answers are ignored. `may_be_unpublished()` gives Bioconductor a few
+  # days more before it stops.
   if (isTRUE(event$unpublished) && nrow(state$file$lock$entries) == 0 &&
       !is.null(header$snapshot) && !is.na(header$snapshot) &&
-      identical(event$key, repo_key("cran", header$snapshot))) {
-    state$packages$indexes[[event$key]] <- NULL
+      identical(key_date(event$key), header$snapshot) &&
+      (identical(event$key, repo_key("cran", header$snapshot)) || is_bioc_key(event$key))) {
+    keys <- names(state$packages$indexes)
+    drop <- keys[keys == event$key | (is_bioc_key(keys) & key_date(keys) == header$snapshot)]
+    for (k in drop) state$packages$indexes[[k]] <- NULL
     state$file$header$snapshot <- format(as.Date(header$snapshot) - 1, "%Y-%m-%d")
     return(list(state = state, effects = list(), reply = NULL))
   }
@@ -1327,8 +1385,10 @@ reduce_install_progress <- function(state, event) {
 #' naming its `package`, and `failures$needed_by` (`fill_needed_by()`,
 #' which may fetch indexes to walk); falls back to today's single `NA`-package row
 #' only when `event$failures` has none (the installer's output didn't
-#' parse). An old key's result is dropped: the library exists on disk and
-#' costs nothing until cleanup.
+#' parse). An installer that stopped before a large download
+#' (`event$download`) leaves the target `"asking"` with `download`, and no
+#' problem: nothing failed. An old key's result is dropped: the library
+#' exists on disk and costs nothing until cleanup.
 reduce_install_done <- function(state, event) {
   inst <- state$packages$install
   if (is.null(inst) || !eq(inst$token, event$token)) return(list(state = state, effects = list(), reply = NULL))
@@ -1336,7 +1396,12 @@ reduce_install_done <- function(state, event) {
   effects <- list()
   if (identical(event$key, state$packages$target$key)) {
     tgt <- state$packages$target
-    if (!is.null(event$manifest)) {
+    if (is.null(event$manifest) && !is.null(event$download) && nrow(event$download) > 0) {
+      tgt$status <- "asking"
+      tgt$download <- event$download
+      tgt$progress <- NULL
+      state$packages$target <- tgt
+    } else if (!is.null(event$manifest)) {
       tgt$status <- "ready"
       tgt$installed <- event$manifest$installed
       tgt$exports <- event$manifest$exports
@@ -1371,6 +1436,23 @@ reduce_install_done <- function(state, event) {
     }
   }
   list(state = state, effects = effects, reply = NULL)
+}
+
+#' The user's OK for a large download (#37): an `"asking"` target goes back
+#' to `"missing"` with `approved`, and `schedule_packages()` installs it
+#' without stopping again. Refused when nothing is waiting for one, or in
+#' safe preview, where nothing installs. Reply: `TRUE`.
+reduce_approve_install <- function(state, event) {
+  if (!identical(state$packages$target$status, "asking")) {
+    return(list(state = state, effects = list(), reply = refused("no install is waiting for an OK")))
+  }
+  if (!isTRUE(state$allowed)) {
+    return(list(state = state, effects = list(), reply = refused("the notebook hasn't been allowed to run")))
+  }
+  state$packages$target$status <- "missing"
+  state$packages$target$approved <- TRUE
+  state$packages$target$download <- NULL
+  list(state = state, effects = list(), reply = TRUE)
 }
 
 #' A preview of moving the date: `proposal <- new_proposal(date)`;
@@ -1608,6 +1690,31 @@ reduce_set_date <- function(state, event) {
   list(state = ap$state, effects = ap$effects, reply = changes)
 }
 
+#' Why Bioconductor couldn't be looked in, or `character()`. A name CRAN
+#' lacks, resolved while Bioconductor couldn't be looked in (an index of its
+#' failed, or no release because the release list couldn't be fetched), may
+#' well be there: the package view calls it `"lookup_failed"` and a cell's
+#' error says the same (`unlooked_message()`), rather than "not found in any
+#' repository" (#264, #282). Running again fetches what failed and resolves
+#' again (`reduce_run()`). With the release lookup turned off
+#' (`ember_repos(bioc_config = NA)`) there is nothing to retry, and the name
+#' stays `"not_found"`.
+unlooked_reason <- function(state) {
+  problems <- state$packages$problems
+  if (is.null(problems) || nrow(problems) == 0) return(character())
+  unlooked <- problems$message[problems$kind == "index_unavailable" & is.na(problems$package)]
+  lookup_on <- !is.null(state$options$repos$bioc_config) && !is.na(state$options$repos$bioc_config)
+  gap <- releases_gap_message(state$packages, state$file$header$snapshot)
+  if (lookup_on && !is.null(gap) && any(problems$kind == "bioc_unavailable")) unlooked <- c(unlooked, gap)
+  if (length(unlooked) > 0) unlooked[[1]] else character()
+}
+
+#' What `unlooked_reason()` makes of a name not found.
+unlooked_message <- function(pkg, reason) {
+  sprintf("%s isn't on CRAN at this date, and Ember couldn't look in Bioconductor (%s); running again tries again",
+          pkg, reason)
+}
+
 #' `wk_done` with `report$error$package` set (the worker saw R's
 #' `packageNotFoundError`, which carries the name, so this is not a message
 #' match and works in every locale):
@@ -1646,7 +1753,10 @@ missing_package_error <- function(state, pkg) {
              (identical(probs$kind[[i]], "not_found") && identical(probs$package[[i]], pkg)),
           seq_len(nrow(probs)))
     } else NULL
-    msg <- if (!is.null(row)) {
+    unlooked <- unlooked_reason(state)
+    msg <- if (!is.null(row) && identical(probs$kind[[row]], "not_found") && length(unlooked) > 0) {
+      sprintf("there is no package called '%s': %s", pkg, unlooked_message(pkg, unlooked))
+    } else if (!is.null(row)) {
       sprintf("there is no package called '%s': %s", pkg, probs$message[[row]])
     } else {
       sprintf("there is no package called '%s'", pkg)
@@ -1739,7 +1849,8 @@ packages_named_in <- function(state, msg) {
 #' (every other row of a library that failed: the staging folder is never
 #' renamed into place, so nothing in that install actually landed, even
 #' the packages that built fine), `"not_found"` (from `problems`, `version`
-#' `NA`), and for a package with a `[sources]` entry, `"looking_up"` and
+#' `NA`), `"lookup_failed"` (a `not_found` name while Bioconductor couldn't
+#' be looked in, so it may be there; its message says why), and for a package with a `[sources]` entry, `"looking_up"` and
 #' `"source_failed"` (`source_rows()`, which also adds `spec`). `direct` is
 #' `TRUE` for wanted names. `plan` is what running would
 #' do; the banner's "installs 3 packages" (a `"not_installed"` row counts
@@ -1771,7 +1882,8 @@ empty_packages_df <- function() {
 #'   `source_problems()`) carries that problem's message;
 #' * a wanted package with a readable spec, its GitHub lookup still
 #'   running, is `"looking_up"`, even while the last resolution's stale
-#'   `not_found` row for it is still in `problems`;
+#'   `not_found` row for it is still in `problems` (shown as `not_found` or
+#'   `lookup_failed`);
 #' * a wanted package with a spec that is neither locked nor `not_found`
 #'   would have no row at all: it gets one, `"looking_up"` while its
 #'   lookup (or, with no problem naming it yet, any index) is being
@@ -1797,7 +1909,7 @@ source_rows <- function(state, wanted, rows) {
 
   hit <- match(rows$name, probs$package)
   rows$message[!is.na(hit)] <- probs$message[hit[!is.na(hit)]]
-  now_looking <- rows$status == "not_found" & rows$name %in% looking_up
+  now_looking <- rows$status %in% c("not_found", "lookup_failed") & rows$name %in% looking_up
   rows$status[now_looking] <- "looking_up"
   rows$message[now_looking] <- NA_character_
 
@@ -1956,12 +2068,20 @@ packages_view <- function(state) {
               message = NA_character_, stringsAsFactors = FALSE)
   }
 
+  problems <- p$problems
+  gap <- releases_gap_message(p, state$file$header$snapshot)
+  unlooked <- unlooked_reason(state)
+  if (length(unlooked) > 0) {
+    nf <- problems$kind == "not_found"
+    problems$message[nf] <- unlooked_message(problems$package[nf], unlooked)
+  }
   not_found_df <- empty_packages_df()
-  if (!is.null(p$problems) && nrow(p$problems) > 0) {
-    nf <- p$problems[!is.na(p$problems$kind) & p$problems$kind == "not_found", , drop = FALSE]
+  if (!is.null(problems) && nrow(problems) > 0) {
+    nf <- problems[!is.na(problems$kind) & problems$kind == "not_found", , drop = FALSE]
     if (nrow(nf) > 0) {
       not_found_df <- data.frame(name = nf$package, version = NA_character_, source = NA_character_,
-                                 direct = nf$package %in% wanted, status = "not_found",
+                                 direct = nf$package %in% wanted,
+                                 status = if (length(unlooked) > 0) "lookup_failed" else "not_found",
                                  message = nf$message, stringsAsFactors = FALSE)
     }
   }
@@ -1981,8 +2101,6 @@ packages_view <- function(state) {
   # unpinned notebook found no Bioconductor release (`bioc_unavailable`)
   # because the release list was missing or too old for its date, that is
   # the reason given; a CRAN-only or pinned notebook never gets the row.
-  problems <- p$problems
-  gap <- releases_gap_message(p, state$file$header$snapshot)
   if (!is.null(gap) && any(problems$kind == "bioc_unavailable")) {
     problems <- rbind(problems[problems$kind != "bioc_unavailable", , drop = FALSE],
                       package_problem("bioc_releases_unavailable", NA_character_,
@@ -2010,6 +2128,6 @@ packages_view <- function(state) {
       bioc_version = state$file$header$bioc_version,
       library = list(status = p$target$status, path = p$target$path,
                     progress = p$target$progress, message = p$target$message,
-                    log = p$target$log, failures = failures),
+                    log = p$target$log, failures = failures, download = p$target$download),
       packages = packages_df, problems = problems, proposal = proposal, plan = plan)
 }

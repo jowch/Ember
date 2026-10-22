@@ -281,9 +281,29 @@ const table_size_words = (body) => {
     return t("t_table_size", { rows: t("t_table_rows", { count: size[0] }), columns: t("t_table_columns", { count: size[1] }) })
 }
 
+/** Whether the box at `ref` is wider inside than out, so it scrolls
+ * sideways. Rechecked when it or its contents resize. */
+const useScrollsSideways = (ref) => {
+    const [scrolls, set_scrolls] = useState(false)
+    useLayoutEffect(() => {
+        const el = ref.current
+        if (el == null) return
+        const check = () => set_scrolls(el.scrollWidth > el.clientWidth + 1)
+        check()
+        if (typeof ResizeObserver === "undefined") return
+        const observer = new ResizeObserver(check)
+        observer.observe(el)
+        if (el.firstElementChild) observer.observe(el.firstElementChild)
+        return () => observer.disconnect()
+    }, [])
+    return scrolls
+}
+
 export const TableView = ({ mime, body, cell_id, persist_js_state, sanitize_html }) => {
     let pluto_actions = useContext(PlutoActionsContext)
     const node_ref = useRef(null)
+    const scroll_ref = useRef(null)
+    const scrolls = useScrollsSideways(scroll_ref)
 
     const cell_output = (pair) =>
         pair[1] === "text/plain"
@@ -324,10 +344,23 @@ export const TableView = ({ mime, body, cell_id, persist_js_state, sanitize_html
         })}
     </tbody>`
 
+    // The table scrolls sideways in its own box, and the Show more buttons
+    // sit under that box, so an overlay scrollbar (macOS, WebKit embeds)
+    // draws over the table's edge, not over the buttons (#286). While it
+    // scrolls, the box takes keyboard focus so arrow keys can scroll it,
+    // named by the table's size; a table that fits adds no tab stop.
     return html`<div class="ember-table" ref=${node_ref}>
-        <table class="pluto-table">
-            ${thead}${tbody}
-        </table>
+        <div
+            class="ember-table-scroll"
+            ref=${scroll_ref}
+            tabindex=${scrolls ? 0 : undefined}
+            role=${scrolls ? "region" : undefined}
+            aria-label=${scrolls ? table_size_words(body) : undefined}
+        >
+            <table class="pluto-table">
+                ${thead}${tbody}
+            </table>
+        </div>
         ${can_load && (more_rows > 0 || more_cols > 0)
             ? html`<div class="ember-table-more">
                   ${more_rows > 0 ? show_more(1, t("t_show_more_rows", { count: more_rows })) : null}

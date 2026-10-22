@@ -160,11 +160,26 @@ library and the install is skipped. Chromium comes from `npx playwright
 install chromium`, or from `EMBER_CHROMIUM` (the path browser3.mjs uses on
 this Mac).
 
+**UI sweep and screenshots**: `tests/ui-sweep.test.mjs` runs generic
+layout rules (`layout-check.mjs`: nothing clipped, covered, off screen or
+under an overlay scrollbar; cells in the same state look the same) over
+`fixtures/ui-sweep.R` at 600, 900 and 1440 px, in each state a person sees
+it in. Known open bugs are listed in its `KNOWN` with their issue; the PR
+that fixes one removes its entry. `node tests/e2e/shots.mjs [notebook]
+[--run] [--dark] [--mac]` saves screenshots of any notebook with the same
+checks, for looking at a change before and after
+(`.claude/skills/verify`). What automation can't judge is in
+`docs/ui-checklist.md`. `node tests/e2e/audit.mjs` walks the main journeys
+with screenshots and measurements for the periodic UI audit
+(`.claude/skills/ui-audit`).
+
 **In CI**: a job `e2e` on ubuntu-latest and macos-latest:
 `r-lib/actions/setup-r` and `setup-r-dependencies`,
 `actions/setup-node` (22), `npm ci` in `tests/e2e`, `npx playwright install
 --with-deps chromium`, `npm test`, and the server logs and a screenshot per
-failed scenario uploaded as artifacts. Windows waits for its interrupt
+failed scenario uploaded as artifacts. On ubuntu, the UI sweep runs a second time in
+Playwright's WebKit (`EMBER_BROWSER=webkit`), the engine Endeavor's pane
+uses. Windows waits for its interrupt
 spike. The page loads its modules from jsdelivr and esm.sh until the
 offline bundle exists, so a CDN outage fails this job; a retry of one is
 allowed for page load only.

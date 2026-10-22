@@ -697,7 +697,7 @@ test_that("every request type in the handler table is answered as documented (36
                "ember_open_notebook", "ember_forget_recent", "ember_set_package_source",
                "ember_remove_package_source")
   silent <- c("interrupt_all", "restart_process", "shutdown_notebook", "reshow_cell", "ember_render_plot",
-             "ember_run_all", "ember_retry_install", "ember_split_cell", "ember_apply_update", "ember_cancel_update",
+             "ember_run_all", "ember_retry_install", "ember_split_cell", "ember_apply_update", "ember_cancel_update", "ember_approve_install",
              "ember_set_mode", "request_js_link_response", "nbpkg_available_versions",
              "nbpkg_get_project_toml", "nbpkg_set_project_toml", "pkg_update")
   # Answered once a subprocess exits, so not counted here: see its own test.

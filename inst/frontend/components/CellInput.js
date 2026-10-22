@@ -57,7 +57,7 @@ import { commentKeymap } from "./CellInput/comment_mixed_parsers.js"
 import { mod_d_command } from "./CellInput/mod_d_command.js"
 import { open_bottom_right_panel } from "./BottomRightPanel.js"
 import { assert_not_null, timeout_promise } from "../common/PlutoConnection.js"
-import { LastFocusWasForcedEffect, tab_help_plugin } from "./CellInput/tab_help_plugin.js"
+import { LastFocusWasForcedEffect, tab_help_plugin, tab_pass_through } from "./CellInput/tab_help_plugin.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { moveLineDown } from "../imports/CodemirrorPlutoSetup.js"
 import { detect_indent_unit, indent_unit_of_setting } from "./CellInput/detect_indent_unit.js"
@@ -618,6 +618,7 @@ export const CellInput = ({
                     bracketMatching(),
                     docs_updater,
                     tab_help_plugin,
+                    tab_pass_through,
                     // Remove selection on blur
                     EditorView.domEventHandlers({
                         blur: (event, view) => {

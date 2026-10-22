@@ -7,7 +7,7 @@
 // discovery, by not passing `executablePath` at all. Mirrors
 // spikes/server-worker/browser3.mjs's local-Mac path.
 
-import { chromium } from "playwright-core";
+import { chromium, webkit } from "playwright-core";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,7 +24,11 @@ function resolveExecutable() {
   return existsSync(mac) ? mac : undefined;
 }
 
+/** `EMBER_BROWSER=webkit` runs the suite in Playwright's WebKit instead
+ * (on Linux, the WebKitGTK engine Endeavor's notebook pane uses). Only the
+ * UI sweep runs there in CI; the rest of the suite assumes Chromium. */
 export async function launchBrowser() {
+  if (process.env.EMBER_BROWSER === "webkit") return webkit.launch({ headless: true });
   const executablePath = resolveExecutable();
   return chromium.launch({ executablePath, headless: true });
 }

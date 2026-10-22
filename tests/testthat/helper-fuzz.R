@@ -499,6 +499,11 @@ fuzz_check <- function(snap, ran, mode, run, res) {
     kinds <- vapply(views[[id]]$errors, `[[`, "", "kind")
     if (id %in% blocked && !any(kinds %in% graph_kinds)) say(id, " can't run but shows no graph error")
     if (!id %in% blocked && any(kinds %in% graph_kinds)) say(id, " can run but shows a graph error")
+    # Once it is submitted, or every cell is run, it has no result left
+    # (drop_graph_error_results()).
+    if (id %in% blocked && (identical(run, id) || identical(run, "all")) && has_run(views[[id]])) {
+      say(id, " can't run but still shows a result (", views[[id]]$status, ")")
+    }
   }
 
   # Every output not marked stale is what running the code behind the

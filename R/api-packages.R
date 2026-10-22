@@ -122,6 +122,21 @@ set_date <- function(nb, date) {
   invisible(reply)
 }
 
+#' Say yes to a large download.
+#'
+#' An install whose Bioconductor annotation and experiment-data packages
+#' add up to more than `options(ember.ask_above)` bytes (500 MB by default)
+#' stops before downloading anything and waits: `package_status(nb)` then
+#' has `library$status` `"asking"` and `library$download`, the packages and
+#' their sizes. This installs them. Refused (an `ember_refused` condition)
+#' when no install is waiting for an OK.
+#' @export
+approve_install <- function(nb) {
+  reply <- dispatch(nb, ev_approve_install(at = Sys.time()))
+  if (inherits(reply, "ember_refused")) stop(reply)
+  invisible(reply)
+}
+
 #' What updating one package, or pinning it to an older version, would
 #' change.
 #'

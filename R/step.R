@@ -206,6 +206,7 @@ reduce <- function(state, event) {
     library_checked  = reduce_library_checked(state, event),
     install_progress = reduce_install_progress(state, event),
     install_done     = reduce_install_done(state, event),
+    approve_install  = reduce_approve_install(state, event),
     stop("unknown event type: ", event$type)
   )
 }
@@ -253,7 +254,6 @@ schedule <- function(state) {
   }
   if (!identical(w$status, "ready")) return(list(state = state, effects = list()))
 
-  id <- NULL
   waiting <- waiting_cells(state)
   # A target library that failed can never bring in the packages these
   # cells are waiting for; let them run anyway so the worker reports the
@@ -262,16 +262,32 @@ schedule <- function(state) {
   if (identical(state$packages$target$status, "failed") && length(waiting) > 0) {
     waiting <- list()
   }
+  # A queued cell waiting for an install will still run, so its dependents
+  # are marked stale now rather than showing their last result as current
+  # for the whole install (#248). They are queued only when the cell is
+  # sent, as before: a settings cell's dependents, or a reader of a name it
+  # used to define, needn't be waiting themselves, and queued now they
+  # could run ahead of it. One that can't run is dropped below, never sent.
+  # This waits for a ready worker, as the rest of the scheduling does: while
+  # another cell runs, the dependents are marked once it's done, not before,
+  # so no event during a run pays for `waiting_cells()`.
+  for (wid in intersect(state$pending, names(waiting))) {
+    if (!can_run(state, wid)) next
+    prev <- state$results[[wid]]
+    state <- invalidate_dependents(state, wid, if (!is.null(prev)) prev$defined else character(),
+                                   queue = FALSE)
+  }
+  id <- NULL
   repeat {
     queue <- run_order(state$graph, state$pending)
     if (length(queue) == 0) return(list(state = state, effects = list()))
-    candidate <- queue[1]
+    candidate <- first_to_run(state, queue)
     if (!is.null(waiting[[candidate]])) {
       # Leave it queued (it isn't blocked, just not ready yet) and look
       # further down the queue for something that can run now, dropping
       # anything else along the way that can't (same rule as below).
       found <- NULL
-      for (q in queue[-1]) {
+      for (q in setdiff(queue, candidate)) {
         if (!is.null(waiting[[q]])) next
         if (can_run(state, q)) { found <- q; break }
         state$pending <- setdiff(state$pending, q)
@@ -355,10 +371,15 @@ failed_definers <- function(state, id) {
 }
 
 #' For every cell in `blocked_cells(graph)` that still has a result: drop
-#' the result, mark its dependents stale (`invalidate_dependents(...,
-#' queue = FALSE)`: nothing is queued, as for an edit), and send
-#' `drop_globals`. Returns `list(state, effects)`; a no-op when there are
-#' none.
+#' the result, mark its dependents stale, and send `drop_globals`. Returns
+#' `list(state, effects)`; a no-op when there are none.
+#'
+#' `queue` is passed on to `invalidate_dependents()`. From `schedule()` it
+#' is `FALSE`: nothing is queued, as for an edit, since the cell dropped
+#' was not asked to run. `reduce_run()` passes `TRUE`: a cell submitted
+#' into a graph error has its dependents queued in autorun, as for a cell
+#' that ran and failed, so they rerun and fail on their own if they need
+#' what it would have provided (#272).
 #'
 #' A cell that ran and then gained a graph error (an edit made `x` defined
 #' twice, or a learned definition did) still holds its result, and the
@@ -371,7 +392,7 @@ failed_definers <- function(state, id) {
 #' asked to run: a run request is not an edit, and once it is made the
 #' cell's code is what was submitted, so a cell with a graph error shows
 #' only the error, not `code_differs` against an earlier run's code.
-drop_graph_error_results <- function(state, ids = NULL) {
+drop_graph_error_results <- function(state, ids = NULL, queue = FALSE) {
   blocked <- blocked_cells(state$graph)
   if (!is.null(ids)) blocked <- intersect(blocked, ids)
   stale_results <- Filter(function(id) !is.null(state$results[[id]]), blocked)
@@ -379,7 +400,7 @@ drop_graph_error_results <- function(state, ids = NULL) {
   for (id in stale_results) {
     old <- state$results[[id]]
     state$results[[id]] <- NULL
-    state <- invalidate_dependents(state, id, old$defined, queue = FALSE,
+    state <- invalidate_dependents(state, id, old$defined, queue = queue,
                                    was_setting = isTRUE(old$setting))
     if (state$worker$status %in% c("starting", "ready", "busy")) {
       effects <- c(effects, list(fx_send(state$worker$gen, list(type = "drop_globals", cell = id))))
@@ -594,6 +615,129 @@ reached_from <- function(graph, from, among) {
   reached
 }
 
+#' The graph with the edges of what edited cells last ran (#175).
+#' A cell edited since it ran still holds the result of its old code: it
+#' read what that code read, and its readers read the names that code
+#' defined. The graph only has the edited code's edges, so staleness and
+#' run plans use this one instead. With nothing edited, it is
+#' the graph itself.
+run_graph <- function(state, edited = edited_cells(state)) {
+  g <- state$graph
+  if (length(edited) == 0) return(g)
+  # Asked for several times per step, and the answer only changes when the
+  # graph or what the edited cells last ran does: keep the last one.
+  key <- lapply(edited, function(id) state$results[[id]][c("code", "defined")])
+  names(key) <- edited
+  if (identical(run_graph_memo$key, key) && identical(run_graph_memo$graph, g)) return(run_graph_memo$value)
+  ids <- g$ids
+  # What the last run defined, or would have: a failed run defines nothing,
+  # but its readers' results still came from that failure.
+  old_defs <- lapply(edited, function(id) {
+    union(state$results[[id]]$defined, code_edges(state$results[[id]]$code)$definitions)
+  })
+  names(old_defs) <- edited
+  refs <- lapply(g$cells[ids], function(c) setdiff(c$references, c$masked_none))
+  defs <- lapply(g$cells[ids], `[[`, "definitions")
+  defs[edited] <- Map(union, defs[edited], old_defs)
+  # Name to the cells that read it, and to the cells that define it now or
+  # did in their last run: one pass each, so this stays linear in the
+  # notebook however many cells are edited.
+  readers_of <- split(rep(ids, lengths(refs)), unlist(refs, use.names = FALSE))
+  definers_of <- split(rep(ids, lengths(defs)), unlist(defs, use.names = FALSE))
+  from <- character(); to <- character()
+  for (e in edited) {
+    # Readers of a name its last run defined.
+    r <- setdiff(unique(unlist(readers_of[old_defs[[e]]], use.names = FALSE)), e)
+    # What its last run read, from whoever defines it now or did last run.
+    d <- setdiff(unique(unlist(definers_of[ran_references(state, e)], use.names = FALSE)), e)
+    from <- c(from, r, rep(e, length(d)))
+    to <- c(to, rep(e, length(r)), d)
+  }
+  for (f in unique(from)) g$upstream[[f]] <- union(g$upstream[[f]], to[from == f])
+  for (t in unique(to)) g$downstream[[t]] <- union(g$downstream[[t]], from[to == t])
+  run_graph_memo$graph <- state$graph
+  run_graph_memo$key <- key
+  run_graph_memo$value <- g
+  g
+}
+run_graph_memo <- new.env(parent = emptyenv())
+
+#' The cell of `queue` to run first. `queue` is in the graph's run order,
+#' which has no edges for what edited cells last ran: the head can read a
+#' name a pending cell's last run defined (an edit renamed or removed it),
+#' or a cell run by hand can pull in an edited ancestor the order puts
+#' after it. That cell runs first, after whatever it waits on, so the head
+#' doesn't use the old value or go stale as soon as it ran (#174).
+first_to_run <- function(state, queue) {
+  head <- queue[1]
+  edited <- edited_cells(state)
+  if (length(edited) == 0) return(head)
+  g <- run_graph(state, edited)
+  seen <- character()
+  repeat {
+    seen <- c(seen, head)
+    first <- queue[queue %in% upstream(g, head, transitive = TRUE)][1]
+    if (is.na(first) || first %in% seen) return(head)
+    head <- first
+  }
+}
+
+#' The cells edited since they last ran whose last run read or defined a
+#' name their current code doesn't: their result came from code with other
+#' edges. Runs at every cell start, so the code comparison is vectorised.
+edited_cells <- function(state) {
+  ids <- intersect(state$graph$ids, names(state$results))
+  ran <- lapply(state$results[ids], `[[`, "code")
+  ids <- ids[lengths(ran) == 1L]
+  if (length(ids) == 0) return(character())
+  ids <- ids[unlist(ran[ids], use.names = FALSE) != vapply(state$cells[ids], `[[`, "", "code")]
+  # Only an edit that drops a reference or a definition leaves edges the
+  # graph doesn't have. Most edits keep the names (a changed number, a new
+  # argument), and those cells add nothing, so they aren't returned.
+  Filter(function(id) {
+    r <- state$results[[id]]
+    old <- code_edges(r$code)
+    now <- state$graph$cells[[id]]
+    !all(old$references %in% now$references) ||
+      !all(union(r$defined, old$definitions) %in% now$definitions)
+  }, ids)
+}
+
+#' What a cell's result read: its references, plus those of the code it
+#' last ran when it was edited since (#175).
+ran_references <- function(state, id) {
+  now <- state$graph$cells[[id]]
+  refs <- setdiff(now$references, now$masked_none)
+  r <- state$results[[id]]
+  if (is.null(r) || is.null(r$code) || identical(r$code, state$cells[[id]]$code)) return(refs)
+  # A column read (`x` in `subset(df, x > 1)`) the current code's data
+  # provides isn't a read of the global in the old code either (#107). One
+  # the current code doesn't resolve stays a reference, as #107 keeps an
+  # edge it can't settle.
+  old <- code_edges(r$code)
+  union(refs, setdiff(old$references, intersect(old$masked, now$masked_none)))
+}
+
+#' The static references and definitions of `code`, parsed once per code
+#' text: `run_graph()` asks for an edited cell's old code at every cell
+#' start, and parsing it each time made a run with many staged edits
+#' several times slower.
+code_edges <- function(code) {
+  key <- paste0("c", code)  # an environment name can't be empty
+  hit <- edges_cache[[key]]
+  if (!is.null(hit)) return(hit)
+  if (length(edges_cache) >= 1000) rm(list = ls(edges_cache, all.names = TRUE), envir = edges_cache)
+  parsed <- read_cell(code)
+  refs <- parsed$references
+  # Names read only inside a data-masking call (`masked`): whether they read
+  # the global depends on the data's columns.
+  masked <- setdiff(unique(refs$name[refs$where == "masked"]), refs$name[refs$where != "masked"])
+  hit <- list(references = references_of(parsed), definitions = definitions_of(parsed), masked = masked)
+  assign(key, hit, envir = edges_cache)
+  hit
+}
+edges_cache <- new.env(hash = TRUE, parent = emptyenv())
+
 #' Has a result with status "ok", not stale, matching the current code.
 is_fresh <- function(state, id) {
   r <- state$results[[id]]
@@ -638,31 +782,38 @@ is_fresh <- function(state, id) {
 #' directly.
 invalidate_dependents <- function(state, id, names, queue = TRUE,
                                   was_setting = isTRUE(state$results[[id]]$setting)) {
-  dependents <- downstream(state$graph, id, transitive = TRUE)
+  edited <- edited_cells(state)
+  g <- run_graph(state, edited)
+  dependents <- downstream(g, id, transitive = TRUE)
   if (was_setting) {
     pos <- match(id, state$graph$order)
     if (!is.na(pos)) dependents <- union(dependents, state$graph$order[-seq_len(pos)])
   }
-  if (length(names) > 0) dependents <- union(dependents, readers_of(state, id, names))
-  invalidate_cells(state, id, setdiff(dependents, id), queue = queue)
+  if (length(names) > 0) dependents <- union(dependents, readers_of(state, id, names, edited, g))
+  invalidate_cells(state, id, setdiff(dependents, id), queue = queue, g = g)
 }
 
 #' The cells other than `id` that read any of `names`, and everything
 #' downstream of them.
-readers_of <- function(state, id, names) {
+readers_of <- function(state, id, names, edited = edited_cells(state),
+                       g = run_graph(state, edited)) {
   readers <- Filter(function(cid) {
     c <- state$graph$cells[[cid]]
     !identical(cid, id) && length(intersect(names, setdiff(c$references, c$masked_none))) > 0
   }, state$graph$ids)
+  # An edited cell's result read what its old code read (#175).
+  readers <- union(readers, Filter(function(cid) {
+    !identical(cid, id) && length(intersect(names, ran_references(state, cid))) > 0
+  }, edited))
   unique(unlist(lapply(readers, function(r) {
-    c(r, downstream(state$graph, r, transitive = TRUE))
+    c(r, downstream(g, r, transitive = TRUE))
   }), use.names = FALSE))
 }
 
 #' Mark `dependents` (of `id`) stale and, in autorun when `queue`, queue
 #' them: `invalidate_dependents()`'s rule, for a set of cells already
 #' worked out.
-invalidate_cells <- function(state, id, dependents, queue = TRUE) {
+invalidate_cells <- function(state, id, dependents, queue = TRUE, g = run_graph(state)) {
   autorun <- identical(state$file$header$on_cell_change, "autorun")
   queued <- character()
   for (cid in dependents) {
@@ -687,9 +838,9 @@ invalidate_cells <- function(state, id, dependents, queue = TRUE) {
     isTRUE(state$results[[a]]$stale) && !(a %in% state$pending) && !identical(a, id)
   }, names(state$results)) else character()
   if (length(outside)) {
-    ancestors <- setdiff(upstream_of_set(state$graph, queued), id)
+    ancestors <- setdiff(upstream_of_set(g, queued), id)
     stale <- Filter(function(a) can_run(state, a), intersect(outside, ancestors))
-    between <- reached_from(state$graph, stale, setdiff(ancestors, stale))
+    between <- reached_from(g, stale, setdiff(ancestors, stale))
     state$pending <- union(state$pending, Filter(function(a) can_run(state, a), union(stale, between)))
   }
   state
@@ -1018,7 +1169,8 @@ forget_run <- function(state, id) {
 #' Ask to run cells.
 #'
 #' Also retries a failed target library once, and any failed index whose
-#' wanted set hasn't changed: `schedule_packages()`'s install and resolve
+#' wanted set hasn't changed (resolving again, so a failed Bioconductor
+#' index is fetched again too):`schedule_packages()`'s install and resolve
 #' stages don't loop on a broken package by themselves (no retry storm while
 #' offline), but asking to run again is "I want this to work now", the same
 #' way a stopped worker restarts only when something is asked to run.
@@ -1037,6 +1189,13 @@ reduce_run <- function(state, event) {
   failed_keys <- Filter(function(k) identical(state$packages$indexes[[k]]$status, "failed"),
                         names(state$packages$indexes))
   for (k in failed_keys) state$packages$indexes[[k]] <- NULL
+  # A failed Bioconductor index left the names CRAN lacks resolved as not
+  # found, and only resolving again asks for it: without this, its slot was
+  # dropped here but never fetched again (#264). (CRAN's own index is
+  # fetched again by whatever asks for it next, as before.)
+  if (any(is_bioc_key(failed_keys)) && any(state$packages$problems$kind == "not_found")) {
+    state$packages$resolved_for <- character()
+  }
   # So is Bioconductor's release list, and a Bioconductor move that failed
   # (an index fetch) is proposed again.
   # A list kept from an earlier day after a fetch for a later date failed
@@ -1063,17 +1222,18 @@ reduce_run <- function(state, event) {
   # exactly this request (run the cell) after every disable/enable toggle.
   off_ids <- Filter(function(id) id %in% names(state$graph$off), ids)
   on_ids <- setdiff(ids, off_ids)
-  ancestors <- upstream_of_set(state$graph, on_ids)
+  g <- run_graph(state)
+  ancestors <- upstream_of_set(g, on_ids)
   unfresh <- Filter(function(a) !is_fresh(state, a), ancestors)
   # An ancestor downstream of an unfresh one is fresh now but goes stale
   # once that one runs, after this plan is made: it runs too, or the cells
   # asked for would use its old values (#169).
-  between <- reached_from(state$graph, unfresh, setdiff(ancestors, unfresh))
+  between <- reached_from(g, unfresh, setdiff(ancestors, unfresh))
   want <- union(union(unfresh, between), on_ids)
   skipped <- union(off_ids, Filter(function(id) !can_run(state, id), want))
   to_add <- setdiff(want, skipped)
   state$pending <- union(state$pending, to_add)
-  dg <- drop_graph_error_results(state, on_ids)
+  dg <- drop_graph_error_results(state, on_ids, queue = TRUE)
   state <- dg$state
   reply <- list(accepted = TRUE, queued = run_order(state$graph, state$pending), skipped = skipped)
   list(state = state, effects = dg$effects, reply = reply)
@@ -1278,8 +1438,9 @@ reduce_wk_input_set <- function(state, event) {
   state$input_values[[name]] <- if (!identical(event$value, default)) {
     list(cell = id, code = r$code, value = event$value)
   }
-  dependents <- setdiff(readers_of(state, id, name), id)
-  state <- invalidate_cells(state, id, dependents)
+  g <- run_graph(state)
+  dependents <- setdiff(readers_of(state, id, name, g = g), id)
+  state <- invalidate_cells(state, id, dependents, g = g)
   state$input_outcome <- list(name = name, ok = TRUE, error = NULL, value = event$value,
                               cells = Filter(function(cid) !is.null(state$results[[cid]]), dependents))
   list(state = state, effects = list(), reply = NULL)

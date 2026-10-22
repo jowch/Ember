@@ -697,10 +697,29 @@ test_that("[net] an r-universe package installs from its universe, and a commit 
   res <- run_cells(nb, wait = TRUE, timeout = 300)
   expect_false(res$timed_out)
   status <- package_status(nb)
-  expect_equal(status$library$status, "ready",
-               info = paste(c(status$library$message, notebook_state(nb)$packages$target$log), collapse = "\n"))
+  # A failed universe lookup is reported (highr's row is "source_failed"),
+  # not passed off as success, and running again retries it. r-universe
+  # sometimes fails a request, so give it one more try before asserting
+  # (#312).
+  failed <- function(status) {
+    any(status$packages$status[status$packages$name == "highr"] == "source_failed")
+  }
+  if (failed(status)) {
+    res <- run_cells(nb, wait = TRUE, timeout = 300)
+    expect_false(res$timed_out)
+    status <- package_status(nb)
+  }
+  why <- function(status) {
+    paste(c(status$library$message,
+            utils::capture.output(print(status$problems)),
+            utils::capture.output(print(status$packages[, intersect(c("name", "status", "source", "message"),
+                                                                   names(status$packages))])),
+            notebook_state(nb)$packages$target$log), collapse = "\n")
+  }
+  expect_false(failed(status), info = why(status))
+  expect_equal(status$library$status, "ready", info = why(status))
   src <- parse_universe_source(status$packages$source[status$packages$name == "highr"])
-  expect_equal(src$universe, "yihui")
+  expect_equal(src$universe, "yihui", info = why(status))
   expect_equal(src$git, "https://github.com/yihui/highr")
   desc <- read.dcf(file.path(notebook_state(nb)$packages$target$path, "highr", "DESCRIPTION"))
   expect_equal(unname(desc[, "RemoteSha"]), src$sha)
@@ -858,4 +877,49 @@ test_that("a notebook with the failing-installer option reports the real compile
   expect_match(status$library$message, "compilation failed for package", fixed = TRUE)
   expect_gt(length(status$library$log), 10)
   expect_equal(status$library$failures$package, "brokenpkg")
+})
+
+# ---- 130: a large download waits for an OK -----------------------------------
+
+test_that("an install of a large Bioconductor data package waits for approve_install() (130)", {
+  withr::local_options(ember.installer_script = system.file("fake-installer.R", package = "ember"),
+                       ember.ask_above = 1000)
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  # The fixture repositories, with a 2 kB GO.db tarball for the size.
+  root <- withr::local_tempdir()
+  file.copy(testthat::test_path("fixtures", "bioc"), root, recursive = TRUE)
+  writeBin(raw(2048), file.path(root, "bioc", "2026-09-01", "packages", "3.23", "data", "annotation",
+                                "src", "contrib", "GO.db_3.22.0.tar.gz"))
+  fixture <- function(...) paste0("file://", normalizePath(testthat::test_path("fixtures", ...), winslash = "/"))
+  repos <- ember_repos(cran = fixture("repos", "cran"),
+                       bioc = paste0("file://", normalizePath(file.path(root, "bioc"), winslash = "/")),
+                       bioc_config = fixture("bioc-config", "config.yaml"))
+
+  dir <- withr::local_tempdir()
+  cells <- list(S = list(code = "", kind = "code", folded = FALSE),
+                A = list(code = "library(GO.db)", kind = "code", folded = FALSE))
+  header <- new_header(ember_version = as.character(utils::packageVersion("ember")),
+                       r_version = paste(R.version$major, R.version$minor, sep = "."),
+                       snapshot = "2026-09-01")
+  file <- new_notebook_file(
+    header = header, cells = cells, run_order = names(cells), learned = list(),
+    sourced = data.frame(path = character(), hash = character(), stringsAsFactors = FALSE),
+    lock = empty_lock(), extra_blocks = list(), format = ember_format)
+  path <- file.path(dir, "nb.R")
+  write_atomic(path, format_notebook(file))
+
+  nb <- open_notebook(path, repos = repos, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, wait = FALSE)
+  expect_true(wait_for(nb, function(snap) identical(snap$packages$library$status, "asking"), timeout = 120),
+              info = paste(c(package_status(nb)$library$status, package_status(nb)$library$message),
+                           collapse = ": "))
+  download <- package_status(nb)$library$download
+  expect_equal(download$package, "GO.db")
+  expect_equal(download$bytes, 2048)
+
+  approve_install(nb)
+  expect_true(wait_for(nb, function(snap) identical(snap$packages$library$status, "ready"), timeout = 120))
+  expect_error(approve_install(nb), "no install is waiting")
 })
