@@ -305,7 +305,7 @@ schedule <- function(state) {
   # Dropping a result marks that cell's dependents stale. If `id` reads one
   # of them, it runs after it, with every ancestor between them, as when a
   # cell is run by hand (#176), not with its old value (#326).
-  if (length(dg$effects) > 0) {
+  if (length(dg$dropped) > 0) {
     ups <- upstream_of_set(state$graph, id)
     stale <- Filter(function(a) isTRUE(state$results[[a]]$stale) && can_run(state, a), ups)
     if (length(stale) > 0) {
@@ -385,7 +385,8 @@ failed_definers <- function(state, id) {
 
 #' For every cell in `blocked_cells(graph)` that still has a result: drop
 #' the result, mark its dependents stale, and send `drop_globals`. Returns
-#' `list(state, effects)`; a no-op when there are none.
+#' `list(state, effects, dropped)`, `dropped` being the cells whose result
+#' went; a no-op when there are none.
 #'
 #' `queue` is passed on to `invalidate_dependents()`. From `schedule()` it
 #' is `FALSE`: nothing is queued, as for an edit, since the cell dropped
@@ -431,7 +432,7 @@ drop_graph_error_results <- function(state, ids = NULL, queue = FALSE) {
       effects <- c(effects, list(fx_send(state$worker$gen, list(type = "drop_globals", cell = id))))
     }
   }
-  list(state = state, effects = effects)
+  list(state = state, effects = effects, dropped = stale_results)
 }
 
 #' Cells that became off in this event (`names(new$graph$off)` minus
