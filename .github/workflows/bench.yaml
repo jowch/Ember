@@ -38,6 +38,9 @@ concurrency:
 jobs:
   bench:
     runs-on: ubuntu-latest
+    # About twice the slowest successful run (43 minutes), so a hung step
+    # fails the job instead of running for six hours. See check.yaml (#339).
+    timeout-minutes: 90
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
     steps:
