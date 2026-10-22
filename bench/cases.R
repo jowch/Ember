@@ -54,6 +54,15 @@ cases <- local(envir = env, list(
       st <- perf_running(2000)
       list(st = st, done = wk_done(1, st$worker$running$token, report(), at(10)))
     },
+    run = function(x) { r <- step(x$st, x$done); notifications(x$st, r$state) }, inner = 1L),
+  # The same, for a cell that defines a name: its readers are looked up
+  # (`readers_of()`), which scanned every cell each time (#316).
+  worker_message_defines_2000 = list(
+    setup = function() {
+      st <- perf_running(2000)
+      st <- step(st, wk_done(1, st$worker$running$token, report(), at(4)))$state  # S
+      list(st = st, done = wk_done(1, st$worker$running$token, report(created = "x1"), at(10)))
+    },
     run = function(x) { r <- step(x$st, x$done); notifications(x$st, r$state) }, inner = 1L)
 ))
 

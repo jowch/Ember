@@ -835,10 +835,8 @@ invalidate_dependents <- function(state, id, names, queue = TRUE,
 #' downstream of them.
 readers_of <- function(state, id, names, edited = edited_cells(state),
                        g = run_graph(state, edited)) {
-  readers <- Filter(function(cid) {
-    c <- state$graph$cells[[cid]]
-    !identical(cid, id) && length(intersect(names, setdiff(c$references, c$masked_none))) > 0
-  }, state$graph$ids)
+  readers <- unique(unlist(name_readers(state$graph)[names], use.names = FALSE))
+  readers <- setdiff(state$graph$ids[state$graph$ids %in% readers], id)
   # An edited cell's result read what its old code read (#175).
   readers <- union(readers, Filter(function(cid) {
     !identical(cid, id) && length(intersect(names, ran_references(state, cid))) > 0
@@ -847,6 +845,21 @@ readers_of <- function(state, id, names, edited = edited_cells(state),
     c(r, downstream(g, r, transitive = TRUE))
   }), use.names = FALSE))
 }
+
+#' Name to the cells that read it (a masked name their data provides
+#' doesn't count), for `readers_of()`. It runs for every cell that starts
+#' or finishes, and a scan of every cell each time made a run of the whole
+#' notebook quadratic (#316), so the index is built once per graph.
+name_readers <- function(graph) {
+  if (identical(name_readers_memo$graph, graph)) return(name_readers_memo$value)
+  ids <- graph$ids
+  refs <- lapply(graph$cells[ids], function(c) unique(setdiff(c$references, c$masked_none)))
+  value <- split(rep(ids, lengths(refs)), unlist(refs, use.names = FALSE))
+  name_readers_memo$graph <- graph
+  name_readers_memo$value <- value
+  value
+}
+name_readers_memo <- new.env(parent = emptyenv())
 
 #' Mark `dependents` (of `id`) stale and, in autorun when `queue`, queue
 #' them: `invalidate_dependents()`'s rule, for a set of cells already
@@ -861,10 +874,12 @@ invalidate_cells <- function(state, id, dependents, queue = TRUE, g = run_graph(
     state$results[[cid]] <- r
     if (queue && autorun && isTRUE(state$allowed) && cell_runs(state$cells[[cid]]) &&
         !(cid %in% names(state$graph$off))) {
-      state$pending <- union(state$pending, cid)
       queued <- c(queued, cid)
     }
   }
+  # One union for the lot: one per cell made each invalidation quadratic
+  # in the number of dependents (#316).
+  if (length(queued)) state$pending <- union(state$pending, queued)
   # A queued dependent can read a stale cell outside this run (a delete, a
   # rename or an interrupt can leave one stale). As when it is run by hand,
   # its stale ancestors run first, with every ancestor between them and it
