@@ -53,17 +53,24 @@ const shot = async (page, step, full = false) => {
 
 /** Start collecting layout shifts (CLS, from the Layout Instability API)
  * and long tasks on `page`; read them back with `measured(page)`. Not
- * every engine has both APIs; a missing one reads as null. */
+ * every engine has both APIs; a missing one reads as null.
+ *
+ * `cls` counts the shifts after `settled(page)`, input or not, once
+ * `runAll()` has called it, and otherwise the shifts not marked as
+ * following input. The browser marks a shift as following input for 500
+ * ms after a click, so after "Run this notebook" the first outputs landing
+ * were counted on some runs and not others (the #295 audit read 0.074 to
+ * 0.173; locally the same shifts summed to 0.058 to 0.149 under that
+ * rule); counting from a fixed point instead gives the same number each
+ * run. */
 async function measure(page) {
   await page.evaluate(() => {
-    window.__audit = { cls: null, shifts: [], long: null };
+    window.__audit = { cls: null, since: null, shifts: [], long: null };
     try {
       window.__audit.cls = 0;
       new PerformanceObserver((list) => {
         for (const e of list.getEntries()) {
-          if (e.hadRecentInput) continue;
-          window.__audit.cls += e.value;
-          window.__audit.shifts.push({ value: Number(e.value.toFixed(4)), at: Math.round(e.startTime),
+          window.__audit.shifts.push({ value: Number(e.value.toFixed(4)), at: Math.round(e.startTime), start: e.startTime, input: e.hadRecentInput,
             moved: (e.sources ?? []).map((s) => s.node?.nodeName?.toLowerCase() + (s.node?.className ? "." + String(s.node.className).split(" ")[0] : "")).slice(0, 3) });
         }
       }).observe({ type: "layout-shift" });
@@ -74,7 +81,15 @@ async function measure(page) {
     } catch { window.__audit.long = null; }
   });
 }
-const measured = (page) => page.evaluate(() => ({ ...window.__audit, cls: window.__audit.cls == null ? null : Number(window.__audit.cls.toFixed(3)) }));
+/** From here on, `cls` counts every shift, input or not: call it once the
+ * page has drawn the click's own, intended change. */
+const settled = (page) => page.evaluate(() => { if (window.__audit) window.__audit.since = performance.now(); });
+const measured = (page) => page.evaluate(() => {
+  const a = window.__audit;
+  if (a.cls == null) return { ...a };
+  const counted = a.since == null ? a.shifts.filter((s) => !s.input) : a.shifts.filter((s) => s.start >= a.since);
+  return { ...a, since: a.since == null ? null : Math.round(a.since), cls: Number(counted.reduce((sum, s) => sum + s.value, 0).toFixed(3)) };
+});
 
 async function waitIdle(page, timeout = 60000) {
   await page.waitForFunction(() => document.querySelectorAll("pluto-cell.running, pluto-cell.queued").length === 0, null, { timeout });
@@ -101,6 +116,10 @@ async function open(fixture, width = 900) {
 async function runAll(page) {
   await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(() => !document.querySelector("#ember-safe-preview"), null, { timeout: 30000 });
+  // The banner leaving moves the page up: the click's intended change, so
+  // CLS counts from after it.
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+  await settled(page);
   await page.waitForTimeout(500);
   await waitIdle(page, 120000);
   await page.waitForTimeout(800);
