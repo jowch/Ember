@@ -16,6 +16,7 @@ import {
     keymap,
     history,
     historyKeymap,
+    isolateHistory,
     defaultKeymap,
     indentMore,
     indentLess,
@@ -257,6 +258,7 @@ export const CellInput = ({
     on_delete,
     on_add_after,
     on_change,
+    on_remote_replace = (/** @type {boolean} */ _replaced) => {},
     on_update_doc_query,
     on_focus_neighbor,
     on_line_heights,
@@ -299,6 +301,12 @@ export const CellInput = ({
     const newcm_ref = useRef(/** @type {EditorView?} */ (null))
     const dom_node_ref = useRef(/** @type {HTMLElement?} */ (null))
     const remote_code_ref = useRef(/** @type {string?} */ (null))
+    // The run code the editor's text was last in step with: what it was
+    // created from, then each remote_code applied. Text that differs from it
+    // is typing that hasn't been run yet. Unlike remote_code_ref, this is
+    // set even when remote_code arrived before the editor existed (the
+    // editor is made only once the cell scrolls into view).
+    const synced_code_ref = useRef(/** @type {string?} */ (null))
 
     const [dark_theme, set_dark_theme] = useState(is_dark_theme())
     useEventListener(window, "ember theme change", () => set_dark_theme(is_dark_theme()), [])
@@ -568,6 +576,7 @@ export const CellInput = ({
             }
         })
 
+        synced_code_ref.current = remote_code
         const newcm = (newcm_ref.current = new EditorView({
             state: EditorState.create({
                 doc: local_code,
@@ -789,9 +798,11 @@ export const CellInput = ({
         cm.dispatch(setDiagnostics(cm.state, diagnostics))
     }, [cm_diagnostics])
 
-    // Effect to apply "remote_code" to the cell when it changes...
-    // ideally this won't be necessary as we'll have actual multiplayer,
-    // or something to tell the user that the cell is out of sync.
+    // Effect to apply "remote_code" to the cell when it changes. Like Pluto,
+    // every tab shows the code that was last run, wherever it was run (#318).
+    // If this tab had typing that wasn't run yet, the new code replaces it
+    // as an undo step of its own, so one Ctrl+Z brings the typing back, and
+    // the cell says so.
     useEffect(() => {
         if (newcm_ref.current == null) return // Not sure when and why this gave an error, but now it doesn't
 
@@ -801,10 +812,16 @@ export const CellInput = ({
             // this happens when pasting or dropping cells
             return
         }
+        const had_local_edit = synced_code_ref.current != null && current_value !== synced_code_ref.current
         remote_code_ref.current = remote_code
+        synced_code_ref.current = remote_code
         if (current_value !== remote_code) {
-            setValue6(newcm_ref.current, remote_code)
+            newcm_ref.current.dispatch({
+                changes: { from: 0, to: newcm_ref.current.state.doc.length, insert: remote_code },
+                annotations: isolateHistory.of("full"),
+            })
         }
+        on_remote_replace(had_local_edit && current_value !== remote_code)
     }, [remote_code])
 
     useEffect(() => {
