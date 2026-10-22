@@ -2480,27 +2480,125 @@ check_formulas <- function(formulas) {
 # ---- Console and devices -----------------------------------------------------------------
 
 #' `txt` as a terminal leaves it: on each line, a "\r" moves back to the
-#' start, and what follows overwrites what was there, character by
-#' character (#358). A progress bar that redraws itself 300 times
+#' start, and what follows overwrites what was there, column by column
+#' (#358). A progress bar that redraws itself 300 times
 #' (`txtProgressBar()`, which writes "\r" before each redraw) ends as one
 #' line, as in the R console, and a redraw shorter than the line before it
 #' leaves that line's tail, as a terminal does. "\r\n" has already become
-#' "\n". Text R can't split into characters is left as it is.
+#' "\n".
+#'
+#' Colors are on in the worker, so a line can hold ANSI escapes. They take
+#' no columns: each column keeps the colors it was written with, and the
+#' line is written back with them. On a line with a "\r", "\033[K" clears
+#' to the end of the line ("\033[2K" all of it), "\033[<n>G" moves to
+#' column n, and any other escape that isn't a color is dropped. A wide
+#' character (CJK, most emoji) takes two columns. Lines with no "\r" are
+#' left as they are, and so is text R can't split into characters.
 apply_carriage_returns <- function(txt) {
   if (!grepl("\r", txt, fixed = TRUE)) return(txt)
   tryCatch({
     lines <- strsplit(txt, "\n", fixed = TRUE)[[1]]
     if (endsWith(txt, "\n")) lines <- c(lines, "")
-    lines <- vapply(lines, function(line) {
-      if (!grepl("\r", line, fixed = TRUE)) return(line)
-      out <- ""
-      for (seg in strsplit(line, "\r", fixed = TRUE)[[1]]) {
-        out <- paste0(seg, substring(out, nchar(seg) + 1L))
+    sgr <- ""  # the colors in force, carried from line to line
+    for (i in seq_along(lines)) {
+      if (grepl("\r", lines[[i]], fixed = TRUE)) {
+        res <- terminal_line(lines[[i]], sgr)
+        lines[[i]] <- res$text
+        sgr <- res$sgr
+      } else if (grepl("\033[", lines[[i]], fixed = TRUE)) {
+        for (e in regmatches(lines[[i]], gregexpr("\033\\[[0-9;]*m", lines[[i]]))[[1]]) sgr <- sgr_after(sgr, e)
       }
-      out
-    }, character(1), USE.NAMES = FALSE)
+    }
     paste(lines, collapse = "\n")
   }, error = function(e) txt)
+}
+
+#' The colors in force after `seq` (one "\033[...m"): a reset ("\033[m",
+#' or one starting with 0) starts again, anything else adds to `sgr`.
+sgr_after <- function(sgr, seq) {
+  params <- substr(seq, 3L, nchar(seq) - 1L)
+  if (!nzchar(params) || grepl("^0*(;|$)", params)) {
+    rest <- sub("^0*;?", "", params)
+    if (nzchar(rest)) paste0("\033[", rest, "m") else ""
+  } else paste0(sgr, seq)
+}
+
+#' One line with a "\r" in it, as a terminal leaves it, starting with the
+#' colors `sgr` in force. Returns `list(text, sgr)`, `sgr` being the
+#' colors in force at its end.
+terminal_line <- function(line, sgr) {
+  start <- sgr
+  ch <- character()   # per column: the character, "" for the second column of a wide one
+  st <- character()   # per column: the colors it was written with
+  col <- 0L
+  put <- function(chars, widths) {
+    for (k in seq_along(chars)) {
+      w <- widths[[k]]
+      if (w <= 0L) next
+      at <- col + seq_len(w)
+      if (max(at) > length(ch)) {
+        pad <- (length(ch) + 1L):max(at)
+        ch[pad] <<- " "; st[pad] <<- sgr
+      }
+      # Overwriting half of a wide character leaves a space in its other half.
+      if (identical(ch[[at[1]]], "") && at[1] > 1L) ch[[at[1] - 1L]] <<- " "
+      last <- at[length(at)]
+      if (last < length(ch) && identical(ch[[last + 1L]], "")) ch[[last + 1L]] <<- " "
+      ch[at] <<- c(chars[[k]], rep("", w - 1L))
+      st[at] <<- sgr
+      col <<- last
+    }
+  }
+  toks <- regmatches(line, gregexpr("\033\\[[0-9;?]*[ -/]*[@-~]|\033.|\r|[^\033\r]+", line, perl = TRUE))[[1]]
+  for (t in toks) {
+    if (identical(t, "\r")) {
+      col <- 0L
+    } else if (startsWith(t, "\033")) {
+      final <- substring(t, nchar(t))
+      params <- substr(t, 3L, nchar(t) - 1L)
+      if (startsWith(t, "\033[") && final == "m") {
+        sgr <- sgr_after(sgr, t)
+      } else if (startsWith(t, "\033[") && final == "K") {
+        if (params %in% c("", "0")) {
+          keep <- seq_len(min(col, length(ch)))
+          ch <- ch[keep]; st <- st[keep]
+        } else if (params == "2") {
+          ch[] <- " "; st[] <- sgr
+        }
+      } else if (startsWith(t, "\033[") && final == "G") {
+        col <- max(0L, (if (nzchar(params)) as.integer(params) else 1L) - 1L)
+      }
+    } else {
+      chars <- strsplit(t, "")[[1]]
+      widths <- nchar(chars, type = "width")
+      if (all(widths == 1L)) {
+        # The common case, a run of ordinary characters: written at once.
+        at <- col + seq_along(chars)
+        if (max(at) > length(ch)) {
+          pad <- (length(ch) + 1L):max(at)
+          ch[pad] <- " "; st[pad] <- sgr
+        }
+        if (identical(ch[[at[1]]], "") && at[1] > 1L) ch[[at[1] - 1L]] <- " "
+        last <- at[length(at)]
+        if (last < length(ch) && identical(ch[[last + 1L]], "")) ch[[last + 1L]] <- " "
+        ch[at] <- chars; st[at] <- sgr
+        col <- last
+      } else {
+        put(chars, widths)
+      }
+    }
+  }
+  # Written back with each change of colors, starting from those in force
+  # before the line, and ending with those in force after it.
+  out <- character()
+  cur <- start
+  for (k in seq_along(ch)) {
+    if (!nzchar(ch[[k]])) next
+    if (!identical(st[[k]], cur)) { out <- c(out, "\033[0m", st[[k]]); cur <- st[[k]] }
+    out <- c(out, ch[[k]])
+  }
+  if (!identical(cur, sgr)) out <- c(out, "\033[0m", sgr)
+  list(text = paste(out, collapse = ""), sgr = sgr)
 }
 
 #' Collect console items in order and stream each to the server.

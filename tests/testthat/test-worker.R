@@ -63,13 +63,21 @@ test_that("a progress bar's redraws end as one line, as in the R console (#358)"
     "pb <- txtProgressBar(min = 0, max = 300, style = 3)",
     "for (i in 1:300) setTxtProgressBar(pb, i)",
     "close(pb)",
-    'cat("abcdef\\rXY\\n")', sep = "\n"))
+    'cat("abcdef\\rXY\\n")',
+    'cat("\\033[32m100%\\033[39m\\r\\033[32m5%\\033[39m\\n")',
+    'cat("\\u65e5\\u672c\\u8a9e\\rab\\n")',
+    'cat("loading...\\r\\033[KDone\\n")', sep = "\n"))
   expect_identical(r$status, "ok")
   out <- paste(vapply(Filter(function(i) identical(i$kind, "stdout"), r$console), `[[`, "", "text"), collapse = "")
   expect_false(grepl("\r", out, fixed = TRUE))
   lines <- strsplit(out, "\n", fixed = TRUE)[[1]]
-  # A redraw overwrites the line it returns to, so a shorter one keeps its tail.
-  expect_identical(lines, c(sprintf("  |%s| 100%%", strrep("=", 70)), "XYcdef"))
+  visible <- gsub("\033\\[[0-9;]*m", "", lines)
+  # A redraw overwrites the line it returns to, so a shorter one keeps its
+  # tail. Colors take no columns, and each column keeps the color it was
+  # written in; a wide character takes two columns; ESC[K clears the rest.
+  expect_identical(visible, c(sprintf("  |%s| 100%%", strrep("=", 70)), "XYcdef", "5%0%",
+                              "ab\u672c\u8a9e", "Done"))
+  expect_match(lines[[3]], "\033[32m0%", fixed = TRUE)
 })
 
 test_that("earlier_visible_values_to_console", {
