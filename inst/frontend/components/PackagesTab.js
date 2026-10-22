@@ -261,6 +261,11 @@ const LargeDownloadCard = ({ download }) => {
     `
 }
 
+/** One package a step back changes (#311): "name from → to", or just the
+ * version it gets or loses. */
+const step_back_change = (c) =>
+    c.from != null && c.to != null ? `${c.name} ${c.from} → ${c.to}` : c.to != null ? `${c.name} ${c.to}` : t("t_ember_packages_step_back_dropped", { name: c.name, version: c.from })
+
 /**
  * The header's Update button and, once `update` fills in, what it found:
  * "Checking…" while fetching, the in-tab restart question when applying
@@ -274,6 +279,11 @@ const LargeDownloadCard = ({ download }) => {
  * just clicked Update like nothing happened. `justFinished` tracks that
  * transition locally and shows a short "Already up to date" note for it,
  * unless the library went on to install something (a real update).
+ *
+ * The same place asks about a step back (`update.back`, #311): the
+ * notebook's date isn't published for Bioconductor yet, and the newest
+ * date that is would change a locked version. Ember moves back on its own
+ * when nothing locked would change, so this shows only then.
  *
  * @param {{ update: import("./Editor.js").EmberPackagesUpdate?, library_status: string }} props
  */
@@ -318,6 +328,23 @@ const PackagesUpdate = ({ update, library_status }) => {
                 ? html`<span class="ember-packages-update-failed"
                       >${t("t_ember_packages_update_failed", { reason: update.message ?? "" })}</span
                   >`
+                : update.back != null
+                ? html`<div class="ember-packages-update-question ember-packages-step-back-question">
+                      <p>
+                          ${t("t_ember_packages_step_back_question", {
+                              from: update.back.from,
+                              date: update.date,
+                              changes: update.back.changes.map(step_back_change).join(", "),
+                          })}
+                          ${update.restart.length > 0
+                              ? " " + t("t_ember_packages_step_back_restart", { names: update.restart.join(", ") })
+                              : ""}
+                      </p>
+                      <button type="button" class="ember-btn primary" onClick=${() => pluto_actions.ember_apply_update(update.date)}>
+                          ${t("t_ember_packages_step_back_apply", { date: update.date })}
+                      </button>
+                      <button type="button" class="ember-btn" onClick=${() => pluto_actions.ember_cancel_update()}>${t("t_cancel")}</button>
+                  </div>`
                 : update.restart.length > 0
                 ? html`<div class="ember-packages-update-question">
                       <p>${t("t_ember_packages_update_restart_question", { names: update.restart.join(", ") })}</p>

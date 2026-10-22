@@ -461,6 +461,15 @@ install_failures <- function(lines) {
 #'   even when it restarts R (running the notebook was the consent), holds
 #'   the install of the old pin's library while it is pending, and isn't
 #'   the page's update question (`project_ember()`).
+#' * `kind` `"back"`: the notebook's date moving back because one of
+#'   Bioconductor's indexes isn't published at it yet while packages are
+#'   locked (`reduce_index_failed()`, #311). It is proposed by Ember, not
+#'   asked for, and re-resolves in `"keep"` mode at the earlier date. When
+#'   every locked version is the one that date has, it applies at once with
+#'   nothing shown; otherwise it stays `"ready"` with `apply = FALSE` and
+#'   the changes that date needs, as the page's update question
+#'   (`project_ember()`), until `set_date()` applies it or it is cancelled.
+#'   One that fails is dropped, leaving the `index_unavailable` row.
 #' * `asked`: the date the preview was asked for. It differs from `date`
 #'   only when that day wasn't published yet and the preview moved back to
 #'   the newest one that is (`reduce_index_failed()`, #162), so
@@ -731,6 +740,7 @@ schedule_packages <- function(state, old) {
         !is.na(state$packages$proposal$date)) {
       prop <- state$packages$proposal
       is_move <- identical(prop$kind, "bioc")
+      is_back <- identical(prop$kind, "back")
       releases <- releases_at(state$packages, prop$date)
       wanted <- wanted_packages(state$graph, state$file$header)
       # The new date's CRAN key first, then Bioconductor's at the release for
@@ -769,7 +779,13 @@ schedule_packages <- function(state, old) {
       # at that date), the lock's Bioconductor packages would resolve as not
       # found and silently drop out of the new lock: fail instead. A notebook
       # with none just resolves without the failed index.
-      drop_message <- if (!has_bioc || identical(prop$status, "failed")) {
+      drop_message <- if (identical(prop$status, "failed")) {
+        NULL
+      } else if (is_back && length(failed) > 0) {
+        # A step back is for a Bioconductor package: without its indexes
+        # there is nothing to gain by moving.
+        failed_index_problems(state$packages$indexes[failed])$message[[1]]
+      } else if (!has_bioc) {
         NULL
       } else if (is.na(bioc_release_in(needed))) {
         releases_gap_message(state$packages, prop$date) %||% sprintf(paste("Bioconductor has no release for R %s at %s; moving there would",
@@ -797,7 +813,17 @@ schedule_packages <- function(state, old) {
                 (identical(prop$status, "fetching") || !setequal(prop$for_wanted %||% character(), wanted))) {
         indexes_loaded <- Filter(Negate(is.null), lapply(state$packages$indexes[needed], function(s) s$index))
         res <- resolve_lock(wanted, lock_for_sources(state$file$lock, state$file$header, sources_for),
-                            indexes_loaded, needed = needed, mode = if (is_move) "bioc" else "fresh")
+                            indexes_loaded, needed = needed,
+                            mode = if (is_move) "bioc" else if (is_back) "keep" else "fresh")
+        # A step back keeps the locked versions; one the earlier date
+        # doesn't have is resolved from that date instead, and the move
+        # waits for an answer (#311).
+        back_moved <- if (is_back && isTRUE(res$complete)) back_conflicts(state, res) else character()
+        if (length(back_moved) > 0) {
+          base <- lock_for_sources(state$file$lock, state$file$header, sources_for)
+          base$entries <- base$entries[!(base$entries$name %in% back_moved), , drop = FALSE]
+          res <- resolve_lock(wanted, base, indexes_loaded, needed = needed, mode = "keep")
+        }
         if (needs_bioc(res) && releases_unsettled(state$packages, prop$date)) {
           fr <- fetch_releases(state$packages, state$options, prop$date)
           state$packages <- fr$p
@@ -820,7 +846,16 @@ schedule_packages <- function(state, old) {
                                    problems = res$problems, for_wanted = wanted, apply = prop$apply,
                                    bioc_version = bioc_pin(res$lock, bioc_release_in(needed)),
                                    kind = prop$kind, update = prop$update, asked = prop$asked %||% prop$date)
-          if (isTRUE(prop$apply)) {
+          if (is_back && length(back_moved) == 0) {
+            # Every locked version stays: nothing to ask.
+            state$packages$proposal <- new_prop
+            ap <- apply_proposal(state)
+            state <- ap$state
+            effects <- c(effects, ap$effects)
+          } else if (is_back) {
+            new_prop$restart <- intersect(changes$name, names(state$worker$loaded %||% character()))
+            state$packages$proposal <- new_prop
+          } else if (isTRUE(prop$apply)) {
             loaded <- state$worker$loaded %||% character()
             restart_names <- intersect(changes$name, names(loaded))
             # A Bioconductor move doesn't wait on the page: running the
@@ -852,6 +887,12 @@ schedule_packages <- function(state, old) {
                                                 message = slot$message, kind = prop$kind, update = prop$update,
                                                 asked = prop$asked %||% prop$date)
       }
+    }
+    # A step back that failed is dropped: the failed index's own row says
+    # why the package isn't there, and running again retries it (#311).
+    bp <- state$packages$proposal
+    if (!is.null(bp) && identical(bp$kind, "back") && identical(bp$status, "failed")) {
+      state$packages$proposal <- NULL
     }
     # A preview held for a Bioconductor move (`hold_preview()`) is made
     # once the move has applied or failed, and goes round to be resolved.
@@ -990,7 +1031,10 @@ propose_bioc_move <- function(state) {
     return(state)
   }
   if (is.na(bioc_move_target(header, state$options$r, releases_at(p, header$snapshot)))) return(state)
-  # A request already held is newer than the open preview: it wins.
+  # A request already held is newer than the open preview: it wins. A step
+  # back (#311) wasn't asked for, so it isn't held: the move fetches
+  # Bioconductor's indexes again, and steps back again if they're missing.
+  if (identical(p$proposal$kind, "back")) p$proposal <- NULL
   if (!is.null(p$proposal) && is.null(p$held)) p$held <- preview_event(p$proposal)
   p$proposal <- new_proposal(header$snapshot, apply = TRUE, kind = "bioc")
   p$bioc_move_tried <- TRUE
@@ -1307,6 +1351,39 @@ reduce_index_failed <- function(state, event) {
     state$file$header$snapshot <- format(as.Date(header$snapshot) - 1, "%Y-%m-%d")
     return(list(state = state, effects = list(), reply = NULL))
   }
+  # The same for one of Bioconductor's indexes at the notebook's date
+  # while packages are locked (#311): the date the lock came from is
+  # published for CRAN, but Bioconductor's snapshot for it comes days
+  # later, so a Bioconductor package added since can't be found there.
+  # Ember proposes moving back a day (`kind = "back"`); the Proposal stage
+  # of `schedule_packages()` re-resolves there keeping the locked versions,
+  # and applies it without asking when none of them would change. The
+  # failed index is kept as failed meanwhile, so the name shows why it
+  # isn't resolved yet. Not while another proposal (one the user asked
+  # for) or a held one is open.
+  prop <- state$packages$proposal
+  if (isTRUE(event$unpublished) && nrow(state$file$lock$entries) > 0 &&
+      is.null(prop) && is.null(state$packages$held) &&
+      !is.null(header$snapshot) && !is.na(header$snapshot) &&
+      is_bioc_key(event$key) && identical(key_date(event$key), header$snapshot)) {
+    wanted <- wanted_packages(state$graph, header)
+    state$packages$indexes[[event$key]] <- new_index_slot("failed", message = event$message, wanted = wanted)
+    state <- step_back(state, header$snapshot, asked = header$snapshot)
+    return(list(state = state, effects = list(), reply = NULL))
+  }
+  # A step back whose earlier day isn't published either (CRAN's index, or
+  # one of Bioconductor's) moves back another day, until every index it
+  # needs is there. The shell's `unpublished` bound (`may_be_unpublished()`)
+  # stops it; past that the failure fails the proposal, which is dropped.
+  if (isTRUE(event$unpublished) && !is.null(prop) && identical(prop$kind, "back") &&
+      identical(prop$status, "fetching") && identical(key_date(event$key), prop$date) &&
+      (identical(event$key, repo_key("cran", prop$date)) || is_bioc_key(event$key))) {
+    keys <- names(state$packages$indexes)
+    drop <- keys[keys == event$key | (is_bioc_key(keys) & key_date(keys) == prop$date)]
+    for (k in drop) state$packages$indexes[[k]] <- NULL
+    state <- step_back(state, prop$date, asked = prop$asked %||% header$snapshot)
+    return(list(state = state, effects = list(), reply = NULL))
+  }
   # A date preview of a day that isn't published yet ("Update all" is a
   # preview of today) moves back a day the same way, so it offers the
   # newest published date instead of failing with no changes. The same
@@ -1332,6 +1409,32 @@ reduce_index_failed <- function(state, event) {
   wanted <- wanted_packages(state$graph, header)
   state$packages$indexes[[event$key]] <- new_index_slot("failed", message = event$message, wanted = wanted)
   list(state = state, effects = list(), reply = NULL)
+}
+
+#' A `"back"` proposal (#311) at the day before `date`. The earlier day
+#' may still be gaining packages: a provisional copy of its CRAN index
+#' this session holds is fetched again, as `reduce_preview_date()` does.
+step_back <- function(state, date, asked) {
+  earlier <- format(as.Date(date) - 1, "%Y-%m-%d")
+  held <- state$packages$indexes[[repo_key("cran", earlier)]]
+  if (isTRUE(held$provisional) && identical(held$status, "ready")) {
+    state$packages$indexes[[repo_key("cran", earlier)]] <- NULL
+  }
+  state$packages$proposal <- new_proposal(earlier, kind = "back", asked = asked)
+  state
+}
+
+#' The locked packages whose version a `"keep"` resolution at another date
+#' found isn't that date's (`off_date`, or no index has it), less those
+#' already so at the notebook's own date (a lock edited by hand, a pinned
+#' package): moving there would change, or fail to install, these.
+back_conflicts <- function(state, res) {
+  conflict <- function(probs) {
+    if (is.null(probs) || nrow(probs) == 0) return(character())
+    probs$package[!is.na(probs$package) & probs$kind %in% c("off_date", "not_in_index")]
+  }
+  locked <- state$file$lock$entries$name
+  intersect(setdiff(conflict(res$problems), conflict(state$packages$problems)), locked)
 }
 
 #' The release list arrived, and the pin's problem rows are recomputed
