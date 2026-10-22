@@ -518,16 +518,12 @@ view_context <- function(state) {
   # (design.md, "Writes static reading can't see"), once each: the note that
   # the cell doesn't rerun when what they read changes (#357). NULL, as
   # above, for the many cells with none.
+  # `graph$untracked` holds only those cells, as `graph$settings` does.
   untracked <- vector("list", n)
-  analyses <- graph$analyses
-  if (length(analyses) > 0) {
-    at <- match(ids, names(analyses))
-    for (i in which(!is.na(at))) {
-      notes <- analyses[[at[[i]]]]$notes
-      if (is.null(notes) || nrow(notes) == 0) next
-      calls <- unique(notes$detail[notes$kind == "untracked_read"])
-      if (length(calls) > 0) untracked[[i]] <- calls
-    }
+  if (length(graph$untracked) > 0) {
+    at <- match(names(graph$untracked), ids)
+    ok <- !is.na(at)
+    untracked[at[ok]] <- graph$untracked[ok]
   }
 
   list(ids = ids, running = running, running_idx = running_idx,

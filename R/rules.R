@@ -98,6 +98,31 @@ untracked_reads <- c("get", "get0", "mget", "exists", "dynGet",
 #' literal before falling back to the plain `untracked_read` note.
 get_family_functions <- c("get", "get0", "exists", "mget", "dynGet")
 
+#' Calls that take a function as an object to look at, not to call:
+#' `args(get)` or `?get` reads no global through `get`, so a get-family
+#' function that is a direct argument of one gets no note (#357).
+function_object_heads <- c("?", "help", "args", "formals", "body",
+                           "environment", "debug", "debugonce", "undebug",
+                           "trace", "untrace", "identical", "bquote")
+
+#' The get-family function `e` passes as a value, or `NULL`: a bare
+#' `get` (unless a local binds it) or `base::get` / `base:::get` that isn't
+#' being called (#357).
+get_family_value <- function(e, scope) {
+  if (is.symbol(e)) {
+    name <- as.character(e)
+    if (name %in% get_family_functions && !is_bound_locally(scope, name)) return(name)
+    return(NULL)
+  }
+  if (is.call(e) && length(e) == 3 && is.symbol(e[[1]]) &&
+      as.character(e[[1]]) %in% c("::", ":::") &&
+      identical(as.character(e[[2]]), "base") &&
+      as.character(e[[3]]) %in% get_family_functions) {
+    return(as.character(e[[3]]))
+  }
+  NULL
+}
+
 is_get_family <- function(name) {
   name %in% get_family_functions
 }
