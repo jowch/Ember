@@ -261,10 +261,12 @@ const LargeDownloadCard = ({ download }) => {
     `
 }
 
-/** One package a step back changes (#311): "name from → to", or just the
- * version it gets or loses. */
+/** One locked package a step back changes (#311): "name from → to", or
+ * one it no longer needs. The packages it adds aren't listed: they are
+ * what the user asked for, and for a Bioconductor package that is a long
+ * list of dependencies. */
 const step_back_change = (c) =>
-    c.from != null && c.to != null ? `${c.name} ${c.from} → ${c.to}` : c.to != null ? `${c.name} ${c.to}` : t("t_ember_packages_step_back_dropped", { name: c.name, version: c.from })
+    c.to != null ? `${c.name} ${c.from} → ${c.to}` : t("t_ember_packages_step_back_dropped", { name: c.name, version: c.from })
 
 /**
  * The header's Update button and, once `update` fills in, what it found:
@@ -329,12 +331,15 @@ const PackagesUpdate = ({ update, library_status }) => {
                       >${t("t_ember_packages_update_failed", { reason: update.message ?? "" })}</span
                   >`
                 : update.back != null
-                ? html`<div class="ember-packages-update-question ember-packages-step-back-question">
+                ? html`<div class="ember-packages-update-question">
                       <p>
                           ${t("t_ember_packages_step_back_question", {
                               from: update.back.from,
                               date: update.date,
-                              changes: update.back.changes.map(step_back_change).join(", "),
+                              changes: update.back.changes
+                                  .filter((c) => c.from != null)
+                                  .map(step_back_change)
+                                  .join(", "),
                           })}
                           ${update.restart.length > 0
                               ? " " + t("t_ember_packages_step_back_restart", { names: update.restart.join(", ") })

@@ -1249,6 +1249,9 @@ reduce_run <- function(state, event) {
     state$packages$proposal <- NULL
     state$packages$bioc_move_tried <- FALSE
   }
+  # A step back that found nothing, or was cancelled, may be tried again
+  # (#311): the indexes that failed are fetched again too.
+  state$packages$back_tried <- NULL
   runnable_ids <- Filter(function(i) cell_runs(state$cells[[i]]), names(state$cells))
   ids <- event$ids %||% runnable_ids
   ids <- ids[ids %in% names(state$cells)]

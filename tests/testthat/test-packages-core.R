@@ -1532,23 +1532,31 @@ unpublished_404 <- function(state, key, t) {
                                at(t), unpublished = TRUE))
 }
 
+#' Every Bioconductor index at `date` answers an unpublished 404.
+bioc_unpublished <- function(state, date = "2026-10-01", t = 3) {
+  r <- list(state = state, effects = list())
+  for (kind in names(bioc_kinds)) r <- unpublished_404(r$state, repo_key(kind, date, "3.23"), t)
+  r
+}
+
 test_that("a Bioconductor index not published at a locked notebook's date steps back silently when nothing locked changes (#311)", {
   r <- locked_bioc_open()
   r <- unpublished_404(r$state, "bioc/2026-10-01/3.23", 3)
+  # Not before resolution at the notebook's date has settled.
+  expect_null(r$state$packages$proposal)
+  r <- unpublished_404(r$state, "bioc-ann/2026-10-01/3.23", 3)
+  r <- unpublished_404(r$state, "bioc-exp/2026-10-01/3.23", 3)
   prop <- r$state$packages$proposal
   expect_equal(prop$kind, "back")
   expect_equal(prop$date, "2026-09-30")
   expect_equal(prop$asked, "2026-10-01")
-  # Nothing has moved yet, and the page asks nothing.
+  # Nothing has moved yet, the page asks nothing, and the cell that needs
+  # DESeq2 waits for the step back rather than failing first.
   expect_equal(r$state$file$header$snapshot, "2026-10-01")
   expect_null(pluto_state(r$state)$js$ember$packages$update)
+  expect_true("A" %in% names(waiting_cells(r$state)))
   expect_equal(find_effect(r, "fetch_index")$key, "cran/2026-09-30")
   expect_true(find_effect(r, "fetch_index")$fresh)
-
-  # The old date's other Bioconductor answers don't disturb it.
-  r <- unpublished_404(r$state, "bioc-ann/2026-10-01/3.23", 4)
-  r <- unpublished_404(r$state, "bioc-exp/2026-10-01/3.23", 4)
-  expect_equal(r$state$packages$proposal$date, "2026-09-30")
 
   r <- drive(r$state, ev_index_fetched("cran/2026-09-30", cran_as("2026-09-30"), at(5)))
   r <- deliver_bioc(r$state, date = "2026-09-30", t = 6)
@@ -1559,14 +1567,15 @@ test_that("a Bioconductor index not published at a locked notebook's date steps 
   expect_equal(lock$version[lock$name == "cli"], "3.6.6")
   expect_false(any(r$state$packages$problems$kind %in% c("not_found", "index_unavailable", "off_date")))
   expect_null(pluto_state(r$state)$js$ember$packages$update)
+  # Still waiting, now for the install.
+  expect_equal(waiting_cells(r$state)[["A"]], "DESeq2")
   text <- format_notebook(notebook_file_of(r$state))
   expect_match(text, "2026-09-30", fixed = TRUE)
   expect_match(text, "# DESeq2 1.50.0 Bioc", fixed = TRUE)
 })
 
-test_that("a step back keeps going while the earlier day isn't published either (#311)", {
-  r <- locked_bioc_open()
-  r <- unpublished_404(r$state, "bioc/2026-10-01/3.23", 3)
+test_that("a step back keeps going while the earlier day isn't published either, for Bioconductor or CRAN (#311)", {
+  r <- bioc_unpublished(locked_bioc_open()$state)
   r <- drive(r$state, ev_index_fetched("cran/2026-09-30", cran_as("2026-09-30"), at(4)))
   r <- unpublished_404(r$state, "bioc/2026-09-30/3.23", 5)
   expect_equal(r$state$packages$proposal$kind, "back")
@@ -1574,23 +1583,34 @@ test_that("a step back keeps going while the earlier day isn't published either 
   expect_equal(r$state$packages$proposal$asked, "2026-10-01")
   expect_false(any(is_bioc_key(names(r$state$packages$indexes)) &
                      key_date(names(r$state$packages$indexes)) == "2026-09-30"))
-  r <- drive(r$state, ev_index_fetched("cran/2026-09-29", cran_as("2026-09-29"), at(6)))
-  r <- deliver_bioc(r$state, date = "2026-09-29", t = 7)
+  # CRAN's index at 2026-09-29 isn't there either.
+  r <- unpublished_404(r$state, "cran/2026-09-29", 6)
+  expect_equal(r$state$packages$proposal$date, "2026-09-28")
+  expect_null(r$state$packages$indexes[["cran/2026-09-29"]])
+  expect_equal(find_effect(r, "fetch_index")$key, "cran/2026-09-28")
+  r <- drive(r$state, ev_index_fetched("cran/2026-09-28", cran_as("2026-09-28"), at(7)))
+  r <- deliver_bioc(r$state, date = "2026-09-28", t = 8)
   expect_null(r$state$packages$proposal)
-  expect_equal(r$state$file$header$snapshot, "2026-09-29")
+  expect_equal(r$state$file$header$snapshot, "2026-09-28")
   expect_true("DESeq2" %in% r$state$file$lock$entries$name)
 })
 
-test_that("a step back that would change a locked version waits as the page's question, and set_date() applies it (#311)", {
-  r <- locked_bioc_open()
-  r <- unpublished_404(r$state, "bioc/2026-10-01/3.23", 3)
-  # The day before has cli 3.6.5, not the locked 3.6.6.
+#' `locked_bioc_open()` stepped back to 2026-09-30, whose CRAN index has
+#' cli 3.6.5 rather than the locked 3.6.6, so the move waits for an answer.
+back_question <- function(loaded = NULL) {
+  r <- bioc_unpublished(locked_bioc_open()$state)
+  if (!is.null(loaded)) r$state$worker$loaded <- loaded
   r <- drive(r$state, ev_index_fetched("cran/2026-09-30", cran_as("2026-09-30", fixture = "2026-09-01"), at(4)))
-  r <- deliver_bioc(r$state, date = "2026-09-30", t = 5)
+  deliver_bioc(r$state, date = "2026-09-30", t = 5)
+}
+
+test_that("a step back that would change a locked version waits as the page's question, and set_date() applies it (#311)", {
+  r <- back_question()
   prop <- r$state$packages$proposal
   expect_equal(prop$kind, "back")
   expect_equal(prop$status, "ready")
   expect_false(isTRUE(prop$apply))
+  expect_equal(prop$restart, character())
   expect_equal(r$state$file$header$snapshot, "2026-10-01")
   ch <- prop$changes
   expect_equal(ch$from[ch$name == "cli"], "3.6.6")
@@ -1598,6 +1618,8 @@ test_that("a step back that would change a locked version waits as the page's qu
   expect_true("DESeq2" %in% ch$name[ch$change == "added"])
   # Only the package that has to move moves.
   expect_false(any(prop$problems$kind == "off_date"))
+  # The question is open: the cell isn't held for it.
+  expect_false("A" %in% names(waiting_cells(r$state)))
 
   js <- pluto_state(r$state)$js
   expect_true(check_wire(js))
@@ -1620,21 +1642,97 @@ test_that("a step back that would change a locked version waits as the page's qu
   expect_null(r$state$packages$proposal)
 })
 
-test_that("a cancelled step back leaves the date and the unpublished index's row (#311)", {
-  r <- locked_bioc_open()
-  for (kind in names(bioc_kinds)) r <- unpublished_404(r$state, repo_key(kind, "2026-10-01", "3.23"), 3)
+test_that("a step back's question names a loaded package it changes as restarting R (#311)", {
+  r <- back_question(loaded = c(cli = "3.6.6"))
+  expect_equal(r$state$packages$proposal$restart, "cli")
+  expect_equal(unlist(pluto_state(r$state)$js$ember$packages$update$restart), "cli")
+})
+
+test_that("a step back's question follows the wanted set, and goes once the missing name does (#311)", {
+  r <- back_question()
+  r <- drive(r$state, ev_apply(list(op_set_code("S", "library(cli); library(glue)")), at(6)))
+  # Bioconductor is asked again at the notebook's date for the new set.
+  r <- bioc_unpublished(r$state, t = 6)
+  prop <- r$state$packages$proposal
+  expect_equal(prop$status, "ready")
+  expect_setequal(prop$for_wanted, c("cli", "glue", "DESeq2"))
+  expect_true("glue" %in% prop$lock$entries$name)
+
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "1 + 1")), at(7)))
+  expect_null(r$state$packages$proposal)
+  expect_equal(r$state$file$header$snapshot, "2026-10-01")
+  expect_equal(r$state$file$lock$entries$version[r$state$file$lock$entries$name == "cli"], "3.6.6")
+})
+
+test_that("a step back that finds no missing name is dropped, and not tried again until the notebook runs (#311)", {
+  s <- pkg_state(list(S = cell("library(cli)"), A = cell("library(dplyrr)")), options = list(r = r46),
+                 snapshot = "2026-10-01", lock = new_lock("cli", "3.6.6", "CRAN"))
+  r <- drive(s, ev_open(at(1)), ev_index_fetched(repo_key("cran", "2026-10-01"), cran_as("2026-10-01"), at(2)))
+  r <- bioc_unpublished(r$state)
+  expect_equal(r$state$packages$proposal$kind, "back")
+  # Even with cli older there, a typo isn't worth a question.
   r <- drive(r$state, ev_index_fetched("cran/2026-09-30", cran_as("2026-09-30", fixture = "2026-09-01"), at(4)))
   r <- deliver_bioc(r$state, date = "2026-09-30", t = 5)
+  expect_null(r$state$packages$proposal)
+  expect_equal(r$state$file$header$snapshot, "2026-10-01")
+  expect_null(pluto_state(r$state)$js$ember$packages$update)
+  r <- drive(r$state, ev_apply(list(op_set_code("S", "library(cli) # again")), at(6)))
+  expect_null(r$state$packages$proposal)
+  expect_false("A" %in% names(waiting_cells(r$state)))
+
+  # Running again fetches the failed indexes, and tries once more once
+  # they have answered (at once here: the earlier day's indexes are held).
+  r <- drive(r$state, ev_run(NULL, at(7)))
+  expect_null(r$state$packages$back_tried)
+  r <- unpublished_404(r$state, "bioc/2026-10-01/3.23", 8)
+  expect_null(r$state$packages$back_tried)
+  r <- bioc_unpublished(r$state, t = 8)
+  expect_equal(r$state$packages$back_tried$names, "dplyrr")
+  expect_null(r$state$packages$proposal)
+})
+
+test_that("no step back once the Bioconductor package resolved at the notebook's date, whatever else 404s (#311)", {
+  r <- locked_bioc_open()
+  r <- drive(r$state, ev_index_fetched("bioc/2026-10-01/3.23", bioc_index("bioc", date = "2026-10-01"), at(3)),
+             ev_index_fetched("bioc-exp/2026-10-01/3.23", bioc_index("bioc-exp", date = "2026-10-01"), at(3)))
+  r <- unpublished_404(r$state, "bioc-ann/2026-10-01/3.23", 4)
+  expect_true("DESeq2" %in% r$state$file$lock$entries$name)
+  expect_null(r$state$packages$proposal)
+  expect_equal(r$state$file$header$snapshot, "2026-10-01")
+})
+
+test_that("a step back that would lose a locked package is dropped (#311)", {
+  s <- pkg_state(list(S = cell("library(cli); library(viz)"), A = cell("library(DESeq2)")),
+                 options = list(r = r46), snapshot = "2026-10-01",
+                 lock = new_lock(c("cli", "viz"), c("3.6.6", "2.0.0"), c("CRAN", "CRAN")))
+  r <- drive(s, ev_open(at(1)), ev_index_fetched(repo_key("cran", "2026-10-01"), cran_as("2026-10-01"), at(2)))
+  r <- bioc_unpublished(r$state)
+  # viz isn't out yet at 2026-09-30.
+  idx <- cran_as("2026-09-30")
+  keep <- idx$name != "viz"
+  without_viz <- new_repo_index(idx$key, idx$label, idx$name[keep], idx$version[keep], idx$deps[keep],
+                                idx$needs_compilation[keep])
+  r <- drive(r$state, ev_index_fetched("cran/2026-09-30", without_viz, at(4)))
+  r <- deliver_bioc(r$state, date = "2026-09-30", t = 5)
+  expect_null(r$state$packages$proposal)
+  expect_equal(r$state$file$header$snapshot, "2026-10-01")
+  expect_true("viz" %in% r$state$file$lock$entries$name)
+})
+
+test_that("a cancelled step back leaves the date and the unpublished index's row (#311)", {
+  r <- back_question()
   r <- drive(r$state, ev_cancel_preview(at(6)))
   expect_null(r$state$packages$proposal)
   expect_equal(r$state$file$header$snapshot, "2026-10-01")
   expect_true(any(r$state$packages$problems$kind == "index_unavailable"))
   expect_null(pluto_state(r$state)$js$ember$packages$update)
+  # Not asked again on the next edit.
+  r <- drive(r$state, ev_apply(list(op_set_code("S", "library(cli) # again")), at(7)))
+  expect_null(r$state$packages$proposal)
 })
 
-test_that("a step back past the unpublished window is dropped, and the failure shows as before (#311)", {
-  r <- locked_bioc_open()
-  for (kind in names(bioc_kinds)) r <- unpublished_404(r$state, repo_key(kind, "2026-10-01", "3.23"), 3)
+test_that("a step back whose earlier day fails to fetch is dropped, and the failure shows as before (#311)", {
+  r <- bioc_unpublished(locked_bioc_open()$state)
   r <- drive(r$state, ev_index_fetched("cran/2026-09-30", cran_as("2026-09-30"), at(4)))
   for (kind in names(bioc_kinds)) {
     r <- drive(r$state, ev_index_failed(repo_key(kind, "2026-09-30", "3.23"), "network down", at(5)))
@@ -1645,14 +1743,16 @@ test_that("a step back past the unpublished window is dropped, and the failure s
   probs <- r$state$packages$problems
   expect_true(any(probs$kind == "index_unavailable" &
                     grepl("bioc/2026-10-01/3.23 isn't published", probs$message, fixed = TRUE)))
+  expect_false("A" %in% names(waiting_cells(r$state)))
 })
 
 test_that("a step back isn't proposed over a date preview the user asked for (#311)", {
   r <- locked_bioc_open()
   r <- drive(r$state, ev_preview_date("2026-10-01", at(3)))
-  r <- unpublished_404(r$state, "bioc/2026-10-01/3.23", 4)
+  r <- bioc_unpublished(r$state, t = 4)
   expect_equal(r$state$packages$proposal$kind, "date")
 })
+
 
 test_that("running again fetches a failed Bioconductor index and resolves the name it held (#264)", {
   s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46))
@@ -2153,4 +2253,16 @@ test_that("download_lines() reads the installer's EMBER-DOWNLOAD lines, largest 
   expect_equal(d$package, c("org.Hs.eg.db", "GO.db", "BSgenome.X"))
   expect_equal(d$bytes, c(2.1e9, 25248437, NA))
   expect_null(download_lines(c("Error: something else")))
+})
+
+test_that("a Bioconductor move drops a step back rather than holding it as a preview (#311)", {
+  r <- drive(pinned_322(), ev_open(at(1)))
+  st <- r$state
+  st$allowed <- TRUE
+  st$packages$proposal <- new_proposal("2026-08-31", kind = "back", asked = "2026-09-01")
+  st$packages$back_tried <- list(date = "2026-09-01", names = "DESeq2")
+  out <- propose_bioc_move(st)
+  expect_equal(out$packages$proposal$kind, "bioc")
+  expect_null(out$packages$held)
+  expect_null(out$packages$back_tried)
 })

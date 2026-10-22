@@ -118,7 +118,7 @@
     "t_ember_packages_update_failed": "Couldn't get today's versions: {{reason}}",
     "t_ember_packages_step_back_question": "Bioconductor hasn't published its packages for {{from}} yet. {{date}} is the newest date it has, and moving there changes {{changes}}.",
     "t_ember_packages_step_back_restart": "R has loaded {{names}}, so it will restart and cells will need to run again.",
-    "t_ember_packages_step_back_dropped": "{{name}} {{version}} (not there)",
+    "t_ember_packages_step_back_dropped": "{{name}} {{version}} (no longer needed)",
     "t_ember_packages_step_back_apply": "Move to {{date}}",
     "t_ember_packages_update_restart_question": "Updating changes {{names}}, which R has loaded. R will restart and cells will need to run again.",
     "t_ember_packages_library_status_checking": "Checking packages",
