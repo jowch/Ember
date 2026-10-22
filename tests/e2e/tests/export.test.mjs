@@ -90,8 +90,10 @@ for (const offlineBundle of [false, true]) {
     // file://), and MD's fenced block is tagged "language-r" by the R
     // grammar's markdown embedding (CellOutput.js switched this from
     // "language-julia"), not left generic or wrong.
-    const dfSpans = await page.locator(`${cellSelector("DF")} .cm-content span[class]`).count();
-    assert.ok(dfSpans > 0, "expected the DF cell's code to have highlighted spans");
+    // CodeMirror highlights once it has parsed, which can be after the
+    // table shows, so wait for the spans rather than count them once (#340).
+    await page.locator(`${cellSelector("DF")} .cm-content span[class]`).first().waitFor({ timeout: 20000 })
+      .catch(() => assert.fail("expected the DF cell's code to have highlighted spans"));
     const mdCodeClass = await page.locator(`${cellSelector("MD")} pre code`).first().getAttribute("class");
     assert.match(mdCodeClass, /\blanguage-r\b/);
 
