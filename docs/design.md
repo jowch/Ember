@@ -375,6 +375,13 @@ tell which variables it reads through them, so it doesn't rerun when they
 change (#357). The note comes from reading the code, so it shows before
 the cell runs, and the snapshot carries it as `untracked_reads`.
 
+When the read is inside a function (`load_site <- function(s) get(s)`),
+the note goes on each cell that calls the function, and names it
+(`load_site()`): that cell is the one showing old values. The cell that
+only defines the function gets no note, because running it reads nothing.
+A function that calls such a function passes the note on to its own
+callers (#365).
+
 **Code in other files.** `source("helpers.R")` with a literal path is read
 like part of the cell:
 

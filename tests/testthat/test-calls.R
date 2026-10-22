@@ -343,6 +343,31 @@ test_that("get looked at as a function, not called, gets no note (#357)", {
   expect_equal(a$notes$detail, "get")
 })
 
+test_that("get() inside a top-level function belongs to the function, not the cell (#365)", {
+  a <- read_cell("load_site <- function(s) get(s)")
+  expect_equal(a$notes$detail, "get")
+  expect_equal(a$untracked, character())
+  expect_equal(a$fn_untracked, list(load_site = "get"))
+  # What a function's body reads, and what the cell reads outside its
+  # functions, own definitions included.
+  b <- read_cell("load_all <- function(ns) lapply(ns, load_site)\nx <- load_all(nms)")
+  expect_equal(b$fn_calls$load_all, c("lapply", "load_site"))
+  expect_true(all(c("load_all", "nms") %in% b$calls))
+  expect_false("load_site" %in% b$calls)
+  # An argument or local with the function's name isn't the function.
+  c <- read_cell("g <- function(load_site) load_site(1)")
+  expect_null(c$fn_calls$g)
+  # A function literal that isn't bound at the top level runs here.
+  d <- read_cell("sapply(nms, function(s) get(s))\nlocal(f <- function(s) get(s))")
+  expect_equal(d$untracked, "get")
+  expect_equal(d$fn_untracked, list())
+  # A sourced file's functions count the same.
+  e <- read_cell('source("helpers.R")\nload_site("a")',
+                 read_file = function(path) "load_site <- function(s) get(s)")
+  expect_equal(e$fn_untracked, list(load_site = "get"))
+  expect_true("load_site" %in% e$calls)
+})
+
 test_that("eval() is untouched by the get-family literal-name rule", {
   a <- read_cell('eval(parse(text = "1 + 1"))')
   expect_equal(a$notes$kind, "untracked_read")

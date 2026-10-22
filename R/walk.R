@@ -24,14 +24,14 @@ walk_expr <- function(e, scope, acc, pid = NA_integer_) {
     # `lapply(site_names, get)`: get() passed as a function reads whatever
     # names it is handed, which static reading can't follow (#357).
     passed <- get_family_value(e, scope)
-    if (!is.null(passed)) record_note(acc, "untracked_read", passed, pd_position(acc, pid))
+    if (!is.null(passed)) record_untracked(acc, passed, pd_position(acc, pid))
     return(invisible())
   }
   if (!is.call(e)) return(invisible())
   # `lapply(site_names, base::get)`, the same as the bare symbol above. A
   # call's head never comes here: `base::get(x)` is walk_qualified_call()'s.
   passed <- get_family_value(e, scope)
-  if (!is.null(passed)) record_note(acc, "untracked_read", passed, pd_position(acc, pid))
+  if (!is.null(passed)) record_untracked(acc, passed, pd_position(acc, pid))
 
   head <- e[[1]]
   if (is.call(head)) {
@@ -236,7 +236,7 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
     if (is_get_family(name)) {
       walk_get_family_call(e, scope, acc, name, arg_pids, head_pos)
     } else {
-      record_note(acc, "untracked_read", name, head_pos())
+      record_untracked(acc, name, head_pos())
       walk_call_args(e, scope, acc, arg_pids)
     }
     return(invisible())
@@ -544,7 +544,20 @@ walk_assignment <- function(e, scope, acc, op, pid = NA_integer_) {
   raw_target_pid <- if (identical(side, "lhs")) target_pid else value_pid
   value_expr_pid <- if (identical(side, "lhs")) value_pid else target_pid
 
-  walk_expr(value, scope, acc, value_expr_pid)
+  # `load_site <- function(s) get(s)` at the top level: what the body
+  # reads is the function's, for the cells that call it (#365).
+  fn_name <- if (identical(scope$kind, "top") && is.null(acc$fn_target) &&
+                 is_function_literal(value) && !(op %in% c("<<-", "->>", "%<>%")) &&
+                 (is.symbol(raw_target) || (is.character(raw_target) && length(raw_target) == 1))) {
+    as.character(raw_target)
+  }
+  if (!is.null(fn_name)) {
+    acc$fn_target <- fn_name
+    walk_expr(value, scope, acc, value_expr_pid)
+    acc$fn_target <- NULL
+  } else {
+    walk_expr(value, scope, acc, value_expr_pid)
+  }
 
   if (identical(op, "%<>%")) {
     target_name <- extract_target_name(raw_target)
