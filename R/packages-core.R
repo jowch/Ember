@@ -987,7 +987,8 @@ propose_bioc_move <- function(state) {
     return(state)
   }
   if (is.na(bioc_move_target(header, state$options$r, releases_at(p, header$snapshot)))) return(state)
-  if (!is.null(p$proposal)) p$held <- preview_event(p$proposal)
+  # A request already held is newer than the open preview: it wins.
+  if (!is.null(p$proposal) && is.null(p$held)) p$held <- preview_event(p$proposal)
   p$proposal <- new_proposal(header$snapshot, apply = TRUE, kind = "bioc")
   p$bioc_move_tried <- TRUE
   state$packages <- p
@@ -1504,6 +1505,10 @@ hold_preview <- function(state, event) {
 replay_held <- function(state) {
   event <- state$packages$held
   state$packages$held <- NULL
+  # The reply is dropped: a held request has passed its refusals already
+  # (they come before the hold), and the move keeps the lock's CRAN
+  # entries, so nothing replayed here is refused today. A refusal added
+  # after the hold would be lost, so keep them before it.
   r <- if (identical(event$type, "preview_update")) reduce_preview_update(state, event) else reduce_preview_date(state, event)
   list(state = r$state, effects = r$effects)
 }
