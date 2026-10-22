@@ -1061,7 +1061,8 @@ poll <- function(nb) {
 
   if (!is.null(nb$proc) && is.null(nb$con) && !is.null(nb$listen)) {
     if (isTRUE(tryCatch(socketSelect(list(nb$listen), timeout = 0), error = function(e) FALSE))) {
-      nb$con <- tryCatch(socketAccept(nb$listen, blocking = FALSE, open = "a+b"),
+      # No-delay: see write_frame().
+      nb$con <- tryCatch(socketAccept(nb$listen, blocking = FALSE, open = "a+b", options = "no-delay"),
                          error = function(e) NULL)
     }
   }
@@ -1209,9 +1210,11 @@ take_frames <- function(rx) {
 }
 
 #' `serialize()` a message, prefix its length, write it. Messages to the
-#' worker are small (code, ids); a blocking write is fine. One write, not
-#' two: a separate 4-byte write holds the payload back behind Nagle and the
-#' peer's delayed ACK, about 40 ms per frame (#316).
+#' worker are small (code, ids); a blocking write is fine. Both ends set
+#' TCP no-delay: otherwise a frame sent while the last one is unanswered
+#' (a split length and payload, or the worker's `running` then `done`)
+#' waits for the peer's delayed ACK, about 40 ms each time (#316). One
+#' write per frame also saves a packet.
 write_frame <- function(con, msg) {
   payload <- serialize(msg, NULL)
   writeBin(c(writeBin(length(payload), raw(), endian = "big"), payload), con)
