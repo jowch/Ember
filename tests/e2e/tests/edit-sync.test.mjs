@@ -1,6 +1,6 @@
 // #318: two tabs on one notebook. Like Pluto, every tab shows the code that
 // was last run, wherever it ran. Typing that wasn't run yet in the other tab
-// isn't lost silently: one Ctrl+Z brings it back, and the cell says so.
+// isn't lost silently: Ctrl+Z brings it back, and the cell says so.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -28,7 +28,7 @@ const remoteCode = (page, id, expected) => page.waitForFunction(
   ([id, expected]) => window.editor_state.notebook.cell_inputs[id]?.code === expected,
   [id, expected], { timeout: 15000 });
 
-test("a run in one tab replaces unrun typing in another as one undo step, with a notice (#318)", async (t) => {
+test("a run in one tab replaces unrun typing in another as an undo step, with a notice (#318)", async (t) => {
   const notebook = tempNotebook("edit-sync.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "edit-sync.server.log") });
   const browser = await launchBrowser();
@@ -55,18 +55,29 @@ test("a run in one tab replaces unrun typing in another as one undo step, with a
   await two.waitForSelector(note("B"), { timeout: 5000 });
   assert.equal(await code(two, "B"), "b <- a * 2 # tab1");
   assert.equal(await differs(two, "B"), false);
-  assert.match(await two.locator(note("B")).innerText(), /^Changed in another tab or by the agent\. Undo \((Ctrl|⌘)\+Z\) to get your edit back\.$/);
+  assert.match(await two.locator(note("B")).innerText(), /^Changed elsewhere \(another tab or the agent\)\. Undo \((Ctrl|⌘)\+Z\) to get your edit back\.$/);
   assert.equal(await one.locator(note("B")).count(), 0, "no notice in the tab that ran it");
   assert.equal(await two.locator(note("C")).count(), 0, "no notice on a cell nobody else changed");
   assert.equal(await code(two, "C"), "c <- 3 # left alone", "C keeps tab 2's typing");
 
-  // One undo brings tab 2's typing back, marked changed again, and clears
-  // the notice.
+  // A second run from tab 1 (the agent's run, fix, run) keeps the notice:
+  // tab 2's typing is still only in its undo history.
+  await typeAtEnd(one, "B", " r2");
+  await one.keyboard.press("Shift+Enter");
+  await remoteCode(two, "B", "b <- a * 2 # tab1 r2");
+  await two.waitForFunction((sel) => document.querySelector(sel).innerText === "b <- a * 2 # tab1 r2", editor("B"), { timeout: 5000 });
+  assert.equal(await two.locator(note("B")).count(), 1, "the notice stays through a second remote change");
+
+  // Undo steps back through the runs to tab 2's typing, marked changed
+  // again; the notice stays until the typing is back.
   await two.locator(editor("B")).click();
+  await two.keyboard.press(`${mod}+z`);
+  await two.waitForFunction((sel) => document.querySelector(sel).innerText === "b <- a * 2 # tab1", editor("B"), { timeout: 5000 });
+  assert.equal(await two.locator(note("B")).count(), 1, "the notice stays while the typing is still further back");
   await two.keyboard.press(`${mod}+z`);
   await two.waitForFunction((sel) => document.querySelector(sel).innerText === "b <- a * 2 # tab2", editor("B"), { timeout: 5000 });
   assert.equal(await differs(two, "B"), true, "B is marked changed again");
-  assert.equal(await two.locator(note("B")).count(), 0, "the undo clears the notice");
+  assert.equal(await two.locator(note("B")).count(), 0, "getting the typing back clears the notice");
 
   // A tab with no unrun typing just follows along, with no notice.
   await typeAtEnd(two, "B", "!");

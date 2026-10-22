@@ -17,6 +17,7 @@ import {
     history,
     historyKeymap,
     isolateHistory,
+    Annotation,
     defaultKeymap,
     indentMore,
     indentLess,
@@ -163,6 +164,9 @@ const setValue6 = (/** @type {EditorView} */ cm, value) =>
     cm.dispatch({
         changes: { from: 0, to: cm.state.doc.length, insert: value },
     })
+// Marks the transaction that puts code run elsewhere into the editor (#318).
+const RemoteCodeAnnotation = Annotation.define()
+
 const replaceRange6 = (/** @type {EditorView} */ cm, text, from, to) =>
     cm.dispatch({
         changes: { from, to, insert: text },
@@ -307,6 +311,9 @@ export const CellInput = ({
     // set even when remote_code arrived before the editor existed (the
     // editor is made only once the cell scrolls into view).
     const synced_code_ref = useRef(/** @type {string?} */ (null))
+    // The unrun typing a remote change last replaced, while the notice for
+    // it shows. Undoing back to it clears the notice.
+    const replaced_text_ref = useRef(/** @type {string?} */ (null))
 
     const [dark_theme, set_dark_theme] = useState(is_dark_theme())
     useEventListener(window, "ember theme change", () => set_dark_theme(is_dark_theme()), [])
@@ -334,10 +341,21 @@ export const CellInput = ({
         useMemo(() => {
             return EditorView.updateListener.of((update) => {
                 if (update.docChanged) {
-                    on_change(update.state.doc.toString())
+                    const doc = update.state.doc.toString()
+                    on_change(doc)
+                    // The notice about replaced typing stays through later
+                    // remote changes, and through undo and redo until the
+                    // typing is back; any other edit clears it (#318).
+                    const trs = update.transactions.filter((tr) => tr.docChanged)
+                    const remote = trs.some((tr) => tr.annotation(RemoteCodeAnnotation))
+                    const history_step = trs.every((tr) => tr.isUserEvent("undo") || tr.isUserEvent("redo"))
+                    if (!remote && (!history_step || doc === replaced_text_ref.current)) {
+                        replaced_text_ref.current = null
+                        on_remote_replace(false)
+                    }
                 }
             })
-        }, [on_change])
+        }, [on_change, on_remote_replace])
     )
 
     // Settings apply to open editors at once: one compartment holds every
@@ -801,8 +819,8 @@ export const CellInput = ({
     // Effect to apply "remote_code" to the cell when it changes. Like Pluto,
     // every tab shows the code that was last run, wherever it was run (#318).
     // If this tab had typing that wasn't run yet, the new code replaces it
-    // as an undo step of its own, so one Ctrl+Z brings the typing back, and
-    // the cell says so.
+    // as an undo step of its own, so Ctrl+Z brings the typing back, and the
+    // cell says so until the typing is back or this tab edits or runs it.
     useEffect(() => {
         if (newcm_ref.current == null) return // Not sure when and why this gave an error, but now it doesn't
 
@@ -818,10 +836,13 @@ export const CellInput = ({
         if (current_value !== remote_code) {
             newcm_ref.current.dispatch({
                 changes: { from: 0, to: newcm_ref.current.state.doc.length, insert: remote_code },
-                annotations: isolateHistory.of("full"),
+                annotations: [isolateHistory.of("full"), RemoteCodeAnnotation.of(true)],
             })
+            if (had_local_edit) {
+                replaced_text_ref.current = current_value
+                on_remote_replace(true)
+            }
         }
-        on_remote_replace(had_local_edit && current_value !== remote_code)
     }, [remote_code])
 
     useEffect(() => {

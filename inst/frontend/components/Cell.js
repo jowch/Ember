@@ -205,8 +205,9 @@ export const Cell = ({
 
     const class_code_differs = code !== (cell_input_local?.code ?? code)
     // Set when code run elsewhere (another tab, or the agent) replaced typing
-    // in this cell that wasn't run yet; cleared by the next edit, run, or
-    // remote change (#318). Ctrl+Z brings the typing back.
+    // in this cell that wasn't run yet (#318). Ctrl+Z brings the typing
+    // back; CellInput clears it then, or on this tab's next edit, and a run
+    // here clears it too.
     const [remote_replaced, set_remote_replaced] = useState(false)
     // Markdown cells never run: their output is always the rendered text.
     const no_output_yet = kind !== "markdown" && (output?.last_run_timestamp ?? 0) === 0
@@ -274,7 +275,6 @@ export const Cell = ({
     }, [pluto_actions, cell_id])
     const on_change_cell_input = useCallback(
         (new_code) => {
-            set_remote_replaced(false)
             if (!disable_input_ref.current) {
                 if (code_folded && cm_forced_focus != null) {
                     pluto_actions.fold_remote_cells([cell_id], false)
