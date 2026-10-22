@@ -28,7 +28,10 @@ HOURGLASS <- "\u231B"
 #' and a search typed in the Help box reads every installed package's help
 #' index (`help_lookup()`, inst/worker.R), which can take seconds on a big
 #' library. With 0.8 s that lookup's reply was dropped, and each new ask
-#' queued in the worker behind it and was dropped too (#92 review).
+#' queued in the worker behind it and was dropped too (#92 review). A
+#' lookup that takes longer still isn't thrown away: `docs` keeps its late
+#' reply for the page's next ask, and doesn't queue a second lookup behind
+#' it (#356).
 DOCS_QUERY_TIMEOUT <- 10
 
 # ---- Public API --------------------------------------------------------------
@@ -1007,7 +1010,10 @@ handlers <- list(
   #' answer in time, answers with a page saying so, with status `HOURGLASS`
   #' rather than `THUMBS_UP`: the help panel shows the page and asks again shortly,
   #' since nothing else would make it ask while the cursor stays put
-  #' (ui-2.md, 4c).
+  #' (ui-2.md, 4c). A lookup that outlives `DOCS_QUERY_TIMEOUT` stays in
+  #' `nb$help_lookups`: an ask for the same query while it runs gets
+  #' "still looking" instead of a second lookup queued behind it, and the
+  #' first ask after it ends gets its page (#356).
   docs = function(server, cl, hub, req) {
     if (is.null(hub)) {
       send(cl, reply_message(req, "docs", list(status = "not_found")))
@@ -1029,7 +1035,9 @@ handlers <- list(
     was_idle <- worker_is_idle(hub$nb)
     help_msg <- list(type = "help", topic = parsed$name, package = parsed$package,
                      all_packages = isTRUE(req$body$all_packages))
-    worker_query(hub$nb, help_msg, timeout = DOCS_QUERY_TIMEOUT, callback = function(reply) {
+    lookups <- hub$nb$help_lookups
+    key <- paste(help_msg$topic, help_msg$package %||% "", help_msg$all_packages, sep = "\r")
+    answer <- function(reply) {
       if (!is.null(reply)) {
         doc <- help_reply_html(reply)
         # `package` NULL when ambiguous (reply$matches non-empty): the page
@@ -1048,7 +1056,30 @@ handlers <- list(
         msg <- if (busy) "<p>R is busy running a cell\u2026</p>" else "<p>Help pages need R running. Run a cell to start it.</p>"
         send(cl, reply_message(req, "docs", list(status = HOURGLASS, doc = msg)))
       }
+    }
+    if (exists(key, envir = lookups, inherits = FALSE)) {
+      reply <- get(key, envir = lookups, inherits = FALSE)$reply
+      if (is.null(reply)) {
+        send(cl, reply_message(req, "docs", list(status = HOURGLASS, doc = "<p>R is still looking this up\u2026</p>")))
+      } else {
+        rm(list = key, envir = lookups)
+        answer(reply)
+      }
+      return(invisible(NULL))
+    }
+    sent <- worker_query(hub$nb, help_msg, timeout = DOCS_QUERY_TIMEOUT, callback = function(reply) {
+      if (!is.null(reply) && exists(key, envir = lookups, inherits = FALSE)) rm(list = key, envir = lookups)
+      answer(reply)
+    }, late = function(reply) {
+      # Kept for the next ask; NULL when the worker exited first, and then
+      # there is nothing to keep (fail_pending_queries() clears the rest).
+      if (is.null(reply)) {
+        if (exists(key, envir = lookups, inherits = FALSE)) rm(list = key, envir = lookups)
+      } else {
+        assign(key, list(reply = reply), envir = lookups)
+      }
     })
+    if (isTRUE(sent)) assign(key, list(reply = NULL), envir = lookups)
   },
 
   all_registered_package_names = function(server, cl, hub, req) {
