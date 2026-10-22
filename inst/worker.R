@@ -394,8 +394,8 @@ send <- function(msg) {
   on.exit(trace_line("sent", msg$type))
   uninterrupted({
     payload <- serialize(msg, NULL)
-    writeBin(length(payload), con, endian = "big")
-    writeBin(payload, con)
+    # One write: see write_frame() in R/shell.R (#316).
+    writeBin(c(writeBin(length(payload), raw(), endian = "big"), payload), con)
     flush(con)
   })
   invisible()

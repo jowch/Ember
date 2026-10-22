@@ -1209,11 +1209,12 @@ take_frames <- function(rx) {
 }
 
 #' `serialize()` a message, prefix its length, write it. Messages to the
-#' worker are small (code, ids); a blocking write is fine.
+#' worker are small (code, ids); a blocking write is fine. One write, not
+#' two: a separate 4-byte write holds the payload back behind Nagle and the
+#' peer's delayed ACK, about 40 ms per frame (#316).
 write_frame <- function(con, msg) {
   payload <- serialize(msg, NULL)
-  writeBin(length(payload), con, endian = "big")
-  writeBin(payload, con)
+  writeBin(c(writeBin(length(payload), raw(), endian = "big"), payload), con)
   flush(con)
   invisible(NULL)
 }
