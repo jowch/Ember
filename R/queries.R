@@ -9,17 +9,7 @@
 #' Ancestors come back in run order, which is the order they must run in.
 upstream <- function(graph, id, transitive = FALSE) {
   if (!isTRUE(transitive)) return(graph$upstream[[id]])
-  seen <- character()
-  visit <- function(i) {
-    for (u in graph$upstream[[i]]) {
-      if (!(u %in% seen)) {
-        seen <<- c(seen, u)
-        visit(u)
-      }
-    }
-  }
-  visit(id)
-  run_order(graph, seen)
+  run_order(graph, reach(graph$upstream, id))
 }
 
 #' Cells that depend on `id` (direct), or all its descendants.
@@ -27,18 +17,45 @@ upstream <- function(graph, id, transitive = FALSE) {
 #' Descendants come back in run order.
 downstream <- function(graph, id, transitive = FALSE) {
   if (!isTRUE(transitive)) return(graph$downstream[[id]])
-  seen <- character()
-  visit <- function(i) {
-    for (d in graph$downstream[[i]]) {
-      if (!(d %in% seen)) {
-        seen <<- c(seen, d)
-        visit(d)
-      }
-    }
-  }
-  visit(id)
-  run_order(graph, seen)
+  run_order(graph, reach(graph$downstream, id))
 }
+
+#' The cells reached from any of `from` along `edges` (`graph$upstream` or
+#' `graph$downstream`), in no particular order. A cell of `from` counts
+#' only if an edge leads back to it. One walk over positions, so a long
+#' chain stays linear (#316).
+reach <- function(edges, from) {
+  if (length(from) == 0) return(character())
+  # Positions, not names: looking a name up in `edges` scans its names, so
+  # a walk down a chain would be quadratic again. The index costs a pass
+  # over every edge, so it is kept for the last few edge lists: a step
+  # asks about the same graph several times, and a cell with no
+  # dependents must not pay for the whole notebook.
+  ix <- reach_index(edges)
+  seen <- logical(length(ix$ids))
+  todo <- match(from, ix$ids)
+  while (length(todo)) {
+    nxt <- unique(unlist(ix$to[todo], use.names = FALSE))
+    todo <- nxt[!seen[nxt]]
+    seen[todo] <- TRUE
+  }
+  ix$ids[seen]
+}
+
+#' `reach()`'s position index of `edges`: `ids` (the names of `edges`,
+#' then any target that isn't one) and `to`, each id's targets as positions
+#' in `ids`.
+reach_index <- function(edges) {
+  for (ix in reach_memo$kept) if (identical(ix$edges, edges)) return(ix)
+  targets <- unlist(edges, use.names = FALSE)
+  ids <- unique(c(names(edges), targets))
+  to <- split(match(targets, ids), factor(rep.int(seq_along(edges), lengths(edges)), levels = seq_along(ids)))
+  ix <- list(edges = edges, ids = ids, to = to)
+  # Upstream and downstream, of the graph and of run_graph()'s copy.
+  reach_memo$kept <- c(list(ix), reach_memo$kept)[seq_len(min(4L, length(reach_memo$kept) + 1L))]
+  ix
+}
+reach_memo <- new.env(parent = emptyenv())
 
 #' Run order of a set of cells, or of the whole notebook.
 #'
