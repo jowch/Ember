@@ -882,10 +882,14 @@ rest:
    translated message gets no offer. The engine
    never installs such a package by itself.
 2. Resolve each against CRAN and Bioconductor at the notebook's snapshot
-   date. GitHub and r-universe packages can't be inferred; the user records
-   them in the header's `[sources]` as `github:user/repo` or
-   `universe:name`, and the Packages tab offers to add one on a name that
-   isn't found.
+   date. GitHub and r-universe packages can't be inferred. The code names
+   them the way R users already do, with an install call
+   (`remotes::install_github("user/repo")`, `install.packages("pkg", repos
+   = "https://name.r-universe.dev")`), and Ember records the source in the
+   header's `[sources]` as `github:user/repo` or `universe:name`; the user
+   can also add one there, and the Packages tab offers to on a name that
+   isn't found. Install calls don't run in Ember: the lock answers them
+   (packages.md, "Install calls").
 3. Update the lock and install into the notebook's library in a subprocess.
    The worker restarts only if a package it has already loaded changed
    version; a new package is just loaded.
