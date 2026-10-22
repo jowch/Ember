@@ -1529,6 +1529,11 @@ delete_library <- function(path) {
 #' `exact` is `FALSE`. A folder that doesn't exist is 0. Run in a
 #' subprocess when asked (`disk_use_command()`): walking a large cache
 #' can take seconds.
+#'
+#' `du` exits 1 when a folder vanishes during its walk, as an install's
+#' staging folder does when the install ends, but still prints a total for
+#' each root: those totals are kept (#332), since what vanished was going
+#' away anyway. Only a missing total falls back to summing.
 disk_use <- function(dir = cache_dir(), du = Sys.which("du")) {
   roots <- c(cache = file.path(dir, "renv-cache"), indexes = file.path(dir, "indexes"),
              libraries = file.path(dir, "libraries"))
@@ -1539,8 +1544,8 @@ disk_use <- function(dir = cache_dir(), du = Sys.which("du")) {
     res <- processx::run(du, c("-sk", unname(present)), error_on_status = FALSE)
     lines <- strsplit(res$stdout, "\n")[[1]]
     lines <- lines[nzchar(lines)]
-    if (identical(res$status, 0L) && length(lines) == length(present)) {
-      kb <- as.numeric(sub("\t.*$", "", lines))
+    kb <- suppressWarnings(as.numeric(sub("\t.*$", "", lines)))
+    if (identical(sub("^[^\t]*\t", "", lines), unname(present)) && !anyNA(kb)) {
       for (i in seq_along(present)) use[[names(present)[i]]] <- kb[i] * 1024
       return(use)
     }
@@ -1593,7 +1598,9 @@ clean_up <- function(dir = cache_dir(), keep = character(), dry_run = TRUE, max_
     res <- processx::run(du, c("-sck", paths), error_on_status = FALSE)
     lines <- strsplit(res$stdout, "\n")[[1]]
     total <- grep("\ttotal$", lines, value = TRUE)
-    if (identical(res$status, 0L) && length(total) == 1L)
+    # A path that vanished during the walk makes du exit 1 with the total
+    # still printed: that total is kept, as disk_use() keeps its own (#332).
+    if (length(total) == 1L)
       bytes <- as.numeric(sub("\t.*$", "", total)) * 1024
   }
   if (!isTRUE(dry_run) && length(paths) > 0L)

@@ -415,12 +415,16 @@ as something to avoid rather than something they prevent. R's copy-on-modify
 makes the same code a visible redefinition, so the rule catches it.
 
 Only reference objects change in place in R (environments, R6, reference
-classes, data.table's `:=` and `set*()`). Those stay untracked, as mutation
+classes, data.table's `:=` and `set*()`, and a closure's environment, such
+as a function factory's counter or a memoised function's cache). Those stay untracked, as mutation
 is in Pluto and marimo; the user docs say so and the engine warns when a
 cell modifies one defined elsewhere. Before each run the worker keeps a
 fingerprint of every environment another cell defines (its bindings, and
 those of the environments inside it, three levels down, which reaches an
-R6 object's private fields). If a run changes one without rebinding its
+R6 object's private fields), and of the environment each function another
+cell defines was made in, unless that is the global environment or a
+package's (#333). An S4 generic is skipped: it caches the methods it
+dispatched to in its own environment. If a run changes one without rebinding its
 name, the cell shows a note: "Changed `cnt` in place, which another cell
 defines, so the cells that read it don't rerun." Taking the fingerprint
 forces no promise and calls no active binding. Namespaces are skipped, and
