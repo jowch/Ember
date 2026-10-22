@@ -822,11 +822,12 @@ invalidate_cells <- function(state, id, dependents, queue = TRUE, g = run_graph(
   # Whole vectors at a time: a chain's rerun passes most of the notebook
   # here for every cell, and a lookup by name scans the names (#316).
   ids <- dependents[dependents %in% names(state$results)]
+  if (length(ids) == 0) return(state)
   state$results[ids] <- lapply(state$results[ids], function(r) { r$stale <- TRUE; r })
   queued <- if (queue && autorun && isTRUE(state$allowed)) {
     ids[vapply(state$cells[ids], cell_runs, logical(1)) & !(ids %in% names(state$graph$off))]
   } else character()
-  state$pending <- union(state$pending, queued)
+  if (length(queued)) state$pending <- union(state$pending, queued)
   # A queued dependent can read a stale cell outside this run (a delete, a
   # rename or an interrupt can leave one stale). As when it is run by hand,
   # its stale ancestors run first, with every ancestor between them and it
