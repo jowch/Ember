@@ -20,7 +20,9 @@ the file can't be read. \code{NULL} means \code{source()} calls are not followed
 \value{
 An \code{ember_cell_analysis}: a list with \code{code}, \code{parse_error} (\code{NULL}
 unless the code fails to parse), and data frames \code{definitions},
-\code{references}, \code{packages}, \code{settings}, \code{sourced}, \code{notes}, plus a list of
+\code{references}, \code{packages}, \code{installs} (the packages install calls
+such as \code{remotes::install_github()} name, with their sources),
+\code{settings}, \code{sourced}, \code{notes}, plus a list of
 \code{formula_site} in \code{formulas}. When \code{parse_error} is set, every other
 field is empty.
 }

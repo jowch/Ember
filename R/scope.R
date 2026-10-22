@@ -26,6 +26,8 @@ new_accumulator <- function(read_file, file, stack) {
   acc$def_rows <- new_rows()
   acc$ref_rows <- new_rows()
   acc$pkg_rows <- list()
+  acc$install_rows <- list()
+  acc$top_expr <- NULL
   acc$setting_rows <- list()
   acc$sourced_rows <- list()
   acc$note_rows <- list()
@@ -271,6 +273,14 @@ record_top_level_definition <- function(acc, scope, name, kind, pos = NULL) {
 record_package <- function(acc, name, attached) {
   acc$pkg_rows[[length(acc$pkg_rows) + 1]] <-
     list(name = name, attached = attached, line = acc$line)
+}
+
+#' A package an install call names (`install_calls`), with its source
+#' spec (`source_spec()`) or `NA`. `top` is `TRUE` when the call is the
+#' whole top-level expression: the worker skips that one.
+record_install <- function(acc, package, source, top) {
+  acc$install_rows[[length(acc$install_rows) + 1]] <-
+    list(package = package, source = source, line = acc$line, index = acc$index, top = top)
 }
 
 record_setting <- function(acc, fn, setting = NA_character_, pos = NULL) {

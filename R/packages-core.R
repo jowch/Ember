@@ -610,14 +610,17 @@ schedule_packages <- function(state, old) {
   # still correct. Measured: without this, a 2000-cell notebook with no
   # packages regressed step()'s per-event cost past the engine's 50ms budget
   # (test-projections.R), since `wanted_packages()` walks every cell.
+  #
+  # The sources the code's install calls give go into the header first
+  # (`sync_sources()`, packages.md "Install calls"), cached the same way.
   {
-    wanted <- if (identical(state$graph, old$graph) && identical(state$file$header, old$file$header) &&
-                 !is.null(p$wanted_cache)) {
-      p$wanted_cache
-    } else {
-      wanted_packages(state$graph, state$file$header)
-    }
+    unchanged <- identical(state$graph, old$graph) && identical(state$file$header, old$file$header) &&
+      !is.null(p$wanted_cache)
+    wanted <- if (unchanged) p$wanted_cache else wanted_packages(state$graph, state$file$header)
     p$wanted_cache <- wanted
+    declared <- if (unchanged && !is.null(p$declared_cache)) p$declared_cache else declared_sources(state$graph, wanted)
+    p$declared_cache <- declared
+    state$file$header <- sync_sources(state$file$header, declared)
     sources <- readable_sources(state$file$header)
     if (!setequal(wanted, p$resolved_for) || !identical(sources, p$sources_for %||% character())) {
       if (length(wanted) > 0 && (is.null(state$file$header$snapshot) || is.na(state$file$header$snapshot))) {
