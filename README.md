@@ -97,7 +97,7 @@ Ember is being built in steps. Not yet available: interactive inputs, like
 Pluto's `@bind`.
 
 Known gaps are tracked as [GitHub issues](https://github.com/jowch/Ember/issues),
-labelled P1 to P3 by priority, and the design is in [docs/design.md](docs/design.md).
+labelled P1 to P3 by priority, and the design is in [docs/design.md](https://github.com/jowch/Ember/blob/main/docs/design.md).
 
 ## Acknowledgements
 

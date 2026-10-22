@@ -73,6 +73,11 @@ repository depends on them.
   stale) runs after it, not with its stale value (#176). Autorun doesn't
   restart an ancestor that failed or was interrupted while it ran, so a
   dependent that needs one ends as an error until that ancestor is run.
+  A cell edited but not yet run still holds what its old code made, so
+  until it runs, its edges are both its old code's and its new code's:
+  rerunning a cell its old code read marks it stale, and its going stale
+  marks stale the readers of what its old code defined (#175), and in a
+  run it goes before the cells that read what its old code defined (#174).
   Pluto's safe preview shows editing without running is workable.
 - **Open without running.** Running a cell runs its unrun ancestors first.
   "Run all" is one click. Long simulations don't start just because a
@@ -210,10 +215,11 @@ each such child in a job object that ends it once the worker ends. processx
 (and so callr) puts its children in a job object of its own that does the
 same, so the worker clears that one setting on processx's job after every
 run, before it says the run is done, and from a thread every half second
-for a cell still running (src/children.c). A processx or callr child then
-outlives a restart and a killed server, as on Unix. Only the first one a
-worker starts can still end with it, if the worker is killed mid-run within
-half a second of starting it; later ones join a job already released.
+for a cell still running (src/children.c). processx makes that job only as
+it starts its first child, so when processx loads in the worker, the worker
+has it start one that only exits (System32's `cmd /d /c exit`) and
+releases the job at once (#235). A processx or callr child then outlives a
+restart and a killed server, as on Unix, the first one included.
 
 On every system the worker also drops the `PROCESSX_<id>` marker it
 inherits as the server's process tree (`cleanup_tree`). Otherwise a cell's
@@ -980,8 +986,8 @@ CRAN-only notebook carries no Bioconductor pin and no tie to an R version.
 
 **Large installs ask first.** Annotation and genome packages
 (`org.Hs.eg.db`, `BSgenome.*`) run from hundreds of MB to several GB. Above a
-size threshold the engine shows the download size and waits for the user
-before installing.
+size threshold (500 MB) the engine shows the download size and waits for the
+user before installing (built, #37: packages.md, "Large downloads").
 
 **Installs** link from a shared cache into a per-notebook library, so a
 second notebook with the same packages installs in seconds. A library is

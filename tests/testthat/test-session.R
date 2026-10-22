@@ -972,6 +972,41 @@ test_that("on Windows a busy cell's own processx and callr children outlive a ki
   expect_true(pid_running(pids[3]))    # callr's
 })
 
+test_that("on Windows a cell's first processx child outlives a server killed right after it starts (#235)", {
+  skip_on_os(c("mac", "linux", "solaris"))
+  use_installed_ember()
+  pidfile <- normalizePath(tempfile("cell-pids-"), winslash = "/", mustWork = FALSE)
+  rscript <- normalizePath(file.path(R.home("bin"), "Rscript.exe"), winslash = "/")
+  libs <- paste(deparse(normalizePath(.libPaths(), winslash = "/")), collapse = "")
+  # The worker's first processx child, and the cell stays busy: the server
+  # is killed as soon as the pids are written, well inside the half second
+  # the worker's thread takes to find a job made only now.
+  path <- write_session_notebook(list(S = cell(""), A = unscanned_cell("a", sprintf(paste0(
+    ".libPaths(c(%1$s, .libPaths())); ",
+    "a <- processx::process$new('%2$s', c('-e', 'Sys.sleep(300)')); ",
+    "writeLines(as.character(c(Sys.getpid(), a$get_pid())), '%3$s.tmp'); ",
+    "file.rename('%3$s.tmp', '%3$s'); Sys.sleep(300)"),
+    libs, rscript, pidfile))))
+  code <- paste0("library(ember); nb <- open_notebook(", deparse(path), "); run_cells(nb, 'A'); ",
+                 "repeat later::run_now(1)")
+  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
+                                  env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
+                                  stdout = "|", stderr = "2>&1")
+  on.exit(if (server$is_alive()) server$kill(), add = TRUE)
+  deadline <- Sys.time() + 60
+  while (!file.exists(pidfile) && server$is_alive() && Sys.time() < deadline) Sys.sleep(0.01)
+  # read_all_output() waits for the server to end, so a server still
+  # running without the file is ended first.
+  if (!file.exists(pidfile) && server$is_alive()) server$kill()
+  expect_true(file.exists(pidfile), info = server$read_all_output())
+  server$kill()
+  pids <- as.integer(readLines(pidfile))
+  on.exit(for (p in pids) tools::pskill(p), add = TRUE)
+
+  expect_true(wait_pid_gone(pids[1]))  # the worker
+  expect_true(pid_running(pids[2]))    # processx's
+})
+
 test_that("what a busy cell started with system() ends when the server is killed (#150)", {
   # `sleep &` and `$!` need sh; the Windows tests above cover Windows.
   skip_on_os("windows")

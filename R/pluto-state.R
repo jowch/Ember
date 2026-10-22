@@ -328,8 +328,9 @@ span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
 #'   rerun (#167). `split` is present, as `length(split_mixed(view$code))`,
 #'   only when `view$errors` has a `mixed_text` error: the Split button's
 #'   label (Cell.js), answered by the `ember_split_cell` request (server.R).
-#'   `figure` is present, as `list(width, height)` inches, only when the
-#'   output is `image/png`. It comes from `cell_figure_size(view$code)` --
+#'   `figure` is present, as `list(width, height)` inches plus `alt` when
+#'   the cell's `#| fig-alt`/`fig-cap` gives one (cell_figure_alt()), only
+#'   when the output is `image/png`. It comes from `cell_figure_size(view$code)` --
 #'   the cell's own `#|` lines -- never from the stored image's actual
 #'   pixel size, which is the last render's: a density redraw stores an
 #'   image at the cell's figure size times the page's `res`, so reading
@@ -356,7 +357,8 @@ project_cell_result <- function(view, known_ids = NULL) {
   can_disable <- identical(view$kind, "code")
   figure <- if (!is.null(view$output) && identical(view$output$mime, "image/png")) {
     fig <- cell_figure_size(view$code)
-    list(width = fig$width, height = fig$height)
+    alt <- cell_figure_alt(view$code)
+    c(list(width = fig$width, height = fig$height), if (!is.null(alt)) list(alt = alt))
   } else {
     NULL
   }
@@ -966,7 +968,10 @@ project_nbpkg <- function(state) {
 #'   and `needed_by` from `packages_view()`'s own `library$failures`
 #'   column) -- both only while the library's `status` is `"failed"`;
 #'   `NULL`/`arr()` otherwise, so a page that has never seen a failure
-#'   never sees these fields change.
+#'   never sees these fields change. While `status` is `"asking"` (#37) it
+#'   adds `download`: `list(bytes, packages = arr(list(package, version,
+#'   bytes)))`, largest first, `bytes` the total of the sizes known (a
+#'   package's `bytes` is `NULL` when its size couldn't be had).
 #' * `update`: `list(date, status = "checking"|"ready"|"failed",
 #'   restart = arr(<names>), changes = <int>, message)` while a proposal
 #'   from `ember_update_packages` (`ev_preview_date(..., apply = TRUE)`)
@@ -1032,6 +1037,15 @@ project_ember <- function(state, ctx) {
     library = list(status = pv$library$status, message = pv$library$message %||% NA_character_,
                   progress = pv$library$progress, log = log, failures = as_arr(failures)),
     rows = as_arr(rows))
+  dl <- pv$library$download
+  if (identical(pv$library$status, "asking") && !is.null(dl) && nrow(dl) > 0) {
+    packages$library$download <- list(
+      bytes = sum(dl$bytes, na.rm = TRUE),
+      packages = as_arr(lapply(seq_len(nrow(dl)), function(i) {
+        list(package = dl$package[[i]], version = dl$version[[i]],
+             bytes = if (is.na(dl$bytes[[i]])) NULL else dl$bytes[[i]])
+      })))
+  }
   # `snapshot`/`r_version`/`bioc_version`/`library$message` are NA when
   # unset (packages-core.R: a fresh header has no snapshot date until
   # packages are resolved); the wire has no NA (check_wire()), so each

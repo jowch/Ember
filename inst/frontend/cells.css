@@ -364,10 +364,59 @@ pluto-notebook.ember-empty-notebook pluto-input .cm-editor {
     box-shadow: 0 0 0 1px var(--ember-line);
 }
 
-/* The shoulder's fold eye is replaced by the menu's Hide/Show code item;
-   the element stays for Endeavor (folded.ts), just not shown. */
-pluto-shoulder > button.foldcode {
+/* The show/hide code eye (#287), where Pluto has it: in the left shoulder,
+   level with the cell's top, so it stays in place whether the code is
+   shown or hidden. It sits left of the run button, which reaches 15px into
+   the gutter at the code's top-left corner; main's margin and padding
+   (editor.css) leave 46px for both at every width. Endeavor (folded.ts)
+   reads this element, so it keeps Pluto's tag and class. The menu's
+   Hide/Show code item stays as a second way in. */
+pluto-cell > pluto-shoulder > button.foldcode {
+    position: relative;
+    top: 1px;
+    margin-right: 18px;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ember-muted);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease-in-out;
+}
+pluto-cell > pluto-shoulder > button.foldcode > span {
+    display: flex;
+}
+/* Pluto's icon is a background image on span::after; Ember's is an SVG. */
+pluto-cell > pluto-shoulder > button.foldcode > span::after {
+    content: none !important;
     display: none;
+}
+pluto-cell > pluto-shoulder > button.foldcode:hover {
+    background: var(--ember-hover);
+    color: var(--ember-text);
+}
+/* Shown when the run button and the menu are (below), and while the code is
+   hidden and the cell has focus, so a keyboard user sees the state. */
+pluto-cell:has(.cm-editor.cm-focused, div.input_context_menu[role="menu"]) > pluto-shoulder > button.foldcode,
+pluto-cell > pluto-shoulder > button.foldcode:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+@media (hover: hover) {
+    pluto-cell:hover > pluto-shoulder > button.foldcode {
+        opacity: 1;
+        pointer-events: auto;
+    }
+}
+@media (hover: none) {
+    pluto-cell:focus-within > pluto-shoulder > button.foldcode {
+        opacity: 1;
+        pointer-events: auto;
+    }
 }
 
 /* ---- Cell menu (ui-3.md "Cell menu") ----------------------------------- */
@@ -811,6 +860,12 @@ pluto-output table.pluto-table tr.empty div {
     display: flex;
     flex-flow: column nowrap;
     align-items: center;
+}
+/* A wide table scrolls in its own box, so the buttons under it stay put
+   and clear of an overlay scrollbar (#286). */
+.ember-table-scroll {
+    min-width: 0;
+    overflow-x: auto;
 }
 .ember-table-more {
     display: flex;

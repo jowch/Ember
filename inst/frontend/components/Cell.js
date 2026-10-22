@@ -9,7 +9,7 @@ import { cl } from "../common/ClassTable.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { t, th } from "../common/lang.js"
-import { CircleIcon, ClockIcon, SlashCircleIcon, SlidersIcon } from "../common/Icons.js"
+import { CircleIcon, ClockIcon, EyeIcon, EyeOffIcon, SlashCircleIcon, SlidersIcon } from "../common/Icons.js"
 import { stale_names } from "../common/stale_names.js"
 import { display_name } from "../common/display_name.js"
 import { useSettled, wait_for_on } from "../common/useSettled.js"
@@ -110,9 +110,11 @@ export const Cell = ({
     nbpkg,
     global_definition_locations,
     definition_cells,
-    is_first_cell,
+    top_of_page,
     inspecting_hidden_code,
 }) => {
+    // For tests that count which cells re-render (render-count.test.mjs, #289).
+    /** @type {any} */ (window).__ember_on_cell_render?.(cell_id)
     const { show_logs, disabled: running_disabled, skip_as_script } = metadata
     const code_changed = !!ember?.code_changed
     const stale = useSettled(!code_changed && !!ember?.stale, wait_for_on)
@@ -292,6 +294,11 @@ export const Cell = ({
             pluto_actions.fold_remote_cells(pluto_actions.get_selected_cells(cell_id, selected), !code_folded)
         }
     }, [pluto_actions, cell_id, selected, code_folded, inspecting_hidden_code_here, inspecting_hidden_code])
+    // The show/hide code toggle, Pluto's eye in the left shoulder (#287):
+    // struck through, pressed and titled "Show code" while the code is
+    // hidden. Inspecting a hidden cell's code shows it, so the eye is open
+    // then.
+    const eye_hidden = code_folded && !inspecting_hidden_code_here
     const on_run = useCallback(async () => {
         return await pluto_actions.set_and_run_multiple(pluto_actions.get_selected_cells(cell_id, selected))
     }, [pluto_actions, cell_id, selected])
@@ -391,8 +398,13 @@ export const Cell = ({
             else window.dispatchEvent(new CustomEvent("cell_focus", { detail: { cell_id, line: 0, ch: 0 } }))
         } else if (e.key === "Tab" && !e.shiftKey) {
             // The code comes first in the DOM; from the selected cell, Tab
-            // goes on past it to the run button and the menu.
-            const next = /** @type {HTMLElement?} */ (cell.querySelector("pluto-input button.ember-run, pluto-input button.input_context_menu"))
+            // goes on past it to the run button and the menu, whichever is
+            // shown first (a cell with hidden code has no run button). The
+            // show/hide code eye comes before the code, in the shoulder, so
+            // Tab reaches it on the way into the cell (#287).
+            const next = /** @type {HTMLElement?} */ (
+                Array.from(cell.querySelectorAll("pluto-input button.ember-run, pluto-input button.input_context_menu")).find((b) => b.getClientRects().length > 0)
+            )
             if (next == null) return false
             next.focus()
         } else {
@@ -448,9 +460,10 @@ export const Cell = ({
         is_starting_to_run
     )
 
-    // A cell that would show "Not run yet" once the page leaves safe
-    // preview. Safe preview says "nothing has run" once, in its banner
-    // (ui-3.md, "Safe preview is one banner"), so these cells show no chip.
+    // A code cell that hasn't run. It says "Not run yet" in safe preview
+    // too, the way Pluto marks every cell there, so the first view has no
+    // unexplained gaps (#298), and leaving safe preview by running one cell
+    // changes nothing on the cells that stay unrun.
     const unrun_code_cell =
         no_output_yet &&
         !running &&
@@ -461,26 +474,27 @@ export const Cell = ({
         !running_disabled &&
         !depends_on_disabled_cells &&
         !errored
-    const not_run_yet_now = unrun_code_cell && !process_waiting_for_permission
+    const not_run_yet_now = unrun_code_cell
     const not_run_yet = useSettled(not_run_yet_now, wait_for_on)
     // When a cell showing "Not run yet" starts, the chip goes at once but
     // its first result lands later, so the code would move up and then
     // down again. Keep the chip's space, unseen, until that result lands
     // or the run is called off, so the layout moves once (#52).
     //
-    // Safe preview keeps the same space, unseen, for the cells that will
-    // show "Not run yet" when it ends, so leaving it doesn't push them all
-    // down by a chip at once (#139). The hold lasts while "Not run yet" is
-    // still settling in, so the chip takes its place. A cell that leaves
-    // safe preview queued gives the space back at once, with the banner:
+    // Safe preview shows the chip too (#298), so leaving it never pushes
+    // unrun cells down by a chip at once (#139). A cell that leaves safe
+    // preview queued gives the chip's space back at once, with the banner:
     // held through its run, it would collapse when a cell with no output
     // finished, and the page would move up again mid-run.
+    // "Run this notebook" can clear the preview a render before the cell
+    // is queued, so the preview counts for a moment after it ends.
+    const in_preview = useSettled(!!process_waiting_for_permission, (value, shown) => !value && shown)
     const holding_chip_ref = useRef(false)
     const held_from_preview_ref = useRef(false)
     const busy = running || queued || waiting_to_run
     if (not_run_yet) {
         holding_chip_ref.current = true
-        held_from_preview_ref.current = false
+        held_from_preview_ref.current = in_preview
     } else if (unrun_code_cell && process_waiting_for_permission) {
         holding_chip_ref.current = true
         held_from_preview_ref.current = true
@@ -584,13 +598,26 @@ export const Cell = ({
                 class="add_cell before"
                 title=${t("t_add_cell_here")}
                 aria-label=${t("t_add_cell_here")}
-                tabindex=${is_first_cell ? undefined : "-1"}
+                tabindex=${
+                    // Only the topmost "add cell" button is a tab stop: the
+                    // others share their spot with the "after" button of the
+                    // cell above, which is one. A matter of where the button
+                    // sits on the page, not of the cell (#284).
+                    top_of_page ? undefined : "-1"
+                }
             >
                 <span></span>
             </button>
             <pluto-shoulder draggable="true" title=${t("t_drag_to_move_cell")}>
-                <button onClick=${on_code_fold} class="foldcode" title=${code_folded ? t("t_show_code") : t("t_hide_code")}>
-                    <span></span>
+                <button
+                    type="button"
+                    onClick=${on_code_fold}
+                    class="foldcode"
+                    title=${eye_hidden ? t("t_show_code") : t("t_hide_code")}
+                    aria-label=${t("t_hide_code")}
+                    aria-pressed=${eye_hidden ? "true" : "false"}
+                >
+                    <span>${eye_hidden ? html`<${EyeOffIcon} />` : html`<${EyeIcon} />`}</span>
                 </button>
             </pluto-shoulder>
             <pluto-trafficlight></pluto-trafficlight>
@@ -622,7 +649,7 @@ export const Cell = ({
                 cm_forced_focus=${cm_forced_focus}
                 set_cm_forced_focus=${set_cm_forced_focus}
                 show_input=${show_input}
-                skip_static_fake=${is_first_cell || (kind === "markdown" && text_open)}
+                skip_static_fake=${kind === "markdown" && text_open}
                 on_submit=${on_submit}
                 on_delete=${on_delete}
                 on_add_after=${on_add_after}

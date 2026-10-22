@@ -448,6 +448,14 @@ test_that("project_cell_result(): ember$figure comes from the cell's code, not t
   expect_true(check_wire(js))
   expect_equal(js$cell_results$A$ember$figure, list(width = 8, height = 4))
 
+  # #| fig-alt adds the plot's text alternative (#294).
+  s3 <- fake_state(list(S = cell(""), A = cell("#| fig-alt: Ten points\nplot(1:10)")))
+  r3 <- boot(s3, "A")
+  r3 <- drive(r3$state, wk_done(1, last_token(r3), report(output = out), at(10)))
+  js3 <- pluto_state(r3$state)$js
+  expect_true(check_wire(js3))
+  expect_equal(js3$cell_results$A$ember$figure, list(width = 7.5, height = 5, alt = "Ten points"))
+
   s2 <- fake_state(list(S = cell(""), A = cell("1")))
   r2 <- boot(s2, "A")
   r2 <- drive(r2$state,

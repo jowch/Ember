@@ -186,8 +186,30 @@ listen_for_interrupts <- function() {
     children_running <<- getNativeSymbolInfo("C_cell_children_running", dll)
     keeping_children <<- isTRUE(tryCatch(.Call(getNativeSymbolInfo("C_keep_cell_children", dll)),
                                          error = function(e) FALSE))
+    setHook(packageEvent("processx", "onLoad"), function(pkgname, pkgpath) release_processx_job())
     isTRUE(.Call(getNativeSymbolInfo("C_interrupt_listen", dll)))
   }, error = function(e) FALSE))
+}
+
+#' On Windows, as processx loads: have it make its job object now, with a
+#' child that only exits, and release the job at once, so a cell's first
+#' processx or callr child joins a job already released and outlives a
+#' worker killed right after starting it (#235). processx makes the job
+#' only as it starts a child, and Windows says nothing when it does, so the
+#' half-second thread in src/children.c could miss that first child.
+#' System32's cmd with `/d`, so no AutoRun command (conda's, say) runs
+#' first. The job exists once the child has started, so a child that hangs
+#' anyway is killed after two seconds and the job released all the same.
+#' Silent: an error or warning here never reaches the cell, and the job is
+#' released whatever happened (the thread is left for a start that failed).
+release_processx_job <- function() {
+  tryCatch({
+    cmd <- file.path(Sys.getenv("SystemRoot", "C:/Windows"), "System32", "cmd.exe")
+    p <- processx::process$new(cmd, c("/d", "/c", "exit"), cleanup = TRUE, windows_hide_window = TRUE)
+    p$wait(2000)
+    if (p$is_alive()) p$kill()
+  }, warning = function(w) NULL, error = function(e) NULL, finally = .Call(release_children))
+  invisible(NULL)
 }
 
 #' Drop an interrupt still pending as a run starts: it is late, for the

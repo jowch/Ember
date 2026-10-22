@@ -156,13 +156,14 @@ Any event that changes what the notebook wants reaches the same code, so no hand
 
 - The index cache is a dated index saved as RDS forever, plus a memo per process so sessions share one R object. The exception is an index dated yesterday or later in UTC (`index_may_change()`, #39): Package Manager may still add to that day's snapshot. Opening still reads the saved copy (fetching a CRAN index costs about 11 s), but the slot is marked `provisional` (the shell judges the date; the core has no clock), and a date preview fetches it again: the preview asks for every index it fetches `fresh`, and the shell skips the saved copy of a `fresh` key whose date may change, whether or not the session held it. That fetch replaces the saved copy and the memo, so sessions opened later read it. When it fails (offline), the saved copy stands in.
 - A new notebook is dated today, and Package Manager publishes a day's snapshot hours after that day starts in UTC. Until then the date's index is a 404, and east of UTC that is most of a local morning (#162). `fetch_index_main()` says so when the server answers 404 (`index_not_published()`), and the shell passes `unpublished` on `index_failed` for a date from yesterday to tomorrow in UTC (`may_be_unpublished()`). A date further ahead is no clock's today, so its 404 is a plain failure. While the lock is empty, nothing came from that date, so the core moves the notebook's date back a day and resolves there. The saved file then carries the date its packages came from. It stops at the day before yesterday in UTC, where the failure shows as `index_unavailable`. Offline, the fetch fails without a 404, so the date stays today; the next fetch once online moves it if the snapshot still isn't out. A notebook with locked packages keeps its date: its lock was resolved from that date's index, so the date was published. A date preview of a day that isn't published yet moves back the same way: "Update all" is a preview of today, so early in a day it offers the newest published date instead of failing with no changes. The proposal keeps the date it was asked for as `asked`, and its `date` is the one it would move to.
+- Package Manager publishes a day's Bioconductor snapshot about two days after CRAN's (#282), so a notebook dated today can find CRAN's index and get a 404 from Bioconductor's. For a Bioconductor key `may_be_unpublished()` covers three days back to tomorrow in UTC, and while the lock is empty a 404 for one of Bioconductor's indexes at the notebook's date moves the whole date back a day as CRAN's does, so both resolve at one date. With packages locked the date stays, and the failed index shows as `index_unavailable`; a cell that needs a name CRAN lacks says Bioconductor couldn't be looked in (`unlooked_message()`, as the Packages tab does since #264) rather than that the package is in no repository.
 - Libraries are built in a staging folder and then renamed into place. A process that loses the race deletes its copy, so no locks are needed.
 - The renv cache is Ember's own, so `clean()` can never break the user's renv projects.
 - `clean()` and `ember::run()` sit outside the core.
 
 One process-wide table, `jobs`, lets two sessions that want the same index or library share one subprocess. It holds processes and subscribers and makes no decisions.
 
-**Jobs end with the server.** A job is killed when its last session leaves (the session closed or cancelled the install), and the server closes its notebooks on the way out, including on Ctrl-C. If the server is killed instead, processx's supervisor ends the job, and on Unix the job runs under `sh`, which takes the job's children (`R CMD INSTALL`, the compiler) with it (`job_process()`, #141). On Windows there is no `sh`, and none is needed: R's `system()` and `system2()` start each child in a job object that ends it once the R process that started it ends. So when processx's job object, the supervisor or a cancel ends the job's process, `R CMD INSTALL` and the compiler go too. That covers children started through `system()`/`system2()`, as renv starts `R CMD INSTALL`, or through processx; a child started some other way isn't covered (#148). A killed install leaves only its staging folder, which `clean()` removes.
+**Jobs end with the server.** A job is killed when its last session leaves (the session closed or cancelled the install), and the server closes its notebooks on the way out, including on Ctrl-C. If the server is killed instead, processx's supervisor ends the job, and on Unix the job runs under `sh`, which takes the job's children (`R CMD INSTALL`, the compiler) with it (`job_process()`, #141). On Windows there is no `sh`, and none is needed: R's `system()` and `system2()` start each child in a job object that ends it once the R process that started it ends. So when processx's job object, the supervisor or a cancel ends the job's process, `R CMD INSTALL` and the compiler go too. That covers children started through `system()`/`system2()`, as renv starts `R CMD INSTALL`, or through processx; a child started some other way isn't covered (#148). A killed install leaves only its staging folder, which `clean()` removes. A library is deleted manifest first (`delete_library()`, #152), so a delete cut short leaves a folder that reads as no library: the next install replaces it, and `clean()` removes it once it is a day old.
 
 **renv comes from the server's own library** as an Imports dependency. Only the installer subprocess loads it, never the server or the worker.
 
@@ -176,6 +177,7 @@ One process-wide table, `jobs`, lets two sessions that want the same index or li
 - `run` and `clean`
 - `ember_repos` and `cache_dir`, plus `repos`/`cache` arguments to `open_notebook`
 - `preview_update` in increment 3
+- `approve_install`, for a large download (#37)
 
 Behind that sit detection, resolution, index caching, library naming, installs, waiting cells, the worker library switch, restarts, exports for the graph, the missing-package fix and cleanup. No caller ever asks for an install or a resolution: they edit code and run cells, as in Pluto.
 
@@ -206,7 +208,7 @@ Behind that sit detection, resolution, index caching, library naming, installs, 
    - Bioconductor (`bioc_version`, its index keys, the date-window warning): built, see [Bioconductor](#bioconductor)
    - `[sources]` GitHub as one-row indexes: built, see [GitHub sources](#github-sources)
    - `[sources]` r-universe the same way: built, see [r-universe sources](#r-universe-sources)
-   - the install plan job: download size and consent
+   - asking before a large download: built for Bioconductor's annotation and experiment-data packages, see [Large downloads](#large-downloads) (#37). A notice that doesn't stop the install (#19) is not built
    - compiler and system-library checks: built, see [Install checks](#install-checks)
    - old snapshot dates that build from source on a newer R: explained when the build fails, see [Install checks](#install-checks); saying so before the install waits for the install plan
    - disk use: built. The Packages tab shows the libraries', the cache's and the indexes' disk use for all notebooks, from one `du` run so a hard-linked file counts once (`disk_use()`); without `du` (Windows) it sums file sizes and says the libraries' figure includes shared files. (#38)
@@ -214,11 +216,42 @@ Behind that sit detection, resolution, index caching, library naming, installs, 
    - R minor version change with a Bioconductor pin: built, see [Bioconductor](#bioconductor)
 3. **Release dates:** built. `preview_update()` updates one package or pins it to an older version: CRAN's own index of its files gives the date (`cran_release_table()`), checked against that day's snapshot, and the increment-1 preview shows what changes. The Packages tab has no control for it yet (#23).
 
+### Large downloads
+
+Built (#37). design.md's "Large installs ask first": an install that would
+download more than `options(ember.ask_above)` bytes (500 MB by default,
+`Inf` never asks) stops before downloading anything and waits for the
+user's OK.
+
+- **What's counted.** Bioconductor's annotation and experiment-data
+  packages in the lock that renv's cache doesn't hold for this R
+  (`large_downloads()`). Those are the large ones: `org.Hs.eg.db`,
+  `BSgenome.*` and the like run from hundreds of MB to several GB. CRAN's
+  and Bioconductor's software packages are kept under 5 MB by those
+  repositories' rules, and a GitHub package is one repository's source, so
+  neither is counted. The size is the source tarball's: a HEAD request's
+  Content-Length, after one read of each data repository's index. None of
+  the package indexes carries a size.
+- **Where it stops.** The installer (and the fake one) measures after the
+  compiler check and before renv runs. Above the threshold it writes one
+  `EMBER-DOWNLOAD <package> <version> <bytes>` line per package and exits
+  with status 3. The shell turns that into `ev_install_done(download =)`,
+  and the target library goes to `"asking"`: not failed, no problem row.
+  Cells that use the packages wait, as for any install.
+- **The OK.** The Packages tab opens with a card: "This install downloads
+  2.1 GB", the large packages with their sizes, and Install
+  (`ember_approve_install`). From R and for agents, `package_status(nb)`
+  shows `library$status` `"asking"` and `library$download`, and
+  `approve_install(nb)` says yes. The target goes back to `"missing"` with
+  `approved`, and the install runs with no limit. Running cells again
+  isn't an OK. To say no, remove the package from the code.
+- **`ember::run()`** never asks: there may be nobody to answer.
+
 ### Bioconductor
 
 Built from increment 2. Resolution, the lock, the pin and the install's
-repositories; the install plan (download size and consent, compilers) is
-not.
+repositories. Asking before a large download is in
+[Large downloads](#large-downloads).
 
 - **Three repositories per release.** Bioconductor splits a release into
   software (`bioc`), annotation data (`data/annotation`: `GO.db`,
@@ -390,9 +423,9 @@ what was missing.
   Not built: saying so before the install. It is cheap to detect (one
   request on Linux with Package Manager; on macOS and Windows a second
   read of the binary index renv reads anyway), but it shouldn't stop the
-  install, since pure R packages build fine, and there is nowhere yet to
-  show a notice that doesn't stop it: that is the install plan's consent
-  step, which isn't built.
+  install, since pure R packages build fine. The card for a large download
+  ([Large downloads](#large-downloads)) shows only when an install stops,
+  so a notice that doesn't stop it still has nowhere to go (#19).
 - **A compiler missing during a build.** A build that fails because make
   or configure can't find the compiler (`gcc: No such file or directory`,
   `no acceptable C compiler`, `xcrun: error: invalid active developer
