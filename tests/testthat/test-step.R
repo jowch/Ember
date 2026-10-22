@@ -552,6 +552,47 @@ test_that("a cycle peer edited after its result was dropped waits to be asked (#
   expect_false("B" %in% r1$state$pending)
 })
 
+test_that("submitting a cell whose graph-error result is already gone still reruns its stale dependents in autorun (#325)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), A2 = cell("z <- 9"), E = cell("x + 1"), F = cell("2")))
+  r <- boot(s, c("A", "A2", "E", "F"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "z"), at(11)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(12)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(13)))
+
+  r2 <- drive(r$state, ev_apply(list(op_set_code("A2", "x <- 2")), at(20)))
+  # Running F drops A's and A2's results, marking E stale but not queueing it.
+  r3 <- drive(r2$state, ev_run("F", at(21)))
+  r3 <- drive(r3$state, wk_done(1, last_token(r3), report(), at(22)))
+  expect_null(r3$state$results$A2)
+  expect_true(isTRUE(r3$state$results$E$stale))
+  expect_false("E" %in% r3$state$pending)
+
+  r4 <- drive(r3$state, ev_run("A2", at(23)))
+  expect_equal(last_sent(r4)$cell, "E")
+})
+
+test_that("a dependent queued by submitting a graph error runs after a cell the other definer leaves stale (#326, #176)", {
+  # D is edited to define x, which A defines: both have a graph error. E
+  # reads D's w and B's y, and B reads A's q, so B is stale once A's result
+  # goes: E must run after it, not with its old y. B doesn't read x, so it
+  # isn't one of D's dependents.
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1\nq <- 2"), B = cell("y <- q + 1"),
+                       D = cell("w <- 5"), E = cell("w + y")))
+  r <- boot(s, c("A", "B", "D", "E"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = c("x", "q")), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(11)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "w"), at(12)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(13)))
+
+  r2 <- drive(r$state, ev_apply(list(op_set_code("D", "x <- 2\nw <- 5")), at(20)))
+  r3 <- drive(r2$state, ev_run("D", at(21)))
+  expect_null(r3$state$results$A)
+  expect_null(r3$state$results$D)
+  expect_equal(last_sent(r3)$cell, "B")
+  expect_true("E" %in% r3$state$pending)
+})
+
 test_that("two definers of the same name give one upstream entry, the first in display order (ui-3 7c, fix 2)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1"), A2 = cell("x <- 2"), C = cell("x + 1")))
   r <- boot(s, "C")

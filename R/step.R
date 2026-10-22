@@ -309,6 +309,19 @@ schedule <- function(state) {
 
   dg <- drop_graph_error_results(state)
   state <- dg$state
+  # Dropping a result marks that cell's dependents stale. If `id` reads one
+  # of them, it runs after it, with every ancestor between them, as when a
+  # cell is run by hand (#176), not with its old value (#326).
+  if (length(dg$effects) > 0) {
+    ups <- upstream_of_set(state$graph, id)
+    stale <- Filter(function(a) isTRUE(state$results[[a]]$stale) && can_run(state, a), ups)
+    if (length(stale) > 0) {
+      between <- reached_from(state$graph, stale, setdiff(ups, stale))
+      state$pending <- union(state$pending, Filter(function(a) can_run(state, a), union(stale, between)))
+      s2 <- schedule(state)
+      return(list(state = s2$state, effects = c(dg$effects, s2$effects)))
+    }
+  }
 
   token <- state$next_token
   state$next_token <- state$next_token + 1L
@@ -386,7 +399,12 @@ failed_definers <- function(state, id) {
 #' was not asked to run. `reduce_run()` passes `TRUE`: a cell submitted
 #' into a graph error has its dependents queued in autorun, as for a cell
 #' that ran and failed, so they rerun and fail on their own if they need
-#' what it would have provided (#272).
+#' what it would have provided (#272). Their dependents are the readers of
+#' what the cell defined when it last ran and of what its code defines now:
+#' a cell defining a name another cell defines has no edges to that name's
+#' readers. A cell submitted again while it still has the graph error has
+#' no result left to drop, but its dependents are queued all the same, as
+#' for any cell that is run (#325).
 #'
 #' A cell that ran and then gained a graph error (an edit made `x` defined
 #' twice, or a learned definition did) still holds its result, and the
@@ -404,11 +422,18 @@ drop_graph_error_results <- function(state, ids = NULL, queue = FALSE) {
   if (!is.null(ids)) blocked <- intersect(blocked, ids)
   stale_results <- Filter(function(id) !is.null(state$results[[id]]), blocked)
   effects <- list()
+  if (queue) {
+    for (id in setdiff(blocked, stale_results)) {
+      state <- invalidate_dependents(state, id, state$graph$cells[[id]]$definitions, queue = TRUE,
+                                     was_setting = FALSE)
+    }
+  }
   for (id in stale_results) {
     old <- state$results[[id]]
     state$results[[id]] <- NULL
     state$graph_dropped[[id]] <- old$code
-    state <- invalidate_dependents(state, id, old$defined, queue = queue,
+    names <- if (queue) union(old$defined, state$graph$cells[[id]]$definitions) else old$defined
+    state <- invalidate_dependents(state, id, names, queue = queue,
                                    was_setting = isTRUE(old$setting))
     if (state$worker$status %in% c("starting", "ready", "busy")) {
       effects <- c(effects, list(fx_send(state$worker$gen, list(type = "drop_globals", cell = id))))
@@ -517,7 +542,20 @@ run_message <- function(state, id, token) {
       role = if (is_text) "text" else "cell",
       order = order, settings = settings_in_effect(state, id), formulas = state$graph$analyses[[id]]$formulas,
       library = state$packages$active$path, fig = cell_figure_size(cell$code),
-      inputs = if (!is_text) run_inputs(state, id))
+      inputs = if (!is_text) run_inputs(state, id),
+      installs = if (!is_text) run_installs(state$graph$analyses[[id]]))
+}
+
+#' The install part of a run message: the cell's top-level install calls,
+#' which the worker doesn't run (packages.md, "Install calls"), as
+#' `list(list(index, packages))`. `NULL` for a cell with none.
+run_installs <- function(analysis) {
+  r <- analysis$installs
+  if (is.null(r) || !any(r$top)) return(NULL)
+  r <- r[r$top, , drop = FALSE]
+  lapply(unique(r$index), function(k) {
+    list(index = k, packages = unique(r$package[r$index == k & !is.na(r$package)]))
+  })
 }
 
 #' The inputs part of a run message: the cell's bindings
@@ -1129,6 +1167,10 @@ reduce_apply <- function(state, event) {
       spec <- source_spec(op$source)
       if (!is_one_package_name(op$name)) {
         bad <- refused("not a package name", op)
+      } else if (op$name %in% code_sources(state$graph, header)) {
+        # As remove_extra_package: schedule_packages() would just put the
+        # code's back (sync_sources()).
+        bad <- refused(sprintf("%s's source is named by an install call in code; change it there instead", op$name), op)
       } else if (is.null(spec)) {
         bad <- refused("a source is written \"github:user/repo\", optionally with @ and a branch, tag or commit, or as a github.com link to the repository or to a branch, tag or commit; or, for an r-universe, \"universe:name\" or a link to it", op)
       } else {
@@ -1139,6 +1181,8 @@ reduce_apply <- function(state, event) {
     } else if (identical(op$op, "remove_package_source")) {
       if (!is_one_package_name(op$name)) {
         bad <- refused("not a package name", op)
+      } else if (op$name %in% code_sources(state$graph, header)) {
+        bad <- refused(sprintf("%s's source is named by an install call in code; remove it there instead", op$name), op)
       } else {
         src <- header$sources %||% character()
         header$sources <- src[names(src) != op$name]
@@ -1963,7 +2007,8 @@ reduce_wk_done <- function(state, event) {
                        variables = if (identical(status, "ok")) report$globals %||% list() else list(),
                        settings_found = settings_found, setting = id %in% state$graph$settings,
                        load_notes = load_notes, changed_in_place = as.character(changed_in_place),
-                       inputs = if (identical(status, "ok")) report$inputs %||% list() else list())
+                       inputs = if (identical(status, "ok")) report$inputs %||% list() else list(),
+                       from_lock = as.character(report$from_lock %||% character()))
   if (late_stale) result$stale <- TRUE
   state$results[[id]] <- result
   state$graph_dropped[[id]] <- NULL
