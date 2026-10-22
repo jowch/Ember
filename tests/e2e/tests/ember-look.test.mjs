@@ -9,7 +9,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector, waitIdle, hoverCell } from "../browser.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -153,7 +153,11 @@ test("look: markdown cell renders folded, with R tokens in its fenced block (11)
   // cell's bare R) through the rendered text instead.
   // The fold eye is hidden now (ui-3-plan.md piece 6a): Hide/Show code
   // moved to the cell menu, which still toggles the same code_folded flag.
-  await page.hover(cellSelector("MD"));
+  // The menu takes the pointer only while MD is hovered. Leaving safe
+  // preview ran the notebook, and the plots above MD push it down by about
+  // 1800 px when they arrive, so hover once the run is over (#271).
+  await waitIdle(page);
+  await hoverCell(page, "MD");
   await page.locator(`${cellSelector("MD")} button.input_context_menu`).click();
   await page.locator(`${cellSelector("MD")} button.hide_code`).click();
   const mdSource = await page.locator(`${cellSelector("MD")} .cm-content`).innerText();

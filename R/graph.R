@@ -82,6 +82,7 @@ new_graph <- function(ids, settings, analyses, learned, exports, cells, edges,
 #' `kind` is one of `"parse"`, `"multiple_definitions"`, `"cycle"`,
 #' `"private_name"`, `"setting_conflict"` (one setting set in two cells),
 #' `"package_conflict"` (one package attached in two cells),
+#' `"source_conflict"` (install calls giving one package two sources),
 #' `"mixed_text"` (a cell mixing `#'` lines and code; text-cells.R's
 #' `is_mixed()`). `cells` are the ids the error is reported on (all of
 #' them can't run). `names` are the globals, settings or packages involved
@@ -100,6 +101,7 @@ new_graph <- function(ids, settings, analyses, learned, exports, cells, edges,
 #'   withr::with_options() to change it for one piece of code" (the scoped
 #'   function by kind; `setting_fix()`).
 #' * package in two cells: "Keep one library(pkg) and remove the other".
+#' * two sources for a package: "Keep one install call for pkg".
 new_graph_error <- function(kind, cells, names = character(),
                             lines = NULL, message, fixes = character()) {
   structure(list(kind = kind, cells = cells, names = names,
@@ -1005,6 +1007,22 @@ find_errors <- function(cells, analyses, edges, ids, components,
       kind = "package_conflict", cells = attachers, names = p, lines = lines_df,
       message = sprintf("%s is attached in %s cells.", p, count_word(length(attachers))),
       fixes = sprintf("Keep one library(%s) and remove the other", p))
+  }
+
+  # source_conflict: one package given two sources by install calls in
+  # enabled cells (packages.md, "Install calls"). Which one is meant is the
+  # user's to say, so neither goes into [sources] (`declared_sources()`).
+  src_rows <- install_source_rows(analyses[enabled], ids[enabled])
+  for (p in unique(src_rows$package)) {
+    rows <- src_rows[src_rows$package == p, , drop = FALSE]
+    specs <- unique(rows$source)
+    if (length(specs) < 2) next
+    errors[[length(errors) + 1]] <- new_graph_error(
+      kind = "source_conflict", cells = unique(rows$cell), names = p,
+      lines = data.frame(cell = rows$cell, line = rows$line, stringsAsFactors = FALSE),
+      message = sprintf("%s is installed from %s places: %s.", p, count_word(length(specs)),
+                        paste(specs, collapse = ", ")),
+      fixes = sprintf("Keep one install call for %s", p))
   }
 
   # mixed_text: a cell mixing #' lines and code (text-cells.R's

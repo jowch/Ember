@@ -208,6 +208,7 @@ Behind that sit detection, resolution, index caching, library naming, installs, 
    - Bioconductor (`bioc_version`, its index keys, the date-window warning): built, see [Bioconductor](#bioconductor)
    - `[sources]` GitHub as one-row indexes: built, see [GitHub sources](#github-sources)
    - `[sources]` r-universe the same way: built, see [r-universe sources](#r-universe-sources)
+   - install calls name the source: built, see [Install calls](#install-calls) (#79)
    - asking before a large download: built for Bioconductor's annotation and experiment-data packages, see [Large downloads](#large-downloads) (#37)
    - compiler and system-library checks: built, see [Install checks](#install-checks)
    - old snapshot dates that build from source on a newer R: built. Said while the packages build, and explained when a build fails, see [Install checks](#install-checks) (#19)
@@ -658,6 +659,73 @@ r-universe.
 Not built: guessing the universe for a name that isn't found; a
 universe's own dependencies resolve from CRAN, so a dependency only on
 r-universe needs its own entry.
+
+### Install calls
+
+Built for #79. A package that isn't on CRAN or Bioconductor is named the
+way R users already do it: an install call says where it lives, and
+`library(pkg)` is what fetches it. Nobody has to edit `[sources]`.
+
+```r
+remotes::install_github("lab/mypkg")
+install.packages("emberui", repos = "https://jowch.r-universe.dev")
+library(mypkg)
+```
+
+- **What counts** (`install_calls`, rules.R): `remotes::` or
+  `devtools::install_github("user/repo")`, with `@ref` or `ref =`;
+  `pak::pak()` and `pak::pkg_install()` with `"user/repo"`,
+  `"github::user/repo"` or `"pkg=user/repo"`; `install.packages()` with
+  one r-universe among `repos` (CRAN's own, `cran.r-universe.dev`, isn't
+  one); `BiocManager::install()`, which names no source. `install_github`,
+  `pak`, `pkg_install` and `install.packages` also count bare. Only
+  literal strings are read. The package is the repository's name, or the
+  name before `=` for pak; when it differs from the package's only in
+  case, the wanted name is used.
+- **Where they count.** In a cell's own code, outside function bodies,
+  including inside `if` or a wrapper such as `suppressMessages()`. One in
+  a function or a `source()`d file is an ordinary call. Only a call that
+  is a whole top-level expression is skipped (below), so only its own
+  package (remotes, pak) isn't one the notebook needs; any other runs
+  when it is reached, and its package is locked like any other.
+- **The header stays the record.** Each step writes the sources the code
+  gives, for the packages the notebook wants, into `[sources]`
+  (`declared_sources()`, `sync_sources()`, packages-core.R stage 1). The
+  code wins over a hand-written entry, and the source ops refuse to
+  change a package's entry while an install call names it ("change it
+  there instead"); an entry whose call is gone stays, so deleting the
+  line doesn't move a package. Two calls giving one
+  package different sources are a graph error on their cells
+  (`source_conflict`, "Keep one install call for pkg"), and neither is
+  written: which one is meant is the user's to say. A call in a disabled
+  cell doesn't count.
+- **Ember's own packages are built in** (`builtin_sources`): one there
+  needs no install call, and its source only fills a gap (an entry
+  already in the header stays). The table is empty for now: emberui goes
+  in as `universe:jowch` once that universe builds it, since until then
+  the entry would send `library(emberui)` to a universe without it.
+- **They don't run.** The lock already answers them, and running one would
+  install behind the lock's back into a shared library. The run message
+  lists the top-level install calls (`run_installs()`); the worker skips
+  them and reports their packages, and the cell shows one muted line
+  ("Install calls don't run in Ember: it installs mypkg from the
+  notebook's lock when a cell uses them. To get a newer version, use the
+  Packages tab."). One inside `if` isn't skipped: in the usual
+  `if (!requireNamespace("mypkg")) remotes::install_github(...)` the
+  package is installed from the lock, so the call isn't reached.
+- **`ember::run()` does the same.** It runs a copy of the file with the
+  top-level install calls replaced by `invisible(NULL)`, every other line
+  where it was, from the file's own folder, and says once which packages
+  the lock gives (`without_install_calls()`). The copy is a temporary
+  file, so `commandArgs()` names it, not the notebook. A package missing from the
+  lock still only warns: `run()` doesn't resolve.
+
+Not built: an install call's subdirectory (`"user/repo/pkg"` or
+`subdir =`) or pull request (`"user/repo#12"`), which can't be a source
+yet; it is still skipped. So is `install.packages("pkg.tar.gz", repos =
+NULL)`, a local file the lock can't answer: `library(pkg)` then doesn't
+resolve. The note can be noisy with many such packages; it is one line
+per cell, and to be revisited once in use.
 
 ## Where the direction strains
 

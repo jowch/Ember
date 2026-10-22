@@ -2580,3 +2580,20 @@ test_that("run_cell(): a text cell's error traceback drops the worker's own eval
   expect_identical(r$error$traceback, c("f()", 'stop("boom")'))
   expect_false(any(grepl("line_e|handleSimpleError|eval\\(line_e", r$error$traceback)))
 })
+
+test_that("run_cell(): a top-level install call doesn't run, and the report names its packages (#79)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  m <- run_msg("a", 1L, 'x <- 1\nremotes::install_github("lab/toyD")\ninstall.packages(pkgs)')
+  m$installs <- list(list(index = 2L, packages = "toyD"), list(index = 3L, packages = character()))
+  h$send(m)
+  r <- wait_for_done(h)
+  # remotes isn't installed and `pkgs` doesn't exist: either would fail.
+  expect_identical(r$status, "ok")
+  expect_null(r$output)
+  expect_identical(r$from_lock, c("toyD", ""))
+  expect_identical(r$created, "x")
+
+  r <- run_and_wait(h, "b", 2L, "y <- 2")
+  expect_identical(r$from_lock, character())
+})
