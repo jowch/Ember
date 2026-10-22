@@ -9,73 +9,73 @@
 cat(paste('line', 1:3), sep = '\n')
 
 # %% id=C02
-cat(paste('line', 1:4), sep = '\n')
+data.frame(line = 1:4)
 
 # %% id=C03
 cat(paste('line', 1:5), sep = '\n')
 
 # %% id=C04
-cat(paste('line', 1:6), sep = '\n')
+data.frame(line = 1:6)
 
 # %% id=C05
 cat(paste('line', 1:3), sep = '\n')
 
 # %% id=C06
-cat(paste('line', 1:4), sep = '\n')
+data.frame(line = 1:4)
 
 # %% id=C07
 cat(paste('line', 1:5), sep = '\n')
 
 # %% id=C08
-cat(paste('line', 1:6), sep = '\n')
+data.frame(line = 1:6)
 
 # %% id=C09
 cat(paste('line', 1:3), sep = '\n')
 
 # %% id=C10
-cat(paste('line', 1:4), sep = '\n')
+data.frame(line = 1:4)
 
 # %% id=C11
 cat(paste('line', 1:5), sep = '\n')
 
 # %% id=C12
-cat(paste('line', 1:6), sep = '\n')
+data.frame(line = 1:6)
 
 # %% id=C13
 cat(paste('line', 1:3), sep = '\n')
 
 # %% id=C14
-cat(paste('line', 1:4), sep = '\n')
+data.frame(line = 1:4)
 
 # %% id=C15
 cat(paste('line', 1:5), sep = '\n')
 
 # %% id=C16
-cat(paste('line', 1:6), sep = '\n')
+data.frame(line = 1:6)
 
 # %% id=C17
 cat(paste('line', 1:3), sep = '\n')
 
 # %% id=C18
-cat(paste('line', 1:4), sep = '\n')
+data.frame(line = 1:4)
 
 # %% id=C19
 cat(paste('line', 1:5), sep = '\n')
 
 # %% id=C20
-cat(paste('line', 1:6), sep = '\n')
+data.frame(line = 1:6)
 
 # %% id=C21
 cat(paste('line', 1:3), sep = '\n')
 
 # %% id=C22
-cat(paste('line', 1:4), sep = '\n')
+data.frame(line = 1:4)
 
 # %% id=C23
 cat(paste('line', 1:5), sep = '\n')
 
 # %% id=C24
-cat(paste('line', 1:6), sep = '\n')
+data.frame(line = 1:6)
 
 # /// cell order
 # C01

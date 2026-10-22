@@ -618,7 +618,7 @@ test('chips: "Run this notebook" moves the page up only at the click, then only 
   assertNoProblems(page);
 });
 
-test('view anchor: scrolled into the notebook, "Run this notebook" leaves the cell at the top of the view where it is', async (t) => {
+test('view anchor: scrolled into the notebook, "Run this notebook" leaves the code at the top of the view where it is, even as its own table lands above it', async (t) => {
   const notebook = tempNotebook("view-anchor.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-view-anchor.server.log") });
   const browser = await launchBrowser();
@@ -630,17 +630,18 @@ test('view anchor: scrolled into the notebook, "Run this notebook" leaves the ce
   await page.evaluate((sel) => document.querySelector(sel).scrollIntoView({ block: "start" }), cellSelector("C08"));
   await page.waitForTimeout(300);
 
-  // Read where C08 is in every frame something resizes, after the page's
-  // own observer has run (observers run in the order they were made), so
-  // this is what gets painted.
+  // Read where C08's code is in every frame something resizes, after the
+  // page's own observer has run (observers run in the order they were
+  // made), so this is what gets painted. C08 prints a table, which lands
+  // above its code: the cell's own top holding still isn't enough.
   await page.evaluate((sel) => {
     const el = document.querySelector(sel);
     window.__tops = [];
     const ro = new ResizeObserver(() => window.__tops.push(el.getBoundingClientRect().top));
     ro.observe(document.body);
     for (const c of document.querySelectorAll("pluto-cell")) ro.observe(c);
-  }, cellSelector("C08"));
-  const before = await rect(page, cellSelector("C08"));
+  }, `${cellSelector("C08")} > pluto-input`);
+  const before = await rect(page, `${cellSelector("C08")} > pluto-input`);
   // Clicked in script: Playwright's click would scroll the banner into view first.
   await page.evaluate(() => document.querySelector("#ember-safe-preview button").click());
   await page.waitForFunction(() => !document.querySelector("#ember-safe-preview"), null, { timeout: 30000 });
@@ -650,7 +651,8 @@ test('view anchor: scrolled into the notebook, "Run this notebook" leaves the ce
   const tops = await page.evaluate(() => window.__tops);
   assert.ok(tops.length > 5, `outputs landed above C08 (${tops.length} frames)`);
   const off = tops.filter((top) => Math.abs(top - before.top) > 1);
-  assert.deepEqual(off, [], `C08 stayed at ${before.top} in every frame`);
+  assert.deepEqual(off, [], `C08's code stayed at ${before.top} in every frame`);
+  assert.ok(await page.locator(`${cellSelector("C08")} > pluto-output table`).count() > 0, "C08's table landed");
   assertNoProblems(page);
 });
 

@@ -7,7 +7,8 @@
  * in script, for the case Pluto's own compensation (CellOutput.js)
  * doesn't cover: no cell has focus.
  *
- * The anchor is the first cell still showing under the sticky header.
+ * The anchor is a part of a cell (its output, code or console) near the
+ * top of the view, under the sticky header (see choose()).
  * When something resizes, a ResizeObserver runs after layout and before
  * paint; if the anchor has moved and the reader hasn't scrolled, the page
  * scrolls by the same amount, so the frame paints with the anchor where it
@@ -15,28 +16,59 @@
  * there, what's above is what the reader is looking at.
  */
 export const keep_view_anchored = () => {
-    /** @type {{ el: Element, top: number, scroll_y: number }?} */
+    /** @type {{ cell: Element, part: string?, top: number, scroll_y: number }?} */
     let anchor = null
 
     const header_bottom = () => document.querySelector("header#pluto-nav")?.getBoundingClientRect().bottom ?? 0
     const cell_focused = () => document.querySelector("pluto-cell:focus-within") != null
 
+    // A cell's parts, top to bottom, that can hold what the reader is
+    // looking at. Its chip and notes come and go, so they never anchor.
+    const PARTS = ["pluto-output", "pluto-input", "pluto-logs-container"]
+
+    // The anchor is the first part that starts in view, or that reaches the
+    // middle of the view (a tall output you've scrolled into). A sliver
+    // peeking out from under the header isn't what the reader is looking
+    // at, and anchoring on it lets the next part move.
     const choose = () => {
         anchor = null
         if (window.scrollY <= 0) return
         const line = header_bottom()
+        const middle = (line + window.innerHeight) / 2
+        /** @type {typeof anchor} */
+        let fallback = null
         for (const cell of document.querySelectorAll("pluto-notebook > pluto-cell")) {
-            const r = cell.getBoundingClientRect()
-            if (r.bottom > line) {
-                anchor = { el: cell, top: r.top, scroll_y: window.scrollY }
-                return
+            const c = cell.getBoundingClientRect()
+            if (c.bottom <= line) continue
+            if (c.top >= window.innerHeight) break
+            let found = false
+            for (const part of cell.children) {
+                if (!PARTS.includes(part.localName)) continue
+                const r = part.getBoundingClientRect()
+                if (r.height === 0 || r.bottom <= line) continue
+                found = true
+                const candidate = { cell, part: part.localName, top: r.top, scroll_y: window.scrollY }
+                if (r.top >= line || r.bottom >= middle) {
+                    anchor = candidate
+                    return
+                }
+                fallback ??= candidate
             }
+            // A cell with no part showing (its gap, its "+" button): the cell.
+            if (!found) fallback ??= { cell, part: null, top: c.top, scroll_y: window.scrollY }
         }
+        anchor = fallback
     }
 
+    // The part is found again by name: a cell can swap its editor element
+    // (the static stand-in for the real one) while it runs.
+    const anchor_element = () =>
+        anchor == null || !anchor.cell.isConnected ? null : anchor.part == null ? anchor.cell : anchor.cell.querySelector(`:scope > ${anchor.part}`)
+
     const on_resize = () => {
-        if (anchor != null && anchor.el.isConnected && !cell_focused() && window.scrollY === anchor.scroll_y) {
-            const moved = anchor.el.getBoundingClientRect().top - anchor.top
+        const el = anchor_element()
+        if (anchor != null && el != null && !cell_focused() && window.scrollY === anchor.scroll_y) {
+            const moved = el.getBoundingClientRect().top - anchor.top
             if (Math.abs(moved) >= 0.5) window.scrollBy(0, moved)
         }
         choose()
