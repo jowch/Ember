@@ -246,8 +246,8 @@ test_that("source_only_packages() names, before the install, the CRAN packages t
   dir.create(file.path(cache, "renv-cache", "v5", "linux-ubuntu-noble", "R-4.6", "x86_64-pc-linux-gnu",
                        "rlang", "1.1.3", "abc123"), recursive = TRUE)
 
-  # Linux with Package Manager binaries: one package asked about, and at a
-  # date with no binaries for this R every uncached CRAN package counts.
+  # Linux with Package Manager binaries: at a date with no binaries for
+  # this R every uncached CRAN package counts, once a second confirms it.
   binary_repos <- c(CRAN = "https://ppm.example/cran/__linux__/noble/2024-06-01")
   asked <- character()
   answer <- function(value) function(url) {
@@ -258,7 +258,12 @@ test_that("source_only_packages() names, before the install, the CRAN packages t
                               binary_repos = binary_repos, linux_binaries = TRUE, os = "linux",
                               serves_binary = answer(FALSE), minor = "4.6")
   expect_equal(got, c(cli = "3.6.2", glue = "1.7.0"))
-  expect_equal(asked, "https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/cli_3.6.2.tar.gz")
+  expect_equal(asked, c("https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/cli_3.6.2.tar.gz",
+                        "https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/glue_1.7.0.tar.gz"))
+  # One package without a binary at a date that has them: only that one.
+  expect_equal(source_only_packages(lock, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE,
+                                    os = "linux", serves_binary = function(url) !grepl("cli_", url), minor = "4.6"),
+               c(cli = "3.6.2"))
   # Binaries served, or no answer: none.
   expect_length(source_only_packages(lock, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE,
                                      os = "linux", serves_binary = answer(TRUE), minor = "4.6"), 0)
@@ -286,6 +291,65 @@ test_that("source_only_packages() names, before the install, the CRAN packages t
   repos <- c(CRAN = paste0(if (.Platform$OS.type == "windows") "file:///" else "file://", normalizePath(root, winslash = "/")))
   expect_equal(source_only_packages(lock, repos, NULL, os = "macos", binary_type = type),
                c(cli = "3.6.2", rlang = "1.1.3"))
+})
+
+test_that("on Linux the checks ask Package Manager at the binary URL renv downloads from, not CRAN's own (#19)", {
+  skip_if_not(identical(os_kind(), "linux"), "renv rewrites to Package Manager's binaries only on Linux")
+  withr::local_envvar(RENV_CONFIG_PPM_ENABLED = "TRUE")
+  urls <- c(CRAN = "https://packagemanager.posit.co/cran/2026-09-01",
+            BioCsoft = "https://packagemanager.posit.co/bioconductor/2026-09-01/packages/3.23/bioc")
+  # renv's own rewrite, as the installer gets it (no network: renv reads
+  # the platform from this system).
+  r <- installer_repos(urls)
+  skip_if_not(r$linux_binaries, "renv doesn't know Package Manager binaries for this Linux")
+  # renv installs from CRAN's own URL (it rewrites that itself) ...
+  expect_equal(r$repos[["CRAN"]], urls[["CRAN"]])
+  # ... and downloads from its binary one, which is where the checks ask:
+  # at CRAN's own URL Package Manager sends the source at every date.
+  expect_match(r$probe[["CRAN"]], "^https://packagemanager.posit.co/cran/__linux__/[^/]+/2026-09-01$")
+  expect_equal(r$probe[names(r$probe) != "CRAN"], r$repos[names(r$repos) != "CRAN"])
+
+  lock <- parse_lock_lines(c("cli 3.6.6 CRAN", "glue 1.8.0 CRAN"))$lock
+  asked <- character()
+  record <- function(url) {
+    asked <<- c(asked, url)
+    FALSE
+  }
+  source_only_packages(lock, urls, NULL, binary_repos = r$probe, linux_binaries = r$linux_binaries,
+                       os = "linux", serves_binary = record)
+  no_binary_packages(c("cli", "glue"), lock, urls, binary_repos = r$probe, linux_binaries = r$linux_binaries,
+                     os = "linux", serves_binary = record)
+  compiler_check(lock, urls, r$linux_binaries, os = "linux", compiler = FALSE, binary_repos = r$probe,
+                 serves_binary = function(url) {
+                   asked <<- c(asked, url)
+                   TRUE
+                 })
+  expect_gte(length(asked), 5)
+  expect_true(all(grepl("^https://packagemanager.posit.co/cran/__linux__/[^/]+/2026-09-01/src/contrib/", asked)),
+              info = paste(asked, collapse = "\n"))
+
+  # Elsewhere (macOS, Windows, file:// repositories) nothing changes.
+  other <- installer_repos(c(CRAN = "file:///repos/cran"), cran_binary = NULL)
+  expect_false(other$linux_binaries)
+  expect_equal(other$probe, other$repos)
+})
+
+test_that("[net] at a date with binaries for this R, the installer's own URLs name no package (#19)", {
+  skip_if_not(identical(Sys.getenv("EMBER_TEST_NETWORK"), "1"),
+              "set EMBER_TEST_NETWORK=1 to run the opt-in network test")
+  skip_if_not(identical(os_kind(), "linux") && getRversion() >= "4.6" && getRversion() < "4.7",
+              "Package Manager's answer depends on this R's user agent")
+  withr::local_envvar(RENV_CONFIG_PPM_ENABLED = "TRUE")
+  urls <- c(CRAN = "https://packagemanager.posit.co/cran/2026-09-01")
+  r <- installer_repos(urls)
+  skip_if_not(r$linux_binaries, "renv doesn't know Package Manager binaries for this Linux")
+  lock <- parse_lock_lines(c("cli 3.6.6 CRAN", "glue 1.8.0 CRAN"))$lock
+  expect_length(source_only_packages(lock, urls, NULL, binary_repos = r$probe, linux_binaries = TRUE), 0)
+  old <- c(CRAN = "https://packagemanager.posit.co/cran/2024-06-01")
+  r_old <- installer_repos(old)
+  lock_old <- parse_lock_lines(c("cli 3.6.2 CRAN", "glue 1.7.0 CRAN"))$lock
+  expect_equal(source_only_packages(lock_old, old, NULL, binary_repos = r_old$probe, linux_binaries = TRUE),
+               c(cli = "3.6.2", glue = "1.7.0"))
 })
 
 test_that("the EMBER-NO-BINARY line reads back as it was written (#19)", {

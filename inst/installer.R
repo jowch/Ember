@@ -53,24 +53,16 @@ main <- function(plan_path) {
   wanted <- ember:::lock_versions(lock)
   total <- length(wanted)
 
-  # renv's own Linux binary rewrite gets Bioconductor's URLs wrong
-  # (`ppm_binary_repos()`), so they go in already rewritten, following
-  # what renv's rewrite makes of the CRAN URL. `renv_ppm_transform` is
-  # renv internal: if it is renamed, this falls back to the 404, and the
-  # `[net]` S4Vectors test in test-packages-session.R is what catches it.
-  cran_binary <- tryCatch(
-    unname(utils::getFromNamespace("renv_ppm_transform", "renv")(plan$repos[["CRAN"]])),
-    error = function(e) NULL)
-  repos <- ember:::ppm_binary_repos(plan$repos, cran_binary)
-  # Bioconductor's own binaries, for those Package Manager doesn't build
-  # on macOS and Windows (`bioc_binary_repos()`).
-  repos <- ember:::bioc_binary_repos(repos)
+  # The repositories renv installs from, and the URLs it really downloads
+  # from, for the checks that ask Package Manager (`installer_repos()`).
+  inst_repos <- ember:::installer_repos(plan$repos)
+  repos <- inst_repos$repos
+  linux_binaries <- inst_repos$linux_binaries
 
   # A package that builds from source needs a compiler. Checked before
   # renv downloads anything, so a missing one says what to install
   # instead of failing a build minutes in (install-checks.R).
-  linux_binaries <- !is.null(cran_binary) && grepl("/__linux__/", cran_binary)
-  compiler <- ember:::compiler_check(lock, plan$repos, linux_binaries, binary_repos = repos)
+  compiler <- ember:::compiler_check(lock, plan$repos, linux_binaries, binary_repos = inst_repos$probe)
   if (!is.null(compiler)) stop_missing(plan, compiler = compiler)
 
   if (ember:::ask_before_install(plan, lock)) {
@@ -82,7 +74,7 @@ main <- function(plan_path) {
   # source, which is slow and, for versions from before this R, often
   # fails (#19). Said before renv starts, so the session can show it while
   # they build; the install goes on.
-  no_binary <- tryCatch(ember:::source_only_packages(lock, plan$repos, plan$cache, binary_repos = repos,
+  no_binary <- tryCatch(ember:::source_only_packages(lock, plan$repos, plan$cache, binary_repos = inst_repos$probe,
                                                      linux_binaries = linux_binaries,
                                                      minor = if (is.null(plan$r$minor)) ember:::r_info()$minor else plan$r$minor),
                         error = function(e) character())
@@ -130,7 +122,7 @@ main <- function(plan_path) {
     failed <- ember:::renv_failed_packages(msg)
     if (length(failed) > 0) failed <- ember:::failed_builds(failed, ember:::read_available(plan$repos, "source"))
     no_binary <- ember:::no_binary_packages(failed, lock, plan$repos,
-                                            binary_repos = repos, linux_binaries = linux_binaries)
+                                            binary_repos = inst_repos$probe, linux_binaries = linux_binaries)
     if (length(no_binary) > 0) writeLines(ember:::missing_report_lines(no_binary = no_binary), con = stderr())
     flush(stderr())
     quit(status = 1L, save = "no")

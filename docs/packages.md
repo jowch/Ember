@@ -424,9 +424,13 @@ what was missing.
   installer names the CRAN packages that will build from source for want
   of a binary for this R (`source_only_packages()`), leaving out those
   renv's cache already holds. On Linux with Package Manager binaries it
-  asks about one package, as the compiler check does: at a date from
-  before Package Manager built binaries for this R it sends the source of
-  every package, so all of them count. On macOS and Windows it reads the
+  asks about one package, as the compiler check does, at the binary URL
+  renv downloads from (`installer_repos()`: at CRAN's own URL Package
+  Manager sends the source at every date). At a date from before Package
+  Manager built binaries for this R it sends the source of every package,
+  so when a second package comes as source too, all of them count; when
+  only the first does (a failed binary build, a release from this week),
+  only it does. On macOS and Windows it reads the
   binary index, as `no_binary_packages()` does. On Linux without those
   binaries everything always builds from source, so nothing is said. It
   prints one `EMBER-NO-BINARY <package>=<version> ...` line, the shell
