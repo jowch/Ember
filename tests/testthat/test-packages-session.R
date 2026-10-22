@@ -886,11 +886,20 @@ test_that("an install of a large Bioconductor data package waits for approve_ins
                        ember.ask_above = 1000)
   cache <- toy_cache()
   on.exit(unlink(cache, recursive = TRUE), add = TRUE)
-  # The fixture repositories, with a 2 kB GO.db tarball for the size.
+  # The fixture repositories, with a 2 kB GO.db tarball for the size. They
+  # hold Bioconductor 3.23, R 4.6's release at the snapshot; on another R the
+  # notebook looks in that R's release, so the same files go there too.
+  releases <- parse_bioc_config(readLines(testthat::test_path("fixtures", "bioc-config", "config.yaml")))
+  bioc <- bioc_release_for(r_info()$minor, "2026-09-01", releases)
+  skip_if(is.na(bioc), paste("the fixture config has no Bioconductor release for R", r_info()$minor))
   root <- withr::local_tempdir()
   file.copy(testthat::test_path("fixtures", "bioc"), root, recursive = TRUE)
-  writeBin(raw(2048), file.path(root, "bioc", "2026-09-01", "packages", "3.23", "data", "annotation",
-                                "src", "contrib", "GO.db_3.22.0.tar.gz"))
+  packages <- file.path(root, "bioc", "2026-09-01", "packages")
+  writeBin(raw(2048), file.path(packages, "3.23", "data", "annotation", "src", "contrib", "GO.db_3.22.0.tar.gz"))
+  if (bioc != "3.23") {
+    dir.create(file.path(packages, bioc))
+    file.copy(list.files(file.path(packages, "3.23"), full.names = TRUE), file.path(packages, bioc), recursive = TRUE)
+  }
   fixture <- function(...) paste0("file://", normalizePath(testthat::test_path("fixtures", ...), winslash = "/"))
   repos <- ember_repos(cran = fixture("repos", "cran"),
                        bioc = paste0("file://", normalizePath(file.path(root, "bioc"), winslash = "/")),
