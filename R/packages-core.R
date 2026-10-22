@@ -55,6 +55,9 @@
 #' * `bioc_move_tried`: `TRUE` once this session has proposed moving the
 #'   pin to the running R's release (`propose_bioc_move()`), so a move that
 #'   can't be made isn't proposed again on every event.
+#' * `held`: absent, or the `preview_date`/`preview_update` event asked
+#'   for while a Bioconductor move was pending, made once it is over
+#'   (`hold_preview()`).
 #' * `next_token`: integer, install job tokens.
 #'
 #' Invariants (added to `check_state()`):
@@ -850,6 +853,14 @@ schedule_packages <- function(state, old) {
                                                 asked = prop$asked %||% prop$date)
       }
     }
+    # A preview held for a Bioconductor move (`hold_preview()`) is made
+    # once the move has applied or failed, and goes round to be resolved.
+    if (!stepped && !is.null(state$packages$held) && !bioc_move_pending(state)) {
+      rp <- replay_held(state)
+      state <- rp$state
+      effects <- c(effects, rp$effects)
+      stepped <- TRUE
+    }
     if (!stepped) break
   }
 
@@ -964,18 +975,23 @@ fetch_releases <- function(p, options, date) {
 #' (`bioc_problems()`'s `bioc_r_version` row names the release it moves to).
 #'
 #' Once a session: a move that fails (an index fetch) isn't proposed again
-#' until `reduce_run()` retries it. None while another proposal is open (a
-#' date move moves the pin itself), while the release list is unsettled,
-#' or when there is no release for this R at that date (the row says so).
+#' until `reduce_run()` retries it. None while the release list is
+#' unsettled, or when there is no release for this R at that date (the row
+#' says so). A preview already open (one taken in safe preview, say) waits
+#' for the move, as one asked for during it does (`hold_preview()`, #323):
+#' left open, it kept the move from being proposed while the old pin's
+#' library installed.
 propose_bioc_move <- function(state) {
   p <- state$packages
   header <- state$file$header
-  if (!isTRUE(state$allowed) || isTRUE(state$read_only) || !is.null(p$proposal) ||
+  if (!isTRUE(state$allowed) || isTRUE(state$read_only) || identical(p$proposal$kind, "bioc") ||
       isTRUE(p$bioc_move_tried) || is.na(header$bioc_version) || is.na(header$snapshot) ||
       !lock_has_bioc(state$file$lock) || releases_unsettled(p, header$snapshot)) {
     return(state)
   }
   if (is.na(bioc_move_target(header, state$options$r, releases_at(p, header$snapshot)))) return(state)
+  # A request already held is newer than the open preview: it wins.
+  if (!is.null(p$proposal) && is.null(p$held)) p$held <- preview_event(p$proposal)
   p$proposal <- new_proposal(header$snapshot, apply = TRUE, kind = "bioc")
   p$bioc_move_tried <- TRUE
   state$packages <- p
@@ -1468,7 +1484,49 @@ reduce_approve_install <- function(state, event) {
 #' the user asking to preview again (the same "I want this to work now" as
 #' `ev_run()` retrying a failed library or index, reduce_run()) is exactly
 #' when a retry belongs.
+#'
+#' Waits while a Bioconductor move is pending (`hold_preview()`, #323).
 reduce_preview_date <- function(state, event) {
+  if (bioc_move_pending(state)) return(hold_preview(state, event))
+  list(state = preview_date_now(state, event), effects = list(), reply = TRUE)
+}
+
+#' A preview asked for while a Bioconductor move is pending
+#' (`bioc_move_pending()`) waits for it (#323): replacing the move would
+#' drop it for the session (it is proposed once), and with nothing pending
+#' the old pin's library would install, building every Bioconductor
+#' package from source on this R. `held` keeps the latest such request,
+#' and `schedule_packages()` makes it once the move has applied or failed
+#' (`replay_held()`). Reply: `TRUE`, as the request itself replies.
+hold_preview <- function(state, event) {
+  state$packages$held <- event
+  list(state = state, effects = list(), reply = TRUE)
+}
+
+#' The request `held` for a Bioconductor move, made now that the move is
+#' over. Returns `list(state, effects)`.
+replay_held <- function(state) {
+  event <- state$packages$held
+  state$packages$held <- NULL
+  # The reply is dropped: a held request has passed its refusals already
+  # (they come before the hold), and the move keeps the lock's CRAN
+  # entries, so nothing replayed here is refused today. A refusal added
+  # after the hold would be lost, so keep them before it.
+  r <- if (identical(event$type, "preview_update")) reduce_preview_update(state, event) else reduce_preview_date(state, event)
+  list(state = r$state, effects = r$effects)
+}
+
+#' The request that would make date proposal `prop` again: its package
+#' update, or its date as asked for.
+preview_event <- function(prop) {
+  u <- prop$update
+  if (!is.null(u)) return(event("preview_update", NA, name = u$name, version = u$version, today = u$today))
+  event("preview_date", NA, date = prop$asked %||% prop$date, apply = isTRUE(prop$apply))
+}
+
+#' `reduce_preview_date()`'s preview, made now: the proposal for
+#' `event$date` replaces any other. Returns the state.
+preview_date_now <- function(state, event) {
   date_header <- state$file$header
   date_header$snapshot <- event$date
   date_header$bioc_version <- NA_character_
@@ -1492,7 +1550,7 @@ reduce_preview_date <- function(state, event) {
 
   }
   state$packages$proposal <- new_proposal(event$date, apply = isTRUE(event$apply))
-  list(state = state, effects = list(), reply = TRUE)
+  state
 }
 
 #' The date that puts `name` at `version` (`NULL`: the newest), from
@@ -1538,7 +1596,8 @@ update_tries <- 3L
 #' packages have no CRAN dates. With CRAN's release dates not yet known,
 #' fetches them first (the proposal waits with status `"dates"`); then
 #' `start_update()` turns the version into a date and previews that date
-#' as `preview_date()` does. Reply: `TRUE`.
+#' as `preview_date()` does. Waits while a Bioconductor move is pending
+#' (`hold_preview()`). Reply: `TRUE`.
 reduce_preview_update <- function(state, event) {
   entries <- state$file$lock$entries
   row <- if (is.null(entries)) integer() else which(entries$name == event$name)
@@ -1550,6 +1609,7 @@ reduce_preview_update <- function(state, event) {
     return(list(state = state, effects = list(),
                 reply = refused(sprintf("%s comes from %s, not CRAN", event$name, entries$source[[row]]))))
   }
+  if (bioc_move_pending(state)) return(hold_preview(state, event))
   update <- list(name = event$name, version = event$version, from = entries$version[[row]],
                  today = event$today)
   effects <- list()
@@ -1587,7 +1647,7 @@ start_update <- function(state, update) {
 }
 
 preview_update_at <- function(state, date, update) {
-  state <- reduce_preview_date(state, list(date = format(date, "%Y-%m-%d"), apply = FALSE))$state
+  state <- preview_date_now(state, list(date = format(date, "%Y-%m-%d"), apply = FALSE))
   state$packages$proposal$update <- update
   state
 }
@@ -1643,8 +1703,15 @@ reduce_cran_releases_failed <- function(state, event) {
 }
 
 #' Drop the current preview without applying it (the in-tab question's
-#' Cancel, `ember_cancel_update`). A no-op if there is none.
+#' Cancel, `ember_cancel_update`). A no-op if there is none. A pending
+#' Bioconductor move isn't a preview, so it stays (#323); a preview held
+#' for it is dropped instead.
 reduce_cancel_preview <- function(state, event) {
+  if (!is.null(state$packages$held)) state$packages$held <- NULL
+  prop <- state$packages$proposal
+  if (!is.null(prop) && identical(prop$kind, "bioc") && !identical(prop$status, "failed")) {
+    return(list(state = state, effects = list(), reply = NULL))
+  }
   state$packages$proposal <- NULL
   list(state = state, effects = list(), reply = NULL)
 }
