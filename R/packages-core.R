@@ -1690,25 +1690,6 @@ reduce_set_date <- function(state, event) {
   list(state = ap$state, effects = ap$effects, reply = changes)
 }
 
-#' `wk_done` with `report$error$package` set (the worker saw R's
-#' `packageNotFoundError`, which carries the name, so this is not a message
-#' match and works in every locale):
-#' * not in the lock, and not already wanted (not named in code or
-#'   `[extra_packages]`): run error kind `"missing_package"`, `names = pkg`,
-#'   fix "Add pkg to [extra_packages]" (the API op `add_extra_package()`);
-#' * not in the lock, but already wanted: adding it to `[extra_packages]`
-#'   again would do nothing (`schedule_packages()` already tried to resolve
-#'   it and failed), so the fix would be a lie. The error points at the
-#'   real reason instead: an unavailable index, or the resolver's own
-#'   `not_found` problem for `pkg`.
-#' * in the lock and `active` says it is installed: the library changed
-#'   under us (cleaned by another process): `active$status <- "unknown"` and
-#'   target likewise, so it is looked at again;
-#' * in the lock, not installed: the install failed; the error points at the
-#'   package status.
-#' Called from `reduce_wk_done()`. Returns `list(state, error)` (the
-#' sketch's signature only names the inputs; a reducer needs to update both
-#' the state, for the "check again" case, and produce the run error).
 #' Why Bioconductor couldn't be looked in, or `character()`. A name CRAN
 #' lacks, resolved while Bioconductor couldn't be looked in (an index of its
 #' failed, or no release because the release list couldn't be fetched), may
@@ -1734,6 +1715,25 @@ unlooked_message <- function(pkg, reason) {
           pkg, reason)
 }
 
+#' `wk_done` with `report$error$package` set (the worker saw R's
+#' `packageNotFoundError`, which carries the name, so this is not a message
+#' match and works in every locale):
+#' * not in the lock, and not already wanted (not named in code or
+#'   `[extra_packages]`): run error kind `"missing_package"`, `names = pkg`,
+#'   fix "Add pkg to [extra_packages]" (the API op `add_extra_package()`);
+#' * not in the lock, but already wanted: adding it to `[extra_packages]`
+#'   again would do nothing (`schedule_packages()` already tried to resolve
+#'   it and failed), so the fix would be a lie. The error points at the
+#'   real reason instead: an unavailable index, or the resolver's own
+#'   `not_found` problem for `pkg`.
+#' * in the lock and `active` says it is installed: the library changed
+#'   under us (cleaned by another process): `active$status <- "unknown"` and
+#'   target likewise, so it is looked at again;
+#' * in the lock, not installed: the install failed; the error points at the
+#'   package status.
+#' Called from `reduce_wk_done()`. Returns `list(state, error)` (the
+#' sketch's signature only names the inputs; a reducer needs to update both
+#' the state, for the "check again" case, and produce the run error).
 missing_package_error <- function(state, pkg) {
   lock_entries <- state$file$lock$entries
   lock_names <- if (is.null(lock_entries) || nrow(lock_entries) == 0) character() else lock_entries$name
