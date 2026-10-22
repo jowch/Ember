@@ -1141,9 +1141,10 @@ ENV_FINGERPRINT_ONE_MAX <- 1000L
 
 #' Fingerprints of the reference-valued globals in `before` (a
 #' `snapshot_globals()` result) named in `names`: a named list of
-#' `list(env, print)`. Environments, R6 objects, reference class objects
-#' and data.tables are the values a cell can change without rebinding the
-#' name, so `compare_globals()` can't see it (#167, #172). Package
+#' `list(env, print)`. Environments, R6 objects, reference class objects,
+#' data.tables and closures' environments are the values a cell can change
+#' without rebinding the name, so `compare_globals()` can't see it (#167,
+#' #172, #333). Package
 #' namespaces and the global environment are skipped, and so is an
 #' environment too big to read.
 env_fingerprints <- function(before, names) {
@@ -1162,9 +1163,19 @@ env_fingerprints <- function(before, names) {
 
 #' The fingerprint of one global, or `NULL` when it isn't a value that
 #' changes in place (or is too big to read): an environment's from
-#' `env_fingerprint()`, a data.table's from `datatable_fingerprint()`.
+#' `env_fingerprint()`, a data.table's from `datatable_fingerprint()`, and a
+#' closure's from its enclosing environment's.
 ref_fingerprint <- function(v, budget) {
   if (inherits(v, "data.table")) return(datatable_fingerprint(v))
+  # A closure keeps its state in the environment it was made in, which a
+  # call changes in place (a function factory's `n <<- n + 1`, a memoised
+  # function's cache; #333). One made at top level or in a package has a
+  # shared environment, skipped below. An S4 generic caches the methods it
+  # dispatched to in its own environment when called, which isn't a change.
+  if (is.function(v) && !is.primitive(v)) {
+    if (isS4(v)) return(NULL)
+    v <- environment(v)
+  }
   if (!is.environment(v) || is_shared_env(v) || is_python_object(v)) return(NULL)
   env_fingerprint(v, budget)
 }
