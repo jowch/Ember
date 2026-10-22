@@ -259,6 +259,11 @@ export const Cell = ({
     const on_delete = useCallback(() => {
         pluto_actions.confirm_delete_multiple(pluto_actions.get_selected_cells(cell_id, selected))
     }, [pluto_actions, selected, cell_id])
+    // The cell menu's Delete: the menu and the cell holding focus both go,
+    // so focus moves on to a neighbouring cell, as with Esc + Backspace (#317).
+    const on_menu_delete = useCallback(() => {
+        pluto_actions.confirm_delete_and_select_neighbor(pluto_actions.get_selected_cells(cell_id, selected))
+    }, [pluto_actions, selected, cell_id])
     const on_submit = useCallback(async () => {
         set_text_open(false)
         if (!disable_input_ref.current) {
@@ -656,6 +661,7 @@ export const Cell = ({
                 skip_static_fake=${kind === "markdown" && text_open}
                 on_submit=${on_submit}
                 on_delete=${on_delete}
+                on_menu_delete=${on_menu_delete}
                 on_add_after=${on_add_after}
                 on_change=${on_change_cell_input}
                 on_update_doc_query=${on_update_doc_query}

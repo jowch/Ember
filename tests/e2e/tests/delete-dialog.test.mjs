@@ -122,3 +122,46 @@ test("delete several cells: a click on the dialog's backdrop cancels", async (t)
 
   assertNoProblems(page);
 });
+
+// #317: the cell menu's Delete removes the focused menu with its cell.
+// Focus goes to the next cell, selected, as Esc + Backspace does, or to
+// the one before when the cell was last; never to <body>.
+test("delete from the cell menu: focus moves to the next cell, or the previous one for the last cell (#317)", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "delete-menu-focus.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  const deleteFromMenu = async (id) => {
+    const cell = page.locator(`pluto-cell[id="${id}"]`);
+    await cell.scrollIntoViewIfNeeded();
+    await cell.locator(".cm-editor:not(.cm-ssr-fake) .cm-content").click();
+    await cell.locator("button.input_context_menu").click();
+    await cell.locator("div.input_context_menu button.delete").click();
+    await page.locator(`pluto-cell[id="${id}"]`).waitFor({ state: "detached", timeout: 10000 });
+  };
+  const focus = () => page.waitForFunction(() => {
+    const el = document.activeElement;
+    return el != null && el !== document.body ? { cell: el.closest("pluto-cell")?.id ?? null, tag: el.tagName } : null;
+  }, null, { timeout: 5000 }).then((h) => h.jsonValue());
+  const selected = () => page.evaluate(() => window.editor_state.selected_cells);
+
+  await deleteFromMenu("B");
+  assert.deepEqual(await focus(), { cell: "ERR", tag: "PLUTO-CELL" });
+  assert.deepEqual(await selected(), ["ERR"]);
+
+  const last = await page.evaluate(() => window.editor_state.notebook.cell_order.at(-1));
+  const before = await page.evaluate(() => window.editor_state.notebook.cell_order.at(-2));
+  await deleteFromMenu(last);
+  assert.deepEqual(await focus(), { cell: before, tag: "PLUTO-CELL" });
+  assert.deepEqual(await selected(), [before]);
+
+  // The keyboard still works from there: Backspace deletes the selected cell.
+  await page.keyboard.press("Backspace");
+  await page.locator(`pluto-cell[id="${before}"]`).waitFor({ state: "detached", timeout: 10000 });
+
+  assertNoProblems(page);
+});
