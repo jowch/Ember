@@ -89,7 +89,8 @@ setting_kinds <- c(options = "option", local_options = "option",
 #' FALSE` argument says otherwise, each name is recorded as a reference
 #' instead, and the note is dropped -- the cell no longer reads
 #' untrackably, it reads a specific global. A non-literal name
-#' (`get(paste0("fit_", i))`) keeps the note, same as before.
+#' (`get(paste0("fit_", i))`) keeps the note, same as before. So does one
+#' of them passed as a function (`lapply(names, get)`, walk.R).
 untracked_reads <- c("get", "get0", "mget", "exists", "dynGet",
                      "eval", "evalq", "eval.parent")
 

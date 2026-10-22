@@ -368,9 +368,12 @@ with `identical()`, which returns at once for an object that wasn't replaced.
 Reads can't be watched this way. A literal name is read statically:
 `get("x")`, `exists("x")` and `mget(c("a", "b"))` reference those globals,
 and data.table's `dt[, ..cols]` references `cols`. A computed name
-(`get(paste0("fit_", i))`), a call with `envir` or `pos`, and
-`eval(parse())` run normally, and the engine shows a note that it can't
-track them.
+(`get(paste0("fit_", i))`), `get` passed as a function
+(`lapply(site_names, get)`), a call with `envir` or `pos`, and
+`eval(parse())` run normally, and the cell shows a note that Ember can't
+tell which variables it reads through them, so it doesn't rerun when they
+change (#357). The note comes from reading the code, so it shows before
+the cell runs, and the snapshot carries it as `untracked_reads`.
 
 **Code in other files.** `source("helpers.R")` with a literal path is read
 like part of the cell:

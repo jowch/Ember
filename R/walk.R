@@ -21,6 +21,11 @@ walk_expr <- function(e, scope, acc, pid = NA_integer_) {
   if (is.symbol(e)) {
     name <- as.character(e)
     if (nzchar(name)) record_read(acc, scope, name, pos = pd_position(acc, pid))
+    # `lapply(site_names, get)`: get() passed as a function reads whatever
+    # names it is handed, which static reading can't follow (#357).
+    if (name %in% get_family_functions && !is_bound_locally(scope, name)) {
+      record_note(acc, "untracked_read", name, pd_position(acc, pid))
+    }
     return(invisible())
   }
   if (!is.call(e)) return(invisible())

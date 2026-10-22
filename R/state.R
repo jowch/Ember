@@ -379,7 +379,10 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 #' `"code"` or `"run"`; empty for an ordinary cell), `settings_found` (the
 #' last result's, `character()` when none), `load_notes` (the last
 #' result's, `list()` when none), `changed_in_place` (the last result's,
-#' `character()` when none), `from_lock` (likewise), `inputs` (the last result's, `list()` when
+#' `character()` when none), `from_lock` (likewise), `untracked_reads` (the
+#' calls in the cell's code that read globals by a name static reading can't
+#' follow, such as `"get"` for `get(paste0("fit_", i))`, from the analysis,
+#' not a run; `character()` when none; #357), `inputs` (the last result's, `list()` when
 #' none; see `new_result()`), `queued`, `running`, `status` (`"not_run"`, `"ok"`, `"error"`,
 #' `"interrupted"`), `stale`, `code_differs`, `errors` (graph errors, or
 #' else the run error, each with `kind`, `message`, `fixes`, `names`, and, for an
@@ -445,6 +448,9 @@ snapshot_of <- function(state) {
 #'   itself in `graph$off`, which isn't a "disabled by" relationship) or a
 #'   cell that isn't off. Built from `graph$off` alone, a loop bounded by
 #'   the (usually small) off set, not by the whole notebook.
+#' * `untracked`: list, position -> the names of the calls the cell reads
+#'   through untrackably (`"get"`, `"eval"`; its analysis's
+#'   `untracked_read` notes, once each), or `NULL` for none.
 #' * `results`: list, position -> `state$results[[id]]` or `NULL`, aligned
 #'   once with `match()`: `results` isn't stored in display order (it's
 #'   keyed by id, and holds only cells that have run), so without this a
@@ -508,10 +514,26 @@ view_context <- function(state) {
     if (!is.na(at)) settings[[at]] <- cell_settings_view(graph, sid)
   }
 
+  # The calls a cell reads globals through that static reading can't follow
+  # (design.md, "Writes static reading can't see"), once each: the note that
+  # the cell doesn't rerun when what they read changes (#357). NULL, as
+  # above, for the many cells with none.
+  untracked <- vector("list", n)
+  analyses <- graph$analyses
+  if (length(analyses) > 0) {
+    at <- match(ids, names(analyses))
+    for (i in which(!is.na(at))) {
+      notes <- analyses[[at[[i]]]]$notes
+      if (is.null(notes) || nrow(notes) == 0) next
+      calls <- unique(notes$detail[notes$kind == "untracked_read"])
+      if (length(calls) > 0) untracked[[i]] <- calls
+    }
+  }
+
   list(ids = ids, running = running, running_idx = running_idx,
       queued = queued, waiting = waiting_vec,
       errors_by_cell = errors_by_cell, off = off, disabled_by = disabled_by,
-      settings = settings, results = results)
+      settings = settings, untracked = untracked, results = results)
 }
 
 #' `result$variables` as a list of `list(name, type, value, kind)`, sorted
@@ -565,6 +587,7 @@ cell_view <- function(state, ctx, i) {
     load_notes = if (!is.null(result)) result$load_notes %||% list() else list(),
     changed_in_place = if (!is.null(result)) result$changed_in_place %||% character() else character(),
     from_lock = if (!is.null(result)) result$from_lock %||% character() else character(),
+    untracked_reads = ctx$untracked[[i]] %||% character(),
     inputs = if (!is.null(result)) result$inputs %||% list() else list(),
     queued = ctx$queued[[i]], running = is_running,
     status = if (!is.null(result)) result$status else "not_run",
