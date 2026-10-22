@@ -1125,6 +1125,10 @@ finish_library <- function(staging, path, manifest) {
   # (`delete_library()`, #152). A rename can't replace a folder that isn't
   # empty, so it goes first, or the library could never be installed again.
   # Checked again just before: another installer may have finished since.
+  # A rename landing between that check and the unlink is not ruled out: this
+  # one then deletes that library and renames its own copy, the same lock, in
+  # its place. Only a worker starting on the other copy in that instant would
+  # notice; rare enough to accept.
   if (dir.exists(path) && is.null(read_library_manifest(path))) unlink(path, recursive = TRUE)
   if (suppressWarnings(file.rename(staging, path))) return(invisible(TRUE))
   # Lost a race that started after the check above.
