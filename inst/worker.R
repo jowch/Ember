@@ -2479,6 +2479,30 @@ check_formulas <- function(formulas) {
 
 # ---- Console and devices -----------------------------------------------------------------
 
+#' `txt` as a terminal leaves it: on each line, a "\r" moves back to the
+#' start, and what follows overwrites what was there, character by
+#' character (#358). A progress bar that redraws itself 300 times
+#' (`txtProgressBar()`, which writes "\r" before each redraw) ends as one
+#' line, as in the R console, and a redraw shorter than the line before it
+#' leaves that line's tail, as a terminal does. "\r\n" has already become
+#' "\n". Text R can't split into characters is left as it is.
+apply_carriage_returns <- function(txt) {
+  if (!grepl("\r", txt, fixed = TRUE)) return(txt)
+  tryCatch({
+    lines <- strsplit(txt, "\n", fixed = TRUE)[[1]]
+    if (endsWith(txt, "\n")) lines <- c(lines, "")
+    lines <- vapply(lines, function(line) {
+      if (!grepl("\r", line, fixed = TRUE)) return(line)
+      out <- ""
+      for (seg in strsplit(line, "\r", fixed = TRUE)[[1]]) {
+        out <- paste0(seg, substring(out, nchar(seg) + 1L))
+      }
+      out
+    }, character(1), USE.NAMES = FALSE)
+    paste(lines, collapse = "\n")
+  }, error = function(e) txt)
+}
+
 #' Collect console items in order and stream each to the server.
 #'
 #' stdout is captured with sink() into a textConnection; before a message
@@ -2536,6 +2560,7 @@ console_collector <- function(cell, token) {
     self$read_pos <- size
     # The sink file is in text mode, which writes "\r\n" on Windows.
     txt <- gsub("\r\n", "\n", rawToChar(raw_bytes), fixed = TRUE)
+    txt <- apply_carriage_returns(txt)
     if (nzchar(txt)) add_item("stdout", txt)
   }
 

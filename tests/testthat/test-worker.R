@@ -56,6 +56,22 @@ test_that("run_value_and_console_order", {
   expect_identical(r$output$text, "[1] 2")
 })
 
+test_that("a progress bar's redraws end as one line, as in the R console (#358)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, paste(
+    "pb <- txtProgressBar(min = 0, max = 300, style = 3)",
+    "for (i in 1:300) setTxtProgressBar(pb, i)",
+    "close(pb)",
+    'cat("abcdef\\rXY\\n")', sep = "\n"))
+  expect_identical(r$status, "ok")
+  out <- paste(vapply(Filter(function(i) identical(i$kind, "stdout"), r$console), `[[`, "", "text"), collapse = "")
+  expect_false(grepl("\r", out, fixed = TRUE))
+  lines <- strsplit(out, "\n", fixed = TRUE)[[1]]
+  # A redraw overwrites the line it returns to, so a shorter one keeps its tail.
+  expect_identical(lines, c(sprintf("  |%s| 100%%", strrep("=", 70)), "XYcdef"))
+})
+
 test_that("earlier_visible_values_to_console", {
   h <- worker_harness()
   on.exit(h$close())
