@@ -1780,6 +1780,7 @@ test_that("a call that changes a closure's environment reports the closure; call
     "setGeneric('area', function(s) standardGeneric('area'))",
     "setClass('Sq', representation(w = 'numeric'))",
     "setMethod('area', 'Sq', function(s) s@w^2)",
+    "setClass('Sq2', contains = 'Sq')",
     "sd_of <- stats::sd", sep = "\n"))
   r <- run_and_wait(h, "b", 2L, "counter()")
   expect_identical(r$status, "ok")
@@ -1792,7 +1793,9 @@ test_that("a call that changes a closure's environment reports the closure; call
   # Forcing the promise a factory's argument is kept in isn't a change.
   r <- run_and_wait(h, "d", 5L, "shown()")
   expect_length(r$changed_in_place, 0)
-  r <- run_and_wait(h, "e", 6L, "top()\narea(new('Sq', w = 2))\nsd_of(1:3)")
+  # Dispatch on a subclass caches the inherited method in the generic's
+  # environment, which isn't a change.
+  r <- run_and_wait(h, "e", 6L, "top()\narea(new('Sq2', w = 2))\nsd_of(1:3)")
   expect_identical(r$status, "ok")
   expect_length(r$changed_in_place, 0)
 })
