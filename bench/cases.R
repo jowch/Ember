@@ -44,6 +44,12 @@ cases <- local(envir = env, list(
   graph_edit_2000 = list(
     setup = function() perf_graph_edit(2000),
     run = function(x) notebook_graph(x$code, previous = x$previous), inner = 1L),
+  # A cell finishing during "run all" of a chain that has run before:
+  # every later cell has a result to mark stale (#316).
+  rerun_chain_step_150 = list(
+    setup = function() perf_chain_rerun(150),
+    run = function(r) step(r$state, perf_done(r)),
+    inner = 3L),
   run_all_chain_2000 = list(
     setup = function() fake_state(make_chain_cells(2000)),
     run = function(s) step(s, ev_run(NULL, at(1))), inner = 1L),

@@ -617,17 +617,7 @@ unfresh_ancestors <- function(state, id) {
 #' (and so `upstream(..., transitive = TRUE)`) once per requested id, which
 #' made "run all" quadratic in the number of cells.
 upstream_of_set <- function(graph, ids) {
-  seen <- character()
-  visit <- function(i) {
-    for (u in graph$upstream[[i]]) {
-      if (!(u %in% seen)) {
-        seen <<- c(seen, u)
-        visit(u)
-      }
-    }
-  }
-  for (id in ids) visit(id)
-  run_order(graph, seen)
+  run_order(graph, reach(graph$upstream, ids))
 }
 
 #' The cells of `among` downstream of any of `from`, directly or not: one
@@ -839,11 +829,9 @@ readers_of <- function(state, id, names, edited = edited_cells(state),
   readers <- setdiff(state$graph$ids[state$graph$ids %in% readers], id)
   # An edited cell's result read what its old code read (#175).
   readers <- union(readers, Filter(function(cid) {
-    !identical(cid, id) && length(intersect(names, ran_references(state, cid))) > 0
+    !identical(cid, id) && any(names %in% ran_references(state, cid))
   }, edited))
-  unique(unlist(lapply(readers, function(r) {
-    c(r, downstream(g, r, transitive = TRUE))
-  }), use.names = FALSE))
+  union(readers, reach(g$downstream, readers))
 }
 
 #' Name to the cells that read it (a masked name their data provides
@@ -866,19 +854,14 @@ name_readers_memo <- new.env(parent = emptyenv())
 #' worked out.
 invalidate_cells <- function(state, id, dependents, queue = TRUE, g = run_graph(state)) {
   autorun <- identical(state$file$header$on_cell_change, "autorun")
-  queued <- character()
-  for (cid in dependents) {
-    r <- state$results[[cid]]
-    if (is.null(r)) next
-    r$stale <- TRUE
-    state$results[[cid]] <- r
-    if (queue && autorun && isTRUE(state$allowed) && cell_runs(state$cells[[cid]]) &&
-        !(cid %in% names(state$graph$off))) {
-      queued <- c(queued, cid)
-    }
-  }
-  # One union for the lot: one per cell made each invalidation quadratic
-  # in the number of dependents (#316).
+  # Whole vectors at a time: a chain's rerun passes most of the notebook
+  # here for every cell, and a lookup by name scans the names (#316).
+  ids <- dependents[dependents %in% names(state$results)]
+  if (length(ids) == 0) return(state)
+  state$results[ids] <- lapply(state$results[ids], function(r) { r$stale <- TRUE; r })
+  queued <- if (queue && autorun && isTRUE(state$allowed)) {
+    ids[vapply(state$cells[ids], cell_runs, logical(1)) & !(ids %in% names(state$graph$off))]
+  } else character()
   if (length(queued)) state$pending <- union(state$pending, queued)
   # A queued dependent can read a stale cell outside this run (a delete, a
   # rename or an interrupt can leave one stale). As when it is run by hand,
@@ -887,9 +870,11 @@ invalidate_cells <- function(state, id, dependents, queue = TRUE, g = run_graph(
   # Only a stale cell not already pending needs adding, so the walk is
   # skipped when there is none, as in the usual rerun after an edit, where
   # every stale cell is one of the queued dependents.
-  outside <- if (length(queued)) Filter(function(a) {
-    isTRUE(state$results[[a]]$stale) && !(a %in% state$pending) && !identical(a, id)
-  }, names(state$results)) else character()
+  outside <- if (length(queued)) {
+    ids <- names(state$results)
+    stale <- vapply(state$results, function(r) isTRUE(r$stale), logical(1))
+    ids[stale & !(ids %in% state$pending) & ids != id]
+  } else character()
   if (length(outside)) {
     ancestors <- setdiff(upstream_of_set(g, queued), id)
     stale <- Filter(function(a) can_run(state, a), intersect(outside, ancestors))
