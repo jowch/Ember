@@ -526,6 +526,32 @@ test_that("a dependent queued in autorun runs its not-run ancestor first (#315)"
   expect_equal(run_order(r2$state$graph, intersect(r2$state$pending, c("B", "C"))), c("B", "C"))
 })
 
+test_that("a draft cell never run stays not run when a dependent it would feed is queued (#315)", {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), C = cell("y + a")))
+  r <- boot(s, c("A", "C"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "a"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "object 'y' not found")), at(11)))
+  r1 <- drive(r$state, ev_apply(list(op_insert("E", 3, "y <- Sys.sleep(60)")), at(20)),
+              ev_apply(list(op_set_code("A", "a <- 2")), at(21)), ev_run("A", at(22)))
+  expect_false("E" %in% r1$state$pending)
+  sent <- sent_cells(r1)
+  t <- 23
+  while (!is.null(r1$state$worker$running)) {
+    r1 <- drive(r1$state, wk_done(1, last_token(r1), report(), at(t)))
+    sent <- c(sent, sent_cells(r1))
+    t <- t + 1
+  }
+  expect_false("E" %in% sent)
+  expect_null(r1$state$results$E)
+})
+
+test_that("a cycle peer edited after its result was dropped waits to be asked (#315)", {
+  r <- cycle_then_fixed()
+  r1 <- drive(r$state, ev_apply(list(op_set_code("A", "a <- 10"), op_set_code("B", "b <- a * 3")), at(30)),
+              ev_run("A", at(31)))
+  expect_false("B" %in% r1$state$pending)
+})
+
 test_that("two definers of the same name give one upstream entry, the first in display order (ui-3 7c, fix 2)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1"), A2 = cell("x <- 2"), C = cell("x + 1")))
   r <- boot(s, "C")
