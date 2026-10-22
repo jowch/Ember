@@ -951,7 +951,11 @@ Page, `CellInput/pluto_autocomplete.js` rewritten for R:
      a "⌛" reply's `doc` and asks again after 1 s while the query is
      unchanged: the cursor staying put sends no new query. If the retry
      then finds nothing, the page says "No help page for …" in place of
-     the ⌛ message, which is no longer true (#121).
+     the ⌛ message, which is no longer true (#121). A lookup that takes
+     longer than the docs timeout (`DOCS_QUERY_TIMEOUT`, 10 s) isn't
+     thrown away: while it runs, an ask for the same query gets "R is
+     still looking this up…" and no second lookup; once it ends, the next
+     ask gets its page from what the server kept (`nb$help_lookups`, #356).
 - `rewrite_help_links(html)` (pure): Rd2HTML's `../../pkg/help/topic`
   links become `@ref pkg::topic`, which LiveDocsTab already turns into a
   new query (LiveDocsTab.js:126-135). No link may navigate the editor
