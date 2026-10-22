@@ -9,17 +9,7 @@
 #' Ancestors come back in run order, which is the order they must run in.
 upstream <- function(graph, id, transitive = FALSE) {
   if (!isTRUE(transitive)) return(graph$upstream[[id]])
-  seen <- character()
-  visit <- function(i) {
-    for (u in graph$upstream[[i]]) {
-      if (!(u %in% seen)) {
-        seen <<- c(seen, u)
-        visit(u)
-      }
-    }
-  }
-  visit(id)
-  run_order(graph, seen)
+  run_order(graph, reach(graph$upstream, id))
 }
 
 #' Cells that depend on `id` (direct), or all its descendants.
@@ -27,17 +17,27 @@ upstream <- function(graph, id, transitive = FALSE) {
 #' Descendants come back in run order.
 downstream <- function(graph, id, transitive = FALSE) {
   if (!isTRUE(transitive)) return(graph$downstream[[id]])
-  seen <- character()
-  visit <- function(i) {
-    for (d in graph$downstream[[i]]) {
-      if (!(d %in% seen)) {
-        seen <<- c(seen, d)
-        visit(d)
-      }
-    }
+  run_order(graph, reach(graph$downstream, id))
+}
+
+#' The cells reached from any of `from` along `edges` (`graph$upstream` or
+#' `graph$downstream`), in no particular order. A cell of `from` counts
+#' only if an edge leads back to it. One walk over positions, so a long
+#' chain stays linear (#316).
+reach <- function(edges, from) {
+  # Positions, not names: looking a name up in `edges` scans its names, so
+  # a walk down a chain would be quadratic again.
+  targets <- unlist(edges, use.names = FALSE)
+  ids <- unique(c(names(edges), targets, from))
+  to <- split(match(targets, ids), factor(rep.int(seq_along(edges), lengths(edges)), levels = seq_along(ids)))
+  seen <- logical(length(ids))
+  todo <- match(from, ids)
+  while (length(todo)) {
+    nxt <- unique(unlist(to[todo], use.names = FALSE))
+    todo <- nxt[!seen[nxt]]
+    seen[todo] <- TRUE
   }
-  visit(id)
-  run_order(graph, seen)
+  ids[seen]
 }
 
 #' Run order of a set of cells, or of the whole notebook.
