@@ -2499,35 +2499,92 @@ apply_carriage_returns <- function(txt) {
   tryCatch({
     lines <- strsplit(txt, "\n", fixed = TRUE)[[1]]
     if (endsWith(txt, "\n")) lines <- c(lines, "")
-    sgr <- ""  # the colors in force, carried from line to line
-    for (i in seq_along(lines)) {
-      if (grepl("\r", lines[[i]], fixed = TRUE)) {
-        res <- terminal_line(lines[[i]], sgr)
-        lines[[i]] <- res$text
-        sgr <- res$sgr
-      } else if (grepl("\033[", lines[[i]], fixed = TRUE)) {
-        for (e in regmatches(lines[[i]], gregexpr("\033\\[[0-9;]*m", lines[[i]]))[[1]]) sgr <- sgr_after(sgr, e)
+    sgr <- SGR_NONE  # the colors in force, carried from line to line
+    with_cr <- which(grepl("\r", lines, fixed = TRUE))
+    from <- 1L
+    for (i in with_cr) {
+      # The lines before it are left as they are; only their colors count.
+      if (i > from) {
+        between <- paste(lines[from:(i - 1L)], collapse = "\n")
+        for (e in regmatches(between, gregexpr("\033\\[[0-9;]*m", between))[[1]]) sgr <- sgr_after(sgr, e)
       }
+      res <- terminal_line(lines[[i]], sgr)
+      lines[[i]] <- res$text
+      sgr <- res$sgr
+      from <- i + 1L
     }
     paste(lines, collapse = "\n")
   }, error = function(e) txt)
 }
 
-#' The colors in force after `seq` (one "\033[...m"): a reset ("\033[m",
-#' or one starting with 0) starts again, anything else adds to `sgr`.
+#' The colors in force, one field per attribute, so the state stays the
+#' same size however many escapes a chunk holds: a code that sets or
+#' clears an attribute replaces that field ("\033[39m" clears the
+#' foreground, "\033[22m" bold and faint), and 0 clears them all.
+SGR_NONE <- c(fg = "", bg = "", bold = "", faint = "", italic = "", underline = "",
+              blink = "", inverse = "", hidden = "", strike = "")
+
+#' `sgr` after `seq`, one "\033[...m". What `seq` does to the fields is
+#' worked out once per distinct escape: a chunk repeats a few of them.
 sgr_after <- function(sgr, seq) {
+  delta <- SGR_DELTAS[[seq]]
+  if (is.null(delta)) {
+    delta <- sgr_delta(seq)
+    assign(seq, delta, envir = SGR_DELTAS)
+  }
+  if (delta$reset) sgr <- SGR_NONE
+  sgr[names(delta$set)] <- delta$set
+  sgr
+}
+SGR_DELTAS <- new.env(parent = emptyenv())
+
+#' What `seq` does, as `list(reset, set)`: whether it clears every field
+#' first, then the fields it sets ("" for one it clears).
+sgr_delta <- function(seq) {
+  sgr <- stats::setNames(rep(NA_character_, length(SGR_NONE)), names(SGR_NONE))
+  reset <- FALSE
   params <- substr(seq, 3L, nchar(seq) - 1L)
-  if (!nzchar(params) || grepl("^0*(;|$)", params)) {
-    rest <- sub("^0*;?", "", params)
-    if (nzchar(rest)) paste0("\033[", rest, "m") else ""
-  } else paste0(sgr, seq)
+  codes <- if (nzchar(params)) strsplit(params, ";", fixed = TRUE)[[1]] else "0"
+  codes[!nzchar(codes)] <- "0"
+  k <- 1L
+  while (k <= length(codes)) {
+    n <- suppressWarnings(as.integer(codes[[k]]))
+    if (is.na(n)) { k <- k + 1L; next }
+    if (n %in% c(38L, 48L)) {
+      # An extended color: 38;5;n or 38;2;r;g;b (48 for the background).
+      len <- if (k < length(codes) && codes[[k + 1L]] == "5") 3L else if (k < length(codes) && codes[[k + 1L]] == "2") 5L else 1L
+      code <- paste(codes[k:min(length(codes), k + len - 1L)], collapse = ";")
+      sgr[[if (n == 38L) "fg" else "bg"]] <- code
+      k <- k + len
+      next
+    }
+    field <- if (n == 0L) "all" else if ((n >= 30L && n <= 37L) || (n >= 90L && n <= 97L)) "fg"
+      else if (n == 39L) "-fg" else if ((n >= 40L && n <= 47L) || (n >= 100L && n <= 107L)) "bg"
+      else if (n == 49L) "-bg" else if (n == 1L) "bold" else if (n == 2L) "faint" else if (n == 22L) "-boldfaint"
+      else if (n == 3L) "italic" else if (n == 23L) "-italic" else if (n == 4L) "underline" else if (n == 24L) "-underline"
+      else if (n == 5L) "blink" else if (n == 25L) "-blink" else if (n == 7L) "inverse" else if (n == 27L) "-inverse"
+      else if (n == 8L) "hidden" else if (n == 28L) "-hidden" else if (n == 9L) "strike" else if (n == 29L) "-strike"
+      else ""
+    if (field == "all") { reset <- TRUE; sgr[] <- NA_character_ }
+    else if (field == "-boldfaint") sgr[c("bold", "faint")] <- ""
+    else if (startsWith(field, "-")) sgr[[substring(field, 2L)]] <- ""
+    else if (nzchar(field)) sgr[[field]] <- as.character(n)
+    k <- k + 1L
+  }
+  list(reset = reset, set = sgr[!is.na(sgr)])
+}
+
+#' The escape that sets `sgr` from nothing; "" for no colors.
+sgr_code <- function(sgr) {
+  on <- sgr[nzchar(sgr)]
+  if (length(on)) paste0("\033[", paste(on, collapse = ";"), "m") else ""
 }
 
 #' One line with a "\r" in it, as a terminal leaves it, starting with the
 #' colors `sgr` in force. Returns `list(text, sgr)`, `sgr` being the
 #' colors in force at its end.
 terminal_line <- function(line, sgr) {
-  start <- sgr
+  start <- sgr_code(sgr)
   ch <- character()   # per column: the character, "" for the second column of a wide one
   st <- character()   # per column: the colors it was written with
   col <- 0L
@@ -2538,18 +2595,20 @@ terminal_line <- function(line, sgr) {
       at <- col + seq_len(w)
       if (max(at) > length(ch)) {
         pad <- (length(ch) + 1L):max(at)
-        ch[pad] <<- " "; st[pad] <<- sgr
+        ch[pad] <<- " "; st[pad] <<- sgr_code(sgr)
       }
       # Overwriting half of a wide character leaves a space in its other half.
       if (identical(ch[[at[1]]], "") && at[1] > 1L) ch[[at[1] - 1L]] <<- " "
       last <- at[length(at)]
       if (last < length(ch) && identical(ch[[last + 1L]], "")) ch[[last + 1L]] <<- " "
       ch[at] <<- c(chars[[k]], rep("", w - 1L))
-      st[at] <<- sgr
+      st[at] <<- sgr_code(sgr)
       col <<- last
     }
   }
-  toks <- regmatches(line, gregexpr("\033\\[[0-9;?]*[ -/]*[@-~]|\033.|\r|[^\033\r]+", line, perl = TRUE))[[1]]
+  # An OSC sequence (a hyperlink, a window title) ends at BEL or ESC \;
+  # it is dropped with the other escapes that aren't colors.
+  toks <- regmatches(line, gregexpr("\033\\][^\a\033]*(?:\a|\033\\\\)?|\033\\[[0-9;?]*[ -/]*[@-~]|\033.|\r|[^\033\r]+", line, perl = TRUE))[[1]]
   for (t in toks) {
     if (identical(t, "\r")) {
       col <- 0L
@@ -2563,7 +2622,7 @@ terminal_line <- function(line, sgr) {
           keep <- seq_len(min(col, length(ch)))
           ch <- ch[keep]; st <- st[keep]
         } else if (params == "2") {
-          ch[] <- " "; st[] <- sgr
+          ch[] <- " "; st[] <- sgr_code(sgr)
         }
       } else if (startsWith(t, "\033[") && final == "G") {
         col <- max(0L, (if (nzchar(params)) as.integer(params) else 1L) - 1L)
@@ -2576,12 +2635,12 @@ terminal_line <- function(line, sgr) {
         at <- col + seq_along(chars)
         if (max(at) > length(ch)) {
           pad <- (length(ch) + 1L):max(at)
-          ch[pad] <- " "; st[pad] <- sgr
+          ch[pad] <- " "; st[pad] <- sgr_code(sgr)
         }
         if (identical(ch[[at[1]]], "") && at[1] > 1L) ch[[at[1] - 1L]] <- " "
         last <- at[length(at)]
         if (last < length(ch) && identical(ch[[last + 1L]], "")) ch[[last + 1L]] <- " "
-        ch[at] <- chars; st[at] <- sgr
+        ch[at] <- chars; st[at] <- sgr_code(sgr)
         col <- last
       } else {
         put(chars, widths)
@@ -2597,7 +2656,8 @@ terminal_line <- function(line, sgr) {
     if (!identical(st[[k]], cur)) { out <- c(out, "\033[0m", st[[k]]); cur <- st[[k]] }
     out <- c(out, ch[[k]])
   }
-  if (!identical(cur, sgr)) out <- c(out, "\033[0m", sgr)
+  end <- sgr_code(sgr)
+  if (!identical(cur, end)) out <- c(out, "\033[0m", end)
   list(text = paste(out, collapse = ""), sgr = sgr)
 }
 

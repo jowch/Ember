@@ -66,7 +66,9 @@ test_that("a progress bar's redraws end as one line, as in the R console (#358)"
     'cat("abcdef\\rXY\\n")',
     'cat("\\033[32m100%\\033[39m\\r\\033[32m5%\\033[39m\\n")',
     'cat("\\u65e5\\u672c\\u8a9e\\rab\\n")',
-    'cat("loading...\\r\\033[KDone\\n")', sep = "\n"))
+    'cat("loading...\\r\\033[KDone\\n")',
+    'cat("ab\\033]8;;https://x.org\\aLINK\\033]8;;\\a\\rZ\\n")',
+    'cat(strrep("\\033[32mrow\\033[39m\\n", 1000), "a\\rb\\n", sep = "")', sep = "\n"))
   expect_identical(r$status, "ok")
   out <- paste(vapply(Filter(function(i) identical(i$kind, "stdout"), r$console), `[[`, "", "text"), collapse = "")
   expect_false(grepl("\r", out, fixed = TRUE))
@@ -75,9 +77,13 @@ test_that("a progress bar's redraws end as one line, as in the R console (#358)"
   # A redraw overwrites the line it returns to, so a shorter one keeps its
   # tail. Colors take no columns, and each column keeps the color it was
   # written in; a wide character takes two columns; ESC[K clears the rest.
+  # A hyperlink's escape is dropped, not shown.
   expect_identical(visible, c(sprintf("  |%s| 100%%", strrep("=", 70)), "XYcdef", "5%0%",
-                              "ab\u672c\u8a9e", "Done"))
-  expect_match(lines[[3]], "\033[32m0%", fixed = TRUE)
+                              "ab\u672c\u8a9e", "Done", "ZbLINK", rep("row", 1000), "b"))
+  expect_match(lines[[3]], "\033[32m5%0%", fixed = TRUE)  # 0% keeps its green
+  # The colors in force stay a few fields, however many escapes came
+  # before: 1000 green rows, each closed with 39, leave none.
+  expect_identical(lines[[length(lines)]], "b")
 })
 
 test_that("earlier_visible_values_to_console", {
