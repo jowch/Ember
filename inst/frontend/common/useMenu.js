@@ -10,7 +10,8 @@ import { useEventListener } from "./useEventListener.js"
  * focus to the button, same as a click outside; Tab closes and lets focus
  * move on to wherever it would have gone anyway. Callers that want the
  * menu to close after an item is picked call `close()` themselves, since
- * some items (a toggle) may want to leave it open.
+ * some items (a toggle) may want to leave it open. `button_ref` and
+ * `menu_ref` are returned for callers that place the menu themselves.
  *
  * @param {{ count: number }} options
  */
@@ -121,5 +122,5 @@ export const useMenu = ({ count }) => {
         onFocus: () => set_active_index(i),
     })
 
-    return { button_props, menu_props, item_props, open, close, is_open }
+    return { button_props, menu_props, item_props, open, close, is_open, button_ref, menu_ref }
 }

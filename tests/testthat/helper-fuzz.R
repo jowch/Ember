@@ -451,8 +451,10 @@ fuzz_replay <- function(trace, timeout = 30) {
   cells <- c(list(S = cell("")), cells[setdiff(names(cells), "S")])
   nb <- open_notebook(write_session_notebook(cells, on_cell_change = trace$mode))
   on.exit(close_notebook(nb), add = TRUE)
-  # The code each cell last ran, which is what its output came from.
+  # The code each cell last ran, which is what its output came from, and
+  # whether that run succeeded.
   ran <- list()
+  ran_ok <- list()
   last <- list()
   for (s in seq_along(trace$steps)) {
     step <- trace$steps[[s]]
@@ -471,18 +473,26 @@ fuzz_replay <- function(trace, timeout = 30) {
     }
     snap <- notebook_snapshot(nb)
     for (v in snap$cells) {
-      if (!identical(v$last_run, last[[v$id]])) ran[[v$id]] <- v$code
+      if (!identical(v$last_run, last[[v$id]])) {
+        ran[[v$id]] <- v$code
+        ran_ok[[v$id]] <- identical(v$status, "ok")
+      }
     }
     last <- stats::setNames(lapply(snap$cells, `[[`, "last_run"), vapply(snap$cells, `[[`, "", "id"))
     ran <- ran[intersect(names(ran), names(last))]
-    problems <- fuzz_check(snap, ran, trace$mode, step$run, res)
+    ran_ok <- ran_ok[intersect(names(ran_ok), names(last))]
+    problems <- fuzz_check(snap, ran, trace$mode, step$run, res, ran_ok)
     if (length(problems)) return(list(step = s, problems = problems))
+    # A cell whose result is gone defines nothing as far as Ember's next
+    # submit of it goes (drop_graph_error_results() reads `old$defined`
+    # only from a result it still holds).
+    for (v in snap$cells) if (!v$status %in% c("ok", "error")) ran_ok[[v$id]] <- FALSE
   }
   NULL
 }
 
 #' What's wrong with `snap`, as sentences; empty when nothing is.
-fuzz_check <- function(snap, ran, mode, run, res) {
+fuzz_check <- function(snap, ran, mode, run, res, ran_ok = list()) {
   problems <- character()
   say <- function(...) problems <<- c(problems, paste0(...))
   views <- stats::setNames(snap$cells, vapply(snap$cells, `[[`, "", "id"))
@@ -551,9 +561,20 @@ fuzz_check <- function(snap, ran, mode, run, res) {
     # Autorun reruns the dependents that have a result; one that never ran
     # stays not run (step.R, invalidate_dependents()). Those of a cell
     # submitted with a graph error rerun too, and fail if they need it
-    # (engine.md: a dependent of a graph-broken cell runs and fails).
+    # (engine.md: a dependent of a graph-broken cell runs and fails). Its
+    # dependents there are the readers of what it defined when it last ran
+    # (nothing, if that run failed) and of what its code defines now
+    # (nothing, if it doesn't parse), and what depends on them (#337).
     if (identical(mode, "autorun")) {
-      for (d in setdiff(fuzz_descendants(open, run), blocked)) {
+      deps <- if (run %in% blocked) {
+        names <- character()
+        if (!identical(fuzz_blocked(current[run])[[run]], "parse")) names <- fuzz_defs(current[[run]])
+        if (isTRUE(ran_ok[[run]])) names <- union(names, fuzz_defs(ran[[run]]))
+        readers <- Filter(function(c) length(intersect(fuzz_refs(open[[c]]), names)) > 0,
+                          setdiff(names(open), run))
+        unique(c(readers, unlist(lapply(readers, function(c) fuzz_descendants(open, c)))))
+      } else fuzz_descendants(open, run)
+      for (d in setdiff(deps, blocked)) {
         if (has_run(views[[d]]) && !fresh(d)) {
           if (run %in% blocked) say("after submitting ", run, " with a graph error in autorun, its dependent ", d, " isn't fresh")
           else say("after running ", run, " in autorun, its dependent ", d, " isn't fresh")

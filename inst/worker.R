@@ -1774,6 +1774,8 @@ diff_settings <- function(before, after) {
   # variables, and almost always finds nothing: the whole-list check comes
   # first, and names are matched once rather than searched for each (#316).
   diff_named <- function(b, a, kind) {
+    # Most cells change nothing: one comparison of the whole list instead
+    # of one per option (#316).
     if (identical(b, a)) return(list())
     nms <- union(names(b), names(a))
     bi <- match(nms, names(b))
