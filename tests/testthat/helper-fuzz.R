@@ -483,6 +483,10 @@ fuzz_replay <- function(trace, timeout = 30) {
     ran_ok <- ran_ok[intersect(names(ran_ok), names(last))]
     problems <- fuzz_check(snap, ran, trace$mode, step$run, res, ran_ok)
     if (length(problems)) return(list(step = s, problems = problems))
+    # A cell whose result is gone defines nothing as far as Ember's next
+    # submit of it goes (drop_graph_error_results() reads `old$defined`
+    # only from a result it still holds).
+    for (v in snap$cells) if (!v$status %in% c("ok", "error")) ran_ok[[v$id]] <- FALSE
   }
   NULL
 }
