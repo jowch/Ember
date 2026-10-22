@@ -1790,23 +1790,69 @@ test_that("running on the new R moves the pin and the Bioconductor packages befo
   expect_match(inst$repos[["BioCsoft"]], "/2026-09-01/packages/3.23/bioc", fixed = TRUE)
 })
 
-test_that("a date preview waits for a pending move instead of cancelling it (323)", {
+#' A pinned notebook allowed to run on the new R, its move pending.
+pending_move <- function() {
   r <- drive(pinned_322(), ev_open(at(1)))
   r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(2)), ev_allow(at(3)))
   expect_equal(r$state$packages$proposal$kind, "bioc")
-  r <- drive(r$state, ev_preview_date("2026-10-01", at(4)))
-  expect_s3_class(r$reply, "ember_refused")
-  expect_match(conditionMessage(r$reply), "Bioconductor packages are moving", fixed = TRUE)
+  r
+}
+
+test_that("a date preview waits for a pending move, then is made (323)", {
+  r <- drive(pending_move()$state, ev_preview_date("2026-10-01", at(4), apply = TRUE))
+  expect_true(isTRUE(r$reply))
   expect_equal(r$state$packages$proposal$kind, "bioc")
   expect_false("install" %in% effect_types(r))
+  # A second request replaces the first: the latest is what was asked for.
+  r <- drive(r$state, ev_preview_date("2026-10-02", at(5), apply = TRUE))
+  expect_equal(r$state$packages$held$date, "2026-10-02")
 
-  # The move goes on and applies; then a preview is taken.
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(6)))
+  r <- deliver_bioc(r$state, t = 7)
+  expect_equal(r$state$file$header$bioc_version, "3.23")
+  prop <- r$state$packages$proposal
+  expect_equal(list(prop$kind, prop$date, prop$apply), list("date", "2026-10-02", TRUE))
+  expect_null(r$state$packages$held)
+  expect_equal(r$state$packages$indexes[["cran/2026-10-02"]]$status, "fetching")
+})
+
+test_that("a per-package update waits for a pending move, then is made (323)", {
+  r <- drive(pending_move()$state, ev_preview_update("cli", NULL, "2026-10-01", at(4)))
+  expect_true(isTRUE(r$reply))
+  expect_equal(r$state$packages$proposal$kind, "bioc")
+  expect_false("fetch_cran_releases" %in% effect_types(r))
   r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(5)))
   r <- deliver_bioc(r$state, t = 6)
   expect_equal(r$state$file$header$bioc_version, "3.23")
-  r <- drive(r$state, ev_preview_date("2026-10-01", at(7)))
-  expect_true(isTRUE(r$reply))
-  expect_equal(r$state$packages$proposal$kind, "date")
+  expect_equal(r$state$packages$proposal$update$name, "cli")
+  expect_equal(r$state$packages$cran_releases$status, "fetching")
+  # A package the lock doesn't have is still refused at once.
+  r2 <- drive(pending_move()$state, ev_preview_update("dplyr", NULL, "2026-10-01", at(4)))
+  expect_s3_class(r2$reply, "ember_refused")
+})
+
+test_that("Cancel leaves a pending move alone and drops a preview held for it (323)", {
+  r <- drive(pending_move()$state, ev_preview_date("2026-10-01", at(4)), ev_cancel_preview(at(5)))
+  expect_equal(r$state$packages$proposal$kind, "bioc")
+  expect_null(r$state$packages$held)
+  expect_false("install" %in% effect_types(r))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(6)))
+  r <- deliver_bioc(r$state, t = 7)
+  expect_equal(r$state$file$header$bioc_version, "3.23")
+  expect_null(r$state$packages$proposal)
+})
+
+test_that("a preview open from safe preview waits for the move, so the old pin doesn't install (323)", {
+  r <- drive(pinned_322(), ev_open(at(1)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(2)),
+             ev_preview_date("2026-10-01", at(3)), ev_allow(at(4)))
+  expect_equal(r$state$packages$proposal$kind, "bioc")
+  expect_equal(r$state$packages$held$date, "2026-10-01")
+  expect_false("install" %in% effect_types(r))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(5)))
+  r <- deliver_bioc(r$state, t = 6)
+  expect_equal(r$state$file$header$bioc_version, "3.23")
+  expect_equal(list(r$state$packages$proposal$kind, r$state$packages$proposal$date), list("date", "2026-10-01"))
 })
 
 test_that("a date preview replaces a move that failed", {

@@ -73,11 +73,6 @@ remove_package_source <- function(name) list(op = "remove_package_source", name 
 #' the date has visibly moved, since an applied proposal is cleared the
 #' moment it applies and so may already be gone by the time this checks.
 #'
-#' Refused (an `ember_refused` condition) while the notebook's
-#' Bioconductor packages are moving to the release for the running R,
-#' which they do by themselves the first time a pinned notebook runs on a
-#' newer R; preview once that is done.
-#'
 #' @return `list(date, status, changes = data.frame(name, from, to, change),
 #'   problems, restart)`. `restart` is `character()` unless `apply = TRUE`
 #'   left the proposal waiting on a loaded package.
@@ -89,8 +84,7 @@ preview_date <- function(nb, date = Sys.Date(), wait = TRUE, apply = FALSE, time
   # change of the snapshot from this one is what says it applied.
   before <- package_status(nb)$snapshot
   moved <- function(snapshot) isTRUE(apply) && !identical(snapshot, before) && !is.null(snapshot)
-  reply <- dispatch(nb, ev_preview_date(date, at = Sys.time(), apply = apply))
-  if (inherits(reply, "ember_refused")) stop(reply)
+  dispatch(nb, ev_preview_date(date, at = Sys.time(), apply = apply))
 
   if (isTRUE(wait)) {
     wait_for(nb, function(snap) {
