@@ -556,6 +556,59 @@ test_that("clean(cache = TRUE) deletes only cache entries no manifest lists (66)
   expect_true(dir.exists(used_entry))
 })
 
+test_that("clean() deletes a library folder without a manifest once it is a day old, unless kept (#152)", {
+  root <- tempfile("ember-cache-")
+  dir.create(root)
+  on.exit(unlink(root, recursive = TRUE), add = TRUE)
+  # What a delete cut short leaves: the manifest gone first, packages left.
+  half <- function(key, age_days) {
+    path <- make_fake_library(root, key, last_used_days_ago = 90)
+    unlink(file.path(path, "ember-library.rds"))
+    dir.create(file.path(path, "pkgA"))
+    writeLines("x", file.path(path, "pkgA", "DESCRIPTION"))
+    Sys.setFileTime(path, Sys.time() - age_days * 86400)
+    path
+  }
+  old <- half("oldhalf", 2)
+  young <- half("younghalf", 0.1)
+  kept <- half("kepthalf", 2)
+  expect_null(read_library_manifest(old))
+
+  plan <- clean(max_age = 60, cache = FALSE, dry_run = TRUE, dir = root, keep = kept)
+  expect_equal(plan$path, old)
+  expect_equal(plan$kind, "library")
+  expect_true(dir.exists(old))
+
+  out <- clean(max_age = 60, cache = FALSE, dry_run = FALSE, dir = root, keep = kept)
+  expect_equal(out$path, old)
+  expect_false(dir.exists(old))
+  expect_true(dir.exists(young))
+  expect_true(dir.exists(kept))
+})
+
+test_that("delete_library() removes the manifest and the folder; an install replaces a half-deleted one (#152)", {
+  root <- tempfile("ember-cache-")
+  dir.create(root)
+  on.exit(unlink(root, recursive = TRUE), add = TRUE)
+  path <- make_fake_library(root, "gone", last_used_days_ago = 90)
+  expect_true(delete_library(path))
+  expect_false(dir.exists(path))
+
+  # A folder left by a delete cut short doesn't stop the next install's
+  # rename: it is no library, so the new one replaces it.
+  path <- make_fake_library(root, "half")
+  unlink(file.path(path, "ember-library.rds"))
+  writeLines("x", file.path(path, "leftover"))
+  staging <- paste0(path, ".staging-1")
+  dir.create(staging)
+  manifest <- list(lock_lines = character(), r = r_info(), installed = character(),
+                   exports = list(), cache_entries = character(), created = Sys.time())
+  expect_true(finish_library(staging, path, manifest))
+  expect_false(is.null(read_library_manifest(path)))
+  expect_false(file.exists(file.path(path, "leftover")))
+  expect_false(dir.exists(staging))
+})
+
 # ---- clean_up(): the Packages tab's clean-up button (#128) --------------------
 
 # A cache dir with two cache entries, each 100 KB: `kept` is listed by an

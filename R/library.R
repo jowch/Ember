@@ -1121,6 +1121,15 @@ finish_library <- function(staging, path, manifest) {
     unlink(staging, recursive = TRUE)
     return(invisible(FALSE))
   }
+  # A folder with no manifest is no library: what a delete cut short leaves
+  # (`delete_library()`, #152). A rename can't replace a folder that isn't
+  # empty, so it goes first, or the library could never be installed again.
+  # Checked again just before: another installer may have finished since.
+  # A rename landing between that check and the unlink is not ruled out: this
+  # one then deletes that library and renames its own copy, the same lock, in
+  # its place. Only a worker starting on the other copy in that instant would
+  # notice; rare enough to accept.
+  if (dir.exists(path) && is.null(read_library_manifest(path))) unlink(path, recursive = TRUE)
   if (suppressWarnings(file.rename(staging, path))) return(invisible(TRUE))
   # Lost a race that started after the check above.
   if (!is.null(read_library_manifest(path))) {
@@ -1355,6 +1364,9 @@ dir_size <- function(path) {
 #'   hold only links, so a returning notebook gets its library back from
 #'   the cache in seconds, or from the lock.
 #' * Staging folders older than one day (an installer that crashed).
+#' * Library folders without a manifest older than one day, except those in
+#'   `keep`: what a delete cut short leaves. A library is deleted manifest
+#'   first, so such a folder never reads as a ready library (#152).
 #' * With `cache = TRUE`: renv cache entries listed in no remaining
 #'   library's manifest (`cache_entries`), so deleting one never breaks a
 #'   library whether renv linked with hard links or symlinks. An entry
@@ -1408,7 +1420,18 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
       }
 
       manifest <- read_library_manifest(entry)
-      if (is.null(manifest)) next
+      if (is.null(manifest)) {
+        # No manifest, so not a library anything uses: what an interrupted
+        # delete leaves (below), or a manifest that can't be read. Left a
+        # day, as a staging folder is, before it goes (#152).
+        if (normalizePath(entry, mustWork = FALSE) %in% keep_resolved) next
+        age <- age_days(file.info(entry)$mtime)
+        if (is.na(age) || age >= 1) {
+          record(entry, "library", dir_size(entry), file.info(entry)$mtime)
+          if (!dry_run) delete_library(entry)
+        }
+        next
+      }
 
       if (normalizePath(entry, mustWork = FALSE) %in% keep_resolved) {
         kept_cache_entries <- c(kept_cache_entries, manifest$cache_entries)
@@ -1422,7 +1445,7 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
         next
       }
       record(entry, "library", dir_size(entry), last_used)
-      if (!dry_run) unlink(entry, recursive = TRUE)
+      if (!dry_run) delete_library(entry)
     }
   }
 
@@ -1460,6 +1483,20 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
   }
 
   invisible(out)
+}
+
+#' Delete the library folder `path`, its manifest first (#152): a delete cut
+#' short (the server stopping mid clean-up, a file that can't be removed)
+#' then leaves a folder `read_library_manifest()` reads as no library, which
+#' is installed again, never one it reads as ready with packages missing.
+#' If the manifest can't be removed, nothing else is. Returns whether the
+#' folder is gone.
+delete_library <- function(path) {
+  manifest <- file.path(path, "ember-library.rds")
+  unlink(manifest)
+  if (file.exists(manifest)) return(invisible(FALSE))
+  unlink(path, recursive = TRUE)
+  invisible(!dir.exists(path))
 }
 
 #' Disk use for the package view (#38): `list(libraries, cache, indexes,
