@@ -585,6 +585,21 @@ export class Editor extends Component {
                     }
                 }
             },
+            /** Delete `cell_ids` (asking first, as `confirm_delete_multiple` does), then select the cell after them, or the one before when they were last, so focus stays on a cell (#317). */
+            delete_and_select_neighbor: async (cell_ids) => {
+                const order = this.state.notebook.cell_order
+                const indices = cell_ids.map((id) => order.indexOf(id))
+                const kept = (id) => !cell_ids.includes(id)
+                const neighbor =
+                    order.slice(Math.max(...indices) + 1).find(kept) ??
+                    order
+                        .slice(0, Math.max(0, Math.min(...indices)))
+                        .reverse()
+                        .find(kept)
+                await this.actions.confirm_delete_multiple(cell_ids, () => {
+                    if (neighbor != null) this.actions.select_cell(neighbor)
+                })
+            },
             fold_remote_cells: async (cell_ids, new_value) => {
                 await update_notebook((notebook) => {
                     for (let cell_id of cell_ids) {
@@ -1171,18 +1186,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
             const typing = active != null && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable)
             const ids = this.state.selected_cells
             if (ids.length > 0 && !typing) {
-                const order = this.state.notebook.cell_order
-                const indices = ids.map((id) => order.indexOf(id))
-                const kept = (id) => !ids.includes(id)
-                const neighbor =
-                    order.slice(Math.max(...indices) + 1).find(kept) ??
-                    order
-                        .slice(0, Math.max(0, Math.min(...indices)))
-                        .reverse()
-                        .find(kept)
-                this.actions.confirm_delete_multiple(ids, () => {
-                    if (neighbor != null) this.actions.select_cell(neighbor)
-                })
+                this.actions.delete_and_select_neighbor(ids)
                 return true
             }
         }
