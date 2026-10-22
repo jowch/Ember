@@ -302,6 +302,19 @@ schedule <- function(state) {
 
   dg <- drop_graph_error_results(state)
   state <- dg$state
+  # Dropping a result marks that cell's dependents stale. If `id` reads one
+  # of them, it runs after it, with every ancestor between them, as when a
+  # cell is run by hand (#176), not with its old value (#326).
+  if (length(dg$effects) > 0) {
+    ups <- upstream_of_set(state$graph, id)
+    stale <- Filter(function(a) isTRUE(state$results[[a]]$stale) && can_run(state, a), ups)
+    if (length(stale) > 0) {
+      between <- reached_from(state$graph, stale, setdiff(ups, stale))
+      state$pending <- union(state$pending, Filter(function(a) can_run(state, a), union(stale, between)))
+      s2 <- schedule(state)
+      return(list(state = s2$state, effects = c(dg$effects, s2$effects)))
+    }
+  }
 
   token <- state$next_token
   state$next_token <- state$next_token + 1L
@@ -379,7 +392,12 @@ failed_definers <- function(state, id) {
 #' was not asked to run. `reduce_run()` passes `TRUE`: a cell submitted
 #' into a graph error has its dependents queued in autorun, as for a cell
 #' that ran and failed, so they rerun and fail on their own if they need
-#' what it would have provided (#272).
+#' what it would have provided (#272). Their dependents are the readers of
+#' what the cell defined when it last ran and of what its code defines now:
+#' a cell defining a name another cell defines has no edges to that name's
+#' readers. A cell submitted again while it still has the graph error has
+#' no result left to drop, but its dependents are queued all the same, as
+#' for any cell that is run (#325).
 #'
 #' A cell that ran and then gained a graph error (an edit made `x` defined
 #' twice, or a learned definition did) still holds its result, and the
@@ -397,10 +415,17 @@ drop_graph_error_results <- function(state, ids = NULL, queue = FALSE) {
   if (!is.null(ids)) blocked <- intersect(blocked, ids)
   stale_results <- Filter(function(id) !is.null(state$results[[id]]), blocked)
   effects <- list()
+  if (queue) {
+    for (id in setdiff(blocked, stale_results)) {
+      state <- invalidate_dependents(state, id, state$graph$cells[[id]]$definitions, queue = TRUE,
+                                     was_setting = FALSE)
+    }
+  }
   for (id in stale_results) {
     old <- state$results[[id]]
     state$results[[id]] <- NULL
-    state <- invalidate_dependents(state, id, old$defined, queue = queue,
+    names <- if (queue) union(old$defined, state$graph$cells[[id]]$definitions) else old$defined
+    state <- invalidate_dependents(state, id, names, queue = queue,
                                    was_setting = isTRUE(old$setting))
     if (state$worker$status %in% c("starting", "ready", "busy")) {
       effects <- c(effects, list(fx_send(state$worker$gen, list(type = "drop_globals", cell = id))))

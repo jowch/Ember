@@ -240,8 +240,9 @@ main <- function() {
   drop_processx_marker()
   listening <- listen_for_interrupts()
   port <- as.integer(commandArgs(trailingOnly = TRUE)[1])
+  # No-delay: see write_frame() in R/shell.R.
   con <<- socketConnection("127.0.0.1", port, blocking = TRUE, open = "r+b",
-                           timeout = 60 * 60 * 24 * 365)
+                           timeout = 60 * 60 * 24 * 365, options = "no-delay")
   install_traces()
   install_input_hook()
   # Baseline, not a cell's change: a colour terminal under Rscript has these
@@ -394,8 +395,8 @@ send <- function(msg) {
   on.exit(trace_line("sent", msg$type))
   uninterrupted({
     payload <- serialize(msg, NULL)
-    writeBin(length(payload), con, endian = "big")
-    writeBin(payload, con)
+    # One write: see write_frame() in R/shell.R.
+    writeBin(c(writeBin(length(payload), raw(), endian = "big"), payload), con)
     flush(con)
   })
   invisible()
