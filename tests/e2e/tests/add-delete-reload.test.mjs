@@ -1,5 +1,6 @@
 // Scenario 41 (docs/ui-tests.md): add a cell below, type, run; delete it;
-// reload and the order/code survive, matching the file.
+// reload and the order/code survive, matching the file. A delete from the
+// ⋯ menu leaves focus on the next cell (#317).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -43,6 +44,10 @@ test("add + run + delete a cell, then reload: state matches the file", async (t)
   await page.waitForFunction((id) => !document.getElementById(id), newCellId, { timeout: 10000 });
   await page.waitForSelector("nav#undo_delete:not(.hidden)", { timeout: 5000 });
   assert.equal((await page.locator("nav#undo_delete").innerText()).trim(), "Cell deleted · Undo");
+  // The menu item that had focus went with the cell: the next cell (ERR) is
+  // selected and focused, as Backspace on a selected cell does, not <body> (#317).
+  await page.waitForFunction(() => document.activeElement?.matches('pluto-cell[id="ERR"]'), null, { timeout: 5000 });
+  assert.deepEqual(await page.evaluate(() => window.editor_state.selected_cells), ["ERR"], "the next cell is selected");
 
   const countBefore = await page.locator("pluto-cell").count();
 
