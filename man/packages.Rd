@@ -7,6 +7,7 @@
 \alias{remove_package_source}
 \alias{preview_date}
 \alias{preview_update}
+\alias{approve_install}
 \alias{set_date}
 \alias{run}
 \alias{clean}
@@ -38,6 +39,8 @@ preview_date(nb, date = Sys.Date(), wait = TRUE, apply = FALSE, timeout = 60)
 preview_update(nb, name, version = NULL, wait = TRUE, timeout = 60)
 
 set_date(nb, date)
+
+approve_install(nb)
 
 run(path, repos = ember_repos(), cache = cache_dir(), echo = TRUE)
 
@@ -120,7 +123,8 @@ version's release date for \code{preview_update()}. Kept in \code{cache} for a d
 \value{
 \code{package_status()} returns a plain list, the same value as
 \code{notebook_snapshot(nb)$packages}: \code{list(snapshot, r_version,
-bioc_version, library = list(status, path, progress, message, log, failures),
+bioc_version, library = list(status, path, progress, message, log, failures,
+download),
 packages = data.frame(name, version, source, direct, status, message),
 problems, proposal, plan)}. Per package, \code{status} is one of
 \code{"installed"}, \code{"installing"}, \code{"missing"}, \code{"failed"} (named by
@@ -179,6 +183,16 @@ such date. It is refused unless the lock has \code{name} from CRAN.
 as \code{preview_date()}'s). It is refused (an \code{ember_refused} condition) unless
 \code{preview_date()} for that date is ready and current: the caller must have
 seen what would change.
+
+\code{approve_install()} says yes to a large download. An install whose
+Bioconductor annotation and experiment-data packages add up to more than
+\code{options(ember.ask_above)} bytes (500 MB by default; \code{Inf} never
+asks) stops before downloading anything, with \code{library$status}
+\code{"asking"} and \code{library$download} a data frame \code{package}, \code{version},
+\code{bytes} (\code{NA} when a size couldn't be had), largest first. Cells that
+use those packages wait until it is approved. It returns \code{TRUE}
+invisibly, and is refused when no install is waiting for an OK.
+\code{run()} never asks.
 
 \code{run()} returns, invisibly, the file's exit status.
 

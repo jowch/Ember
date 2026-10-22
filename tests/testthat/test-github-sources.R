@@ -545,7 +545,8 @@ test_that("a not-found package given a source is looking up, then locked with it
   r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_at(), at(2)))
   for (k in effect_keys(r)) r <- drive(r$state, ev_index_failed(k, "offline", at(2)))
   row <- view_row(r$state, "toyC")
-  expect_equal(row$status, "not_found")
+  # Bioconductor's indexes failed too, so it may be there (#264).
+  expect_equal(row$status, "lookup_failed")
   expect_true(is.na(row$spec))
 
   # The stale not_found problem is still there while the lookup runs, but

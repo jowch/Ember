@@ -276,3 +276,22 @@ test_that("a global the data doesn't shadow is read, and its edit reruns the rea
   expect_false(res$timed_out)
   expect_equal(snap_view(notebook_snapshot(nb), "F")$output$text, "[1] 1")
 })
+
+test_that("a staged edit to the global's cell doesn't make a column read stale (#175 with #107)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("a <- 1"), X = cell("x <- a"),
+                                      D = cell("df <- data.frame(x = 1:4)"),
+                                      F = cell("nrow(subset(df, x > 1))")),
+                                 on_cell_change = "lazy")
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  expect_false(run_cells(nb, wait = TRUE, timeout = 30)$timed_out)
+  # X's last run defined x; staged, it doesn't. F reads the column x, not
+  # the global, so X going stale when A runs leaves F as it was.
+  edit_notebook(nb, set_code("X", "x2 <- a"))
+  edit_notebook(nb, set_code("A", "a <- 2"))
+  expect_false(run_cells(nb, "A", wait = TRUE, timeout = 30)$timed_out)
+  snap <- notebook_snapshot(nb)
+  expect_true(isTRUE(snap_view(snap, "X")$stale))
+  expect_false(isTRUE(snap_view(snap, "F")$stale))
+  expect_equal(snap_view(snap, "F")$output$text, "[1] 3")
+})

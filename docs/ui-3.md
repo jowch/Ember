@@ -76,6 +76,11 @@ out of the way of the data, the code and the results.
   overlapping the rail, shown on hover or focus (always on the focused cell
   on touch screens). It becomes Stop while the cell runs. The last run time
   is a small chip on the code's bottom-right corner, also on hover or focus.
+- **Show/hide code eye** (#287): Pluto's eye, in the left shoulder level
+  with the cell's top, left of the run button's corner; on hover or focus.
+  One click hides or shows the code, and it stays in place either way
+  (struck through while the code is hidden). The column's left gutter is
+  46px so both fit at every width.
 - **Cell menu** (⋯ at the code's top right, in the interface font): Hide
   code, Disable cell, Copy output, Move up, Move down, Delete cell.
 - **Disable cell** (any code cell): the cell and the
@@ -137,6 +142,9 @@ out of the way of the data, the code and the results.
   card or frame; plots in dark mode stay exactly as R draws them. No size
   label or copy/save buttons: the browser's right-click covers that. Plain
   `Rscript` ignores the `#|` lines; scripts use `ggsave()` for sized files.
+  A screen reader reads a plot as "Plot", or as the cell's
+  `#| fig-alt: ...` (Quarto's alt text key), or failing that its
+  `#| fig-cap: ...` (#294).
 
 ## Header
 
@@ -148,8 +156,9 @@ out of the way of the data, the code and the results.
   tab, or closes it), Export, and ⋯ (Keyboard shortcuts, Settings, Open
   another notebook). See Menus and Settings below.
 - While R is busy: "Running 2 of 5 cells" and Stop.
-- Safe preview is one banner with "Run this notebook", not a label on every
-  cell.
+- Safe preview is one banner with "Run this notebook". Each code cell also
+  shows its "Not run yet" chip, as Pluto marks every cell in safe preview,
+  so the first view has no unexplained gaps (#298).
 - Restart R lives only in Status: restarting shouldn't become a habit.
 
 ## Side panel

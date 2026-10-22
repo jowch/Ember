@@ -126,6 +126,7 @@ running <- NULL        # list(cell, token) during a run (for the source trace)
 deferred <- list()     # messages read while waiting for a source_reply
 interrupt_drain <- NULL # Windows: the DLL routine that drops a late interrupt (listen_for_interrupts())
 release_children <- NULL # Windows: the DLL routine that releases a cell's processx children (#208)
+children_running <- NULL # Windows: the DLL routine that tells the release thread a run is going (#273)
 keeping_children <- FALSE  # Windows: whether the thread that releases them runs
 load_log <- NULL       # settings changes made inside loadNamespace/library during a run
 notebook_options <- character()  # option names an options() call from the
@@ -182,10 +183,33 @@ listen_for_interrupts <- function() {
     # So a cell's processx and callr children outlive this process, as
     # they do on Unix (src/children.c, #208).
     release_children <<- getNativeSymbolInfo("C_release_cell_children", dll)
+    children_running <<- getNativeSymbolInfo("C_cell_children_running", dll)
     keeping_children <<- isTRUE(tryCatch(.Call(getNativeSymbolInfo("C_keep_cell_children", dll)),
                                          error = function(e) FALSE))
+    setHook(packageEvent("processx", "onLoad"), function(pkgname, pkgpath) release_processx_job())
     isTRUE(.Call(getNativeSymbolInfo("C_interrupt_listen", dll)))
   }, error = function(e) FALSE))
+}
+
+#' On Windows, as processx loads: have it make its job object now, with a
+#' child that only exits, and release the job at once, so a cell's first
+#' processx or callr child joins a job already released and outlives a
+#' worker killed right after starting it (#235). processx makes the job
+#' only as it starts a child, and Windows says nothing when it does, so the
+#' half-second thread in src/children.c could miss that first child.
+#' System32's cmd with `/d`, so no AutoRun command (conda's, say) runs
+#' first. The job exists once the child has started, so a child that hangs
+#' anyway is killed after two seconds and the job released all the same.
+#' Silent: an error or warning here never reaches the cell, and the job is
+#' released whatever happened (the thread is left for a start that failed).
+release_processx_job <- function() {
+  tryCatch({
+    cmd <- file.path(Sys.getenv("SystemRoot", "C:/Windows"), "System32", "cmd.exe")
+    p <- processx::process$new(cmd, c("/d", "/c", "exit"), cleanup = TRUE, windows_hide_window = TRUE)
+    p$wait(2000)
+    if (p$is_alive()) p$kill()
+  }, warning = function(w) NULL, error = function(e) NULL, finally = .Call(release_children))
+  invisible(NULL)
 }
 
 #' Drop an interrupt still pending as a run starts: it is late, for the
@@ -290,9 +314,12 @@ handle_next <- function() {
   switch(msg$type,
     run = {
       drain_late_interrupt()
+      # The release thread scans only while a run is going (#273).
+      if (!is.null(children_running)) .Call(children_running, TRUE)
       report <- run_cell(msg)
       # Before "done": the children a finished cell started are released
       # by the time the server hears it ended (src/children.c, #208).
+      if (!is.null(children_running)) .Call(children_running, FALSE)
       if (!is.null(release_children)) .Call(release_children)
       send(list(type = "done", cell = msg$cell, token = msg$token, report = report))
     },
@@ -1138,7 +1165,7 @@ env_fingerprints <- function(before, names) {
 #' `env_fingerprint()`, a data.table's from `datatable_fingerprint()`.
 ref_fingerprint <- function(v, budget) {
   if (inherits(v, "data.table")) return(datatable_fingerprint(v))
-  if (!is.environment(v) || is_shared_env(v)) return(NULL)
+  if (!is.environment(v) || is_shared_env(v) || is_python_object(v)) return(NULL)
   env_fingerprint(v, budget)
 }
 
@@ -1191,6 +1218,13 @@ datatable_clear_mark <- function() {
   tryCatch({ g <- asNamespace("data.table")$.global; g$print <- "" }, error = function(e) NULL)
   invisible()
 }
+
+#' A reticulate object: an R environment holding a pointer to a Python
+#' object (`pyobj`). Its state lives in Python, so its R bindings can't
+#' show a change in place, and the first `py_to_r()` caches one more
+#' binding (`simple`) there, which isn't a change (#259). Read by
+#' identity only.
+is_python_object <- function(v) inherits(v, "python.builtin.object")
 
 # ---- data.table row writes (#201, #216) ------------------------------------
 #
@@ -1472,7 +1506,7 @@ env_fingerprint_ <- function(e, budget, depth, seen) {
       out[[n]] <- NULL
       next
     }
-    if (is.environment(v) && depth > 1L && !is_shared_env(v)) {
+    if (is.environment(v) && depth > 1L && !is_shared_env(v) && !is_python_object(v)) {
       inner <- env_fingerprint_(v, budget, depth - 1L, seen)
       out[[n]] <- if (is.null(inner)) list(env = v) else list(env = v, print = inner)
     } else {

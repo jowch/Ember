@@ -50,7 +50,9 @@ jobs:
       - uses: r-lib/actions/check-r-package@v2
         with:
           args: 'c("--no-manual", "--as-cran")'
-          error-on: '"error"'
+          # A WARNING fails the job (#255): a compiler warning and a codoc
+          # mismatch both reached main while CI stayed green. NOTEs still pass.
+          error-on: '"warning"'
           upload-snapshots: true
 
   grammar:
@@ -115,6 +117,18 @@ jobs:
         run: npx playwright-core install --with-deps chromium
       - working-directory: tests/e2e
         run: npm test
+      # The UI sweep and the first-cell check (#284) again in WebKit, the
+      # engine Endeavor's notebook pane uses (WebKitGTK on Linux), where
+      # layout differs from Chromium. Only on ubuntu, where Playwright's
+      # WebKit is close to WebKitGTK.
+      - name: UI sweep in WebKit
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: tests/e2e
+        env:
+          EMBER_BROWSER: webkit
+        run: |
+          npx playwright-core install --with-deps webkit
+          node run.mjs tests/ui-sweep.test.mjs tests/first-cell.test.mjs
       - name: Upload server logs and screenshots on failure
         if: failure()
         uses: actions/upload-artifact@v4

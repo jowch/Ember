@@ -224,7 +224,8 @@ for (const scheme of ["light", "dark"]) {
   test(`axe finds nothing serious, ${scheme} (171)`, async (t) => {
     const basic = tempNotebook("basic.R");
     const cells = tempNotebook("cells.R");
-    const server = await startServer([basic, cells], { logFile: path.join(artifactsDir(), `a11y-171-${scheme}.server.log`) });
+    const sweep = tempNotebook("ui-sweep.R");
+    const server = await startServer([basic, cells, sweep], { logFile: path.join(artifactsDir(), `a11y-171-${scheme}.server.log`) });
     const browser = await launchBrowser();
     t.after(async () => { await browser.close(); server.stop(); });
 
@@ -253,6 +254,12 @@ for (const scheme of ["light", "dark"]) {
     await runAll(page);
     findings.push(...(await axeFindings(page, "cells.R")));
 
+    // One of each kind of output, a plot among them (#294).
+    await openNotebook(page, server.origin, server.secret, sweep);
+    await runAll(page);
+    await page.waitForSelector(`${cellSelector("PLT")} pluto-output img`, { timeout: 30000 });
+    findings.push(...(await axeFindings(page, "ui-sweep.R")));
+
     await page.goto(server.url);
     await page.waitForSelector(".ember-start-row", { timeout: 10000 });
     findings.push(...(await axeFindings(page, "start page")));
@@ -261,3 +268,30 @@ for (const scheme of ["light", "dark"]) {
     assertNoProblems(page);
   });
 }
+
+// #294: a plot's text alternative is its cell's #| fig-alt, else its
+// #| fig-cap, else "Plot".
+test("plots: alt text from #| fig-alt or fig-cap, else \"Plot\" (#294)", async (t) => {
+  const notebook = tempNotebook("ui-sweep.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "a11y-294.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const img = `${cellSelector("PLT")} pluto-output img`;
+  const altBecomes = (alt) => page.waitForFunction(([sel, alt]) => document.querySelector(sel)?.getAttribute("alt") === alt,
+    [img, alt], { timeout: 30000 });
+
+  await runCell(page, "PLT");
+  await altBecomes("Plot");
+
+  await setCellCode(page, "PLT", '#| fig-cap: Squares of x\nplot(x, x^2, type = "b")');
+  await runCell(page, "PLT");
+  await altBecomes("Squares of x");
+
+  await setCellCode(page, "PLT", '#| fig-cap: Squares of x\n#| fig-alt: Line chart of x squared, rising\nplot(x, x^2, type = "b")');
+  await runCell(page, "PLT");
+  await altBecomes("Line chart of x squared, rising");
+  assertNoProblems(page);
+});

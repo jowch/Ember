@@ -57,7 +57,7 @@ import { commentKeymap } from "./CellInput/comment_mixed_parsers.js"
 import { mod_d_command } from "./CellInput/mod_d_command.js"
 import { open_bottom_right_panel } from "./BottomRightPanel.js"
 import { assert_not_null, timeout_promise } from "../common/PlutoConnection.js"
-import { LastFocusWasForcedEffect, tab_help_plugin } from "./CellInput/tab_help_plugin.js"
+import { LastFocusWasForcedEffect, tab_help_plugin, tab_pass_through } from "./CellInput/tab_help_plugin.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { moveLineDown } from "../imports/CodemirrorPlutoSetup.js"
 import { detect_indent_unit, indent_unit_of_setting } from "./CellInput/detect_indent_unit.js"
@@ -68,7 +68,6 @@ import { RunButton } from "./RunButton.js"
 import { alt_or_options_name } from "../common/KeyboardShortcuts.js"
 import { MoreIcon } from "../common/Icons.js"
 import { DEFAULT_SETTINGS, get_settings } from "./Settings.js"
-import { highlightKwargsPlugin } from "./CellInput/highlight_kwargs.js"
 import { hash_quote_continue, hash_quote_highlight } from "./CellInput/text_cell.js"
 import { highlight_assigned } from "./CellInput/highlight_assigned.js"
 import { is_dark_theme } from "../common/theme.js"
@@ -599,7 +598,6 @@ export const CellInput = ({
                     syntaxHighlighting(pluto_syntax_colors_css),
                     lineNumbers(),
                     highlightSpecialChars(),
-                    highlightKwargsPlugin(),
                     highlight_assigned,
                     history(),
                     drawSelection(),
@@ -620,6 +618,7 @@ export const CellInput = ({
                     bracketMatching(),
                     docs_updater,
                     tab_help_plugin,
+                    tab_pass_through,
                     // Remove selection on blur
                     EditorView.domEventHandlers({
                         blur: (event, view) => {

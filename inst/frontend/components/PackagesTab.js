@@ -230,6 +230,37 @@ const InstallFailureCard = ({ card, rows, r_version, log, show_command }) => {
     `
 }
 
+/** A byte count in words: "2.1 GB", "640 MB", "25 MB", "2 kB". */
+export const size_words = (/** @type {number} */ bytes) =>
+    bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : bytes >= 1e6 ? `${Math.round(bytes / 1e6)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} kB`
+
+/**
+ * The card an install shows when it stopped before a large download
+ * (#37): the total, the largest packages, and Install, which says yes
+ * (`ember_approve_install`, server.R). Until then the cells that use them
+ * wait; removing the package from the code is the way to say no.
+ *
+ * @param {{ download: { bytes: number, packages: Array<{ package: string, version: string, bytes: number? }> } }} props
+ */
+const LargeDownloadCard = ({ download }) => {
+    const pluto_actions = useContext(PlutoActionsContext)
+    const named = download.packages.slice(0, MAX_NAMES).map((p) => (p.bytes != null ? `${p.package} (${size_words(p.bytes)})` : p.package))
+    const rest = download.packages.length - named.length
+    return html`
+        <div class="ember-install-ask-card">
+            <p class="ember-install-failure-title">${t("t_ember_install_ask_title", { size: size_words(download.bytes) })}</p>
+            <p class="ember-install-failure-sentence">
+                ${t("t_ember_install_ask_sentence", {
+                    packages: rest > 0 ? `${named.join(", ")}, ${t("t_ember_install_failed_more", { count: rest })}` : named.join(", "),
+                })}
+            </p>
+            <div class="ember-install-failure-actions">
+                <button type="button" class="ember-btn primary" onClick=${() => pluto_actions.ember_approve_install()}>${t("t_ember_install_ask_install")}</button>
+            </div>
+        </div>
+    `
+}
+
 /**
  * The header's Update button and, once `update` fills in, what it found:
  * "Checking…" while fetching, the in-tab restart question when applying
@@ -305,7 +336,7 @@ const PackagesUpdate = ({ update, library_status }) => {
 const PackageStatus = ({ row }) => {
     const text = t(`t_ember_packages_status_${row.status}`)
     if (row.status === "installed") return html`<span class="ember-pill ember-pill-accent">${text}</span>`
-    if (row.status === "failed" || row.status === "not_found" || row.status === "source_failed") {
+    if (row.status === "failed" || row.status === "not_found" || row.status === "lookup_failed" || row.status === "source_failed") {
         return html`<span class="ember-pill ember-pill-red">${text}</span>`
     }
     if (row.status === "installing" || row.status === "looking_up") {
@@ -424,7 +455,7 @@ const SourceDetail = ({ row, read_only }) => {
     const [removing, set_removing] = useState(false)
     const has_spec = row.spec != null
     const failed_message = has_spec && row.message != null ? row.message : null
-    if (!has_spec && row.status !== "not_found") return null
+    if (!has_spec && row.status !== "not_found" && row.status !== "lookup_failed") return null
     if (read_only && failed_message == null) return null
 
     return html`
@@ -633,6 +664,9 @@ export const PackagesTab = ({ packages, read_only = false }) => {
                           ? html`<br /><span class="ember-packages-library-message">${library.message}</span>`
                           : null}
                   </p>`}
+            ${library.status === "asking" && library.download != null
+                ? html`<div class="ember-install-failure-cards"><${LargeDownloadCard} download=${library.download} /></div>`
+                : null}
             ${cards.length === 0
                 ? null
                 : html`<div class="ember-install-failure-cards">
