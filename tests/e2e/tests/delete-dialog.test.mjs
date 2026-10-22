@@ -165,3 +165,64 @@ test("delete from the cell menu: focus moves to the next cell, or the previous o
 
   assertNoProblems(page);
 });
+
+// #317, review: the same move by keyboard alone, and from a cell inside a
+// selection, where the confirm dialog comes first and the neighbour is the
+// next cell that survives.
+test("delete from the cell menu by keyboard, and inside a selection, focuses the next surviving cell (#317)", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "delete-menu-keyboard.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  const focusedCell = () => page.waitForFunction(() => {
+    const el = document.activeElement;
+    return el != null && el.tagName === "PLUTO-CELL" ? el.id : null;
+  }, null, { timeout: 5000 }).then((h) => h.jsonValue());
+  const selected = () => page.evaluate(() => window.editor_state.selected_cells);
+  // End moves focus to the menu's last item, Delete; wait for it before Enter.
+  const deleteFocused = (id) => page.waitForFunction((id) =>
+    document.activeElement === document.querySelector(`pluto-cell[id="${id}"] div.input_context_menu button.delete`),
+  id, { timeout: 5000 });
+
+  // Keyboard only: focus the menu button, open it, go to its last item
+  // (Delete), and press Enter.
+  const order = await page.evaluate(() => window.editor_state.notebook.cell_order);
+  const [first, second, third, fourth] = order;
+  const menuButton = page.locator(`pluto-cell[id="${first}"] button.input_context_menu`);
+  await menuButton.focus();
+  await page.keyboard.press("Enter");
+  await page.locator(`pluto-cell[id="${first}"] div.input_context_menu button.delete`).waitFor({ state: "visible", timeout: 5000 });
+  await page.keyboard.press("End");
+  await deleteFocused(first);
+  await page.keyboard.press("Enter");
+  await page.locator(`pluto-cell[id="${first}"]`).waitFor({ state: "detached", timeout: 10000 });
+  assert.equal(await focusedCell(), second);
+  assert.deepEqual(await selected(), [second]);
+
+  // Inside a selection (menu opened by keyboard, so the selection stays):
+  // Delete on one of two selected cells asks first,
+  // then deletes both and focuses the cell after them.
+  await page.evaluate((ids) => window.editor_state_set({ selected_cells: ids }), [second, third]);
+  const cell = page.locator(`pluto-cell[id="${second}"]`);
+  await cell.locator("button.input_context_menu").focus();
+  await page.keyboard.press("Enter");
+  await cell.locator("div.input_context_menu button.delete").waitFor({ state: "visible", timeout: 5000 });
+  assert.deepEqual(await selected(), [second, third], "opening the menu by keyboard keeps the selection");
+  await page.keyboard.press("End");
+  await deleteFocused(second);
+  await page.keyboard.press("Enter");
+  const dialog = page.locator("dialog.ember-dialog[open]");
+  await dialog.waitFor({ state: "visible", timeout: 5000 });
+  assert.match(await dialog.innerText(), /Delete 2 cells\?/);
+  await page.keyboard.press("Enter");
+  await page.locator(`pluto-cell[id="${third}"]`).waitFor({ state: "detached", timeout: 10000 });
+  assert.equal(await page.locator(`pluto-cell[id="${second}"]`).count(), 0);
+  assert.equal(await focusedCell(), fourth);
+  assert.deepEqual(await selected(), [fourth]);
+
+  assertNoProblems(page);
+});

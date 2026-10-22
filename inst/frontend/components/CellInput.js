@@ -865,7 +865,7 @@ export const CellInput = ({
                 : html`<${RunButton} running=${running} queued=${queued} runtime=${runtime} on_run=${on_run} on_interrupt=${on_interrupt} />`}
             <${InputContextMenu}
                 cell_id=${cell_id}
-                on_delete=${on_menu_delete ?? on_delete}
+                on_delete=${on_menu_delete}
                 code_folded=${code_folded}
                 on_code_fold=${on_code_fold}
                 can_disable=${can_disable}
