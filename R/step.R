@@ -149,6 +149,13 @@ step <- function(state, event) {
   # graph no longer has.
   lost <- setdiff(effective_settings(state$graph), effective_settings(to$state$graph))
   if (length(lost) > 0) to$state <- stale_after_settings(to$state, state$graph, lost)
+  # A cell that leaves a graph error (its cycle or second definition is
+  # fixed) no longer stands behind the "contains errors" message of the
+  # cells that read from it: mark those stale (#315).
+  if (length(state$graph$errors) > 0) {
+    cleared <- setdiff(blocked_cells(state$graph), blocked_cells(to$state$graph))
+    if (length(cleared) > 0) to$state <- stale_upstream_errors(to$state, cleared)
+  }
   pk <- schedule_packages(to$state, old = state)
   s <- schedule(pk$state)
   reads <- missing_file_reads(s$state)
@@ -565,6 +572,22 @@ stale_after_settings <- function(state, old_graph, ids) {
   state
 }
 
+#' Mark stale every result whose upstream error names one of `ids`
+#' (`failed_definers()`): the cells it blames have changed, so the message
+#' is no longer about the notebook as it is. Not queued: called from
+#' `step()` for any event, an edit included, and an edit never runs
+#' anything.
+stale_upstream_errors <- function(state, ids) {
+  for (cid in names(state$results)) {
+    r <- state$results[[cid]]
+    if (isTRUE(r$stale) || !identical(r$error$kind, "upstream")) next
+    if (!any(ids %in% r$error$cells)) next
+    r$stale <- TRUE
+    state$results[[cid]] <- r
+  }
+  state
+}
+
 #' Cells that need to run before `id` can: its transitive upstream that is
 #' not fresh. Fresh = has a result with status "ok", not stale, and
 #' `code` equal to the current code.
@@ -755,7 +778,8 @@ is_fresh <- function(state, id) {
 #' downstream. A masked name the reader's data provides (`x` in
 #' `subset(df, x > 1)` with a column `x`, `masked_none`) doesn't count: R
 #' never read the global. Only cells with a result are touched: a cell that hasn't run
-#' stays not run, in both modes.
+#' stays not run, in both modes, unless a queued dependent reads it
+#' (`invalidate_cells()`: it then runs first, as for a run by hand, #315).
 #'
 #' Every touched result gets `stale = TRUE`. In autorun, and when `queue` is
 #' `TRUE`, they are also added to `pending`, unless the cell is off (a
@@ -828,15 +852,20 @@ invalidate_cells <- function(state, id, dependents, queue = TRUE, g = run_graph(
     }
   }
   # A queued dependent can read a stale cell outside this run (a delete, a
-  # rename or an interrupt can leave one stale). As when it is run by hand,
-  # its stale ancestors run first, with every ancestor between them and it
-  # (#176).
-  # Only a stale cell not already pending needs adding, so the walk is
+  # rename or an interrupt can leave one stale), or one with no result at
+  # all (a graph error dropped it, #315). As when it is run by hand, those
+  # ancestors run first, with every ancestor between them and it (#176).
+  # Only such a cell not already pending needs adding, so the walk is
   # skipped when there is none, as in the usual rerun after an edit, where
-  # every stale cell is one of the queued dependents.
-  outside <- if (length(queued)) Filter(function(a) {
-    isTRUE(state$results[[a]]$stale) && !(a %in% state$pending) && !identical(a, id)
-  }, names(state$results)) else character()
+  # every stale cell is one of the queued dependents and every cell has run.
+  outside <- if (length(queued)) {
+    # Only one something reads can be an ancestor: a text cell with no
+    # inline code has no result but no readers either.
+    not_run <- setdiff(state$graph$ids, names(state$results))
+    not_run <- not_run[lengths(g$downstream[not_run]) > 0]
+    stale <- Filter(function(a) isTRUE(state$results[[a]]$stale), names(state$results))
+    setdiff(union(stale, not_run), c(state$pending, id))
+  } else character()
   if (length(outside)) {
     ancestors <- setdiff(upstream_of_set(g, queued), id)
     stale <- Filter(function(a) can_run(state, a), intersect(outside, ancestors))
