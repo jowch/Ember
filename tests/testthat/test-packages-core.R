@@ -1890,6 +1890,27 @@ test_that("an install asks above ask_above, and installs without asking once app
   expect_equal(install_fx[[1]]$ask_above, Inf)
 })
 
+test_that("the installer's no-binary notice shows while installing and clears when the next install starts (#19)", {
+  st <- installing_state()
+  pkgs <- c(cli = "3.6.2", rlang = "1.1.3")
+  # Another install's notice is dropped.
+  r <- drive(st$r$state, ev_install_no_binary(st$token + 1L, pkgs, at(5)))
+  expect_null(r$state$packages$target$no_binary)
+  r <- drive(r$state, ev_install_no_binary(st$token, pkgs, at(6)))
+  expect_equal(r$state$packages$target$no_binary, pkgs)
+  expect_equal(r$state$packages$target$status, "installing")
+  expect_equal(packages_view(r$state)$library$no_binary, pkgs)
+  # It doesn't stop anything: the cell still waits on the install.
+  expect_true("A" %in% names(waiting_cells(r$state)))
+
+  # The next install starts without it.
+  r <- drive(r$state, ev_install_done(st$token, st$key, NULL, NULL, character(), at(7), download = big_download()))
+  r <- drive(r$state, ev_approve_install(at(8)))
+  expect_equal(r$state$packages$target$status, "installing")
+  expect_null(r$state$packages$target$no_binary)
+  expect_null(packages_view(r$state)$library$no_binary)
+})
+
 test_that("approve_install is refused when nothing waits for an OK (130)", {
   st <- installing_state()
   r <- drive(st$r$state, ev_approve_install(at(5)))

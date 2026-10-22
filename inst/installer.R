@@ -20,6 +20,10 @@
 # built for a newer system, or against another version of a library), or
 # a package that failed to build had no binary for this R
 # (install-checks.R).
+#   EMBER-NO-BINARY <package>=<version> ...
+# once, before renv starts, naming the CRAN packages that have no binary
+# for this R at their locked version and so build from source (#19,
+# `source_only_packages()`); the install goes on.
 #   EMBER-DOWNLOAD <package> <version> <bytes>
 # one per large package, before anything downloads, when they add up to
 # more than `ask_above` (`ask_before_install()`); then exit status 3, and
@@ -72,6 +76,19 @@ main <- function(plan_path) {
   if (ember:::ask_before_install(plan, lock)) {
     unlink(plan$staging, recursive = TRUE)
     quit(status = 3L, save = "no")
+  }
+
+  # Packages with no binary for this R at their locked version build from
+  # source, which is slow and, for versions from before this R, often
+  # fails (#19). Said before renv starts, so the session can show it while
+  # they build; the install goes on.
+  no_binary <- tryCatch(ember:::source_only_packages(lock, plan$repos, plan$cache, binary_repos = repos,
+                                                     linux_binaries = linux_binaries,
+                                                     minor = if (is.null(plan$r$minor)) ember:::r_info()$minor else plan$r$minor),
+                        error = function(e) character())
+  if (length(no_binary) > 0) {
+    cat(ember:::no_binary_notice_line(no_binary), "\n", sep = "")
+    flush(stdout())
   }
 
   github <- if (is.null(plan$github)) "https://api.github.com" else plan$github

@@ -1317,6 +1317,16 @@ poll_jobs <- function(nb) {
       output <- paste0(paste(job$lines, collapse = "\n"),
                        if (length(job$lines) > 0L) "\n" else "",
                        job$buf, rest)
+      # Lines that arrived only with the exit (a fast job) are progress
+      # too, ahead of the result: an installer's notice (#19) would
+      # otherwise be lost whenever it finished between two polls.
+      last <- strsplit(paste0(job$buf, rest), "\n", fixed = TRUE)[[1]]
+      for (line in last[nzchar(last)]) {
+        for (s in job$subs) {
+          ev <- tryCatch(s$make_progress(line), error = function(e) NULL)
+          if (!is.null(ev)) enqueue(s$nb, ev)
+        }
+      }
       for (s in job$subs) {
         ev <- tryCatch(s$make_done(status, output), error = function(e) NULL)
         if (!is.null(ev)) enqueue(s$nb, ev)

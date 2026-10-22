@@ -205,6 +205,7 @@ reduce <- function(state, event) {
     cran_releases_failed  = reduce_cran_releases_failed(state, event),
     library_checked  = reduce_library_checked(state, event),
     install_progress = reduce_install_progress(state, event),
+    install_no_binary = reduce_install_no_binary(state, event),
     install_done     = reduce_install_done(state, event),
     approve_install  = reduce_approve_install(state, event),
     stop("unknown event type: ", event$type)

@@ -879,6 +879,39 @@ test_that("a notebook with the failing-installer option reports the real compile
   expect_equal(status$library$failures$package, "brokenpkg")
 })
 
+test_that("packages with no binary for this R are named while they build, and the install goes on (#19)", {
+  withr::local_options(ember.installer_script = testthat::test_path("fixtures", "no-binary-notice-installer.R"))
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  path <- write_broken_notebook()
+
+  nb <- open_notebook(path, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, wait = FALSE)
+  expect_true(wait_for(nb, function(snap) length(snap$packages$library$no_binary) > 0, timeout = 120),
+              info = paste(c(package_status(nb)$library$status, package_status(nb)$library$message),
+                           collapse = ": "))
+  status <- package_status(nb)
+  expect_equal(status$library$status, "installing")
+  expect_equal(status$library$no_binary, c(brokenpkg = "0.1.0", rlang = "1.1.3"))
+})
+
+test_that("a failed install keeps its no-binary notice, beside the no_binary failure (#19)", {
+  withr::local_options(ember.installer_script = testthat::test_path("fixtures", "no-binary-installer.R"))
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  path <- write_broken_notebook()
+
+  nb <- open_notebook(path, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  res <- run_cells(nb, wait = TRUE, timeout = 60)
+  expect_false(res$timed_out)
+  status <- package_status(nb)
+  expect_equal(status$library$status, "failed")
+  expect_equal(status$library$no_binary, c(brokenpkg = "0.1.0"))
+  expect_equal(status$library$failures$kind, "no_binary")
+})
+
 # ---- 130: a large download waits for an OK -----------------------------------
 
 test_that("an install of a large Bioconductor data package waits for approve_install() (130)", {

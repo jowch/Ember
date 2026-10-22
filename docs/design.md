@@ -1080,7 +1080,8 @@ common Linux systems, including Bioconductor software packages since
 code, R versions outside the binary window (current minor and four before
 it), snapshot dates from before the running R came out (no binaries were
 built for it then), and packages whose binary build failed. Old versions
-often don't build on a newer R; when such a build fails, the engine says
+often don't build on a newer R. While such packages build, the engine
+says which ones have no binary for this R; when a build fails, it says
 the package had no binary for this R and offers a newer date or an older
 R (#19). Before one, the engine checks
 for the tools (macOS: `xcode-select -p`; Windows: Rtools; Linux: the C

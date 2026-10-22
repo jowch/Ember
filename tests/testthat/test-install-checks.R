@@ -238,6 +238,65 @@ test_that("no_binary_packages() names the failed CRAN packages with no binary fo
                                          serves_binary = function(url) stop("not asked"))), 0)
 })
 
+test_that("source_only_packages() names, before the install, the CRAN packages that will build for want of a binary (#19)", {
+  lock <- parse_lock_lines(c("cli 3.6.2 CRAN", "glue 1.7.0 CRAN", "rlang 1.1.3 CRAN", "S4Vectors 0.40.0 Bioc",
+                             "mypkg 3f2a1c9 github:lab/mypkg@3f2a1c9"))$lock
+  cache <- withr::local_tempdir()
+  # rlang is in renv's cache already, so it doesn't build again.
+  dir.create(file.path(cache, "renv-cache", "v5", "linux-ubuntu-noble", "R-4.6", "x86_64-pc-linux-gnu",
+                       "rlang", "1.1.3", "abc123"), recursive = TRUE)
+
+  # Linux with Package Manager binaries: one package asked about, and at a
+  # date with no binaries for this R every uncached CRAN package counts.
+  binary_repos <- c(CRAN = "https://ppm.example/cran/__linux__/noble/2024-06-01")
+  asked <- character()
+  answer <- function(value) function(url) {
+    asked <<- c(asked, url)
+    value
+  }
+  got <- source_only_packages(lock, c(CRAN = "https://ppm.example/cran/2024-06-01"), cache,
+                              binary_repos = binary_repos, linux_binaries = TRUE, os = "linux",
+                              serves_binary = answer(FALSE), minor = "4.6")
+  expect_equal(got, c(cli = "3.6.2", glue = "1.7.0"))
+  expect_equal(asked, "https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/cli_3.6.2.tar.gz")
+  # Binaries served, or no answer: none.
+  expect_length(source_only_packages(lock, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE,
+                                     os = "linux", serves_binary = answer(TRUE), minor = "4.6"), 0)
+  expect_length(source_only_packages(lock, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE,
+                                     os = "linux", serves_binary = answer(NA), minor = "4.6"), 0)
+  # Linux without them: everything builds there anyway, so nothing is asked.
+  expect_length(source_only_packages(lock, binary_repos, cache, linux_binaries = FALSE, os = "linux",
+                                     serves_binary = function(url) stop("not asked"), minor = "4.6"), 0)
+  # Everything cached: nothing builds, nothing is asked.
+  for (p in c("cli 3.6.2", "glue 1.7.0")) {
+    w <- strsplit(p, " ")[[1]]
+    dir.create(file.path(cache, "renv-cache", "v5", "linux-ubuntu-noble", "R-4.6", "x86_64-pc-linux-gnu",
+                         w[[1]], w[[2]], "abc123"), recursive = TRUE)
+  }
+  expect_length(source_only_packages(lock, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE,
+                                     os = "linux", serves_binary = function(url) stop("not asked"), minor = "4.6"), 0)
+
+  # macOS: the binary index, at the locked versions.
+  type <- "mac.binary.big-sur-arm64"
+  root <- withr::local_tempdir()
+  contrib <- sub("^file://", "", utils::contrib.url(paste0("file://", root), type))
+  dir.create(contrib, recursive = TRUE)
+  writeLines(c("Package: glue", "Version: 1.7.0", "", "Package: cli", "Version: 3.6.5", ""),
+             file.path(contrib, "PACKAGES"))
+  repos <- c(CRAN = paste0(if (.Platform$OS.type == "windows") "file:///" else "file://", normalizePath(root, winslash = "/")))
+  expect_equal(source_only_packages(lock, repos, NULL, os = "macos", binary_type = type),
+               c(cli = "3.6.2", rlang = "1.1.3"))
+})
+
+test_that("the EMBER-NO-BINARY line reads back as it was written (#19)", {
+  line <- no_binary_notice_line(c(cli = "3.6.2", data.table = "1.15.4"))
+  expect_equal(line, "EMBER-NO-BINARY cli=3.6.2 data.table=1.15.4")
+  expect_equal(parse_no_binary_notice(line), c(cli = "3.6.2", data.table = "1.15.4"))
+  expect_equal(no_binary_notice_line(character()), character())
+  expect_null(parse_no_binary_notice("EMBER-PROGRESS 0 3 - restore"))
+  expect_null(parse_no_binary_notice("EMBER-NO-BINARY"))
+})
+
 test_that("a failed build with no binary becomes a no_binary row with the version, and other kinds stay (119)", {
   lines <- missing_report_lines(no_binary = c(cli = "3.6.2"), r_version = "4.6.1")
   expect_equal(lines[[1]], "EMBER-MISSING binary cli 3.6.2")

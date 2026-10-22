@@ -327,6 +327,60 @@ no_binary_packages <- function(failed, lock, repos, binary_repos = repos, linux_
   stats::setNames(e$version[no_binary], e$name[no_binary])[order(e$name[no_binary])]
 }
 
+#' Before renv runs: which of the lock's CRAN packages will build from
+#' source because they have no binary for this R at their locked version
+#' (#19), so the session can say so while they build. Named character,
+#' package -> version. Doesn't stop the install: pure R packages build
+#' fine, and the build's own failure (`no_binary_packages()`) says what
+#' went wrong if one doesn't.
+#'
+#' Packages renv's cache already holds (`in_renv_cache()`, under
+#' `cache`) aren't counted: they don't build again. On Linux with Package
+#' Manager binaries one package is asked about, as in `compiler_check()`:
+#' at a date before Package Manager built binaries for this R it sends the
+#' source of every package, so all of them count, and otherwise none. On
+#' macOS and Windows the binary index is read (`no_binary_packages()`).
+#' On Linux without those binaries everything builds from source, as it
+#' always does there, so none: the date isn't why.
+source_only_packages <- function(lock, repos, cache, binary_repos = repos, linux_binaries = FALSE,
+                                 os = os_kind(), binary_type = .Platform$pkgType,
+                                 serves_binary = ppm_serves_binary, minor = r_info()$minor) {
+  none <- stats::setNames(character(), character())
+  e <- lock$entries[lock$entries$source == "CRAN", , drop = FALSE]
+  if (!is.null(cache)) {
+    root <- file.path(cache, "renv-cache")
+    cached <- vapply(seq_len(nrow(e)), function(i) in_renv_cache(root, e$name[[i]], e$version[[i]], minor), logical(1))
+    e <- e[!cached, , drop = FALSE]
+  }
+  if (nrow(e) == 0) return(none)
+  if (identical(os, "linux")) {
+    if (!linux_binaries || !"CRAN" %in% names(binary_repos)) return(none)
+    if (!identical(serves_binary(package_url(binary_repos[["CRAN"]], e$name[[1]], e$version[[1]])), FALSE)) {
+      return(none)
+    }
+    return(stats::setNames(e$version, e$name)[order(e$name)])
+  }
+  lock$entries <- e
+  no_binary_packages(e$name, lock, repos, binary_repos = binary_repos, os = os, binary_type = binary_type)
+}
+
+#' The installer's line for `source_only_packages()`, or none:
+#' `EMBER-NO-BINARY <package>=<version> ...`, one line for all of them.
+no_binary_notice_line <- function(packages) {
+  if (length(packages) == 0) return(character())
+  paste("EMBER-NO-BINARY", paste0(names(packages), "=", unname(packages), collapse = " "))
+}
+
+#' `no_binary_notice_line()` read back: named character, or `NULL` when
+#' `line` isn't one.
+parse_no_binary_notice <- function(line) {
+  if (!startsWith(line, "EMBER-NO-BINARY ")) return(NULL)
+  words <- strsplit(trimws(sub("^EMBER-NO-BINARY ", "", line)), " +")[[1]]
+  words <- words[grepl("^[A-Za-z][A-Za-z0-9.]*=\\S+$", words)]
+  if (length(words) == 0) return(NULL)
+  stats::setNames(sub("^[^=]*=", "", words), sub("=.*$", "", words))
+}
+
 # ---- System libraries --------------------------------------------------------
 
 #' What `ldd` couldn't resolve, from its output for one or more files:
