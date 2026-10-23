@@ -708,6 +708,7 @@ walk_call_args <- function(e, scope, acc, arg_pids = NULL) {
   is_bracket_call <- identical(bare_fn, "[")
   # `args(get)`, `?get`: the function is looked at, not called (#357).
   looks_at_function <- !is.null(bare_fn) && bare_fn %in% function_object_heads
+  is_c_call <- identical(bare_fn, "c")
 
   has_data <- FALSE
   data_expr <- NULL
@@ -740,6 +741,9 @@ walk_call_args <- function(e, scope, acc, arg_pids = NULL) {
       # isn't a call of load_site (#365).
       record_read(acc, scope, as.character(a), pos = pd_position(acc, arg_pids[[i]]), call = FALSE)
     } else if (looks_at_function && !is.null(get_family_value(a, scope))) {
+    } else if (is_c_call && is.character(a)) {
+      # A string in c() is data, not a function's name: a long literal
+      # vector would otherwise cost a lookup per element (#365).
     } else if (is.call(a) && is.symbol(a[[1]]) && identical(as.character(a[[1]]), "~")) {
       site <- formula_site(acc$index, acc$line, fn_display, data_text, character())
       walk_formula(a, scope, acc, has_data, site, arg_pids[[i]])
