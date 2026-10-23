@@ -1772,6 +1772,45 @@ test_that("Update all steps back a day when Bioconductor hasn't published the da
   expect_false(any(r$state$packages$problems$kind %in% c("not_found", "index_unavailable")))
 })
 
+#' Hold provisional copies of CRAN's and Bioconductor's indexes at
+#' 2026-09-30, from a preview of that day that was then cancelled.
+hold_provisional_0930 <- function(state, t) {
+  r <- drive(state, ev_preview_date("2026-09-30", at(t)),
+             ev_index_fetched("cran/2026-09-30", cran_as("2026-09-30"), at(t), provisional = TRUE))
+  for (kind in names(bioc_kinds)) {
+    r <- drive(r$state, ev_index_fetched(repo_key(kind, "2026-09-30", "3.23"),
+                                         bioc_index(kind, "3.23", "2026-09-30"), at(t), provisional = TRUE))
+  }
+  r <- drive(r$state, ev_cancel_preview(at(t)))
+  held <- r$state$packages$indexes[grepl("2026-09-30", names(r$state$packages$indexes), fixed = TRUE)]
+  stopifnot(length(held) == 4, all(vapply(held, function(s) isTRUE(s$provisional), logical(1))))
+  r
+}
+
+held_0930 <- function(state) {
+  keys <- names(state$packages$indexes)
+  keys[key_date(keys) == "2026-09-30" & !vapply(state$packages$indexes[keys], function(s) identical(s$status, "fetching"),
+                                                 logical(1))]
+}
+
+test_that("a step back fetches the provisional CRAN and Bioconductor indexes it holds at the earlier day again (#382)", {
+  # Update all's step back.
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46))
+  r <- hold_provisional_0930(deliver_bioc(open_with_cran(s)$state)$state, 4)
+  r <- drive(r$state, ev_preview_date("2026-10-01", at(5), apply = TRUE))
+  r <- drive(r$state, ev_index_fetched("cran/2026-10-01", cran_as("2026-10-01"), at(6)))
+  r <- unpublished_404(r$state, "bioc/2026-10-01/3.23", 7)
+  expect_equal(r$state$packages$proposal$date, "2026-09-30")
+  expect_length(held_0930(r$state), 0)
+
+  # The #311 step back of a locked notebook.
+  r <- hold_provisional_0930(locked_bioc_open()$state, 3)
+  r <- bioc_unpublished(r$state, t = 4)
+  expect_equal(r$state$packages$proposal$kind, "back")
+  expect_equal(r$state$packages$proposal$date, "2026-09-30")
+  expect_length(held_0930(r$state), 0)
+})
+
 test_that("a step back isn't proposed over a date preview the user asked for (#311)", {
   r <- locked_bioc_open()
   r <- drive(r$state, ev_preview_date("2026-10-01", at(3)))

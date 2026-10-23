@@ -1421,13 +1421,7 @@ reduce_index_failed <- function(state, event) {
     drop <- keys[keys == event$key | (is_bioc_key(keys) & key_date(keys) == prop$date)]
     for (k in drop) state$packages$indexes[[k]] <- NULL
     earlier <- format(as.Date(prop$date) - 1, "%Y-%m-%d")
-    # The earlier day may still be gaining packages too: a copy this
-    # session holds from before is fetched again, as reduce_preview_date()
-    # does for the date asked.
-    held <- state$packages$indexes[[repo_key("cran", earlier)]]
-    if (isTRUE(held$provisional) && identical(held$status, "ready")) {
-      state$packages$indexes[[repo_key("cran", earlier)]] <- NULL
-    }
+    state <- drop_provisional(state, earlier)
     state$packages$proposal <- new_proposal(earlier,
                                             apply = prop$apply, kind = prop$kind,
                                             asked = prop$asked %||% prop$date)
@@ -1488,15 +1482,25 @@ step_back_names <- function(state) {
   unique(probs$package[probs$kind == "not_found" & !is.na(probs$package)])
 }
 
-#' A `"back"` proposal (#311) at the day before `date`. The earlier day
-#' may still be gaining packages: a provisional copy of its CRAN index
-#' this session holds is fetched again, as `reduce_preview_date()` does.
+#' Drops the provisional copies this session holds of CRAN's and
+#' Bioconductor's indexes at `date`, so they're fetched again: a day a
+#' step back lands on may still be gaining packages, as
+#' `preview_date_now()` does for the date asked (#382).
+drop_provisional <- function(state, date) {
+  keys <- names(state$packages$indexes)
+  at <- keys[keys == repo_key("cran", date) | (is_bioc_key(keys) & key_date(keys) == date)]
+  for (k in at) {
+    held <- state$packages$indexes[[k]]
+    if (isTRUE(held$provisional) && identical(held$status, "ready")) state$packages$indexes[[k]] <- NULL
+  }
+  state
+}
+
+#' A `"back"` proposal (#311) at the day before `date`, with the
+#' provisional indexes held at that day dropped (`drop_provisional()`).
 step_back <- function(state, date, asked) {
   earlier <- format(as.Date(date) - 1, "%Y-%m-%d")
-  held <- state$packages$indexes[[repo_key("cran", earlier)]]
-  if (isTRUE(held$provisional) && identical(held$status, "ready")) {
-    state$packages$indexes[[repo_key("cran", earlier)]] <- NULL
-  }
+  state <- drop_provisional(state, earlier)
   state$packages$proposal <- new_proposal(earlier, kind = "back", asked = asked)
   state
 }
