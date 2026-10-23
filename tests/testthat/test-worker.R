@@ -110,6 +110,23 @@ test_that("a forked child doesn't send its parent's printed text again (#470)", 
   expect_identical(r$console, sent)
 })
 
+test_that("a line printed before a long Sys.sleep() is sent during the sleep (#470)", {
+  # R sleeps a wait in one go unless R_wait_usec is set, so the hook would
+  # run only when the sleep ends. The test stops the sleep once the line
+  # has arrived. Unix only: Windows has no hook yet (#482).
+  skip_on_os("windows")
+  h <- worker_harness()
+  on.exit(h$close())
+  h$send(run_msg("a", 1L, 'cat("before the sleep\\n"); Sys.sleep(3600)'))
+  sent <- list()
+  r <- wait_for_done(h, on_frame = function(m) if (identical(m$type, "console")) {
+    sent[[length(sent) + 1]] <<- m$item
+    h$interrupt()
+  })
+  expect_identical(r$status, "interrupted")
+  expect_identical(sent, list(list(kind = "stdout", text = "before the sleep\n")))
+})
+
 test_that("a progress bar's redraws end as one line, as in the R console (#358)", {
   h <- worker_harness()
   on.exit(h$close())
