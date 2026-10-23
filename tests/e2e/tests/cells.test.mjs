@@ -1449,27 +1449,46 @@ test("cell menu: on a cell at the bottom of the window it opens upwards, so ever
   await page.setViewportSize({ width: 900, height: 700 });
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  // The last cell whose code box is wholly in view, and the first one.
-  const [first, last] = await page.evaluate(() => {
-    const seen = [...document.querySelectorAll("pluto-cell")].filter((c) => {
-      const r = c.querySelector("pluto-input").getBoundingClientRect();
-      return r.top >= 0 && r.bottom <= innerHeight;
-    });
-    return [seen[0].id, seen.at(-1).id];
-  });
+  // The first cell whose code box is wholly in view.
+  const first = await page.evaluate(() => [...document.querySelectorAll("pluto-cell")].find((c) => {
+    const r = c.querySelector("pluto-input").getBoundingClientRect();
+    return r.top >= 0 && r.bottom <= innerHeight;
+  }).id);
   const open = async (id) => {
-    await page.hover(cellSelector(id));
+    // The code box, not the whole cell: the cell's middle can be below the
+    // window, and hovering there would scroll it.
+    await page.hover(`${cellSelector(id)} pluto-input`);
+    const before = (await rects(page, { more: `${cellSelector(id)} button.input_context_menu` })).more;
     await page.locator(`${cellSelector(id)} button.input_context_menu`).click();
-    return rects(page, {
-      menu: `${cellSelector(id)} div.input_context_menu[role="menu"]`,
-      more: `${cellSelector(id)} button.input_context_menu`,
-    });
+    return {
+      before,
+      ...await rects(page, {
+        menu: `${cellSelector(id)} div.input_context_menu[role="menu"]`,
+        more: `${cellSelector(id)} button.input_context_menu`,
+      }),
+    };
   };
 
-  const bottom = await open(last);
+  // A one-line cell whose code box ends at the bottom of the window. Where
+  // cells land on their own depends on font metrics and on off-screen cells
+  // swapping their stand-in for the real editor (#373), so this one is put
+  // there: scrolled to the bottom until its real editor is in and it stays
+  // put for a frame.
+  const low = "C10";
+  await page.waitForFunction((sel) => {
+    const input = document.querySelector(`${sel} pluto-input`);
+    input.scrollIntoView({ block: "end" });
+    const bottom = input.getBoundingClientRect().bottom;
+    const still = window.__low_bottom === bottom;
+    window.__low_bottom = bottom;
+    return still && Math.abs(bottom - innerHeight) < 1 && input.querySelector(".cm-editor:not(.cm-ssr-fake)") != null;
+  }, cellSelector(low), { polling: "raf", timeout: 10000 });
+  const bottom = await open(low);
+  assert.ok(700 - bottom.before.bottom < 3 + bottom.menu.height, `the ⋯ ended at ${bottom.before.bottom} before the menu opened, so the menu fit below it and this cell can't show the flip`);
   assert.ok(bottom.menu.bottom <= 700, `menu ends at ${bottom.menu.bottom}, below the 700px window`);
   near(bottom.more.top - bottom.menu.bottom, 3, "3px above the ⋯");
   await page.keyboard.press("Escape");
+  await page.evaluate(() => scrollTo(0, 0));
 
   const top = await open(first);
   near(top.menu.top - top.more.bottom, 3, "3px below the ⋯");
