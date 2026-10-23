@@ -768,6 +768,35 @@ test_that("a cell that reads globals by a computed name shows the can't-track no
   expect_null(pluto_state(r2$state, p1)$js$cell_results$B$ember$untracked_reads)
 })
 
+test_that("a cell that reads a file by a computed path shows the can't-track note (#276)", {
+  s <- fake_state(list(F = cell("f <- 'd.csv'"),
+                       X = cell("d <- read.csv(f)"),
+                       Y = cell("e <- read.csv('e.csv')")))
+  snap <- snapshot_of(s)
+  expect_equal(snap$cells$X$untracked_files, "read.csv")
+  expect_equal(snap$cells$Y$untracked_files, character())
+  js <- pluto_state(s)$js
+  check_wire(js)
+  expect_equal(js$cell_results$X$ember$untracked_files, as_arr("read.csv"))
+  expect_null(js$cell_results$Y$ember$untracked_files)
+
+  # An edit to a literal path drops it, and the cached projection follows.
+  p1 <- pluto_state(s)
+  r <- drive(s, ev_apply(list(op_set_code("X", "d <- read.csv('d.csv')")), at(20)))
+  expect_equal(snapshot_of(r$state)$cells$X$untracked_files, character())
+  expect_null(pluto_state(r$state, p1)$js$cell_results$X$ember$untracked_files)
+})
+
+test_that("a sourced file that starts reading by a computed path shows the note on a cell that hasn't run, from a cached page state (#276)", {
+  s <- fake_state(list(S = cell(""), A = cell('source("h.R")')))
+  r <- drive(s, ev_files_read(list("h.R" = list(text = "z <- 1", hash = "v1")), at(2)))
+  p1 <- pluto_state(r$state)
+  expect_null(p1$js$cell_results$A$ember$untracked_files)
+  r2 <- drive(r$state, ev_files_read(list("h.R" = list(text = "d <- read.csv(f)", hash = "v2")), at(3)))
+  expect_equal(r2$state$graph$analyses$A$untracked_files, "read.csv")
+  expect_equal(pluto_state(r2$state, p1)$js$cell_results$A$ember$untracked_files, as_arr("read.csv"))
+})
+
 test_that("a cell that calls a function reading through get() shows the note, not the cell defining it (#365)", {
   s <- fake_state(list(N = cell("site_names <- c('site_A', 'site_B')"),
                        A = cell("for (s in site_names) assign(s, data.frame(h = 1:3))"),
@@ -1010,6 +1039,123 @@ test_that("a sourced file's change invalidates the sourcing cell (53)", {
 
   r2 <- drive(r$state, ev_files_read(list("h.R" = list(text = "z <- 2", hash = "v2")), at(12)))
   expect_true(isTRUE(r2$state$results$A$stale) || "A" %in% r2$state$pending)
+})
+
+# ---- Data files a cell reads (#276) -----------------------------------------
+
+# W writes d.csv, R reads it, U uses what R read: no edge between W and R.
+# R's result saw d.csv at version "v1" (the shell's signature of the file).
+data_file_notebook <- function(on_cell_change = "autorun") {
+  s <- fake_state(list(S = cell(""),
+                       W = cell('write.csv(data.frame(x = 1:3), "d.csv", row.names = FALSE)'),
+                       R = cell('d <- read.csv("d.csv")'),
+                       U = cell("print(sum(d$x))")),
+                  on_cell_change = on_cell_change)
+  r <- boot(s, c("W", "R", "U"))
+  for (created in list(character(), "d", character())) {
+    seen <- if (identical(created, "d")) list("d.csv" = "v1") else list()
+    r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = created, data_seen = seen),
+                                at(r$state$worker$running$started_at + 2)))
+  }
+  r
+}
+
+test_that("a cell that reads a data file by a literal path has it in its analysis (#276)", {
+  r <- data_file_notebook()
+  expect_equal(r$state$graph$analyses$R$data_files, "d.csv")
+  expect_equal(r$state$graph$analyses$W$data_files, character())
+  expect_equal(watched_data_files(r$state), "d.csv")
+  expect_equal(r$state$results$R$data_seen, list("d.csv" = "v1"))
+})
+
+test_that("a data file that changed after its reader ran reruns the reader and its dependents in autorun (#276)", {
+  r <- data_file_notebook()
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(21)))
+  expect_equal(r2$state$worker$running$cell, "R")
+  expect_true(isTRUE(r2$state$results$U$stale) || "U" %in% r2$state$pending)
+  expect_false("W" %in% c(r2$state$pending, r2$state$worker$running$cell))
+})
+
+test_that("a writer that runs right after its reader reruns the reader, however coarse the file clock (#276)", {
+  # R sits above W: run all runs R, then W. W's write can carry a modified
+  # time from before R's result arrived; only the version counts.
+  s <- fake_state(list(S = cell(""), R = cell('d <- read.csv("d.csv")'),
+                       W = cell('write.csv(data.frame(x = 1:3), "d.csv", row.names = FALSE)')))
+  r <- boot(s, c("R", "W"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "d", data_seen = list("d.csv" = "v1")), at(5)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(5.004)))
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(6)))
+  expect_equal(r2$state$worker$running$cell, "R")
+})
+
+test_that("in lazy mode a changed data file marks its reader and dependents stale, and runs nothing (#276)", {
+  r <- data_file_notebook("lazy")
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(21)))
+  expect_true(isTRUE(r2$state$results$R$stale))
+  expect_true(isTRUE(r2$state$results$U$stale))
+  expect_equal(r2$state$pending, character())
+  expect_null(r2$state$worker$running)
+})
+
+test_that("a data file at the version its reader's result saw doesn't wake the reader (#276)", {
+  # As when a cell writes the file it reads: its result saw its own write.
+  r <- data_file_notebook()
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = "v1"), at(10)))
+  expect_false(isTRUE(r2$state$results$R$stale))
+  expect_equal(r2$state$pending, character())
+  expect_null(r2$state$worker$running)
+})
+
+test_that("a data file someone else changed while its reader ran makes the result stale, and autorun runs it again (#276)", {
+  s <- fake_state(list(S = cell(""), R = cell('d <- read.csv("d.csv")'), U = cell("d")))
+  r <- boot(s, c("R", "U"))
+  # The poll's change, during the run, is left to the run's own report.
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(4)))
+  expect_equal(r2$state$worker$running$cell, "R")
+  expect_equal(r2$state$pending, "U")
+  r3 <- drive(r2$state, wk_done(1, r2$state$worker$running$token,
+                                report(created = "d", data_seen = list("d.csv" = "v2"), data_changed = "d.csv"), at(5)))
+  expect_equal(r3$state$results$R$data_seen, list("d.csv" = "v2"))
+  expect_equal(r3$state$worker$running$cell, "R")
+  # A run that saw it again right after (a write Ember can't see, as
+  # through a helper function) keeps its result: no loop.
+  r4 <- drive(r3$state, wk_done(1, r3$state$worker$running$token,
+                                report(created = "d", data_seen = list("d.csv" = "v3"), data_changed = "d.csv"), at(6)))
+  expect_false(isTRUE(r4$state$results$R$stale))
+  expect_equal(r4$state$worker$running$cell, "U")
+  # A run that saw no one else's change is fresh, its own writes included.
+  r5 <- drive(r2$state, wk_done(1, r2$state$worker$running$token,
+                                report(created = "d", data_seen = list("d.csv" = "v2")), at(5)))
+  expect_false(isTRUE(r5$state$results$R$stale))
+  expect_equal(r5$state$worker$running$cell, "U")
+})
+
+test_that("in lazy mode a change during the run marks the result stale and runs nothing more for it (#276)", {
+  s <- fake_state(list(S = cell(""), R = cell('d <- read.csv("d.csv")')), on_cell_change = "lazy")
+  r <- boot(s, "R")
+  r2 <- drive(r$state, wk_done(1, r$state$worker$running$token,
+                               report(created = "d", data_seen = list("d.csv" = "v2"), data_changed = "d.csv"), at(5)))
+  expect_true(isTRUE(r2$state$results$R$stale))
+  expect_null(r2$state$worker$running)
+})
+
+test_that("a run message carries each data file with the expressions that read or write it (#276)", {
+  s <- fake_state(list(S = cell(""),
+                       R = cell('d <- read.csv("d.csv")\nm <- lm(y ~ x, d)\nwrite.csv(d, "d.csv")\nwriteLines("x", f)')))
+  r <- boot(s, "R")
+  msg <- last_sent(r)
+  expect_equal(length(msg$data), 1)
+  expect_equal(msg$data[[1]]$path, "d.csv")
+  expect_equal(msg$data[[1]]$full, file.path(dirname(s$path), "d.csv"))
+  expect_equal(msg$data[[1]]$touch, c(1L, 3L, 4L))
+  expect_null(last_sent(boot(fake_state(list(S = cell(""), A = cell("1"))), "A"))$data)
+})
+
+test_that("a change to a file no cell reads does nothing (#276)", {
+  r <- data_file_notebook()
+  r2 <- drive(r$state, ev_data_changed(list("other.csv" = "v2"), at(21)))
+  expect_identical(r2$state$results, r$state$results)
+  expect_null(r2$state$worker$running)
 })
 
 test_that("every run message carries the current code-cell run order (54)", {
@@ -2537,4 +2683,84 @@ test_that("a failed install's cell error says why it failed, as package_status()
   # A package the install didn't get to, though it didn't fail itself, says why too.
   out <- missing_package_error(r$state, "s2")
   expect_equal(out$error$message, paste0("there is no package called 's2': ", why))
+})
+
+# ---- Prompts (#186) --------------------------------------------------------------
+
+test_that("a prompt waits on the running cell until answered, and the answer goes to the worker (#186)", {
+  s <- fake_state(list(S = cell(""), A = cell('x <- readline("Name? ")')))
+  r <- boot(s, "A")
+  tok <- last_token(r)
+  r <- drive(r$state, wk_running(1, tok, at(9)), wk_input(1, tok, 1L, "Name? ", NULL, at(10)))
+  expect_equal(r$state$worker$running$prompt, list(id = 1L, text = "Name? ", choices = NULL))
+  view <- Find(function(v) identical(v$id, "A"), snapshot_of(r$state)$cells)
+  expect_equal(view$prompt$text, "Name? ")
+  expect_true(view$running)
+
+  r2 <- drive(r$state, ev_answer_input("Ada", at(11), cell = "A"))
+  expect_true(r2$reply)
+  expect_equal(last_sent(r2), list(type = "input_reply", id = 1L, text = "Ada"))
+  expect_null(r2$state$worker$running$prompt)
+  # Answered once: a second answer has no prompt to go to.
+  r3 <- drive(r2$state, ev_answer_input("again", at(12)))
+  expect_s3_class(r3$reply, "ember_refused")
+  expect_length(r3$effects, 0)
+})
+
+test_that("an answer is refused for another cell, or when it isn't one string (#186)", {
+  s <- fake_state(list(S = cell(""), A = cell('x <- readline("Name? ")'), B = cell("1")))
+  r <- boot(s, "A")
+  tok <- last_token(r)
+  r <- drive(r$state, wk_input(1, tok, 1L, "Name? ", NULL, at(10)))
+  expect_s3_class(drive(r$state, ev_answer_input("Ada", at(11), cell = "B"))$reply, "ember_refused")
+  expect_s3_class(drive(r$state, ev_answer_input(c("a", "b"), at(11)))$reply, "ember_refused")
+  expect_s3_class(drive(r$state, ev_answer_input(NA_character_, at(11)))$reply, "ember_refused")
+  expect_false(is.null(r$state$worker$running$prompt))
+})
+
+test_that("an answer that names its prompt is refused once that prompt has gone (#186)", {
+  s <- fake_state(list(S = cell(""), A = cell('x <- menu(c("a", "b"))')))
+  r <- boot(s, "A")
+  tok <- last_token(r)
+  # menu() asked again after a bad answer: an answer typed for the first question isn't given to the second.
+  r <- drive(r$state, wk_input(1, tok, 2L, "Selection: ", c("a", "b"), at(10)))
+  stale <- drive(r$state, ev_answer_input("1", at(11), id = 1L))
+  expect_s3_class(stale$reply, "ember_refused")
+  expect_match(conditionMessage(stale$reply), "already answered", fixed = TRUE)
+  expect_length(stale$effects, 0)
+  ok <- drive(r$state, ev_answer_input("1", at(11), id = 2L))
+  expect_true(isTRUE(ok$reply))
+  expect_equal(last_sent(ok), list(type = "input_reply", id = 2L, text = "1"))
+})
+
+test_that("a prompt from an older run or worker is ignored, and one that closes or ends with the run goes (#186)", {
+  s <- fake_state(list(S = cell(""), A = cell('x <- readline("Name? ")')))
+  r <- boot(s, "A")
+  tok <- last_token(r)
+  expect_null(drive(r$state, wk_input(2, tok, 1L, "Name? ", NULL, at(10)))$state$worker$running$prompt)
+  expect_null(drive(r$state, wk_input(1, tok + 1L, 1L, "Name? ", NULL, at(10)))$state$worker$running$prompt)
+
+  r <- drive(r$state, wk_input(1, tok, 1L, "Name? ", NULL, at(10)))
+  # A close for another prompt leaves this one.
+  expect_false(is.null(drive(r$state, wk_input_closed(1, tok, 2L, at(11)))$state$worker$running$prompt))
+  expect_null(drive(r$state, wk_input_closed(1, tok, 1L, at(11)))$state$worker$running$prompt)
+  # The run ends (interrupted): nothing waits.
+  r2 <- drive(r$state, wk_done(1, tok, report(status = "interrupted"), at(12)))
+  expect_null(r2$state$worker$running)
+  expect_s3_class(drive(r2$state, ev_answer_input("late", at(13)))$reply, "ember_refused")
+})
+
+test_that("the page's projection carries the prompt and updates when only the prompt changes (#186)", {
+  s <- fake_state(list(S = cell(""), A = cell('pick <- menu(c("red", "blue"))')))
+  r <- boot(s, "A")
+  tok <- last_token(r)
+  r <- drive(r$state, wk_running(1, tok, at(9)))
+  before <- pluto_state(r$state)
+  r2 <- drive(r$state, wk_input(1, tok, 3L, "Selection: ", c("red", "blue"), at(10)))
+  after <- pluto_state(r2$state, previous = before)
+  expect_equal(after$js$cell_results$A$ember$prompt,
+               list(id = 3L, text = "Selection: ", choices = list("red", "blue")))
+  expect_null(before$js$cell_results$A$ember$prompt)
+  # Built from scratch, the same.
+  expect_equal(after$js$cell_results$A, pluto_state(r2$state)$js$cell_results$A)
 })

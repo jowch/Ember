@@ -22,6 +22,9 @@
 #'   `untracked_of()`.
 #'   Kept here so the page's projection loops over these few cells, not
 #'   every analysis.
+#' * `untracked_files`: the same, for the cells that read a data file
+#'   through a computed path (`read.csv(f)`): their analyses'
+#'   `untracked_files`, the readers the cell's note names (#276).
 #' * `analyses`: `ember_cell_analysis` per cell (the cache for the next
 #'   build).
 #' * `learned`: `list(definitions = <id -> character>, references = <id ->
@@ -75,8 +78,10 @@
 #' no definitions and no references but keeps its setting edges.
 new_graph <- function(ids, settings, analyses, learned, exports, cells, edges,
                       disabled, off, upstream, downstream, order, errors,
-                      reread, read_file = NULL, untracked = list()) {
+                      reread, read_file = NULL, untracked = list(),
+                      untracked_files = list()) {
   structure(list(ids = ids, settings = settings, untracked = untracked,
+                 untracked_files = untracked_files,
                  analyses = analyses,
                  learned = learned, exports = exports, cells = cells,
                  edges = edges, disabled = disabled, off = off,
@@ -262,6 +267,8 @@ notebook_graph <- function(cells, exports = list(),
   settings <- ids[!(ids %in% disabled) &
                     vapply(cells_resolved, function(c) nrow(c$setting_keys) > 0, logical(1))]
   untracked <- untracked_of(analyses)
+  untracked_files <- analyses[vapply(analyses, function(a) length(a$untracked_files) > 0, logical(1))]
+  untracked_files <- lapply(untracked_files, `[[`, "untracked_files")
   order <- compute_order(ids, settings, upstream_list, attaches_list, comp_of, is_markdown)
 
   # 6. setting edges: every non-markdown cell to each settings cell before
@@ -278,6 +285,7 @@ notebook_graph <- function(cells, exports = list(),
   }
 
   new_graph(ids = ids, settings = settings, untracked = untracked,
+            untracked_files = untracked_files,
             analyses = analyses, learned = learned,
             exports = exports, cells = cells_resolved, edges = edges,
             disabled = disabled, off = off,

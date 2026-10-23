@@ -265,6 +265,15 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
     walk_masking_call(e, scope, acc, name, arg_pids)
     return(invisible())
   }
+  if (name %in% names(data_readers) && !in_function(scope) &&
+      (qualified || !is_bound_locally(scope, name))) {
+    maybe_record_name_read()
+    walk_data_read(e, scope, acc, name, arg_pids, head_pos)
+    return(invisible())
+  }
+  if (name %in% names(data_writers) && (qualified || !is_bound_locally(scope, name))) {
+    walk_data_write(e, scope, acc, name)
+  }
   if (identical(name, "source")) {
     maybe_record_name_read()
     if (!in_function(scope)) {

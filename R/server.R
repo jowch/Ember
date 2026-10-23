@@ -887,6 +887,8 @@ answer_from_subprocess <- function(cmd, answer, ok, failure) {
 #' | ember_update_packages          | dispatch ev_preview_date(today, apply = TRUE); flush. No reply       |
 #' | ember_apply_update             | {date}: set_date(hub$nb, date); a refusal is logged. Flush. No reply |
 #' | ember_cancel_update            | dispatch ev_cancel_preview(); flush. No reply                        |
+#' | ember_update_package           | {name, version}: a row's Update (#23): dispatch ev_preview_update(name, version, today, page = TRUE); nothing when read-only; flush. No reply |
+#' | ember_check_versions           | {}: the Packages tab opened (#23): dispatch ev_check_releases(); flush. No reply |
 #' | ember_approve_install          | the large-download card's Install (#37): dispatch ev_approve_install() (refused when nothing waits); flush. No reply |
 #' | ember_set_package_source       | {name, source}: edit_notebook(set_package_source()); reply {ok} or {error}; flush |
 #' | ember_remove_package_source    | {name}: edit_notebook(remove_package_source()); reply {ok} or {error}; flush |
@@ -898,6 +900,7 @@ answer_from_subprocess <- function(cmd, answer, ok, failure) {
 #' | ember_open_notebook            | {path}: open_or_find() (shared with /open); reply {url} or {error}. No hub |
 #' | ember_forget_recent            | {path}: forget_notebook(), then the ember_start_page reply. No hub |
 #' | ember_set_mode                 | {mode}: "autorun" or "lazy", else refused; refused when read-only. set_cell_change_mode(nb, mode); flush. No reply |
+#' | ember_answer_input             | {cell_id, prompt_id, text}: the answer to the running cell's prompt (#186), answer_input(); a refusal (the prompt has gone, or was another question) is logged. Flush. No reply |
 #' | request_js_link_response, nbpkg_available_versions, nbpkg_get_project_toml, nbpkg_set_project_toml, pkg_update | Julia-only; their UI is disabled in the frontend. Logged, no reply |
 #'
 #' Replies use the reply type Pluto uses for each (connect "\U0001F44B", ping
@@ -1231,6 +1234,30 @@ handlers <- list(
     flush_clients(server, hub)
   },
 
+  #' A row's Update on the Packages tab (#23): preview moving the date so
+  #' the package is at `version`, the newer version the row showed. The
+  #' proposal is the row's question (`project_ember()`), applied with
+  #' `ember_apply_update` like the header's. A refusal (the package has
+  #' since left the lock) is logged, never thrown at the client.
+  ember_update_package = function(server, cl, hub, req) {
+    if (is.null(hub) || isTRUE(hub$nb$state$read_only)) return(invisible(NULL))
+    name <- req$body$name
+    version <- req$body$version
+    if (is.character(name) && length(name) == 1 && is.character(version) && length(version) == 1) {
+      reply <- dispatch(hub$nb, ev_preview_update(name, version, today = Sys.Date(), at = Sys.time(), page = TRUE))
+      if (inherits(reply, "ember_refused")) message("ember: refused ember_update_package: ", conditionMessage(reply))
+    }
+    flush_clients(server, hub)
+  },
+
+  #' The Packages tab opened (#23): fetch CRAN's release dates if they
+  #' aren't known, so rows can say when CRAN has a newer version.
+  ember_check_versions = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    dispatch(hub$nb, ev_check_releases(at = Sys.time()))
+    flush_clients(server, hub)
+  },
+
   #' The in-tab update question's Update: apply the proposal the page was
   #' shown. A refusal (the proposal has since changed or gone) is logged,
   #' never thrown at the client, since the frontend sends without awaiting
@@ -1362,6 +1389,30 @@ handlers <- list(
       if (isTRUE(notebook_snapshot(hub$nb)$read_only)) stop(refused("read-only notebook"))
       set_cell_change_mode(hub$nb, mode)
     }, ember_refused = function(e) message("ember: refused ember_set_mode: ", conditionMessage(e)))
+    flush_clients(server, hub)
+  },
+
+  #' A cell's prompt answered on the page (#186). A refusal (the prompt
+  #' closed or was answered meanwhile, a bad body) is logged, never thrown
+  #' at the client: the page sends without awaiting a reply.
+  ember_answer_input = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    cell <- req$body$cell_id
+    text <- req$body$text
+    tryCatch({
+      if (!(is.character(text) && length(text) == 1 && !is.na(text))) {
+        stop(refused("ember_answer_input: text must be one string"))
+      }
+      if (!(is.character(cell) && length(cell) == 1 && !is.na(cell))) {
+        stop(refused("ember_answer_input: cell_id must be one string"))
+      }
+      id <- req$body$prompt_id
+      if (!is.null(id) && !(is.numeric(id) && length(id) == 1 && !is.na(id))) {
+        stop(refused("ember_answer_input: prompt_id must be a number"))
+      }
+      reply <- dispatch(hub$nb, ev_answer_input(text, at = Sys.time(), cell = cell, id = id))
+      if (inherits(reply, "ember_refused")) stop(reply)
+    }, ember_refused = function(e) message("ember: refused ember_answer_input: ", conditionMessage(e)))
     flush_clients(server, hub)
   }
 )

@@ -217,6 +217,52 @@ test_that("preview_update finds toyA's dates in CRAN's index of its files and pr
   expect_match(never$message, "never released toyA 0.3")
 })
 
+test_that("a row's Update through the server: CRAN's newer toyA shows, its question lists the change, and Update applies it, offline (#23)", {
+  meta <- normalizePath(testthat::test_path("fixtures", "repos", "toy-meta"), mustWork = TRUE)
+  repos <- toy_repos()
+  repos$cran_meta <- paste0("file://", meta)
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  nb <- open_notebook(write_toy_notebook("2026-09-01"), repos = repos, cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  res <- run_cells(nb, wait = TRUE, timeout = 120)
+  expect_false(res$timed_out)
+
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  row_of <- function(name) Filter(function(r) identical(r$name, name), pluto_state(notebook_state(nb))$js$ember$packages$rows)[[1]]
+  expect_null(row_of("toyA")$available)
+
+  # The tab opening asks for CRAN's release dates.
+  handle_message(server, ws, wire("ember_check_versions", notebook_id = id))
+  expect_true(wait_for(nb, function(snap) {
+    pk <- snap$packages$packages
+    identical(pk$available[pk$name == "toyA"], "0.2")
+  }, timeout = 120))
+  expect_equal(row_of("toyA")$available, "0.2")
+
+  handle_message(server, ws, wire("ember_update_package", notebook_id = id, name = "toyA", version = "0.2"))
+  expect_true(wait_for(nb, function(snap) {
+    identical(snap$packages$proposal$status, "ready")
+  }, timeout = 120))
+  pu <- pluto_state(notebook_state(nb))$js$ember$packages$package_update
+  expect_equal(pu$name, "toyA")
+  expect_equal(pu$status, "ready")
+  expect_equal(pu$date, "2026-09-30")
+  # toyA is the only package, so nothing else moves.
+  expect_length(pu$changes, 0)
+  expect_equal(notebook_state(nb)$file$header$snapshot, "2026-09-01")
+
+  handle_message(server, ws, wire("ember_apply_update", notebook_id = id, date = pu$date))
+  expect_equal(notebook_state(nb)$file$header$snapshot, "2026-09-30")
+  expect_equal(unname(lock_versions(notebook_state(nb)$file$lock)["toyA"]), "0.2")
+  expect_null(pluto_state(notebook_state(nb))$js$ember$packages$package_update)
+  expect_null(row_of("toyA")$available)
+})
+
 test_that("release dates that can't be fetched fail the preview and say where from (77)", {
   repos <- toy_repos()
   repos$cran_meta <- paste0("file://", tempfile("ember-no-meta-"))

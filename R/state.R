@@ -236,8 +236,10 @@ new_state <- function(file, path, id, options, at) {
 #'   generation it came from; events from an older generation are ignored,
 #'   which is what makes kill-then-start safe against messages in flight.
 #' * `running`: `NULL` or `list(cell, token, code, started_at, console,
-#'   begun)`; `console` grows as the worker streams console items, and
-#'   `begun` turns `TRUE` when the worker says it began the run.
+#'   begun, prompt)`; `console` grows as the worker streams console items,
+#'   `begun` turns `TRUE` when the worker says it began the run, and
+#'   `prompt` is `list(id, text, choices)` while a prompt in the cell waits
+#'   for an answer (#186; `reduce_wk_input()`).
 #' * `interrupt`: `NULL` or `list(at, token)` once the user interrupted that
 #'   run. SIGINT is sent then, or when the run begins if that is later.
 #'   `failed = TRUE` is added if the interrupt couldn't be delivered
@@ -387,7 +389,9 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 #' `character()` when none), `from_lock` (likewise), `untracked_reads` (the
 #' calls in the cell's code that read globals by a name static reading can't
 #' follow, such as `"get"` for `get(paste0("fit_", i))`, from the analysis,
-#' not a run; `character()` when none; #357), `inputs` (the last result's, `list()` when
+#' not a run; `character()` when none; #357), `untracked_files` (likewise, for
+#' the data readers called with a computed path, such as `"read.csv"` for
+#' `read.csv(f)`; #276), `inputs` (the last result's, `list()` when
 #' none; see `new_result()`), `queued`, `running`, `status` (`"not_run"`, `"ok"`, `"error"`,
 #' `"interrupted"`), `stale`, `code_differs`, `errors` (graph errors, or
 #' else the run error, each with `kind`, `message`, `fixes`, `names`, and, for an
@@ -396,7 +400,8 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 #' error of kind `"parse"` also carries `lines`, for `project_parse_error()`
 #' (pluto-state.R) to put the diagnostic on the real line),
 #' `output` (`ember_display` or `NULL`),
-#' `console`, `last_run`, `runtime`, `disabled` (the user's own choice),
+#' `console`, `prompt` (the running cell's waiting prompt, `list(id, text,
+#' choices)`, or `NULL`; #186), `last_run`, `runtime`, `disabled` (the user's own choice),
 #' `disabled_by` (the disabled cell a dependent is off because of, `NA`
 #' otherwise -- including for the disabled cell itself), `variables`
 #' (`list(name, type, value, kind)` per global the cell owns, sorted
@@ -530,11 +535,19 @@ view_context <- function(state) {
     ok <- !is.na(at)
     untracked[at[ok]] <- graph$untracked[ok]
   }
+  # The same for data files read through a computed path (#276).
+  untracked_files <- vector("list", n)
+  if (length(graph$untracked_files) > 0) {
+    at <- match(names(graph$untracked_files), ids)
+    ok <- !is.na(at)
+    untracked_files[at[ok]] <- graph$untracked_files[ok]
+  }
 
   list(ids = ids, running = running, running_idx = running_idx,
       queued = queued, waiting = waiting_vec,
       errors_by_cell = errors_by_cell, off = off, disabled_by = disabled_by,
-      settings = settings, untracked = untracked, results = results)
+      settings = settings, untracked = untracked, untracked_files = untracked_files,
+      results = results)
 }
 
 #' `result$variables` as a list of `list(name, type, value, kind)`, sorted
@@ -589,6 +602,7 @@ cell_view <- function(state, ctx, i) {
     changed_in_place = if (!is.null(result)) result$changed_in_place %||% character() else character(),
     from_lock = if (!is.null(result)) result$from_lock %||% character() else character(),
     untracked_reads = ctx$untracked[[i]] %||% character(),
+    untracked_files = ctx$untracked_files[[i]] %||% character(),
     inputs = if (!is.null(result)) result$inputs %||% list() else list(),
     queued = ctx$queued[[i]], running = is_running,
     status = if (!is.null(result)) result$status else "not_run",
@@ -598,6 +612,7 @@ cell_view <- function(state, ctx, i) {
     output = if (!is.null(result)) result$output else NULL,
     console = if (is_running) ctx$running$console
               else if (!is.null(result)) result$console else list(),
+    prompt = if (is_running) ctx$running$prompt,
     last_run = if (!is.null(result)) result$started_at else NULL,
     runtime = if (!is.null(result)) result$runtime else NULL,
     waiting_for = ctx$waiting[[i]] %||% character(),
@@ -766,7 +781,9 @@ cells_maybe_changed <- function(old, old_ctx, new, new_ctx, at) {
     differ(new_ctx$settings, old_ctx$settings) |
     # Another cell's edit can change it: a helper that gains or drops a
     # get() changes the note on the cells calling it (#365).
-    differ(new_ctx$untracked, old_ctx$untracked)
+    differ(new_ctx$untracked, old_ctx$untracked) |
+    # A sourced file's edit can change a cell's untracked_files (#276).
+    differ(new_ctx$untracked_files, old_ctx$untracked_files)
   maybe <- maybe | !(new_ctx$queued == old_ctx$queued[at]) %in% TRUE
   a <- new_ctx$disabled_by; b <- old_ctx$disabled_by[at]
   maybe <- maybe | !((a == b) %in% TRUE | (is.na(a) & is.na(b)))
@@ -778,7 +795,8 @@ cells_maybe_changed <- function(old, old_ctx, new, new_ctx, at) {
   run_new <- running_at(new_ctx, new_ctx$ids)
   run_old <- running_at(old_ctx, old_ctx$ids[at])
   maybe <- maybe | run_new != run_old
-  if (!identical(new_ctx$running$console, old_ctx$running$console)) maybe <- maybe | run_new
+  if (!identical(new_ctx$running$console, old_ctx$running$console) ||
+      !identical(new_ctx$running$prompt, old_ctx$running$prompt)) maybe <- maybe | run_new
   maybe
 }
 
@@ -877,6 +895,14 @@ watched_files <- function(state) {
                 use.names = FALSE)
   comp <- unlist(state$computed_sources, use.names = FALSE)
   unique(c(lit, comp, state$footer_sources))
+}
+
+#' Data files the shell should watch (#276): every cell's `data_files`, as
+#' written in the code, relative to the notebook's folder. Reads only the
+#' analyses, which `watch_inputs()` (shell.R) lists.
+watched_data_files <- function(state) {
+  unique(unlist(lapply(state$graph$analyses, function(a) .subset2(a, "data_files")),
+                use.names = FALSE))
 }
 
 #' The reader the graph is built with: `files` as a function.

@@ -11,6 +11,14 @@ import { apply_theme } from "./common/theme.js"
 
 apply_theme()
 
+// The code font, loaded before the editor draws any cell. Until a cell's
+// editor loads, its code is static text whose height the editor then keeps
+// (#379); drawn in a fallback font it can wrap a long line into fewer rows
+// than the editor will (Windows' Consolas is narrower than IBM Plex Mono),
+// so the cell would still grow when the font arrives (#400). A failed load
+// doesn't hold anything up.
+const code_font_loaded = document.fonts.load(`400 13px ${getComputedStyle(document.documentElement).getPropertyValue("--ember-code-font")}`).catch(() => null)
+
 const url_params = new URLSearchParams(window.location.search)
 
 //////////////
@@ -118,6 +126,10 @@ const EditorLoader = ({ launch_params, pluto_editor_element }) => {
     const initial_notebook_state_ref = useRef(empty_notebook_state(launch_params))
     const [error_banner, set_error_banner] = useState(/** @type {import("./imports/Preact.js").ReactElement?} */ (null))
     const [ready_for_editor, set_ready_for_editor] = useState(!static_preview)
+    const [code_font_ready, set_code_font_ready] = useState(false)
+    useEffect(() => {
+        code_font_loaded.then(() => set_code_font_ready(true))
+    }, [])
 
     useEffect(() => {
         if (!ready_for_editor && static_preview) {
@@ -152,7 +164,7 @@ const EditorLoader = ({ launch_params, pluto_editor_element }) => {
 
     return error_banner != null
         ? error_banner
-        : ready_for_editor
+        : ready_for_editor && code_font_ready
           ? html`<${Editor}
                 initial_notebook_state=${initial_notebook_state_ref.current}
                 launch_params=${launch_params}
