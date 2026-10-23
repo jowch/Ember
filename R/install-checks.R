@@ -327,6 +327,31 @@ failed_builds <- function(failed, index) {
   failed[!vapply(failed, function(p) any(deps[[p]] %in% failed), logical(1))]
 }
 
+#' The archives renv downloaded for `packages`, under `root` (renv's
+#' `RENV_PATHS_ROOT`: `<root>/source/.../<package>/<file>` and
+#' `<root>/binary/.../<package>/<file>`), that can't be read. renv 1.3
+#' installs what its parallel downloader fetched without opening it
+#' first: it counts any file that isn't empty as downloaded, even when
+#' curl said the transfer failed. So a download cut short fails the
+#' install with "zip file '...' cannot be opened" or a tar error (#450).
+#' The installer deletes these and tries once more.
+unreadable_downloads <- function(packages, root) {
+  if (length(packages) == 0 || !dir.exists(root)) return(character())
+  files <- list.files(root, pattern = "\\.(zip|tgz|tar\\.gz)$", recursive = TRUE, full.names = TRUE)
+  files <- files[basename(dirname(files)) %in% packages]
+  files[!vapply(files, archive_readable, logical(1))]
+}
+
+#' Whether the zip or tarball at `path` lists: a cut-short zip "cannot be
+#' opened" and a cut-short tarball has an "incomplete block".
+archive_readable <- function(path) {
+  tryCatch({
+    if (grepl("\\.zip$", path)) utils::unzip(path, list = TRUE)
+    else utils::untar(path, list = TRUE, tar = "internal")
+    TRUE
+  }, warning = function(w) FALSE, error = function(e) FALSE)
+}
+
 #' Which of the locked CRAN packages in `failed` had no binary for this R
 #' at the snapshot date, so renv built them from source: named character,
 #' package -> locked version.

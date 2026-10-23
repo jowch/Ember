@@ -107,6 +107,23 @@ for (mode in c("autorun", "lazy")) {
   })
 }
 
+# The same, with cells that ask (readline() and menu(), #186). While a cell
+# waits on a question, a step can interrupt it, edit the notebook, run a
+# cell (the asking one too) or answer a question that isn't waiting; then
+# each question gets its one answer. An answer must reach its question, and
+# every value must match the reference, which answers the same. Known
+# failures here are keyed "prompts <mode> <seed>".
+for (mode in c("autorun", "lazy")) {
+  test_that(paste("random edits with cells that ask match a run from scratch,", mode, "mode"), {
+    for (seed in union(fuzz_seeds(), known_seeds(paste("prompts", mode)))) {
+      trace <- fuzz_trace(seed, mode, steps = fuzz_steps(), prompts = TRUE)
+      known <- fuzz_known[[paste("prompts", mode, seed)]]
+      if (!is.null(known) && fuzz_steps() >= known$step) expect_known_failure(trace, known)
+      else expect_trace_passes(trace)
+    }
+  })
+}
+
 # Regression tests: shrunk traces of what the random runs found.
 
 test_that("autorun runs a queued dependent's stale ancestors first (#176)", {
@@ -205,4 +222,48 @@ test_that("a hand run of an edited cell runs the ancestor that read its old code
     steps = list(list(ops = list(list(op = "set_code", cell = "C3", code = "v4 <- (14 + 1 * v3) %% 997")), run = "C3"),
                  list(ops = list(list(op = "set_code", cell = "C6", code = "v2[1] <- 85\n(86 + 1 * v3 + 2 * v4 + 3 * v5 + 4 * v6) %% 997")), run = NULL),
                  list(ops = list(list(op = "set_code", cell = "C2", code = "v3 <- (77 + 1 * v9) %% 997")), run = "all"))))
+})
+
+test_that("a cell reading a name it assigns whole reads the other definer's, so that edge can close a cycle (#436)", {
+  # C3 and C6 both define v8, and C3's `v8 <- (... + v8)` reads it first:
+  # C3 -> C4 (v1) -> C6 (v5) -> C3 (v8) is a cycle, so C4 can't run either.
+  for (mode in c("autorun", "lazy")) {
+    expect_trace_passes(list(mode = mode,
+      cells = list(C3 = 'v4 <- stop("fail 2")', C4 = "v5 <- (67 + 1 * v1) %% 997", C6 = "(57 + 1 * v1 + 2 * v5 + 3 * v4) %% 997"),
+      steps = list(list(ops = list(list(op = "set_code", cell = "C3", code = "v1[1] <- 76\nv8 <- ((78 + 1 * v1) %% 997 + v8) %% 997")), run = NULL),
+                   list(ops = list(list(op = "set_code", cell = "C6", code = "v8[1] <- 65\n(57 + 1 * v1 + 2 * v5 + 3 * v7) %% 997")), run = NULL))))
+  }
+  # The same through v2, in C1's `v2 + 48` before C1 assigns it.
+  expect_trace_passes(list(mode = "autorun",
+    cells = list(C4 = "v5 <- (23 + 1 * v1) %% 997", C6 = "(59 + 1 * v3 + 2 * v4 + 3 * v5 + 4 * v6) %% 997",
+                 C1 = "v1 <- 19\nv2 <- (v1 * 3 + 19) %% 997"),
+    steps = list(list(ops = list(list(op = "set_code", cell = "C1", code = "v2 + 48\nv1 <- (66 + v1) %% 997\nv2 <- (v1 * 3 + 4) %% 997")), run = NULL),
+                 list(ops = list(list(op = "set_code", cell = "C6", code = "v2[1] <- 80\n(59 + 1 * v3 + 2 * v4 + 3 * v5 + 4 * v6) %% 997")), run = NULL))))
+})
+
+test_that("a run whose upstream cell is deleted while it asks ends stale (#451)", {
+  expect_trace_passes(list(mode = "autorun", prompts = TRUE,
+    cells = list(C1 = "v1 <- 29", C4 = "v4 <- (6 + 1 * v2 + 2 * v3) %% 997",
+                 C3 = "v3 <- (49 + 1 * v1 + 2 * menu(c(\"q1-a\", \"q1-b\", \"q1-c\"))) %% 997"),
+    steps = list(list(ops = list(), run = "C4"),
+                 list(ops = list(), run = "C1",
+                      asking = list(list(act = "edit", ops = list(list(op = "delete", cell = "C1"))))))))
+})
+
+test_that("deleting the cell that asks leaves the notebook able to run (#452)", {
+  expect_trace_passes(list(mode = "autorun", prompts = TRUE,
+    cells = list(C1 = "v1 <- 90\nv2 <- (v1 * 3 + 90) %% 997",
+                 C5 = "v6 <- (57 + 1 * v1 + 2 * as.numeric(readline(\"q2? \"))) %% 997",
+                 C6 = "(32 + 1 * v3 + 2 * v4 + 3 * v5 + 4 * v6) %% 997"),
+    steps = list(list(ops = list(), run = "C6",
+                      asking = list(list(act = "edit", ops = list(list(op = "delete", cell = "C5"))))),
+                 list(ops = list(), run = "all"))))
+})
+
+test_that("in lazy mode a hand run while a cell asks reruns what it made stale before a queued reader (#453)", {
+  expect_trace_passes(list(mode = "lazy", prompts = TRUE,
+    cells = list(C1 = "v1 <- 52", C2 = "v2 <- (71 + 1 * v1) %% 997",
+                 C3 = "v3 <- (41 + 1 * v2 + 2 * as.numeric(readline(\"q1? \"))) %% 997\nv4 <- (v3 * 3 + 41) %% 997",
+                 C4 = "v5 <- (41 + 1 * v3 + 2 * as.numeric(readline(\"q2? \"))) %% 997\nv6 <- (v5 * 3 + 41) %% 997"),
+    steps = list(list(ops = list(), run = "all", asking = list(list(act = "run", cell = "C2"))))))
 })

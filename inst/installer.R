@@ -108,11 +108,27 @@ main <- function(plan_path) {
   # and Windows, where renv never tests.
   Sys.setenv(RENV_INSTALL_TEST_LOAD = "FALSE")
   options(repos = repos)
-  restored <- tryCatch(withCallingHandlers(
+  restore <- function() tryCatch(withCallingHandlers(
     renv::restore(lockfile = lockfile_tmp, library = plan$staging,
                   project = project_dir, prompt = FALSE, clean = FALSE),
     message = function(m) invokeRestart("muffleMessage")),
     error = function(e) e)
+  restored <- restore()
+  # renv installs what it downloaded without opening it first, so one
+  # download cut short fails the install (#450). An archive that can't be
+  # read is deleted and the install tried once more; what installed stays.
+  if (inherits(restored, "error")) {
+    missing <- setdiff(names(wanted), list.files(plan$staging))
+    root <- Sys.getenv("RENV_PATHS_ROOT", file.path(plan$cache, "renv-root"))
+    bad <- ember:::unreadable_downloads(missing, root)
+    if (length(bad) > 0) {
+      writeLines(sprintf("ember: %s couldn't be read (a download cut short); downloading it again", basename(bad)),
+                 con = stderr())
+      flush(stderr())
+      unlink(bad)
+      restored <- restore()
+    }
+  }
   # A failed build of a package that had no binary for this R is most
   # often a version from before this R came out (an old snapshot date,
   # #19): its own error (a removed C API) doesn't say so, so this does.

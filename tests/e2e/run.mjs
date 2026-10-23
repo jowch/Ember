@@ -19,18 +19,30 @@ import { ensureLib } from "./install.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { lib, owned: ownLib } = ensureLib();
-
+const env = { ...process.env, EMBER_E2E_LIB: lib };
 const files = process.argv.slice(2);
 const tests = files.length ? files
   : readdirSync(path.join(HERE, "tests")).filter((f) => f.endsWith(".test.mjs")).sort().map((f) => path.join("tests", f));
-const child = spawn(process.execPath,
-  ["--test", "--test-timeout=300000", "--test-concurrency=3", ...tests],
-  { cwd: HERE, stdio: "inherit", env: { ...process.env, EMBER_E2E_LIB: lib } });
 
-// Pass a stop on to the test runner and wait for it to finish, so the
-// library is removed after the servers using it are gone.
-for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => child.kill(signal));
-child.on("exit", (code, signal) => {
+// Pass a stop on to whichever child is running, the warm-up or the test
+// runner, and wait for it to finish, so the library is removed after the
+// servers using it are gone.
+let child = null;
+let stopped = false;
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => { stopped = true; child?.kill(signal); });
+const finish = (code, signal) => {
   if (ownLib) rmSync(lib, { recursive: true, force: true });
   process.exit(code ?? (signal ? 1 : 0));
+};
+
+// The warm-up (warmup.mjs, #417) runs first, in a process of its own like
+// each test file, so server.mjs's exit and signal handlers aren't this
+// one's. Its result doesn't decide the run's; a stop during it ends the run.
+child = spawn(process.execPath, ["warmup.mjs"], { cwd: HERE, stdio: "inherit", env });
+child.on("exit", () => {
+  if (stopped) return finish(1);
+  child = spawn(process.execPath,
+    ["--test", "--test-timeout=300000", "--test-concurrency=3", ...tests],
+    { cwd: HERE, stdio: "inherit", env });
+  child.on("exit", finish);
 });

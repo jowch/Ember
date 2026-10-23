@@ -195,6 +195,35 @@ test_that("renv_failed_packages() reads renv's \"failed to install\" error, in e
   expect_equal(renv_failed_packages('failed to retrieve package "cli"'), character())
 })
 
+test_that("unreadable_downloads() names the cut-short zips and tarballs of the given packages, and nothing else (#450)", {
+  root <- tempfile("ember-renv-root-")
+  on.exit(unlink(root, recursive = TRUE), add = TRUE)
+  put <- function(dir, file, bytes) {
+    dir.create(file.path(root, dir), recursive = TRUE, showWarnings = FALSE)
+    writeBin(bytes, file.path(root, dir, file))
+    file.path(root, dir, file)
+  }
+  tarball <- readBin(test_path("fixtures", "repos", "toy", "2026-09-01", "src", "contrib", "toyA_0.1.tar.gz"), "raw", 1e6)
+  zipdir <- tempfile("ember-zip-")
+  dir.create(zipdir)
+  on.exit(unlink(zipdir, recursive = TRUE), add = TRUE)
+  writeLines("Package: toyZ", file.path(zipdir, "DESCRIPTION"))
+  zipfile <- file.path(zipdir, "toyZ_1.0.zip")
+  withr::with_dir(zipdir, utils::zip(zipfile, "DESCRIPTION", flags = "-q"))
+  zip <- readBin(zipfile, "raw", 1e6)
+
+  put("source/repository/toyA", "toyA_0.1.tar.gz", tarball)
+  cut_tar <- put("source/repository/toyB", "toyB_1.0.tar.gz", tarball[1:250])
+  put("binary/windows/R-4.6/x86_64-w64-mingw32/repository/toyZ", "toyZ_1.0.zip", zip)
+  cut_zip <- put("binary/windows/R-4.6/x86_64-w64-mingw32/repository/toyY", "toyY_1.0.zip", zip[seq_len(length(zip) %/% 2)])
+  put("source/repository/other", "other_1.0.tar.gz", tarball[1:250])
+
+  expect_setequal(unreadable_downloads(c("toyA", "toyB", "toyY", "toyZ"), root), c(cut_tar, cut_zip))
+  expect_equal(unreadable_downloads("toyA", root), character())
+  expect_equal(unreadable_downloads(character(), root), character())
+  expect_equal(unreadable_downloads("toyB", file.path(root, "none")), character())
+})
+
 test_that("no_binary_packages() names the failed CRAN packages with no binary for this R, per platform (118, #22)", {
   lock <- parse_lock_lines(c("cli 3.6.2 CRAN", "glue 1.7.0 CRAN", "S4Vectors 0.40.0 Bioc",
                              "mypkg 3f2a1c9 github:lab/mypkg@3f2a1c9"))$lock

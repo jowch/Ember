@@ -1141,7 +1141,7 @@ project_ember <- function(state, ctx, pv = packages_view(state)) {
     others <- if (is.null(ch)) ch else ch[ch$name != u$name, , drop = FALSE]
     na_null <- function(x) if (is.na(x)) NULL else x
     moved <- if (is.null(ch)) character() else ch$name[ch$change %in% c("upgraded", "downgraded", "source", "removed")]
-    status <- switch(prop$status, fetching = "checking", dates = "checking", prop$status)
+    status <- switch(prop$status, fetching = "checking", dates = "checking", lock = "checking", prop$status)
     packages$package_update <- list(
       name = u$name, version = u$version %||% NULL,
       date = if (is.na(prop$date)) NULL else prop$date, status = status,
