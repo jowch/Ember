@@ -10,8 +10,10 @@
 // - The test waits until run.mjs's --test-timeout stops the file. Under
 //   Node 22 that bound is per file: the runner ends the file's process
 //   and drops whatever it prints after that. So the list is kept in
-//   test-results/waiting-<file>.txt, rewritten at most once a second while
-//   a wait is pending, and run.mjs prints any list a file leaves behind.
+//   test-results/waiting-<file>.txt, rewritten within a second of a change
+//   and every 5 s while a wait is pending (so how long each has waited is
+//   current to 5 s, on Windows too), and run.mjs prints any list a file
+//   leaves behind.
 //   Where the process gets a signal first (not on Windows, where the
 //   runner's stop is abrupt), server.mjs calls stateOnStop(), which adds
 //   what each page shows.
@@ -125,7 +127,8 @@ function write() {
 function track(promise, entry) {
   const id = nextId++;
   pending.set(id, { ...entry, since: Date.now() });
-  keepAlive ??= setInterval(() => {}, 60000);
+  // Also rewrites the list, so a wait that hangs shows how long it has.
+  keepAlive ??= setInterval(() => { if (!stopping) write(); }, 5000);
   schedule();
   const done = () => {
     pending.delete(id);
