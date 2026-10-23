@@ -117,6 +117,8 @@ export const Cell = ({
     // For tests that count which cells re-render (render-count.test.mjs, #289).
     /** @type {any} */ (window).__ember_on_cell_render?.(cell_id)
     const { show_logs, disabled: running_disabled, skip_as_script } = metadata
+    // One array per logs object, so Logs only re-splits the console when it changes.
+    const log_list = useMemo(() => Object.values(logs ?? {}), [logs])
     const code_changed = !!ember?.code_changed
     const stale = useSettled(!code_changed && !!ember?.stale, wait_for_on)
     let pluto_actions = useContext(PlutoActionsContext)
@@ -701,7 +703,8 @@ export const Cell = ({
                 : null}
             ${show_logs && cell_api_ready
                 ? html`<${Logs}
-                      logs=${Object.values(logs)}
+                      logs=${log_list}
+                      run=${running ? "running" : (output?.last_run_timestamp ?? null)}
                       line_heights=${line_heights}
                       set_cm_highlighted_line=${set_cm_highlighted_line}
                       sanitize_html=${sanitize_html}
