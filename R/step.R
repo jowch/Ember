@@ -890,13 +890,23 @@ invalidate_dependents <- function(state, id, names, queue = TRUE,
                                   was_setting = isTRUE(state$results[[id]]$setting)) {
   edited <- edited_cells(state)
   g <- run_graph(state, edited)
-  dependents <- downstream(g, id, transitive = TRUE)
+  # A cell with a graph error can't run, so nothing passes through it, as
+  # in run order: the walk stops there (#390). When the error clears, the
+  # cell runs or stale_upstream_errors() marks what blamed it. The cells in
+  # `id`'s own graph error are the exception: `id` running into the error
+  # is what drops their results (#272, #315).
+  walk <- g
+  peers <- unlist(lapply(state$graph$errors, function(e) if (id %in% e$cells) e$cells))
+  stops <- setdiff(blocked_cells(state$graph), c(id, peers))
+  stops <- stops[stops %in% names(walk$downstream)]
+  if (length(stops) > 0) walk$downstream[stops] <- list(character())
+  dependents <- downstream(walk, id, transitive = TRUE)
   below <- dependents
   if (was_setting) {
     pos <- match(id, state$graph$order)
     if (!is.na(pos)) dependents <- union(dependents, state$graph$order[-seq_len(pos)])
   }
-  if (length(names) > 0) dependents <- union(dependents, readers_of(state, id, names, edited, g, known = below))
+  if (length(names) > 0) dependents <- union(dependents, readers_of(state, id, names, edited, walk, known = below))
   invalidate_cells(state, id, setdiff(dependents, id), queue = queue, g = g)
 }
 
