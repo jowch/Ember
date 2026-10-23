@@ -19,7 +19,7 @@
 # cells). Where that comes from work done once per cell, a test counts the
 # calls instead (test-pluto-state.R); bench/ looks for the rest, by
 # running these fixtures on a pull request and on its base branch on one
-# machine, and flags only slowdowns over 25%.
+# machine, and flags only slowdowns over 20%.
 
 #' Seconds for `inner` calls of `f()`.
 time_calls <- function(f, inner = 1L) {
@@ -187,4 +187,28 @@ perf_diff_pair <- function(n) {
   new$cell_results[[changed_id]]$running <- TRUE
   new$cell_results[[changed_id]]$output$body <- "changed"
   list(old = old, new = new, changed_id = changed_id)
+}
+
+#' An `n`-cell chain (`make_chain_cells()`) that has run once, with "run
+#' all" started again and the worker busy with its first cell: every cell
+#' has a result, so each one that runs marks its whole downstream stale
+#' (#316). The results are made directly; running the chain to make them
+#' would take longer than the benchmark.
+perf_chain_rerun <- function(n) {
+  s <- fake_state(make_chain_cells(n))
+  s$allowed <- TRUE
+  ids <- names(s$cells)
+  s$results <- stats::setNames(lapply(ids, function(id) {
+    list(status = "ok", code = s$cells[[id]]$code, output = NULL, console = list(),
+         started_at = 1, runtime = 0.01, stale = FALSE, error = NULL,
+         defined = s$graph$cells[[id]]$definitions)
+  }), ids)
+  boot(s, NULL, at0 = 10)
+}
+
+#' The `wk_done()` for the cell the worker is running in `r` (a `boot()` or
+#' `drive()` result), reporting what that cell defines, as the worker would.
+perf_done <- function(r) {
+  id <- r$state$worker$running$cell
+  wk_done(1, last_token(r), report(created = r$state$graph$cells[[id]]$definitions), at(r$state$clock + 1))
 }

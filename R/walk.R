@@ -21,9 +21,17 @@ walk_expr <- function(e, scope, acc, pid = NA_integer_) {
   if (is.symbol(e)) {
     name <- as.character(e)
     if (nzchar(name)) record_read(acc, scope, name, pos = pd_position(acc, pid))
+    # `lapply(site_names, get)`: get() passed as a function reads whatever
+    # names it is handed, which static reading can't follow (#357).
+    passed <- get_family_value(e, scope)
+    if (!is.null(passed)) record_note(acc, "untracked_read", passed, pd_position(acc, pid))
     return(invisible())
   }
   if (!is.call(e)) return(invisible())
+  # `lapply(site_names, base::get)`, the same as the bare symbol above. A
+  # call's head never comes here: `base::get(x)` is walk_qualified_call()'s.
+  passed <- get_family_value(e, scope)
+  if (!is.null(passed)) record_note(acc, "untracked_read", passed, pd_position(acc, pid))
 
   head <- e[[1]]
   if (is.call(head)) {
@@ -60,7 +68,7 @@ walk_expr <- function(e, scope, acc, pid = NA_integer_) {
     },
     "local" = {
       parts <- pd_call_parts(acc$pd, e, pid)
-      record_read(acc, scope, "local", pos = pd_position(acc, parts$head))
+      record_read(acc, scope, "local", pos = pd_position(acc, parts$head), unmasked = TRUE)
       walk_local(e, scope, acc, parts$args)
       return(invisible())
     },
@@ -72,6 +80,10 @@ walk_expr <- function(e, scope, acc, pid = NA_integer_) {
     "$" = ,
     "@" = {
       parts <- pd_call_parts(acc$pd, e, pid)
+      # `$` and `@` are generics (`@` since R 4.3), so `df$col` reads `$`,
+      # as `a + b` reads `+`: a `$.foo` method feeds the cells that use `$`
+      # (#41). The field or slot name is never a read.
+      record_read(acc, scope, name, pos = pd_position(acc, parts$head), unmasked = TRUE)
       walk_expr(e[[2]], scope, acc, safe_pid(parts$args, 1))
       return(invisible())
     },
@@ -80,6 +92,11 @@ walk_expr <- function(e, scope, acc, pid = NA_integer_) {
 
   dispatch_call_by_name(e, scope, acc, name, pid = pid)
 }
+
+#' Install calls are read in the cell's own code, outside function bodies
+#' (rules.R, `install_calls`). One in a sourced file or a function is an
+#' ordinary call: it runs when it is reached.
+reads_install_calls <- function(scope, acc) is.na(acc$file) && !in_function(scope)
 
 #' `pkg::fn(...)` or `pkg:::fn(...)` used as a call head: not a plain symbol
 #' head, so dispatch on a symbol head never sees it.
@@ -101,6 +118,13 @@ walk_qualified_call <- function(e, scope, acc, q, pid = NA_integer_) {
     record_package(acc, "box", attached = FALSE)
     parts <- pd_call_parts(acc$pd, e, pid)
     walk_box_use_args(e, scope, acc, parts$args)
+  } else if (reads_install_calls(scope, acc) && paste0(q$pkg, "::", q$fn) %in% names(install_calls)) {
+    # As the whole top-level expression the call doesn't run (rules.R), so
+    # its package isn't one the notebook needs; anywhere else
+    # (`suppressMessages(...)`, inside `if`) it runs when reached.
+    if (!identical(e, acc$top_expr)) record_package(acc, q$pkg, attached = FALSE)
+    parts <- pd_call_parts(acc$pd, e, pid)
+    walk_install_call(e, scope, acc, install_calls[[paste0(q$pkg, "::", q$fn)]], parts$args)
   } else {
     record_package(acc, q$pkg, attached = FALSE)
     dispatch_call_by_name(e, scope, acc, q$fn, qualified = TRUE, pid = pid)
@@ -138,7 +162,7 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
   head_pos <- function() pd_position(acc, head_pos_pid)
 
   maybe_record_name_read <- function() {
-    if (!qualified) record_read(acc, scope, name, pos = head_pos())
+    if (!qualified) record_read(acc, scope, name, pos = head_pos(), unmasked = TRUE)
   }
 
   if (!qualified && name %in% names(assignment_ops)) {
@@ -162,6 +186,11 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
   if (is_str_interp_function(name)) {
     maybe_record_name_read()
     walk_str_interp_call(e, scope, acc, name, arg_pids)
+    return(invisible())
+  }
+  if (!qualified && name %in% names(install_calls_bare) && reads_install_calls(scope, acc)) {
+    maybe_record_name_read()
+    walk_install_call(e, scope, acc, install_calls_bare[[name]], arg_pids)
     return(invisible())
   }
   if (name %in% attach_functions) {
@@ -230,6 +259,11 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
     }
     return(invisible())
   }
+  if (name %in% names(data_masking_calls) && (!qualified || is_base_qualified(e[[1]]))) {
+    maybe_record_name_read()
+    walk_masking_call(e, scope, acc, name, arg_pids)
+    return(invisible())
+  }
   if (identical(name, "source")) {
     maybe_record_name_read()
     if (!in_function(scope)) {
@@ -242,6 +276,45 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
 
   maybe_record_name_read()
   walk_call_args(e, scope, acc, arg_pids)
+}
+
+#' Is a call head `base::name` (or `base:::name`)?
+is_base_qualified <- function(head) {
+  q <- qualified_head(head)
+  !is.null(q) && identical(q$pkg, "base")
+}
+
+#' `subset(df, x > 1)`, `transform()`, `with()`, `within()` (#107): the
+#' data argument is walked as usual; every other argument is walked in a
+#' `"local"` scope, as R evaluates it in an environment made from the data
+#' (so `within(df, z <- x * 2)` defines no global `z`), with its reads at
+#' the top level recorded as masked by the data. A masked read names the
+#' data only when the data argument is a bare name that is a global (the
+#' cell's own or another's), not a function's or `local()`'s; otherwise `acc$mask` is `NA` and the reads are ordinary ones.
+#' The graph turns each masked read into an edge or not
+#' (`resolve_masked()`).
+walk_masking_call <- function(e, scope, acc, name, arg_pids) {
+  args <- as.list(e)[-1]
+  if (length(args) == 0) return(invisible())
+  nms <- names2(args)
+  data_i <- which(nms == data_masking_calls[[name]]$data)[1]
+  if (is.na(data_i)) data_i <- which(nms == "")[1]
+  if (is.na(data_i)) {
+    walk_call_args(e, scope, acc, arg_pids)
+    return(invisible())
+  }
+  data <- args[[data_i]]
+  if (!missing_arg(data)) walk_expr(data, scope, acc, arg_pids[[data_i]])
+  root <- if (is.symbol(data) && !is_bound_locally(scope, as.character(data))) as.character(data) else NA_character_
+  masked_scope <- new_scope("local", character(), parent = scope,
+                            home = scope$home, defer_target = scope$defer_target)
+  outer <- acc$mask
+  acc$mask <- list(data = root, fn = name)
+  on.exit(acc$mask <- outer)
+  for (i in seq_along(args)[-data_i]) {
+    if (missing_arg(args[[i]])) next
+    walk_expr(args[[i]], masked_scope, acc, arg_pids[[i]])
+  }
 }
 
 #' The bare function name behind a call head, package-qualified or not, for
@@ -541,8 +614,9 @@ walk_assignment <- function(e, scope, acc, op, pid = NA_integer_) {
 #' runs `r(x) <- v` as `` x <- `r<-`(x, value = v) ``, so the target reads
 #' `` `r<-` ``, and a call nested inside another (`names(x)` in
 #' `names(x)[i] <- nm`) reads its getter too, which R calls to get the
-#' value it then modifies. `$` and `@` read neither, as `df$col` reads no
-#' `$` elsewhere. A `pkg::f(x) <- v` head is a use of `pkg`.
+#' value it then modifies. `$` and `@` do too (`df$col <- v` reads
+#' `` `$<-` ``), and the field or slot name is never a read. A
+#' `pkg::f(x) <- v` head is a use of `pkg`.
 walk_replacement_target <- function(t, scope, acc, pid = NA_integer_, outer = TRUE) {
   if (missing_arg(t)) return(invisible())
   if (!is.call(t)) return(invisible())
@@ -553,11 +627,11 @@ walk_replacement_target <- function(t, scope, acc, pid = NA_integer_, outer = TR
   if (length(args) >= 1) {
     walk_replacement_target(args[[1]], scope, acc, safe_pid(parts$args, 1), outer = FALSE)
   }
-  if (!is.null(hname) && hname %in% c("$", "@")) return(invisible())
   if (!is.null(hname) && nzchar(hname)) {
     hpos <- pd_position(acc, parts$head)
-    record_read(acc, scope, paste0(hname, "<-"), pos = hpos)
-    if (!outer) record_read(acc, scope, hname, pos = hpos)
+    record_read(acc, scope, paste0(hname, "<-"), pos = hpos, unmasked = TRUE)
+    if (!outer) record_read(acc, scope, hname, pos = hpos, unmasked = TRUE)
+    if (hname %in% c("$", "@")) return(invisible())
   } else {
     q <- qualified_head(h)
     if (!is.null(q)) record_package(acc, q$pkg, attached = FALSE)
@@ -618,6 +692,8 @@ walk_call_args <- function(e, scope, acc, arg_pids = NULL) {
   if (is.null(arg_pids)) arg_pids <- rep(list(NA_integer_), length(args))
   nms <- names2(args)
   is_bracket_call <- identical(bare_fn, "[")
+  # `args(get)`, `?get`: the function is looked at, not called (#357).
+  looks_at_function <- !is.null(bare_fn) && bare_fn %in% function_object_heads
 
   has_data <- FALSE
   data_expr <- NULL
@@ -645,6 +721,8 @@ walk_call_args <- function(e, scope, acc, arg_pids = NULL) {
     if (is_bracket_call && is.symbol(a) && is_dotdot_prefixed_name(as.character(a))) {
       stripped <- substr(as.character(a), 3, nchar(as.character(a)))
       record_read(acc, scope, stripped, pos = pd_position(acc, arg_pids[[i]]))
+    } else if (looks_at_function && !is.null(get_family_value(a, scope))) {
+      if (is.symbol(a)) record_read(acc, scope, as.character(a), pos = pd_position(acc, arg_pids[[i]]))
     } else if (is.call(a) && is.symbol(a[[1]]) && identical(as.character(a[[1]]), "~")) {
       site <- formula_site(acc$index, acc$line, fn_display, data_text, character())
       walk_formula(a, scope, acc, has_data, site, arg_pids[[i]])

@@ -3,21 +3,22 @@
 // link pasted from the browser, #85) locks the package from GitHub, saved
 // as a github: source; Remove source sends it back to not found. The
 // notebook resolves against the toy CRAN repository and the file://
-// GitHub fixture (tests/testthat/fixtures), so nothing touches the network.
+// GitHub fixture (tests/testthat/fixtures, through githubFixtureDir()), so
+// nothing touches the network.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
+import { startServer, tempNotebook, artifactsDir, githubFixtureDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook } from "../browser.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(HERE, "..", "..", "testthat", "fixtures");
 const REPOS = {
   cran: `file://${path.join(FIXTURES, "repos", "toy")}`,
-  github: `file://${path.join(FIXTURES, "github")}`,
+  github: `file://${githubFixtureDir()}`,
   bioc_config: null,
 };
 
@@ -39,8 +40,8 @@ test("packages tab: add a GitHub source to a not-found package, fix a typo, remo
   await page.locator("tr.ember-package-row.ember-package-not_found", { hasText: "toyC" }).waitFor({ timeout: 30000 });
 
   // A refusal stays in the form, under the field.
-  await detail.getByRole("button", { name: "Add a GitHub source" }).click();
-  const input = detail.getByLabel("GitHub repository for toyC");
+  await detail.getByRole("button", { name: "Add a source" }).click();
+  const input = detail.getByLabel("Source for toyC");
   // The form focuses its field in an effect, after the click's render.
   await input.evaluate((el) => new Promise((resolve) => {
     const check = () => (el === document.activeElement ? resolve() : requestAnimationFrame(check));

@@ -74,7 +74,7 @@ test_that(".x, .y, .data and .env are never references", {
   # same as in any other function body; only the pronouns themselves are
   # never references.
   a <- read_cell("map(xs, ~ .x + .data$col + .env$k)")
-  expect_setequal(refs(a), c("map", "xs", "+"))
+  expect_setequal(refs(a), c("map", "xs", "+", "$"))
 })
 
 test_that("lm(y ~ x, , d): an empty data argument is skipped, not read", {

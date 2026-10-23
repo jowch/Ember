@@ -18,6 +18,33 @@ pluto-input .cm-editor .cm-gutters {
 pluto-input .cm-editor .cm-gutter.cm-lineNumbers {
     min-width: 34px;
 }
+/* The static code shown until a cell's editor loads (StaticCodeMirrorFaker
+   in CellInput.js) reuses CodeMirror's class names, but CodeMirror adds its
+   own styles only when the first editor is made. Without these, the gutter
+   sits above the code instead of beside it, and every cell below moves up
+   23 px when the editor replaces it (#375). Taken from CodeMirror's base
+   theme. */
+pluto-input .cm-ssr-fake .cm-scroller {
+    display: flex;
+    align-items: flex-start;
+}
+pluto-input .cm-ssr-fake .cm-gutters {
+    display: flex;
+    flex-shrink: 0;
+    min-height: 100%;
+}
+pluto-input .cm-ssr-fake .cm-content {
+    display: block;
+    flex-grow: 2;
+    flex-shrink: 1;
+    box-sizing: border-box;
+    min-height: 100%;
+    margin: 0;
+    white-space: pre-wrap;
+    white-space: break-spaces;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
 pluto-input .cm-editor .cm-lineNumbers .cm-gutterElement {
     box-sizing: border-box;
     padding: 0 10px 0 4px;
@@ -364,10 +391,59 @@ pluto-notebook.ember-empty-notebook pluto-input .cm-editor {
     box-shadow: 0 0 0 1px var(--ember-line);
 }
 
-/* The shoulder's fold eye is replaced by the menu's Hide/Show code item;
-   the element stays for Endeavor (folded.ts), just not shown. */
-pluto-shoulder > button.foldcode {
+/* The show/hide code eye (#287), where Pluto has it: in the left shoulder,
+   level with the cell's top, so it stays in place whether the code is
+   shown or hidden. It sits left of the run button, which reaches 15px into
+   the gutter at the code's top-left corner; main's margin and padding
+   (editor.css) leave 46px for both at every width. Endeavor (folded.ts)
+   reads this element, so it keeps Pluto's tag and class. The menu's
+   Hide/Show code item stays as a second way in. */
+pluto-cell > pluto-shoulder > button.foldcode {
+    position: relative;
+    top: 1px;
+    margin-right: 18px;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ember-muted);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease-in-out;
+}
+pluto-cell > pluto-shoulder > button.foldcode > span {
+    display: flex;
+}
+/* Pluto's icon is a background image on span::after; Ember's is an SVG. */
+pluto-cell > pluto-shoulder > button.foldcode > span::after {
+    content: none !important;
     display: none;
+}
+pluto-cell > pluto-shoulder > button.foldcode:hover {
+    background: var(--ember-hover);
+    color: var(--ember-text);
+}
+/* Shown when the run button and the menu are (below), and while the code is
+   hidden and the cell has focus, so a keyboard user sees the state. */
+pluto-cell:has(.cm-editor.cm-focused, div.input_context_menu[role="menu"]) > pluto-shoulder > button.foldcode,
+pluto-cell > pluto-shoulder > button.foldcode:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+@media (hover: hover) {
+    pluto-cell:hover > pluto-shoulder > button.foldcode {
+        opacity: 1;
+        pointer-events: auto;
+    }
+}
+@media (hover: none) {
+    pluto-cell:focus-within > pluto-shoulder > button.foldcode {
+        opacity: 1;
+        pointer-events: auto;
+    }
 }
 
 /* ---- Cell menu (ui-3.md "Cell menu") ----------------------------------- */
@@ -467,6 +543,14 @@ ember-chip {
     line-height: 1.5;
     animation: ember-fade-in 0.15s ease-out;
 }
+/* Chips are status, not content: dragging across a cell or
+   double-clicking near one doesn't select its text (#285). Links in a
+   chip still work. Settings and load notes stay selectable, since they
+   give advice and name settings a reader may copy. */
+ember-chip {
+    -webkit-user-select: none;
+    user-select: none;
+}
 ember-chip .ember-chip-icon {
     display: inline-flex;
     width: 12px;
@@ -529,7 +613,7 @@ pluto-cell.depends_on_disabled_cells > ember-chip {
 pluto-cell.stale {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "out" "chip" "in" "logs";
+    grid-template-areas: "out" "chip" "in" "note" "logs";
 }
 pluto-cell.stale::before {
     content: "";
@@ -553,6 +637,9 @@ pluto-cell.stale > ember-chip {
 }
 pluto-cell.stale > pluto-input {
     grid-area: in;
+}
+pluto-cell.stale > ember-settings-note.remote-replace-note {
+    grid-area: note;
 }
 pluto-cell.stale > pluto-logs-container {
     grid-area: logs;
@@ -812,6 +899,12 @@ pluto-output table.pluto-table tr.empty div {
     flex-flow: column nowrap;
     align-items: center;
 }
+/* A wide table scrolls in its own box, so the buttons under it stay put
+   and clear of an overlay scrollbar (#286). */
+.ember-table-scroll {
+    min-width: 0;
+    overflow-x: auto;
+}
 .ember-table-more {
     display: flex;
     align-self: flex-start;
@@ -968,7 +1061,10 @@ ember-log code {
     padding: 0;
 }
 pluto-log-truncated {
-    display: block;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 12px;
     font-family: var(--ember-ui-font);
     font-size: 12px;
     color: var(--ember-faint);
@@ -979,7 +1075,8 @@ pluto-log-truncated {
 pluto-editor.disable_ui button.ember-run,
 pluto-editor.disable_ui button.input_context_menu,
 pluto-editor.disable_ui ember-runtime,
-pluto-editor.disable_ui pluto-cell.not_run_yet > ember-chip {
+pluto-editor.disable_ui pluto-cell.not_run_yet > ember-chip,
+pluto-editor.disable_ui pluto-cell > ember-chip.held {
     display: none;
 }
 

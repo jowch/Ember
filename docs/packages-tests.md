@@ -129,7 +129,7 @@ In test-packages-core.R, with `drive()`:
 82. A CRAN-only notebook never fetches a Bioconductor index and carries no pin.
 83. `library(DESeq2)` fetches the three Bioconductor indexes after CRAN's, locks it as `Bioc`, pins the release in the header, and the install gets all four repositories.
 84. Removing the last Bioconductor package drops the pin.
-85. A failed Bioconductor index leaves the name `not_found` with an `index_unavailable` row, and is refetched only when the wanted set changes.
+85. A failed Bioconductor index leaves the name `not_found` with an `index_unavailable` row, shown as `lookup_failed`, and is refetched when the wanted set changes or on run (#264).
 86. A pinned release is kept on another R and flagged `bioc_r_version`; an R with no known release fetches no Bioconductor index and gets a `bioc_unavailable` row.
 87. A date move keeps Bioconductor packages at the new date's release, and fails rather than dropping them when a Bioconductor index can't be fetched.
 88. A reopened notebook with a Bioc lock fetches the Bioconductor indexes when its wanted set changes, and reports no `not_in_index`.
@@ -184,8 +184,41 @@ In test-packages-session.R:
 112. A package from a `[sources]` entry installs at the ref's commit with its CRAN dependency from the toy repo, and the cell runs.
 113. `ember::run()` installs a saved GitHub lock into a cache that never resolved it.
 
+## r-universe sources (#203)
+
+In test-universe-sources.R:
+
+123. A `universe:` spec, or a link to an r-universe or any page in it, reads as `universe:<name>` (lower case); anything else reads as GitHub's or as nothing. The lock source names the universe, the git repository, a subdirectory after `//`, and the commit, and reads back.
+124. `source_keys` keeps a locked universe commit's key while the spec is unchanged, and asks for the latest build otherwise or on refresh; `lock_for_sources` drops a universe entry whose source is gone or changed; a move to another commit is a source change.
+125. renv's record is the universe's repository while it serves the locked commit, else a GitHub record for that commit (github.com, even with a GitHub Enterprise API set), else a git record with the subdirectory; `repo_urls` names each universe the lock uses.
+126. `fetch_universe_main` on the `file://` fixture reads the latest build's JSON and saves it under both keys; a commit the universe no longer serves is read from GitHub; a missing package, a build that doesn't say its commit, and a moved commit off GitHub each stop with a message; `universe_served` and `github_install_deps` read the fixture.
+127. In the core: a universe entry is fetched with CRAN's index and the lock holds its commit; the install gets the universe's URL; a reopened notebook asks for the commit's key; update all takes the latest build and moving back keeps the commit; `set_package_source` saves a link as `universe:`; a failed lookup names the package and doesn't fall back to CRAN.
+
+In test-packages-session.R:
+
+128. A package from a `[sources]` universe entry installs from the universe's own build (its DESCRIPTION's `Repository` and `RemoteSha`) and runs; a universe whose build isn't the commit its API names gets the package installed again from GitHub at that commit (`universe_wrong_builds()`, also unit-tested); a locked commit the universe no longer serves, under the same version, installs from GitHub at that commit.
+129. **[net]** highr from yihui's universe resolves, its lock source names github.com/yihui/highr, and the installed build is the locked commit; pinned to v0.11's commit, which the universe no longer serves, `ember::run()` installs it from GitHub.
+
+## Install calls (#79)
+
+In test-install-calls.R:
+
+131. The walker reads `install_github` (with `@ref` or `ref =`), pak's forms, `install.packages()` with one r-universe besides CRAN's, and `BiocManager::install()`; the call's own package isn't one the notebook needs; one inside `if` is read but isn't top-level, one in a function is an ordinary call; a call it can't read is still one the worker skips.
+132. Two install calls giving one package different sources are a `source_conflict` on their cells, and neither is declared; the same source twice, or a call in a disabled cell, is no conflict. Declared sources are for wanted packages, match the repository's name ignoring case, and fill in a built-in source; the code wins over the header, a built-in fills only a gap, and an entry whose call is gone stays.
+133. In the core: an install call's source goes into the header and is fetched with CRAN's index; changing the call moves it, removing it keeps it; the source ops are refused for a package an install call names. The run message lists the top-level install calls, and the worker's report becomes the cell's note, with or without names.
+134. `without_install_calls()` replaces top-level install calls with `invisible(NULL)`, keeping every line where it was.
+
+In test-worker.R:
+
+135. A top-level install call doesn't run (remotes isn't installed), and the report names its packages, `""` for one it couldn't read.
+
+In test-packages-session.R:
+
+136. `install.packages("toyA")` before `library(toyA)` runs neither in the session nor in `ember::run()`: the cell shows the note and its output, and `run()` says once that the lock gives toyA.
+
 ## Network, opt-in
 
 75. **[net]** A notebook with `library(dplyr)` at a fixed past date resolves from PPM, installs with renv, and the worker loads exactly the locked versions.
 76. **[net]** (2) A Bioconductor package resolves and installs from the dated Bioconductor URL.
-77. **[net]** (3) `preview_update(nb, "dplyr", "1.1.4")` finds the date from crandb and lists the changes.
+77. **[net]** (3) `preview_update(nb, "dplyr", "1.1.4")` finds the date from CRAN's index of its files and lists the changes. Offline, the toy repo's `toy-meta` stands in for CRAN's files; the core tests cover a snapshot that lags a release.
+130. (#37) An install whose Bioconductor data packages add up to more than `ask_above` stops before downloading, with the library `"asking"` and the sizes, and installs after `approve_install()`; nothing in renv's cache is counted, and running again isn't an OK. Offline: a copy of the Bioconductor fixture with a sized GO.db tarball and the fake installer (test-packages-session.R), plus the core and `large_downloads()` tests.

@@ -392,6 +392,207 @@ test_that("drop_graph_error_results clears a stale graph-error cell before the n
   }, logical(1))))
 })
 
+test_that("running a cell into a parse error queues its dependents in autorun (#272)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1")))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(11)))
+  expect_equal(r$state$results$B$status, "ok")
+
+  r1 <- drive(r$state, ev_apply(list(op_set_code("A", "x <- (")), at(20)))
+  expect_true("A" %in% blocked_cells(r1$state$graph))
+  r2 <- drive(r1$state, ev_run("A", at(21)))
+  expect_equal(r2$replies[[1]]$skipped, "A")
+  expect_null(r2$state$results$A)
+  expect_equal(r2$replies[[1]]$queued, "B")
+  expect_equal(last_sent(r2)$cell, "B")   # after A's drop_globals
+  r3 <- drive(r2$state, wk_done(1, last_token(r2),
+                                report(status = "error", error = list(message = "object 'x' not found")), at(22)))
+  # A no longer parses, so it defines nothing and B has no edge to it: B
+  # fails with its own error, not an upstream one.
+  expect_equal(r3$state$results$B$status, "error")
+  expect_false(isTRUE(r3$state$results$B$stale))
+})
+
+test_that("running a cell into a multiple definition queues the name's readers in autorun (#272)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("y <- 2"), C = cell("x + 1")))
+  r <- boot(s, c("A", "B", "C"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(11)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(12)))
+  expect_equal(r$state$results$C$status, "ok")
+
+  r1 <- drive(r$state, ev_apply(list(op_set_code("B", "x <- 2")), at(20)))
+  r2 <- drive(r1$state, ev_run("B", at(21)))
+  expect_equal(r2$replies[[1]]$skipped, "B")
+  expect_equal(last_sent(r2)$cell, "C")
+  expect_false("C" %in% r2$state$pending)
+})
+
+test_that("running a cell into a cycle queues its readers, and drops the blocked cycle peer unsent (#272)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("y <- 2"), C = cell("x + 1")))
+  r <- boot(s, c("A", "B", "C"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(11)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(12)))
+
+  r1 <- drive(r$state, ev_apply(list(op_set_code("B", "y <- x"), op_set_code("A", "x <- y")), at(20)))
+  expect_true(all(c("A", "B") %in% blocked_cells(r1$state$graph)))
+  r2 <- drive(r1$state, ev_run("A", at(21)))
+  expect_setequal(r2$replies[[1]]$skipped, c("A", "B"))   # B is an ancestor of A now
+  expect_equal(sent_cells(r2), "C")   # B is queued as A's dependent but blocked: dropped, not sent
+  expect_false("B" %in% r2$state$pending)
+  expect_null(r2$state$results$A)
+  expect_null(r2$state$results$B)
+})
+
+test_that("running a cell into a graph error leaves its dependents stale, not queued, when lazy (#272)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell("x + 1")), on_cell_change = "lazy")
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(11)))
+
+  r1 <- drive(r$state, ev_apply(list(op_set_code("A", "x <- (")), at(20)))
+  r2 <- drive(r1$state, ev_run("A", at(21)))
+  expect_true(isTRUE(r2$state$results$B$stale))
+  expect_equal(r2$state$pending, character())
+  expect_null(last_sent(r2)$token)
+})
+
+# #315: the way out of a cycle. A and B lose their results while the cycle
+# stands; C (reads B) and D (reads A) fail with upstream errors.
+cycle_then_fixed <- function(on_cell_change = "autorun") {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- a * 2"),
+                       C = cell("b + 1"), D = cell("a")), on_cell_change = on_cell_change)
+  r <- boot(s, c("A", "B", "C", "D"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "a"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "b"), at(11)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(12)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(13)))
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "a <- b")), at(20)), ev_run("A", at(21)))
+  t <- 22
+  while (!is.null(r$state$worker$running)) {
+    r <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "not found")), at(t)))
+    t <- t + 1
+  }
+  r
+}
+
+test_that("fixing a cycle runs the peer it dropped before the cells that read it (#315)", {
+  r <- cycle_then_fixed()
+  expect_null(r$state$results$B)
+  expect_equal(r$state$results$C$error$kind, "upstream")
+  expect_equal(r$state$results$D$error$kind, "upstream")
+
+  r1 <- drive(r$state, ev_apply(list(op_set_code("A", "a <- 10")), at(30)))
+  # The edit runs nothing, but C's and D's messages blamed the cycle.
+  expect_true(isTRUE(r1$state$results$C$stale))
+  expect_true(isTRUE(r1$state$results$D$stale))
+  r2 <- drive(r1$state, ev_run("A", at(31)))
+  sent <- sent_cells(r2)
+  t <- 32
+  while (!is.null(r2$state$worker$running)) {
+    cell <- r2$state$worker$running$cell
+    created <- switch(cell, A = "a", B = "b", character())
+    r2 <- drive(r2$state, wk_done(1, last_token(r2), report(created = created), at(t)))
+    sent <- c(sent, sent_cells(r2))
+    t <- t + 1
+  }
+  expect_equal(sent[sent %in% c("A", "B", "C")], c("A", "B", "C"))
+  expect_true("D" %in% sent)
+  for (id in c("A", "B", "C", "D")) {
+    expect_equal(r2$state$results[[id]]$status, "ok")
+    expect_false(isTRUE(r2$state$results[[id]]$stale))
+  }
+})
+
+test_that("fixing a cycle by a rename marks the cells blaming it stale (#315)", {
+  for (mode in c("autorun", "lazy")) {
+    r <- cycle_then_fixed(mode)
+    r1 <- drive(r$state, ev_apply(list(op_set_code("A", "aa <- 1")), at(30)))
+    expect_true(isTRUE(r1$state$results$C$stale), info = mode)
+    expect_true(isTRUE(r1$state$results$D$stale), info = mode)
+    expect_equal(r1$state$pending, character(), info = mode)   # an edit runs nothing
+  }
+})
+
+test_that("a dependent queued in autorun runs its not-run ancestor first (#315)", {
+  # B has no result (dropped by a graph error that is now gone) while C,
+  # which reads it, does. Rerunning A queues C; B must run before it.
+  r <- cycle_then_fixed()
+  r1 <- drive(r$state, ev_apply(list(op_set_code("A", "a <- 10")), at(30)))
+  r2 <- drive(r1$state, ev_run("A", at(31)))
+  expect_true(all(c("B", "C") %in% r2$state$pending))
+  expect_equal(run_order(r2$state$graph, intersect(r2$state$pending, c("B", "C"))), c("B", "C"))
+})
+
+test_that("a draft cell never run stays not run when a dependent it would feed is queued (#315)", {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), C = cell("y + a")))
+  r <- boot(s, c("A", "C"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "a"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "object 'y' not found")), at(11)))
+  r1 <- drive(r$state, ev_apply(list(op_insert("E", 3, "y <- Sys.sleep(60)")), at(20)),
+              ev_apply(list(op_set_code("A", "a <- 2")), at(21)), ev_run("A", at(22)))
+  expect_false("E" %in% r1$state$pending)
+  sent <- sent_cells(r1)
+  t <- 23
+  while (!is.null(r1$state$worker$running)) {
+    r1 <- drive(r1$state, wk_done(1, last_token(r1), report(), at(t)))
+    sent <- c(sent, sent_cells(r1))
+    t <- t + 1
+  }
+  expect_false("E" %in% sent)
+  expect_null(r1$state$results$E)
+})
+
+test_that("a cycle peer edited after its result was dropped waits to be asked (#315)", {
+  r <- cycle_then_fixed()
+  r1 <- drive(r$state, ev_apply(list(op_set_code("A", "a <- 10"), op_set_code("B", "b <- a * 3")), at(30)),
+              ev_run("A", at(31)))
+  expect_false("B" %in% r1$state$pending)
+})
+
+test_that("submitting a cell whose graph-error result is already gone still reruns its stale dependents in autorun (#325)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), A2 = cell("z <- 9"), E = cell("x + 1"), F = cell("2")))
+  r <- boot(s, c("A", "A2", "E", "F"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "z"), at(11)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(12)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(13)))
+
+  r2 <- drive(r$state, ev_apply(list(op_set_code("A2", "x <- 2")), at(20)))
+  # Running F drops A's and A2's results, marking E stale but not queueing it.
+  r3 <- drive(r2$state, ev_run("F", at(21)))
+  r3 <- drive(r3$state, wk_done(1, last_token(r3), report(), at(22)))
+  expect_null(r3$state$results$A2)
+  expect_true(isTRUE(r3$state$results$E$stale))
+  expect_false("E" %in% r3$state$pending)
+
+  r4 <- drive(r3$state, ev_run("A2", at(23)))
+  expect_equal(last_sent(r4)$cell, "E")
+})
+
+test_that("a dependent queued by submitting a graph error runs after a cell the other definer leaves stale (#326, #176)", {
+  # D is edited to define x, which A defines: both have a graph error. E
+  # reads D's w and B's y, and B reads A's q, so B is stale once A's result
+  # goes: E must run after it, not with its old y. B doesn't read x, so it
+  # isn't one of D's dependents.
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1\nq <- 2"), B = cell("y <- q + 1"),
+                       D = cell("w <- 5"), E = cell("w + y")))
+  r <- boot(s, c("A", "B", "D", "E"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = c("x", "q")), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(11)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "w"), at(12)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(13)))
+
+  r2 <- drive(r$state, ev_apply(list(op_set_code("D", "x <- 2\nw <- 5")), at(20)))
+  r3 <- drive(r2$state, ev_run("D", at(21)))
+  expect_null(r3$state$results$A)
+  expect_null(r3$state$results$D)
+  expect_equal(last_sent(r3)$cell, "B")
+  expect_true("E" %in% r3$state$pending)
+})
+
 test_that("two definers of the same name give one upstream entry, the first in display order (ui-3 7c, fix 2)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1"), A2 = cell("x <- 2"), C = cell("x + 1")))
   r <- boot(s, "C")
@@ -537,6 +738,34 @@ test_that("a cell that changes another cell's object in place shows a note, and 
   r2 <- drive(r2$state, wk_done(1, last_token(r2), report(), at(14)))
   expect_equal(r2$state$results$B$changed_in_place, character())
   expect_null(pluto_state(r2$state)$js$cell_results$B$ember$changed_in_place)
+})
+
+test_that("a cell that reads globals by a computed name shows the can't-track note, before and after it runs (#357)", {
+  s <- fake_state(list(N = cell("nms <- c('a', 'b')"),
+                       A = cell("for (s in nms) assign(s, 1)"),
+                       B = cell("sapply(nms, function(s) get(s))"),
+                       C = cell("x <- lapply(nms, get)\neval(parse(text = 'a'))"),
+                       D = cell("get('a')")))
+  snap <- snapshot_of(s)
+  expect_equal(snap$cells$B$untracked_reads, "get")
+  expect_equal(snap$cells$C$untracked_reads, c("get", "eval"))
+  # A literal name is a reference, not an untracked read.
+  expect_equal(snap$cells$D$untracked_reads, character())
+  expect_equal(snap$cells$A$untracked_reads, character())
+  js <- pluto_state(s)$js
+  check_wire(js)
+  expect_equal(js$cell_results$B$ember$untracked_reads, as_arr("get"))
+  expect_equal(js$cell_results$C$ember$untracked_reads, as_arr(c("get", "eval")))
+  expect_null(js$cell_results$D$ember$untracked_reads)
+
+  # It comes from the code, so a run keeps it and an edit that drops the
+  # get() drops it; the page's cached projection follows the edit.
+  r <- boot(s, c("N", "A", "B", "C", "D"))
+  expect_equal(snapshot_of(r$state)$cells$B$untracked_reads, "get")
+  p1 <- pluto_state(r$state)
+  r2 <- drive(r$state, ev_apply(list(op_set_code("B", "nms")), at(20)))
+  expect_equal(snapshot_of(r2$state)$cells$B$untracked_reads, character())
+  expect_null(pluto_state(r2$state, p1)$js$cell_results$B$ember$untracked_reads)
 })
 
 test_that("a package load that resets a setting a settings cell set shows a note on the loading cell (#61)", {
@@ -893,6 +1122,27 @@ test_that("a stale restart-offer timer does nothing (59)", {
   expect_identical(r3$state, at_clock(r2$state, 11))
 })
 
+test_that("an interrupt that couldn't be delivered offers the restart at once and says so (#48)", {
+  s <- fake_state(list(S = cell(""), A = cell("Sys.sleep(30)")))
+  r <- boot(s, "A")
+  tok <- r$state$worker$running$token
+  r2 <- drive(r$state, ev_interrupt(at(10)))
+  r3 <- drive(r2$state, wk_interrupt_failed(1, at(10.1)))
+  expect_true(r3$state$worker$restart_offered)
+  expect_true(r3$state$worker$interrupt$failed)
+  expect_true(snapshot_of(r3$state)$interrupt_failed)
+
+  # From an older worker, or once the run is over, it does nothing.
+  expect_identical(drive(r2$state, wk_interrupt_failed(2, at(10.1)))$state, at_clock(r2$state, 10.1))
+  r4 <- drive(r2$state, wk_done(1, tok, report(status = "interrupted"), at(10.1)))
+  expect_identical(drive(r4$state, wk_interrupt_failed(1, at(10.2)))$state, at_clock(r4$state, 10.2))
+
+  # The run ending clears it with the offer.
+  r5 <- drive(r3$state, wk_done(1, tok, report(status = "interrupted"), at(12)))
+  expect_false(r5$state$worker$restart_offered)
+  expect_false(snapshot_of(r5$state)$interrupt_failed)
+})
+
 test_that("restart leaves every cell not run (60)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1")))
   r <- boot(s, "A")
@@ -993,6 +1243,19 @@ test_that("running all of a 2000-cell chain grows about linearly, not with the s
   # Backstop: about 0.25 s on a cloud container.
   expect_lt(r$a, 5)
   expect_equal(length(step(big, ev_run(NULL, at(1)))$reply$skipped), 0)
+})
+
+test_that("rerunning a chain marks each cell's dependents stale in linear time, not square (#316)", {
+  # Every cell that starts marks all later cells stale again. The walk
+  # looked names up in growing vectors and `union()`ed one cell at a time,
+  # so one step grew with the square of the chain: about 20x from 250 to
+  # 2000 cells (1 s a step at 2000), against about 7x now. Timed against
+  # the smaller chain rather than a fixed budget (helper-perf.R).
+  done <- function(r) function() step(r$state, perf_done(r))
+  r <- time_ratio(done(perf_chain_rerun(2000)), done(perf_chain_rerun(250)), samples = 5L, inner_b = 4L)
+  cat(sprintf("\n[timing] a step during a chain rerun: 2000 cells %.1f ms, 250 cells %.1f ms (%.1fx)\n",
+              1000 * r$a, 1000 * r$b, r$ratio))
+  expect_lt(r$ratio, 12)
 })
 
 test_that("requesting a dependent re-queues its failed ancestor; it runs once the ancestor fails again (ui-3 3)", {
@@ -1351,13 +1614,13 @@ test_that("an off cell has no variables in its view, even though its result keep
   expect_equal(cell_view(r2$state, ctx, va)$variables, list())
 })
 
-test_that("reduce_render() with NULL width and height sends render {cell, res} without those fields (ui-3 66)", {
+test_that("reduce_render() sends render {cell, res} with no width or height (ui-3 66)", {
   s <- fake_state(list(S = cell(""), A = cell("plot(1)")))
   out <- new_display("image/png", "bytes", "[plot]", size = list(width = 1440, height = 960, res = 192))
   r <- boot(s, "A")
   r <- drive(r$state, wk_done(1, last_token(r), report(output = out), at(10)))
 
-  r2 <- drive(r$state, ev_render("A", NULL, NULL, at(11), res = 288))
+  r2 <- drive(r$state, ev_render("A", at(11), res = 288))
   msg <- last_sent(r2)
   expect_equal(msg$type, "render")
   expect_equal(msg$cell, "A")
@@ -2060,6 +2323,81 @@ test_that("after a failed install, a cell waiting on the package runs instead of
   err <- r2$state$results$A$error
   expect_equal(err$kind, "missing_package")
   expect_equal(err$message, "there is no package called 'cli': install failed")
+})
+
+# ---- A package the error names but the code doesn't (#184) -----------------
+
+# A state whose CRAN index has glmnet, textdata, dplyr and MASS, with dplyr
+# installed in the notebook's library and MASS in R's own.
+named_state <- function(cells = list(A = cell("x <- 1"))) {
+  s <- fake_state(cells)
+  idx <- new_repo_index("cran/2026-09-01", "CRAN", c("glmnet", "textdata", "dplyr", "MASS", "lexicon2"),
+                        rep("1.0", 5), rep(list(character()), 5), rep(FALSE, 5))
+  s$packages$indexes[["cran/2026-09-01"]] <- new_index_slot("ready", index = idx)
+  s$packages$active$installed <- c(dplyr = "1.1.4")
+  s
+}
+
+test_that("a message saying a package is needed offers to add it, and only then (#184)", {
+  s <- named_state()
+  # parsnip's set_engine("glmnet"), and tidytext's get_sentiments("afinn").
+  # As parsnip's message reads in the worker, which turns cli's colours on (trial 5).
+  expect_equal(packages_named_in(s, "Package install is required for \033[34mglmnet\033[39m."), "glmnet")
+  # Without the colours nothing marks it as a package.
+  expect_equal(packages_named_in(s, "Package install is required for glmnet."), character())
+  expect_equal(packages_named_in(s, "The textdata package is required to download the AFINN lexicon."), "textdata")
+  # Installed: in the notebook's library, or R's own (MASS is recommended).
+  expect_equal(packages_named_in(s, "The dplyr package is required."), character())
+  expect_equal(packages_named_in(s, "The MASS package is required."), character())
+  # "package" next to a word that is no package, or a name in the index without "package".
+  expect_equal(packages_named_in(s, "could not find the package lexicon"), character())
+  expect_equal(packages_named_in(s, "object 'glmnet' not found"), character())
+  # Part of a longer word or name.
+  expect_equal(packages_named_in(s, "the packages 'glmnet2' and 'glmnet_cv' and 'my.glmnet' are required"), character())
+  # Ordinary words that are CRAN packages ("not", "here") count only where the
+  # message marks them as one.
+  n <- named_state()
+  idx <- n$packages$indexes[["cran/2026-09-01"]]$index
+  n$packages$indexes[["cran/2026-09-01"]]$index <- new_repo_index("cran/2026-09-01", "CRAN",
+    c(idx$name, "not", "here", "and"), c(idx$version, "1", "1", "1"), c(idx$deps, list(character(), character(), character())),
+    c(idx$needs_compilation, FALSE, FALSE, FALSE))
+  expect_equal(packages_named_in(n, "Package 'glmnet' is not installed."), "glmnet")
+  expect_equal(packages_named_in(n, "Package \u2018glmnet\u2019 and its friends are not installed here."), "glmnet")
+  expect_equal(packages_named_in(n, "No package here and not now."), character())
+  # A word before "package" counts only when nothing is quoted ("optional" is on CRAN).
+  n$packages$indexes[["cran/2026-09-01"]]$index <- new_repo_index("cran/2026-09-01", "CRAN",
+    c(idx$name, "not", "here", "and", "optional", "ranger"), c(idx$version, rep("1", 5)),
+    c(idx$deps, rep(list(character()), 5)), c(idx$needs_compilation, rep(FALSE, 5)))
+  expect_equal(packages_named_in(n, "The optional package \"ranger\" is required."), "ranger")
+  expect_equal(packages_named_in(n, "The ranger package is required."), "ranger")
+  # rlang's message for check_installed(c("glmnet", "rlang"), version = c(NA, "99.0")):
+  # the worker names neither, and the quoted glmnet still gets its fix.
+  expect_equal(packages_named_in(n, "The packages \"glmnet\" and \"rlang\" (>= 99.0) are required."), "glmnet")
+  # Translated: no match, no fix.
+  expect_equal(packages_named_in(s, "Le paquet glmnet est requis."), character())
+  # Already named in the code: adding it again would do nothing.
+  w <- named_state(list(A = cell("library(glmnet)")))
+  expect_equal(packages_named_in(w, "Package install is required for glmnet."), character())
+
+  # Through a run: the error keeps its kind and text, with the fix added.
+  r <- drive(s, ev_run("A", at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(), at(3)))
+  r <- drive(r$state, wk_done(r$state$worker$gen, r$state$worker$running$token, report(
+    error = list(message = "Package install is required for \033[34mglmnet\033[39m.")), at(4)))
+  err <- r$state$results$A$error
+  expect_equal(err$kind, "error")
+  expect_equal(err$message, "Package install is required for \033[34mglmnet\033[39m.")
+  expect_equal(err$fixes, "Add glmnet to [extra_packages]")
+})
+
+test_that("rlang's check_installed() error is a missing package, with each one's fix (#184)", {
+  s <- named_state()
+  r <- drive(s, ev_run("A", at(1)), wk_started(1, 99, at(2)), wk_hello(1, list(), at(3)))
+  r <- drive(r$state, wk_done(r$state$worker$gen, r$state$worker$running$token, report(
+    error = list(message = "The packages \"glmnet\" and \"textdata\" are required.", package = c("glmnet", "textdata"))), at(4)))
+  err <- r$state$results$A$error
+  expect_equal(err$kind, "missing_package")
+  expect_equal(err$names, c("glmnet", "textdata"))
+  expect_equal(err$fixes, c("Add glmnet to [extra_packages]", "Add textdata to [extra_packages]"))
 })
 
 test_that("while a package installs, a cell calling its functions waits for it instead of failing first (#67)", {

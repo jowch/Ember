@@ -90,8 +90,13 @@ for (const offlineBundle of [false, true]) {
     // file://), and MD's fenced block is tagged "language-r" by the R
     // grammar's markdown embedding (CellOutput.js switched this from
     // "language-julia"), not left generic or wrong.
-    const dfSpans = await page.locator(`${cellSelector("DF")} .cm-content span[class]`).count();
-    assert.ok(dfSpans > 0, "expected the DF cell's code to have highlighted spans");
+    // A cell first shows a static fake editor (.cm-ssr-fake, no highlighting);
+    // the real one replaces it when the cell scrolls into view, which can be
+    // after TBL's table shows. So wait for the real editor's spans rather than
+    // count them once (#340).
+    await page.locator(cellSelector("DF")).scrollIntoViewIfNeeded();
+    await page.locator(`${cellSelector("DF")} .cm-editor:not(.cm-ssr-fake) .cm-content span[class]`).first().waitFor({ timeout: 20000 })
+      .catch(() => assert.fail("expected the DF cell's code to have highlighted spans"));
     const mdCodeClass = await page.locator(`${cellSelector("MD")} pre code`).first().getAttribute("class");
     assert.match(mdCodeClass, /\blanguage-r\b/);
 
@@ -131,6 +136,33 @@ test("export: an htmlwidget's dependency files are inlined and run (20)", {
   await page.waitForFunction(
     () => document.querySelector("#widget-marker")?.textContent === "widget-ran",
     null, { timeout: 20000 });
+
+  assertNoProblems(page);
+  await page.close();
+});
+
+// #122: a notebook exported while still in safe preview keeps
+// `process_waiting_for_permission` in its state, but the exported page is
+// static and can't run anything, so it shows no safe-preview banner.
+test("export: a notebook exported in safe preview shows no safe-preview banner", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "export-safe-preview.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const livePage = await newPage(browser);
+  const id = await openNotebook(livePage, server.origin, server.secret, notebook);
+  await livePage.waitForSelector("#ember-safe-preview button", { timeout: 20000 });
+  await livePage.close();
+
+  const html = await fetchExport(server, id);
+  const file = saveExport(html, "safe-preview-export.html");
+
+  const page = await openFileOffline(browser, file);
+  await page.waitForSelector("pluto-cell", { timeout: 20000 });
+  // The flag the banner used to key on is still in the exported state.
+  assert.equal(await page.evaluate(() => window.editor_state.notebook.process_status), "waiting_for_permission");
+  assert.equal(await page.locator("#ember-safe-preview").count(), 0, "a static export shows no safe-preview banner");
 
   assertNoProblems(page);
   await page.close();

@@ -19,21 +19,22 @@ fuzz_steps <- function() {
   if (nzchar(s)) as.integer(s) else 12L
 }
 
-# Known failures, by mode and seed (at the default 12 steps), one or more
+# Known failures, by mode and seed (at the default 12 steps; "conflicts"
+# first for the tests with edits that break the code), one or more
 # per open issue: each must still fail at its step for its recorded reason,
 # so a fix shows up here as a failure until its entry is removed, and any
 # other failure is new. Their seeds run along with fuzz_seeds(). A known
 # trace stops at its failure, so its later steps aren't checked.
-fuzz_known <- list(
-  "lazy 8" = list(issue = 175, step = 4L, kind = "_ shows ok but running from scratch gives error"),
-  "autorun 10" = list(issue = 175, step = 8L, kind = "_ shows _ but running from scratch gives _"),
-  "lazy 30" = list(issue = 174, step = 5L, kind = "after running every cell, _ isn't fresh"),
-  "autorun 31" = list(issue = 176, step = 3L, kind = "_ isn't stale but reads from _, which is")
-)
+# None is open now; entries look like
+#   "lazy 30" = list(issue = 174, step = 5L, kind = "after running every cell, _ isn't fresh")
+#   "conflicts autorun 1" = list(issue = 272, step = 6L, kind = "after submitting _ with a graph error in autorun, its dependent _ isn't fresh")
+fuzz_known <- list()
 
 known_seeds <- function(mode) {
-  keys <- strsplit(names(fuzz_known), " ")
-  as.integer(vapply(Filter(function(k) identical(k[1], mode), keys), `[`, "", 2))
+  keys <- as.character(names(fuzz_known))
+  prefix <- paste0(mode, " ")
+  keys <- keys[startsWith(keys, prefix) & !grepl(" ", substring(keys, nchar(prefix) + 1))]
+  as.integer(substring(keys, nchar(prefix) + 1))
 }
 
 expect_known_failure <- function(trace, known) {
@@ -72,3 +73,56 @@ for (mode in c("autorun", "lazy")) {
     }
   })
 }
+
+# The same, with edits that break the code too: a name defined in two cells,
+# a cycle, a parse error, a cell reading its own variable, and undoing them.
+# Each step is one edit, run as submitted. A cell that can't run must show
+# a graph error, and everything else is checked as above. Known failures
+# here are keyed "conflicts <mode> <seed>".
+for (mode in c("autorun", "lazy")) {
+  test_that(paste("random edits that break the code match a run from scratch,", mode, "mode"), {
+    for (seed in union(fuzz_seeds(), known_seeds(paste("conflicts", mode)))) {
+      trace <- fuzz_trace(seed, mode, steps = fuzz_steps(), conflicts = TRUE)
+      known <- fuzz_known[[paste("conflicts", mode, seed)]]
+      if (!is.null(known) && fuzz_steps() >= known$step) expect_known_failure(trace, known)
+      else expect_trace_passes(trace)
+    }
+  })
+}
+
+# Regression tests: shrunk traces of what the random runs found.
+
+test_that("autorun runs a queued dependent's stale ancestors first (#176)", {
+  expect_trace_passes(list(mode = "autorun",
+    cells = list(C1 = "v1 <- 1", C2 = "v2 <- v1 + 1", C3 = "v3 <- 10", C4 = "v2 + v3"),
+    steps = list(list(ops = list(), run = "all"),
+                 list(ops = list(list(op = "delete", cell = "C1"),
+                                 list(op = "set_code", cell = "C3", code = "v3 <- 20")), run = "C3"))))
+})
+
+test_that("a staged edit that drops a reference or a definition doesn't hide staleness (#175)", {
+  staged <- function(mode, code) list(mode = mode,
+    cells = list(C1 = "v1 <- 1", C2 = "v2 <- v1 + 1", C3 = "v2 * 10"),
+    steps = list(list(ops = list(), run = "all"),
+                 list(ops = list(list(op = "set_code", cell = "C2", code = code),
+                                 list(op = "set_code", cell = "C1", code = "v1 <- 2")), run = "C1")))
+  for (mode in c("autorun", "lazy")) {
+    expect_trace_passes(staged(mode, "v2 <- 5"))        # drops the reference to v1
+    expect_trace_passes(staged(mode, "v3 <- v1 + 1"))   # drops the definition of v2
+  }
+})
+
+test_that("a cell edited since it ran goes before what read its old code (#174)", {
+  for (mode in c("autorun", "lazy")) {
+    # Run all after a rename: the old reader comes first in the file.
+    expect_trace_passes(list(mode = mode,
+      cells = list(C2 = "v2 <- v1 + 1", C1 = "v1 <- 1", C3 = "v2 * 10"),
+      steps = list(list(ops = list(), run = "all"),
+                   list(ops = list(list(op = "set_code", cell = "C1", code = "v4 <- 1")), run = "all"))))
+    # A hand run that pulls in an edited ancestor the file puts after it.
+    expect_trace_passes(list(mode = mode,
+      cells = list(C1 = "v4 <- 1", C5 = "v7 <- (5 + 1 * v6) %% 997", C4 = "v6 <- (36 + 1 * v4) %% 997"),
+      steps = list(list(ops = list(), run = "all"),
+                   list(ops = list(list(op = "set_code", cell = "C4", code = "v11 <- (36 + 1 * v4) %% 997")), run = "C5"))))
+  }
+})

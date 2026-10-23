@@ -250,7 +250,7 @@ parse_header_block <- function(lines) {
         # saves it, so the next save writes "github:user/repo" (#85). Any
         # other value stays as written: a bare "user/repo" is not the
         # header's form, and source_problems() names what it can't read.
-        sources[key] <- (if (is_github_link(val)) github_spec(val)) %||% val
+        sources[key] <- (if (is_source_link(val)) source_spec(val)) %||% val
       } else if (key %in% names(known)) {
         known[[key]] <- val
       } else {
@@ -355,6 +355,34 @@ cell_figure_size <- function(code) {
     i <- i + 1L
   }
   out
+}
+
+#' The text alternative a cell gives its plot with Quarto's comment lines:
+#' `fig-alt`, or failing that `fig-cap` (knitr's `fig.alt`/`fig.cap` too),
+#' read from the same run of `#|` lines at the top of the cell as
+#' cell_figure_size(). A value may be quoted. NULL when the cell gives
+#' neither; the page then says "Plot" (#294).
+#' @return a string, or NULL.
+cell_figure_alt <- function(code) {
+  lines <- strsplit(code, "\n", fixed = TRUE)[[1]]
+  n <- length(lines)
+  i <- 1L
+  while (i <= n && !nzchar(trimws(lines[[i]]))) i <- i + 1L
+  found <- list()
+  while (i <= n && grepl("^#\\|", lines[[i]])) {
+    m <- regmatches(lines[[i]],
+                    regexec("^#\\|\\s*fig[-.](alt|cap)\\s*:\\s*(.*?)\\s*$", lines[[i]], perl = TRUE))[[1]]
+    if (length(m) == 3) {
+      value <- m[[3]]
+      if (grepl('^"[^"]*"$', value) || grepl("^'[^']*'$", value)) {
+        value <- substr(value, 2, nchar(value) - 1)
+      }
+      value <- trimws(value)
+      if (nzchar(value) && is.null(found[[m[[2]]]])) found[[m[[2]]]] <- value
+    }
+    i <- i + 1L
+  }
+  found$alt %||% found$cap
 }
 
 #' Resolve the display order, fold state, and the `disabled`/`commented`

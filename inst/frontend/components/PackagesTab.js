@@ -231,6 +231,60 @@ const InstallFailureCard = ({ card, rows, r_version, log, show_command }) => {
 }
 
 /**
+ * The line under "Installing..." when packages build from source for want
+ * of a binary for this R (#19, `source_only_packages()`, R/install-checks.R).
+ * It doesn't stop the install: pure R packages build fine. If one doesn't,
+ * the failure card says why, with the same Update.
+ *
+ * @param {Array<{ package: string, version: string }>} packages
+ * @param {string?} r_version
+ */
+const no_binary_notice = (packages, r_version) =>
+    t("t_ember_install_no_binary", {
+        count: packages.length,
+        packages: name_list(packages.map((p) => `${p.package} ${p.version}`)),
+        r_version: r_version ?? "",
+    })
+
+/** A byte count in words: "2.1 GB", "640 MB", "25 MB", "2 kB". */
+export const size_words = (/** @type {number} */ bytes) =>
+    bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : bytes >= 1e6 ? `${Math.round(bytes / 1e6)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} kB`
+
+/**
+ * The card an install shows when it stopped before a large download
+ * (#37): the total, the largest packages, and Install, which says yes
+ * (`ember_approve_install`, server.R). Until then the cells that use them
+ * wait; removing the package from the code is the way to say no.
+ *
+ * @param {{ download: { bytes: number, packages: Array<{ package: string, version: string, bytes: number? }> } }} props
+ */
+const LargeDownloadCard = ({ download }) => {
+    const pluto_actions = useContext(PlutoActionsContext)
+    const named = download.packages.slice(0, MAX_NAMES).map((p) => (p.bytes != null ? `${p.package} (${size_words(p.bytes)})` : p.package))
+    const rest = download.packages.length - named.length
+    return html`
+        <div class="ember-install-ask-card">
+            <p class="ember-install-failure-title">${t("t_ember_install_ask_title", { size: size_words(download.bytes) })}</p>
+            <p class="ember-install-failure-sentence">
+                ${t("t_ember_install_ask_sentence", {
+                    packages: rest > 0 ? `${named.join(", ")}, ${t("t_ember_install_failed_more", { count: rest })}` : named.join(", "),
+                })}
+            </p>
+            <div class="ember-install-failure-actions">
+                <button type="button" class="ember-btn primary" onClick=${() => pluto_actions.ember_approve_install()}>${t("t_ember_install_ask_install")}</button>
+            </div>
+        </div>
+    `
+}
+
+/** One locked package a step back changes (#311): "name from → to", or
+ * one it no longer needs. The packages it adds aren't listed: they are
+ * what the user asked for, and for a Bioconductor package that is a long
+ * list of dependencies. */
+const step_back_change = (c) =>
+    c.to != null ? `${c.name} ${c.from} → ${c.to}` : t("t_ember_packages_step_back_dropped", { name: c.name, version: c.from })
+
+/**
  * The header's Update button and, once `update` fills in, what it found:
  * "Checking…" while fetching, the in-tab restart question when applying
  * would restart a loaded package (the engine applies the update itself
@@ -243,6 +297,11 @@ const InstallFailureCard = ({ card, rows, r_version, log, show_command }) => {
  * just clicked Update like nothing happened. `justFinished` tracks that
  * transition locally and shows a short "Already up to date" note for it,
  * unless the library went on to install something (a real update).
+ *
+ * The same place asks about a step back (`update.back`, #311): the
+ * notebook's date isn't published for Bioconductor yet, and the newest
+ * date that is would change a locked version. Ember moves back on its own
+ * when nothing locked would change, so this shows only then.
  *
  * @param {{ update: import("./Editor.js").EmberPackagesUpdate?, library_status: string }} props
  */
@@ -287,6 +346,26 @@ const PackagesUpdate = ({ update, library_status }) => {
                 ? html`<span class="ember-packages-update-failed"
                       >${t("t_ember_packages_update_failed", { reason: update.message ?? "" })}</span
                   >`
+                : update.back != null
+                ? html`<div class="ember-packages-update-question">
+                      <p>
+                          ${t("t_ember_packages_step_back_question", {
+                              from: update.back.from,
+                              date: update.date,
+                              changes: update.back.changes
+                                  .filter((c) => c.from != null)
+                                  .map(step_back_change)
+                                  .join(", "),
+                          })}
+                          ${update.restart.length > 0
+                              ? " " + t("t_ember_packages_step_back_restart", { names: update.restart.join(", ") })
+                              : ""}
+                      </p>
+                      <button type="button" class="ember-btn primary" onClick=${() => pluto_actions.ember_apply_update(update.date)}>
+                          ${t("t_ember_packages_step_back_apply", { date: update.date })}
+                      </button>
+                      <button type="button" class="ember-btn" onClick=${() => pluto_actions.ember_cancel_update()}>${t("t_cancel")}</button>
+                  </div>`
                 : update.restart.length > 0
                 ? html`<div class="ember-packages-update-question">
                       <p>${t("t_ember_packages_update_restart_question", { names: update.restart.join(", ") })}</p>
@@ -305,7 +384,7 @@ const PackagesUpdate = ({ update, library_status }) => {
 const PackageStatus = ({ row }) => {
     const text = t(`t_ember_packages_status_${row.status}`)
     if (row.status === "installed") return html`<span class="ember-pill ember-pill-accent">${text}</span>`
-    if (row.status === "failed" || row.status === "not_found" || row.status === "source_failed") {
+    if (row.status === "failed" || row.status === "not_found" || row.status === "lookup_failed" || row.status === "source_failed") {
         return html`<span class="ember-pill ember-pill-red">${text}</span>`
     }
     if (row.status === "installing" || row.status === "looking_up") {
@@ -319,15 +398,21 @@ const PackageStatus = ({ row }) => {
 
 /**
  * Where a package from the header's `[sources]` comes from, under its
- * version: "GitHub lab/mypkg@3f2a1c9". Its version isn't the snapshot
- * date's, so the date above the table doesn't speak for it; this label is
- * design.md's "marked unchecked", and its tooltip says so.
+ * version: "GitHub lab/mypkg@3f2a1c9", or "r-universe jowch@b56942e" for
+ * a universe's build. Its version isn't the snapshot date's, so the date
+ * above the table doesn't speak for it; this label is design.md's "marked
+ * unchecked", and its tooltip says so.
  * @param {string?} source  the lock's source, "github:<user>/<repo>@<sha>"
+ *   or "universe:<name>/<host>/<path>[//<subdir>]@<sha>"
  */
 const github_source_label = (source) => {
     const m = /^github:([^@]+)@(.+)$/.exec(source ?? "")
-    if (m == null) return null
-    return html`<div class="ember-package-source" title=${t("t_ember_packages_from_github_unchecked", { source })}>${t("t_ember_packages_from_github", { repo: `${m[1]}@${m[2].slice(0, 7)}` })}</div>`
+    if (m != null) {
+        return html`<div class="ember-package-source" title=${t("t_ember_packages_from_github_unchecked", { source })}>${t("t_ember_packages_from_github", { repo: `${m[1]}@${m[2].slice(0, 7)}` })}</div>`
+    }
+    const u = /^universe:([^/]+)\/.*@([0-9a-f]+)$/.exec(source ?? "")
+    if (u == null) return null
+    return html`<div class="ember-package-source" title=${t("t_ember_packages_from_universe_unchecked", { source })}>${t("t_ember_packages_from_universe", { universe: u[1], sha: u[2].slice(0, 7) })}</div>`
 }
 
 /** A `[sources]` spec as the form shows it and takes it: "user/repo[@ref]". */
@@ -418,7 +503,7 @@ const SourceDetail = ({ row, read_only }) => {
     const [removing, set_removing] = useState(false)
     const has_spec = row.spec != null
     const failed_message = has_spec && row.message != null ? row.message : null
-    if (!has_spec && row.status !== "not_found") return null
+    if (!has_spec && row.status !== "not_found" && row.status !== "lookup_failed") return null
     if (read_only && failed_message == null) return null
 
     return html`
@@ -626,7 +711,13 @@ export const PackagesTab = ({ packages, read_only = false }) => {
                       ${library.message != null && library.failures.length === 0
                           ? html`<br /><span class="ember-packages-library-message">${library.message}</span>`
                           : null}
+                      ${library.status === "installing" && library.no_binary != null && library.no_binary.length > 0
+                          ? html`<br /><span class="ember-packages-library-message ember-packages-no-binary">${no_binary_notice(library.no_binary, r_version)}</span>`
+                          : null}
                   </p>`}
+            ${library.status === "asking" && library.download != null
+                ? html`<div class="ember-install-failure-cards"><${LargeDownloadCard} download=${library.download} /></div>`
+                : null}
             ${cards.length === 0
                 ? null
                 : html`<div class="ember-install-failure-cards">

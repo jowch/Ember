@@ -832,7 +832,8 @@ on_run <- function(server, cl, hub, req) {
 #' `list(error = <stderr, else failure>)` when it fails or `ok()` returns
 #' NULL. Polled with `later`, so the server never blocks. Both pipes are
 #' drained while it runs, so a child that writes more than a pipe buffer
-#' can't block on a full stderr.
+#' can't block on a full stderr. A failure is logged too, with the exit
+#' status, since the page only says it failed (#327).
 answer_from_subprocess <- function(cmd, answer, ok, failure) {
   proc <- tryCatch(job_process(cmd, stderr = "|"), error = function(e) e)
   if (inherits(proc, "error")) return(answer(list(error = conditionMessage(proc))))
@@ -844,8 +845,13 @@ answer_from_subprocess <- function(cmd, answer, ok, failure) {
     out <<- paste0(out, tryCatch(proc$read_all_output(), error = function(e) ""))
     err <<- paste0(err, tryCatch(proc$read_all_error(), error = function(e) ""))
     parsed <- tryCatch(jsonlite::fromJSON(out), error = function(e) NULL)
-    message <- if (identical(proc$get_exit_status(), 0L) && is.list(parsed)) ok(parsed)
-    answer(message %||% list(error = if (nzchar(err)) err else failure))
+    status <- proc$get_exit_status()
+    reply <- if (identical(status, 0L) && is.list(parsed)) ok(parsed)
+    if (is.null(reply)) {
+      message("ember: ", failure, " (exit status ", status, ")", if (nzchar(err)) paste0(": ", trimws(err)))
+      reply <- list(error = if (nzchar(err)) err else failure)
+    }
+    answer(reply)
   }
   later::later(poll, 0.1)
   invisible(NULL)
@@ -881,6 +887,7 @@ answer_from_subprocess <- function(cmd, answer, ok, failure) {
 #' | ember_update_packages          | dispatch ev_preview_date(today, apply = TRUE); flush. No reply       |
 #' | ember_apply_update             | {date}: set_date(hub$nb, date); a refusal is logged. Flush. No reply |
 #' | ember_cancel_update            | dispatch ev_cancel_preview(); flush. No reply                        |
+#' | ember_approve_install          | the large-download card's Install (#37): dispatch ev_approve_install() (refused when nothing waits); flush. No reply |
 #' | ember_set_package_source       | {name, source}: edit_notebook(set_package_source()); reply {ok} or {error}; flush |
 #' | ember_remove_package_source    | {name}: edit_notebook(remove_package_source()); reply {ok} or {error}; flush |
 #' | ember_disk_use                 | {}: measure disk use of the notebook's cache dir in a subprocess (disk_use()); reply {libraries, cache, indexes, exact} or {error} when it exits (#38) |
@@ -1079,7 +1086,7 @@ handlers <- list(
     res <- as.integer(b$res %||% 96L)
     if (is.na(res)) return(invisible(NULL))
     res <- clamp(res, 72L, 384L)
-    dispatch(hub$nb, ev_render(cell, NULL, NULL, at = Sys.time(), res = res))
+    dispatch(hub$nb, ev_render(cell, at = Sys.time(), res = res))
     flush_clients(server, hub)
   },
 
@@ -1243,6 +1250,15 @@ handlers <- list(
   ember_cancel_update = function(server, cl, hub, req) {
     if (is.null(hub)) return(invisible(NULL))
     dispatch(hub$nb, ev_cancel_preview(at = Sys.time()))
+    flush_clients(server, hub)
+  },
+
+  #' The large-download card's Install (#37): the user's OK, after which
+  #' the install runs without stopping again. A refusal (nothing waiting,
+  #' as when a second page clicked first) changes nothing.
+  ember_approve_install = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    dispatch(hub$nb, ev_approve_install(at = Sys.time()))
     flush_clients(server, hub)
   },
 
@@ -1770,12 +1786,16 @@ http_notebookfile <- function(server, req) {
            list("Content-Disposition" = sprintf('inline; filename="%s"', basename(state$path))))
 }
 
-#' `GET /notebookexport?id=` -> a static HTML export (export_html()).
+#' `GET /notebookexport?id=` -> a static HTML export (export_html()), named
+#' after the notebook (`analysis.R` downloads as `analysis.html`).
 http_notebookexport <- function(server, req) {
   q <- parse_query_string(req$QUERY_STRING)
   hub <- if (!is.null(q$id)) mget(q$id, envir = server$hubs, ifnotfound = list(NULL))[[1]] else NULL
   if (is.null(hub)) return(http_text(404L, NOT_OPEN_TEXT))
-  http_text(200L, export_html(notebook_state(hub$nb)), "text/html; charset=utf-8")
+  state <- notebook_state(hub$nb)
+  name <- paste0(tools::file_path_sans_ext(basename(state$path)), ".html")
+  http_text(200L, export_html(state), "text/html; charset=utf-8",
+           list("Content-Disposition" = sprintf('inline; filename="%s"', name)))
 }
 
 #' `GET /` -> start.html, Ember's own start page: a "My notebooks" list

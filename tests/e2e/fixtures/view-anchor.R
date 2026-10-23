@@ -1,0 +1,105 @@
+### An Ember notebook ###
+# /// environment
+# ember_version = "0.0.0.9000"
+# r_version = "4.6.1"
+# snapshot = "2026-01-01"
+# ///
+
+# %% id=C01
+cat(paste('line', 1:3), sep = '\n')
+
+# %% id=C02
+data.frame(line = 1:4)
+
+# %% id=C03
+cat(paste('line', 1:5), sep = '\n')
+
+# %% id=C04
+data.frame(line = 1:6)
+
+# %% id=C05
+cat(paste('line', 1:3), sep = '\n')
+
+# %% id=C06
+data.frame(line = 1:4)
+
+# %% id=C07
+cat(paste('line', 1:5), sep = '\n')
+
+# %% id=C08
+data.frame(line = 1:6)
+
+# %% id=C09
+cat(paste('line', 1:3), sep = '\n')
+
+# %% id=C10
+data.frame(line = 1:4)
+
+# %% id=C11
+cat(paste('line', 1:5), sep = '\n')
+
+# %% id=C12
+data.frame(line = 1:6)
+
+# %% id=C13
+cat(paste('line', 1:3), sep = '\n')
+
+# %% id=C14
+data.frame(line = 1:4)
+
+# %% id=C15
+cat(paste('line', 1:5), sep = '\n')
+
+# %% id=C16
+data.frame(line = 1:6)
+
+# %% id=C17
+cat(paste('line', 1:3), sep = '\n')
+
+# %% id=C18
+data.frame(line = 1:4)
+
+# %% id=C19
+cat(paste('line', 1:5), sep = '\n')
+
+# %% id=C20
+data.frame(line = 1:6)
+
+# %% id=C21
+cat(paste('line', 1:3), sep = '\n')
+
+# %% id=C22
+data.frame(line = 1:4)
+
+# %% id=C23
+cat(paste('line', 1:5), sep = '\n')
+
+# %% id=C24
+data.frame(line = 1:6)
+
+# /// cell order
+# C01
+# C02
+# C03
+# C04
+# C05
+# C06
+# C07
+# C08
+# C09
+# C10
+# C11
+# C12
+# C13
+# C14
+# C15
+# C16
+# C17
+# C18
+# C19
+# C20
+# C21
+# C22
+# C23
+# C24
+# ///

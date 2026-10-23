@@ -33,6 +33,11 @@ const set_signature_tooltip = StateEffect.define()
 const signature_tooltip_field = StateField.define({
     create: () => null,
     update(value, tr) {
+        // The anchor follows edits until the debounced recompute moves it
+        // or closes it. Unmapped, an edit that shortens the code (select
+        // all and type) leaves it past the end of the document, and
+        // CodeMirror's next measure of the tooltip throws (#314).
+        if (value != null && tr.docChanged) value = { ...value, pos: tr.changes.mapPos(value.pos) }
         for (let e of tr.effects) if (e.is(set_signature_tooltip)) value = e.value
         return value
     },
@@ -95,8 +100,12 @@ export function signature_hint({ request_signature }) {
             request_signature({ name: call.name, package: call.package })
                 .then((text) => {
                     if (call.package != null && text != null) cache.set(key, text)
-                    if (!view.hasFocus) return
-                    if (last_key === key) dispatch_tooltip(view, call.pos, text)
+                    if (!view.hasFocus || last_key !== key) return
+                    // The code may have changed while the request was out,
+                    // and `call.pos` with it: anchor at the call as it is now.
+                    let now = call_at_cursor(view.state)
+                    if (now == null || `${now.package ?? ""}::${now.name}` !== key) return
+                    dispatch_tooltip(view, now.pos, text)
                 })
                 .catch(() => {})
         }

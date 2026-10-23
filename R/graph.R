@@ -14,6 +14,11 @@
 #' * `settings`: ids of the settings cells, in display order: enabled
 #'   cells with a static or learned setting (settings-cells.md). They run
 #'   first, and every later cell depends on them.
+#' * `untracked`: `<id -> character>` for only the cells whose code reads
+#'   globals untrackably (`get(paste0(...))`, `eval()`), in display order:
+#'   their analyses' `untracked`, the calls the cell's note names (#357).
+#'   Kept here so the page's projection loops over these few cells, not
+#'   every analysis.
 #' * `analyses`: `ember_cell_analysis` per cell (the cache for the next
 #'   build).
 #' * `learned`: `list(definitions = <id -> character>, references = <id ->
@@ -67,8 +72,9 @@
 #' no definitions and no references but keeps its setting edges.
 new_graph <- function(ids, settings, analyses, learned, exports, cells, edges,
                       disabled, off, upstream, downstream, order, errors,
-                      reread, read_file = NULL) {
-  structure(list(ids = ids, settings = settings, analyses = analyses,
+                      reread, read_file = NULL, untracked = list()) {
+  structure(list(ids = ids, settings = settings, untracked = untracked,
+                 analyses = analyses,
                  learned = learned, exports = exports, cells = cells,
                  edges = edges, disabled = disabled, off = off,
                  upstream = upstream, downstream = downstream,
@@ -82,6 +88,7 @@ new_graph <- function(ids, settings, analyses, learned, exports, cells, edges,
 #' `kind` is one of `"parse"`, `"multiple_definitions"`, `"cycle"`,
 #' `"private_name"`, `"setting_conflict"` (one setting set in two cells),
 #' `"package_conflict"` (one package attached in two cells),
+#' `"source_conflict"` (install calls giving one package two sources),
 #' `"mixed_text"` (a cell mixing `#'` lines and code; text-cells.R's
 #' `is_mixed()`). `cells` are the ids the error is reported on (all of
 #' them can't run). `names` are the globals, settings or packages involved
@@ -100,6 +107,7 @@ new_graph <- function(ids, settings, analyses, learned, exports, cells, edges,
 #'   withr::with_options() to change it for one piece of code" (the scoped
 #'   function by kind; `setting_fix()`).
 #' * package in two cells: "Keep one library(pkg) and remove the other".
+#' * two sources for a package: "Keep one install call for pkg".
 new_graph_error <- function(kind, cells, names = character(),
                             lines = NULL, message, fixes = character()) {
   structure(list(kind = kind, cells = cells, names = names,
@@ -150,13 +158,16 @@ reuse_analysis <- function(prev, code, read_file) {
 #'   sourced files still read the same; everything else is recomputed.
 #'   Passing `previous` never changes the result, only the work done.
 #' @param read_file Reader for `source()` paths; see `read_cell()`.
+#' @param columns Named list, cell id -> global -> `list(frame, names)`:
+#'   the session's `data_columns` (state.R), which decide masked reads
+#'   (`resolve_masked()`).
 #' @return An `ember_graph`.
 #'
 #' The build is deterministic and idempotent: the same inputs give an
 #' identical graph, with or without `previous`.
 notebook_graph <- function(cells, exports = list(),
                            learned = NULL, disabled = character(),
-                           previous = NULL, read_file = NULL) {
+                           previous = NULL, read_file = NULL, columns = list()) {
   ids <- names(cells)
   if (is.null(ids) || any(is.na(ids)) || any(ids == "") ||
       any(duplicated(ids))) {
@@ -203,7 +214,10 @@ notebook_graph <- function(cells, exports = list(),
 
   # 3. edges: resolve_edges(cells, exports, disabled). Setting edges come
   #    after the order (step 6).
-  edges <- resolve_edges(cells_resolved, exports, ids, disabled)
+  edges <- resolve_edges(cells_resolved, exports, ids, disabled, columns)
+  masked_none <- attr(edges, "masked_none")
+  attr(edges, "masked_none") <- NULL
+  for (i in seq_along(ids)) cells_resolved[[i]]$masked_none <- masked_none[[i]]
 
   # upstream/downstream from edges, in display order.
   rank <- setNames(seq_along(ids), ids)
@@ -244,6 +258,8 @@ notebook_graph <- function(cells, exports = list(),
   names(is_markdown) <- ids
   settings <- ids[!(ids %in% disabled) &
                     vapply(cells_resolved, function(c) nrow(c$setting_keys) > 0, logical(1))]
+  untracked <- analyses[vapply(analyses, function(a) length(a$untracked) > 0, logical(1))]
+  untracked <- lapply(untracked, `[[`, "untracked")
   order <- compute_order(ids, settings, upstream_list, attaches_list, comp_of, is_markdown)
 
   # 6. setting edges: every non-markdown cell to each settings cell before
@@ -259,7 +275,8 @@ notebook_graph <- function(cells, exports = list(),
     }
   }
 
-  new_graph(ids = ids, settings = settings, analyses = analyses, learned = learned,
+  new_graph(ids = ids, settings = settings, untracked = untracked,
+            analyses = analyses, learned = learned,
             exports = exports, cells = cells_resolved, edges = edges,
             disabled = disabled, off = off,
             upstream = upstream_list, downstream = downstream_list,
@@ -298,13 +315,15 @@ compute_off <- function(ids, disabled, downstream_list) {
 #' reports the full set after each run, so a name that stopped appearing
 #' drops out); `references` replaces its learned references (the formula
 #' check's missing columns); `settings` replaces its learned setting keys
-#' (`character()` drops them). `NULL` leaves that part as it was. Returns a
+#' (`character()` drops them). `NULL` leaves that part as it was.
+#' `columns` is the session's `data_columns` (state.R), passed to
+#' `notebook_graph()` as it is. Returns a
 #' new graph built with `previous = graph`, so nothing is re-read.
 #'
 #' The caller persists `graph$learned$definitions` and
 #' `graph$learned$settings` in the footer.
 graph_learn <- function(graph, cell, definitions = NULL, references = NULL,
-                        settings = NULL) {
+                        settings = NULL, columns = list()) {
   learned <- graph$learned
   if (!is.null(definitions)) learned$definitions[[cell]] <- definitions
   if (!is.null(references)) learned$references[[cell]] <- references
@@ -315,7 +334,7 @@ graph_learn <- function(graph, cell, definitions = NULL, references = NULL,
                             character(1)), graph$ids)
   notebook_graph(cells, exports = graph$exports,
                  learned = learned, disabled = graph$disabled,
-                 previous = graph, read_file = graph$read_file)
+                 previous = graph, read_file = graph$read_file, columns = columns)
 }
 
 #' Public definitions, references, packages per cell.
@@ -370,12 +389,24 @@ resolve_cells <- function(analyses, learned, ids, previous = NULL) {
     defs_all <- unique(c(definitions_of(a), l_defs))
     private <- defs_all[is_private_name(defs_all)]
     definitions <- defs_all[!is_private_name(defs_all)]
+    # A name read only inside data-masking calls is the graph's to decide
+    # per notebook (resolve_masked()); read anywhere else too, or learned
+    # from a formula check, it is an ordinary reference.
+    masked <- a$masked
+    if (!is.null(masked) && nrow(masked) > 0) {
+      r <- a$references
+      plain <- unique(c(r$name[!(r$where %in% c("masked", "slot"))], l_refs))
+      masked <- masked[!(masked$name %in% plain), , drop = FALSE]
+    } else {
+      masked <- empty_masked()
+    }
     references <- unique(c(references_of(a), l_refs))
     soft_references <- setdiff(unique(a$references$name[a$references$where == "slot"]), references)
     attaches <- unique(a$packages$name[a$packages$attached])
 
     cells[[i]] <- list(definitions = definitions, learned = l_defs,
                        references = references, soft_references = soft_references,
+                       masked = masked,
                        packages = unique(a$packages$name),
                        attaches = attaches, settings = a$settings,
                        setting_keys = setting_keys_of(a$settings, l_settings),
@@ -419,7 +450,7 @@ resolve_methods <- function(cells, analyses, exports, ids) {
   used <- unique(unlist(lapply(cells, `[[`, "packages"), use.names = FALSE))
   exports <- exports[names(exports) %in% used]
   is_generic <- function(g) {
-    g %in% s3_generics || g %in% user_generics ||
+    g %in% s3_generics || g %in% names(group_generics) || g %in% user_generics ||
       any(vapply(exports, function(x) g %in% x, logical(1)))
   }
   for (i in seq_along(cells)) {
@@ -472,7 +503,7 @@ no_resolved_methods <- data.frame(generic = character(), signature = character()
 #' attaches the package exporting it.
 #' Setting edges are added later, once the order is known
 #' (`setting_edges_of()`).
-resolve_edges <- function(cells, exports, ids, disabled = character()) {
+resolve_edges <- function(cells, exports, ids, disabled = character(), columns = list()) {
   # Four lookup tables, each built in one pass so the whole function is
   # linear in (total definitions + total exports + total references)
   # instead of the reference-times-cells cost of testing every id against
@@ -523,6 +554,14 @@ resolve_edges <- function(cells, exports, ids, disabled = character()) {
   }
   has_methods <- length(ls(method_lookup, all.names = TRUE)) > 0
 
+  # Masked reads (`x` in `subset(df, x > 1)`): an ordinary reference, a
+  # soft one, or none, per cell (resolve_masked()).
+  masked_refs <- lapply(seq_along(ids), function(i) {
+    m <- cells[[i]]$masked
+    if (is.null(m) || nrow(m) == 0) return(NULL)
+    resolve_masked(m, ids[[i]], cells[[i]]$private, definer_lookup, method_lookup, columns)
+  })
+
   package_providers <- function(n, tbl) {
     pkgs <- name_to_pkgs[[n]]
     if (is.null(pkgs)) return(character())
@@ -540,9 +579,12 @@ resolve_edges <- function(cells, exports, ids, disabled = character()) {
   edges_of <- function(soft) lapply(seq_along(ids), function(i) {
     b <- ids[[i]]
     if (soft) {
-      refs <- cells[[i]]$soft_references
+      refs <- c(cells[[i]]$soft_references, masked_refs[[i]]$soft)
     } else {
       refs <- cells[[i]]$references
+      if (!is.null(masked_refs[[i]])) {
+        refs <- c(setdiff(refs, cells[[i]]$masked$name), masked_refs[[i]]$hard)
+      }
       m_b <- cells[[i]]$methods
       if (nrow(m_b) > 0) refs <- c(refs, setdiff(unique(m_b$generic[m_b$form != "name"]), refs))
     }
@@ -594,11 +636,63 @@ resolve_edges <- function(cells, exports, ids, disabled = character()) {
   }
 
   edges <- as_edges(edges_of(soft = FALSE))
-  if (any(lengths(lapply(cells, `[[`, "soft_references")) > 0)) {
+  if (any(lengths(lapply(cells, `[[`, "soft_references")) > 0) ||
+      any(lengths(lapply(masked_refs, `[[`, "soft")) > 0)) {
     edges <- add_soft_edges(edges, as_edges(edges_of(soft = TRUE)))
   }
   if (has_methods) edges <- add_method_edges(edges, cells, ids, method_lookup)
+  # Per cell, the masked names its data provides (no edge), for
+  # invalidate_dependents() in step.R: their global's edit changes nothing.
+  attr(edges, "masked_none") <- lapply(seq_along(ids), function(i) {
+    m <- cells[[i]]$masked
+    if (is.null(m) || nrow(m) == 0) return(character())
+    setdiff(unique(m$name), c(masked_refs[[i]]$hard, masked_refs[[i]]$soft))
+  })
   edges
+}
+
+#' How the graph reads a cell's masked reads (`x` in `subset(df, x > 1)`,
+#' #107). R looks `x` up in `df` first and takes the global only when `df`
+#' has no column `x`, so the edge follows `df`'s columns: the names its
+#' value had when the one cell that defines `df` (`owner`) last ran
+#' (`columns[[owner]][[df]]`, from the worker's report, step.R).
+#'
+#' - **hard** (an ordinary reference): `df` doesn't have the name, or its
+#'   owner's run reported no names for it, or it isn't
+#'   a data frame where the call needs one (`frame` in
+#'   `data_masking_calls`), or the answer can't be known: `df` is a
+#'   package's or is defined by no cell or by several, or the notebook
+#'   defines the function itself or a method of it, which needn't mask.
+#' - **none**: `df` had the name. Editing `x`'s cell can't change the
+#'   result, as under `Rscript`.
+#' - **soft**: `df`'s owner hasn't run in this session, or its last run
+#'   failed, so its columns are unknown. The edge is kept unless it would close a cycle
+#'   (`add_soft_edges()`). The owner runs before the cell (the cell reads
+#'   `df`), and its report settles the name before the cell itself runs;
+#'   when the cell is its own owner, its first run settles it, and a name
+#'   that isn't a column then becomes an ordinary reference.
+#'
+#' A name read under several calls takes the strictest answer.
+#' Returns `list(hard, soft)`, character each.
+resolve_masked <- function(masked, id, private, definer_lookup, method_lookup, columns) {
+  answer <- function(k) {
+    n <- masked$name[k]
+    data <- masked$data[k]
+    fn <- masked$fn[k]
+    if (!is.null(definer_lookup[[fn]]) || !is.null(method_lookup[[fn]])) return("hard")
+    owners <- if (data %in% private) id else definer_lookup[[data]]
+    if (length(owners) != 1) return("hard")
+    reported <- columns[[owners]]
+    if (is.null(reported)) return("soft")
+    info <- reported[[data]]
+    if (is.null(info)) return("hard")
+    if (isTRUE(data_masking_calls[[fn]]$frame) && !isTRUE(info$frame)) return("hard")
+    if (n %in% info$names) "none" else "hard"
+  }
+  answers <- vapply(seq_len(nrow(masked)), answer, character(1))
+  hard <- unique(masked$name[answers == "hard"])
+  soft <- setdiff(unique(masked$name[answers == "soft"]), hard)
+  list(hard = hard, soft = soft)
 }
 
 #' Soft reference edges: a slot or field class (`representation(r =
@@ -662,9 +756,14 @@ add_soft_edges <- function(edges, candidates) {
 #' removed, disabled or rerun, so R falls back to another method.
 add_method_edges <- function(edges, cells, ids, method_lookup) {
   generics <- ls(method_lookup, all.names = TRUE)
+  # A group generic's method (`Ops.money`) is read through any member (`+`).
+  read_as <- lapply(generics, function(g) c(g, group_generics[[g]]))
   readers <- new.env(parent = emptyenv())  # generic -> ids reading it
   for (id in ids) {
-    for (g in intersect(cells[[id]]$references, generics)) readers[[g]] <- c(readers[[g]], id)
+    refs <- cells[[id]]$references
+    for (k in seq_along(generics)) {
+      if (any(read_as[[k]] %in% refs)) readers[[generics[[k]]]] <- c(readers[[generics[[k]]]], id)
+    }
   }
   upstream <- new.env(parent = emptyenv())
   for (i in seq_len(nrow(edges))) {
@@ -685,23 +784,23 @@ add_method_edges <- function(edges, cells, ids, method_lookup) {
     }
     seen
   }
-  have <- paste(edges$from, edges$to, edges$name, sep = "\r")
+  have <- new.env(parent = emptyenv())
+  for (k in paste(edges$from, edges$to, edges$name, sep = "\r")) have[[k]] <- TRUE
   method_cells <- ids[ids %in% unique(unlist(mget(generics, envir = method_lookup),
                                              use.names = FALSE))]
-  from <- to <- name <- character()
+  added <- list()
   for (t in method_cells) {
     anc <- ancestors(t)
     for (g in unique(cells[[t]]$methods$generic)) {
       for (b in readers[[g]]) {
         if (identical(b, t) || !is.null(anc[[b]])) next
-        if (paste(b, t, g, sep = "\r") %in% have) next
-        from <- c(from, b)
-        to <- c(to, t)
-        name <- c(name, g)
+        if (!is.null(have[[paste(b, t, g, sep = "\r")]])) next
+        added[[length(added) + 1]] <- c(b, t, g)
         upstream[[b]] <- c(upstream[[b]], t)
       }
     }
   }
+  from <- vapply(added, `[[`, "", 1); to <- vapply(added, `[[`, "", 2); name <- vapply(added, `[[`, "", 3)
   if (length(from) == 0) return(edges)
   rbind(edges, data.frame(from = from, to = to, name = name, via = "method",
                           stringsAsFactors = FALSE))
@@ -917,6 +1016,22 @@ find_errors <- function(cells, analyses, edges, ids, components,
       kind = "package_conflict", cells = attachers, names = p, lines = lines_df,
       message = sprintf("%s is attached in %s cells.", p, count_word(length(attachers))),
       fixes = sprintf("Keep one library(%s) and remove the other", p))
+  }
+
+  # source_conflict: one package given two sources by install calls in
+  # enabled cells (packages.md, "Install calls"). Which one is meant is the
+  # user's to say, so neither goes into [sources] (`declared_sources()`).
+  src_rows <- install_source_rows(analyses[enabled], ids[enabled])
+  for (p in unique(src_rows$package)) {
+    rows <- src_rows[src_rows$package == p, , drop = FALSE]
+    specs <- unique(rows$source)
+    if (length(specs) < 2) next
+    errors[[length(errors) + 1]] <- new_graph_error(
+      kind = "source_conflict", cells = unique(rows$cell), names = p,
+      lines = data.frame(cell = rows$cell, line = rows$line, stringsAsFactors = FALSE),
+      message = sprintf("%s is installed from %s places: %s.", p, count_word(length(specs)),
+                        paste(specs, collapse = ", ")),
+      fixes = sprintf("Keep one install call for %s", p))
   }
 
   # mixed_text: a cell mixing #' lines and code (text-cells.R's

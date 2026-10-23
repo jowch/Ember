@@ -58,6 +58,11 @@ exports_of <- function(state) {
 #'   reported through `source()` with a computed path on the cell's latest
 #'   run, seeded from the footer's "learned sources" on open. Cleared for a
 #'   cell when it starts running or is deleted.
+#' * `graph_dropped`: named list, cell id -> the code of the result
+#'   `drop_graph_error_results()` dropped (step.R). Such a cell runs ahead
+#'   of a dependent autorun queues, while it still has no result and that
+#'   code (#315). Cleared for a cell when it gets a result, and for all
+#'   with the worker.
 #' * `footer_sources`: computed paths in an older file's "sourced files"
 #'   block that no "learned sources" line claims, so no cell is known to
 #'   have sourced them. They stand in until every code cell has run in this
@@ -84,14 +89,29 @@ exports_of <- function(state) {
 #'   edit or a learned definition during a run reorders the queue for free.
 #' * `results`: named list, id -> `ember_result`, for cells that ran in the
 #'   current worker. A cell with no entry is "not run".
+#' * `data_columns`: named list, id -> global -> `list(frame, names)`: the
+#'   names each data frame or list a cell created had at its last run in
+#'   the current worker session, if that run was ok; a failed run, a
+#'   restart or R exiting removes the entry (worker.R's `global_columns()`),
+#'   for masked reads (graph.R, `resolve_masked()`). Not saved: it
+#'   describes the worker's values. Deleted cells' entries are ignored.
 #' * `clock`: the `at` of the last event; the only time the core knows.
 #' * `seq`: integer, advanced by every event that changed the state
 #'   (Endeavor's `seq`).
 #' * `next_token`: integer, the next run token.
+#' * `input_values`: named list, input name -> `list(cell, code, value)`:
+#'   the value the user gave an input this session (docs/inputs.md), kept
+#'   so the input's cell gets it back when it reruns with the same `code`.
+#'   Never saved; an input at its default has no entry.
+#' * `input_outcome`: `NULL`, or `list(name, ok, error, value, cells)` for
+#'   the last value the worker answered (`reduce_wk_input_set()`): `cells`
+#'   are the readers it reran or marked stale. What `set_input(wait =
+#'   TRUE)` reports.
 #'
 #' Invariants (checked by `check_state()` in tests after every step):
 #' * `graph` is `notebook_graph(code_of(cells), exports,
-#'   graph$learned, read_file = reader_of(files))` for the current fields:
+#'   graph$learned, read_file = reader_of(files), columns = data_columns)`
+#'   for the current fields:
 #'   every step that changes `cells`, `exports` or `files` rebuilds
 #'   it with `previous = graph` (`rebuild_graph()` in step.R) and nothing
 #'   else assigns it.
@@ -131,6 +151,8 @@ new_state <- function(file, path, id, options, at) {
   if (is.null(options$grace)) options$grace <- 3
   if (is.null(options$repos)) options$repos <- ember_repos()
   if (is.null(options$cache)) options$cache <- tempfile("ember-cache-")
+  # Bytes of large downloads an install asks about first (#37).
+  if (is.null(options$ask_above)) options$ask_above <- getOption("ember.ask_above", ask_above_default)
   # `[[` (exact), not `$`: `options$r` partial-matches `options$repos` via
   # `$`'s partial-matching on lists whenever `repos` is already set and `r`
   # isn't, which would make this check always find a (wrong) non-NULL value
@@ -185,6 +207,9 @@ new_state <- function(file, path, id, options, at) {
   wanted <- wanted_packages(graph, file$header)
   packages <- new_packages_state(file$lock, wanted, options$r, options$cache, file$header,
                                  releases_slot_for(options))
+  # Seeded as `wanted_cache` is, for the same reason; the first step writes
+  # it into the header (`sync_sources()`).
+  packages$declared_cache <- declared_sources(graph, wanted)
 
   structure(list(
     id = id, path = path, read_only = isTRUE(file$read_only),
@@ -196,8 +221,8 @@ new_state <- function(file, path, id, options, at) {
     exports = list(), graph = graph, options = options, packages = packages,
     allowed = FALSE, closed = FALSE, worker = new_worker_state(),
     worker_usage = NULL,
-    pending = character(), results = list(), clock = at, seq = 0L,
-    next_token = 1L
+    pending = character(), results = list(), graph_dropped = list(), data_columns = list(), clock = at, seq = 0L,
+    next_token = 1L, input_values = list(), input_outcome = NULL
   ), class = "ember_state")
 }
 
@@ -215,6 +240,8 @@ new_state <- function(file, path, id, options, at) {
 #'   `begun` turns `TRUE` when the worker says it began the run.
 #' * `interrupt`: `NULL` or `list(at, token)` once the user interrupted that
 #'   run. SIGINT is sent then, or when the run begins if that is later.
+#'   `failed = TRUE` is added if the interrupt couldn't be delivered
+#'   (`wk_interrupt_failed`, Windows).
 #' * `restart_offered`: logical.
 #' * `info`: what the hello said (pid, R version, library paths), or `NULL`.
 #' * `exit`: `NULL` or `list(status, message)` from the last exit.
@@ -226,6 +253,9 @@ new_state <- function(file, path, id, options, at) {
 #'   to), or `NULL` before it has ever started. Compared against
 #'   `dirname(state$path)` to notice a move made while the worker was
 #'   still starting (`reduce_wk_hello()`, step.R).
+#' * `input`: `NULL`, or `list(cell, name, value)` while a new input value
+#'   is with the worker (`reduce_set_input()`); nothing new is sent to run
+#'   until it answers.
 new_worker_state <- function() {
   structure(list(status = "off", gen = 0L, running = NULL, interrupt = NULL,
                  restart_offered = FALSE, info = NULL, exit = NULL,
@@ -266,16 +296,28 @@ new_worker_state <- function() {
 #'   class objects another cell defines that this run changed without
 #'   rebinding them (the worker's report, #167). Cells that read them don't
 #'   rerun, so the cell shows a note.
+#' * `inputs`: one entry per input call the run made, in order (the
+#'   worker's report, `input_hook()`): `list(name, bound, reason, spec,
+#'   default, value)`. `bound` inputs can be set (`set_input()`); an
+#'   unbound one has `reason` `"not_assigned"` (not the right-hand side of
+#'   a top-level assignment) or `"read_elsewhere"` (the cell reads or
+#'   redefines `name` too). `spec` is the input's type and arguments.
+#'   `value` follows `set_input()`.
+#' * `from_lock`: the packages of the install calls the worker didn't run
+#'   (packages.md, "Install calls"): the cell shows a note that they come
+#'   from the lock.
 new_result <- function(code, status, output, console, error, started_at,
                        runtime, defined, stale = FALSE, variables = list(),
                        settings_found = character(), setting = FALSE,
-                       load_notes = list(), changed_in_place = character()) {
+                       load_notes = list(), changed_in_place = character(),
+                       inputs = list(), from_lock = character()) {
   structure(list(code = code, status = status, output = output,
                  console = console, error = error, started_at = started_at,
                  runtime = runtime, defined = defined, stale = stale,
                  variables = variables, settings_found = settings_found,
                  setting = setting, load_notes = load_notes,
-                 changed_in_place = changed_in_place),
+                 changed_in_place = changed_in_place, inputs = inputs,
+                 from_lock = from_lock),
             class = "ember_result")
 }
 
@@ -334,13 +376,19 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 
 #' The snapshot: the notebook as Endeavor and the console see it.
 #'
-#' `list(cells, process, restart_offered, worker_message, seq)`. Per cell,
+#' `list(cells, process, restart_offered, interrupt_failed, worker_message,
+#' seq)`. `interrupt_failed` is TRUE once an interrupt of the running cell
+#' couldn't be delivered (Windows, #48); `restart_offered` is then TRUE too. Per cell,
 #' an `ember_cell_view`: `id`, `index` (display), `kind`, `code`, `folded`,
 #' `settings` (`list(name, found)` per setting the cell sets, `found` being
 #' `"code"` or `"run"`; empty for an ordinary cell), `settings_found` (the
 #' last result's, `character()` when none), `load_notes` (the last
 #' result's, `list()` when none), `changed_in_place` (the last result's,
-#' `character()` when none), `queued`, `running`, `status` (`"not_run"`, `"ok"`, `"error"`,
+#' `character()` when none), `from_lock` (likewise), `untracked_reads` (the
+#' calls in the cell's code that read globals by a name static reading can't
+#' follow, such as `"get"` for `get(paste0("fit_", i))`, from the analysis,
+#' not a run; `character()` when none; #357), `inputs` (the last result's, `list()` when
+#' none; see `new_result()`), `queued`, `running`, `status` (`"not_run"`, `"ok"`, `"error"`,
 #' `"interrupted"`), `stale`, `code_differs`, `errors` (graph errors, or
 #' else the run error, each with `kind`, `message`, `fixes`, `names`, and, for an
 #' `"upstream"` run error, `cells`; a plain "error" also carries `call`,
@@ -369,6 +417,7 @@ snapshot_of <- function(state) {
   process <- if (!isTRUE(state$allowed)) "preview" else state$worker$status
   list(cells = views, process = process,
       restart_offered = isTRUE(state$worker$restart_offered),
+      interrupt_failed = isTRUE(state$worker$interrupt$failed),
       worker_message = if (!is.null(state$worker$exit)) state$worker$exit$message else NULL,
       seq = state$seq, packages = packages_view(state))
 }
@@ -404,6 +453,9 @@ snapshot_of <- function(state) {
 #'   itself in `graph$off`, which isn't a "disabled by" relationship) or a
 #'   cell that isn't off. Built from `graph$off` alone, a loop bounded by
 #'   the (usually small) off set, not by the whole notebook.
+#' * `untracked`: list, position -> the names of the calls the cell reads
+#'   through untrackably (`"get"`, `"eval"`; its analysis's
+#'   `untracked_read` notes, once each), or `NULL` for none.
 #' * `results`: list, position -> `state$results[[id]]` or `NULL`, aligned
 #'   once with `match()`: `results` isn't stored in display order (it's
 #'   keyed by id, and holds only cells that have run), so without this a
@@ -467,10 +519,22 @@ view_context <- function(state) {
     if (!is.na(at)) settings[[at]] <- cell_settings_view(graph, sid)
   }
 
+  # The calls a cell reads globals through that static reading can't follow
+  # (design.md, "Writes static reading can't see"), once each: the note that
+  # the cell doesn't rerun when what they read changes (#357). NULL, as
+  # above, for the many cells with none.
+  # `graph$untracked` holds only those cells, as `graph$settings` does.
+  untracked <- vector("list", n)
+  if (length(graph$untracked) > 0) {
+    at <- match(names(graph$untracked), ids)
+    ok <- !is.na(at)
+    untracked[at[ok]] <- graph$untracked[ok]
+  }
+
   list(ids = ids, running = running, running_idx = running_idx,
       queued = queued, waiting = waiting_vec,
       errors_by_cell = errors_by_cell, off = off, disabled_by = disabled_by,
-      settings = settings, results = results)
+      settings = settings, untracked = untracked, results = results)
 }
 
 #' `result$variables` as a list of `list(name, type, value, kind)`, sorted
@@ -523,6 +587,9 @@ cell_view <- function(state, ctx, i) {
     settings_found = if (!is.null(result)) result$settings_found %||% character() else character(),
     load_notes = if (!is.null(result)) result$load_notes %||% list() else list(),
     changed_in_place = if (!is.null(result)) result$changed_in_place %||% character() else character(),
+    from_lock = if (!is.null(result)) result$from_lock %||% character() else character(),
+    untracked_reads = ctx$untracked[[i]] %||% character(),
+    inputs = if (!is.null(result)) result$inputs %||% list() else list(),
     queued = ctx$queued[[i]], running = is_running,
     status = if (!is.null(result)) result$status else "not_run",
     stale = !is.null(result) && isTRUE(result$stale),
@@ -652,10 +719,7 @@ notifications <- function(old, new) {
     nts <- c(nts, list(list(kind = "notebook_shut_down")))
   }
 
-  pkg_same <- identical(old$packages, new$packages) &&
-    identical(old$file$lock, new$file$lock) && identical(old$file$header, new$file$header) &&
-    identical(old$worker$loaded, new$worker$loaded) && identical(old$graph, new$graph)
-  if (!pkg_same && !identical(packages_view(old), packages_view(new))) {
+  if (!packages_inputs_same(old, new) && !identical(packages_view(old), packages_view(new))) {
     nts <- c(nts, list(list(kind = "packages_changed")))
   }
 
@@ -664,6 +728,55 @@ notifications <- function(old, new) {
   }
 
   nts
+}
+
+#' Whether `a` and `b` hold the same inputs to `packages_view()` (the
+#' package state, the file's header and lock, the graph's packages, what
+#' the worker has loaded, and the options its messages read), so the two
+#' views are equal without building either. Each is one `identical()`,
+#' pointer-equal in practice when nothing package-related happened.
+packages_inputs_same <- function(a, b) {
+  identical(a$packages, b$packages) &&
+    identical(a$file$lock, b$file$lock) && identical(a$file$header, b$file$header) &&
+    identical(a$worker$loaded, b$worker$loaded) && identical(a$graph, b$graph) &&
+    identical(a$options, b$options)
+}
+
+#' For each cell of `new`, whether `key_unchanged()` (pluto-state.R) could
+#' be FALSE against the same cell of `old`, at position `at[i]` of `old`
+#' (`NA` for a cell `old` doesn't have). Conservative: a TRUE only means
+#' "check this one", so callers still run `key_unchanged()` on those. It
+#' compares each key field for all cells at once, with one `identical()`
+#' on the whole list when nothing in it changed (the common case: one
+#' worker message changes one or two cells' results), where checking every
+#' field of every cell one call at a time cost about 4 ms a message at 150
+#' cells, in both `changed_views()` and `pluto_state()`.
+cells_maybe_changed <- function(old, old_ctx, new, new_ctx, at) {
+  n <- length(new_ctx$ids)
+  if (n == 0) return(logical())
+  if (!identical(new$allowed, old$allowed)) return(rep(TRUE, n))
+  maybe <- is.na(at)
+  differ <- function(a, b) {
+    b <- b[at]
+    if (identical(unname(a), unname(b))) return(logical(n))
+    !vapply(seq_len(n), function(k) identical(a[[k]], b[[k]]), logical(1))
+  }
+  maybe <- maybe | differ(new$cells, old$cells) | differ(new_ctx$results, old_ctx$results) |
+    differ(new_ctx$waiting, old_ctx$waiting) | differ(new_ctx$errors_by_cell, old_ctx$errors_by_cell) |
+    differ(new_ctx$settings, old_ctx$settings)
+  maybe <- maybe | !(new_ctx$queued == old_ctx$queued[at]) %in% TRUE
+  a <- new_ctx$disabled_by; b <- old_ctx$disabled_by[at]
+  maybe <- maybe | !((a == b) %in% TRUE | (is.na(a) & is.na(b)))
+  # The running cell, before and after: its own key holds the console.
+  running_at <- function(ctx, ids) {
+    cell <- ctx$running$cell
+    if (is.null(cell)) logical(n) else (ids == cell) %in% TRUE
+  }
+  run_new <- running_at(new_ctx, new_ctx$ids)
+  run_old <- running_at(old_ctx, old_ctx$ids[at])
+  maybe <- maybe | run_new != run_old
+  if (!identical(new_ctx$running$console, old_ctx$running$console)) maybe <- maybe | run_new
+  maybe
 }
 
 #' Ids whose `cell_view()` differs between two states: cells in `old`
@@ -682,13 +795,14 @@ changed_views <- function(old, new) {
   ids <- union(old_ids, new_ids)
   in_old <- match(ids, old_ids)
   in_new <- match(ids, new_ids)
+  maybe <- cells_maybe_changed(old, old_ctx, new, new_ctx, match(new_ids, old_ids))
   differs <- logical(length(ids))
   for (k in seq_along(ids)) {
     j <- in_old[k]
     i <- in_new[k]
     if (is.na(j) || is.na(i)) {
       differs[k] <- TRUE
-    } else if (i != j || !key_unchanged(new, new_ctx, i, cell_key(old, old_ctx, j))) {
+    } else if (i != j || (maybe[i] && !key_unchanged(new, new_ctx, i, cell_key(old, old_ctx, j)))) {
       differs[k] <- !identical(cell_view(old, old_ctx, j), cell_view(new, new_ctx, i))
     }
   }
@@ -812,7 +926,8 @@ check_state <- function(state) {
   expected <- notebook_graph(code_of(state$cells),
                              exports = exports_of(state), learned = state$graph$learned,
                              disabled = disabled_ids(state$cells),
-                             previous = state$graph, read_file = reader_of(state$files))
+                             previous = state$graph, read_file = reader_of(state$files),
+                             columns = state$data_columns)
   # `read_file` is a closure freshly made over `state$files`; it is never
   # the same object as the one already stored on the graph even when it
   # behaves identically. `reread` records what was recomputed relative to

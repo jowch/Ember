@@ -26,10 +26,14 @@ new_accumulator <- function(read_file, file, stack) {
   acc$def_rows <- new_rows()
   acc$ref_rows <- new_rows()
   acc$pkg_rows <- list()
+  acc$install_rows <- list()
+  acc$top_expr <- NULL
   acc$setting_rows <- list()
   acc$sourced_rows <- list()
   acc$note_rows <- list()
   acc$formulas <- list()
+  acc$mask <- NULL
+  acc$mask_rows <- list()
   acc$deferred <- list()
   acc$extra_defs <- list()
   acc$extra_refs <- list()
@@ -144,6 +148,16 @@ is_bound <- function(scope, name) {
   FALSE
 }
 
+#' Is `name` bound in a function or `local()` scope, not the cell's top
+#' level (a global the cell defines)?
+is_bound_locally <- function(scope, name) {
+  while (!is.null(scope) && !identical(scope$kind, "top")) {
+    if (exists(name, envir = scope$bound, inherits = FALSE)) return(TRUE)
+    scope <- scope$parent
+  }
+  FALSE
+}
+
 #' Add names to a scope. `names` keeps their order for the branch logic in
 #' `walk_if()`; `bound` is the hashed set `is_bound()` looks in, so a cell
 #' with thousands of definitions doesn't search a long vector per read.
@@ -197,7 +211,7 @@ fallback_pos <- function(acc) {
   list(line = acc$line, col = NA_integer_, end_col = NA_integer_)
 }
 
-record_read <- function(acc, scope, name, where = "code", pos = NULL) {
+record_read <- function(acc, scope, name, where = "code", pos = NULL, unmasked = FALSE) {
   if (is_ignored(name)) return(invisible())
   if (is_bound(scope, name)) return(invisible())
   if (is.null(pos)) pos <- fallback_pos(acc)
@@ -211,6 +225,15 @@ record_read <- function(acc, scope, name, where = "code", pos = NULL) {
     }
     acc$deferred[[length(acc$deferred) + 1]] <- row
   } else {
+    # A read inside a data-masking call's other arguments (`x` in
+    # `subset(df, x > 1)`, walk_masking_call()): kept as a reference, and
+    # noted with the data that may provide it instead. `unmasked` reads
+    # aren't: a call's head (R skips a column that isn't a function when
+    # it looks up `f` in `f(y)`) and a class name.
+    if (!unmasked && !is.null(acc$mask) && !is.na(acc$mask$data)) {
+      acc$mask_rows[[length(acc$mask_rows) + 1]] <- list(name = name, data = acc$mask$data, fn = acc$mask$fn)
+      where <- "masked"
+    }
     rows_push(acc$ref_rows, list(name = name, line = pos$line, col = pos$col, end_col = pos$end_col,
            where = where, file = acc$file))
   }
@@ -250,6 +273,14 @@ record_top_level_definition <- function(acc, scope, name, kind, pos = NULL) {
 record_package <- function(acc, name, attached) {
   acc$pkg_rows[[length(acc$pkg_rows) + 1]] <-
     list(name = name, attached = attached, line = acc$line)
+}
+
+#' A package an install call names (`install_calls`), with its source
+#' spec (`source_spec()`) or `NA`. `top` is `TRUE` when the call is the
+#' whole top-level expression: the worker skips that one.
+record_install <- function(acc, package, source, top) {
+  acc$install_rows[[length(acc$install_rows) + 1]] <-
+    list(package = package, source = source, line = acc$line, index = acc$index, top = top)
 }
 
 record_setting <- function(acc, fn, setting = NA_character_, pos = NULL) {

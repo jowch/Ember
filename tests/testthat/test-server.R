@@ -697,7 +697,7 @@ test_that("every request type in the handler table is answered as documented (36
                "ember_open_notebook", "ember_forget_recent", "ember_set_package_source",
                "ember_remove_package_source")
   silent <- c("interrupt_all", "restart_process", "shutdown_notebook", "reshow_cell", "ember_render_plot",
-             "ember_run_all", "ember_retry_install", "ember_split_cell", "ember_apply_update", "ember_cancel_update",
+             "ember_run_all", "ember_retry_install", "ember_split_cell", "ember_apply_update", "ember_cancel_update", "ember_approve_install",
              "ember_set_mode", "request_js_link_response", "nbpkg_available_versions",
              "nbpkg_get_project_toml", "nbpkg_set_project_toml", "pkg_update")
   # Answered once a subprocess exits, so not counted here: see its own test.
@@ -783,6 +783,22 @@ await_reply <- function(ws, type) {
   }
   replies
 }
+
+test_that("a failed subprocess answers with its stderr and logs its exit status (#327)", {
+  cmd <- list(command = file.path(R.home("bin"), "Rscript"),
+              args = c("--vanilla", "-e", "cat('no du here', file = stderr()); quit(status = 3)"),
+              env = "current")
+  got <- NULL
+  logged <- character()
+  withCallingHandlers({
+    answer_from_subprocess(cmd, function(m) got <<- m, function(x) x, "could not measure disk use")
+    # A guard against a hang, not a timing check.
+    deadline <- Sys.time() + 60
+    while (is.null(got) && Sys.time() < deadline) later::run_now(timeout = 0.5)
+  }, message = function(m) { logged <<- c(logged, conditionMessage(m)); invokeRestart("muffleMessage") })
+  expect_equal(got, list(error = "no du here"))
+  expect_match(logged, "ember: could not measure disk use (exit status 3): no du here", fixed = TRUE, all = FALSE)
+})
 
 test_that("ember_clean_up counts first, and deletes only when asked with dry_run = false (#128)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1")))
@@ -899,6 +915,13 @@ test_that("the secret cookie is set on /edit, and the file's content matches the
   file_resp <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id)))
   expect_equal(file_resp$status, 200L)
   expect_equal(file_resp$body, format_notebook(notebook_file_of(notebook_state(nb))))
+  stem <- tools::file_path_sans_ext(basename(path))
+  expect_equal(file_resp$headers[["Content-Disposition"]], sprintf('inline; filename="%s"', basename(path)))
+
+  # the HTML export is named after the notebook too, not "notebookexport"
+  export_resp <- http_call(server, fake_req("/notebookexport", sprintf("id=%s&secret=s", id)))
+  expect_equal(export_resp$status, 200L)
+  expect_equal(export_resp$headers[["Content-Disposition"]], sprintf('inline; filename="%s.html"', stem))
 
   # the cookie alone (no query secret) is also accepted
   resp2 <- http_call(server, fake_req("/notebookfile", sprintf("id=%s", id), cookie = "ember_secret=s"))
@@ -2295,7 +2318,7 @@ test_that("every hashed vendor file a shim or editor.html names exists, and no o
 test_that("ember_set_package_source replies ok and the row looks the source up; a refusal is the reply; remove sends it back (122)", {
   fixtures <- normalizePath(testthat::test_path("fixtures"), mustWork = TRUE)
   repos <- ember_repos(cran = paste0("file://", file.path(fixtures, "repos", "toy")), bioc_config = NA,
-                       github = paste0("file://", file.path(fixtures, "github")))
+                       github = paste0("file://", github_fixture_dir()))
   cache <- tempfile("ember-pkg-cache-")
   dir.create(cache, recursive = TRUE)
   on.exit(unlink(cache, recursive = TRUE), add = TRUE)

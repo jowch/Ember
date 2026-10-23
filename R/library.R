@@ -12,6 +12,8 @@
 #   libraries/R-4.6/<platform>/<key>.staging-<pid>-<rand>/   in progress
 #   renv-cache/                              RENV_PATHS_CACHE
 #   renv-root/                               RENV_PATHS_ROOT (sandbox etc.)
+#   worker/R-<x.y.z>-<md5 of worker.R>.Rc    the worker's compiled image
+#                                            (shell.R, ready_worker_image())
 #
 # Ember's own renv cache, not the user's: `ember::clean()` deletes cache
 # entries no Ember library uses, which must never touch the user's own renv
@@ -87,12 +89,32 @@ index_rds_path <- function(key, cache = cache_dir()) {
 #' fetches such an index again (its slot is `provisional`). Yesterday too,
 #' since when a day's snapshot is complete isn't known here, and a date
 #' ahead of UTC's (a clock east of Greenwich) is later still. Any other
-#' dated index never changes. Not GitHub keys: those move by ref
-#' (`github_key()`).
+#' dated index never changes. Not GitHub or universe keys: those move by
+#' ref (`github_key()`, `universe_key()`).
 index_may_change <- function(key, now = Sys.time()) {
-  if (is_github_key(key)) return(FALSE)
+  if (is_github_key(key) || is_universe_key(key)) return(FALSE)
   date <- tryCatch(as.Date(strsplit(key, "/", fixed = TRUE)[[1]][[2]]), error = function(e) NA)
   !is.na(date) && date >= as.Date(format(now, tz = "UTC", usetz = FALSE)) - 1
+}
+
+#' Whether a 404 for `key` can mean "not published yet" (#162): a date
+#' `index_may_change()` covers, and no later than tomorrow in UTC, which is
+#' as far ahead as a clock east of UTC can be. A 404 for a date further
+#' ahead (a typo, a year off) is just a failure, so nothing steps back
+#' from it day by day.
+#'
+#' Package Manager publishes a day's Bioconductor snapshot about two days
+#' after CRAN's (#282), so for a Bioconductor key the window starts three
+#' days before today in UTC instead of one.
+may_be_unpublished <- function(key, now = Sys.time()) {
+  today <- as.Date(format(now, tz = "UTC", usetz = FALSE))
+  if (is_bioc_key(key)) {
+    date <- tryCatch(as.Date(strsplit(key, "/", fixed = TRUE)[[1]][[2]]), error = function(e) NA)
+    return(!is.na(date) && date >= today - 3 && date <= today + 1)
+  }
+  if (!index_may_change(key, now)) return(FALSE)
+  date <- as.Date(strsplit(key, "/", fixed = TRUE)[[1]][[2]])
+  date <= today + 1
 }
 
 #' The label a dated repo key resolves to (`read_repo_index()`'s `label`,
@@ -167,12 +189,46 @@ fetch_index_main <- function(key, url, path) {
     stop("ember: ", key, " isn't published: ", url, " has no index for that date (404)", call. = FALSE)
   }
   if (!ok) stop("ember: could not fetch the index for ", key, " from ", url, call. = FALSE)
+  # `read.dcf()` reads a cut-off PACKAGES.gz as far as it goes, silently,
+  # and the parse would be cached for good: the packages after the cut
+  # would be "not found" in every session (#264).
+  if (identical(name, "PACKAGES.gz") && !gz_complete(tmp_pkgs)) {
+    stop("ember: the index for ", key, " from ", url, " arrived incomplete", call. = FALSE)
+  }
 
   idx <- read_repo_index(tmp_pkgs, key, index_label_of_key(key))
   tmp_rds <- paste0(path, ".tmp-", Sys.getpid())
   saveRDS(idx, tmp_rds)
   if (!file.rename(tmp_rds, path)) unlink(tmp_rds)
   invisible(NULL)
+}
+
+#' Whether `path` is a whole gzip file: it starts with gzip's magic bytes,
+#' and the length gzip's trailer records (its last four bytes, modulo
+#' 2^32) is what it decompresses to. A file cut off anywhere fails the
+#' second test, except by a 1 in 2^32 chance; a page that isn't gzip (an
+#' error page sent with status 200) fails the first. A file of several
+#' gzip members is checked against its last one only, and fails: no
+#' repository index Ember reads is written that way.
+gz_complete <- function(path) {
+  size <- file.size(path)
+  if (is.na(size) || size < 18) return(FALSE)
+  isTRUE(tryCatch({
+    con <- file(path, "rb")
+    magic <- readBin(con, "raw", 2)
+    seek(con, size - 4)
+    recorded <- readBin(con, "integer", 1, size = 4, endian = "little")
+    close(con)
+    con <- gzfile(path, "rb")
+    on.exit(close(con))
+    n <- 0
+    repeat {
+      chunk <- readBin(con, "raw", 1048576)
+      if (length(chunk) == 0) break
+      n <- n + length(chunk)
+    }
+    identical(magic, as.raw(c(0x1f, 0x8b))) && n %% 2^32 == recorded %% 2^32
+  }, error = function(e) FALSE, warning = function(w) FALSE))
 }
 
 #' Whether the repository answered that it has no index at `base` (a dated
@@ -197,7 +253,9 @@ index_not_published <- function(base) {
 index_fetch_command <- function(key, url, cache = cache_dir()) {
   path <- index_rds_path(key, cache)
   rscript <- file.path(R.home("bin"), "Rscript")
-  main <- if (is_github_key(key)) "fetch_github_main" else "fetch_index_main"
+  main <- if (is_github_key(key)) "fetch_github_main"
+          else if (is_universe_key(key)) "fetch_universe_main"
+          else "fetch_index_main"
   code <- paste0(
     "local({library(ember); ember:::", main, "(",
     deparse(key), ", ", deparse(url), ", ", deparse(path), ")})")
@@ -266,10 +324,12 @@ fetch_github_main <- function(key, url, path) {
 #' The URL of a commit's top-level DESCRIPTION: GitHub's contents endpoint
 #' (`<base>/contents/DESCRIPTION?ref=<sha>`, the call renv makes too), or,
 #' for a `file://` base (the tests' fixture, which can't take a query),
-#' `<base>/contents/<sha>/DESCRIPTION`.
-github_description_url <- function(base, sha) {
-  if (startsWith(base, "file://")) paste0(base, "/contents/", sha, "/DESCRIPTION")
-  else paste0(base, "/contents/DESCRIPTION?ref=", sha)
+#' `<base>/contents/<sha>/DESCRIPTION`. With `subdir`, the DESCRIPTION in
+#' that folder of the repository (a universe package's `RemoteSubdir`).
+github_description_url <- function(base, sha, subdir = NA_character_) {
+  file <- if (is.na(subdir)) "DESCRIPTION" else paste0(subdir, "/DESCRIPTION")
+  if (startsWith(base, "file://")) paste0(base, "/contents/", sha, "/", file)
+  else paste0(base, "/contents/", file, "?ref=", sha)
 }
 
 #' The token to send to GitHub's API at `base`, or `""`: `GITHUB_PAT` (as
@@ -360,14 +420,35 @@ read_description_index <- function(path, key, label) {
                  if (is.na(nc)) NA else nc == "YES")
 }
 
-#' Run in the installer: for each GitHub package in `lock`, the package
-#' names its DESCRIPTION needs, from the index cached when it was resolved
-#' (under its commit's key), or fetched again (`fetch_github_main()`) when
-#' this machine never resolved it. A package whose DESCRIPTION can't be had
-#' is left out, and renv looks it up itself. -> named list.
-github_install_deps <- function(lock, cache, github) {
+#' Run in the installer: for each GitHub or universe package in `lock`,
+#' the package names its DESCRIPTION needs, from the index cached when it
+#' was resolved (under its commit's key), or fetched again
+#' (`fetch_github_main()`, `fetch_universe_main()`) when this machine never
+#' resolved it. A package whose DESCRIPTION can't be had is left out, and
+#' renv looks it up itself. `repos`: the installer's repositories, which
+#' name each universe (`repo_urls()`). -> named list.
+github_install_deps <- function(lock, cache, github, repos = character()) {
   e <- lock$entries
   out <- list()
+  for (i in which(startsWith(e$source, "universe:"))) {
+    src <- parse_universe_source(e$source[[i]])
+    if (is.null(src)) next
+    key <- universe_commit_key(e$source[[i]], e$name[[i]])
+    idx <- cached_index(key, cache)
+    if (is.null(idx)) {
+      url <- if (is.null(universe_github_repo(src))) {
+        unname(repos[universe_repo_name(src$universe)])
+      } else {
+        repo_url(list(github = github), key)
+      }
+      idx <- if (is.na(url[1])) NULL else tryCatch({
+        fetch_universe_main(key, url, index_rds_path(key, cache))
+        cached_index(key, cache)
+      }, error = function(e) NULL)
+    }
+    pos <- if (is.null(idx)) NA else match(e$name[[i]], idx$name)
+    if (!is.na(pos)) out[[e$name[[i]]]] <- idx$deps[[pos]]
+  }
   for (i in which(startsWith(e$source, "github:"))) {
     src <- parse_github_source(e$source[[i]])
     if (is.null(src) || is.na(src$ref)) next
@@ -394,6 +475,167 @@ fresh_index <- function(key, cache = cache_dir()) {
   path <- index_rds_path(key, cache)
   if (!file.exists(path)) return(NULL)
   tryCatch(readRDS(path), error = function(e) NULL)
+}
+
+# ---- r-universe sources ------------------------------------------------------
+
+#' Run in a subprocess (`index_fetch_command()`, for a universe key), as
+#' `fetch_github_main()` is for a GitHub one.
+#'
+#' For a universe's latest build (`universe_key()`), `url` is the
+#' universe: one request for the package's JSON
+#' (`<url>/api/packages/<package>`, `universe_package_info()`), which gives
+#' its version, its dependencies and the git commit the build came from.
+#' The one-row index is labelled with that commit (`universe_source()`)
+#' and saved under the key asked for and under the commit's own key
+#' (`universe_commit_key()`), which never changes.
+#'
+#' For a commit's key (a lock read on a machine that never resolved it),
+#' the universe may serve a later build by now, so the DESCRIPTION is read
+#' from GitHub at that commit when the repository is there (`url` is its
+#' API, `repo_url()`), and from the universe otherwise, which works only
+#' while it still serves that commit.
+fetch_universe_main <- function(key, url, path) {
+  base <- sub("/+$", "", url)
+  if (startsWith(key, "universe-commit/")) {
+    package <- strsplit(key, "/", fixed = TRUE)[[1]][[2]]
+    source <- universe_source_of_key(key)
+    src <- parse_universe_source(source)
+    if (is.null(src)) stop("ember: not a universe key: ", key, call. = FALSE)
+    if (!is.null(universe_github_repo(src))) {
+      idx <- read_github_description(base, src$sha, src$subdir, key, source,
+                                     sprintf("%s (built by r-universe %s)", src$git, src$universe))
+    } else {
+      info <- universe_package_info(base, src$universe, package)
+      if (!identical(tolower(info$RemoteSha %||% ""), src$sha)) {
+        stop(sprintf(paste0("ember: r-universe %s no longer serves %s at commit %s, and its ",
+                            "repository (%s) isn't on GitHub, so that commit's DESCRIPTION ",
+                            "can't be read; update %s to take the universe's latest build"),
+                     src$universe, package, src$sha, src$git, package), call. = FALSE)
+      }
+      idx <- universe_info_index(info, key, src$universe)
+    }
+    targets <- stats::setNames(path, key)
+  } else {
+    parts <- strsplit(key, "/", fixed = TRUE)[[1]]
+    if (length(parts) != 3) stop("ember: not a universe key: ", key, call. = FALSE)
+    info <- universe_package_info(base, parts[[2]], parts[[3]])
+    idx <- universe_info_index(info, key, parts[[2]])
+    pinned <- universe_commit_key(idx$label, parts[[3]])
+    targets <- stats::setNames(c(path, index_rds_path(pinned, dirname(dirname(path)))), c(key, pinned))
+  }
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  for (k in names(targets)) {
+    idx$key <- k
+    tmp_rds <- paste0(targets[[k]], ".tmp-", Sys.getpid())
+    saveRDS(idx, tmp_rds)
+    if (!file.rename(tmp_rds, targets[[k]])) unlink(tmp_rds)
+  }
+  invisible(NULL)
+}
+
+#' A universe's JSON for `package` (`<base>/api/packages/<package>`), as
+#' a list, or a stop naming what went wrong: no such package in the
+#' universe (404), or no answer.
+universe_package_info <- function(base, universe, package) {
+  dest <- tempfile("ember-universe-")
+  got <- github_get(paste0(base, "/api/packages/", utils::URLencode(package, reserved = TRUE)),
+                    dest, c(Accept = "application/json"))
+  if (identical(got$status, 404L)) {
+    stop(sprintf("ember: r-universe %s has no package %s", universe, package), call. = FALSE)
+  }
+  if (!got$ok) {
+    stop(sprintf("ember: could not reach r-universe %s for %s%s", universe, package,
+                 if (nzchar(got$detail)) paste0(" (", got$detail, ")") else ""), call. = FALSE)
+  }
+  info <- tryCatch(jsonlite::fromJSON(dest, simplifyVector = TRUE), error = function(e) NULL)
+  if (!is.list(info) || is.null(info$Package) || is.null(info$Version)) {
+    stop(sprintf("ember: r-universe %s's answer for %s isn't a package's description", universe, package),
+         call. = FALSE)
+  }
+  info
+}
+
+#' A universe's JSON for a package (`universe_package_info()`) -> a one-row
+#' `ember_repo_index` under `key`, labelled with the commit it was built
+#' from (`universe_source()`). A build that doesn't say its commit, or
+#' whose repository isn't an https URL, can't be locked to its code, so it
+#' stops instead.
+universe_info_index <- function(info, key, universe) {
+  label <- if (is.null(info$RemoteSha) || !is_commit(info$RemoteSha)) NULL
+           else universe_source(universe, info$RemoteUrl %||% NA_character_, info$RemoteSha,
+                                info$RemoteSubdir %||% NA_character_)
+  if (is.null(label)) {
+    stop(sprintf(paste0("ember: r-universe %s doesn't say which git commit it built %s from, ",
+                        "so the lock can't fix its code"), universe, info$Package), call. = FALSE)
+  }
+  deps <- info[["_dependencies"]]
+  deps <- if (is.data.frame(deps) && all(c("package", "role") %in% names(deps))) {
+    unique(setdiff(deps$package[deps$role %in% c("Depends", "Imports", "LinkingTo")], c("R", base_packages)))
+  } else {
+    character()
+  }
+  nc <- toupper(trimws(info$NeedsCompilation %||% NA_character_))
+  new_repo_index(key, label, info$Package, info$Version, list(deps), if (is.na(nc)) NA else nc == "YES")
+}
+
+#' A GitHub repository's DESCRIPTION at commit `sha` (in `subdir` when not
+#' `NA`) -> a one-row index under `key`, labelled `label`; `where` names
+#' the repository in a failure's message (`github_failure()`).
+read_github_description <- function(base, sha, subdir, key, label, where) {
+  token <- github_token(base)
+  headers <- if (nzchar(token)) c(Authorization = paste("token", token)) else character()
+  desc <- tempfile("ember-github-desc-")
+  got <- github_get(github_description_url(base, sha, subdir), desc,
+                    c(headers, Accept = "application/vnd.github.raw"))
+  if (identical(got$status, 404L)) {
+    stop("ember: ", where, " has no DESCRIPTION at commit ", sha,
+         if (!is.na(subdir)) paste0(" in ", subdir), call. = FALSE)
+  }
+  if (!got$ok) stop(github_failure(where, got, nzchar(token), sha), call. = FALSE)
+  read_description_index(desc, key, label)
+}
+
+#' Run in the installer: for each universe package in `lock`, the commit
+#' its universe serves now (`universe_package_info()`, from `repos`, which
+#' name each universe: `repo_urls()`), or `NA` when it can't be asked. A
+#' universe can serve a new commit under the same version (a development
+#' version that stays `0.0.0.9000`), so the version alone can't say whether
+#' its build is the locked code; `renv_lockfile_of()` installs from the
+#' universe only when the commit matches. -> named character.
+universe_served <- function(lock, repos) {
+  e <- lock$entries
+  out <- character()
+  for (i in which(startsWith(e$source, "universe:"))) {
+    src <- parse_universe_source(e$source[[i]])
+    url <- if (is.null(src)) NA_character_ else unname(repos[universe_repo_name(src$universe)])
+    sha <- if (is.na(url[1])) NULL else tryCatch(universe_package_info(url, src$universe, e$name[[i]])$RemoteSha,
+                                                 error = function(e) NULL)
+    out[[e$name[[i]]]] <- if (is.null(sha)) NA_character_ else tolower(sha)
+  }
+  out
+}
+
+#' Run in the installer after renv: the universe packages renv installed
+#' from their universe (`served` names the locked commit) whose installed
+#' build isn't the locked commit. r-universe writes the commit it built
+#' from (`RemoteSha`) into every build's DESCRIPTION, and binaries are
+#' separate builds: one can lag the source build while it is still being
+#' made or after it failed, and the universe can rebuild between
+#' `universe_served()` and renv's download, all under the same version.
+#' A build that doesn't say its commit counts as wrong. -> character.
+universe_wrong_builds <- function(lock, library, served) {
+  e <- lock$entries
+  out <- character()
+  for (i in which(startsWith(e$source, "universe:"))) {
+    name <- e$name[[i]]
+    src <- parse_universe_source(e$source[[i]])
+    if (is.null(src) || !identical(unname(served[name]), src$sha)) next
+    path <- file.path(library, name, "DESCRIPTION")
+    sha <- if (file.exists(path)) unname(read.dcf(path, fields = "RemoteSha")[1, 1]) else NA_character_
+    if (is.na(sha) || !identical(tolower(sha), src$sha)) out <- c(out, name)
+  }
+  out
 }
 
 # ---- Bioconductor's release list ---------------------------------------------
@@ -466,6 +708,214 @@ bioc_config_fetch_command <- function(url, cache = cache_dir()) {
 #' keep it apart from `index_job_key()`'s.
 bioc_config_job_key <- function(url, cache) paste("bioc-config", url, cache, sep = "\u0001")
 
+# ---- CRAN's release dates ----------------------------------------------------
+
+#' Every CRAN version's release date, from CRAN's own index of its files
+#' (`ember_repos(cran_meta)`): `archive.rds` lists each archived tarball and
+#' `current.rds` each current one, with the time CRAN published it. A
+#' `data.frame(package, version, date)`, `date` the UTC day, one row per
+#' version, oldest first within a package. Pure; `archive` and `current` are
+#' what `readRDS()` gives for those files.
+cran_release_table <- function(archive, current) {
+  paths <- c(unlist(lapply(archive, rownames), use.names = FALSE), rownames(current))
+  mtime <- c(unlist(lapply(archive, function(info) as.numeric(info$mtime)), use.names = FALSE),
+             as.numeric(current$mtime))
+  file <- basename(paths)
+  pattern <- "^(.+)_([^_]+)\\.tar\\.gz$"
+  ok <- grepl(pattern, file)
+  out <- data.frame(package = sub(pattern, "\\1", file[ok]), version = sub(pattern, "\\2", file[ok]),
+                    date = as.Date(as.POSIXct(mtime[ok], origin = "1970-01-01", tz = "UTC"), tz = "UTC"),
+                    stringsAsFactors = FALSE)
+  # By the time, not the day: two versions released the same day are in
+  # the order they came out (BFS 0.5 and 0.5.1 on 2023-06-08).
+  out <- out[order(out$package, mtime[ok], method = "radix"), , drop = FALSE]
+  out <- out[!duplicated(paste(out$package, out$version)), , drop = FALSE]
+  rownames(out) <- NULL
+  out
+}
+
+#' Where the release table from `url` is cached, as the Bioconductor list is.
+cran_releases_rds_path <- function(url, cache = cache_dir()) {
+  file.path(cache, "cran-releases", paste0(hash_text(url), ".rds"))
+}
+
+#' A day, as for Bioconductor's list: a copy fetched yesterday lacks only
+#' today's releases, which Package Manager's snapshots may not have yet.
+cran_releases_max_age <- 24 * 60 * 60
+
+#' The cached release table for `url`: `list(table, fetched_at)`, or `NULL`
+#' when there is none, or it is older than `max_age` seconds.
+cached_cran_releases <- function(url, cache = cache_dir(), max_age = cran_releases_max_age) {
+  path <- cran_releases_rds_path(url, cache)
+  if (!file.exists(path)) return(NULL)
+  hit <- tryCatch(readRDS(path), error = function(e) NULL)
+  if (is.null(hit) || !is.data.frame(hit$table)) return(NULL)
+  age <- as.numeric(difftime(Sys.time(), hit$fetched_at, units = "secs"))
+  if (is.na(age) || age > max_age) return(NULL)
+  hit
+}
+
+#' Run in a subprocess (`cran_releases_fetch_command()`): download
+#' `archive.rds` and `current.rds` from `url` (about 6 MB together), build
+#' `cran_release_table()` and save `list(table, fetched_at)` at a temporary
+#' name, then rename into place.
+fetch_cran_releases_main <- function(url, path) {
+  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
+  read <- function(name) {
+    tmp <- tempfile("ember-cran-meta-")
+    on.exit(unlink(tmp))
+    ok <- isTRUE(tryCatch({
+      utils::download.file(paste0(url, "/", name), tmp, quiet = TRUE, mode = "wb")
+      TRUE
+    }, error = function(e) FALSE, warning = function(w) FALSE))
+    if (!ok) stop("ember: could not fetch ", paste0(url, "/", name), call. = FALSE)
+    readRDS(tmp)
+  }
+  table <- cran_release_table(read("archive.rds"), read("current.rds"))
+  if (nrow(table) == 0) stop("ember: no CRAN releases found at ", url, call. = FALSE)
+  tmp_rds <- paste0(path, ".tmp-", Sys.getpid())
+  saveRDS(list(table = table, fetched_at = Sys.time()), tmp_rds)
+  if (!file.rename(tmp_rds, path)) unlink(tmp_rds)
+  invisible(NULL)
+}
+
+#' The command that fetches the release table from `url`, as a job.
+cran_releases_fetch_command <- function(url, cache = cache_dir()) {
+  path <- cran_releases_rds_path(url, cache)
+  rscript <- file.path(R.home("bin"), "Rscript")
+  code <- paste0(
+    "local({library(ember); ember:::fetch_cran_releases_main(",
+    deparse(url), ", ", deparse(path), ")})")
+  env <- c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep),
+           R_LIBS_USER = "", R_LIBS_SITE = "")
+  list(command = rscript, args = c("--vanilla", "-e", code), env = env)
+}
+
+cran_releases_job_key <- function(url, cache) paste("cran-releases", url, cache, sep = "\u0001")
+
+# ---- Large downloads (#37) -----------------------------------------------------
+
+#' An install that would download more than this many bytes waits for the
+#' user's OK first (design.md, "Large installs ask first"):
+#' `options(ember.ask_above)` changes it for new sessions, and `Inf` never
+#' asks.
+ask_above_default <- 500e6
+
+#' The local path of a `file://` URL: `file:///tmp/x` and, on Windows,
+#' both `file://D:/x` and `file:///D:/x`, as the tests write them.
+#' (`available.packages()` reads `file://D:/x` as `//D:/x`, a network path
+#' that isn't there, so the indexes here are read with `read_contrib()`.)
+file_url_path <- function(url) {
+  path <- sub("^file://", "", url)
+  if (.Platform$OS.type == "windows" && grepl("^/[A-Za-z]:", path)) path <- substring(path, 2L)
+  path
+}
+
+#' The `Package` and `Version` columns of the index at `contrib` (a
+#' `.../src/contrib` URL), or `NULL` when it can't be read.
+read_contrib <- function(contrib) {
+  if (!startsWith(contrib, "file://")) {
+    return(tryCatch(suppressWarnings(utils::available.packages(contriburl = contrib, filters = list())),
+                    error = function(e) NULL))
+  }
+  dir <- file_url_path(contrib)
+  file <- Filter(file.exists, file.path(dir, c("PACKAGES", "PACKAGES.gz")))
+  if (length(file) == 0) return(NULL)
+  tryCatch(read.dcf(file[[1]], fields = c("Package", "Version")), error = function(e) NULL)
+}
+
+#' The size in bytes of the file at `url`, or `NA`: the Content-Length of
+#' a HEAD request (the last response's, after any redirect), or the size
+#' of a `file://` URL's file (the tests' fixtures).
+url_size <- function(url) {
+  if (startsWith(url, "file://")) {
+    size <- file.size(file_url_path(url))
+    return(if (is.na(size)) NA_real_ else as.numeric(size))
+  }
+  headers <- tryCatch(curlGetHeaders(url), error = function(e) NULL)
+  if (is.null(headers) || !identical(as.integer(attr(headers, "status")), 200L)) return(NA_real_)
+  len <- grep("^content-length:", headers, ignore.case = TRUE, value = TRUE)
+  if (length(len) == 0) return(NA_real_)
+  suppressWarnings(as.numeric(trimws(sub("^[^:]*:", "", len[[length(len)]]))))
+}
+
+#' Whether renv's cache already holds `name` at `version` for R `minor`, so
+#' installing it downloads nothing. renv's layout:
+#' `v5/<os>/R-<minor>/<platform>/<name>/<version>/<hash>`.
+in_renv_cache <- function(cache_root, name, version, minor) {
+  length(Sys.glob(file.path(cache_root, "v5", "*", paste0("R-", minor), "*", name, version, "*"))) > 0
+}
+
+#' The packages that make an install large, with their sizes: Bioconductor's
+#' annotation and experiment-data packages (`org.Hs.eg.db`, `BSgenome.*`:
+#' hundreds of MB to several GB) in `lock` that renv's cache doesn't hold
+#' yet. CRAN's and Bioconductor's software packages are kept under 5 MB by
+#' those repositories' rules, and a GitHub package is one repository's
+#' source, so neither is counted. `repos` is the installer's (name -> URL;
+#' `BioCann` and `BioCexp` are there when the notebook has a Bioconductor
+#' pin). One read of each data repository's index, then one HEAD request
+#' per package not yet in the cache.
+#' -> `data.frame(package, version, bytes)`, `bytes` `NA` when the size
+#' couldn't be had.
+large_downloads <- function(lock, repos, cache, minor = r_info()$minor) {
+  out <- data.frame(package = character(), version = character(), bytes = numeric(),
+                    stringsAsFactors = FALSE)
+  bioc <- lock$entries[lock$entries$source == "Bioc", , drop = FALSE]
+  data_repos <- repos[intersect(c("BioCann", "BioCexp"), names(repos))]
+  if (nrow(bioc) == 0 || length(data_repos) == 0) return(out)
+  root <- file.path(cache, "renv-cache")
+  for (repo in data_repos) {
+    contrib <- paste0(sub("/+$", "", repo), "/src/contrib")
+    avail <- read_contrib(contrib)
+    if (is.null(avail) || nrow(avail) == 0) next
+    hit <- match(bioc$name, avail[, "Package"])
+    here <- !is.na(hit) & !(bioc$name %in% out$package)
+    for (i in which(here)) {
+      name <- bioc$name[[i]]
+      version <- bioc$version[[i]]
+      if (!identical(unname(avail[hit[[i]], "Version"]), version)) next
+      if (in_renv_cache(root, name, version, minor)) next
+      bytes <- url_size(paste0(contrib, "/", name, "_", version, ".tar.gz"))
+      out <- rbind(out, data.frame(package = name, version = version, bytes = bytes,
+                                   stringsAsFactors = FALSE))
+    }
+  }
+  out
+}
+
+#' Called by the installer (and the fake one) before anything downloads:
+#' when `plan$ask_above` is finite and `large_downloads()` add up to more,
+#' writes one `EMBER-DOWNLOAD <package> <version> <bytes>` line per package
+#' on stdout and returns `TRUE`, and the installer stops with status 3 (the
+#' shell turns that into the target's `"asking"`, `ev_install_done()`'s
+#' `download`). Sizes that couldn't be had count as 0.
+ask_before_install <- function(plan, lock) {
+  ask_above <- plan$ask_above %||% Inf
+  if (!is.finite(ask_above)) return(FALSE)
+  big <- large_downloads(lock, plan$repos, plan$cache, plan$r$minor %||% r_info()$minor)
+  if (sum(big$bytes, na.rm = TRUE) <= ask_above) return(FALSE)
+  for (i in seq_len(nrow(big))) {
+    cat(sprintf("EMBER-DOWNLOAD %s %s %s\n", big$package[[i]], big$version[[i]],
+                if (is.na(big$bytes[[i]])) "NA" else format(big$bytes[[i]], scientific = FALSE)))
+  }
+  flush(stdout())
+  TRUE
+}
+
+#' The installer's `EMBER-DOWNLOAD` lines as `data.frame(package, version,
+#' bytes)`, largest first; `NULL` when there are none (an ordinary failure).
+download_lines <- function(lines) {
+  m <- regmatches(lines, regexec("^EMBER-DOWNLOAD (\\S+) (\\S+) (\\S+)\\s*$", lines))
+  m <- Filter(function(x) length(x) == 4, m)
+  if (length(m) == 0) return(NULL)
+  out <- data.frame(package = vapply(m, `[[`, "", 2), version = vapply(m, `[[`, "", 3),
+                    bytes = suppressWarnings(as.numeric(vapply(m, `[[`, "", 4))),
+                    stringsAsFactors = FALSE)
+  out <- out[order(-ifelse(is.na(out$bytes), 0, out$bytes), out$package), , drop = FALSE]
+  rownames(out) <- NULL
+  out
+}
+
 # ---- Libraries ---------------------------------------------------------------
 
 #' The manifest of a ready library, or `NULL` when there is no complete
@@ -503,6 +953,13 @@ installer_script <- function() {
   getOption("ember.installer_script", system.file("installer.R", package = "ember"))
 }
 
+#' Never called. renv is in Imports for inst/installer.R, which R CMD check
+#' doesn't read, so without a `renv::` call in R/ the check notes renv as
+#' unused (#24). A `::` here satisfies it, and unlike `importFrom()` it
+#' doesn't load renv when ember loads: the server never loads renv (see
+#' `installer_command()`).
+renv_is_for_the_installer <- function() renv::restore
+
 #' The command for the installer subprocess (inst/installer.R):
 #' `list(command = <Rscript>, args, env)`.
 #'
@@ -514,14 +971,17 @@ installer_script <- function() {
 #'   binary form), `MAKEFLAGS = -j2` (increment 2 chooses a real core
 #'   count; increment 1's fixtures need no compiler at all).
 #' * Input: a plan file (RDS) with the lock lines, the repo URLs, R info,
-#'   the staging and final paths.
+#'   the staging and final paths, and `ask_above`: past that many bytes of
+#'   large downloads the installer stops first (`ask_before_install()`).
+#'   `Inf`, the default, as for `ember::run()`, never stops.
 #' The installer restores into the staging folder, writes the manifest
 #' (computing exports: see the script), then renames staging to `path`.
 #'
 #' `r` isn't a parameter: it is always this process's own `r_info()`,
 #' since whoever calls `installer_command()` is running on the R the
 #' library must match.
-installer_command <- function(lock, repos, path, cache = cache_dir(), github = "https://api.github.com") {
+installer_command <- function(lock, repos, path, cache = cache_dir(), github = "https://api.github.com",
+                              ask_above = Inf) {
   dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
   # `tempfile()`'s own unique suffix, not `sample()`: this runs in the
   # server process, and `sample()` would perturb its `.Random.seed` on
@@ -533,7 +993,7 @@ installer_command <- function(lock, repos, path, cache = cache_dir(), github = "
   # untouched).
   staging <- paste0(path, ".staging-", Sys.getpid(), "-", basename(tempfile()))
   plan <- list(lock_lines = format_lock_lines(lock), repos = repos, r = r_info(),
-              staging = staging, path = path, cache = cache, github = github)
+              staging = staging, path = path, cache = cache, github = github, ask_above = ask_above)
   plan_path <- tempfile("ember-install-plan-", fileext = ".rds")
   saveRDS(plan, plan_path)
 
@@ -630,8 +1090,12 @@ library_cache_entries <- function(staging, installed, cache_root) {
       out <- c(out, candidates)
       next
     }
+    # Base R's `file.info()` has no `ino` column, so this is `NULL` and the
+    # newest candidate stands in; `is.na(NULL)` used to stop the install
+    # whenever two cache entries shared a package and version (two builds
+    # of one universe version, #203).
     target_ino <- tryCatch(file.info(pkg_dir)$ino, error = function(e) NA)
-    matched <- if (!is.na(target_ino)) {
+    matched <- if (length(target_ino) == 1 && !is.na(target_ino)) {
       Filter(function(c) isTRUE(file.info(file.path(c, pkg))$ino == target_ino), candidates)
     } else character()
     out <- c(out, if (length(matched) > 0) matched else candidates[length(candidates)])
@@ -666,6 +1130,15 @@ finish_library <- function(staging, path, manifest) {
     unlink(staging, recursive = TRUE)
     return(invisible(FALSE))
   }
+  # A folder with no manifest is no library: what a delete cut short leaves
+  # (`delete_library()`, #152). A rename can't replace a folder that isn't
+  # empty, so it goes first, or the library could never be installed again.
+  # Checked again just before: another installer may have finished since.
+  # A rename landing between that check and the unlink is not ruled out: this
+  # one then deletes that library and renames its own copy, the same lock, in
+  # its place. Only a worker starting on the other copy in that instant would
+  # notice; rare enough to accept.
+  if (dir.exists(path) && is.null(read_library_manifest(path))) unlink(path, recursive = TRUE)
   if (suppressWarnings(file.rename(staging, path))) return(invisible(TRUE))
   # Lost a race that started after the check above.
   if (!is.null(read_library_manifest(path))) {
@@ -763,6 +1236,8 @@ job_start <- function(key, cmd, nb, make_progress, make_done) {
   }
   job$subs[[length(job$subs) + 1L]] <- list(nb = nb, make_progress = make_progress,
                                             make_done = make_done)
+  # An idle session polls every 2 s; read the job at the job pace from now.
+  hurry_poll(nb, 0.25)
   invisible(NULL)
 }
 
@@ -842,6 +1317,16 @@ poll_jobs <- function(nb) {
       output <- paste0(paste(job$lines, collapse = "\n"),
                        if (length(job$lines) > 0L) "\n" else "",
                        job$buf, rest)
+      # Lines that arrived only with the exit (a fast job) are progress
+      # too, ahead of the result: an installer's notice (#19) would
+      # otherwise be lost whenever it finished between two polls.
+      last <- strsplit(paste0(job$buf, rest), "\n", fixed = TRUE)[[1]]
+      for (line in last[nzchar(last)]) {
+        for (s in job$subs) {
+          ev <- tryCatch(s$make_progress(line), error = function(e) NULL)
+          if (!is.null(ev)) enqueue(s$nb, ev)
+        }
+      }
       for (s in job$subs) {
         ev <- tryCatch(s$make_done(status, output), error = function(e) NULL)
         if (!is.null(ev)) enqueue(s$nb, ev)
@@ -898,6 +1383,9 @@ dir_size <- function(path) {
 #'   hold only links, so a returning notebook gets its library back from
 #'   the cache in seconds, or from the lock.
 #' * Staging folders older than one day (an installer that crashed).
+#' * Library folders without a manifest older than one day, except those in
+#'   `keep`: what a delete cut short leaves. A library is deleted manifest
+#'   first, so such a folder never reads as a ready library (#152).
 #' * With `cache = TRUE`: renv cache entries listed in no remaining
 #'   library's manifest (`cache_entries`), so deleting one never breaks a
 #'   library whether renv linked with hard links or symlinks. An entry
@@ -951,7 +1439,18 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
       }
 
       manifest <- read_library_manifest(entry)
-      if (is.null(manifest)) next
+      if (is.null(manifest)) {
+        # No manifest, so not a library anything uses: what an interrupted
+        # delete leaves (below), or a manifest that can't be read. Left a
+        # day, as a staging folder is, before it goes (#152).
+        if (normalizePath(entry, mustWork = FALSE) %in% keep_resolved) next
+        age <- age_days(file.info(entry)$mtime)
+        if (is.na(age) || age >= 1) {
+          record(entry, "library", dir_size(entry), file.info(entry)$mtime)
+          if (!dry_run) delete_library(entry)
+        }
+        next
+      }
 
       if (normalizePath(entry, mustWork = FALSE) %in% keep_resolved) {
         kept_cache_entries <- c(kept_cache_entries, manifest$cache_entries)
@@ -965,7 +1464,7 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
         next
       }
       record(entry, "library", dir_size(entry), last_used)
-      if (!dry_run) unlink(entry, recursive = TRUE)
+      if (!dry_run) delete_library(entry)
     }
   }
 
@@ -1005,6 +1504,20 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
   invisible(out)
 }
 
+#' Delete the library folder `path`, its manifest first (#152): a delete cut
+#' short (the server stopping mid clean-up, a file that can't be removed)
+#' then leaves a folder `read_library_manifest()` reads as no library, which
+#' is installed again, never one it reads as ready with packages missing.
+#' If the manifest can't be removed, nothing else is. Returns whether the
+#' folder is gone.
+delete_library <- function(path) {
+  manifest <- file.path(path, "ember-library.rds")
+  unlink(manifest)
+  if (file.exists(manifest)) return(invisible(FALSE))
+  unlink(path, recursive = TRUE)
+  invisible(!dir.exists(path))
+}
+
 #' Disk use for the package view (#38): `list(libraries, cache, indexes,
 #' exact)`, the first three in bytes. R's `file.info()` has no inode or
 #' link count, so this runs one `du -sk` over the cache, the indexes and
@@ -1016,6 +1529,11 @@ clean <- function(max_age = 60, cache = TRUE, dry_run = FALSE,
 #' `exact` is `FALSE`. A folder that doesn't exist is 0. Run in a
 #' subprocess when asked (`disk_use_command()`): walking a large cache
 #' can take seconds.
+#'
+#' `du` exits 1 when a folder vanishes during its walk, as an install's
+#' staging folder does when the install ends, but still prints a total for
+#' each root: those totals are kept (#332), since what vanished was going
+#' away anyway. Only a missing total falls back to summing.
 disk_use <- function(dir = cache_dir(), du = Sys.which("du")) {
   roots <- c(cache = file.path(dir, "renv-cache"), indexes = file.path(dir, "indexes"),
              libraries = file.path(dir, "libraries"))
@@ -1026,8 +1544,8 @@ disk_use <- function(dir = cache_dir(), du = Sys.which("du")) {
     res <- processx::run(du, c("-sk", unname(present)), error_on_status = FALSE)
     lines <- strsplit(res$stdout, "\n")[[1]]
     lines <- lines[nzchar(lines)]
-    if (identical(res$status, 0L) && length(lines) == length(present)) {
-      kb <- as.numeric(sub("\t.*$", "", lines))
+    kb <- suppressWarnings(as.numeric(sub("\t.*$", "", lines)))
+    if (identical(sub("^[^\t]*\t", "", lines), unname(present)) && !anyNA(kb)) {
       for (i in seq_along(present)) use[[names(present)[i]]] <- kb[i] * 1024
       return(use)
     }
@@ -1080,7 +1598,9 @@ clean_up <- function(dir = cache_dir(), keep = character(), dry_run = TRUE, max_
     res <- processx::run(du, c("-sck", paths), error_on_status = FALSE)
     lines <- strsplit(res$stdout, "\n")[[1]]
     total <- grep("\ttotal$", lines, value = TRUE)
-    if (identical(res$status, 0L) && length(total) == 1L)
+    # A path that vanished during the walk makes du exit 1 with the total
+    # still printed: that total is kept, as disk_use() keeps its own (#332).
+    if (length(total) == 1L)
       bytes <- as.numeric(sub("\t.*$", "", total)) * 1024
   }
   if (!isTRUE(dry_run) && length(paths) > 0L)

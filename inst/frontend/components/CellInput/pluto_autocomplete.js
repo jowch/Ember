@@ -172,7 +172,7 @@ const not_explicit_and_too_boring = (/** @type {autocomplete.CompletionContext} 
     // Not ":" alone: "pkg::" and "pkg:::" must keep completing.
     if (ctx.matchBefore(/[\s=)+\-/,*'(;\[\]{}"]$/)) return true
     if (ctx.matchBefore(/[^:]:$/)) return true
-    if (ctx.tokenBefore(["IntegerLiteral", "FloatLiteral"]) != null) return true
+    if (ctx.tokenBefore(["Number"]) != null) return true
     if (in_comment(ctx)) return true
     if (ctx.tokenBefore([...R_STRING_NODE_NAMES]) != null) return true
     return false
@@ -355,6 +355,13 @@ export let pluto_autocomplete = ({ request_autocomplete, on_update_doc_query, re
     return [
         autocompletion({
             activateOnTyping: activate_on_typing,
+            // CodeMirror waits this long after a keystroke before asking the
+            // sources, 100 ms by default. Ours mostly ask only where a name
+            // starts (`validFor` filters as it grows), so a shorter wait adds
+            // few requests, and the list shows about 70 ms sooner (#288). A
+            // reply cut off as too long has no `validFor`, so after one of
+            // those each keystroke asks again.
+            activateOnTypingDelay: 30,
             icons: false,
             override: [
                 global_variables_completion(request_unsubmitted_global_definitions, cell_id),

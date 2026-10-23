@@ -20,6 +20,34 @@ attach_functions <- c("library", "require", "p_load")
 #' through this table.
 use_functions <- c("requireNamespace", "loadNamespace", "use")
 
+#' Install calls: the way R users say where a package lives
+#' (packages.md, "Install calls"). `library(pkg)` is what fetches it; an
+#' install call only names the source, which goes into the header's
+#' `[sources]`. The walker reads one in a cell's own code, outside function
+#' bodies, by the kind of argument it takes: `"github"` (`"user/repo"`,
+#' optionally with `@ref`, or a `ref =` argument), `"pak"` (`"user/repo"`,
+#' `"github::user/repo"`, `"pkg=user/repo"`, or a plain name), `"repos"`
+#' (package names, with an r-universe among `repos`), `"names"` (package
+#' names only: Bioconductor's are found without a source). The worker
+#' doesn't run one at a cell's top level: the lock already answers it.
+#'
+#' `install_calls` are matched as `pkg::fn` (as a whole top-level
+#' expression the package isn't one the notebook needs: the call doesn't
+#' run); `install_calls_bare` by the bare
+#' name, for code that attached the package first. `BiocManager::install`
+#' has no bare form: `install()` alone is too common a name.
+install_calls <- c("remotes::install_github" = "github", "devtools::install_github" = "github",
+                   "pak::pak" = "pak", "pak::pkg_install" = "pak",
+                   "utils::install.packages" = "repos", "BiocManager::install" = "names")
+install_calls_bare <- c(install_github = "github", pak = "pak", pkg_install = "pak",
+                        install.packages = "repos")
+
+#' Sources Ember knows without an install call: its own packages, which
+#' aren't on CRAN. emberui (docs/inputs.md) goes here as
+#' `"universe:jowch"` once its universe builds it; until then an entry
+#' would send `library(emberui)` to a universe that doesn't have it.
+builtin_sources <- stats::setNames(character(), character())
+
 #' Functions whose top-level call changes a global setting.
 #'
 #' A call counts only when it changes something: `options()` and
@@ -61,13 +89,39 @@ setting_kinds <- c(options = "option", local_options = "option",
 #' FALSE` argument says otherwise, each name is recorded as a reference
 #' instead, and the note is dropped -- the cell no longer reads
 #' untrackably, it reads a specific global. A non-literal name
-#' (`get(paste0("fit_", i))`) keeps the note, same as before.
+#' (`get(paste0("fit_", i))`) keeps the note, same as before. So does one
+#' of them passed as a function (`lapply(names, get)`, walk.R).
 untracked_reads <- c("get", "get0", "mget", "exists", "dynGet",
                      "eval", "evalq", "eval.parent")
 
 #' The subset of `untracked_reads` whose name argument is checked for a
 #' literal before falling back to the plain `untracked_read` note.
 get_family_functions <- c("get", "get0", "exists", "mget", "dynGet")
+
+#' Calls that take a function as an object to look at, not to call:
+#' `args(get)` or `?get` reads no global through `get`, so a get-family
+#' function that is a direct argument of one gets no note (#357).
+function_object_heads <- c("?", "help", "args", "formals", "body",
+                           "environment", "debug", "debugonce", "undebug",
+                           "trace", "untrace", "identical", "bquote")
+
+#' The get-family function `e` passes as a value, or `NULL`: a bare
+#' `get` (unless a local binds it) or `base::get` / `base:::get` that isn't
+#' being called (#357).
+get_family_value <- function(e, scope) {
+  if (is.symbol(e)) {
+    name <- as.character(e)
+    if (name %in% get_family_functions && !is_bound_locally(scope, name)) return(name)
+    return(NULL)
+  }
+  if (is.call(e) && length(e) == 3 && is.symbol(e[[1]]) &&
+      as.character(e[[1]]) %in% c("::", ":::") &&
+      identical(as.character(e[[2]]), "base") &&
+      as.character(e[[3]]) %in% get_family_functions) {
+    return(as.character(e[[3]]))
+  }
+  NULL
+}
 
 is_get_family <- function(name) {
   name %in% get_family_functions
@@ -172,7 +226,15 @@ class_name_calls <- list(
   as = list(formals = c("object", "Class"), read = "Class"),
   setAs = list(formals = c("from", "to"), read = c("from", "to")),
   getClass = list(formals = "Class", read = "Class"),
-  getClassDef = list(formals = "Class", read = "Class")
+  getClassDef = list(formals = "Class", read = "Class"),
+  slotNames = list(formals = "x", read = "x"),
+  getSlots = list(formals = "x", read = "x"),
+  extends = list(formals = c("class1", "class2"), read = c("class1", "class2")),
+  isVirtualClass = list(formals = "Class", read = "Class"),
+  existsMethod = list(formals = c("f", "signature"), read = "signature"),
+  hasMethod = list(formals = c("f", "signature"), read = "signature"),
+  getMethod = list(formals = c("f", "signature"), read = "signature"),
+  selectMethod = list(formals = c("f", "signature"), read = "signature")
 )
 
 #' The arguments of `class_name_calls` that hold slot or field classes,
@@ -209,12 +271,12 @@ display_names <- function(names) {
 #' of R 4.6.1 (`utils::isS3stdGeneric()`), the internal and primitive
 #' generics (`?InternalMethods`, `.S3PrimitiveGenerics`), and the members of
 #' the group generics, so `+.money` and `max.interval` count. The group
-#' generics themselves (`Ops.money`, `Math.interval`) are not methods of
-#' any one name and are left out.
+#' generics themselves (`Ops.money`, `Math.interval`) are in
+#' `group_generics`.
 s3_generics <- c(
   "-", "!", "!=", ".AtNames", ".DollarNames", "[", "[[", "[[<-", "[<-", "*",
-  "/", "&", "%/%", "%%", "^", "+", "<", "<=", "==", ">", ">=", "|", "$",
-  "$<-", "abs", "acos", "acosh", "add1", "aggregate", "AIC", "alias", "all",
+  "/", "&", "%/%", "%%", "%*%", "^", "+", "<", "<=", "==", ">", ">=", "|", "$",
+  "$<-", "@", "@<-", "abs", "acos", "acosh", "add1", "aggregate", "AIC", "alias", "all",
   "all.equal", "anova", "ansari.test", "any", "anyDuplicated", "anyNA",
   "aperm", "ar.burg", "ar.yw", "Arg", "as.array", "as.call", "as.character",
   "as.complex", "as.data.frame", "as.Date", "as.dendrogram", "as.dist",
@@ -251,9 +313,9 @@ s3_generics <- c(
   "princomp", "print", "prod", "profile", "proj", "prompt", "qqnorm", "qr",
   "quade.test", "quantile", "quarters", "range", "rbind", "Re", "relevel",
   "reorder", "rep", "rep_len", "rep.int", "resid", "residuals", "rev",
-  "row.names", "row.names<-", "rowsum", "rstandard", "rstudent", "scale",
+  "round", "row.names", "row.names<-", "rowsum", "rstandard", "rstudent", "scale",
   "screeplot", "se.contrast", "seek", "selfStart", "seq", "seq.int",
-  "sequence", "sigma", "sign", "simulate", "sin", "sinh", "sinpi", "solve",
+  "sequence", "sigma", "sign", "signif", "simulate", "sin", "sinh", "sinpi", "solve",
   "sort_by", "sortedXyData", "spineplot", "split", "split<-", "sqrt", "SSD",
   "stack", "start", "str", "stripchart", "subset", "sum", "summary",
   "sunflowerplot", "t", "t.test", "tail", "tan", "tanh", "tanpi", "terms",
@@ -263,6 +325,25 @@ s3_generics <- c(
   "var.test", "variable.names", "vcov", "weekdays", "weighted.mean",
   "weights", "wilcox.test", "window", "window<-", "with", "within", "xtfrm"
 )
+
+#' The group generics and their members, S3 (`?groupGeneric`) and S4
+#' (`?S4groupGeneric`). A method of a group (`Ops.money`,
+#' `setMethod("Arith", "Money", ...)`) runs for each member, so it feeds
+#' every cell that reads one (#41).
+group_generics <- local({
+  arith <- c("+", "-", "*", "^", "%%", "%/%", "/")
+  compare <- c("==", ">", "<", "!=", "<=", ">=")
+  logic <- c("&", "|")
+  math <- c("abs", "sign", "sqrt", "ceiling", "floor", "trunc", "cummax", "cummin",
+            "cumprod", "cumsum", "exp", "expm1", "log", "log10", "log2", "log1p",
+            "cos", "cosh", "sin", "sinh", "tan", "tanh", "acos", "acosh", "asin",
+            "asinh", "atan", "atanh", "cospi", "sinpi", "tanpi", "gamma", "lgamma",
+            "digamma", "trigamma")
+  list(Ops = c(arith, compare, logic, "!"), Arith = arith, Compare = compare,
+       Logic = logic, Math = c(math, "round", "signif"), Math2 = c("round", "signif"),
+       Summary = c("max", "min", "range", "prod", "sum", "any", "all"),
+       Complex = c("Arg", "Conj", "Im", "Mod", "Re"), matrixOps = "%*%")
+})
 
 #' Formula operators whose every argument is a term.
 #'
@@ -280,6 +361,22 @@ formula_transparent <- c("+", "-", "*", "/", "^", ":", "|", "||", "&", "&&",
 formula_data_positional <- c("lm", "glm", "aov", "lmer", "glmer", "nls",
                              "gam", "t.test", "wilcox.test", "xtabs",
                              "aggregate", "boxplot")
+
+#' Base R's data-masking calls (#107): each looks a name in its other
+#' arguments up in its data first, and in the calling environment only
+#' when the data has no such name. `data` is the data argument's names, in
+#' the order R matches them (a named one, else the first unnamed one).
+#' `frame` is `TRUE` when only a data frame masks (`subset()` and
+#' `transform()` on anything else evaluate their arguments as usual);
+#' `with()` and `within()` also mask with a plain list. The graph decides
+#' per name, from the columns the data had when its cell last ran
+#' (graph.R, `resolve_masked()`).
+data_masking_calls <- list(
+  subset = list(data = "x", frame = TRUE),
+  transform = list(data = "_data", frame = TRUE),
+  with = list(data = "data", frame = FALSE),
+  within = list(data = "data", frame = FALSE)
+)
 
 #' Names never recorded as references or definitions.
 #'

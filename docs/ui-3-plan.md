@@ -1355,8 +1355,9 @@ message and `done` report gain fields, worker and server in one commit; the
 - **Bigger images.** A 2x PNG is 2-3 times today's bytes, in the state,
   every page sync and every HTML export: a page with 50 plots grows by a
   few MB.
-- **`render_png()` with a pixel size replaces the stored image**, so the
-  page then shows that image. Unchanged from today; tracked in #28.
+- **`render_png()` with a pixel size replaced the stored image**, so the
+  page then showed that image. Fixed in #28: it now asks the worker
+  directly and only returns the image.
 - **Summaries run user code** (`str` and `format` methods) after every
   run. The 0.25 s budget, per-name `tryCatch` and interruptibility bound
   it; a slow `class()` is not bounded.
@@ -2525,7 +2526,15 @@ be; Figtree 12 px, weight 500, a 12 px icon, pill, padding
 - "Not run yet": a circle icon, panel background, line border, muted text,
   no output. Shown when the cell has never run, isn't queued or running,
   isn't blank, isn't off, isn't text, and the page isn't in safe preview
-  (piece 5's banner says it once).
+  (piece 5's banner says it once). In safe preview such a cell keeps the
+  chip's space, unseen and hidden from screen readers, so leaving safe
+  preview doesn't push every cell that stays unrun down by a chip at once
+  (#139). A cell that leaves safe preview queued (all of them, for "Run
+  this notebook") gives the space back then, with the banner, so the page
+  moves up once, at the click, and after that only grows as outputs land.
+  Outside safe preview, the same unseen chip holds the space while a "Not
+  run yet" cell's first run is on its way, so its code moves once, when
+  the output lands (#52).
 - "Stale · `x` changed": a clock icon, `#f5ecd6` background, `#e6d3a3`
   border, `#6f5210` text (dark `#352d1b`, `#58492a`, `#dcb35a`). The old
   output is greyscale at 0.32 opacity on a wash (`--ember-wash`) joined to

@@ -6,7 +6,9 @@
 # The GitHub fixture (fixtures/github) is laid out as the GitHub API is:
 # `repos/lab/toyC/commits/<ref>` holds the commit a ref names,
 # `repos/lab/toyC/contents/<sha>/DESCRIPTION` that commit's DESCRIPTION, and
-# `repos/lab/toyC/tarball/<sha>` the package renv installs. toyC imports toyB
+# `repos/lab/toyC/tarball/<sha>` the package renv installs. The contents
+# folders are stored under short shas, so the tarball's paths fit, and
+# `github_fixture_dir()` names them in full in a copy. toyC imports toyB
 # (from the toy CRAN fixture); it is 0.3.0 at C1 (tag v0.3.0, short sha
 # 3f2a1c9) and 0.4.0 at C2 (main, HEAD).
 
@@ -14,7 +16,7 @@ C1 <- "3f2a1c90a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0"
 C2 <- "8e4b7d2c1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c"
 
 github_fixture <- function() {
-  paste0("file://", normalizePath(testthat::test_path("fixtures", "github"), mustWork = TRUE))
+  paste0("file://", github_fixture_dir())
 }
 
 #' A notebook file with `[sources]` and a lock.
@@ -118,24 +120,24 @@ test_that("a locked commit answers a spec of the same repository, and a commit s
 test_that("source_keys keeps a locked commit for an unchanged spec, and looks up the ref otherwise", {
   lock <- new_lock("toyC", "0.3.0", github_source("lab", "toyC", C1))
   header <- list(sources = c(toyC = "github:lab/toyC@main", other = "github:x/other", bad = "cran"))
-  expect_equal(source_keys(header, lock, github_sources(header)),
+  expect_equal(source_keys(header, lock, readable_sources(header)),
                c(other = "github/x/other@HEAD", toyC = paste0("github/lab/toyC@", C1)))
   # The spec changed since the lock was resolved: look the new ref up.
   expect_equal(source_keys(header, lock, c(toyC = "github:lab/toyC@v0.3.0"))[["toyC"]],
                "github/lab/toyC@main")
   # A commit spec the lock doesn't hold.
   header$sources[["toyC"]] <- "github:lab/toyC@8e4b7d2"
-  expect_equal(source_keys(header, lock, github_sources(header))[["toyC"]], "github/lab/toyC@8e4b7d2")
+  expect_equal(source_keys(header, lock, readable_sources(header))[["toyC"]], "github/lab/toyC@8e4b7d2")
 })
 
 test_that("lock_for_sources drops entries that disagree with [sources] and keeps the rest", {
   lock <- new_lock(c("cli", "dplyr", "toyC"), c("3.6.5", "1.1.4", "0.3.0"),
                    c("CRAN", "CRAN", github_source("lab", "toyC", C1)))
   header <- list(sources = c(toyC = "github:lab/toyC"))
-  expect_identical(lock_for_sources(lock, header, github_sources(header)), lock)
+  expect_identical(lock_for_sources(lock, header, readable_sources(header)), lock)
   # dplyr now has a source: its CRAN entry goes.
   header2 <- list(sources = c(toyC = "github:lab/toyC", dplyr = "github:tidy/dplyr"))
-  expect_equal(lock_for_sources(lock, header2, github_sources(header2))$entries$name, c("cli", "toyC"))
+  expect_equal(lock_for_sources(lock, header2, readable_sources(header2))$entries$name, c("cli", "toyC"))
   # toyC's source was removed: its GitHub entry goes.
   expect_equal(lock_for_sources(lock, list(sources = character()), character())$entries$name, c("cli", "dplyr"))
 })
@@ -362,7 +364,7 @@ test_that("removing the source sends the package back to CRAN, or to not_found w
   bioc_keys <- vapply(names(bioc_kinds), function(k) repo_key(k, "2026-09-01", "3.23"), character(1))
   expect_setequal(effect_keys(r), bioc_keys)
   for (kind in names(bioc_kinds)) {
-    idx <- read_repo_index(testthat::test_path("fixtures", "repos", "bioc", "2026-09-01", "packages", "3.23",
+    idx <- read_repo_index(testthat::test_path("fixtures", "bioc", "2026-09-01", "packages", "3.23",
                                                bioc_kinds[[kind]], "src", "contrib", "PACKAGES"),
                            key = bioc_keys[[kind]], label = "Bioc")
     r <- drive(r$state, ev_index_fetched(bioc_keys[[kind]], idx, at(5)))
@@ -543,7 +545,8 @@ test_that("a not-found package given a source is looking up, then locked with it
   r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_at(), at(2)))
   for (k in effect_keys(r)) r <- drive(r$state, ev_index_failed(k, "offline", at(2)))
   row <- view_row(r$state, "toyC")
-  expect_equal(row$status, "not_found")
+  # Bioconductor's indexes failed too, so it may be there (#264).
+  expect_equal(row$status, "lookup_failed")
   expect_true(is.na(row$spec))
 
   # The stale not_found problem is still there while the lookup runs, but

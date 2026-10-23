@@ -33,8 +33,14 @@ CELL_METADATA_DISABLED <- list(disabled = TRUE, show_logs = TRUE, skip_as_script
 #'   inputs its two entries were built from (see cell_key()). A cell whose
 #'   key is identical() keeps its previous entries without rebuilding them.
 #' * `graph`: the `ember_graph` `js$cell_dependencies` was built from.
-new_pluto_state <- function(js, state, keys, graph) {
-  structure(list(js = js, state = state, keys = keys, graph = graph),
+#' * `ctx`: `view_context(state)`, kept so the next projection can compare
+#'   against it (`cells_maybe_changed()`, state.R) without building it again.
+#' * `packages`: the `packages_view(state)` that `js$nbpkg` and
+#'   `js$ember$packages` were built from, kept for the next projection
+#'   while `packages_inputs_same()` (state.R) holds: a worker message
+#'   rarely touches packages, and the view costs a few milliseconds.
+new_pluto_state <- function(js, state, keys, graph, packages = NULL, ctx = NULL) {
+  structure(list(js = js, state = state, keys = keys, graph = graph, packages = packages, ctx = ctx),
             class = "ember_pluto_state")
 }
 
@@ -60,6 +66,9 @@ pluto_state <- function(state, previous = NULL) {
                                              # one match, never `[[name]]`
                                              # in a loop (quadratic, spike)
   inputs <- results <- keys <- vector("list", n)
+  maybe <- if (is.null(previous)) rep(TRUE, n) else {
+    cells_maybe_changed(previous$state, previous$ctx %||% view_context(previous$state), state, ctx, at)
+  }
   for (i in seq_len(n)) {
     j <- at[i]
     prev_key <- if (!is.na(j) && !is.null(previous)) previous$keys[[j]] else NULL
@@ -71,7 +80,7 @@ pluto_state <- function(state, previous = NULL) {
     # this). Every lookup inside is by position `i` (state.R's
     # view_context()), never by id: a 2000-cell notebook made the named
     # lookups alone cost tens of milliseconds (measured).
-    if (!is.null(prev_key) && key_unchanged(state, ctx, i, prev_key)) {
+    if (!is.null(prev_key) && (!maybe[i] || key_unchanged(state, ctx, i, prev_key))) {
       keys[[i]] <- prev_key
       inputs[i] <- pj$cell_inputs[j]; results[i] <- pj$cell_results[j]
     } else {
@@ -105,6 +114,12 @@ pluto_state <- function(state, previous = NULL) {
     project_dependencies(state$graph, if (!is.null(pj)) pj$cell_dependencies else NULL)
   }
 
+  pv <- if (!is.null(previous$packages) && packages_inputs_same(state, previous$state)) {
+    previous$packages
+  } else {
+    packages_view(state)
+  }
+
   js <- list(
     pluto_version = PLUTO_VERSION,
     julia_version = paste("R", state$options$r$version),
@@ -116,11 +131,11 @@ pluto_state <- function(state, previous = NULL) {
     cell_results = reuse(results, if (!is.null(pj)) pj$cell_results else NULL),
     cell_order = reuse(as_arr(ids), if (!is.null(pj)) pj$cell_order else NULL),
     published_objects = emptymap(), bonds = emptymap(), metadata = emptymap(),
-    nbpkg = reuse(project_nbpkg(state), if (!is.null(pj)) pj$nbpkg else NULL),
+    nbpkg = reuse(project_nbpkg(state, pv), if (!is.null(pj)) pj$nbpkg else NULL),
     cell_dependencies = deps,
     cell_execution_order = reuse(as_arr(state$graph$order), if (!is.null(pj)) pj$cell_execution_order else NULL),
-    ember = reuse_fields(project_ember(state, ctx), if (!is.null(pj)) pj$ember else NULL))
-  new_pluto_state(js, state, keys, state$graph)
+    ember = reuse_fields(project_ember(state, ctx, pv), if (!is.null(pj)) pj$ember else NULL))
+  new_pluto_state(js, state, keys, state$graph, pv, ctx)
 }
 
 #' What a cell's two entries depend on, as a list whose big parts are the
@@ -150,7 +165,8 @@ pluto_state <- function(state, previous = NULL) {
 #' `cell`, so only the dependent relationship needs this field.
 #' `can_disable` needs no key field: it depends only on `kind` (in `cell`).
 #' `settings` is in the key because a sourced file can change what a cell
-#' sets without the cell itself changing.
+#' sets without the cell itself changing. `untracked` is too, for the same
+#' reason: a sourced file's `get()` is the cell's (#357).
 cell_key <- function(state, ctx, i) {
   id <- ctx$ids[[i]]
   running <- ctx$running
@@ -159,7 +175,7 @@ cell_key <- function(state, ctx, i) {
        is_running = is_running, console = if (is_running) running$console else NULL,
        queued = ctx$queued[[i]], waiting_for = ctx$waiting[[i]],
        errors = ctx$errors_by_cell[[i]], disabled_by = ctx$disabled_by[[i]],
-       settings = ctx$settings[[i]],
+       settings = ctx$settings[[i]], untracked = ctx$untracked[[i]],
        allowed = state$allowed)
 }
 
@@ -182,6 +198,7 @@ key_unchanged <- function(state, ctx, i, prev_key) {
   if (!identical(ctx$errors_by_cell[[i]], prev_key$errors)) return(FALSE)
   if (!identical(ctx$disabled_by[[i]], prev_key$disabled_by)) return(FALSE)
   if (!identical(ctx$settings[[i]], prev_key$settings)) return(FALSE)
+  if (!identical(ctx$untracked[[i]], prev_key$untracked)) return(FALSE)
   identical(state$allowed, prev_key$allowed)
 }
 
@@ -304,7 +321,7 @@ span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
 #'   (Pluto's own field, Run.jl:86-91) -- true for a disabled cell itself,
 #'   too.
 #' * `ember`: `list(stale, code_changed, upstream_error?, disabled_by?,
-#'   can_disable, settings?, settings_found?, load_notes?, changed_in_place?, split?, figure?)`, from the view's `stale` and
+#'   can_disable, settings?, settings_found?, load_notes?, changed_in_place?, from_lock?, untracked_reads?, split?, figure?)`, from the view's `stale` and
 #'   `code_differs` -- both already in `cell_key()`'s key (`code_differs`
 #'   is derived from `cell$code` and `result$code`). `stale` is
 #'   `isTRUE(view$stale) && !off`: an off cell shows as disabled, not also
@@ -325,17 +342,24 @@ span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
 #'   setting a settings cell set: one note each (#61). `changed_in_place`
 #'   is present, as `as_arr()` of names, when the last run changed another
 #'   cell's reference object in place: the note that its readers don't
-#'   rerun (#167). `split` is present, as `length(split_mixed(view$code))`,
+#'   rerun (#167). `from_lock` is present, as `as_arr()` of names (empty
+#'   for a call whose packages couldn't be read), when the last run skipped
+#'   install calls: the note that packages come from the lock (packages.md,
+#'   "Install calls"). `untracked_reads` is present, as `as_arr()` of call
+#'   names (`"get"`), when the cell's code reads globals by a name static
+#'   reading can't follow: the note that the cell doesn't rerun when they
+#'   change (#357). It comes from the graph's analysis, so `cell_key()`
+#'   holds it too. `split` is present, as `length(split_mixed(view$code))`,
 #'   only when `view$errors` has a `mixed_text` error: the Split button's
 #'   label (Cell.js), answered by the `ember_split_cell` request (server.R).
-#'   `figure` is present, as `list(width, height)` inches, only when the
-#'   output is `image/png`. It comes from `cell_figure_size(view$code)` --
+#'   `figure` is present, as `list(width, height)` inches plus `alt` when
+#'   the cell's `#| fig-alt`/`fig-cap` gives one (cell_figure_alt()), only
+#'   when the output is `image/png`. It comes from `cell_figure_size(view$code)` --
 #'   the cell's own `#|` lines -- never from the stored image's actual
-#'   pixel size: an API `render_png(width, height)` call replaces that
-#'   stored image (it's an Endeavor-facing API, left as is) without
-#'   changing the cell's figure size every other viewer sees, so reading
-#'   the size back out of it would make one such call resize the figure
-#'   on every open page. `code` is already in the key (through `cell`).
+#'   pixel size, which is the last render's: a density redraw stores an
+#'   image at the cell's figure size times the page's `res`, so reading
+#'   the size back out of it would tie the figure to one page's density.
+#'   `code` is already in the key (through `cell`).
 #'   `variables` is present, as `as_arr(view$variables)` (already
 #'   `list(name, type, value, kind)` per global, sorted, dot-names and an
 #'   off cell's excluded by `cell_variables()`), only when non-empty: the
@@ -357,7 +381,8 @@ project_cell_result <- function(view, known_ids = NULL) {
   can_disable <- identical(view$kind, "code")
   figure <- if (!is.null(view$output) && identical(view$output$mime, "image/png")) {
     fig <- cell_figure_size(view$code)
-    list(width = fig$width, height = fig$height)
+    alt <- cell_figure_alt(view$code)
+    c(list(width = fig$width, height = fig$height), if (!is.null(alt)) list(alt = alt))
   } else {
     NULL
   }
@@ -369,6 +394,8 @@ project_cell_result <- function(view, known_ids = NULL) {
             if (length(view$settings_found) > 0) list(settings_found = as_arr(view$settings_found)),
             if (length(view$load_notes) > 0) list(load_notes = as_arr(view$load_notes)),
             if (length(view$changed_in_place) > 0) list(changed_in_place = as_arr(display_names(view$changed_in_place))),
+            if (length(view$from_lock) > 0) list(from_lock = as_arr(setdiff(view$from_lock, ""))),
+            if (length(view$untracked_reads) > 0) list(untracked_reads = as_arr(view$untracked_reads)),
             if (!is.null(split)) list(split = split),
             if (!is.null(figure)) list(figure = figure),
             if (length(view$variables) > 0) list(variables = as_arr(view$variables)))
@@ -877,22 +904,24 @@ project_process_status <- function(state) {
 #' * `installed_versions`: name -> version for rows with status "installed".
 #' * `busy_packages`: arr(names with status "installing").
 #' * `terminal_outputs`: `list(nbpkg_sync = <library message, the install
-#'   progress line, and any failed/not_found/source_failed rows, one per
+#'   progress line, and any failed/not_found/lookup_failed/source_failed rows, one per
 #'   line>)`.
 #' * `restart_required_msg`: when `plan$restart` is non-empty, "Restart R to
 #'   use the new versions of: <names>".
 #' * `restart_recommended_msg`: when the snapshot's `restart_offered` (a
 #'   cell ignored the interrupt), "The running cell hasn't stopped. Restart R
 #'   to stop it; every cell will be left not run." Pluto's banner for this
-#'   has a restart link, which is the action Ember offers.
+#'   has a restart link, which is the action Ember offers. If the interrupt
+#'   couldn't be delivered (Windows, #48) it says so instead: "The interrupt
+#'   couldn't reach R. Restart R to stop the running cell; every cell will
+#'   be left not run."
 #' * `install_time_ns = NULL`, `instantiated = library status is "ready"`.
 #'
 #' Kept filled alongside Ember's own `ember$packages` (project_ember(),
 #' above): Endeavor's page adapter still reads these Pluto-shaped fields
 #' (`endeavor/frontend/src/drawer.ts:218, 244`), so they stay, not just until
 #' increment 2.
-project_nbpkg <- function(state) {
-  pv <- packages_view(state)
+project_nbpkg <- function(state, pv = packages_view(state)) {
   p <- state$packages
   pkgs <- pv$packages
 
@@ -908,7 +937,7 @@ project_nbpkg <- function(state) {
     lines <- c(lines, sprintf("Installing %s (%d/%d)...",
                               pr$current %||% "", pr$done %||% 0L, pr$total %||% 0L))
   }
-  nf <- pkgs[pkgs$status %in% c("not_found", "source_failed"), , drop = FALSE]
+  nf <- pkgs[pkgs$status %in% c("not_found", "lookup_failed", "source_failed"), , drop = FALSE]
   if (nrow(nf) > 0) lines <- c(lines, sprintf("%s: %s", nf$name, nf$message))
   if (identical(p$target$status, "failed") && !is.null(p$target$message)) {
     lines <- c(lines, p$target$message)
@@ -917,7 +946,9 @@ project_nbpkg <- function(state) {
   restart_required <- if (!is.null(pv$plan) && length(pv$plan$restart) > 0) {
     sprintf("Restart R to use the new versions of: %s", paste(pv$plan$restart, collapse = ", "))
   } else NULL
-  restart_recommended <- if (isTRUE(state$worker$restart_offered)) {
+  restart_recommended <- if (isTRUE(state$worker$interrupt$failed) && isTRUE(state$worker$restart_offered)) {
+    "The interrupt couldn't reach R. Restart R to stop the running cell; every cell will be left not run."
+  } else if (isTRUE(state$worker$restart_offered)) {
     "The running cell hasn't stopped. Restart R to stop it; every cell will be left not run."
   } else NULL
 
@@ -962,7 +993,10 @@ project_nbpkg <- function(state) {
 #'   and `needed_by` from `packages_view()`'s own `library$failures`
 #'   column) -- both only while the library's `status` is `"failed"`;
 #'   `NULL`/`arr()` otherwise, so a page that has never seen a failure
-#'   never sees these fields change.
+#'   never sees these fields change. While `status` is `"asking"` (#37) it
+#'   adds `download`: `list(bytes, packages = arr(list(package, version,
+#'   bytes)))`, largest first, `bytes` the total of the sizes known (a
+#'   package's `bytes` is `NULL` when its size couldn't be had).
 #' * `update`: `list(date, status = "checking"|"ready"|"failed",
 #'   restart = arr(<names>), changes = <int>, message)` while a proposal
 #'   from `ember_update_packages` (`ev_preview_date(..., apply = TRUE)`)
@@ -970,6 +1004,12 @@ project_nbpkg <- function(state) {
 #'   shows nothing here: its proposal has `apply = FALSE`. `status`
 #'   `"checking"` is the proposal's `"fetching"` (the page's wording, not
 #'   the core's); `message` is set only once `status == "failed"`.
+#'   A step back that would change a locked version (`kind = "back"`,
+#'   #311) is the same question once `"ready"`, with `back = list(from,
+#'   changes = arr(list(name, from, to)))`: the date Bioconductor hasn't
+#'   published yet, and each package that moves (`from`/`to` `NULL` for
+#'   one added or dropped). The page's answer is `ember_apply_update` or
+#'   `ember_cancel_update`, as for an update.
 #' * `on_cell_change`: `state$file$header$on_cell_change`, `"autorun"` or
 #'   `"lazy"`.
 #' * `r_version`, `worker_started_at`: the running worker's own report
@@ -979,7 +1019,7 @@ project_nbpkg <- function(state) {
 #' * `read_only`: `isTRUE(state$read_only)`, the same flag
 #'   `notebook_snapshot()` projects -- the page disables the Status tab's
 #'   autorun/lazy radios with it; `ember_set_mode` refuses regardless.
-project_ember <- function(state, ctx) {
+project_ember <- function(state, ctx, pv = packages_view(state)) {
   stale <- 0L
   if (isTRUE(state$allowed)) {
     for (i in seq_along(ctx$ids)) {
@@ -991,7 +1031,6 @@ project_ember <- function(state, ctx) {
   wu <- state$worker_usage
   if (!is.null(wu) && identical(wu$gen, state$worker$gen)) worker_memory <- as.double(wu$rss)
 
-  pv <- packages_view(state)
   pkgs <- pv$packages
   rows <- lapply(seq_len(nrow(pkgs)), function(i) {
     list(name = pkgs$name[[i]],
@@ -1028,6 +1067,23 @@ project_ember <- function(state, ctx) {
     library = list(status = pv$library$status, message = pv$library$message %||% NA_character_,
                   progress = pv$library$progress, log = log, failures = as_arr(failures)),
     rows = as_arr(rows))
+  dl <- pv$library$download
+  if (identical(pv$library$status, "asking") && !is.null(dl) && nrow(dl) > 0) {
+    packages$library$download <- list(
+      bytes = sum(dl$bytes, na.rm = TRUE),
+      packages = as_arr(lapply(seq_len(nrow(dl)), function(i) {
+        list(package = dl$package[[i]], version = dl$version[[i]],
+             bytes = if (is.na(dl$bytes[[i]])) NULL else dl$bytes[[i]])
+      })))
+  }
+  # Shown under "Installing..." while they build (#19); a failed install
+  # has its cards instead.
+  nb_pkgs <- pv$library$no_binary
+  if (identical(pv$library$status, "installing") && length(nb_pkgs) > 0) {
+    packages$library$no_binary <- as_arr(lapply(seq_along(nb_pkgs), function(i) {
+      list(package = names(nb_pkgs)[[i]], version = unname(nb_pkgs[[i]]))
+    }))
+  }
   # `snapshot`/`r_version`/`bioc_version`/`library$message` are NA when
   # unset (packages-core.R: a fresh header has no snapshot date until
   # packages are resolved); the wire has no NA (check_wire()), so each
@@ -1043,6 +1099,17 @@ project_ember <- function(state, ctx) {
                             restart = as_arr(pv$proposal$restart %||% character()),
                             changes = if (is.null(pv$proposal$changes)) 0L else nrow(pv$proposal$changes),
                             message = pv$proposal$message)
+  } else if (!is.null(pv$proposal) && identical(pv$proposal$kind, "back") &&
+             identical(pv$proposal$status, "ready")) {
+    # A step back that would change a locked version (#311) asks first.
+    ch <- pv$proposal$changes
+    na_null <- function(x) if (is.na(x)) NULL else x
+    packages$update <- list(date = pv$proposal$date, status = "ready",
+                            restart = as_arr(pv$proposal$restart %||% character()),
+                            changes = if (is.null(ch)) 0L else nrow(ch), message = NULL,
+                            back = list(from = pv$proposal$asked, changes = as_arr(lapply(seq_len(NROW(ch)), function(i) {
+                              list(name = ch$name[[i]], from = na_null(ch$from[[i]]), to = na_null(ch$to[[i]]))
+                            }))))
   }
 
   plan <- pv$plan

@@ -61,8 +61,7 @@ New fixtures:
    Endeavor (`endeavor-css-variables.txt`).
    6c. The other direction: every `var(--x)` a frontend file outside
    `themes/` reads is defined in both themes, defined by the frontend
-   itself, or written with a fallback, `var(--x, ...)`. Two known gaps
-   are listed in the test under #195.
+   itself, or written with a fallback, `var(--x, ...)`.
 7. `inst/COPYRIGHTS` exists and names "Pluto.jl"; DESCRIPTION's
    `Authors@R` has a person with role `"cph"` whose name mentions Pluto.jl.
 
@@ -308,12 +307,16 @@ New fixtures:
 60. Completion: typing `me` then Ctrl+Space in a new cell shows a list
     containing `mean`; Enter inserts it. After running `DF`, typing `df$`
     shows `mpg`. While `LOOP` (basic.R) runs, typing `su` shows `sum`
-    within 1 s.
+    within 1 s. Typing numbers (`12345`, `2L`, `3.14`, `0x1F`, `1i`) at a
+    person's pace sends no completion request; `me` typed after them
+    still lists `mean` (#35).
 61. Help: with the cursor inside `mean(`, the Help tab shows "Arithmetic
     Mean"; clicking a link inside it loads that page in the panel; an
     example block has `.hljs-keyword` spans.
 62. Signature: with the cursor after `lm(`, a tooltip containing
-    `formula` appears within 1 s.
+    `formula` appears within 1 s. Brackets: next to any R bracket (a
+    call's `(`, `{`, `[`, `[[` and each closing one) it and its partner
+    are marked; a `(` inside a string isn't paired with one outside it (#246).
 63. Go-to-definition: Ctrl/Cmd-click on `x` in B focuses cell A; typing
     in B removes the marks until B is run again. No module
     `scopestate_statefield.js` is loaded.

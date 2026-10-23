@@ -305,7 +305,9 @@ run_cells <- function(nb, ids = NULL, wait = FALSE, timeout = 60) {
 #'
 #' Sends SIGINT. If the cell hasn't stopped `grace` seconds later, the
 #' snapshot's `restart_offered` turns `TRUE` (with the cells a restart would
-#' leave not run); it turns back to `FALSE` if the cell stops after all.
+#' leave not run); it turns back to `FALSE` if the cell stops after all. If
+#' the interrupt can't be delivered at all (Windows, #48), both
+#' `restart_offered` and `interrupt_failed` turn `TRUE` at once.
 #' @export
 interrupt_notebook <- function(nb) {
   dispatch(nb, ev_interrupt(at = Sys.time()))
@@ -322,12 +324,52 @@ restart_notebook <- function(nb) {
   invisible(reply)
 }
 
+#' Give an input a new value, as moving its widget does (docs/inputs.md).
+#'
+#' `name` is the variable the input is bound to (`n` for
+#' `n <- input_slider(10, 500)`). The input's cell must have run and be
+#' neither stale nor edited since. The worker checks the value against the
+#' input (a dropdown's value must be one of its choices) and assigns it;
+#' the input's own cell doesn't rerun. The cells that read `name` rerun in
+#' autorun, or are marked stale in lazy mode. The value lasts for the
+#' session: it is not saved, and editing the input's code resets it.
+#'
+#' @param value The R value, as the input would return it.
+#' @param wait `TRUE` blocks until the worker has answered and the reruns
+#'   have finished, or `timeout` passes (as `run_cells()`'s `wait`). A
+#'   value the input doesn't allow is then an error.
+#' @return Invisibly, `list(accepted, cell, value, cells, timed_out)`:
+#'   `cell` is the input's cell; `value` (the value as assigned) and
+#'   `cells` (the readers rerun or marked stale) are filled in only with
+#'   `wait`, and stay empty if the wait timed out. A refused change (no such input, its cell not fresh, another
+#'   value still being set) is an `ember_refused` error.
+#' @export
+set_input <- function(nb, name, value, wait = FALSE, timeout = 60) {
+  if (!is.character(name) || length(name) != 1 || is.na(name)) stop("ember: `name` must be one string")
+  reply <- dispatch(nb, ev_set_input(name, value, at = Sys.time()))
+  if (inherits(reply, "ember_refused")) stop(reply)
+  if (is.null(reply)) stop("ember: the notebook is closed")
+  result <- list(accepted = TRUE, cell = reply$cell, value = NULL, cells = character(), timed_out = FALSE)
+  if (isTRUE(wait)) {
+    ok <- wait_for(nb, function(s) is.null(nb$state$worker$input) && is_idle(s), timeout = timeout)
+    result$timed_out <- !ok
+    out <- nb$state$input_outcome
+    if (ok && !is.null(out) && identical(out$name, name)) {
+      if (!isTRUE(out$ok)) stop(sprintf("ember: %s", out$error), call. = FALSE)
+      result$value <- out$value
+      result$cells <- out$cells
+    }
+  }
+  invisible(result)
+}
+
 # ---- Reading ------------------------------------------------------------------
 
 #' What the notebook looks like now: a plain list, safe to keep.
 #'
 #' `list(id, path, seq, read_only, allowed, process, restart_offered,
-#' worker_message, worker_memory, problems, order, cells, packages)` where
+#' interrupt_failed, worker_message, worker_memory, problems, order, cells,
+#' packages)` where
 #' `process` is one of `"preview"`, `"starting"`, `"ready"`, `"busy"`,
 #' `"stopped"`, `cells` is a named list (display order) of `ember_cell_view`
 #' (see `snapshot_of()` in state.R) with each cell's `variables` carrying
@@ -346,6 +388,7 @@ notebook_snapshot <- function(nb) {
   list(id = nb$state$id, path = nb$state$path, seq = s$seq,
       read_only = isTRUE(nb$state$read_only), allowed = isTRUE(nb$state$allowed),
       process = s$process, restart_offered = s$restart_offered,
+      interrupt_failed = s$interrupt_failed,
       worker_message = s$worker_message, worker_memory = worker_memory,
       problems = nb$state$problems,
       order = names(nb$state$cells), cells = cells, packages = s$packages)
@@ -404,9 +447,12 @@ notebook_state <- function(nb) nb$state
 
 #' A PNG of a cell's output, for Endeavor's `view_cell_output`.
 #'
-#' Plots are already PNGs and come back at once. With `width`/`height`
-#' different from the stored image, the worker re-renders the recorded
-#' plot (the call waits up to `timeout`). Other outputs return `NULL`; the
+#' Plots are already PNGs and come back at once. With `width`/`height`,
+#' the worker re-renders the recorded plot at that size (the call waits up
+#' to `timeout`, and a busy worker answers once its run ends). The new
+#' image is only returned: the cell's stored image, the one every page
+#' shows, stays as it was (#28). `png` is `NULL` when no answer came in
+#' time, or the cell ran again meanwhile. Other outputs return `NULL`; the
 #' caller reads their `text/plain` form from the snapshot.
 #' @return `list(png = <raw> | NULL, mime = <the output's mime type>)`.
 #' @export
@@ -424,18 +470,20 @@ render_png <- function(nb, cell, width = NULL, height = NULL, res = 96, timeout 
     return(list(png = view$output$data, mime = "image/png"))
   }
 
-  before <- view$output
-  dispatch(nb, ev_render(id, width, height, at = Sys.time(), res = res))
-  deadline <- Sys.time() + timeout
-  repeat {
-    now_view <- find_view()
-    if (!is.null(now_view$output) && !identical(now_view$output, before)) {
-      return(list(png = now_view$output$data, mime = "image/png"))
-    }
-    remaining <- as.numeric(deadline - Sys.time(), units = "secs")
-    if (remaining <= 0) return(list(png = NULL, mime = "image/png"))
-    later::run_now(timeout = remaining)
+  # A worker query, not an event: the reply goes to this call alone and
+  # never reaches the state, so the page keeps the cell's own image.
+  token <- nb$state$results[[id]]$output$token
+  msg <- c(list(type = "render", cell = id, res = res),
+          if (!is.null(width)) list(width = width),
+          if (!is.null(height)) list(height = height))
+  reply <- "unset"
+  worker_query(nb, msg, function(r) reply <<- r, timeout = timeout, busy_ok = TRUE)
+  while (identical(reply, "unset")) later::run_now(timeout = timeout)
+  display <- if (!is.null(reply) && eq(reply$token, token)) as_display(reply$display)
+  if (is.null(display) || !identical(display$mime, "image/png")) {
+    return(list(png = NULL, mime = "image/png"))
   }
+  list(png = display$data, mime = "image/png")
 }
 
 # ---- Events and waiting -------------------------------------------------------

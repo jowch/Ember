@@ -27,12 +27,22 @@ on:
       - .github/macos-binary/**
   workflow_dispatch:
 
+# A new push to a pull request cancels that PR's older runs, which would only
+# report on a head nobody will merge. Every other run (a push, a run by hand)
+# gets a group of its own, so it is never cancelled and never waits: a shared
+# group would also drop a run still waiting behind another.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   binary:
     runs-on: macos-latest
+    # Slowest successful run: 5 minutes. See check.yaml (#339).
+    timeout-minutes: 20
     name: Apple Silicon binary (R ${{ matrix.r }})
     strategy:
       fail-fast: false
@@ -100,6 +110,8 @@ jobs:
     needs: binary
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # Under a minute. See check.yaml (#339).
+    timeout-minutes: 10
     name: Publish (R ${{ matrix.r }})
     strategy:
       fail-fast: false

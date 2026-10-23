@@ -78,10 +78,10 @@ find_effect <- function(result, type) {
 r46 <- list(version = "4.6.1", minor = "4.6", platform = "x86_64-pc-linux-gnu")
 
 #' The Bioconductor 3.23 fixture index of `kind`
-#' (fixtures/repos/bioc/2026-09-01/packages/3.23/...), keyed as `release`
+#' (fixtures/bioc/2026-09-01/packages/3.23/...), keyed as `release`
 #' at `date`.
 bioc_index <- function(kind, release = "3.23", date = "2026-09-01") {
-  idx <- read_repo_index(testthat::test_path("fixtures", "repos", "bioc", "2026-09-01", "packages",
+  idx <- read_repo_index(testthat::test_path("fixtures", "bioc", "2026-09-01", "packages",
                                              "3.23", bioc_kinds[[kind]], "src", "contrib", "PACKAGES"),
                          key = repo_key(kind, date, release), label = "Bioc")
   idx
@@ -207,6 +207,32 @@ test_that("an unpublished date stays, with the failure shown, when the lock has 
   expect_true("index_unavailable" %in% r$state$packages$problems$kind)
 })
 
+test_that("a preview of a date not published yet moves back a day and offers that one; any other failure fails it (#162)", {
+  s <- pkg_state(list(A = cell("library(dplyr)")), snapshot = "2026-09-01")
+  r <- drive(s, ev_open(at(1)), ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index("2026-09-01"), at(2)))
+  expect_setequal(r$state$file$lock$entries$name, c("dplyr", "cli", "glue"))
+
+  key <- repo_key("cran", "2026-10-01")
+  p <- drive(r$state, ev_preview_date("2026-10-01", at(3)))
+  expect_equal(find_effect(p, "fetch_index")$key, key)
+  p <- drive(p$state, ev_index_failed(key, "cran/2026-10-01 isn't published", at(4), unpublished = TRUE))
+  expect_equal(p$state$packages$proposal$date, "2026-09-30")
+  expect_equal(p$state$packages$proposal$asked, "2026-10-01")
+  expect_null(p$state$packages$indexes[[key]])
+  expect_equal(find_effect(p, "fetch_index")$key, repo_key("cran", "2026-09-30"))
+  p <- drive(p$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(5)))
+  expect_equal(p$state$packages$proposal$status, "ready")
+  expect_equal(packages_view(p$state)$proposal$asked, "2026-10-01")
+  expect_equal(p$state$file$header$snapshot, "2026-09-01")
+
+  # Offline, or anything but a 404 for a recent date: the preview fails for
+  # the date it was asked for, as before.
+  p <- drive(r$state, ev_preview_date("2026-10-01", at(3)),
+             ev_index_failed(key, "could not resolve host", at(4)))
+  expect_equal(p$state$packages$proposal$date, "2026-10-01")
+  expect_equal(p$state$packages$proposal$status, "failed")
+})
+
 # ---- Looking at and installing the library ------------------------------------
 
 test_that("in safe preview a missing library is checked but never installed (34)", {
@@ -231,7 +257,7 @@ test_that("after allow, a missing target emits exactly one install; a second eve
   expect_equal(sum(effect_types(r) == "install"), 1)
   expect_equal(r$state$packages$target$status, "installing")
 
-  r2 <- drive(r$state, ev_render("nonexistent", 10, 10, at(5)))
+  r2 <- drive(r$state, ev_render("nonexistent", at(5)))
   expect_equal(sum(effect_types(r2) == "install"), 0)
 })
 
@@ -354,6 +380,89 @@ test_that("when the library becomes ready the waiting cell is sent with the new 
   expect_equal(last_sent(r)$cell, "A")
   expect_equal(last_sent(r)$library, r$state$packages$active$path)
   expect_equal(r$state$packages$active$key, target_key)
+})
+
+test_that("a cell rerun to wait for an install marks its dependents stale meanwhile, and they rerun after it (#248)", {
+  s <- pkg_state(list(S = cell(""), A = cell("x <- 1"), B = cell("y <- x + 1")))
+  r <- boot(s, c("A", "B"))
+  expect_equal(last_sent(r)$cell, "A")
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(4)))
+  expect_equal(last_sent(r)$cell, "B")
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(5)))
+  expect_false(r$state$results$B$stale)
+
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "library(dplyr)\nx <- 2")), at(6)),
+             ev_run("A", at(7)))
+  expect_true("A" %in% r$state$pending)
+  expect_null(last_sent(r))
+  expect_true(r$state$results$B$stale)
+  # Queued when A is sent, not before: it can't run ahead of A.
+  expect_false("B" %in% r$state$pending)
+
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(20)))
+  target_key <- r$state$packages$target$key
+  r <- drive(r$state, ev_library_checked(target_key, NULL, at(21)))
+  r <- drive(r$state, ev_install_done(r$state$packages$install$token, target_key,
+                                      manifest(c(dplyr = "1.1.4", cli = "3.6.5", glue = "1.8.0")),
+                                      NULL, character(), at(22)))
+  expect_equal(last_sent(r)$cell, "A")
+  r <- drive(r$state, wk_done(r$state$worker$gen, last_token(r), report(created = "x"), at(23)))
+  expect_equal(last_sent(r)$cell, "B")
+})
+
+test_that("a waiting settings cell marks later cells stale without letting them run first (#248)", {
+  s <- pkg_state(list(S = cell(""), A = cell("options(digits = 3)"), B = cell("z <- 2")))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(settings = list(list(kind = "option", name = "digits", before = 7, after = 3))), at(4)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "z"), at(5)))
+  expect_false(r$state$results$B$stale)
+
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "library(dplyr)\noptions(digits = 4)")), at(6)),
+             ev_run("A", at(7)))
+  expect_true(r$state$results$B$stale)
+  expect_null(last_sent(r))
+})
+
+test_that("while another cell runs, a cell waiting for an install costs an event nothing (#248)", {
+  # A chain of n cells below A, which waits on dplyr, while C runs.
+  busy_state <- function(n, a_code) {
+    chain <- setNames(lapply(seq_len(n), function(i) cell(sprintf("b%d <- %s + 1", i, if (i == 1) "x" else paste0("b", i - 1)))),
+                      paste0("B", seq_len(n)))
+    s <- pkg_state(c(list(S = cell(""), C = cell("z <- 1"), A = cell(a_code)), chain))
+    r <- boot(s, c("C", "A"))
+    expect_equal(last_sent(r)$cell, "C")
+    r$state
+  }
+  waiting <- busy_state(300, "library(dplyr)\nx <- 1")
+  plain <- busy_state(300, "x <- 1")
+  expect_false(is.null(waiting_cells(waiting)$A))
+  r <- time_ratio(function() schedule(waiting), function() schedule(plain), samples = 11L)
+  cat(sprintf("\n[timing] schedule() with a busy worker, 300-cell chain: A waiting %.3f ms, not waiting %.3f ms (%.1fx)\n",
+              r$a * 1000, r$b * 1000, r$ratio))
+  expect_lt(r$ratio, 3)
+})
+
+test_that("waiting_cells() stays linear in the number of cells while one waits for an install (#258)", {
+  # A waits on dplyr, whose exports aren't known yet; every cell below it
+  # also has a reference that resolves to nothing, so each one goes through
+  # the unknown-exports check and is a waiting cell with its own downstream.
+  waiting <- function(n) {
+    chain <- setNames(lapply(seq_len(n), function(i) {
+      cell(sprintf("b%d <- %s + nrow(mtcars) + typo%d", i, if (i == 1) "1" else paste0("b", i - 1), i))
+    }), paste0("B", seq_len(n)))
+    fake_state(c(list(S = cell(""), A = cell("library(dplyr)")), chain),
+               lock = new_lock(name = "dplyr", version = "1.1.4", source = "CRAN"))
+  }
+  big <- waiting(300)
+  small <- waiting(100)
+  w <- waiting_cells(big)
+  expect_equal(length(w), 301)
+  expect_equal(w$B300, "dplyr")
+  r <- time_ratio(function() waiting_cells(big), function() waiting_cells(small), samples = 11L)
+  cat(sprintf("\n[timing] waiting_cells(): 300-cell chain %.2f ms, 100-cell chain %.2f ms (%.1fx)\n",
+              r$a * 1000, r$b * 1000, r$ratio))
+  expect_lt(r$ratio, 6)   # linear is 3x; the per-cell walk this replaced was ~10x
+  expect_lt(r$a, 0.3)
 })
 
 # ---- Library readiness and restarts -------------------------------------------
@@ -661,6 +770,208 @@ test_that("an edit that changes the wanted set recomputes a ready proposal (54)"
   expect_true("viz" %in% r2$state$packages$proposal$lock$entries$name)
 })
 
+# ---- Updating one package (docs/packages-tests.md, 77) -----------------------
+
+#' CRAN's release dates as `cran_release_table()` gives them, for the
+#' fixture's dplyr: 1.1.4 current from 2026-08-01, 1.1.5 from `new_on`.
+release_table <- function(new_on = "2026-09-30") {
+  data.frame(package = c("dplyr", "dplyr", "dplyr"), version = c("1.1.3", "1.1.4", "1.1.5"),
+             date = as.Date(c("2026-06-01", "2026-08-01", new_on)), stringsAsFactors = FALSE)
+}
+
+#' The fixture's index at `date` (the files of 2026-09-01 or 2026-09-30),
+#' keyed as `as`: a snapshot of a day in between.
+cran_index_as <- function(date, as) {
+  read_repo_index(testthat::test_path("fixtures", "repos", "cran", date, "src", "contrib", "PACKAGES"),
+                  key = repo_key("cran", as), label = "CRAN")
+}
+
+today <- as.Date("2026-10-10")
+
+test_that("update_date takes a newer version's first day and an older one's last", {
+  t <- release_table()
+  up <- update_date(t, "dplyr", NULL, "1.1.4")
+  expect_equal(up$version, "1.1.5")
+  expect_equal(up$date, as.Date("2026-09-30"))
+  expect_equal(up$step, 1L)
+  expect_true(is.na(up$last))
+  pin <- update_date(t, "dplyr", "1.1.3", "1.1.4")
+  expect_equal(pin$date, as.Date("2026-07-31"))
+  expect_equal(pin$step, -1L)
+  expect_equal(pin$last, as.Date("2026-06-01"))
+  mid <- update_date(t, "dplyr", "1.1.4", "1.1.3")
+  expect_equal(mid$date, as.Date("2026-08-01"))
+  expect_equal(mid$last, as.Date("2026-09-29"))
+
+  expect_match(update_date(t, "dplyr", "9.9.9", "1.1.4")$message, "never released dplyr 9.9.9")
+  expect_match(update_date(t, "nope", NULL, "1.0")$message, "no record of a package called 'nope'")
+  expect_match(update_date(t, "dplyr", "1.1.4", "1.1.4")$message, "already at 1.1.4")
+  same_day <- rbind(t, data.frame(package = "dplyr", version = "1.1.6", date = as.Date("2026-09-30")))
+  expect_match(update_date(same_day, "dplyr", "1.1.5", "1.1.4")$message, "replaced by 1.1.6 the day it came out")
+})
+
+test_that("cran_release_table reads archive.rds and current.rds as CRAN writes them", {
+  info <- function(files, times) {
+    data.frame(size = rep(1, length(files)),
+               mtime = as.POSIXct(times, tz = "UTC"), row.names = files)
+  }
+  archive <- list(dplyr = info(c("dplyr/dplyr_1.1.3.tar.gz", "dplyr/dplyr_1.1.4.tar.gz"),
+                               c("2026-06-01 10:00:00", "2026-08-01 23:30:00")),
+                  old.pkg = info("old.pkg/old.pkg_0.1-2.tar.gz", "2020-01-02 03:04:05"))
+  current <- info(c("dplyr_1.1.5.tar.gz", "zoo_1.8-12.tar.gz"), c("2026-09-30 08:00:00", "2026-01-01 00:00:00"))
+  t <- cran_release_table(archive, current)
+  expect_equal(t$package, c("dplyr", "dplyr", "dplyr", "old.pkg", "zoo"))
+  expect_equal(t$version, c("1.1.3", "1.1.4", "1.1.5", "0.1-2", "1.8-12"))
+  expect_equal(t$date, as.Date(c("2026-06-01", "2026-08-01", "2026-09-30", "2020-01-02", "2026-01-01")))
+})
+
+test_that("cran_release_table orders versions released the same day by the time they came out (77)", {
+  # BFS 0.5 at 12:32 and 0.5.1 at 22:23 on 2023-06-08: by file name, 0.5.1
+  # sorts first, and the day alone can't tell them apart.
+  archive <- list(BFS = data.frame(size = c(1, 1),
+                                   mtime = as.POSIXct(c("2023-06-08 22:23:00", "2023-06-08 12:32:00"), tz = "UTC"),
+                                   row.names = c("BFS/BFS_0.5.1.tar.gz", "BFS/BFS_0.5.tar.gz")))
+  current <- data.frame(size = 1, mtime = as.POSIXct("2023-08-11 09:00:00", tz = "UTC"),
+                        row.names = "BFS_0.5.2.tar.gz")
+  t <- cran_release_table(archive, current)
+  expect_equal(t$version, c("0.5", "0.5.1", "0.5.2"))
+  got <- update_date(t, "BFS", "0.5.1", "0.5.2")
+  expect_equal(got$date, as.Date("2023-08-10"))
+  expect_match(update_date(t, "BFS", "0.5", "0.5.2")$message, "replaced by 0.5.1 the day it came out")
+})
+
+test_that("an update whose day isn't published yet isn't moved back a day, as update all is (77)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- open_with_cran(s)
+  r <- drive(r$state, ev_preview_update("dplyr", NULL, today, at(3)))
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(), at(4)))
+  key <- repo_key("cran", "2026-09-30")
+  r <- drive(r$state, ev_index_failed(key, "cran/2026-09-30 isn't published", at(5), unpublished = TRUE))
+  prop <- r$state$packages$proposal
+  expect_equal(prop$date, "2026-09-30")
+  expect_equal(prop$update$version, "1.1.5")
+  expect_equal(prop$status, "failed")
+})
+
+test_that("preview_update fetches CRAN's release dates, then previews the newest version's date (77)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- open_with_cran(s)
+  expect_equal(unname(lock_versions(r$state$file$lock)["dplyr"]), "1.1.4")
+
+  r <- drive(r$state, ev_preview_update("dplyr", NULL, today, at(3)))
+  expect_true(r$reply)
+  expect_equal(effect_types(r), "fetch_cran_releases")
+  expect_equal(r$state$packages$proposal$status, "dates")
+  expect_equal(packages_view(r$state)$proposal$update$name, "dplyr")
+
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(), at(4)))
+  expect_equal(r$state$packages$proposal$date, "2026-09-30")
+  expect_true("fetch_index" %in% effect_types(r))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(5)))
+  prop <- r$state$packages$proposal
+  expect_equal(prop$status, "ready")
+  expect_equal(prop$changes$to[prop$changes$name == "dplyr"], "1.1.5")
+  expect_equal(prop$update$version, "1.1.5")
+
+  # Applied as any preview is.
+  r <- drive(r$state, ev_set_date("2026-09-30", at(6)))
+  expect_equal(r$state$file$header$snapshot, "2026-09-30")
+  expect_equal(unname(lock_versions(r$state$file$lock)["dplyr"]), "1.1.5")
+
+  # A second update uses the dates already fetched.
+  r <- drive(r$state, ev_preview_update("dplyr", "1.1.4", today, at(7)))
+  expect_false("fetch_cran_releases" %in% effect_types(r))
+  expect_equal(r$state$packages$proposal$date, "2026-09-29")
+})
+
+test_that("a snapshot taken before the release reached it is passed over for the next day's", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- open_with_cran(s)
+  r <- drive(r$state, ev_preview_update("dplyr", "1.1.5", today, at(3)))
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(new_on = "2026-09-29"), at(4)))
+  expect_equal(r$state$packages$proposal$date, "2026-09-29")
+  # Package Manager's snapshot of 2026-09-29 still has 1.1.4.
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-29"), cran_index_as("2026-09-01", "2026-09-29"), at(5)))
+  prop <- r$state$packages$proposal
+  expect_equal(prop$date, "2026-09-30")
+  expect_equal(prop$status, "fetching")
+  expect_true("fetch_index" %in% effect_types(r))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(6)))
+  expect_equal(r$state$packages$proposal$status, "ready")
+  expect_equal(r$state$packages$proposal$date, "2026-09-30")
+})
+
+test_that("a pin moves the date back to the last day the old version was current, and passes over a later snapshot", {
+  lock <- new_lock(c("cli", "dplyr", "glue"), c("3.6.6", "1.1.5", "1.8.0"), rep("CRAN", 3))
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")), snapshot = "2026-09-30", lock = lock)
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_preview_update("dplyr", "1.1.4", today, at(2)))
+  # 1.1.5 came out on 2026-09-02, but the snapshot of 09-01 already had it.
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(new_on = "2026-09-02"), at(3)))
+  expect_equal(r$state$packages$proposal$date, "2026-09-01")
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index_as("2026-09-30", "2026-09-01"), at(4)))
+  expect_equal(r$state$packages$proposal$date, "2026-08-31")
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-08-31"), cran_index_as("2026-09-01", "2026-08-31"), at(5)))
+  prop <- r$state$packages$proposal
+  expect_equal(prop$status, "ready")
+  expect_equal(prop$changes$change[prop$changes$name == "dplyr"], "downgraded")
+  expect_equal(prop$changes$to[prop$changes$name == "dplyr"], "1.1.4")
+})
+
+test_that("an update that no snapshot near its date has fails, saying so", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- open_with_cran(s)
+  r <- drive(r$state, ev_preview_update("dplyr", "1.1.5", today, at(3)))
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(new_on = "2026-09-20"), at(4)))
+  for (i in 0:3) {
+    d <- format(as.Date("2026-09-20") + i)
+    expect_equal(r$state$packages$proposal$date, d)
+    r <- drive(r$state, ev_index_fetched(repo_key("cran", d), cran_index_as("2026-09-01", d), at(5 + i)))
+  }
+  prop <- r$state$packages$proposal
+  expect_equal(prop$status, "failed")
+  expect_match(prop$message, "snapshot of 2026-09-23 has dplyr 1.1.4, and no snapshot near it has dplyr 1.1.5")
+  expect_equal(packages_view(r$state)$proposal$status, "failed")
+})
+
+test_that("an update never goes past today's snapshot", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- open_with_cran(s)
+  r <- drive(r$state, ev_preview_update("dplyr", NULL, as.Date("2026-09-30"), at(3)))
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(), at(4)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index_as("2026-09-01", "2026-09-30"), at(5)))
+  expect_equal(r$state$packages$proposal$status, "failed")
+  expect_false("fetch_index" %in% effect_types(r))
+})
+
+test_that("preview_update refuses a package that isn't in the lock or isn't from CRAN", {
+  lock <- new_lock(c("dplyr", "mypkg"), c("1.1.4", "0.1.0"), c("CRAN", "github:me/mypkg@abc123"))
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")), lock = lock)
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_preview_update("ggplot2", NULL, today, at(2)))
+  expect_s3_class(r$reply, "ember_refused")
+  expect_match(conditionMessage(r$reply), "ggplot2 is not in this notebook's packages")
+  r <- drive(r$state, ev_preview_update("mypkg", NULL, today, at(3)))
+  expect_s3_class(r$reply, "ember_refused")
+  expect_match(conditionMessage(r$reply), "not CRAN")
+  expect_length(r$effects, 0)
+})
+
+test_that("release dates that can't be fetched fail the update, and the next one fetches again", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- open_with_cran(s)
+  r <- drive(r$state, ev_preview_update("dplyr", NULL, today, at(3)))
+  r <- drive(r$state, ev_cran_releases_failed("couldn't fetch CRAN's release dates from x", at(4)))
+  expect_equal(r$state$packages$proposal$status, "failed")
+  expect_match(r$state$packages$proposal$message, "couldn't fetch CRAN's release dates")
+  r <- drive(r$state, ev_preview_update("dplyr", NULL, today, at(5)))
+  expect_equal(effect_types(r), "fetch_cran_releases")
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(), at(6)))
+  r <- drive(r$state, ev_preview_update("dplyr", "7.0", today, at(7)))
+  expect_equal(r$state$packages$proposal$status, "failed")
+  expect_match(r$state$packages$proposal$message, "never released dplyr 7.0")
+})
+
 # ---- apply = TRUE previews (ui-3-plan.md, "Update to today's snapshot") -----
 
 test_that("an apply = TRUE preview applies itself once ready with nothing loaded to restart (83)", {
@@ -756,7 +1067,7 @@ test_that("packages_changed is notified once per dispatch when the view changes,
   notes <- notifications(r$state, r2$state)
   expect_equal(sum(vapply(notes, function(n) n$kind, character(1)) == "packages_changed"), 1)
 
-  r3 <- drive(r2$state, ev_render("nonexistent", 1, 1, at(3)))
+  r3 <- drive(r2$state, ev_render("nonexistent", at(3)))
   notes2 <- notifications(r2$state, r3$state)
   expect_false("packages_changed" %in% vapply(notes2, function(n) n$kind, character(1)))
 })
@@ -1120,6 +1431,13 @@ test_that("a failed Bioconductor index leaves the name not found, says why, and 
   expect_true("DESeq2" %in% probs$package[probs$kind == "not_found"])
   expect_true(any(probs$kind == "index_unavailable" & grepl("network down", probs$message)))
   expect_equal(effect_types(r), character())
+  # The page doesn't call it "not found in any repository": it may be in
+  # the index that failed (#264).
+  row <- packages_view(r$state)$packages
+  row <- row[row$name == "DESeq2", ]
+  expect_equal(row$status, "lookup_failed")
+  expect_match(row$message, "couldn't look in Bioconductor (the package index bioc/2026-09-01/3.23 could not be fetched: network down)",
+               fixed = TRUE)
 
   r2 <- drive(r$state, ev_apply(list(op_set_code("S", "1 + 1")), at(4)))
   expect_equal(effect_types(r2), character())
@@ -1132,6 +1450,325 @@ test_that("a failed Bioconductor index leaves the name not found, says why, and 
   r4 <- drive(r2$state, ev_apply(list(op_set_code("A", "library(dplyr)")), at(5)))
   expect_false("fetch_index" %in% effect_types(r4))
   expect_equal(r4$state$packages$resolved_for, "dplyr")
+})
+
+test_that("a cell's missing-package error says Bioconductor couldn't be looked in, as the page does (#282)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46))
+  r <- open_with_cran(s)
+  for (kind in names(bioc_kinds)) {
+    r <- drive(r$state, ev_index_failed(repo_key(kind, "2026-09-01", "3.23"), "network down", at(3)))
+  }
+  err <- missing_package_error(r$state, "DESeq2")$error
+  expect_equal(err$kind, "missing_package")
+  expect_match(err$message, "there is no package called 'DESeq2': DESeq2 isn't on CRAN at this date, and Ember couldn't look in Bioconductor (the package index bioc/2026-09-01/3.23 could not be fetched: network down)",
+               fixed = TRUE)
+  expect_false(grepl("not found in any repository", err$message, fixed = TRUE))
+})
+
+test_that("a Bioconductor index not published yet at the notebook's date moves the date back while nothing is locked (#282)", {
+  # CRAN's index is there at 2026-10-01 (the 2026-09-30 fixture stands in);
+  # Bioconductor's isn't yet.
+  cran_at <- function(date) {
+    read_repo_index(testthat::test_path("fixtures", "repos", "cran", "2026-09-30", "src", "contrib", "PACKAGES"),
+                    key = repo_key("cran", date), label = "CRAN")
+  }
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46), snapshot = "2026-10-01")
+  r <- drive(s, ev_open(at(1)), ev_index_fetched(repo_key("cran", "2026-10-01"), cran_at("2026-10-01"), at(2)))
+  expect_setequal(vapply(r$effects, function(e) e$key %||% NA_character_, character(1)) |> stats::na.omit() |> as.character(),
+                  c("cran/2026-10-01", "bioc/2026-10-01/3.23", "bioc-ann/2026-10-01/3.23", "bioc-exp/2026-10-01/3.23"))
+
+  r <- drive(r$state, ev_index_failed("bioc/2026-10-01/3.23", "bioc/2026-10-01/3.23 isn't published: no index for that date (404)",
+                                      at(3), unpublished = TRUE))
+  expect_equal(r$state$file$header$snapshot, "2026-09-30")
+  expect_false(any(grepl("2026-10-01", names(r$state$packages$indexes)) &
+                     is_bioc_key(names(r$state$packages$indexes))))
+  expect_equal(find_effect(r, "fetch_index")$key, repo_key("cran", "2026-09-30"))
+  # The old date's other Bioconductor answers are ignored.
+  r <- drive(r$state, ev_index_failed("bioc-ann/2026-10-01/3.23", "404", at(4), unpublished = TRUE),
+             ev_index_failed("bioc-exp/2026-10-01/3.23", "404", at(4), unpublished = TRUE))
+  expect_equal(r$state$file$header$snapshot, "2026-09-30")
+  expect_equal(nrow(r$state$packages$problems), 0)
+
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_at("2026-09-30"), at(5)))
+  r <- deliver_bioc(r$state, release = "3.23", date = "2026-09-30", t = 6)
+  expect_true("DESeq2" %in% r$state$file$lock$entries$name)
+  expect_equal(r$state$file$header$snapshot, "2026-09-30")
+  expect_false(any(r$state$packages$problems$kind %in% c("not_found", "index_unavailable")))
+})
+
+test_that("a Bioconductor index not published yet leaves the date alone when the lock has packages (#282)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46),
+                 lock = new_lock("cli", "3.6.3", "CRAN"))
+  r <- open_with_cran(s)
+  for (kind in names(bioc_kinds)) {
+    r <- drive(r$state, ev_index_failed(repo_key(kind, "2026-09-01", "3.23"),
+                                        sprintf("%s isn't published: no index for that date (404)", repo_key(kind, "2026-09-01", "3.23")),
+                                        at(3), unpublished = TRUE))
+  }
+  expect_equal(r$state$file$header$snapshot, "2026-09-01")
+  expect_true(any(r$state$packages$problems$kind == "index_unavailable" &
+                    grepl("bioc/2026-09-01/3.23 isn't published", r$state$packages$problems$message, fixed = TRUE)))
+})
+
+# ---- Stepping back for Bioconductor while packages are locked (#311) ----------
+
+#' The CRAN fixture `fixture` (2026-09-30's or 2026-09-01's) keyed at `date`.
+cran_as <- function(date, fixture = "2026-09-30") {
+  read_repo_index(testthat::test_path("fixtures", "repos", "cran", fixture, "src", "contrib", "PACKAGES"),
+                  key = repo_key("cran", date), label = "CRAN")
+}
+
+#' A notebook dated 2026-10-01 using cli, locked at 3.6.6 (2026-09-30's
+#' version), and a cell asking for DESeq2, opened with CRAN's index there.
+#' Bioconductor's indexes at 2026-10-01 are being fetched.
+locked_bioc_open <- function() {
+  s <- pkg_state(list(S = cell("library(cli)"), A = cell("library(DESeq2)")), options = list(r = r46),
+                 snapshot = "2026-10-01", lock = new_lock("cli", "3.6.6", "CRAN"))
+  drive(s, ev_open(at(1)), ev_index_fetched(repo_key("cran", "2026-10-01"), cran_as("2026-10-01"), at(2)))
+}
+
+unpublished_404 <- function(state, key, t) {
+  drive(state, ev_index_failed(key, sprintf("%s isn't published: no index for that date (404)", key),
+                               at(t), unpublished = TRUE))
+}
+
+#' Every Bioconductor index at `date` answers an unpublished 404.
+bioc_unpublished <- function(state, date = "2026-10-01", t = 3) {
+  r <- list(state = state, effects = list())
+  for (kind in names(bioc_kinds)) r <- unpublished_404(r$state, repo_key(kind, date, "3.23"), t)
+  r
+}
+
+test_that("a Bioconductor index not published at a locked notebook's date steps back silently when nothing locked changes (#311)", {
+  r <- locked_bioc_open()
+  r <- unpublished_404(r$state, "bioc/2026-10-01/3.23", 3)
+  # Not before resolution at the notebook's date has settled.
+  expect_null(r$state$packages$proposal)
+  r <- unpublished_404(r$state, "bioc-ann/2026-10-01/3.23", 3)
+  r <- unpublished_404(r$state, "bioc-exp/2026-10-01/3.23", 3)
+  prop <- r$state$packages$proposal
+  expect_equal(prop$kind, "back")
+  expect_equal(prop$date, "2026-09-30")
+  expect_equal(prop$asked, "2026-10-01")
+  # Nothing has moved yet, the page asks nothing, and the cell that needs
+  # DESeq2 waits for the step back rather than failing first.
+  expect_equal(r$state$file$header$snapshot, "2026-10-01")
+  expect_null(pluto_state(r$state)$js$ember$packages$update)
+  expect_true("A" %in% names(waiting_cells(r$state)))
+  expect_equal(find_effect(r, "fetch_index")$key, "cran/2026-09-30")
+  expect_true(find_effect(r, "fetch_index")$fresh)
+
+  r <- drive(r$state, ev_index_fetched("cran/2026-09-30", cran_as("2026-09-30"), at(5)))
+  r <- deliver_bioc(r$state, date = "2026-09-30", t = 6)
+  expect_null(r$state$packages$proposal)
+  expect_equal(r$state$file$header$snapshot, "2026-09-30")
+  lock <- r$state$file$lock$entries
+  expect_true("DESeq2" %in% lock$name)
+  expect_equal(lock$version[lock$name == "cli"], "3.6.6")
+  expect_false(any(r$state$packages$problems$kind %in% c("not_found", "index_unavailable", "off_date")))
+  expect_null(pluto_state(r$state)$js$ember$packages$update)
+  # Still waiting, now for the install.
+  expect_equal(waiting_cells(r$state)[["A"]], "DESeq2")
+  text <- format_notebook(notebook_file_of(r$state))
+  expect_match(text, "2026-09-30", fixed = TRUE)
+  expect_match(text, "# DESeq2 1.50.0 Bioc", fixed = TRUE)
+})
+
+test_that("a step back keeps going while the earlier day isn't published either, for Bioconductor or CRAN (#311)", {
+  r <- bioc_unpublished(locked_bioc_open()$state)
+  r <- drive(r$state, ev_index_fetched("cran/2026-09-30", cran_as("2026-09-30"), at(4)))
+  r <- unpublished_404(r$state, "bioc/2026-09-30/3.23", 5)
+  expect_equal(r$state$packages$proposal$kind, "back")
+  expect_equal(r$state$packages$proposal$date, "2026-09-29")
+  expect_equal(r$state$packages$proposal$asked, "2026-10-01")
+  expect_false(any(is_bioc_key(names(r$state$packages$indexes)) &
+                     key_date(names(r$state$packages$indexes)) == "2026-09-30"))
+  # CRAN's index at 2026-09-29 isn't there either.
+  r <- unpublished_404(r$state, "cran/2026-09-29", 6)
+  expect_equal(r$state$packages$proposal$date, "2026-09-28")
+  expect_null(r$state$packages$indexes[["cran/2026-09-29"]])
+  expect_equal(find_effect(r, "fetch_index")$key, "cran/2026-09-28")
+  r <- drive(r$state, ev_index_fetched("cran/2026-09-28", cran_as("2026-09-28"), at(7)))
+  r <- deliver_bioc(r$state, date = "2026-09-28", t = 8)
+  expect_null(r$state$packages$proposal)
+  expect_equal(r$state$file$header$snapshot, "2026-09-28")
+  expect_true("DESeq2" %in% r$state$file$lock$entries$name)
+})
+
+#' `locked_bioc_open()` stepped back to 2026-09-30, whose CRAN index has
+#' cli 3.6.5 rather than the locked 3.6.6, so the move waits for an answer.
+back_question <- function(loaded = NULL) {
+  r <- bioc_unpublished(locked_bioc_open()$state)
+  if (!is.null(loaded)) r$state$worker$loaded <- loaded
+  r <- drive(r$state, ev_index_fetched("cran/2026-09-30", cran_as("2026-09-30", fixture = "2026-09-01"), at(4)))
+  deliver_bioc(r$state, date = "2026-09-30", t = 5)
+}
+
+test_that("a step back that would change a locked version waits as the page's question, and set_date() applies it (#311)", {
+  r <- back_question()
+  prop <- r$state$packages$proposal
+  expect_equal(prop$kind, "back")
+  expect_equal(prop$status, "ready")
+  expect_false(isTRUE(prop$apply))
+  expect_equal(prop$restart, character())
+  expect_equal(r$state$file$header$snapshot, "2026-10-01")
+  ch <- prop$changes
+  expect_equal(ch$from[ch$name == "cli"], "3.6.6")
+  expect_equal(ch$to[ch$name == "cli"], "3.6.5")
+  expect_true("DESeq2" %in% ch$name[ch$change == "added"])
+  # Only the package that has to move moves.
+  expect_false(any(prop$problems$kind == "off_date"))
+  # The question is open: the cell isn't held for it.
+  expect_false("A" %in% names(waiting_cells(r$state)))
+
+  js <- pluto_state(r$state)$js
+  expect_true(check_wire(js))
+  up <- js$ember$packages$update
+  expect_equal(up$date, "2026-09-30")
+  expect_equal(up$status, "ready")
+  expect_equal(up$back$from, "2026-10-01")
+  cli_row <- Filter(function(c) identical(c$name, "cli"), up$back$changes)[[1]]
+  expect_equal(cli_row$from, "3.6.6")
+  expect_equal(cli_row$to, "3.6.5")
+  added <- Filter(function(c) identical(c$name, "DESeq2"), up$back$changes)[[1]]
+  expect_null(added$from)
+
+  r <- drive(r$state, ev_set_date("2026-09-30", at(6)))
+  expect_false(inherits(r$replies[[1]], "ember_refused"))
+  expect_equal(r$state$file$header$snapshot, "2026-09-30")
+  lock <- r$state$file$lock$entries
+  expect_equal(lock$version[lock$name == "cli"], "3.6.5")
+  expect_true("DESeq2" %in% lock$name)
+  expect_null(r$state$packages$proposal)
+})
+
+test_that("a step back's question names a loaded package it changes as restarting R (#311)", {
+  r <- back_question(loaded = c(cli = "3.6.6"))
+  expect_equal(r$state$packages$proposal$restart, "cli")
+  expect_equal(unlist(pluto_state(r$state)$js$ember$packages$update$restart), "cli")
+})
+
+test_that("a step back's question follows the wanted set, and goes once the missing name does (#311)", {
+  r <- back_question()
+  r <- drive(r$state, ev_apply(list(op_set_code("S", "library(cli); library(glue)")), at(6)))
+  # Bioconductor is asked again at the notebook's date for the new set.
+  r <- bioc_unpublished(r$state, t = 6)
+  prop <- r$state$packages$proposal
+  expect_equal(prop$status, "ready")
+  expect_setequal(prop$for_wanted, c("cli", "glue", "DESeq2"))
+  expect_true("glue" %in% prop$lock$entries$name)
+
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "1 + 1")), at(7)))
+  expect_null(r$state$packages$proposal)
+  expect_equal(r$state$file$header$snapshot, "2026-10-01")
+  expect_equal(r$state$file$lock$entries$version[r$state$file$lock$entries$name == "cli"], "3.6.6")
+})
+
+test_that("a step back that finds no missing name is dropped, and not tried again until the notebook runs (#311)", {
+  s <- pkg_state(list(S = cell("library(cli)"), A = cell("library(dplyrr)")), options = list(r = r46),
+                 snapshot = "2026-10-01", lock = new_lock("cli", "3.6.6", "CRAN"))
+  r <- drive(s, ev_open(at(1)), ev_index_fetched(repo_key("cran", "2026-10-01"), cran_as("2026-10-01"), at(2)))
+  r <- bioc_unpublished(r$state)
+  expect_equal(r$state$packages$proposal$kind, "back")
+  # Even with cli older there, a typo isn't worth a question.
+  r <- drive(r$state, ev_index_fetched("cran/2026-09-30", cran_as("2026-09-30", fixture = "2026-09-01"), at(4)))
+  r <- deliver_bioc(r$state, date = "2026-09-30", t = 5)
+  expect_null(r$state$packages$proposal)
+  expect_equal(r$state$file$header$snapshot, "2026-10-01")
+  expect_null(pluto_state(r$state)$js$ember$packages$update)
+  r <- drive(r$state, ev_apply(list(op_set_code("S", "library(cli) # again")), at(6)))
+  expect_null(r$state$packages$proposal)
+  expect_false("A" %in% names(waiting_cells(r$state)))
+
+  # Running again fetches the failed indexes, and tries once more once
+  # they have answered (at once here: the earlier day's indexes are held).
+  r <- drive(r$state, ev_run(NULL, at(7)))
+  expect_null(r$state$packages$back_tried)
+  r <- unpublished_404(r$state, "bioc/2026-10-01/3.23", 8)
+  expect_null(r$state$packages$back_tried)
+  r <- bioc_unpublished(r$state, t = 8)
+  expect_equal(r$state$packages$back_tried$names, "dplyrr")
+  expect_null(r$state$packages$proposal)
+})
+
+test_that("no step back once the Bioconductor package resolved at the notebook's date, whatever else 404s (#311)", {
+  r <- locked_bioc_open()
+  r <- drive(r$state, ev_index_fetched("bioc/2026-10-01/3.23", bioc_index("bioc", date = "2026-10-01"), at(3)),
+             ev_index_fetched("bioc-exp/2026-10-01/3.23", bioc_index("bioc-exp", date = "2026-10-01"), at(3)))
+  r <- unpublished_404(r$state, "bioc-ann/2026-10-01/3.23", 4)
+  expect_true("DESeq2" %in% r$state$file$lock$entries$name)
+  expect_null(r$state$packages$proposal)
+  expect_equal(r$state$file$header$snapshot, "2026-10-01")
+})
+
+test_that("a step back that would lose a locked package is dropped (#311)", {
+  s <- pkg_state(list(S = cell("library(cli); library(viz)"), A = cell("library(DESeq2)")),
+                 options = list(r = r46), snapshot = "2026-10-01",
+                 lock = new_lock(c("cli", "viz"), c("3.6.6", "2.0.0"), c("CRAN", "CRAN")))
+  r <- drive(s, ev_open(at(1)), ev_index_fetched(repo_key("cran", "2026-10-01"), cran_as("2026-10-01"), at(2)))
+  r <- bioc_unpublished(r$state)
+  # viz isn't out yet at 2026-09-30.
+  idx <- cran_as("2026-09-30")
+  keep <- idx$name != "viz"
+  without_viz <- new_repo_index(idx$key, idx$label, idx$name[keep], idx$version[keep], idx$deps[keep],
+                                idx$needs_compilation[keep])
+  r <- drive(r$state, ev_index_fetched("cran/2026-09-30", without_viz, at(4)))
+  r <- deliver_bioc(r$state, date = "2026-09-30", t = 5)
+  expect_null(r$state$packages$proposal)
+  expect_equal(r$state$file$header$snapshot, "2026-10-01")
+  expect_true("viz" %in% r$state$file$lock$entries$name)
+})
+
+test_that("a cancelled step back leaves the date and the unpublished index's row (#311)", {
+  r <- back_question()
+  r <- drive(r$state, ev_cancel_preview(at(6)))
+  expect_null(r$state$packages$proposal)
+  expect_equal(r$state$file$header$snapshot, "2026-10-01")
+  expect_true(any(r$state$packages$problems$kind == "index_unavailable"))
+  expect_null(pluto_state(r$state)$js$ember$packages$update)
+  # Not asked again on the next edit.
+  r <- drive(r$state, ev_apply(list(op_set_code("S", "library(cli) # again")), at(7)))
+  expect_null(r$state$packages$proposal)
+})
+
+test_that("a step back whose earlier day fails to fetch is dropped, and the failure shows as before (#311)", {
+  r <- bioc_unpublished(locked_bioc_open()$state)
+  r <- drive(r$state, ev_index_fetched("cran/2026-09-30", cran_as("2026-09-30"), at(4)))
+  for (kind in names(bioc_kinds)) {
+    r <- drive(r$state, ev_index_failed(repo_key(kind, "2026-09-30", "3.23"), "network down", at(5)))
+  }
+  expect_null(r$state$packages$proposal)
+  expect_equal(r$state$file$header$snapshot, "2026-10-01")
+  expect_equal(r$state$file$lock$entries$name, "cli")
+  probs <- r$state$packages$problems
+  expect_true(any(probs$kind == "index_unavailable" &
+                    grepl("bioc/2026-10-01/3.23 isn't published", probs$message, fixed = TRUE)))
+  expect_false("A" %in% names(waiting_cells(r$state)))
+})
+
+test_that("a step back isn't proposed over a date preview the user asked for (#311)", {
+  r <- locked_bioc_open()
+  r <- drive(r$state, ev_preview_date("2026-10-01", at(3)))
+  r <- bioc_unpublished(r$state, t = 4)
+  expect_equal(r$state$packages$proposal$kind, "date")
+})
+
+
+test_that("running again fetches a failed Bioconductor index and resolves the name it held (#264)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46))
+  r <- open_with_cran(s)
+  for (kind in names(bioc_kinds)) {
+    r <- drive(r$state, ev_index_failed(repo_key(kind, "2026-09-01", "3.23"), "network down", at(3)))
+  }
+  r <- drive(r$state, ev_run(NULL, at(4)))
+  fetched <- Filter(function(e) identical(e$type, "fetch_index"), r$effects)
+  expect_setequal(vapply(fetched, function(e) e$key, character(1)),
+                  c("bioc/2026-09-01/3.23", "bioc-ann/2026-09-01/3.23", "bioc-exp/2026-09-01/3.23"))
+  r <- deliver_bioc(r$state, t = 5)
+  expect_true("DESeq2" %in% r$state$file$lock$entries$name)
+  expect_false(any(r$state$packages$problems$kind %in% c("not_found", "index_unavailable")))
+  expect_equal(packages_view(r$state)$packages$status[packages_view(r$state)$packages$name == "DESeq2"],
+               "missing")
 })
 
 test_that("a reopened notebook with a Bioc lock fetches Bioconductor's indexes when the wanted set changes, not not_in_index (88)", {
@@ -1264,6 +1901,8 @@ test_that("with no release list at all, Bioconductor names are not found and the
   expect_equal(view$problems$message[view$problems$kind == "bioc_releases_unavailable"],
                paste("Bioconductor packages can't be resolved:", msg))
   expect_false("bioc_unavailable" %in% view$problems$kind)
+  expect_equal(view$packages$status[view$packages$name == "DESeq2"], "lookup_failed")
+  expect_match(view$packages$message[view$packages$name == "DESeq2"], msg, fixed = TRUE)
 
   r <- drive(r$state, ev_run(NULL, at(4)))
   expect_true("fetch_bioc_config" %in% effect_types(r))
@@ -1395,6 +2034,105 @@ test_that("running on the new R moves the pin and the Bioconductor packages befo
   expect_match(inst$repos[["BioCsoft"]], "/2026-09-01/packages/3.23/bioc", fixed = TRUE)
 })
 
+#' A pinned notebook allowed to run on the new R, its move pending.
+pending_move <- function() {
+  r <- drive(pinned_322(), ev_open(at(1)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(2)), ev_allow(at(3)))
+  expect_equal(r$state$packages$proposal$kind, "bioc")
+  r
+}
+
+test_that("a date preview waits for a pending move, then is made (323)", {
+  r <- drive(pending_move()$state, ev_preview_date("2026-10-01", at(4), apply = TRUE))
+  expect_true(isTRUE(r$reply))
+  expect_equal(r$state$packages$proposal$kind, "bioc")
+  expect_false("install" %in% effect_types(r))
+  # A second request replaces the first: the latest is what was asked for.
+  r <- drive(r$state, ev_preview_date("2026-10-02", at(5), apply = TRUE))
+  expect_equal(r$state$packages$held$date, "2026-10-02")
+
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(6)))
+  r <- deliver_bioc(r$state, t = 7)
+  expect_equal(r$state$file$header$bioc_version, "3.23")
+  prop <- r$state$packages$proposal
+  expect_equal(list(prop$kind, prop$date, prop$apply), list("date", "2026-10-02", TRUE))
+  expect_null(r$state$packages$held)
+  expect_equal(r$state$packages$indexes[["cran/2026-10-02"]]$status, "fetching")
+})
+
+test_that("a per-package update waits for a pending move, then is made (323)", {
+  r <- drive(pending_move()$state, ev_preview_update("cli", NULL, "2026-10-01", at(4)))
+  expect_true(isTRUE(r$reply))
+  expect_equal(r$state$packages$proposal$kind, "bioc")
+  expect_false("fetch_cran_releases" %in% effect_types(r))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(5)))
+  r <- deliver_bioc(r$state, t = 6)
+  expect_equal(r$state$file$header$bioc_version, "3.23")
+  expect_equal(r$state$packages$proposal$update$name, "cli")
+  expect_equal(r$state$packages$cran_releases$status, "fetching")
+  # A package the lock doesn't have is still refused at once.
+  r2 <- drive(pending_move()$state, ev_preview_update("dplyr", NULL, "2026-10-01", at(4)))
+  expect_s3_class(r2$reply, "ember_refused")
+})
+
+test_that("Cancel leaves a pending move alone and drops a preview held for it (323)", {
+  r <- drive(pending_move()$state, ev_preview_date("2026-10-01", at(4)), ev_cancel_preview(at(5)))
+  expect_equal(r$state$packages$proposal$kind, "bioc")
+  expect_null(r$state$packages$held)
+  expect_false("install" %in% effect_types(r))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(6)))
+  r <- deliver_bioc(r$state, t = 7)
+  expect_equal(r$state$file$header$bioc_version, "3.23")
+  expect_null(r$state$packages$proposal)
+})
+
+test_that("a preview open from safe preview waits for the move, so the old pin doesn't install (323)", {
+  r <- drive(pinned_322(), ev_open(at(1)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(2)),
+             ev_preview_date("2026-10-01", at(3)), ev_allow(at(4)))
+  expect_equal(r$state$packages$proposal$kind, "bioc")
+  expect_equal(r$state$packages$held$date, "2026-10-01")
+  expect_false("install" %in% effect_types(r))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(5)))
+  r <- deliver_bioc(r$state, t = 6)
+  expect_equal(r$state$file$header$bioc_version, "3.23")
+  expect_equal(list(r$state$packages$proposal$kind, r$state$packages$proposal$date), list("date", "2026-10-01"))
+})
+
+test_that("a request held before the move is proposed wins over the older open preview (323)", {
+  lock <- new_lock(c("DESeq2", "S4Vectors", "cli"), c("1.48.0", "0.46.0", "3.6.4"), c("Bioc", "Bioc", "CRAN"))
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46, repos = lookup_repos),
+                 snapshot = "2026-09-01", lock = lock, bioc_version = "3.22")
+  r <- drive(s, ev_open(at(1)), ev_bioc_releases_failed("offline", at(2)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(3)),
+             ev_preview_date("2026-10-01", at(4)), ev_allow(at(5)))
+  expect_equal(r$state$packages$proposal$date, "2026-10-01")
+  # Run asks for the list again; the Update click meanwhile is held.
+  r <- drive(r$state, ev_run(NULL, at(6)))
+  expect_equal(r$state$packages$bioc_releases$status, "fetching")
+  r <- drive(r$state, ev_preview_date("2026-10-02", at(7), apply = TRUE))
+  expect_equal(r$state$packages$held$date, "2026-10-02")
+  r <- drive(r$state, ev_bioc_releases_fetched(fixture_releases(), as.Date("2026-10-08"), at(8)))
+  expect_equal(r$state$packages$proposal$kind, "bioc")
+  expect_equal(list(r$state$packages$held$date, r$state$packages$held$apply), list("2026-10-02", TRUE))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(9)))
+  r <- deliver_bioc(r$state, t = 10)
+  expect_equal(r$state$file$header$bioc_version, "3.23")
+  prop <- r$state$packages$proposal
+  expect_equal(list(prop$kind, prop$date, prop$apply), list("date", "2026-10-02", TRUE))
+})
+
+test_that("a date preview replaces a move that failed", {
+  r <- drive(pinned_322(), ev_open(at(1)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(2)), ev_allow(at(3)),
+             ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(4)),
+             ev_index_failed("bioc/2026-09-01/3.23", "network down", at(5)))
+  expect_equal(r$state$packages$proposal$status, "failed")
+  r <- drive(r$state, ev_preview_date("2026-10-01", at(6)))
+  expect_true(isTRUE(r$reply))
+  expect_equal(r$state$packages$proposal$kind, "date")
+})
+
 test_that("a move that would change a loaded package applies anyway and restarts R once installed", {
   r <- drive(pinned_322(), ev_open(at(1)), ev_allow(at(2)))
   r$state$worker$loaded <- c(DESeq2 = "1.48.0")
@@ -1446,4 +2184,106 @@ test_that("a pinned notebook waits for the release list before deciding a move",
              ev_bioc_releases_fetched(fixture_releases("config-3.24.yaml"), as.Date("2026-11-02"), at(4)))
   expect_null(r$state$packages$proposal)
   expect_true("install" %in% effect_types(r))
+})
+
+# ---- Asking before a large download (#37) -------------------------------------
+
+#' A notebook whose install has just started: `list(state, key, token)`.
+installing_state <- function(options = list()) {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")), options = options)
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index(), at(2)))
+  r <- drive(r$state, ev_library_checked(r$state$packages$target$key, NULL, at(3)))
+  r <- drive(r$state, ev_allow(at(4)))
+  list(r = r, key = r$state$packages$target$key, token = r$state$packages$install$token)
+}
+
+big_download <- function() {
+  data.frame(package = c("org.Hs.eg.db", "GO.db"), version = c("3.22.0", "3.22.0"),
+             bytes = c(2.1e9, 25e6), stringsAsFactors = FALSE)
+}
+
+test_that("an install asks above ask_above, and installs without asking once approved (130)", {
+  st <- installing_state(options = list(ask_above = 1e8))
+  install_fx <- Filter(function(fx) identical(fx$type, "install"), st$r$effects)
+  expect_equal(install_fx[[1]]$ask_above, 1e8)
+
+  r <- drive(st$r$state, ev_install_done(st$token, st$key, NULL, NULL, character(), at(5),
+                                          download = big_download()))
+  tgt <- r$state$packages$target
+  expect_equal(tgt$status, "asking")
+  expect_equal(tgt$download$package, c("org.Hs.eg.db", "GO.db"))
+  # Nothing failed: no problem row, no new install, the cell still waits.
+  expect_false("install_failed" %in% r$state$packages$problems$kind)
+  expect_null(r$state$packages$install)
+  expect_false(any(vapply(r$effects, function(fx) identical(fx$type, "install"), logical(1))))
+  expect_true("A" %in% names(waiting_cells(r$state)))
+  expect_equal(packages_view(r$state)$library$download$package, c("org.Hs.eg.db", "GO.db"))
+
+  # Running again isn't an OK.
+  r <- drive(r$state, ev_run("A", at(6)))
+  expect_equal(r$state$packages$target$status, "asking")
+
+  r <- drive(r$state, ev_approve_install(at(7)))
+  expect_true(r$reply)
+  expect_equal(r$state$packages$target$status, "installing")
+  expect_null(r$state$packages$target$download)
+  install_fx <- Filter(function(fx) identical(fx$type, "install"), r$effects)
+  expect_length(install_fx, 1)
+  expect_equal(install_fx[[1]]$ask_above, Inf)
+})
+
+test_that("the installer's no-binary notice shows while installing and clears when the next install starts (#19)", {
+  st <- installing_state()
+  pkgs <- c(cli = "3.6.2", rlang = "1.1.3")
+  # Another install's notice is dropped.
+  r <- drive(st$r$state, ev_install_no_binary(st$token + 1L, pkgs, at(5)))
+  expect_null(r$state$packages$target$no_binary)
+  r <- drive(r$state, ev_install_no_binary(st$token, pkgs, at(6)))
+  expect_equal(r$state$packages$target$no_binary, pkgs)
+  expect_equal(r$state$packages$target$status, "installing")
+  expect_equal(packages_view(r$state)$library$no_binary, pkgs)
+  # It doesn't stop anything: the cell still waits on the install.
+  expect_true("A" %in% names(waiting_cells(r$state)))
+
+  # The next install starts without it.
+  r <- drive(r$state, ev_install_done(st$token, st$key, NULL, NULL, character(), at(7), download = big_download()))
+  r <- drive(r$state, ev_approve_install(at(8)))
+  expect_equal(r$state$packages$target$status, "installing")
+  expect_null(r$state$packages$target$no_binary)
+  expect_null(packages_view(r$state)$library$no_binary)
+})
+
+test_that("approve_install is refused when nothing waits for an OK (130)", {
+  st <- installing_state()
+  r <- drive(st$r$state, ev_approve_install(at(5)))
+  expect_s3_class(r$reply, "ember_refused")
+  expect_equal(r$state$packages$target$status, "installing")
+})
+
+test_that("ask_above comes from options(ember.ask_above), 500 MB by default (130)", {
+  expect_equal(pkg_state(list(S = cell("")))$options$ask_above, 500e6)
+  withr::local_options(ember.ask_above = Inf)
+  expect_equal(pkg_state(list(S = cell("")))$options$ask_above, Inf)
+})
+
+test_that("download_lines() reads the installer's EMBER-DOWNLOAD lines, largest first (130)", {
+  lines <- c("EMBER-PROGRESS 0 3 - restore", "EMBER-DOWNLOAD GO.db 3.22.0 25248437",
+             "EMBER-DOWNLOAD org.Hs.eg.db 3.22.0 2100000000", "EMBER-DOWNLOAD BSgenome.X 1.0 NA")
+  d <- download_lines(lines)
+  expect_equal(d$package, c("org.Hs.eg.db", "GO.db", "BSgenome.X"))
+  expect_equal(d$bytes, c(2.1e9, 25248437, NA))
+  expect_null(download_lines(c("Error: something else")))
+})
+
+test_that("a Bioconductor move drops a step back rather than holding it as a preview (#311)", {
+  r <- drive(pinned_322(), ev_open(at(1)))
+  st <- r$state
+  st$allowed <- TRUE
+  st$packages$proposal <- new_proposal("2026-08-31", kind = "back", asked = "2026-09-01")
+  st$packages$back_tried <- list(date = "2026-09-01", names = "DESeq2")
+  out <- propose_bioc_move(st)
+  expect_equal(out$packages$proposal$kind, "bioc")
+  expect_null(out$packages$held)
+  expect_null(out$packages$back_tried)
 })

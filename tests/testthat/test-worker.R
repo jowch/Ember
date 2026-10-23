@@ -10,14 +10,11 @@ run_msg <- function(cell, token, code, role = "cell", order = character(), formu
 }
 
 #' Run code in a fresh harness and return the `done` report. Fails the
-#' test (via a timeout error) if the worker never replies.
-run_and_wait <- function(h, cell, token, code, ..., timeout = 5) {
+#' test if the worker exits or hangs before replying (next_frame()), or,
+#' with a `timeout`, once that many seconds pass.
+run_and_wait <- function(h, cell, token, code, ..., timeout = NULL) {
   h$send(run_msg(cell, token, code, ...))
-  repeat {
-    m <- h$receive(timeout)
-    if (is.null(m)) no_reply(h, timeout)
-    if (identical(m$type, "done")) return(m$report)
-  }
+  wait_for_done(h, timeout)
 }
 
 png_dims <- function(bytes) {
@@ -57,6 +54,36 @@ test_that("run_value_and_console_order", {
   expect_identical(r$console[[2]]$text, "b\n")
   expect_identical(r$console[[3]]$text, "c")
   expect_identical(r$output$text, "[1] 2")
+})
+
+test_that("a progress bar's redraws end as one line, as in the R console (#358)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, paste(
+    "pb <- txtProgressBar(min = 0, max = 300, style = 3)",
+    "for (i in 1:300) setTxtProgressBar(pb, i)",
+    "close(pb)",
+    'cat("abcdef\\rXY\\n")',
+    'cat("\\033[32m100%\\033[39m\\r\\033[32m5%\\033[39m\\n")',
+    'cat("\\u65e5\\u672c\\u8a9e\\rab\\n")',
+    'cat("loading...\\r\\033[KDone\\n")',
+    'cat("ab\\033]8;;https://x.org\\aLINK\\033]8;;\\a\\rZ\\n")',
+    'cat(strrep("\\033[32mrow\\033[39m\\n", 1000), "a\\rb\\n", sep = "")', sep = "\n"))
+  expect_identical(r$status, "ok")
+  out <- paste(vapply(Filter(function(i) identical(i$kind, "stdout"), r$console), `[[`, "", "text"), collapse = "")
+  expect_false(grepl("\r", out, fixed = TRUE))
+  lines <- strsplit(out, "\n", fixed = TRUE)[[1]]
+  visible <- gsub("\033\\[[0-9;]*m", "", lines)
+  # A redraw overwrites the line it returns to, so a shorter one keeps its
+  # tail. Colors take no columns, and each column keeps the color it was
+  # written in; a wide character takes two columns; ESC[K clears the rest.
+  # A hyperlink's escape is dropped, not shown.
+  expect_identical(visible, c(sprintf("  |%s| 100%%", strrep("=", 70)), "XYcdef", "5%0%",
+                              "ab\u672c\u8a9e", "Done", "ZbLINK", rep("row", 1000), "b"))
+  expect_match(lines[[3]], "\033[32m5%0%", fixed = TRUE)  # 0% keeps its green
+  # The colors in force stay a few fields, however many escapes came
+  # before: 1000 green rows, each closed with 39, leave none.
+  expect_identical(lines[[length(lines)]], "b")
 })
 
 test_that("earlier_visible_values_to_console", {
@@ -173,6 +200,29 @@ test_that("run_cell(): an assignment to a failing call's result isn't deep (item
   expect_identical(r$status, "error")
   expect_identical(r$error$call, "f(1)")
   expect_identical(r$error$deep, FALSE)
+})
+
+test_that("run_cell(): rlang's check_installed() error names its packages, as a packageNotFoundError does (#184)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  # The worker's library has no rlang, so the cell raises the condition the way
+  # check_installed() does: class rlib_error_package_not_found, with `pkg`.
+  r <- run_and_wait(h, "a", 1L, paste0('stop(structure(class = c("rlib_error_package_not_found", "rlib_error", ',
+                                       '"error", "condition"), list(message = "The packages are required.", ',
+                                       'call = NULL, pkg = c("emberabsent1", "emberabsent2"), version = NULL)))'))
+  expect_identical(r$status, "error")
+  expect_identical(r$error$package, c("emberabsent1", "emberabsent2"))
+
+  # One with a version may be installed and only too old: none is named, so the
+  # whole message stays (check_installed("rlang (>= 99.0)")).
+  r <- run_and_wait(h, "a", 2L, paste0('stop(structure(class = c("rlib_error_package_not_found", "rlib_error", ',
+                                       '"error", "condition"), list(message = "The package \\"stats\\" (>= 99.0) is required.", ',
+                                       'call = NULL, pkg = c("stats", "emberabsent1"), version = c("99.0", NA))))'))
+  expect_null(r$error$package)
+  r <- run_and_wait(h, "a", 3L, paste0('stop(structure(class = c("rlib_error_package_not_found", "rlib_error", ',
+                                       '"error", "condition"), list(message = "The package \\"stats\\" (>= 99.0) is required.", ',
+                                       'call = NULL, pkg = "stats", version = "99.0")))'))
+  expect_null(r$error$package)
 })
 
 test_that("run_cell(): a notebook function calling lm() with bad data (ui-3-tests 128)", {
@@ -1024,7 +1074,7 @@ test_that("an interrupt sent on the running frame stops that run", {
   for (i in 1:10) {
     h$send(run_msg(paste0("c", i), i, "Sys.sleep(5)"))
     r <- wait_for_done(h, timeout = 30, on_frame = function(m) {
-      if (identical(m$type, "running")) h$process$interrupt()
+      if (identical(m$type, "running")) h$interrupt()
     })
     expect_identical(r$status, "interrupted")
   }
@@ -1045,7 +1095,7 @@ test_that("interrupt_r_code", {
   while (!file.exists(started) && Sys.time() < deadline) Sys.sleep(0.05)
   expect_true(file.exists(started))
   t0 <- Sys.time()
-  h$process$interrupt()
+  h$interrupt()
   r <- wait_for_done(h, timeout = 5)
   elapsed <- as.numeric(Sys.time() - t0, units = "secs")
   expect_identical(r$status, "interrupted")
@@ -1057,13 +1107,72 @@ test_that("interrupt_r_code", {
   expect_identical(check$output$text, "[1] 1 2")
 })
 
-test_that("interrupt_between_runs_swallowed", {
-  # On Windows the interrupt arrives later than the 0.2 s this test waits,
-  # so it lands in the next cell; tracked in #48.
-  skip_on_os("windows")
+test_that("on Windows a worker with no console is interrupted all the same (#48)", {
+  # processx's interrupt() needs the worker to have a console, and one
+  # started by a server without a console has none: every interrupt was
+  # lost, while interrupt() said it was sent. The interrupt event needs no
+  # console.
+  skip_on_os(c("mac", "linux", "solaris"))
+  h <- worker_harness(detached = TRUE)
+  expect_true(isTRUE(h$hello$interrupts))
+  on.exit(h$close())
+  for (code in c("Sys.sleep(20)", "t0 <- Sys.time(); repeat if (Sys.time() - t0 > 20) break")) {
+    h$send(run_msg("a", 1L, code))
+    r <- wait_for_done(h, timeout = 10, on_frame = function(m) {
+      if (identical(m$type, "running")) expect_true(h$interrupt())
+    })
+    expect_identical(r$status, "interrupted")
+  }
+})
+
+test_that("on Windows interrupting a process with no interrupt event says it wasn't delivered (#48)", {
+  skip_on_os(c("mac", "linux", "solaris"))
+  p <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", "Sys.sleep(30)"))
+  on.exit(p$kill())
+  expect_false(interrupt_worker(p))
+  expect_true(p$is_alive())
+})
+
+test_that("an interrupt just after a run's done doesn't stop the next run (#48)", {
+  # The server sends the next run as soon as it has "done", so a late
+  # interrupt and the next run can reach the worker together. One still
+  # pending when the run starts is late, and must not stop it.
   h <- worker_harness()
   on.exit(h$close())
-  h$process$interrupt()
+  for (i in 1:50) {
+    h$send(run_msg(paste0("c", i), i, "1 + 1"))
+    r <- wait_for_done(h, timeout = 10)
+    expect_identical(r$status, "ok")
+    h$interrupt()
+  }
+  r <- run_and_wait(h, "last", 51L, "1 + 1")
+  expect_identical(r$status, "ok")
+})
+
+test_that("on Windows a late interrupt the listener took but hasn't applied doesn't stop the next run (#238)", {
+  # The window between the listener taking an interrupt and setting
+  # UserBreak is a thread switch long; a test-only delay widens it to
+  # 20 ms, so a drain that doesn't wait for the listener fails almost
+  # every round.
+  skip_on_os(c("mac", "linux", "solaris"))
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "delay", 1L, '.Call(getNativeSymbolInfo("C_interrupt_test_delay", "ember"), 20L)')
+  expect_identical(r$status, "ok")
+  for (i in 1:10) {
+    h$send(run_msg(paste0("c", i), i + 1L, "1 + 1"))
+    r <- wait_for_done(h, timeout = 10)
+    expect_identical(r$status, "ok")
+    h$interrupt()
+  }
+  r <- run_and_wait(h, "last", 12L, "1 + 1")
+  expect_identical(r$status, "ok")
+})
+
+test_that("interrupt_between_runs_swallowed", {
+  h <- worker_harness()
+  on.exit(h$close())
+  h$interrupt()
   Sys.sleep(0.2)
   r <- run_and_wait(h, "a", 1L, "1 + 1")
   expect_identical(r$status, "ok")
@@ -1172,16 +1281,13 @@ test_that("known_attached_packages_never_shrink", {
 })
 
 test_that("interrupt_during_display_still_completes_bookkeeping", {
-  # Windows delivers the interrupt through processx's CTRL+C helper, too late
-  # for this test's timing; tracked in #48.
-  skip_on_os("windows")
   h <- worker_harness()
   on.exit(h$close())
   run_and_wait(h, "a", 1L,
     'registerS3method("print", "slowprint", function(x, ...) { Sys.sleep(3); cat("slow\\n") })')
   h$send(run_msg("b", 2L, 'options(digits = 3); orphan <- 42; structure(1, class = "slowprint")'))
   Sys.sleep(1)
-  h$process$interrupt()
+  h$interrupt()
   r <- wait_for_done(h, timeout = 10)
   expect_identical(r$status, "interrupted")
   expect_true("orphan" %in% r$created)
@@ -1201,14 +1307,11 @@ test_that("interrupt_during_display_still_completes_bookkeeping", {
 })
 
 test_that("sigint_during_remove_cell_does_not_crash_worker", {
-  # On Windows a late interrupt between cells can still stop the worker;
-  # tracked in #48.
-  skip_on_os("windows")
   h <- worker_harness()
   on.exit(h$close())
   run_and_wait(h, "a", 1L, "x <- 1")
   h$send(list(type = "remove_cell", cell = "a", order = character()))
-  h$process$interrupt()
+  h$interrupt()
   # a SIGINT landing in the remove_cell/rebuild_search_path bookkeeping (or
   # anywhere else between runs) has nothing to interrupt there and must be
   # swallowed, not reach top level and kill the worker.
@@ -1678,9 +1781,51 @@ test_that("a cell that changes another cell's environment in place reports it; r
   expect_length(r$changed_in_place, 0)
   r <- run_and_wait(h, "t", 11L, "a$inc()")
   expect_identical(r$changed_in_place, "a")
+  # A reticulate object caches `simple` in its environment on its first
+  # py_to_r(), which isn't a change (#259). Shaped like one, so the test
+  # needs no Python; held inside another environment too.
+  run_and_wait(h, "p", 14L, paste(
+    "py <- structure(new.env(), class = c('pandas.DataFrame', 'python.builtin.object'))",
+    "py$pyobj <- 1\npy$convert <- TRUE",
+    "holder <- new.env()\nholder$py <- py", sep = "\n"))
+  r <- run_and_wait(h, "q", 15L, "assign('simple', TRUE, envir = py)")
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "q", 16L, "assign('simple2', TRUE, envir = holder$py)")
+  expect_length(r$changed_in_place, 0)
   # A namespace held in a global isn't read.
   run_and_wait(h, "h", 12L, "ns <- asNamespace('stats')")
   r <- run_and_wait(h, "i", 13L, "1")
+  expect_identical(r$status, "ok")
+  expect_length(r$changed_in_place, 0)
+})
+
+test_that("a call that changes a closure's environment reports the closure; calling a top-level function, an S4 generic or a package's doesn't (#333)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  run_and_wait(h, "a", 1L, paste(
+    "counter <- local({ n <- 0L; function() { n <<- n + 1L; n } })",
+    "memo <- (function(f) { cache <- new.env(); function(x) { k <- as.character(x); if (is.null(cache[[k]])) cache[[k]] <- f(x); cache[[k]] } })(sqrt)",
+    "shown <- (function(x) function() x)(42)",
+    "top <- function() 1",
+    "setGeneric('area', function(s) standardGeneric('area'))",
+    "setClass('Sq', representation(w = 'numeric'))",
+    "setMethod('area', 'Sq', function(s) s@w^2)",
+    "setClass('Sq2', contains = 'Sq')",
+    "sd_of <- stats::sd", sep = "\n"))
+  r <- run_and_wait(h, "b", 2L, "counter()")
+  expect_identical(r$status, "ok")
+  expect_identical(r$changed_in_place, "counter")
+  r <- run_and_wait(h, "c", 3L, "memo(4)")
+  expect_identical(r$changed_in_place, "memo")
+  # A second call finds it in the cache, which changes nothing.
+  r <- run_and_wait(h, "c", 4L, "memo(4)")
+  expect_length(r$changed_in_place, 0)
+  # Forcing the promise a factory's argument is kept in isn't a change.
+  r <- run_and_wait(h, "d", 5L, "shown()")
+  expect_length(r$changed_in_place, 0)
+  # Dispatch on a subclass caches the inherited method in the generic's
+  # environment, which isn't a change.
+  r <- run_and_wait(h, "e", 6L, "top()\narea(new('Sq2', w = 2))\nsd_of(1:3)")
   expect_identical(r$status, "ok")
   expect_length(r$changed_in_place, 0)
 })
@@ -1868,6 +2013,125 @@ test_that("a cell ending in a data.table := shows nothing, as at the R console, 
   # Nor the same cell's last value.
   r <- run_and_wait(h, "a", 12L, "invisible(dt[, h := 1])\ndt", order = ord)
   expect_false(is.null(r$output))
+})
+
+test_that("a cell that writes some rows of another cell's data.table reports it, and one that only reads it doesn't (#201)", {
+  skip_if_not_installed("data.table")
+  h <- worker_harness(extra_libs = dirname(find.package("data.table")))
+  on.exit(h$close())
+  ord <- c("l", letters[1:6])
+  run_and_wait(h, "l", 1L, "library(data.table)", order = ord)
+  run_and_wait(h, "a", 2L, "dt <- data.table(a = 1:3, x = c(1, 2, 3), s = c('p', 'q', NA))", order = ord)
+  run_and_wait(h, "b", 3L, "bump <- function(d) { d[1L, x := x + 1]; invisible() }", order = ord)
+  for (code in c("dt[a > 1L, x := 0]", "set(dt, 1L, 'x', 99)", "data.table::set(dt, 2L, 'x', 1)",
+                 "dt[2L, let(x = 5)]", "bump(dt)", "dt[3L, s := 'r']", "dt |> bump()")) {
+    r <- run_and_wait(h, "c", 4L, code, order = ord)
+    expect_identical(r$status, "ok", info = code)
+    expect_identical(r$changed_in_place, "dt", info = code)
+    expect_null(r$output)
+    expect_length(r$console, 0)
+  }
+  # Writing the same value again changes nothing.
+  r <- run_and_wait(h, "c", 5L, "dt[1L, a := 1L]", order = ord)
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "c", 6L, "dt[a > 1L, .N]\nnrow(dt)\nsum(dt$x)", order = ord)
+  expect_length(r$changed_in_place, 0)
+  # A cell's own table is its own to change.
+  r <- run_and_wait(h, "d", 7L, "mine <- data.table(v = 1:2)\nmine[1L, v := 5L]\nset(mine, 2L, 'v', 6L)", order = ord)
+  expect_length(r$changed_in_place, 0)
+  # Its writes are seen by the next cell that writes it.
+  r <- run_and_wait(h, "e", 8L, "set(mine, 1L, 'v', 7L)", order = ord)
+  expect_identical(r$changed_in_place, "mine")
+  # A helper that writes the global itself, without being passed it (#216).
+  run_and_wait(h, "b", 9L, "zero_dt <- function() { dt[1L, x := -1]; invisible() }", order = ord)
+  r <- run_and_wait(h, "c", 10L, "zero_dt()", order = ord)
+  expect_identical(r$changed_in_place, "dt")
+  # A cell that passes the table to a function and changes nothing isn't
+  # reported (review).
+  run_and_wait(h, "b", 11L, "show_n <- function(d) nrow(d)", order = ord)
+  r <- run_and_wait(h, "c", 12L, "show_n(dt)", order = ord)
+  expect_identical(r$output$text, "[1] 3")
+  expect_length(r$changed_in_place, 0)
+  # data.table's set() through do.call() or under another name.
+  for (code in c("do.call(set, list(dt, 1L, 'x', 41))", "upd <- data.table::set\nupd(dt, 1L, 'x', 42)")) {
+    r <- run_and_wait(h, "c", 13L, code, order = ord)
+    expect_identical(r$changed_in_place, "dt", info = code)
+  }
+  # Code run from text (#216).
+  r <- run_and_wait(h, "c", 14L, "eval(parse(text = 'dt[1L, x := 43]'))", order = ord)
+  expect_identical(r$changed_in_place, "dt")
+})
+
+test_that("a row write to a table held in another cell's list or environment, or bound to a second name, is reported under each name (#216)", {
+  skip_if_not_installed("data.table")
+  h <- worker_harness(extra_libs = dirname(find.package("data.table")))
+  on.exit(h$close())
+  ord <- c("l", letters[1:6])
+  run_and_wait(h, "l", 1L, "library(data.table)", order = ord)
+  run_and_wait(h, "a", 2L, paste("dt <- data.table(a = 1:3, x = c(1, 2, 3))",
+                                 "tabs <- list(flights = data.table(x = 1:3), other = 1)",
+                                 "box <- new.env()\nbox$t <- data.table(x = 1:3)", sep = "\n"), order = ord)
+  for (code in c("tabs$flights[1L, x := 0L]", "tabs[['flights']][2L, x := 0L]", "set(box$t, 1L, 'x', 0L)",
+                 "box$t[2L, x := 0L]")) {
+    r <- run_and_wait(h, "c", 3L, code, order = ord)
+    expect_identical(r$status, "ok", info = code)
+    expect_identical(r$changed_in_place, if (startsWith(code, "tabs")) "tabs" else "box", info = code)
+  }
+  r <- run_and_wait(h, "c", 4L, "tabs$flights[x > 1L, .N]\nnrow(box$t)", order = ord)
+  expect_length(r$changed_in_place, 0)
+  r <- run_and_wait(h, "c", 5L, "with(tabs, flights[3L, x := 0L])", order = ord)
+  expect_identical(r$changed_in_place, "tabs")
+  # A second name for the same table, and a list holding it: all are named
+  # (review).
+  run_and_wait(h, "b", 6L, "alias <- dt\nheld <- list(t = dt)", order = ord)
+  for (code in c("alias[1L, x := 0]", "dt[2L, x := 0]", "alias[, z := 1]", "held$t[3L, x := 0]")) {
+    r <- run_and_wait(h, "c", 7L, code, order = ord)
+    expect_setequal(r$changed_in_place, c("dt", "alias", "held"))
+  }
+})
+
+test_that("which tables a cell's code could write: a write in a [, set*(), or a notebook function it's passed to (#201)", {
+  skip_if_not_installed("data.table")
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  loadNamespace("data.table")
+  nb <- new.env(parent = globalenv())
+  nb$f <- function(d) d
+  environment(nb$f) <- globalenv()   # as a cell's function's is
+  nb$set <- nb$upd <- getExportedValue("data.table", "set")
+  cw <- function(code) e$datatable_could_write(as.list(parse(text = code)), c("dt", "other"), env = nb)
+  for (code in c("dt", "dt[x > 1]", "dt[, .N, by = g]", "dt$x", "dt[['x']]", "nrow(dt)", "print(dt)",
+                 "head(dt, 3)", "summary(dt)", "y <- data.table::copy(dt)", "dt2 <- dt[x > 1, .(x)]",
+                 "mean(dt$x)", "lm(y ~ x, dt)", "merge(dt, other, by = 'a')", "lapply(list(dt), nrow)",
+                 "x <- dt", "stats::lm(y ~ x, data = dt)", "dt[a %in% setdiff(p, q)]", "dt[, setNames(.SD, nm)]"))
+    expect_identical(cw(code), character(), info = code)
+  for (code in c("dt[i, x := 0]", "dt[, let(x = 1)]", "set(dt, 1L, 'x', 0)", "data.table::setkey(dt, a)",
+                 "f(dt)", "dt |> f()", "not_defined_yet(dt)", "lapply(list(dt), f)", "do.call(f, list(dt))",
+                 "Map(function(d) d[1L, x := 0], list(dt))", "dt[, f(dt)]", "g <- function() dt[1L, x := 0]",
+                 "local(dt[1L, x := 0])", "do.call(set, list(dt, 1L, 'x', 0))",
+                 "do.call(data.table::set, list(dt, 1L, 'x', 0))", "upd(dt, 1L, 'x', 0)"))
+    expect_true("dt" %in% cw(code), info = code)
+  expect_identical(cw("print(other)\nf(dt)"), "dt")
+  # A table in a list or an environment, written through it (#216).
+  for (code in c("other$t[1L, x := 0]", "other[['t']][1L, x := 0]", "set(other$t, 1L, 'x', 0)"))
+    expect_identical(cw(code), "other", info = code)
+  for (code in c("other$t[x > 1]", "nrow(other$t)", "other$t$x"))
+    expect_identical(cw(code), character(), info = code)
+  # A notebook function's body is read: one that writes a global counts
+  # where it's called, one that doesn't, doesn't (#216).
+  nb$zero <- function() dt[1L, x := 0]
+  nb$zero2 <- function() zero()
+  nb$count <- function() nrow(dt)
+  environment(nb$zero) <- environment(nb$zero2) <- environment(nb$count) <- nb
+  expect_true("dt" %in% cw("zero()"))
+  expect_true("dt" %in% cw("zero2()"))
+  expect_true("dt" %in% cw("lapply(1:2, function(i) zero())"))
+  expect_true("dt" %in% cw("do.call('zero', list())"))
+  expect_identical(cw("count()"), character())
+  expect_identical(cw("with(other, t[1L, x := 0])"), "other")
+  expect_identical(cw("with(other, sum(t$x))"), character())
+  # Code run from text could write any table.
+  expect_setequal(cw("eval(parse(text = s))"), c("dt", "other"))
 })
 
 test_that("a setting the display step changes isn't the cell's: only its code's changes make it a settings cell, and the display's change stays as a package load's would (#156)", {
@@ -2376,4 +2640,57 @@ test_that("run_cell(): a text cell's error traceback drops the worker's own eval
   expect_identical(r$status, "error")
   expect_identical(r$error$traceback, c("f()", 'stop("boom")'))
   expect_false(any(grepl("line_e|handleSimpleError|eval\\(line_e", r$error$traceback)))
+})
+
+test_that("run_cell(): a top-level install call doesn't run, and the report names its packages (#79)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  m <- run_msg("a", 1L, 'x <- 1\nremotes::install_github("lab/toyD")\ninstall.packages(pkgs)')
+  m$installs <- list(list(index = 2L, packages = "toyD"), list(index = 3L, packages = character()))
+  h$send(m)
+  r <- wait_for_done(h)
+  # remotes isn't installed and `pkgs` doesn't exist: either would fail.
+  expect_identical(r$status, "ok")
+  expect_null(r$output)
+  expect_identical(r$from_lock, c("toyD", ""))
+  expect_identical(r$created, "x")
+
+  r <- run_and_wait(h, "b", 2L, "y <- 2")
+  expect_identical(r$from_lock, character())
+})
+
+test_that("a package the library doesn't have is looked up once, until a library changes (#316)", {
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  lib <- withr::local_tempdir()
+  withr::local_libpaths(lib, action = "prefix")
+  asked <- 0L
+  e$requireNamespace <- function(package, ..., quietly = TRUE) { asked <<- asked + 1L; FALSE }
+  for (i in 1:5) expect_false(e$has_namespace("notapkg.ember316"))
+  expect_equal(asked, 1L)
+  # An install adds a folder to the library, which changes its time.
+  Sys.setFileTime(lib, Sys.time() + 5)
+  expect_false(e$has_namespace("notapkg.ember316"))
+  expect_equal(asked, 2L)
+  # A loaded namespace never asks.
+  expect_true(e$has_namespace("stats"))
+  expect_equal(asked, 2L)
+})
+
+test_that("diff_settings finds each changed, added and removed entry (#316)", {
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  s <- list(options = list(a = 1, b = "x", f = mean), env = list(HOME = "/h", X = "1"),
+            locale = list(LC_COLLATE = "C"), wd = "/w", search = character(), theme = NULL)
+  expect_identical(e$diff_settings(s, s), list())
+  t <- s
+  t$options$b <- "y"; t$options$a <- NULL; t$options$c <- TRUE
+  t$env$X <- "2"
+  d <- e$diff_settings(s, t)
+  got <- vapply(d, function(x) paste(x$kind, x$name), "")
+  expect_setequal(got, c("option a", "option b", "option c", "env X"))
+  b <- d[[match("option b", got)]]
+  expect_identical(list(b$before, b$after), list("x", "y"))
+  a <- d[[match("option a", got)]]
+  expect_identical(list(a$before, a$after), list(1, NULL))
 })
