@@ -1102,6 +1102,16 @@ test_that("in lazy mode a run that reaches the writer after the reader reruns th
   expect_setequal(r2$state$pending, c("R", "U"))
   r3 <- drive(r2$state, wk_done(1, r2$state$worker$running$token, report(), at(7)))
   expect_equal(r3$state$worker$running$cell, "R")
+  # A cell between the reader and the queued one, which ran before the
+  # write, runs again too.
+  s <- fake_state(list(S = cell(""), R = cell('d <- read.csv("d.csv")'), A = cell("e <- d"),
+                       W = cell('write.csv(data.frame(x = 1:3), "d.csv", row.names = FALSE)'),
+                       U = cell("sum(e$x)")), on_cell_change = "lazy")
+  r <- boot(s, c("R", "A", "W", "U"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "d", data_seen = list("d.csv" = "v1")), at(5)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "e"), at(6)))
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(7)))
+  expect_setequal(r2$state$pending, c("R", "A", "U"))
   # With nothing queued that reads it, lazy mode only marks it stale.
   r4 <- drive(data_file_notebook("lazy")$state, ev_data_changed(list("d.csv" = "v2"), at(21)))
   expect_equal(r4$state$pending, character())

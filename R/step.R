@@ -1686,17 +1686,13 @@ reduce_data_changed <- function(state, event) {
     if (all(vapply(hit, function(p) identical(seen[[p]], event$files[[p]]), logical(1)))) next
     r$stale <- TRUE
     state$results[[id]] <- r
-    # In lazy mode too when a queued cell reads it (a run of every cell
-    # that has reached the writer): that cell would read its old value, as
-    # when a stale ancestor of a cell run by hand is left out (#176).
-    needed <- autorun || length(reached_from(state$graph, id, state$pending)) > 0
-    if (needed && isTRUE(state$allowed) && can_run(state, id)) {
-      state$pending <- union(state$pending, id)
-      # Its stale ancestors run first, as when it is run by hand, so it
-      # doesn't read their old values.
-      state <- queue_stale_ancestors(state, id)
-    }
+    if (autorun && isTRUE(state$allowed) && can_run(state, id)) state$pending <- union(state$pending, id)
     state <- invalidate_dependents(state, id, character())
+    # A queued cell's stale ancestors run first, as when it is run by hand
+    # (#176), so it doesn't read their old values (#437): the reader queued
+    # here, or in lazy mode a cell still queued in the same run, such as a
+    # run of every cell that reaches the writer after the reader.
+    if (length(state$pending) && isTRUE(state$allowed)) state <- queue_stale_ancestors(state, state$pending)
   }
   list(state = state, effects = list(), reply = NULL)
 }

@@ -234,7 +234,8 @@ fuzz_gen_shape <- function(g, shape, n) {
     }
   } else if (shape == "fan") {
     root <- add(character(), ndefs = 2)
-    mids <- vapply(seq_len(max(1, n - 2)), function(i) add(sample(last_defs(root), 1)), "")
+    # The root has no names when it defines a replacement function (extras).
+    mids <- vapply(seq_len(max(1, n - 2)), function(i) add(if (length(last_defs(root))) sample(last_defs(root), 1) else character()), "")
     add(vapply(mids, function(m) last_defs(m)[1], ""), ndefs = 0)
   } else {
     for (i in seq_len(n)) add(fuzz_pick_refs(g, Inf), ndefs = sample(0:2, 1, prob = c(0.2, 0.55, 0.25)))
@@ -629,23 +630,23 @@ fuzz_replay <- function(trace, timeout = 30) {
 
 #' Wait until every cell whose last run read `file` and that has a result
 #' has taken in its change from outside: it is stale, queued or running, or
-#' has run again since `before`. A cell edited since it ran is left out:
-#' Ember watches what its code reads now, and it already shows as edited. The shell sees the change on its poll, so
+#' has run again since `before`. A cell edited since it ran counts only
+#' when its code still reads the file: Ember watches what its code reads
+#' now. The shell sees the change on its poll, so
 #' this is what waiting for the notebook means after a file changes. FALSE
 #' if one hasn't within `timeout` seconds.
 fuzz_noticed <- function(nb, before, ran, file, timeout) {
   last <- stats::setNames(lapply(before$cells, `[[`, "last_run"), vapply(before$cells, `[[`, "", "id"))
   pattern <- sprintf('readLines("%s")', file)
   readers <- names(Filter(function(code) grepl(pattern, code, fixed = TRUE), ran))
-  edited <- vapply(before$cells, function(v) isTRUE(v$code_differs), TRUE)
-  readers <- Filter(function(id) !is.null(last[[id]]) && !id %in% vapply(before$cells, `[[`, "", "id")[edited], readers)
+  code_now <- stats::setNames(lapply(before$cells, `[[`, "code"), names(last))
+  readers <- Filter(function(id) !is.null(last[[id]]) && grepl(pattern, code_now[[id]] %||% "", fixed = TRUE), readers)
   if (!length(readers)) return(TRUE)
   wait_for(nb, function(snap) {
     views <- stats::setNames(snap$cells, vapply(snap$cells, `[[`, "", "id"))
     all(vapply(readers, function(id) {
       v <- views[[id]]
-      is.null(v) || isTRUE(v$stale) || isTRUE(v$code_differs) || v$queued || v$running ||
-        !identical(v$last_run, last[[id]])
+      is.null(v) || isTRUE(v$stale) || v$queued || v$running || !identical(v$last_run, last[[id]])
     }, TRUE))
   }, timeout = timeout)
 }
@@ -680,16 +681,20 @@ fuzz_check <- function(snap, ran, mode, run, res, ran_ok = list(), dir = NULL) {
   # outputs from scratch gives, so the reference uses the code each cell
   # ran. A cell edited since it ran keeps its old output, marked as edited.
   shown <- Filter(function(id) has_run(views[[id]]) && !is.null(ran[[id]]), names(views))
+  files_read <- function(code) regmatches(code, gregexpr('readLines\\("[^"]+"\\)', code))[[1]]
+  unwatched <- Filter(function(id) {
+    isTRUE(views[[id]]$code_differs) && length(setdiff(files_read(ran[[id]]), files_read(current[[id]])))
+  }, shown)
   ref <- fuzz_reference(ran[shown], dir)
   for (id in shown) {
     v <- views[[id]]
     # A cell that can't run now keeps its last output under its graph error
     # until something runs (drop_graph_error_results()): it is marked.
     if (isTRUE(v$stale) || id %in% blocked) next
-    # An edited cell's output, from code that read a file, isn't watched
-    # (fuzz_noticed()).
-    if (isTRUE(v$code_differs) && grepl("readLines(", ran[[id]], fixed = TRUE)) next
+    # A file only an edited cell's old code read isn't watched any more
+    # (fuzz_noticed()), so neither it nor what reads from it follows the file.
     reads <- fuzz_ancestors(ran[shown], id)
+    if (any(c(id, reads) %in% unwatched)) next
     want <- ref[[id]]
     got <- v$output$text
     if (!identical(v$status, want$status)) {
@@ -706,12 +711,14 @@ fuzz_check <- function(snap, ran, mode, run, res, ran_ok = list(), dir = NULL) {
   # In lazy mode a reader can be left stale by a run: a writer isn't an
   # upstream of its readers (design.md, "Data files a cell reads"), so a run
   # can read a file before the cell that writes it, which then marks the
-  # reader stale. Autorun reruns it instead. So is what reads from it.
+  # reader stale. Autorun reruns it instead. So can what reads from it,
+  # even once the reader has run again for a cell the run still had queued.
   excused <- character()
   if (identical(mode, "lazy")) {
-    readers <- Filter(function(id) !is.null(ran[[id]]) && grepl("readLines(", ran[[id]], fixed = TRUE) &&
-                        isTRUE(views[[id]]$stale), names(views))
-    excused <- unique(c(readers, unlist(lapply(readers, function(r) fuzz_descendants(current, r)))))
+    readers <- Filter(function(id) !is.null(ran[[id]]) && grepl("readLines(", ran[[id]], fixed = TRUE),
+                      names(views))
+    below <- unique(c(readers, unlist(lapply(readers, function(r) fuzz_descendants(current, r)))))
+    excused <- Filter(function(id) isTRUE(views[[id]]$stale), below)
   }
   # A cell that can't run is never fresh, and isn't expected to be.
   fresh <- function(id) {
