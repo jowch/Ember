@@ -26,6 +26,7 @@
     "t_ember_run_not_run_other": "Run {{count}} not run",
     "t_ember_run_not_run_title_one": "{{count}} cell hasn't run",
     "t_ember_run_not_run_title_other": "{{count}} cells haven't run",
+    "t_ember_run_changed": "Run changed",
     "t_ember_saved": "Saved",
     "t_ember_r_status_not_connected": "Reconnecting",
     "t_ember_r_status_key_refused": "Ember restarted",

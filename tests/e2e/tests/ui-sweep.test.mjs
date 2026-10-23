@@ -80,8 +80,18 @@ test("ui sweep: safe preview, run, and edited with both shortcut labels", async 
       await openNotebook(p, server.origin, server.secret, notebook);
     }
     await setCellCode(p, "B", "sum(x) + 1");
-    await p.waitForSelector("#saveall-container.ask_to_save", { timeout: 10000 });
+    await p.waitForSelector("#saveall-container.ask_to_save", { state: "attached", timeout: 10000 });
     await sweep(p, `edited-${platform}`);
+    // The floating "Run all changed" covers cells over the column (#456), so it floats only in
+    // the margin, and the header's "Run changed" takes over where it can't.
+    for (const [width, floating] of [[600, false], [900, false], [1440, true]]) {
+      await p.setViewportSize({ width, height: 900 });
+      const shown = await p.evaluate(() => ({
+        floating: !!document.querySelector("#saveall-container.ask_to_save")?.getClientRects().length,
+        header: !!document.querySelector("header .ember-run-changed")?.getClientRects().length,
+      }));
+      assert.deepEqual(shown, { floating, header: !floating }, `at ${width}`);
+    }
     assertNoProblems(p);
   }
 });

@@ -1689,6 +1689,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                             }
                             on_open_move=${() => this.setState({ move_dialog_open: true })}
                             on_run_all=${() => this.actions.ember_run_all()}
+                            on_run_changed=${() => this.actions.set_and_run_all_changed_remote_cells()}
                             on_interrupt=${() => this.actions.interrupt_remote()}
                         />
                     </header>

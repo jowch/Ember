@@ -1535,6 +1535,21 @@ main > preamble #saveall-container {
         transform: translateX(calc((100vw - var(--ember-column) - 25px - 6px) / 2 - 24px));
     }
 }
+/* Floating over the column, the button covers whatever cell scrolls under
+   it, the cell's ⋯ menu included, and a click there runs every changed cell
+   (#456). So it floats only out in the margin; otherwise the header's "Run
+   changed" does its job. "Saving" and "Saved" show only for a moment. */
+main > preamble #saveall-container.ask_to_save {
+    display: none;
+}
+@media screen and (min-width: 1240px) {
+    pluto-editor.fullscreen:not(:has(#helpbox-wrapper.open)) main > preamble #saveall-container.ask_to_save {
+        display: flex;
+    }
+    pluto-editor.fullscreen:not(:has(#helpbox-wrapper.open)) .ember-run-changed {
+        display: none;
+    }
+}
 /* The keys are laid out as boxes, so the button is as tall as they are
    instead of the keys spilling out of it (#290). */
 main > preamble #saveall-container > button.runallchanged {
