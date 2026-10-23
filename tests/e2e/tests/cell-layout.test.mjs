@@ -12,11 +12,16 @@ const rect = (page, sel) => page.locator(sel).evaluate((el) => {
   const r = el.getBoundingClientRect();
   return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
 });
+// Several rects in one round trip, so a scroll between reads can't skew
+// their differences.
 const rects = (page, sels) => page.evaluate((sels) => Object.fromEntries(Object.entries(sels).map(([k, sel]) => {
   const r = document.querySelector(sel).getBoundingClientRect();
   return [k, { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height }];
 })), sels);
 const near = (actual, expected, what) => assert.ok(Math.abs(actual - expected) < 0.6, `${what}: ${actual}, expected ${expected}`);
+
+// A theme token as the browser computes it, for comparing with a computed
+// background.
 const tokenColor = (page, name) => page.evaluate((name) => {
   const probe = document.createElement("div");
   probe.style.backgroundColor = `var(${name})`;

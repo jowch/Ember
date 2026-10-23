@@ -13,6 +13,9 @@ import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector } from "../browser.mjs";
 
 const near = (actual, expected, what) => assert.ok(Math.abs(actual - expected) < 0.6, `${what}: ${actual}, expected ${expected}`);
+
+// A theme token as the browser computes it, for comparing with a computed
+// background.
 const tokenColor = (page, name) => page.evaluate((name) => {
   const probe = document.createElement("div");
   probe.style.backgroundColor = `var(${name})`;
@@ -22,6 +25,7 @@ const tokenColor = (page, name) => page.evaluate((name) => {
   return color;
 }, name);
 const computed = (page, sel, prop) => page.locator(sel).evaluate((el, prop) => getComputedStyle(el)[prop], prop);
+// The rail's colour transitions, so wait for it to arrive before comparing.
 const settledStyle = async (page, sel, prop, expected, what = `${sel} ${prop}`) => {
   await page.waitForFunction(
     ([sel, prop, expected]) => getComputedStyle(document.querySelector(sel))[prop] === expected,

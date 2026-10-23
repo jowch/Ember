@@ -65,6 +65,9 @@ test("keyboard path: skip link, Esc selects the cell, arrows, Enter, Tab to run,
   const runs = sentMessages(page, "run_multiple_cells");
   await openNotebook(page, server.origin, server.secret, notebook);
   const order = await page.evaluate(() => window.editor_state.notebook.cell_order);
+  // The skip link, and Enter on a selected cell, focus a cell's code only
+  // once its real editor has replaced the static copy (#415).
+  await page.waitForFunction(() => !document.querySelector("pluto-input .cm-ssr-fake"));
 
   await page.keyboard.press("Tab");
   const skip = await page.evaluate(() => {
