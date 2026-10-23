@@ -173,6 +173,11 @@ const try_close_socket_connection = (/** @type {WebSocket} */ socket) => {
 const create_ws_connection = (address, { on_message, on_socket_close }, timeout_s = connect_timeout_ms / 1000) => {
     return new Promise((resolve, reject) => {
         const socket = new WebSocket(address)
+        // Messages arrive already read, as ArrayBuffers, not as Blobs to read
+        // later. WebKit fails a Blob read that a reload or navigation
+        // interrupts, which showed as "Failed to unpack message" and a page
+        // error when a reload caught a message being read (#385).
+        socket.binaryType = "arraybuffer"
 
         let has_been_open = false
 
@@ -190,15 +195,13 @@ const create_ws_connection = (address, { on_message, on_socket_close }, timeout_
 
         let last_task = Promise.resolve()
         socket.onmessage = (event) => {
-            // we read and deserialize the incoming messages asynchronously
             // they arrive in order (WS guarantees this), i.e. this socket.onmessage event gets fired with the message events in the right order
-            // but some message are read and deserialized much faster than others, because of varying sizes, so _after_ async read & deserialization, messages are no longer guaranteed to be in order
-            //
-            // the solution is a task queue, where each task includes the deserialization and the update handler
+            // the task queue keeps them handled in that order
+            // `event.data` is already an ArrayBuffer (`binaryType` above), so there is no async read left to fail or to finish out of order
+            const data = event.data
             last_task = last_task.then(async () => {
                 try {
-                    const buffer = await event.data.arrayBuffer()
-                    const message = unpack(new Uint8Array(buffer))
+                    const message = unpack(new Uint8Array(data))
 
                     try {
                         on_message(message)
