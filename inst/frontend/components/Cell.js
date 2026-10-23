@@ -5,6 +5,7 @@ import { CellOutput } from "./CellOutput.js"
 import { CellInput } from "./CellInput.js"
 import { Logs } from "./Logs.js"
 import { CellPrompt } from "./CellPrompt.js"
+import { CellInputs } from "./CellInputs.js"
 import { RunButton, useDebouncedTruth } from "./RunButton.js"
 import { cl } from "../common/ClassTable.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
@@ -668,6 +669,9 @@ export const Cell = ({
             ${load_notes.map(
                 (note) => html`<ember-settings-note class="load-note" role="status">${t("t_load_note", { package: note.package, name: note.setting })}</ember-settings-note>`
             )}
+            ${!code_not_trusted_yet && (ember?.inputs?.length ?? 0) > 0
+                ? html`<${CellInputs} inputs=${ember.inputs} disabled=${disable_input} />`
+                : null}
             ${code_not_trusted_yet
                 ? null
                 : cell_api_ready

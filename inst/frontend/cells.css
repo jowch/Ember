@@ -1112,6 +1112,100 @@ ember-prompt input:focus-visible {
     color: var(--ember-muted);
 }
 
+/* A cell's inputs (docs/inputs.md, CellInputs.js): one row each, above
+   the cell's output, in the page's own type. */
+ember-inputs {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 12px;
+    font-family: var(--ember-ui-font);
+    font-size: 13px;
+    color: var(--ember-text);
+}
+ember-input {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 10px;
+}
+ember-input > label,
+ember-input fieldset {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+}
+ember-input fieldset {
+    margin: 0;
+    padding: 0;
+    border: none;
+}
+ember-input fieldset > label {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+ember-input legend {
+    float: left;
+    padding: 0;
+}
+.ember-input-label {
+    font-family: var(--ember-code-font);
+    font-size: 12.5px;
+}
+ember-input input[type="range"] {
+    width: 220px;
+    accent-color: var(--ember-accent);
+}
+ember-input input[type="checkbox"],
+ember-input input[type="radio"] {
+    accent-color: var(--ember-accent);
+}
+ember-input output {
+    min-width: 4ch;
+    font-family: var(--ember-code-font);
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+}
+ember-input input[type="number"],
+ember-input input[type="text"],
+ember-input select {
+    padding: 2px 6px;
+    border: 1px solid var(--ember-line);
+    border-radius: 6px;
+    background: var(--ember-panel);
+    color: var(--ember-text);
+    font: inherit;
+}
+ember-input input[type="number"] {
+    width: 10ch;
+}
+ember-input input[type="text"] {
+    min-width: 20ch;
+}
+ember-input :disabled,
+ember-input fieldset:disabled label {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+.ember-input-changed {
+    padding: 0 6px;
+    border-radius: 6px;
+    background: var(--ember-panel);
+    color: var(--ember-accent);
+    font-size: 12px;
+    cursor: help;
+}
+ember-input.unbound > label,
+ember-input.unbound > fieldset {
+    opacity: 0.6;
+}
+.ember-input-note {
+    font-size: 12px;
+    color: var(--ember-muted);
+}
+
 pluto-log-truncated {
     display: flex;
     flex-wrap: wrap;

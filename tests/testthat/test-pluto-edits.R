@@ -228,12 +228,13 @@ test_that("move the file: move_to set, no ops (22)", {
 
 # ---- 23. Refusals ------------------------------------------------------------------
 
-test_that("refusals: show_logs, skip_as_script, notebook metadata, a bond (23)", {
+test_that("refusals: show_logs, skip_as_script, notebook metadata, part of a bond (23)", {
   cases <- list(
     show_logs = patch_replace(list("cell_inputs", "A", "metadata", "show_logs"), FALSE),
     skip_as_script = patch_replace(list("cell_inputs", "A", "metadata", "skip_as_script"), TRUE),
     notebook_metadata = patch_add(list("metadata", "some_setting"), TRUE),
-    bond = patch_add(list("bonds", "x"), list(value = 1))
+    bond_part = patch_replace(list("bonds", "x", "value"), 1),
+    all_bonds = patch_replace(list("bonds"), list(x = list(value = 1)))
   )
   for (name in names(cases)) {
     before <- base_before(2)
@@ -243,6 +244,21 @@ test_that("refusals: show_logs, skip_as_script, notebook metadata, a bond (23)",
     # The client's own change still lands in `after`: no undo code exists.
     expect_false(identical(ed$after, before), info = name)
   }
+})
+
+# ---- Inputs (docs/inputs.md) ------------------------------------------------------
+
+test_that("a bond the page sets is an input value for the server, and one the page already had is not", {
+  before <- base_before(2)
+  before$bonds <- list(n = list(value = 5), method = list(value = 0L))
+  ed <- pluto_edits(before, list(patch_replace(list("bonds", "n"), list(value = 8))))
+  expect_null(ed$refusal)
+  expect_length(ed$ops, 0)
+  expect_identical(ed$inputs, list(list(name = "n", value = 8)))
+  expect_identical(ed$after$bonds$n$value, 8)
+  # The page re-sending what it was shown (a first value) sets nothing.
+  same <- pluto_edits(before, list(patch_add(list("bonds", "method"), list(value = 0L))))
+  expect_length(same$inputs, 0)
 })
 
 # ---- Disable cell (ui-3 34) --------------------------------------------------

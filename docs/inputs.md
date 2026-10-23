@@ -1,8 +1,8 @@
 # Interactive inputs
 
-_Design, 2026-10-17, for #36 (build step 5). The engine and worker side
-and the emberui package are built; the page and the agent tool are not. See "Built so
-far" at the end._
+_Design, 2026-10-17, for #36 (build step 5). The engine and worker side,
+the emberui package and the widgets on the page are built; the agent tool
+is not. See "Built so far" at the end._
 
 ## Summary
 
@@ -385,8 +385,39 @@ R API. Nothing shows on the page yet.
   spec also has `labels`: each choice's name or, without one, the
   element printed.
 
-Next: the widgets on the page (the `bonds` projection), then EndeavorMCP's
-tool.
+- **The widgets on the page.** Each cell's inputs go to the page as
+  `cell_results[id].ember.inputs` (`project_inputs()` in R/inputs.R), and
+  CellInputs.js draws them above the cell's output. This differs from the
+  outline above, which had a new output type inside `<bond>` elements: a
+  cell's output is its value, and a bound input's cell often has one of
+  its own (`round(input_number(2))` beside a slider), so the inputs sit
+  beside the output instead of in it. Pluto's `Bond.js` isn't used; the
+  widgets call `set_bond` themselves.
+- **Values.** The server projects `bonds` (`project_bonds()`): each bound
+  input's value, as the page last asked for it. A dropdown's or radio's
+  value is the 0-based position of its choice (a list of them for a
+  multiple dropdown), since a choice may be any R object; the server turns
+  it back into the element (`input_from_page()`). A `bonds` patch from
+  the page becomes `set_input()` (`pluto_edits()`, then
+  `set_page_input()` in R/server.R); a refused value gets a thumbs-down,
+  and the next diff puts the widget back.
+- **Values faster than the worker.** Pluto's page holds new values back
+  while a cell runs, but not while a value is with the worker and nothing
+  runs yet. So a page value arriving then waits (`worker$next_inputs`,
+  the latest for each name) and goes when the worker answers, before any
+  reader runs. A value from the R API is still refused then, so its
+  caller knows.
+- **Disabled and greyed.** A cell's widgets are disabled while it is
+  stale, edited since it ran, queued or running, and when the page can't
+  change the notebook (an HTML export, or no connection). An unbound
+  input shows greyed at its default, with "Assign this input to a name at
+  the top of the cell to use it." or "Read `n` in another cell.". A value
+  off its default is marked "changed"; its tooltip gives the default.
+- **Sending.** A slider sends as it moves; a number box and a text box send
+  on Enter or when the user leaves them; the others on each change.
+
+Next: EndeavorMCP's tool (its `set_input` and `read_cell` text), which
+the Endeavor side picks up.
 
 ## Decided with Jonathan (2026-10-17)
 

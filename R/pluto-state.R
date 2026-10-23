@@ -130,7 +130,9 @@ pluto_state <- function(state, previous = NULL) {
     cell_inputs  = reuse(inputs,  if (!is.null(pj)) pj$cell_inputs else NULL),
     cell_results = reuse(results, if (!is.null(pj)) pj$cell_results else NULL),
     cell_order = reuse(as_arr(ids), if (!is.null(pj)) pj$cell_order else NULL),
-    published_objects = emptymap(), bonds = emptymap(), metadata = emptymap(),
+    published_objects = emptymap(),
+    bonds = reuse(project_bonds(state), if (!is.null(pj)) pj$bonds else NULL),
+    metadata = emptymap(),
     nbpkg = reuse(project_nbpkg(state, pv), if (!is.null(pj)) pj$nbpkg else NULL),
     cell_dependencies = deps,
     cell_execution_order = reuse(as_arr(state$graph$order), if (!is.null(pj)) pj$cell_execution_order else NULL),
@@ -367,6 +369,10 @@ span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
 #'   image at the cell's figure size times the page's `res`, so reading
 #'   the size back out of it would tie the figure to one page's density.
 #'   `code` is already in the key (through `cell`).
+#'   `inputs` is present, as `project_inputs(view)` (R/inputs.R), when the
+#'   last run called any input (docs/inputs.md): the widgets. It comes
+#'   from `result` and the cell's flags, all in the key; the values the
+#'   widgets show come from the top-level `bonds` (`project_bonds()`).
 #'   `variables` is present, as `as_arr(view$variables)` (already
 #'   `list(name, type, value, kind)` per global, sorted, dot-names and an
 #'   off cell's excluded by `cell_variables()`), only when non-empty: the
@@ -408,6 +414,7 @@ project_cell_result <- function(view, known_ids = NULL) {
             if (!is.null(view$prompt)) list(prompt = list(id = view$prompt$id, text = view$prompt$text,
                                                           choices = as_arr(view$prompt$choices %||% character()))),
             if (!is.null(figure)) list(figure = figure),
+            if (length(view$inputs) > 0) list(inputs = project_inputs(view)),
             if (length(view$variables) > 0) list(variables = as_arr(view$variables)))
   list(cell_id = view$id,
       queued = isTRUE(view$queued), running = isTRUE(view$running),

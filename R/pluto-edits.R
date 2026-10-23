@@ -19,11 +19,16 @@
 #'     current_state_for_clients), because the browser already shows it.
 #'   * `ops`: list of `ember_op` for one atomic edit_notebook() call.
 #'   * `move_to`: a new path, or NULL (move_notebook(), not an op).
+#'   * `inputs`: list of `list(name, value)`, one per bond the patches gave a
+#'     new value, in the page's encoding (`input_to_page()`, R/inputs.R):
+#'     the server sets each with `set_input()` after the ops. A bond whose
+#'     value is the one the projection already shows is left out, as
+#'     Pluto skips a first value the server already has.
 #'   * `refusal`: NULL, or one sentence. When set, `ops` is empty and the
 #'     server answers "\U0001F44E" without calling the engine.
 #' An `ember_pluto_edit`: see `pluto_edits()`'s return value.
-new_pluto_edit <- function(after, ops, move_to = NULL, refusal = NULL) {
-  structure(list(after = after, ops = ops, move_to = move_to, refusal = refusal),
+new_pluto_edit <- function(after, ops, move_to = NULL, refusal = NULL, inputs = list()) {
+  structure(list(after = after, ops = ops, move_to = move_to, refusal = refusal, inputs = inputs),
             class = "ember_pluto_edit")
 }
 
@@ -67,7 +72,13 @@ pluto_edits <- function(before, patches) {
 
   move_to <- if (!identical(before$path, after$path)) after$path else NULL
 
-  new_pluto_edit(after, ops, move_to = move_to)
+  inputs <- list()
+  for (name in names(after$bonds)) {
+    v <- after$bonds[[name]]$value
+    if (!identical(v, before$bonds[[name]]$value)) inputs[[length(inputs) + 1L]] <- list(name = name, value = v)
+  }
+
+  new_pluto_edit(after, ops, move_to = move_to, inputs = inputs)
 }
 
 #' Is this patch one the frontend sends for something Ember supports, and
@@ -114,6 +125,11 @@ allowed_patch <- function(patch, before) {
     return(TRUE)
   }
   if (head %in% c("cell_order", "path", "in_temp_dir", "process_status")) return(TRUE)
+  if (identical(head, "bonds")) {
+    # `set_bond(name, value)` replaces `bonds[name]` with `{value}`.
+    if (length(path) == 2 && patch$op %in% c("add", "replace")) return(TRUE)
+    return("Ember only supports setting an input's whole value")
+  }
   sprintf("Ember doesn't support %s yet", head)
 }
 

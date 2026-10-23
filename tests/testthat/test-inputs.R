@@ -223,6 +223,105 @@ test_that("the snapshot lists a cell's inputs", {
   expect_length(snapshot_of(r$state)$cells$B$inputs, 0)
 })
 
+# ---- The page ---------------------------------------------------------------------
+
+test_that("a page value arriving while one is with the worker waits, the latest for each name, and goes when it answers", {
+  r <- inputs_ran()
+  r <- drive(r$state, ev_set_input("n", 6, at(20), latest = TRUE))
+  r <- drive(r$state, ev_set_input("n", 7, at(21), latest = TRUE), ev_set_input("bins", 3, at(21), latest = TRUE),
+             ev_set_input("n", 9, at(22), latest = TRUE))
+  expect_true(isTRUE(r$reply$accepted))
+  expect_length(Filter(function(e) identical(e$msg$type, "set_input"), r$effects), 0)
+  expect_identical(lapply(r$state$worker$next_inputs, `[[`, "value"), list(n = 9, bins = 3))
+  # The R API's value is still refused meanwhile: its caller is told.
+  api <- drive(r$state, ev_set_input("n", 2, at(23)))
+  expect_true(inherits(api$reply, "ember_refused"))
+  # The answer sends the next one waiting: no run starts in between.
+  r <- drive(r$state, wk_input_set(1, "I", "n", TRUE, 6, NULL, list(), at(24)))
+  expect_identical(last_sent(r)[c("type", "name", "value")], list(type = "set_input", name = "n", value = 9))
+  expect_length(sent_cells(r), 0)
+  expect_identical(names(r$state$worker$next_inputs), "bins")
+  r <- drive(r$state, wk_input_set(1, "I", "n", TRUE, 9, NULL, list(), at(25)))
+  expect_identical(last_sent(r)$name, "bins")
+  expect_null(r$state$worker$next_inputs)
+  r <- drive(r$state, wk_input_set(1, "I", "bins", TRUE, 3, NULL, list(), at(26)))
+  # Only now do the readers run, once, with the latest values.
+  expect_identical(sent_cells(r), "B")
+  expect_identical(r$state$input_values$n$value, 9)
+  expect_identical(r$state$input_values$bins$value, 3)
+})
+
+test_that("a waiting page value is dropped when the worker exits, or when its cell is edited meanwhile", {
+  r <- inputs_ran()
+  r <- drive(r$state, ev_set_input("n", 6, at(20), latest = TRUE), ev_set_input("n", 7, at(21), latest = TRUE))
+  gone <- drive(r$state, wk_exited(1, 1L, "killed", at(22)))
+  expect_null(gone$state$worker$next_inputs)
+  edited <- drive(r$state, ev_apply(list(op_set_code("I", "n <- input_slider(1, 20, 5)\nbins <- input_slider(1, 10, 5)")), at(22)),
+                  wk_input_set(1, "I", "n", TRUE, 6, NULL, list(), at(23)))
+  expect_null(edited$state$worker$input)
+  expect_null(edited$state$worker$next_inputs)
+})
+
+test_that("bonds show the page's latest value: one waiting, else the one with the worker, else the cell's", {
+  r <- inputs_ran()
+  expect_identical(project_bonds(r$state), list(n = list(value = 5), bins = list(value = 5)))
+  r <- drive(r$state, ev_set_input("n", 6, at(20), latest = TRUE))
+  expect_identical(project_bonds(r$state)$n$value, 6)
+  r <- drive(r$state, ev_set_input("n", 7, at(21), latest = TRUE))
+  expect_identical(project_bonds(r$state)$n$value, 7)
+  # An unbound input has no bond.
+  s <- r$state
+  s$results$I$inputs[[2]]$bound <- FALSE
+  expect_null(project_bonds(s)$bins)
+})
+
+test_that("a dropdown's value goes to the page as its choice's position, and comes back as the choice", {
+  spec <- list(type = "select", choices = list(a = 1L, b = as.Date("2026-01-02"), c = "x"), multiple = FALSE)
+  expect_identical(input_to_page(spec, as.Date("2026-01-02")), 1L)
+  expect_identical(input_to_page(spec, 1), 0L)       # numbers compare by value, as emberui's check
+  expect_null(input_to_page(spec, "nope"))
+  expect_identical(input_from_page(spec, 1L), as.Date("2026-01-02"))
+  expect_true(inherits(input_from_page(spec, 3L), "ember_page_refusal"))
+  expect_true(inherits(input_from_page(spec, list(0L, 1L)), "ember_page_refusal"))
+  many <- list(type = "select", choices = c("a", "b", "c"), multiple = TRUE)
+  expect_identical(input_to_page(many, c("c", "a")), list(2L, 0L))
+  expect_identical(input_from_page(many, list(2L, 0L)), c("c", "a"))
+  expect_identical(input_from_page(many, list()), character())
+  # Anything else passes through, for the worker's check.
+  expect_identical(input_from_page(list(type = "slider"), 7L), 7L)
+  expect_identical(input_to_page(list(type = "text"), "hi"), "hi")
+})
+
+test_that("the page gets each cell's inputs, disabled while the cell is stale, edited or queued, and greyed when unbound", {
+  r <- inputs_ran()
+  r$state$results$I$inputs[[2]] <- list(name = NULL, bound = FALSE, reason = "not_assigned",
+                                       spec = list(type = "radio", value = "b", choices = c("a", "b"), labels = c("A", "B")),
+                                       default = "b", value = "b")
+  p <- pluto_state(r$state)
+  check_wire(p$js)
+  ins <- p$js$cell_results$I$ember$inputs
+  expect_length(ins, 2)
+  expect_identical(ins[[1]][c("type", "name", "label", "bound", "value", "default", "changed", "disabled", "min", "max")],
+                   list(type = "slider", name = "n", label = "n", bound = TRUE, value = 5, default = 5,
+                        changed = FALSE, disabled = FALSE, min = 1, max = 10))
+  expect_identical(ins[[2]][c("type", "bound", "reason", "value", "disabled", "labels")],
+                   list(type = "radio", bound = FALSE, reason = "not_assigned", value = 1L, disabled = TRUE,
+                        labels = list("A", "B")))
+  expect_null(p$js$cell_results$B$ember$inputs)
+  expect_identical(p$js$bonds, list(n = list(value = 5)))
+
+  s <- r$state
+  s$results$I$stale <- TRUE
+  expect_true(pluto_state(s, p)$js$cell_results$I$ember$inputs[[1]]$disabled)
+  edited <- drive(r$state, ev_apply(list(op_set_code("I", "n <- input_slider(1, 20, 5)")), at(30)))
+  expect_true(pluto_state(edited$state, p)$js$cell_results$I$ember$inputs[[1]]$disabled)
+  # A value off its default is marked.
+  set <- drive(r$state, ev_set_input("n", 8, at(20)), wk_input_set(1, "I", "n", TRUE, 8, NULL, list(), at(21)))
+  i <- pluto_state(set$state, p)$js$cell_results$I$ember$inputs[[1]]
+  expect_identical(c(i$value, i$default), c(8, 5))
+  expect_true(i$changed)
+})
+
 # ---- The worker ------------------------------------------------------------------
 
 inputs_run_msg <- function(cell, token, code, inputs = input_bindings(code), values = list()) {
