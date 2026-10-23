@@ -136,6 +136,13 @@ const Widget = ({ group, input, label, value, send, disabled }) => {
     }
 }
 
+/** `round()` as R does it: a half goes to the even neighbour (IEC 60559), so 10.5 is 10. */
+const round_r = (x) => {
+    const f = Math.floor(x)
+    const d = x - f
+    return d > 0.5 || (d === 0.5 && f % 2 !== 0) ? f + 1 : f
+}
+
 /**
  * Why `n` doesn't fit the number box's limits (`null` when it does), worded
  * as the worker words it. An integer input rounds first, as R does, so the
@@ -144,7 +151,7 @@ const Widget = ({ group, input, label, value, send, disabled }) => {
 const out_of_range = (input, n) => {
     const lo = input.min ?? null
     const hi = input.max ?? null
-    const x = input.integer ? Math.round(n) : n
+    const x = input.integer ? round_r(n) : n
     if ((lo == null || x >= lo) && (hi == null || x <= hi)) return null
     const w = input.integer ? "_whole" : ""
     if (lo != null && hi != null) return t(`t_input_range${w}`, { min: lo, max: hi })
