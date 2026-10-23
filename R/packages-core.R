@@ -737,7 +737,8 @@ schedule_packages <- function(state, old) {
                                 failed_index_problems(p$indexes[failed]),
                                 bioc_problems(state$file$header, state$options$r, p$bioc_releases$table),
                                 bioc_unavailable_problem(needed, res$problems, state$file$header,
-                                                         state$options$r))
+                                                         state$options$r,
+                                                         releases_at(p, state$file$header$snapshot)))
           } else {
             for (k in res$fetch) {
               if (is.null(p$indexes[[k]]) || !identical(p$indexes[[k]]$status, "fetching")) {
@@ -2109,6 +2110,27 @@ unlooked_message <- function(pkg, reason) {
           pkg, reason)
 }
 
+#' Why a name CRAN lacks wasn't looked for in Bioconductor at all, or
+#' `character()`: the `bioc_unavailable` row's message, when Bioconductor
+#' has no release for the running R at the notebook's date (an R 4.6
+#' notebook dated January 2025). Running again won't find the package, so
+#' its status stays `"not_found"`, but a cell's error and the page say why
+#' rather than "not found in any repository", which reads as if
+#' Bioconductor had been searched. A release list too old for the date is
+#' `unlooked_reason()`'s case instead.
+no_release_reason <- function(state) {
+  problems <- state$packages$problems
+  if (is.null(problems) || nrow(problems) == 0) return(character())
+  if (!is.null(releases_gap_message(state$packages, state$file$header$snapshot))) return(character())
+  msg <- problems$message[problems$kind %in% "bioc_unavailable"]
+  if (length(msg) > 0) msg[[1]] else character()
+}
+
+#' What `no_release_reason()` makes of a name not found.
+no_release_message <- function(pkg, reason) {
+  sprintf("%s isn't on CRAN at this date, and %s", pkg, reason)
+}
+
 #' `wk_done` with `report$error$package` set (the worker saw R's
 #' `packageNotFoundError`, which carries the name, so this is not a message
 #' match and works in every locale):
@@ -2148,8 +2170,11 @@ missing_package_error <- function(state, pkg) {
           seq_len(nrow(probs)))
     } else NULL
     unlooked <- unlooked_reason(state)
+    no_release <- no_release_reason(state)
     msg <- if (!is.null(row) && identical(probs$kind[[row]], "not_found") && length(unlooked) > 0) {
       sprintf("there is no package called '%s': %s", pkg, unlooked_message(pkg, unlooked))
+    } else if (!is.null(row) && identical(probs$kind[[row]], "not_found") && length(no_release) > 0) {
+      sprintf("there is no package called '%s': %s", pkg, no_release_message(pkg, no_release))
     } else if (!is.null(row)) {
       sprintf("there is no package called '%s': %s", pkg, probs$message[[row]])
     } else {
@@ -2467,9 +2492,13 @@ packages_view <- function(state) {
   problems <- p$problems
   gap <- releases_gap_message(p, state$file$header$snapshot)
   unlooked <- unlooked_reason(state)
+  no_release <- no_release_reason(state)
   if (length(unlooked) > 0) {
     nf <- problems$kind == "not_found"
     problems$message[nf] <- unlooked_message(problems$package[nf], unlooked)
+  } else if (length(no_release) > 0) {
+    nf <- problems$kind == "not_found"
+    problems$message[nf] <- no_release_message(problems$package[nf], no_release)
   }
   not_found_df <- empty_packages_df()
   if (!is.null(problems) && nrow(problems) > 0) {

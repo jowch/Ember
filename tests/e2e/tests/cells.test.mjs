@@ -1,25 +1,27 @@
 // ui-3-tests.md, piece 6a steps 2-4 (ui-3-plan.md): the rail, the run/stop
 // button and run-time chip, the cell menu, the "+" overlay and the empty
-// notebook's hints.
+// notebook's hints. The chips, outputs and layout of cells are in
+// cell-chips, cell-outputs and cell-layout.test.mjs: as one file they ran
+// past the runner's 300 s per file on a slow Windows runner (#417).
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
+import { writeFileSync } from "node:fs";
+import { startServer, tempNotebook, artifactsDir, tempDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector } from "../browser.mjs";
 
-const rect = (page, sel) => page.locator(sel).evaluate((el) => {
-  const r = el.getBoundingClientRect();
-  return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height };
-});
-// Several rects in one round trip, so a scroll between reads can't skew
-// their differences.
-const rects = (page, sels) => page.evaluate((sels) => Object.fromEntries(Object.entries(sels).map(([k, sel]) => {
-  const r = document.querySelector(sel).getBoundingClientRect();
-  return [k, { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height }];
-})), sels);
+// Where a cell is and what its editor holds, for a failure message.
+const viewState = (page, id) => page.evaluate((id) => {
+  const cell = document.querySelector(`pluto-cell[id="${id}"]`);
+  const r = cell.getBoundingClientRect();
+  const editor = cell.querySelector("pluto-input .cm-editor");
+  return {
+    top: r.top, bottom: r.bottom, viewHeight: innerHeight, scrollY, scrollHeight: document.documentElement.scrollHeight,
+    fake: editor?.classList.contains("cm-ssr-fake") ?? null, height: editor?.style.height, minHeight: editor?.style.minHeight,
+    fakes: [...document.querySelectorAll("pluto-input .cm-ssr-fake")].map((f) => f.closest("pluto-cell").id),
+  };
+}, id);
 const near = (actual, expected, what) => assert.ok(Math.abs(actual - expected) < 0.6, `${what}: ${actual}, expected ${expected}`);
 
 // A theme token as the browser computes it, for comparing with a computed
@@ -231,7 +233,7 @@ test("cell menu: item order, move down, hide code, Disable on every code cell (1
 // height until then, so those cells sit above B too (#379).
 test("opening: a cell's static code is as tall as its editor, so nothing below moves when editors load (#375, #379)", async (t) => {
   const long = `x <- c(${Array.from({ length: 300 }, (_, i) => i).join(", ")})`;
-  const notebook = path.join(mkdtempSync(path.join(tmpdir(), "ember-e2e-static-")), "static.R");
+  const notebook = path.join(tempDir("ember-e2e-static-"), "static.R");
   writeFileSync(notebook, [
     "### An Ember notebook ###", "# /// environment", '# ember_version = "0.0.0.9000"', '# r_version = "4.6.1"', '# snapshot = "2026-01-01"', "# ///", "",
     "# %% id=S", "",
@@ -276,7 +278,16 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
       return cell?.id ?? null;
     });
     if (id === null) break;
-    await page.waitForFunction((sel) => !document.querySelector(`${sel} .cm-ssr-fake`), cellSelector(id), { timeout: 20000 });
+    await page.waitForFunction((sel) => !document.querySelector(`${sel} .cm-ssr-fake`), cellSelector(id), { timeout: 20000 })
+      .catch(async () => assert.fail(`cell ${id}'s editor loads once it is scrolled into view: ${JSON.stringify(await viewState(page, id))}`));
+  }
+  // An editor scrolled past before its first measure keeps the static
+  // code's height until it is back in view (#416), so bring each one into
+  // view until it has measured its text and let that height go.
+  for (const id of ["S", "A", "I", "L", "W", "T", "U", "B"]) {
+    await page.evaluate((sel) => document.querySelector(sel).scrollIntoView(), cellSelector(id));
+    await page.waitForFunction((sel) => document.querySelector(`${sel} pluto-input .cm-editor`).style.height === "", cellSelector(id), { timeout: 20000 })
+      .catch(async () => assert.fail(`cell ${id}'s editor lets go of the static code's height once in view: ${JSON.stringify(await viewState(page, id))}`));
   }
   // U's last lines are rendered once they come into view; until then U's
   // editor keeps the static code's height as its minimum.
@@ -298,6 +309,61 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
   assert.deepEqual(Object.keys(statics).sort(), ["A", "B", "I", "L", "S", "T", "U", "W"], "every cell showed its static code first");
   for (const [id, h] of Object.entries(statics)) near(h, editors[id], `cell ${id}'s static code height`);
   assert.deepEqual([...new Set(tops)], [tops[0]], "B never moves while the editors load");
+
+  assertNoProblems(page);
+});
+
+// An editor scrolled out of view before its first measure: CodeMirror
+// doesn't measure an editor it can't see, but its measure requests still
+// run, so the static code's height was let go for CodeMirror's guess, 393
+// px for W's 250 (the opening test's failure on macOS CI). The editor keeps
+// the static height until it is in view and measured (#416).
+test("opening: an editor scrolled past before its first measure keeps the static code's height until it is measured (#416)", async (t) => {
+  const notebook = path.join(tempDir("ember-e2e-static-"), "scrolled.R");
+  writeFileSync(notebook, [
+    "### An Ember notebook ###", "# /// environment", '# ember_version = "0.0.0.9000"', '# r_version = "4.6.1"', '# snapshot = "2026-01-01"', "# ///", "",
+    ...Array.from({ length: 30 }, (_, i) => [`# %% id=P${i}`, `p${i} <- ${i}`, ""]).flat(),
+    "# %% id=W", `s <- "${"abcdefghij".repeat(80)}"`, "",
+    ...Array.from({ length: 60 }, (_, i) => [`# %% id=Q${i}`, `q${i} <- ${i}`, ""]).flat(),
+  ].join("\n"), "utf8");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-static-scrolled.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const w = cellSelector("W");
+  // The notebook stops loading before every cell is drawn, so wait for W's
+  // static code; it starts below the view (#420).
+  await page.waitForFunction((sel) => document.querySelector(`${sel} .cm-ssr-fake`), w, { timeout: 20000 })
+    .catch(() => assert.fail("W shows its static code when the notebook opens"));
+  const { staticHeight, top, viewHeight } = await page.evaluate((sel) => ({
+    staticHeight: document.querySelector(`${sel} .cm-ssr-fake`).getBoundingClientRect().height,
+    top: document.querySelector(sel).getBoundingClientRect().top,
+    viewHeight: innerHeight,
+  }), w);
+  assert.ok(top > viewHeight, `W starts below the view: its top is ${top}, the view's height ${viewHeight}`);
+  // Bring W into view, and scroll to the end the moment its editor replaces
+  // the static code, before CodeMirror's first measure.
+  await page.evaluate((sel) => new Promise((resolve) => {
+    const cell = document.querySelector(sel);
+    new MutationObserver((_, observer) => {
+      if (cell.querySelector(".cm-ssr-fake")) return;
+      observer.disconnect();
+      window.scrollTo(0, document.body.scrollHeight);
+      resolve();
+    }).observe(cell, { subtree: true, childList: true });
+    cell.scrollIntoView();
+  }), w);
+  // Every frame for a while out of view: the static height, never the guess.
+  const editorHeight = (sel) => page.evaluate((sel) => new Promise((resolve) =>
+    requestAnimationFrame(() => resolve(document.querySelector(`${sel} pluto-input .cm-editor`).getBoundingClientRect().height))), sel);
+  for (let i = 0; i < 20; i++) near(await editorHeight(w), staticHeight, `W's editor out of view, frame ${i}`);
+
+  // Back in view, it measures its text and lets the height go.
+  await page.locator(w).scrollIntoViewIfNeeded();
+  await page.waitForFunction((sel) => document.querySelector(`${sel} pluto-input .cm-editor`).style.height === "", w, { timeout: 20000 });
+  near(await editorHeight(w), staticHeight, "W's editor once measured");
 
   assertNoProblems(page);
 });
@@ -454,7 +520,7 @@ test("empty notebook: placeholder and hints show, and typing removes them (151)"
   // A real new notebook (new_notebook(), R/api.R) has two empty cells
   // (setup, then one code cell), not one -- made through the start page,
   // like a person actually gets there.
-  const dir = mkdtempSync(path.join(tmpdir(), "ember-e2e-empty-"));
+  const dir = tempDir("ember-e2e-empty-");
   const server = await startServer([], { cwd: dir, logFile: path.join(artifactsDir(), "cells-empty.server.log") });
   const browser = await launchBrowser();
   t.after(async () => { await browser.close(); server.stop(); });
@@ -476,8 +542,12 @@ test("empty notebook: placeholder and hints show, and typing removes them (151)"
   await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
   await page.keyboard.type("empty");
   await page.getByRole("button", { name: "Create", exact: true }).click();
-  await page.waitForURL(/edit\?id=/, { timeout: 10000 });
-  await page.waitForSelector("pluto-cell", { timeout: 15000 });
+  // No timeouts of our own: the page and its notebook arrive when the
+  // server sends them, and the test runner's timeout bounds the wait. 15 s
+  // ran out once on Windows CI while the whole runner was slowed, other
+  // files' tests 4 to 9 times their usual time with it (#417).
+  await page.waitForURL(/edit\?id=/, { timeout: 0 });
+  await page.waitForSelector("pluto-cell", { timeout: 0 });
 
   assert.equal(await page.locator("pluto-cell").count(), 1, "a new notebook has one empty code cell");
   const placeholder = await page.locator("pluto-cell .cm-placeholder").first().innerText();
@@ -489,1274 +559,6 @@ test("empty notebook: placeholder and hints show, and typing removes them (151)"
   await page.waitForFunction(
     () => document.querySelectorAll("ember-empty-hints").length === 0,
     null, { timeout: 10000 });
-
-  assertNoProblems(page);
-});
-
-test('chips: "Not run yet" in safe preview and before running, "Stale" after an upstream edit (144, #298)', async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-safe.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-
-  // Safe preview: B has never run, and says so, as Pluto marks every
-  // cell in safe preview (#298).
-  const chip = page.locator(`${cellSelector("B")} > ember-chip:not(.held)`);
-  await chip.waitFor({ state: "visible", timeout: 10000 });
-  assert.equal(await chip.innerText(), "Not run yet");
-
-  await page.locator("#ember-safe-preview button").click();
-  await page.waitForFunction(
-    (sel) => document.querySelector(sel)?.innerText.includes("2"),
-    cellSelector("B") + " pluto-output", { timeout: 20000 });
-
-  // B just ran: no chip now that it has output.
-  assert.equal(await page.locator(`${cellSelector("B")} ember-chip`).count(), 0);
-
-  assertNoProblems(page);
-});
-
-test('chips: NEVER (loaded with code, never run) shows "Not run yet" with no output (144)', async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-notrun.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-  // Running A alone (not the safe-preview bar's "Run this notebook", which
-  // runs the whole file) starts R without ever reaching NEVER, which has
-  // no connection to A: its code comes straight from the file on disk,
-  // read but not yet run -- the "Not run yet" chip must read that remote
-  // code, not local state, since nothing here has been typed at all.
-  await runCell(page, "A");
-  await page.waitForFunction(
-    (sel) => document.querySelector(sel)?.classList.contains("not_run_yet"),
-    cellSelector("NEVER"), { timeout: 20000 });
-  assert.equal(await page.locator(`${cellSelector("NEVER")} ember-chip`).innerText(), "Not run yet");
-  assert.equal(await page.locator(`${cellSelector("NEVER")} pluto-output`).innerText(), "");
-  // Board Cells: 12px right of the rail and 12px above the code. A's run
-  // can still be landing (its chip goes, its output comes), which moves
-  // NEVER down, so wait for it to finish and read every box in one round
-  // trip: reads taken a moment apart once measured the chip 46px from the
-  // code.
-  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached", timeout: 15000 });
-  const { neverCell, neverRail, neverChip, neverCode } = await rects(page, {
-    neverCell: cellSelector("NEVER"),
-    neverRail: `${cellSelector("NEVER")} > pluto-trafficlight`,
-    neverChip: `${cellSelector("NEVER")} > ember-chip`,
-    neverCode: `${cellSelector("NEVER")} .cm-editor`,
-  });
-  near(neverRail.right, neverCell.left, "the rail ends where the cell starts");
-  near(neverChip.left - neverRail.right, 12, "chip to rail");
-  near(neverCode.top - neverChip.bottom, 12, "chip to code");
-  assert.equal(await page.locator(`${cellSelector("NEVER")} ember-runtime`).count(), 0, "no run-time chip before a first run");
-
-  const formatted = await page.evaluate(async () => {
-    const src = document.querySelector('script[src$="editor.js"]').src;
-    const { format_runtime } = await import(new URL("components/RunButton.js", src).href);
-    return [0.04, 9.994, 9.996, 12.4, 59.4, 59.996, 63.2, 119.7, 120].map((s) => format_runtime(s * 1e9));
-  });
-  assert.deepEqual(formatted, ["0.04 s", "9.99 s", "10 s", "12 s", "59 s", "1 min", "1 min 3 s", "2 min", "2 min"]);
-
-  // A static export (disable_ui) shows no "Not run yet" chip.
-  const id = new URL(page.url()).searchParams.get("id");
-  const res = await fetch(`${server.origin}notebookexport?id=${id}&secret=${server.secret}`);
-  assert.equal(res.status, 200);
-  const file = path.join(mkdtempSync(path.join(tmpdir(), "ember-e2e-export-")), "cells.html");
-  writeFileSync(file, await res.text(), "utf8");
-  const exported = await newPage(browser);
-  await exported.goto(`file://${file}`);
-  await exported.waitForSelector(`pluto-editor.disable_ui ${cellSelector("NEVER")}.not_run_yet`, { state: "attached", timeout: 15000 });
-  assert.equal(await exported.locator(`${cellSelector("NEVER")} ember-chip`).isVisible(), false, "no \"Not run yet\" chip in an export");
-
-  assertNoProblems(page);
-});
-
-// #52: when a cell showing "Not run yet" runs, the chip used to go at once
-// and the output came later, so the code moved up and then down. NEVER is
-// made slow (Sys.sleep) so the two would be far apart; the code's place in
-// its cell, read once a frame through the whole run, may change only once.
-test('chips: a "Not run yet" cell that runs moves its code once, when the output lands (#52)', async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-notrun-run.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-  await runCell(page, "A");
-  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached", timeout: 30000 });
-  await setCellCode(page, "NEVER", "Sys.sleep(1); 3 + 3");
-  await page.waitForFunction(
-    (sel) => document.querySelector(sel)?.classList.contains("not_run_yet"),
-    cellSelector("NEVER"), { timeout: 20000 });
-
-  await page.evaluate((sel) => {
-    window.__code_tops = [];
-    window.__stop = false;
-    const tick = () => {
-      const cell = document.querySelector(sel);
-      const top = cell.querySelector(".cm-editor").getBoundingClientRect().top - cell.getBoundingClientRect().top;
-      const output = cell.querySelector(":scope > pluto-output")?.innerText ?? "";
-      const last = window.__code_tops.at(-1);
-      if (last == null || Math.abs(last.top - top) > 0.5) window.__code_tops.push({ top, output });
-      if (!window.__stop) requestAnimationFrame(tick);
-    };
-    tick();
-  }, cellSelector("NEVER"));
-  await page.keyboard.press("Shift+Enter");
-  await page.waitForSelector(`${cellSelector("NEVER")} ember-runtime`, { state: "attached", timeout: 30000 });
-  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("6"), cellSelector("NEVER") + " > pluto-output", { timeout: 30000 });
-  const tops = await page.evaluate(() => { window.__stop = true; return window.__code_tops; });
-
-  assert.ok(tops.length <= 2, `the code moved once at most: ${JSON.stringify(tops)}`);
-  assert.equal(await page.locator(`${cellSelector("NEVER")} ember-chip`).count(), 0, "no chip once it has output");
-  assertNoProblems(page);
-});
-
-// #139: the first run used to give every unrun cell its chip at once and
-// push the page down by a chip per cell. Safe preview now shows the chip
-// already (#298). NEVER, LOOP and W stay unrun when A runs; the code's
-// place in each, read once a frame from safe preview through A's run, must
-// not move.
-test('chips: leaving safe preview doesn\'t move unrun cells: their chip is already there (#139, #298)', async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-preview-space.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-  const ids = ["NEVER", "LOOP", "W"];
-  const shown = page.locator(`${cellSelector("NEVER")} > ember-chip:not(.held)`);
-  await shown.waitFor({ state: "visible", timeout: 10000 });
-  assert.equal(await shown.innerText(), "Not run yet", "safe preview shows the chip");
-  assert.equal(await shown.getAttribute("aria-hidden"), null, "and reads it out");
-
-  await page.evaluate((sels) => {
-    window.__code_tops = Object.fromEntries(sels.map((sel) => [sel, []]));
-    window.__stop = false;
-    const tick = () => {
-      for (const sel of sels) {
-        const cell = document.querySelector(sel);
-        const top = cell.querySelector(":scope > pluto-input").getBoundingClientRect().top - cell.getBoundingClientRect().top;
-        const tops = window.__code_tops[sel];
-        if (!tops.length || Math.abs(tops.at(-1) - top) > 0.5) tops.push(top);
-      }
-      if (!window.__stop) requestAnimationFrame(tick);
-    };
-    tick();
-  }, ids.map(cellSelector));
-  await runCell(page, "A");
-  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached", timeout: 30000 });
-  for (const id of ids) {
-    await page.waitForFunction(
-      (sel) => document.querySelector(sel)?.classList.contains("not_run_yet"),
-      cellSelector(id), { timeout: 20000 });
-  }
-  const tops = await page.evaluate(() => { window.__stop = true; return window.__code_tops; });
-  for (const id of ids) {
-    assert.equal(tops[cellSelector(id)].length, 1, `${id}'s code didn't move: ${JSON.stringify(tops[cellSelector(id)])}`);
-  }
-  assert.equal(await page.locator(`${cellSelector("NEVER")} > ember-chip`).innerText(), "Not run yet");
-  assert.equal(await page.locator(`${cellSelector("NEVER")} > ember-chip.held`).count(), 0, "the chip still shows once the run starts");
-  assertNoProblems(page);
-});
-
-// #139, round 1 of its review: "Run this notebook" queues every cell. A
-// queued cell gives its held space back at the click, with the banner, so
-// a cell that finishes with no output (F, LOOP) doesn't move the page up
-// mid-run. TXT's place on the page, read once a frame: once it starts
-// moving down (outputs landing), it never moves up again.
-test('chips: "Run this notebook" moves the page up only at the click, then only down (#139)', async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-preview-runall.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-  await page.locator(`${cellSelector("NEVER")} > ember-chip:not(.held)`).waitFor({ state: "visible", timeout: 15000 });
-
-  await page.evaluate((sel) => {
-    window.__txt_tops = [];
-    window.__stop = false;
-    // How many tops were recorded before the click. One means the page had
-    // settled before it (#391); the run's moves are judged from there on.
-    document.addEventListener("click", () => { window.__txt_at_click ??= window.__txt_tops.length; }, { capture: true });
-    const tick = () => {
-      const top = document.querySelector(sel).getBoundingClientRect().top + window.scrollY;
-      const tops = window.__txt_tops;
-      if (!tops.length || Math.abs(tops.at(-1) - top) > 0.5) tops.push(top);
-      if (!window.__stop) requestAnimationFrame(tick);
-    };
-    tick();
-  }, cellSelector("TXT"));
-  await page.locator("#ember-safe-preview button").click();
-  await page.waitForSelector(`${cellSelector("LOOP")} ember-runtime`, { state: "attached", timeout: 30000 });
-  await page.waitForFunction(
-    () => document.querySelectorAll('pluto-cell[data-rail="run"], pluto-cell[data-rail="queued"]').length === 0,
-    null, { timeout: 30000 });
-  const { all, atClick } = await page.evaluate(() => { window.__stop = true; return { all: window.__txt_tops, atClick: window.__txt_at_click }; });
-  assert.equal(atClick, 1, `the page had settled before the click (#391): ${JSON.stringify(all)}`);
-  const tops = all.slice(atClick - 1);
-  const moves = tops.slice(1).map((top, i) => Math.round(top - tops[i]));
-  const firstDown = moves.findIndex((m) => m > 0);
-  assert.ok(firstDown >= 0, `outputs moved TXT down: ${JSON.stringify(moves)}`);
-  assert.ok(moves.slice(firstDown).every((m) => m > 0), `no move up once the run's outputs land: ${JSON.stringify(moves)}`);
-  assert.equal(await page.locator("ember-chip.held").count(), 0, "no held space left once every cell ran");
-  assertNoProblems(page);
-});
-
-test('view anchor: scrolled into the notebook, "Run this notebook" leaves the code at the top of the view where it is, even as its own table lands above it', async (t) => {
-  const notebook = tempNotebook("view-anchor.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-view-anchor.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await page.setViewportSize({ width: 900, height: 800 });
-  await openNotebook(page, server.origin, server.secret, notebook);
-  await page.evaluate((sel) => document.querySelector(sel).scrollIntoView({ block: "start" }), cellSelector("C08"));
-  await page.waitForTimeout(300);
-
-  // Read where C08's code is in every frame something resizes, after the
-  // page's own observer has run (observers run in the order they were
-  // made), so this is what gets painted. C08 prints a table, which lands
-  // above its code: the cell's own top holding still isn't enough.
-  await page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    window.__tops = [];
-    const ro = new ResizeObserver(() => window.__tops.push(el.getBoundingClientRect().top));
-    ro.observe(document.body);
-    for (const c of document.querySelectorAll("pluto-cell")) ro.observe(c);
-  }, `${cellSelector("C08")} > pluto-input`);
-  const before = await rect(page, `${cellSelector("C08")} > pluto-input`);
-  const pageTop = () => page.evaluate((sel) => document.querySelector(sel).getBoundingClientRect().top + window.scrollY, `${cellSelector("C08")} > pluto-input`);
-  const beforePage = await pageTop();
-  // Clicked in script: Playwright's click would scroll the banner into view first.
-  await page.evaluate(() => document.querySelector("#ember-safe-preview button").click());
-  await page.waitForFunction(() => !document.querySelector("#ember-safe-preview"), null, { timeout: 30000 });
-  await page.waitForFunction(() => document.querySelectorAll("pluto-cell.running, pluto-cell.queued").length === 0, null, { timeout: 60000 });
-  await page.waitForTimeout(500);
-
-  const tops = await page.evaluate(() => window.__tops);
-  // Outputs landed above C08: its code is further down the page. Counting
-  // resize frames instead was a weak proxy: outputs that land in the same
-  // frame share one, and it failed about one run in five (#401).
-  const afterPage = await pageTop();
-  assert.ok(afterPage > beforePage + 50, `outputs landed above C08: its code moved down the page from ${beforePage} to ${afterPage}`);
-  assert.ok(Math.abs((await rect(page, `${cellSelector("C08")} > pluto-input`)).top - before.top) <= 1, "C08's code is still where it was in the view");
-  const off = tops.filter((top) => Math.abs(top - before.top) > 1);
-  assert.deepEqual(off, [], `C08's code stayed at ${before.top} in every frame`);
-  assert.ok(await page.locator(`${cellSelector("C08")} > pluto-output table`).count() > 0, "C08's table landed");
-  assertNoProblems(page);
-});
-
-test('chips: "Stale · x changed" after an upstream edit in lazy mode, with a greyed output (144)', async (t) => {
-  const notebook = tempNotebook("lazy.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-stale.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-  await page.locator("#ember-safe-preview button").click();
-  await page.waitForFunction(
-    (sel) => document.querySelector(sel)?.innerText.includes("2"),
-    cellSelector("B") + " pluto-output", { timeout: 20000 });
-
-  await setCellCode(page, "A", "x <- 2");
-  await runCell(page, "A");
-  await page.waitForSelector(`${cellSelector("B")}.stale`, { timeout: 20000 });
-  // The chip's text depends on A's own run having landed (its new
-  // last_run_timestamp), which can arrive just after the "stale" class
-  // itself, so wait for the names, not only the class.
-  await page.waitForFunction(
-    (sel) => document.querySelector(sel)?.innerText === "Stale · x changed",
-    cellSelector("B") + " ember-chip", { timeout: 10000 });
-  assert.equal(await page.locator(`${cellSelector("B")} pluto-output`).evaluate((el) => getComputedStyle(el).filter), "grayscale(1)");
-
-  // Board "Cells": output, then chip, both on one full-strength wash that
-  // runs down to the code box, whose top-right corner goes square.
-  const { out, chip, code } = await rects(page, {
-    out: `${cellSelector("B")} > pluto-output`,
-    chip: `${cellSelector("B")} > ember-chip`,
-    code: `${cellSelector("B")} .cm-editor`,
-  });
-  assert.ok(chip.top >= out.bottom, `chip (${chip.top}) under the output (${out.bottom})`);
-  const wash = await page.locator(cellSelector("B")).evaluate((el) => {
-    const s = getComputedStyle(el, "::before");
-    return { bg: s.backgroundColor, height: parseFloat(s.height), radius: s.borderRadius };
-  });
-  assert.equal(wash.bg, await tokenColor(page, "--ember-wash"));
-  near(wash.height, code.top - out.top, "the wash spans output and chip, down to the code box");
-  assert.equal(wash.radius, "0px 6px 0px 0px");
-  assert.equal(await computed(page, `${cellSelector("B")} > pluto-output`, "backgroundColor"), "rgba(0, 0, 0, 0)", "the faded output has no background of its own");
-  assert.equal(await computed(page, `${cellSelector("B")} .cm-editor:not(.cm-ssr-fake)`, "borderTopRightRadius"), "0px");
-
-  assertNoProblems(page);
-});
-
-test("errors: where it happened, a traceback outermost first, labelled by origin; the box joins the code (145)", async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-errors.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-  await runCell(page, "F");
-  await page.waitForFunction(
-    () => window.editor_state.notebook.cell_results.F?.output?.last_run_timestamp > 0,
-    null, { timeout: 30000 });
-  for (const id of ["ERR", "TOP"]) {
-    await runCell(page, id);
-    await page.waitForSelector(`${cellSelector(id)}.errored jlerror.ember`, { timeout: 20000 });
-  }
-
-  const top = `${cellSelector("TOP")} jlerror`;
-  assert.equal(await page.locator(`${top} > header > p:first-child`).innerText(), "boom");
-  assert.equal(await page.locator(`${top} > header > p.ember-error-where`).innerText(), "Error · line 2");
-  assert.equal(await page.locator(`${top} button`).count(), 0, "no traceback button for a top-level stop()");
-  assert.equal(await page.locator(`${cellSelector("TOP")} ember-chip`).count(), 0, "no \"Not run yet\" chip on an errored cell");
-
-  const err = `${cellSelector("ERR")} jlerror`;
-  assert.equal(await page.locator(`${err} > header > p`).count(), 2, "jlerror > header holds the message, then where it happened");
-  assert.equal(await page.locator(`${err} > header > p:first-child`).innerText(), "invalid type (list) for variable 'wt'");
-  assert.equal(await page.locator(`${err} > header > p.ember-error-where`).innerText(), "Error in model.frame.default(…) · called from line 1");
-  assert.equal(await page.locator(`${err} > header code`).innerText(), "model.frame.default(…)");
-
-  const n = await page.evaluate(() => window.editor_state.notebook.cell_results.ERR.output.body.stacktrace.length);
-  assert.ok(n >= 4, `the traceback has the notebook and stats calls (${n})`);
-  const tbState = () => page.evaluate((sel) => {
-    const button = document.querySelector(sel);
-    const list = document.getElementById(button.getAttribute("aria-controls"));
-    return { expanded: button.getAttribute("aria-expanded"), list: list?.matches("ol.ember-tb") ?? false, shown: list != null && list.getClientRects().length > 0, above: list != null && (button.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 };
-  }, `${err} button.ember-tb-toggle`);
-  assert.deepEqual(await tbState(), { expanded: "false", list: true, shown: false, above: true }, "the traceback starts collapsed; the toggle controls the list below it");
-  await page.getByRole("button", { name: `Show traceback (${n} calls)`, exact: true }).click();
-  await page.getByRole("button", { name: "Hide traceback", exact: true }).waitFor({ timeout: 5000 });
-  assert.deepEqual(await tbState(), { expanded: "true", list: true, shown: true, above: true }, "open: aria-expanded and the list shows");
-
-  const frames = await page.locator(`${err} ol.ember-tb > li`).evaluateAll((lis) => lis.map((li) => ({
-    n: li.querySelector(".ember-tb-n").innerText,
-    call: li.querySelector("code").innerText,
-    from: li.querySelector(".ember-tb-from").innerText,
-    link: li.querySelector(".ember-tb-from a") != null,
-    color: getComputedStyle(li).color,
-  })));
-  assert.equal(frames.length, n);
-  const text = await tokenColor(page, "--ember-text");
-  const faint = await tokenColor(page, "--ember-faint");
-  assert.notEqual(text, faint);
-  assert.deepEqual(frames[0], { n: "1", call: "g(bad)", from: "this cell, line 1", link: true, color: text }, "outermost first: the call in this cell");
-  assert.match(frames[n - 1].call, /^model\.frame\.default\(/, "innermost last");
-  const fd = frames.find((f) => f.call === "f(d)");
-  assert.deepEqual(fd, { n: "2", call: "f(d)", from: "notebook", link: true, color: text }, "a function from another cell says notebook");
-  const stats = frames.find((f) => f.from === "stats");
-  assert.ok(stats, "a frame is labelled stats");
-  assert.equal(stats.color, faint, "package calls are faint");
-
-  await page.locator(`${err} ol.ember-tb > li:nth-child(2) .ember-tb-from a`).click();
-  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, cellSelector("F"), { timeout: 10000 });
-
-  // Board Outputs4 / Cells: a red-tinted box flush with the rail and joined
-  // to the code box, whose top-right corner goes square.
-  // One evaluate, so all three come from the same frame: focusing F
-  // smooth-scrolls the page, and separate reads can straddle a scroll step.
-  const { box, cell, code } = await page.locator(cellSelector("ERR")).evaluate((el) => {
-    const r = (e) => { const b = e.getBoundingClientRect(); return { left: b.left, top: b.top, right: b.right, bottom: b.bottom }; };
-    return { box: r(el.querySelector("jlerror")), cell: r(el), code: r(el.querySelector(".cm-editor")) };
-  });
-  near(box.left, cell.left, "the box starts at the rail");
-  near(box.right, code.right, "the box is as wide as the code box");
-  near(code.top, box.bottom, "the box is joined to the code box");
-  assert.equal(await computed(page, err, "backgroundColor"), await tokenColor(page, "--ember-err-bg"));
-  assert.equal(await computed(page, err, "padding"), "10px 14px");
-  assert.equal(await computed(page, err, "borderRadius"), "0px 6px 0px 0px");
-  assert.equal(await computed(page, `${cellSelector("ERR")} .cm-editor:not(.cm-ssr-fake)`, "borderTopRightRadius"), "0px");
-  const msg = `${err} > header > p:first-child`;
-  assert.equal(await computed(page, msg, "fontSize"), "14px");
-  assert.equal(await computed(page, msg, "fontWeight"), "600");
-  assert.equal(await computed(page, msg, "color"), await tokenColor(page, "--ember-red"));
-  assert.equal(await computed(page, `${err} > header > p.ember-error-where`, "color"), await tokenColor(page, "--ember-muted"));
-  assert.equal(await computed(page, `${err} ol.ember-tb`, "borderTopStyle"), "dashed");
-
-  assertNoProblems(page);
-});
-
-test("disabled states: A shows Disabled with no run button; B shows Depends on a disabled cell, and Go to it focuses A (149)", async (t) => {
-  const notebook = tempNotebook("disabled.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-disabled-chips.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-  await page.locator("#ember-safe-preview button").click();
-  await page.waitForFunction(
-    (sel) => document.querySelector(sel)?.innerText.includes("2"),
-    cellSelector("B") + " pluto-output", { timeout: 20000 });
-
-  const outputLeft = async (id) => (await rect(page, `${cellSelector(id)} > pluto-output pre`)).left - (await rect(page, cellSelector(id))).left;
-  near(await outputLeft("B"), 12, "an output starts 12px right of the rail");
-
-  await page.hover(cellSelector("A"));
-  await page.locator(`${cellSelector("A")} button.input_context_menu`).click();
-  await page.locator(`${cellSelector("A")} button.disable_cell`).click();
-  await page.waitForSelector(`${cellSelector("A")}.running_disabled`, { timeout: 15000 });
-
-  assert.equal(await page.locator(`${cellSelector("A")} ember-chip`).innerText(), "Disabled");
-  assert.equal(await page.locator(`${cellSelector("A")} button.ember-run`).count(), 0, "no run button on a disabled cell");
-  assert.equal(await page.locator(`${cellSelector("A")} ember-chip`).count(), 1, "no \"Not run yet\" chip either");
-
-  await page.waitForSelector(`${cellSelector("B")}.depends_on_disabled_cells`, { timeout: 15000 });
-  const bChip = page.locator(`${cellSelector("B")} ember-chip`);
-  assert.match(await bChip.innerText(), /Depends on a disabled cell\..*Go to it/s);
-  assert.equal(await page.locator(`${cellSelector("B")} ember-chip`).count(), 1, "B has no \"Not run yet\" chip either");
-
-  // Board Cells: the chip 12px from the rail, then the greyed output with
-  // no wash behind it (the wash is the stale state's).
-  assert.notEqual(await tokenColor(page, "--pluto-output-bg-color"), await tokenColor(page, "--ember-wash"));
-  near(await outputLeft("B"), 12, "B's output to rail");
-  for (const id of ["A", "B"]) {
-    near((await rect(page, `${cellSelector(id)} > ember-chip`)).left - (await rect(page, cellSelector(id))).left, 12, `${id}'s chip to rail`);
-    assert.equal(await computed(page, `${cellSelector(id)} > pluto-output`, "filter"), "grayscale(1)", `${id}'s output is greyed`);
-    assert.equal(await computed(page, `${cellSelector(id)} > pluto-output`, "backgroundColor"), await tokenColor(page, "--pluto-output-bg-color"), `no wash behind ${id}'s output`);
-    assert.equal(await page.locator(cellSelector(id)).evaluate((el) => getComputedStyle(el, "::before").content), "none", `no wash layer on ${id}`);
-  }
-
-  await bChip.locator("a").click();
-  await page.waitForFunction(
-    (sel) => document.activeElement?.closest(sel) != null,
-    cellSelector("A"), { timeout: 10000 });
-
-  assertNoProblems(page);
-});
-
-test("outputs: a table's size, types, NA cells and Show more; a list tree; printed text with no box (146)", async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const rich = tempNotebook("rich.R");
-  const server = await startServer([notebook, rich], { logFile: path.join(artifactsDir(), "cells-outputs.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-  for (const id of ["NA", "VEC"]) await runCell(page, id);
-
-  const na = cellSelector("NA");
-  await page.waitForSelector(`${na} table.pluto-table`, { timeout: 30000 });
-  assert.equal(await page.locator(`${na} th.ember-table-size`).innerText(), "2 rows × 2 columns");
-  assert.deepEqual(await page.locator(`${na} tr.schema-types th`).allInnerTexts(), ["", "dbl", "chr"]);
-  assert.deepEqual(await page.locator(`${na} td.na`).allInnerTexts(), ["NA", "NA"]);
-  assert.equal(await computed(page, `${na} td.na >> nth=0`, "color"), await tokenColor(page, "--ember-faint"));
-  assert.equal(await computed(page, `${na} tbody tr:first-child td >> nth=0`, "color"), await tokenColor(page, "--ember-text"));
-  assert.equal(await page.locator(`${na} button.ember-show-more`).count(), 0, "no Show more for a table shown whole");
-
-  const vec = cellSelector("VEC");
-  await page.waitForSelector(`${vec} pluto-tree.ember-tree`, { timeout: 30000 });
-  const root = page.locator(vec).getByRole("button", { name: "list of 3", exact: true });
-  assert.equal(await root.getAttribute("aria-expanded"), "true", "the root starts open");
-  const sub = page.locator(vec).getByRole("button", { name: "sub list of 1", exact: true });
-  assert.equal(await sub.getAttribute("aria-expanded"), "false", "a nested list starts collapsed");
-  const long = page.locator(`${vec} .ember-tree-row`).filter({ has: page.locator(".ember-tree-key", { hasText: /^long$/ }) });
-  assert.equal(await long.locator(".ember-tree-value").innerText(), "1 2 3 4 5 6 7 8 9 10 … int, 100 values");
-  assert.equal(await long.locator(".ember-vector-count").innerText(), "int, 100 values");
-  await sub.click();
-  assert.equal(await sub.getAttribute("aria-expanded"), "true");
-  assert.deepEqual(await page.locator(`${vec} pluto-tree.ember-tree pluto-tree.ember-tree > .ember-tree-items > .ember-tree-row`).allInnerTexts(), ["c\nx"]);
-  await root.click();
-  assert.equal(await page.locator(`${vec} .ember-tree-items`).count(), 0, "the root collapses");
-
-  await openNotebook(page, server.origin, server.secret, rich);
-  for (const id of ["DF", "TBL", "FIT"]) await runCell(page, id);
-  const tbl = cellSelector("TBL");
-  await page.waitForSelector(`${tbl} table.pluto-table`, { timeout: 30000 });
-  assert.equal(await page.locator(`${tbl} th.ember-table-size`).innerText(), "32 rows × 11 columns");
-  assert.equal(await page.locator(`${tbl} table.pluto-table tbody tr`).count(), 10, "no in-table \"more\" row");
-  assert.equal(await page.locator(`${tbl} tr.schema-names th`).count(), 9, "the size cell and 8 columns, no in-table \"more\" column");
-  await page.locator(tbl).getByRole("button", { name: "Show 3 more columns", exact: true }).waitFor();
-  await page.locator(tbl).getByRole("button", { name: "Show 22 more rows", exact: true }).click();
-  // The worker adds 60 rows per click; mtcars has 32.
-  await page.waitForFunction(
-    (sel) => document.querySelectorAll(`${sel} table.pluto-table tbody tr`).length === 32,
-    tbl, { timeout: 10000 });
-  assert.equal(await page.locator(`${tbl} button.ember-show-more`).allInnerTexts().then((x) => x.join("|")), "Show 3 more columns");
-
-  const fit = `${cellSelector("FIT")} pluto-output pre`;
-  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("Coefficients"), fit, { timeout: 20000 });
-  assert.equal(await computed(page, fit, "backgroundColor"), "rgba(0, 0, 0, 0)");
-  assert.equal(await computed(page, fit, "paddingLeft"), "0px");
-
-  assertNoProblems(page);
-});
-
-test("console: a muted message, a warning with its call, and ANSI colours from the theme (147)", async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-console.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await page.emulateMedia({ colorScheme: "light" });
-  await openNotebook(page, server.origin, server.secret, notebook);
-  await runCell(page, "W");
-  const logs = `${cellSelector("W")} pluto-logs`;
-  await page.waitForSelector(`${logs} ember-log.stdout`, { timeout: 30000 });
-
-  assert.deepEqual(
-    await page.locator(`${logs} > ember-log`).evaluateAll((els) => els.map((el) => [el.className, el.innerText])),
-    [["message", "Reading"], ["warning", "Warning in h(): careful"], ["stdout", "ok grey"]]);
-  assert.equal(await computed(page, `${logs} > ember-log.message`, "color"), await tokenColor(page, "--ember-muted"));
-  assert.equal(await computed(page, `${logs} > ember-log.stdout`, "color"), await tokenColor(page, "--ember-text"));
-  assert.equal(await page.locator(`${logs} > ember-log.warning > b`).innerText(), "Warning");
-  assert.equal(await page.locator(`${logs} > ember-log.warning > code`).innerText(), "h()");
-  assert.equal(await computed(page, `${logs} > ember-log.warning`, "backgroundColor"), await tokenColor(page, "--ember-due-bg"));
-  assert.equal(await computed(page, `${logs} > ember-log.warning > b`, "color"), await tokenColor(page, "--ember-warn-text"));
-
-  // \033[38;5;246m is a 256-colour code: it gets a base colour's class, not an inline rgb().
-  assert.equal(await page.locator(`${logs} span.ansi-bright-black-fg`).innerText(), "grey");
-  assert.equal(await page.locator(`${logs} [style*="rgb("]`).count(), 0);
-  const green = `${logs} span.ansi-green-fg`;
-  assert.equal(await computed(page, green, "color"), "rgb(43, 122, 75)");
-
-  await page.emulateMedia({ colorScheme: "dark" });
-  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark", null, { timeout: 5000 });
-  assert.equal(await computed(page, green, "color"), "rgb(134, 209, 159)");
-
-  assertNoProblems(page);
-});
-
-test("console: a long print shows its first 60 and last 20 lines, and \"Show more\" reveals 500 at a time (350)", async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-long-console.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-  const logs = `${cellSelector("W")} pluto-logs`;
-  const marker = `${logs} > pluto-log-truncated`;
-  await setCellCode(page, "W", 'message("start")\ncat(sprintf("line %d\\n", 1:1000), sep = "")');
-  await page.keyboard.press("Shift+Enter");
-  await page.waitForSelector(marker, { timeout: 30000 });
-
-  // Every line on the page, in order: a message is one, a stdout block one per line.
-  const shown = () => page.locator(logs).evaluate((el) => [...el.children].flatMap((child) =>
-    child.localName === "pluto-log-truncated" ? ["--"] : child.innerText.split("\n")));
-  const lines = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => `line ${from + i}`);
-
-  // 1001 lines: the message, then 1000 of stdout.
-  assert.deepEqual(await shown(), ["start", ...lines(1, 59), "--", ...lines(981, 1000)]);
-  assert.equal(await page.locator(`${marker}`).innerText().then((s) => s.replace(/\s+/g, " ").trim()), "921 lines not shown Show 500 more");
-  assert.equal(await page.locator(`${logs} > ember-log.stdout`).count(), 2, "the stdout either side of the cut stays one block each");
-
-  await page.locator(marker).getByRole("button", { name: "Show 500 more", exact: true }).click();
-  await page.locator(marker).getByRole("button", { name: "Show 421 more", exact: true }).waitFor();
-  assert.deepEqual(await shown(), ["start", ...lines(1, 559), "--", ...lines(981, 1000)]);
-  await page.locator(marker).getByRole("button", { name: "Show 421 more", exact: true }).click();
-  await page.waitForSelector(marker, { state: "detached", timeout: 5000 });
-  assert.deepEqual(await shown(), ["start", ...lines(1, 1000)]);
-  assert.equal(await page.locator(`${logs} > ember-log.stdout`).count(), 1);
-
-  // A rerun starts the cut over.
-  await runCell(page, "W");
-  await page.waitForSelector(marker, { timeout: 30000 });
-  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("921 lines not shown"), marker, { timeout: 10000 });
-
-  assertNoProblems(page);
-});
-
-test("console: one very long line shows its first 10,000 characters, and a long message is cut by its lines (350)", async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-long-line.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-  const logs = `${cellSelector("W")} pluto-logs`;
-  // cat() doesn't wrap: 25,000 characters on one line, then a 200-line message.
-  await setCellCode(page, "W", 'cat(strrep("x", 25000))\nmessage(paste("m", 1:200, collapse = "\\n"))');
-  await page.keyboard.press("Shift+Enter");
-  await page.waitForSelector(`${logs} > pluto-log-truncated`, { timeout: 30000 });
-
-  const stdout = await page.locator(`${logs} > ember-log.stdout`).innerText();
-  assert.equal(stdout, `${"x".repeat(10000)}… 15,000 more characters not shown`);
-  const messages = await page.locator(`${logs} > ember-log.message`).allInnerTexts();
-  assert.equal(messages.length, 2, "the message on either side of the cut");
-  assert.deepEqual(messages[0].split("\n"), Array.from({ length: 59 }, (_, i) => `m ${i + 1}`));
-  assert.deepEqual(messages[1].split("\n"), Array.from({ length: 20 }, (_, i) => `m ${i + 181}`));
-  assert.match(await page.locator(`${logs} > pluto-log-truncated`).innerText(), /^121 lines not shown/);
-
-  assertNoProblems(page);
-});
-
-test("figures: no border, background or filter in either theme; at most the column wide; a default plot is 708px, 14px above the code; fig-width 4 is 384px (148)", async (t) => {
-  const notebook = tempNotebook("rich.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-figures.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await page.emulateMedia({ colorScheme: "light" });
-  await openNotebook(page, server.origin, server.secret, notebook);
-  const img = `${cellSelector("PLT")} pluto-output img`;
-  await runCell(page, "PLT");
-  await page.waitForFunction((sel) => document.querySelector(sel)?.naturalWidth > 0, img, { timeout: 30000 });
-
-  // Outputs4/Cells: `.out` is padded 2px 0 0 12px, so a default plot fills
-  // the 708px the Cells board draws its figure at, 14px above the code box;
-  // a printed output sits 12px above it and an empty one adds nothing.
-  const underOutput = (id) => page.evaluate((sel) => {
-    const cell = document.querySelector(sel);
-    const out = cell.querySelector(":scope > pluto-output");
-    const last = [...out.querySelectorAll("img, pre")].pop() ?? out;
-    const code = cell.querySelector("pluto-input .cm-editor").getBoundingClientRect();
-    return {
-      padding: getComputedStyle(out).padding,
-      width: out.querySelector("img")?.getBoundingClientRect().width ?? null,
-      gap: Math.round((code.top - last.getBoundingClientRect().bottom) * 10) / 10,
-    };
-  }, cellSelector(id));
-  assert.deepEqual(await underOutput("PLT"), { padding: "2px 0px 0px 12px", width: 708, gap: 14 }, "a default plot");
-  for (const id of ["S", "DF", "FIT"]) await runCell(page, id);
-  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("Coefficients"), `${cellSelector("FIT")} > pluto-output`, { timeout: 30000 }).catch(() => {});
-  assert.deepEqual(await underOutput("FIT"), { padding: "2px 0px 0px 12px", width: null, gap: 12 }, "printed text");
-  // S only defines a function, so its output is empty.
-  const empty = await underOutput("S");
-  assert.equal(empty.gap, 0, "an empty output adds no gap above the code");
-
-  const look = () => page.locator(img).evaluate((el) => {
-    const s = getComputedStyle(el);
-    const output = el.closest("pluto-output");
-    const os = getComputedStyle(output);
-    const column = output.clientWidth - parseFloat(os.paddingLeft) - parseFloat(os.paddingRight);
-    return {
-      border: [s.borderTopWidth, s.borderRightWidth, s.borderBottomWidth, s.borderLeftWidth].join(" "),
-      radius: s.borderTopLeftRadius,
-      background: [s.backgroundColor, s.backgroundImage].join(" "),
-      filter: s.filter,
-      boxShadow: s.boxShadow,
-      fits: el.getBoundingClientRect().width <= column + 0.5,
-    };
-  });
-  const plain = { border: "0px 0px 0px 0px", radius: "0px", background: "rgba(0, 0, 0, 0) none", filter: "none", boxShadow: "none", fits: true };
-  assert.deepEqual(await look(), plain, "light");
-  await page.emulateMedia({ colorScheme: "dark" });
-  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark", null, { timeout: 5000 });
-  assert.deepEqual(await look(), plain, "dark");
-  await page.setViewportSize({ width: 390, height: 800 });
-  assert.equal((await look()).fits, true, "fits a phone-width column");
-  await page.setViewportSize({ width: 1280, height: 800 });
-
-  await setCellCode(page, "FIG", "#| fig-width: 4\n#| fig-height: 3\nplot(1:10)");
-  await page.keyboard.press("Shift+Enter");
-  const fig = `${cellSelector("FIG")} pluto-output img`;
-  await page.waitForFunction(
-    (sel) => { const el = document.querySelector(sel); return el?.naturalWidth > 0 && Math.abs(el.getBoundingClientRect().width - 384) < 1; },
-    fig, { timeout: 30000 }).catch(() => {});
-  assert.equal(Math.round(await page.locator(fig).evaluate((el) => el.getBoundingClientRect().width)), 384);
-
-  assertNoProblems(page);
-});
-
-test("text cells: serif text with tinted values that copy as plain text; click or Tab + Enter opens the source, #' continues, Esc closes it and selects the cell, Shift + Enter closes it and focuses the text (150)", async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-text.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await page.emulateMedia({ colorScheme: "light" });
-  await openNotebook(page, server.origin, server.secret, notebook);
-  await runCell(page, "A");
-  const cell = cellSelector("TXT");
-  const out = `${cell} > pluto-output`;
-  const editor = `${cell} pluto-input .cm-editor`;
-  // A's first run starts R and puts its output above TXT, moving TXT down:
-  // a drag measured before that lands can start beside the paragraph and
-  // select nothing (#120). So the test starts once A's run is done.
-  await page.waitForFunction((sel) => {
-    const a = document.querySelector(sel);
-    return a != null && !a.matches(".running, .queued") && (a.querySelector(":scope > pluto-output")?.innerText.trim() ?? "") !== "";
-  }, cellSelector("A"), { timeout: 30000 });
-  const isOpen = () => page.locator(cell).evaluate((el) => el.classList.contains("show_input"));
-  // A click opens the source once the double-click interval has passed, so
-  // "didn't open" is only known after that.
-  const staysClosed = async (what) => {
-    await page.waitForTimeout(700);
-    assert.equal(await isOpen(), false, what);
-  };
-  const closes = async (what) => {
-    await page.waitForFunction((sel) => !document.querySelector(sel).classList.contains("show_input"), cell, { timeout: 5000 }).catch(() => {});
-    assert.equal(await isOpen(), false, what);
-  };
-  const textFocused = () => page.evaluate((sel) => document.activeElement === document.querySelector(sel), out);
-  await page.locator(cell).scrollIntoViewIfNeeded();
-  assert.equal(await isOpen(), false, "a text cell starts with its source hidden");
-
-  // Keep the link's navigation from leaving the page; the cell still sees the click.
-  await page.evaluate(() => document.addEventListener("click", (e) => { if (e.target.closest("a")) e.preventDefault(); }, true));
-  await page.locator(`${out} a`).click();
-  await staysClosed("clicking a link doesn't open the source");
-
-  const p = await page.locator(`${out} p`).boundingBox();
-  await page.mouse.move(p.x + 2, p.y + p.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(p.x + 120, p.y + p.height / 2, { steps: 5 });
-  await page.mouse.up();
-  const p_after = await page.locator(`${out} p`).boundingBox();
-  assert.ok((await page.evaluate(() => getSelection().toString())).length > 5,
-    `the drag selected text (the paragraph's box before the drag: ${JSON.stringify(p)}, after: ${JSON.stringify(p_after)})`);
-  await staysClosed("selecting text by dragging doesn't open the source");
-
-  // A click inside the dragged selection would keep it until mouseup.
-  await page.evaluate(() => getSelection().removeAllRanges());
-  await page.locator(`${out} p`).dblclick({ position: { x: 12, y: p.height / 2 } });
-  await staysClosed("double-clicking a word doesn't open the source");
-  assert.equal(await page.evaluate(() => getSelection().toString().trim()), "One", "the double click selected the word");
-
-  await page.locator(`${out} h2`).click();
-  await page.locator(editor).waitFor({ state: "visible", timeout: 5000 });
-  assert.equal(await page.locator(`${editor} .cm-ember-md-h`).innerText(), "## Results");
-  assert.equal(await page.locator(`${cell} .preview_hidden_code_info`).isVisible(), false, "no hidden-code note on an open text cell");
-  assert.equal(await computed(page, `${editor} .cm-ember-md-h`, "color"), await tokenColor(page, "--ember-syn-kw"));
-  assert.equal(await computed(page, `${editor} .cm-ember-r`, "color"), await tokenColor(page, "--ember-ansi-cyan"));
-  const source = () => page.locator(editor).evaluate((el) => el.CodeMirror.getValue().split("\n"));
-  const original = await source();
-
-  // Enter at the start of a #' line is a plain Enter.
-  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, editor, { timeout: 5000 });
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowUp" : "Control+Home");
-  await page.keyboard.press("Enter");
-  assert.deepEqual((await source()).slice(0, 2), ["", "#' ## Results"], "Enter in column 0 adds an empty line above, with no #'");
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+z" : "Control+z");
-  assert.deepEqual(await source(), original, "undone");
-
-  await page.keyboard.press("Escape");
-  await closes("Esc closes the unchanged source");
-  await page.waitForFunction((sel) => document.activeElement === document.querySelector(sel), cell, { timeout: 5000 }).catch(() => {});
-  assert.deepEqual(await page.evaluate((sel) => [document.activeElement === document.querySelector(sel), window.editor_state.selected_cells], cell),
-    [true, ["TXT"]], "after Esc, the cell is focused and selected");
-
-  // Keyboard: Tab reaches the text, Enter opens its source.
-  await page.locator(`${cell} > button.add_cell.before`).evaluate((el) => el.focus());
-  for (let i = 0; i < 5 && !(await textFocused()); i++) await page.keyboard.press("Tab");
-  assert.equal(await textFocused(), true, "Tab reaches the text");
-  assert.deepEqual(await page.locator(out).evaluate((el) => [el.tabIndex, el.getAttribute("role"), el.getAttribute("aria-label")]),
-    [0, "group", "Text cell. Press Enter to edit its source."]);
-  await page.keyboard.press("Enter");
-  await page.locator(editor).waitFor({ state: "visible", timeout: 5000 });
-  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, editor, { timeout: 5000 });
-  assert.deepEqual(await source(), original, "Enter on the text opens it without typing a newline");
-  await page.keyboard.press("Escape");
-  await closes("Esc closes it again");
-
-  await page.locator(`${out} p`).click({ position: { x: 5, y: 5 } });
-  await page.locator(editor).waitFor({ state: "visible", timeout: 5000 });
-  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, editor, { timeout: 5000 });
-  const before = await source();
-  await page.keyboard.press("End");
-  await page.keyboard.press("Enter");
-  const after = await source();
-  assert.equal(after.length, before.length + 1, "Enter adds one line");
-  assert.deepEqual(after.filter((line) => line === "#' "), ["#' "], "the new line starts with #' and a space");
-  await page.keyboard.press("Shift+Enter");
-  await closes("Shift + Enter closes the source");
-  assert.equal(await textFocused(), true, "after Shift + Enter, focus is on the text");
-
-  const inline = `${out} span.ember-inline`;
-  await page.waitForFunction((sel) => document.querySelector(sel)?.textContent === "2", inline, { timeout: 30000 });
-  assert.match(await computed(page, `${out} h2`, "fontFamily"), /^"Source Serif 4"/);
-  assert.equal(await computed(page, inline, "backgroundColor"), await tokenColor(page, "--ember-accent-bg"));
-  const pseudo = await page.locator(inline).evaluate((el) => [getComputedStyle(el, "::before").content, getComputedStyle(el, "::after").content]);
-  assert.deepEqual(pseudo, ["none", "none"]);
-  const copied = await page.locator(`${out} p`).evaluate((p) => {
-    const range = document.createRange();
-    range.selectNodeContents(p);
-    getSelection().removeAllRanges();
-    getSelection().addRange(range);
-    return getSelection().toString();
-  });
-  assert.equal(copied, "One more than x is 2, as the docs say.");
-
-  assertNoProblems(page);
-});
-
-test("text cells: keys pressed as the source opens, before it has drawn, aren't undone by the opening cursor (#120)", async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-text-early-keys.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-  const cell = cellSelector("TXT");
-  const out = `${cell} > pluto-output`;
-  const editor = `${cell} pluto-input .cm-editor`;
-  const source = () => page.locator(editor).evaluate((el) => el.CodeMirror.getValue().split("\n"));
-  await page.locator(cell).scrollIntoViewIfNeeded();
-
-  // Hold animation frames, the way a slow or busy machine delays them, so
-  // the keys below land after the editor has focus but before its next
-  // frames. Opening the source then put the cursor at the end of the text
-  // two frames later, on top of wherever the keys had moved it, so Enter
-  // landed at the end (#120: macOS CI, cells.test.mjs "Enter in column 0").
-  await page.evaluate(() => {
-    const held = new Map();
-    let next = 1;
-    const real = { request: window.requestAnimationFrame.bind(window), cancel: window.cancelAnimationFrame.bind(window) };
-    window.requestAnimationFrame = (cb) => { held.set(next, cb); return next++; };
-    window.cancelAnimationFrame = (id) => held.delete(id);
-    window.__release_frames = () => {
-      window.requestAnimationFrame = real.request;
-      window.cancelAnimationFrame = real.cancel;
-      for (const cb of held.values()) real.request(cb);
-      held.clear();
-    };
-  });
-  await page.locator(`${out} h2`).click();
-  await page.locator(editor).waitFor({ state: "visible", timeout: 5000 });
-  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, editor, { timeout: 5000 });
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowUp" : "Control+Home");
-  // The frames come between the two keys: two for the deferred cursor,
-  // and one more to be sure it ran.
-  await page.evaluate(() => window.__release_frames());
-  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(done)))));
-  await page.keyboard.press("Enter");
-  assert.deepEqual((await source()).slice(0, 2), ["", "#' ## Results"], "Enter in column 0 adds an empty line above");
-
-  assertNoProblems(page);
-});
-
-// Geometry from the Cells and Insert5 boards (ui-3.md "Cell anatomy",
-// "Run button", "Cell menu", "Adding cells").
-
-
-test("geometry: 26px between cells; a one-line code box is 7px 12px around 13px/1.65 text, after a 34px gutter", async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-geometry-box.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-  // The static copy a cell shows before its editor loads is a .cm-editor
-  // too, with the same layout (#375), and the real editor replaces it
-  // between two reads, so wait for the real one (#398).
-  await page.waitForSelector(`${cellSelector("A")} .cm-editor:not(.cm-ssr-fake)`);
-
-  const { a, b, box, gutters } = await rects(page, {
-    a: cellSelector("A"), b: cellSelector("B"), box: `${cellSelector("A")} .cm-editor:not(.cm-ssr-fake)`, gutters: `${cellSelector("A")} .cm-editor:not(.cm-ssr-fake) .cm-gutters`,
-  });
-  near(b.top - a.bottom, 26, "gap between A and B");
-  near(box.height, 7 + 13 * 1.65 + 7, "one-line code box height");
-  near(gutters.width, 34, "gutter width");
-
-  const content = await page.locator(`${cellSelector("A")} .cm-editor:not(.cm-ssr-fake) .cm-content`).evaluate((el) => {
-    const cs = getComputedStyle(el);
-    const range = document.createRange();
-    range.selectNodeContents(el.querySelector(".cm-line"));
-    const gutterRight = el.closest(".cm-editor").querySelector(".cm-gutters").getBoundingClientRect().right;
-    return { padding: cs.padding, fontSize: cs.fontSize, lineHeight: cs.lineHeight, textGap: range.getBoundingClientRect().left - gutterRight };
-  });
-  assert.equal(content.padding, "7px 12px");
-  assert.equal(content.fontSize, "13px");
-  assert.equal(content.lineHeight, "21.45px");
-  near(content.textGap, 12, "code text starts 12px right of the gutter");
-
-  assertNoProblems(page);
-});
-
-test("gutter: every code cell shows its line numbers, focused or not, 12px faint and 10px from the code", async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-geometry-gutter.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-  await page.locator(cellSelector("W")).scrollIntoViewIfNeeded();
-  const gutter = `${cellSelector("W")} .cm-gutter.cm-lineNumbers`;
-  await page.waitForFunction((sel) => document.querySelectorAll(`${sel} .cm-gutterElement`).length >= 6, gutter, { timeout: 10000 });
-  const faint = await tokenColor(page, "--ember-faint");
-  const numbers = await page.locator(`${gutter} .cm-gutterElement`).evaluateAll((els) => els
-    .filter((el) => el.textContent !== "" && el.style.visibility !== "hidden")
-    .map((el) => {
-      const s = getComputedStyle(el);
-      const range = document.createRange();
-      range.selectNodeContents(el);
-      return {
-        text: el.textContent,
-        color: s.color,
-        fontSize: s.fontSize,
-        after: getComputedStyle(el, "::after").content,
-        rightGap: el.closest(".cm-gutters").getBoundingClientRect().right - range.getBoundingClientRect().right,
-      };
-    }));
-  assert.deepEqual(numbers.map((n) => n.text), ["1", "2", "3", "4", "5"]);
-  for (const n of numbers) {
-    assert.equal(n.color, faint, `line ${n.text} in the faint colour`);
-    assert.equal(n.fontSize, "12px");
-    assert.equal(n.after, "none", `line ${n.text} has no dot`);
-    near(n.rightGap, 10, `line ${n.text} ends 10px left of the code`);
-  }
-  assert.equal(await page.locator(cellSelector("W")).evaluate((el) => el.contains(document.activeElement)), false, "W is not focused");
-
-  assertNoProblems(page);
-});
-
-test("syntax: the Cells board's token colours in light and dark, nothing bold or italic", async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-syntax.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await page.emulateMedia({ colorScheme: "light" });
-  await openNotebook(page, server.origin, server.secret, notebook);
-  await page.locator(cellSelector("W")).scrollIntoViewIfNeeded();
-  await page.waitForSelector(`${cellSelector("W")} .cm-editor:not(.cm-ssr-fake)`);
-
-  const tokens = (id) => page.locator(`${cellSelector(id)} .cm-content`).evaluate((el) =>
-    [...el.querySelectorAll(".cm-line span")].filter((s) => s.children.length === 0 && s.textContent.trim() !== "").map((s) => {
-      const c = getComputedStyle(s);
-      return { text: s.textContent, color: c.color, weight: c.fontWeight, style: c.fontStyle };
-    }));
-  const check = async (theme) => {
-    const fn = await tokenColor(page, "--ember-syn-fn");
-    const kw = await tokenColor(page, "--ember-syn-kw");
-    const str = await tokenColor(page, "--ember-syn-str");
-    const num = await tokenColor(page, "--ember-syn-num");
-    const text = await tokenColor(page, "--ember-text");
-    const f = await tokens("F");
-    const w = await tokens("W");
-    const colour = (list, text_, n = 0) => list.filter((tk) => tk.text === text_)[n]?.color;
-    assert.equal(colour(f, "f"), fn, `${theme}: an assigned name in the function colour`);
-    assert.equal(colour(f, "function"), kw, `${theme}: a keyword`);
-    assert.equal(colour(f, "lm"), fn, `${theme}: a call`);
-    assert.equal(colour(f, "data"), text, `${theme}: an argument name is plain`);
-    assert.equal(colour(f, "mpg"), text, `${theme}: a variable is plain`);
-    assert.equal(colour(w, "message"), fn, `${theme}: a call`);
-    assert.equal(colour(w, '"Reading"'), str, `${theme}: a string`);
-    assert.equal(colour(w, "1"), num, `${theme}: a number`);
-    for (const tk of [...f, ...w]) {
-      assert.equal(tk.weight, "400", `${theme}: ${tk.text} is not bold`);
-      assert.equal(tk.style, "normal", `${theme}: ${tk.text} is not italic`);
-    }
-  };
-  await check("light");
-  await page.emulateMedia({ colorScheme: "dark" });
-  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark", null, { timeout: 5000 });
-  await check("dark");
-
-  assertNoProblems(page);
-});
-
-test("geometry: the run button sits on the code box's top-left corner and gives way to the \"+\" above it", async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-geometry-run.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-
-  // A has no output, so its code box starts at the cell's top, right under
-  // the gap's "+".
-  await page.hover(`${cellSelector("A")} .cm-content`);
-  const run = page.locator(`${cellSelector("A")} button.ember-run`);
-  await page.waitForFunction((el) => getComputedStyle(el).opacity === "1", await run.elementHandle(), { timeout: 5000 });
-  const { box, button } = await rects(page, { box: `${cellSelector("A")} .cm-editor`, button: `${cellSelector("A")} button.ember-run` });
-  near(button.left - box.left, -15, "run button left");
-  near(button.top - box.top, -13, "run button top");
-
-  const strip = await rect(page, `${cellSelector("A")} button.add_cell.before`);
-  await page.mouse.move(strip.left + 300, strip.top + strip.height / 2);
-  const circle = `${cellSelector("A")} button.add_cell.before > span`;
-  await page.waitForFunction((sel) => getComputedStyle(document.querySelector(sel)).opacity === "1", circle, { timeout: 5000 });
-  await page.waitForFunction((el) => getComputedStyle(el).opacity === "0", await run.elementHandle(), { timeout: 5000 });
-
-  // Insert5: the circle is centred on the gap, its left edge 11px left of the rail.
-  // The circle's lower half is where the run button would be: it must be
-  // the "+" that takes a click there.
-  const { c, rail, gap, hit } = await page.evaluate(([circle, railSel, stripSel]) => {
-    const c = document.querySelector(circle).getBoundingClientRect();
-    const strip = document.querySelector(stripSel).getBoundingClientRect();
-    const hit = document.elementFromPoint(c.left + c.width / 2, c.bottom - 3)?.closest("button")?.className ?? null;
-    return { c: c.toJSON(), rail: document.querySelector(railSel).getBoundingClientRect().toJSON(), gap: strip.top + strip.height / 2, hit };
-  }, [circle, `${cellSelector("A")} > pluto-trafficlight`, `${cellSelector("A")} button.add_cell.before`]);
-  near(c.left - rail.left, -11, "circle left");
-  near(c.top + c.height / 2, gap, "circle centre");
-  assert.equal(hit, "add_cell before");
-
-  assertNoProblems(page);
-});
-
-test('"+": each gap\'s live button is the lower cell\'s .before, and the last cell\'s .after below it (Endeavor)', async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-geometry-plus.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-
-  const ids = await page.evaluate(() => [...document.querySelectorAll("pluto-cell")].map((c) => c.id));
-  for (const id of ids) {
-    assert.equal(await page.locator(`${cellSelector(id)} > button.add_cell.before`).count(), 1, `${id} keeps .before`);
-    assert.equal(await page.locator(`${cellSelector(id)} > button.add_cell.after`).count(), 1, `${id} keeps .after`);
-  }
-
-  // Who takes a click `dx` right of `upper`'s left edge: halfway down the
-  // gap to `lower`, or `dy` below `upper` when there is no `lower`.
-  const owner = (upper, lower, dx, dy) => page.evaluate(([upper, lower, dx, dy]) => {
-    const above = document.querySelector(upper).getBoundingClientRect();
-    const y = lower == null ? above.bottom + dy : (above.bottom + document.querySelector(lower).getBoundingClientRect().top) / 2;
-    const b = document.elementFromPoint(above.left + dx, y)?.closest("button.add_cell");
-    return b ? `${b.closest("pluto-cell").id} ${b.className}` : null;
-  }, [upper, lower, dx, dy]);
-
-  // elementFromPoint only sees the viewport.
-  const show = (id) => page.locator(cellSelector(id)).evaluate((el) => el.scrollIntoView({ block: "center" }));
-  for (let i = 1; i < ids.length; i++) {
-    await show(ids[i]);
-    assert.equal(await owner(cellSelector(ids[i - 1]), cellSelector(ids[i]), 300, 0), `${ids[i]} add_cell before`, `gap above ${ids[i]}`);
-  }
-  const last = ids[ids.length - 1];
-  await show(last);
-  assert.equal(await owner(cellSelector(last), null, 300, 13), `${last} add_cell after`, "below the last cell");
-
-  assertNoProblems(page);
-});
-
-test("cell menu: the ⋯ is in pluto-input after the code, on the code box even under an error, and opens on a folded cell", async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-geometry-menu-place.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-  await page.locator("#ember-safe-preview button").click();
-  await page.waitForSelector(`${cellSelector("ERR")}.errored`, { timeout: 20000 });
-
-  assert.equal(await page.locator("pluto-cell > button.input_context_menu").count(), 0);
-  assert.equal(await page.locator("pluto-cell > pluto-input > button.input_context_menu").count(), await page.locator("pluto-cell").count());
-  const order = await page.locator(`${cellSelector("A")} > pluto-input`).evaluate((input) =>
-    [...input.children].map((c) => c.matches(".cm-editor") ? "code" : c.matches("button.ember-run") ? "run" : c.matches("button.input_context_menu") ? "menu" : null).filter(Boolean));
-  assert.deepEqual(order, ["code", "run", "menu"], "Tab reaches the code first, then run, then ⋯");
-
-  await page.hover(`${cellSelector("ERR")} .cm-content`);
-  const { box, more, output } = await rects(page, {
-    box: `${cellSelector("ERR")} .cm-editor`,
-    more: `${cellSelector("ERR")} button.input_context_menu`,
-    output: `${cellSelector("ERR")} > pluto-output`,
-  });
-  near(box.right - more.right, 6, "⋯ right inset");
-  near(more.top - box.top, 5, "⋯ top inset");
-  assert.ok(more.top >= output.bottom, "the ⋯ is below the error output, not over it");
-
-  await page.hover(cellSelector("B"));
-  await page.locator(`${cellSelector("B")} button.input_context_menu`).click();
-  await page.locator(`${cellSelector("B")} button.hide_code`).click();
-  await page.waitForSelector(`${cellSelector("B")}.code_folded:not(.show_input)`, { timeout: 10000 });
-  assert.equal(await page.locator(`${cellSelector("B")} .cm-editor`).isVisible(), false, "the folded cell's code is hidden");
-
-  await page.hover(cellSelector("B"));
-  await page.locator(`${cellSelector("B")} button.input_context_menu`).click();
-  const showItem = page.locator(`${cellSelector("B")} button.hide_code`);
-  assert.equal(await showItem.innerText(), "Show code");
-  await showItem.click();
-  await page.waitForFunction((sel) => !document.querySelector(sel).classList.contains("code_folded"), cellSelector("B"), { timeout: 10000 });
-  await page.locator(`${cellSelector("B")} .cm-editor`).waitFor({ state: "visible", timeout: 5000 });
-
-  assertNoProblems(page);
-});
-
-test("cell menu: on a cell at the bottom of the window it opens upwards, so every item is on screen; elsewhere downwards", async (t) => {
-  const notebook = tempNotebook("many-cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-menu-flip.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await page.setViewportSize({ width: 900, height: 700 });
-  await openNotebook(page, server.origin, server.secret, notebook);
-
-  // The first cell whose code box is wholly in view.
-  const first = await page.evaluate(() => [...document.querySelectorAll("pluto-cell")].find((c) => {
-    const r = c.querySelector("pluto-input").getBoundingClientRect();
-    return r.top >= 0 && r.bottom <= innerHeight;
-  }).id);
-  const open = async (id) => {
-    // The code box, not the whole cell: the cell's middle can be below the
-    // window, and hovering there would scroll it.
-    await page.hover(`${cellSelector(id)} pluto-input`);
-    const before = (await rects(page, { more: `${cellSelector(id)} button.input_context_menu` })).more;
-    await page.locator(`${cellSelector(id)} button.input_context_menu`).click();
-    return {
-      before,
-      ...await rects(page, {
-        menu: `${cellSelector(id)} div.input_context_menu[role="menu"]`,
-        more: `${cellSelector(id)} button.input_context_menu`,
-      }),
-    };
-  };
-
-  // A one-line cell whose code box ends at the bottom of the window. Where
-  // cells land on their own depends on font metrics and on off-screen cells
-  // swapping their stand-in for the real editor (#373), so this one is put
-  // there: scrolled to the bottom until its real editor is in and it stays
-  // put for a frame.
-  const low = "C10";
-  await page.waitForFunction((sel) => {
-    const input = document.querySelector(`${sel} pluto-input`);
-    input.scrollIntoView({ block: "end" });
-    const bottom = input.getBoundingClientRect().bottom;
-    const still = window.__low_bottom === bottom;
-    window.__low_bottom = bottom;
-    return still && Math.abs(bottom - innerHeight) < 1 && input.querySelector(".cm-editor:not(.cm-ssr-fake)") != null;
-  }, cellSelector(low), { polling: "raf", timeout: 10000 });
-  const bottom = await open(low);
-  assert.ok(700 - bottom.before.bottom < 3 + bottom.menu.height, `the ⋯ ended at ${bottom.before.bottom} before the menu opened, so the menu fit below it and this cell can't show the flip`);
-  assert.ok(bottom.menu.bottom <= 700, `menu ends at ${bottom.menu.bottom}, below the 700px window`);
-  near(bottom.more.top - bottom.menu.bottom, 3, "3px above the ⋯");
-  await page.keyboard.press("Escape");
-  await page.evaluate(() => scrollTo(0, 0));
-
-  const top = await open(first);
-  near(top.menu.top - top.more.bottom, 3, "3px below the ⋯");
-  await page.keyboard.press("Escape");
-
-  // Too short a window for either way: it stays below, and the page scrolls.
-  await page.setViewportSize({ width: 900, height: 200 });
-  const short = await open(first);
-  near(short.menu.top - short.more.bottom, 3, "3px below the ⋯ in a 200px window");
-  await page.keyboard.press("Escape");
-
-  assertNoProblems(page);
-});
-
-test("cell menu: text-only one-line items with a right-aligned key hint, panel and line colours, a 6px-radius trigger that stays on while open", async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-geometry-menu-look.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-
-  await page.hover(cellSelector("A"));
-  const trigger = page.locator(`${cellSelector("A")} button.input_context_menu`);
-  assert.equal(await trigger.evaluate((el) => getComputedStyle(el).borderRadius), "6px");
-  await trigger.click();
-  assert.match(await trigger.getAttribute("class"), /\bon\b/);
-
-  const menu = page.locator(`${cellSelector("A")} div.input_context_menu[role="menu"]`);
-  const colours = await menu.evaluate((el) => {
-    const probe = document.createElement("div");
-    probe.style.cssText = "border-top: 1px solid var(--ember-line); background: var(--ember-panel)";
-    document.body.append(probe);
-    const want = getComputedStyle(probe);
-    const got = getComputedStyle(el);
-    const r = { border: [got.borderTopColor, want.borderTopColor], background: [got.backgroundColor, want.backgroundColor] };
-    probe.remove();
-    return r;
-  });
-  assert.equal(colours.border[0], colours.border[1], "menu border is --ember-line");
-  assert.equal(colours.background[0], colours.background[1], "menu background is --ember-panel");
-
-  assert.equal(await menu.locator(".ctx_icon, svg, img").count(), 0, "no icons in the items");
-
-  const moveUp = menu.locator("button.move_up");
-  const item = await moveUp.evaluate((el) => {
-    const cs = getComputedStyle(el);
-    const key = el.querySelector(".ember-menuitem-key");
-    const kr = key.getBoundingClientRect();
-    const r = el.getBoundingClientRect();
-    return {
-      direction: cs.flexDirection, padding: cs.padding, gap: cs.gap, height: r.height,
-      key: key.textContent, keySize: getComputedStyle(key).fontSize, keyRightInset: r.right - kr.right,
-      keyMiddle: kr.top + kr.height / 2 - (r.top + r.height / 2),
-    };
-  });
-  assert.equal(item.direction, "row");
-  assert.equal(item.padding, "7px 10px");
-  assert.equal(item.gap, "10px");
-  near(item.height, 7 + 13 * 1.65 + 7, "item height (Cells board)");
-  assert.match(item.key, /^(Alt|⌥) ↑$/);
-  assert.equal(item.keySize, "11.5px");
-  near(item.keyRightInset, 10, "key hint is right-aligned");
-  near(item.keyMiddle, 0, "key hint on the label's line");
-  assert.equal(await moveUp.evaluate((el) => el.firstChild.textContent.trim()), "Move up");
-
-  // The header's ⋯ menu keeps its stacked title-over-description items.
-  const header = await page.evaluate(() => {
-    const b = document.createElement("button");
-    b.className = "ember-menuitem";
-    document.body.append(b);
-    const cs = getComputedStyle(b);
-    const r = { direction: cs.flexDirection, padding: cs.padding };
-    b.remove();
-    return r;
-  });
-  assert.deepEqual(header, { direction: "column", padding: "8px 10px" });
-
-  await page.keyboard.press("Escape");
-  await page.waitForFunction((el) => !el.classList.contains("on"), await trigger.elementHandle(), { timeout: 5000 });
-
-  assertNoProblems(page);
-});
-
-test("chips: a chip's text can't be selected, by double-click or by dragging across the cell (#285)", async (t) => {
-  const notebook = tempNotebook("cells.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chip-select.server.log") });
-  const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
-
-  const page = await newPage(browser);
-  await openNotebook(page, server.origin, server.secret, notebook);
-  await runCell(page, "A");
-  await page.waitForFunction(
-    (sel) => document.querySelector(sel)?.classList.contains("not_run_yet"),
-    cellSelector("NEVER"), { timeout: 20000 });
-  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached", timeout: 15000 });
-
-  const chip = page.locator(`${cellSelector("NEVER")} > ember-chip`);
-  await chip.scrollIntoViewIfNeeded();
-  assert.equal(await chip.innerText(), "Not run yet");
-  const selection = () => page.evaluate(() => window.getSelection().toString());
-
-  // A double-click on the chip's words selects nothing.
-  await page.locator(`${cellSelector("NEVER")} > ember-chip span:not(.ember-chip-icon)`).dblclick();
-  assert.equal(await selection(), "", "double-clicking a chip selects none of its text");
-
-  // A drag from the chip's row into the cell's code copies the code but
-  // not the chip. This reads the clipboard, not getSelection(): Chromium's
-  // Selection.toString() still lists user-select: none text that a copy
-  // leaves out.
-  const box = await chip.boundingBox();
-  const cell = await page.locator(cellSelector("NEVER")).boundingBox();
-  // Scrolling the chip into view swaps NEVER's static code copy for its
-  // editor, so measure the editor.
-  const code = await page.locator(`${cellSelector("NEVER")} .cm-editor:not(.cm-ssr-fake) .cm-content`).boundingBox();
-  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
-  await page.mouse.move(cell.x + cell.width - 4, box.y + box.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(code.x + 2, code.y + code.height / 2, { steps: 8 });
-  await page.mouse.up();
-  await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C");
-  const copied = await page.evaluate(() => navigator.clipboard.readText());
-  assert.match(copied, /3 \+ 3/, "the drag reached NEVER's code");
-  assert.doesNotMatch(copied, /Not run yet/, "a drag across the cell leaves the chip out");
 
   assertNoProblems(page);
 });

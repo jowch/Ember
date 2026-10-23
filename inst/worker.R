@@ -296,7 +296,12 @@ main <- function() {
 #' "resume" restart for a real SIGINT; a re-signalled one (see
 #' `uninterrupted()`) has none, and returning simply carries on.
 ignore_interrupt <- function(i) {
-  if (!is.null(findRestart("resume"))) invokeRestart("resume")
+  resumable <- !is.null(findRestart("resume"))
+  # So a worker that dies between runs shows whether an interrupt reached
+  # here that couldn't be resumed, which ends it (Ember #407).
+  trace_line("interrupt at top level:",
+             if (resumable) "resumed" else if (inherits(i, "ember_resignalled")) "passed on" else "not resumable")
+  if (resumable) invokeRestart("resume")
 }
 
 #' Evaluate `expr` without letting an interrupt cut it short, then pass the
@@ -311,10 +316,18 @@ uninterrupted <- function(expr) {
     if (!is.null(findRestart("resume"))) invokeRestart("resume")
   })
   if (interrupted) {
-    signalCondition(structure(class = c("interrupt", "condition"),
+    signalCondition(structure(class = c("ember_resignalled", "interrupt", "condition"),
                               list(message = "", call = NULL)))
   }
   value
+}
+
+#' End the worker once the server has closed the socket. The trace line
+#' tells this exit from an interrupt reaching top level: both exit 0 with
+#' nothing else on stderr (Ember #407).
+server_gone <- function() {
+  trace_line("server gone")
+  quit(save = "no")
 }
 
 #' Read the next message (or take a deferred one) and act on it.
@@ -326,7 +339,7 @@ handle_next <- function() {
   } else {
     receive()
   }
-  if (is.null(msg)) quit(save = "no")  # server gone
+  if (is.null(msg)) server_gone()
   trace_line("message", msg$type)
   on.exit(trace_line("handled", msg$type))
   switch(msg$type,
@@ -1165,7 +1178,7 @@ ask_for_input <- function(prompt, choices = NULL) {
     # Interruptible: only the read of a frame that is there is whole.
     while (!isTRUE(socketSelect(list(con), timeout = 1))) NULL
     reply <- receive()
-    if (is.null(reply)) quit(save = "no")  # server gone
+    if (is.null(reply)) server_gone()
     if (identical(reply$type, "input_reply")) {
       if (identical(as.integer(reply$id), id)) break
       next  # an answer to a prompt that already closed
@@ -2543,7 +2556,7 @@ trace_source <- function(file) {
   reply <- NULL
   repeat {
     reply <- receive()
-    if (is.null(reply)) quit(save = "no")  # server gone
+    if (is.null(reply)) server_gone()
     if (identical(reply$type, "source_reply")) break
     deferred[[length(deferred) + 1]] <<- reply
   }

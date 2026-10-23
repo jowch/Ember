@@ -6,7 +6,7 @@
 // scrollbar, so a layout regression nobody wrote a test for still fails.
 //
 // Widths: 600 and 900 are Endeavor's notebook pane next to its chat;
-// 1440 opens the side panel. The ⌘ S and Ctrl+S shortcut labels differ
+// 1440 opens the side panel (with Help open on a long page, #433). The ⌘ S and Ctrl+S shortcut labels differ
 // in size (#290), so the edited state runs under both.
 //
 // A problem that's a known, open bug goes in KNOWN with its issue, so the
@@ -107,6 +107,47 @@ test("ui sweep: partly run, after a reload", async (t) => {
   // Chips settle in after a moment (Cell.js's useSettled).
   await page.waitForSelector(`${cellSelector("DOWN")} ember-chip:not(.held)`, { timeout: 10000 });
   await sweep(page, "partial");
+  assertNoProblems(page);
+});
+
+// #433: the Help tab open on a long page. At 1240 and up the panel docks,
+// and the notebook column's docked margin once reached the help page's own
+// <main> (Rd2HTML's), widening it past the panel. The checker sees a link
+// cut off; the page's own width is checked too, since a clipped paragraph
+// has no control to flag.
+test("ui sweep: the Help tab open on a long page, docked and not (#433)", async (t) => {
+  const notebook = tempNotebook("ui-sweep.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "ui-sweep-help.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await emulatePlatform(page, "other");
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForFunction(() => {
+    const nb = window.editor_state?.notebook;
+    return nb?.process_status === "ready" && Object.values(nb.cell_results ?? {}).length > 0 &&
+      Object.values(nb.cell_results).every((r) => !r.running && !r.queued);
+  }, null, { timeout: 60000 });
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
+  await page.locator("#live-docs-search").fill("regmatches");
+  await page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper .ember-help-page h2")?.innerText.includes("Matched Substrings"),
+    null, { timeout: 30000 });
+  await sweep(page, "help");
+
+  for (const width of [1240, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.waitForTimeout(300);
+    const fit = await page.evaluate(() => {
+      const panel = document.querySelector("#helpbox-wrapper").getBoundingClientRect();
+      const main = document.querySelector("#helpbox-wrapper .ember-help-page main").getBoundingClientRect();
+      return { panel: [panel.left, panel.right], main: [main.left, main.right], margin: getComputedStyle(document.querySelector("#helpbox-wrapper .ember-help-page main")).marginRight };
+    });
+    assert.ok(fit.main[0] >= fit.panel[0] && fit.main[1] <= fit.panel[1] && fit.margin === "0px",
+      `at ${width} the help page fits its panel: ${JSON.stringify(fit)}`);
+  }
   assertNoProblems(page);
 });
 

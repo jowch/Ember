@@ -269,7 +269,12 @@ repositories. Asking before a large download is in
   (`bioc_release_for()`, from the release list below). An R the list
   doesn't know, or a date before that R's first release, has no
   Bioconductor keys: its packages are `not_found`, next to a
-  `bioc_unavailable` row that says why.
+  `bioc_unavailable` row that says why. A cell's error and the package's
+  row give that reason too, rather than "not found in any repository"
+  (`no_release_reason()`, #422). With the release list at hand, the row
+  also says what to do, as BiocManager does for a release built for
+  another R: run the notebook on the R the release at its date needs, or
+  move the date to this R's first release or later with Update (#431).
 - **The release list** comes from bioconductor.org's `config.yaml`, the
   map BiocManager reads (`ember_repos(bioc_config)`, parsed by
   `parse_bioc_config()`); Ember ships no copy, so a new release needs no

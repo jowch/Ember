@@ -1,7 +1,7 @@
 # Interactive inputs
 
-_Design, 2026-10-17, for #36 (build step 5). The engine and worker side is
-built; the package, the page and the agent tool are not. See "Built so
+_Design, 2026-10-17, for #36 (build step 5). The engine and worker side
+and the emberui package are built; the page and the agent tool are not. See "Built so
 far" at the end._
 
 ## Summary
@@ -375,13 +375,18 @@ R API. Nothing shows on the page yet.
   and the result names the cells that reran or turned stale.
 - **The snapshot** has each cell's `inputs`: name, whether bound, why not,
   spec, default and current value.
-- **Tests** use a stand-in emberui with two inputs
-  (tests/testthat/fixtures/emberui), not the real package. One test
-  installs it from a `file://` repository and drives `set_input()` end to
-  end.
+- **The emberui package** is in inst/emberui: the six functions of the
+  first version, their argument checks, and a `check` for each. Base R
+  only. Ember ships its source, so Ember's tests install the real package
+  (fixture_lib(), and one test that installs it from a `file://`
+  repository and drives `set_input()` end to end) and run emberui's own
+  tests. r-universe can build it from that folder, with a `subdir`
+  entry in jowch.r-universe.dev's packages.json. A dropdown's or radio's
+  spec also has `labels`: each choice's name or, without one, the
+  element printed.
 
-Next: the emberui package itself, then the widgets on the page (the
-`bonds` projection), then EndeavorMCP's tool.
+Next: the widgets on the page (the `bonds` projection), then EndeavorMCP's
+tool.
 
 ## Decided with Jonathan (2026-10-17)
 

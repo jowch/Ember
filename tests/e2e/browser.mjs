@@ -59,25 +59,32 @@ export function assertNoProblems(page) {
 /** Open a notebook through /open (the URL a bookmark would use), wait for
  * the editor to finish loading, and return the id from the resulting
  * /edit?id=... URL. `origin` is the server's base URL (`http://host:port/`,
- * no query string). */
+ * no query string).
+ *
+ * No timeouts of our own on the waits: the page and its notebook arrive
+ * when the server sends them, and the test runner's timeout bounds them.
+ * 30 s ran out for the first tests of a Windows run, while three files'
+ * first servers and browsers started at once (#417). */
 export async function openNotebook(page, origin, secret, notebookPath) {
   const url = `${origin}open?path=${encodeURIComponent(notebookPath)}&secret=${secret}`;
-  await page.goto(url);
-  await page.waitForSelector("pluto-cell", { timeout: 30000 });
+  await page.goto(url, { timeout: 0 });
+  await page.waitForSelector("pluto-cell", { timeout: 0 });
   await page.waitForFunction(
     () => !document.querySelector("pluto-editor")?.classList.contains("loading"),
-    null, { timeout: 30000 });
+    null, { timeout: 0 });
   return new URL(page.url()).searchParams.get("id");
 }
 
 export function cellSelector(id) { return `pluto-cell[id="${id}"]`; }
 
-/** Wait until the worker is ready and no cell is running or queued. */
+/** Wait until the worker is ready and no cell is running or queued. No
+ * timeout of its own, as openNotebook(): a cold worker start is still a
+ * start (#417). */
 export async function waitIdle(page) {
   await page.waitForFunction(() => {
     const nb = window.editor_state?.notebook;
     return nb?.process_status === "ready" && Object.values(nb.cell_results).every((r) => !r.running && !r.queued);
-  }, null, { timeout: 30000 });
+  }, null, { timeout: 0 });
 }
 
 /** Hover a cell (at `part` inside it, if given) and wait until the cell is

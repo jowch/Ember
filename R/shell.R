@@ -39,7 +39,12 @@
 #' closing dispatch's notifications are delivered), `queries` (environment,
 #' id (character) -> callback, for `worker_query()`'s pending completion/
 #' help/signature questions and one-off renders -- outside `ember_state`
-#' and the event log, see `worker_query()`), `next_query_id` (integer, last id handed out),
+#' and the event log, see `worker_query()`), `late_queries` (the same, for
+#' replies that timed out but are still wanted: `worker_query()`'s `late`),
+#' `help_lookups` (environment, help query key -> `list(reply)`: a lookup
+#' still running in the worker, `reply` NULL, or one that finished after its
+#' docs reply timed out, kept for the next ask; server.R's `docs`, #356),
+#' `next_query_id` (integer, last id handed out),
 #' `file_inputs`/`watch_inputs` (what the last saved file text and the
 #' last watched paths were made from: `save_if_changed()` and
 #' `after_dispatch()` skip the work when these are unchanged; `NULL` until
@@ -73,6 +78,8 @@ session_start <- function(state) {
   nb$output_watch <- NULL
   nb$closing <- FALSE
   nb$queries <- new.env(parent = emptyenv())
+  nb$late_queries <- new.env(parent = emptyenv())
+  nb$help_lookups <- new.env(parent = emptyenv())
   nb$next_query_id <- 0L
   class(nb) <- "ember_notebook"
 
@@ -349,6 +356,7 @@ drain <- function(nb) {
   while (length(nb$inbox) > 0) {
     e <- nb$inbox[[1]]
     nb$inbox <- nb$inbox[-1]
+    if (e$type %in% c("wk_running", "wk_done", "install_done")) forget_finished_help(nb)
     r <- step(nb$state, e)
     nb$state <- r$state
     if (first) {
@@ -413,7 +421,7 @@ file_inputs <- function(state) {
 #' What `watched_files()` reads from a state, for the same skip in
 #' `after_dispatch()`.
 watch_inputs <- function(state) {
-  list(state$graph$analyses, state$computed_sources, state$footer_sources)
+  list(state$graph$analyses, state$computed_sources, state$footer_sources, results_data_read(state))
 }
 
 #' Notify and re-watch: derived from the state change over a dispatch.
@@ -1058,10 +1066,13 @@ worker_is_idle <- function(nb) {
 #' isn't ready or busy: a `render` may arrive mid-run, and the worker
 #' answers it once the run ends, inst/worker.R), or
 #' with `NULL` after `timeout` seconds, or when the worker exits
-#' (`fail_pending_queries()`). A reply that arrives after the timeout (or
-#' after the worker that was asked is gone) finds no entry in `nb$queries`
-#' and is dropped.
-worker_query <- function(nb, msg, callback, timeout = 0.8, busy_ok = FALSE) {
+#' (`fail_pending_queries()`). A reply that arrives after the timeout goes
+#' to `late(reply)` when one is given, kept in `nb$late_queries` (which,
+#' unlike `nb$queries`, doesn't keep the shell polling fast); otherwise, or
+#' after the worker that was asked is gone, it is dropped. `late` is called
+#' with `NULL` if the worker exits first. Whether the question was sent
+#' (`FALSE` when the callback already ran with `NULL`).
+worker_query <- function(nb, msg, callback, timeout = 0.8, busy_ok = FALSE, late = NULL) {
   st <- nb$state
   can_ask <- if (busy_ok) {
     isTRUE(st$allowed) && st$worker$status %in% c("ready", "busy") && !is.null(nb$con)
@@ -1070,7 +1081,7 @@ worker_query <- function(nb, msg, callback, timeout = 0.8, busy_ok = FALSE) {
   }
   if (!can_ask) {
     callback(NULL)
-    return(invisible(NULL))
+    return(invisible(FALSE))
   }
   id <- nb$next_query_id <- nb$next_query_id + 1L
   key <- as.character(id)
@@ -1081,16 +1092,17 @@ worker_query <- function(nb, msg, callback, timeout = 0.8, busy_ok = FALSE) {
   if (!ok) {
     rm(list = key, envir = nb$queries)
     callback(NULL)
-    return(invisible(NULL))
+    return(invisible(FALSE))
   }
   later::later(function() {
     if (exists(key, envir = nb$queries, inherits = FALSE)) {
       cb <- get(key, envir = nb$queries, inherits = FALSE)
       rm(list = key, envir = nb$queries)
+      if (!is.null(late)) assign(key, late, envir = nb$late_queries)
       cb(NULL)
     }
   }, timeout)
-  invisible(NULL)
+  invisible(TRUE)
 }
 
 #' A `completions`/`help_page`/`signature` reply, or a `rendered` one with
@@ -1098,22 +1110,46 @@ worker_query <- function(nb, msg, callback, timeout = 0.8, busy_ok = FALSE) {
 #' `msg$id` and call it, or drop the message (its query already timed out).
 answer_query <- function(nb, msg) {
   key <- as.character(msg$id)
-  if (!exists(key, envir = nb$queries, inherits = FALSE)) return(invisible(NULL))
-  cb <- get(key, envir = nb$queries, inherits = FALSE)
-  rm(list = key, envir = nb$queries)
-  cb(msg)
+  for (waiting in list(nb$queries, nb$late_queries)) {
+    if (exists(key, envir = waiting, inherits = FALSE)) {
+      cb <- get(key, envir = waiting, inherits = FALSE)
+      rm(list = key, envir = waiting)
+      cb(msg)
+      break
+    }
+  }
   invisible(NULL)
 }
 
-#' Every pending `worker_query()` callback, called with `NULL`: the worker
-#' that was asked is gone (exited, or killed for a protocol error) and will
-#' never answer.
-fail_pending_queries <- function(nb) {
-  for (key in ls(nb$queries, all.names = TRUE)) {
-    cb <- get(key, envir = nb$queries, inherits = FALSE)
-    rm(list = key, envir = nb$queries)
-    cb(NULL)
+#' Drop the help pages kept from lookups that finished after the docs
+#' timeout (`nb$help_lookups`, server.R's `docs`) once a run starts or ends
+#' or an install finishes: what the session can see may have changed since,
+#' and a kept "no help page" must not show hours later for a package
+#' installed in between. Lookups still running stay; they answer the next
+#' ask with what they find.
+forget_finished_help <- function(nb) {
+  lookups <- nb$help_lookups
+  if (!is.environment(lookups)) return(invisible(NULL))
+  for (key in ls(lookups, all.names = TRUE)) {
+    if (!is.null(get(key, envir = lookups, inherits = FALSE)$reply)) rm(list = key, envir = lookups)
   }
+  invisible(NULL)
+}
+
+#' Every pending `worker_query()` callback, and every `late` one waiting on
+#' a reply that timed out, called with `NULL`: the worker that was asked is
+#' gone (exited, or killed for a protocol error) and will never answer. The
+#' help lookups it was running or had finished late (`nb$help_lookups`,
+#' server.R's `docs`) go with it.
+fail_pending_queries <- function(nb) {
+  for (waiting in list(nb$queries, nb$late_queries)) {
+    for (key in ls(waiting, all.names = TRUE)) {
+      cb <- get(key, envir = waiting, inherits = FALSE)
+      rm(list = key, envir = waiting)
+      cb(NULL)
+    }
+  }
+  rm(list = ls(nb$help_lookups, all.names = TRUE), envir = nb$help_lookups)
   invisible(NULL)
 }
 

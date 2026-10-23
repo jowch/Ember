@@ -113,7 +113,10 @@ replace_inline_matches <- function(line, replacements) {
 
 #' The inline expressions of a text cell, in reading order:
 #' `data.frame(line = <int, line in the cell>, expr = <chr>)`. Matched on
-#' text lines only, via `line_inline_matches()`.
+#' text lines only, via `line_inline_matches()`, with the `#'` prefix
+#' taken off first as `text_body()` does: the pattern's `^```` lookbehind
+#' is about the prose's own start, and `project_text()` matches the same
+#' stripped line, so the two always count the same spans (#432).
 inline_spans <- function(code) {
   lines <- strsplit(code, "\n", fixed = TRUE)[[1]]
   if (length(lines) == 0) return(data.frame(line = integer(), expr = character(), stringsAsFactors = FALSE))
@@ -121,7 +124,7 @@ inline_spans <- function(code) {
   out_expr <- character()
   for (i in seq_along(lines)) {
     if (!text_line(lines[[i]])) next
-    mm <- line_inline_matches(lines[[i]])
+    mm <- line_inline_matches(sub("^#+'[ ]?", "", lines[[i]]))
     if (length(mm$exprs) == 0) next
     out_line <- c(out_line, rep(i, length(mm$exprs)))
     out_expr <- c(out_expr, mm$exprs)
