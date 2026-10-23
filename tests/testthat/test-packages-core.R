@@ -1746,6 +1746,32 @@ test_that("a step back whose earlier day fails to fetch is dropped, and the fail
   expect_false("A" %in% names(waiting_cells(r$state)))
 })
 
+test_that("Update all steps back a day when Bioconductor hasn't published the day it previews (#377)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46))
+  r <- deliver_bioc(open_with_cran(s)$state)
+  r <- drive(r$state, ev_preview_date("2026-10-01", at(4), apply = TRUE))
+  r <- drive(r$state, ev_index_fetched("cran/2026-10-01", cran_as("2026-10-01"), at(5)))
+  r <- unpublished_404(r$state, "bioc/2026-10-01/3.23", 6)
+  prop <- r$state$packages$proposal
+  expect_equal(prop$kind, "date")
+  expect_equal(prop$date, "2026-09-30")
+  expect_equal(prop$asked, "2026-10-01")
+  expect_true(prop$apply)
+  # The other Bioconductor indexes at the unpublished day are dropped, so
+  # their answers are ignored, and the failure isn't kept as a problem.
+  keys <- names(r$state$packages$indexes)
+  expect_false(any(is_bioc_key(keys) & key_date(keys) == "2026-10-01"))
+  r <- unpublished_404(r$state, "bioc-ann/2026-10-01/3.23", 6)
+  expect_equal(r$state$packages$proposal$date, "2026-09-30")
+
+  r <- drive(r$state, ev_index_fetched("cran/2026-09-30", cran_as("2026-09-30"), at(7)))
+  r <- deliver_bioc(r$state, date = "2026-09-30", t = 8)
+  expect_null(r$state$packages$proposal)
+  expect_equal(as.character(r$state$file$header$snapshot), "2026-09-30")
+  expect_true("DESeq2" %in% r$state$file$lock$entries$name)
+  expect_false(any(r$state$packages$problems$kind %in% c("not_found", "index_unavailable")))
+})
+
 test_that("a step back isn't proposed over a date preview the user asked for (#311)", {
   r <- locked_bioc_open()
   r <- drive(r$state, ev_preview_date("2026-10-01", at(3)))
