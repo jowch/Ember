@@ -2,9 +2,10 @@
 # every 5 s into a CSV. Each row counts the connections by state, and names
 # the listeners most TIME_WAIT sockets belong to (the process that listens on
 # one end of the connection), so the log shows who opens short connections.
-# Read-only: it changes no setting.
+# It also logs the nonpaged pool, the other buffer Windows reports as
+# ERR_NO_BUFFER_SPACE. Read-only: it changes no setting.
 param([string]$Out)
-"time,established,time_wait,close_wait,syn_sent,all,r_procs,time_wait_by_listener" | Set-Content $Out
+"time,established,time_wait,close_wait,syn_sent,all,r_procs,nonpaged_mb,time_wait_by_listener" | Set-Content $Out
 while ($true) {
   $c = @(Get-NetTCPConnection -ErrorAction SilentlyContinue)
   $listen = @{}
@@ -20,6 +21,7 @@ while ($true) {
   } | Group-Object | Sort-Object Count -Descending | Select-Object -First 4 | ForEach-Object { "$($_.Name):$($_.Count)" }
   $n = { param($s) @($c | Where-Object State -eq $s).Count }
   $r = @(Get-Process -Name R, Rterm, Rscript -ErrorAction SilentlyContinue).Count
-  "{0},{1},{2},{3},{4},{5},{6},{7}" -f (Get-Date -Format HH:mm:ss), (& $n "Established"), (& $n "TimeWait"), (& $n "CloseWait"), (& $n "SynSent"), $c.Count, $r, ($by -join " ") | Add-Content $Out
+  $npp = [math]::Round((Get-CimInstance Win32_PerfRawData_PerfOS_Memory).PoolNonpagedBytes / 1MB, 1)
+  "{0},{1},{2},{3},{4},{5},{6},{7},{8}" -f (Get-Date -Format HH:mm:ss), (& $n "Established"), (& $n "TimeWait"), (& $n "CloseWait"), (& $n "SynSent"), $c.Count, $r, $npp, ($by -join " ") | Add-Content $Out
   Start-Sleep -Seconds 5
 }

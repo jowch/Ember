@@ -8,9 +8,11 @@
 // spikes/server-worker/browser3.mjs's local-Mac path.
 
 import { chromium, webkit } from "playwright-core";
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { artifactsDir } from "./server.mjs";
 
 function macCacheExecutable() {
   const base = path.join(os.homedir(), "Library", "Caches", "ms-playwright", "chromium-1234");
@@ -47,7 +49,30 @@ export async function newPage(browser) {
   page.on("pageerror", (e) => problems.push("pageerror: " + e.message));
   page.on("dialog", async (d) => { problems.push("dialog: " + d.message()); await d.dismiss(); });
   page.problems = problems;
+  page.on("requestfailed", (r) => { if (/ERR_NO_BUFFER_SPACE/.test(r.failure()?.errorText ?? "")) noBufferSpace(page, r.url()); });
   return page;
+}
+
+/** On Windows, when a load fails with ERR_NO_BUFFER_SPACE (#412), write
+ * what the machine looks like at that moment to test-results/: the time, the
+ * nonpaged pool, the TCP connections by state, the UDP endpoints, the
+ * processes holding the most nonpaged memory, and netstat. The 5 s socket
+ * samples ruled out running out of ports; this looks at the rest. Once per
+ * page. Read-only. */
+function noBufferSpace(page, url) {
+  if (process.platform !== "win32" || page.noBufferSpace) return;
+  page.noBufferSpace = true;
+  const file = path.join(artifactsDir(), `412-${Date.now()}.txt`);
+  const ps = `& {
+    "$(Get-Date -Format HH:mm:ss.fff) ERR_NO_BUFFER_SPACE: ${url.split("?")[0].replace(/[`"$]/g, "")}"
+    "nonpaged pool MB: " + [math]::Round((Get-CimInstance Win32_PerfRawData_PerfOS_Memory).PoolNonpagedBytes / 1MB, 1)
+    Get-NetTCPConnection | Group-Object State | Select-Object Count, Name | Format-Table -AutoSize | Out-String
+    "UDP endpoints: " + @(Get-NetUDPEndpoint).Count
+    Get-Process | Sort-Object NPM -Descending | Select-Object -First 15 Name, Id, Handles, NPM | Format-Table -AutoSize | Out-String
+    netstat -ano -p tcp
+  } *> '${file}'`;
+  execFile("powershell.exe", ["-NoProfile", "-Command", ps], () => {});
+  console.error(`#412: ERR_NO_BUFFER_SPACE on ${url.split("?")[0]}; the machine's state is in ${file}`);
 }
 
 export function assertNoProblems(page) {
