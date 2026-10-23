@@ -302,6 +302,52 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
   assertNoProblems(page);
 });
 
+// An editor scrolled out of view before its first measure: CodeMirror
+// doesn't measure an editor it can't see, but its measure requests still
+// run, so the static code's height was let go for CodeMirror's guess, 393
+// px for W's 250 (the opening test's failure on macOS CI). The editor keeps
+// the static height until it is in view and measured (#416).
+test("opening: an editor scrolled past before its first measure keeps the static code's height until it is measured (#416)", async (t) => {
+  const notebook = path.join(mkdtempSync(path.join(tmpdir(), "ember-e2e-static-")), "scrolled.R");
+  writeFileSync(notebook, [
+    "### An Ember notebook ###", "# /// environment", '# ember_version = "0.0.0.9000"', '# r_version = "4.6.1"', '# snapshot = "2026-01-01"', "# ///", "",
+    ...Array.from({ length: 30 }, (_, i) => [`# %% id=P${i}`, `p${i} <- ${i}`, ""]).flat(),
+    "# %% id=W", `s <- "${"abcdefghij".repeat(80)}"`, "",
+    ...Array.from({ length: 60 }, (_, i) => [`# %% id=Q${i}`, `q${i} <- ${i}`, ""]).flat(),
+  ].join("\n"), "utf8");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-static-scrolled.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const w = cellSelector("W");
+  const staticHeight = await page.evaluate((sel) => document.querySelector(`${sel} .cm-ssr-fake`).getBoundingClientRect().height, w);
+  // Bring W into view, and scroll to the end the moment its editor replaces
+  // the static code, before CodeMirror's first measure.
+  await page.evaluate((sel) => new Promise((resolve) => {
+    const cell = document.querySelector(sel);
+    new MutationObserver((_, observer) => {
+      if (cell.querySelector(".cm-ssr-fake")) return;
+      observer.disconnect();
+      window.scrollTo(0, document.body.scrollHeight);
+      resolve();
+    }).observe(cell, { subtree: true, childList: true });
+    cell.scrollIntoView();
+  }), w);
+  // Every frame for a while out of view: the static height, never the guess.
+  const editorHeight = (sel) => page.evaluate((sel) => new Promise((resolve) =>
+    requestAnimationFrame(() => resolve(document.querySelector(`${sel} pluto-input .cm-editor`).getBoundingClientRect().height))), sel);
+  for (let i = 0; i < 20; i++) near(await editorHeight(w), staticHeight, `W's editor out of view, frame ${i}`);
+
+  // Back in view, it measures its text and lets the height go.
+  await page.locator(w).scrollIntoViewIfNeeded();
+  await page.waitForFunction((sel) => document.querySelector(`${sel} pluto-input .cm-editor`).style.height === "", w, { timeout: 20000 });
+  near(await editorHeight(w), staticHeight, "W's editor once measured");
+
+  assertNoProblems(page);
+});
+
 test('"+": hovering the gap shows the line and circle without moving cells; clicking adds a cell (143)', async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-add.server.log") });

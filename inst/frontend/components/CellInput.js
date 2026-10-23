@@ -654,13 +654,29 @@ export const CellInput = ({
         // last line has been rendered and measured, or its own height reaches
         // it first, so nothing below moves (#379). An edit, a new width or
         // focus (a fold needs it) ends the minimum, since the static height
-        // may no longer hold.
+        // may no longer hold. CodeMirror doesn't measure an editor that is
+        // out of view (scrolled past before its first measure), though its
+        // measure requests still run, so the hold waits until the editor is
+        // in view and measured (#416).
         const static_height = static_height_ref.current
         static_height_ref.current = null
         let height_floor = /** @type {{ height: number, width: number }?} */ (null)
+        let height_held = false
         const end_height_floor = (/** @type {EditorView} */ view) => {
             height_floor = null
             view.dom.style.minHeight = ""
+        }
+        const end_height_hold = (/** @type {EditorView} */ view) => {
+            if (!view.inView) {
+                height_held = true
+                return
+            }
+            height_held = false
+            view.dom.style.height = ""
+            // Every guess left is for a line not yet rendered.
+            if (view.contentHeight >= static_height - 0.5 || view.viewport.to === view.state.doc.length) return
+            height_floor = { height: static_height, width: view.dom.offsetWidth }
+            view.dom.style.minHeight = `${static_height}px`
         }
         const newcm = (newcm_ref.current = new EditorView({
             state: make_state({
@@ -676,11 +692,16 @@ export const CellInput = ({
                     editable_compartment,
                     last_remote_code_set_time_compartment,
                     EditorView.updateListener.of((update) => {
-                        if (height_floor == null) return
                         const { view } = update
+                        if (height_held) {
+                            // In view now: the next measure measures its text.
+                            if (view.inView) view.requestMeasure({ read: () => null, write: () => end_height_hold(view) })
+                            return
+                        }
+                        if (height_floor == null) return
                         if (update.docChanged || view.hasFocus || view.contentHeight >= height_floor.height - 0.5 || view.dom.offsetWidth !== height_floor.width) {
                             end_height_floor(view)
-                        } else if (view.viewport.to === view.state.doc.length) {
+                        } else if (view.viewport.to === view.state.doc.length && view.inView) {
                             // The last line is rendered, and the next measure measures it.
                             view.requestMeasure({ read: () => null, write: () => end_height_floor(view) })
                         }
@@ -845,16 +866,7 @@ export const CellInput = ({
         dom_node_ref.current.prepend(newcm.dom)
         if (static_height != null) {
             newcm.dom.style.height = `${static_height}px`
-            newcm.requestMeasure({
-                read: () => null,
-                write: () => {
-                    newcm.dom.style.height = ""
-                    // Every guess left is for a line not yet rendered.
-                    if (newcm.contentHeight >= static_height - 0.5 || newcm.viewport.to === newcm.state.doc.length) return
-                    height_floor = { height: static_height, width: newcm.dom.offsetWidth }
-                    newcm.dom.style.minHeight = `${static_height}px`
-                },
-            })
+            newcm.requestMeasure({ read: () => null, write: () => end_height_hold(newcm) })
         }
 
         // For use from useDropHandler
