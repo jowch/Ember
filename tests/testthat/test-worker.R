@@ -2502,12 +2502,13 @@ test_that("argument completion inside a call gives utils' own names, methods' to
   arg_items <- function(id, line) {
     h$send(list(type = "complete", id = id, line = line, cursor = nchar(line)))
     m <- h$receive()
-    sort(vapply(Filter(function(it) identical(it$kind, "argument"), m$items), `[[`, character(1), "name"))
+    sort(vapply(Filter(function(it) identical(it$kind, "argument"), m$items), `[[`, character(1), "name"), method = "radix")
   }
   # What plain R's completer gives, read in a cell, where nothing has been
-  # put into the table: the argument names (`...` isn't one).
+  # put into the table: the argument names (`...` isn't one). Both sides
+  # sort by bytes, since the worker and the cell may sort in other locales.
   utils_args <- function(label, n, fun, text) {
-    out <- run_and_wait(h, label, n, sprintf('cat(sort(utils:::functionArgs("%s", "%s")), sep = "\\n")', fun, text))
+    out <- run_and_wait(h, label, n, sprintf('cat(sort(utils:::functionArgs("%s", "%s"), method = "radix"), sep = "\\n")', fun, text))
     printed <- Filter(function(i) identical(i$kind, "stdout"), out$console)
     all <- strsplit(paste(vapply(printed, `[[`, "", "text"), collapse = ""), "\n")[[1]]
     all[grepl("=$", all)]

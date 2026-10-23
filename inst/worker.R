@@ -3908,7 +3908,7 @@ arg_names_anywhere <- function(x, envs) {
       gen <- paste(parts[1L:(i - 1)], collapse = ".")
       cl <- paste(parts[i:np], collapse = ".")
       if (gen == "" || cl == "") next
-      f <- utils::getS3method(gen, cl, TRUE)
+      f <- utils::getS3method(gen, cl, TRUE, envir = envs$utils)
       if (!is.null(f) && !is.null(environment(f))) objs <- c(objs, list(f))
     }
   }
@@ -3928,25 +3928,32 @@ arg_names_anywhere <- function(x, envs) {
 #' Before `.completeToken()`: the names whose arguments it will look up
 #' for the call the cursor is in (the function, and its S3 methods when
 #' `rc.settings(S3 = TRUE)`, as `functionArgs()` picks them), put into
-#' `utils:::.FunArgEnv`, the table `argNames()` reads first. Returns the
-#' names added, for `complete_line()` to take out again, so the table
-#' never answers for a function the notebook has since redefined.
-fill_arg_names <- function() {
+#' `utils:::.FunArgEnv`, the table `argNames()` reads first. Each name is
+#' recorded in `added$names` before it goes in, so `complete_line()` takes
+#' out every one, even after an error or an interrupt part-way, and the
+#' table never answers for a function the notebook has since redefined.
+#' `exists()`, `methods()` and `getS3method()` look from utils' namespace,
+#' where `functionArgs()` and `getAnywhere()` run, not from the worker's
+#' own environment.
+fill_arg_names <- function(added) {
   env <- utils:::.CompletionEnv
-  if (utils:::isInsideQuotes() || !isTRUE(env$settings[["args"]]) || !isTRUE(env$settings[["argdb"]])) return(character())
+  if (utils:::isInsideQuotes() || !isTRUE(env$settings[["args"]]) || !isTRUE(env$settings[["argdb"]])) return(invisible())
   fun <- utils:::inFunction(env[["linebuffer"]], env[["start"]])
-  if (length(fun) < 1L || any(fun == "")) return(character())
-  # Looked up from utils' namespace, as `functionArgs()` does.
-  if (isTRUE(env$settings[["S3"]]) && exists(fun, envir = asNamespace("utils"), mode = "function")) {
-    fun <- c(fun, tryCatch(utils::methods(fun), warning = function(w) NULL, error = function(e) NULL))
+  if (length(fun) < 1L || any(fun == "")) return(invisible())
+  utils_ns <- asNamespace("utils")
+  if (isTRUE(env$settings[["S3"]]) && exists(fun, envir = utils_ns, mode = "function")) {
+    fun <- c(fun, tryCatch(eval(call("methods", fun), utils_ns), warning = function(w) NULL, error = function(e) NULL))
   }
   db <- utils:::.FunArgEnv
   todo <- setdiff(unique(fun), ls(db, all.names = TRUE))
-  if (length(todo) == 0) return(character())
+  if (length(todo) == 0) return(invisible())
   envs <- list(search = lapply(seq_along(search()), as.environment),
-               namespaces = lapply(loadedNamespaces(), asNamespace))
-  for (name in todo) assign(name, arg_names_anywhere(name, envs), envir = db)
-  todo
+               namespaces = lapply(loadedNamespaces(), asNamespace), utils = utils_ns)
+  for (name in todo) {
+    added$names <- c(added$names, name)
+    assign(name, arg_names_anywhere(name, envs), envir = db)
+  }
+  invisible()
 }
 
 #' utils' own line completion, as IRkernel does: `.assignLinebuffer()` and
@@ -3970,8 +3977,10 @@ complete_line <- function(line, cursor) {
     utils:::.assignLinebuffer(line)
     utils:::.assignEnd(cursor)
     utils:::.guessTokenFromLine()
-    filled <- tryCatch(fill_arg_names(), error = function(e) character())
-    on.exit(rm(list = filled, envir = utils:::.FunArgEnv), add = TRUE)
+    added <- new.env(parent = emptyenv())
+    added$names <- character()
+    on.exit(rm(list = intersect(added$names, ls(utils:::.FunArgEnv, all.names = TRUE)), envir = utils:::.FunArgEnv), add = TRUE)
+    tryCatch(fill_arg_names(added), error = function(e) NULL)
     utils:::.completeToken()
     comps <- utils:::.retrieveCompletions()
     token <- tryCatch(utils:::.CompletionEnv$token, error = function(e) NULL) %||% ""
