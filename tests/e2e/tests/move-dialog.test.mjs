@@ -8,15 +8,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
+import { startServer, tempNotebook, artifactsDir, tempDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, setCellCode, cellSelector } from "../browser.mjs";
 
 test("header: click the file name, rename and move to a different folder, Save: title changes, R keeps running, getwd() matches the new folder (98)", async (t) => {
   const notebook = tempNotebook();
   const dir = path.dirname(notebook);
-  const newDir = mkdtempSync(path.join(tmpdir(), "ember-e2e-move-dest-"));
+  const newDir = tempDir("ember-e2e-move-dest-");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "move-dialog.server.log") });
   const browser = await launchBrowser();
   t.after(async () => { await browser.close(); server.stop(); });
