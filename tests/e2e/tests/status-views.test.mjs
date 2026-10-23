@@ -26,8 +26,7 @@ test("header: worker memory shows after the first run, nothing in safe preview (
 
   await runCell(page, "A");
   await page.waitForFunction(
-    () => typeof window.editor_state?.notebook?.ember?.worker_memory === "number",
-    null, { timeout: 30000 });
+    () => typeof window.editor_state?.notebook?.ember?.worker_memory === "number");
 
   assertNoProblems(page);
 });
@@ -45,7 +44,7 @@ test('"N cells not run" bar counts, grows after a restart, and "Run all" clears 
   await runCell(page, "B"); // also runs A, its ancestor
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("55"),
-    cellSelector("B") + " pluto-output", { timeout: 30000 });
+    cellSelector("B") + " pluto-output");
 
   // Restart from the Status tab's Restart R button: every cell, including
   // A and B, is not run again.
@@ -53,13 +52,11 @@ test('"N cells not run" bar counts, grows after a restart, and "Run all" clears 
   await page.waitForSelector("#ember-status-restart");
   await page.locator("#ember-status-restart").click();
   await page.waitForFunction(
-    () => document.querySelector("header#pluto-nav button.ember-btn")?.innerText.includes("4 not run"),
-    null, { timeout: 30000 });
+    () => document.querySelector("header#pluto-nav button.ember-btn")?.innerText.includes("4 not run"));
 
   await page.locator("header#pluto-nav button.ember-btn").click();
   await page.waitForFunction(
-    () => document.querySelector("header#pluto-nav button.ember-btn") == null,
-    null, { timeout: 30000 });
+    () => document.querySelector("header#pluto-nav button.ember-btn") == null);
 
   assertNoProblems(page);
 });
@@ -77,20 +74,20 @@ test('lazy.R: editing A shows B as "stale", running B clears it (73)', async (t)
   await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("2"),
-    cellSelector("B") + " pluto-output", { timeout: 30000 });
+    cellSelector("B") + " pluto-output");
 
   await setCellCode(page, "A", "x <- 2");
   await runCell(page, "A");
 
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText === "Stale · x changed",
-    cellSelector("B") + " > ember-chip", { timeout: 30000 });
+    cellSelector("B") + " > ember-chip");
   assert.equal(await page.locator(`${cellSelector("B")} ember-cell-label`).count(), 0);
 
   await runCell(page, "B");
   await page.waitForFunction(
     (sel) => document.querySelector(sel) == null,
-    cellSelector("B") + " > ember-chip", { timeout: 30000 });
+    cellSelector("B") + " > ember-chip");
 
   assertNoProblems(page);
 });
@@ -113,14 +110,13 @@ test("Packages tab lists a missing package and the preview banner names the inst
   // "Run this notebook" starts execution immediately, and the banner (and
   // its sentence) is gone once process_waiting_for_permission is false.
   await page.waitForFunction(
-    () => /installs \d+ packages?/.test(document.querySelector("#ember-safe-preview")?.innerText ?? ""),
-    null, { timeout: 10000 });
+    () => /installs \d+ packages?/.test(document.querySelector("#ember-safe-preview")?.innerText ?? ""));
   const bannerText = await page.locator("#ember-safe-preview").innerText();
   assert.match(bannerText, /installs \d+ packages?/);
 
   // The "missing" status, in safe preview, before anything installs.
   await page.getByRole("button", { name: "Packages", exact: true }).click();
-  await page.waitForSelector("#ember-packages-tab .ember-packages-table", { timeout: 10000 });
+  await page.waitForSelector("#ember-packages-tab .ember-packages-table");
   const rows = await page.locator("#ember-packages-tab .ember-package-row").count();
   assert.ok(rows > 0, "expected at least one package row");
   const statuses = await page.locator("#ember-packages-tab .ember-package-row td:last-child").allInnerTexts();

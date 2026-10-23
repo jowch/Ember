@@ -24,7 +24,7 @@ test("runCell on a cell below an 800px window actually runs it", async (t) => {
 
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("30"),
-    cellSelector("C30") + " pluto-output", { timeout: 20000 });
+    cellSelector("C30") + " pluto-output");
 
   const top = await page.evaluate(
     (sel) => document.querySelector(sel)?.getBoundingClientRect().top, cellSelector("C30"));
@@ -34,7 +34,7 @@ test("runCell on a cell below an 800px window actually runs it", async (t) => {
   await runCell(page, "C30");
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("999"),
-    cellSelector("C30") + " pluto-output", { timeout: 20000 });
+    cellSelector("C30") + " pluto-output");
 
   assertNoProblems(page);
 });

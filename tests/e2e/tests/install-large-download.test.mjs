@@ -41,14 +41,14 @@ test("large-download.R: the install asks first, and Install installs it", async 
 
   // The Packages tab opens by itself on the question.
   const card = page.locator(".ember-install-ask-card");
-  await card.waitFor({ timeout: 60000 });
+  await card.waitFor();
   assert.match(await card.innerText(), /This install downloads 2 kB/);
   assert.match(await card.innerText(), /GO\.db \(2 kB\)/);
   assert.equal(await page.locator(`${cellSelector("S")}.errored`).count(), 0);
 
   await card.getByRole("button", { name: "Install" }).click();
-  await card.waitFor({ state: "detached", timeout: 60000 });
-  await page.locator(".ember-packages-library-ready").waitFor({ timeout: 60000 });
+  await card.waitFor({ state: "detached" });
+  await page.locator(".ember-packages-library-ready").waitFor();
 
   assertNoProblems(page);
 });

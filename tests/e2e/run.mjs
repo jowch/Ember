@@ -12,7 +12,7 @@
 // ember you installed there.
 
 import { spawn } from "node:child_process";
-import { readdirSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureLib } from "./install.mjs";
@@ -30,7 +30,16 @@ const tests = files.length ? files
 let child = null;
 let stopped = false;
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => { stopped = true; child?.kill(signal); });
+// What a test file was waiting for when its process ended with a wait
+// still pending (waits.mjs): the runner's stop for a file that ran too
+// long, or a crash. Lists from an earlier run go first.
+const RESULTS = path.join(HERE, "test-results");
+const waitLists = () => (existsSync(RESULTS) ? readdirSync(RESULTS).filter((f) => /^waiting-.*\.txt$/.test(f)) : []);
+for (const f of waitLists()) rmSync(path.join(RESULTS, f), { force: true });
 const finish = (code, signal) => {
+  for (const f of waitLists()) {
+    console.log(`\n== test-results/${f}\n${readFileSync(path.join(RESULTS, f), "utf8")}`);
+  }
   if (ownLib) rmSync(lib, { recursive: true, force: true });
   process.exit(code ?? (signal ? 1 : 0));
 };

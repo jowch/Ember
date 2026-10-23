@@ -37,7 +37,7 @@ test("packages tab: add a GitHub source to a not-found package, fix a typo, remo
 
   const row = page.locator("tr.ember-package-row", { hasText: "toyC" });
   const detail = page.locator("tr.ember-package-row:has-text('toyC') + tr.ember-package-detail");
-  await page.locator("tr.ember-package-row.ember-package-not_found", { hasText: "toyC" }).waitFor({ timeout: 30000 });
+  await page.locator("tr.ember-package-row.ember-package-not_found", { hasText: "toyC" }).waitFor();
 
   // A refusal stays in the form, under the field.
   await detail.getByRole("button", { name: "Add a source" }).click();
@@ -49,14 +49,14 @@ test("packages tab: add a GitHub source to a not-found package, fix a typo, remo
   }));
   await input.fill("https://github.com/lab/toyC/blob/main/README.md");
   await detail.getByRole("button", { name: "Add", exact: true }).click();
-  await detail.getByRole("alert").waitFor({ timeout: 10000 });
+  await detail.getByRole("alert").waitFor();
   assert.match(await detail.getByRole("alert").innerText(), /github:user\/repo/);
 
   // A repository that isn't there: the row stays, saying why, with the
   // source to change.
   await input.fill("lab/nope");
   await detail.getByRole("button", { name: "Add", exact: true }).click();
-  await page.locator("tr.ember-package-row.ember-package-source_failed", { hasText: "toyC" }).waitFor({ timeout: 30000 });
+  await page.locator("tr.ember-package-row.ember-package-source_failed", { hasText: "toyC" }).waitFor();
   const reason = await detail.locator(".ember-package-source-failed").innerText();
   assert.match(reason, /^couldn't look up github:lab\/nope for toyC: could not find github:lab\/nope@HEAD on GitHub/);
   assert.doesNotMatch(reason, /Execution halted/);
@@ -67,7 +67,7 @@ test("packages tab: add a GitHub source to a not-found package, fix a typo, remo
   assert.equal(await input.inputValue(), "lab/nope");
   await input.fill("https://github.com/lab/toyC");
   await input.press("Enter");
-  await row.locator(".ember-package-source").waitFor({ timeout: 30000 });
+  await row.locator(".ember-package-source").waitFor();
   assert.equal(await row.locator(".ember-package-source").innerText(), "GitHub lab/toyC@8e4b7d2");
   assert.match(await row.locator("td").nth(1).innerText(), /^0\.4\.0/);
   assert.equal(await detail.locator(".ember-package-source-failed").count(), 0);
@@ -76,7 +76,7 @@ test("packages tab: add a GitHub source to a not-found package, fix a typo, remo
   assert.match(text, /# toyC 0\.4\.0 github:lab\/toyC@8e4b7d2c1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c/);
 
   await detail.getByRole("button", { name: "Remove source" }).click();
-  await page.locator("tr.ember-package-row.ember-package-not_found", { hasText: "toyC" }).waitFor({ timeout: 30000 });
+  await page.locator("tr.ember-package-row.ember-package-not_found", { hasText: "toyC" }).waitFor();
   assert.doesNotMatch(readFileSync(notebook, "utf8"), /\[sources\]/);
 
   assertNoProblems(page);

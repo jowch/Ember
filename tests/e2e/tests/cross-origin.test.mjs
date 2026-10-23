@@ -68,7 +68,7 @@ ws.onclose = (e) => window.result.events.push("close:" + e.code);
  * its socket: one of the two decides the test. A reply fails it below; a
  * close ends the page's tries. */
 const decided = (page) => page.waitForFunction(
-  () => window.result?.events.some((e) => e.startsWith("close:") || e.startsWith("message:")), null, { timeout: 0 });
+  () => window.result?.events.some((e) => e.startsWith("close:") || e.startsWith("message:")));
 
 function startAttackerServer(html) {
   return new Promise((resolve) => {

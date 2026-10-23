@@ -27,7 +27,7 @@ test("failing.R: a build with no binary for this R says why and offers Update", 
   await runCell(page, "S");
 
   await page.getByRole("button", { name: "Packages", exact: true }).click();
-  await page.waitForSelector(".ember-install-failure-card", { timeout: 30000 });
+  await page.waitForSelector(".ember-install-failure-card");
 
   const sentence = await page.locator(".ember-install-failure-sentence").innerText();
   assert.match(sentence, /no binary of version 0\.1\.0 for R \S+, so it was built on this computer/);
@@ -59,7 +59,7 @@ test("failing.R: packages with no binary for this R are named under Installing w
 
   await page.getByRole("button", { name: "Packages", exact: true }).click();
   const notice = page.locator(".ember-packages-library-installing .ember-packages-no-binary");
-  await notice.waitFor({ timeout: 30000 });
+  await notice.waitFor();
 
   const text = await notice.innerText();
   assert.match(text, /^2 packages have no binary for R \S+ at this snapshot date, so they're being built on this computer: brokenpkg 0\.1\.0 and rlang 1\.1\.3\./);

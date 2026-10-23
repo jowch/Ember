@@ -34,14 +34,14 @@ test('safe preview: "Run this notebook" allows execution and runs every cell (12
   // execution is allowed and "run every cell" actually reached them.
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("55"),
-    cellSelector("B") + " pluto-output", { timeout: 30000 });
-  await page.waitForSelector(`${cellSelector("ERR")} jlerror`, { timeout: 30000 });
+    cellSelector("B") + " pluto-output");
+  await page.waitForSelector(`${cellSelector("ERR")} jlerror`);
 
   assert.equal(await banner.count(), 0, "the banner is gone once execution is allowed");
   const body_after = await page.locator("body").innerText();
   assert.doesNotMatch(body_after, /not executed/);
 
   // The run it started is announced once it ends; ERR is the cell that fails.
-  await page.waitForFunction(() => document.querySelector("#ember-run-status").textContent === "A cell: error", null, { timeout: 30000 });
+  await page.waitForFunction(() => document.querySelector("#ember-run-status").textContent === "A cell: error");
   assertNoProblems(page);
 });

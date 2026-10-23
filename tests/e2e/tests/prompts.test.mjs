@@ -23,14 +23,14 @@ test("readline(): the answer typed under the cell goes to R, and the console sho
   const page = await setup(t, "prompts-readline");
   await runCell(page, "ASK");
   const input = page.locator(`${cellSelector("ASK")} ember-prompt input`);
-  await input.waitFor({ timeout: 30000 });
+  await input.waitFor();
   assert.equal(await page.locator(`${cellSelector("ASK")} ember-prompt .ember-prompt-text`).textContent(), "Name? ");
   // Run from its code, so the answer can be typed straight away.
   await page.waitForFunction((sel) => document.activeElement === document.querySelector(sel),
-    `${cellSelector("ASK")} ember-prompt input`, { timeout: 10000 });
+    `${cellSelector("ASK")} ember-prompt input`);
   await page.keyboard.type("Ada");
   await page.keyboard.press("Enter");
-  await page.waitForSelector(`${cellSelector("ASK")}:not(.running)`, { timeout: 30000 });
+  await page.waitForSelector(`${cellSelector("ASK")}:not(.running)`);
   assert.equal(await page.locator(`${cellSelector("ASK")} ember-prompt`).count(), 0);
   const logs = await page.locator(`${cellSelector("ASK")} pluto-logs`).textContent();
   assert.match(logs, /Name\? Ada/);
@@ -42,10 +42,10 @@ test("menu(): a choice's button answers with its number (#186)", async (t) => {
   const page = await setup(t, "prompts-menu");
   await runCell(page, "MENU");
   const buttons = page.locator(`${cellSelector("MENU")} .ember-prompt-choices button`);
-  await buttons.first().waitFor({ timeout: 30000 });
+  await buttons.first().waitFor();
   assert.deepEqual(await buttons.allTextContents(), ["red", "blue"]);
   await buttons.nth(1).click();
-  await page.waitForSelector(`${cellSelector("MENU")}:not(.running)`, { timeout: 30000 });
+  await page.waitForSelector(`${cellSelector("MENU")}:not(.running)`);
   assert.match(await page.locator(`${cellSelector("MENU")} pluto-output`).textContent(), /\[1\] 2/);
   await assertNoProblems(page);
 });

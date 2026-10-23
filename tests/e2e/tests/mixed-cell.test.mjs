@@ -26,7 +26,7 @@ test("mixed cell: shows the mixed error and a Split button; clicking it splits t
   await runCell(page, "B");
 
   const box = `${cellSelector("B")} jlerror.ember`;
-  await page.waitForSelector(box, { timeout: 15000 });
+  await page.waitForSelector(box);
   assert.equal(await page.locator(`${box} > header > p:first-child`).innerText(), "Text and code in one cell");
   assert.equal(await page.locator(`${box} > header > p.ember-error-note`).innerText(),
     "A cell is either text (only #' lines) or code. Nothing in it has run.");
@@ -35,7 +35,7 @@ test("mixed cell: shows the mixed error and a Split button; clicking it splits t
 
   // The Split button is inside the error box (board Insert5).
   const splitButton = page.locator(`${box} > button.ember-split`);
-  await splitButton.waitFor({ timeout: 15000 });
+  await splitButton.waitFor();
   assert.equal(await splitButton.innerText(), "Split into 2 cells");
   assert.equal(await page.locator(`${cellSelector("B")} > button.ember-split`).count(), 0);
   assert.equal(await splitButton.evaluate((el) => el.getBoundingClientRect().height), 26);
@@ -45,11 +45,11 @@ test("mixed cell: shows the mixed error and a Split button; clicking it splits t
 
   await page.waitForFunction(
     (n) => document.querySelectorAll("pluto-cell").length === n,
-    countBefore + 1, { timeout: 15000 });
+    countBefore + 1);
 
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("A note."),
-    cellSelector("B") + " pluto-output", { timeout: 15000 });
+    cellSelector("B") + " pluto-output");
   const bText = await page.locator(`${cellSelector("B")} pluto-output`).innerText();
   assert.match(bText, /A note\./);
   assert.equal(await page.locator(cellSelector("B")).evaluate((el) => el.classList.contains("code_folded")), false, "the text half is not folded for you");
@@ -63,7 +63,7 @@ test("mixed cell: shows the mixed error and a Split button; clicking it splits t
   const newSel = `pluto-cell[id="${newCellId}"]`;
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.querySelector(".cm-content")?.innerText.includes("sum(x)"),
-    newSel, { timeout: 10000 });
+    newSel);
   assert.equal(await page.locator(`${newSel} pluto-output`).innerText(), "");
 
   assertNoProblems(page);

@@ -47,7 +47,7 @@ test("reverse proxy: a notebook opens and a cell runs through a path prefix on a
   await runCell(page, "B");
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("55"),
-    cellSelector("B") + " pluto-output", { timeout: 20000 });
+    cellSelector("B") + " pluto-output");
 
   assertNoProblems(page);
 });

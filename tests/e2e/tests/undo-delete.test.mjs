@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, roundTrip } from "../browser.mjs";
+import { waitingFor } from "../waits.mjs";
 
 const MOD = process.platform === "darwin" ? "Meta" : "Control";
 
@@ -24,15 +25,14 @@ const setup = async (t, name) => {
 
 const order = (page) => page.evaluate(() => window.editor_state.notebook.cell_order);
 const waitOrder = (page, expected) =>
-  page.waitForFunction((e) => JSON.stringify(window.editor_state.notebook.cell_order) === JSON.stringify(e), expected, { timeout: 10000 })
-    .catch(async () => assert.deepEqual(await order(page), expected));
+  waitingFor(`the order becomes ${expected.join(", ")}`,
+    page.waitForFunction((e) => JSON.stringify(window.editor_state.notebook.cell_order) === JSON.stringify(e), expected), () => order(page));
 // The editor's text, through the getValue CellInput.js puts on its DOM.
 const editorText = (page, id) =>
   page.evaluate((sel) => document.querySelector(sel)?.CodeMirror?.getValue() ?? null, `${cellSelector(id)} .cm-editor:not(.cm-ssr-fake)`);
 const waitText = (page, id, text) =>
-  page.waitForFunction(([sel, text]) => document.querySelector(sel)?.CodeMirror?.getValue() === text,
-    [`${cellSelector(id)} .cm-editor:not(.cm-ssr-fake)`, text], { timeout: 10000 })
-    .catch(async () => assert.equal(await editorText(page, id), text));
+  waitingFor(`${id}'s text becomes ${JSON.stringify(text)}`, page.waitForFunction(([sel, text]) => document.querySelector(sel)?.CodeMirror?.getValue() === text,
+    [`${cellSelector(id)} .cm-editor:not(.cm-ssr-fake)`, text]), () => editorText(page, id));
 const focusedCell = () => document.activeElement?.closest("pluto-cell")?.id ?? null;
 const inEditor = () => document.activeElement?.closest(".cm-editor") != null;
 
@@ -47,11 +47,11 @@ test("Ctrl+Z in an editor steps back through typing and the cell deleted from it
   await page.keyboard.press(`${MOD}+A`);
   await page.keyboard.press("Backspace");
   await page.keyboard.press("Backspace");
-  await page.locator(cellSelector("B")).waitFor({ state: "detached", timeout: 10000 });
+  await page.locator(cellSelector("B")).waitFor({ state: "detached" });
   // The cursor moves to A once its editor takes the forced focus, which
   // can land after B is gone.
-  await page.waitForFunction(() => document.activeElement?.closest("pluto-cell")?.id === "A", null, { timeout: 5000 })
-    .catch(async () => assert.equal(await page.evaluate(focusedCell), "A"));
+  await waitingFor("focus moves to A", page.waitForFunction(() => document.activeElement?.closest("pluto-cell")?.id === "A"),
+    () => page.evaluate(focusedCell));
 
   // Type in A after the delete.
   await page.keyboard.type(" # more");
@@ -66,7 +66,7 @@ test("Ctrl+Z in an editor steps back through typing and the cell deleted from it
   // the cursor in it.
   await page.keyboard.press(`${MOD}+Z`);
   await waitOrder(page, original);
-  await page.waitForFunction(() => document.activeElement?.closest("pluto-cell")?.id === "B", null, { timeout: 10000 });
+  await page.waitForFunction(() => document.activeElement?.closest("pluto-cell")?.id === "B");
   assert.ok(await page.evaluate(inEditor), "the cursor is in B's editor");
   await waitText(page, "B", "");
   // Its run code is unchanged: emptying it was never run.
@@ -85,8 +85,8 @@ test("Ctrl+Z in an editor steps back through typing and the cell deleted from it
   await page.keyboard.press(`${MOD}+Shift+Z`);
   await waitText(page, "B", "");
   await page.keyboard.press(`${MOD}+Shift+Z`);
-  await page.locator(cellSelector("B")).waitFor({ state: "detached", timeout: 10000 });
-  await page.waitForFunction(() => document.activeElement?.closest("pluto-cell")?.id === "A", null, { timeout: 5000 });
+  await page.locator(cellSelector("B")).waitFor({ state: "detached" });
+  await page.waitForFunction(() => document.activeElement?.closest("pluto-cell")?.id === "A");
   await page.keyboard.press(`${MOD}+Z`);
   await waitOrder(page, original);
 
@@ -101,21 +101,21 @@ test("Backspace pressed while a delete is in flight isn't dropped (#353); Ctrl+Z
   await page.locator(cellSelector("A")).scrollIntoViewIfNeeded();
   await page.locator(`${cellSelector("A")} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.keyboard.press("Escape");
-  await page.waitForFunction(() => window.editor_state.selected_cells.join() === "A", null, { timeout: 5000 });
+  await page.waitForFunction(() => window.editor_state.selected_cells.join() === "A");
   await page.keyboard.press("Backspace");
   await page.keyboard.press("Backspace");
   await page.keyboard.press("Backspace");
   const remaining = original.filter((id) => !["A", "B", "ERR"].includes(id));
   await waitOrder(page, remaining);
   assert.deepEqual(await page.evaluate(() => window.editor_state.selected_cells), ["LOOP"]);
-  await page.locator("#undo_delete:not(.hidden)").waitFor({ timeout: 5000 });
+  await page.locator("#undo_delete:not(.hidden)").waitFor();
 
   // Ctrl+Z on the selected cell: the last delete first, then the others.
   await page.keyboard.press(`${MOD}+Z`);
   await waitOrder(page, original.filter((id) => !["A", "B"].includes(id)));
-  await page.locator("#undo_delete.hidden").waitFor({ state: "attached", timeout: 5000 });
+  await page.locator("#undo_delete.hidden").waitFor({ state: "attached" });
   // It comes back selected, like the bottom bar's Undo.
-  await page.waitForFunction(() => window.editor_state.selected_cells.join() === "ERR", null, { timeout: 5000 });
+  await page.waitForFunction(() => window.editor_state.selected_cells.join() === "ERR");
   await page.keyboard.press(`${MOD}+Z`);
   await page.keyboard.press(`${MOD}+Z`);
   await waitOrder(page, original);
@@ -159,7 +159,7 @@ test("deletes undone out of order go back next to their old neighbours (#349)", 
     await page.keyboard.press(`${MOD}+A`);
     await page.keyboard.press("Backspace");
     await page.keyboard.press("Delete");
-    await page.locator(cellSelector(id)).waitFor({ state: "detached", timeout: 10000 });
+    await page.locator(cellSelector(id)).waitFor({ state: "detached" });
   };
   const undoIn = async (id) => {
     await page.locator(`${cellSelector(id)} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
