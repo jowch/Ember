@@ -264,9 +264,17 @@ export const Cell = ({
     )
 
     const cell_api_ready = useCellApi(node_ref, published_object_keys, pluto_actions)
-    const on_delete = useCallback(() => {
-        pluto_actions.confirm_delete_multiple(pluto_actions.get_selected_cells(cell_id, selected))
-    }, [pluto_actions, selected, cell_id])
+    // From the editor: Backspace (-1) or Delete (+1) in an empty cell, which
+    // moves the cursor to the cell before or after itself. That cell's
+    // Ctrl+Z then brings this one back (#349).
+    const on_delete = useCallback(
+        (/** @type {unknown} */ direction) => {
+            pluto_actions.confirm_delete_multiple(pluto_actions.get_selected_cells(cell_id, selected), {
+                host_direction: direction === -1 ? -1 : 1,
+            })
+        },
+        [pluto_actions, selected, cell_id]
+    )
     // The ⋯ menu's Delete: the menu item that had focus goes with the cell, so a neighbour is selected, as Backspace on a selected cell does (#317).
     const on_menu_delete = useCallback(() => {
         pluto_actions.delete_and_select_neighbor(pluto_actions.get_selected_cells(cell_id, selected))
@@ -547,6 +555,7 @@ export const Cell = ({
     const settings_found = ember?.settings_found ?? []
     const load_notes = ember?.load_notes ?? []
     const changed_in_place = ember?.changed_in_place ?? []
+    const untracked_reads = ember?.untracked_reads ?? []
     const from_lock = ember?.from_lock
 
     const cell_state =
@@ -644,6 +653,9 @@ export const Cell = ({
                 : null}
             ${changed_in_place.length > 0
                 ? html`<ember-settings-note class="in-place-note" role="status">${t("t_changed_in_place_note", { names: join_names(changed_in_place) })}</ember-settings-note>`
+                : null}
+            ${untracked_reads.length > 0
+                ? html`<ember-settings-note class="untracked-note" role="status">${t("t_untracked_read_note", { names: join_names(untracked_reads.map((name) => `${name}()`)) })}</ember-settings-note>`
                 : null}
             ${from_lock != null
                 ? html`<ember-settings-note class="from-lock-note" role="status">${from_lock.length > 0 ? t("t_from_lock_note", { names: join_names(from_lock) }) : t("t_from_lock_note_unnamed")}</ember-settings-note>`

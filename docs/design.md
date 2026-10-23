@@ -368,9 +368,12 @@ with `identical()`, which returns at once for an object that wasn't replaced.
 Reads can't be watched this way. A literal name is read statically:
 `get("x")`, `exists("x")` and `mget(c("a", "b"))` reference those globals,
 and data.table's `dt[, ..cols]` references `cols`. A computed name
-(`get(paste0("fit_", i))`), a call with `envir` or `pos`, and
-`eval(parse())` run normally, and the engine shows a note that it can't
-track them.
+(`get(paste0("fit_", i))`), `get` passed as a function
+(`lapply(site_names, get)`), a call with `envir` or `pos`, and
+`eval(parse())` run normally, and the cell shows a note that Ember can't
+tell which variables it reads through them, so it doesn't rerun when they
+change (#357). The note comes from reading the code, so it shows before
+the cell runs, and the snapshot carries it as `untracked_reads`.
 
 **Code in other files.** `source("helpers.R")` with a literal path is read
 like part of the cell:
@@ -1095,7 +1098,8 @@ common Linux systems, including Bioconductor software packages since
 code, R versions outside the binary window (current minor and four before
 it), snapshot dates from before the running R came out (no binaries were
 built for it then), and packages whose binary build failed. Old versions
-often don't build on a newer R; when such a build fails, the engine says
+often don't build on a newer R. While such packages build, the engine
+says which ones have no binary for this R; when a build fails, it says
 the package had no binary for this R and offers a newer date or an older
 R (#19). Before one, the engine checks
 for the tools (macOS: `xcode-select -p`; Windows: Rtools; Linux: the C

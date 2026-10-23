@@ -1097,3 +1097,36 @@ test_that("Run all at 2000 cells reads no cell's spans again: they depend only o
   expect_equal(n, 1L)
   expect_equal(p2$js$cell_inputs$c7$ember_spans$refs, list(list("x6", 6L, 8L)))
 })
+
+# ---- 369: cells_maybe_changed() never misses a changed key -------------------
+
+test_that("cells_maybe_changed() flags every cell whose key changed, through a rerun with console output (#369)", {
+  r <- perf_chain_rerun(6)
+  states <- list(r$state)
+  for (k in 1:4) {
+    done <- perf_done(r)
+    s <- step(r$state, wk_console(1, last_token(r), list(kind = "stdout", text = "x\n"), at(r$state$clock + 1)))$state
+    states[[length(states) + 1]] <- s
+    r <- step(s, done)
+    states[[length(states) + 1]] <- r$state
+  }
+  preview <- r$state; preview$allowed <- FALSE
+  states[[length(states) + 1]] <- preview
+  for (k in seq_len(length(states) - 1)) {
+    old <- states[[k]]; new <- states[[k + 1]]
+    octx <- view_context(old); nctx <- view_context(new)
+    at <- match(nctx$ids, octx$ids)
+    maybe <- cells_maybe_changed(old, octx, new, nctx, at)
+    changed <- !vapply(seq_along(nctx$ids), function(i) {
+      key_unchanged(new, nctx, i, cell_key(old, octx, at[i]))
+    }, logical(1))
+    expect_true(any(changed))
+    expect_true(all(maybe[changed]), info = paste("step", k))
+  }
+  # And the projection built through it matches one built from scratch.
+  p <- NULL
+  for (s in states) {
+    p <- pluto_state(s, p)
+    expect_identical(p$js, pluto_state(s, NULL)$js)
+  }
+})

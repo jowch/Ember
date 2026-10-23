@@ -21,9 +21,17 @@ walk_expr <- function(e, scope, acc, pid = NA_integer_) {
   if (is.symbol(e)) {
     name <- as.character(e)
     if (nzchar(name)) record_read(acc, scope, name, pos = pd_position(acc, pid))
+    # `lapply(site_names, get)`: get() passed as a function reads whatever
+    # names it is handed, which static reading can't follow (#357).
+    passed <- get_family_value(e, scope)
+    if (!is.null(passed)) record_note(acc, "untracked_read", passed, pd_position(acc, pid))
     return(invisible())
   }
   if (!is.call(e)) return(invisible())
+  # `lapply(site_names, base::get)`, the same as the bare symbol above. A
+  # call's head never comes here: `base::get(x)` is walk_qualified_call()'s.
+  passed <- get_family_value(e, scope)
+  if (!is.null(passed)) record_note(acc, "untracked_read", passed, pd_position(acc, pid))
 
   head <- e[[1]]
   if (is.call(head)) {
@@ -684,6 +692,8 @@ walk_call_args <- function(e, scope, acc, arg_pids = NULL) {
   if (is.null(arg_pids)) arg_pids <- rep(list(NA_integer_), length(args))
   nms <- names2(args)
   is_bracket_call <- identical(bare_fn, "[")
+  # `args(get)`, `?get`: the function is looked at, not called (#357).
+  looks_at_function <- !is.null(bare_fn) && bare_fn %in% function_object_heads
 
   has_data <- FALSE
   data_expr <- NULL
@@ -711,6 +721,8 @@ walk_call_args <- function(e, scope, acc, arg_pids = NULL) {
     if (is_bracket_call && is.symbol(a) && is_dotdot_prefixed_name(as.character(a))) {
       stripped <- substr(as.character(a), 3, nchar(as.character(a)))
       record_read(acc, scope, stripped, pos = pd_position(acc, arg_pids[[i]]))
+    } else if (looks_at_function && !is.null(get_family_value(a, scope))) {
+      if (is.symbol(a)) record_read(acc, scope, as.character(a), pos = pd_position(acc, arg_pids[[i]]))
     } else if (is.call(a) && is.symbol(a[[1]]) && identical(as.character(a[[1]]), "~")) {
       site <- formula_site(acc$index, acc$line, fn_display, data_text, character())
       walk_formula(a, scope, acc, has_data, site, arg_pids[[i]])

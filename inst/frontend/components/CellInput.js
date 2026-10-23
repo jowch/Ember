@@ -5,11 +5,22 @@ import { utf8index_to_ut16index } from "../common/UnicodeTools.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { get_selected_doc_from_state } from "./CellInput/LiveDocsFromCursor.js"
 import { GlobalDefinitionsFacet, DefinitionCellsFacet, EmberSpansFacet, current_spans, go_to_definition_plugin } from "./CellInput/go_to_definition_plugin.js"
+import {
+    cell_undo,
+    is_returning,
+    take_returning,
+    register_view,
+    unregister_view,
+    mark_returned,
+    undo_or_restore_unhosted,
+    redo_or_redelete_returned,
+} from "./CellInput/cell_undo.js"
 // import { debug_syntax_plugin } from "./CellInput/debug_syntax_plugin.js"
 
 import {
     EditorState,
     EditorSelection,
+    StateEffect,
     Compartment,
     EditorView,
     placeholder,
@@ -306,6 +317,10 @@ export const CellInput = ({
     const newcm_ref = useRef(/** @type {EditorView?} */ (null))
     const dom_node_ref = useRef(/** @type {HTMLElement?} */ (null))
     const remote_code_ref = useRef(/** @type {string?} */ (null))
+    // Set when the editor was made from the state it had before its cell was
+    // deleted (#349): the run code it came back with, which the remote_code
+    // effect mustn't paste over the editor's own text.
+    const returned_with_code_ref = useRef(/** @type {string?} */ (null))
     // The run code the editor's text was last in step with: what it was
     // created from, then each remote_code applied. Text that differs from it
     // is typing that hasn't been run yet. Unlike remote_code_ref, this is
@@ -409,7 +424,7 @@ export const CellInput = ({
     const [show_static_fake_state, set_show_static_fake] = useState(!skip_static_fake)
 
     const show_static_fake_excuses_ref = useRef(false)
-    show_static_fake_excuses_ref.current ||= navigator.userAgent.includes("Firefox") || focus_after_creation || cm_forced_focus != null || skip_static_fake
+    show_static_fake_excuses_ref.current ||= navigator.userAgent.includes("Firefox") || focus_after_creation || cm_forced_focus != null || skip_static_fake || is_returning(cell_id)
 
     const show_static_fake = show_static_fake_excuses_ref.current ? false : show_static_fake_state
 
@@ -489,7 +504,7 @@ export const CellInput = ({
             }
             if (cm.state.doc.length === 0) {
                 on_focus_neighbor(cell_id, +1)
-                on_delete()
+                on_delete(+1)
                 return true
             }
             return false
@@ -506,7 +521,7 @@ export const CellInput = ({
             if (cm.state.doc.length === 0) {
                 // `Infinity, Infinity` means: last line, last character
                 on_focus_neighbor(cell_id, -1, Infinity, Infinity)
-                on_delete()
+                on_delete(-1)
                 return true
             }
             return false
@@ -551,6 +566,26 @@ export const CellInput = ({
         }
 
         const plutoKeyMaps = [
+            // Ctrl+Z goes through the cell's history, cell deletes included;
+            // with nothing left there, it brings back a delete no cell holds.
+            {
+                key: "Mod-z",
+                run: (/** @type {EditorView} */ cm) => !cm.state.facet(EditorState.readOnly) && undo_or_restore_unhosted(cm),
+                preventDefault: true,
+            },
+            // Redo, on historyKeymap's keys. In a cell that just came back,
+            // with nothing left to redo, it deletes the cell again.
+            {
+                key: "Mod-y",
+                mac: "Mod-Shift-z",
+                run: (/** @type {EditorView} */ cm) => !cm.state.facet(EditorState.readOnly) && redo_or_redelete_returned(cm),
+                preventDefault: true,
+            },
+            {
+                linux: "Ctrl-Shift-z",
+                run: (/** @type {EditorView} */ cm) => !cm.state.facet(EditorState.readOnly) && redo_or_redelete_returned(cm),
+                preventDefault: true,
+            },
             { key: "Shift-Enter", run: keyMapSubmit },
             { key: "Ctrl-Enter", mac: "Cmd-Enter", run: keyMapRun },
             { key: "Ctrl-Enter", run: keyMapRun },
@@ -595,9 +630,17 @@ export const CellInput = ({
             }
         })
 
+        // A deleted cell coming back gets the editor state it had, history
+        // included, so Ctrl+Z goes on through its own edits (#349).
+        const returning = take_returning(cell_id)
+        const returning_state = returning?.state != null && returning.state.doc.toString() === local_code ? returning.state : null
+        if (returning_state != null) returned_with_code_ref.current = remote_code
+        const make_state = (/** @type {{ doc: string, extensions: any[] }} */ config) =>
+            returning_state != null ? returning_state.update({ effects: StateEffect.reconfigure.of(config.extensions) }).state : EditorState.create(config)
+
         synced_code_ref.current = remote_code
         const newcm = (newcm_ref.current = new EditorView({
-            state: EditorState.create({
+            state: make_state({
                 doc: local_code,
                 extensions: [
                     dark_theme_compartment,
@@ -758,10 +801,13 @@ export const CellInput = ({
                         //     `We ran into an issue! We have lost your cursor 😞😓😿\n If this appears again, please press F12, then click the "Console" tab,  eport an issue at https://github.com/JuliaPluto/Pluto.jl/issues`
                         // )
                     }),
+                    cell_undo,
                 ],
             }),
             parent: dom_node_ref.current,
         }))
+        register_view(cell_id, newcm)
+        if (returning != null) mark_returned(newcm, returning.record_id)
         // EditorView appends; the run button and ⋯ must follow the code in Tab order.
         dom_node_ref.current.prepend(newcm.dom)
 
@@ -772,7 +818,15 @@ export const CellInput = ({
             setValue: (x) => setValue6(newcm, x),
         }
 
-        if (focus_after_creation) {
+        if (returning?.focus) {
+            setTimeout(() => {
+                let view = newcm_ref.current
+                if (view == null) return
+                view.dom.scrollIntoView({ block: "nearest" })
+                if (returning_state == null) view.dispatch({ selection: { anchor: view.state.doc.length } })
+                view.focus()
+            })
+        } else if (focus_after_creation) {
             setTimeout(() => {
                 let view = newcm_ref.current
                 if (view == null) return
@@ -809,6 +863,8 @@ export const CellInput = ({
         }
     }, [show_static_fake])
 
+    useEffect(() => () => unregister_view(cell_id, /** @type {EditorView} */ (newcm_ref.current)), [])
+
     useEffect(() => {
         if (newcm_ref.current == null) return
         const cm = newcm_ref.current
@@ -826,6 +882,16 @@ export const CellInput = ({
         if (newcm_ref.current == null) return // Not sure when and why this gave an error, but now it doesn't
 
         const current_value = getValue6(newcm_ref.current) ?? ""
+        if (returned_with_code_ref.current != null) {
+            // A restored editor keeps its text, which may be typing that
+            // was never run, over the run code it came back with.
+            const same = returned_with_code_ref.current === remote_code
+            returned_with_code_ref.current = null
+            if (same) {
+                remote_code_ref.current = remote_code
+                return
+            }
+        }
         if (remote_code_ref.current == null && remote_code === "" && current_value !== "") {
             // this cell is being initialized with empty code, but it already has local code set.
             // this happens when pasting or dropping cells

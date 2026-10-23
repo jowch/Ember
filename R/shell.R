@@ -642,6 +642,8 @@ run_effect <- function(nb, fx) {
       # one `job$subs` list.
       job_start(fx$path, cmd, nb,
         make_progress = function(line) {
+          no_binary <- parse_no_binary_notice(line)
+          if (!is.null(no_binary)) return(ev_install_no_binary(fx$token, no_binary, at = Sys.time()))
           item <- parse_install_progress_line(line)
           if (is.null(item)) NULL else ev_install_progress(fx$token, item, at = Sys.time())
         },

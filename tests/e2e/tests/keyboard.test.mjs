@@ -250,6 +250,9 @@ test("keyboard: Backspace on a selected cell selects the next one, or the one ab
     order: window.editor_state.notebook.cell_order,
   }));
   const settled = (focus) => page.waitForFunction((focus) => document.activeElement?.id === focus, focus, { timeout: 5000 }).catch(() => {});
+  // The neighbour is selected as soon as a delete starts (#353), before the
+  // notebook's order changes, so wait for the order as well.
+  const orderIs = (order) => page.waitForFunction((order) => window.editor_state.notebook.cell_order.join() === order.join(), order, { timeout: 10000 }).catch(() => {});
   const select = async (id) => {
     await page.locator(cellSelector(id)).scrollIntoViewIfNeeded();
     await page.evaluate((id) => document.getElementById(id).focus(), id);
@@ -266,15 +269,18 @@ test("keyboard: Backspace on a selected cell selects the next one, or the one ab
   await settled(added);
   await page.keyboard.press("Backspace");
   await settled("ERR");
+  await orderIs(["S", "A", "B", "ERR", "LOOP", "MD"]);
   assert.deepEqual(await state(), { focus: "ERR", selected: ["ERR"], order: ["S", "A", "B", "ERR", "LOOP", "MD"] });
 
   await page.locator("#undo_delete a").click();
   await settled(added);
+  await orderIs(["S", "A", "B", added, "ERR", "LOOP", "MD"]);
   assert.deepEqual(await state(), { focus: added, selected: [added], order: ["S", "A", "B", added, "ERR", "LOOP", "MD"] });
 
   await select("MD");
   await page.keyboard.press("Backspace");
   await settled("LOOP");
+  await orderIs(["S", "A", "B", added, "ERR", "LOOP"]);
   assert.deepEqual(await state(), { focus: "LOOP", selected: ["LOOP"], order: ["S", "A", "B", added, "ERR", "LOOP"] });
   assertNoProblems(page);
 });
@@ -316,5 +322,32 @@ test("focus ring: 2 px accent outline 2 px out on keyboard focus, none after a c
   const mouse = await ring();
   assert.ok(mouse.focused, "the button keeps focus after the click");
   assert.equal(mouse.style, "none");
+  assertNoProblems(page);
+});
+
+// #366: the cell menu focused its first item a frame after opening, so a
+// key pressed in between went to the menu button and was lost. Frames are
+// slowed here so "in between" is wide enough to land in every time.
+test("cell menu: keys pressed right after it opens by keyboard aren't lost, even when frames are slow (#366)", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "menu-keys.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await page.addInitScript(() => {
+    const raf = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = (cb) => raf((time) => setTimeout(() => cb(time), 150));
+  });
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  const first = await page.evaluate(() => window.editor_state.notebook.cell_order[0]);
+  await page.locator(`pluto-cell[id="${first}"] button.input_context_menu`).focus();
+  // Open, go to the last item (Delete) and pick it, with no wait between.
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await page.locator(`pluto-cell[id="${first}"]`).waitFor({ state: "detached", timeout: 10000 });
+
   assertNoProblems(page);
 });

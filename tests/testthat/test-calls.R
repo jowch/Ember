@@ -311,6 +311,38 @@ test_that("mget(c('a', paste0('b'))) is not fully literal, keeps the note", {
   expect_equal(a$notes$kind, "untracked_read")
 })
 
+test_that("get passed as a function gets the untracked_read note, unless it's a local (#357)", {
+  a <- read_cell('all <- lapply(site_names, get)')
+  expect_equal(a$notes$kind, "untracked_read")
+  expect_equal(a$notes$detail, "get")
+  b <- read_cell('mapply(get, nms)')
+  expect_equal(b$notes$detail, "get")
+  # A parameter named `get` is the function's own, not base::get.
+  c <- read_cell('f <- function(get) lapply(x, get)')
+  expect_equal(nrow(c$notes), 0)
+  # A call is read by the get() rules above, not twice.
+  d <- read_cell('get(s)')
+  expect_equal(nrow(d$notes), 1)
+  # base::get passed as a function is the same case.
+  e <- read_cell('lapply(nms, base::get)')
+  expect_equal(e$notes$detail, "get")
+  expect_equal(e$untracked, "get")
+})
+
+test_that("get looked at as a function, not called, gets no note (#357)", {
+  for (code in c("?get", "help(get)", "args(get)", "formals(get)", "body(exists)",
+                 "environment(get)", "debug(get)", "debugonce(mget)", "undebug(get)",
+                 "trace(get, quote(1))", "untrace(get)", "identical(f, get)", "bquote(get)",
+                 "args(base::get)")) {
+    a <- read_cell(code)
+    expect_equal(nrow(a$notes), 0, info = code)
+    expect_equal(a$untracked, character(), info = code)
+  }
+  # Only a direct argument: a call inside one still reads.
+  a <- read_cell("identical(x, lapply(nms, get))")
+  expect_equal(a$notes$detail, "get")
+})
+
 test_that("eval() is untouched by the get-family literal-name rule", {
   a <- read_cell('eval(parse(text = "1 + 1"))')
   expect_equal(a$notes$kind, "untracked_read")
