@@ -685,9 +685,8 @@ test('chips: "Run this notebook" moves the page up only at the click, then only 
   await page.evaluate((sel) => {
     window.__txt_tops = [];
     window.__stop = false;
-    // How many tops were recorded before the click: only moves from then on
-    // are the run's. Anything earlier is the page still settling after it
-    // opened (#391).
+    // How many tops were recorded before the click. One means the page had
+    // settled before it (#391); the run's moves are judged from there on.
     document.addEventListener("click", () => { window.__txt_at_click ??= window.__txt_tops.length; }, { capture: true });
     const tick = () => {
       const top = document.querySelector(sel).getBoundingClientRect().top + window.scrollY;
@@ -703,7 +702,7 @@ test('chips: "Run this notebook" moves the page up only at the click, then only 
     () => document.querySelectorAll('pluto-cell[data-rail="run"], pluto-cell[data-rail="queued"]').length === 0,
     null, { timeout: 30000 });
   const { all, atClick } = await page.evaluate(() => { window.__stop = true; return { all: window.__txt_tops, atClick: window.__txt_at_click }; });
-  assert.ok(atClick >= 1, "TXT's top was recorded before the click");
+  assert.equal(atClick, 1, `the page had settled before the click (#391): ${JSON.stringify(all)}`);
   const tops = all.slice(atClick - 1);
   const moves = tops.slice(1).map((top, i) => Math.round(top - tops[i]));
   const firstDown = moves.findIndex((m) => m > 0);
