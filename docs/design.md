@@ -916,7 +916,12 @@ settings cells' changes, so a deleted setting doesn't linger.
 **Editor services** run in the worker with base R: completion through
 `utils`'s completion functions (as IRkernel does), help pages through
 `tools::Rd2HTML`, signatures through `args()`. These use internal `utils`
-functions, so they're tested on each R release.
+functions, so they're tested on each R release. Inside a call, utils looks
+up the arguments of the function and each of its S3 methods by listing
+every attached package per name, which takes seconds for `print(` with a
+large package stack. The worker finds the same names with `exists()` and
+puts them in utils' argument table for that one completion, so the items
+don't change (#288).
 
 ### Attached packages
 
