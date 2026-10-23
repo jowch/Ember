@@ -256,6 +256,7 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  *   status: string, message: string?, progress: { done: number, total: number, current: string }?,
  *   log: string?, failures: Array<EmberInstallFailure>,
  *   download?: { bytes: number, packages: Array<{ package: string, version: string, bytes: number? }> },
+ *   no_binary?: Array<{ package: string, version: string }>,
  *  },
  *  rows: Array<EmberPackageRow>,
  *  update: EmberPackagesUpdate?,

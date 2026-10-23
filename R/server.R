@@ -832,7 +832,8 @@ on_run <- function(server, cl, hub, req) {
 #' `list(error = <stderr, else failure>)` when it fails or `ok()` returns
 #' NULL. Polled with `later`, so the server never blocks. Both pipes are
 #' drained while it runs, so a child that writes more than a pipe buffer
-#' can't block on a full stderr.
+#' can't block on a full stderr. A failure is logged too, with the exit
+#' status, since the page only says it failed (#327).
 answer_from_subprocess <- function(cmd, answer, ok, failure) {
   proc <- tryCatch(job_process(cmd, stderr = "|"), error = function(e) e)
   if (inherits(proc, "error")) return(answer(list(error = conditionMessage(proc))))
@@ -844,8 +845,13 @@ answer_from_subprocess <- function(cmd, answer, ok, failure) {
     out <<- paste0(out, tryCatch(proc$read_all_output(), error = function(e) ""))
     err <<- paste0(err, tryCatch(proc$read_all_error(), error = function(e) ""))
     parsed <- tryCatch(jsonlite::fromJSON(out), error = function(e) NULL)
-    message <- if (identical(proc$get_exit_status(), 0L) && is.list(parsed)) ok(parsed)
-    answer(message %||% list(error = if (nzchar(err)) err else failure))
+    status <- proc$get_exit_status()
+    reply <- if (identical(status, 0L) && is.list(parsed)) ok(parsed)
+    if (is.null(reply)) {
+      message("ember: ", failure, " (exit status ", status, ")", if (nzchar(err)) paste0(": ", trimws(err)))
+      reply <- list(error = if (nzchar(err)) err else failure)
+    }
+    answer(reply)
   }
   later::later(poll, 0.1)
   invisible(NULL)
@@ -1780,12 +1786,16 @@ http_notebookfile <- function(server, req) {
            list("Content-Disposition" = sprintf('inline; filename="%s"', basename(state$path))))
 }
 
-#' `GET /notebookexport?id=` -> a static HTML export (export_html()).
+#' `GET /notebookexport?id=` -> a static HTML export (export_html()), named
+#' after the notebook (`analysis.R` downloads as `analysis.html`).
 http_notebookexport <- function(server, req) {
   q <- parse_query_string(req$QUERY_STRING)
   hub <- if (!is.null(q$id)) mget(q$id, envir = server$hubs, ifnotfound = list(NULL))[[1]] else NULL
   if (is.null(hub)) return(http_text(404L, NOT_OPEN_TEXT))
-  http_text(200L, export_html(notebook_state(hub$nb)), "text/html; charset=utf-8")
+  state <- notebook_state(hub$nb)
+  name <- paste0(tools::file_path_sans_ext(basename(state$path)), ".html")
+  http_text(200L, export_html(state), "text/html; charset=utf-8",
+           list("Content-Disposition" = sprintf('inline; filename="%s"', name)))
 }
 
 #' `GET /` -> start.html, Ember's own start page: a "My notebooks" list

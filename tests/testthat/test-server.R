@@ -784,6 +784,22 @@ await_reply <- function(ws, type) {
   replies
 }
 
+test_that("a failed subprocess answers with its stderr and logs its exit status (#327)", {
+  cmd <- list(command = file.path(R.home("bin"), "Rscript"),
+              args = c("--vanilla", "-e", "cat('no du here', file = stderr()); quit(status = 3)"),
+              env = "current")
+  got <- NULL
+  logged <- character()
+  withCallingHandlers({
+    answer_from_subprocess(cmd, function(m) got <<- m, function(x) x, "could not measure disk use")
+    # A guard against a hang, not a timing check.
+    deadline <- Sys.time() + 60
+    while (is.null(got) && Sys.time() < deadline) later::run_now(timeout = 0.5)
+  }, message = function(m) { logged <<- c(logged, conditionMessage(m)); invokeRestart("muffleMessage") })
+  expect_equal(got, list(error = "no du here"))
+  expect_match(logged, "ember: could not measure disk use (exit status 3): no du here", fixed = TRUE, all = FALSE)
+})
+
 test_that("ember_clean_up counts first, and deletes only when asked with dry_run = false (#128)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("1")))
   cache <- tempfile("ember-pkg-cache-")
@@ -899,6 +915,13 @@ test_that("the secret cookie is set on /edit, and the file's content matches the
   file_resp <- http_call(server, fake_req("/notebookfile", sprintf("id=%s&secret=s", id)))
   expect_equal(file_resp$status, 200L)
   expect_equal(file_resp$body, format_notebook(notebook_file_of(notebook_state(nb))))
+  stem <- tools::file_path_sans_ext(basename(path))
+  expect_equal(file_resp$headers[["Content-Disposition"]], sprintf('inline; filename="%s"', basename(path)))
+
+  # the HTML export is named after the notebook too, not "notebookexport"
+  export_resp <- http_call(server, fake_req("/notebookexport", sprintf("id=%s&secret=s", id)))
+  expect_equal(export_resp$status, 200L)
+  expect_equal(export_resp$headers[["Content-Disposition"]], sprintf('inline; filename="%s.html"', stem))
 
   # the cookie alone (no query secret) is also accepted
   resp2 <- http_call(server, fake_req("/notebookfile", sprintf("id=%s", id), cookie = "ember_secret=s"))

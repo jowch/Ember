@@ -324,3 +324,30 @@ test("focus ring: 2 px accent outline 2 px out on keyboard focus, none after a c
   assert.equal(mouse.style, "none");
   assertNoProblems(page);
 });
+
+// #366: the cell menu focused its first item a frame after opening, so a
+// key pressed in between went to the menu button and was lost. Frames are
+// slowed here so "in between" is wide enough to land in every time.
+test("cell menu: keys pressed right after it opens by keyboard aren't lost, even when frames are slow (#366)", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "menu-keys.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await page.addInitScript(() => {
+    const raf = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = (cb) => raf((time) => setTimeout(() => cb(time), 150));
+  });
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  const first = await page.evaluate(() => window.editor_state.notebook.cell_order[0]);
+  await page.locator(`pluto-cell[id="${first}"] button.input_context_menu`).focus();
+  // Open, go to the last item (Delete) and pick it, with no wait between.
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await page.locator(`pluto-cell[id="${first}"]`).waitFor({ state: "detached", timeout: 10000 });
+
+  assertNoProblems(page);
+});
