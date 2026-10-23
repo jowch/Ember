@@ -16,12 +16,15 @@ test("interrupt: a long-running cell is stopped by clicking stop", async (t) => 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  // A loop far longer than any runner takes to stop it, that says once R
-  // is inside it: an interrupt that comes before the run has started is
-  // dropped, as one between runs is (test-worker.R).
-  await setCellCode(page, "LOOP", 'cat("inside the loop\\n"); t0 <- Sys.time(); while (Sys.time() - t0 < 60) NULL');
+  // A loop far longer than any runner takes to stop it. Stop is clicked
+  // once the run is R's (`running`, not `queued`): an interrupt then waits
+  // for the worker to begin the run, while one clicked while the cell is
+  // still queued, as R starts, takes it off the queue. The cell's own text
+  // can't tell the two apart: its code is in it, and what it prints doesn't
+  // show until the run ends (#470, #477).
+  await setCellCode(page, "LOOP", "t0 <- Sys.time(); while (Sys.time() - t0 < 60) NULL");
   await page.keyboard.press("Shift+Enter");
-  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("inside the loop"), cellSelector("LOOP"), { timeout: 0 });
+  await page.waitForFunction(() => window.editor_state?.notebook?.cell_results?.LOOP?.running === true, null, { timeout: 0 });
 
   await page.locator(`${cellSelector("LOOP")} button.ember-run.busy`).click();
   await page.waitForSelector(`${cellSelector("LOOP")}:not(.running)`, { timeout: 0 });
