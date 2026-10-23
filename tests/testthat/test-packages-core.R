@@ -957,6 +957,44 @@ test_that("preview_update refuses a package that isn't in the lock or isn't from
   expect_length(r$effects, 0)
 })
 
+test_that("an update asked for before the first resolve waits for the lock, then goes on (#419)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  expect_equal(nrow(r$state$file$lock$entries), 0)
+  r <- drive(r$state, ev_preview_update("dplyr", NULL, today, at(2), page = TRUE))
+  expect_true(r$reply)
+  expect_equal(r$state$packages$proposal$status, "lock")
+  expect_equal(pluto_state(r$state)$js$ember$packages$package_update$status, "checking")
+  # A name the code doesn't load is still refused at once.
+  r2 <- drive(r$state, ev_preview_update("ggplot2", NULL, today, at(2)))
+  expect_s3_class(r2$reply, "ember_refused")
+  expect_match(conditionMessage(r2$reply), "ggplot2 is not in this notebook's packages")
+
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_index("2026-09-01"), at(3)))
+  expect_equal(unname(lock_versions(r$state$file$lock)["dplyr"]), "1.1.4")
+  expect_equal(r$state$packages$proposal$status, "dates")
+  expect_equal(r$state$packages$proposal$update$from, "1.1.4")
+  expect_true(r$state$packages$proposal$update$page)
+  expect_true("fetch_cran_releases" %in% effect_types(r))
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(), at(4)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(5)))
+  prop <- r$state$packages$proposal
+  expect_equal(prop$status, "ready")
+  expect_equal(prop$changes$to[prop$changes$name == "dplyr"], "1.1.5")
+})
+
+test_that("an update waiting for the lock fails, saying why, when resolution can't give it the package (#419)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_preview_update("dplyr", NULL, today, at(2)))
+  expect_equal(r$state$packages$proposal$status, "lock")
+  r <- drive(r$state, ev_index_failed(repo_key("cran", "2026-09-01"), "couldn't reach Package Manager", at(3)))
+  prop <- r$state$packages$proposal
+  expect_equal(prop$status, "failed")
+  expect_match(prop$message, "dplyr is not in this notebook's packages")
+  expect_false("fetch_cran_releases" %in% effect_types(r))
+})
+
 test_that("release dates that can't be fetched fail the update, and the next one fetches again", {
   s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
   r <- open_with_cran(s)
