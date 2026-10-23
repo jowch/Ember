@@ -1439,6 +1439,51 @@ test("cell menu: the ⋯ is in pluto-input after the code, on the code box even 
   assertNoProblems(page);
 });
 
+test("cell menu: on a cell at the bottom of the window it opens upwards, so every item is on screen; elsewhere downwards", async (t) => {
+  const notebook = tempNotebook("many-cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-menu-flip.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await page.setViewportSize({ width: 900, height: 700 });
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  // The last cell whose code box is wholly in view, and the first one.
+  const [first, last] = await page.evaluate(() => {
+    const seen = [...document.querySelectorAll("pluto-cell")].filter((c) => {
+      const r = c.querySelector("pluto-input").getBoundingClientRect();
+      return r.top >= 0 && r.bottom <= innerHeight;
+    });
+    return [seen[0].id, seen.at(-1).id];
+  });
+  const open = async (id) => {
+    await page.hover(cellSelector(id));
+    await page.locator(`${cellSelector(id)} button.input_context_menu`).click();
+    return rects(page, {
+      menu: `${cellSelector(id)} div.input_context_menu[role="menu"]`,
+      more: `${cellSelector(id)} button.input_context_menu`,
+    });
+  };
+
+  const bottom = await open(last);
+  assert.ok(bottom.menu.bottom <= 700, `menu ends at ${bottom.menu.bottom}, below the 700px window`);
+  near(bottom.more.top - bottom.menu.bottom, 3, "3px above the ⋯");
+  await page.keyboard.press("Escape");
+
+  const top = await open(first);
+  near(top.menu.top - top.more.bottom, 3, "3px below the ⋯");
+  await page.keyboard.press("Escape");
+
+  // Too short a window for either way: it stays below, and the page scrolls.
+  await page.setViewportSize({ width: 900, height: 200 });
+  const short = await open(first);
+  near(short.menu.top - short.more.bottom, 3, "3px below the ⋯ in a 200px window");
+  await page.keyboard.press("Escape");
+
+  assertNoProblems(page);
+});
+
 test("cell menu: text-only one-line items with a right-aligned key hint, panel and line colours, a 6px-radius trigger that stays on while open", async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-geometry-menu-look.server.log") });
