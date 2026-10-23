@@ -138,8 +138,18 @@ new_index_slot <- function(status, index = NULL, message = NULL, wanted = NULL, 
 }
 
 #' CRAN's release dates as the session knows them (`cran_release_table()`).
-new_cran_releases_slot <- function(status = "unknown", table = NULL, message = NULL) {
-  list(status = status, table = table, message = message)
+#' `latest`: each package's current version, named by package, worked out
+#' once here because `packages_view()` reads it on every dispatch (#23).
+#' `at`: when `table` arrived, so the Packages tab's check can fetch again
+#' once it is a day old (`reduce_check_releases()`).
+new_cran_releases_slot <- function(status = "unknown", table = NULL, message = NULL, at = NULL) {
+  latest <- NULL
+  if (!is.null(table)) {
+    # Oldest first within a package, so a package's last row is its current version.
+    last <- table[!duplicated(table$package, fromLast = TRUE), , drop = FALSE]
+    latest <- stats::setNames(last$version, last$package)
+  }
+  list(status = status, table = table, message = message, latest = latest, at = at)
 }
 
 #' Bioconductor's release list as the session knows it.
@@ -506,8 +516,14 @@ ev_set_date     <- function(date, at) event("set_date", at, date = date)
 #' Preview moving the date so that `name` is at `version` (`NULL`: CRAN's
 #' newest), `preview_update()`. `today`: the caller's date, since the core
 #' has no clock; no snapshot is later.
-ev_preview_update <- function(name, version, today, at)
-  event("preview_update", at, name = name, version = version, today = as.Date(today))
+#' `page`: asked for by a row's Update on the Packages tab (#23), so the
+#' page shows the proposal as that row's question (`project_ember()`).
+ev_preview_update <- function(name, version, today, at, page = FALSE)
+  event("preview_update", at, name = name, version = version, today = as.Date(today), page = isTRUE(page))
+#' The Packages tab opened (#23): fetch CRAN's release dates unless they
+#' are known or on their way, so each row can say whether CRAN has a
+#' newer version (`packages_view()`'s `available`).
+ev_check_releases <- function(at) event("check_releases", at)
 #' Drop the current preview without applying it (the page's Cancel on the
 #' in-tab update question).
 ev_cancel_preview <- function(at) event("cancel_preview", at)
@@ -1713,7 +1729,7 @@ replay_held <- function(state) {
 #' update, or its date as asked for.
 preview_event <- function(prop) {
   u <- prop$update
-  if (!is.null(u)) return(event("preview_update", NA, name = u$name, version = u$version, today = u$today))
+  if (!is.null(u)) return(event("preview_update", NA, name = u$name, version = u$version, today = u$today, page = isTRUE(u$page)))
   event("preview_date", NA, date = prop$asked %||% prop$date, apply = isTRUE(prop$apply))
 }
 
@@ -1804,7 +1820,7 @@ reduce_preview_update <- function(state, event) {
   }
   if (bioc_move_pending(state)) return(hold_preview(state, event))
   update <- list(name = event$name, version = event$version, from = entries$version[[row]],
-                 today = event$today)
+                 today = event$today, page = isTRUE(event$page))
   effects <- list()
   rel <- state$packages$cran_releases
   if (identical(rel$status, "ready")) {
@@ -1869,25 +1885,71 @@ update_failed_message <- function(prop, got) {
           prop$date, has, u$name, u$version)
 }
 
+#' The Packages tab wants to know which rows CRAN has a newer version of
+#' (#23): fetch the release dates if they aren't known or on their way, or
+#' are a day old (`cran_releases_max_age`): a session can stay open for
+#' days. While they are fetched again, the old table stays, and with it
+#' each row's `available`. A failed fetch is tried again, as the next
+#' `preview_update()` would.
+reduce_check_releases <- function(state, event) {
+  rel <- state$packages$cran_releases
+  fresh <- identical(rel$status, "ready") && !is.null(rel$at) &&
+    as.numeric(event$at) - as.numeric(rel$at) < cran_releases_max_age
+  if (identical(rel$status, "fetching") || fresh) return(list(state = state, effects = list(), reply = NULL))
+  if (identical(rel$status, "ready")) {
+    rel$status <- "fetching"
+    state$packages$cran_releases <- rel
+  } else {
+    state$packages$cran_releases <- new_cran_releases_slot("fetching")
+  }
+  list(state = state, effects = list(fx_fetch_cran_releases(state$options$repos$cran_meta)), reply = NULL)
+}
+
+#' For each row of `rows` (`packages_view()`'s), CRAN's newest version when
+#' it is newer than the locked one and the lock has the package from CRAN,
+#' else `NA`: what the Packages tab offers to update to (#23). `NA` for
+#' every row until CRAN's release dates are known (`reduce_check_releases()`).
+available_versions <- function(rows, releases) {
+  out <- rep(NA_character_, nrow(rows))
+  # `latest` stays while a day-old table is fetched again.
+  if (is.null(releases$latest) || nrow(rows) == 0) return(out)
+  latest <- unname(releases$latest[rows$name])
+  for (i in which(!is.na(latest) & rows$source %in% "CRAN" & !is.na(rows$version))) {
+    newer <- tryCatch(package_version(latest[[i]]) > package_version(rows$version[[i]]), error = function(e) FALSE)
+    if (isTRUE(newer)) out[[i]] <- latest[[i]]
+  }
+  out
+}
+
 #' CRAN's release dates arrived: a waiting update goes on.
 reduce_cran_releases_fetched <- function(state, event) {
   if (!identical(state$packages$cran_releases$status, "fetching")) {
     return(list(state = state, effects = list(), reply = NULL))
   }
-  state$packages$cran_releases <- new_cran_releases_slot("ready", event$table)
+  state$packages$cran_releases <- new_cran_releases_slot("ready", event$table, at = event$at)
   prop <- state$packages$proposal
   if (!is.null(prop) && identical(prop$status, "dates")) state <- start_update(state, prop$update)
   list(state = state, effects = list(), reply = NULL)
 }
 
 #' CRAN's release dates couldn't be fetched: a waiting update fails, and
-#' the next one fetches again.
+#' the next one fetches again. When they were being fetched again because
+#' they were a day old (`reduce_check_releases()`), the old table stays,
+#' still a day old so the next check tries again, and a waiting update
+#' uses it.
 reduce_cran_releases_failed <- function(state, event) {
-  if (!identical(state$packages$cran_releases$status, "fetching")) {
+  rel <- state$packages$cran_releases
+  if (!identical(rel$status, "fetching")) {
+    return(list(state = state, effects = list(), reply = NULL))
+  }
+  prop <- state$packages$proposal
+  if (!is.null(rel$table)) {
+    rel$status <- "ready"
+    state$packages$cran_releases <- rel
+    if (!is.null(prop) && identical(prop$status, "dates")) state <- start_update(state, prop$update)
     return(list(state = state, effects = list(), reply = NULL))
   }
   state$packages$cran_releases <- new_cran_releases_slot("failed", message = event$message)
-  prop <- state$packages$proposal
   if (!is.null(prop) && identical(prop$status, "dates")) {
     state$packages$proposal <- new_proposal(NA_character_, status = "failed", message = event$message,
                                             update = prop$update)
@@ -2101,7 +2163,7 @@ packages_named_in <- function(state, msg) {
 #'
 #' `list(snapshot, r_version, bioc_version,
 #'      library = list(status, path, progress, message, log, failures, download, no_binary),
-#'      packages = data.frame(name, version, source, direct, status, message, spec),
+#'      packages = data.frame(name, version, source, direct, status, message, spec, available),
 #'      problems, proposal = NULL | list(date, status, changes, problems),
 #'      plan = NULL | list(install = <n packages>, restart = <names>))`
 #'
@@ -2115,7 +2177,9 @@ packages_named_in <- function(state, msg) {
 #' `NA`), `"lookup_failed"` (a `not_found` name while Bioconductor couldn't
 #' be looked in, so it may be there; its message says why), and for a package with a `[sources]` entry, `"looking_up"` and
 #' `"source_failed"` (`source_rows()`, which also adds `spec`). `direct` is
-#' `TRUE` for wanted names. `plan` is what running would
+#' `TRUE` for wanted names. `available` is CRAN's newest version where it
+#' is newer than the locked one, `NA` otherwise or until CRAN's release
+#' dates are known (`available_versions()`). `plan` is what running would
 #' do; the banner's "installs 3 packages" (a `"not_installed"` row counts
 #' toward it exactly as `"missing"` does: running retries it).
 #'
@@ -2349,6 +2413,7 @@ packages_view <- function(state) {
     }
   }
   packages_df <- source_rows(state, wanted, rbind(locked_df, not_found_df))
+  packages_df$available <- available_versions(packages_df, p$cran_releases)
 
   proposal <- NULL
   if (!is.null(p$proposal)) {
@@ -2357,7 +2422,10 @@ packages_view <- function(state) {
                      apply = isTRUE(p$proposal$apply), restart = p$proposal$restart %||% character(),
                      message = p$proposal$message, kind = p$proposal$kind %||% "date",
                      asked = p$proposal$asked %||% p$proposal$date,
-                     update = if (!is.null(p$proposal$update)) p$proposal$update[c("name", "version")])
+                     update = if (!is.null(p$proposal$update)) {
+                       list(name = p$proposal$update$name, version = p$proposal$update$version,
+                            page = isTRUE(p$proposal$update$page))
+                     })
   }
   # A Bioconductor move that failed isn't the page's update question
   # (`project_ember()`), so it is said as a problem instead. Where an

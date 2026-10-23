@@ -972,6 +972,153 @@ test_that("release dates that can't be fetched fail the update, and the next one
   expect_match(r$state$packages$proposal$message, "never released dplyr 7.0")
 })
 
+test_that("the Packages tab's check fetches CRAN's release dates once, and each row says what CRAN has newer (#23)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- open_with_cran(s)
+  expect_true(all(is.na(packages_view(r$state)$packages$available)))
+
+  r <- drive(r$state, ev_check_releases(at(3)))
+  expect_equal(effect_types(r), "fetch_cran_releases")
+  expect_equal(r$state$packages$cran_releases$status, "fetching")
+  r <- drive(r$state, ev_check_releases(at(4)))
+  expect_length(r$effects, 0)
+
+  # A failed fetch is tried again the next time the tab opens.
+  r <- drive(r$state, ev_cran_releases_failed("couldn't fetch CRAN's release dates from x", at(5)))
+  expect_true(all(is.na(packages_view(r$state)$packages$available)))
+  r <- drive(r$state, ev_check_releases(at(6)))
+  expect_equal(effect_types(r), "fetch_cran_releases")
+
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(), at(7)))
+  rows <- packages_view(r$state)$packages
+  expect_equal(rows$available[rows$name == "dplyr"], "1.1.5")
+  # cli and glue aren't in the table: nothing to say.
+  expect_true(all(is.na(rows$available[rows$name != "dplyr"])))
+  js <- pluto_state(r$state)$js
+  expect_true(check_wire(js))
+  dplyr <- Filter(function(row) identical(row$name, "dplyr"), js$ember$packages$rows)[[1]]
+  expect_equal(dplyr$available, "1.1.5")
+  expect_null(js$ember$packages$package_update)
+
+  r <- drive(r$state, ev_check_releases(at(8)))
+  expect_length(r$effects, 0)
+})
+
+test_that("the tab's check fetches release dates again once they are a day old, keeping the old ones meanwhile (#23)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- open_with_cran(s)
+  t0 <- 100
+  r <- drive(r$state, ev_check_releases(at(3)))
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(), at(t0)))
+  available <- function(state) {
+    rows <- packages_view(state)$packages
+    rows$available[rows$name == "dplyr"]
+  }
+
+  # A session stays open for days: under a day, nothing is fetched.
+  r <- drive(r$state, ev_check_releases(at(t0 + cran_releases_max_age - 1)))
+  expect_length(r$effects, 0)
+  r <- drive(r$state, ev_check_releases(at(t0 + cran_releases_max_age)))
+  expect_equal(effect_types(r), "fetch_cran_releases")
+  expect_equal(available(r$state), "1.1.5")
+
+  # A failed fetch keeps the old dates, and the next check tries again.
+  r <- drive(r$state, ev_cran_releases_failed("couldn't fetch CRAN's release dates from x", at(t0 + cran_releases_max_age + 1)))
+  expect_equal(r$state$packages$cran_releases$status, "ready")
+  expect_equal(available(r$state), "1.1.5")
+  r <- drive(r$state, ev_check_releases(at(t0 + cran_releases_max_age + 2)))
+  expect_equal(effect_types(r), "fetch_cran_releases")
+
+  # An update asked for meanwhile waits for the new dates.
+  r <- drive(r$state, ev_preview_update("dplyr", NULL, today, at(t0 + cran_releases_max_age + 3), page = TRUE))
+  expect_equal(r$state$packages$proposal$status, "dates")
+  newer <- rbind(release_table(), data.frame(package = "dplyr", version = "1.1.6", date = as.Date("2026-10-05")))
+  r <- drive(r$state, ev_cran_releases_fetched(newer, at(t0 + cran_releases_max_age + 4)))
+  expect_equal(available(r$state), "1.1.6")
+  expect_equal(r$state$packages$proposal$update$version, "1.1.6")
+  expect_equal(r$state$packages$proposal$date, "2026-10-05")
+})
+
+test_that("available_versions names only a newer CRAN version of a package the lock has from CRAN (#23)", {
+  rows <- data.frame(name = c("dplyr", "dplyr2", "mypkg", "gone", "cli"),
+                     version = c("1.1.4", "1.1.5", "0.1.0", NA, "3.6.6"),
+                     source = c("CRAN", "CRAN", "github:me/mypkg@abc123", NA, "CRAN"),
+                     stringsAsFactors = FALSE)
+  table <- rbind(release_table(),
+                 data.frame(package = c("dplyr2", "mypkg", "gone", "cli"), version = c("1.1.5", "9.0", "1.0", "3.6.5"),
+                            date = as.Date("2026-01-01"), stringsAsFactors = FALSE))
+  ready <- new_cran_releases_slot("ready", table)
+  # dplyr2 is at CRAN's newest, mypkg comes from GitHub, gone has no
+  # version, and cli is newer than CRAN's (a lock written by hand).
+  expect_equal(available_versions(rows, ready), c("1.1.5", NA, NA, NA, NA))
+  expect_equal(available_versions(rows, new_cran_releases_slot("fetching")), rep(NA_character_, 5))
+})
+
+test_that("a row's Update is that row's question, with the other packages that move, until applied (#23)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- open_with_cran(s)
+  r <- drive(r$state, ev_check_releases(at(3)))
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(), at(4)))
+
+  # From R, an update leaves the page alone.
+  r0 <- drive(r$state, ev_preview_update("dplyr", "1.1.5", today, at(5)))
+  expect_null(pluto_state(r0$state)$js$ember$packages$package_update)
+
+  r <- drive(r$state, ev_preview_update("dplyr", "1.1.5", today, at(5), page = TRUE))
+  expect_true(r$reply)
+  pu <- pluto_state(r$state)$js$ember$packages$package_update
+  expect_equal(pu$name, "dplyr")
+  expect_equal(pu$version, "1.1.5")
+  expect_equal(pu$status, "checking")
+  expect_equal(pu$date, "2026-09-30")
+  # The header's Update question is a different one.
+  expect_null(pluto_state(r$state)$js$ember$packages$update)
+
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(6)))
+  js <- pluto_state(r$state)$js
+  expect_true(check_wire(js))
+  pu <- js$ember$packages$package_update
+  expect_equal(pu$status, "ready")
+  expect_null(pu$message)
+  # Every other package the date moves, not dplyr itself.
+  ch <- r$state$packages$proposal$changes
+  others <- ch$name[ch$name != "dplyr"]
+  expect_equal(vapply(pu$changes, function(c) c$name, ""), others)
+  expect_false("dplyr" %in% vapply(pu$changes, function(c) c$name, ""))
+  expect_length(pu$restart, 0)
+
+  # Nothing applies until the page says so; then the row is up to date.
+  expect_equal(r$state$file$header$snapshot, "2026-09-01")
+  r <- drive(r$state, ev_set_date(pu$date, at(7)))
+  expect_equal(unname(lock_versions(r$state$file$lock)["dplyr"]), "1.1.5")
+  js <- pluto_state(r$state)$js
+  expect_null(js$ember$packages$package_update)
+  dplyr <- Filter(function(row) identical(row$name, "dplyr"), js$ember$packages$rows)[[1]]
+  expect_null(dplyr$available)
+})
+
+test_that("a row's Update names the loaded packages it restarts, and a failed one says why until closed (#23)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- open_with_cran(s)
+  r$state$worker$loaded <- c(dplyr = "1.1.4", glue = "1.8.0")
+  r <- drive(r$state, ev_check_releases(at(3)))
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(), at(4)))
+  r <- drive(r$state, ev_preview_update("dplyr", "1.1.5", today, at(5), page = TRUE))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_index("2026-09-30"), at(6)))
+  pu <- pluto_state(r$state)$js$ember$packages$package_update
+  ch <- r$state$packages$proposal$changes
+  expect_equal(sort(unlist(pu$restart)), sort(intersect(ch$name, c("dplyr", "glue"))))
+  expect_true("dplyr" %in% unlist(pu$restart))
+
+  r <- drive(r$state, ev_preview_update("dplyr", "7.0", today, at(7), page = TRUE))
+  pu <- pluto_state(r$state)$js$ember$packages$package_update
+  expect_equal(pu$status, "failed")
+  expect_match(pu$message, "never released dplyr 7.0")
+  expect_null(pu$date)
+  r <- drive(r$state, ev_cancel_preview(at(8)))
+  expect_null(pluto_state(r$state)$js$ember$packages$package_update)
+})
+
 # ---- apply = TRUE previews (ui-3-plan.md, "Update to today's snapshot") -----
 
 test_that("an apply = TRUE preview applies itself once ready with nothing loaded to restart (83)", {

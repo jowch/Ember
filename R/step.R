@@ -205,6 +205,7 @@ reduce <- function(state, event) {
     preview_date     = reduce_preview_date(state, event),
     set_date         = reduce_set_date(state, event),
     preview_update   = reduce_preview_update(state, event),
+    check_releases   = reduce_check_releases(state, event),
     cancel_preview   = reduce_cancel_preview(state, event),
     index_fetched    = reduce_index_fetched(state, event),
     index_failed     = reduce_index_failed(state, event),
