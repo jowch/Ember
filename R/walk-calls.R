@@ -348,7 +348,7 @@ walk_get_family_call <- function(e, scope, acc, name, arg_pids = NULL, head_pos 
   }
 
   if (is.null(resolved)) {
-    record_note(acc, "untracked_read", name, head_pos())
+    record_untracked(acc, name, head_pos())
   } else {
     x_pos <- pd_position(acc, arg_pids[[x_idx]])
     for (nm in resolved) record_read(acc, scope, nm, pos = x_pos)
@@ -762,6 +762,13 @@ walk_source <- function(e, scope, acc, arg_pids = NULL) {
   }
   acc$extra_notes[[length(acc$extra_notes) + 1]] <- sub$notes
   acc$extra_methods[[length(acc$extra_methods) + 1]] <- sub$methods
+  acc$top_untracked <- c(acc$top_untracked, sub$untracked)
+  acc$fn_untracked <- c(acc$fn_untracked, sub$fn_untracked)
+  for (fn in names(sub$fn_calls)) {
+    if (is.null(acc$fn_calls[[fn]])) acc$fn_calls[[fn]] <- new.env(parent = emptyenv(), hash = TRUE)
+    for (nm in sub$fn_calls[[fn]]) acc$fn_calls[[fn]][[nm]] <- TRUE
+  }
+  for (nm in sub$calls) acc$calls[[nm]] <- TRUE
   if (nrow(sub$definitions) > 0) {
     bind_names(scope, sub$definitions$name)
   }

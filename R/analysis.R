@@ -87,9 +87,17 @@
 #'   `"source_parse_error"` (a sourced file that fails to parse; `detail`
 #'   is the parser's message). `col`/`end_col` are `NA` for a note with no
 #'   single responsible token (`"missing_file"`, `"source_parse_error"`).
-#' * `untracked`: the `detail` of the `untracked_read` notes, once each
-#'   (`"get"`, `"eval"`): the calls the cell's note names (#357), kept
-#'   here so the graph doesn't look at every cell's `notes` per build.
+#' * `untracked`: the `detail` of the `untracked_read` notes outside any
+#'   top-level function, once each (`"get"`, `"eval"`): the calls the
+#'   cell's note names (#357), kept here so the graph doesn't look at every
+#'   cell's `notes` per build.
+#' * `fn_untracked`: `<function name -> character>`, the same for the notes
+#'   inside each top-level function literal (`load_site <- function(s)
+#'   get(s)`). Those belong to the cells that call the function (#365).
+#' * `fn_calls`: `<function name -> character>`, the names each top-level
+#'   function's body reads, so a function calling `load_site` is found too.
+#' * `calls`: the names the cell reads outside its top-level functions,
+#'   its own top-level definitions included (it may call one it defines).
 #' * `data_files`: the literal paths the cell (or a file it sources) reads
 #'   data from with one of the `data_readers` (`read.csv("d.csv")`), once
 #'   each. The shell watches them (#276).
@@ -128,14 +136,17 @@ new_cell_analysis <- function(code,
                               sourced = empty_sourced(),
                               notes = empty_notes(),
                               methods = no_methods,
+                              untracked = unique(notes$detail[notes$kind == "untracked_read"]),
+                              fn_untracked = list(), fn_calls = list(),
+                              calls = character(),
                               data_touch = empty_data_touch()) {
-  untracked <- unique(notes$detail[notes$kind == "untracked_read"])
   untracked_files <- unique(notes$detail[notes$kind == "untracked_file"])
   structure(list(code = code, parse_error = parse_error,
                  definitions = definitions, references = references,
                  packages = packages, installs = installs, settings = settings,
                  formulas = formulas, masked = masked, sourced = sourced,
-                 notes = notes, untracked = untracked, methods = methods,
+                 notes = notes, untracked = untracked, fn_untracked = fn_untracked,
+                 fn_calls = fn_calls, calls = calls, methods = methods,
                  data_files = unique(data_touch$path[data_touch$read & !is.na(data_touch$path)]),
                  data_touch = data_touch, untracked_files = untracked_files),
             class = "ember_cell_analysis")
@@ -425,7 +436,11 @@ finish <- function(acc, code) {
   new_cell_analysis(code, parse_error = NULL, definitions = defs,
                      references = refs, packages = pkgs, installs = installs, settings = settings,
                      formulas = acc$formulas, masked = masked, sourced = sourced, notes = notes,
-                     methods = methods, data_touch = data_touch_of(acc$data_rows))
+                     methods = methods, untracked = unique(acc$top_untracked),
+                     fn_untracked = lapply(acc$fn_untracked, unique),
+                     fn_calls = lapply(acc$fn_calls, ls, all.names = TRUE),
+                     calls = ls(acc$calls, all.names = TRUE),
+                     data_touch = data_touch_of(acc$data_rows))
 }
 
 empty_data_touch <- function() data.frame(path = character(), index = integer(), read = logical(),

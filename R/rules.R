@@ -141,7 +141,7 @@ get_family_functions <- c("get", "get0", "exists", "mget", "dynGet")
 #' function that is a direct argument of one gets no note (#357).
 function_object_heads <- c("?", "help", "args", "formals", "body",
                            "environment", "debug", "debugonce", "undebug",
-                           "trace", "untrace", "identical", "bquote")
+                           "trace", "untrace", "identical", "bquote", "print")
 
 #' The get-family function `e` passes as a value, or `NULL`: a bare
 #' `get` (unless a local binds it) or `base::get` / `base:::get` that isn't

@@ -787,6 +787,64 @@ test_that("a cell that reads a file by a computed path shows the can't-track not
   expect_null(pluto_state(r$state, p1)$js$cell_results$X$ember$untracked_files)
 })
 
+test_that("a sourced file that starts reading by a computed path shows the note on a cell that hasn't run, from a cached page state (#276)", {
+  s <- fake_state(list(S = cell(""), A = cell('source("h.R")')))
+  r <- drive(s, ev_files_read(list("h.R" = list(text = "z <- 1", hash = "v1")), at(2)))
+  p1 <- pluto_state(r$state)
+  expect_null(p1$js$cell_results$A$ember$untracked_files)
+  r2 <- drive(r$state, ev_files_read(list("h.R" = list(text = "d <- read.csv(f)", hash = "v2")), at(3)))
+  expect_equal(r2$state$graph$analyses$A$untracked_files, "read.csv")
+  expect_equal(pluto_state(r2$state, p1)$js$cell_results$A$ember$untracked_files, as_arr("read.csv"))
+})
+
+test_that("a cell that calls a function reading through get() shows the note, not the cell defining it (#365)", {
+  s <- fake_state(list(N = cell("site_names <- c('site_A', 'site_B')"),
+                       A = cell("for (s in site_names) assign(s, data.frame(h = 1:3))"),
+                       H = cell("load_site <- function(s) get(s)"),
+                       W = cell("load_all <- function(ns) lapply(ns, load_site)"),
+                       C = cell("sapply(site_names, function(s) sum(load_site(s)$h))"),
+                       D = cell("length(load_all(site_names))"),
+                       L = cell("f <- function(s) get(s)\nf('site_A')")))
+  snap <- snapshot_of(s)
+  expect_equal(snap$cells$C$untracked_reads, "load_site")
+  expect_equal(snap$cells$D$untracked_reads, "load_all")
+  # A cell that both defines and calls one has the note too.
+  expect_equal(snap$cells$L$untracked_reads, "f")
+  # Defining a function reads nothing.
+  expect_equal(snap$cells$H$untracked_reads, character())
+  expect_equal(snap$cells$W$untracked_reads, character())
+  js <- pluto_state(s)$js
+  check_wire(js)
+  expect_equal(js$cell_results$C$ember$untracked_reads, as_arr("load_site"))
+  expect_null(js$cell_results$H$ember$untracked_reads)
+
+  # An edit to the helper that names the variable drops the callers' notes,
+  # though their own code didn't change.
+  r <- boot(s, c("N", "A", "H", "W", "C", "D", "L"))
+  p1 <- pluto_state(r$state)
+  r2 <- drive(r$state, ev_apply(list(op_set_code("H", "load_site <- function(s) site_A")), at(20)))
+  expect_equal(snapshot_of(r2$state)$cells$C$untracked_reads, character())
+  expect_equal(snapshot_of(r2$state)$cells$D$untracked_reads, character())
+  expect_null(pluto_state(r2$state, p1)$js$cell_results$C$ember$untracked_reads)
+})
+
+test_that("a get() helper nothing calls by a name Ember sees keeps the note on the cell defining it (#365)", {
+  s <- fake_state(list(H = cell("load_site <- function(s) get(s)"),
+                       S = cell("sapply(c('a', 'b'), 'load_site')"),
+                       P = cell("pick <- function(s) get(s)"),
+                       Q = cell("f <- paste0('pi', 'ck')\ndo.call(f, list('a'))"),
+                       L = cell("args(load_site)")))
+  snap <- snapshot_of(s)
+  # Called by a string: the caller has the note, the definer doesn't.
+  expect_equal(snap$cells$S$untracked_reads, "load_site")
+  expect_equal(snap$cells$H$untracked_reads, character())
+  # Called through a computed name: no caller is found, so the definer keeps it.
+  expect_equal(snap$cells$P$untracked_reads, "get")
+  expect_equal(snap$cells$Q$untracked_reads, character())
+  # Looking at a function isn't calling it.
+  expect_equal(snap$cells$L$untracked_reads, character())
+})
+
 test_that("a package load that resets a setting a settings cell set shows a note on the loading cell (#61)", {
   # A loads mgcv inside a function, so the fake lock needs no entry for it;
   # the worker's report is what matters here.

@@ -45,6 +45,14 @@ new_accumulator <- function(read_file, file, stack) {
   acc$method_rows <- list()
   acc$no_formals <- character()
   acc$extra_methods <- list()
+  # Through-function untracked reads (#365): the top-level function whose
+  # literal is being walked, the untracked calls outside any such function
+  # and inside each one, and the names read outside them and inside each.
+  acc$fn_target <- NULL
+  acc$top_untracked <- character()
+  acc$fn_untracked <- list()
+  acc$calls <- new.env(parent = emptyenv(), hash = TRUE)
+  acc$fn_calls <- list()
   acc
 }
 
@@ -212,8 +220,10 @@ fallback_pos <- function(acc) {
   list(line = acc$line, col = NA_integer_, end_col = NA_integer_)
 }
 
-record_read <- function(acc, scope, name, where = "code", pos = NULL, unmasked = FALSE) {
+record_read <- function(acc, scope, name, where = "code", pos = NULL, unmasked = FALSE,
+                        call = TRUE) {
   if (is_ignored(name)) return(invisible())
+  if (call) record_call_read(acc, scope, name)
   if (is_bound(scope, name)) return(invisible())
   if (is.null(pos)) pos <- fallback_pos(acc)
   if (in_function(scope)) {
@@ -298,6 +308,58 @@ record_method <- function(acc, generic, signature, form, pos = NULL) {
   acc$method_rows[[length(acc$method_rows) + 1]] <-
     list(generic = generic, signature = signature, form = form, line = pos$line,
          col = pos$col, end_col = pos$end_col, file = acc$file)
+}
+
+#' A read of `name` for the through-function rule (#365): into the body
+#' reads of the top-level function being walked (`acc$fn_target`), or the
+#' cell's own reads outside any. Unlike a reference, a name the cell binds
+#' at its top level counts (a cell that defines `load_site` and then calls
+#' it); only one bound inside a function or `local()` (an argument, a
+#' local) doesn't, since that isn't the global function.
+record_call_read <- function(acc, scope, name) {
+  while (!identical(scope$kind, "top")) {
+    if (exists(name, envir = scope$bound, inherits = FALSE)) return(invisible())
+    scope <- scope$parent
+    if (is.null(scope)) break
+  }
+  fn <- acc$fn_target
+  if (is.null(fn)) {
+    acc$calls[[name]] <- TRUE
+  } else {
+    if (is.null(acc$fn_calls[[fn]])) acc$fn_calls[[fn]] <- new.env(parent = emptyenv(), hash = TRUE)
+    acc$fn_calls[[fn]][[name]] <- TRUE
+  }
+  invisible()
+}
+
+#' A string that may name a function, for the same rule:
+#' `sapply(nms, "load_site")`, `do.call("load_site", ...)` and `match.fun()`
+#' call it by name. Only a name of a function with a note matters, so any
+#' other string costs nothing but a lookup.
+record_call_string <- function(acc, name) {
+  fn <- acc$fn_target
+  if (is.null(fn)) {
+    acc$calls[[name]] <- TRUE
+  } else {
+    if (is.null(acc$fn_calls[[fn]])) acc$fn_calls[[fn]] <- new.env(parent = emptyenv(), hash = TRUE)
+    acc$fn_calls[[fn]][[name]] <- TRUE
+  }
+  invisible()
+}
+
+#' An `untracked_read` note for `name` (`get`, `eval`, ...), kept apart by
+#' where it is: inside a top-level function's literal, the note belongs to
+#' the cells that call that function, not to the cell defining it (#365);
+#' anywhere else, to this cell.
+record_untracked <- function(acc, name, pos = NULL) {
+  record_note(acc, "untracked_read", name, pos)
+  fn <- acc$fn_target
+  if (is.null(fn)) {
+    acc$top_untracked <- c(acc$top_untracked, name)
+  } else {
+    acc$fn_untracked[[fn]] <- c(acc$fn_untracked[[fn]], name)
+  }
+  invisible()
 }
 
 #' `pos` is `NULL` (falls back, `col`/`end_col` `NA`) for a note with no

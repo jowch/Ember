@@ -774,7 +774,12 @@ cells_maybe_changed <- function(old, old_ctx, new, new_ctx, at) {
   }
   maybe <- maybe | differ(new$cells, old$cells) | differ(new_ctx$results, old_ctx$results) |
     differ(new_ctx$waiting, old_ctx$waiting) | differ(new_ctx$errors_by_cell, old_ctx$errors_by_cell) |
-    differ(new_ctx$settings, old_ctx$settings)
+    differ(new_ctx$settings, old_ctx$settings) |
+    # Another cell's edit can change it: a helper that gains or drops a
+    # get() changes the note on the cells calling it (#365).
+    differ(new_ctx$untracked, old_ctx$untracked) |
+    # A sourced file's edit can change a cell's untracked_files (#276).
+    differ(new_ctx$untracked_files, old_ctx$untracked_files)
   maybe <- maybe | !(new_ctx$queued == old_ctx$queued[at]) %in% TRUE
   a <- new_ctx$disabled_by; b <- old_ctx$disabled_by[at]
   maybe <- maybe | !((a == b) %in% TRUE | (is.na(a) & is.na(b)))
