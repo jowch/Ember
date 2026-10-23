@@ -1740,6 +1740,22 @@ current_theme <- function() {
   tryCatch(get("theme_get", envir = asNamespace("ggplot2"))(), error = function(e) NULL)
 }
 
+#' The environment variables, as `as.list(Sys.getenv())` gives them.
+#' Sys.getenv() parses and sorts every variable (about 0.4 ms for 200 of
+#' them), and a cell takes several snapshots, while most cells set no
+#' variable. So the parsed list is kept while the raw `NAME=value` strings
+#' are identical (#369). The order can lag a change of LC_COLLATE, which
+#' changes nothing: diff_settings() compares variables by name.
+env_snapshot <- new.env(parent = emptyenv())
+snapshot_env <- function() {
+  raw <- .Internal(Sys.getenv(character(), ""))
+  if (!identical(raw, env_snapshot$raw)) {
+    env_snapshot$parsed <- as.list(Sys.getenv())
+    env_snapshot$raw <- raw
+  }
+  env_snapshot$parsed
+}
+
 #' `requireNamespace(pkg)`, remembering a package that isn't installed
 #' until a library on the path changes. Display asks for knitr and repr on
 #' every value, and the figure device for ragg on every run; for a package
@@ -1761,7 +1777,7 @@ missing_namespaces <- new.env(hash = TRUE, parent = emptyenv())
 
 #' The global settings, as one comparable value.
 snapshot_settings <- function() {
-  list(options = options(), env = as.list(Sys.getenv()), wd = getwd(),
+  list(options = options(), env = snapshot_env(), wd = getwd(),
        locale = snapshot_locale(), search = search_non_package(),
        theme = current_theme())
 }
