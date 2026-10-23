@@ -90,8 +90,13 @@ for (const offlineBundle of [false, true]) {
     // file://), and MD's fenced block is tagged "language-r" by the R
     // grammar's markdown embedding (CellOutput.js switched this from
     // "language-julia"), not left generic or wrong.
-    const dfSpans = await page.locator(`${cellSelector("DF")} .cm-content span[class]`).count();
-    assert.ok(dfSpans > 0, "expected the DF cell's code to have highlighted spans");
+    // A cell first shows a static fake editor (.cm-ssr-fake, no highlighting);
+    // the real one replaces it when the cell scrolls into view, which can be
+    // after TBL's table shows. So wait for the real editor's spans rather than
+    // count them once (#340).
+    await page.locator(cellSelector("DF")).scrollIntoViewIfNeeded();
+    await page.locator(`${cellSelector("DF")} .cm-editor:not(.cm-ssr-fake) .cm-content span[class]`).first().waitFor({ timeout: 20000 })
+      .catch(() => assert.fail("expected the DF cell's code to have highlighted spans"));
     const mdCodeClass = await page.locator(`${cellSelector("MD")} pre code`).first().getAttribute("class");
     assert.match(mdCodeClass, /\blanguage-r\b/);
 

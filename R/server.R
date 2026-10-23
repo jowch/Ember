@@ -1786,12 +1786,16 @@ http_notebookfile <- function(server, req) {
            list("Content-Disposition" = sprintf('inline; filename="%s"', basename(state$path))))
 }
 
-#' `GET /notebookexport?id=` -> a static HTML export (export_html()).
+#' `GET /notebookexport?id=` -> a static HTML export (export_html()), named
+#' after the notebook (`analysis.R` downloads as `analysis.html`).
 http_notebookexport <- function(server, req) {
   q <- parse_query_string(req$QUERY_STRING)
   hub <- if (!is.null(q$id)) mget(q$id, envir = server$hubs, ifnotfound = list(NULL))[[1]] else NULL
   if (is.null(hub)) return(http_text(404L, NOT_OPEN_TEXT))
-  http_text(200L, export_html(notebook_state(hub$nb)), "text/html; charset=utf-8")
+  state <- notebook_state(hub$nb)
+  name <- paste0(tools::file_path_sans_ext(basename(state$path)), ".html")
+  http_text(200L, export_html(state), "text/html; charset=utf-8",
+           list("Content-Disposition" = sprintf('inline; filename="%s"', name)))
 }
 
 #' `GET /` -> start.html, Ember's own start page: a "My notebooks" list

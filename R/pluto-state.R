@@ -1050,6 +1050,14 @@ project_ember <- function(state, ctx) {
              bytes = if (is.na(dl$bytes[[i]])) NULL else dl$bytes[[i]])
       })))
   }
+  # Shown under "Installing..." while they build (#19); a failed install
+  # has its cards instead.
+  nb_pkgs <- pv$library$no_binary
+  if (identical(pv$library$status, "installing") && length(nb_pkgs) > 0) {
+    packages$library$no_binary <- as_arr(lapply(seq_along(nb_pkgs), function(i) {
+      list(package = names(nb_pkgs)[[i]], version = unname(nb_pkgs[[i]]))
+    }))
+  }
   # `snapshot`/`r_version`/`bioc_version`/`library$message` are NA when
   # unset (packages-core.R: a fresh header has no snapshot date until
   # packages are resolved); the wire has no NA (check_wire()), so each

@@ -37,6 +37,7 @@ import { ConfirmBeforeLongRuntime, maybe_abort_long_runtime } from "./ConfirmBef
 import { RunTracker, run_started } from "./RunTracker.js"
 import { Settings } from "./Settings.js"
 import { ShortcutsSheet } from "./ShortcutsSheet.js"
+import { keep_view_anchored } from "../common/view_anchor.js"
 
 // This is imported asynchronously - uncomment for development
 // import environment from "../common/Environment.js"
@@ -255,6 +256,7 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  *   status: string, message: string?, progress: { done: number, total: number, current: string }?,
  *   log: string?, failures: Array<EmberInstallFailure>,
  *   download?: { bytes: number, packages: Array<{ package: string, version: string, bytes: number? }> },
+ *   no_binary?: Array<{ package: string, version: string }>,
  *  },
  *  rows: Array<EmberPackageRow>,
  *  update: EmberPackagesUpdate?,
@@ -1378,6 +1380,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
         } else {
             this.connect()
         }
+        keep_view_anchored()
 
         // The Variables tab's name links (VariablesTab.js): scroll to and
         // select the cell that defines a variable.
