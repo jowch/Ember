@@ -19,9 +19,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import http from "node:http";
-import { mkdtempSync, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
+import { existsSync } from "node:fs";
+import { startServer, tempNotebook, artifactsDir, tempDir } from "../server.mjs";
 import { launchBrowser, openNotebook } from "../browser.mjs";
 
 /** A minimal local HTTP server standing in for "some other program on this
@@ -77,7 +76,7 @@ function startAttackerServer(html) {
 
 test("cross-origin: a page on another local server can't connect or run code via the secret cookie", async (t) => {
   const notebook = tempNotebook();
-  const dir = mkdtempSync(path.join(tmpdir(), "ember-e2e-xorigin-"));
+  const dir = tempDir("ember-e2e-xorigin-");
   const pwned = path.join(dir, "pwned.txt");
 
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cross-origin.server.log") });

@@ -7,9 +7,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
+import { writeFileSync } from "node:fs";
+import { startServer, tempNotebook, artifactsDir, tempDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector } from "../browser.mjs";
 
 const near = (actual, expected, what) => assert.ok(Math.abs(actual - expected) < 0.6, `${what}: ${actual}, expected ${expected}`);
@@ -223,7 +222,7 @@ test("cell menu: item order, move down, hide code, Disable on every code cell (1
 // height until then, so those cells sit above B too (#379).
 test("opening: a cell's static code is as tall as its editor, so nothing below moves when editors load (#375, #379)", async (t) => {
   const long = `x <- c(${Array.from({ length: 300 }, (_, i) => i).join(", ")})`;
-  const notebook = path.join(mkdtempSync(path.join(tmpdir(), "ember-e2e-static-")), "static.R");
+  const notebook = path.join(tempDir("ember-e2e-static-"), "static.R");
   writeFileSync(notebook, [
     "### An Ember notebook ###", "# /// environment", '# ember_version = "0.0.0.9000"', '# r_version = "4.6.1"', '# snapshot = "2026-01-01"', "# ///", "",
     "# %% id=S", "",
@@ -446,7 +445,7 @@ test("empty notebook: placeholder and hints show, and typing removes them (151)"
   // A real new notebook (new_notebook(), R/api.R) has two empty cells
   // (setup, then one code cell), not one -- made through the start page,
   // like a person actually gets there.
-  const dir = mkdtempSync(path.join(tmpdir(), "ember-e2e-empty-"));
+  const dir = tempDir("ember-e2e-empty-");
   const server = await startServer([], { cwd: dir, logFile: path.join(artifactsDir(), "cells-empty.server.log") });
   const browser = await launchBrowser();
   t.after(async () => { await browser.close(); server.stop(); });

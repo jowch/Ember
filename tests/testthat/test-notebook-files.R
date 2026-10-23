@@ -159,6 +159,25 @@ test_that("complete_path(): in a big folder, folders only are found among many f
   expect_equal(unlist(r_many$results)[1:3], c("d1/", "d2/", "f0001.txt"))
 })
 
+test_that("complete_path(): folders only, among many matching folders, lists the first 200 by name (#424)", {
+  # 1100 matching folders and 1100 matching files: the folders come first
+  # by name here, so stat-ing finds 200 without list.dirs().
+  dir <- tempfile("ember-complete-dense-")
+  dir.create(dir)
+  for (i in 1:1100) dir.create(file.path(dir, sprintf("a%04d", i)))
+  file.create(file.path(dir, sprintf("b%04d.txt", 1:1100)))
+
+  r <- complete_path(paste0(dir, "/"), dirs_only = TRUE)
+  expect_length(r$results, 200)
+  expect_true(r$ember_truncated)
+  expect_equal(unlist(r$results), sprintf("a%04d/", 1:200))
+
+  # And past the first 1024, with only files there, list.dirs() finds none.
+  r_b <- complete_path(file.path(dir, "b"), dirs_only = TRUE)
+  expect_length(r_b$results, 0)
+  expect_false(r_b$ember_truncated)
+})
+
 test_that("first_free_notebook_name(): notebook.R, then notebook-2.R, notebook-3.R, ...", {
   dir <- tempfile("ember-free-name-")
   dir.create(dir)

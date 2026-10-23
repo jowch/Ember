@@ -8,9 +8,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { writeFileSync, mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
+import { writeFileSync } from "node:fs";
+import { startServer, tempNotebook, artifactsDir, tempDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector } from "../browser.mjs";
 
 /** `html` with every `<script>...</script>`/`<style>...</style>` element's
@@ -33,7 +32,7 @@ async function fetchExport(server, id, { offlineBundle = false } = {}) {
 }
 
 function saveExport(html, name) {
-  const dir = mkdtempSync(path.join(tmpdir(), "ember-export-"));
+  const dir = tempDir("ember-export-");
   const file = path.join(dir, name);
   writeFileSync(file, html, "utf8");
   return file;

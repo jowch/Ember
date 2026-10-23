@@ -7,15 +7,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, existsSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { startServer, tempNotebook, artifactsDir, tempDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook } from "../browser.mjs";
 
 /** A cache folder holding one library last used 40 days ago, the one
  * cache entry its manifest lists, and one library used 10 days ago. */
 function seedCache() {
-  const root = mkdtempSync(path.join(tmpdir(), "ember-e2e-clean-up-"));
+  const root = tempDir("ember-e2e-clean-up-");
   const stale = path.join(root, "libraries", "R-4.6", "testplat", "stalekey");
   const recent = path.join(root, "libraries", "R-4.6", "testplat", "recentkey");
   const entry = path.join(root, "renv-cache", "v5", "os", "R-4.6", "triplet", "pkgStale", "1.0", "hashpkgStale");
@@ -38,7 +37,7 @@ function seedCache() {
   // passes `-e` on through cmd.exe, which doesn't carry a newline, and
   // here the seeding R crashed (#220).
   // Outside the cache root, so the seeded cache holds only what the test made.
-  const seedDir = mkdtempSync(path.join(tmpdir(), "ember-e2e-seed-"));
+  const seedDir = tempDir("ember-e2e-seed-");
   const script = path.join(seedDir, "seed.R");
   writeFileSync(script, expr);
   const res = spawnSync(process.env.EMBER_RSCRIPT ?? "Rscript", ["--vanilla", script], { encoding: "utf8" });

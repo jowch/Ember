@@ -5,9 +5,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
+import { writeFileSync } from "node:fs";
+import { startServer, tempNotebook, artifactsDir, tempDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector } from "../browser.mjs";
 
 const rect = (page, sel) => page.locator(sel).evaluate((el) => {
@@ -107,7 +106,7 @@ test('chips: NEVER (loaded with code, never run) shows "Not run yet" with no out
   const id = new URL(page.url()).searchParams.get("id");
   const res = await fetch(`${server.origin}notebookexport?id=${id}&secret=${server.secret}`);
   assert.equal(res.status, 200);
-  const file = path.join(mkdtempSync(path.join(tmpdir(), "ember-e2e-export-")), "cells.html");
+  const file = path.join(tempDir("ember-e2e-export-"), "cells.html");
   writeFileSync(file, await res.text(), "utf8");
   const exported = await newPage(browser);
   await exported.goto(`file://${file}`);

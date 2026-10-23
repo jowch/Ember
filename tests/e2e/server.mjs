@@ -34,11 +34,21 @@ function freePort() {
   });
 }
 
+/** A fresh folder under the OS temp folder, removed when this test
+ * process exits (the "exit" handler below), so runs don't pile up
+ * folders there (#421). */
+const tempDirs = new Set();
+export function tempDir(prefix) {
+  const dir = mkdtempSync(path.join(tmpdir(), prefix));
+  tempDirs.add(dir);
+  return dir;
+}
+
 /** Copy `name` from tests/e2e/fixtures into a fresh temp directory, and
  * return its path. Each test gets its own copy so edits (and the file on
  * disk they produce) never leak between tests. */
 export function tempNotebook(name = "basic.R") {
-  const dir = mkdtempSync(path.join(tmpdir(), "ember-e2e-"));
+  const dir = tempDir("ember-e2e-");
   const dest = path.join(dir, name);
   copyFileSync(path.join(FIXTURES, name), dest);
   return dest;
@@ -50,7 +60,7 @@ export function tempNotebook(name = "basic.R") {
  * `github_fixture_dir()` does. The folders are stored short because a
  * package tarball holds no path over 100 bytes (#244). */
 export function githubFixtureDir() {
-  const out = path.join(mkdtempSync(path.join(tmpdir(), "ember-e2e-gh-")), "github");
+  const out = path.join(tempDir("ember-e2e-gh-"), "github");
   cpSync(path.join(HERE, "..", "testthat", "fixtures", "github"), out, { recursive: true });
   const repos = path.join(out, "repos");
   for (const user of readdirSync(repos)) {
@@ -90,9 +100,15 @@ process.on("exit", () => {
   for (const child of liveChildren) {
     try { child.kill("SIGKILL"); } catch { /* already gone */ }
   }
+  // After the kills: a folder a server still had open would not go.
+  for (const dir of tempDirs) {
+    try { rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* left for the OS */ }
+  }
 });
-// A signal ends the process without "exit" unless something handles it.
-for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]]) {
+// A signal ends the process without "exit" unless something handles it:
+// Ctrl+C, a stop, or the terminal or console window closing (SIGHUP, also
+// what Node emits on Windows for a closed console), so the folders still go.
+for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143], ["SIGHUP", 129]]) {
   process.once(signal, () => process.exit(code));
 }
 
@@ -165,7 +181,7 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   // honours this environment variable: each server gets its own temp
   // folder, so this suite never touches the real one or lets two test
   // servers share a recent-notebooks file.
-  const dataDir = mkdtempSync(path.join(tmpdir(), "ember-e2e-data-"));
+  const dataDir = tempDir("ember-e2e-data-");
   const child = spawn(rscript, ["--vanilla", "-e", expr], {
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, R_USER_DATA_DIR: dataDir, R_LIBS: emberLibs() },
