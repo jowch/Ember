@@ -1193,6 +1193,31 @@ test_that("the poll leaves a file the running cell writes to the check at the ru
   expect_identical(running_writes(nb$state), character())
 })
 
+test_that("the poll's skip matches a running writer's file however its path is spelled (#405)", {
+  touch <- data.frame(path = "./d.csv", index = 1L, read = FALSE, stringsAsFactors = FALSE)
+  nb <- data_check_nb(running = list(cell = "W"), touch = touch)
+  writeLines("1,2", nb$file)
+  check_data_files(nb, nb$send, skip = running_writes(nb$state))
+  expect_length(nb$sent, 0)
+})
+
+test_that("a look that found the file cut short doesn't cost the next same-bytes rewrite a rerun (#405)", {
+  nb <- data_check_nb()
+  at <- function(s) as.POSIXct("2026-01-01 00:00:00", tz = "UTC") + s
+  put <- function(text, s) { writeLines(text, nb$file, sep = ""); Sys.setFileTime(nb$file, at(s)) }
+  put("1,2\n", 1); check_data_files(nb, nb$send)
+  put("1,2\n", 2); check_data_files(nb, nb$send)   # the first same-size rewrite has no hash to compare
+  expect_length(nb$sent, 2)
+  # A writer the skip can't see: one look mid-write, then the finished file
+  # in the same clock tick. Both are changes (a reader may have read the
+  # short file), and the hash is kept.
+  put("", 3); check_data_files(nb, nb$send)
+  put("1,2\n", 3); check_data_files(nb, nb$send)
+  expect_length(nb$sent, 4)
+  put("1,2\n", 4); check_data_files(nb, nb$send)
+  expect_length(nb$sent, 4)
+})
+
 # ---- Prompts (#186) ------------------------------------------------------------
 
 #' Run `id` and wait until its prompt shows; returns the prompt.

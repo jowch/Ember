@@ -1317,17 +1317,24 @@ check_data_files <- function(nb, send, skip = character()) {
   # bytes reruns nothing. A new size is a change without reading the file;
   # the same size is told apart by its hash, which a file has only after
   # its first such rewrite (hashing every data file when the notebook
-  # opens would read them all).
+  # opens would read them all). The record keeps the last hash with the
+  # size it was taken at (`hash_size`), so a look that found the file cut
+  # short, by a writer the skip can't see, doesn't cost the next same-bytes
+  # rewrite a rerun.
+  skip_full <- if (anyNA(skip)) NA_character_ else canonical_path(vapply(skip, function(s) resolve_source_path(nb, s), character(1)))
   data_changed <- list()
   for (p in names(nb$data_watch)) {
-    if (anyNA(skip) || p %in% skip) next
     full <- resolve_source_path(nb, p)
+    if (anyNA(skip_full) || canonical_path(full) %in% skip_full) next
     info <- data_file_info(full)
     w <- nb$data_watch[[p]]
     if (!isTRUE(identical(info$mtime, w$mtime)) || !isTRUE(identical(info$size, w$size))) {
       same_size <- isTRUE(identical(info$size, w$size)) && !is.na(info$size)
-      hash <- if (same_size) data_file_hash(full) else NA_character_
-      nb$data_watch[[p]] <- list(mtime = info$mtime, size = info$size, hash = hash)
+      hashed <- !is.na(info$size) && isTRUE(identical(info$size, w$hash_size))
+      hash <- if (same_size || hashed) data_file_hash(full) else NA_character_
+      kept <- !is.na(hash)
+      nb$data_watch[[p]] <- list(mtime = info$mtime, size = info$size, hash = if (kept) hash else w$hash,
+                                 hash_size = if (kept) info$size else w$hash_size)
       if (!same_size || is.na(hash) || !identical(hash, w$hash)) {
         data_changed[[p]] <- data_signature(info)
       }
@@ -1335,6 +1342,13 @@ check_data_files <- function(nb, send, skip = character()) {
   }
   if (length(data_changed) > 0) send(nb, ev_data_changed(data_changed, at = Sys.time()))
   invisible(NULL)
+}
+
+#' A path with its folder resolved (`d.txt` and `./d.txt` alike), so two
+#' spellings of one data file compare equal. The file itself may not exist.
+canonical_path <- function(full) {
+  if (length(full) == 0) return(character())
+  file.path(normalizePath(dirname(full), winslash = "/", mustWork = FALSE), basename(full))
 }
 
 #' The data files the running cell writes by a literal path, from its
