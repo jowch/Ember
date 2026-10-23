@@ -1314,7 +1314,9 @@ neighbour_lists <- function(ids, rank, key, value) {
 #' none is added, the ones whose body calls one of them (`fn_calls`). The
 #' one-definition rule makes a name enough to say which function it is. A
 #' cell that only defines such a function gets no note for it: running it
-#' reads nothing. Only cells with a note are kept.
+#' reads nothing. But a function nothing calls by a name Ember sees (called
+#' through a computed name, say) keeps its note on the cell defining it, so
+#' the note isn't lost. Only cells with a note are kept.
 untracked_of <- function(analyses) {
   shown <- lapply(analyses, `[[`, "untracked")
   fns <- unique(unlist(lapply(analyses, function(a) names(a$fn_untracked)), use.names = FALSE))
@@ -1327,6 +1329,15 @@ untracked_of <- function(analyses) {
       fns <- c(fns, more)
     }
     shown <- lapply(analyses, function(a) unique(c(a$untracked, fns[fns %in% a$calls])))
+    called <- unique(c(unlist(lapply(analyses, `[[`, "calls"), use.names = FALSE),
+                       unlist(lapply(names(fn_calls), function(f) setdiff(fn_calls[[f]], f)), use.names = FALSE)))
+    for (f in setdiff(fns, called)) {
+      for (id in names(analyses)) {
+        a <- analyses[[id]]
+        if (!(f %in% c(names(a$fn_untracked), names(a$fn_calls)))) next
+        shown[[id]] <- unique(c(shown[[id]], a$fn_untracked[[f]], intersect(a$fn_calls[[f]], fns)))
+      }
+    }
   }
   shown[lengths(shown) > 0]
 }

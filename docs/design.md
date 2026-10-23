@@ -379,8 +379,10 @@ When the read is inside a function (`load_site <- function(s) get(s)`),
 the note goes on each cell that calls the function, and names it
 (`load_site()`): that cell is the one showing old values. The cell that
 only defines the function gets no note, because running it reads nothing.
-A function that calls such a function passes the note on to its own
-callers (#365).
+A call by a string name counts (`sapply(nms, "load_site")`, `do.call()`),
+and `args(load_site)` doesn't. A function that calls such a function passes
+the note on to its own callers. When no cell calls the function by a name
+Ember can see, the note stays on the cell that defines it (#365).
 
 **Code in other files.** `source("helpers.R")` with a literal path is read
 like part of the cell:

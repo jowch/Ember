@@ -366,6 +366,11 @@ test_that("get() inside a top-level function belongs to the function, not the ce
                  read_file = function(path) "load_site <- function(s) get(s)")
   expect_equal(e$fn_untracked, list(load_site = "get"))
   expect_true("load_site" %in% e$calls)
+  # A call by a string name counts; looking at the function doesn't.
+  f <- read_cell("sapply(nms, 'load_site')\ndo.call(\"pick\", list(1))")
+  expect_true(all(c("load_site", "pick") %in% f$calls))
+  g <- read_cell("args(load_site)\nbody(load_site)")
+  expect_false("load_site" %in% g$calls)
 })
 
 test_that("eval() is untouched by the get-family literal-name rule", {

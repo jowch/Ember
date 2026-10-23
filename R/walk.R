@@ -27,6 +27,7 @@ walk_expr <- function(e, scope, acc, pid = NA_integer_) {
     if (!is.null(passed)) record_untracked(acc, passed, pd_position(acc, pid))
     return(invisible())
   }
+  if (is.character(e) && length(e) == 1 && !is.na(e) && nzchar(e)) record_call_string(acc, e)
   if (!is.call(e)) return(invisible())
   # `lapply(site_names, base::get)`, the same as the bare symbol above. A
   # call's head never comes here: `base::get(x)` is walk_qualified_call()'s.
@@ -734,8 +735,11 @@ walk_call_args <- function(e, scope, acc, arg_pids = NULL) {
     if (is_bracket_call && is.symbol(a) && is_dotdot_prefixed_name(as.character(a))) {
       stripped <- substr(as.character(a), 3, nchar(as.character(a)))
       record_read(acc, scope, stripped, pos = pd_position(acc, arg_pids[[i]]))
+    } else if (looks_at_function && is.symbol(a)) {
+      # Looked at, not called: no note for get, and `args(load_site)`
+      # isn't a call of load_site (#365).
+      record_read(acc, scope, as.character(a), pos = pd_position(acc, arg_pids[[i]]), call = FALSE)
     } else if (looks_at_function && !is.null(get_family_value(a, scope))) {
-      if (is.symbol(a)) record_read(acc, scope, as.character(a), pos = pd_position(acc, arg_pids[[i]]))
     } else if (is.call(a) && is.symbol(a[[1]]) && identical(as.character(a[[1]]), "~")) {
       site <- formula_site(acc$index, acc$line, fn_display, data_text, character())
       walk_formula(a, scope, acc, has_data, site, arg_pids[[i]])

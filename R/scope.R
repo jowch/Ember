@@ -219,9 +219,10 @@ fallback_pos <- function(acc) {
   list(line = acc$line, col = NA_integer_, end_col = NA_integer_)
 }
 
-record_read <- function(acc, scope, name, where = "code", pos = NULL, unmasked = FALSE) {
+record_read <- function(acc, scope, name, where = "code", pos = NULL, unmasked = FALSE,
+                        call = TRUE) {
   if (is_ignored(name)) return(invisible())
-  record_call_read(acc, scope, name)
+  if (call) record_call_read(acc, scope, name)
   if (is_bound(scope, name)) return(invisible())
   if (is.null(pos)) pos <- fallback_pos(acc)
   if (in_function(scope)) {
@@ -320,6 +321,21 @@ record_call_read <- function(acc, scope, name) {
     scope <- scope$parent
     if (is.null(scope)) break
   }
+  fn <- acc$fn_target
+  if (is.null(fn)) {
+    acc$calls[[name]] <- TRUE
+  } else {
+    if (is.null(acc$fn_calls[[fn]])) acc$fn_calls[[fn]] <- new.env(parent = emptyenv(), hash = TRUE)
+    acc$fn_calls[[fn]][[name]] <- TRUE
+  }
+  invisible()
+}
+
+#' A string that may name a function, for the same rule:
+#' `sapply(nms, "load_site")`, `do.call("load_site", ...)` and `match.fun()`
+#' call it by name. Only a name of a function with a note matters, so any
+#' other string costs nothing but a lookup.
+record_call_string <- function(acc, name) {
   fn <- acc$fn_target
   if (is.null(fn)) {
     acc$calls[[name]] <- TRUE
