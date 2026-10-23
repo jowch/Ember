@@ -727,12 +727,23 @@ server over the socket. R's own console reads have no input, since the
 worker's stdin is closed, so `scan("")` and `readLines(stdin())` return at
 once, as under `Rscript`, and `browser()` carries on. The API answers with
 `answer_input()`, and the snapshot shows the waiting question as the
-running cell's `prompt`.
+running cell's `prompt`; an answer can name the prompt's `id`, so one
+typed for a question that has since gone (`menu()` asking again, another
+tab's answer first) is refused, not given to the next question. Two
+settings stay as under `Rscript`: the default graphics device is `pdf`
+(an interactive R picks X11, quartz or windows), and rlang's
+`check_installed()` errors instead of offering to install into the
+notebook's shared library (`rlib_restart_package_not_found = FALSE`; see
+packages.md, "Install calls"). `run()` still runs a file under `Rscript`,
+so there a cell that asks gets "" or fails.
 
 Measured before this was built (10-17): shapes.R, penguins.R and deseq.R
 give the same status, output, plots and messages with `interactive()`
 `TRUE`; a cli progress bar updates more often, and lifecycle adds its
-"displayed once per session" footer. Ember's own installs run in a
+"displayed once per session" footer. Measured since (10-23):
+`keep.source` is `TRUE`, so a function from a `source()`d file keeps its
+srcref and its error frames name that file; the page shows only the
+notebook's cells, so nothing there changes. Ember's own installs run in a
 separate non-interactive `Rscript`, so they never ask. `Rscript -e` can't
 be made interactive: R reading its code from a file never is, whatever the
 flags, so the worker reads its boot line from stdin instead.

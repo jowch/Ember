@@ -898,7 +898,7 @@ answer_from_subprocess <- function(cmd, answer, ok, failure) {
 #' | ember_open_notebook            | {path}: open_or_find() (shared with /open); reply {url} or {error}. No hub |
 #' | ember_forget_recent            | {path}: forget_notebook(), then the ember_start_page reply. No hub |
 #' | ember_set_mode                 | {mode}: "autorun" or "lazy", else refused; refused when read-only. set_cell_change_mode(nb, mode); flush. No reply |
-#' | ember_answer_input             | {cell_id, text}: the answer to the running cell's prompt (#186), answer_input(); a refusal (the prompt has gone) is logged. Flush. No reply |
+#' | ember_answer_input             | {cell_id, prompt_id, text}: the answer to the running cell's prompt (#186), answer_input(); a refusal (the prompt has gone, or was another question) is logged. Flush. No reply |
 #' | request_js_link_response, nbpkg_available_versions, nbpkg_get_project_toml, nbpkg_set_project_toml, pkg_update | Julia-only; their UI is disabled in the frontend. Logged, no reply |
 #'
 #' Replies use the reply type Pluto uses for each (connect "\U0001F44B", ping
@@ -1380,7 +1380,11 @@ handlers <- list(
       if (!(is.character(cell) && length(cell) == 1 && !is.na(cell))) {
         stop(refused("ember_answer_input: cell_id must be one string"))
       }
-      reply <- dispatch(hub$nb, ev_answer_input(text, at = Sys.time(), cell = cell))
+      id <- req$body$prompt_id
+      if (!is.null(id) && !(is.numeric(id) && length(id) == 1 && !is.na(id))) {
+        stop(refused("ember_answer_input: prompt_id must be a number"))
+      }
+      reply <- dispatch(hub$nb, ev_answer_input(text, at = Sys.time(), cell = cell, id = id))
       if (inherits(reply, "ember_refused")) stop(reply)
     }, ember_refused = function(e) message("ember: refused ember_answer_input: ", conditionMessage(e)))
     flush_clients(server, hub)

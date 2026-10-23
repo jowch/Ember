@@ -2718,6 +2718,21 @@ test_that("an answer is refused for another cell, or when it isn't one string (#
   expect_false(is.null(r$state$worker$running$prompt))
 })
 
+test_that("an answer that names its prompt is refused once that prompt has gone (#186)", {
+  s <- fake_state(list(S = cell(""), A = cell('x <- menu(c("a", "b"))')))
+  r <- boot(s, "A")
+  tok <- last_token(r)
+  # menu() asked again after a bad answer: an answer typed for the first question isn't given to the second.
+  r <- drive(r$state, wk_input(1, tok, 2L, "Selection: ", c("a", "b"), at(10)))
+  stale <- drive(r$state, ev_answer_input("1", at(11), id = 1L))
+  expect_s3_class(stale$reply, "ember_refused")
+  expect_match(conditionMessage(stale$reply), "already answered", fixed = TRUE)
+  expect_length(stale$effects, 0)
+  ok <- drive(r$state, ev_answer_input("1", at(11), id = 2L))
+  expect_true(isTRUE(ok$reply))
+  expect_equal(last_sent(ok), list(type = "input_reply", id = 2L, text = "1"))
+})
+
 test_that("a prompt from an older run or worker is ignored, and one that closes or ends with the run goes (#186)", {
   s <- fake_state(list(S = cell(""), A = cell('x <- readline("Name? ")')))
   r <- boot(s, "A")

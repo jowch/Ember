@@ -260,6 +260,12 @@ main <- function() {
   # on, and a settings cell can still change them (each run resets to this
   # baseline, same as any other setting).
   options(cli.num_colors = 256L, crayon.enabled = TRUE, crayon.colors = 256L)
+  # The worker is interactive (#186), but these stay as under Rscript: the
+  # default device draws to a file, not a window (an interactive R picks
+  # X11, quartz or windows), and rlang's check_installed() errors rather
+  # than offering to install into the notebook's shared, lock-keyed library
+  # (docs/packages.md, "Install calls").
+  options(device = grDevices::pdf, rlib_restart_package_not_found = FALSE)
   # So `library(` completion includes installed package names (complete_line()).
   tryCatch(utils::rc.settings(ipck = TRUE), error = function(e) NULL)
   secret <- Sys.getenv("EMBER_SECRET")

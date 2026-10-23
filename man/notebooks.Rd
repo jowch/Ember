@@ -45,7 +45,7 @@ set_input(nb, name, value, wait = FALSE, timeout = 60)
 
 interrupt_notebook(nb)
 
-answer_input(nb, text, cell = NULL)
+answer_input(nb, text, cell = NULL, id = NULL)
 
 restart_notebook(nb)
 
@@ -92,6 +92,10 @@ would return it.}
 cell the answer is for, or \code{NULL} for whichever cell runs.}
 \item{text}{For \code{answer_input()}, the answer to the running cell's
 prompt, one string, as typed at the prompt.}
+\item{id}{For \code{answer_input()}, the prompt's \code{id} from the snapshot,
+or \code{NULL} for whichever question waits. Given, an answer to a question
+already answered (and asked again, as \code{menu()} does after a bad
+answer) is an error.}
 \item{width, height}{Requested pixel size for \code{render_png()}. \code{NULL} for
 both returns the output's stored image unchanged.}
 \item{res}{Pixel density (dots per inch) for \code{render_png()}'s re-render,

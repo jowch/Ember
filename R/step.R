@@ -48,7 +48,7 @@ ev_set_mode    <- function(mode, at) event("set_mode", at, mode = mode)
 ev_set_input   <- function(name, value, at) event("set_input", at, name = name, value = value)
 #' The answer to the prompt the running cell waits on (#186): `text`, one
 #' string. `cell`: the cell the answer is for, or `NULL` for whichever runs.
-ev_answer_input <- function(text, at, cell = NULL) event("answer_input", at, text = text, cell = cell)
+ev_answer_input <- function(text, at, cell = NULL, id = NULL) event("answer_input", at, text = text, cell = cell, id = id)
 #' A redraw at the cell's own figure size and a new pixel density
 #' (`ember_render_plot`, a density change: 3a). `render_png()`'s one-off
 #' pixel sizes don't come through here: they never change the state (#28).
@@ -1783,8 +1783,10 @@ reduce_wk_input_closed <- function(state, event) {
 
 #' Answer the waiting prompt: the text goes to the worker, and the prompt
 #' is dropped at once, so a second answer is refused rather than sent to
-#' a prompt that has gone. Refused when nothing waits, or (with
-#' `event$cell`) when the prompt is another cell's.
+#' a prompt that has gone. Refused when nothing waits, (with
+#' `event$cell`) when the prompt is another cell's, or (with `event$id`)
+#' when it is another question: `menu()` asking again, or a second tab's
+#' answer that came first.
 reduce_answer_input <- function(state, event) {
   no <- function(reason) list(state = state, effects = list(), reply = refused(reason, op = "answer_input"))
   w <- state$worker
@@ -1793,6 +1795,7 @@ reduce_answer_input <- function(state, event) {
   if (!is.null(event$cell) && !identical(event$cell, w$running$cell)) {
     return(no("that cell isn't waiting for an answer"))
   }
+  if (!is.null(event$id) && !eq(event$id, p$id)) return(no("that question was already answered"))
   text <- event$text
   if (!is.character(text) || length(text) != 1 || is.na(text)) return(no("the answer must be one string"))
   state$worker$running$prompt <- NULL

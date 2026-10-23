@@ -36,7 +36,7 @@ export const CellPrompt = ({ cell_id, prompt }) => {
     const answer = (text) => {
         if (sent) return
         set_sent(true)
-        pluto_actions.ember_answer_input(cell_id, text)
+        pluto_actions.ember_answer_input(cell_id, prompt.id, text)
     }
     const choices = prompt.choices ?? []
 

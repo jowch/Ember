@@ -1162,6 +1162,22 @@ test_that("a cell runs with interactive() TRUE, as in an R console (#186)", {
   expect_match(snap_view(notebook_snapshot(nb), "A")$output$text, "TRUE", fixed = TRUE)
 })
 
+test_that("an interactive worker still draws to pdf and doesn't offer installs (#186)", {
+  # With a display named, an interactive R's default device would be X11 (a
+  # window, or an error without a server); Ember keeps Rscript's pdf.
+  old <- Sys.getenv("DISPLAY", unset = NA)
+  Sys.setenv(DISPLAY = ":99")
+  on.exit(if (is.na(old)) Sys.unsetenv("DISPLAY") else Sys.setenv(DISPLAY = old), add = TRUE)
+  code <- 'grDevices::dev.new(); plot(1); grDevices::dev.off()\nc(identical(getOption("device"), grDevices::pdf), isFALSE(getOption("rlib_restart_package_not_found")))'
+  path <- write_session_notebook(list(S = cell(""), A = cell(code)))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, "A", wait = TRUE, timeout = 30)
+  view <- snap_view(notebook_snapshot(nb), "A")
+  expect_equal(view$status, "ok")
+  expect_match(view$output$text, "TRUE TRUE", fixed = TRUE)
+})
+
 test_that("readline() in a cell waits for the answer and the cell carries on with it (#186)", {
   path <- write_session_notebook(list(S = cell(""), A = cell('cat("Before\\n")\nname <- readline("Name? ")\ncat("Hello", name, "\\n")')))
   nb <- open_notebook(path)
