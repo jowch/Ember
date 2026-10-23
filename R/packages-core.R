@@ -170,6 +170,9 @@ new_releases_slot <- function(status = "unknown", table = empty_bioc_releases(),
 #'   computed once, by the installer, from each package's NAMESPACE and
 #'   lazy-load index (no package is loaded in the server).
 #' * `progress`: `NULL` or `list(done, total, current)` while installing.
+#' * `no_binary`: `NULL`, or what the installer said will build from
+#'   source for want of a binary for this R (#19): named character,
+#'   package -> version. Set while installing, kept until the next install.
 #' * `message`, `log`: why it failed, and the installer's last lines.
 #' * `download`: while `"asking"`, the large packages and their sizes
 #'   (`download_lines()`); else `NULL`. `approved`: the user said yes, so
@@ -517,6 +520,11 @@ ev_library_checked <- function(key, manifest, at)            # manifest: NULL wh
   event("library_checked", at, key = key, manifest = manifest)
 ev_install_progress <- function(token, item, at)             # item: list(package, step, done, total)
   event("install_progress", at, token = token, item = item)
+#' The installer's notice that `packages` (named character, package ->
+#' version) have no binary for this R and build from source (#19,
+#' `source_only_packages()`).
+ev_install_no_binary <- function(token, packages, at)
+  event("install_no_binary", at, token = token, packages = packages)
 #' `failures` is `install_failures()`'s result (empty when the install
 #' succeeded, or when the caller doesn't have one -- tests that build this
 #' event directly don't need to).
@@ -890,6 +898,7 @@ schedule_packages <- function(state, old) {
     state$packages$install <- list(token = token, key = tgt$key, path = tgt$path)
     tgt$status <- "installing"
     tgt$progress <- NULL
+    tgt$no_binary <- NULL
     state$packages$target <- tgt
     # Asked once: after the user's OK (`reduce_approve_install()`), the
     # same library installs without stopping again.
@@ -1394,6 +1403,15 @@ reduce_install_progress <- function(state, event) {
   inst <- state$packages$install
   if (is.null(inst) || !eq(inst$token, event$token)) return(list(state = state, effects = list(), reply = NULL))
   state$packages$target$progress <- event$item
+  list(state = state, effects = list(), reply = NULL)
+}
+
+#' Token check; `target$no_binary` set. Kept once the install ends, until
+#' the next one starts.
+reduce_install_no_binary <- function(state, event) {
+  inst <- state$packages$install
+  if (is.null(inst) || !eq(inst$token, event$token)) return(list(state = state, effects = list(), reply = NULL))
+  state$packages$target$no_binary <- event$packages
   list(state = state, effects = list(), reply = NULL)
 }
 
@@ -1907,7 +1925,7 @@ packages_named_in <- function(state, msg) {
 #' The packages part of the snapshot (and `package_status()`): plain data.
 #'
 #' `list(snapshot, r_version, bioc_version,
-#'      library = list(status, path, progress, message, log, failures),
+#'      library = list(status, path, progress, message, log, failures, download, no_binary),
 #'      packages = data.frame(name, version, source, direct, status, message, spec),
 #'      problems, proposal = NULL | list(date, status, changes, problems),
 #'      plan = NULL | list(install = <n packages>, restart = <names>))`
@@ -2198,6 +2216,7 @@ packages_view <- function(state) {
       bioc_version = state$file$header$bioc_version,
       library = list(status = p$target$status, path = p$target$path,
                     progress = p$target$progress, message = p$target$message,
-                    log = p$target$log, failures = failures, download = p$target$download),
+                    log = p$target$log, failures = failures, download = p$target$download,
+                    no_binary = p$target$no_binary),
       packages = packages_df, problems = problems, proposal = proposal, plan = plan)
 }

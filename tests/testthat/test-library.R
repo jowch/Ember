@@ -294,6 +294,29 @@ test_that("two installs with the same lock key but different library paths are s
   job_leave(infoB$path, nbB)
 })
 
+test_that("a job that ends before the first poll still hands every line to make_progress, before make_done (#19)", {
+  key <- paste0("job-fast-", uuid())
+  rscript <- file.path(R.home("bin"), "Rscript")
+  cmd <- list(command = rscript, args = c("--vanilla", "-e", "cat('EMBER-NO-BINARY cli=3.6.2\\nlast line')"),
+              env = "current")
+  nb <- fake_sub()
+  seen <- character()
+  job_start(key, cmd, nb, make_progress = function(line) {
+    seen <<- c(seen, line)
+    NULL
+  }, make_done = function(status, output) {
+    seen <<- c(seen, "done")
+    NULL
+  })
+  # Ended before poll_jobs() ever read it: all its output comes with the exit.
+  jobs[[key]]$proc$wait()
+  poll_jobs(NULL)
+  # Windows ends the lines with "\r\n" (the parsers trim it), as it does
+  # the lines read while a job runs.
+  expect_equal(sub("\r$", "", seen), c("EMBER-NO-BINARY cli=3.6.2", "last line", "done"))
+  expect_null(jobs[[key]])
+})
+
 test_that("job_leave by the last subscriber kills the process (63)", {
   key <- paste0("job-kill-", uuid())
   rscript <- file.path(R.home("bin"), "Rscript")

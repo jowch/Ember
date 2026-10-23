@@ -230,6 +230,22 @@ const InstallFailureCard = ({ card, rows, r_version, log, show_command }) => {
     `
 }
 
+/**
+ * The line under "Installing..." when packages build from source for want
+ * of a binary for this R (#19, `source_only_packages()`, R/install-checks.R).
+ * It doesn't stop the install: pure R packages build fine. If one doesn't,
+ * the failure card says why, with the same Update.
+ *
+ * @param {Array<{ package: string, version: string }>} packages
+ * @param {string?} r_version
+ */
+const no_binary_notice = (packages, r_version) =>
+    t("t_ember_install_no_binary", {
+        count: packages.length,
+        packages: name_list(packages.map((p) => `${p.package} ${p.version}`)),
+        r_version: r_version ?? "",
+    })
+
 /** A byte count in words: "2.1 GB", "640 MB", "25 MB", "2 kB". */
 export const size_words = (/** @type {number} */ bytes) =>
     bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : bytes >= 1e6 ? `${Math.round(bytes / 1e6)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} kB`
@@ -662,6 +678,9 @@ export const PackagesTab = ({ packages, read_only = false }) => {
                       ${library.progress != null ? ` (${library.progress.done}/${library.progress.total})` : ""}
                       ${library.message != null && library.failures.length === 0
                           ? html`<br /><span class="ember-packages-library-message">${library.message}</span>`
+                          : null}
+                      ${library.status === "installing" && library.no_binary != null && library.no_binary.length > 0
+                          ? html`<br /><span class="ember-packages-library-message ember-packages-no-binary">${no_binary_notice(library.no_binary, r_version)}</span>`
                           : null}
                   </p>`}
             ${library.status === "asking" && library.download != null
