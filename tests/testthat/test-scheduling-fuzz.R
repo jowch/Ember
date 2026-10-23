@@ -28,8 +28,8 @@ fuzz_steps <- function() {
 # its failure, so its later steps aren't checked. Entries look like
 #   "lazy 30" = list(issue = 174, step = 5L, kind = "after running every cell, _ isn't fresh")
 fuzz_known <- list(
-  "conflicts lazy 15" = list(issue = 408, step = 21L, kind = "after running _, its ancestor _ isn't fresh"),
-  "conflicts lazy 35" = list(issue = 408, step = 21L, kind = "after running _, its ancestor _ isn't fresh"))
+  "conflicts autorun 366" = list(issue = 436, step = 14L, kind = "_ can run but shows a graph error"),
+  "conflicts lazy 366" = list(issue = 436, step = 14L, kind = "_ can run but shows a graph error"))
 
 known_seeds <- function(mode) {
   keys <- as.character(names(fuzz_known))
@@ -168,18 +168,25 @@ test_that("a hand run doesn't leave a cell stale through a cell that can't run (
 })
 
 test_that("a hand run of an edited cell runs the ancestor that read its old code (#408)", {
-  # C1 read v8, which only C7's old code defined.
-  expect_known_failure(list(mode = "lazy", cells = list(C1 = "v1 <- 34"),
+  # C1 read v8, which only C7's old code defined: C7 runs first, so C1
+  # doesn't see the old v8, and again after C1.
+  expect_trace_passes(list(mode = "lazy", cells = list(C1 = "v1 <- 34"),
     steps = list(list(ops = list(list(op = "insert", index = 5L, id = "C7", code = "v8 <- (40 + 1 * v1) %% 997")), run = "C7"),
                  list(ops = list(list(op = "set_code", cell = "C1", code = "v8[1] <- 47\nv1 <- 34")), run = NULL),
-                 list(ops = list(list(op = "set_code", cell = "C7", code = "v10 <- (40 + 1 * v1) %% 997")), run = "C7"))),
-    list(issue = 408, step = 3L, kind = "after running _, its ancestor _ isn't fresh"))
+                 list(ops = list(list(op = "set_code", cell = "C7", code = "v10 <- (40 + 1 * v1) %% 997")), run = "C7"))))
   # C4 read v3, which only C3's old code defined; C3 now reads C5, which reads C4.
-  expect_known_failure(list(mode = "lazy",
+  expect_trace_passes(list(mode = "lazy",
     cells = list(C2 = "v2 <- (65 + 1 * v1) %% 997", C3 = "v3 <- (11 + 1 * v1) %% 997",
                  C4 = "v4 <- (14 + 1 * v2 + 2 * v3) %% 997", C5 = "v5 <- (18 + 1 * v4) %% 997"),
     steps = list(list(ops = list(list(op = "set_code", cell = "C2", code = "v4 + 73\nv2 <- (65 + 1 * v1) %% 997")), run = "C2"),
                  list(ops = list(list(op = "delete", cell = "C2")), run = NULL),
-                 list(ops = list(list(op = "set_code", cell = "C3", code = "v5 + 75\nv9 <- (11 + 1 * v1) %% 997")), run = "C3"))),
-    list(issue = 408, step = 3L, kind = "after running _, its ancestor _ isn't fresh"))
+                 list(ops = list(list(op = "set_code", cell = "C3", code = "v5 + 75\nv9 <- (11 + 1 * v1) %% 997")), run = "C3"))))
+  # C2 last read v2, which C6 now defines, but no longer does: that old
+  # edge makes C6 an ancestor of C2, and C6 mustn't go first.
+  expect_trace_passes(list(mode = "lazy",
+    cells = list(C6 = "(86 + 1 * v3 + 2 * v4 + 3 * v5 + 4 * v6) %% 997", C2 = "v3 <- (77 + 1 * v2) %% 997",
+                 C3 = "v4 <- (61 + 1 * v2) %% 997"),
+    steps = list(list(ops = list(list(op = "set_code", cell = "C3", code = "v4 <- (14 + 1 * v3) %% 997")), run = "C3"),
+                 list(ops = list(list(op = "set_code", cell = "C6", code = "v2[1] <- 85\n(86 + 1 * v3 + 2 * v4 + 3 * v5 + 4 * v6) %% 997")), run = NULL),
+                 list(ops = list(list(op = "set_code", cell = "C2", code = "v3 <- (77 + 1 * v9) %% 997")), run = "all"))))
 })
