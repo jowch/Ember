@@ -4,12 +4,18 @@
 # drops mid-download leaves it. Later downloads are whole. Only renv GETs
 # archives; Ember's own size checks are HEAD requests, which aren't cut.
 #
-#   Rscript cut-download-server.R <root>
+#   Rscript cut-download-server.R <root> [refuse]
+#
+# With a number `refuse` as well, the first `refuse` downloads of each
+# archive are refused outright instead (HTTP 404, no body), as a download
+# that never starts (a host lookup that fails) leaves no file (#478).
 #
 # Prints "PORT <n>" once listening, then "GET <file> <count>" per archive
 # download and "<method> <file> agent=<user agent>" per archive request.
 # A request for /__quit makes it exit.
-root <- commandArgs(trailingOnly = TRUE)[[1]]
+args <- commandArgs(trailingOnly = TRUE)
+root <- args[[1]]
+refuse <- if (length(args) > 1) as.integer(args[[2]]) else 0L
 seen <- new.env()
 done <- FALSE
 app <- list(call = function(req) {
@@ -31,7 +37,8 @@ app <- list(call = function(req) {
     assign(path, n, envir = seen)
     cat("GET", basename(path), n, "\n")
     flush(stdout())
-    if (n == 1) body <- body[seq_len(length(body) %/% 2)]
+    if (n <= refuse) return(list(status = 404L, headers = list(`Content-Type` = "text/plain"), body = "refused"))
+    if (refuse == 0 && n == 1) body <- body[seq_len(length(body) %/% 2)]
   }
   list(status = 200L, headers = list(`Content-Type` = "application/octet-stream"), body = body)
 })
