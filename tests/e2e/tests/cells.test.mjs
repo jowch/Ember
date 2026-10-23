@@ -20,6 +20,17 @@ const rects = (page, sels) => page.evaluate((sels) => Object.fromEntries(Object.
   const r = document.querySelector(sel).getBoundingClientRect();
   return [k, { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height }];
 })), sels);
+// Where a cell is and what its editor holds, for a failure message.
+const viewState = (page, id) => page.evaluate((id) => {
+  const cell = document.querySelector(`pluto-cell[id="${id}"]`);
+  const r = cell.getBoundingClientRect();
+  const editor = cell.querySelector("pluto-input .cm-editor");
+  return {
+    top: r.top, bottom: r.bottom, viewHeight: innerHeight, scrollY, scrollHeight: document.documentElement.scrollHeight,
+    fake: editor?.classList.contains("cm-ssr-fake") ?? null, height: editor?.style.height, minHeight: editor?.style.minHeight,
+    fakes: [...document.querySelectorAll("pluto-input .cm-ssr-fake")].map((f) => f.closest("pluto-cell").id),
+  };
+}, id);
 const near = (actual, expected, what) => assert.ok(Math.abs(actual - expected) < 0.6, `${what}: ${actual}, expected ${expected}`);
 
 // A theme token as the browser computes it, for comparing with a computed
@@ -276,7 +287,16 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
       return cell?.id ?? null;
     });
     if (id === null) break;
-    await page.waitForFunction((sel) => !document.querySelector(`${sel} .cm-ssr-fake`), cellSelector(id), { timeout: 20000 });
+    await page.waitForFunction((sel) => !document.querySelector(`${sel} .cm-ssr-fake`), cellSelector(id), { timeout: 20000 })
+      .catch(async () => assert.fail(`cell ${id}'s editor loads once it is scrolled into view: ${JSON.stringify(await viewState(page, id))}`));
+  }
+  // An editor scrolled past before its first measure keeps the static
+  // code's height until it is back in view (#416), so bring each one into
+  // view until it has measured its text and let that height go.
+  for (const id of ["S", "A", "I", "L", "W", "T", "U", "B"]) {
+    await page.evaluate((sel) => document.querySelector(sel).scrollIntoView(), cellSelector(id));
+    await page.waitForFunction((sel) => document.querySelector(`${sel} pluto-input .cm-editor`).style.height === "", cellSelector(id), { timeout: 20000 })
+      .catch(async () => assert.fail(`cell ${id}'s editor lets go of the static code's height once in view: ${JSON.stringify(await viewState(page, id))}`));
   }
   // U's last lines are rendered once they come into view; until then U's
   // editor keeps the static code's height as its minimum.
