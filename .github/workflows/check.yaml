@@ -219,8 +219,27 @@ jobs:
         run: npm ci
       - working-directory: tests/e2e
         run: npx playwright-core install --with-deps chromium
+      # #412: on the Windows runner a page sometimes fails to load a file
+      # with ERR_NO_BUFFER_SPACE. The TCP settings, and a socket count every
+      # 5 s during the run, go in the log to find out why, with what
+      # browser.mjs records at the moment of a failure. Read-only.
+      - name: TCP settings and a socket sampler (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          netsh int ipv4 show dynamicport tcp
+          Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters -ErrorAction SilentlyContinue | Select-Object TcpTimedWaitDelay, MaxUserPort | Format-List
+          $p = Start-Process pwsh -PassThru -WindowStyle Hidden -ArgumentList "-NoProfile", "-File", "${{ github.workspace }}\.github\windows-sockets\sample.ps1", "-Out", "$env:RUNNER_TEMP\sockets.csv"
+          $p.Id | Set-Content "$env:RUNNER_TEMP\sampler.pid"
       - working-directory: tests/e2e
         run: npm test
+      - name: The socket samples (Windows)
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (Test-Path "$env:RUNNER_TEMP\sampler.pid") { Stop-Process -Id (Get-Content "$env:RUNNER_TEMP\sampler.pid") -ErrorAction SilentlyContinue }
+          Get-Content "$env:RUNNER_TEMP\sockets.csv" -ErrorAction SilentlyContinue
+          Get-ChildItem tests\e2e\test-results\412-*.txt -ErrorAction SilentlyContinue | ForEach-Object { "== $($_.Name)"; Get-Content $_.FullName }
       # The UI sweep, the first-cell check (#284) and the reload check (#385)
       # again in WebKit, the engine Endeavor's notebook pane uses (WebKitGTK
       # on Linux), where layout differs from Chromium. Only on ubuntu, where
