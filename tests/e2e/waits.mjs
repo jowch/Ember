@@ -268,7 +268,10 @@ if (process.env.NODE_TEST_CONTEXT) {
   beforeEach((t) => { testName = t.name; });
   // Before the test's own after hooks, which close its browser.
   afterEach(async () => {
-    if (pending.size === 0) return;
+    // A call on a page the test closed ends with the close: its rejection
+    // can still be on its way when page.close() returns, but it can't hang.
+    for (const [id, entry] of pending) if (entry.page?.isClosed()) pending.delete(id);
+    if (pending.size === 0) { clearInterval(keepAlive); keepAlive = null; return; }
     console.log(report("still pending when the test ended") + ["state:", ...(await states())].join("\n"));
     // Reported, so let them go: a wait no browser close will settle (a
     // poll(), sentMessages().reach) would otherwise keep node running, and
