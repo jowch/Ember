@@ -1611,3 +1611,46 @@ test("cell menu: text-only one-line items with a right-aligned key hint, panel a
 
   assertNoProblems(page);
 });
+
+test("chips: a chip's text can't be selected, by double-click or by dragging across the cell (#285)", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chip-select.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await runCell(page, "A");
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.classList.contains("not_run_yet"),
+    cellSelector("NEVER"), { timeout: 20000 });
+  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached", timeout: 15000 });
+
+  const chip = page.locator(`${cellSelector("NEVER")} > ember-chip`);
+  await chip.scrollIntoViewIfNeeded();
+  assert.equal(await chip.innerText(), "Not run yet");
+  const selection = () => page.evaluate(() => window.getSelection().toString());
+
+  // A double-click on the chip's words selects nothing.
+  await page.locator(`${cellSelector("NEVER")} > ember-chip span:not(.ember-chip-icon)`).dblclick();
+  assert.equal(await selection(), "", "double-clicking a chip selects none of its text");
+
+  // A drag from the chip's row into the cell's code copies the code but
+  // not the chip. This reads the clipboard, not getSelection(): Chromium's
+  // Selection.toString() still lists user-select: none text that a copy
+  // leaves out.
+  const box = await chip.boundingBox();
+  const cell = await page.locator(cellSelector("NEVER")).boundingBox();
+  const code = await page.locator(`${cellSelector("NEVER")} .cm-content`).boundingBox();
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await page.mouse.move(cell.x + cell.width - 4, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(code.x + 2, code.y + code.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+C" : "Control+C");
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  assert.match(copied, /3 \+ 3/, "the drag reached NEVER's code");
+  assert.doesNotMatch(copied, /Not run yet/, "a drag across the cell leaves the chip out");
+
+  assertNoProblems(page);
+});

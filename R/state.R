@@ -719,10 +719,7 @@ notifications <- function(old, new) {
     nts <- c(nts, list(list(kind = "notebook_shut_down")))
   }
 
-  pkg_same <- identical(old$packages, new$packages) &&
-    identical(old$file$lock, new$file$lock) && identical(old$file$header, new$file$header) &&
-    identical(old$worker$loaded, new$worker$loaded) && identical(old$graph, new$graph)
-  if (!pkg_same && !identical(packages_view(old), packages_view(new))) {
+  if (!packages_inputs_same(old, new) && !identical(packages_view(old), packages_view(new))) {
     nts <- c(nts, list(list(kind = "packages_changed")))
   }
 
@@ -731,6 +728,55 @@ notifications <- function(old, new) {
   }
 
   nts
+}
+
+#' Whether `a` and `b` hold the same inputs to `packages_view()` (the
+#' package state, the file's header and lock, the graph's packages, what
+#' the worker has loaded, and the options its messages read), so the two
+#' views are equal without building either. Each is one `identical()`,
+#' pointer-equal in practice when nothing package-related happened.
+packages_inputs_same <- function(a, b) {
+  identical(a$packages, b$packages) &&
+    identical(a$file$lock, b$file$lock) && identical(a$file$header, b$file$header) &&
+    identical(a$worker$loaded, b$worker$loaded) && identical(a$graph, b$graph) &&
+    identical(a$options, b$options)
+}
+
+#' For each cell of `new`, whether `key_unchanged()` (pluto-state.R) could
+#' be FALSE against the same cell of `old`, at position `at[i]` of `old`
+#' (`NA` for a cell `old` doesn't have). Conservative: a TRUE only means
+#' "check this one", so callers still run `key_unchanged()` on those. It
+#' compares each key field for all cells at once, with one `identical()`
+#' on the whole list when nothing in it changed (the common case: one
+#' worker message changes one or two cells' results), where checking every
+#' field of every cell one call at a time cost about 4 ms a message at 150
+#' cells, in both `changed_views()` and `pluto_state()`.
+cells_maybe_changed <- function(old, old_ctx, new, new_ctx, at) {
+  n <- length(new_ctx$ids)
+  if (n == 0) return(logical())
+  if (!identical(new$allowed, old$allowed)) return(rep(TRUE, n))
+  maybe <- is.na(at)
+  differ <- function(a, b) {
+    b <- b[at]
+    if (identical(unname(a), unname(b))) return(logical(n))
+    !vapply(seq_len(n), function(k) identical(a[[k]], b[[k]]), logical(1))
+  }
+  maybe <- maybe | differ(new$cells, old$cells) | differ(new_ctx$results, old_ctx$results) |
+    differ(new_ctx$waiting, old_ctx$waiting) | differ(new_ctx$errors_by_cell, old_ctx$errors_by_cell) |
+    differ(new_ctx$settings, old_ctx$settings)
+  maybe <- maybe | !(new_ctx$queued == old_ctx$queued[at]) %in% TRUE
+  a <- new_ctx$disabled_by; b <- old_ctx$disabled_by[at]
+  maybe <- maybe | !((a == b) %in% TRUE | (is.na(a) & is.na(b)))
+  # The running cell, before and after: its own key holds the console.
+  running_at <- function(ctx, ids) {
+    cell <- ctx$running$cell
+    if (is.null(cell)) logical(n) else (ids == cell) %in% TRUE
+  }
+  run_new <- running_at(new_ctx, new_ctx$ids)
+  run_old <- running_at(old_ctx, old_ctx$ids[at])
+  maybe <- maybe | run_new != run_old
+  if (!identical(new_ctx$running$console, old_ctx$running$console)) maybe <- maybe | run_new
+  maybe
 }
 
 #' Ids whose `cell_view()` differs between two states: cells in `old`
@@ -749,13 +795,14 @@ changed_views <- function(old, new) {
   ids <- union(old_ids, new_ids)
   in_old <- match(ids, old_ids)
   in_new <- match(ids, new_ids)
+  maybe <- cells_maybe_changed(old, old_ctx, new, new_ctx, match(new_ids, old_ids))
   differs <- logical(length(ids))
   for (k in seq_along(ids)) {
     j <- in_old[k]
     i <- in_new[k]
     if (is.na(j) || is.na(i)) {
       differs[k] <- TRUE
-    } else if (i != j || !key_unchanged(new, new_ctx, i, cell_key(old, old_ctx, j))) {
+    } else if (i != j || (maybe[i] && !key_unchanged(new, new_ctx, i, cell_key(old, old_ctx, j)))) {
       differs[k] <- !identical(cell_view(old, old_ctx, j), cell_view(new, new_ctx, i))
     }
   }
