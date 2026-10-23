@@ -421,7 +421,7 @@ file_inputs <- function(state) {
 #' What `watched_files()` reads from a state, for the same skip in
 #' `after_dispatch()`.
 watch_inputs <- function(state) {
-  list(state$graph$analyses, state$computed_sources, state$footer_sources)
+  list(state$graph$analyses, state$computed_sources, state$footer_sources, results_data_read(state))
 }
 
 #' Notify and re-watch: derived from the state change over a dispatch.

@@ -898,11 +898,20 @@ watched_files <- function(state) {
 }
 
 #' Data files the shell should watch (#276): every cell's `data_files`, as
-#' written in the code, relative to the notebook's folder. Reads only the
-#' analyses, which `watch_inputs()` (shell.R) lists.
+#' written in the code, relative to the notebook's folder, and the files
+#' each result's run read (`data_seen`). A cell edited to stop reading a
+#' file keeps a result that came from it until it runs again, so the file
+#' stays watched until then (#439). Reads only the analyses and results,
+#' which `watch_inputs()` (shell.R) lists.
 watched_data_files <- function(state) {
-  unique(unlist(lapply(state$graph$analyses, function(a) .subset2(a, "data_files")),
-                use.names = FALSE))
+  unique(c(unlist(lapply(state$graph$analyses, function(a) .subset2(a, "data_files")), use.names = FALSE),
+           results_data_read(state)))
+}
+
+#' The data files the cells' last runs read (`data_seen`), for
+#' `watched_data_files()` and `watch_inputs()`.
+results_data_read <- function(state) {
+  unique(unlist(lapply(state$results, function(r) names(.subset2(r, "data_seen"))), use.names = FALSE))
 }
 
 #' The reader the graph is built with: `files` as a function.
