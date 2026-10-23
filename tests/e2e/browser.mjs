@@ -13,6 +13,7 @@ import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { artifactsDir } from "./server.mjs";
+import { untimed, waitingFor } from "./waits.mjs";
 
 function macCacheExecutable() {
   const base = path.join(os.homedir(), "Library", "Caches", "ms-playwright", "chromium-1234");
@@ -28,11 +29,17 @@ function resolveExecutable() {
 
 /** `EMBER_BROWSER=webkit` runs the suite in Playwright's WebKit instead
  * (on Linux, the WebKitGTK engine Endeavor's notebook pane uses). Only the
- * UI sweep runs there in CI; the rest of the suite assumes Chromium. */
+ * UI sweep runs there in CI; the rest of the suite assumes Chromium.
+ *
+ * No Playwright call on its pages has a time limit (waits.mjs): a wait
+ * ends when what it waits for happens, and the runner bounds the test.
+ * The browser stays up on a signal, so the report of what a stopped test
+ * was waiting for can still ask its pages; it goes when node exits. */
 export async function launchBrowser() {
-  if (process.env.EMBER_BROWSER === "webkit") return webkit.launch({ headless: true });
+  const options = { headless: true, handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false };
+  if (process.env.EMBER_BROWSER === "webkit") return untimed(await webkit.launch(options));
   const executablePath = resolveExecutable();
-  return chromium.launch({ executablePath, headless: true });
+  return untimed(await chromium.launch({ executablePath, ...options }));
 }
 
 /** A page wired to fail the test on a console error, an uncaught page
@@ -86,17 +93,14 @@ export function assertNoProblems(page) {
  * /edit?id=... URL. `origin` is the server's base URL (`http://host:port/`,
  * no query string).
  *
- * No timeouts of our own on the waits: the page and its notebook arrive
- * when the server sends them, and the test runner's timeout bounds them.
- * 30 s ran out for the first tests of a Windows run, while three files'
- * first servers and browsers started at once (#417). */
+ * The page and its notebook arrive when the server sends them. 30 s ran
+ * out for the first tests of a Windows run, while three files' first
+ * servers and browsers started at once (#417). */
 export async function openNotebook(page, origin, secret, notebookPath) {
   const url = `${origin}open?path=${encodeURIComponent(notebookPath)}&secret=${secret}`;
-  await page.goto(url, { timeout: 0 });
-  await page.waitForSelector("pluto-cell", { timeout: 0 });
-  await page.waitForFunction(
-    () => !document.querySelector("pluto-editor")?.classList.contains("loading"),
-    null, { timeout: 0 });
+  await page.goto(url);
+  await page.waitForSelector("pluto-cell");
+  await page.waitForFunction(() => !document.querySelector("pluto-editor")?.classList.contains("loading"));
   return new URL(page.url()).searchParams.get("id");
 }
 
@@ -173,7 +177,9 @@ export async function connectionSettled(page) {
     const c = window.ember_connection;
     return c != null && c.state !== "trying" && c.state !== "syncing" && c.key_checks_out === 0;
   });
-  while (!(await done())) await new Promise((resolve) => setTimeout(resolve, 20));
+  const settled = (async () => { while (!(await done())) await new Promise((resolve) => setTimeout(resolve, 20)); })();
+  await waitingFor("the connection settles (connectionSettled)", settled,
+    () => page.evaluate(() => JSON.stringify(window.ember_connection)));
 }
 
 /** The websocket messages `page` sends whose bytes include `type`, as a
@@ -185,10 +191,10 @@ export async function connectionSettled(page) {
 export function sentMessages(page, type) {
   const seen = [];
   const waiting = [];
-  seen.reach = (n) => new Promise((resolve) => {
+  seen.reach = (n) => waitingFor(`${n} sent "${type}" messages (sentMessages)`, new Promise((resolve) => {
     if (seen.length >= n) resolve();
     else waiting.push([n, resolve]);
-  });
+  }), () => `${seen.length} sent`);
   page.on("websocket", (ws) => {
     ws.on("framesent", (frame) => {
       const payload = frame.payload ?? "";
@@ -205,14 +211,13 @@ export function sentMessages(page, type) {
   return seen;
 }
 
-/** Wait until the worker is ready and no cell is running or queued. No
- * timeout of its own, as openNotebook(): a cold worker start is still a
- * start (#417). */
+/** Wait until the worker is ready and no cell is running or queued. A
+ * cold worker start is still a start (#417). */
 export async function waitIdle(page) {
   await page.waitForFunction(() => {
     const nb = window.editor_state?.notebook;
     return nb?.process_status === "ready" && Object.values(nb.cell_results).every((r) => !r.running && !r.queued);
-  }, null, { timeout: 0 });
+  });
 }
 
 /** Hover a cell (at `part` inside it, if given) and wait until the cell is
@@ -222,7 +227,7 @@ export async function waitIdle(page) {
  * pointer that doesn't move (#271). */
 export async function hoverCell(page, id, part = "") {
   await page.locator(part ? `${cellSelector(id)} ${part}` : cellSelector(id)).hover();
-  await page.waitForFunction((sel) => document.querySelector(sel)?.matches(":hover"), cellSelector(id), { timeout: 15000 });
+  await page.waitForFunction((sel) => document.querySelector(sel)?.matches(":hover"), cellSelector(id));
 }
 
 /** Click into a cell's editor and select-all + type new code, the way a

@@ -28,7 +28,7 @@ test("theme: system default, an explicit setting wins, live system switch (115)"
 
   await page.evaluate(() => localStorage.setItem("pluto_setting_THEME", JSON.stringify("light")));
   await page.reload();
-  await page.waitForSelector("pluto-cell", { timeout: 30000 });
+  await page.waitForSelector("pluto-cell");
 
   assert.equal(await page.evaluate(() => document.documentElement.getAttribute("data-theme")), "light");
   assert.equal(
@@ -38,11 +38,11 @@ test("theme: system default, an explicit setting wins, live system switch (115)"
 
   await page.evaluate(() => localStorage.removeItem("pluto_setting_THEME"));
   await page.reload();
-  await page.waitForSelector("pluto-cell", { timeout: 30000 });
+  await page.waitForSelector("pluto-cell");
   assert.equal(await page.evaluate(() => document.documentElement.getAttribute("data-theme")), "dark");
 
   await page.emulateMedia({ colorScheme: "light" });
-  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "light", null, { timeout: 5000 });
+  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "light");
 
   assertNoProblems(page);
 });

@@ -18,7 +18,7 @@ test("error: stop('boom') shows the error element with its message", async (t) =
   await openNotebook(page, server.origin, server.secret, notebook);
 
   await runCell(page, "ERR");
-  await page.waitForSelector(`${cellSelector("ERR")} jlerror`, { timeout: 20000 });
+  await page.waitForSelector(`${cellSelector("ERR")} jlerror`);
   const text = await page.locator(`${cellSelector("ERR")} jlerror`).innerText();
   assert.match(text, /boom/);
   assert.equal(await page.locator(`${cellSelector("ERR")} jlerror.ember > header > p:first-child`).innerText(), "boom");
@@ -36,7 +36,7 @@ test("error: a parse error shows its message and line, and no traceback", async 
   await page.locator("#ember-safe-preview button").click();
 
   const box = `${cellSelector("PARSE")} jlerror.ember.syntax-error`;
-  await page.waitForSelector(box, { timeout: 20000 });
+  await page.waitForSelector(box);
   assert.notEqual(await page.locator(`${box} > header > p:first-child`).innerText(), "");
   assert.equal(await page.locator(`${box} > header > p.ember-error-where`).innerText(), "Error · line 1");
   assert.equal(await page.locator(`${box} > section`).count(), 0);
@@ -57,7 +57,7 @@ test("error: a name defined twice and a cycle are worded for R users (Words6)", 
   await setCellCode(page, "ERR", "x <- 2");
   await page.keyboard.press("Shift+Enter");
   await page.waitForFunction((sel) => /more than one cell/.test(document.querySelector(sel)?.innerText ?? ""),
-    `${cellSelector("ERR")} jlerror`, { timeout: 20000 });
+    `${cellSelector("ERR")} jlerror`);
   assert.equal((await message("ERR").innerText()).split("\n")[0], "x is defined in more than one cell. Keep one, or put them in one cell.");
 
   await setCellCode(page, "ERR", "y <- z");
@@ -65,7 +65,7 @@ test("error: a name defined twice and a cycle are worded for R users (Words6)", 
   await setCellCode(page, "LOOP", "z <- y");
   await page.keyboard.press("Shift+Enter");
   await page.waitForFunction((sel) => /each other/.test(document.querySelector(sel)?.innerText ?? ""),
-    `${cellSelector("LOOP")} jlerror`, { timeout: 20000 });
+    `${cellSelector("LOOP")} jlerror`);
   assert.equal((await message("LOOP").innerText()).split("\n")[0], "y and z depend on each other, so neither can run.");
   assertNoProblems(page);
 });
@@ -92,17 +92,17 @@ test("error: running broken code in a cell that ran shows only the error, not ed
   await page.keyboard.type("41 + 1", { delay: 2 });
   await page.keyboard.press("Shift+Enter");
   await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("42"),
-    `${cell} pluto-output`, { timeout: 20000 });
+    `${cell} pluto-output`);
 
   await setCellCode(page, id, "barplot(table(sample(1:3, size=1000, replace=TRUE, prob=(.30,.60,.10))))");
-  await page.waitForSelector(`${cell}.code_differs`, { timeout: 10000 });
+  await page.waitForSelector(`${cell}.code_differs`);
   await page.keyboard.press("Shift+Enter");
 
   const box = `${cell} jlerror.ember.syntax-error`;
-  await page.waitForSelector(box, { timeout: 20000 });
+  await page.waitForSelector(box);
   // The edit reaches the server before the run request, and in between the
   // cell is briefly errored and edited at once.
-  await page.waitForSelector(`${cell}.errored:not(.code_differs):not(.code_changed)`, { timeout: 10000 });
+  await page.waitForSelector(`${cell}.errored:not(.code_differs):not(.code_changed)`);
   assert.equal(await page.locator(`${box} > header > p:first-child`).innerText(), "Syntax error: unexpected ','");
   assert.doesNotMatch(await page.locator(box).innerText(), /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/);
   assert.equal(await page.locator(`${box} > header > p.ember-error-where`).innerText(), "Error · line 1");

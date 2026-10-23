@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector, frames } from "../browser.mjs";
+import { waitingFor } from "../waits.mjs";
 
 const rect = (page, sel) => page.locator(sel).evaluate((el) => {
   const r = el.getBoundingClientRect();
@@ -36,11 +37,10 @@ test("errors: where it happened, a traceback outermost first, labelled by origin
   await openNotebook(page, server.origin, server.secret, notebook);
   await runCell(page, "F");
   await page.waitForFunction(
-    () => window.editor_state.notebook.cell_results.F?.output?.last_run_timestamp > 0,
-    null, { timeout: 30000 });
+    () => window.editor_state.notebook.cell_results.F?.output?.last_run_timestamp > 0);
   for (const id of ["ERR", "TOP"]) {
     await runCell(page, id);
-    await page.waitForSelector(`${cellSelector(id)}.errored jlerror.ember`, { timeout: 20000 });
+    await page.waitForSelector(`${cellSelector(id)}.errored jlerror.ember`);
   }
 
   const top = `${cellSelector("TOP")} jlerror`;
@@ -64,7 +64,7 @@ test("errors: where it happened, a traceback outermost first, labelled by origin
   }, `${err} button.ember-tb-toggle`);
   assert.deepEqual(await tbState(), { expanded: "false", list: true, shown: false, above: true }, "the traceback starts collapsed; the toggle controls the list below it");
   await page.getByRole("button", { name: `Show traceback (${n} calls)`, exact: true }).click();
-  await page.getByRole("button", { name: "Hide traceback", exact: true }).waitFor({ timeout: 5000 });
+  await page.getByRole("button", { name: "Hide traceback", exact: true }).waitFor();
   assert.deepEqual(await tbState(), { expanded: "true", list: true, shown: true, above: true }, "open: aria-expanded and the list shows");
 
   const frames = await page.locator(`${err} ol.ember-tb > li`).evaluateAll((lis) => lis.map((li) => ({
@@ -87,7 +87,7 @@ test("errors: where it happened, a traceback outermost first, labelled by origin
   assert.equal(stats.color, faint, "package calls are faint");
 
   await page.locator(`${err} ol.ember-tb > li:nth-child(2) .ember-tb-from a`).click();
-  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, cellSelector("F"), { timeout: 10000 });
+  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, cellSelector("F"));
 
   // Board Outputs4 / Cells: a red-tinted box flush with the rail and joined
   // to the code box, whose top-right corner goes square.
@@ -125,7 +125,7 @@ test("disabled states: A shows Disabled with no run button; B shows Depends on a
   await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("2"),
-    cellSelector("B") + " pluto-output", { timeout: 20000 });
+    cellSelector("B") + " pluto-output");
 
   const outputLeft = async (id) => (await rect(page, `${cellSelector(id)} > pluto-output pre`)).left - (await rect(page, cellSelector(id))).left;
   near(await outputLeft("B"), 12, "an output starts 12px right of the rail");
@@ -133,13 +133,13 @@ test("disabled states: A shows Disabled with no run button; B shows Depends on a
   await page.hover(cellSelector("A"));
   await page.locator(`${cellSelector("A")} button.input_context_menu`).click();
   await page.locator(`${cellSelector("A")} button.disable_cell`).click();
-  await page.waitForSelector(`${cellSelector("A")}.running_disabled`, { timeout: 15000 });
+  await page.waitForSelector(`${cellSelector("A")}.running_disabled`);
 
   assert.equal(await page.locator(`${cellSelector("A")} ember-chip`).innerText(), "Disabled");
   assert.equal(await page.locator(`${cellSelector("A")} button.ember-run`).count(), 0, "no run button on a disabled cell");
   assert.equal(await page.locator(`${cellSelector("A")} ember-chip`).count(), 1, "no \"Not run yet\" chip either");
 
-  await page.waitForSelector(`${cellSelector("B")}.depends_on_disabled_cells`, { timeout: 15000 });
+  await page.waitForSelector(`${cellSelector("B")}.depends_on_disabled_cells`);
   const bChip = page.locator(`${cellSelector("B")} ember-chip`);
   assert.match(await bChip.innerText(), /Depends on a disabled cell\..*Go to it/s);
   assert.equal(await page.locator(`${cellSelector("B")} ember-chip`).count(), 1, "B has no \"Not run yet\" chip either");
@@ -158,7 +158,7 @@ test("disabled states: A shows Disabled with no run button; B shows Depends on a
   await bChip.locator("a").click();
   await page.waitForFunction(
     (sel) => document.activeElement?.closest(sel) != null,
-    cellSelector("A"), { timeout: 10000 });
+    cellSelector("A"));
 
   assertNoProblems(page);
 });
@@ -175,7 +175,7 @@ test("outputs: a table's size, types, NA cells and Show more; a list tree; print
   for (const id of ["NA", "VEC"]) await runCell(page, id);
 
   const na = cellSelector("NA");
-  await page.waitForSelector(`${na} table.pluto-table`, { timeout: 30000 });
+  await page.waitForSelector(`${na} table.pluto-table`);
   assert.equal(await page.locator(`${na} th.ember-table-size`).innerText(), "2 rows × 2 columns");
   assert.deepEqual(await page.locator(`${na} tr.schema-types th`).allInnerTexts(), ["", "dbl", "chr"]);
   assert.deepEqual(await page.locator(`${na} td.na`).allInnerTexts(), ["NA", "NA"]);
@@ -184,7 +184,7 @@ test("outputs: a table's size, types, NA cells and Show more; a list tree; print
   assert.equal(await page.locator(`${na} button.ember-show-more`).count(), 0, "no Show more for a table shown whole");
 
   const vec = cellSelector("VEC");
-  await page.waitForSelector(`${vec} pluto-tree.ember-tree`, { timeout: 30000 });
+  await page.waitForSelector(`${vec} pluto-tree.ember-tree`);
   const root = page.locator(vec).getByRole("button", { name: "list of 3", exact: true });
   assert.equal(await root.getAttribute("aria-expanded"), "true", "the root starts open");
   const sub = page.locator(vec).getByRole("button", { name: "sub list of 1", exact: true });
@@ -201,7 +201,7 @@ test("outputs: a table's size, types, NA cells and Show more; a list tree; print
   await openNotebook(page, server.origin, server.secret, rich);
   for (const id of ["DF", "TBL", "FIT"]) await runCell(page, id);
   const tbl = cellSelector("TBL");
-  await page.waitForSelector(`${tbl} table.pluto-table`, { timeout: 30000 });
+  await page.waitForSelector(`${tbl} table.pluto-table`);
   assert.equal(await page.locator(`${tbl} th.ember-table-size`).innerText(), "32 rows × 11 columns");
   assert.equal(await page.locator(`${tbl} table.pluto-table tbody tr`).count(), 10, "no in-table \"more\" row");
   assert.equal(await page.locator(`${tbl} tr.schema-names th`).count(), 9, "the size cell and 8 columns, no in-table \"more\" column");
@@ -210,11 +210,11 @@ test("outputs: a table's size, types, NA cells and Show more; a list tree; print
   // The worker adds 60 rows per click; mtcars has 32.
   await page.waitForFunction(
     (sel) => document.querySelectorAll(`${sel} table.pluto-table tbody tr`).length === 32,
-    tbl, { timeout: 10000 });
+    tbl);
   assert.equal(await page.locator(`${tbl} button.ember-show-more`).allInnerTexts().then((x) => x.join("|")), "Show 3 more columns");
 
   const fit = `${cellSelector("FIT")} pluto-output pre`;
-  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("Coefficients"), fit, { timeout: 20000 });
+  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("Coefficients"), fit);
   assert.equal(await computed(page, fit, "backgroundColor"), "rgba(0, 0, 0, 0)");
   assert.equal(await computed(page, fit, "paddingLeft"), "0px");
 
@@ -232,7 +232,7 @@ test("console: a muted message, a warning with its call, and ANSI colours from t
   await openNotebook(page, server.origin, server.secret, notebook);
   await runCell(page, "W");
   const logs = `${cellSelector("W")} pluto-logs`;
-  await page.waitForSelector(`${logs} ember-log.stdout`, { timeout: 30000 });
+  await page.waitForSelector(`${logs} ember-log.stdout`);
 
   assert.deepEqual(
     await page.locator(`${logs} > ember-log`).evaluateAll((els) => els.map((el) => [el.className, el.innerText])),
@@ -251,7 +251,7 @@ test("console: a muted message, a warning with its call, and ANSI colours from t
   assert.equal(await computed(page, green, "color"), "rgb(43, 122, 75)");
 
   await page.emulateMedia({ colorScheme: "dark" });
-  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark", null, { timeout: 5000 });
+  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark");
   assert.equal(await computed(page, green, "color"), "rgb(134, 209, 159)");
 
   assertNoProblems(page);
@@ -269,7 +269,7 @@ test("console: a long print shows its first 60 and last 20 lines, and \"Show mor
   const marker = `${logs} > pluto-log-truncated`;
   await setCellCode(page, "W", 'message("start")\ncat(sprintf("line %d\\n", 1:1000), sep = "")');
   await page.keyboard.press("Shift+Enter");
-  await page.waitForSelector(marker, { timeout: 30000 });
+  await page.waitForSelector(marker);
 
   // Every line on the page, in order: a message is one, a stdout block one per line.
   const shown = () => page.locator(logs).evaluate((el) => [...el.children].flatMap((child) =>
@@ -285,14 +285,14 @@ test("console: a long print shows its first 60 and last 20 lines, and \"Show mor
   await page.locator(marker).getByRole("button", { name: "Show 421 more", exact: true }).waitFor();
   assert.deepEqual(await shown(), ["start", ...lines(1, 559), "--", ...lines(981, 1000)]);
   await page.locator(marker).getByRole("button", { name: "Show 421 more", exact: true }).click();
-  await page.waitForSelector(marker, { state: "detached", timeout: 5000 });
+  await page.waitForSelector(marker, { state: "detached" });
   assert.deepEqual(await shown(), ["start", ...lines(1, 1000)]);
   assert.equal(await page.locator(`${logs} > ember-log.stdout`).count(), 1);
 
   // A rerun starts the cut over.
   await runCell(page, "W");
-  await page.waitForSelector(marker, { timeout: 30000 });
-  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("921 lines not shown"), marker, { timeout: 10000 });
+  await page.waitForSelector(marker);
+  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("921 lines not shown"), marker);
 
   assertNoProblems(page);
 });
@@ -309,7 +309,7 @@ test("console: one very long line shows its first 10,000 characters, and a long 
   // cat() doesn't wrap: 25,000 characters on one line, then a 200-line message.
   await setCellCode(page, "W", 'cat(strrep("x", 25000))\nmessage(paste("m", 1:200, collapse = "\\n"))');
   await page.keyboard.press("Shift+Enter");
-  await page.waitForSelector(`${logs} > pluto-log-truncated`, { timeout: 30000 });
+  await page.waitForSelector(`${logs} > pluto-log-truncated`);
 
   const stdout = await page.locator(`${logs} > ember-log.stdout`).innerText();
   assert.equal(stdout, `${"x".repeat(10000)}… 15,000 more characters not shown`);
@@ -333,7 +333,7 @@ test("figures: no border, background or filter in either theme; at most the colu
   await openNotebook(page, server.origin, server.secret, notebook);
   const img = `${cellSelector("PLT")} pluto-output img`;
   await runCell(page, "PLT");
-  await page.waitForFunction((sel) => document.querySelector(sel)?.naturalWidth > 0, img, { timeout: 30000 });
+  await page.waitForFunction((sel) => document.querySelector(sel)?.naturalWidth > 0, img);
 
   // Outputs4/Cells: `.out` is padded 2px 0 0 12px, so a default plot fills
   // the 708px the Cells board draws its figure at, 14px above the code box;
@@ -351,7 +351,7 @@ test("figures: no border, background or filter in either theme; at most the colu
   }, cellSelector(id));
   assert.deepEqual(await underOutput("PLT"), { padding: "2px 0px 0px 12px", width: 708, gap: 14 }, "a default plot");
   for (const id of ["S", "DF", "FIT"]) await runCell(page, id);
-  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("Coefficients"), `${cellSelector("FIT")} > pluto-output`, { timeout: 30000 }).catch(() => {});
+  await waitingFor("FIT prints its Coefficients", page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("Coefficients"), `${cellSelector("FIT")} > pluto-output`));
   assert.deepEqual(await underOutput("FIT"), { padding: "2px 0px 0px 12px", width: null, gap: 12 }, "printed text");
   // S only defines a function, so its output is empty.
   const empty = await underOutput("S");
@@ -374,7 +374,7 @@ test("figures: no border, background or filter in either theme; at most the colu
   const plain = { border: "0px 0px 0px 0px", radius: "0px", background: "rgba(0, 0, 0, 0) none", filter: "none", boxShadow: "none", fits: true };
   assert.deepEqual(await look(), plain, "light");
   await page.emulateMedia({ colorScheme: "dark" });
-  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark", null, { timeout: 5000 });
+  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark");
   assert.deepEqual(await look(), plain, "dark");
   await page.setViewportSize({ width: 390, height: 800 });
   assert.equal((await look()).fits, true, "fits a phone-width column");
@@ -385,7 +385,7 @@ test("figures: no border, background or filter in either theme; at most the colu
   const fig = `${cellSelector("FIG")} pluto-output img`;
   await page.waitForFunction(
     (sel) => { const el = document.querySelector(sel); return el?.naturalWidth > 0 && Math.abs(el.getBoundingClientRect().width - 384) < 1; },
-    fig, { timeout: 30000 }).catch(() => {});
+    fig);
   assert.equal(Math.round(await page.locator(fig).evaluate((el) => el.getBoundingClientRect().width)), 384);
 
   assertNoProblems(page);
@@ -410,7 +410,7 @@ test("text cells: serif text with tinted values that copy as plain text; click o
   await page.waitForFunction((sel) => {
     const a = document.querySelector(sel);
     return a != null && !a.matches(".running, .queued") && (a.querySelector(":scope > pluto-output")?.innerText.trim() ?? "") !== "";
-  }, cellSelector("A"), { timeout: 30000 });
+  }, cellSelector("A"));
   const isOpen = () => page.locator(cell).evaluate((el) => el.classList.contains("show_input"));
   // A click opens the source once the double-click interval has passed, so
   // "didn't open" is only known after that: after Cell.js's timer has run.
@@ -425,7 +425,7 @@ test("text cells: serif text with tinted values that copy as plain text; click o
     assert.equal(await isOpen(), false, what);
   };
   const closes = async (what) => {
-    await page.waitForFunction((sel) => !document.querySelector(sel).classList.contains("show_input"), cell, { timeout: 5000 }).catch(() => {});
+    await waitingFor(what, page.waitForFunction((sel) => !document.querySelector(sel).classList.contains("show_input"), cell));
     assert.equal(await isOpen(), false, what);
   };
   const textFocused = () => page.evaluate((sel) => document.activeElement === document.querySelector(sel), out);
@@ -454,7 +454,7 @@ test("text cells: serif text with tinted values that copy as plain text; click o
   assert.equal(await page.evaluate(() => getSelection().toString().trim()), "One", "the double click selected the word");
 
   await page.locator(`${out} h2`).click();
-  await page.locator(editor).waitFor({ state: "visible", timeout: 5000 });
+  await page.locator(editor).waitFor({ state: "visible" });
   assert.equal(await page.locator(`${editor} .cm-ember-md-h`).innerText(), "## Results");
   assert.equal(await page.locator(`${cell} .preview_hidden_code_info`).isVisible(), false, "no hidden-code note on an open text cell");
   assert.equal(await computed(page, `${editor} .cm-ember-md-h`, "color"), await tokenColor(page, "--ember-syn-kw"));
@@ -463,7 +463,7 @@ test("text cells: serif text with tinted values that copy as plain text; click o
   const original = await source();
 
   // Enter at the start of a #' line is a plain Enter.
-  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, editor, { timeout: 5000 });
+  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, editor);
   await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowUp" : "Control+Home");
   await page.keyboard.press("Enter");
   assert.deepEqual((await source()).slice(0, 2), ["", "#' ## Results"], "Enter in column 0 adds an empty line above, with no #'");
@@ -472,7 +472,8 @@ test("text cells: serif text with tinted values that copy as plain text; click o
 
   await page.keyboard.press("Escape");
   await closes("Esc closes the unchanged source");
-  await page.waitForFunction((sel) => document.activeElement === document.querySelector(sel), cell, { timeout: 5000 }).catch(() => {});
+  await waitingFor("after Esc, the cell is focused", page.waitForFunction((sel) => document.activeElement === document.querySelector(sel), cell),
+    () => page.evaluate(() => document.activeElement?.outerHTML.slice(0, 120)));
   assert.deepEqual(await page.evaluate((sel) => [document.activeElement === document.querySelector(sel), window.editor_state.selected_cells], cell),
     [true, ["TXT"]], "after Esc, the cell is focused and selected");
 
@@ -483,15 +484,15 @@ test("text cells: serif text with tinted values that copy as plain text; click o
   assert.deepEqual(await page.locator(out).evaluate((el) => [el.tabIndex, el.getAttribute("role"), el.getAttribute("aria-label")]),
     [0, "group", "Text cell. Press Enter to edit its source."]);
   await page.keyboard.press("Enter");
-  await page.locator(editor).waitFor({ state: "visible", timeout: 5000 });
-  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, editor, { timeout: 5000 });
+  await page.locator(editor).waitFor({ state: "visible" });
+  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, editor);
   assert.deepEqual(await source(), original, "Enter on the text opens it without typing a newline");
   await page.keyboard.press("Escape");
   await closes("Esc closes it again");
 
   await page.locator(`${out} p`).click({ position: { x: 5, y: 5 } });
-  await page.locator(editor).waitFor({ state: "visible", timeout: 5000 });
-  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, editor, { timeout: 5000 });
+  await page.locator(editor).waitFor({ state: "visible" });
+  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, editor);
   const before = await source();
   await page.keyboard.press("End");
   await page.keyboard.press("Enter");
@@ -503,7 +504,7 @@ test("text cells: serif text with tinted values that copy as plain text; click o
   assert.equal(await textFocused(), true, "after Shift + Enter, focus is on the text");
 
   const inline = `${out} span.ember-inline`;
-  await page.waitForFunction((sel) => document.querySelector(sel)?.textContent === "2", inline, { timeout: 30000 });
+  await page.waitForFunction((sel) => document.querySelector(sel)?.textContent === "2", inline);
   assert.match(await computed(page, `${out} h2`, "fontFamily"), /^"Source Serif 4"/);
   assert.equal(await computed(page, inline, "backgroundColor"), await tokenColor(page, "--ember-accent-bg"));
   const pseudo = await page.locator(inline).evaluate((el) => [getComputedStyle(el, "::before").content, getComputedStyle(el, "::after").content]);
@@ -553,8 +554,8 @@ test("text cells: keys pressed as the source opens, before it has drawn, aren't 
     };
   });
   await page.locator(`${out} h2`).click();
-  await page.locator(editor).waitFor({ state: "visible", timeout: 5000 });
-  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, editor, { timeout: 5000 });
+  await page.locator(editor).waitFor({ state: "visible" });
+  await page.waitForFunction((sel) => document.activeElement?.closest(sel) != null, editor);
   await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowUp" : "Control+Home");
   // The frames come between the two keys: two for the deferred cursor,
   // and one more to be sure it ran.

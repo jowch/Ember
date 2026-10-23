@@ -69,11 +69,10 @@ test("ui sweep: safe preview, run, and edited with both shortcut labels", async 
   await sweep(page, "preview");
 
   await page.locator("#ember-safe-preview button").click();
-  await page.waitForSelector(`${cellSelector("ERR")} jlerror`, { timeout: 60000 });
-  await page.waitForSelector(`${cellSelector("WIDE")} .ember-table-more`, { timeout: 30000 });
-  await page.waitForSelector(`${cellSelector("PLT")} pluto-output img`, { timeout: 30000 });
-  await page.waitForFunction(() => document.querySelectorAll("pluto-cell.running, pluto-cell.queued").length === 0,
-    null, { timeout: 30000 });
+  await page.waitForSelector(`${cellSelector("ERR")} jlerror`);
+  await page.waitForSelector(`${cellSelector("WIDE")} .ember-table-more`);
+  await page.waitForSelector(`${cellSelector("PLT")} pluto-output img`);
+  await page.waitForFunction(() => document.querySelectorAll("pluto-cell.running, pluto-cell.queued").length === 0);
   await sweep(page, "ran");
 
   for (const platform of ["other", "mac"]) {
@@ -83,7 +82,7 @@ test("ui sweep: safe preview, run, and edited with both shortcut labels", async 
       await openNotebook(p, server.origin, server.secret, notebook);
     }
     await setCellCode(p, "B", "sum(x) + 1");
-    await p.waitForSelector("#saveall-container.ask_to_save", { timeout: 10000 });
+    await p.waitForSelector("#saveall-container.ask_to_save");
     await sweep(p, `edited-${platform}`);
     assertNoProblems(p);
   }
@@ -102,13 +101,12 @@ test("ui sweep: partly run, after a reload", async (t) => {
   await openNotebook(page, server.origin, server.secret, notebook);
   await runCell(page, "B");
   await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("55"),
-    cellSelector("B") + " pluto-output", { timeout: 60000 });
+    cellSelector("B") + " pluto-output");
   await page.reload();
-  await page.waitForSelector("pluto-cell", { timeout: 30000 });
-  await page.waitForFunction(() => !document.querySelector("pluto-editor")?.classList.contains("loading"),
-    null, { timeout: 30000 });
+  await page.waitForSelector("pluto-cell");
+  await page.waitForFunction(() => !document.querySelector("pluto-editor")?.classList.contains("loading"));
   // Chips settle in after a moment (Cell.js's useSettled).
-  await page.waitForSelector(`${cellSelector("DOWN")} ember-chip:not(.held)`, { timeout: 10000 });
+  await page.waitForSelector(`${cellSelector("DOWN")} ember-chip:not(.held)`);
   await sweep(page, "partial");
   assertNoProblems(page);
 });
@@ -132,12 +130,11 @@ test("ui sweep: the Help tab open on a long page, docked and not (#433)", async 
     const nb = window.editor_state?.notebook;
     return nb?.process_status === "ready" && Object.values(nb.cell_results ?? {}).length > 0 &&
       Object.values(nb.cell_results).every((r) => !r.running && !r.queued);
-  }, null, { timeout: 60000 });
+  });
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
   await page.locator("#live-docs-search").fill("regmatches");
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper .ember-help-page h2")?.innerText.includes("Matched Substrings"),
-    null, { timeout: 30000 });
+    () => document.querySelector("#helpbox-wrapper .ember-help-page h2")?.innerText.includes("Matched Substrings"));
   await sweep(page, "help");
 
   for (const width of [1240, 1440]) {

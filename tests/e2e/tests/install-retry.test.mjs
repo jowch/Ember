@@ -34,19 +34,19 @@ test("failing-dep.R: Try again on the failure card retries the install and rerun
   await openNotebook(page, server.origin, server.secret, notebook);
 
   await runCell(page, "S");
-  await page.locator(`${cellSelector("S")}.errored`).waitFor({ timeout: 30000 });
+  await page.locator(`${cellSelector("S")}.errored`).waitFor();
 
   await page.getByRole("button", { name: "Packages", exact: true }).click();
   const card = page.locator(".ember-install-failure-card", { hasText: "toyA couldn't install" });
-  await card.waitFor({ timeout: 30000 });
+  await card.waitFor();
   await card.getByRole("button", { name: "Try again" }).click();
 
   // The install runs again, the card goes, and library(toyA) runs clean.
-  await page.locator(".ember-install-failure-card").waitFor({ state: "detached", timeout: 60000 });
+  await page.locator(".ember-install-failure-card").waitFor({ state: "detached" });
   await page.waitForFunction((sel) => {
     const cell = document.querySelector(sel);
     return cell != null && !cell.classList.contains("errored") && !cell.classList.contains("queued") && !cell.classList.contains("running");
-  }, cellSelector("S"), { timeout: 60000 });
+  }, cellSelector("S"));
   assert.equal(await page.locator(".ember-install-failure-card").count(), 0);
 
   assertNoProblems(page);

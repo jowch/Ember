@@ -91,7 +91,7 @@ test("layout: the side panel docks at 1440x900 and main clears it (111)", async 
   assert.ok(main_open.x + main_open.width <= panel.x - 32 + 1, "main clears the panel by the gap");
 
   const main_x_settles_at = (x) =>
-    page.waitForFunction((x) => Math.abs(document.querySelector("main").getBoundingClientRect().x - x) <= 1, x, { timeout: 2000 });
+    page.waitForFunction((x) => Math.abs(document.querySelector("main").getBoundingClientRect().x - x) <= 1, x);
 
   // Clicking Variables closes the panel (its tab was showing); main centres.
   await variables_icon.click();

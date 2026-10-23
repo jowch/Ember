@@ -11,8 +11,8 @@ import { launchBrowser, newPage, assertNoProblems, openNotebook, layoutSettled }
 
 const reload = async (page) => {
   await page.reload();
-  await page.waitForSelector("pluto-cell", { timeout: 30000 });
-  await page.waitForFunction(() => !document.querySelector("pluto-editor")?.classList.contains("loading"), null, { timeout: 30000 });
+  await page.waitForSelector("pluto-cell");
+  await page.waitForFunction(() => !document.querySelector("pluto-editor")?.classList.contains("loading"));
 };
 
 const selected_tab = (page) => page.locator('#helpbox-wrapper [role="tab"][aria-selected="true"]').innerText();

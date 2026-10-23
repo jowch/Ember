@@ -10,6 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, codeSelector } from "../browser.mjs";
+import { waitingFor } from "../waits.mjs";
 
 const rect = (page, sel) => page.locator(sel).evaluate((el) => {
   const r = el.getBoundingClientRect();
@@ -20,7 +21,7 @@ const state = (page, sel) => page.locator(sel).evaluate((b) => ({
   label: b.getAttribute("aria-label"), pressed: b.getAttribute("aria-pressed"), title: b.title,
 }));
 const folded = (page, id, want) => page.waitForFunction(([sel, want]) =>
-  document.querySelector(sel)?.classList.contains("code_folded") === want, [cellSelector(id), want], { timeout: 10000 });
+  document.querySelector(sel)?.classList.contains("code_folded") === want, [cellSelector(id), want]);
 const savedFolded = (notebook, id) => new RegExp(`^# ${id} .*folded`, "m").test(fs.readFileSync(notebook, "utf8"));
 
 test("eye: one click hides the code, a second click in the same place shows it", async (t) => {
@@ -32,7 +33,7 @@ test("eye: one click hides the code, a second click in the same place shows it",
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
   await page.locator("#ember-safe-preview button").click();
-  await page.waitForSelector(`${cellSelector("PLT")} pluto-output img`, { timeout: 60000 });
+  await page.waitForSelector(`${cellSelector("PLT")} pluto-output img`);
 
   for (const width of [600, 1200]) {
     await page.setViewportSize({ width, height: 800 });
@@ -57,7 +58,7 @@ test("eye: one click hides the code, a second click in the same place shows it",
 
       await page.mouse.click(eye0.x + eye0.w / 2, eye0.y + eye0.h / 2);
       await folded(page, id, false);
-      await page.locator(codeSelector(id, "")).waitFor({ state: "visible", timeout: 5000 });
+      await page.locator(codeSelector(id, "")).waitFor({ state: "visible" });
       same(await rect(page, eye), eye0, `${id} at ${width} px: the eye is back where it started`);
     }
   }
@@ -65,8 +66,9 @@ test("eye: one click hides the code, a second click in the same place shows it",
   // The file records the fold, as with the menu's Hide code.
   await page.locator(`${cellSelector("A")} pluto-shoulder > button.foldcode`).click({ force: true });
   await folded(page, "A", true);
-  const deadline = Date.now() + 10000;
-  while (!savedFolded(notebook, "A") && Date.now() < deadline) await new Promise((r) => setTimeout(r, 100));
+  await waitingFor("the file records A folded", (async () => {
+    while (!savedFolded(notebook, "A")) await new Promise((r) => setTimeout(r, 100));
+  })());
   assert.ok(savedFolded(notebook, "A"), "the cell order footer marks A folded");
 
   assertNoProblems(page);
@@ -83,7 +85,7 @@ test("eye: reached by Tab on the way into a cell, toggled with Enter, focus stay
   // Run it first: in safe preview a hidden cell's code still shows.
   await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(() => document.querySelectorAll("pluto-cell.running, pluto-cell.queued").length === 0
-    && document.getElementById("A")?.classList.contains("no_output_yet") === false, null, { timeout: 60000 });
+    && document.getElementById("A")?.classList.contains("no_output_yet") === false);
   const active = () => page.evaluate(() => {
     const el = document.activeElement;
     return { cell: el?.closest("pluto-cell")?.id, cls: el?.className.trim(), label: el?.getAttribute("aria-label") };
@@ -100,8 +102,7 @@ test("eye: reached by Tab on the way into a cell, toggled with Enter, focus stay
   };
   assert.deepEqual(await tabToEye(), { cell: "A", cls: "foldcode", label: "Hide code" }, "the eye is the first stop in A");
   // Shown while it has keyboard focus (after the 0.15 s fade in).
-  await page.waitForFunction(() => getComputedStyle(document.querySelector('pluto-cell[id="A"] pluto-shoulder > button.foldcode')).opacity === "1",
-    null, { timeout: 3000 });
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('pluto-cell[id="A"] pluto-shoulder > button.foldcode')).opacity === "1");
 
   await page.keyboard.press("Enter");
   await folded(page, "A", true);

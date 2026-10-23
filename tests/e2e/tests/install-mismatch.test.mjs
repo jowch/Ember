@@ -39,7 +39,7 @@ test("failing-dep.R: a binary built for a newer system, and one against another 
   await page.getByRole("button", { name: "Packages", exact: true }).click();
   // toyB folds into toyA's card once the index the failure asked for arrives.
   const card = page.locator(".ember-install-failure-card", { hasText: "toyA couldn't install" });
-  await card.locator(".ember-install-failure-sentence", { hasText: "toyB" }).waitFor({ timeout: 0 });
+  await card.locator(".ember-install-failure-sentence", { hasText: "toyB" }).waitFor();
   assert.deepEqual(await card.locator(".ember-install-failure-sentence").allInnerTexts(), [
     "It was built for a newer system than this one, and needs GLIBC_2.38 from libraries here that are older (/lib/x86_64-linux-gnu/libc.so.6).",
     "A package it needs, toyB 1.0, was built against libtoy.so.1, and this system has libtoy.so.2 instead.",

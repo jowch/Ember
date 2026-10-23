@@ -21,9 +21,9 @@ test("interrupt: a long-running cell is stopped by clicking stop", async (t) => 
   // dropped, as one between runs is (test-worker.R).
   await setCellCode(page, "LOOP", 'cat("inside the loop\\n"); t0 <- Sys.time(); while (Sys.time() - t0 < 60) NULL');
   await page.keyboard.press("Shift+Enter");
-  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("inside the loop"), cellSelector("LOOP"), { timeout: 0 });
+  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("inside the loop"), cellSelector("LOOP"));
 
   await page.locator(`${cellSelector("LOOP")} button.ember-run.busy`).click();
-  await page.waitForSelector(`${cellSelector("LOOP")}:not(.running)`, { timeout: 0 });
+  await page.waitForSelector(`${cellSelector("LOOP")}:not(.running)`);
   assert.match(await page.locator(`${cellSelector("LOOP")} > pluto-output`).innerText(), /Interrupted/, "the loop was stopped, not run to its end");
 });

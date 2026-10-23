@@ -20,7 +20,7 @@ test("packages tab: a GitHub package shows its repository and commit under its v
   await openNotebook(page, server.origin, server.secret, notebook);
   await page.getByRole("button", { name: "Packages", exact: true }).click();
   const row = page.locator("tr.ember-package-row", { hasText: "toyC" });
-  await row.waitFor({ timeout: 30000 });
+  await row.waitFor();
   const label = row.locator(".ember-package-source");
   assert.equal(await label.innerText(), "GitHub lab/toyC@8e4b7d2");
   const title = await label.getAttribute("title");

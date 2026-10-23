@@ -17,7 +17,7 @@ function downloadsDir(t) {
 
 async function download(page, dir, name) {
   const [file] = await Promise.all([
-    page.waitForEvent("download", { timeout: 10000 }),
+    page.waitForEvent("download"),
     page.getByRole("menuitem", { name, exact: true }).click(),
   ]);
   const dest = path.join(dir, file.suggestedFilename());
@@ -35,12 +35,12 @@ test("export menu: three items, downloads, Esc returns focus (161)", async (t) =
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
   await page.locator("#ember-safe-preview button").click();
-  await page.waitForFunction(() => document.querySelectorAll("#ember-safe-preview").length === 0, null, { timeout: 20000 });
+  await page.waitForFunction(() => document.querySelectorAll("#ember-safe-preview").length === 0);
 
   const button = page.locator("header#pluto-nav button.toggle_export");
   await button.click();
   const menu = page.locator('[role="menu"]');
-  await menu.waitFor({ timeout: 5000 });
+  await menu.waitFor();
   assert.deepEqual(
     await menu.locator('[role="menuitem"]').evaluateAll((els) => els.map((el) => el.querySelector(".ember-menuitem-title").textContent)),
     ["Download .R file", "Download HTML", "Print or save as PDF"]);
@@ -49,7 +49,7 @@ test("export menu: three items, downloads, Esc returns focus (161)", async (t) =
   const r = await download(page, downloads, "Download .R file");
   assert.equal(r.name, "basic.R");
   assert.equal(r.text.split("\n")[0], "### An Ember notebook ###");
-  await menu.waitFor({ state: "detached", timeout: 5000 });
+  await menu.waitFor({ state: "detached" });
 
   await button.click();
   const exported = await download(page, downloads, "Download HTML");
@@ -57,9 +57,9 @@ test("export menu: three items, downloads, Esc returns focus (161)", async (t) =
   assert.match(exported.text, /id="ember-modules"/, "expected the self-contained export");
 
   await button.click();
-  await menu.waitFor({ timeout: 5000 });
+  await menu.waitFor();
   await page.keyboard.press("Escape");
-  await menu.waitFor({ state: "detached", timeout: 5000 });
+  await menu.waitFor({ state: "detached" });
   assert.ok(await button.evaluate((el) => el === document.activeElement), "focus is back on the Export button");
 
   assertNoProblems(page);
@@ -74,11 +74,11 @@ test("export menu: safe preview shows the note and downloads without asking (162
 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
-  await page.locator("#ember-safe-preview").waitFor({ timeout: 10000 });
+  await page.locator("#ember-safe-preview").waitFor();
 
   await page.locator("header#pluto-nav button.toggle_export").click();
   const menu = page.locator('[role="menu"]');
-  await menu.waitFor({ timeout: 5000 });
+  await menu.waitFor();
   assert.equal(
     (await menu.locator(".ember-menu-note").innerText()).trim(),
     "This notebook hasn't run, so HTML and PDF have code but no outputs.");
@@ -92,7 +92,7 @@ test("export menu: safe preview shows the note and downloads without asking (162
   // On a phone the items are in ⋯, which isn't about exporting, so each item points at the note.
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "More", exact: true }).click();
-  await page.waitForSelector(".ember-menu .ember-menu-note", { timeout: 5000 });
+  await page.waitForSelector(".ember-menu .ember-menu-note");
   const described = await page.evaluate(() =>
     [...document.querySelectorAll('.ember-menu a.ember-menuitem[aria-labelledby^="ember-export"]')].map((a) => a.getAttribute("aria-describedby")));
   assert.deepEqual(described, [

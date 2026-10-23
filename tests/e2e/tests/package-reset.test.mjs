@@ -14,7 +14,6 @@ import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector } 
 // installed first: gated the same way as packages.R's scenario.
 test("a package that resets a settings cell's option leaves a note on the cell that loads it (#61)", {
   skip: !process.env.EMBER_E2E_INSTALLS && "set EMBER_E2E_INSTALLS=1 (needs network to resolve the lock)",
-  timeout: 150000,
 }, async (t) => {
   const notebook = tempNotebook("package-reset.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "package-reset.server.log") });
@@ -26,7 +25,7 @@ test("a package that resets a settings cell's option leaves a note on the cell t
   await page.locator("#ember-safe-preview button").click();
 
   const note = `${cellSelector("LOAD")} ember-settings-note.load-note`;
-  await page.waitForSelector(note, { timeout: 120000 });
+  await page.waitForSelector(note);
   assert.equal(await page.locator(note).innerText(),
     "Loading mgcv resets mgcv.vc.logrange, which a settings cell sets. Under Rscript the setting is lost, " +
     "because settings cells come first in the file. Move it into this cell, after mgcv loads.");
@@ -35,7 +34,7 @@ test("a package that resets a settings cell's option leaves a note on the cell t
   // The cell after the load still sees the settings cell's value.
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("50"),
-    `${cellSelector("AFTER")} pluto-output`, { timeout: 20000 });
+    `${cellSelector("AFTER")} pluto-output`);
   assert.equal(await page.locator(`${cellSelector("AFTER")} ember-settings-note`).count(), 0, "no note on the later cell");
 
   assertNoProblems(page);

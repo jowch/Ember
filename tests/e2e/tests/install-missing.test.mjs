@@ -28,7 +28,7 @@ test("failing.R: a missing system library shows the command and Try again", asyn
   await runCell(page, "S");
 
   await page.getByRole("button", { name: "Packages", exact: true }).click();
-  await page.waitForSelector(".ember-install-failure-card", { timeout: 30000 });
+  await page.waitForSelector(".ember-install-failure-card");
 
   const sentence = await page.locator(".ember-install-failure-sentence").innerText();
   assert.match(sentence, /system libraries that aren't installed: libbroken\.so\.1/);

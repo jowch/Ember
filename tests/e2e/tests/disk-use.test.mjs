@@ -8,6 +8,7 @@ import path from "node:path";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { startServer, tempNotebook, artifactsDir, tempDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook } from "../browser.mjs";
+import { waitingFor } from "../waits.mjs";
 
 /** A cache folder of the test's own, one file in each part. Not the shared
  * cache: every other server in the run installs into that one, and its size
@@ -37,11 +38,10 @@ test("packages tab: a line gives the disk use of the libraries, the cache and th
   await page.getByRole("button", { name: "Packages", exact: true }).click();
 
   // The line says "Measuring disk use…" until the reply, then the use or
-  // "Couldn't measure disk use."; a timeout says which it was.
+  // "Couldn't measure disk use."; a wait that never ends says which it shows.
   const line = page.locator("#ember-packages-tab .ember-packages-disk-use");
-  await page.waitForFunction(
-    () => !/^Measuring/.test(document.querySelector("#ember-packages-tab .ember-packages-disk-use")?.innerText ?? "Measuring"),
-    null, { timeout: 30000 }).catch(async (e) => { throw new Error(`${e.message}; the line says: ${await line.innerText()}`); });
+  await waitingFor("the disk-use line stops saying Measuring", page.waitForFunction(
+    () => !/^Measuring/.test(document.querySelector("#ember-packages-tab .ember-packages-disk-use")?.innerText ?? "Measuring")), () => line.innerText());
   assert.match(await line.innerText(),
     /^Disk use for all notebooks: libraries 3\d\d KB, package cache 2\d\d KB, indexes 1\d\d KB\. /);
 
