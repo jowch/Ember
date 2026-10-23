@@ -710,7 +710,12 @@ test_that("notebook_snapshot() strips ANSI from output and console text; noteboo
 # ---- worker_query() (ui-2.md, 4a) --------------------------------------------
 
 test_that("worker_query() answers when idle, NULL at once while busy, NULL in preview starting no worker, drops a late reply, and fails every pending query on exit (48)", {
-  path <- write_session_notebook(list(S = cell(""), A = cell("Sys.sleep(3)")))
+  # A runs until the test lets it go, so the worker is busy for as long as
+  # the test needs, however slow the machine.
+  release <- tempfile("release-")
+  on.exit(unlink(release), add = TRUE)
+  path <- write_session_notebook(list(S = cell(""),
+    A = cell(sprintf("while (!file.exists(%s)) Sys.sleep(0.02)", deparse(release)))))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
 
@@ -721,7 +726,7 @@ test_that("worker_query() answers when idle, NULL at once while busy, NULL in pr
   expect_null(nb$proc)
 
   allow_execution(nb)
-  run_cells(nb, wait = TRUE, timeout = 20)
+  run_cells(nb, "S", wait = TRUE, timeout = 20)
 
   # Idle: a real reply.
   got_idle <- "unset"
@@ -729,36 +734,37 @@ test_that("worker_query() answers when idle, NULL at once while busy, NULL in pr
   expect_true(wait_for(nb, function(s) !identical(got_idle, "unset"), timeout = 10))
   expect_match(got_idle$text, "^lm\\(formula, data")
 
-  # Busy: NULL at once, not after waiting out the cell.
+  # Busy: NULL at once, not after waiting out the cell. The callback has
+  # run by the time worker_query() returns, so no clock is needed.
   run_cells(nb, "A", wait = FALSE)
   expect_true(wait_for(nb, function(s) identical(s$process, "busy"), timeout = 15))
   got_busy <- "unset"
-  before <- Sys.time()
   worker_query(nb, list(type = "signature", name = "lm", package = NULL), function(r) got_busy <<- r)
   expect_null(got_busy)
-  expect_lt(as.numeric(Sys.time() - before, units = "secs"), 0.5)
 
-  # A late reply (the busy cell finishes and the worker is asked again,
-  # with a very short timeout) is dropped, not delivered twice, and
-  # doesn't kill the worker.
-  expect_true(wait_for(nb, timeout = 20))
+  # A late reply is dropped, not delivered twice, and doesn't kill the
+  # worker. Asked while A runs, the worker reads the query only after A
+  # ends, so the 0 s timeout always fires first.
   late_calls <- 0L
   late_reply <- "unset"
   worker_query(nb, list(type = "signature", name = "lm", package = NULL),
-              function(r) { late_calls <<- late_calls + 1L; late_reply <<- r }, timeout = 0)
-  later::run_now(timeout = 0)  # the 0s timeout fires before the worker's real reply can arrive
-  for (i in 1:50) { later::run_now(timeout = 0.05); Sys.sleep(0.02) }
-  expect_identical(late_calls, 1L)
+              function(r) { late_calls <<- late_calls + 1L; late_reply <<- r },
+              timeout = 0, busy_ok = TRUE)
+  expect_true(wait_for(nb, function(s) late_calls > 0L, timeout = 10))
   expect_null(late_reply)
-  expect_true(wait_for(nb, timeout = 5))
-  expect_false(is.null(nb$proc))
+  file.create(release)
+  expect_true(wait_for(nb, timeout = 20))
 
   # The worker is still alive and answers again: a fresh query, with no
-  # short timeout this time, gets a real reply.
+  # short timeout this time, gets a real reply. The late reply was on the
+  # socket before it, so by now it has been read, and dropped.
   got_again <- "unset"
   worker_query(nb, list(type = "signature", name = "lm", package = NULL), function(r) got_again <<- r)
   expect_true(wait_for(nb, function(s) !identical(got_again, "unset"), timeout = 10))
   expect_match(got_again$text, "^lm\\(formula, data")
+  expect_identical(late_calls, 1L)
+  expect_null(late_reply)
+  expect_false(is.null(nb$proc))
 
   # A worker exit fails every pending query. A real query's reply can beat
   # a kill() by a wide enough margin on a fast loopback that this can't be
