@@ -134,6 +134,31 @@ test_that("complete_path(): over 200 matches lists the first 200 and says so (#1
   expect_false(r_typed$ember_truncated)
 })
 
+test_that("complete_path(): in a big folder, folders only are found among many files, and stat only what matches (#218)", {
+  # 1500 files and 3 folders. A folder-only query must still find the 3,
+  # whether it goes through list.dirs() (more than 1024 candidates) or
+  # stats the matches; files and folders both answer a plain query.
+  dir <- tempfile("ember-complete-many-")
+  dir.create(dir)
+  file.create(file.path(dir, sprintf("f%04d.txt", 1:1500)))
+  for (d in c("d1", "d2", "f9999-dir")) dir.create(file.path(dir, d))
+
+  r <- complete_path(paste0(dir, "/"), dirs_only = TRUE)
+  expect_equal(unlist(r$results), c("d1/", "d2/", "f9999-dir/"))
+  expect_false(r$ember_truncated)
+
+  r_f <- complete_path(file.path(dir, "f9"), dirs_only = TRUE)
+  expect_equal(unlist(r_f$results), "f9999-dir/")
+
+  r_all <- complete_path(file.path(dir, "f000"))
+  expect_equal(unlist(r_all$results), sprintf("f%04d.txt", 1:9))
+
+  r_many <- complete_path(paste0(dir, "/"))
+  expect_length(r_many$results, 200)
+  expect_true(r_many$ember_truncated)
+  expect_equal(unlist(r_many$results)[1:3], c("d1/", "d2/", "f0001.txt"))
+})
+
 test_that("first_free_notebook_name(): notebook.R, then notebook-2.R, notebook-3.R, ...", {
   dir <- tempfile("ember-free-name-")
   dir.create(dir)

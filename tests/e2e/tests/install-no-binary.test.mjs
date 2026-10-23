@@ -40,3 +40,33 @@ test("failing.R: a build with no binary for this R says why and offers Update", 
 
   assertNoProblems(page);
 });
+
+const NOTICE_INSTALLER = path.join(HERE, "..", "..", "testthat", "fixtures", "no-binary-notice-installer.R");
+
+test("failing.R: packages with no binary for this R are named under Installing while they build", async (t) => {
+  const notebook = tempNotebook("failing.R");
+  const server = await startServer([notebook], {
+    installerScript: NOTICE_INSTALLER,
+    logFile: path.join(artifactsDir(), "install-no-binary-notice.server.log"),
+  });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await runCell(page, "S");
+
+  await page.getByRole("button", { name: "Packages", exact: true }).click();
+  const notice = page.locator(".ember-packages-library-installing .ember-packages-no-binary");
+  await notice.waitFor({ timeout: 30000 });
+
+  const text = await notice.innerText();
+  assert.match(text, /^2 packages have no binary for R \S+ at this snapshot date, so they're being built on this computer: brokenpkg 0\.1\.0 and rlang 1\.1\.3\./);
+  assert.match(text, /Update moves the packages to a newer date/);
+  // A notice, not a stop: no card, and Update is the header's.
+  assert.equal(await page.locator(".ember-install-failure-card, .ember-install-ask-card").count(), 0);
+  assert.equal(await page.locator(".ember-packages-update button", { hasText: "Update" }).count(), 1);
+
+  assertNoProblems(page);
+});

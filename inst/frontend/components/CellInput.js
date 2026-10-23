@@ -5,17 +5,30 @@ import { utf8index_to_ut16index } from "../common/UnicodeTools.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { get_selected_doc_from_state } from "./CellInput/LiveDocsFromCursor.js"
 import { GlobalDefinitionsFacet, DefinitionCellsFacet, EmberSpansFacet, current_spans, go_to_definition_plugin } from "./CellInput/go_to_definition_plugin.js"
+import {
+    cell_undo,
+    is_returning,
+    take_returning,
+    register_view,
+    unregister_view,
+    mark_returned,
+    undo_or_restore_unhosted,
+    redo_or_redelete_returned,
+} from "./CellInput/cell_undo.js"
 // import { debug_syntax_plugin } from "./CellInput/debug_syntax_plugin.js"
 
 import {
     EditorState,
     EditorSelection,
+    StateEffect,
     Compartment,
     EditorView,
     placeholder,
     keymap,
     history,
     historyKeymap,
+    isolateHistory,
+    Annotation,
     defaultKeymap,
     indentMore,
     indentLess,
@@ -57,7 +70,7 @@ import { commentKeymap } from "./CellInput/comment_mixed_parsers.js"
 import { mod_d_command } from "./CellInput/mod_d_command.js"
 import { open_bottom_right_panel } from "./BottomRightPanel.js"
 import { assert_not_null, timeout_promise } from "../common/PlutoConnection.js"
-import { LastFocusWasForcedEffect, tab_help_plugin } from "./CellInput/tab_help_plugin.js"
+import { LastFocusWasForcedEffect, tab_help_plugin, tab_pass_through } from "./CellInput/tab_help_plugin.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { moveLineDown } from "../imports/CodemirrorPlutoSetup.js"
 import { detect_indent_unit, indent_unit_of_setting } from "./CellInput/detect_indent_unit.js"
@@ -68,7 +81,6 @@ import { RunButton } from "./RunButton.js"
 import { alt_or_options_name } from "../common/KeyboardShortcuts.js"
 import { MoreIcon } from "../common/Icons.js"
 import { DEFAULT_SETTINGS, get_settings } from "./Settings.js"
-import { highlightKwargsPlugin } from "./CellInput/highlight_kwargs.js"
 import { hash_quote_continue, hash_quote_highlight } from "./CellInput/text_cell.js"
 import { highlight_assigned } from "./CellInput/highlight_assigned.js"
 import { is_dark_theme } from "../common/theme.js"
@@ -163,6 +175,9 @@ const setValue6 = (/** @type {EditorView} */ cm, value) =>
     cm.dispatch({
         changes: { from: 0, to: cm.state.doc.length, insert: value },
     })
+// Marks the transaction that puts code run elsewhere into the editor (#318).
+const RemoteCodeAnnotation = Annotation.define()
+
 const replaceRange6 = (/** @type {EditorView} */ cm, text, from, to) =>
     cm.dispatch({
         changes: { from, to, insert: text },
@@ -256,8 +271,10 @@ export const CellInput = ({
     skip_static_fake = false,
     on_submit,
     on_delete,
+    on_menu_delete,
     on_add_after,
     on_change,
+    on_remote_replace = (/** @type {boolean} */ _replaced) => {},
     on_update_doc_query,
     on_focus_neighbor,
     on_line_heights,
@@ -300,6 +317,19 @@ export const CellInput = ({
     const newcm_ref = useRef(/** @type {EditorView?} */ (null))
     const dom_node_ref = useRef(/** @type {HTMLElement?} */ (null))
     const remote_code_ref = useRef(/** @type {string?} */ (null))
+    // Set when the editor was made from the state it had before its cell was
+    // deleted (#349): the run code it came back with, which the remote_code
+    // effect mustn't paste over the editor's own text.
+    const returned_with_code_ref = useRef(/** @type {string?} */ (null))
+    // The run code the editor's text was last in step with: what it was
+    // created from, then each remote_code applied. Text that differs from it
+    // is typing that hasn't been run yet. Unlike remote_code_ref, this is
+    // set even when remote_code arrived before the editor existed (the
+    // editor is made only once the cell scrolls into view).
+    const synced_code_ref = useRef(/** @type {string?} */ (null))
+    // The unrun typing a remote change last replaced, while the notice for
+    // it shows. Undoing back to it clears the notice.
+    const replaced_text_ref = useRef(/** @type {string?} */ (null))
 
     const [dark_theme, set_dark_theme] = useState(is_dark_theme())
     useEventListener(window, "ember theme change", () => set_dark_theme(is_dark_theme()), [])
@@ -327,10 +357,21 @@ export const CellInput = ({
         useMemo(() => {
             return EditorView.updateListener.of((update) => {
                 if (update.docChanged) {
-                    on_change(update.state.doc.toString())
+                    const doc = update.state.doc.toString()
+                    on_change(doc)
+                    // The notice about replaced typing stays through later
+                    // remote changes, and through undo and redo until the
+                    // typing is back; any other edit clears it (#318).
+                    const trs = update.transactions.filter((tr) => tr.docChanged)
+                    const remote = trs.some((tr) => tr.annotation(RemoteCodeAnnotation))
+                    const history_step = trs.every((tr) => tr.isUserEvent("undo") || tr.isUserEvent("redo"))
+                    if (!remote && (!history_step || doc === replaced_text_ref.current)) {
+                        replaced_text_ref.current = null
+                        on_remote_replace(false)
+                    }
                 }
             })
-        }, [on_change])
+        }, [on_change, on_remote_replace])
     )
 
     // Settings apply to open editors at once: one compartment holds every
@@ -383,7 +424,7 @@ export const CellInput = ({
     const [show_static_fake_state, set_show_static_fake] = useState(!skip_static_fake)
 
     const show_static_fake_excuses_ref = useRef(false)
-    show_static_fake_excuses_ref.current ||= navigator.userAgent.includes("Firefox") || focus_after_creation || cm_forced_focus != null || skip_static_fake
+    show_static_fake_excuses_ref.current ||= navigator.userAgent.includes("Firefox") || focus_after_creation || cm_forced_focus != null || skip_static_fake || is_returning(cell_id)
 
     const show_static_fake = show_static_fake_excuses_ref.current ? false : show_static_fake_state
 
@@ -463,7 +504,7 @@ export const CellInput = ({
             }
             if (cm.state.doc.length === 0) {
                 on_focus_neighbor(cell_id, +1)
-                on_delete()
+                on_delete(+1)
                 return true
             }
             return false
@@ -480,7 +521,7 @@ export const CellInput = ({
             if (cm.state.doc.length === 0) {
                 // `Infinity, Infinity` means: last line, last character
                 on_focus_neighbor(cell_id, -1, Infinity, Infinity)
-                on_delete()
+                on_delete(-1)
                 return true
             }
             return false
@@ -525,6 +566,26 @@ export const CellInput = ({
         }
 
         const plutoKeyMaps = [
+            // Ctrl+Z goes through the cell's history, cell deletes included;
+            // with nothing left there, it brings back a delete no cell holds.
+            {
+                key: "Mod-z",
+                run: (/** @type {EditorView} */ cm) => !cm.state.facet(EditorState.readOnly) && undo_or_restore_unhosted(cm),
+                preventDefault: true,
+            },
+            // Redo, on historyKeymap's keys. In a cell that just came back,
+            // with nothing left to redo, it deletes the cell again.
+            {
+                key: "Mod-y",
+                mac: "Mod-Shift-z",
+                run: (/** @type {EditorView} */ cm) => !cm.state.facet(EditorState.readOnly) && redo_or_redelete_returned(cm),
+                preventDefault: true,
+            },
+            {
+                linux: "Ctrl-Shift-z",
+                run: (/** @type {EditorView} */ cm) => !cm.state.facet(EditorState.readOnly) && redo_or_redelete_returned(cm),
+                preventDefault: true,
+            },
             { key: "Shift-Enter", run: keyMapSubmit },
             { key: "Ctrl-Enter", mac: "Cmd-Enter", run: keyMapRun },
             { key: "Ctrl-Enter", run: keyMapRun },
@@ -569,8 +630,17 @@ export const CellInput = ({
             }
         })
 
+        // A deleted cell coming back gets the editor state it had, history
+        // included, so Ctrl+Z goes on through its own edits (#349).
+        const returning = take_returning(cell_id)
+        const returning_state = returning?.state != null && returning.state.doc.toString() === local_code ? returning.state : null
+        if (returning_state != null) returned_with_code_ref.current = remote_code
+        const make_state = (/** @type {{ doc: string, extensions: any[] }} */ config) =>
+            returning_state != null ? returning_state.update({ effects: StateEffect.reconfigure.of(config.extensions) }).state : EditorState.create(config)
+
+        synced_code_ref.current = remote_code
         const newcm = (newcm_ref.current = new EditorView({
-            state: EditorState.create({
+            state: make_state({
                 doc: local_code,
                 extensions: [
                     dark_theme_compartment,
@@ -599,7 +669,6 @@ export const CellInput = ({
                     syntaxHighlighting(pluto_syntax_colors_css),
                     lineNumbers(),
                     highlightSpecialChars(),
-                    highlightKwargsPlugin(),
                     highlight_assigned,
                     history(),
                     drawSelection(),
@@ -620,6 +689,7 @@ export const CellInput = ({
                     bracketMatching(),
                     docs_updater,
                     tab_help_plugin,
+                    tab_pass_through,
                     // Remove selection on blur
                     EditorView.domEventHandlers({
                         blur: (event, view) => {
@@ -731,10 +801,13 @@ export const CellInput = ({
                         //     `We ran into an issue! We have lost your cursor 😞😓😿\n If this appears again, please press F12, then click the "Console" tab,  eport an issue at https://github.com/JuliaPluto/Pluto.jl/issues`
                         // )
                     }),
+                    cell_undo,
                 ],
             }),
             parent: dom_node_ref.current,
         }))
+        register_view(cell_id, newcm)
+        if (returning != null) mark_returned(newcm, returning.record_id)
         // EditorView appends; the run button and ⋯ must follow the code in Tab order.
         dom_node_ref.current.prepend(newcm.dom)
 
@@ -745,7 +818,15 @@ export const CellInput = ({
             setValue: (x) => setValue6(newcm, x),
         }
 
-        if (focus_after_creation) {
+        if (returning?.focus) {
+            setTimeout(() => {
+                let view = newcm_ref.current
+                if (view == null) return
+                view.dom.scrollIntoView({ block: "nearest" })
+                if (returning_state == null) view.dispatch({ selection: { anchor: view.state.doc.length } })
+                view.focus()
+            })
+        } else if (focus_after_creation) {
             setTimeout(() => {
                 let view = newcm_ref.current
                 if (view == null) return
@@ -782,6 +863,8 @@ export const CellInput = ({
         }
     }, [show_static_fake])
 
+    useEffect(() => () => unregister_view(cell_id, /** @type {EditorView} */ (newcm_ref.current)), [])
+
     useEffect(() => {
         if (newcm_ref.current == null) return
         const cm = newcm_ref.current
@@ -790,21 +873,42 @@ export const CellInput = ({
         cm.dispatch(setDiagnostics(cm.state, diagnostics))
     }, [cm_diagnostics])
 
-    // Effect to apply "remote_code" to the cell when it changes...
-    // ideally this won't be necessary as we'll have actual multiplayer,
-    // or something to tell the user that the cell is out of sync.
+    // Effect to apply "remote_code" to the cell when it changes. Like Pluto,
+    // every tab shows the code that was last run, wherever it was run (#318).
+    // If this tab had typing that wasn't run yet, the new code replaces it
+    // as an undo step of its own, so Ctrl+Z brings the typing back, and the
+    // cell says so until the typing is back or this tab edits or runs it.
     useEffect(() => {
         if (newcm_ref.current == null) return // Not sure when and why this gave an error, but now it doesn't
 
         const current_value = getValue6(newcm_ref.current) ?? ""
+        if (returned_with_code_ref.current != null) {
+            // A restored editor keeps its text, which may be typing that
+            // was never run, over the run code it came back with.
+            const same = returned_with_code_ref.current === remote_code
+            returned_with_code_ref.current = null
+            if (same) {
+                remote_code_ref.current = remote_code
+                return
+            }
+        }
         if (remote_code_ref.current == null && remote_code === "" && current_value !== "") {
             // this cell is being initialized with empty code, but it already has local code set.
             // this happens when pasting or dropping cells
             return
         }
+        const had_local_edit = synced_code_ref.current != null && current_value !== synced_code_ref.current
         remote_code_ref.current = remote_code
+        synced_code_ref.current = remote_code
         if (current_value !== remote_code) {
-            setValue6(newcm_ref.current, remote_code)
+            newcm_ref.current.dispatch({
+                changes: { from: 0, to: newcm_ref.current.state.doc.length, insert: remote_code },
+                annotations: [isolateHistory.of("full"), RemoteCodeAnnotation.of(true)],
+            })
+            if (had_local_edit) {
+                replaced_text_ref.current = current_value
+                on_remote_replace(true)
+            }
         }
     }, [remote_code])
 
@@ -865,7 +969,7 @@ export const CellInput = ({
                 : html`<${RunButton} running=${running} queued=${queued} runtime=${runtime} on_run=${on_run} on_interrupt=${on_interrupt} />`}
             <${InputContextMenu}
                 cell_id=${cell_id}
-                on_delete=${on_delete}
+                on_delete=${on_menu_delete}
                 code_folded=${code_folded}
                 on_code_fold=${on_code_fold}
                 can_disable=${can_disable}
@@ -940,7 +1044,27 @@ const InputContextMenu = ({ cell_id, on_delete, code_folded, on_code_fold, can_d
         { tag: "delete", contents: t("t_delete_cell_action"), onClick: on_delete, danger: true },
     ].filter((item) => item != null)
 
-    const { button_props, menu_props, item_props, close, is_open } = useMenu({ count: items.length })
+    const { button_props, menu_props, item_props, close, is_open, button_ref, menu_ref } = useMenu({ count: items.length })
+
+    // The menu opens below the button (cells.css). On a cell near the bottom
+    // of the window that puts "Move down" and "Delete cell" below the fold,
+    // so open it above the button instead when it doesn't fit below and does
+    // fit above, clear of the header.
+    useLayoutEffect(() => {
+        const menu = menu_ref.current
+        const button = button_ref.current
+        if (!is_open || menu == null || button == null) return
+        menu.style.top = ""
+        const gap = 3
+        const b = button.getBoundingClientRect()
+        const height = menu.getBoundingClientRect().height
+        const header_bottom = document.querySelector("header#pluto-nav")?.getBoundingClientRect().bottom ?? 0
+        const fits_below = b.bottom + gap + height <= window.innerHeight
+        const fits_above = b.top - gap - height >= Math.max(0, header_bottom)
+        // The button and the menu are siblings in pluto-input, the menu's
+        // offset parent, so the button's offsetTop is in the menu's terms.
+        if (!fits_below && fits_above) menu.style.top = `${button.offsetTop - gap - height}px`
+    }, [is_open, items.length])
 
     return html`
         <button

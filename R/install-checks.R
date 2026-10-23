@@ -196,7 +196,7 @@ read_available <- function(repos, type) {
 #' at a snapshot date from before Package Manager built binaries for this
 #' R (#19): then none of its packages has one. So one locked CRAN package
 #' is asked about (`ppm_serves_binary()`), at the URL renv will use
-#' (`binary_repos`, the installer's rewritten repositories), and only when
+#' (`binary_repos`, `installer_repos()$probe`), and only when
 #' it comes as source are the packages counted, as without binaries.
 #' (Measured: at 2024-06-01 Package Manager sent R 4.6 the source of every
 #' package asked about, pure R ones too; at 2026-09-01, binaries.)
@@ -251,6 +251,43 @@ compiler_check <- function(lock, repos, linux_binaries = FALSE, os = os_kind(),
 # fails, the installer asks which of the failed packages had no binary and
 # says so, with what to do: move the date forward, or use an older R.
 
+#' The installer's repositories: `list(repos, probe, linux_binaries)`.
+#'
+#' * `repos`: what renv installs from. renv's own Linux binary rewrite
+#'   gets Bioconductor's URLs wrong (`ppm_binary_repos()`), so they go in
+#'   already rewritten, following what renv's rewrite makes of the CRAN
+#'   URL (`cran_binary`); CRAN itself stays as it is, for renv to rewrite.
+#'   Then Bioconductor's own binaries, for those Package Manager doesn't
+#'   build on macOS and Windows (`bioc_binary_repos()`).
+#' * `probe`: the URLs renv really downloads from, for the checks that
+#'   ask Package Manager what it sends (`compiler_check()`,
+#'   `source_only_packages()`, `no_binary_packages()`): `repos` with CRAN
+#'   at `cran_binary` on Linux. Package Manager sends the source at CRAN's
+#'   own URL whatever the date, so asking there would say every package
+#'   has no binary.
+#' * `linux_binaries`: whether renv rewrote CRAN to Package Manager's
+#'   Linux binaries.
+#'
+#' `cran_binary`: renv's rewrite of `urls[["CRAN"]]` (`renv_ppm_transform`,
+#' renv internal: if it is renamed, Bioconductor falls back to the 404, and
+#' the `[net]` S4Vectors test in test-packages-session.R is what catches
+#' it), or `NULL`.
+installer_repos <- function(urls, cran_binary = renv_cran_binary(urls)) {
+  repos <- bioc_binary_repos(ppm_binary_repos(urls, cran_binary))
+  linux_binaries <- !is.null(cran_binary) && length(cran_binary) == 1 && !is.na(cran_binary) &&
+    grepl("/__linux__/", cran_binary)
+  probe <- repos
+  if (linux_binaries) probe[["CRAN"]] <- unname(cran_binary)
+  list(repos = repos, probe = probe, linux_binaries = linux_binaries)
+}
+
+#' What renv's own rewrite makes of `urls[["CRAN"]]`, or `NULL`.
+renv_cran_binary <- function(urls) {
+  if (!"CRAN" %in% names(urls)) return(NULL)
+  tryCatch(unname(utils::getFromNamespace("renv_ppm_transform", "renv")(urls[["CRAN"]])),
+           error = function(e) NULL)
+}
+
 #' A source package's URL in the repository at `repo`.
 package_url <- function(repo, package, version) {
   paste0(sub("/+$", "", repo), "/src/contrib/", package, "_", version, ".tar.gz")
@@ -298,7 +335,7 @@ failed_builds <- function(failed, index) {
 #'   at the locked version. An unreadable index names none.
 #' * Linux with Package Manager binaries (`linux_binaries`): Package
 #'   Manager sends the source (`serves_binary`), asked at the URL renv used
-#'   (`binary_repos`, the installer's rewritten repositories).
+#'   (`binary_repos`, `installer_repos()$probe`).
 #' * Linux without them: none. Everything builds from source there, so a
 #'   failed build says nothing about the date.
 #'
@@ -325,6 +362,64 @@ no_binary_packages <- function(failed, lock, repos, binary_repos = repos, linux_
     no_binary <- !paste(e$name, e$version) %in% paste(index[, "Package"], index[, "Version"])
   }
   stats::setNames(e$version[no_binary], e$name[no_binary])[order(e$name[no_binary])]
+}
+
+#' Before renv runs: which of the lock's CRAN packages will build from
+#' source because they have no binary for this R at their locked version
+#' (#19), so the session can say so while they build. Named character,
+#' package -> version. Doesn't stop the install: pure R packages build
+#' fine, and the build's own failure (`no_binary_packages()`) says what
+#' went wrong if one doesn't.
+#'
+#' Packages renv's cache already holds (`in_renv_cache()`, under
+#' `cache`) aren't counted: they don't build again. On Linux with Package
+#' Manager binaries one package is asked about, at the URL renv downloads
+#' from (`binary_repos`, `installer_repos()$probe`): at a date before
+#' Package Manager built binaries for this R it sends the source of every
+#' package, so when a second package comes as source too, all of them
+#' count; when only the first does, only it; otherwise none. On
+#' macOS and Windows the binary index is read (`no_binary_packages()`).
+#' On Linux without those binaries everything builds from source, as it
+#' always does there, so none: the date isn't why.
+source_only_packages <- function(lock, repos, cache, binary_repos = repos, linux_binaries = FALSE,
+                                 os = os_kind(), binary_type = .Platform$pkgType,
+                                 serves_binary = ppm_serves_binary, minor = r_info()$minor) {
+  none <- stats::setNames(character(), character())
+  e <- lock$entries[lock$entries$source == "CRAN", , drop = FALSE]
+  if (!is.null(cache)) {
+    root <- file.path(cache, "renv-cache")
+    cached <- vapply(seq_len(nrow(e)), function(i) in_renv_cache(root, e$name[[i]], e$version[[i]], minor), logical(1))
+    e <- e[!cached, , drop = FALSE]
+  }
+  if (nrow(e) == 0) return(none)
+  if (identical(os, "linux")) {
+    if (!linux_binaries || !"CRAN" %in% names(binary_repos)) return(none)
+    source_of <- function(i) identical(serves_binary(package_url(binary_repos[["CRAN"]], e$name[[i]], e$version[[i]])), FALSE)
+    if (!source_of(1)) return(none)
+    # One package with no binary (a failed binary build, a release from
+    # this week) isn't a date without binaries: a second one confirms.
+    if (nrow(e) > 1 && !source_of(2)) return(stats::setNames(e$version[[1]], e$name[[1]]))
+    return(stats::setNames(e$version, e$name)[order(e$name)])
+  }
+  lock$entries <- e
+  no_binary_packages(e$name, lock, repos, binary_repos = binary_repos, os = os, binary_type = binary_type)
+}
+
+#' The installer's line for `source_only_packages()`, or none:
+#' `EMBER-NO-BINARY <package>=<version> ...`, one line for all of them.
+no_binary_notice_line <- function(packages) {
+  if (length(packages) == 0) return(character())
+  paste("EMBER-NO-BINARY", paste0(names(packages), "=", unname(packages), collapse = " "))
+}
+
+#' `no_binary_notice_line()` read back: named character, or `NULL` when
+#' `line` isn't one.
+parse_no_binary_notice <- function(line) {
+  if (!startsWith(line, "EMBER-NO-BINARY ")) return(NULL)
+  words <- strsplit(trimws(sub("^EMBER-NO-BINARY ", "", line)), " +")[[1]]
+  words <- words[grepl("^[A-Za-z][A-Za-z0-9.]*=\\S+$", words)]
+  if (length(words) == 0) return(NULL)
+  stats::setNames(sub("^[^=]*=", "", words), sub("=.*$", "", words))
 }
 
 # ---- System libraries --------------------------------------------------------

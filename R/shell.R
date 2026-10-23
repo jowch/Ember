@@ -34,7 +34,8 @@
 #' total length), `watch` (path -> mtime), `last_mem_check`/
 #' `worker_rss_reported` (the worker memory sampler's own timer and
 #' last-reported value, below), `poll_cancel` (the `later`
-#' cancel function), `closing` (listeners are cleared only after the
+#' cancel function), `output_watch` (`list(proc, cancel)` while the poll
+#' waits on that worker's stdout pipe, `watch_worker_output()`), `closing` (listeners are cleared only after the
 #' closing dispatch's notifications are delivered), `queries` (environment,
 #' id (character) -> callback, for `worker_query()`'s pending completion/
 #' help/signature questions and one-off renders -- outside `ember_state`
@@ -68,6 +69,7 @@ session_start <- function(state) {
   nb$last_mem_check <- NULL
   nb$worker_rss_reported <- NULL
   nb$poll_cancel <- NULL
+  nb$output_watch <- NULL
   nb$closing <- FALSE
   nb$queries <- new.env(parent = emptyenv())
   nb$next_query_id <- 0L
@@ -226,10 +228,12 @@ schedule_poll <- function(nb, interval = 0.005) {
 #' half-read, or anything sent or received in the last second); 250 ms while
 #' an install or index job is running, so its progress and its end are read
 #' promptly; otherwise 2 s. An idle worker sends nothing (it speaks only in
-#' reply, or during a run), so the slow poll only notices a worker that died
-#' while idle, and a watched file that changed: each costs about 1.7 ms of
-#' the server's time, so 4 a second cost 0.7% of a core per open notebook
-#' (#46).
+#' reply, or during a run), so the slow poll only notices a watched file that
+#' changed, and a worker that died while idle on Windows or while a
+#' `system()` child still holds its stdout pipe (otherwise the pipe wakes the
+#' poll at once, `watch_worker_output()`, #209): each
+#' poll costs about 1.7 ms of the server's time, so 4 a second cost 0.7% of
+#' a core per open notebook (#46).
 poll_interval <- function(nb, now = Sys.time()) {
   jobs_running <- length(ls(jobs, all.names = TRUE)) > 0
   if (is.null(nb$proc)) return(if (jobs_running) 0.25 else 2)
@@ -267,6 +271,43 @@ cancel_poll <- function(nb) {
   if (!is.null(nb$poll_cancel)) {
     try(nb$poll_cancel(), silent = TRUE)
     nb$poll_cancel <- NULL
+  }
+  invisible(NULL)
+}
+
+#' On macOS and Linux, wake the poll when the worker's stdout pipe is
+#' readable: R or native code wrote something, or the worker ended and the
+#' pipe closed. So a worker that dies while idle is noticed at once rather
+#' than at the next 2 s poll (#209). An idle worker sends no frames (it
+#' speaks only in reply, or during a run, when the poll is fast anyway), so
+#' the socket needs no wake of its own. The slow poll stays: watched files
+#' need it, and a process a cell started with `system()` inherits the pipe
+#' and keeps it open after the worker has gone.
+#'
+#' Armed once per readable spell: the poll reads what is there and arms it
+#' again on its way out, since a pipe at its end is always readable and
+#' waiting on it again at once would spin. Not armed once the output is
+#' complete, or on Windows, whose pipes can't be waited on this way (as
+#' `watch_child()`, server.R). Returns whether it is armed, invisibly.
+watch_worker_output <- function(nb) {
+  proc <- nb$proc
+  if (is.null(proc) || isTRUE(nb$closing) || .Platform$OS.type == "windows") return(invisible(FALSE))
+  if (identical(nb$output_watch$proc, proc)) return(invisible(TRUE))
+  cancel_output_watch(nb)
+  fd <- tryCatch(processx::conn_get_fileno(proc$get_output_connection()), error = function(e) NULL)
+  if (is.null(fd) || !isTRUE(tryCatch(proc$is_incomplete_output(), error = function(e) FALSE))) return(invisible(FALSE))
+  cancel <- later::later_fd(function(ready) {
+    nb$output_watch <- NULL
+    if (identical(nb$proc, proc)) hurry_poll(nb, 0.005)
+  }, readfds = fd)
+  nb$output_watch <- list(proc = proc, cancel = cancel)
+  invisible(TRUE)
+}
+
+cancel_output_watch <- function(nb) {
+  if (!is.null(nb$output_watch)) {
+    try(nb$output_watch$cancel(), silent = TRUE)
+    nb$output_watch <- NULL
   }
   invisible(NULL)
 }
@@ -480,6 +521,7 @@ run_effect <- function(nb, fx) {
     close = {
       nb$closing <- TRUE
       cancel_poll(nb)
+      cancel_output_watch(nb)
       if (!is.null(nb$con)) {
         tryCatch(close(nb$con), error = function(e) NULL)
         nb$con <- NULL
@@ -590,7 +632,8 @@ run_effect <- function(nb, fx) {
     },
     install = {
       cmd <- installer_command(fx$lock, fx$repos, fx$path, nb$state$options$cache,
-                               github = fx$github %||% "https://api.github.com")
+                               github = fx$github %||% "https://api.github.com",
+                               ask_above = fx$ask_above %||% Inf)
       # Keyed by `path`, not `key`: `key` is a hash of the lock text alone
       # (library_for(), lock.R), the same for two sessions with the same
       # lock but different library paths (different caches, or -- in tests
@@ -599,6 +642,8 @@ run_effect <- function(nb, fx) {
       # one `job$subs` list.
       job_start(fx$path, cmd, nb,
         make_progress = function(line) {
+          no_binary <- parse_no_binary_notice(line)
+          if (!is.null(no_binary)) return(ev_install_no_binary(fx$token, no_binary, at = Sys.time()))
           item <- parse_install_progress_line(line)
           if (is.null(item)) NULL else ev_install_progress(fx$token, item, at = Sys.time())
         },
@@ -606,6 +651,12 @@ run_effect <- function(nb, fx) {
           manifest <- tryCatch(read_library_manifest(fx$path), error = function(e) NULL)
           lines <- strsplit(output, "\n", fixed = TRUE)[[1]]
           failed <- !identical(status, 0L)
+          # Status 3: stopped before a large download, to ask (#37).
+          download <- if (identical(status, 3L)) download_lines(lines) else NULL
+          if (!is.null(download)) {
+            return(ev_install_done(fx$token, fx$key, NULL, message = NULL, log = character(),
+                                   download = download, at = Sys.time()))
+          }
           ev_install_done(fx$token, fx$key, manifest,
                           message = if (failed) install_failure_message(lines, status) else NULL,
                           log = utils::tail(lines, 200),
@@ -828,6 +879,7 @@ start_worker_process <- function(nb, fx) {
   if (!is.null(nb$con)) tryCatch(close(nb$con), error = function(e) NULL)
   nb$proc <- proc
   nb$proc_gen <- fx$gen
+  watch_worker_output(nb)
   nb$out_tail <- ""
   nb$con <- NULL
   nb$rx <- list(chunks = list(), n = 0L)
@@ -1054,7 +1106,8 @@ poll <- function(nb) {
 
   if (!is.null(nb$proc) && is.null(nb$con) && !is.null(nb$listen)) {
     if (isTRUE(tryCatch(socketSelect(list(nb$listen), timeout = 0), error = function(e) FALSE))) {
-      nb$con <- tryCatch(socketAccept(nb$listen, blocking = FALSE, open = "a+b"),
+      # No-delay: see write_frame().
+      nb$con <- tryCatch(socketAccept(nb$listen, blocking = FALSE, open = "a+b", options = "no-delay"),
                          error = function(e) NULL)
     }
   }
@@ -1140,6 +1193,7 @@ poll <- function(nb) {
     if (length(changed) > 0) dispatch(nb, ev_files_read(changed, at = Sys.time()))
   }
 
+  watch_worker_output(nb)
   schedule_poll(nb, poll_interval(nb))
   invisible(NULL)
 }
@@ -1202,11 +1256,14 @@ take_frames <- function(rx) {
 }
 
 #' `serialize()` a message, prefix its length, write it. Messages to the
-#' worker are small (code, ids); a blocking write is fine.
+#' worker are small (code, ids); a blocking write is fine. Both ends set
+#' TCP no-delay: otherwise a frame sent while the last one is unanswered
+#' (a split length and payload, or the worker's `running` then `done`)
+#' waits for the peer's delayed ACK, about 40 ms each time (#316). One
+#' write per frame also saves a packet.
 write_frame <- function(con, msg) {
   payload <- serialize(msg, NULL)
-  writeBin(length(payload), con, endian = "big")
-  writeBin(payload, con)
+  writeBin(c(writeBin(length(payload), raw(), endian = "big"), payload), con)
   flush(con)
   invisible(NULL)
 }

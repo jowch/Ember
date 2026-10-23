@@ -9,7 +9,7 @@ export let mod_d_command = {
     /** @param {EditorView} view */
     run: ({ state, dispatch }) => {
         if (state.selection.main.empty) {
-            let nodes_that_i_like = ["Identifier", "FieldName"]
+            let nodes_that_i_like = ["Identifier"]
 
             // Expand to closest Identifier
             let cursor_left = syntaxTree(state).cursorAt(state.selection.main.from, -1)
