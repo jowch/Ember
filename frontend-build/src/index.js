@@ -48,6 +48,7 @@ export {
     historyKeymap,
     history,
     invertedEffects,
+    isolateHistory,
 } from "@codemirror/commands"
 export {
     indentOnInput,

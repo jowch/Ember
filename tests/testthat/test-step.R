@@ -459,6 +459,99 @@ test_that("running a cell into a graph error leaves its dependents stale, not qu
   expect_null(last_sent(r2)$token)
 })
 
+# #315: the way out of a cycle. A and B lose their results while the cycle
+# stands; C (reads B) and D (reads A) fail with upstream errors.
+cycle_then_fixed <- function(on_cell_change = "autorun") {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- a * 2"),
+                       C = cell("b + 1"), D = cell("a")), on_cell_change = on_cell_change)
+  r <- boot(s, c("A", "B", "C", "D"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "a"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "b"), at(11)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(12)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(13)))
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "a <- b")), at(20)), ev_run("A", at(21)))
+  t <- 22
+  while (!is.null(r$state$worker$running)) {
+    r <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "not found")), at(t)))
+    t <- t + 1
+  }
+  r
+}
+
+test_that("fixing a cycle runs the peer it dropped before the cells that read it (#315)", {
+  r <- cycle_then_fixed()
+  expect_null(r$state$results$B)
+  expect_equal(r$state$results$C$error$kind, "upstream")
+  expect_equal(r$state$results$D$error$kind, "upstream")
+
+  r1 <- drive(r$state, ev_apply(list(op_set_code("A", "a <- 10")), at(30)))
+  # The edit runs nothing, but C's and D's messages blamed the cycle.
+  expect_true(isTRUE(r1$state$results$C$stale))
+  expect_true(isTRUE(r1$state$results$D$stale))
+  r2 <- drive(r1$state, ev_run("A", at(31)))
+  sent <- sent_cells(r2)
+  t <- 32
+  while (!is.null(r2$state$worker$running)) {
+    cell <- r2$state$worker$running$cell
+    created <- switch(cell, A = "a", B = "b", character())
+    r2 <- drive(r2$state, wk_done(1, last_token(r2), report(created = created), at(t)))
+    sent <- c(sent, sent_cells(r2))
+    t <- t + 1
+  }
+  expect_equal(sent[sent %in% c("A", "B", "C")], c("A", "B", "C"))
+  expect_true("D" %in% sent)
+  for (id in c("A", "B", "C", "D")) {
+    expect_equal(r2$state$results[[id]]$status, "ok")
+    expect_false(isTRUE(r2$state$results[[id]]$stale))
+  }
+})
+
+test_that("fixing a cycle by a rename marks the cells blaming it stale (#315)", {
+  for (mode in c("autorun", "lazy")) {
+    r <- cycle_then_fixed(mode)
+    r1 <- drive(r$state, ev_apply(list(op_set_code("A", "aa <- 1")), at(30)))
+    expect_true(isTRUE(r1$state$results$C$stale), info = mode)
+    expect_true(isTRUE(r1$state$results$D$stale), info = mode)
+    expect_equal(r1$state$pending, character(), info = mode)   # an edit runs nothing
+  }
+})
+
+test_that("a dependent queued in autorun runs its not-run ancestor first (#315)", {
+  # B has no result (dropped by a graph error that is now gone) while C,
+  # which reads it, does. Rerunning A queues C; B must run before it.
+  r <- cycle_then_fixed()
+  r1 <- drive(r$state, ev_apply(list(op_set_code("A", "a <- 10")), at(30)))
+  r2 <- drive(r1$state, ev_run("A", at(31)))
+  expect_true(all(c("B", "C") %in% r2$state$pending))
+  expect_equal(run_order(r2$state$graph, intersect(r2$state$pending, c("B", "C"))), c("B", "C"))
+})
+
+test_that("a draft cell never run stays not run when a dependent it would feed is queued (#315)", {
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), C = cell("y + a")))
+  r <- boot(s, c("A", "C"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "a"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(status = "error", error = list(message = "object 'y' not found")), at(11)))
+  r1 <- drive(r$state, ev_apply(list(op_insert("E", 3, "y <- Sys.sleep(60)")), at(20)),
+              ev_apply(list(op_set_code("A", "a <- 2")), at(21)), ev_run("A", at(22)))
+  expect_false("E" %in% r1$state$pending)
+  sent <- sent_cells(r1)
+  t <- 23
+  while (!is.null(r1$state$worker$running)) {
+    r1 <- drive(r1$state, wk_done(1, last_token(r1), report(), at(t)))
+    sent <- c(sent, sent_cells(r1))
+    t <- t + 1
+  }
+  expect_false("E" %in% sent)
+  expect_null(r1$state$results$E)
+})
+
+test_that("a cycle peer edited after its result was dropped waits to be asked (#315)", {
+  r <- cycle_then_fixed()
+  r1 <- drive(r$state, ev_apply(list(op_set_code("A", "a <- 10"), op_set_code("B", "b <- a * 3")), at(30)),
+              ev_run("A", at(31)))
+  expect_false("B" %in% r1$state$pending)
+})
+
 test_that("submitting a cell whose graph-error result is already gone still reruns its stale dependents in autorun (#325)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1"), A2 = cell("z <- 9"), E = cell("x + 1"), F = cell("2")))
   r <- boot(s, c("A", "A2", "E", "F"))

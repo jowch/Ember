@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "../imports/Preact.js"
+import { useLayoutEffect, useMemo, useRef, useState } from "../imports/Preact.js"
 import { useEventListener } from "./useEventListener.js"
 
 /**
@@ -10,7 +10,8 @@ import { useEventListener } from "./useEventListener.js"
  * focus to the button, same as a click outside; Tab closes and lets focus
  * move on to wherever it would have gone anyway. Callers that want the
  * menu to close after an item is picked call `close()` themselves, since
- * some items (a toggle) may want to leave it open.
+ * some items (a toggle) may want to leave it open. `button_ref` and
+ * `menu_ref` are returned for callers that place the menu themselves.
  *
  * @param {{ count: number }} options
  */
@@ -28,16 +29,37 @@ export const useMenu = ({ count }) => {
     const is_open_ref = useRef(false)
     is_open_ref.current = is_open
 
+    // Within an open menu the items are there to focus at once. Focusing
+    // a frame later instead let the next key land on the item the focus
+    // was leaving: End then Enter picked the first item, not the last.
     const focus_item = (/** @type {number} */ i) => {
         set_active_index(i)
-        requestAnimationFrame(() => item_refs.current[i]?.focus())
+        item_refs.current[i]?.focus()
     }
+
+    // The item open() asks for, focused as soon as the menu is drawn: the
+    // items don't exist until then. Not a frame later, as it once was: a
+    // key pressed in between (End right after Enter) went to the button,
+    // which ignored it (#366).
+    const focus_on_open = useRef(/** @type {number?} */ (null))
+    useLayoutEffect(() => {
+        const i = focus_on_open.current
+        focus_on_open.current = null
+        if (!is_open || i == null) return
+        // After the other layout effects of this render, so a caller that
+        // places the menu (CellInput's, above its button near the bottom of
+        // the window) has done so before focus scrolls to the item.
+        queueMicrotask(() => {
+            if (is_open_ref.current) item_refs.current[i]?.focus()
+        })
+    }, [is_open])
 
     const { open, close } = useMemo(
         () => ({
             open: () => {
                 set_is_open(true)
-                focus_item(0)
+                set_active_index(0)
+                focus_on_open.current = 0
             },
             close: (/** @type {{ refocus_button?: boolean }} */ { refocus_button = true } = {}) => {
                 set_is_open(false)
@@ -121,5 +143,5 @@ export const useMenu = ({ count }) => {
         onFocus: () => set_active_index(i),
     })
 
-    return { button_props, menu_props, item_props, open, close, is_open }
+    return { button_props, menu_props, item_props, open, close, is_open, button_ref, menu_ref }
 }

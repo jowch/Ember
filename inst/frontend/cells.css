@@ -578,7 +578,7 @@ pluto-cell.depends_on_disabled_cells > ember-chip {
 pluto-cell.stale {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "out" "chip" "in" "logs";
+    grid-template-areas: "out" "chip" "in" "note" "logs";
 }
 pluto-cell.stale::before {
     content: "";
@@ -602,6 +602,9 @@ pluto-cell.stale > ember-chip {
 }
 pluto-cell.stale > pluto-input {
     grid-area: in;
+}
+pluto-cell.stale > ember-settings-note.remote-replace-note {
+    grid-area: note;
 }
 pluto-cell.stale > pluto-logs-container {
     grid-area: logs;
@@ -1023,7 +1026,10 @@ ember-log code {
     padding: 0;
 }
 pluto-log-truncated {
-    display: block;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 12px;
     font-family: var(--ember-ui-font);
     font-size: 12px;
     color: var(--ember-faint);
