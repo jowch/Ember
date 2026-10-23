@@ -322,7 +322,16 @@ test("opening: an editor scrolled past before its first measure keeps the static
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
   const w = cellSelector("W");
-  const staticHeight = await page.evaluate((sel) => document.querySelector(`${sel} .cm-ssr-fake`).getBoundingClientRect().height, w);
+  // The notebook stops loading before every cell is drawn, so wait for W's
+  // static code; it starts below the view (#420).
+  await page.waitForFunction((sel) => document.querySelector(`${sel} .cm-ssr-fake`), w, { timeout: 20000 })
+    .catch(() => assert.fail("W shows its static code when the notebook opens"));
+  const { staticHeight, top, viewHeight } = await page.evaluate((sel) => ({
+    staticHeight: document.querySelector(`${sel} .cm-ssr-fake`).getBoundingClientRect().height,
+    top: document.querySelector(sel).getBoundingClientRect().top,
+    viewHeight: innerHeight,
+  }), w);
+  assert.ok(top > viewHeight, `W starts below the view: its top is ${top}, the view's height ${viewHeight}`);
   // Bring W into view, and scroll to the end the moment its editor replaces
   // the static code, before CodeMirror's first measure.
   await page.evaluate((sel) => new Promise((resolve) => {

@@ -695,7 +695,7 @@ export const CellInput = ({
                         const { view } = update
                         if (height_held) {
                             // In view now: the next measure measures its text.
-                            if (view.inView) view.requestMeasure({ read: () => null, write: () => end_height_hold(view) })
+                            if (view.inView) view.requestMeasure({ key: end_height_hold, read: () => null, write: () => end_height_hold(view) })
                             return
                         }
                         if (height_floor == null) return
@@ -866,7 +866,7 @@ export const CellInput = ({
         dom_node_ref.current.prepend(newcm.dom)
         if (static_height != null) {
             newcm.dom.style.height = `${static_height}px`
-            newcm.requestMeasure({ read: () => null, write: () => end_height_hold(newcm) })
+            newcm.requestMeasure({ key: end_height_hold, read: () => null, write: () => end_height_hold(newcm) })
         }
 
         // For use from useDropHandler
