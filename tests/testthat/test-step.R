@@ -1076,6 +1076,37 @@ test_that("a data file that changed after its reader ran reruns the reader and i
   expect_false("W" %in% c(r2$state$pending, r2$state$worker$running$cell))
 })
 
+test_that("in autorun a reader the file change reruns runs its stale ancestors first, not with their old values (#437)", {
+  # Found by the scheduling fuzz test with data files: B was left stale (its
+  # upstream deleted), and R reran alone on the change, reading B's old j.
+  s <- fake_state(list(S = cell(""), B = cell("j <- 2"), R = cell('d <- read.csv("d.csv")\nsum(d$x) + j')))
+  r <- boot(s, c("B", "R"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "j"), at(5)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "d", data_seen = list("d.csv" = "v1")), at(6)))
+  r$state$results$B$stale <- TRUE
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(21)))
+  expect_equal(r2$state$worker$running$cell, "B")
+  expect_equal(r2$state$pending, "R")
+})
+
+test_that("in lazy mode a run that reaches the writer after the reader reruns the reader before a queued cell that reads it (#437)", {
+  # Run all: R reads d.csv, W writes it, U reads what R read. The change is
+  # seen as W's result arrives, while U is still queued.
+  s <- fake_state(list(S = cell(""), R = cell('d <- read.csv("d.csv")'),
+                       W = cell('write.csv(data.frame(x = 1:3), "d.csv", row.names = FALSE)'),
+                       U = cell("sum(d$x)")), on_cell_change = "lazy")
+  r <- boot(s, c("R", "W", "U"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "d", data_seen = list("d.csv" = "v1")), at(5)))
+  expect_equal(r$state$worker$running$cell, "W")
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(6)))
+  expect_setequal(r2$state$pending, c("R", "U"))
+  r3 <- drive(r2$state, wk_done(1, r2$state$worker$running$token, report(), at(7)))
+  expect_equal(r3$state$worker$running$cell, "R")
+  # With nothing queued that reads it, lazy mode only marks it stale.
+  r4 <- drive(data_file_notebook("lazy")$state, ev_data_changed(list("d.csv" = "v2"), at(21)))
+  expect_equal(r4$state$pending, character())
+})
+
 test_that("a writer that runs right after its reader reruns the reader, however coarse the file clock (#276)", {
   # R sits above W: run all runs R, then W. W's write can carry a modified
   # time from before R's result arrived; only the version counts.

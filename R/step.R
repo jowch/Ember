@@ -945,15 +945,21 @@ invalidate_cells <- function(state, id, dependents, queue = TRUE, g = run_graph(
     ids[vapply(state$cells[ids], cell_runs, logical(1)) & !(ids %in% names(state$graph$off))]
   } else character()
   if (length(queued)) state$pending <- union(state$pending, queued)
-  # A queued dependent can read a stale cell outside this run (a delete, a
-  # rename or an interrupt can leave one stale), or one whose result a
-  # graph error dropped (`graph_dropped`, #315). As when it is run by hand,
-  # those ancestors run first, with every ancestor between them and it
-  # (#176). Other cells with no result stay not run: a draft never run, or
-  # a dropped cell edited since, runs only when asked.
-  # Only such a cell not already pending needs adding, so the walk is
-  # skipped when there is none, as in the usual rerun after an edit, where
-  # every stale cell is one of the queued dependents.
+  queue_stale_ancestors(state, queued, id, g)
+}
+
+#' Queue the stale ancestors of `queued`, cells autorun has just queued.
+#' A queued cell can read a stale cell outside this run (a delete, a
+#' rename or an interrupt can leave one stale), or one whose result a
+#' graph error dropped (`graph_dropped`, #315). As when it is run by hand,
+#' those ancestors run first, with every ancestor between them and it
+#' (#176). Other cells with no result stay not run: a draft never run, or
+#' a dropped cell edited since, runs only when asked. `id` is the cell
+#' whose change queued them, left out.
+#' Only such a cell not already pending needs adding, so the walk is
+#' skipped when there is none, as in the usual rerun after an edit, where
+#' every stale cell is one of the queued dependents.
+queue_stale_ancestors <- function(state, queued, id = character(), g = run_graph(state)) {
   outside <- if (length(queued)) {
     ids <- names(state$results)
     stale <- ids[vapply(state$results, function(r) isTRUE(r$stale), logical(1))]
@@ -1680,7 +1686,16 @@ reduce_data_changed <- function(state, event) {
     if (all(vapply(hit, function(p) identical(seen[[p]], event$files[[p]]), logical(1)))) next
     r$stale <- TRUE
     state$results[[id]] <- r
-    if (autorun && isTRUE(state$allowed) && can_run(state, id)) state$pending <- union(state$pending, id)
+    # In lazy mode too when a queued cell reads it (a run of every cell
+    # that has reached the writer): that cell would read its old value, as
+    # when a stale ancestor of a cell run by hand is left out (#176).
+    needed <- autorun || length(reached_from(state$graph, id, state$pending)) > 0
+    if (needed && isTRUE(state$allowed) && can_run(state, id)) {
+      state$pending <- union(state$pending, id)
+      # Its stale ancestors run first, as when it is run by hand, so it
+      # doesn't read their old values.
+      state <- queue_stale_ancestors(state, id)
+    }
     state <- invalidate_dependents(state, id, character())
   }
   list(state = state, effects = list(), reply = NULL)
