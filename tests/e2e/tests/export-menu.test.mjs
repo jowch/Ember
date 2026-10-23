@@ -77,8 +77,11 @@ test("export menu: safe preview shows the note and downloads without asking (162
   let at = "";
   t.after(async () => {
     if (at) {
-      const shown = await page.evaluate(() => document.body.innerText.slice(0, 2000).replace(/\s*\n\s*/g, " | "))
+      // Bounded, as only this read is: a wedged page mustn't hold the hook
+      // until the runner kills the file and the report is lost again.
+      const read = page.evaluate(() => document.body.innerText.slice(0, 2000).replace(/\s*\n\s*/g, " | "))
         .catch((e) => `(unreadable: ${e.message})`);
+      const shown = await Promise.race([read, new Promise((done) => setTimeout(done, 5000, "(the page didn't answer)"))]);
       t.diagnostic(`stopped at: ${at}; the page shows: ${shown}`);
     }
     await browser.close();
