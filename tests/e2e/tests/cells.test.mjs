@@ -769,7 +769,7 @@ test('chips: "Stale · x changed" after an upstream edit in lazy mode, with a gr
   near(wash.height, code.top - out.top, "the wash spans output and chip, down to the code box");
   assert.equal(wash.radius, "0px 6px 0px 0px");
   assert.equal(await computed(page, `${cellSelector("B")} > pluto-output`, "backgroundColor"), "rgba(0, 0, 0, 0)", "the faded output has no background of its own");
-  assert.equal(await computed(page, `${cellSelector("B")} .cm-editor`, "borderTopRightRadius"), "0px");
+  assert.equal(await computed(page, `${cellSelector("B")} .cm-editor:not(.cm-ssr-fake)`, "borderTopRightRadius"), "0px");
 
   assertNoProblems(page);
 });
@@ -851,7 +851,7 @@ test("errors: where it happened, a traceback outermost first, labelled by origin
   assert.equal(await computed(page, err, "backgroundColor"), await tokenColor(page, "--ember-err-bg"));
   assert.equal(await computed(page, err, "padding"), "10px 14px");
   assert.equal(await computed(page, err, "borderRadius"), "0px 6px 0px 0px");
-  assert.equal(await computed(page, `${cellSelector("ERR")} .cm-editor`, "borderTopRightRadius"), "0px");
+  assert.equal(await computed(page, `${cellSelector("ERR")} .cm-editor:not(.cm-ssr-fake)`, "borderTopRightRadius"), "0px");
   const msg = `${err} > header > p:first-child`;
   assert.equal(await computed(page, msg, "fontSize"), "14px");
   assert.equal(await computed(page, msg, "fontWeight"), "600");
@@ -1320,16 +1320,19 @@ test("geometry: 26px between cells; a one-line code box is 7px 12px around 13px/
 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
-  await page.waitForSelector(`${cellSelector("A")} .cm-editor`);
+  // The static copy a cell shows before its editor loads is a .cm-editor
+  // too, with the same layout (#375), and the real editor replaces it
+  // between two reads, so wait for the real one (#398).
+  await page.waitForSelector(`${cellSelector("A")} .cm-editor:not(.cm-ssr-fake)`);
 
   const { a, b, box, gutters } = await rects(page, {
-    a: cellSelector("A"), b: cellSelector("B"), box: `${cellSelector("A")} .cm-editor`, gutters: `${cellSelector("A")} .cm-gutters`,
+    a: cellSelector("A"), b: cellSelector("B"), box: `${cellSelector("A")} .cm-editor:not(.cm-ssr-fake)`, gutters: `${cellSelector("A")} .cm-editor:not(.cm-ssr-fake) .cm-gutters`,
   });
   near(b.top - a.bottom, 26, "gap between A and B");
   near(box.height, 7 + 13 * 1.65 + 7, "one-line code box height");
   near(gutters.width, 34, "gutter width");
 
-  const content = await page.locator(`${cellSelector("A")} .cm-content`).evaluate((el) => {
+  const content = await page.locator(`${cellSelector("A")} .cm-editor:not(.cm-ssr-fake) .cm-content`).evaluate((el) => {
     const cs = getComputedStyle(el);
     const range = document.createRange();
     range.selectNodeContents(el.querySelector(".cm-line"));
@@ -1714,7 +1717,9 @@ test("chips: a chip's text can't be selected, by double-click or by dragging acr
   // leaves out.
   const box = await chip.boundingBox();
   const cell = await page.locator(cellSelector("NEVER")).boundingBox();
-  const code = await page.locator(`${cellSelector("NEVER")} .cm-content`).boundingBox();
+  // Scrolling the chip into view swaps NEVER's static code copy for its
+  // editor, so measure the editor.
+  const code = await page.locator(`${cellSelector("NEVER")} .cm-editor:not(.cm-ssr-fake) .cm-content`).boundingBox();
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.mouse.move(cell.x + cell.width - 4, box.y + box.height / 2);
   await page.mouse.down();
