@@ -343,6 +343,14 @@ schedule <- function(state) {
   token <- state$next_token
   state$next_token <- state$next_token + 1L
   state$pending <- setdiff(state$pending, id)
+  # An edited cell sent ahead of a pending cell it now reads (#174's rule,
+  # when that cell read what the edited one's last run defined) runs again
+  # once that cell has: its first run is what removes the old names, and
+  # it read the pending cell's old value (#408).
+  if (length(state$pending) > 0 && id %in% edited_cells(state) &&
+      any(state$pending %in% upstream(state$graph, id, transitive = TRUE))) {
+    state$pending <- union(state$pending, id)
+  }
   state$computed_sources[[id]] <- NULL
   prev <- state$results[[id]]
   state <- invalidate_dependents(state, id, if (!is.null(prev)) prev$defined else character())
@@ -781,9 +789,24 @@ first_to_run <- function(state, queue) {
   repeat {
     seen <- c(seen, head)
     first <- queue[queue %in% upstream(g, head, transitive = TRUE)][1]
+    # With the old edges a cell can be its own ancestor, and come first.
+    # An edited cell whose last run defined a name it reads goes first
+    # then, so it doesn't read the old value (#408).
+    if (identical(first, head)) first <- old_definer(state, setdiff(intersect(queue, edited), seen), head)
     if (is.na(first) || first %in% seen) return(head)
     head <- first
   }
+}
+
+#' The first of `cells` whose last run defined, or would have, a name
+#' `id` reads, or `NA`.
+old_definer <- function(state, cells, id) {
+  reads <- setdiff(state$graph$cells[[id]]$references, state$graph$cells[[id]]$masked_none)
+  for (cid in cells) {
+    r <- state$results[[cid]]
+    if (any(union(r$defined, code_edges(r$code)$definitions) %in% reads)) return(cid)
+  }
+  NA_character_
 }
 
 #' The cells edited since they last ran whose last run read or defined a
