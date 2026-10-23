@@ -161,7 +161,12 @@ test("layout: the side panel opens as a bottom sheet at 390x844 (113)", async (t
   await open_panel(page, "variables");
   await page.waitForSelector("#helpbox-wrapper.open");
   const panel = await page.locator("#helpbox-wrapper").boundingBox();
-  assert.ok(Math.abs(panel.x + panel.width - 390) <= 1, "the sheet spans the full width");
+  // What the page measured, so a failure says why (#463).
+  const seen = await page.evaluate(() => ({
+    inner: innerWidth, client: document.documentElement.clientWidth, scroll: [document.documentElement.scrollWidth, document.documentElement.scrollHeight],
+    sheet: getComputedStyle(document.querySelector("#helpbox-wrapper")).width, narrow: matchMedia("(max-width: 640px)").matches,
+  }));
+  assert.ok(Math.abs(panel.x + panel.width - 390) <= 1, `the sheet spans the full width: ${JSON.stringify({ x: panel.x, width: panel.width, ...seen })}`);
   assert.ok(panel.y + panel.height >= 844 - 1, "the sheet is anchored to the bottom");
 
   // The sheet covers the bottom of the viewport; click the scrim where it's
