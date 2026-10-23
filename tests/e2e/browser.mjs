@@ -42,7 +42,8 @@ export async function newPage(browser) {
   const context = await browser.newContext({ viewport: { width: 1200, height: 800 } });
   const page = await context.newPage();
   const problems = [];
-  page.on("console", (m) => { if (m.type() === "error") problems.push("console: " + m.text()); });
+  // A failed load's message doesn't say what failed; its location does (#412).
+  page.on("console", (m) => { if (m.type() === "error") problems.push("console: " + m.text() + (m.location()?.url ? ` (${m.location().url})` : "")); });
   page.on("pageerror", (e) => problems.push("pageerror: " + e.message));
   page.on("dialog", async (d) => { problems.push("dialog: " + d.message()); await d.dismiss(); });
   page.problems = problems;
