@@ -58,6 +58,11 @@ exports_of <- function(state) {
 #'   reported through `source()` with a computed path on the cell's latest
 #'   run, seeded from the footer's "learned sources" on open. Cleared for a
 #'   cell when it starts running or is deleted.
+#' * `graph_dropped`: named list, cell id -> the code of the result
+#'   `drop_graph_error_results()` dropped (step.R). Such a cell runs ahead
+#'   of a dependent autorun queues, while it still has no result and that
+#'   code (#315). Cleared for a cell when it gets a result, and for all
+#'   with the worker.
 #' * `footer_sources`: computed paths in an older file's "sourced files"
 #'   block that no "learned sources" line claims, so no cell is known to
 #'   have sourced them. They stand in until every code cell has run in this
@@ -216,7 +221,7 @@ new_state <- function(file, path, id, options, at) {
     exports = list(), graph = graph, options = options, packages = packages,
     allowed = FALSE, closed = FALSE, worker = new_worker_state(),
     worker_usage = NULL,
-    pending = character(), results = list(), data_columns = list(), clock = at, seq = 0L,
+    pending = character(), results = list(), graph_dropped = list(), data_columns = list(), clock = at, seq = 0L,
     next_token = 1L, input_values = list(), input_outcome = NULL
   ), class = "ember_state")
 }
