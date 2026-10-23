@@ -710,12 +710,7 @@ test_that("notebook_snapshot() strips ANSI from output and console text; noteboo
 # ---- worker_query() (ui-2.md, 4a) --------------------------------------------
 
 test_that("worker_query() answers when idle, NULL at once while busy, NULL in preview starting no worker, drops a late reply, and fails every pending query on exit (48)", {
-  # A runs until the test lets it go, so the worker is busy for as long as
-  # the test needs, however slow the machine.
-  release <- tempfile("release-")
-  on.exit(unlink(release), add = TRUE)
-  path <- write_session_notebook(list(S = cell(""),
-    A = cell(sprintf("while (!file.exists(%s)) Sys.sleep(0.02)", deparse(release)))))
+  path <- write_session_notebook(list(S = cell(""), A = cell("Sys.sleep(3)")))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
 
@@ -726,7 +721,7 @@ test_that("worker_query() answers when idle, NULL at once while busy, NULL in pr
   expect_null(nb$proc)
 
   allow_execution(nb)
-  run_cells(nb, "S", wait = TRUE, timeout = 20)
+  run_cells(nb, wait = TRUE, timeout = 20)
 
   # Idle: a real reply.
   got_idle <- "unset"
@@ -742,29 +737,35 @@ test_that("worker_query() answers when idle, NULL at once while busy, NULL in pr
   worker_query(nb, list(type = "signature", name = "lm", package = NULL), function(r) got_busy <<- r)
   expect_null(got_busy)
 
-  # A late reply is dropped, not delivered twice, and doesn't kill the
-  # worker. Asked while A runs, the worker reads the query only after A
-  # ends, so the 0 s timeout always fires first.
+  # A late reply (the busy cell finishes and the worker is asked again,
+  # with a very short timeout) is dropped, not delivered twice, and
+  # doesn't kill the worker. The poll is stopped while the 0 s timeout
+  # fires: a poll already due (on a slow runner, or with no pipe watch, as
+  # on Windows) would otherwise run first and could read the real reply
+  # before the timeout (#402). Then the poll resumes and reads the reply,
+  # whose query has timed out.
+  expect_true(wait_for(nb, timeout = 20))
   late_calls <- 0L
   late_reply <- "unset"
+  cancel_poll(nb)
   worker_query(nb, list(type = "signature", name = "lm", package = NULL),
-              function(r) { late_calls <<- late_calls + 1L; late_reply <<- r },
-              timeout = 0, busy_ok = TRUE)
-  expect_true(wait_for(nb, function(s) late_calls > 0L, timeout = 10))
+              function(r) { late_calls <<- late_calls + 1L; late_reply <<- r }, timeout = 0)
+  later::run_now(timeout = 0)
+  expect_identical(late_calls, 1L)
   expect_null(late_reply)
-  file.create(release)
-  expect_true(wait_for(nb, timeout = 20))
+  schedule_poll(nb)
+  expect_true(wait_for(nb, timeout = 5))
+  expect_false(is.null(nb$proc))
 
   # The worker is still alive and answers again: a fresh query, with no
-  # short timeout this time, gets a real reply. The late reply was on the
-  # socket before it, so by now it has been read, and dropped.
+  # short timeout this time, gets a real reply. The worker answers in
+  # order on one socket, so the late reply has been read by then, and was
+  # dropped.
   got_again <- "unset"
   worker_query(nb, list(type = "signature", name = "lm", package = NULL), function(r) got_again <<- r)
   expect_true(wait_for(nb, function(s) !identical(got_again, "unset"), timeout = 10))
   expect_match(got_again$text, "^lm\\(formula, data")
   expect_identical(late_calls, 1L)
-  expect_null(late_reply)
-  expect_false(is.null(nb$proc))
 
   # A worker exit fails every pending query. A real query's reply can beat
   # a kill() by a wide enough margin on a fast loopback that this can't be
@@ -1151,6 +1152,77 @@ test_that("worker_tempdir() keeps only an existing R temp folder that isn't the 
   expect_null(worker_tempdir(file.path(dirname(d), "RtmpMissing")))
   expect_null(worker_tempdir(NULL))
   expect_null(worker_tempdir(c(d, d)))
+})
+
+# check_data_files() on a stand-in notebook: its folder, the shell's record
+# of d.csv, and the events it sends.
+data_check_nb <- function(running = NULL, touch = NULL) {
+  dir <- normalizePath(tempfile("ember-check-"), winslash = "/", mustWork = FALSE)
+  dir.create(dir)
+  nb <- new.env()
+  nb$state <- list(path = file.path(dir, "nb.R"), worker = list(running = running),
+                   graph = list(analyses = list(W = list(data_touch = touch))))
+  nb$data_watch <- list("d.csv" = list(mtime = NA, size = NA, hash = NA_character_))
+  nb$sent <- list()
+  nb$send <- function(nb, ev) nb$sent[[length(nb$sent) + 1]] <- ev
+  nb$file <- file.path(dir, "d.csv")
+  nb
+}
+
+test_that("a data file whose size changes within one clock tick is still a change (#405)", {
+  nb <- data_check_nb()
+  writeLines("", nb$file, sep = "")
+  t <- as.POSIXct("2026-01-01 00:00:00", tz = "UTC")
+  Sys.setFileTime(nb$file, t)
+  check_data_files(nb, nb$send)
+  expect_length(nb$sent, 1)
+  # The write finishes with the same modified time as the look that found it empty.
+  writeLines("1,2", nb$file)
+  Sys.setFileTime(nb$file, t)
+  check_data_files(nb, nb$send)
+  expect_length(nb$sent, 2)
+  expect_identical(nb$data_watch[["d.csv"]]$size, file.info(nb$file)$size)
+})
+
+test_that("the poll leaves a file the running cell writes to the check at the run's end (#405)", {
+  touch <- data.frame(path = "d.csv", index = 1L, read = FALSE, stringsAsFactors = FALSE)
+  nb <- data_check_nb(running = list(cell = "W"), touch = touch)
+  writeLines("1,2", nb$file)
+  expect_identical(running_writes(nb$state), "d.csv")
+  check_data_files(nb, nb$send, skip = running_writes(nb$state))
+  expect_length(nb$sent, 0)
+  check_data_files(nb, nb$send)
+  expect_length(nb$sent, 1)
+  # A write to a computed path may be any file.
+  nb$state$graph$analyses$W$data_touch$path <- NA_character_
+  expect_identical(running_writes(nb$state), NA_character_)
+  nb$state$worker$running <- NULL
+  expect_identical(running_writes(nb$state), character())
+})
+
+test_that("the poll's skip matches a running writer's file however its path is spelled (#405)", {
+  touch <- data.frame(path = "./d.csv", index = 1L, read = FALSE, stringsAsFactors = FALSE)
+  nb <- data_check_nb(running = list(cell = "W"), touch = touch)
+  writeLines("1,2", nb$file)
+  check_data_files(nb, nb$send, skip = running_writes(nb$state))
+  expect_length(nb$sent, 0)
+})
+
+test_that("a look that found the file cut short doesn't cost the next same-bytes rewrite a rerun (#405)", {
+  nb <- data_check_nb()
+  at <- function(s) as.POSIXct("2026-01-01 00:00:00", tz = "UTC") + s
+  put <- function(text, s) { writeLines(text, nb$file, sep = ""); Sys.setFileTime(nb$file, at(s)) }
+  put("1,2\n", 1); check_data_files(nb, nb$send)
+  put("1,2\n", 2); check_data_files(nb, nb$send)   # the first same-size rewrite has no hash to compare
+  expect_length(nb$sent, 2)
+  # A writer the skip can't see: one look mid-write, then the finished file
+  # in the same clock tick. Both are changes (a reader may have read the
+  # short file), and the hash is kept.
+  put("", 3); check_data_files(nb, nb$send)
+  put("1,2\n", 3); check_data_files(nb, nb$send)
+  expect_length(nb$sent, 4)
+  put("1,2\n", 4); check_data_files(nb, nb$send)
+  expect_length(nb$sent, 4)
 })
 
 # ---- Prompts (#186) ------------------------------------------------------------

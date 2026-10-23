@@ -1221,7 +1221,7 @@ poll <- function(nb) {
       }
     }
     if (length(changed) > 0) dispatch(nb, ev_files_read(changed, at = Sys.time()))
-    check_data_files(nb, dispatch)
+    check_data_files(nb, dispatch, skip = running_writes(nb$state))
   }
 
   watch_worker_output(nb)
@@ -1306,21 +1306,35 @@ write_frame <- function(con, msg) {
 #' them has its readers queued or stale before the notebook goes idle: the
 #' poll alone would find the change only after `run_cells(wait = TRUE)`
 #' had returned with the readers' old results.
-check_data_files <- function(nb, send) {
-  # Data files (#276): only a change of contents counts, so a file
-  # rewritten with the same bytes reruns nothing. A new size is a change
-  # without reading the file; the same size is told apart by its hash,
-  # which a file has only after its first such rewrite (hashing every
-  # data file when the notebook opens would read them all).
+#'
+#' `skip` is the files the running cell writes (`running_writes()`; `NA`
+#' for all of them), which the poll leaves to the check at the run's end:
+#' a look in the middle of the write can find the file cut short (#405).
+#' A size that differs counts even when the modified time doesn't, since
+#' a write can finish within the clock tick of such a look.
+check_data_files <- function(nb, send, skip = character()) {
+  # Only a change of contents counts, so a file rewritten with the same
+  # bytes reruns nothing. A new size is a change without reading the file;
+  # the same size is told apart by its hash, which a file has only after
+  # its first such rewrite (hashing every data file when the notebook
+  # opens would read them all). The record keeps the last hash with the
+  # size it was taken at (`hash_size`), so a look that found the file cut
+  # short, by a writer the skip can't see, doesn't cost the next same-bytes
+  # rewrite a rerun.
+  skip_full <- if (anyNA(skip)) NA_character_ else canonical_path(vapply(skip, function(s) resolve_source_path(nb, s), character(1)))
   data_changed <- list()
   for (p in names(nb$data_watch)) {
     full <- resolve_source_path(nb, p)
+    if (anyNA(skip_full) || canonical_path(full) %in% skip_full) next
     info <- data_file_info(full)
     w <- nb$data_watch[[p]]
-    if (!isTRUE(identical(info$mtime, w$mtime))) {
+    if (!isTRUE(identical(info$mtime, w$mtime)) || !isTRUE(identical(info$size, w$size))) {
       same_size <- isTRUE(identical(info$size, w$size)) && !is.na(info$size)
-      hash <- if (same_size) data_file_hash(full) else NA_character_
-      nb$data_watch[[p]] <- list(mtime = info$mtime, size = info$size, hash = hash)
+      hashed <- !is.na(info$size) && isTRUE(identical(info$size, w$hash_size))
+      hash <- if (same_size || hashed) data_file_hash(full) else NA_character_
+      kept <- !is.na(hash)
+      nb$data_watch[[p]] <- list(mtime = info$mtime, size = info$size, hash = if (kept) hash else w$hash,
+                                 hash_size = if (kept) info$size else w$hash_size)
       if (!same_size || is.na(hash) || !identical(hash, w$hash)) {
         data_changed[[p]] <- data_signature(info)
       }
@@ -1328,6 +1342,25 @@ check_data_files <- function(nb, send) {
   }
   if (length(data_changed) > 0) send(nb, ev_data_changed(data_changed, at = Sys.time()))
   invisible(NULL)
+}
+
+#' A path with its folder resolved (`d.txt` and `./d.txt` alike), so two
+#' spellings of one data file compare equal. The file itself may not exist.
+canonical_path <- function(full) {
+  if (length(full) == 0) return(character())
+  file.path(normalizePath(dirname(full), winslash = "/", mustWork = FALSE), basename(full))
+}
+
+#' The data files the running cell writes by a literal path, from its
+#' analysis's `data_touch`; `NA` when it writes to a computed path, which
+#' may be any of them. `character()` when nothing runs.
+running_writes <- function(state) {
+  id <- state$worker$running$cell
+  if (is.null(id)) return(character())
+  touch <- state$graph$analyses[[id]]$data_touch
+  if (is.null(touch)) return(character())
+  written <- touch$path[!touch$read]
+  if (anyNA(written)) NA_character_ else unique(written)
 }
 
 #' Turn a wire message into a core event (the boundary: validate here,
