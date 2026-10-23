@@ -296,7 +296,12 @@ main <- function() {
 #' "resume" restart for a real SIGINT; a re-signalled one (see
 #' `uninterrupted()`) has none, and returning simply carries on.
 ignore_interrupt <- function(i) {
-  if (!is.null(findRestart("resume"))) invokeRestart("resume")
+  resumable <- !is.null(findRestart("resume"))
+  # So a worker that dies between runs shows whether an interrupt reached
+  # here that couldn't be resumed, which ends it (Ember #407).
+  trace_line("interrupt at top level:",
+             if (resumable) "resumed" else if (inherits(i, "ember_resignalled")) "passed on" else "not resumable")
+  if (resumable) invokeRestart("resume")
 }
 
 #' Evaluate `expr` without letting an interrupt cut it short, then pass the
@@ -311,7 +316,7 @@ uninterrupted <- function(expr) {
     if (!is.null(findRestart("resume"))) invokeRestart("resume")
   })
   if (interrupted) {
-    signalCondition(structure(class = c("interrupt", "condition"),
+    signalCondition(structure(class = c("ember_resignalled", "interrupt", "condition"),
                               list(message = "", call = NULL)))
   }
   value

@@ -240,12 +240,18 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
 #' that need to answer a "source" request or otherwise react mid-run.
 #' Fail a test whose worker went quiet, saying whether it is still running
 #' and what it last wrote, so a failure on a CI machine can be diagnosed.
+#' A worker that ended says how: an exit status of 0 with no "Execution
+#' halted" is an interrupt that reached top level (the worker is
+#' `R --interactive`, whose console then reads the end of its closed stdin),
+#' and a negative one is the signal that killed it (Ember #407).
 no_reply <- function(h, timeout) {
   alive <- h$process$is_alive()
+  status <- if (alive) "" else sprintf(", exit status: %s",
+    format(tryCatch(h$process$get_exit_status(), error = function(e) NA)))
   read <- function(f) if (file.exists(f)) readLines(f, warn = FALSE) else character()
   err <- read(h$err_file)
   out <- read(h$out_file)
-  stop(sprintf("worker did not reply within %ss (alive: %s)\n%s", timeout, alive,
+  stop(sprintf("worker did not reply within %ss (alive: %s%s)\n%s", timeout, alive, status,
                paste(utils::tail(c(out, err), 20), collapse = "\n")), call. = FALSE)
 }
 
