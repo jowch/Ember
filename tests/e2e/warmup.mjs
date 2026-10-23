@@ -49,7 +49,9 @@ async function warmUp() {
       await page.locator("#ember-safe-preview button").click({ timeout: 0 });
       await waitIdle(page);
     });
-    console.log(`warm-up: ${times.join(", ")} (${secs(t0)} s in all)`);
+    const line = `warm-up: ${times.join(", ")} (${secs(t0)} s in all)`;
+    // On GitHub Actions, also a notice on the run's summary page.
+    console.log(process.env.GITHUB_ACTIONS ? `::notice title=e2e warm-up::${line}` : line);
   } catch (e) {
     // The tests still run and report: if the warm-up can't open and run a
     // notebook, they fail too, with their own messages.
