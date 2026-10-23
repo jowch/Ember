@@ -7,20 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, runCell } from "../browser.mjs";
-
-/** What a cell shows of its run state: its chip's text and whether the
- * chip is visible, plus the state classes the chip's style keys on. */
-const look = (page, id) => page.evaluate((id) => {
-  const cell = document.getElementById(id);
-  const chip = cell?.querySelector(":scope > ember-chip");
-  const shown = chip != null && chip.getClientRects().length > 0 && getComputedStyle(chip).visibility !== "hidden";
-  return {
-    chip: chip ? chip.innerText.trim() : null,
-    shown,
-    classes: ["not_run_yet", "stale", "no_output_yet"].filter((c) => cell?.classList.contains(c)),
-  };
-}, id);
+import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, afterSettle } from "../browser.mjs";
 
 test("the first cell shows the same chip on load as an identical cell further down", async (t) => {
   const notebook = tempNotebook("first-cell.R");
@@ -29,6 +16,30 @@ test("the first cell shows the same chip on load as an identical cell further do
   t.after(async () => { await browser.close(); server.stop(); });
 
   const page = await newPage(browser);
+  // What each cell shows, in every frame of a load asked for below.
+  await page.addInitScript(() => {
+    window.__look = (id) => {
+      const cell = document.getElementById(id);
+      const chip = cell?.querySelector(":scope > ember-chip");
+      const shown = chip != null && chip.getClientRects().length > 0 && getComputedStyle(chip).visibility !== "hidden";
+      return {
+        chip: chip ? chip.innerText.trim() : null,
+        shown,
+        classes: ["not_run_yet", "stale", "no_output_yet"].filter((c) => cell?.classList.contains(c)),
+      };
+    };
+    if (sessionStorage.getItem("record_looks") !== "1") return;
+    window.__looks = [];
+    window.__stop_looks = false;
+    const tick = () => {
+      if (window.__stop_looks) return;
+      if (document.getElementById("FIRST") && document.getElementById("LATER")) {
+        window.__looks.push([performance.now(), window.__look("FIRST"), window.__look("LATER")]);
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
   await openNotebook(page, server.origin, server.secret, notebook);
   await runCell(page, "RUN");
   await page.waitForFunction(() => document.querySelectorAll("pluto-cell.running, pluto-cell.queued").length === 0
@@ -36,16 +47,19 @@ test("the first cell shows the same chip on load as an identical cell further do
 
   for (const width of [1200, 600]) {
     await page.setViewportSize({ width, height: 800 });
+    // Every frame of the load, from the first that has both cells, until
+    // the page has settled: LATER, the cell any other is like, shows its
+    // chip, and any passing state held back from before then has shown.
+    await page.evaluate(() => sessionStorage.setItem("record_looks", "1"));
     await page.reload();
     await page.waitForFunction(() => !document.querySelector("pluto-editor")?.classList.contains("loading"),
       null, { timeout: 30000 });
-    const samples = [];
-    for (const wait of [0, 50, 150, 300, 600, 1500]) {
-      await page.waitForTimeout(wait);
-      samples.push([wait, await look(page, "FIRST"), await look(page, "LATER")]);
-    }
-    for (const [wait, first, later] of samples) {
-      assert.deepEqual(first, later, `at ${width} px, ${wait} ms into the load, FIRST and LATER differ`);
+    await page.waitForFunction(() => window.__look("LATER").shown, null, { timeout: 0 });
+    await afterSettle(page);
+    const samples = await page.evaluate(() => { window.__stop_looks = true; return window.__looks; });
+    assert.ok(samples.length > 0, "frames were recorded during the load");
+    for (const [at, first, later] of samples) {
+      assert.deepEqual(first, later, `at ${width} px, ${Math.round(at)} ms into the load, FIRST and LATER differ`);
     }
     const [, settled] = samples.at(-1);
     assert.deepEqual(settled, { chip: "Not run yet", shown: true, classes: ["not_run_yet", "no_output_yet"] },

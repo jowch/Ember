@@ -8,7 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, roundTrip } from "../browser.mjs";
 
 const MOD = process.platform === "darwin" ? "Meta" : "Control";
 
@@ -128,7 +128,7 @@ test("Backspace pressed while a delete is in flight isn't dropped (#353); Ctrl+Z
   await page.keyboard.press(`${MOD}+Z`);
   await waitOrder(page, original);
   await page.keyboard.press(`${MOD}+Z`);
-  await page.waitForTimeout(300);
+  await roundTrip(page);
   assert.deepEqual(await order(page), original);
 
   assertNoProblems(page);

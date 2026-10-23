@@ -12,6 +12,20 @@ import { fileURLToPath } from "node:url";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, setCellCode, cellSelector } from "../browser.mjs";
 
+/** The times the page gave up typesetting TeX (CellOutput.js logs each
+ * one), as a list that grows; `reach(n)` waits until it holds `n`. */
+function typesetFailures(page) {
+  const seen = [];
+  const waiting = [];
+  seen.reach = (n) => new Promise((resolve) => (seen.length >= n ? resolve() : waiting.push([n, resolve])));
+  page.on("console", (m) => {
+    if (!m.text().startsWith("Failed to typeset TeX")) return;
+    seen.push(m.text());
+    for (const w of waiting.filter(([n]) => seen.length >= n)) { waiting.splice(waiting.indexOf(w), 1); w[1](); }
+  });
+  return seen;
+}
+
 const FRONTEND = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "inst", "frontend");
 
 /** Abort every request whose host isn't 127.0.0.1 (a real offline browser
@@ -278,6 +292,7 @@ test("TeX: after MathJax fails to load, a later output with TeX tries again", as
   t.after(async () => { await browser.close(); server.stop(); });
 
   const page = await newPage(browser);
+  const gaveUp = typesetFailures(page);
   const fetched = [];
   await page.route("**/*", (route) => {
     const url = new URL(route.request().url());
@@ -292,7 +307,7 @@ test("TeX: after MathJax fails to load, a later output with TeX tries again", as
   await openNotebook(page, server.origin, server.secret, notebook);
   const tex = `${cellSelector("T")} pluto-output .tex`;
   await page.waitForSelector(tex, { timeout: 20000 });
-  await page.waitForTimeout(500);
+  await gaveUp.reach(1);
   assert.equal(fetched.length, 1);
   assert.equal(await page.locator(tex).getAttribute("data-typeset"), null, "nothing typeset while MathJax can't load");
 
@@ -309,6 +324,7 @@ test("TeX: MathJax 2 in place of 3 fails quietly, and the next output with TeX l
   t.after(async () => { await browser.close(); server.stop(); });
 
   const page = await newPage(browser);
+  const gaveUp = typesetFailures(page);
   const fetched = [];
   await page.route("**/*", (route) => {
     const url = new URL(route.request().url());
@@ -322,13 +338,15 @@ test("TeX: MathJax 2 in place of 3 fails quietly, and the next output with TeX l
   await openNotebook(page, server.origin, server.secret, notebook);
   const tex = `${cellSelector("T")} pluto-output .tex`;
   await page.waitForSelector(tex, { timeout: 20000 });
-  await page.waitForTimeout(500);
+  await gaveUp.reach(1);
   assert.equal(fetched.length, 1);
 
   await page.locator(tex).evaluate((el) => { el.__before_run = true; });
+  const failures_before = gaveUp.length;
   await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction((sel) => document.querySelector(sel)?.__before_run === undefined, tex, { timeout: 30000 });
-  await page.waitForTimeout(500);
+  // The new output asked for MathJax again, and was told no.
+  await gaveUp.reach(failures_before + 1);
   assert.equal(fetched.length, 1, "with MathJax 2 on the page, no second MathJax is loaded");
   assertNoProblems(page);
 });
@@ -360,13 +378,17 @@ test("cache: a hashed vendor file is served from cache on a second fetch (21)", 
 
   const sizes = await page.evaluate(async (u) => {
     performance.clearResourceTimings();
+    const entries = () => performance.getEntriesByType("resource").filter((e) => e.name === u);
+    // A fetch's timing entry is added after its body has come, a little later.
+    const recorded = (n) => new Promise((resolve) => {
+      const check = () => (entries().length >= n ? resolve() : requestAnimationFrame(check));
+      check();
+    });
     await (await fetch(u, { cache: "default" })).arrayBuffer();
-    await new Promise((r) => setTimeout(r, 200));
+    await recorded(1);
     await (await fetch(u, { cache: "default" })).arrayBuffer();
-    await new Promise((r) => setTimeout(r, 200));
-    return performance.getEntriesByType("resource")
-      .filter((e) => e.name === u)
-      .map((e) => e.transferSize);
+    await recorded(2);
+    return entries().map((e) => e.transferSize);
   }, url);
 
   assert.equal(sizes.length, 2);

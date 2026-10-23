@@ -26,7 +26,7 @@ test("docstring: Help shows a notebook function's signature, doc and a working G
   assert.ok(newCellId, "a new cell was inserted right after FN");
   const newSel = `pluto-cell[id="${newCellId}"]`;
 
-  await page.locator(`${newSel} .cm-content`).click();
+  await page.locator(`${newSel} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.keyboard.type("clean", { delay: 10 });
   await page.keyboard.press("Escape"); // close any autocomplete popup first
 

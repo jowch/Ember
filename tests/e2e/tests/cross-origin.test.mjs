@@ -64,6 +64,12 @@ ws.onclose = (e) => window.result.events.push("close:" + e.code);
 </script></body></html>`;
 }
 
+/** Waits until the server has either answered the attacker page or closed
+ * its socket: one of the two decides the test. A reply fails it below; a
+ * close ends the page's tries. */
+const decided = (page) => page.waitForFunction(
+  () => window.result?.events.some((e) => e.startsWith("close:") || e.startsWith("message:")), null, { timeout: 0 });
+
 function startAttackerServer(html) {
   return new Promise((resolve) => {
     const server = http.createServer((_req, res) => {
@@ -102,7 +108,7 @@ test("cross-origin: a page on another local server can't connect or run code via
   // the fix must refuse the connection anyway.
   const attackerPage = await ctx.newPage();
   await attackerPage.goto(attackerOrigin);
-  await attackerPage.waitForTimeout(3000);
+  await decided(attackerPage);
   const result = await attackerPage.evaluate(() => window.result);
 
   assert.ok(result.events.includes("open"), "the TCP/websocket handshake itself still completes (it's refused at the app layer)");
@@ -117,7 +123,7 @@ test("cross-origin: a page on another local server can't connect or run code via
   const ctx2 = await browser.newContext();
   const controlPage = await ctx2.newPage();
   await controlPage.goto(attackerOrigin);
-  await controlPage.waitForTimeout(1500);
+  await decided(controlPage);
   const controlResult = await controlPage.evaluate(() => window.result);
   assert.ok(!controlResult.events.some((e) => e.startsWith("message:")), "same refusal with no cookie at all");
   await ctx2.close();

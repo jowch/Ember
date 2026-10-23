@@ -9,7 +9,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector, waitIdle, hoverCell } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector, waitIdle, hoverCell, codeSelector } from "../browser.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -160,13 +160,13 @@ test("look: markdown cell renders folded, with R tokens in its fenced block (11)
   await hoverCell(page, "MD");
   await page.locator(`${cellSelector("MD")} button.input_context_menu`).click();
   await page.locator(`${cellSelector("MD")} button.hide_code`).click();
-  const mdSource = await page.locator(`${cellSelector("MD")} .cm-content`).innerText();
+  const mdSource = await page.locator(codeSelector("MD")).innerText();
   assert.match(mdSource, /```r/, "the unfolded source keeps the fenced R block");
   assert.match(mdSource, /1 \+ 1/);
 
   const codeFolded = await page.locator(cellSelector("DF")).evaluate((el) => el.classList.contains("code_folded"));
   assert.equal(codeFolded, false, "a code cell is not folded");
-  const dfSource = await page.locator(`${cellSelector("DF")} .cm-content`).innerText();
+  const dfSource = await page.locator(codeSelector("DF")).innerText();
   assert.doesNotMatch(dfSource, /```/, "a code cell's source has no markdown fencing");
 
   assertNoProblems(page);

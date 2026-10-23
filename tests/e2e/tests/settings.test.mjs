@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, cellSelector, codeSelector } from "../browser.mjs";
 
 async function openSettings(page) {
   await page.getByRole("button", { name: "More", exact: true }).click();
@@ -29,7 +29,7 @@ async function closeSettings(page, dialog) {
 async function indentAfterBrace(page) {
   await setCellCode(page, "A", "f <- function() {");
   await page.keyboard.press("Enter");
-  return page.locator(`${cellSelector("A")} .cm-line`).nth(1).evaluate((el) => el.textContent);
+  return page.locator(codeSelector("A", ".cm-line")).nth(1).evaluate((el) => el.textContent);
 }
 
 test("settings: opens from ⋯, traps Tab, applies theme, indent and Tab key live (163)", async (t) => {
@@ -102,7 +102,7 @@ test("settings: opens from ⋯, traps Tab, applies theme, indent and Tab key liv
   await pick(dialog, "Tab key in code", "Moves focus");
   await pick(dialog, "Theme", "Dark");
   await closeSettings(page, dialog);
-  await page.locator(`${cellSelector("A")} .cm-content`).click();
+  await page.locator(codeSelector("A")).click();
   await page.keyboard.press("Tab");
   assert.equal(await page.evaluate(() => document.activeElement?.closest(".cm-content") == null), true, "Tab moved focus out of the code");
 

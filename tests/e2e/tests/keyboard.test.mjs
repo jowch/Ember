@@ -6,28 +6,9 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import fs from "node:fs";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, sentMessages, roundTrip } from "../browser.mjs";
 
 const mac = process.platform === "darwin";
-
-/** The websocket messages `page` sends whose bytes include `type`, as a
- * list that grows while the page runs. msgpack keeps a short string's
- * UTF-8 bytes as they are, so the message type's name shows up verbatim. */
-function sentMessages(page, type) {
-  const seen = [];
-  page.on("websocket", (ws) => {
-    ws.on("framesent", (frame) => {
-      const payload = frame.payload ?? "";
-      const text = Buffer.isBuffer(payload) ? payload.toString("latin1") : String(payload);
-      let found = text.includes(type);
-      if (!found && !Buffer.isBuffer(payload)) {
-        try { found = Buffer.from(text, "base64").toString("latin1").includes(type); } catch { /* not base64 */ }
-      }
-      if (found) seen.push(Date.now());
-    });
-  });
-  return seen;
-}
 
 /** Click into cell `id`'s code, Esc to select the cell, Enter to go back to the code. */
 async function reenterCode(page, id) {
@@ -133,7 +114,7 @@ test("keyboard path: skip link, Esc selects the cell, arrows, Enter, Tab to run,
     const r = window.editor_state.notebook.cell_results.B;
     return (r?.output?.last_run_timestamp ?? 0) > 0 && !r.running && !r.queued;
   }, null, { timeout: 30000 });
-  await page.waitForTimeout(500);
+  await roundTrip(page);
   assert.equal(runs.length - runs_before, 1, "Shift + Enter in the code sends one run");
 
   await reenterCode(page, "B");
@@ -142,7 +123,7 @@ test("keyboard path: skip link, Esc selects the cell, arrows, Enter, Tab to run,
   moved.splice(before_move.indexOf("B") + 1, 0, "B");
   await page.keyboard.press("Alt+ArrowDown");
   await page.waitForFunction((before) => JSON.stringify(window.editor_state.notebook.cell_order) !== JSON.stringify(before), before_move, { timeout: 5000 });
-  await page.waitForTimeout(500);
+  await roundTrip(page);
   assert.deepEqual(await page.evaluate(() => window.editor_state.notebook.cell_order), moved, "Alt + ↓ moves the cell one place");
 
   // A selection left on another cell: the fold key in the code folds only this one.
@@ -151,7 +132,7 @@ test("keyboard path: skip link, Esc selects the cell, arrows, Enter, Tab to run,
   await page.evaluate(() => window.editor_state_set({ selected_cells: ["A"] }));
   await page.keyboard.press(mac ? "Meta+Alt+BracketLeft" : "Control+Shift+BracketLeft");
   await page.waitForFunction(() => window.editor_state.notebook.cell_inputs.ERR.code_folded, null, { timeout: 5000 });
-  await page.waitForTimeout(500);
+  await roundTrip(page);
   assert.deepEqual(await page.evaluate(() => ["A", "ERR"].map((id) => window.editor_state.notebook.cell_inputs[id].code_folded)), [false, true]);
   assertNoProblems(page);
 });
@@ -231,8 +212,12 @@ test("keyboard: Tab passes through cells' code without editing it, and indents o
   const content_sel = `${cellSelector(next)} .cm-editor:not(.cm-ssr-fake) .cm-content`;
   const content = page.locator(content_sel);
   const text = await content.textContent();
-  await content.evaluate((el) => el.dispatchEvent(new FocusEvent("blur", { relatedTarget: null })));
-  await page.waitForTimeout(500);
+  // How long it is away doesn't matter: what the blur starts is a 0 ms
+  // timer at most (CellInput.js), done once one has run after it.
+  await content.evaluate((el) => {
+    el.dispatchEvent(new FocusEvent("blur", { relatedTarget: null }));
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  });
   await content.evaluate((el) => el.dispatchEvent(new FocusEvent("focus", { relatedTarget: null })));
   await page.keyboard.press("Tab");
   assert.equal((await focused(page)).cell, next, "Tab after coming back stayed in the cell");

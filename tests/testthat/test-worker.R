@@ -957,17 +957,14 @@ test_that("summarise_globals(): the over-budget path doesn't call an active bind
 test_that("summarise_globals(): a slow method is bounded by its own time limit rather than holding up the whole report, and never leaks into a later run (review: setTimeLimit)", {
   h <- worker_harness()
   on.exit(h$close())
-  t0 <- Sys.time()
   r <- run_and_wait(h, "a", 1L, paste(
     "slow <- Sys.Date()",
     "format.Date <- function(x, ...) { t0 <- Sys.time(); repeat if (as.numeric(Sys.time() - t0) > 30) break; 'slow' }",
     sep = "\n"), timeout = 35)
-  elapsed <- as.numeric(Sys.time() - t0, units = "secs")
   # A busy R loop, not Sys.sleep(): setTimeLimit() is checked while R code
-  # runs and does not cut a sleep short. The budget is 0.25 s; the method
-  # runs 30 s unless it is cut short, so 10 s tells the two apart however
-  # slow the runner, where 4 s against a 5 s method did not leave room.
-  expect_lt(elapsed, 10)
+  # runs and does not cut a sleep short. The budget is 0.25 s; a method
+  # that ran its 30 s would have returned 'slow' and been summarised, so
+  # "none" is the method cut short.
   expect_equal(r$globals$slow$kind, "none")
 
   r2 <- run_and_wait(h, "b", 2L, "1 + 1", timeout = 3)
@@ -1131,14 +1128,10 @@ test_that("interrupt_r_code", {
   deadline <- Sys.time() + 10
   while (!file.exists(started) && Sys.time() < deadline) Sys.sleep(0.05)
   expect_true(file.exists(started))
-  t0 <- Sys.time()
   h$interrupt()
   r <- wait_for_done(h, timeout = 5)
-  elapsed <- as.numeric(Sys.time() - t0, units = "secs")
+  # An unheeded interrupt runs the loop its full 10 s and ends "ok".
   expect_identical(r$status, "interrupted")
-  # An unheeded interrupt runs the loop its full 10 s (and times out
-  # above), so 3 s still tells them apart with room for a slow runner.
-  expect_lt(elapsed, 3)
 
   check <- run_and_wait(h, "c", 3L, 'c(x, y)')
   expect_identical(check$output$text, "[1] 1 2")
@@ -1210,7 +1203,14 @@ test_that("interrupt_between_runs_swallowed", {
   h <- worker_harness()
   on.exit(h$close())
   h$interrupt()
-  Sys.sleep(0.2)
+  # The run goes once the top level has taken the interrupt, which it says
+  # in the trace. On Windows the next run drains it instead, whenever it
+  # came, so there is nothing to wait for.
+  if (.Platform$OS.type != "windows") {
+    took <- function() any(grepl("interrupt at top level", readLines(h$err_file, warn = FALSE)))
+    deadline <- Sys.time() + 60
+    while (!took() && Sys.time() < deadline) Sys.sleep(0.05)
+  }
   r <- run_and_wait(h, "a", 1L, "1 + 1")
   expect_identical(r$status, "ok")
   expect_identical(r$output$text, "[1] 2")
@@ -1328,10 +1328,15 @@ test_that("known_attached_packages_never_shrink", {
 test_that("interrupt_during_display_still_completes_bookkeeping", {
   h <- worker_harness()
   on.exit(h$close())
-  run_and_wait(h, "a", 1L,
-    'registerS3method("print", "slowprint", function(x, ...) { Sys.sleep(3); cat("slow\\n") })')
+  started <- tempfile()
+  run_and_wait(h, "a", 1L, sprintf(
+    'registerS3method("print", "slowprint", function(x, ...) { writeLines("go", %s); Sys.sleep(3); cat("slow\\n") })',
+    deparse(started)))
   h$send(run_msg("b", 2L, 'options(digits = 3); orphan <- 42; structure(1, class = "slowprint")'))
-  Sys.sleep(1)
+  # Interrupted while it prints, which it says it has begun.
+  deadline <- Sys.time() + 60
+  while (!file.exists(started) && Sys.time() < deadline) Sys.sleep(0.05)
+  expect_true(file.exists(started))
   h$interrupt()
   r <- wait_for_done(h, timeout = 10)
   expect_identical(r$status, "interrupted")

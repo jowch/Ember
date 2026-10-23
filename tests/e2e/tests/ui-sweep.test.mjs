@@ -18,7 +18,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { writeFileSync } from "node:fs";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, setCellCode, runCell } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, setCellCode, runCell, layoutSettled } from "../browser.mjs";
 import { pageProblems, emulatePlatform, formatProblems } from "../layout-check.mjs";
 
 const WIDTHS = [600, 900, 1440];
@@ -39,7 +39,7 @@ async function sweep(page, label) {
   for (const [width, scheme] of shots) {
     await page.emulateMedia({ colorScheme: scheme });
     await page.setViewportSize({ width, height: 900 });
-    await page.waitForTimeout(300);
+    await layoutSettled(page);
     const name = `ui-sweep-${label}-${width}-${scheme}`;
     await page.screenshot({ path: path.join(artifactsDir(), name + ".png"), fullPage: true });
     for (const p of await pageProblems(page)) {
@@ -142,7 +142,7 @@ test("ui sweep: the Help tab open on a long page, docked and not (#433)", async 
 
   for (const width of [1240, 1440]) {
     await page.setViewportSize({ width, height: 900 });
-    await page.waitForTimeout(300);
+    await layoutSettled(page);
     const fit = await page.evaluate(() => {
       const panel = document.querySelector("#helpbox-wrapper").getBoundingClientRect();
       const main = document.querySelector("#helpbox-wrapper .ember-help-page main").getBoundingClientRect();

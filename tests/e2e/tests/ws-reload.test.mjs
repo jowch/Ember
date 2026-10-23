@@ -45,7 +45,11 @@ test("websocket: reloading while a cell streams output logs no errors (#385)", a
   // Each reload lands while the cell is still printing, so messages are
   // arriving as the page goes away.
   for (let i = 0; i < 4; i++) {
-    await page.waitForTimeout(150);
+    // A message arrives after the load, so the reload lands while more are
+    // coming; once the run has ended there are none left to wait for.
+    const last = await page.evaluateHandle(() => window.pluto_get_message_log().at(-1));
+    await page.waitForFunction((last) => window.pluto_get_message_log().at(-1) !== last
+      || !window.editor_state?.notebook?.cell_results?.STREAM?.running, last, { timeout: 0 });
     await page.reload();
     await loaded(page);
   }

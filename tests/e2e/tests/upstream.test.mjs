@@ -53,7 +53,7 @@ test("upstream: a dependent names the failed cell and links to it; an unrelated 
   const link = b_error.locator("header a", { hasText: "a" });
   assert.equal(await link.count(), 1);
 
-  await page.locator(`${cellSelector("C")} .cm-content`).scrollIntoViewIfNeeded();
+  await page.locator(`${cellSelector("C")} pluto-input`).scrollIntoViewIfNeeded();
   assert.equal(await isInViewport(page, cellSelector("A")), false, "A is scrolled out of view");
 
   await link.click();

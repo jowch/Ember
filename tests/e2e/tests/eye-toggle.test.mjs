@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, codeSelector } from "../browser.mjs";
 
 const rect = (page, sel) => page.locator(sel).evaluate((el) => {
   const r = el.getBoundingClientRect();
@@ -51,13 +51,13 @@ test("eye: one click hides the code, a second click in the same place shows it",
 
       await page.mouse.click(eye0.x + eye0.w / 2, eye0.y + eye0.h / 2);
       await folded(page, id, true);
-      assert.equal(await page.locator(`${cellSelector(id)} .cm-editor`).isVisible(), false, `${id}'s code is hidden`);
+      assert.equal(await page.locator(codeSelector(id, "")).isVisible(), false, `${id}'s code is hidden`);
       assert.deepEqual(await state(page, eye), { label: "Hide code", pressed: "true", title: "Show code" });
       same(await rect(page, eye), eye0, `${id} at ${width} px: the eye stays put when the code hides`);
 
       await page.mouse.click(eye0.x + eye0.w / 2, eye0.y + eye0.h / 2);
       await folded(page, id, false);
-      await page.locator(`${cellSelector(id)} .cm-editor`).waitFor({ state: "visible", timeout: 5000 });
+      await page.locator(codeSelector(id, "")).waitFor({ state: "visible", timeout: 5000 });
       same(await rect(page, eye), eye0, `${id} at ${width} px: the eye is back where it started`);
     }
   }

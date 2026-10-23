@@ -8,7 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector, frames } from "../browser.mjs";
 
 const SELECT_ALL = process.platform === "darwin" ? "Meta+A" : "Control+A";
 
@@ -88,8 +88,18 @@ async function show_mean_from_code(page) {
   assert.equal(await help_query(page), "mean");
 }
 
-/** Lets a docs request the last action may have sent come back. */
-const settle = (page) => page.waitForTimeout(1500);
+/** Lets a docs request the last action may have sent come back: once the
+ * page's effects have run (a new query is asked for from one), every
+ * request window.ember_docs (LiveDocsTab.js) shows going out has a reply,
+ * a stale reply, or was given up on, and that is on screen. */
+async function settle(page) {
+  await frames(page);
+  await page.waitForFunction(() => {
+    const ended = new Set(window.ember_docs.filter((e) => e.event !== "sent").map((e) => e.request));
+    return window.ember_docs.filter((e) => e.event === "sent").every((e) => ended.has(e.request));
+  }, null, { timeout: 0 });
+  await frames(page);
+}
 
 test("help: a text cell, a #' line, a comment and a non-name selection never change the query", { timeout: 120000 }, async (t) => {
   const page = await open_idle_notebook(t, "help-text-query.server.log");
@@ -135,7 +145,14 @@ test("help: a text cell, a #' line, a comment and a non-name selection never cha
   await page.mouse.click(comment_end.x, comment_end.y);
   await page.keyboard.press("End");
   await page.keyboard.type(" cle", { delay: 30 });
-  await page.waitForTimeout(1000);
+  // CodeMirror asks for completions once its timer after the last key has
+  // run; a timer set after it for as long runs after it.
+  await page.evaluate(async () => {
+    const src = document.querySelector('script[src$="editor.js"]').src;
+    const { ACTIVATE_ON_TYPING_MS } = await import(new URL("components/CellInput/pluto_autocomplete.js", src).href);
+    await new Promise((resolve) => setTimeout(resolve, ACTIVATE_ON_TYPING_MS));
+  });
+  await frames(page);
   assert.equal(await page.locator(".cm-tooltip-autocomplete").count(), 0, "no completions while typing in a comment");
   await page.keyboard.press("Control+Space");
   await page.waitForSelector(".cm-tooltip-autocomplete", { timeout: 5000 });

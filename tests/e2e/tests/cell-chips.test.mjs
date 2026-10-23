@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { writeFileSync } from "node:fs";
 import { startServer, tempNotebook, artifactsDir, tempDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector, codeSelector, layoutSettled } from "../browser.mjs";
 
 const rect = (page, sel) => page.locator(sel).evaluate((el) => {
   const r = el.getBoundingClientRect();
@@ -262,7 +262,8 @@ test('view anchor: scrolled into the notebook, "Run this notebook" leaves the co
   await page.setViewportSize({ width: 900, height: 800 });
   await openNotebook(page, server.origin, server.secret, notebook);
   await page.evaluate((sel) => document.querySelector(sel).scrollIntoView({ block: "start" }), cellSelector("C08"));
-  await page.waitForTimeout(300);
+  await page.waitForSelector(codeSelector("C08", ""), { timeout: 0 });
+  await layoutSettled(page);
 
   // Read where C08's code is in every frame something resizes, after the
   // page's own observer has run (observers run in the order they were
@@ -282,7 +283,7 @@ test('view anchor: scrolled into the notebook, "Run this notebook" leaves the co
   await page.evaluate(() => document.querySelector("#ember-safe-preview button").click());
   await page.waitForFunction(() => !document.querySelector("#ember-safe-preview"), null, { timeout: 30000 });
   await page.waitForFunction(() => document.querySelectorAll("pluto-cell.running, pluto-cell.queued").length === 0, null, { timeout: 60000 });
-  await page.waitForTimeout(500);
+  await layoutSettled(page);
 
   const tops = await page.evaluate(() => window.__tops);
   // Outputs landed above C08: its code is further down the page. Counting

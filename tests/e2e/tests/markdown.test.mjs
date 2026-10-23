@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector, codeSelector } from "../browser.mjs";
 
 test("markdown: editing and running a text cell renders the new text", async (t) => {
   const notebook = tempNotebook();
@@ -38,7 +38,7 @@ test("markdown: a new cell typed as `#' ...` becomes a text cell and stays unfol
   await openNotebook(page, server.origin, server.secret, notebook);
 
   const cellCountBefore = await page.locator("pluto-cell").count();
-  await page.locator(`${cellSelector("B")} .cm-content`).click();
+  await page.locator(codeSelector("B")).click();
   await page.keyboard.press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
   await page.waitForFunction(
     (before) => document.querySelectorAll("pluto-cell").length > before,
@@ -52,7 +52,7 @@ test("markdown: a new cell typed as `#' ...` becomes a text cell and stays unfol
   assert.ok(newCellId, "a new cell was inserted right after B");
   const newSel = `pluto-cell[id="${newCellId}"]`;
 
-  await page.locator(`${newSel} .cm-content`).click();
+  await page.locator(`${newSel} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.keyboard.type("#' Hello", { delay: 2 });
   await page.keyboard.press("Shift+Enter");
 
@@ -62,7 +62,7 @@ test("markdown: a new cell typed as `#' ...` becomes a text cell and stays unfol
   assert.ok(await page.locator(newSel).evaluate((el) => el.classList.contains("text_cell")));
   assert.equal(await page.locator(newSel).evaluate((el) => el.classList.contains("code_folded")), false,
     "a text cell is never folded for you");
-  await page.locator(`${newSel} pluto-input .cm-editor`).waitFor({ state: "visible", timeout: 5000 });
+  await page.locator(`${newSel} pluto-input .cm-editor:not(.cm-ssr-fake)`).waitFor({ state: "visible", timeout: 5000 });
 
   assertNoProblems(page);
 });

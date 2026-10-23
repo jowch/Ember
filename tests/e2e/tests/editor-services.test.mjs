@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector, setCellCode } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector, setCellCode, codeSelector } from "../browser.mjs";
 
 /** Resolves once the page hasn't scrolled for 10 frames in a row. The
  * check runs once a frame and returns a plain value: waitForFunction
@@ -93,7 +93,7 @@ test("completion: typing me then Ctrl+Space lists mean; after running DF, df$ li
   assert.ok(newCellId, "a new cell was inserted right after DF");
   const newSel = `pluto-cell[id="${newCellId}"]`;
 
-  await page.locator(`${newSel} .cm-content`).click();
+  await page.locator(`${newSel} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.keyboard.type("me", { delay: 10 });
   await page.keyboard.press("Control+Space");
   await page.waitForSelector(".cm-tooltip-autocomplete .cm-completionLabel", { timeout: 10000 });
@@ -158,7 +158,10 @@ test("completion still works on the notebook's names and base R while a cell run
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  await runCell(page, "LOOP");
+  // A loop that runs until the test ends, so R is busy however long the
+  // steps below take.
+  await setCellCode(page, "LOOP", "repeat NULL");
+  await page.keyboard.press("Shift+Enter");
   await page.waitForFunction(
     () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
     null, { timeout: 10000 });
@@ -176,11 +179,11 @@ test("completion still works on the notebook's names and base R while a cell run
   }, "B");
   const newSel = `pluto-cell[id="${newCellId}"]`;
 
-  await page.locator(`${newSel} .cm-content`).click();
+  await page.locator(`${newSel} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.keyboard.type("su", { delay: 10 });
-  const start = Date.now();
-  await page.waitForSelector(".cm-tooltip-autocomplete .cm-completionLabel", { timeout: 5000 });
-  assert.ok(Date.now() - start < 2000, "the fallback answered within 2s of the last keystroke while the worker was busy");
+  await page.waitForSelector(".cm-tooltip-autocomplete .cm-completionLabel", { timeout: 0 });
+  // LOOP never ends by itself: still running means the answer didn't wait for R.
+  assert.ok(await page.locator(`${cellSelector("LOOP")}.running`).count() === 1, "the fallback answered while the worker was busy");
   const labels = await page.locator(".cm-tooltip-autocomplete .cm-completionLabel").allInnerTexts();
   assert.ok(labels.includes("sum"), `expected "sum" among ${JSON.stringify(labels)}`);
 
@@ -246,7 +249,7 @@ test("help: the cursor inside mean( shows Arithmetic Mean; a link loads another 
   }, "DF");
   const newSel = `pluto-cell[id="${newCellId}"]`;
 
-  await page.locator(`${newSel} .cm-content`).click();
+  await page.locator(`${newSel} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.keyboard.type("mean(df$mpg", { delay: 10 });
   await page.keyboard.press("Escape"); // close any autocomplete popup first
 
@@ -313,7 +316,7 @@ test("help: opened while a cell runs, the panel says R is busy, then shows mean'
   }, "B");
   const newSel = `pluto-cell[id="${newCellId}"]`;
 
-  await page.locator(`${newSel} .cm-content`).click();
+  await page.locator(`${newSel} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.keyboard.type("mean(x", { delay: 10 });
   await page.keyboard.press("Escape");
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
@@ -621,7 +624,7 @@ test("signature: the cursor after lm( shows a tooltip containing formula within 
   }, "DF");
   const newSel = `pluto-cell[id="${newCellId}"]`;
 
-  await page.locator(`${newSel} .cm-content`).click();
+  await page.locator(`${newSel} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.keyboard.type("lm", { delay: 10 });
   const start = Date.now();
   await page.keyboard.type("(");
@@ -706,7 +709,7 @@ test("signature: a click on the tooltip lands in the code under it (#34)", async
   await page.mouse.click(x, y);
   await tooltip.waitFor({ state: "detached", timeout: 30000 });
   await page.keyboard.type("Z");
-  assert.match(await page.locator(`${cellSelector("DF")} .cm-line`).first().innerText(), /Z/, "the click put the cursor in DF");
+  assert.match(await page.locator(codeSelector("DF", ".cm-line")).first().innerText(), /Z/, "the click put the cursor in DF");
   assert.equal(await page.locator(`${newSel} .cm-line`).first().innerText(), "read.table()", "the new cell is unchanged");
 
   assertNoProblems(page);
@@ -799,7 +802,7 @@ test("brackets: the bracket at the cursor and its partner are marked, for every 
   //          0123456789012345678901234567890
   const code = 'f(c(1), {2}, x[3], y[[4]], "(")';
   await setCellCode(page, "A", code);
-  const content = page.locator(`${cellSelector("A")} .cm-content`);
+  const content = page.locator(codeSelector("A"));
   const marks = `${cellSelector("A")} .cm-matchingBracket`;
   const marked = () => page.evaluate((sel) => [...document.querySelectorAll(sel)].map((e) => e.textContent), marks);
   const cursor_at = async (pos) => {

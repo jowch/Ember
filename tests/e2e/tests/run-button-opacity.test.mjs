@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector, hoverCell } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector, hoverCell, codeSelector } from "../browser.mjs";
 
 test("run button: a selected cell's run button is hidden, not half faded", async (t) => {
   const notebook = tempNotebook();
@@ -31,7 +31,7 @@ test("run button: a selected cell's run button is hidden, not half faded", async
 
   await runCell(page, "B");
   await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("55"), cellSelector("B") + " pluto-output", { timeout: 30000 });
-  await page.locator(`${cellSelector("A")} .cm-content`).click();
+  await page.locator(codeSelector("A")).click();
   await page.mouse.move(1, 1);
   await opacityBecomes("A", "1", "shown while typing in A");
 
@@ -42,11 +42,11 @@ test("run button: a selected cell's run button is hidden, not half faded", async
 
   // Clicking the run button leaves focus on it, without :focus-visible
   // (the user's screenshot: A's button half faded while B was hovered).
-  await page.locator(`${cellSelector("A")} .cm-content`).hover();
+  await page.locator(codeSelector("A")).hover();
   await page.locator(`${cellSelector("A")} button.ember-run`).click();
   await idle("A");
   await idle("B");
-  await hoverCell(page, "B", ".cm-content");
+  await hoverCell(page, "B", ".cm-editor:not(.cm-ssr-fake) .cm-content");
   assert.equal(await page.evaluate(() => document.activeElement.classList.contains("ember-run")), true, "focus stays on the clicked button");
   await opacityBecomes("B", "1", "the hovered cell's button");
   await opacityBecomes("A", "0", "the clicked button, once the pointer leaves its cell");
