@@ -715,6 +715,8 @@ test('view anchor: scrolled into the notebook, "Run this notebook" leaves the co
     for (const c of document.querySelectorAll("pluto-cell")) ro.observe(c);
   }, `${cellSelector("C08")} > pluto-input`);
   const before = await rect(page, `${cellSelector("C08")} > pluto-input`);
+  const pageTop = () => page.evaluate((sel) => document.querySelector(sel).getBoundingClientRect().top + window.scrollY, `${cellSelector("C08")} > pluto-input`);
+  const beforePage = await pageTop();
   // Clicked in script: Playwright's click would scroll the banner into view first.
   await page.evaluate(() => document.querySelector("#ember-safe-preview button").click());
   await page.waitForFunction(() => !document.querySelector("#ember-safe-preview"), null, { timeout: 30000 });
@@ -722,7 +724,12 @@ test('view anchor: scrolled into the notebook, "Run this notebook" leaves the co
   await page.waitForTimeout(500);
 
   const tops = await page.evaluate(() => window.__tops);
-  assert.ok(tops.length > 5, `outputs landed above C08 (${tops.length} frames)`);
+  // Outputs landed above C08: its code is further down the page. Counting
+  // resize frames instead was a weak proxy: outputs that land in the same
+  // frame share one, and it failed about one run in five (#401).
+  const afterPage = await pageTop();
+  assert.ok(afterPage > beforePage + 50, `outputs landed above C08: its code moved down the page from ${beforePage} to ${afterPage}`);
+  assert.ok(Math.abs((await rect(page, `${cellSelector("C08")} > pluto-input`)).top - before.top) <= 1, "C08's code is still where it was in the view");
   const off = tops.filter((top) => Math.abs(top - before.top) > 1);
   assert.deepEqual(off, [], `C08's code stayed at ${before.top} in every frame`);
   assert.ok(await page.locator(`${cellSelector("C08")} > pluto-output table`).count() > 0, "C08's table landed");
