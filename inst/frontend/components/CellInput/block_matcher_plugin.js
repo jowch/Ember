@@ -8,230 +8,11 @@ import { Decoration } from "../../imports/CodemirrorPlutoSetup.js"
  * Original: https://github.com/codemirror/matchbrackets/blob/99bf6b7e6891c09987269e370dc45ab1d588b875/src/matchbrackets.ts
  *
  * I changed it to ignore the closedBy and openBy properties provided by lezer, because these
- * are all wrong for julia... Also, this supports returning multiple matches, like `if ... elseif ... end`, etc.
- * On top of that I added `match_block` to match the block brackets, like `begin ... end` and all of those.
- * Also it doesn't do non-matching now, there is just matching or nothing.
+ * are all wrong for julia... Also it doesn't do non-matching now, there is just matching or nothing.
+ *
+ * Ember: Pluto's `match_block`, which matched Julia's `begin ... end`-style blocks, is gone (#246).
+ * R has no `end`, so it never matched. Only `()`, `[]` and `{}` are matched.
  */
-
-function match_try_node(node) {
-    let try_node = node.parent.firstChild
-    let possibly_end = node.parent.lastChild
-    let did_match = possibly_end.name === "end"
-    if (!did_match) return null
-
-    let catch_node = node.parent.getChild("CatchClause")?.firstChild
-    let else_node = node.parent.getChild("TryElseClause")?.firstChild
-    let finally_node = node.parent.getChild("FinallyClause")?.firstChild
-
-    return [
-        { from: try_node.from, to: try_node.to },
-        catch_node && { from: catch_node.from, to: catch_node.to },
-        else_node && { from: else_node.from, to: else_node.to },
-        finally_node && { from: finally_node.from, to: finally_node.to },
-        { from: possibly_end.from, to: possibly_end.to },
-    ].filter((x) => x != null)
-}
-
-function match_block(node) {
-    if (node.name === "end") {
-        if (node.parent.name === "IfStatement") {
-            // Try moving to the "if" part because
-            // the rest of the code is looking for that
-            node = node.parent?.firstChild?.firstChild
-        } else {
-            node = node.parent.firstChild
-        }
-    }
-
-    if (node == null) {
-        return []
-    }
-
-    // if (node.name === "StructDefinition") node = node.firstChild
-    if (node.name === "mutable" || node.name === "struct") {
-        if (node.name === "struct") node = node.parent.firstChild
-
-        let struct_node = node.parent.getChild("struct")
-        let possibly_end = node.parent.lastChild
-        let did_match = possibly_end.name === "end"
-        if (!did_match || !struct_node) return null
-
-        return [
-            { from: node.from, to: struct_node.to },
-            { from: possibly_end.from, to: possibly_end.to },
-        ]
-    }
-    if (node.name === "struct") {
-        let possibly_end = node.parent.lastChild
-        let did_match = possibly_end.name === "end"
-        if (!did_match) return null
-
-        return [
-            { from: node.from, to: node.to },
-            { from: possibly_end.from, to: possibly_end.to },
-        ]
-    }
-
-    if (node.name === "quote") {
-        let possibly_end = node.parent.lastChild
-        let did_match = possibly_end.name === "end"
-        if (!did_match) return null
-
-        return [
-            { from: node.from, to: node.to },
-            { from: possibly_end.from, to: possibly_end.to },
-        ]
-    }
-
-    if (node.name === "begin") {
-        let possibly_end = node.parent.lastChild
-        let did_match = possibly_end.name === "end"
-        if (!did_match) return null
-
-        return [
-            { from: node.from, to: node.to },
-            { from: possibly_end.from, to: possibly_end.to },
-        ]
-    }
-
-    if (node.name === "do") {
-        let possibly_end = node.parent.lastChild
-        let did_match = possibly_end.name === "end"
-        if (!did_match) return null
-
-        return [
-            { from: node.from, to: node.to },
-            { from: possibly_end.from, to: possibly_end.to },
-        ]
-    }
-
-    if (node.name === "for") {
-        let possibly_end = node.parent.lastChild
-        let did_match = possibly_end.name === "end"
-        if (!did_match) return null
-
-        return [
-            { from: node.from, to: node.to },
-            { from: possibly_end.from, to: possibly_end.to },
-        ]
-    }
-
-    if (node.name === "let") {
-        let possibly_end = node.parent.lastChild
-        let did_match = possibly_end.name === "end"
-        if (!did_match) return null
-
-        return [
-            { from: node.from, to: node.to },
-            { from: possibly_end.from, to: possibly_end.to },
-        ]
-    }
-
-    if (node.name === "macro") {
-        let possibly_end = node.parent.lastChild
-        let did_match = possibly_end.name === "end"
-        if (!did_match) return null
-
-        return [
-            { from: node.from, to: node.to },
-            { from: possibly_end.from, to: possibly_end.to },
-        ]
-    }
-
-    if (node.name === "function") {
-        let possibly_end = node.parent.lastChild
-        let did_match = possibly_end.name === "end"
-        if (!did_match) return null
-
-        return [
-            { from: node.from, to: node.to },
-            { from: possibly_end.from, to: possibly_end.to },
-        ]
-    }
-
-    if (node.name === "while") {
-        let possibly_end = node.parent.lastChild
-        let did_match = possibly_end.name === "end"
-        if (!did_match) return null
-
-        return [
-            { from: node.from, to: node.to },
-            { from: possibly_end.from, to: possibly_end.to },
-        ]
-    }
-
-    if (node.name === "type") node = node.parent.firstChild
-    if (node.name === "abstract" || node.name === "primitive") {
-        let possibly_end = node.parent.lastChild
-        let did_match = possibly_end.name === "end"
-        let struct_node = node.parent.getChild("type")
-        if (!did_match || !struct_node) return null
-
-        return [
-            { from: node.from, to: struct_node.to },
-            { from: possibly_end.from, to: possibly_end.to },
-        ]
-    }
-
-    if (node.name === "if" || node.name === "else" || node.name === "elseif") {
-        if (node.name === "if") node = node.parent
-        let iselse = false
-        if (node.name === "else") {
-            node = node.parent
-            iselse = true
-        }
-        if (node.name === "elseif") node = node.parent.parent
-        if (!node.parent) return null
-
-        let try_node = node.parent.firstChild
-        let possibly_end = node.parent.lastChild
-        let did_match = possibly_end.name === "end"
-        if (!did_match) return null
-
-        if (iselse && try_node.name === "try") {
-            return match_try_node(node) // try catch else finally end
-        }
-
-        let decorations = []
-        decorations.push({ from: try_node.from, to: try_node.to })
-        for (let elseif_clause_node of node.parent.getChildren("ElseifClause")) {
-            let elseif_node = elseif_clause_node.firstChild
-            decorations.push({ from: elseif_node.from, to: elseif_node.to })
-        }
-        for (let else_clause_node of node.parent.getChildren("ElseClause")) {
-            let else_node = else_clause_node.firstChild
-            decorations.push({ from: else_node.from, to: else_node.to })
-        }
-        decorations.push({ from: possibly_end.from, to: possibly_end.to })
-
-        return decorations
-    }
-
-    if (node.name === "try" || node.name === "catch" || node.name === "finally" || node.name === "else") {
-        if (node.name === "catch") node = node.parent
-        if (node.name === "finally") node = node.parent
-        if (node.name === "else") node = node.parent
-
-        let possibly_end = node.parent.lastChild
-        let did_match = possibly_end.name === "end"
-        if (!did_match) return null
-
-        return match_try_node(node)
-    }
-
-    if (node.name === "module" || node.name === "baremodule") {
-        let possibly_end = node.parent.lastChild
-        let did_match = possibly_end.name === "end"
-        if (!did_match) return null
-
-        return [
-            { from: node.from, to: node.to },
-            { from: possibly_end.from, to: possibly_end.to },
-        ]
-    }
-
-    return null
-}
 
 const baseTheme = EditorView.baseTheme({
     ".cm-matchingBracket": { backgroundColor: "#328c8252" },
@@ -294,8 +75,7 @@ export function matchBrackets(state, pos, dir, config = {}) {
     let tree = syntaxTree(state),
         node = tree.resolveInner(pos, dir)
 
-    let result = match_block(node)
-    return result || matchPlainBrackets(state, pos, dir, tree, bracket_node_name_normalizer(node.name), maxScanDistance, brackets)
+    return matchPlainBrackets(state, pos, dir, tree, bracket_node_name_normalizer(node.name), maxScanDistance, brackets)
 }
 
 function matchPlainBrackets(state, pos, dir, tree, tokenType, maxScanDistance, brackets) {
@@ -332,17 +112,29 @@ function matchPlainBrackets(state, pos, dir, tree, tokenType, maxScanDistance, b
 
 /**
  * Little modification to the original matchPlainBrackets function: in our Julia language, the node that opens a bracket is called "(". In e.g. markdown it's called LinkMark or something (the same name for opening and closing). We don't have this so we make them equal.
+ *
+ * Ember: the R grammar (grammar/src/r.grammar) names its brackets, with different names for the
+ * opening and the closing one, and a call's `(`, a `[` and a `[[` are tokens of their own. Without
+ * these, an R bracket's partner never matched and only the bracket at the cursor was marked (#246).
  */
 const bracket_node_name_normalizer = (/** @type {String} */ node_name) => {
     switch (node_name) {
         case "(":
         case ")":
+        case "ParenL":
+        case "ContinueParenL":
+        case "ParenR":
             return "()"
         case "[":
         case "]":
+        case "ContinueBracketL":
+        case "ContinueDBracketL":
+        case "BracketR":
             return "[]"
         case "{":
         case "}":
+        case "BraceL":
+        case "BraceR":
             return "{}"
         default:
             return node_name

@@ -73,6 +73,11 @@ repository depends on them.
   stale) runs after it, not with its stale value (#176). Autorun doesn't
   restart an ancestor that failed or was interrupted while it ran, so a
   dependent that needs one ends as an error until that ancestor is run.
+  A cell edited but not yet run still holds what its old code made, so
+  until it runs, its edges are both its old code's and its new code's:
+  rerunning a cell its old code read marks it stale, and its going stale
+  marks stale the readers of what its old code defined (#175), and in a
+  run it goes before the cells that read what its old code defined (#174).
   Pluto's safe preview shows editing without running is workable.
 - **Open without running.** Running a cell runs its unrun ancestors first.
   "Run all" is one click. Long simulations don't start just because a
@@ -184,9 +189,16 @@ The reset is a few lines of C, so the server package has compiled code from
 the start. The server polls the worker socket from its `later` loop: every 5 ms while
 it waits on the worker (a run, a query, or traffic in the last second),
 every 250 ms while an install or index job runs, and every 2 s otherwise. A
-crash during a run is noticed within 5 ms; one while idle, or an edit to a
-watched file, within about 2 s. At 250 ms an idle notebook cost the server
-0.7% of a core and 4 wake-ups a second; at 2 s it is about 0.12% (#46).
+crash during a run is noticed within 5 ms, and an edit to a watched file
+within about 2 s. At 250 ms an idle notebook cost the server 0.7% of a core
+and 4 wake-ups a second; at 2 s it is about 0.12% (#46). On macOS and Linux
+the server also waits on the worker's stdout pipe (`later::later_fd()`), which
+closes when the worker ends, so a crash while idle is noticed at once too
+(#209). The slow poll stays: a process a cell started with `system()` holds
+the pipe open after the worker has gone, and watched files need it. On
+Windows a crash while idle is noticed within about 2 s, since its pipes can't
+be waited on. An idle worker sends nothing on its socket, so that needs no
+wake of its own.
 It must read a large worker message in pieces rather than all at once, so a
 big output can't stall it.
 
@@ -210,10 +222,11 @@ each such child in a job object that ends it once the worker ends. processx
 (and so callr) puts its children in a job object of its own that does the
 same, so the worker clears that one setting on processx's job after every
 run, before it says the run is done, and from a thread every half second
-for a cell still running (src/children.c). A processx or callr child then
-outlives a restart and a killed server, as on Unix. Only the first one a
-worker starts can still end with it, if the worker is killed mid-run within
-half a second of starting it; later ones join a job already released.
+for a cell still running (src/children.c). processx makes that job only as
+it starts its first child, so when processx loads in the worker, the worker
+has it start one that only exits (System32's `cmd /d /c exit`) and
+releases the job at once (#235). A processx or callr child then outlives a
+restart and a killed server, as on Unix, the first one included.
 
 On every system the worker also drops the `PROCESSX_<id>` marker it
 inherits as the server's process tree (`cleanup_tree`). Otherwise a cell's
@@ -355,9 +368,21 @@ with `identical()`, which returns at once for an object that wasn't replaced.
 Reads can't be watched this way. A literal name is read statically:
 `get("x")`, `exists("x")` and `mget(c("a", "b"))` reference those globals,
 and data.table's `dt[, ..cols]` references `cols`. A computed name
-(`get(paste0("fit_", i))`), a call with `envir` or `pos`, and
-`eval(parse())` run normally, and the engine shows a note that it can't
-track them.
+(`get(paste0("fit_", i))`), `get` passed as a function
+(`lapply(site_names, get)`), a call with `envir` or `pos`, and
+`eval(parse())` run normally, and the cell shows a note that Ember can't
+tell which variables it reads through them, so it doesn't rerun when they
+change (#357). The note comes from reading the code, so it shows before
+the cell runs, and the snapshot carries it as `untracked_reads`.
+
+When the read is inside a function (`load_site <- function(s) get(s)`),
+the note goes on each cell that calls the function, and names it
+(`load_site()`): that cell is the one showing old values. The cell that
+only defines the function gets no note, because running it reads nothing.
+A call by a string name counts (`sapply(nms, "load_site")`, `do.call()`),
+and `args(load_site)` doesn't. A function that calls such a function passes
+the note on to its own callers. When no cell calls the function by a name
+Ember can see, the note stays on the cell that defines it (#365).
 
 **Code in other files.** `source("helpers.R")` with a literal path is read
 like part of the cell:
@@ -402,17 +427,24 @@ as something to avoid rather than something they prevent. R's copy-on-modify
 makes the same code a visible redefinition, so the rule catches it.
 
 Only reference objects change in place in R (environments, R6, reference
-classes, data.table's `:=` and `set*()`). Those stay untracked, as mutation
+classes, data.table's `:=` and `set*()`, and a closure's environment, such
+as a function factory's counter or a memoised function's cache). Those stay untracked, as mutation
 is in Pluto and marimo; the user docs say so and the engine warns when a
 cell modifies one defined elsewhere. Before each run the worker keeps a
 fingerprint of every environment another cell defines (its bindings, and
 those of the environments inside it, three levels down, which reaches an
-R6 object's private fields). If a run changes one without rebinding its
+R6 object's private fields), and of the environment each function another
+cell defines was made in, unless that is the global environment or a
+package's (#333). An S4 generic is skipped: it caches the methods it
+dispatched to in its own environment. If a run changes one without rebinding its
 name, the cell shows a note: "Changed `cnt` in place, which another cell
 defines, so the cells that read it don't rerun." Taking the fingerprint
 forces no promise and calls no active binding. Namespaces are skipped, and
 so is any one environment with more than 1,000 bindings; the others are
-still checked, up to 10,000 bindings a run. A data.table another cell
+still checked, up to 10,000 bindings a run. A reticulate object is read
+by identity only. Its state lives in Python, and the first `py_to_r()`
+caches a binding in its R environment, which isn't a change (#259). A
+data.table another cell
 defines is fingerprinted by its shape: column names, each column's
 address, its spare column slots and its key. So `dt[, z := x * 2]`,
 `setnames()`, `setkey()`, `setorder()` and dropping a column are noted. A
@@ -423,16 +455,30 @@ megabyte, so a run hashes only another cell's tables its code could write:
 the table of a `[` with `:=`, `let()` or `set*()` in it, an argument of
 data.table's `set*()` (under any name, or through `do.call()`), and a
 table passed to one of the notebook's own functions (`add_b(dt)`,
-`lapply(list(dt), add_b)`), or to a function not defined yet. Showing the
-table, reading it with `[` or `$`, and passing it to a package's function
-(`nrow(dt)`, `lm(y ~ x, dt)`, `ggplot(dt)`) hash nothing. Such a run
+`lapply(list(dt), add_b)`), or to a function not defined yet. The body of
+each notebook function the cell calls is read the same way, so a helper
+that writes the global itself (`zero_dt <- function() dt[1L, x := 0]`)
+counts where it's called. A table can also sit in a list or an
+environment another cell defines, up to three levels down
+(`tabs$flights[1L, x := 0]`, an R6 object's field); the note then names
+the list or environment, and so does `with(tabs, flights[1L, x := 0])`.
+Code run from text (`eval(parse(text = ...))`,
+`source()`) can't be read, so such a run hashes every other cell's table.
+A write found is noted under every name another cell binds the table to,
+and every list or environment another cell defines that holds it, so
+after `alias <- dt` or `held <- list(t = dt)`, a write through `dt` names
+`alias` and `held` too (#216). A table two globals hold is hashed once.
+Showing the table, reading it with `[` or `$`, and passing it to a
+package's function (`nrow(dt)`, `lm(y ~ x, dt)`, `ggplot(dt)`) hash
+nothing. Such a run
 hashes the table twice, before its code and after; no hash is kept between
 runs, so a write that was missed is never blamed on a later cell. That cost
 grows with the table and has no cap, on purpose: a cap would bring the
 silent miss back. A 36 MB table adds about 0.17 s to each cell that could
-write it, and a 1 GB table would add about 7 s. A cell that reaches a
-table without naming it (a helper that writes the global, a table in a
-list) isn't hashed, and its write isn't noted (#216). Before R 4.5,
+write it, and a 1 GB table would add about 7 s. A table the code reaches
+only through `get()` or `assign()` by name, or through a package's
+function that writes a global, isn't hashed, and its write isn't noted.
+Before R 4.5,
 `tools::md5sum()` can't hash bytes, so row writes aren't noted there.
 
 ### Methods
@@ -589,7 +635,9 @@ top-level expression is its output. When that expression is an assignment
 invisibly, so `cars <- mtcars` shows the table. As in Pluto, the value is
 the right-hand side: `df$z <- df$x * 2` shows the new column, not `df`. A
 plot the cell drew still wins over an assigned value, so `h <- hist(x)`
-shows the histogram. Any other invisible value
+shows the histogram. A bound interactive input is the exception: `n <-
+input_slider(1, 10)` shows the widget, not the number, since moving the
+widget changes `n` without rerunning the cell (inputs.md). Any other invisible value
 shows nothing: `invisible()`, `library()`, a function that returns
 invisibly. So `invisible(x <- big)`, or a last line of `invisible()`, is
 how a cell hides its output (Pluto's trailing `;` has no meaning in R).
@@ -850,10 +898,14 @@ rest:
    translated message gets no offer. The engine
    never installs such a package by itself.
 2. Resolve each against CRAN and Bioconductor at the notebook's snapshot
-   date. GitHub and r-universe packages can't be inferred; the user records
-   them in the header's `[sources]` as `github:user/repo` or
-   `universe:name`, and the Packages tab offers to add one on a name that
-   isn't found.
+   date. GitHub and r-universe packages can't be inferred. The code names
+   them the way R users already do, with an install call
+   (`remotes::install_github("user/repo")`, `install.packages("pkg", repos
+   = "https://name.r-universe.dev")`), and Ember records the source in the
+   header's `[sources]` as `github:user/repo` or `universe:name`; the user
+   can also add one there, and the Packages tab offers to on a name that
+   isn't found. Install calls don't run in Ember: the lock answers them
+   (packages.md, "Install calls").
 3. Update the lock and install into the notebook's library in a subprocess.
    The worker restarts only if a package it has already loaded changed
    version; a new package is just loaded.
@@ -883,17 +935,27 @@ the git commit for both (an r-universe serves only its latest build).
   package) moves the notebook to the earliest date on which that version was
   current, so the other packages move only as far as they must. **Update
   all** moves the date to today. **Pinning an older version** moves the date
-  back to when it was current. Each shows every version that changes before
-  applying.
+  back to the last day it was current, so the other packages move back as
+  little as they can. Package Manager takes its snapshots at a set time, so
+  each date is checked against that day's snapshot, and a snapshot that
+  doesn't have the version yet (or, for a pin, already has the next one) is
+  passed over for the next day's. Each shows every version that changes
+  before applying (`preview_update()`).
 - **No solver is needed.** Each package version was current for one span of
   time, from its release to the next. Versions that were all current at one
   moment form a valid lock, and for spans of time, overlapping pairwise
   already means overlapping at one moment; so finding a lock is finding a
-  date. The data is every CRAN version's release date, which
-  crandb.r-pkg.org gives per package (fetching 100 packages took 3 s with 16
-  requests at a time; finding a date took 13 ms). Ember caches it, since
-  crandb is a community service. The installer only ever sees one dated
-  repository URL.
+  date. The data is every CRAN version's release date, which CRAN gives
+  itself: its `src/contrib/Meta/archive.rds` and `current.rds` list every
+  tarball with the time it was published (about 6 MB together, on any CRAN
+  mirror). Ember fetches them in a subprocess and caches the table for a
+  day. crandb.r-pkg.org has the same dates, but it is a community service
+  Ember would depend on. CRAN's files do add one host,
+  cloud.r-project.org (`ember_repos(cran_meta)`), in place of crandb's:
+  Package Manager serves `archive.rds` but not `current.rds`. A machine
+  that reaches only Package Manager gets "couldn't fetch CRAN's release
+  dates" and can still move the whole date. The installer only
+  ever sees one dated repository URL.
 
 CRAN's checks aren't a guarantee (a package can be broken or archived on
 some date), but they are much stronger than minimum versions. Moving the date
@@ -951,8 +1013,8 @@ CRAN-only notebook carries no Bioconductor pin and no tie to an R version.
 
 **Large installs ask first.** Annotation and genome packages
 (`org.Hs.eg.db`, `BSgenome.*`) run from hundreds of MB to several GB. Above a
-size threshold the engine shows the download size and waits for the user
-before installing.
+size threshold (500 MB) the engine shows the download size and waits for the
+user before installing (built, #37: packages.md, "Large downloads").
 
 **Installs** link from a shared cache into a per-notebook library, so a
 second notebook with the same packages installs in seconds. A library is
@@ -1045,7 +1107,8 @@ common Linux systems, including Bioconductor software packages since
 code, R versions outside the binary window (current minor and four before
 it), snapshot dates from before the running R came out (no binaries were
 built for it then), and packages whose binary build failed. Old versions
-often don't build on a newer R; when such a build fails, the engine says
+often don't build on a newer R. While such packages build, the engine
+says which ones have no binary for this R; when a build fails, it says
 the package had no binary for this R and offers a newer date or an older
 R (#19). Before one, the engine checks
 for the tools (macOS: `xcode-select -p`; Windows: Rtools; Linux: the C

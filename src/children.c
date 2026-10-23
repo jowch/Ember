@@ -19,10 +19,11 @@
    so what a cell starts with `system()` still ends with the worker, as on
    Unix. processx still ends its children itself when R exits normally or
    a process object is collected; only the end of the worker's own process
-   no longer takes them. Only the first processx or callr child a worker
-   starts (per processx load) can still go with it, if the worker is killed
-   in the half second after, mid-run; later ones join a job already
-   released. The worker's processx marker matters too: see worker.R's
+   no longer takes them. So that a cell's first child isn't left in the
+   job for up to half a second, the worker has processx make the job as it
+   loads, with a child that only exits, and releases it then (worker.R's
+   `release_processx_job()`, #235); the thread stays in case that fails.
+   The worker's processx marker matters too: see worker.R's
    `drop_processx_marker()` (#232).
 
    There is no call to list a process's job handles, so the thread asks
@@ -36,6 +37,10 @@
 #define LAST_HANDLE_VALUE 65536
 
 static int keeping = 0;
+/* Set while a run is going (C_cell_children_running()): the thread scans
+   only then, since a finished run's children are released before its
+   "done", and an idle worker has nothing new to release (#273). */
+static HANDLE running_event = NULL;
 
 static void release_processx_jobs(void) {
   for (ULONG_PTR v = 4; v < LAST_HANDLE_VALUE; v += 4) {
@@ -52,6 +57,7 @@ static void release_processx_jobs(void) {
 
 static DWORD WINAPI release_loop(LPVOID unused) {
   for (;;) {
+    if (WaitForSingleObject(running_event, INFINITE) != WAIT_OBJECT_0) return 0;
     release_processx_jobs();
     Sleep(500);
   }
@@ -64,8 +70,14 @@ static DWORD WINAPI release_loop(LPVOID unused) {
 SEXP C_keep_cell_children(void) {
 #if defined(_WIN32)
   if (keeping) return ScalarLogical(1);
+  running_event = CreateEventA(NULL, TRUE, FALSE, NULL);  /* manual reset */
+  if (!running_event) return ScalarLogical(0);
   HANDLE thread = CreateThread(NULL, 0, release_loop, NULL, 0, NULL);
-  if (!thread) return ScalarLogical(0);
+  if (!thread) {
+    CloseHandle(running_event);
+    running_event = NULL;
+    return ScalarLogical(0);
+  }
   CloseHandle(thread);
   keeping = 1;
   return ScalarLogical(1);
@@ -82,4 +94,31 @@ SEXP C_release_cell_children(void) {
   release_processx_jobs();
 #endif
   return R_NilValue;
+}
+
+/* Worker side, as a run starts (`on` TRUE) and once it ends (FALSE). */
+SEXP C_cell_children_running(SEXP on) {
+#if defined(_WIN32)
+  if (running_event) {
+    if (Rf_asLogical(on) == TRUE) SetEvent(running_event); else ResetEvent(running_event);
+  }
+#endif
+  return R_NilValue;
+}
+
+/* Test-only: TRUE once no job this process holds is still processx's
+   kill-on-close one, that is once the release has run on every job there
+   is (test-session.R, #274). */
+SEXP C_cell_children_released(void) {
+#if defined(_WIN32)
+  for (ULONG_PTR v = 4; v < LAST_HANDLE_VALUE; v += 4) {
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION info;
+    if (!QueryInformationJobObject((HANDLE) v, JobObjectExtendedLimitInformation,
+                                   &info, sizeof info, NULL)) continue;
+    DWORD flags = info.BasicLimitInformation.LimitFlags;
+    if ((flags & JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK) && (flags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE))
+      return ScalarLogical(0);
+  }
+#endif
+  return ScalarLogical(1);
 }

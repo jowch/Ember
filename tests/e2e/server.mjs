@@ -3,7 +3,7 @@
 // spikes/server-worker/server3.R's shape but drives the real ember::serve()
 // (docs/ui-tests.md, "Running locally" / "In CI").
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, copyFileSync, mkdirSync, appendFileSync, rmSync, cpSync, readdirSync, renameSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -110,8 +110,26 @@ function emberLibs() {
   return [path.resolve(lib), process.env.R_LIBS].filter(Boolean).join(path.delimiter);
 }
 
-async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port: fixedPort, secret = SECRET, repos, cacheDir }) {
+/** The Rscript to start servers with: EMBER_RSCRIPT, or Rscript from the
+ * PATH. On Windows both are usually R's `bin\Rscript.exe`, a front end
+ * that runs the real `bin\x64\Rscript.exe` through cmd.exe. `stop()`
+ * would then end only the front end, leaving the server running with its
+ * port and its worker (#219). So R is asked once for the real one. */
+let realRscript = null;
+function serverRscript() {
   const rscript = process.env.EMBER_RSCRIPT ?? "Rscript";
+  if (process.platform !== "win32") return rscript;
+  if (realRscript === null) {
+    const res = spawnSync(rscript, ["--vanilla", "-e", "cat(file.path(R.home('bin'), 'Rscript.exe'))"], { encoding: "utf8" });
+    const found = res.status === 0 && res.stdout.trim();
+    realRscript = found ? res.stdout.trim() : rscript;
+    if (!found) console.error(`server.mjs: could not ask ${rscript} for R's own Rscript.exe; using it as is, so a stopped server may keep running (#219)`);
+  }
+  return realRscript;
+}
+
+async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port: fixedPort, secret = SECRET, repos, cacheDir, askAbove }) {
+  const rscript = serverRscript();
   const quoted = notebookPaths.map((p) => JSON.stringify(p)).join(", ");
   const port = fixedPort ?? await freePort();
   // Set before `ember::serve()` starts: `installer_script()` (R/library.R)
@@ -121,6 +139,8 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   // A test that seeds the cache itself (clean-up.test.mjs) names it; the
   // folder is the test's, so it is not removed here.
   if (cacheDir) prelude += `options(ember.cache_dir = ${JSON.stringify(cacheDir)}); `;
+  // Read when each notebook opens (`new_state()`), so set first too.
+  if (askAbove != null) prelude += `options(ember.ask_above = ${askAbove}); `;
   let expr;
   let cache = null;
   if (repos) {
@@ -239,13 +259,15 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
  * a server at the same address with a new secret. `repos` (an object of
  * `ember_repos()` arguments, `null` for `NA`) opens the notebooks against
  * those repositories instead of the real ones. `cacheDir` points the
- * server's cache (`options(ember.cache_dir)`) at a folder the test owns. */
+ * server's cache (`options(ember.cache_dir)`) at a folder the test owns.
+ * `askAbove` sets `options(ember.ask_above)`: the bytes of large downloads
+ * an install asks about first (#37). */
 export async function startServer(notebookPaths, opts = {}) {
-  const { timeoutMs = 30000, logFile, retries = 3, installerScript, cwd, port, secret, repos, cacheDir } = opts;
+  const { timeoutMs = 30000, logFile, retries = 3, installerScript, cwd, port, secret, repos, cacheDir, askAbove } = opts;
   let lastErr;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      return await startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port, secret, repos, cacheDir });
+      return await startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port, secret, repos, cacheDir, askAbove });
     } catch (err) {
       if (!err.bindFailure || attempt === retries) throw err;
       lastErr = err;

@@ -43,6 +43,15 @@
 #'   qualified call (`pkg::fn(...)`) always records `pkg` here, even when
 #'   `fn` is itself an attach/setting/source/etc. function handled by the
 #'   same rule as its unqualified form (see `dispatch_call_by_name()`).
+#' * `installs`: data frame `package`, `source`, `line`, `index`, `top`:
+#'   each package an install call in the cell's own code names
+#'   (`install_calls`, rules.R), outside function bodies. `source` is the
+#'   spec it gives (`"github:user/repo"`, `"universe:name"`; `NA` for one
+#'   that names no source, such as `install.packages("x")`). `index` is
+#'   the top-level expression's position and `top` whether the call is
+#'   that whole expression, which the worker then doesn't run. For such a
+#'   call its own package (remotes, pak) isn't in `packages`; for any other
+#'   it is, since that one runs when reached.
 #' * `settings`: data frame `fn`, `setting`, `line`, `col`, `end_col`:
 #'   top-level calls to a global setting function (see
 #'   `setting_functions`), positioned at the function name token (for
@@ -77,6 +86,17 @@
 #'   `"source_parse_error"` (a sourced file that fails to parse; `detail`
 #'   is the parser's message). `col`/`end_col` are `NA` for a note with no
 #'   single responsible token (`"missing_file"`, `"source_parse_error"`).
+#' * `untracked`: the `detail` of the `untracked_read` notes outside any
+#'   top-level function, once each (`"get"`, `"eval"`): the calls the
+#'   cell's note names (#357), kept here so the graph doesn't look at every
+#'   cell's `notes` per build.
+#' * `fn_untracked`: `<function name -> character>`, the same for the notes
+#'   inside each top-level function literal (`load_site <- function(s)
+#'   get(s)`). Those belong to the cells that call the function (#365).
+#' * `fn_calls`: `<function name -> character>`, the names each top-level
+#'   function's body reads, so a function calling `load_site` is found too.
+#' * `calls`: the names the cell reads outside its top-level functions,
+#'   its own top-level definitions included (it may call one it defines).
 #'
 #' Invariants: rows are in source order within the cell's own code and
 #' within each sourced file; a sourced file's rows are appended as a block
@@ -96,17 +116,22 @@ new_cell_analysis <- function(code,
                               definitions = empty_definitions(),
                               references = empty_references(),
                               packages = empty_packages(),
+                              installs = no_installs,
                               settings = empty_settings(),
                               formulas = list(),
                               masked = empty_masked(),
                               sourced = empty_sourced(),
                               notes = empty_notes(),
-                              methods = no_methods) {
+                              methods = no_methods,
+                              untracked = unique(notes$detail[notes$kind == "untracked_read"]),
+                              fn_untracked = list(), fn_calls = list(),
+                              calls = character()) {
   structure(list(code = code, parse_error = parse_error,
                  definitions = definitions, references = references,
-                 packages = packages, settings = settings,
+                 packages = packages, installs = installs, settings = settings,
                  formulas = formulas, masked = masked, sourced = sourced,
-                 notes = notes, methods = methods),
+                 notes = notes, untracked = untracked, fn_untracked = fn_untracked,
+                 fn_calls = fn_calls, calls = calls, methods = methods),
             class = "ember_cell_analysis")
 }
 
@@ -128,6 +153,12 @@ empty_packages <- function() {
   data.frame(name = character(), attached = logical(), line = integer(),
              stringsAsFactors = FALSE)
 }
+empty_installs <- function() {
+  data.frame(package = character(), source = character(), line = integer(),
+             index = integer(), top = logical(), stringsAsFactors = FALSE)
+}
+# Built once, as `no_methods` is: almost no cell has an install call.
+no_installs <- empty_installs()
 empty_settings <- function() {
   data.frame(fn = character(), setting = character(), line = integer(), col = integer(),
              end_col = integer(), stringsAsFactors = FALSE)
@@ -267,6 +298,7 @@ read_cell_in <- function(code, read_file, file, stack) {
   for (i in seq_along(exprs)) {
     acc$index <- i
     acc$line <- expression_line(exprs, i)
+    acc$top_expr <- exprs[[i]]
     walk_expr(exprs[[i]], top, acc, top_pids[i])
   }
   finish(acc, code)
@@ -341,6 +373,17 @@ finish <- function(acc, code) {
   if (nrow(pkgs) > 0) pkgs <- pkgs[!duplicated(pkgs[c("name", "line")]), , drop = FALSE]
   row.names(pkgs) <- NULL
 
+  installs <- no_installs
+  if (length(acc$install_rows) > 0) {
+    r <- acc$install_rows
+    installs <- data.frame(package = vapply(r, `[[`, character(1), "package"),
+                           source = vapply(r, `[[`, character(1), "source"),
+                           line = vapply(r, `[[`, integer(1), "line"),
+                           index = vapply(r, `[[`, integer(1), "index"),
+                           top = vapply(r, `[[`, logical(1), "top"),
+                           stringsAsFactors = FALSE)
+  }
+
   settings <- rbind_all(setting_rows_to_df(acc$setting_rows), acc$extra_settings)
   if (nrow(settings) > 0) settings <- settings[!duplicated(settings[c("fn", "setting", "line", "col")]), , drop = FALSE]
   row.names(settings) <- NULL
@@ -374,9 +417,12 @@ finish <- function(acc, code) {
   }
 
   new_cell_analysis(code, parse_error = NULL, definitions = defs,
-                     references = refs, packages = pkgs, settings = settings,
+                     references = refs, packages = pkgs, installs = installs, settings = settings,
                      formulas = acc$formulas, masked = masked, sourced = sourced, notes = notes,
-                     methods = methods)
+                     methods = methods, untracked = unique(acc$top_untracked),
+                     fn_untracked = lapply(acc$fn_untracked, unique),
+                     fn_calls = lapply(acc$fn_calls, ls, all.names = TRUE),
+                     calls = ls(acc$calls, all.names = TRUE))
 }
 
 #' The `"name"`-form method rows of a cell's own definitions: each

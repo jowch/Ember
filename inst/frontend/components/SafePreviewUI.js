@@ -23,10 +23,14 @@ const plan_text = (plan) => {
  * the page outline and its info popup; no cell shows "not executed"
  * anymore (Cell.js no longer renders `SafePreviewOutput`).
  *
- * @param {{ process_waiting_for_permission: boolean, run_notebook: () => void, plan: { install: number, restart: string[] }? }} props
+ * A static export (`static_preview`, loaded from a statefile) keeps the
+ * flag from when it was exported, but nothing on it can run, so it shows
+ * no banner (#122).
+ *
+ * @param {{ process_waiting_for_permission: boolean, static_preview: boolean, run_notebook: () => void, plan: { install: number, restart: string[] }? }} props
  */
-export const SafePreviewUI = ({ process_waiting_for_permission, run_notebook, plan }) => {
-    if (!process_waiting_for_permission) return null
+export const SafePreviewUI = ({ process_waiting_for_permission, static_preview, run_notebook, plan }) => {
+    if (!process_waiting_for_permission || static_preview) return null
     return html`
         <div id="ember-safe-preview">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">

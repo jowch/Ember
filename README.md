@@ -84,6 +84,20 @@ prefix to one with a trailing slash, as JupyterHub's server proxy does:
 Ember never sees the prefix, so its relative links resolve one level too
 high against a URL without that slash.
 
+Packages from CRAN and Bioconductor need nothing more than `library(dplyr)`:
+Ember installs them into the notebook's own library, at the notebook's date.
+For a package from GitHub or an r-universe, write the install call you would
+anyway, then `library()` it:
+
+```r
+remotes::install_github("lab/mypkg")
+library(mypkg)
+```
+
+Ember reads the install call as where the package lives and records it in
+the notebook. The call itself doesn't run, in Ember or in `ember::run()`:
+the notebook's lock decides what is installed, and the cell says so.
+
 To run a saved notebook from start to finish outside the browser, with the
 package versions it records:
 
@@ -97,7 +111,7 @@ Ember is being built in steps. Not yet available: interactive inputs, like
 Pluto's `@bind`.
 
 Known gaps are tracked as [GitHub issues](https://github.com/jowch/Ember/issues),
-labelled P1 to P3 by priority, and the design is in [docs/design.md](docs/design.md).
+labelled P1 to P3 by priority, and the design is in [docs/design.md](https://github.com/jowch/Ember/blob/main/docs/design.md).
 
 ## Acknowledgements
 

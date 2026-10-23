@@ -786,3 +786,89 @@ test("signature: in a multi-line call at the top of the window, the tooltip leav
 
   assertNoProblems(page);
 });
+
+test("brackets: the bracket at the cursor and its partner are marked, for every R bracket; one inside a string isn't paired (#246)", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-brackets.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  //          0         1         2         3
+  //          0123456789012345678901234567890
+  const code = 'f(c(1), {2}, x[3], y[[4]], "(")';
+  await setCellCode(page, "A", code);
+  const content = page.locator(`${cellSelector("A")} .cm-content`);
+  const marks = `${cellSelector("A")} .cm-matchingBracket`;
+  const marked = () => page.evaluate((sel) => [...document.querySelectorAll(sel)].map((e) => e.textContent), marks);
+  const cursor_at = async (pos) => {
+    await content.click();
+    await page.keyboard.press("Home");
+    for (let i = 0; i < pos; i++) await page.keyboard.press("ArrowRight");
+  };
+  const marks_become = (n) => page.waitForFunction(([sel, n]) => document.querySelectorAll(sel).length === n, [marks, n], { timeout: 30000 });
+
+  // [cursor position, what it sits next to, the pair expected]
+  const cases = [
+    [2, "a call's (", ["(", ")"]],
+    [4, "the inner call's (", ["(", ")"]],
+    [6, "a closing )", ["(", ")"]],
+    [9, "{", ["{", "}"]],
+    [11, "a closing }", ["{", "}"]],
+    [15, "[", ["[", "]"]],
+    [17, "a closing ]", ["[", "]"]],
+    [22, "[[", ["[", "]"]],
+    [31, "the last )", ["(", ")"]],
+  ];
+  for (const [pos, what, pair] of cases) {
+    await cursor_at(pos);
+    await marks_become(2);
+    assert.deepEqual((await marked()).sort(), [...pair].sort(), `next to ${what} (position ${pos}), both brackets are marked`);
+  }
+
+  // From a marked pair to the ( inside the string: that ( is text, so it
+  // isn't paired with the call's closing ). (A bracket with no partner is
+  // still marked on its own, as before.)
+  await cursor_at(2);
+  await marks_become(2);
+  for (let i = 2; i < 29; i++) await page.keyboard.press("ArrowRight");
+  await page.waitForFunction((sel) => document.querySelectorAll(sel).length !== 2, marks, { timeout: 30000 });
+  assert.ok(!(await marked()).includes(")"), `the ( in the string isn't paired: ${JSON.stringify(await marked())}`);
+
+  assertNoProblems(page);
+});
+
+// #314: select all and retype while the tooltip shows. The first key
+// shortens the code below the tooltip's anchor; the tooltip must follow
+// the edit instead of being measured at a position past the end, which
+// threw, rebuilt the editor and dropped every later keystroke.
+test("signature: select all and retype inside a call keeps every key (#314)", async (t) => {
+  const notebook = tempNotebook();
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-signature-retype.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await runCell(page, "A");
+  await page.waitForFunction(() => window.editor_state.notebook.cell_results.A?.output?.last_run_timestamp > 0, null, { timeout: 30000 });
+
+  // A call over two lines: the cell gets shorter on the first key, so
+  // CodeMirror measures the tooltip straight away (on a one-line cell it
+  // waits for the next scroll, which in a person's session comes soon
+  // enough but not in a test).
+  await setCellCode(page, "B", "mean(c(x,\n1, 2, 3, 4))");
+  const content = page.locator(`${cellSelector("B")} .cm-editor:not(.cm-ssr-fake) .cm-content`);
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("ArrowLeft");
+  await page.waitForSelector(".cm-ember-signature-tooltip", { timeout: 30000 });
+
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+  await page.keyboard.type("x * 10", { delay: 120 });
+
+  assert.equal(await content.innerText(), "x * 10");
+  assert.ok(await page.evaluate(() => document.activeElement?.closest?.("pluto-cell")?.id === "B"), "focus stays in the cell");
+  assertNoProblems(page);
+});

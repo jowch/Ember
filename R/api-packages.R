@@ -122,13 +122,60 @@ set_date <- function(nb, date) {
   invisible(reply)
 }
 
-#' Increment 3. Move the date so that `name` is at `version` (the latest
-#' when `NULL`): the earliest date on which that version was current, from
-#' CRAN's release dates (crandb.r-pkg.org, cached), so the other packages
-#' move only as far as they must. Returns the preview; `set_date()` with
-#' its date applies it. Pinning an older version is the same call.
+#' Say yes to a large download.
+#'
+#' An install whose Bioconductor annotation and experiment-data packages
+#' add up to more than `options(ember.ask_above)` bytes (500 MB by default)
+#' stops before downloading anything and waits: `package_status(nb)` then
+#' has `library$status` `"asking"` and `library$download`, the packages and
+#' their sizes. This installs them. Refused (an `ember_refused` condition)
+#' when no install is waiting for an OK.
+#' @export
+approve_install <- function(nb) {
+  reply <- dispatch(nb, ev_approve_install(at = Sys.time()))
+  if (inherits(reply, "ember_refused")) stop(reply)
+  invisible(reply)
+}
+
+#' What updating one package, or pinning it to an older version, would
+#' change.
+#'
+#' Moves the date so that `name` is at `version` (CRAN's newest when
+#' `NULL`), as design.md's "Updating one package" says: a newer version
+#' takes the first date it was current, so the other packages move only as
+#' far as they must, and an older one takes the last date it was current,
+#' so they move back as little as they can. The dates come from CRAN's own
+#' index of its files (`ember_repos(cran_meta)`, cached for a day), and
+#' each is checked against that date's snapshot: a snapshot taken before a
+#' release reached Package Manager is passed over for the next day's.
+#'
+#' Refused (an `ember_refused` condition) unless the notebook's lock has
+#' `name` from CRAN. Otherwise the same preview as `preview_date()`, which
+#' `set_date()` with the returned `date` applies; `status` `"failed"` with
+#' `message` when there is no such date (a version CRAN never released, or
+#' release dates that couldn't be fetched).
+#'
+#' @return `list(date, status, changes, problems, message)`, as
+#'   `preview_date()`'s.
+#' @export
 preview_update <- function(nb, name, version = NULL, wait = TRUE, timeout = 60) {
-  stop("not implemented")
+  if (!is.null(version)) version <- as.character(version)
+  reply <- dispatch(nb, ev_preview_update(name, version, today = Sys.Date(), at = Sys.time()))
+  if (inherits(reply, "ember_refused")) stop(reply)
+  mine <- function(prop) {
+    !is.null(prop) && identical(prop$update$name, name) &&
+      (is.null(version) || identical(prop$update$version, version))
+  }
+  if (isTRUE(wait)) {
+    wait_for(nb, function(snap) {
+      prop <- snap$packages$proposal
+      mine(prop) && prop$status %in% c("ready", "failed")
+    }, timeout = timeout)
+  }
+  prop <- package_status(nb)$proposal
+  if (!mine(prop)) return(list(date = NA_character_, status = "fetching", changes = NULL, problems = NULL, message = NULL))
+  list(date = prop$date, status = prop$status, changes = prop$changes, problems = prop$problems,
+       message = prop$message)
 }
 
 # ---- Running a notebook file -------------------------------------------------
@@ -141,6 +188,12 @@ preview_update <- function(nb, name, version = NULL, wait = TRUE, timeout = 60) 
 #' is started. Does not resolve: the lock is the authority here. If the
 #' code names packages the lock lacks, it says so and runs anyway (R will
 #' report the missing package), since resolving would change the file.
+#'
+#' Install calls (`remotes::install_github()`, `install.packages()`, ...)
+#' at a cell's top level don't run, as in a session (packages.md, "Install
+#' calls"): the lock already answers them. The file runs from a copy with
+#' those calls taken out, line numbers unchanged, from the file's own
+#' folder; one message names the packages.
 #'
 #' @return The exit status, invisibly.
 #' @export
@@ -172,11 +225,88 @@ run <- function(path, repos = ember_repos(), cache = cache_dir(), echo = TRUE) {
   }
   touch_library(lib)
 
+  script <- path
+  skipped <- without_install_calls(text)
+  if (!is.null(skipped)) {
+    message("ember: install calls don't run; the lock gives ",
+            if (length(skipped$packages)) paste(skipped$packages, collapse = ", ") else "their packages")
+    script <- tempfile("ember-run-", fileext = ".R")
+    on.exit(unlink(script), add = TRUE)
+    writeBin(charToRaw(enc2utf8(skipped$text)), script)
+  }
+
   rscript <- file.path(R.home("bin"), "Rscript")
-  res <- processx::run(rscript, c("--vanilla", path), wd = dirname(path),
+  res <- processx::run(rscript, c("--vanilla", script), wd = dirname(path),
                        env = c("current", R_LIBS_USER = lib, R_LIBS = "", R_LIBS_SITE = ""),
                        echo = echo, error_on_status = FALSE)
   invisible(res$status)
+}
+
+#' A notebook file's text with its top-level install calls replaced by
+#' `invisible(NULL)`, keeping every other line where it was:
+#' `list(text, packages)`, or `NULL` when it has none (or doesn't parse:
+#' `Rscript` then reports that itself). Each file-level expression is a
+#' cell's top-level one, since text and off cells are comments.
+without_install_calls <- function(text) {
+  exprs <- tryCatch(parse(text = text, keep.source = TRUE), error = function(e) NULL)
+  if (length(exprs) == 0) return(NULL)
+  refs <- attr(exprs, "srcref")
+  lines <- strsplit(text, "\n", fixed = TRUE)[[1]]
+  packages <- character()
+  found <- FALSE
+  # From the last call back, so an earlier call's positions still hold.
+  for (i in rev(seq_along(exprs))) {
+    kind <- install_call_kind(exprs[[i]])
+    if (is.null(kind)) next
+    found <- TRUE
+    p <- install_targets(exprs[[i]], kind)$package
+    packages <- union(p[!is.na(p)], packages)
+    # The srcref's columns, not its bytes: R's byte fields over-count a
+    # multibyte character, while its columns count characters, with a tab
+    # moving to the next multiple of 8 (`column_char()`).
+    r <- as.integer(refs[[i]])
+    first <- lines[[r[1]]]
+    last <- lines[[r[3]]]
+    before <- substr(first, 1, column_char(first, r[5]) - 1)
+    after <- substr(last, column_char(last, r[6]) + 1, nchar(last))
+    if (r[3] == r[1]) {
+      lines[[r[1]]] <- paste0(before, "invisible(NULL)", after)
+    } else {
+      lines[[r[1]]] <- paste0(before, "invisible(NULL)")
+      lines[(r[1] + 1):r[3]] <- ""
+      lines[[r[3]]] <- after
+    }
+  }
+  if (!found) return(NULL)
+  list(text = paste(lines, collapse = "\n"), packages = as.character(packages))
+}
+
+#' The character of `line` at the parser's column `col`: columns count
+#' characters, a tab moving to the next multiple of 8.
+column_char <- function(line, col) {
+  chars <- strsplit(line, "", fixed = TRUE)[[1]]
+  at <- 0L
+  for (k in seq_along(chars)) {
+    at <- if (identical(chars[[k]], "\t")) (at %/% 8L + 1L) * 8L else at + 1L
+    if (at >= col) return(k)
+  }
+  length(chars)
+}
+
+#' The `install_calls` kind (rules.R) of a call, or `NULL` when it isn't
+#' an install call.
+install_call_kind <- function(e) {
+  if (!is.call(e)) return(NULL)
+  q <- qualified_head(e[[1]])
+  if (!is.null(q)) {
+    key <- paste0(q$pkg, "::", q$fn)
+    return(if (key %in% names(install_calls)) install_calls[[key]])
+  }
+  head <- e[[1]]
+  if (is.symbol(head) && as.character(head) %in% names(install_calls_bare)) {
+    return(install_calls_bare[[as.character(head)]])
+  }
+  NULL
 }
 
 # `clean()` is exported from library.R. Endeavor calls it through the

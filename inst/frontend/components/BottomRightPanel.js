@@ -112,6 +112,17 @@ export let BottomRightPanel = ({ desired_doc_query, doc_query_explicit, on_updat
 
     const my_clock_is_ahead_by = useMyClockIsAheadBy({ connected })
 
+    // An install waiting for the user's OK to a large download (#37) opens
+    // the Packages tab, once each time it starts waiting: its cells wait
+    // with nothing else on the page saying why.
+    const library_status = notebook.ember?.packages?.library?.status
+    const was_asking_ref = useRef(false)
+    useEffect(() => {
+        const asking = library_status === "asking"
+        if (asking && !was_asking_ref.current) open_bottom_right_panel("packages")
+        was_asking_ref.current = asking
+    }, [library_status])
+
     return html`
         <aside id="helpbox-wrapper" class=${cl({ open: !hidden })} ref=${container_ref} onKeyDown=${on_keydown}>
             <pluto-helpbox class=${cl({ hidden, [`helpbox-${open_tab}`]: open_tab != null })}>

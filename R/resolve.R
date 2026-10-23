@@ -34,15 +34,21 @@
 #' folder with one subfolder per universe laid out as r-universe is
 #' (`api/packages/<package>` holding the package's JSON, `src/contrib` its
 #' tarball), which is the test seam.
+#'
+#' `cran_meta` is where CRAN's own index of its files is: `archive.rds` and
+#' `current.rds`, which give every version's release date for
+#' `preview_update()` (`cran_release_table()`). Any CRAN mirror's
+#' `src/contrib/Meta`, or a `file://` folder holding the two files.
 #' @export
 ember_repos <- function(cran = "https://packagemanager.posit.co/cran",
                         bioc = "https://packagemanager.posit.co/bioconductor",
                         bioc_config = "https://bioconductor.org/config.yaml",
                         github = "https://api.github.com",
-                        universe = "https://%s.r-universe.dev") {
+                        universe = "https://%s.r-universe.dev",
+                        cran_meta = "https://cloud.r-project.org/src/contrib/Meta") {
   structure(list(cran = sub("/+$", "", cran), bioc = sub("/+$", "", bioc),
                  bioc_config = bioc_config, github = sub("/+$", "", github),
-                 universe = sub("/+$", "", universe)),
+                 universe = sub("/+$", "", universe), cran_meta = sub("/+$", "", cran_meta)),
             class = "ember_repos")
 }
 
@@ -789,6 +795,79 @@ wanted_packages <- function(graph, header) {
   wanted <- c(used, header$extra_packages)
   wanted <- setdiff(unique(wanted), base_packages)
   sort(wanted, method = "radix")
+}
+
+#' The sources the notebook's install calls give (packages.md, "Install
+#' calls"): data frame `cell`, `package`, `source`, `line`, one row per
+#' install row that names a source, from `analyses` (named by `ids`).
+install_source_rows <- function(analyses, ids) {
+  rows <- lapply(seq_along(analyses), function(i) {
+    r <- analyses[[i]]$installs
+    if (is.null(r) || nrow(r) == 0) return(NULL)
+    r <- r[!is.na(r$package) & !is.na(r$source), , drop = FALSE]
+    if (nrow(r) == 0) return(NULL)
+    data.frame(cell = ids[[i]], package = r$package, source = r$source, line = r$line,
+               stringsAsFactors = FALSE)
+  })
+  rows <- Filter(Negate(is.null), rows)
+  if (length(rows) == 0) {
+    return(data.frame(cell = character(), package = character(), source = character(),
+                      line = integer(), stringsAsFactors = FALSE))
+  }
+  do.call(rbind, rows)
+}
+
+#' The `[sources]` entries the notebook's code declares, for the packages
+#' it wants: named character, package -> spec. Each comes from an install
+#' call in a cell that isn't disabled; a package given two sources is left
+#' out (the graph's `source_conflict` error). An install call names a
+#' repository, whose name may differ in case from the package's
+#' (`"lab/MyPkg"` for `library(mypkg)`): it is matched to the wanted name
+#' ignoring case when no wanted name matches exactly. A wanted package in
+#' `builtin` (`builtin_sources`, rules.R) with no install call gets its
+#' built-in source.
+declared_sources <- function(graph, wanted, builtin = builtin_sources) {
+  ids <- setdiff(graph$ids, graph$disabled %||% character())
+  rows <- install_source_rows(graph$analyses[ids], ids)
+  out <- character()
+  for (p in unique(rows$package)) {
+    specs <- unique(rows$source[rows$package == p])
+    if (length(specs) != 1) next
+    name <- if (p %in% wanted) p else wanted[tolower(wanted) == tolower(p)][1]
+    if (length(name) == 1 && !is.na(name) && !(name %in% names(out))) out[[name]] <- specs
+  }
+  for (p in intersect(names(builtin), setdiff(wanted, names(out)))) {
+    out[[p]] <- builtin[[p]]
+  }
+  if (length(out) == 0) return(character())
+  out[order(names(out), method = "radix")]
+}
+
+#' The packages whose source an install call in code names: the
+#' `[sources]` entries the `set_package_source` and `remove_package_source`
+#' ops refuse to change, since the next step would write the code's back.
+#' Built-in sources aren't among them.
+code_sources <- function(graph, header) {
+  names(declared_sources(graph, wanted_packages(graph, header), builtin = character()))
+}
+
+#' The header with the code's declared sources written into `[sources]`
+#' (`declared_sources()`). The code wins over a hand-written entry for the
+#' same package, except a built-in one, which only fills a gap. An entry
+#' whose install call is gone stays: the header is the record, and a
+#' removed line shouldn't move a package.
+sync_sources <- function(header, declared, builtin = builtin_sources) {
+  if (length(declared) == 0) return(header)
+  src <- header$sources %||% character()
+  for (p in names(declared)) {
+    from_builtin <- p %in% names(builtin) && identical(unname(declared[[p]]), unname(builtin[[p]]))
+    if (from_builtin && p %in% names(src)) next
+    src[[p]] <- declared[[p]]
+  }
+  src <- src[order(names(src), method = "radix")]
+  if (identical(src, header$sources)) return(header)
+  header$sources <- src
+  header
 }
 
 #' The packages one cell needs installed before it can run: its analysis's

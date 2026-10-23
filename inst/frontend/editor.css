@@ -100,10 +100,19 @@ pluto-editor main {
     }
 }
 
+/* The cell's left controls, the show/hide code eye in the shoulder
+   (cells.css, #287) and the run button's corner, need 46px left of the
+   column (24px + 18px + 4px). Above 800px the centred column's margin
+   gives that; below, main's own padding does. */
+@media (max-width: 800px) {
+    pluto-editor main {
+        padding-left: 46px;
+    }
+}
 @media (max-width: 640px) {
     pluto-editor main {
         margin-left: 0;
-        padding-left: 16px;
+        padding-left: 46px;
         padding-right: 16px;
         max-width: none;
     }
@@ -1284,6 +1293,13 @@ nav#at_the_top .ember-menu {
     padding: 0.6em 0.8em;
 }
 
+/* A question, not a failure: the panel's own line (#37). */
+.ember-install-ask-card {
+    border: 1px solid var(--rule-color);
+    border-radius: 6px;
+    padding: 0.6em 0.8em;
+}
+
 .ember-install-failure-title {
     font-weight: 600;
     margin: 0 0 0.2em 0;
@@ -1457,7 +1473,8 @@ main > preamble {
     display: flex;
     height: 20px;
     position: sticky;
-    top: 5px;
+    /* Under Ember's sticky header, not over its buttons (#290). */
+    top: calc(var(--ember-header-height) + 5px);
     margin-top: 5px;
     padding-right: 5px;
     z-index: 200;
@@ -1482,18 +1499,28 @@ main > preamble {
     color: var(--overlay-button-color, currentcolor);
 }
 
+/* At the right edge of the notebook column; on a window wide enough, out in
+   the margin, its right edge 24px from the window's (a little more than a
+   classic scrollbar, which 100vw includes). The shift is the margin's
+   width, not a guess at the button's: Pluto's fixed offsets assumed the
+   narrow "⌘ S" label and put "Ctrl+S" past the window's edge (#290). With
+   the side panel docked, the margin is the panel's, so it stays put. */
 main > preamble #saveall-container {
     margin-left: auto;
+    height: auto;
+    min-height: 2.4rem;
+    align-items: center;
 }
-pluto-editor.fullscreen main > preamble #saveall-container {
-    transform: translateX(max(0px, 100vw - 700px - 25px));
-    /* position: relative; */
-}
-
-@media screen and (min-width: calc(700px + 25px + 6px + 500px)) {
-    pluto-editor.fullscreen main > preamble #saveall-container {
-        transform: translateX(500px);
+@media screen and (min-width: 1240px) {
+    pluto-editor.fullscreen:not(:has(#helpbox-wrapper.open)) main > preamble #saveall-container {
+        transform: translateX(calc((100vw - var(--ember-column) - 25px - 6px) / 2 - 24px));
     }
+}
+/* The keys are laid out as boxes, so the button is as tall as they are
+   instead of the keys spilling out of it (#290). */
+main > preamble #saveall-container > button.runallchanged {
+    display: inline-flex;
+    align-items: center;
 }
 
 main > preamble #saveall-container.ask_to_save {
@@ -2899,9 +2926,6 @@ pluto-input:focus-within .cm-editor .cm-matchingBracket {
     white-space: pre;
     vertical-align: top;
     margin-left: -1px;
-}
-.cm-julia-kwarg {
-    font-style: italic;
 }
 
 /* PLUTO HOOKS - special styling for cell that runs hook */

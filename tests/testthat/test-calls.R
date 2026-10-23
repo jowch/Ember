@@ -311,6 +311,71 @@ test_that("mget(c('a', paste0('b'))) is not fully literal, keeps the note", {
   expect_equal(a$notes$kind, "untracked_read")
 })
 
+test_that("get passed as a function gets the untracked_read note, unless it's a local (#357)", {
+  a <- read_cell('all <- lapply(site_names, get)')
+  expect_equal(a$notes$kind, "untracked_read")
+  expect_equal(a$notes$detail, "get")
+  b <- read_cell('mapply(get, nms)')
+  expect_equal(b$notes$detail, "get")
+  # A parameter named `get` is the function's own, not base::get.
+  c <- read_cell('f <- function(get) lapply(x, get)')
+  expect_equal(nrow(c$notes), 0)
+  # A call is read by the get() rules above, not twice.
+  d <- read_cell('get(s)')
+  expect_equal(nrow(d$notes), 1)
+  # base::get passed as a function is the same case.
+  e <- read_cell('lapply(nms, base::get)')
+  expect_equal(e$notes$detail, "get")
+  expect_equal(e$untracked, "get")
+})
+
+test_that("get looked at as a function, not called, gets no note (#357)", {
+  for (code in c("?get", "help(get)", "args(get)", "formals(get)", "body(exists)",
+                 "environment(get)", "debug(get)", "debugonce(mget)", "undebug(get)",
+                 "trace(get, quote(1))", "untrace(get)", "identical(f, get)", "bquote(get)",
+                 "args(base::get)")) {
+    a <- read_cell(code)
+    expect_equal(nrow(a$notes), 0, info = code)
+    expect_equal(a$untracked, character(), info = code)
+  }
+  # Only a direct argument: a call inside one still reads.
+  a <- read_cell("identical(x, lapply(nms, get))")
+  expect_equal(a$notes$detail, "get")
+})
+
+test_that("get() inside a top-level function belongs to the function, not the cell (#365)", {
+  a <- read_cell("load_site <- function(s) get(s)")
+  expect_equal(a$notes$detail, "get")
+  expect_equal(a$untracked, character())
+  expect_equal(a$fn_untracked, list(load_site = "get"))
+  # What a function's body reads, and what the cell reads outside its
+  # functions, own definitions included.
+  b <- read_cell("load_all <- function(ns) lapply(ns, load_site)\nx <- load_all(nms)")
+  expect_equal(b$fn_calls$load_all, c("lapply", "load_site"))
+  expect_true(all(c("load_all", "nms") %in% b$calls))
+  expect_false("load_site" %in% b$calls)
+  # An argument or local with the function's name isn't the function.
+  c <- read_cell("g <- function(load_site) load_site(1)")
+  expect_null(c$fn_calls$g)
+  # A function literal that isn't bound at the top level runs here.
+  d <- read_cell("sapply(nms, function(s) get(s))\nlocal(f <- function(s) get(s))")
+  expect_equal(d$untracked, "get")
+  expect_equal(d$fn_untracked, list())
+  # A sourced file's functions count the same.
+  e <- read_cell('source("helpers.R")\nload_site("a")',
+                 read_file = function(path) "load_site <- function(s) get(s)")
+  expect_equal(e$fn_untracked, list(load_site = "get"))
+  expect_true("load_site" %in% e$calls)
+  # A call by a string name counts; looking at the function doesn't.
+  f <- read_cell("sapply(nms, 'load_site')\ndo.call(\"pick\", list(1))")
+  expect_true(all(c("load_site", "pick") %in% f$calls))
+  g <- read_cell("args(load_site)\nbody(load_site)\nprint(load_site)")
+  expect_false("load_site" %in% g$calls)
+  # A string in c() is data.
+  h <- read_cell("nms <- c('load_site', 'b')")
+  expect_false("load_site" %in% h$calls)
+})
+
 test_that("eval() is untouched by the get-family literal-name rule", {
   a <- read_cell('eval(parse(text = "1 + 1"))')
   expect_equal(a$notes$kind, "untracked_read")

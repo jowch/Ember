@@ -6,6 +6,8 @@
 \alias{set_package_source}
 \alias{remove_package_source}
 \alias{preview_date}
+\alias{preview_update}
+\alias{approve_install}
 \alias{set_date}
 \alias{run}
 \alias{clean}
@@ -34,7 +36,11 @@ remove_package_source(name)
 
 preview_date(nb, date = Sys.Date(), wait = TRUE, apply = FALSE, timeout = 60)
 
+preview_update(nb, name, version = NULL, wait = TRUE, timeout = 60)
+
 set_date(nb, date)
+
+approve_install(nb)
 
 run(path, repos = ember_repos(), cache = cache_dir(), echo = TRUE)
 
@@ -45,14 +51,17 @@ ember_repos(cran = "https://packagemanager.posit.co/cran",
             bioc = "https://packagemanager.posit.co/bioconductor",
             bioc_config = "https://bioconductor.org/config.yaml",
             github = "https://api.github.com",
-            universe = "https://\%s.r-universe.dev")
+            universe = "https://\%s.r-universe.dev",
+            cran_meta = "https://cloud.r-project.org/src/contrib/Meta")
 
 cache_dir()
 }
 \arguments{
 \item{nb}{An \code{ember_notebook} handle.}
-\item{name}{A package name, for \code{add_extra_package()}/\code{remove_extra_package()}
-and \code{set_package_source()}/\code{remove_package_source()}.}
+\item{name}{A package name, for \code{add_extra_package()}/\code{remove_extra_package()},
+\code{set_package_source()}/\code{remove_package_source()} and \code{preview_update()}.}
+\item{version}{The version \code{preview_update()} moves \code{name} to: newer to
+update it, older to pin it back. \code{NULL} is CRAN's newest.}
 \item{source}{Where the package comes from, for \code{set_package_source()}:
 \code{"github:user/repo"}, optionally with \code{@} and a branch, tag or commit
 (\code{"user/repo"} reads as the same, and so does a github.com link to the
@@ -107,11 +116,15 @@ the same way. \code{GITHUB_PAT} (or \code{GITHUB_TOKEN}) is sent when set.}
 \item{universe}{Where \code{[sources]} r-universe packages come from, for
 \code{ember_repos()}: a URL with \code{\%s} where the universe's name goes,
 r-universe's own by default, or a \code{file://} folder laid out the same way.}
+\item{cran_meta}{Where CRAN's own index of its files is, for \code{ember_repos()}:
+the folder holding \code{archive.rds} and \code{current.rds}, which give each
+version's release date for \code{preview_update()}. Kept in \code{cache} for a day.}
 }
 \value{
 \code{package_status()} returns a plain list, the same value as
 \code{notebook_snapshot(nb)$packages}: \code{list(snapshot, r_version,
-bioc_version, library = list(status, path, progress, message, log, failures),
+bioc_version, library = list(status, path, progress, message, log, failures,
+download),
 packages = data.frame(name, version, source, direct, status, message),
 problems, proposal, plan)}. Per package, \code{status} is one of
 \code{"installed"}, \code{"installing"}, \code{"missing"}, \code{"failed"} (named by
@@ -158,10 +171,28 @@ where \code{status} is \code{"fetching"}, \code{"ready"} or \code{"failed"}, and
 applying it on its own: then it names the loaded packages applying would
 restart.
 
+\code{preview_update()} moves the date just far enough that \code{name} is at
+\code{version}: a newer version takes the first day it was CRAN's current one,
+an older one the last, each checked against that day's snapshot. It
+returns \code{list(date, status, changes, problems, message)}, as
+\code{preview_date()}'s, which \code{set_date()} with the returned \code{date}
+applies; \code{status} is \code{"failed"} with \code{message} when there is no
+such date. It is refused unless the lock has \code{name} from CRAN.
+
 \code{set_date()} returns, invisibly, the applied \code{changes} (the same shape
 as \code{preview_date()}'s). It is refused (an \code{ember_refused} condition) unless
 \code{preview_date()} for that date is ready and current: the caller must have
 seen what would change.
+
+\code{approve_install()} says yes to a large download. An install whose
+Bioconductor annotation and experiment-data packages add up to more than
+\code{options(ember.ask_above)} bytes (500 MB by default; \code{Inf} never
+asks) stops before downloading anything, with \code{library$status}
+\code{"asking"} and \code{library$download} a data frame \code{package}, \code{version},
+\code{bytes} (\code{NA} when a size couldn't be had), largest first. Cells that
+use those packages wait until it is approved. It returns \code{TRUE}
+invisibly, and is refused when no install is waiting for an OK.
+\code{run()} never asks.
 
 \code{run()} returns, invisibly, the file's exit status.
 
@@ -193,7 +224,11 @@ tab's.
 names a package the lock lacks, \code{run()} says so and runs anyway (R
 reports the missing package), since resolving would change the file.
 Building the library blocks the caller, the same installer and layout a
-session uses.
+session uses. Install calls (\code{remotes::install_github()},
+\code{install.packages()}, ...) at a cell's top level don't run, as in a
+session: \code{run()} runs a copy of the file without them, from the file's
+own folder, and says once which packages the lock gives. The copy is a
+temporary file, so \code{commandArgs()} names it, not the notebook.
 
 \code{clean()} never deletes a library an open session in this process is using,
 and never touches a user's own renv projects: Ember keeps its own renv
