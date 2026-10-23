@@ -94,8 +94,10 @@ pluto-editor main {
     position: relative;
     transition: margin-right 0.18s ease;
 }
+/* `> main`: the notebook's own column. A help page's Rd2HTML <main> sits
+   inside the panel, and this rule's id out-ranks its reset below (#433). */
 @media screen and (min-width: 1240px) {
-    pluto-editor:not(.disable_ui):has(#helpbox-wrapper.open) main {
+    pluto-editor:not(.disable_ui):has(#helpbox-wrapper.open) > main {
         margin-right: max(var(--ember-main-free) / 2, min(var(--ember-main-free), var(--ember-panel-width) + var(--ember-panel-gap)));
     }
 }

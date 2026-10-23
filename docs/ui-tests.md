@@ -175,7 +175,8 @@ this Mac).
 layout rules (`layout-check.mjs`: nothing clipped, covered, off screen or
 under an overlay scrollbar; cells in the same state look the same) over
 `fixtures/ui-sweep.R` at 600, 900 and 1440 px, in each state a person sees
-it in. Known open bugs are listed in its `KNOWN` with their issue; the PR
+it in, including the Help tab open on a long page, where it also checks
+that the page fits the docked panel at 1240 and 1440 (#433). Known open bugs are listed in its `KNOWN` with their issue; the PR
 that fixes one removes its entry. `node tests/e2e/shots.mjs [notebook]
 [--run] [--dark] [--mac]` saves screenshots of any notebook with the same
 checks, for looking at a change before and after
