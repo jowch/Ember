@@ -270,6 +270,9 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
     walk_data_read(e, scope, acc, name, arg_pids, head_pos)
     return(invisible())
   }
+  if (name %in% names(data_writers) && (qualified || !is_bound_locally(scope, name))) {
+    walk_data_write(e, scope, acc, name)
+  }
   if (identical(name, "source")) {
     maybe_record_name_read()
     if (!in_function(scope)) {

@@ -115,6 +115,21 @@ data_readers <- c(
   read_csv_arrow = "file", read_sav = "file", read_dta = "file", read_sas = "data_file",
   read_xpt = "file", read_json = "path")
 
+#' Functions that write a file, each with the argument that names it and
+#' its position (#276). They aren't watched: they tell the worker which
+#' top-level expressions of a reading cell change its data files
+#' themselves (`data_touch`), so that a change made by any other
+#' expression while the cell runs is someone else's.
+data_writers <- list(
+  write.csv = list("file", 2L), write.csv2 = list("file", 2L), write.table = list("file", 2L),
+  saveRDS = list("file", 2L), save = list("file", NA_integer_), writeLines = list("con", 2L),
+  write_csv = list("file", 2L), write_csv2 = list("file", 2L), write_tsv = list("file", 2L),
+  write_delim = list("file", 2L), write_rds = list("file", 2L), write_lines = list("file", 2L),
+  write_file = list("file", 2L), fwrite = list("file", 2L), write_parquet = list("sink", 2L),
+  write_feather = list("sink", 2L), write_xlsx = list("path", 2L), write_json = list("path", 2L),
+  ggsave = list("filename", 1L), file.copy = list("to", 2L), file.rename = list("to", 2L),
+  download.file = list("destfile", 2L))
+
 #' The subset of `untracked_reads` whose name argument is checked for a
 #' literal before falling back to the plain `untracked_read` note.
 get_family_functions <- c("get", "get0", "exists", "mget", "dynGet")

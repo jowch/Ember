@@ -417,12 +417,19 @@ jsonlite. A literal path in a file the cell sources counts too.
   a reader that ran after the writer isn't run twice. Comparing versions,
   not times, holds however coarse the file system's clock is. A reader
   that is queued is left alone: its run reads the new file.
-- A change while the reader runs counts as seen by that run. Ember can't
-  tell a cell's own write from someone else's there, and marking the
-  result stale would rerun a cell that writes the file it reads over and
-  over, as the stale ancestor of its queued dependents. So a file replaced
-  from outside the notebook while its reader runs, after the reader read
-  it, leaves the result out of date until the next change.
+- A change while the reader runs is checked by the worker. It knows which
+  top-level expressions of the cell read or write each file (literal
+  paths given to a fixed list of writers, `data_writers`, such as
+  `write.csv` and `saveRDS`; a writer with a computed path counts for
+  every file). After each expression it compares each file's version. A
+  change during an expression that neither reads nor writes the file,
+  after the cell first read it, is someone else's: the result is marked
+  stale, and autorun runs it again. A change before the cell reads the
+  file is read with it, and the cell's own writes don't count.
+- A write Ember can't see, such as one inside a helper function, looks
+  like someone else's. So that a cell that does this doesn't run forever,
+  a run that sees such a change right after a run that saw one keeps its
+  result as it is.
 - A file saved with the same bytes isn't a change. The shell compares sizes
   first and hashes a file only when a rewrite keeps its size; the first
   such rewrite after opening counts as a change, since there is no earlier

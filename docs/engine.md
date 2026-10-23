@@ -239,10 +239,12 @@ after each dispatch.
 - **Data files are watched by modified time, then size, then MD5**
   (#276). The shell keeps them in `nb$data_watch`, apart from sourced
   files, and dispatches `data_changed` with each changed path's version
-  (`data_signature()`: modified time and size). A run's `wk_done` carries
-  the versions of the cell's data files as its result arrived, kept as
-  the result's `data_seen`; `reduce_data_changed` skips a reader that saw
-  the new version, or that is queued or running.
+  (`data_signature()`: modified time and size). The run message's `data`
+  lists the cell's files with the expressions that touch them; the worker
+  reports the versions the run ended with (`data_seen`, kept on the
+  result) and the files someone else changed during it (`data_changed`).
+  `reduce_data_changed` skips a reader that saw the new version, or that
+  is queued or running.
 - **Computed `source()` paths are kept for the session only**; the learned
   definitions they produce go into the footer like any other.
 - **Formula checks** evaluate the `data` argument only when it is a symbol

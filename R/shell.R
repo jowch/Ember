@@ -66,7 +66,6 @@ session_start <- function(state) {
   nb$out_tail <- ""
   nb$watch <- list()
   nb$data_watch <- list()
-  nb$run_data <- NULL
   nb$last_watch_check <- NULL
   nb$last_mem_check <- NULL
   nb$worker_rss_reported <- NULL
@@ -487,11 +486,6 @@ run_effect <- function(nb, fx) {
     },
     send = {
       if (identical(nb$proc_gen, fx$gen) && !is.null(nb$con)) {
-        if (identical(fx$msg$type, "run")) {
-          # The data files whose versions the run's result records (#276).
-          nb$run_data <- list(token = fx$msg$token,
-                              paths = nb$state$graph$analyses[[fx$msg$cell]]$data_files %||% character())
-        }
         tryCatch(write_frame(nb$con, fx$msg), error = function(e) NULL)
         note_worker_io(nb)
       }
@@ -1139,10 +1133,6 @@ poll <- function(nb) {
           next
         }
         ev <- worker_event(msg, nb$proc_gen, Sys.time(), secret = nb$secret)
-        if (identical(ev$type, "wk_done") && identical(ev$token, nb$run_data$token)) {
-          ev$data_end <- data_signatures(nb, nb$run_data$paths)
-          nb$run_data <- NULL
-        }
         if (identical(ev$type, "wk_hello")) nb$worker_tmp <- worker_tempdir(msg$tempdir)
         enqueue(nb, ev)
         if (identical(ev$type, "wk_failed")) {
@@ -1459,12 +1449,8 @@ data_file_info <- function(full) {
 #' What step.R compares to tell whether a reader saw a data file's current
 #' version (#276): its modified time and size as text, or `"missing"`.
 data_signature <- function(info) {
-  if (is.na(info$mtime)) "missing" else sprintf("%.6f %s", as.numeric(info$mtime), format(info$size))
-}
-
-#' The signatures of a cell's data files, by path.
-data_signatures <- function(nb, paths) {
-  stats::setNames(lapply(paths, function(p) data_signature(data_file_info(resolve_source_path(nb, p)))), paths)
+  # inst/worker.R's data_signature() must write the same text.
+  if (is.na(info$mtime)) "missing" else sprintf("%.6f %.0f", as.numeric(info$mtime), as.numeric(info$size))
 }
 
 #' A data file's md5, or `NA` when it is missing or can't be read.

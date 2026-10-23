@@ -93,6 +93,12 @@
 #' * `data_files`: the literal paths the cell (or a file it sources) reads
 #'   data from with one of the `data_readers` (`read.csv("d.csv")`), once
 #'   each. The shell watches them (#276).
+#' * `data_touch`: data frame `path`, `index`, `read`: each top-level
+#'   expression that reads (`read`) or writes a data file, the expressions
+#'   of a sourced file counting as the `source()` call's. `path` is `NA`
+#'   for a write to a path that isn't a literal, which may be any file.
+#'   The worker uses it to tell the cell's own changes to its data files
+#'   from someone else's during a run.
 #' * `untracked_files`: the `detail` of the `untracked_file` notes, once
 #'   each: the readers called with a computed path (`read.csv(f)`), which
 #'   the cell's note names.
@@ -122,7 +128,7 @@ new_cell_analysis <- function(code,
                               sourced = empty_sourced(),
                               notes = empty_notes(),
                               methods = no_methods,
-                              data_files = character()) {
+                              data_touch = empty_data_touch()) {
   untracked <- unique(notes$detail[notes$kind == "untracked_read"])
   untracked_files <- unique(notes$detail[notes$kind == "untracked_file"])
   structure(list(code = code, parse_error = parse_error,
@@ -130,7 +136,8 @@ new_cell_analysis <- function(code,
                  packages = packages, installs = installs, settings = settings,
                  formulas = formulas, masked = masked, sourced = sourced,
                  notes = notes, untracked = untracked, methods = methods,
-                 data_files = unique(data_files), untracked_files = untracked_files),
+                 data_files = unique(data_touch$path[data_touch$read & !is.na(data_touch$path)]),
+                 data_touch = data_touch, untracked_files = untracked_files),
             class = "ember_cell_analysis")
 }
 
@@ -418,8 +425,20 @@ finish <- function(acc, code) {
   new_cell_analysis(code, parse_error = NULL, definitions = defs,
                      references = refs, packages = pkgs, installs = installs, settings = settings,
                      formulas = acc$formulas, masked = masked, sourced = sourced, notes = notes,
-                     methods = methods,
-                     data_files = c(acc$data_paths, unlist(acc$extra_data, use.names = FALSE)))
+                     methods = methods, data_touch = data_touch_of(acc$data_rows))
+}
+
+empty_data_touch <- function() data.frame(path = character(), index = integer(), read = logical(),
+                                          stringsAsFactors = FALSE)
+
+data_touch_of <- function(rows) {
+  if (length(rows) == 0) return(empty_data_touch())
+  d <- data.frame(path = vapply(rows, function(r) r$path, character(1)),
+                  index = vapply(rows, function(r) as.integer(r$index), integer(1)),
+                  read = vapply(rows, function(r) r$read, logical(1)), stringsAsFactors = FALSE)
+  d <- d[!duplicated(d), , drop = FALSE]
+  row.names(d) <- NULL
+  d
 }
 
 #' The `"name"`-form method rows of a cell's own definitions: each

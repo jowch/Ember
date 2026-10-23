@@ -394,3 +394,16 @@ test_that("a sourced file's literal reads count as the cell's (#276)", {
   a <- read_cell('source("load.R")', function(path) 'd <- read.csv("d.csv")')
   expect_equal(a$data_files, "d.csv")
 })
+
+test_that("data_touch lists the top-level expressions that read or write each file (#276)", {
+  a <- read_cell('d <- read.csv("d.csv")\nm <- 1\nwrite.csv(d, "d.csv")\nsaveRDS(m, file = f)\nsave(m, file = "m.RData")')
+  expect_equal(a$data_files, "d.csv")
+  t <- a$data_touch
+  expect_equal(t$path, c("d.csv", "d.csv", NA, "m.RData"))
+  expect_equal(t$index, c(1L, 3L, 4L, 5L))
+  expect_equal(t$read, c(TRUE, FALSE, FALSE, FALSE))
+  # A sourced file's reads and writes are the source() call's.
+  b <- read_cell('x <- 1\nsource("load.R")', function(path) 'd <- read.csv("d.csv")\nwrite.csv(d, "d.csv")')
+  expect_equal(b$data_touch$index, c(2L, 2L))
+  expect_equal(b$data_touch$read, c(TRUE, FALSE))
+})

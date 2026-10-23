@@ -68,10 +68,8 @@ wk_console  <- function(gen, token, item, at)
   event("wk_console", at, gen = gen, token = token, item = item)
 wk_source   <- function(gen, token, path, text, at)
   event("wk_source", at, gen = gen, token = token, path = path, text = text)
-#' `data_end` is the signatures of the cell's data files (#276) when its
-#' result arrived.
-wk_done     <- function(gen, token, report, at, data_end = list())
-  event("wk_done", at, gen = gen, token = token, report = report, data_end = data_end)
+wk_done     <- function(gen, token, report, at)
+  event("wk_done", at, gen = gen, token = token, report = report)
 wk_rendered <- function(gen, cell, display, at)
   event("wk_rendered", at, gen = gen, cell = cell, display = display)
 #' The worker's answer to a `set_input` message: `ok`, the value as
@@ -549,7 +547,24 @@ run_message <- function(state, id, token) {
       order = order, settings = settings_in_effect(state, id), formulas = state$graph$analyses[[id]]$formulas,
       library = state$packages$active$path, fig = cell_figure_size(cell$code),
       inputs = if (!is_text) run_inputs(state, id),
-      installs = if (!is_text) run_installs(state$graph$analyses[[id]]))
+      installs = if (!is_text) run_installs(state$graph$analyses[[id]]),
+      data = if (!is_text) run_data_files(state, id))
+}
+
+#' The data part of a run message (#276): for each file the cell reads,
+#' its path resolved against the notebook's folder and the top-level
+#' expressions that read or write it (a write to a computed path counts
+#' for every file), so the worker can tell someone else's change during
+#' the run from the cell's own. `NULL` for a cell that reads none.
+run_data_files <- function(state, id) {
+  a <- state$graph$analyses[[id]]
+  if (length(a$data_files) == 0) return(NULL)
+  touch <- a$data_touch
+  dir <- dirname(state$path %||% ".")
+  lapply(a$data_files, function(p) {
+    list(path = p, full = if (is_absolute_path(p)) p else file.path(dir, p),
+         touch = sort(unique(touch$index[touch$path %in% p | is.na(touch$path)])))
+  })
 }
 
 #' The install part of a run message: the cell's top-level install calls,
@@ -2040,12 +2055,25 @@ reduce_wk_done <- function(state, event) {
                        inputs = if (identical(status, "ok")) report$inputs %||% list() else list(),
                        from_lock = as.character(report$from_lock %||% character()))
   if (late_stale) result$stale <- TRUE
-  # The versions of its data files the result saw (#276). A file that
-  # changed during the run counts as seen: Ember can't tell the cell's own
-  # write from someone else's, and marking it stale would rerun a cell that
-  # writes the file it reads over and over, as an ancestor of its queued
-  # dependents.
-  result$data_seen <- event$data_end %||% list()
+  # The versions of its data files the run ended with (#276), and the ones
+  # someone else changed after the cell read them: the run may have read
+  # the old contents, so the result is stale, and autorun runs it again.
+  # Its own writes don't count (the worker knows which top-level
+  # expressions write each file, `data_touch`); a run that still saw such
+  # a change right after one that did leaves the result as it is, so a
+  # write Ember can't see (through a helper function) doesn't loop.
+  result$data_seen <- report$data_seen %||% list()
+  outside <- as.character(report$data_changed %||% character())
+  if (length(outside) > 0) {
+    result$data_changed <- outside
+    prev <- state$results[[id]]
+    if (length(prev$data_changed %||% character()) == 0) {
+      result$stale <- TRUE
+      if (identical(state$file$header$on_cell_change, "autorun") && isTRUE(state$allowed)) {
+        state$pending <- union(state$pending, id)
+      }
+    }
+  }
   state$results[[id]] <- result
   state$graph_dropped[[id]] <- NULL
   if (identical(status, "ok")) state <- keep_input_values(state, id, w$running$code, result$inputs)

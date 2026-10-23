@@ -996,8 +996,8 @@ data_file_notebook <- function(on_cell_change = "autorun") {
   r <- boot(s, c("W", "R", "U"))
   for (created in list(character(), "d", character())) {
     seen <- if (identical(created, "d")) list("d.csv" = "v1") else list()
-    r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = created),
-                                at(r$state$worker$running$started_at + 2), data_end = seen))
+    r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = created, data_seen = seen),
+                                at(r$state$worker$running$started_at + 2)))
   }
   r
 }
@@ -1024,8 +1024,7 @@ test_that("a writer that runs right after its reader reruns the reader, however 
   s <- fake_state(list(S = cell(""), R = cell('d <- read.csv("d.csv")'),
                        W = cell('write.csv(data.frame(x = 1:3), "d.csv", row.names = FALSE)')))
   r <- boot(s, c("R", "W"))
-  r <- drive(r$state, wk_done(1, last_token(r), report(created = "d"), at(5),
-                              data_end = list("d.csv" = "v1")))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "d", data_seen = list("d.csv" = "v1")), at(5)))
   r <- drive(r$state, wk_done(1, last_token(r), report(), at(5.004)))
   r2 <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(6)))
   expect_equal(r2$state$worker$running$cell, "R")
@@ -1049,20 +1048,49 @@ test_that("a data file at the version its reader's result saw doesn't wake the r
   expect_null(r2$state$worker$running)
 })
 
-test_that("a data file that changes while its reader runs counts as seen by that run (#276)", {
-  # Ember can't tell the run's own write from someone else's; marking the
-  # result stale would rerun a cell that writes the file it reads, as the
-  # stale ancestor of U, again and again.
+test_that("a data file someone else changed while its reader ran makes the result stale, and autorun runs it again (#276)", {
   s <- fake_state(list(S = cell(""), R = cell('d <- read.csv("d.csv")'), U = cell("d")))
   r <- boot(s, c("R", "U"))
+  # The poll's change, during the run, is left to the run's own report.
   r2 <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(4)))
   expect_equal(r2$state$worker$running$cell, "R")
   expect_equal(r2$state$pending, "U")
-  r3 <- drive(r2$state, wk_done(1, r2$state$worker$running$token, report(created = "d"), at(5),
-                                data_end = list("d.csv" = "v2")))
-  expect_false(isTRUE(r3$state$results$R$stale))
+  r3 <- drive(r2$state, wk_done(1, r2$state$worker$running$token,
+                                report(created = "d", data_seen = list("d.csv" = "v2"), data_changed = "d.csv"), at(5)))
   expect_equal(r3$state$results$R$data_seen, list("d.csv" = "v2"))
-  expect_equal(r3$state$worker$running$cell, "U")
+  expect_equal(r3$state$worker$running$cell, "R")
+  # A run that saw it again right after (a write Ember can't see, as
+  # through a helper function) keeps its result: no loop.
+  r4 <- drive(r3$state, wk_done(1, r3$state$worker$running$token,
+                                report(created = "d", data_seen = list("d.csv" = "v3"), data_changed = "d.csv"), at(6)))
+  expect_false(isTRUE(r4$state$results$R$stale))
+  expect_equal(r4$state$worker$running$cell, "U")
+  # A run that saw no one else's change is fresh, its own writes included.
+  r5 <- drive(r2$state, wk_done(1, r2$state$worker$running$token,
+                                report(created = "d", data_seen = list("d.csv" = "v2")), at(5)))
+  expect_false(isTRUE(r5$state$results$R$stale))
+  expect_equal(r5$state$worker$running$cell, "U")
+})
+
+test_that("in lazy mode a change during the run marks the result stale and runs nothing more for it (#276)", {
+  s <- fake_state(list(S = cell(""), R = cell('d <- read.csv("d.csv")')), on_cell_change = "lazy")
+  r <- boot(s, "R")
+  r2 <- drive(r$state, wk_done(1, r$state$worker$running$token,
+                               report(created = "d", data_seen = list("d.csv" = "v2"), data_changed = "d.csv"), at(5)))
+  expect_true(isTRUE(r2$state$results$R$stale))
+  expect_null(r2$state$worker$running)
+})
+
+test_that("a run message carries each data file with the expressions that read or write it (#276)", {
+  s <- fake_state(list(S = cell(""),
+                       R = cell('d <- read.csv("d.csv")\nm <- lm(y ~ x, d)\nwrite.csv(d, "d.csv")\nwriteLines("x", f)')))
+  r <- boot(s, "R")
+  msg <- last_sent(r)
+  expect_equal(length(msg$data), 1)
+  expect_equal(msg$data[[1]]$path, "d.csv")
+  expect_equal(msg$data[[1]]$full, file.path(dirname(s$path), "d.csv"))
+  expect_equal(msg$data[[1]]$touch, c(1L, 3L, 4L))
+  expect_null(last_sent(boot(fake_state(list(S = cell(""), A = cell("1"))), "A"))$data)
 })
 
 test_that("a change to a file no cell reads does nothing (#276)", {
