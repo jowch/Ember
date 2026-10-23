@@ -133,6 +133,55 @@ test_that("autorun: running a cell after editing its grandparent runs each cell 
   expect_identical(sort(readLines(log)), c("A", "B", "C"))
 })
 
+test_that("autorun: a cell that reads a file another cell writes reruns when the contents change, not on the same bytes (#276)", {
+  log <- normalizePath(tempfile("ember-runs-"), winslash = "/", mustWork = FALSE)
+  cells <- list(S = cell(""), W = cell("k <- 1; writeLines(as.character(k), 'd.txt')"),
+                R = cell(sprintf("cat('R\\n', file = '%s', append = TRUE); d <- readLines('d.txt')", log)),
+                U = cell("paste(d, '!')"))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, wait = TRUE, timeout = 20)
+  data <- file.path(dirname(path), "d.txt")
+  # The shell has seen the file W wrote: R ran after it, so it stays as is.
+  seen <- function(...) identical(nb$data_watch[["d.txt"]]$mtime, file.info(data)$mtime)
+  expect_true(wait_for(nb, function(snap) seen() && is_idle(snap), timeout = 20))
+  expect_identical(readLines(log), "R")
+  shown_u <- function(snap) snap_view(snap, "U")$output$text
+
+  # New contents: R and U rerun, though neither reads a variable W defines.
+  # Already there when the wait returns: the writer's result doesn't wait
+  # for the poll, which is held off here so only that path can see it.
+  edit_notebook(nb, set_code("W", "k <- 2; writeLines(as.character(k), 'd.txt')"))
+  nb$last_watch_check <- Sys.time() + 3600
+  run_cells(nb, "W", wait = TRUE, timeout = 20)
+  expect_identical(shown_u(notebook_snapshot(nb)), '[1] "2 !"')
+  nb$last_watch_check <- NULL
+  expect_true(wait_for(nb, function(snap) identical(shown_u(snap), '[1] "2 !"') && is_idle(snap), timeout = 20))
+  expect_identical(readLines(log), c("R", "R"))
+
+  # The same bytes again: the shell sees the write and reruns nothing.
+  edit_notebook(nb, set_code("W", "k <- 2; writeLines(as.character(k), 'd.txt'); NULL"))
+  run_cells(nb, "W", wait = TRUE, timeout = 20)
+  expect_true(wait_for(nb, function(snap) seen() && is_idle(snap), timeout = 20))
+  expect_identical(readLines(log), c("R", "R"))
+})
+
+test_that("a cell that reads a file and appends to it runs once, as in plain R (#276)", {
+  cells <- list(S = cell(""), L = cell("d <- readLines('log.txt')\ncat('entry\\n', file = 'log.txt', append = TRUE)"))
+  path <- write_session_notebook(cells)
+  log <- file.path(dirname(path), "log.txt")
+  writeLines("start", log)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, wait = TRUE, timeout = 20)
+  # The shell's poll has seen the append, and nothing ran after it.
+  seen <- function(...) identical(nb$data_watch[["log.txt"]]$mtime, file.info(log)$mtime)
+  expect_true(wait_for(nb, function(snap) seen() && is_idle(snap), timeout = 20))
+  expect_identical(readLines(log), c("start", "entry"))
+  expect_false(isTRUE(snap_view(notebook_snapshot(nb), "L")$stale))
+})
+
 test_that("the file on disk matches the state after an edit, and file_saved fires (110)", {
   cells <- list(S = cell(""), A = cell("1"))
   path <- write_session_notebook(cells)
@@ -691,25 +740,33 @@ test_that("worker_query() answers when idle, NULL at once while busy, NULL in pr
 
   # A late reply (the busy cell finishes and the worker is asked again,
   # with a very short timeout) is dropped, not delivered twice, and
-  # doesn't kill the worker.
+  # doesn't kill the worker. The poll is stopped while the 0 s timeout
+  # fires: a poll already due (on a slow runner, or with no pipe watch, as
+  # on Windows) would otherwise run first and could read the real reply
+  # before the timeout (#402). Then the poll resumes and reads the reply,
+  # whose query has timed out.
   expect_true(wait_for(nb, timeout = 20))
   late_calls <- 0L
   late_reply <- "unset"
+  cancel_poll(nb)
   worker_query(nb, list(type = "signature", name = "lm", package = NULL),
               function(r) { late_calls <<- late_calls + 1L; late_reply <<- r }, timeout = 0)
-  later::run_now(timeout = 0)  # the 0s timeout fires before the worker's real reply can arrive
-  for (i in 1:50) { later::run_now(timeout = 0.05); Sys.sleep(0.02) }
+  later::run_now(timeout = 0)
   expect_identical(late_calls, 1L)
   expect_null(late_reply)
+  schedule_poll(nb)
   expect_true(wait_for(nb, timeout = 5))
   expect_false(is.null(nb$proc))
 
   # The worker is still alive and answers again: a fresh query, with no
-  # short timeout this time, gets a real reply.
+  # short timeout this time, gets a real reply. The worker answers in
+  # order on one socket, so the late reply has been read by then, and was
+  # dropped.
   got_again <- "unset"
   worker_query(nb, list(type = "signature", name = "lm", package = NULL), function(r) got_again <<- r)
   expect_true(wait_for(nb, function(s) !identical(got_again, "unset"), timeout = 10))
   expect_match(got_again$text, "^lm\\(formula, data")
+  expect_identical(late_calls, 1L)
 
   # A worker exit fails every pending query. A real query's reply can beat
   # a kill() by a wide enough margin on a fast loopback that this can't be
@@ -1096,4 +1153,188 @@ test_that("worker_tempdir() keeps only an existing R temp folder that isn't the 
   expect_null(worker_tempdir(file.path(dirname(d), "RtmpMissing")))
   expect_null(worker_tempdir(NULL))
   expect_null(worker_tempdir(c(d, d)))
+})
+
+# check_data_files() on a stand-in notebook: its folder, the shell's record
+# of d.csv, and the events it sends.
+data_check_nb <- function(running = NULL, touch = NULL) {
+  dir <- normalizePath(tempfile("ember-check-"), winslash = "/", mustWork = FALSE)
+  dir.create(dir)
+  nb <- new.env()
+  nb$state <- list(path = file.path(dir, "nb.R"), worker = list(running = running),
+                   graph = list(analyses = list(W = list(data_touch = touch))))
+  nb$data_watch <- list("d.csv" = list(mtime = NA, size = NA, hash = NA_character_))
+  nb$sent <- list()
+  nb$send <- function(nb, ev) nb$sent[[length(nb$sent) + 1]] <- ev
+  nb$file <- file.path(dir, "d.csv")
+  nb
+}
+
+test_that("a data file whose size changes within one clock tick is still a change (#405)", {
+  nb <- data_check_nb()
+  writeLines("", nb$file, sep = "")
+  t <- as.POSIXct("2026-01-01 00:00:00", tz = "UTC")
+  Sys.setFileTime(nb$file, t)
+  check_data_files(nb, nb$send)
+  expect_length(nb$sent, 1)
+  # The write finishes with the same modified time as the look that found it empty.
+  writeLines("1,2", nb$file)
+  Sys.setFileTime(nb$file, t)
+  check_data_files(nb, nb$send)
+  expect_length(nb$sent, 2)
+  expect_identical(nb$data_watch[["d.csv"]]$size, file.info(nb$file)$size)
+})
+
+test_that("the poll leaves a file the running cell writes to the check at the run's end (#405)", {
+  touch <- data.frame(path = "d.csv", index = 1L, read = FALSE, stringsAsFactors = FALSE)
+  nb <- data_check_nb(running = list(cell = "W"), touch = touch)
+  writeLines("1,2", nb$file)
+  expect_identical(running_writes(nb$state), "d.csv")
+  check_data_files(nb, nb$send, skip = running_writes(nb$state))
+  expect_length(nb$sent, 0)
+  check_data_files(nb, nb$send)
+  expect_length(nb$sent, 1)
+  # A write to a computed path may be any file.
+  nb$state$graph$analyses$W$data_touch$path <- NA_character_
+  expect_identical(running_writes(nb$state), NA_character_)
+  nb$state$worker$running <- NULL
+  expect_identical(running_writes(nb$state), character())
+})
+
+test_that("the poll's skip matches a running writer's file however its path is spelled (#405)", {
+  touch <- data.frame(path = "./d.csv", index = 1L, read = FALSE, stringsAsFactors = FALSE)
+  nb <- data_check_nb(running = list(cell = "W"), touch = touch)
+  writeLines("1,2", nb$file)
+  check_data_files(nb, nb$send, skip = running_writes(nb$state))
+  expect_length(nb$sent, 0)
+})
+
+test_that("a look that found the file cut short doesn't cost the next same-bytes rewrite a rerun (#405)", {
+  nb <- data_check_nb()
+  at <- function(s) as.POSIXct("2026-01-01 00:00:00", tz = "UTC") + s
+  put <- function(text, s) { writeLines(text, nb$file, sep = ""); Sys.setFileTime(nb$file, at(s)) }
+  put("1,2\n", 1); check_data_files(nb, nb$send)
+  put("1,2\n", 2); check_data_files(nb, nb$send)   # the first same-size rewrite has no hash to compare
+  expect_length(nb$sent, 2)
+  # A writer the skip can't see: one look mid-write, then the finished file
+  # in the same clock tick. Both are changes (a reader may have read the
+  # short file), and the hash is kept.
+  put("", 3); check_data_files(nb, nb$send)
+  put("1,2\n", 3); check_data_files(nb, nb$send)
+  expect_length(nb$sent, 4)
+  put("1,2\n", 4); check_data_files(nb, nb$send)
+  expect_length(nb$sent, 4)
+})
+
+# ---- Prompts (#186) ------------------------------------------------------------
+
+#' Run `id` and wait until its prompt shows; returns the prompt.
+run_until_prompt <- function(nb, id) {
+  run_cells(nb, id, wait = FALSE)
+  shown <- wait_for(nb, function(s) !is.null(snap_view(s, id)$prompt), timeout = 30)
+  expect_true(shown, info = sprintf("process %s", notebook_snapshot(nb)$process))
+  snap_view(notebook_snapshot(nb), id)$prompt
+}
+
+console_text <- function(view) paste(vapply(view$console, function(i) i$text, character(1)), collapse = "")
+
+test_that("a cell runs with interactive() TRUE, as in an R console (#186)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("interactive()")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, "A", wait = TRUE, timeout = 30)
+  expect_match(snap_view(notebook_snapshot(nb), "A")$output$text, "TRUE", fixed = TRUE)
+})
+
+test_that("an interactive worker still draws to pdf and doesn't offer installs (#186)", {
+  # With a display named, an interactive R's default device would be X11 (a
+  # window, or an error without a server); Ember keeps Rscript's pdf.
+  old <- Sys.getenv("DISPLAY", unset = NA)
+  Sys.setenv(DISPLAY = ":99")
+  on.exit(if (is.na(old)) Sys.unsetenv("DISPLAY") else Sys.setenv(DISPLAY = old), add = TRUE)
+  code <- 'grDevices::dev.new(); plot(1); grDevices::dev.off()\nc(identical(getOption("device"), grDevices::pdf), isFALSE(getOption("rlib_restart_package_not_found")))'
+  path <- write_session_notebook(list(S = cell(""), A = cell(code)))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, "A", wait = TRUE, timeout = 30)
+  view <- snap_view(notebook_snapshot(nb), "A")
+  expect_equal(view$status, "ok")
+  expect_match(view$output$text, "TRUE TRUE", fixed = TRUE)
+})
+
+test_that("readline() in a cell waits for the answer and the cell carries on with it (#186)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell('cat("Before\\n")\nname <- readline("Name? ")\ncat("Hello", name, "\\n")')))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  prompt <- run_until_prompt(nb, "A")
+  expect_equal(prompt$text, "Name? ")
+  expect_null(prompt$choices)
+  view <- snap_view(notebook_snapshot(nb), "A")
+  expect_true(view$running)
+  # What the cell printed before it asked is shown above the question.
+  expect_match(console_text(view), "Before", fixed = TRUE)
+
+  answer_input(nb, "Ada", cell = "A")
+  expect_true(wait_for(nb, function(s) identical(s$process, "ready"), timeout = 30))
+  view <- snap_view(notebook_snapshot(nb), "A")
+  expect_equal(view$status, "ok")
+  expect_null(view$prompt)
+  # The transcript reads as an R console's: the question, then the answer.
+  expect_match(console_text(view), "Before\nName? Ada\nHello Ada", fixed = TRUE)
+  # Nothing waits now.
+  expect_error(answer_input(nb, "again"), "no prompt is waiting", class = "ember_refused")
+})
+
+test_that("menu() offers its choices and takes a number or a choice; askYesNo() asks too (#186)", {
+  code <- 'pick <- menu(c("red", "blue"), title = "Colour")\nok <- askYesNo("Go on?")\nc(pick, ok)'
+  path <- write_session_notebook(list(S = cell(""), A = cell(code)))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  prompt <- run_until_prompt(nb, "A")
+  expect_equal(prompt$text, "Selection: ")
+  expect_equal(unlist(prompt$choices), c("red", "blue"))
+  # Not a choice: menu() asks again, as R's does.
+  answer_input(nb, "green")
+  expect_true(wait_for(nb, function(s) {
+    p <- snap_view(s, "A")$prompt
+    !is.null(p) && grepl("Enter an item", console_text(snap_view(s, "A")), fixed = TRUE)
+  }, timeout = 30))
+  answer_input(nb, "blue")
+  expect_true(wait_for(nb, function(s) identical(snap_view(s, "A")$prompt$text, "Go on? (Yes/no/cancel) "),
+                       timeout = 30))
+  answer_input(nb, "no")
+  expect_true(wait_for(nb, function(s) identical(s$process, "ready"), timeout = 30))
+  view <- snap_view(notebook_snapshot(nb), "A")
+  expect_equal(view$status, "ok")
+  expect_match(view$output$text, "2 0", fixed = TRUE)
+  expect_match(console_text(view), "Colour \n\n1: red\n2: blue\n\nSelection: green\n", fixed = TRUE)
+})
+
+test_that("interrupting a cell that waits on a prompt stops it, and the prompt goes (#186)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell('x <- readline("Wait? ")')))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_until_prompt(nb, "A")
+  interrupt_notebook(nb)
+  expect_true(wait_for(nb, function(s) identical(s$process, "ready"), timeout = 30))
+  view <- snap_view(notebook_snapshot(nb), "A")
+  expect_equal(view$status, "interrupted")
+  expect_null(view$prompt)
+  expect_error(answer_input(nb, "late"), class = "ember_refused")
+})
+
+test_that("a prompt whose interrupt the cell catches closes, and the cell's next prompt is answered (#186)", {
+  skip_on_os("windows")
+  code <- 'a <- tryCatch(readline("First? "), interrupt = function(i) "stopped")\nb <- readline("Second? ")\npaste(a, b)'
+  path <- write_session_notebook(list(S = cell(""), A = cell(code)))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_until_prompt(nb, "A")
+  # SIGINT straight to the worker, as the server interrupts on Unix, but
+  # without clearing the run: the cell catches it and asks again.
+  tools::pskill(nb$proc$get_pid(), tools::SIGINT)
+  expect_true(wait_for(nb, function(s) identical(snap_view(s, "A")$prompt$text, "Second? "), timeout = 30))
+  answer_input(nb, "two")
+  expect_true(wait_for(nb, function(s) identical(s$process, "ready"), timeout = 30))
+  expect_match(snap_view(notebook_snapshot(nb), "A")$output$text, "stopped two", fixed = TRUE)
 })

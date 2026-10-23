@@ -94,6 +94,44 @@ setting_kinds <- c(options = "option", local_options = "option",
 untracked_reads <- c("get", "get0", "mget", "exists", "dynGet",
                      "eval", "evalq", "eval.parent")
 
+#' Functions that read a data file, each with the argument that names it
+#' (#276). A literal path there is watched as a `source()` path is: when
+#' the file changes, the cell and its dependents rerun or go stale. Any
+#' other value gets an `untracked_file` note. The argument is taken by
+#' name (or as `file`, which `fread()` also takes), or else as the first
+#' unnamed one.
+data_readers <- c(
+  # base and utils
+  read.csv = "file", read.csv2 = "file", read.delim = "file", read.delim2 = "file",
+  read.table = "file", read.fwf = "file", read.dcf = "file", readRDS = "file",
+  load = "file", readLines = "con", scan = "file",
+  # readr and vroom
+  read_csv = "file", read_csv2 = "file", read_tsv = "file", read_delim = "file",
+  read_table = "file", read_fwf = "file", read_lines = "file", read_file = "file",
+  read_rds = "file", vroom = "file",
+  # data.table, readxl, arrow, haven, jsonlite
+  fread = "input", read_excel = "path", read_xlsx = "path", read_xls = "path",
+  read_parquet = "file", read_feather = "file", read_ipc_file = "file",
+  read_csv_arrow = "file", read_sav = "file", read_dta = "file", read_sas = "data_file",
+  read_xpt = "file", read_json = "path")
+
+#' Functions that write a file, each with the argument that names it and
+#' its position (#276). They aren't watched: they tell the worker which
+#' top-level expressions of a reading cell change its data files
+#' themselves (`data_touch`), so that a change made by any other
+#' expression while the cell runs is someone else's.
+data_writers <- list(
+  write.csv = list("file", 2L), write.csv2 = list("file", 2L), write.table = list("file", 2L),
+  saveRDS = list("file", 2L), save = list("file", NA_integer_), writeLines = list("con", 2L),
+  write_csv = list("file", 2L), write_csv2 = list("file", 2L), write_tsv = list("file", 2L),
+  write_delim = list("file", 2L), write_rds = list("file", 2L), write_lines = list("file", 2L),
+  write_file = list("file", 2L), fwrite = list("file", 2L), write_parquet = list("sink", 2L),
+  write_feather = list("sink", 2L), write_xlsx = list("path", 2L), write_json = list("path", 2L),
+  ggsave = list("filename", 1L), file.copy = list("to", 2L), file.rename = list("to", 2L),
+  download.file = list("destfile", 2L), cat = list("file", NA_integer_), write = list("file", 2L),
+  writeBin = list("con", 2L), writeChar = list("con", 2L), file.append = list("file1", 1L),
+  capture.output = list("file", NA_integer_), sink = list("file", 1L))
+
 #' The subset of `untracked_reads` whose name argument is checked for a
 #' literal before falling back to the plain `untracked_read` note.
 get_family_functions <- c("get", "get0", "exists", "mget", "dynGet")
@@ -103,7 +141,7 @@ get_family_functions <- c("get", "get0", "exists", "mget", "dynGet")
 #' function that is a direct argument of one gets no note (#357).
 function_object_heads <- c("?", "help", "args", "formals", "body",
                            "environment", "debug", "debugonce", "undebug",
-                           "trace", "untrace", "identical", "bquote")
+                           "trace", "untrace", "identical", "bquote", "print")
 
 #' The get-family function `e` passes as a value, or `NULL`: a bare
 #' `get` (unless a local binds it) or `base::get` / `base:::get` that isn't

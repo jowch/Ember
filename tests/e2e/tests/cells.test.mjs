@@ -224,9 +224,12 @@ test("cell menu: item order, move down, hide code, Disable on every code cell (1
 // Until a cell's editor loads, its code is shown by a static copy
 // (StaticCodeMirrorFaker). The copy has to be as tall as the editor, or every
 // cell below moves when the editor replaces it: by 23 px per cell above
-// before #375. L and W, whose lines wrap, sit below B: a new editor's first
-// frame guesses a wrapped line's height (#379), which would move B too.
-test("opening: a cell's static code is as tall as its editor, so nothing below moves when editors load (#375)", async (t) => {
+// before #375. Until an editor has measured its text, CodeMirror guesses
+// line heights: a wrapped line's gutter row (L, W) far too tall, and lines
+// past its first viewport too short (T; U, whose wrapped lines come after
+// more lines than fit in the window). The editor holds the static code's
+// height until then, so those cells sit above B too (#379).
+test("opening: a cell's static code is as tall as its editor, so nothing below moves when editors load (#375, #379)", async (t) => {
   const long = `x <- c(${Array.from({ length: 300 }, (_, i) => i).join(", ")})`;
   const notebook = path.join(mkdtempSync(path.join(tmpdir(), "ember-e2e-static-")), "static.R");
   writeFileSync(notebook, [
@@ -234,9 +237,11 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
     "# %% id=S", "",
     "# %% id=A", "x <- 1", "",
     "# %% id=I", "f <- function(a) {", "    if (a) {", "        print(a)", "", "    }", "}", "",
-    "# %% id=B", "x + 1", "",
     "# %% id=L", long, "",
     "# %% id=W", `s <- "${"abcdefghij".repeat(80)}"`, "",
+    "# %% id=T", "y <- 2", long, ...Array.from({ length: 60 }, (_, i) => `t${i} <- ${i}`), "",
+    "# %% id=U", "y <- 2", ...Array.from({ length: 150 }, (_, i) => `u${i} <- ${i}`), long, long, "",
+    "# %% id=B", "x + 1", "",
   ].join("\n"), "utf8");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-static.server.log") });
   const browser = await launchBrowser();
@@ -248,12 +253,14 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
   await page.addInitScript(() => {
     window.__bTops = [];
     window.__staticHeights = {};
+    window.__fontAtFirstStatic = null;
     const tick = () => {
       const b = document.querySelector('pluto-cell[id="B"]');
       if (b) window.__bTops.push(b.getBoundingClientRect().top + window.scrollY);
       for (const c of document.querySelectorAll("pluto-cell")) {
         const fake = c.querySelector("pluto-input .cm-ssr-fake");
         if (fake && !(c.id in window.__staticHeights)) window.__staticHeights[c.id] = fake.getBoundingClientRect().height;
+        if (fake && window.__fontAtFirstStatic == null) window.__fontAtFirstStatic = document.fonts.check(`13px ${getComputedStyle(fake.querySelector(".cm-content")).fontFamily}`);
       }
       requestAnimationFrame(tick);
     };
@@ -271,15 +278,24 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
     if (id === null) break;
     await page.waitForFunction((sel) => !document.querySelector(`${sel} .cm-ssr-fake`), cellSelector(id), { timeout: 20000 });
   }
+  // U's last lines are rendered once they come into view; until then U's
+  // editor keeps the static code's height as its minimum.
+  await page.evaluate(() => document.querySelector('pluto-cell[id="U"] pluto-input').scrollIntoView({ block: "end" }));
+  await page.waitForFunction(() => [...document.querySelectorAll("pluto-input .cm-editor")].every((e) => e.style.minHeight === ""), null, { timeout: 20000 })
+    .catch(() => assert.fail("every editor lets go of the static code's height once its lines are measured"));
   // One more frame, so the recorder has seen the layout with every editor.
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 
-  const { tops, statics, editors } = await page.evaluate(() => ({
+  const { tops, statics, editors, font } = await page.evaluate(() => ({
+    font: window.__fontAtFirstStatic,
     tops: window.__bTops,
     statics: window.__staticHeights,
     editors: Object.fromEntries([...document.querySelectorAll("pluto-cell")].map((c) => [c.id, c.querySelector("pluto-input .cm-editor").getBoundingClientRect().height])),
   }));
-  assert.deepEqual(Object.keys(statics).sort(), ["A", "B", "I", "L", "S", "W"], "every cell showed its static code first");
+  // In a fallback font a long line can wrap into a different number of
+  // rows (Consolas on Windows, #400).
+  assert.equal(font, true, "the code font is loaded when the first static code is drawn");
+  assert.deepEqual(Object.keys(statics).sort(), ["A", "B", "I", "L", "S", "T", "U", "W"], "every cell showed its static code first");
   for (const [id, h] of Object.entries(statics)) near(h, editors[id], `cell ${id}'s static code height`);
   assert.deepEqual([...new Set(tops)], [tops[0]], "B never moves while the editors load");
 
@@ -669,6 +685,9 @@ test('chips: "Run this notebook" moves the page up only at the click, then only 
   await page.evaluate((sel) => {
     window.__txt_tops = [];
     window.__stop = false;
+    // How many tops were recorded before the click. One means the page had
+    // settled before it (#391); the run's moves are judged from there on.
+    document.addEventListener("click", () => { window.__txt_at_click ??= window.__txt_tops.length; }, { capture: true });
     const tick = () => {
       const top = document.querySelector(sel).getBoundingClientRect().top + window.scrollY;
       const tops = window.__txt_tops;
@@ -682,7 +701,9 @@ test('chips: "Run this notebook" moves the page up only at the click, then only 
   await page.waitForFunction(
     () => document.querySelectorAll('pluto-cell[data-rail="run"], pluto-cell[data-rail="queued"]').length === 0,
     null, { timeout: 30000 });
-  const tops = await page.evaluate(() => { window.__stop = true; return window.__txt_tops; });
+  const { all, atClick } = await page.evaluate(() => { window.__stop = true; return { all: window.__txt_tops, atClick: window.__txt_at_click }; });
+  assert.equal(atClick, 1, `the page had settled before the click (#391): ${JSON.stringify(all)}`);
+  const tops = all.slice(atClick - 1);
   const moves = tops.slice(1).map((top, i) => Math.round(top - tops[i]));
   const firstDown = moves.findIndex((m) => m > 0);
   assert.ok(firstDown >= 0, `outputs moved TXT down: ${JSON.stringify(moves)}`);
@@ -715,6 +736,8 @@ test('view anchor: scrolled into the notebook, "Run this notebook" leaves the co
     for (const c of document.querySelectorAll("pluto-cell")) ro.observe(c);
   }, `${cellSelector("C08")} > pluto-input`);
   const before = await rect(page, `${cellSelector("C08")} > pluto-input`);
+  const pageTop = () => page.evaluate((sel) => document.querySelector(sel).getBoundingClientRect().top + window.scrollY, `${cellSelector("C08")} > pluto-input`);
+  const beforePage = await pageTop();
   // Clicked in script: Playwright's click would scroll the banner into view first.
   await page.evaluate(() => document.querySelector("#ember-safe-preview button").click());
   await page.waitForFunction(() => !document.querySelector("#ember-safe-preview"), null, { timeout: 30000 });
@@ -722,7 +745,12 @@ test('view anchor: scrolled into the notebook, "Run this notebook" leaves the co
   await page.waitForTimeout(500);
 
   const tops = await page.evaluate(() => window.__tops);
-  assert.ok(tops.length > 5, `outputs landed above C08 (${tops.length} frames)`);
+  // Outputs landed above C08: its code is further down the page. Counting
+  // resize frames instead was a weak proxy: outputs that land in the same
+  // frame share one, and it failed about one run in five (#401).
+  const afterPage = await pageTop();
+  assert.ok(afterPage > beforePage + 50, `outputs landed above C08: its code moved down the page from ${beforePage} to ${afterPage}`);
+  assert.ok(Math.abs((await rect(page, `${cellSelector("C08")} > pluto-input`)).top - before.top) <= 1, "C08's code is still where it was in the view");
   const off = tops.filter((top) => Math.abs(top - before.top) > 1);
   assert.deepEqual(off, [], `C08's code stayed at ${before.top} in every frame`);
   assert.ok(await page.locator(`${cellSelector("C08")} > pluto-output table`).count() > 0, "C08's table landed");
@@ -769,7 +797,7 @@ test('chips: "Stale · x changed" after an upstream edit in lazy mode, with a gr
   near(wash.height, code.top - out.top, "the wash spans output and chip, down to the code box");
   assert.equal(wash.radius, "0px 6px 0px 0px");
   assert.equal(await computed(page, `${cellSelector("B")} > pluto-output`, "backgroundColor"), "rgba(0, 0, 0, 0)", "the faded output has no background of its own");
-  assert.equal(await computed(page, `${cellSelector("B")} .cm-editor`, "borderTopRightRadius"), "0px");
+  assert.equal(await computed(page, `${cellSelector("B")} .cm-editor:not(.cm-ssr-fake)`, "borderTopRightRadius"), "0px");
 
   assertNoProblems(page);
 });
@@ -851,7 +879,7 @@ test("errors: where it happened, a traceback outermost first, labelled by origin
   assert.equal(await computed(page, err, "backgroundColor"), await tokenColor(page, "--ember-err-bg"));
   assert.equal(await computed(page, err, "padding"), "10px 14px");
   assert.equal(await computed(page, err, "borderRadius"), "0px 6px 0px 0px");
-  assert.equal(await computed(page, `${cellSelector("ERR")} .cm-editor`, "borderTopRightRadius"), "0px");
+  assert.equal(await computed(page, `${cellSelector("ERR")} .cm-editor:not(.cm-ssr-fake)`, "borderTopRightRadius"), "0px");
   const msg = `${err} > header > p:first-child`;
   assert.equal(await computed(page, msg, "fontSize"), "14px");
   assert.equal(await computed(page, msg, "fontWeight"), "600");
@@ -1320,16 +1348,19 @@ test("geometry: 26px between cells; a one-line code box is 7px 12px around 13px/
 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
-  await page.waitForSelector(`${cellSelector("A")} .cm-editor`);
+  // The static copy a cell shows before its editor loads is a .cm-editor
+  // too, with the same layout (#375), and the real editor replaces it
+  // between two reads, so wait for the real one (#398).
+  await page.waitForSelector(`${cellSelector("A")} .cm-editor:not(.cm-ssr-fake)`);
 
   const { a, b, box, gutters } = await rects(page, {
-    a: cellSelector("A"), b: cellSelector("B"), box: `${cellSelector("A")} .cm-editor`, gutters: `${cellSelector("A")} .cm-gutters`,
+    a: cellSelector("A"), b: cellSelector("B"), box: `${cellSelector("A")} .cm-editor:not(.cm-ssr-fake)`, gutters: `${cellSelector("A")} .cm-editor:not(.cm-ssr-fake) .cm-gutters`,
   });
   near(b.top - a.bottom, 26, "gap between A and B");
   near(box.height, 7 + 13 * 1.65 + 7, "one-line code box height");
   near(gutters.width, 34, "gutter width");
 
-  const content = await page.locator(`${cellSelector("A")} .cm-content`).evaluate((el) => {
+  const content = await page.locator(`${cellSelector("A")} .cm-editor:not(.cm-ssr-fake) .cm-content`).evaluate((el) => {
     const cs = getComputedStyle(el);
     const range = document.createRange();
     range.selectNodeContents(el.querySelector(".cm-line"));
@@ -1714,7 +1745,9 @@ test("chips: a chip's text can't be selected, by double-click or by dragging acr
   // leaves out.
   const box = await chip.boundingBox();
   const cell = await page.locator(cellSelector("NEVER")).boundingBox();
-  const code = await page.locator(`${cellSelector("NEVER")} .cm-content`).boundingBox();
+  // Scrolling the chip into view swaps NEVER's static code copy for its
+  // editor, so measure the editor.
+  const code = await page.locator(`${cellSelector("NEVER")} .cm-editor:not(.cm-ssr-fake) .cm-content`).boundingBox();
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
   await page.mouse.move(cell.x + cell.width - 4, box.y + box.height / 2);
   await page.mouse.down();

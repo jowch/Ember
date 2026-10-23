@@ -4,9 +4,10 @@
 # (worker_harness()'s $receive()), never Sys.sleep polling.
 
 run_msg <- function(cell, token, code, role = "cell", order = character(), formulas = list(),
-                    library = NULL, fig = NULL, settings = character()) {
+                    library = NULL, fig = NULL, settings = character(), data = NULL) {
   list(type = "run", cell = cell, token = token, code = code, role = role,
-       order = order, settings = settings, formulas = formulas, library = library, fig = fig)
+       order = order, settings = settings, formulas = formulas, library = library, fig = fig,
+       data = data)
 }
 
 #' Run code in a fresh harness and return the `done` report. Fails the
@@ -295,6 +296,21 @@ test_that("active_binding_not_forced", {
   expect_identical(check$output$text, "[1] 0")
 })
 
+test_that("a global holding the empty symbol is compared, not read as a missing argument (#387)", {
+  # `get()` on such a binding fails with "argument is missing", which ended
+  # the worker on the next cell; plain R keeps going.
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "x <- quote(expr = )")
+  expect_identical(r$status, "ok")
+  expect_identical(r$created, "x")
+  r <- run_and_wait(h, "b", 2L, "y <- 1")
+  expect_identical(r$status, "ok")
+  expect_identical(r$changed, character())
+  r <- run_and_wait(h, "c", 3L, "x <- 2")
+  expect_identical(r$changed, "x")
+})
+
 test_that("an options change is reported, and applies only where its cell is in effect", {
   h <- worker_harness()
   on.exit(h$close())
@@ -312,6 +328,27 @@ test_that("an options change is reported, and applies only where its cell is in 
   # Not in effect (b runs before a, or a is disabled): back to the baseline.
   without <- run_and_wait(h, "b", 3L, 'getOption("digits")')
   expect_identical(without$output$text, "[1] 7")
+})
+
+test_that("an environment variable change is reported each run, and applies only where its cell is in effect (#369)", {
+  # The worker keeps the parsed environment while it is unchanged, so check
+  # the change is seen on a rerun too, and that the reset before the next
+  # cell undoes it.
+  h <- worker_harness()
+  on.exit(h$close())
+  for (gen in 1:2) {
+    r <- run_and_wait(h, "a", gen, 'Sys.setenv(EMBER_TEST_369 = "on")')
+    expect_length(r$settings, 1)
+    expect_identical(r$settings[[1]]$kind, "env")
+    expect_identical(r$settings[[1]]$name, "EMBER_TEST_369")
+    expect_null(r$settings[[1]]$before)
+    expect_identical(r$settings[[1]]$after, "on")
+  }
+  with_a <- run_and_wait(h, "b", 3L, 'Sys.getenv("EMBER_TEST_369")', settings = "a")
+  expect_identical(with_a$output$text, '[1] "on"')
+  expect_length(with_a$settings, 0)
+  without <- run_and_wait(h, "b", 4L, 'Sys.getenv("EMBER_TEST_369")')
+  expect_identical(without$output$text, '[1] ""')
 })
 
 test_that("a settings cell rerun starts from the baseline, and a deleted one stops applying", {
@@ -2693,4 +2730,50 @@ test_that("diff_settings finds each changed, added and removed entry (#316)", {
   expect_identical(list(b$before, b$after), list("x", "y"))
   a <- d[[match("option a", got)]]
   expect_identical(list(a$before, a$after), list(1, NULL))
+})
+
+test_that("a run reports its data files' versions, and a change after the read by an expression that doesn't touch the file (#276)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  f <- normalizePath(tempfile("ember-data-", fileext = ".csv"), winslash = "/", mustWork = FALSE)
+  writeLines("a", f)
+  code <- sprintf('d <- readLines("%1$s")\nwriteLines("bb", "%1$s")\nn <- 1', f)
+  # Expression 2 stands for someone else: it isn't in `touch`.
+  r <- run_and_wait(h, "a", 1L, code, data = list(list(path = "d.csv", full = f, touch = 1L)))
+  expect_identical(r$status, "ok")
+  expect_identical(r$data_changed, "d.csv")
+  info <- file.info(f)
+  expect_identical(r$data_seen[["d.csv"]],
+                   sprintf("%.6f %.0f", as.numeric(info$mtime), as.numeric(info$size)))
+
+  # The cell's own write (expression 2 in `touch`) isn't a change, and
+  # neither is one before the file is read.
+  r2 <- run_and_wait(h, "b", 2L, sprintf('writeLines("ccc", "%1$s")\nd <- readLines("%1$s")\nwriteLines("dddd", "%1$s")', f),
+                     data = list(list(path = "d.csv", full = f, touch = c(2L, 3L))))
+  expect_identical(r2$status, "ok")
+  expect_length(r2$data_changed, 0)
+  expect_identical(r2$data_seen[["d.csv"]], ember:::data_signature(as.list(file.info(f)[, c("mtime", "size")])))
+})
+
+test_that("menu()'s answer is a number in range, 0, or a choice typed out (#186)", {
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  ch <- c("red", "blue", "10")
+  expect_equal(e$menu_choice("2", ch), 2L)
+  expect_equal(e$menu_choice("0", ch), 0L)
+  expect_true(is.na(e$menu_choice("4", ch)))
+  expect_equal(e$menu_choice("blue", ch), 2L)
+  # A number is a number first, as in R's menu().
+  expect_equal(e$menu_choice("10", ch), NA_integer_)
+  expect_true(is.na(e$menu_choice("", ch)))
+  expect_true(is.na(e$menu_choice("green", ch)))
+})
+
+test_that("outside a run nothing can answer: readline() gives \"\" and menu() 0 (#186)", {
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  expect_null(e$running)
+  expect_identical(e$prompt_readline("Name? "), "")
+  if (interactive()) expect_identical(e$prompt_menu(c("a", "b")), 0L)
+  else expect_error(e$prompt_menu(c("a", "b")), "non-interactively")
 })

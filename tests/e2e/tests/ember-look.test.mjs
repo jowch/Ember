@@ -233,7 +233,7 @@ test("look: with no custom code font set, cm-content renders in IBM Plex Mono, n
   // getComputedStyle's font-family is the whole specified list, not the
   // one family actually rendering, so the first named family is what
   // matters here.
-  const families = await page.locator(`${cellSelector("B")} .cm-content`).evaluate((el) => {
+  const families = await page.locator(`${cellSelector("B")} .cm-editor:not(.cm-ssr-fake) .cm-content`).evaluate((el) => {
     return getComputedStyle(el).fontFamily.split(",").map((f) => f.trim().replace(/^["']|["']$/g, ""));
   });
   const firstMeaningful = families.find((f) => f !== "");

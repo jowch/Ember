@@ -145,13 +145,11 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
   dir.create(user_lib, recursive = TRUE)
   lib_path <- paste(c(extra_libs, user_lib), collapse = .Platform$path.sep)
 
-  boot <- worker_boot()
-
   out_file <- tempfile("ember-worker-out-")
   err_file <- tempfile("ember-worker-err-")
-  r_bin <- file.path(R.home("bin"), "Rscript")
+  cmd <- worker_command(srv$port)
   p <- processx::process$new(
-    r_bin, c("--vanilla", "-e", boot, as.character(srv$port)),
+    cmd$command, cmd$args, stdin = "|",
     env = c("current",
             R_LIBS_USER = lib_path, R_LIBS = "", R_LIBS_SITE = "",
             EMBER_WORKER = worker_script_path(), EMBER_WORKER_IMAGE = image,
@@ -163,6 +161,7 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
     # `detached`: on Windows, a worker with no console at all, as when the
     # server has none (#48).
     windows_detached_process = detached)
+  send_worker_boot(p)
 
   fail <- function(...) {
     tryCatch(if (p$is_alive()) p$kill(), error = function(e) NULL)
