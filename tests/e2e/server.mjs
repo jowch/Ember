@@ -81,7 +81,7 @@ export function githubFixtureDir() {
 /** Start `ember::serve()` in a child Rscript process, hosting
  * `notebookPaths` from the start. Resolves once the child prints its
  * "ember: listening on <url>" line (R/server.R's serve()); rejects if the
- * child exits first or nothing is heard within `timeoutMs`.
+ * child exits first or nothing is heard within `timeoutMs` (0: no limit).
  *
  * The child's stdout/stderr are drained into a buffer as they arrive
  * (never left unread: docs/engine.md's pitfall about undrained pipes)
@@ -221,9 +221,11 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   const url = await new Promise((resolve, reject) => {
     let settled = false;
     const finish = (fn, arg) => { if (!settled) { settled = true; clearTimeout(timer); fn(arg); } };
-    const timer = setTimeout(
+    // 0: no timer of its own, as for the warm-up (warmup.mjs); the runner
+    // bounds the wait.
+    const timer = timeoutMs > 0 ? setTimeout(
       () => finish(reject, new Error(`ember server did not start within ${timeoutMs}ms:\n${buffer}`)),
-      timeoutMs);
+      timeoutMs) : null;
     const check = () => {
       const m = buffer.match(/ember: listening on (\S+)/);
       if (m) finish(resolve, m[1]);

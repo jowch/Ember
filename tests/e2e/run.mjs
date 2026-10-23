@@ -11,7 +11,7 @@
 // on R_LIBS. Set EMBER_E2E_LIB yourself to skip the install and test an
 // ember you installed there.
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { readdirSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +19,9 @@ import { ensureLib } from "./install.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { lib, owned: ownLib } = ensureLib();
+// In a process of its own, like each test file, so server.mjs's exit and
+// signal handlers aren't this one's.
+spawnSync(process.execPath, ["warmup.mjs"], { cwd: HERE, stdio: "inherit", env: { ...process.env, EMBER_E2E_LIB: lib } });
 
 const files = process.argv.slice(2);
 const tests = files.length ? files
