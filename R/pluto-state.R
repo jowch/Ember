@@ -150,7 +150,8 @@ pluto_state <- function(state, previous = NULL) {
 #' `cell`, so only the dependent relationship needs this field.
 #' `can_disable` needs no key field: it depends only on `kind` (in `cell`).
 #' `settings` is in the key because a sourced file can change what a cell
-#' sets without the cell itself changing.
+#' sets without the cell itself changing. `untracked` is too, for the same
+#' reason: a sourced file's `get()` is the cell's (#357).
 cell_key <- function(state, ctx, i) {
   id <- ctx$ids[[i]]
   running <- ctx$running
@@ -159,7 +160,7 @@ cell_key <- function(state, ctx, i) {
        is_running = is_running, console = if (is_running) running$console else NULL,
        queued = ctx$queued[[i]], waiting_for = ctx$waiting[[i]],
        errors = ctx$errors_by_cell[[i]], disabled_by = ctx$disabled_by[[i]],
-       settings = ctx$settings[[i]],
+       settings = ctx$settings[[i]], untracked = ctx$untracked[[i]],
        allowed = state$allowed)
 }
 
@@ -182,6 +183,7 @@ key_unchanged <- function(state, ctx, i, prev_key) {
   if (!identical(ctx$errors_by_cell[[i]], prev_key$errors)) return(FALSE)
   if (!identical(ctx$disabled_by[[i]], prev_key$disabled_by)) return(FALSE)
   if (!identical(ctx$settings[[i]], prev_key$settings)) return(FALSE)
+  if (!identical(ctx$untracked[[i]], prev_key$untracked)) return(FALSE)
   identical(state$allowed, prev_key$allowed)
 }
 
@@ -304,7 +306,7 @@ span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
 #'   (Pluto's own field, Run.jl:86-91) -- true for a disabled cell itself,
 #'   too.
 #' * `ember`: `list(stale, code_changed, upstream_error?, disabled_by?,
-#'   can_disable, settings?, settings_found?, load_notes?, changed_in_place?, from_lock?, split?, figure?)`, from the view's `stale` and
+#'   can_disable, settings?, settings_found?, load_notes?, changed_in_place?, from_lock?, untracked_reads?, split?, figure?)`, from the view's `stale` and
 #'   `code_differs` -- both already in `cell_key()`'s key (`code_differs`
 #'   is derived from `cell$code` and `result$code`). `stale` is
 #'   `isTRUE(view$stale) && !off`: an off cell shows as disabled, not also
@@ -328,7 +330,11 @@ span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
 #'   rerun (#167). `from_lock` is present, as `as_arr()` of names (empty
 #'   for a call whose packages couldn't be read), when the last run skipped
 #'   install calls: the note that packages come from the lock (packages.md,
-#'   "Install calls"). `split` is present, as `length(split_mixed(view$code))`,
+#'   "Install calls"). `untracked_reads` is present, as `as_arr()` of call
+#'   names (`"get"`), when the cell's code reads globals by a name static
+#'   reading can't follow: the note that the cell doesn't rerun when they
+#'   change (#357). It comes from the graph's analysis, so `cell_key()`
+#'   holds it too. `split` is present, as `length(split_mixed(view$code))`,
 #'   only when `view$errors` has a `mixed_text` error: the Split button's
 #'   label (Cell.js), answered by the `ember_split_cell` request (server.R).
 #'   `figure` is present, as `list(width, height)` inches plus `alt` when
@@ -374,6 +380,7 @@ project_cell_result <- function(view, known_ids = NULL) {
             if (length(view$load_notes) > 0) list(load_notes = as_arr(view$load_notes)),
             if (length(view$changed_in_place) > 0) list(changed_in_place = as_arr(display_names(view$changed_in_place))),
             if (length(view$from_lock) > 0) list(from_lock = as_arr(setdiff(view$from_lock, ""))),
+            if (length(view$untracked_reads) > 0) list(untracked_reads = as_arr(view$untracked_reads)),
             if (!is.null(split)) list(split = split),
             if (!is.null(figure)) list(figure = figure),
             if (length(view$variables) > 0) list(variables = as_arr(view$variables)))
@@ -983,6 +990,12 @@ project_nbpkg <- function(state) {
 #'   shows nothing here: its proposal has `apply = FALSE`. `status`
 #'   `"checking"` is the proposal's `"fetching"` (the page's wording, not
 #'   the core's); `message` is set only once `status == "failed"`.
+#'   A step back that would change a locked version (`kind = "back"`,
+#'   #311) is the same question once `"ready"`, with `back = list(from,
+#'   changes = arr(list(name, from, to)))`: the date Bioconductor hasn't
+#'   published yet, and each package that moves (`from`/`to` `NULL` for
+#'   one added or dropped). The page's answer is `ember_apply_update` or
+#'   `ember_cancel_update`, as for an update.
 #' * `on_cell_change`: `state$file$header$on_cell_change`, `"autorun"` or
 #'   `"lazy"`.
 #' * `r_version`, `worker_started_at`: the running worker's own report
@@ -1073,6 +1086,17 @@ project_ember <- function(state, ctx) {
                             restart = as_arr(pv$proposal$restart %||% character()),
                             changes = if (is.null(pv$proposal$changes)) 0L else nrow(pv$proposal$changes),
                             message = pv$proposal$message)
+  } else if (!is.null(pv$proposal) && identical(pv$proposal$kind, "back") &&
+             identical(pv$proposal$status, "ready")) {
+    # A step back that would change a locked version (#311) asks first.
+    ch <- pv$proposal$changes
+    na_null <- function(x) if (is.na(x)) NULL else x
+    packages$update <- list(date = pv$proposal$date, status = "ready",
+                            restart = as_arr(pv$proposal$restart %||% character()),
+                            changes = if (is.null(ch)) 0L else nrow(ch), message = NULL,
+                            back = list(from = pv$proposal$asked, changes = as_arr(lapply(seq_len(NROW(ch)), function(i) {
+                              list(name = ch$name[[i]], from = na_null(ch$from[[i]]), to = na_null(ch$to[[i]]))
+                            }))))
   }
 
   plan <- pv$plan

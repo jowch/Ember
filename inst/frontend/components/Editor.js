@@ -142,7 +142,7 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  *  precedence_heuristic: number?,
  *  depends_on_disabled_cells: boolean,
  *  depends_on_skipped_cells: boolean,
- *  ember: { stale: boolean, code_changed: boolean, upstream_error?: {name: string, cell: string}[], disabled_by?: string, can_disable: boolean, settings?: {name: string, found: string}[], settings_found?: string[], load_notes?: {package: string, setting: string}[], changed_in_place?: string[], from_lock?: string[], split?: number },
+ *  ember: { stale: boolean, code_changed: boolean, upstream_error?: {name: string, cell: string}[], disabled_by?: string, can_disable: boolean, settings?: {name: string, found: string}[], settings_found?: string[], load_notes?: {package: string, setting: string}[], changed_in_place?: string[], from_lock?: string[], untracked_reads?: string[], split?: number },
  *  output: {
  *      body: string | Object,
  *      persist_js_state: boolean,
@@ -243,6 +243,7 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  * @type {{
  *  date: string, status: "checking" | "ready" | "failed",
  *  restart: Array<string>, changes: number, message: string?,
+ *  back?: { from: string, changes: Array<{ name: string, from: string?, to: string? }> },
  * }}
  */
 

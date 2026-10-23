@@ -14,6 +14,11 @@
 #' * `settings`: ids of the settings cells, in display order: enabled
 #'   cells with a static or learned setting (settings-cells.md). They run
 #'   first, and every later cell depends on them.
+#' * `untracked`: `<id -> character>` for only the cells whose code reads
+#'   globals untrackably (`get(paste0(...))`, `eval()`), in display order:
+#'   their analyses' `untracked`, the calls the cell's note names (#357).
+#'   Kept here so the page's projection loops over these few cells, not
+#'   every analysis.
 #' * `analyses`: `ember_cell_analysis` per cell (the cache for the next
 #'   build).
 #' * `learned`: `list(definitions = <id -> character>, references = <id ->
@@ -67,8 +72,9 @@
 #' no definitions and no references but keeps its setting edges.
 new_graph <- function(ids, settings, analyses, learned, exports, cells, edges,
                       disabled, off, upstream, downstream, order, errors,
-                      reread, read_file = NULL) {
-  structure(list(ids = ids, settings = settings, analyses = analyses,
+                      reread, read_file = NULL, untracked = list()) {
+  structure(list(ids = ids, settings = settings, untracked = untracked,
+                 analyses = analyses,
                  learned = learned, exports = exports, cells = cells,
                  edges = edges, disabled = disabled, off = off,
                  upstream = upstream, downstream = downstream,
@@ -252,6 +258,8 @@ notebook_graph <- function(cells, exports = list(),
   names(is_markdown) <- ids
   settings <- ids[!(ids %in% disabled) &
                     vapply(cells_resolved, function(c) nrow(c$setting_keys) > 0, logical(1))]
+  untracked <- analyses[vapply(analyses, function(a) length(a$untracked) > 0, logical(1))]
+  untracked <- lapply(untracked, `[[`, "untracked")
   order <- compute_order(ids, settings, upstream_list, attaches_list, comp_of, is_markdown)
 
   # 6. setting edges: every non-markdown cell to each settings cell before
@@ -267,7 +275,8 @@ notebook_graph <- function(cells, exports = list(),
     }
   }
 
-  new_graph(ids = ids, settings = settings, analyses = analyses, learned = learned,
+  new_graph(ids = ids, settings = settings, untracked = untracked,
+            analyses = analyses, learned = learned,
             exports = exports, cells = cells_resolved, edges = edges,
             disabled = disabled, off = off,
             upstream = upstream_list, downstream = downstream_list,

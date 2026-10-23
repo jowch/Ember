@@ -86,6 +86,9 @@
 #'   `"source_parse_error"` (a sourced file that fails to parse; `detail`
 #'   is the parser's message). `col`/`end_col` are `NA` for a note with no
 #'   single responsible token (`"missing_file"`, `"source_parse_error"`).
+#' * `untracked`: the `detail` of the `untracked_read` notes, once each
+#'   (`"get"`, `"eval"`): the calls the cell's note names (#357), kept
+#'   here so the graph doesn't look at every cell's `notes` per build.
 #'
 #' Invariants: rows are in source order within the cell's own code and
 #' within each sourced file; a sourced file's rows are appended as a block
@@ -112,11 +115,12 @@ new_cell_analysis <- function(code,
                               sourced = empty_sourced(),
                               notes = empty_notes(),
                               methods = no_methods) {
+  untracked <- unique(notes$detail[notes$kind == "untracked_read"])
   structure(list(code = code, parse_error = parse_error,
                  definitions = definitions, references = references,
                  packages = packages, installs = installs, settings = settings,
                  formulas = formulas, masked = masked, sourced = sourced,
-                 notes = notes, methods = methods),
+                 notes = notes, untracked = untracked, methods = methods),
             class = "ember_cell_analysis")
 }
 

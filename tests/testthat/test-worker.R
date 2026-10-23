@@ -56,6 +56,36 @@ test_that("run_value_and_console_order", {
   expect_identical(r$output$text, "[1] 2")
 })
 
+test_that("a progress bar's redraws end as one line, as in the R console (#358)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, paste(
+    "pb <- txtProgressBar(min = 0, max = 300, style = 3)",
+    "for (i in 1:300) setTxtProgressBar(pb, i)",
+    "close(pb)",
+    'cat("abcdef\\rXY\\n")',
+    'cat("\\033[32m100%\\033[39m\\r\\033[32m5%\\033[39m\\n")',
+    'cat("\\u65e5\\u672c\\u8a9e\\rab\\n")',
+    'cat("loading...\\r\\033[KDone\\n")',
+    'cat("ab\\033]8;;https://x.org\\aLINK\\033]8;;\\a\\rZ\\n")',
+    'cat(strrep("\\033[32mrow\\033[39m\\n", 1000), "a\\rb\\n", sep = "")', sep = "\n"))
+  expect_identical(r$status, "ok")
+  out <- paste(vapply(Filter(function(i) identical(i$kind, "stdout"), r$console), `[[`, "", "text"), collapse = "")
+  expect_false(grepl("\r", out, fixed = TRUE))
+  lines <- strsplit(out, "\n", fixed = TRUE)[[1]]
+  visible <- gsub("\033\\[[0-9;]*m", "", lines)
+  # A redraw overwrites the line it returns to, so a shorter one keeps its
+  # tail. Colors take no columns, and each column keeps the color it was
+  # written in; a wide character takes two columns; ESC[K clears the rest.
+  # A hyperlink's escape is dropped, not shown.
+  expect_identical(visible, c(sprintf("  |%s| 100%%", strrep("=", 70)), "XYcdef", "5%0%",
+                              "ab\u672c\u8a9e", "Done", "ZbLINK", rep("row", 1000), "b"))
+  expect_match(lines[[3]], "\033[32m5%0%", fixed = TRUE)  # 0% keeps its green
+  # The colors in force stay a few fields, however many escapes came
+  # before: 1000 green rows, each closed with 39, leave none.
+  expect_identical(lines[[length(lines)]], "b")
+})
+
 test_that("earlier_visible_values_to_console", {
   h <- worker_harness()
   on.exit(h$close())
@@ -2627,4 +2657,40 @@ test_that("run_cell(): a top-level install call doesn't run, and the report name
 
   r <- run_and_wait(h, "b", 2L, "y <- 2")
   expect_identical(r$from_lock, character())
+})
+
+test_that("a package the library doesn't have is looked up once, until a library changes (#316)", {
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  lib <- withr::local_tempdir()
+  withr::local_libpaths(lib, action = "prefix")
+  asked <- 0L
+  e$requireNamespace <- function(package, ..., quietly = TRUE) { asked <<- asked + 1L; FALSE }
+  for (i in 1:5) expect_false(e$has_namespace("notapkg.ember316"))
+  expect_equal(asked, 1L)
+  # An install adds a folder to the library, which changes its time.
+  Sys.setFileTime(lib, Sys.time() + 5)
+  expect_false(e$has_namespace("notapkg.ember316"))
+  expect_equal(asked, 2L)
+  # A loaded namespace never asks.
+  expect_true(e$has_namespace("stats"))
+  expect_equal(asked, 2L)
+})
+
+test_that("diff_settings finds each changed, added and removed entry (#316)", {
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  s <- list(options = list(a = 1, b = "x", f = mean), env = list(HOME = "/h", X = "1"),
+            locale = list(LC_COLLATE = "C"), wd = "/w", search = character(), theme = NULL)
+  expect_identical(e$diff_settings(s, s), list())
+  t <- s
+  t$options$b <- "y"; t$options$a <- NULL; t$options$c <- TRUE
+  t$env$X <- "2"
+  d <- e$diff_settings(s, t)
+  got <- vapply(d, function(x) paste(x$kind, x$name), "")
+  expect_setequal(got, c("option a", "option b", "option c", "env X"))
+  b <- d[[match("option b", got)]]
+  expect_identical(list(b$before, b$after), list("x", "y"))
+  a <- d[[match("option a", got)]]
+  expect_identical(list(a$before, a$after), list(1, NULL))
 })

@@ -740,6 +740,34 @@ test_that("a cell that changes another cell's object in place shows a note, and 
   expect_null(pluto_state(r2$state)$js$cell_results$B$ember$changed_in_place)
 })
 
+test_that("a cell that reads globals by a computed name shows the can't-track note, before and after it runs (#357)", {
+  s <- fake_state(list(N = cell("nms <- c('a', 'b')"),
+                       A = cell("for (s in nms) assign(s, 1)"),
+                       B = cell("sapply(nms, function(s) get(s))"),
+                       C = cell("x <- lapply(nms, get)\neval(parse(text = 'a'))"),
+                       D = cell("get('a')")))
+  snap <- snapshot_of(s)
+  expect_equal(snap$cells$B$untracked_reads, "get")
+  expect_equal(snap$cells$C$untracked_reads, c("get", "eval"))
+  # A literal name is a reference, not an untracked read.
+  expect_equal(snap$cells$D$untracked_reads, character())
+  expect_equal(snap$cells$A$untracked_reads, character())
+  js <- pluto_state(s)$js
+  check_wire(js)
+  expect_equal(js$cell_results$B$ember$untracked_reads, as_arr("get"))
+  expect_equal(js$cell_results$C$ember$untracked_reads, as_arr(c("get", "eval")))
+  expect_null(js$cell_results$D$ember$untracked_reads)
+
+  # It comes from the code, so a run keeps it and an edit that drops the
+  # get() drops it; the page's cached projection follows the edit.
+  r <- boot(s, c("N", "A", "B", "C", "D"))
+  expect_equal(snapshot_of(r$state)$cells$B$untracked_reads, "get")
+  p1 <- pluto_state(r$state)
+  r2 <- drive(r$state, ev_apply(list(op_set_code("B", "nms")), at(20)))
+  expect_equal(snapshot_of(r2$state)$cells$B$untracked_reads, character())
+  expect_null(pluto_state(r2$state, p1)$js$cell_results$B$ember$untracked_reads)
+})
+
 test_that("a package load that resets a setting a settings cell set shows a note on the loading cell (#61)", {
   # A loads mgcv inside a function, so the fake lock needs no entry for it;
   # the worker's report is what matters here.
