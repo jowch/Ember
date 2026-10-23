@@ -630,17 +630,16 @@ fuzz_replay <- function(trace, timeout = 30) {
 
 #' Wait until every cell whose last run read `file` and that has a result
 #' has taken in its change from outside: it is stale, queued or running, or
-#' has run again since `before`. A cell edited since it ran counts only
-#' when its code still reads the file: Ember watches what its code reads
-#' now. The shell sees the change on its poll, so
+#' has run again since `before`. A cell edited since it ran counts too:
+#' its result came from the file (#439). The shell sees the change on its
+#' poll, so
 #' this is what waiting for the notebook means after a file changes. FALSE
 #' if one hasn't within `timeout` seconds.
 fuzz_noticed <- function(nb, before, ran, file, timeout) {
   last <- stats::setNames(lapply(before$cells, `[[`, "last_run"), vapply(before$cells, `[[`, "", "id"))
   pattern <- sprintf('readLines("%s")', file)
   readers <- names(Filter(function(code) grepl(pattern, code, fixed = TRUE), ran))
-  code_now <- stats::setNames(lapply(before$cells, `[[`, "code"), names(last))
-  readers <- Filter(function(id) !is.null(last[[id]]) && grepl(pattern, code_now[[id]] %||% "", fixed = TRUE), readers)
+  readers <- Filter(function(id) !is.null(last[[id]]), readers)
   if (!length(readers)) return(TRUE)
   wait_for(nb, function(snap) {
     views <- stats::setNames(snap$cells, vapply(snap$cells, `[[`, "", "id"))
@@ -681,27 +680,16 @@ fuzz_check <- function(snap, ran, mode, run, res, ran_ok = list(), dir = NULL) {
   # outputs from scratch gives, so the reference uses the code each cell
   # ran. A cell edited since it ran keeps its old output, marked as edited.
   shown <- Filter(function(id) has_run(views[[id]]) && !is.null(ran[[id]]), names(views))
-  # A cell edited to stop reading a file isn't watched for it any more
-  # (#439), so it and what reads from it aren't checked against the file.
-  files_read <- function(code) regmatches(code, gregexpr('readLines\\("[^"]+"\\)', code))[[1]]
-  unwatched <- Filter(function(id) {
-    isTRUE(views[[id]]$code_differs) && length(setdiff(files_read(ran[[id]]), files_read(current[[id]])))
-  }, shown)
   ref <- fuzz_reference(ran[shown], dir)
   for (id in shown) {
     v <- views[[id]]
     # A cell that can't run now keeps its last output under its graph error
     # until something runs (drop_graph_error_results()): it is marked.
     if (isTRUE(v$stale) || id %in% blocked) next
-    # A file only an edited cell's old code read isn't watched any more
-    # (fuzz_noticed(), #439), so neither its value nor the values of what
-    # reads from it follow the file. Their staleness is still checked.
     reads <- fuzz_ancestors(ran[shown], id)
     want <- ref[[id]]
     got <- v$output$text
-    if (any(c(id, reads) %in% unwatched)) {
-      # not compared
-    } else if (!identical(v$status, want$status)) {
+    if (!identical(v$status, want$status)) {
       say(id, " shows ", v$status, " but running from scratch gives ", want$status)
     } else if (identical(want$status, "ok") && !identical(got, want$text)) {
       say(id, " shows ", deparse(got), " but running from scratch gives ", deparse(want$text))

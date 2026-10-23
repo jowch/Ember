@@ -1702,11 +1702,13 @@ reduce_data_changed <- function(state, event) {
   changed <- names(event$files)
   marked <- FALSE
   for (id in state$graph$ids) {
-    hit <- intersect(state$graph$analyses[[id]]$data_files, changed)
-    if (length(hit) == 0 || identical(running, id) || id %in% state$pending) next
     r <- state$results[[id]]
-    if (is.null(r)) next
+    if (is.null(r) || identical(running, id) || id %in% state$pending) next
+    # What its code reads now, and what its result's run read: a cell
+    # edited to stop reading a file still shows a result from it (#439).
     seen <- r$data_seen %||% list()
+    hit <- intersect(union(state$graph$analyses[[id]]$data_files, names(seen)), changed)
+    if (length(hit) == 0) next
     if (all(vapply(hit, function(p) identical(seen[[p]], event$files[[p]]), logical(1)))) next
     r$stale <- TRUE
     state$results[[id]] <- r

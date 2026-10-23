@@ -440,6 +440,9 @@ jsonlite. A literal path in a file the cell sources counts too.
   cell would otherwise read the reader's old value and show it as current.
   A cell of that run that read from the reader before the write stays
   stale, as the reader does when nothing queued reads from it.
+- A cell edited to stop reading a file still shows a result that came
+  from it until it runs again. So the file stays watched until then, and a
+  change marks that result stale, with what reads from it (#439).
 - A change while the reader runs is checked by the worker. It knows which
   top-level expressions of the cell read or write each file (literal
   paths given to a fixed list of writers, `data_writers`, such as

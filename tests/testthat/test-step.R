@@ -1076,6 +1076,23 @@ test_that("a data file that changed after its reader ran reruns the reader and i
   expect_false("W" %in% c(r2$state$pending, r2$state$worker$running$cell))
 })
 
+test_that("a cell edited to stop reading a data file goes stale when that file changes before it runs again (#439)", {
+  # Its result, and U's, came from the old file, so they are out of date
+  # the same as for a cell that still reads it.
+  r <- data_file_notebook("lazy")
+  r <- drive(r$state, ev_apply(list(op_set_code("R", "d <- data.frame(x = 4)")), at(20)))
+  expect_equal(r$state$graph$analyses$R$data_files, character())
+  expect_equal(watched_data_files(r$state), "d.csv")
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(21)))
+  expect_true(isTRUE(r2$state$results$R$stale))
+  expect_true(isTRUE(r2$state$results$U$stale))
+  expect_length(r2$state$pending, 0)
+  # Once it runs its new code, its result reads no file and nothing is watched.
+  r3 <- drive(r2$state, ev_run("R", at(22)))
+  r3 <- drive(r3$state, wk_done(1, r3$state$worker$running$token, report(created = "d"), at(23)))
+  expect_equal(watched_data_files(r3$state), character())
+})
+
 test_that("in autorun a reader the file change reruns runs its stale ancestors first, not with their old values (#437)", {
   # Found by the scheduling fuzz test with data files: B was left stale (its
   # upstream deleted), and R reran alone on the change, reading B's old j.
