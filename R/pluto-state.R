@@ -33,8 +33,14 @@ CELL_METADATA_DISABLED <- list(disabled = TRUE, show_logs = TRUE, skip_as_script
 #'   inputs its two entries were built from (see cell_key()). A cell whose
 #'   key is identical() keeps its previous entries without rebuilding them.
 #' * `graph`: the `ember_graph` `js$cell_dependencies` was built from.
-new_pluto_state <- function(js, state, keys, graph) {
-  structure(list(js = js, state = state, keys = keys, graph = graph),
+#' * `ctx`: `view_context(state)`, kept so the next projection can compare
+#'   against it (`cells_maybe_changed()`, state.R) without building it again.
+#' * `packages`: the `packages_view(state)` that `js$nbpkg` and
+#'   `js$ember$packages` were built from, kept for the next projection
+#'   while `packages_inputs_same()` (state.R) holds: a worker message
+#'   rarely touches packages, and the view costs a few milliseconds.
+new_pluto_state <- function(js, state, keys, graph, packages = NULL, ctx = NULL) {
+  structure(list(js = js, state = state, keys = keys, graph = graph, packages = packages, ctx = ctx),
             class = "ember_pluto_state")
 }
 
@@ -60,6 +66,9 @@ pluto_state <- function(state, previous = NULL) {
                                              # one match, never `[[name]]`
                                              # in a loop (quadratic, spike)
   inputs <- results <- keys <- vector("list", n)
+  maybe <- if (is.null(previous)) rep(TRUE, n) else {
+    cells_maybe_changed(previous$state, previous$ctx %||% view_context(previous$state), state, ctx, at)
+  }
   for (i in seq_len(n)) {
     j <- at[i]
     prev_key <- if (!is.na(j) && !is.null(previous)) previous$keys[[j]] else NULL
@@ -71,7 +80,7 @@ pluto_state <- function(state, previous = NULL) {
     # this). Every lookup inside is by position `i` (state.R's
     # view_context()), never by id: a 2000-cell notebook made the named
     # lookups alone cost tens of milliseconds (measured).
-    if (!is.null(prev_key) && key_unchanged(state, ctx, i, prev_key)) {
+    if (!is.null(prev_key) && (!maybe[i] || key_unchanged(state, ctx, i, prev_key))) {
       keys[[i]] <- prev_key
       inputs[i] <- pj$cell_inputs[j]; results[i] <- pj$cell_results[j]
     } else {
@@ -105,6 +114,12 @@ pluto_state <- function(state, previous = NULL) {
     project_dependencies(state$graph, if (!is.null(pj)) pj$cell_dependencies else NULL)
   }
 
+  pv <- if (!is.null(previous$packages) && packages_inputs_same(state, previous$state)) {
+    previous$packages
+  } else {
+    packages_view(state)
+  }
+
   js <- list(
     pluto_version = PLUTO_VERSION,
     julia_version = paste("R", state$options$r$version),
@@ -116,11 +131,11 @@ pluto_state <- function(state, previous = NULL) {
     cell_results = reuse(results, if (!is.null(pj)) pj$cell_results else NULL),
     cell_order = reuse(as_arr(ids), if (!is.null(pj)) pj$cell_order else NULL),
     published_objects = emptymap(), bonds = emptymap(), metadata = emptymap(),
-    nbpkg = reuse(project_nbpkg(state), if (!is.null(pj)) pj$nbpkg else NULL),
+    nbpkg = reuse(project_nbpkg(state, pv), if (!is.null(pj)) pj$nbpkg else NULL),
     cell_dependencies = deps,
     cell_execution_order = reuse(as_arr(state$graph$order), if (!is.null(pj)) pj$cell_execution_order else NULL),
-    ember = reuse_fields(project_ember(state, ctx), if (!is.null(pj)) pj$ember else NULL))
-  new_pluto_state(js, state, keys, state$graph)
+    ember = reuse_fields(project_ember(state, ctx, pv), if (!is.null(pj)) pj$ember else NULL))
+  new_pluto_state(js, state, keys, state$graph, pv, ctx)
 }
 
 #' What a cell's two entries depend on, as a list whose big parts are the
@@ -911,8 +926,7 @@ project_process_status <- function(state) {
 #' above): Endeavor's page adapter still reads these Pluto-shaped fields
 #' (`endeavor/frontend/src/drawer.ts:218, 244`), so they stay, not just until
 #' increment 2.
-project_nbpkg <- function(state) {
-  pv <- packages_view(state)
+project_nbpkg <- function(state, pv = packages_view(state)) {
   p <- state$packages
   pkgs <- pv$packages
 
@@ -1010,7 +1024,7 @@ project_nbpkg <- function(state) {
 #' * `read_only`: `isTRUE(state$read_only)`, the same flag
 #'   `notebook_snapshot()` projects -- the page disables the Status tab's
 #'   autorun/lazy radios with it; `ember_set_mode` refuses regardless.
-project_ember <- function(state, ctx) {
+project_ember <- function(state, ctx, pv = packages_view(state)) {
   stale <- 0L
   if (isTRUE(state$allowed)) {
     for (i in seq_along(ctx$ids)) {
@@ -1022,7 +1036,6 @@ project_ember <- function(state, ctx) {
   wu <- state$worker_usage
   if (!is.null(wu) && identical(wu$gen, state$worker$gen)) worker_memory <- as.double(wu$rss)
 
-  pv <- packages_view(state)
   pkgs <- pv$packages
   rows <- lapply(seq_len(nrow(pkgs)), function(i) {
     list(name = pkgs$name[[i]],
