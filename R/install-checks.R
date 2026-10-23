@@ -342,6 +342,18 @@ unreadable_downloads <- function(packages, root) {
   files[!vapply(files, archive_readable, logical(1))]
 }
 
+#' The packages renv says it couldn't download, read from the report a
+#' failed restore prints (`lines`): "- [pkg]: error downloading '<url>'
+#' [error code 6]" (curl couldn't resolve the host), or "failed to
+#' download". renv has already tried each twice (its parallel download,
+#' then one on its own); the installer tries the install once more (#478).
+#' A build that failed or a dependency that failed isn't a download, so
+#' isn't named.
+renv_download_failures <- function(lines) {
+  m <- regmatches(lines, regexec("- \\[([A-Za-z][A-Za-z0-9.]*)\\]: (error downloading|failed to download)", lines))
+  unique(vapply(Filter(length, m), `[[`, character(1), 2))
+}
+
 #' Whether the zip or tarball at `path` lists: a cut-short zip "cannot be
 #' opened" and a cut-short tarball has an "incomplete block".
 archive_readable <- function(path) {
