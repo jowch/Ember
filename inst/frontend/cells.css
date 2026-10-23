@@ -1060,6 +1060,58 @@ ember-log code {
     background: none;
     padding: 0;
 }
+/* A prompt the running cell waits on (#186): under its console, in the
+   console's type, as the line R would show. */
+ember-prompt {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 4px 12px 8px;
+    font-family: var(--ember-code-font);
+    font-size: 12.5px;
+    line-height: 1.55;
+    color: var(--ember-text);
+}
+ember-prompt label {
+    display: flex;
+    align-items: baseline;
+    white-space: pre;
+}
+ember-prompt input {
+    flex: 1 1 auto;
+    min-width: 8ch;
+    padding: 1px 4px;
+    border: none;
+    border-bottom: 1px solid var(--ember-accent);
+    background: transparent;
+    color: inherit;
+    font: inherit;
+}
+ember-prompt input:focus-visible {
+    background: var(--ember-panel);
+}
+.ember-prompt-choices {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 6px;
+}
+.ember-prompt-choices button {
+    height: 24px;
+    padding: 0 10px;
+    border: 1px solid var(--ember-line);
+    border-radius: 6px;
+    background: var(--ember-panel);
+    color: var(--ember-text);
+    font-family: var(--ember-ui-font);
+    font-size: 12.5px;
+    cursor: pointer;
+}
+.ember-prompt-hint {
+    font-family: var(--ember-ui-font);
+    font-size: 12px;
+    color: var(--ember-muted);
+}
+
 pluto-log-truncated {
     display: flex;
     flex-wrap: wrap;

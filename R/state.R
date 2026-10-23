@@ -236,8 +236,10 @@ new_state <- function(file, path, id, options, at) {
 #'   generation it came from; events from an older generation are ignored,
 #'   which is what makes kill-then-start safe against messages in flight.
 #' * `running`: `NULL` or `list(cell, token, code, started_at, console,
-#'   begun)`; `console` grows as the worker streams console items, and
-#'   `begun` turns `TRUE` when the worker says it began the run.
+#'   begun, prompt)`; `console` grows as the worker streams console items,
+#'   `begun` turns `TRUE` when the worker says it began the run, and
+#'   `prompt` is `list(id, text, choices)` while a prompt in the cell waits
+#'   for an answer (#186; `reduce_wk_input()`).
 #' * `interrupt`: `NULL` or `list(at, token)` once the user interrupted that
 #'   run. SIGINT is sent then, or when the run begins if that is later.
 #'   `failed = TRUE` is added if the interrupt couldn't be delivered
@@ -398,7 +400,8 @@ new_display <- function(mime, data, text, deps = list(), size = NULL,
 #' error of kind `"parse"` also carries `lines`, for `project_parse_error()`
 #' (pluto-state.R) to put the diagnostic on the real line),
 #' `output` (`ember_display` or `NULL`),
-#' `console`, `last_run`, `runtime`, `disabled` (the user's own choice),
+#' `console`, `prompt` (the running cell's waiting prompt, `list(id, text,
+#' choices)`, or `NULL`; #186), `last_run`, `runtime`, `disabled` (the user's own choice),
 #' `disabled_by` (the disabled cell a dependent is off because of, `NA`
 #' otherwise -- including for the disabled cell itself), `variables`
 #' (`list(name, type, value, kind)` per global the cell owns, sorted
@@ -609,6 +612,7 @@ cell_view <- function(state, ctx, i) {
     output = if (!is.null(result)) result$output else NULL,
     console = if (is_running) ctx$running$console
               else if (!is.null(result)) result$console else list(),
+    prompt = if (is_running) ctx$running$prompt,
     last_run = if (!is.null(result)) result$started_at else NULL,
     runtime = if (!is.null(result)) result$runtime else NULL,
     waiting_for = ctx$waiting[[i]] %||% character(),
@@ -791,7 +795,8 @@ cells_maybe_changed <- function(old, old_ctx, new, new_ctx, at) {
   run_new <- running_at(new_ctx, new_ctx$ids)
   run_old <- running_at(old_ctx, old_ctx$ids[at])
   maybe <- maybe | run_new != run_old
-  if (!identical(new_ctx$running$console, old_ctx$running$console)) maybe <- maybe | run_new
+  if (!identical(new_ctx$running$console, old_ctx$running$console) ||
+      !identical(new_ctx$running$prompt, old_ctx$running$prompt)) maybe <- maybe | run_new
   maybe
 }
 
