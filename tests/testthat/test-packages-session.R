@@ -287,10 +287,20 @@ test_that("a package download cut short is deleted and fetched again, and the in
                                   c("--vanilla", testthat::test_path("fixtures", "cut-download-server.R"), root),
                                   stdout = "|", stderr = "|")
   on.exit(server$kill(), add = TRUE)
-  server$poll_io(-1)
-  first <- server$read_output_lines()
-  port <- sub("^PORT ([0-9]+).*", "\\1", first[[1]])
-  expect_match(first[[1]], "^PORT [0-9]+")
+  # poll_io() returns when either pipe has something or the server exits,
+  # so read until its PORT line comes, and say why if it never does.
+  first <- errors <- character()
+  while (!any(grepl("^PORT [0-9]+", first))) {
+    if (!server$is_alive()) {
+      server$wait()
+      stop(sprintf("the test's HTTP server exited with status %s before listening:\n%s",
+                   server$get_exit_status(), paste(c(first, errors, server$read_all_error_lines()), collapse = "\n")))
+    }
+    server$poll_io(-1)
+    first <- c(first, server$read_output_lines())
+    errors <- c(errors, server$read_error_lines())
+  }
+  port <- sub("^PORT ([0-9]+).*", "\\1", grep("^PORT [0-9]+", first, value = TRUE)[[1]])
 
   cache <- toy_cache()
   on.exit(unlink(cache, recursive = TRUE), add = TRUE)
@@ -305,7 +315,7 @@ test_that("a package download cut short is deleted and fetched again, and the in
                info = paste(c(status$library$message, notebook_state(nb)$packages$target$log), collapse = "\n"))
   expect_equal(snap_view(notebook_snapshot(nb), "A")$output$text, "[1] \"toyA 0.1 says: hello from toyB\"")
   # Each archive was cut once and fetched whole the second time.
-  got <- c(first[-1], server$read_output_lines())
+  got <- c(first, server$read_output_lines())
   expect_true(all(c("GET toyA_0.1.tar.gz 2", "GET toyB_1.0.tar.gz 2") %in% trimws(got)), info = paste(got, collapse = "\n"))
 })
 
