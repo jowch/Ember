@@ -740,25 +740,33 @@ test_that("worker_query() answers when idle, NULL at once while busy, NULL in pr
 
   # A late reply (the busy cell finishes and the worker is asked again,
   # with a very short timeout) is dropped, not delivered twice, and
-  # doesn't kill the worker.
+  # doesn't kill the worker. The poll is stopped while the 0 s timeout
+  # fires: a poll already due (on a slow runner, or with no pipe watch, as
+  # on Windows) would otherwise run first and could read the real reply
+  # before the timeout (#402). Then the poll resumes and reads the reply,
+  # whose query has timed out.
   expect_true(wait_for(nb, timeout = 20))
   late_calls <- 0L
   late_reply <- "unset"
+  cancel_poll(nb)
   worker_query(nb, list(type = "signature", name = "lm", package = NULL),
               function(r) { late_calls <<- late_calls + 1L; late_reply <<- r }, timeout = 0)
-  later::run_now(timeout = 0)  # the 0s timeout fires before the worker's real reply can arrive
-  for (i in 1:50) { later::run_now(timeout = 0.05); Sys.sleep(0.02) }
+  later::run_now(timeout = 0)
   expect_identical(late_calls, 1L)
   expect_null(late_reply)
+  schedule_poll(nb)
   expect_true(wait_for(nb, timeout = 5))
   expect_false(is.null(nb$proc))
 
   # The worker is still alive and answers again: a fresh query, with no
-  # short timeout this time, gets a real reply.
+  # short timeout this time, gets a real reply. The worker answers in
+  # order on one socket, so the late reply has been read by then, and was
+  # dropped.
   got_again <- "unset"
   worker_query(nb, list(type = "signature", name = "lm", package = NULL), function(r) got_again <<- r)
   expect_true(wait_for(nb, function(s) !identical(got_again, "unset"), timeout = 10))
   expect_match(got_again$text, "^lm\\(formula, data")
+  expect_identical(late_calls, 1L)
 
   # A worker exit fails every pending query. A real query's reply can beat
   # a kill() by a wide enough margin on a fast loopback that this can't be
