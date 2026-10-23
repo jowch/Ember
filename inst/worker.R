@@ -187,14 +187,13 @@ load_ember_dll <- function() {
 
 #' Show what a running cell prints while it runs (#470): R calls
 #' `console_tick()` from its event processing, a few times a second
-#' (src/console.c). Without the DLL, printed text shows at the next
-#' message, warning or prompt, or at the run's end.
+#' (src/console.c). Without the DLL, and on Windows, which has no such
+#' hook (#482), printed text shows at the next message, warning or prompt,
+#' or at the run's end.
 stream_console <- function(dll) {
   if (is.null(dll)) return(invisible(FALSE))
-  invisible(tryCatch({
-    .Call(getNativeSymbolInfo("C_console_poll", dll), console_tick, 0.25)
-    TRUE
-  }, error = function(e) FALSE))
+  invisible(tryCatch(isTRUE(.Call(getNativeSymbolInfo("C_console_poll", dll), console_tick, 0.25)),
+                     error = function(e) FALSE))
 }
 
 #' Send the whole lines a running cell has printed since the last ones

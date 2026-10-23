@@ -60,25 +60,32 @@ test_that("run_value_and_console_order", {
 test_that("what a running cell prints is sent while it runs, a whole line at a time (#470)", {
   # The cell prints, then waits on a file the test writes only once the
   # printed line has arrived: before #470 nothing came until the run ended.
+  # Windows has no hook for this yet (#482): there the file is written at
+  # once, and the text comes at the message, as before.
+  streams <- .Platform$OS.type != "windows"
   h <- worker_harness()
   on.exit(h$close())
   go <- tempfile("ember-go-")
   on.exit(unlink(go), add = TRUE)
+  if (!streams) writeLines("", go)
   code <- sprintf('cat("inside the loop\\n"); cat("half"); while (!file.exists("%s")) NULL; cat(" line\\n"); message("m")', go)
   h$send(run_msg("a", 1L, code))
-  repeat {
-    m <- next_frame(h)
-    expect_false(identical(m$type, "done"))
-    if (identical(m$type, "console")) break
+  if (streams) {
+    repeat {
+      m <- next_frame(h)
+      expect_false(identical(m$type, "done"))
+      if (identical(m$type, "console")) break
+    }
+    expect_identical(m$item, list(kind = "stdout", text = "inside the loop\n"))
+    writeLines("", go)
   }
-  expect_identical(m$item, list(kind = "stdout", text = "inside the loop\n"))
-  writeLines("", go)
   r <- wait_for_done(h)
   expect_identical(r$status, "ok")
   # The unfinished line was held back, then sent whole, before the message.
-  expect_identical(r$console, list(list(kind = "stdout", text = "inside the loop\n"),
-                                   list(kind = "stdout", text = "half line\n"),
-                                   list(kind = "message", text = "m\n")))
+  stdout <- if (streams) list(list(kind = "stdout", text = "inside the loop\n"),
+                              list(kind = "stdout", text = "half line\n"))
+            else list(list(kind = "stdout", text = "inside the loop\nhalf line\n"))
+  expect_identical(r$console, c(stdout, list(list(kind = "message", text = "m\n"))))
 })
 
 test_that("a progress bar's redraws end as one line, as in the R console (#358)", {

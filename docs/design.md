@@ -730,7 +730,9 @@ order. They show while the cell runs, as in an R console: messages and
 warnings at once, and printed text a whole line at a time, a few times a
 second (#470). The worker reads what the cell printed from R's event
 processing, which R reaches wherever it checks for an interrupt; a cell
-inside C code that doesn't check shows its text when that code returns. A
+inside C code that doesn't check shows its text when that code returns.
+On Windows R offers no such hook, so printed text still shows at the next
+message, warning or prompt, or at the run's end (#482). A
 plot drawn with no visible value after it is the output. R
 Markdown instead shows every visible value inline.
 
