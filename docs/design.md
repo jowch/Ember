@@ -726,7 +726,12 @@ The mark is cleared before each top-level expression, so one left by a
 blank a later cell that shows the table, as it would at the console.
 Earlier visible values, `print()`,
 `cat()`, messages and warnings go to a console area below the output, in
-order. A plot drawn with no visible value after it is the output. R
+order. They show while the cell runs, as in an R console: messages and
+warnings at once, and printed text a whole line at a time, a few times a
+second (#470). The worker reads what the cell printed from R's event
+processing, which R reaches wherever it checks for an interrupt; a cell
+inside C code that doesn't check shows its text when that code returns. A
+plot drawn with no visible value after it is the output. R
 Markdown instead shows every visible value inline.
 
 **Prompts** (#186). A cell runs as R code does in an R console:
