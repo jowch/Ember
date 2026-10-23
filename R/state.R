@@ -106,7 +106,12 @@ exports_of <- function(state) {
 #' * `input_outcome`: `NULL`, or `list(name, ok, error, value, cells)` for
 #'   the last value the worker answered (`reduce_wk_input_set()`): `cells`
 #'   are the readers it reran or marked stale. What `set_input(wait =
-#'   TRUE)` reports.
+#'   TRUE)` reports. Only R API values set it, each with the `token` of
+#'   its `set_input` (`input_token` counts them), so a page value
+#'   answered meanwhile can't stand in for it.
+#' * `input_errors`: named list, input name -> the worker's message for the
+#'   last page value it refused, until a value for that name is accepted
+#'   or its cell runs again: the note under the widget (`project_bonds()`).
 #'
 #' Invariants (checked by `check_state()` in tests after every step):
 #' * `graph` is `notebook_graph(code_of(cells), exports,
@@ -222,7 +227,8 @@ new_state <- function(file, path, id, options, at) {
     allowed = FALSE, closed = FALSE, worker = new_worker_state(),
     worker_usage = NULL,
     pending = character(), results = list(), graph_dropped = list(), data_columns = list(), clock = at, seq = 0L,
-    next_token = 1L, input_values = list(), input_outcome = NULL
+    next_token = 1L, input_values = list(), input_outcome = NULL,
+    input_token = 0L, input_errors = list()
   ), class = "ember_state")
 }
 

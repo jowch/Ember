@@ -262,6 +262,37 @@ test_that("a waiting page value is dropped when the worker exits, or when its ce
   expect_null(edited$state$worker$next_inputs)
 })
 
+test_that("a refused page value is the note under its widget until the next value; an R API value's outcome is its own", {
+  r <- inputs_ran()
+  r <- drive(r$state, ev_set_input("n", 80, at(20), latest = TRUE),
+             wk_input_set(1, "I", "n", FALSE, NULL, "The value must be a number from 1 to 10.", NULL, at(21)))
+  expect_null(r$state$input_outcome)
+  expect_identical(project_bonds(r$state)$n, list(value = 5, error = "The value must be a number from 1 to 10."))
+  # A new value from the page clears it at once.
+  r2 <- drive(r$state, ev_set_input("n", 6, at(22), latest = TRUE))
+  expect_null(project_bonds(r2$state)$n$error)
+  # So does the input's cell running again.
+  r3 <- drive(r$state, ev_run("I", at(22)))
+  r3 <- drive(r3$state, wk_done(1, last_token(r3), report(created = c("n", "bins"),
+                                                          inputs = list(slider_entry("n"), slider_entry("bins"))), at(23)))
+  expect_length(r3$state$input_errors, 0)
+})
+
+test_that("a page value answered after an R API value can't stand in for its outcome", {
+  for (queued in c("n", "bins")) {
+    r <- inputs_ran()
+    api <- drive(r$state, ev_set_input("n", 80, at(20)))
+    token <- api$reply$token
+    r <- drive(api$state, ev_set_input(queued, 7, at(21), latest = TRUE),
+               wk_input_set(1, "I", "n", FALSE, NULL, "The value must be a number from 1 to 10.", NULL, at(22)))
+    r <- drive(r$state, wk_input_set(1, "I", queued, TRUE, 7, NULL, list(), at(23)))
+    out <- r$state$input_outcome
+    expect_identical(out$token, token, info = queued)
+    expect_false(out$ok, info = queued)
+    expect_identical(out$error, "The value must be a number from 1 to 10.", info = queued)
+  }
+})
+
 test_that("bonds show the page's latest value: one waiting, else the one with the worker, else the cell's", {
   r <- inputs_ran()
   expect_identical(project_bonds(r$state), list(n = list(value = 5), bins = list(value = 5)))

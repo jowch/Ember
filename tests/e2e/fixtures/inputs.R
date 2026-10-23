@@ -13,13 +13,22 @@ n <- input_slider(1L, 10L, 5L)
 method <- input_select(c(Pearson = "pearson", Spearman = "spearman"))
 show <- input_checkbox(TRUE, label = "Show points")
 title <- input_text("Results")
+k <- input_number(5, min = 0, max = 10)
 round(input_number(2))
 
+# %% id=J
+pick <- input_radio(c("x", "y"), selected = "y")
+
+# %% id=K
+other <- input_radio(c("p", "q"))
+
 # %% id=B
-paste(n, method, show, title)
+paste(n, method, show, title, k, pick)
 
 # /// cell order
 # L
 # I
+# J
+# K
 # B
 # ///

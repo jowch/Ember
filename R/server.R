@@ -783,8 +783,14 @@ on_update_notebook <- function(server, cl, hub, req) {
     tryCatch({
       if (length(ed$ops) > 0) do.call(edit_notebook, c(list(hub$nb), ed$ops))
       if (!is.null(ed$move_to)) move_notebook(hub$nb, ed$move_to)
-      for (i in ed$inputs) set_page_input(hub$nb, i$name, i$value)
-      list(update_went_well = THUMBS_UP)
+      # Pluto sends the bonds it held back during a run in one patch: one
+      # refused value mustn't stop the others.
+      why <- character()
+      for (i in ed$inputs) {
+        tryCatch(set_page_input(hub$nb, i$name, i$value),
+                 ember_refused = function(e) why <<- c(why, conditionMessage(e)))
+      }
+      if (length(why) > 0) thumbs_down(paste(why, collapse = " ")) else list(update_went_well = THUMBS_UP)
     }, ember_refused = function(e) thumbs_down(conditionMessage(e)))
   }
   flush_clients(server, hub, req, response)

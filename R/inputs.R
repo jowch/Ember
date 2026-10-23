@@ -126,7 +126,11 @@ input_from_page <- function(spec, v) {
 #' The value the page shows for each bound input, as Pluto's `bonds`:
 #' `name -> list(value)`. A value waiting to be sent, else the one with the
 #' worker, else the cell's: the page's own latest value, so its widget
-#' doesn't snap back while the worker catches up.
+#' doesn't snap back while the worker catches up. When the worker refused
+#' the page's last value for the name, the entry also has `error`, its
+#' message (`state$input_errors`), which the widget shows; `set_bond`
+#' replaces the entry with `{value}`, so a new value clears it on the page
+#' at once.
 project_bonds <- function(state) {
   out <- emptymap()
   w <- state$worker
@@ -136,7 +140,8 @@ project_bonds <- function(state) {
       value <- if (!is.null(w$next_inputs[[i$name]])) w$next_inputs[[i$name]]$value
                else if (identical(w$input$name, i$name)) w$input$value
                else i$value
-      out[[i$name]] <- list(value = input_to_page(i$spec, value))
+      out[[i$name]] <- c(list(value = input_to_page(i$spec, value)),
+                         if (!is.null(state$input_errors[[i$name]])) list(error = state$input_errors[[i$name]]))
     }
   }
   out

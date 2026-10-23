@@ -414,7 +414,18 @@ R API. Nothing shows on the page yet.
   the top of the cell to use it." or "Read `n` in another cell.". A value
   off its default is marked "changed"; its tooltip gives the default.
 - **Sending.** A slider sends as it moves; a number box and a text box send
-  on Enter or when the user leaves them; the others on each change.
+  on Enter or when the user leaves them; the others on each change. A
+  number box sends only a number within its `min` and `max`; anything
+  else stays in the box with a note saying what the input allows.
+- **Refused values.** When the worker refuses a page value, the widget
+  goes back to the input's value and shows the worker's message under it
+  (`bonds[name].error`, from `state$input_errors`), until the next value
+  or the cell's next run. A value set through the R API keeps its own
+  outcome (by token), so a page value answered meanwhile can't report in
+  its place.
+- **Duplicate choices.** A dropdown or radio with two equal choices
+  (`c(A = 1, B = 1)`) shows the first as picked whichever was chosen; R
+  gets the same value either way.
 
 Next: EndeavorMCP's tool (its `set_input` and `read_cell` text), which
 the Endeavor side picks up.

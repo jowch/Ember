@@ -670,7 +670,7 @@ export const Cell = ({
                 (note) => html`<ember-settings-note class="load-note" role="status">${t("t_load_note", { package: note.package, name: note.setting })}</ember-settings-note>`
             )}
             ${!code_not_trusted_yet && (ember?.inputs?.length ?? 0) > 0
-                ? html`<${CellInputs} inputs=${ember.inputs} disabled=${disable_input} />`
+                ? html`<${CellInputs} cell_id=${cell_id} inputs=${ember.inputs} disabled=${disable_input} />`
                 : null}
             ${code_not_trusted_yet
                 ? null

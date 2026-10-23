@@ -57,9 +57,11 @@ test("inputs.R: the widgets show, and moving one reruns its readers with the new
   await runCell(page, "L");
   await waitRan(page, "L");
   await runCell(page, "B");
-  await waitOutput(page, "B", /5 pearson TRUE Results/);
+  await waitOutput(page, "B", /5 pearson TRUE Results 5 y/);
+  await runCell(page, "K");
+  await waitRan(page, "K");
   const inputs = page.locator(`${cellSelector("I")} ember-input`);
-  assert.equal(await inputs.count(), 5);
+  assert.equal(await inputs.count(), 6);
 
   // The unbound input is greyed, with the note naming the fix.
   const unbound = page.locator(`${cellSelector("I")} ember-input.unbound`);
@@ -71,27 +73,48 @@ test("inputs.R: the widgets show, and moving one reruns its readers with the new
   const slider = page.locator(`${cellSelector("I")} input[type="range"]`);
   assert.equal(await slider.inputValue(), "5");
   await slider.fill("8");
-  await waitOutput(page, "B", /8 pearson TRUE Results/);
+  await waitOutput(page, "B", /8 pearson TRUE Results 5 y/);
   await page.locator(`${cellSelector("I")} ember-input.slider.changed`).waitFor();
 
   // The dropdown sends its choice, and B gets the element, not the label.
   await page.locator(`${cellSelector("I")} select`).selectOption({ label: "Spearman" });
-  await waitOutput(page, "B", /8 spearman TRUE Results/);
+  await waitOutput(page, "B", /8 spearman TRUE Results 5 y/);
 
   // The checkbox, and the text box (sent on Enter).
   await page.locator(`${cellSelector("I")} input[type="checkbox"]`).uncheck();
-  await waitOutput(page, "B", /8 spearman FALSE Results/);
+  await waitOutput(page, "B", /8 spearman FALSE Results 5 y/);
   const text = page.locator(`${cellSelector("I")} ember-input.text input`);
   await text.fill("Done");
   await text.press("Enter");
-  await waitOutput(page, "B", /8 spearman FALSE Done/);
+  await waitOutput(page, "B", /8 spearman FALSE Done 5 y/);
+
+  // Radio groups in different cells are separate groups: each keeps its own pick.
+  const radio = (id, k) => page.locator(`${cellSelector(id)} input[type="radio"]`).nth(k);
+  assert.deepEqual([await radio("J", 0).isChecked(), await radio("J", 1).isChecked()], [false, true]);
+  assert.deepEqual([await radio("K", 0).isChecked(), await radio("K", 1).isChecked()], [true, false]);
+  await radio("J", 0).check();
+  await waitOutput(page, "B", /8 spearman FALSE Done 5 x/);
+  assert.equal(await radio("K", 0).isChecked(), true);
+
+  // A number outside the input's limits stays in the box with what the input allows, and isn't sent.
+  const number = page.locator(`${cellSelector("I")} ember-input.number`).first().locator("input");
+  await number.fill("999");
+  await number.press("Enter");
+  const error = page.locator(`${cellSelector("I")} ember-input.number .ember-input-error`);
+  await error.waitFor();
+  assert.equal(await error.textContent(), "The value must be a number from 0 to 10.");
+  assert.equal(await number.inputValue(), "999");
+  await number.fill("3");
+  await number.press("Enter");
+  await waitOutput(page, "B", /8 spearman FALSE Done 3 x/);
+  assert.equal(await error.count(), 0);
 
   // A drag: many values in a row, faster than the cells run. B ends at the last one.
   for (const v of ["2", "3", "4", "6", "7", "9", "10", "1"]) await slider.fill(v);
-  await waitOutput(page, "B", /^\[1\] "1 spearman FALSE Done"/);
+  await waitOutput(page, "B", /^\[1\] "1 spearman FALSE Done 3 x"/);
   await waitIdle(page);
   assert.equal(await slider.inputValue(), "1");
-  assert.match(await output(page, "B"), /"1 spearman FALSE Done"/);
+  assert.match(await output(page, "B"), /"1 spearman FALSE Done 3 x"/);
 
   // The input's own cell reruns: every input keeps its value, so B's doesn't change.
   const ran = await lastRun(page, "I");
@@ -101,7 +124,7 @@ test("inputs.R: the widgets show, and moving one reruns its readers with the new
   assert.equal(await slider.inputValue(), "1");
   assert.equal(await page.locator(`${cellSelector("I")} select`).inputValue(), "1");
   assert.equal(await text.inputValue(), "Done");
-  assert.match(await output(page, "B"), /"1 spearman FALSE Done"/);
+  assert.match(await output(page, "B"), /"1 spearman FALSE Done 3 x"/);
 
   assertNoProblems(page);
 });

@@ -16,14 +16,16 @@ import { t } from "../common/lang.js"
  * queued or running (`input.disabled`, from the server), and when the page
  * can't change the notebook (`disabled`: an HTML export, or no
  * connection). A value off its default is marked: `Rscript` would give
- * different results.
+ * different results. When the worker refused the page's last value, the
+ * bond carries its message (`bonds[name].error`), shown under the widget.
  *
  * @param {{
+ *  cell_id: string,
  *  inputs: Array<Record<string, any>>,
  *  disabled: boolean,
  * }} props
  */
-export const CellInputs = ({ inputs, disabled }) => {
+export const CellInputs = ({ cell_id, inputs, disabled }) => {
     const bonds = useContext(PlutoBondsContext)
     const pluto_actions = useContext(PlutoActionsContext)
     return html`<ember-inputs>
@@ -33,7 +35,15 @@ export const CellInputs = ({ inputs, disabled }) => {
             const send = (v) => {
                 if (input.bound && input.name != null) pluto_actions.set_bond(input.name, v)
             }
-            return html`<${InputRow} key=${`${i}-${input.name ?? ""}`} input=${input} value=${value} send=${send} disabled=${disabled || input.disabled} />`
+            return html`<${InputRow}
+                key=${`${i}-${input.name ?? ""}`}
+                group=${`ember-input-${cell_id}-${i}`}
+                input=${input}
+                value=${value}
+                error=${bond?.error ?? null}
+                send=${send}
+                disabled=${disabled || input.disabled}
+            />`
         })}
     </ember-inputs>`
 }
@@ -50,7 +60,7 @@ const shown = (input, v) => {
 
 const same = (a, b) => (Array.isArray(a) && Array.isArray(b) ? a.length === b.length && a.every((x, k) => x === b[k]) : a === b)
 
-const InputRow = ({ input, value, send, disabled }) => {
+const InputRow = ({ group, input, value, error, send, disabled }) => {
     const changed = input.bound && !same(value, input.default)
     const label = input.label ?? input.name ?? input.type
     const note = !input.bound
@@ -59,15 +69,16 @@ const InputRow = ({ input, value, send, disabled }) => {
             : t("t_input_not_assigned")
         : null
     return html`<ember-input class=${`${input.type}${input.bound ? "" : " unbound"}${changed ? " changed" : ""}`}>
-        <${Widget} input=${input} label=${label} value=${value} send=${send} disabled=${disabled} />
+        <${Widget} group=${group} input=${input} label=${label} value=${value} send=${send} disabled=${disabled} />
         ${changed
             ? html`<span class="ember-input-changed" title=${t("t_input_changed", { value: shown(input, input.default) })}>${t("t_input_changed_short")}</span>`
             : null}
         ${note != null ? html`<span class="ember-input-note">${note}</span>` : null}
+        ${error != null ? html`<span class="ember-input-error" role="alert">${error}</span>` : null}
     </ember-input>`
 }
 
-const Widget = ({ input, label, value, send, disabled }) => {
+const Widget = ({ group, input, label, value, send, disabled }) => {
     switch (input.type) {
         case "slider":
             return html`<label>
@@ -115,7 +126,7 @@ const Widget = ({ input, label, value, send, disabled }) => {
                 ${(input.labels ?? []).map(
                     (l, k) =>
                         html`<label>
-                            <input type="radio" name=${`ember-input-${input.name ?? label}`} checked=${value === k} onChange=${() => send(k)} />
+                            <input type="radio" name=${group} checked=${value === k} onChange=${() => send(k)} />
                             <span>${l}</span>
                         </label>`
                 )}
@@ -125,28 +136,51 @@ const Widget = ({ input, label, value, send, disabled }) => {
     }
 }
 
-/** Sends a number when the field changes (Enter, the arrows, or leaving it: the `change` event), and only a number. */
+/** Why `n` doesn't fit the number box's limits (`null` when it does), worded as the worker words it. */
+const out_of_range = (input, n) => {
+    const lo = input.min ?? null
+    const hi = input.max ?? null
+    if ((lo == null || n >= lo) && (hi == null || n <= hi)) return null
+    if (lo != null && hi != null) return t("t_input_range", { min: lo, max: hi })
+    return lo != null ? t("t_input_min", { min: lo }) : t("t_input_max", { max: hi })
+}
+
+/**
+ * Sends a number when the field changes (Enter, the arrows, or leaving it:
+ * the `change` event), and only one that fits its limits: anything else
+ * stays in the box with a note saying what the input allows, rather than
+ * snapping back with no word.
+ */
 const NumberWidget = ({ input, label, value, send, disabled }) => {
     const [draft, set_draft] = useState(String(value))
-    useEffect(() => set_draft(String(value)), [value])
+    const [problem, set_problem] = useState(/** @type {string?} */ (null))
+    useEffect(() => {
+        set_draft(String(value))
+        set_problem(null)
+    }, [value])
     const commit = () => {
         const n = Number(draft)
-        if (draft.trim() !== "" && Number.isFinite(n) && n !== value) send(n)
-        else set_draft(String(value))
+        if (draft.trim() === "" || !Number.isFinite(n)) return set_problem(t("t_input_number"))
+        const why = out_of_range(input, n)
+        if (why != null) return set_problem(why)
+        set_problem(null)
+        if (n !== value) send(n)
     }
     return html`<label>
-        <span class="ember-input-label">${label}</span>
-        <input
-            type="number"
-            min=${input.min}
-            max=${input.max}
-            step=${input.step ?? "any"}
-            value=${draft}
-            disabled=${disabled}
-            onInput=${(e) => set_draft(e.target.value)}
-            onChange=${commit}
-        />
-    </label>`
+            <span class="ember-input-label">${label}</span>
+            <input
+                type="number"
+                min=${input.min}
+                max=${input.max}
+                step=${input.step ?? "any"}
+                value=${draft}
+                disabled=${disabled}
+                aria-invalid=${problem != null ? "true" : undefined}
+                onInput=${(e) => set_draft(e.target.value)}
+                onChange=${commit}
+            />
+        </label>
+        ${problem != null ? html`<span class="ember-input-error" role="alert">${problem}</span>` : null}`
 }
 
 /** Sends the text when the user presses Enter or leaves the box (the `change` event), not on every key (docs/inputs.md). */
