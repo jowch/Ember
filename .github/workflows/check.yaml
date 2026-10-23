@@ -129,10 +129,10 @@ jobs:
         run: npx playwright-core install --with-deps chromium
       - working-directory: tests/e2e
         run: npm test
-      # The UI sweep and the first-cell check (#284) again in WebKit, the
-      # engine Endeavor's notebook pane uses (WebKitGTK on Linux), where
-      # layout differs from Chromium. Only on ubuntu, where Playwright's
-      # WebKit is close to WebKitGTK.
+      # The UI sweep, the first-cell check (#284) and the reload check (#385)
+      # again in WebKit, the engine Endeavor's notebook pane uses (WebKitGTK
+      # on Linux), where layout differs from Chromium. Only on ubuntu, where
+      # Playwright's WebKit is close to WebKitGTK.
       - name: UI sweep in WebKit
         if: matrix.os == 'ubuntu-latest'
         working-directory: tests/e2e
@@ -140,7 +140,7 @@ jobs:
           EMBER_BROWSER: webkit
         run: |
           npx playwright-core install --with-deps webkit
-          node run.mjs tests/ui-sweep.test.mjs tests/first-cell.test.mjs
+          node run.mjs tests/ui-sweep.test.mjs tests/first-cell.test.mjs tests/ws-reload.test.mjs
       - name: Upload server logs and screenshots on failure
         if: failure()
         uses: actions/upload-artifact@v4
