@@ -593,6 +593,24 @@ test_that("a dependent queued by submitting a graph error runs after a cell the 
   expect_true("E" %in% r3$state$pending)
 })
 
+test_that("a queued cell runs after a cell that dropping a graph error's result left stale, though another ran first (#449)", {
+  # E is edited to define x, which A defines: both have a graph error. D
+  # reads B's y and C's z, and B reads A's w. Dispatching C, which hasn't
+  # run, drops A's result, so B is stale: D must run after it, not with its
+  # old y. C reads nothing from B, so checking only C's ancestors missed it.
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1\nw <- 2"), B = cell("y <- w + 1"),
+                       C = cell("z <- 5"), E = cell(""), D = cell("y + z")))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = c("x", "w")), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(11)))
+
+  r2 <- drive(r$state, ev_apply(list(op_set_code("E", "x <- 2")), at(20)))
+  r3 <- drive(r2$state, ev_run("D", at(21)))
+  expect_null(r3$state$results$A)
+  expect_equal(last_sent(r3)$cell, "B")
+  expect_true(all(c("C", "D") %in% r3$state$pending))
+})
+
 test_that("two definers of the same name give one upstream entry, the first in display order (ui-3 7c, fix 2)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1"), A2 = cell("x <- 2"), C = cell("x + 1")))
   r <- boot(s, "C")
