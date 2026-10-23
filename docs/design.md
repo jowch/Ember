@@ -426,6 +426,10 @@ jsonlite. A literal path in a file the cell sources counts too.
   a reader that ran after the writer isn't run twice. Comparing versions,
   not times, holds however coarse the file system's clock is. A reader
   that is queued is left alone: its run reads the new file.
+- The engine checks the files again as each run's result arrives, before
+  the notebook can look finished. So running a writer and waiting for the
+  notebook (`run_cells(wait = TRUE)`, an agent's execute-and-wait) returns
+  with its readers already rerun, or marked stale in lazy mode.
 - A change while the reader runs is checked by the worker. It knows which
   top-level expressions of the cell read or write each file (literal
   paths given to a fixed list of writers, `data_writers`, such as

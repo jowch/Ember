@@ -1134,6 +1134,7 @@ poll <- function(nb) {
         }
         ev <- worker_event(msg, nb$proc_gen, Sys.time(), secret = nb$secret)
         if (identical(ev$type, "wk_hello")) nb$worker_tmp <- worker_tempdir(msg$tempdir)
+        if (identical(ev$type, "wk_done")) check_data_files(nb, enqueue)
         enqueue(nb, ev)
         if (identical(ev$type, "wk_failed")) {
           # A worker that speaks nonsense, or gives the wrong secret, can't
@@ -1193,26 +1194,7 @@ poll <- function(nb) {
       }
     }
     if (length(changed) > 0) dispatch(nb, ev_files_read(changed, at = Sys.time()))
-    # Data files (#276): only a change of contents counts, so a file
-    # rewritten with the same bytes reruns nothing. A new size is a change
-    # without reading the file; the same size is told apart by its hash,
-    # which a file has only after its first such rewrite (hashing every
-    # data file when the notebook opens would read them all).
-    data_changed <- list()
-    for (p in names(nb$data_watch)) {
-      full <- resolve_source_path(nb, p)
-      info <- data_file_info(full)
-      w <- nb$data_watch[[p]]
-      if (!isTRUE(identical(info$mtime, w$mtime))) {
-        same_size <- isTRUE(identical(info$size, w$size)) && !is.na(info$size)
-        hash <- if (same_size) data_file_hash(full) else NA_character_
-        nb$data_watch[[p]] <- list(mtime = info$mtime, size = info$size, hash = hash)
-        if (!same_size || is.na(hash) || !identical(hash, w$hash)) {
-          data_changed[[p]] <- data_signature(info)
-        }
-      }
-    }
-    if (length(data_changed) > 0) dispatch(nb, ev_data_changed(data_changed, at = Sys.time()))
+    check_data_files(nb, dispatch)
   }
 
   watch_worker_output(nb)
@@ -1287,6 +1269,37 @@ write_frame <- function(con, msg) {
   payload <- serialize(msg, NULL)
   writeBin(c(writeBin(length(payload), raw(), endian = "big"), payload), con)
   flush(con)
+  invisible(NULL)
+}
+
+#' Compare the watched data files with what the shell last saw (#276) and
+#' send `data_changed` for those whose contents changed, through `send`
+#' (`dispatch` from the poll, `enqueue` ahead of a run's result). Checked
+#' before a run's result is queued, too, so that a cell that wrote one of
+#' them has its readers queued or stale before the notebook goes idle: the
+#' poll alone would find the change only after `run_cells(wait = TRUE)`
+#' had returned with the readers' old results.
+check_data_files <- function(nb, send) {
+  # Data files (#276): only a change of contents counts, so a file
+  # rewritten with the same bytes reruns nothing. A new size is a change
+  # without reading the file; the same size is told apart by its hash,
+  # which a file has only after its first such rewrite (hashing every
+  # data file when the notebook opens would read them all).
+  data_changed <- list()
+  for (p in names(nb$data_watch)) {
+    full <- resolve_source_path(nb, p)
+    info <- data_file_info(full)
+    w <- nb$data_watch[[p]]
+    if (!isTRUE(identical(info$mtime, w$mtime))) {
+      same_size <- isTRUE(identical(info$size, w$size)) && !is.na(info$size)
+      hash <- if (same_size) data_file_hash(full) else NA_character_
+      nb$data_watch[[p]] <- list(mtime = info$mtime, size = info$size, hash = hash)
+      if (!same_size || is.na(hash) || !identical(hash, w$hash)) {
+        data_changed[[p]] <- data_signature(info)
+      }
+    }
+  }
+  if (length(data_changed) > 0) send(nb, ev_data_changed(data_changed, at = Sys.time()))
   invisible(NULL)
 }
 

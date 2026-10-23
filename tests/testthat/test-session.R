@@ -150,8 +150,13 @@ test_that("autorun: a cell that reads a file another cell writes reruns when the
   shown_u <- function(snap) snap_view(snap, "U")$output$text
 
   # New contents: R and U rerun, though neither reads a variable W defines.
+  # Already there when the wait returns: the writer's result doesn't wait
+  # for the poll, which is held off here so only that path can see it.
   edit_notebook(nb, set_code("W", "k <- 2; writeLines(as.character(k), 'd.txt')"))
+  nb$last_watch_check <- Sys.time() + 3600
   run_cells(nb, "W", wait = TRUE, timeout = 20)
+  expect_identical(shown_u(notebook_snapshot(nb)), '[1] "2 !"')
+  nb$last_watch_check <- NULL
   expect_true(wait_for(nb, function(snap) identical(shown_u(snap), '[1] "2 !"') && is_idle(snap), timeout = 20))
   expect_identical(readLines(log), c("R", "R"))
 
