@@ -224,9 +224,11 @@ test("cell menu: item order, move down, hide code, Disable on every code cell (1
 // Until a cell's editor loads, its code is shown by a static copy
 // (StaticCodeMirrorFaker). The copy has to be as tall as the editor, or every
 // cell below moves when the editor replaces it: by 23 px per cell above
-// before #375. L and W, whose lines wrap, sit below B: a new editor's first
-// frame guesses a wrapped line's height (#379), which would move B too.
-test("opening: a cell's static code is as tall as its editor, so nothing below moves when editors load (#375)", async (t) => {
+// before #375. Until an editor has measured its text, CodeMirror guesses
+// line heights: a wrapped line's gutter row (L, W) far too tall, and lines
+// past its first viewport (T) too short. The editor keeps the static code's
+// height until then, so those cells sit above B too (#379).
+test("opening: a cell's static code is as tall as its editor, so nothing below moves when editors load (#375, #379)", async (t) => {
   const long = `x <- c(${Array.from({ length: 300 }, (_, i) => i).join(", ")})`;
   const notebook = path.join(mkdtempSync(path.join(tmpdir(), "ember-e2e-static-")), "static.R");
   writeFileSync(notebook, [
@@ -234,9 +236,10 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
     "# %% id=S", "",
     "# %% id=A", "x <- 1", "",
     "# %% id=I", "f <- function(a) {", "    if (a) {", "        print(a)", "", "    }", "}", "",
-    "# %% id=B", "x + 1", "",
     "# %% id=L", long, "",
     "# %% id=W", `s <- "${"abcdefghij".repeat(80)}"`, "",
+    "# %% id=T", "y <- 2", long, ...Array.from({ length: 60 }, (_, i) => `t${i} <- ${i}`), "",
+    "# %% id=B", "x + 1", "",
   ].join("\n"), "utf8");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-static.server.log") });
   const browser = await launchBrowser();
@@ -279,7 +282,7 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
     statics: window.__staticHeights,
     editors: Object.fromEntries([...document.querySelectorAll("pluto-cell")].map((c) => [c.id, c.querySelector("pluto-input .cm-editor").getBoundingClientRect().height])),
   }));
-  assert.deepEqual(Object.keys(statics).sort(), ["A", "B", "I", "L", "S", "W"], "every cell showed its static code first");
+  assert.deepEqual(Object.keys(statics).sort(), ["A", "B", "I", "L", "S", "T", "W"], "every cell showed its static code first");
   for (const [id, h] of Object.entries(statics)) near(h, editors[id], `cell ${id}'s static code height`);
   assert.deepEqual([...new Set(tops)], [tops[0]], "B never moves while the editors load");
 

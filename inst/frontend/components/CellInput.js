@@ -427,6 +427,8 @@ export const CellInput = ({
     show_static_fake_excuses_ref.current ||= navigator.userAgent.includes("Firefox") || focus_after_creation || cm_forced_focus != null || skip_static_fake || is_returning(cell_id)
 
     const show_static_fake = show_static_fake_excuses_ref.current ? false : show_static_fake_state
+    // The static code's height, kept for the editor that replaces it (#379).
+    const static_height_ref = useRef(/** @type {number?} */ (null))
 
     useLayoutEffect(() => {
         if (!show_static_fake) return
@@ -435,6 +437,7 @@ export const CellInput = ({
         let observer
 
         const show = () => {
+            static_height_ref.current = node.querySelector(".cm-ssr-fake")?.getBoundingClientRect().height ?? null
             set_show_static_fake(false)
             observer.disconnect()
             window.removeEventListener("beforeprint", show)
@@ -810,6 +813,17 @@ export const CellInput = ({
         if (returning != null) mark_returned(newcm, returning.record_id)
         // EditorView appends; the run button and ⋯ must follow the code in Tab order.
         dom_node_ref.current.prepend(newcm.dom)
+        // Until CodeMirror has measured its text, it sizes lines from guesses:
+        // a wrapped line's gutter row far too tall, lines past its first
+        // viewport too short. So for its first frame the editor keeps the
+        // static code's height, which is the right one, and nothing below
+        // moves (#379).
+        const static_height = static_height_ref.current
+        static_height_ref.current = null
+        if (static_height != null) {
+            newcm.dom.style.height = `${static_height}px`
+            newcm.requestMeasure({ read: () => null, write: () => (newcm.dom.style.height = "") })
+        }
 
         // For use from useDropHandler
         // @ts-ignore
