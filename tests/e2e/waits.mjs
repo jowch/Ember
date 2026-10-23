@@ -136,6 +136,18 @@ function track(promise, entry) {
   return promise;
 }
 
+/** Waits until `check()` is true, checking every 100 ms, listed as
+ * `label` (and `state()`, as for waitingFor()). For a condition outside
+ * the page, such as the notebook's file. The timer between checks doesn't
+ * keep node running by itself, so a poll a failed test left behind lets
+ * the file go on (the afterEach hook below). */
+export function poll(label, check, state) {
+  const until = (async () => {
+    while (!check()) await new Promise((resolve) => setTimeout(resolve, 100).unref());
+  })();
+  return track(until, { label: JSON.stringify(label), site: callSite(), state });
+}
+
 /** `promise`, listed in the report as `label`; `state()`, if given, is
  * what the report adds about it when the process is stopped (an async
  * function of the page, say). For a wait whose own description wouldn't
@@ -256,8 +268,9 @@ if (process.env.NODE_TEST_CONTEXT) {
     if (pending.size === 0) return;
     console.log(report("still pending when the test ended") + ["state:", ...(await states())].join("\n"));
     // Reported, so let them go: a wait no browser close will settle (a
-    // file poll, sentMessages().reach) would otherwise keep node running,
-    // and the rest of the file would wait for the runner's stop.
+    // poll(), sentMessages().reach) would otherwise keep node running, and
+    // the rest of the file would wait for the runner's stop. A loop with a
+    // timer of its own still would: poll() unrefs its timer for this.
     pending.clear();
     clearInterval(keepAlive);
     keepAlive = null;

@@ -9,7 +9,7 @@ import fs from "node:fs";
 import assert from "node:assert/strict";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector } from "../browser.mjs";
-import { waitingFor } from "../waits.mjs";
+import { poll } from "../waits.mjs";
 
 test("disable cell: toggling off then on, with the file and classes surviving a reload (37)", async (t) => {
   const notebook = tempNotebook("disabled.R");
@@ -44,9 +44,7 @@ test("disable cell: toggling off then on, with the file and classes surviving a 
   assert.equal(await page.locator(`${cellSelector("C")}.depends_on_disabled_cells`).count(), 0);
 
   let onDisk = "";
-  await waitingFor("the file has A disabled", (async () => {
-    while (!(onDisk = fs.readFileSync(notebook, "utf8")).includes("## x <- 1")) await new Promise((r) => setTimeout(r, 100));
-  })(), () => onDisk);
+  await poll("the file has A disabled", () => (onDisk = fs.readFileSync(notebook, "utf8")).includes("## x <- 1"), () => onDisk);
   assert.match(onDisk, /## x <- 1/);
   assert.match(onDisk, /# A disabled/);
 
@@ -135,9 +133,7 @@ test("undo delete of a disabled cell brings it back disabled, under its short id
   await page.waitForSelector("nav#undo_delete:not(.hidden)");
   const fileSays = async (re, want) => {
     let text = "";
-    await waitingFor(`the file ${want ? "matches" : "doesn't match"} ${re}`, (async () => {
-      while (re.test(text = fs.readFileSync(notebook, "utf8")) !== want) await new Promise((r) => setTimeout(r, 100));
-    })(), () => text);
+    await poll(`the file ${want ? "matches" : "doesn't match"} ${re}`, () => re.test(text = fs.readFileSync(notebook, "utf8")) === want, () => text);
     return text;
   };
   assert.doesNotMatch(await fileSays(/# %% id=A\n/, false), /# %% id=A\n/, "the delete was saved");

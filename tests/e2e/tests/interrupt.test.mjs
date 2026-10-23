@@ -17,8 +17,8 @@ test("interrupt: a long-running cell is stopped by clicking stop", async (t) => 
   await openNotebook(page, server.origin, server.secret, notebook);
 
   // A loop far longer than any runner takes to stop it, that says once R
-  // is inside it: an interrupt that comes before the run has started is
-  // dropped, as one between runs is (test-worker.R).
+  // is inside it: a stop that comes before the run has started only
+  // cancels it (#472).
   // message(), not cat(): the worker sends a message to the page at once,
   // while printed text waits for the next message or the run's end.
   await setCellCode(page, "LOOP", 'message("inside the loop"); t0 <- Sys.time(); while (Sys.time() - t0 < 60) NULL');

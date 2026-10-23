@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, codeSelector } from "../browser.mjs";
-import { waitingFor } from "../waits.mjs";
+import { poll } from "../waits.mjs";
 
 const rect = (page, sel) => page.locator(sel).evaluate((el) => {
   const r = el.getBoundingClientRect();
@@ -66,9 +66,7 @@ test("eye: one click hides the code, a second click in the same place shows it",
   // The file records the fold, as with the menu's Hide code.
   await page.locator(`${cellSelector("A")} pluto-shoulder > button.foldcode`).click({ force: true });
   await folded(page, "A", true);
-  await waitingFor("the file records A folded", (async () => {
-    while (!savedFolded(notebook, "A")) await new Promise((r) => setTimeout(r, 100));
-  })());
+  await poll("the file records A folded", () => savedFolded(notebook, "A"));
   assert.ok(savedFolded(notebook, "A"), "the cell order footer marks A folded");
 
   assertNoProblems(page);

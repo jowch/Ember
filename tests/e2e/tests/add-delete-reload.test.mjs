@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector } from "../browser.mjs";
-import { waitingFor } from "../waits.mjs";
+import { poll } from "../waits.mjs";
 
 test("add + run + delete a cell, then reload: state matches the file", async (t) => {
   const notebook = tempNotebook();
@@ -54,9 +54,7 @@ test("add + run + delete a cell, then reload: state matches the file", async (t)
 
   // The page drops the cell before the server has saved the deletion (about
   // 100 ms later); a reload inside that window would bring the cell back.
-  await waitingFor("the deletion is saved to the file", (async () => {
-    while (/41 \+ 1/.test(fs.readFileSync(notebook, "utf8"))) await new Promise((r) => setTimeout(r, 100));
-  })());
+  await poll("the deletion is saved to the file", () => !/41 \+ 1/.test(fs.readFileSync(notebook, "utf8")));
 
   await page.reload();
   await page.waitForSelector("pluto-cell");

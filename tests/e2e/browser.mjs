@@ -177,7 +177,7 @@ export async function connectionSettled(page) {
     const c = window.ember_connection;
     return c != null && c.state !== "trying" && c.state !== "syncing" && c.key_checks_out === 0;
   });
-  const settled = (async () => { while (!(await done())) await new Promise((resolve) => setTimeout(resolve, 20)); })();
+  const settled = (async () => { while (!(await done())) await new Promise((resolve) => setTimeout(resolve, 20).unref()); })();
   await waitingFor("the connection settles (connectionSettled)", settled,
     () => page.evaluate(() => JSON.stringify(window.ember_connection)));
 }

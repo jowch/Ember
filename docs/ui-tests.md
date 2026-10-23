@@ -144,8 +144,9 @@ off (`launchBrowser()`), no call passes `timeout`, no test sets one, and
 takes. The only bound is run.mjs's `--test-timeout`, which under Node 22
 stops a whole test file. A wait that never ends still says what it was
 waiting for: `waits.mjs` lists every pending Playwright call and every
-wait labelled with `waitingFor(label, promise, state)`, with where the
-test started it, in `test-results/waiting-<file>.txt`. run.mjs prints a
+wait labelled with `waitingFor(label, promise, state)` or `poll(label,
+check, state)` (a condition outside the page, such as the notebook's
+file), with where the test started it, in `test-results/waiting-<file>.txt`. run.mjs prints a
 list a stopped file leaves behind, with the end of each server's log and,
 except on Windows, what each page showed (its connection, its running
 and queued cells, its focus) and each labelled wait's `state()`. A test
