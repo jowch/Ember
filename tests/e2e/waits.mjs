@@ -255,6 +255,12 @@ if (process.env.NODE_TEST_CONTEXT) {
   afterEach(async () => {
     if (pending.size === 0) return;
     console.log(report("still pending when the test ended") + ["state:", ...(await states())].join("\n"));
+    // Reported, so let them go: a wait no browser close will settle (a
+    // file poll, sentMessages().reach) would otherwise keep node running,
+    // and the rest of the file would wait for the runner's stop.
+    pending.clear();
+    clearInterval(keepAlive);
+    keepAlive = null;
   });
 }
 
