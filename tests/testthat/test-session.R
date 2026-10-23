@@ -162,6 +162,21 @@ test_that("autorun: a cell that reads a file another cell writes reruns when the
   expect_identical(readLines(log), c("R", "R"))
 })
 
+test_that("a cell that reads a file and appends to it runs once, as in plain R (#276)", {
+  cells <- list(S = cell(""), L = cell("d <- readLines('log.txt')\ncat('entry\\n', file = 'log.txt', append = TRUE)"))
+  path <- write_session_notebook(cells)
+  log <- file.path(dirname(path), "log.txt")
+  writeLines("start", log)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, wait = TRUE, timeout = 20)
+  # The shell's poll has seen the append, and nothing ran after it.
+  seen <- function(...) identical(nb$data_watch[["log.txt"]]$mtime, file.info(log)$mtime)
+  expect_true(wait_for(nb, function(snap) seen() && is_idle(snap), timeout = 20))
+  expect_identical(readLines(log), c("start", "entry"))
+  expect_false(isTRUE(snap_view(notebook_snapshot(nb), "L")$stale))
+})
+
 test_that("the file on disk matches the state after an edit, and file_saved fires (110)", {
   cells <- list(S = cell(""), A = cell("1"))
   path <- write_session_notebook(cells)

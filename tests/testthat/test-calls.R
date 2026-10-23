@@ -407,3 +407,12 @@ test_that("data_touch lists the top-level expressions that read or write each fi
   expect_equal(b$data_touch$index, c(2L, 2L))
   expect_equal(b$data_touch$read, c(TRUE, FALSE))
 })
+
+test_that("base writers count as the cell's own writes (#276)", {
+  a <- read_cell(paste('d <- readLines("log.txt")', 'cat("x", file = "log.txt", append = TRUE)', 'write(1, "w.txt")',
+                       'sink("s.txt")', 'capture.output(d, file = "c.txt")', 'file.append("log.txt", "b.txt")',
+                       'writeBin(raw(1), "r.bin")', 'cat("to the console")', sep = "\n"))
+  w <- a$data_touch[!a$data_touch$read, ]
+  expect_equal(w$path, c("log.txt", "w.txt", "s.txt", "c.txt", "log.txt", "r.bin"))
+  expect_equal(w$index, 2:7)
+})

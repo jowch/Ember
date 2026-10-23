@@ -2059,9 +2059,10 @@ reduce_wk_done <- function(state, event) {
   # someone else changed after the cell read them: the run may have read
   # the old contents, so the result is stale, and autorun runs it again.
   # Its own writes don't count (the worker knows which top-level
-  # expressions write each file, `data_touch`); a run that still saw such
-  # a change right after one that did leaves the result as it is, so a
-  # write Ember can't see (through a helper function) doesn't loop.
+  # expressions write each file, `data_touch`). A write Ember can't see
+  # (through a helper function) costs one extra run; a run that still saw
+  # such a change right after one that did leaves the result as it is, so
+  # it doesn't loop.
   result$data_seen <- report$data_seen %||% list()
   outside <- as.character(report$data_changed %||% character())
   if (length(outside) > 0) {
@@ -2069,7 +2070,7 @@ reduce_wk_done <- function(state, event) {
     prev <- state$results[[id]]
     if (length(prev$data_changed %||% character()) == 0) {
       result$stale <- TRUE
-      if (identical(state$file$header$on_cell_change, "autorun") && isTRUE(state$allowed)) {
+      if (identical(state$file$header$on_cell_change, "autorun") && isTRUE(state$allowed) && can_run(state, id)) {
         state$pending <- union(state$pending, id)
       }
     }

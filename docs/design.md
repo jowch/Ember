@@ -427,9 +427,16 @@ jsonlite. A literal path in a file the cell sources counts too.
   stale, and autorun runs it again. A change before the cell reads the
   file is read with it, and the cell's own writes don't count.
 - A write Ember can't see, such as one inside a helper function, looks
-  like someone else's. So that a cell that does this doesn't run forever,
-  a run that sees such a change right after a run that saw one keeps its
-  result as it is.
+  like someone else's, and costs one extra run, which repeats the cell's
+  side effects (an append, a download). A run that sees such a change
+  right after a run that saw one keeps its result as it is, so the cell
+  doesn't run forever. The writers list covers base R's `cat`, `write`,
+  `writeLines`, `writeBin`, `writeChar`, `sink`, `capture.output`,
+  `file.append`, `file.copy`, `file.rename` and `download.file`, besides
+  the table and serialization writers.
+- The check is per top-level expression. An expression that reads the
+  file and then works for a long time (`d <- read.csv("d.csv") |>
+  slow_step()`) treats a change during that work as read with it.
 - A file saved with the same bytes isn't a change. The shell compares sizes
   first and hashes a file only when a rewrite keeps its size; the first
   such rewrite after opening counts as a change, since there is no earlier

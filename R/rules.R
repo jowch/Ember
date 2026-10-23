@@ -128,7 +128,9 @@ data_writers <- list(
   write_file = list("file", 2L), fwrite = list("file", 2L), write_parquet = list("sink", 2L),
   write_feather = list("sink", 2L), write_xlsx = list("path", 2L), write_json = list("path", 2L),
   ggsave = list("filename", 1L), file.copy = list("to", 2L), file.rename = list("to", 2L),
-  download.file = list("destfile", 2L))
+  download.file = list("destfile", 2L), cat = list("file", NA_integer_), write = list("file", 2L),
+  writeBin = list("con", 2L), writeChar = list("con", 2L), file.append = list("file1", 1L),
+  capture.output = list("file", NA_integer_), sink = list("file", 1L))
 
 #' The subset of `untracked_reads` whose name argument is checked for a
 #' literal before falling back to the plain `untracked_read` note.
