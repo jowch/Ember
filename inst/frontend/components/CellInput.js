@@ -427,6 +427,8 @@ export const CellInput = ({
     show_static_fake_excuses_ref.current ||= navigator.userAgent.includes("Firefox") || focus_after_creation || cm_forced_focus != null || skip_static_fake || is_returning(cell_id)
 
     const show_static_fake = show_static_fake_excuses_ref.current ? false : show_static_fake_state
+    // The static code's height, kept for the editor that replaces it (#379).
+    const static_height_ref = useRef(/** @type {number?} */ (null))
 
     useLayoutEffect(() => {
         if (!show_static_fake) return
@@ -435,6 +437,7 @@ export const CellInput = ({
         let observer
 
         const show = () => {
+            static_height_ref.current = node.querySelector(".cm-ssr-fake")?.getBoundingClientRect().height ?? null
             set_show_static_fake(false)
             observer.disconnect()
             window.removeEventListener("beforeprint", show)
@@ -642,6 +645,23 @@ export const CellInput = ({
             returning_state != null ? returning_state.update({ effects: StateEffect.reconfigure.of(config.extensions) }).state : EditorState.create(config)
 
         synced_code_ref.current = remote_code
+        // Until CodeMirror has measured its text, it sizes lines from guesses:
+        // a wrapped line's gutter row far too tall, and lines it hasn't
+        // rendered yet (past its first viewport) too short. The static code
+        // renders every line, so its height is the right one at this width.
+        // The editor takes it as its height until the first measure, which
+        // ends every guess that's too tall, and then as its minimum until its
+        // last line has been rendered and measured, or its own height reaches
+        // it first, so nothing below moves (#379). An edit, a new width or
+        // focus (a fold needs it) ends the minimum, since the static height
+        // may no longer hold.
+        const static_height = static_height_ref.current
+        static_height_ref.current = null
+        let height_floor = /** @type {{ height: number, width: number }?} */ (null)
+        const end_height_floor = (/** @type {EditorView} */ view) => {
+            height_floor = null
+            view.dom.style.minHeight = ""
+        }
         const newcm = (newcm_ref.current = new EditorView({
             state: make_state({
                 doc: local_code,
@@ -655,6 +675,16 @@ export const CellInput = ({
                     ember_spans_compartment,
                     editable_compartment,
                     last_remote_code_set_time_compartment,
+                    EditorView.updateListener.of((update) => {
+                        if (height_floor == null) return
+                        const { view } = update
+                        if (update.docChanged || view.hasFocus || view.contentHeight >= height_floor.height - 0.5 || view.dom.offsetWidth !== height_floor.width) {
+                            end_height_floor(view)
+                        } else if (view.viewport.to === view.state.doc.length) {
+                            // The last line is rendered, and the next measure measures it.
+                            view.requestMeasure({ read: () => null, write: () => end_height_floor(view) })
+                        }
+                    }),
                     highlightLinePlugin(),
                     highlightRangePlugin(),
 
@@ -813,6 +843,19 @@ export const CellInput = ({
         if (returning != null) mark_returned(newcm, returning.record_id)
         // EditorView appends; the run button and ⋯ must follow the code in Tab order.
         dom_node_ref.current.prepend(newcm.dom)
+        if (static_height != null) {
+            newcm.dom.style.height = `${static_height}px`
+            newcm.requestMeasure({
+                read: () => null,
+                write: () => {
+                    newcm.dom.style.height = ""
+                    // Every guess left is for a line not yet rendered.
+                    if (newcm.contentHeight >= static_height - 0.5 || newcm.viewport.to === newcm.state.doc.length) return
+                    height_floor = { height: static_height, width: newcm.dom.offsetWidth }
+                    newcm.dom.style.minHeight = `${static_height}px`
+                },
+            })
+        }
 
         // For use from useDropHandler
         // @ts-ignore

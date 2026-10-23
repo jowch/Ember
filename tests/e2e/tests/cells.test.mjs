@@ -224,9 +224,12 @@ test("cell menu: item order, move down, hide code, Disable on every code cell (1
 // Until a cell's editor loads, its code is shown by a static copy
 // (StaticCodeMirrorFaker). The copy has to be as tall as the editor, or every
 // cell below moves when the editor replaces it: by 23 px per cell above
-// before #375. L and W, whose lines wrap, sit below B: a new editor's first
-// frame guesses a wrapped line's height (#379), which would move B too.
-test("opening: a cell's static code is as tall as its editor, so nothing below moves when editors load (#375)", async (t) => {
+// before #375. Until an editor has measured its text, CodeMirror guesses
+// line heights: a wrapped line's gutter row (L, W) far too tall, and lines
+// past its first viewport too short (T; U, whose wrapped lines come after
+// more lines than fit in the window). The editor holds the static code's
+// height until then, so those cells sit above B too (#379).
+test("opening: a cell's static code is as tall as its editor, so nothing below moves when editors load (#375, #379)", async (t) => {
   const long = `x <- c(${Array.from({ length: 300 }, (_, i) => i).join(", ")})`;
   const notebook = path.join(mkdtempSync(path.join(tmpdir(), "ember-e2e-static-")), "static.R");
   writeFileSync(notebook, [
@@ -234,9 +237,11 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
     "# %% id=S", "",
     "# %% id=A", "x <- 1", "",
     "# %% id=I", "f <- function(a) {", "    if (a) {", "        print(a)", "", "    }", "}", "",
-    "# %% id=B", "x + 1", "",
     "# %% id=L", long, "",
     "# %% id=W", `s <- "${"abcdefghij".repeat(80)}"`, "",
+    "# %% id=T", "y <- 2", long, ...Array.from({ length: 60 }, (_, i) => `t${i} <- ${i}`), "",
+    "# %% id=U", "y <- 2", ...Array.from({ length: 150 }, (_, i) => `u${i} <- ${i}`), long, long, "",
+    "# %% id=B", "x + 1", "",
   ].join("\n"), "utf8");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-static.server.log") });
   const browser = await launchBrowser();
@@ -248,12 +253,14 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
   await page.addInitScript(() => {
     window.__bTops = [];
     window.__staticHeights = {};
+    window.__fontAtFirstStatic = null;
     const tick = () => {
       const b = document.querySelector('pluto-cell[id="B"]');
       if (b) window.__bTops.push(b.getBoundingClientRect().top + window.scrollY);
       for (const c of document.querySelectorAll("pluto-cell")) {
         const fake = c.querySelector("pluto-input .cm-ssr-fake");
         if (fake && !(c.id in window.__staticHeights)) window.__staticHeights[c.id] = fake.getBoundingClientRect().height;
+        if (fake && window.__fontAtFirstStatic == null) window.__fontAtFirstStatic = document.fonts.check(`13px ${getComputedStyle(fake.querySelector(".cm-content")).fontFamily}`);
       }
       requestAnimationFrame(tick);
     };
@@ -271,15 +278,24 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
     if (id === null) break;
     await page.waitForFunction((sel) => !document.querySelector(`${sel} .cm-ssr-fake`), cellSelector(id), { timeout: 20000 });
   }
+  // U's last lines are rendered once they come into view; until then U's
+  // editor keeps the static code's height as its minimum.
+  await page.evaluate(() => document.querySelector('pluto-cell[id="U"] pluto-input').scrollIntoView({ block: "end" }));
+  await page.waitForFunction(() => [...document.querySelectorAll("pluto-input .cm-editor")].every((e) => e.style.minHeight === ""), null, { timeout: 20000 })
+    .catch(() => assert.fail("every editor lets go of the static code's height once its lines are measured"));
   // One more frame, so the recorder has seen the layout with every editor.
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 
-  const { tops, statics, editors } = await page.evaluate(() => ({
+  const { tops, statics, editors, font } = await page.evaluate(() => ({
+    font: window.__fontAtFirstStatic,
     tops: window.__bTops,
     statics: window.__staticHeights,
     editors: Object.fromEntries([...document.querySelectorAll("pluto-cell")].map((c) => [c.id, c.querySelector("pluto-input .cm-editor").getBoundingClientRect().height])),
   }));
-  assert.deepEqual(Object.keys(statics).sort(), ["A", "B", "I", "L", "S", "W"], "every cell showed its static code first");
+  // In a fallback font a long line can wrap into a different number of
+  // rows (Consolas on Windows, #400).
+  assert.equal(font, true, "the code font is loaded when the first static code is drawn");
+  assert.deepEqual(Object.keys(statics).sort(), ["A", "B", "I", "L", "S", "T", "U", "W"], "every cell showed its static code first");
   for (const [id, h] of Object.entries(statics)) near(h, editors[id], `cell ${id}'s static code height`);
   assert.deepEqual([...new Set(tops)], [tops[0]], "B never moves while the editors load");
 
