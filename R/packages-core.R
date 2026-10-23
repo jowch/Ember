@@ -1408,13 +1408,18 @@ reduce_index_failed <- function(state, event) {
   }
   # A date preview of a day that isn't published yet ("Update all" is a
   # preview of today) moves back a day the same way, so it offers the
-  # newest published date instead of failing with no changes. The same
-  # bound applies. Not for one package's update (`prop$update`): its date
-  # is where that version is, and the day before doesn't have it.
-  prop <- state$packages$proposal
+  # newest published date instead of failing with no changes. That goes
+  # for CRAN's index and for Bioconductor's, which lag CRAN's (#377); as
+  # for a step back, the other Bioconductor indexes at that day are
+  # dropped. The same bound applies. Not for one package's update
+  # (`prop$update`): its date is where that version is, and the day
+  # before doesn't have it.
   if (isTRUE(event$unpublished) && !is.null(prop) && identical(prop$kind, "date") && is.null(prop$update) &&
-      identical(prop$status, "fetching") && identical(event$key, repo_key("cran", prop$date))) {
-    state$packages$indexes[[event$key]] <- NULL
+      identical(prop$status, "fetching") && identical(key_date(event$key), prop$date) &&
+      (identical(event$key, repo_key("cran", prop$date)) || is_bioc_key(event$key))) {
+    keys <- names(state$packages$indexes)
+    drop <- keys[keys == event$key | (is_bioc_key(keys) & key_date(keys) == prop$date)]
+    for (k in drop) state$packages$indexes[[k]] <- NULL
     earlier <- format(as.Date(prop$date) - 1, "%Y-%m-%d")
     # The earlier day may still be gaining packages too: a copy this
     # session holds from before is fetched again, as reduce_preview_date()
