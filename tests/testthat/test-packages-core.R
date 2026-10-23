@@ -2053,13 +2053,28 @@ test_that("with no Bioconductor release for this R at the date, a cell's error a
   s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")),
                  options = list(r = list(version = "9.9.0", minor = "9.9", platform = "x")))
   r <- open_with_cran(s)
-  why <- "DESeq2 isn't on CRAN at this date, and Bioconductor has no release for R 9.9 at 2026-09-01, so Bioconductor packages can't be found"
+  why <- paste("DESeq2 isn't on CRAN at this date, and Bioconductor has no release for R 9.9 at 2026-09-01",
+               "(the release then, 3.23, requires R 4.6), so Bioconductor packages can't be found.",
+               "To use them, run the notebook on R 4.6")
   err <- missing_package_error(r$state, "DESeq2")$error
   expect_equal(err$message, paste0("there is no package called 'DESeq2': ", why))
   view <- packages_view(r$state)
   row <- view$packages[view$packages$name == "DESeq2", ]
   expect_equal(row$status, "not_found")  # running again won't find it
   expect_equal(row$message, why)
+})
+
+test_that("the no-release row says what to do: the R the date's release needs, or this R's first release on (#431)", {
+  releases <- fixture_releases()
+  nf <- package_problem("not_found", "limma", "limma was not found in any repository at this date")
+  row <- bioc_unavailable_problem(character(), nf, list(snapshot = "2025-01-15"), list(minor = "4.6"), releases)
+  expect_equal(row$message, paste(
+    "Bioconductor has no release for R 4.6 at 2025-01-15 (the release then, 3.20, requires R 4.4;",
+    "R 4.6's first, 3.23, came out on 2026-04-29), so Bioconductor packages can't be found.",
+    "To use them, run the notebook on R 4.4, or move its date to 2026-04-29 or later with Update in the Packages tab"))
+  # Without the release list there is only the reason.
+  row <- bioc_unavailable_problem(character(), nf, list(snapshot = "2025-01-15"), list(minor = "4.6"))
+  expect_equal(row$message, "Bioconductor has no release for R 4.6 at 2025-01-15, so Bioconductor packages can't be found")
 })
 
 test_that("a date move keeps Bioconductor packages, and fails rather than dropping them when its index can't be fetched (87)", {
