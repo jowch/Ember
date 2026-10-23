@@ -407,6 +407,36 @@ test('notes: "Changed cnt in place, which another cell defines" links cnt to the
   assertNoProblems(page);
 });
 
+// A name no single cell defines reaches th() as plain text, and th() parses
+// a bare string as markup, so `a<b` once showed as "b" (#454 review).
+test("chips: a plain-text name keeps characters th() would read as markup (#285)", async (t) => {
+  const notebook = tempNotebook("lazy.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-plain-name.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const shown = await page.evaluate(async () => {
+    const { th } = await import("./common/lang.js");
+    const { html, render } = await import("./imports/Preact.js");
+    const { join_parts } = await import("./components/Cell.js");
+    const out = {};
+    for (const [label, parts] of [["one", ["a<b"]], ["two", ["a<b", "<i>q</i>"]], ["with a link", [html`<a href="#">x</a>`, "a<b"]]]) {
+      const el = document.createElement("div");
+      render(th("t_chip_stale_names", { names: join_parts(parts) }), el);
+      out[label] = { text: el.textContent, markup: el.querySelectorAll("i, b").length };
+    }
+    return out;
+  });
+  assert.deepEqual(shown, {
+    "one": { text: "Stale · a<b changed", markup: 0 },
+    "two": { text: "Stale · a<b and <i>q</i> changed", markup: 0 },
+    "with a link": { text: "Stale · x and a<b changed", markup: 0 },
+  });
+  assertNoProblems(page);
+});
+
 test("chips: a chip's text can't be selected, by double-click or by dragging across the cell (#285)", async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chip-select.server.log") });

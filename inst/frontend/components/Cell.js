@@ -75,10 +75,11 @@ const join_names = (/** @type {string[]} */ parts) =>
     parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} ${t("t_and")} ${parts[parts.length - 1]}`
 
 /** join_names() for parts that may be links: "a", "a and b", "a, b and c".
- * Always html, never a bare string: th() would parse a string as markup,
- * so a name like `a<b` would lose its text. */
-const join_parts = (/** @type {any[]} */ parts) =>
-    parts.length === 1 ? html`${parts[0]}` : html`${parts.slice(0, -1).map((part, i) => (i === 0 ? part : html`, ${part}`))} ${t("t_and")} ${parts[parts.length - 1]}`
+ * Never a bare string: th() parses a string as markup, so a name like `a<b`
+ * would lose its text. html`${x}` returns x itself, so a lone part goes in
+ * an array, which th() renders as a slot, escaped. */
+export const join_parts = (/** @type {any[]} */ parts) =>
+    parts.length === 1 ? [parts[0]] : html`${parts.slice(0, -1).map((part, i) => (i === 0 ? part : html`, ${part}`))} ${t("t_and")} ${parts[parts.length - 1]}`
 
 const is_busy_rail = (/** @type {string} */ rail) => rail === "run" || rail === "queued"
 /** A run shows on the rail only once it has lasted SETTLE_MS; one already
