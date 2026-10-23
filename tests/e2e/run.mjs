@@ -29,7 +29,7 @@ const child = spawn(process.execPath,
 
 // Pass a stop on to the test runner and wait for it to finish, so the
 // library is removed after the servers using it are gone.
-for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => child.kill(signal));
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => child.kill(signal));
 child.on("exit", (code, signal) => {
   if (ownLib) rmSync(lib, { recursive: true, force: true });
   process.exit(code ?? (signal ? 1 : 0));

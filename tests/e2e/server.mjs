@@ -105,8 +105,10 @@ process.on("exit", () => {
     try { rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* left for the OS */ }
   }
 });
-// A signal ends the process without "exit" unless something handles it.
-for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143]]) {
+// A signal ends the process without "exit" unless something handles it:
+// Ctrl+C, a stop, or the terminal or console window closing (SIGHUP, also
+// what Node emits on Windows for a closed console), so the folders still go.
+for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143], ["SIGHUP", 129]]) {
   process.once(signal, () => process.exit(code));
 }
 
