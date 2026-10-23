@@ -1146,3 +1146,116 @@ test_that("worker_tempdir() keeps only an existing R temp folder that isn't the 
   expect_null(worker_tempdir(NULL))
   expect_null(worker_tempdir(c(d, d)))
 })
+
+# ---- Prompts (#186) ------------------------------------------------------------
+
+#' Run `id` and wait until its prompt shows; returns the prompt.
+run_until_prompt <- function(nb, id) {
+  run_cells(nb, id, wait = FALSE)
+  shown <- wait_for(nb, function(s) !is.null(snap_view(s, id)$prompt), timeout = 30)
+  expect_true(shown, info = sprintf("process %s", notebook_snapshot(nb)$process))
+  snap_view(notebook_snapshot(nb), id)$prompt
+}
+
+console_text <- function(view) paste(vapply(view$console, function(i) i$text, character(1)), collapse = "")
+
+test_that("a cell runs with interactive() TRUE, as in an R console (#186)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("interactive()")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, "A", wait = TRUE, timeout = 30)
+  expect_match(snap_view(notebook_snapshot(nb), "A")$output$text, "TRUE", fixed = TRUE)
+})
+
+test_that("an interactive worker still draws to pdf and doesn't offer installs (#186)", {
+  # With a display named, an interactive R's default device would be X11 (a
+  # window, or an error without a server); Ember keeps Rscript's pdf.
+  old <- Sys.getenv("DISPLAY", unset = NA)
+  Sys.setenv(DISPLAY = ":99")
+  on.exit(if (is.na(old)) Sys.unsetenv("DISPLAY") else Sys.setenv(DISPLAY = old), add = TRUE)
+  code <- 'grDevices::dev.new(); plot(1); grDevices::dev.off()\nc(identical(getOption("device"), grDevices::pdf), isFALSE(getOption("rlib_restart_package_not_found")))'
+  path <- write_session_notebook(list(S = cell(""), A = cell(code)))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, "A", wait = TRUE, timeout = 30)
+  view <- snap_view(notebook_snapshot(nb), "A")
+  expect_equal(view$status, "ok")
+  expect_match(view$output$text, "TRUE TRUE", fixed = TRUE)
+})
+
+test_that("readline() in a cell waits for the answer and the cell carries on with it (#186)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell('cat("Before\\n")\nname <- readline("Name? ")\ncat("Hello", name, "\\n")')))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  prompt <- run_until_prompt(nb, "A")
+  expect_equal(prompt$text, "Name? ")
+  expect_null(prompt$choices)
+  view <- snap_view(notebook_snapshot(nb), "A")
+  expect_true(view$running)
+  # What the cell printed before it asked is shown above the question.
+  expect_match(console_text(view), "Before", fixed = TRUE)
+
+  answer_input(nb, "Ada", cell = "A")
+  expect_true(wait_for(nb, function(s) identical(s$process, "ready"), timeout = 30))
+  view <- snap_view(notebook_snapshot(nb), "A")
+  expect_equal(view$status, "ok")
+  expect_null(view$prompt)
+  # The transcript reads as an R console's: the question, then the answer.
+  expect_match(console_text(view), "Before\nName? Ada\nHello Ada", fixed = TRUE)
+  # Nothing waits now.
+  expect_error(answer_input(nb, "again"), "no prompt is waiting", class = "ember_refused")
+})
+
+test_that("menu() offers its choices and takes a number or a choice; askYesNo() asks too (#186)", {
+  code <- 'pick <- menu(c("red", "blue"), title = "Colour")\nok <- askYesNo("Go on?")\nc(pick, ok)'
+  path <- write_session_notebook(list(S = cell(""), A = cell(code)))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  prompt <- run_until_prompt(nb, "A")
+  expect_equal(prompt$text, "Selection: ")
+  expect_equal(unlist(prompt$choices), c("red", "blue"))
+  # Not a choice: menu() asks again, as R's does.
+  answer_input(nb, "green")
+  expect_true(wait_for(nb, function(s) {
+    p <- snap_view(s, "A")$prompt
+    !is.null(p) && grepl("Enter an item", console_text(snap_view(s, "A")), fixed = TRUE)
+  }, timeout = 30))
+  answer_input(nb, "blue")
+  expect_true(wait_for(nb, function(s) identical(snap_view(s, "A")$prompt$text, "Go on? (Yes/no/cancel) "),
+                       timeout = 30))
+  answer_input(nb, "no")
+  expect_true(wait_for(nb, function(s) identical(s$process, "ready"), timeout = 30))
+  view <- snap_view(notebook_snapshot(nb), "A")
+  expect_equal(view$status, "ok")
+  expect_match(view$output$text, "2 0", fixed = TRUE)
+  expect_match(console_text(view), "Colour \n\n1: red\n2: blue\n\nSelection: green\n", fixed = TRUE)
+})
+
+test_that("interrupting a cell that waits on a prompt stops it, and the prompt goes (#186)", {
+  path <- write_session_notebook(list(S = cell(""), A = cell('x <- readline("Wait? ")')))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_until_prompt(nb, "A")
+  interrupt_notebook(nb)
+  expect_true(wait_for(nb, function(s) identical(s$process, "ready"), timeout = 30))
+  view <- snap_view(notebook_snapshot(nb), "A")
+  expect_equal(view$status, "interrupted")
+  expect_null(view$prompt)
+  expect_error(answer_input(nb, "late"), class = "ember_refused")
+})
+
+test_that("a prompt whose interrupt the cell catches closes, and the cell's next prompt is answered (#186)", {
+  skip_on_os("windows")
+  code <- 'a <- tryCatch(readline("First? "), interrupt = function(i) "stopped")\nb <- readline("Second? ")\npaste(a, b)'
+  path <- write_session_notebook(list(S = cell(""), A = cell(code)))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_until_prompt(nb, "A")
+  # SIGINT straight to the worker, as the server interrupts on Unix, but
+  # without clearing the run: the cell catches it and asks again.
+  tools::pskill(nb$proc$get_pid(), tools::SIGINT)
+  expect_true(wait_for(nb, function(s) identical(snap_view(s, "A")$prompt$text, "Second? "), timeout = 30))
+  answer_input(nb, "two")
+  expect_true(wait_for(nb, function(s) identical(s$process, "ready"), timeout = 30))
+  expect_match(snap_view(notebook_snapshot(nb), "A")$output$text, "stopped two", fixed = TRUE)
+})

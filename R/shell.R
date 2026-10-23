@@ -824,7 +824,7 @@ ready_worker_image <- function(src = system.file("worker.R", package = "ember"),
   NULL
 }
 
-#' The `-e` line a worker starts with: load the compiled image named by
+#' The line a worker boots with (`send_worker_boot()`): load the compiled image named by
 #' EMBER_WORKER_IMAGE into a private environment whose parent is
 #' baseenv(), or, with no image or one that fails to load, source
 #' worker.R there (worker.R's header), then call main().
@@ -833,6 +833,33 @@ worker_boot <- function() {
     "local({e <- new.env(parent = baseenv()); img <- Sys.getenv('EMBER_WORKER_IMAGE'); ",
     "if (!nzchar(img) || inherits(tryCatch(compiler::loadcmp(img, e), error = identity), 'error')) ",
     "sys.source(Sys.getenv('EMBER_WORKER'), e); e$main()})")
+}
+
+#' The command a worker starts with (#186): an interactive R, so
+#' `interactive()` is `TRUE` and a package's prompt asks, as in an R
+#' console (worker.R's "Prompts"). It reads its boot line from stdin
+#' (`send_worker_boot()`): R reading its code from a file, as `Rscript -e`
+#' does, is never interactive, whatever the flags. On Windows Rterm's
+#' `--ess` asserts interactive use, as `--interactive` does elsewhere.
+#' `--no-echo` keeps R's prompt off the worker's output.
+worker_command <- function(port) {
+  args <- c("--no-echo", "--vanilla", "--args", as.character(port))
+  if (.Platform$OS.type == "windows") {
+    list(command = file.path(R.home("bin"), "Rterm.exe"), args = c("--ess", args))
+  } else {
+    list(command = file.path(R.home("bin"), "R"), args = c("--interactive", args))
+  }
+}
+
+#' Write the boot line to a worker just started with `stdin = "|"`, then
+#' close its stdin, so R's own console reads in a cell (`scan("")`,
+#' `readLines(stdin())`) get no input, as under `Rscript`, and the worker
+#' ends when its loop does.
+send_worker_boot <- function(proc) {
+  rest <- charToRaw(paste0(worker_boot(), "\n"))
+  while (length(rest)) rest <- proc$write_input(rest)
+  close(proc$get_input_connection())
+  invisible(NULL)
 }
 
 #' Spawn a worker. Never waits for it: the connection is accepted by the
@@ -853,8 +880,7 @@ start_worker_process <- function(nb, fx) {
   if (!dir.exists(lib)) dir.create(lib, recursive = TRUE, showWarnings = FALSE)
   tryCatch(touch_library(lib), error = function(e) NULL)
 
-  rscript <- file.path(R.home("bin"), "Rscript")
-  boot <- worker_boot()
+  cmd <- worker_command(nb$port)
   env <- c("current",
            R_LIBS_USER = lib, R_LIBS = "", R_LIBS_SITE = "",
            EMBER_WORKER = system.file("worker.R", package = "ember"),
@@ -872,9 +898,10 @@ start_worker_process <- function(nb, fx) {
   # reach the worker itself. Processes a cell started go with the worker's
   # process group, through `start_reaper()` (#150).
   proc <- processx::process$new(
-    rscript, c("--vanilla", "-e", boot, as.character(nb$port)),
-    env = env, wd = wd, stdout = "|", stderr = "2>&1", cleanup_tree = TRUE,
+    cmd$command, cmd$args,
+    env = env, wd = wd, stdin = "|", stdout = "|", stderr = "2>&1", cleanup_tree = TRUE,
     supervise = TRUE)
+  send_worker_boot(proc)
   end_reaper(nb)
   nb$reaper <- start_reaper(proc)
 
@@ -1317,6 +1344,8 @@ worker_event <- function(msg, gen, at, secret = NULL) {
     running  = c("token"),
     console  = c("token", "item"),
     source   = c("token", "path", "text"),
+    input    = c("token", "id", "prompt"),
+    input_closed = c("token", "id"),
     done     = c("token", "report"),
     rendered = c("cell", "token"),
     input_set = c("cell", "name", "ok"),
@@ -1340,6 +1369,8 @@ worker_event <- function(msg, gen, at, secret = NULL) {
     running  = wk_running(gen, msg$token, at),
     console  = wk_console(gen, msg$token, msg$item, at),
     source   = wk_source(gen, msg$token, msg$path, msg$text, at),
+    input    = wk_input(gen, msg$token, msg$id, msg$prompt, msg$choices, at),
+    input_closed = wk_input_closed(gen, msg$token, msg$id, at),
     done     = {
       report <- msg$report
       report$output <- as_display(report$output)

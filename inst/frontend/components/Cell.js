@@ -4,6 +4,7 @@ import { html, useState, useEffect, useMemo, useRef, useContext, useLayoutEffect
 import { CellOutput } from "./CellOutput.js"
 import { CellInput } from "./CellInput.js"
 import { Logs } from "./Logs.js"
+import { CellPrompt } from "./CellPrompt.js"
 import { RunButton, useDebouncedTruth } from "./RunButton.js"
 import { cl } from "../common/ClassTable.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
@@ -726,6 +727,7 @@ export const Cell = ({
                       sanitize_html=${sanitize_html}
                   />`
                 : null}
+            ${ember?.prompt != null && running ? html`<${CellPrompt} cell_id=${cell_id} prompt=${ember.prompt} />` : null}
             <button
                 onClick=${() => {
                     pluto_actions.add_remote_cell(cell_id, "after")
