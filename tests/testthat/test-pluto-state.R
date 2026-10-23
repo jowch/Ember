@@ -177,6 +177,15 @@ test_that("project_output() of a text cell: with and without inline values, code
   expect_true(check_wire(o_err))
 })
 
+test_that("project_text() puts each value at its own span after a line starting ```r (#432)", {
+  code <- "#' ```r a` then `r b`\n#'\n#' and `r c`"
+  values <- vapply(inline_spans(code)$expr, function(e) toupper(e), character(1), USE.NAMES = FALSE)
+  out <- new_display("application/vnd.ember.inline", list(values = values), "")
+  o <- project_output(fake_view(kind = "markdown", code = code, output = out))
+  expect_match(o$body, 'then <span class="ember-inline">B</span>', fixed = TRUE)
+  expect_match(o$body, 'and <span class="ember-inline">C</span>', fixed = TRUE)
+})
+
 test_that("project_text() matches spans line by line, never across a line break (review)", {
   # inline_spans() of this code finds exactly one span ("y"): line 1's
   # `r ` has no closing backtick on its own line, so it isn't one. A

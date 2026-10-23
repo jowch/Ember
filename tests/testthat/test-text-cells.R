@@ -40,6 +40,20 @@ test_that("inline_spans finds `r expr` on text lines only", {
   expect_equal(spans3$line, 3)
 })
 
+test_that("inline_spans counts the spans the page does, matched on the prose after #' (#432)", {
+  # A line whose prose starts with three backticks and r isn't a span to
+  # knitr (`^```` lookbehind). Matched with the prefix still on, it was one
+  # here but not on the page, so every later value showed one span late.
+  spans <- inline_spans("#' ```r a` then `r b`\n#' and `r c`")
+  expect_equal(spans$expr, c("b", "c"))
+  expect_equal(spans$line, c(1, 2))
+  for (code in c("#' ```r a` then `r b`\n#' and `r c`", "#'```r a`", "##' `r a` and `` `r b` ``", "#' see `r \n#' x` and `r y`",
+                 "#' [l `r u`](http://e/`r v`)", "#'`r a`")) {
+    on_page <- sum(vapply(text_body(code), function(l) length(line_inline_matches(l)$exprs), integer(1)))
+    expect_equal(nrow(inline_spans(code)), on_page, info = code)
+  }
+})
+
 test_that("inline_code joins one expression per line", {
   expect_equal(inline_code("#' `r a`\n#' text\n#' `r b`"), "a\nb")
   expect_equal(inline_code("#' no expr here"), "")
