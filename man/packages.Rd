@@ -177,7 +177,10 @@ an older one the last, each checked against that day's snapshot. It
 returns \code{list(date, status, changes, problems, message)}, as
 \code{preview_date()}'s, which \code{set_date()} with the returned \code{date}
 applies; \code{status} is \code{"failed"} with \code{message} when there is no
-such date. It is refused unless the lock has \code{name} from CRAN.
+such date. It is refused unless the lock has \code{name} from CRAN. A
+package the code loads that the lock doesn't have yet, because the
+notebook's packages are still being resolved, isn't refused: the preview
+waits for the lock, and fails with \code{message} if the lock still lacks it.
 
 \code{set_date()} returns, invisibly, the applied \code{changes} (the same shape
 as \code{preview_date()}'s). It is refused (an \code{ember_refused} condition) unless

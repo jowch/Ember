@@ -150,7 +150,10 @@ approve_install <- function(nb) {
 #' release reached Package Manager is passed over for the next day's.
 #'
 #' Refused (an `ember_refused` condition) unless the notebook's lock has
-#' `name` from CRAN. Otherwise the same preview as `preview_date()`, which
+#' `name` from CRAN. A package the code loads that the lock doesn't have
+#' yet, because the notebook's packages are still being resolved (just
+#' after it opens, or after an edit), isn't refused: the preview waits for
+#' the lock, and fails with a `message` if the lock still lacks it. Otherwise the same preview as `preview_date()`, which
 #' `set_date()` with the returned `date` applies; `status` `"failed"` with
 #' `message` when there is no such date (a version CRAN never released, or
 #' release dates that couldn't be fetched).
