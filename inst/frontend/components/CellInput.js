@@ -719,6 +719,9 @@ export const CellInput = ({
                             // Every line is rendered, and the next measure measures them.
                             // Lines out of the viewport are only guessed, so the floor
                             // stays until the editor has been through all of them (#429).
+                            // An editor taller than its viewport never renders every line
+                            // at once, so its floor ends when its height reaches the static
+                            // code's, which relies on the two being equal (#375, #379).
                             view.requestMeasure({ key: end_height_floor, read: () => null, write: () => end_height_floor(view) })
                         }
                     }),
