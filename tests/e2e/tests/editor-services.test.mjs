@@ -158,7 +158,10 @@ test("completion still works on the notebook's names and base R while a cell run
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  await runCell(page, "LOOP");
+  // A loop that runs until the test ends, so R is busy however long the
+  // steps below take.
+  await setCellCode(page, "LOOP", "repeat NULL");
+  await page.keyboard.press("Shift+Enter");
   await page.waitForFunction(
     () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
     null, { timeout: 10000 });
@@ -179,7 +182,7 @@ test("completion still works on the notebook's names and base R while a cell run
   await page.locator(`${newSel} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.keyboard.type("su", { delay: 10 });
   await page.waitForSelector(".cm-tooltip-autocomplete .cm-completionLabel", { timeout: 0 });
-  // LOOP runs for 8 s: still running means the answer didn't wait for R.
+  // LOOP never ends by itself: still running means the answer didn't wait for R.
   assert.ok(await page.locator(`${cellSelector("LOOP")}.running`).count() === 1, "the fallback answered while the worker was busy");
   const labels = await page.locator(".cm-tooltip-autocomplete .cm-completionLabel").allInnerTexts();
   assert.ok(labels.includes("sum"), `expected "sum" among ${JSON.stringify(labels)}`);

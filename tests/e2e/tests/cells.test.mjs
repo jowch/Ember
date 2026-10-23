@@ -492,8 +492,11 @@ test("argument tooltips: a reply that arrives after blur (worker busy) doesn't r
     (sel) => document.querySelector(sel)?.innerText.includes("2"),
     cellSelector("B") + " pluto-output", { timeout: 20000 });
 
-  // Start LOOP (Sys.sleep(3)) running, so the docs request from typing
-  // in A below queues behind a busy worker instead of answering at once.
+  // Start LOOP running, so R is busy for the request from typing in A.
+  // The server answers it at once from its fallback, so the reply comes
+  // before the click on B, and the blur guard for a late reply isn't
+  // exercised here (#467). What is checked: the blur closes the tooltip,
+  // and nothing reopens it.
   await runCell(page, "LOOP");
   await page.waitForSelector(`${cellSelector("LOOP")}.running`, { timeout: 15000 });
 
@@ -506,16 +509,12 @@ test("argument tooltips: a reply that arrives after blur (worker busy) doesn't r
   // Past the 150 ms debounce: the request is in flight.
   await asked.reach(asked_before + 1);
 
-  // Move to a different cell well before LOOP (and so the queued
-  // request) can finish.
   await page.locator(codeSelector("B")).click();
 
-  // Give LOOP, and the request behind it, time to finish and reply.
   await page.waitForFunction(
     (sel) => !document.querySelector(sel)?.classList.contains("running"),
     cellSelector("LOOP"), { timeout: 10000 });
-  // The reply to the request has come, whether or not the page still
-  // waited for it (CellInput.js gives up after 5 s), and been rendered.
+  // The reply to the request has come and been rendered.
   await page.waitForFunction((before) => window.pluto_get_message_log().filter((m) => m.type === "ember_signature").length > before,
     replied_before, { timeout: 0 });
   await frames(page);
