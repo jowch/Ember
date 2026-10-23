@@ -92,6 +92,15 @@ test("ui sweep: safe preview, run, and edited with both shortcut labels", async 
       }));
       assert.deepEqual(shown, { floating, header: !floating }, `at ${width}`);
     }
+    // With the side panel docked, the margin is the panel's, so the button would float over the column.
+    await p.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
+    await p.waitForSelector("#helpbox-wrapper.open");
+    const docked = await p.evaluate(() => ({
+      floating: !!document.querySelector("#saveall-container.ask_to_save")?.getClientRects().length,
+      header: !!document.querySelector("header .ember-run-changed")?.getClientRects().length,
+    }));
+    assert.deepEqual(docked, { floating: false, header: true }, "at 1440 with the side panel docked");
+    await p.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: null })));
     assertNoProblems(p);
   }
 });
