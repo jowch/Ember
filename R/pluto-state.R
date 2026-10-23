@@ -144,6 +144,7 @@ pluto_state <- function(state, previous = NULL) {
 #'
 #' `list(cell = state$cells[[id]], result = state$results[[id]],
 #'       console = <worker$running$console when this cell runs, else NULL>,
+#'       prompt = <worker$running$prompt when this cell runs, else NULL>,
 #'       flags = ctx$flags[[id]],   # queued, running, waiting_for
 #'       errors = ctx$errors[[id]], # graph errors on this cell: shared within one graph
 #'       disabled_by = ctx$disabled_by[[id]],  # off, from graph$off
@@ -173,9 +174,11 @@ cell_key <- function(state, ctx, i) {
   is_running <- !is.null(running) && identical(running$cell, id)
   list(cell = state$cells[[i]], result = ctx$results[[i]],
        is_running = is_running, console = if (is_running) running$console else NULL,
+       prompt = if (is_running) running$prompt,
        queued = ctx$queued[[i]], waiting_for = ctx$waiting[[i]],
        errors = ctx$errors_by_cell[[i]], disabled_by = ctx$disabled_by[[i]],
        settings = ctx$settings[[i]], untracked = ctx$untracked[[i]],
+       untracked_files = ctx$untracked_files[[i]],
        allowed = state$allowed)
 }
 
@@ -193,12 +196,14 @@ key_unchanged <- function(state, ctx, i, prev_key) {
   is_running <- !is.null(running) && identical(running$cell, id)
   if (!identical(is_running, prev_key$is_running)) return(FALSE)
   if (!identical(if (is_running) running$console else NULL, prev_key$console)) return(FALSE)
+  if (!identical(if (is_running) running$prompt, prev_key$prompt)) return(FALSE)
   if (!identical(ctx$queued[[i]], prev_key$queued)) return(FALSE)
   if (!identical(ctx$waiting[[i]], prev_key$waiting_for)) return(FALSE)
   if (!identical(ctx$errors_by_cell[[i]], prev_key$errors)) return(FALSE)
   if (!identical(ctx$disabled_by[[i]], prev_key$disabled_by)) return(FALSE)
   if (!identical(ctx$settings[[i]], prev_key$settings)) return(FALSE)
   if (!identical(ctx$untracked[[i]], prev_key$untracked)) return(FALSE)
+  if (!identical(ctx$untracked_files[[i]], prev_key$untracked_files)) return(FALSE)
   identical(state$allowed, prev_key$allowed)
 }
 
@@ -321,7 +326,7 @@ span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
 #'   (Pluto's own field, Run.jl:86-91) -- true for a disabled cell itself,
 #'   too.
 #' * `ember`: `list(stale, code_changed, upstream_error?, disabled_by?,
-#'   can_disable, settings?, settings_found?, load_notes?, changed_in_place?, from_lock?, untracked_reads?, split?, figure?)`, from the view's `stale` and
+#'   can_disable, settings?, settings_found?, load_notes?, changed_in_place?, from_lock?, untracked_reads?, untracked_files?, split?, figure?)`, from the view's `stale` and
 #'   `code_differs` -- both already in `cell_key()`'s key (`code_differs`
 #'   is derived from `cell$code` and `result$code`). `stale` is
 #'   `isTRUE(view$stale) && !off`: an off cell shows as disabled, not also
@@ -349,7 +354,9 @@ span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
 #'   names (`"get"`), when the cell's code reads globals by a name static
 #'   reading can't follow: the note that the cell doesn't rerun when they
 #'   change (#357). It comes from the graph's analysis, so `cell_key()`
-#'   holds it too. `split` is present, as `length(split_mixed(view$code))`,
+#'   holds it too. `untracked_files` is the same for data readers called
+#'   with a computed path (`"read.csv"`): the note that the cell doesn't
+#'   rerun when the file changes (#276). `split` is present, as `length(split_mixed(view$code))`,
 #'   only when `view$errors` has a `mixed_text` error: the Split button's
 #'   label (Cell.js), answered by the `ember_split_cell` request (server.R).
 #'   `figure` is present, as `list(width, height)` inches plus `alt` when
@@ -396,7 +403,10 @@ project_cell_result <- function(view, known_ids = NULL) {
             if (length(view$changed_in_place) > 0) list(changed_in_place = as_arr(display_names(view$changed_in_place))),
             if (length(view$from_lock) > 0) list(from_lock = as_arr(setdiff(view$from_lock, ""))),
             if (length(view$untracked_reads) > 0) list(untracked_reads = as_arr(view$untracked_reads)),
+            if (length(view$untracked_files) > 0) list(untracked_files = as_arr(view$untracked_files)),
             if (!is.null(split)) list(split = split),
+            if (!is.null(view$prompt)) list(prompt = list(id = view$prompt$id, text = view$prompt$text,
+                                                          choices = as_arr(view$prompt$choices %||% character()))),
             if (!is.null(figure)) list(figure = figure),
             if (length(view$variables) > 0) list(variables = as_arr(view$variables)))
   list(cell_id = view$id,
@@ -983,9 +993,9 @@ project_nbpkg <- function(state, pv = packages_view(state)) {
 #' * `packages`: the snapshot date, R/Bioconductor versions, the library's
 #'   status, and one row per locked or not-found package (and per package
 #'   whose `[sources]` lookup is running or failed), from
-#'   `packages_view(state)`. `spec` is the row's `[sources]` entry. `NA`
-#'   fields (no version, no source, no message, no spec) become `NULL` for
-#'   the wire.
+#'   `packages_view(state)`. `spec` is the row's `[sources]` entry,
+#'   `available` CRAN's newer version (#23). `NA` fields (no version, no
+#'   source, no message, no spec, nothing newer) become `NULL` for the wire.
 #'
 #'   `packages$library` adds `log` (one string, the installer's last 200
 #'   lines, joined with "\n") and `failures` (`arr(list(package, version,
@@ -1010,6 +1020,15 @@ project_nbpkg <- function(state, pv = packages_view(state)) {
 #'   published yet, and each package that moves (`from`/`to` `NULL` for
 #'   one added or dropped). The page's answer is `ember_apply_update` or
 #'   `ember_cancel_update`, as for an update.
+#' * `package_update`: `list(name, version, date, status =
+#'   "checking"|"ready"|"failed", changes = arr(list(name, from, to)),
+#'   restart = arr(<names>), message)` while a proposal from a row's Update
+#'   (`ember_update_package`, `ev_preview_update(..., page = TRUE)`, #23)
+#'   exists, else absent. `changes` are the other packages that move
+#'   (`from`/`to` `NULL` for one added or dropped), `restart` the loaded
+#'   ones among them and the package itself, `date` `NULL` until CRAN's
+#'   release dates give one. The page's answer is `ember_apply_update`
+#'   with `date`, or `ember_cancel_update`.
 #' * `on_cell_change`: `state$file$header$on_cell_change`, `"autorun"` or
 #'   `"lazy"`.
 #' * `r_version`, `worker_started_at`: the running worker's own report
@@ -1038,7 +1057,8 @@ project_ember <- function(state, ctx, pv = packages_view(state)) {
         source = if (is.na(pkgs$source[[i]])) NULL else pkgs$source[[i]],
         direct = isTRUE(pkgs$direct[[i]]), status = pkgs$status[[i]],
         message = if (is.na(pkgs$message[[i]])) NULL else pkgs$message[[i]],
-        spec = if (is.na(pkgs$spec[[i]])) NULL else pkgs$spec[[i]])
+        spec = if (is.na(pkgs$spec[[i]])) NULL else pkgs$spec[[i]],
+        available = if (is.null(pkgs$available) || is.na(pkgs$available[[i]])) NULL else pkgs$available[[i]])
   })
   library_failed <- identical(pv$library$status, "failed")
   log <- if (library_failed && length(pv$library$log) > 0) {
@@ -1110,6 +1130,26 @@ project_ember <- function(state, ctx, pv = packages_view(state)) {
                             back = list(from = pv$proposal$asked, changes = as_arr(lapply(seq_len(NROW(ch)), function(i) {
                               list(name = ch$name[[i]], from = na_null(ch$from[[i]]), to = na_null(ch$to[[i]]))
                             }))))
+  }
+
+  # A row's Update (#23): the update the page asked for, as that row's
+  # question. A `preview_update()` call from R itself shows nothing here.
+  prop <- state$packages$proposal
+  if (!is.null(prop) && isTRUE(prop$update$page)) {
+    u <- prop$update
+    ch <- prop$changes
+    others <- if (is.null(ch)) ch else ch[ch$name != u$name, , drop = FALSE]
+    na_null <- function(x) if (is.na(x)) NULL else x
+    moved <- if (is.null(ch)) character() else ch$name[ch$change %in% c("upgraded", "downgraded", "source", "removed")]
+    status <- switch(prop$status, fetching = "checking", dates = "checking", prop$status)
+    packages$package_update <- list(
+      name = u$name, version = u$version %||% NULL,
+      date = if (is.na(prop$date)) NULL else prop$date, status = status,
+      changes = as_arr(lapply(seq_len(NROW(others)), function(i) {
+        list(name = others$name[[i]], from = na_null(others$from[[i]]), to = na_null(others$to[[i]]))
+      })),
+      restart = as_arr(as.character(intersect(moved, names(state$worker$loaded %||% character())))),
+      message = if (identical(status, "failed")) prop$message else NULL)
   }
 
   plan <- pv$plan

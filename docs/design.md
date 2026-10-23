@@ -157,13 +157,15 @@ This maps one to one onto Pluto's server and workers:
   its event loop, processx to start and watch workers. It must never block:
   it watches workers without waiting on them, and package installs run in
   their own subprocess.
-- **Worker** (the notebook's library): a plain `Rscript` running a loop
+- **Worker** (the notebook's library): an R process running a loop
   written in base R plus the packages that ship with R (utils, tools,
   grDevices, codetools). It exchanges `serialize()`d messages with the server
   over a socket. Its code is `inst/worker.R`, found with
   `system.file("worker.R", package = "ember")`: files in `R/` are built into
   Ember's namespace at install, so the worker couldn't read them without
-  loading Ember. It starts as `Rscript --vanilla` with `R_LIBS_USER` set to
+  loading Ember. It starts as an interactive R (`R --interactive --vanilla`,
+  `Rterm --ess --vanilla` on Windows) that reads one boot line from its
+  stdin, which is then closed (#186; see "Prompts" under Running cells), with `R_LIBS_USER` set to
   the notebook's library and `R_LIBS` and `R_LIBS_SITE` unset, which leaves
   exactly the notebook's library and R's own (measured: the user's personal
   library, where rig puts pak, is hidden). A worker starts and connects in
@@ -375,6 +377,15 @@ tell which variables it reads through them, so it doesn't rerun when they
 change (#357). The note comes from reading the code, so it shows before
 the cell runs, and the snapshot carries it as `untracked_reads`.
 
+When the read is inside a function (`load_site <- function(s) get(s)`),
+the note goes on each cell that calls the function, and names it
+(`load_site()`): that cell is the one showing old values. The cell that
+only defines the function gets no note, because running it reads nothing.
+A call by a string name counts (`sapply(nms, "load_site")`, `do.call()`),
+and `args(load_site)` doesn't. A function that calls such a function passes
+the note on to its own callers. When no cell calls the function by a name
+Ember can see, the note stays on the cell that defines it (#365).
+
 **Code in other files.** `source("helpers.R")` with a literal path is read
 like part of the cell:
 
@@ -399,6 +410,67 @@ like part of the cell:
   changed or missing helper is reported on open. The helper's code stays in
   its own file; the notebook alone is no longer the whole record, and the
   UI says so.
+
+**Data files a cell reads (#276).** A cell that reads a file with a literal
+path, such as `read.csv("data/survey.csv")`, `readRDS("fit.rds")` or
+`load("e.RData")`, depends on that file the way it depends on a sourced
+helper. The readers are a fixed list in `rules.R` (`data_readers`): base R
+and utils, readr, vroom, data.table's `fread`, readxl, arrow, haven and
+jsonlite. A literal path in a file the cell sources counts too.
+
+- The engine watches each such file. When its contents change, the reader
+  and its dependents rerun or are marked stale, following the autorun or
+  lazy setting. So a cell that writes a file and a cell that reads it stay
+  in step, though no variable connects them.
+- A reader's result records the version of each file it reads (modified
+  time and size) when the result arrives. Only a change to another version
+  counts, so a cell that writes the file it reads doesn't wake itself, and
+  a reader that ran after the writer isn't run twice. Comparing versions,
+  not times, holds however coarse the file system's clock is. A reader
+  that is queued is left alone: its run reads the new file.
+- The engine checks the files again as each run's result arrives, before
+  the notebook can look finished. So running a writer and waiting for the
+  notebook (`run_cells(wait = TRUE)`, an agent's execute-and-wait) returns
+  with its readers already rerun, or marked stale in lazy mode.
+- A change while the reader runs is checked by the worker. It knows which
+  top-level expressions of the cell read or write each file (literal
+  paths given to a fixed list of writers, `data_writers`, such as
+  `write.csv` and `saveRDS`; a writer with a computed path counts for
+  every file). After each expression it compares each file's version. A
+  change during an expression that neither reads nor writes the file,
+  after the cell first read it, is someone else's: the result is marked
+  stale, and autorun runs it again. A change before the cell reads the
+  file is read with it, and the cell's own writes don't count.
+- A write Ember can't see, such as one inside a helper function, looks
+  like someone else's, and costs one extra run, which repeats the cell's
+  side effects (an append, a download). A run that sees such a change
+  right after a run that saw one keeps its result as it is, so the cell
+  doesn't run forever. The writers list covers base R's `cat`, `write`,
+  `writeLines`, `writeBin`, `writeChar`, `sink`, `capture.output`,
+  `file.append`, `file.copy`, `file.rename` and `download.file`, besides
+  the table and serialization writers.
+- The check is per top-level expression. An expression that reads the
+  file and then works for a long time (`d <- read.csv("d.csv") |>
+  slow_step()`) treats a change during that work as read with it.
+- A file saved with the same bytes isn't a change. The shell compares sizes
+  first and hashes a file only when a rewrite keeps its size; the first
+  such rewrite after opening counts as a change, since there is no earlier
+  hash to compare with. Opening a notebook reads no data file. The hash
+  runs on the shell's own loop, so a writer that rewrites a large file
+  with the same size makes the page wait while it is read.
+- A computed path (`read.csv(f)`, `readRDS(file.path(dir, "fit.rds"))`)
+  runs normally, and the cell shows a note that Ember can't tell which file
+  it reads, so it doesn't rerun when the file changes. The snapshot carries
+  it as `untracked_files`. Text (`read.csv(text = …)`), URLs and calls
+  inside a function body record nothing, and so does a reader passed as a
+  function (`lapply(files, read.csv)`, `purrr::map(files, read_csv)`):
+  it gets no note either.
+- Writes aren't tracked: the writer doesn't become an upstream of the
+  reader, so running the reader alone doesn't run the writer first. The
+  reader reruns once the file has changed.
+- Paths are resolved against the notebook's folder, where the worker
+  starts. A cell that calls `setwd()` reads elsewhere; Ember watches the
+  wrong file there.
 
 The user docs also recommend the module form, R's version of PlutoLinks'
 `@ingredients`: `h <- new.env(); sys.source("helpers.R", envir = h)` or
@@ -645,6 +717,40 @@ Earlier visible values, `print()`,
 `cat()`, messages and warnings go to a console area below the output, in
 order. A plot drawn with no visible value after it is the output. R
 Markdown instead shows every visible value inline.
+
+**Prompts** (#186). A cell runs as R code does in an R console:
+`interactive()` is `TRUE`, so a package that asks before it acts ("Do you
+want to download...?") asks. Under `Rscript` it would fail ("menu() cannot
+be used non-interactively") or take its default. The question waits under
+the cell's console, with a field for the answer; `menu()`'s choices are
+buttons too. The answer goes back to R, and the console then shows the
+question and the answer, as R's console does. Interrupting the cell stops
+the wait. The worker replaces `readline()` (which `askYesNo()` and most
+packages use), `menu()` and `select.list()` with versions that ask the
+server over the socket. R's own console reads have no input, since the
+worker's stdin is closed, so `scan("")` and `readLines(stdin())` return at
+once, as under `Rscript`, and `browser()` carries on. The API answers with
+`answer_input()`, and the snapshot shows the waiting question as the
+running cell's `prompt`; an answer can name the prompt's `id`, so one
+typed for a question that has since gone (`menu()` asking again, another
+tab's answer first) is refused, not given to the next question. Two
+settings stay as under `Rscript`: the default graphics device is `pdf`
+(an interactive R picks X11, quartz or windows), and rlang's
+`check_installed()` errors instead of offering to install into the
+notebook's shared library (`rlib_restart_package_not_found = FALSE`; see
+packages.md, "Install calls"). `run()` still runs a file under `Rscript`,
+so there a cell that asks gets "" or fails.
+
+Measured before this was built (10-17): shapes.R, penguins.R and deseq.R
+give the same status, output, plots and messages with `interactive()`
+`TRUE`; a cli progress bar updates more often, and lifecycle adds its
+"displayed once per session" footer. Measured since (10-23):
+`keep.source` is `TRUE`, so a function from a `source()`d file keeps its
+srcref and its error frames name that file; the page shows only the
+notebook's cells, so nothing there changes. Ember's own installs run in a
+separate non-interactive `Rscript`, so they never ask. `Rscript -e` can't
+be made interactive: R reading its code from a file never is, whatever the
+flags, so the worker reads its boot line from stdin instead.
 
 **How values display.** Julia has one display function in its base
 language, `show(io, MIME"text/html"(), x)`, that every package extends. R has
@@ -931,7 +1037,9 @@ the git commit for both (an r-universe serves only its latest build).
   each date is checked against that day's snapshot, and a snapshot that
   doesn't have the version yet (or, for a pin, already has the next one) is
   passed over for the next day's. Each shows every version that changes
-  before applying (`preview_update()`).
+  before applying (`preview_update()`). On the Packages tab, a row whose
+  package CRAN has a newer version of offers that update; pinning back is
+  an R call.
 - **No solver is needed.** Each package version was current for one span of
   time, from its release to the next. Versions that were all current at one
   moment form a valid lock, and for spans of time, overlapping pairwise

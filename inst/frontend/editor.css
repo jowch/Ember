@@ -1206,6 +1206,23 @@ nav#at_the_top .ember-menu {
     background: var(--main-bg-color);
     color: var(--ember-text);
 }
+/* CRAN's newer version under a row's own (#23), and that row's question. */
+.ember-package-available {
+    font-family: var(--ember-ui-font);
+    font-size: 11.5px;
+    color: var(--ember-muted);
+}
+.ember-package-available .ember-link-btn {
+    font-size: 11.5px;
+}
+.ember-package-update-checking,
+.ember-package-update-question {
+    margin: 0 0 0.4em 0;
+    font-size: 12.5px;
+}
+.ember-package-update-checking {
+    color: var(--ember-muted);
+}
 .ember-package-source-failed,
 .ember-package-source-error {
     margin: 0 0 0.4em 0;

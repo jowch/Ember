@@ -685,7 +685,7 @@ test("signature: a click on the tooltip lands in the code under it (#34)", async
     tooltip: await tooltip.boundingBox(),
     class: await tooltip.getAttribute("class"),
     cell: await page.locator(newSel).boundingBox(),
-    df_line: await page.locator(`${cellSelector("DF")} .cm-line`).first().boundingBox(),
+    df_line: await page.locator(`${cellSelector("DF")} .cm-editor:not(.cm-ssr-fake) .cm-line`).first().boundingBox(),
     scrollY: await page.evaluate(() => window.scrollY),
   });
   const placed = await where();
@@ -696,7 +696,7 @@ test("signature: a click on the tooltip lands in the code under it (#34)", async
 
   // Click in the middle of where the tooltip and DF's line overlap.
   const box = await tooltip.boundingBox();
-  const df_line = await page.locator(`${cellSelector("DF")} .cm-line`).first().boundingBox();
+  const df_line = await page.locator(`${cellSelector("DF")} .cm-editor:not(.cm-ssr-fake) .cm-line`).first().boundingBox();
   const left = Math.max(box.x, df_line.x), right = Math.min(box.x + box.width, df_line.x + df_line.width);
   const top = Math.max(box.y, df_line.y), bottom = Math.min(box.y + box.height, df_line.y + df_line.height);
   assert.ok(left < right && top < bottom, `the tooltip covers DF's line: ${placed}`);

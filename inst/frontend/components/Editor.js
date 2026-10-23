@@ -143,7 +143,7 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  *  precedence_heuristic: number?,
  *  depends_on_disabled_cells: boolean,
  *  depends_on_skipped_cells: boolean,
- *  ember: { stale: boolean, code_changed: boolean, upstream_error?: {name: string, cell: string}[], disabled_by?: string, can_disable: boolean, settings?: {name: string, found: string}[], settings_found?: string[], load_notes?: {package: string, setting: string}[], changed_in_place?: string[], from_lock?: string[], untracked_reads?: string[], split?: number },
+ *  ember: { stale: boolean, code_changed: boolean, upstream_error?: {name: string, cell: string}[], disabled_by?: string, can_disable: boolean, settings?: {name: string, found: string}[], settings_found?: string[], load_notes?: {package: string, setting: string}[], changed_in_place?: string[], from_lock?: string[], untracked_reads?: string[], untracked_files?: string[], split?: number },
  *  output: {
  *      body: string | Object,
  *      persist_js_state: boolean,
@@ -222,7 +222,17 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  * "github:user/repo[@ref]".
  *
  * @typedef EmberPackageRow
- * @type {{ name: string, version: string?, source: string?, direct: boolean, status: string, message: string?, spec: string? }}
+ * @type {{ name: string, version: string?, source: string?, direct: boolean, status: string, message: string?, spec: string?, available?: string? }}
+ */
+
+/**
+ * A row's Update (#23): the package, the version asked for, the date it
+ * moves to (`null` until known), and the other packages that move.
+ * @typedef EmberPackageUpdate
+ * @type {{
+ *  name: string, version: string?, date: string?, status: "checking" | "ready" | "failed",
+ *  changes: Array<{ name: string, from: string?, to: string? }>, restart: Array<string>, message: string?,
+ * }}
  */
 
 /**
@@ -262,6 +272,7 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  *  },
  *  rows: Array<EmberPackageRow>,
  *  update: EmberPackagesUpdate?,
+ *  package_update?: EmberPackageUpdate,
  * }}
  */
 
@@ -722,12 +733,17 @@ export class Editor extends Component {
                 this.client.send("ember_apply_update", { date }, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_cancel_update: () =>
                 this.client.send("ember_cancel_update", {}, { notebook_id: this.state.notebook.notebook_id }, false),
+            ember_update_package: (name, version) =>
+                this.client.send("ember_update_package", { name, version }, { notebook_id: this.state.notebook.notebook_id }, false),
+            ember_check_versions: () => this.client.send("ember_check_versions", {}, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_set_package_source: (name, source) =>
                 this.client.send("ember_set_package_source", { name, source }, { notebook_id: this.state.notebook.notebook_id }),
             ember_remove_package_source: (name) =>
                 this.client.send("ember_remove_package_source", { name }, { notebook_id: this.state.notebook.notebook_id }),
             ember_disk_use: () => this.client.send("ember_disk_use", {}, { notebook_id: this.state.notebook.notebook_id }),
             ember_clean_up: (dry_run, as_of) => this.client.send("ember_clean_up", { dry_run, as_of }, { notebook_id: this.state.notebook.notebook_id }),
+            ember_answer_input: (cell_id, prompt_id, text) =>
+                this.client.send("ember_answer_input", { cell_id, prompt_id, text }, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_split_cell: (cell_id, code) =>
                 this.client.send("ember_split_cell", { cell_id, code }, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_move_notebook: (name, folder) =>

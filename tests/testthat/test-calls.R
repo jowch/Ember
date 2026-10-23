@@ -343,6 +343,39 @@ test_that("get looked at as a function, not called, gets no note (#357)", {
   expect_equal(a$notes$detail, "get")
 })
 
+test_that("get() inside a top-level function belongs to the function, not the cell (#365)", {
+  a <- read_cell("load_site <- function(s) get(s)")
+  expect_equal(a$notes$detail, "get")
+  expect_equal(a$untracked, character())
+  expect_equal(a$fn_untracked, list(load_site = "get"))
+  # What a function's body reads, and what the cell reads outside its
+  # functions, own definitions included.
+  b <- read_cell("load_all <- function(ns) lapply(ns, load_site)\nx <- load_all(nms)")
+  expect_equal(b$fn_calls$load_all, c("lapply", "load_site"))
+  expect_true(all(c("load_all", "nms") %in% b$calls))
+  expect_false("load_site" %in% b$calls)
+  # An argument or local with the function's name isn't the function.
+  c <- read_cell("g <- function(load_site) load_site(1)")
+  expect_null(c$fn_calls$g)
+  # A function literal that isn't bound at the top level runs here.
+  d <- read_cell("sapply(nms, function(s) get(s))\nlocal(f <- function(s) get(s))")
+  expect_equal(d$untracked, "get")
+  expect_equal(d$fn_untracked, list())
+  # A sourced file's functions count the same.
+  e <- read_cell('source("helpers.R")\nload_site("a")',
+                 read_file = function(path) "load_site <- function(s) get(s)")
+  expect_equal(e$fn_untracked, list(load_site = "get"))
+  expect_true("load_site" %in% e$calls)
+  # A call by a string name counts; looking at the function doesn't.
+  f <- read_cell("sapply(nms, 'load_site')\ndo.call(\"pick\", list(1))")
+  expect_true(all(c("load_site", "pick") %in% f$calls))
+  g <- read_cell("args(load_site)\nbody(load_site)\nprint(load_site)")
+  expect_false("load_site" %in% g$calls)
+  # A string in c() is data.
+  h <- read_cell("nms <- c('load_site', 'b')")
+  expect_false("load_site" %in% h$calls)
+})
+
 test_that("eval() is untouched by the get-family literal-name rule", {
   a <- read_cell('eval(parse(text = "1 + 1"))')
   expect_equal(a$notes$kind, "untracked_read")
@@ -357,3 +390,62 @@ test_that("a cell using str_interp() gets a definition edge on the cell defining
                     g$edges$name == "hello" & g$edges$via == "definition"))
 })
 
+
+test_that("a reader called with a literal path records the file it reads (#276)", {
+  a <- read_cell('d <- read.csv("data/d.csv")\nx <- readr::read_csv(file = "raw/a.csv")\nload("e.RData")')
+  expect_equal(a$data_files, c("data/d.csv", "raw/a.csv", "e.RData"))
+  expect_equal(a$untracked_files, character())
+  expect_equal(nrow(a$notes), 0)
+  expect_true(all(c("d", "x") %in% a$definitions$name))
+})
+
+test_that("fread() takes its path as input or file (#276)", {
+  a <- read_cell('a <- data.table::fread(input = "a.csv")\nb <- fread(file = "b.csv")\nc <- fread("c.csv")')
+  expect_equal(a$data_files, c("a.csv", "b.csv", "c.csv"))
+})
+
+test_that("a reader with a computed path gets the untracked_file note (#276)", {
+  a <- read_cell('d <- readRDS(f)')
+  expect_equal(a$data_files, character())
+  expect_equal(a$notes$kind, "untracked_file")
+  expect_equal(a$untracked_files, "readRDS")
+  expect_true("f" %in% refs(a))
+})
+
+test_that("text, URLs and function bodies record no file (#276)", {
+  for (code in c('read.csv(text = "a,b\\n1,2")',
+                 'read.csv("https://example.org/d.csv")',
+                 'g <- function() read.csv("d.csv")',
+                 'readLines(textConnection(x))', 'readRDS(url(u))')) {
+    a <- read_cell(code)
+    expect_equal(a$data_files, character(), info = code)
+    expect_equal(a$untracked_files, character(), info = code)
+  }
+})
+
+test_that("a sourced file's literal reads count as the cell's (#276)", {
+  a <- read_cell('source("load.R")', function(path) 'd <- read.csv("d.csv")')
+  expect_equal(a$data_files, "d.csv")
+})
+
+test_that("data_touch lists the top-level expressions that read or write each file (#276)", {
+  a <- read_cell('d <- read.csv("d.csv")\nm <- 1\nwrite.csv(d, "d.csv")\nsaveRDS(m, file = f)\nsave(m, file = "m.RData")')
+  expect_equal(a$data_files, "d.csv")
+  t <- a$data_touch
+  expect_equal(t$path, c("d.csv", "d.csv", NA, "m.RData"))
+  expect_equal(t$index, c(1L, 3L, 4L, 5L))
+  expect_equal(t$read, c(TRUE, FALSE, FALSE, FALSE))
+  # A sourced file's reads and writes are the source() call's.
+  b <- read_cell('x <- 1\nsource("load.R")', function(path) 'd <- read.csv("d.csv")\nwrite.csv(d, "d.csv")')
+  expect_equal(b$data_touch$index, c(2L, 2L))
+  expect_equal(b$data_touch$read, c(TRUE, FALSE))
+})
+
+test_that("base writers count as the cell's own writes (#276)", {
+  a <- read_cell(paste('d <- readLines("log.txt")', 'cat("x", file = "log.txt", append = TRUE)', 'write(1, "w.txt")',
+                       'sink("s.txt")', 'capture.output(d, file = "c.txt")', 'file.append("log.txt", "b.txt")',
+                       'writeBin(raw(1), "r.bin")', 'cat("to the console")', sep = "\n"))
+  w <- a$data_touch[!a$data_touch$read, ]
+  expect_equal(w$path, c("log.txt", "w.txt", "s.txt", "c.txt", "log.txt", "r.bin"))
+  expect_equal(w$index, 2:7)
+})
