@@ -432,6 +432,14 @@ jsonlite. A literal path in a file the cell sources counts too.
   the notebook can look finished. So running a writer and waiting for the
   notebook (`run_cells(wait = TRUE)`, an agent's execute-and-wait) returns
   with its readers already rerun, or marked stale in lazy mode.
+- A reader that reruns because its file changed runs its stale ancestors
+  first, as a cell run by hand does, so it never reads their old values
+  (#437). In lazy mode, a reader is also rerun when a cell still queued in
+  the same run reads from it, with the cells between them. An example is a
+  run of every cell that reaches the writer after the reader. The queued
+  cell would otherwise read the reader's old value and show it as current.
+  A cell of that run that read from the reader before the write stays
+  stale, as the reader does when nothing queued reads from it.
 - A change while the reader runs is checked by the worker. It knows which
   top-level expressions of the cell read or write each file (literal
   paths given to a fixed list of writers, `data_writers`, such as

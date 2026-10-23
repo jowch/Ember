@@ -10,6 +10,12 @@
 # index). Cells only use names `v<n>`, numbers and base arithmetic, so the
 # checker reads definitions and references with a regular expression and
 # needs nothing from the generator.
+#
+# With `extras`, cells also write and read data files (`f<n>.txt`, through
+# `writeLines()` and `readLines()`), define replacement functions
+# (`` `s<n><-` ``, plain or an S3 generic with a default method in another
+# cell) and call them (`s<n>(v) <- k`), and a step can change a file from
+# outside the notebook: list(op = "outside", file, value).
 
 # Generating ---------------------------------------------------------------
 
@@ -23,9 +29,14 @@
 #' two cells, a cycle, a parse error, a cell reading its own variable, or
 #' the undoing of one of these.
 #' Without it, a seed gives the same trace it always has.
-fuzz_trace <- function(seed, mode, steps = 12, cells = 6, conflicts = FALSE) {
+#'
+#' With `extras = TRUE`, cells write and read data files and define and call
+#' replacement functions (`fuzz_add()`), and about one step in four also
+#' rewrites a file from outside the notebook.
+fuzz_trace <- function(seed, mode, steps = 12, cells = 6, conflicts = FALSE, extras = FALSE) {
   with_seed(seed, {
     g <- fuzz_gen_new()
+    g$extras <- extras
     g <- fuzz_gen_shape(g, sample(c("chain", "diamond", "fan", "random"), 1), cells)
     initial <- g$cells
     # Cell order in the file doesn't decide run order: shuffle it sometimes.
@@ -33,6 +44,7 @@ fuzz_trace <- function(seed, mode, steps = 12, cells = 6, conflicts = FALSE) {
     order <- c("S", if (stats::runif(1) < 0.3) sample(others) else others)
     trace <- list(seed = seed, mode = mode, conflicts = conflicts,
                   cells = lapply(initial[order], `[[`, "code"), steps = list())
+    if (extras) trace$extras <- TRUE
     g$order <- order
     for (s in seq_len(steps)) {
       if (conflicts) {
@@ -52,6 +64,9 @@ fuzz_trace <- function(seed, mode, steps = 12, cells = 6, conflicts = FALSE) {
         out <- fuzz_gen_op(g)
         g <- out$g
         ops <- c(ops, out$ops)
+      }
+      if (extras && length(g$files) && stats::runif(1) < 0.25) {
+        ops <- c(ops, list(list(op = "outside", file = sample(names(g$files), 1), value = sample.int(996, 1))))
       }
       live <- setdiff(g$order, "S")
       # Half the time after an edit, run something that reads the edited
@@ -79,7 +94,8 @@ with_seed <- function(seed, expr) {
 
 fuzz_gen_new <- function() {
   list(cells = list(S = list(code = "", rank = 0, defs = character(), refs = character())),
-       order = "S", next_name = 1L, next_id = 1L)
+       order = "S", next_name = 1L, next_id = 1L, extras = FALSE,
+       files = list(), next_file = 1L, setters = list(), next_setter = 1L)
 }
 
 fuzz_fresh_names <- function(g, n) {
@@ -90,9 +106,10 @@ fuzz_fresh_names <- function(g, n) {
 
 #' Code for a cell. One definition `v <- expr`; two, where the second uses
 #' the first; or none, a cell that only shows a value. One cell in ten fails.
-fuzz_code <- function(defs, refs, fail = FALSE) {
+fuzz_code <- function(defs, refs, fail = FALSE, files = character()) {
   k <- sample.int(90, 1)
-  terms <- if (length(refs)) paste0(seq_along(refs), " * ", refs, collapse = " + ") else NULL
+  reads <- c(refs, sprintf('as.numeric(readLines("%s"))', files))
+  terms <- if (length(reads)) paste0(seq_along(reads), " * ", reads, collapse = " + ") else NULL
   expr <- if (is.null(terms)) as.character(k) else sprintf("(%d + %s) %%%% 997", k, terms)
   if (fail) expr <- sprintf('stop("fail %d")', k)
   if (!length(defs)) return(expr)
@@ -104,6 +121,66 @@ fuzz_code <- function(defs, refs, fail = FALSE) {
 fuzz_cell <- function(defs, refs, rank) {
   list(code = fuzz_code(defs, refs, fail = stats::runif(1) < 0.1),
        rank = rank, defs = defs, refs = refs)
+}
+
+#' A cell's code with its extras (`fuzz_add()`): a replacement function it
+#' defines, or around fuzz_code(), the files it reads, a replacement call on
+#' its last name, and the file it writes that name to. Either of the last
+#' two ends the cell with that name, so its output stays the name's value.
+fuzz_cell_code <- function(c, fail = FALSE) {
+  k <- sample.int(90, 1)
+  if (!is.null(c$setter)) {
+    terms <- paste0(vapply(c$refs, function(r) paste0(" + ", r), ""), collapse = "")
+    return(switch(c$setter_kind,
+      plain = sprintf("`%s<-` <- function(x, value) (x * %d + value%s) %%%% 997\n%d", c$setter, k %% 7 + 2, terms, k),
+      generic = sprintf("`%s<-` <- function(x, value) UseMethod(\"%s<-\")\n%d", c$setter, c$setter, k),
+      method = sprintf("`%s<-.default` <- function(x, value) (x * %d + value) %%%% 997\n%d", c$setter, k %% 7 + 2, k)))
+  }
+  lines <- fuzz_code(c$defs, c$refs, fail, files = c$reads %||% character())
+  if (!length(c$defs) || (is.null(c$uses) && is.null(c$writes))) return(lines)
+  last <- c$defs[length(c$defs)]
+  paste(c(lines,
+          if (!is.null(c$uses)) sprintf("%s(%s) <- %d", c$uses, last, k),
+          if (!is.null(c$writes)) sprintf('writeLines(as.character(%s), "%s")', last, c$writes),
+          last), collapse = "\n")
+}
+
+#' Give a new cell of `rank` its extras, drawing only from cells ranked
+#' below it, as names are, so no path through files or replacement
+#' functions makes a cycle: one cell in eight defines a replacement
+#' function (with no names of its own), and the rest may read a file, call
+#' a replacement function on their last name, and write that name to a new
+#' file.
+fuzz_extras <- function(g, c) {
+  below <- function(ids) Filter(function(id) !is.null(g$cells[[id]]) && g$cells[[id]]$rank < c$rank, ids)
+  if (stats::runif(1) < 0.12) {
+    generics <- Filter(function(s) identical(g$setters[[s]]$kind, "generic") && is.null(g$setters[[s]]$method),
+                       names(g$setters))
+    if (length(generics) && stats::runif(1) < 0.5) {
+      s <- sample(generics, 1)
+      g$setters[[s]]$method <- TRUE
+      c$setter <- s; c$setter_kind <- "method"
+    } else {
+      s <- paste0("s", g$next_setter)
+      g$next_setter <- g$next_setter + 1L
+      c$setter <- s; c$setter_kind <- if (stats::runif(1) < 0.4) "generic" else "plain"
+      g$setters[[s]] <- list(kind = c$setter_kind, rank = c$rank)
+    }
+    c$defs <- character()
+    if (c$setter_kind != "plain") c$refs <- character()
+    return(list(g = g, c = c))
+  }
+  files <- names(g$files)[vapply(g$files, function(w) w < c$rank, TRUE)]
+  if (length(files) && stats::runif(1) < 0.35) c$reads <- sample(files, 1)
+  setters <- names(g$setters)[vapply(g$setters, function(s) s$rank < c$rank, TRUE)]
+  if (length(c$defs) && length(setters) && stats::runif(1) < 0.35) c$uses <- sample(setters, 1)
+  if (length(c$defs) && stats::runif(1) < 0.3) {
+    f <- paste0("f", g$next_file, ".txt")
+    g$next_file <- g$next_file + 1L
+    g$files[[f]] <- c$rank
+    c$writes <- f
+  }
+  list(g = g, c = c)
 }
 
 #' Names defined by cells ranked below `rank`: a cell only refers to those,
@@ -125,6 +202,15 @@ fuzz_add <- function(g, refs, ndefs = sample(0:2, 1, prob = c(0.2, 0.55, 0.25)),
   fresh <- fuzz_fresh_names(g, ndefs)
   g <- fresh$g
   g$cells[[id]] <- fuzz_cell(fresh$names, refs, rank)
+  if (isTRUE(g$extras)) {
+    # A shape's next cell reads the last one's first name, and a cell that
+    # defines a replacement function has none.
+    g$cells[[id]]$refs <- refs[!is.na(refs)]
+    out <- fuzz_extras(g, g$cells[[id]])
+    g <- out$g
+    out$c$code <- fuzz_cell_code(out$c, fail = stats::runif(1) < 0.1 && is.null(out$c$setter))
+    g$cells[[id]] <- out$c
+  }
   list(g = g, id = id)
 }
 
@@ -148,7 +234,8 @@ fuzz_gen_shape <- function(g, shape, n) {
     }
   } else if (shape == "fan") {
     root <- add(character(), ndefs = 2)
-    mids <- vapply(seq_len(max(1, n - 2)), function(i) add(sample(last_defs(root), 1)), "")
+    # The root has no names when it defines a replacement function (extras).
+    mids <- vapply(seq_len(max(1, n - 2)), function(i) add(if (length(last_defs(root))) sample(last_defs(root), 1) else character()), "")
     add(vapply(mids, function(m) last_defs(m)[1], ""), ndefs = 0)
   } else {
     for (i in seq_len(n)) add(fuzz_pick_refs(g, Inf), ndefs = sample(0:2, 1, prob = c(0.2, 0.55, 0.25)))
@@ -169,6 +256,16 @@ fuzz_gen_op <- function(g) {
   if (kind == "edit") {
     id <- sample(live, 1)
     c <- g$cells[[id]]
+    if (isTRUE(g$extras)) {
+      # A generic or a method keeps its shape; the rest can read other names.
+      if (stats::runif(1) < 0.5 && c$setter_kind %||% "plain" == "plain") c$refs <- fuzz_pick_refs(g, c$rank)
+      if (is.null(c$setter) && stats::runif(1) < 0.3) {
+        files <- names(g$files)[vapply(g$files, function(w) w < c$rank, TRUE)]
+        c$reads <- if (length(files) && stats::runif(1) < 0.5) sample(files, 1)
+      }
+      c$code <- fuzz_cell_code(c, fail = stats::runif(1) < 0.1 && is.null(c$setter))
+      return(list(g = g, ops = list(set(id, c))))
+    }
     if (stats::runif(1) < 0.5) c$refs <- fuzz_pick_refs(g, c$rank)
     c$code <- fuzz_join(fuzz_code(c$defs, c$refs, fail = stats::runif(1) < 0.1), c)
     return(list(g = g, ops = list(set(id, c))))
@@ -306,7 +403,9 @@ fuzz_gen_conflict_op <- function(g) {
 
 fuzz_defs <- function(code) {
   m <- regmatches(code, gregexpr("(?m)^v[0-9]+(?=(\\[[^]\n]*\\])? <-)", code, perl = TRUE))[[1]]
-  unique(m)
+  # A replacement function or its default method: `s1<-`, `s1<-.default`.
+  f <- regmatches(code, gregexpr("(?m)^`s[0-9]+<-(\\.default)?(?=` <-)", code, perl = TRUE))[[1]]
+  unique(c(m, substring(f, 2)))
 }
 
 #' Names `code` reads from other cells: every name in it but those it
@@ -314,7 +413,22 @@ fuzz_defs <- function(code) {
 fuzz_refs <- function(code) {
   m <- regmatches(code, gregexpr("\\bv[0-9]+\\b", code, perl = TRUE))[[1]]
   whole <- regmatches(code, gregexpr("(?m)^v[0-9]+(?= <-)", code, perl = TRUE))[[1]]
-  setdiff(unique(m), whole)
+  # `s1(v) <- k` runs `s1<-`, and through it the method another cell defines.
+  calls <- regmatches(code, gregexpr("(?m)^s[0-9]+(?=\\()", code, perl = TRUE))[[1]]
+  setters <- if (length(calls)) c(paste0(calls, "<-"), paste0(calls, "<-.default"))
+  setdiff(unique(c(m, setters)), whole)
+}
+
+#' What `code` reads among `codes`: fuzz_refs(), less a default method
+#' whose generic no cell defines. Ember counts `s1<-.default` as a method
+#' only while a cell defines `s1<-` (design.md, "What counts"); otherwise
+#' it is just a function, and calling `s1()` doesn't read it.
+fuzz_refs_in <- function(codes, code) {
+  refs <- fuzz_refs(code)
+  methods <- grep("<-\\.default$", refs, value = TRUE)
+  if (!length(methods)) return(refs)
+  defined <- unlist(lapply(codes, fuzz_defs), use.names = FALSE)
+  setdiff(refs, methods[!sub("\\.default$", "", methods) %in% defined])
 }
 
 #' Cells in an order where each comes after the cells defining what it
@@ -324,7 +438,7 @@ fuzz_topo <- function(codes) {
   definer <- list()
   for (id in names(codes)) for (d in fuzz_defs(codes[[id]])) definer[[d]] <- id
   ups <- lapply(names(codes), function(id) {
-    setdiff(unique(unlist(lapply(fuzz_refs(codes[[id]]), function(r) definer[[r]]), use.names = FALSE)), id)
+    setdiff(unique(unlist(lapply(fuzz_refs_in(codes, codes[[id]]), function(r) definer[[r]]), use.names = FALSE)), id)
   })
   names(ups) <- names(codes)
   out <- character()
@@ -367,7 +481,7 @@ fuzz_on_cycle <- function(codes, id) {
   while (length(todo)) {
     c <- todo[1]; todo <- todo[-1]
     # A cell replacing part of a name only it defines reads its own value.
-    ups <- setdiff(unique(unlist(lapply(fuzz_refs(codes[[c]]), definers), use.names = FALSE)), c)
+    ups <- setdiff(unique(unlist(lapply(fuzz_refs_in(codes, codes[[c]]), definers), use.names = FALSE)), c)
     if (id %in% ups) return(TRUE)
     new <- setdiff(ups, seen)
     seen <- c(seen, new)
@@ -384,7 +498,7 @@ fuzz_ancestors <- function(codes, id) {
   todo <- id
   while (length(todo)) {
     c <- todo[1]; todo <- todo[-1]
-    ups <- unlist(lapply(fuzz_refs(codes[[c]]), function(r) definer[[r]]), use.names = FALSE)
+    ups <- unlist(lapply(fuzz_refs_in(codes, codes[[c]]), function(r) definer[[r]]), use.names = FALSE)
     new <- setdiff(ups, c(seen, id))
     seen <- c(seen, new)
     todo <- c(todo, new)
@@ -404,8 +518,18 @@ fuzz_descendants <- function(codes, id) {
 #' removed. A cell that can't run (`fuzz_blocked()`) is an error and
 #' defines nothing. Cells that don't depend on each other run in the order
 #' of `codes`, which callers give in display order.
-fuzz_reference <- function(codes) {
+#'
+#' With `dir`, the cells run there and read its data files as they are now:
+#' Ember doesn't order a writer before its readers (design.md, "Data files
+#' a cell reads"), it reruns or marks a reader once the file changes, so a
+#' reader that isn't stale shows what the file holds. Writes do nothing.
+fuzz_reference <- function(codes, dir = NULL) {
   env <- new.env(parent = baseenv())
+  if (!is.null(dir)) {
+    env$writeLines <- function(...) invisible(NULL)
+    old <- setwd(dir)
+    on.exit(setwd(old), add = TRUE)
+  }
   out <- list()
   blocked <- fuzz_blocked(codes)
   for (id in names(blocked)) out[[id]] <- list(status = "error", text = NULL)
@@ -415,7 +539,7 @@ fuzz_reference <- function(codes) {
     if (!nzchar(code)) { out[[id]] <- list(status = "ok", text = NULL); next }
     res <- tryCatch({
       val <- NULL
-      for (e in parse(text = code, keep.source = FALSE)) val <- eval(e, env)
+      for (e in parse(text = code, keep.source = FALSE)) val <- suppressWarnings(eval(e, env))
       list(status = "ok", text = paste(utils::capture.output(print(val)), collapse = "\n"))
     }, error = function(e) {
       rm(list = intersect(fuzz_defs(code), ls(env)), envir = env)
@@ -435,6 +559,14 @@ fuzz_apply <- function(nb, op) {
   if (!is.null(op$cell) && !op$cell %in% ids) return(invisible())
   if (!is.null(op$index)) {
     op$index <- min(op$index, length(ids) + identical(op$op, "insert"))
+  }
+  if (identical(op$op, "outside")) {
+    # Always a change: a value the file doesn't hold already.
+    path <- file.path(dirname(nb$state$path), op$file)
+    new <- as.character(op$value)
+    if (file.exists(path) && identical(readLines(path, warn = FALSE), new)) new <- as.character(op$value + 1)
+    writeLines(new, path)
+    return(invisible())
   }
   e <- switch(op$op,
     set_code = set_code(op$cell, op$code),
@@ -456,11 +588,16 @@ fuzz_replay <- function(trace, timeout = 30) {
   ran <- list()
   ran_ok <- list()
   last <- list()
+  dir <- if (isTRUE(trace$extras)) dirname(nb$state$path)
   for (s in seq_along(trace$steps)) {
     step <- trace$steps[[s]]
     for (op in step$ops) {
+      before <- notebook_snapshot(nb)
       ok <- tryCatch({ fuzz_apply(nb, op); TRUE }, error = function(e) conditionMessage(e))
       if (!isTRUE(ok)) return(list(step = s, problems = paste("edit refused:", ok)))
+      if (identical(op$op, "outside") && !fuzz_noticed(nb, before, ran, op$file, timeout)) {
+        return(list(step = s, problems = paste0("a reader of ", op$file, " never noticed it change")))
+      }
     }
     res <- NULL
     if (!is.null(step$run) && (identical(step$run, "all") ||
@@ -481,7 +618,7 @@ fuzz_replay <- function(trace, timeout = 30) {
     last <- stats::setNames(lapply(snap$cells, `[[`, "last_run"), vapply(snap$cells, `[[`, "", "id"))
     ran <- ran[intersect(names(ran), names(last))]
     ran_ok <- ran_ok[intersect(names(ran_ok), names(last))]
-    problems <- fuzz_check(snap, ran, trace$mode, step$run, res, ran_ok)
+    problems <- fuzz_check(snap, ran, trace$mode, step$run, res, ran_ok, dir)
     if (length(problems)) return(list(step = s, problems = problems))
     # A cell whose result is gone defines nothing as far as Ember's next
     # submit of it goes (drop_graph_error_results() reads `old$defined`
@@ -491,8 +628,32 @@ fuzz_replay <- function(trace, timeout = 30) {
   NULL
 }
 
+#' Wait until every cell whose last run read `file` and that has a result
+#' has taken in its change from outside: it is stale, queued or running, or
+#' has run again since `before`. A cell edited since it ran counts only
+#' when its code still reads the file: Ember watches what its code reads
+#' now. The shell sees the change on its poll, so
+#' this is what waiting for the notebook means after a file changes. FALSE
+#' if one hasn't within `timeout` seconds.
+fuzz_noticed <- function(nb, before, ran, file, timeout) {
+  last <- stats::setNames(lapply(before$cells, `[[`, "last_run"), vapply(before$cells, `[[`, "", "id"))
+  pattern <- sprintf('readLines("%s")', file)
+  readers <- names(Filter(function(code) grepl(pattern, code, fixed = TRUE), ran))
+  code_now <- stats::setNames(lapply(before$cells, `[[`, "code"), names(last))
+  readers <- Filter(function(id) !is.null(last[[id]]) && grepl(pattern, code_now[[id]] %||% "", fixed = TRUE), readers)
+  if (!length(readers)) return(TRUE)
+  wait_for(nb, function(snap) {
+    views <- stats::setNames(snap$cells, vapply(snap$cells, `[[`, "", "id"))
+    all(vapply(readers, function(id) {
+      v <- views[[id]]
+      is.null(v) || isTRUE(v$stale) || v$queued || v$running || !identical(v$last_run, last[[id]])
+    }, TRUE))
+  }, timeout = timeout)
+}
+
 #' What's wrong with `snap`, as sentences; empty when nothing is.
-fuzz_check <- function(snap, ran, mode, run, res, ran_ok = list()) {
+#' `dir` is the notebook's folder when cells read data files.
+fuzz_check <- function(snap, ran, mode, run, res, ran_ok = list(), dir = NULL) {
   problems <- character()
   say <- function(...) problems <<- c(problems, paste0(...))
   views <- stats::setNames(snap$cells, vapply(snap$cells, `[[`, "", "id"))
@@ -520,16 +681,27 @@ fuzz_check <- function(snap, ran, mode, run, res, ran_ok = list()) {
   # outputs from scratch gives, so the reference uses the code each cell
   # ran. A cell edited since it ran keeps its old output, marked as edited.
   shown <- Filter(function(id) has_run(views[[id]]) && !is.null(ran[[id]]), names(views))
-  ref <- fuzz_reference(ran[shown])
+  # A cell edited to stop reading a file isn't watched for it any more
+  # (#439), so it and what reads from it aren't checked against the file.
+  files_read <- function(code) regmatches(code, gregexpr('readLines\\("[^"]+"\\)', code))[[1]]
+  unwatched <- Filter(function(id) {
+    isTRUE(views[[id]]$code_differs) && length(setdiff(files_read(ran[[id]]), files_read(current[[id]])))
+  }, shown)
+  ref <- fuzz_reference(ran[shown], dir)
   for (id in shown) {
     v <- views[[id]]
     # A cell that can't run now keeps its last output under its graph error
     # until something runs (drop_graph_error_results()): it is marked.
     if (isTRUE(v$stale) || id %in% blocked) next
+    # A file only an edited cell's old code read isn't watched any more
+    # (fuzz_noticed(), #439), so neither its value nor the values of what
+    # reads from it follow the file. Their staleness is still checked.
     reads <- fuzz_ancestors(ran[shown], id)
     want <- ref[[id]]
     got <- v$output$text
-    if (!identical(v$status, want$status)) {
+    if (any(c(id, reads) %in% unwatched)) {
+      # not compared
+    } else if (!identical(v$status, want$status)) {
       say(id, " shows ", v$status, " but running from scratch gives ", want$status)
     } else if (identical(want$status, "ok") && !identical(got, want$text)) {
       say(id, " shows ", deparse(got), " but running from scratch gives ", deparse(want$text))
@@ -540,10 +712,22 @@ fuzz_check <- function(snap, ran, mode, run, res, ran_ok = list()) {
     }
   }
 
+  # In lazy mode a reader can be left stale by a run: a writer isn't an
+  # upstream of its readers (design.md, "Data files a cell reads"), so a run
+  # can read a file before the cell that writes it, which then marks the
+  # reader stale. Autorun reruns it instead. So can what reads from it,
+  # even once the reader has run again for a cell the run still had queued.
+  excused <- character()
+  if (identical(mode, "lazy")) {
+    readers <- Filter(function(id) !is.null(ran[[id]]) && grepl("readLines(", ran[[id]], fixed = TRUE),
+                      names(views))
+    below <- unique(c(readers, unlist(lapply(readers, function(r) fuzz_descendants(current, r)))))
+    excused <- Filter(function(id) isTRUE(views[[id]]$stale), below)
+  }
   # A cell that can't run is never fresh, and isn't expected to be.
   fresh <- function(id) {
     v <- views[[id]]
-    id %in% blocked || (has_run(v) && !isTRUE(v$stale) && !isTRUE(v$code_differs))
+    id %in% blocked || id %in% excused || (has_run(v) && !isTRUE(v$stale) && !isTRUE(v$code_differs))
   }
   if (identical(run, "all")) {
     for (id in names(views)) if (!fresh(id)) say("after running every cell, ", id, " isn't fresh")
@@ -590,7 +774,7 @@ fuzz_check <- function(snap, ran, mode, run, res, ran_ok = list()) {
 #' A trace as R code that rebuilds it, for a failure message or a
 #' regression test.
 fuzz_format <- function(trace) {
-  paste(deparse(trace[c("mode", "cells", "steps")], width.cutoff = 100), collapse = "\n")
+  paste(deparse(trace[intersect(c("mode", "extras", "cells", "steps"), names(trace))], width.cutoff = 100), collapse = "\n")
 }
 
 #' A problem without its cell ids and values, so shrinking keeps the same
