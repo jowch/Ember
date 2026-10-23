@@ -21,9 +21,17 @@ walk_expr <- function(e, scope, acc, pid = NA_integer_) {
   if (is.symbol(e)) {
     name <- as.character(e)
     if (nzchar(name)) record_read(acc, scope, name, pos = pd_position(acc, pid))
+    # `lapply(site_names, get)`: get() passed as a function reads whatever
+    # names it is handed, which static reading can't follow (#357).
+    passed <- get_family_value(e, scope)
+    if (!is.null(passed)) record_note(acc, "untracked_read", passed, pd_position(acc, pid))
     return(invisible())
   }
   if (!is.call(e)) return(invisible())
+  # `lapply(site_names, base::get)`, the same as the bare symbol above. A
+  # call's head never comes here: `base::get(x)` is walk_qualified_call()'s.
+  passed <- get_family_value(e, scope)
+  if (!is.null(passed)) record_note(acc, "untracked_read", passed, pd_position(acc, pid))
 
   head <- e[[1]]
   if (is.call(head)) {
@@ -85,6 +93,11 @@ walk_expr <- function(e, scope, acc, pid = NA_integer_) {
   dispatch_call_by_name(e, scope, acc, name, pid = pid)
 }
 
+#' Install calls are read in the cell's own code, outside function bodies
+#' (rules.R, `install_calls`). One in a sourced file or a function is an
+#' ordinary call: it runs when it is reached.
+reads_install_calls <- function(scope, acc) is.na(acc$file) && !in_function(scope)
+
 #' `pkg::fn(...)` or `pkg:::fn(...)` used as a call head: not a plain symbol
 #' head, so dispatch on a symbol head never sees it.
 qualified_head <- function(head) {
@@ -105,6 +118,13 @@ walk_qualified_call <- function(e, scope, acc, q, pid = NA_integer_) {
     record_package(acc, "box", attached = FALSE)
     parts <- pd_call_parts(acc$pd, e, pid)
     walk_box_use_args(e, scope, acc, parts$args)
+  } else if (reads_install_calls(scope, acc) && paste0(q$pkg, "::", q$fn) %in% names(install_calls)) {
+    # As the whole top-level expression the call doesn't run (rules.R), so
+    # its package isn't one the notebook needs; anywhere else
+    # (`suppressMessages(...)`, inside `if`) it runs when reached.
+    if (!identical(e, acc$top_expr)) record_package(acc, q$pkg, attached = FALSE)
+    parts <- pd_call_parts(acc$pd, e, pid)
+    walk_install_call(e, scope, acc, install_calls[[paste0(q$pkg, "::", q$fn)]], parts$args)
   } else {
     record_package(acc, q$pkg, attached = FALSE)
     dispatch_call_by_name(e, scope, acc, q$fn, qualified = TRUE, pid = pid)
@@ -166,6 +186,11 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
   if (is_str_interp_function(name)) {
     maybe_record_name_read()
     walk_str_interp_call(e, scope, acc, name, arg_pids)
+    return(invisible())
+  }
+  if (!qualified && name %in% names(install_calls_bare) && reads_install_calls(scope, acc)) {
+    maybe_record_name_read()
+    walk_install_call(e, scope, acc, install_calls_bare[[name]], arg_pids)
     return(invisible())
   }
   if (name %in% attach_functions) {
@@ -667,6 +692,8 @@ walk_call_args <- function(e, scope, acc, arg_pids = NULL) {
   if (is.null(arg_pids)) arg_pids <- rep(list(NA_integer_), length(args))
   nms <- names2(args)
   is_bracket_call <- identical(bare_fn, "[")
+  # `args(get)`, `?get`: the function is looked at, not called (#357).
+  looks_at_function <- !is.null(bare_fn) && bare_fn %in% function_object_heads
 
   has_data <- FALSE
   data_expr <- NULL
@@ -694,6 +721,8 @@ walk_call_args <- function(e, scope, acc, arg_pids = NULL) {
     if (is_bracket_call && is.symbol(a) && is_dotdot_prefixed_name(as.character(a))) {
       stripped <- substr(as.character(a), 3, nchar(as.character(a)))
       record_read(acc, scope, stripped, pos = pd_position(acc, arg_pids[[i]]))
+    } else if (looks_at_function && !is.null(get_family_value(a, scope))) {
+      if (is.symbol(a)) record_read(acc, scope, as.character(a), pos = pd_position(acc, arg_pids[[i]]))
     } else if (is.call(a) && is.symbol(a[[1]]) && identical(as.character(a[[1]]), "~")) {
       site <- formula_site(acc$index, acc$line, fn_display, data_text, character())
       walk_formula(a, scope, acc, has_data, site, arg_pids[[i]])

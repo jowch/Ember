@@ -126,6 +126,7 @@ running <- NULL        # list(cell, token) during a run (for the source trace)
 deferred <- list()     # messages read while waiting for a source_reply
 interrupt_drain <- NULL # Windows: the DLL routine that drops a late interrupt (listen_for_interrupts())
 release_children <- NULL # Windows: the DLL routine that releases a cell's processx children (#208)
+children_running <- NULL # Windows: the DLL routine that tells the release thread a run is going (#273)
 keeping_children <- FALSE  # Windows: whether the thread that releases them runs
 load_log <- NULL       # settings changes made inside loadNamespace/library during a run
 notebook_options <- character()  # option names an options() call from the
@@ -182,10 +183,33 @@ listen_for_interrupts <- function() {
     # So a cell's processx and callr children outlive this process, as
     # they do on Unix (src/children.c, #208).
     release_children <<- getNativeSymbolInfo("C_release_cell_children", dll)
+    children_running <<- getNativeSymbolInfo("C_cell_children_running", dll)
     keeping_children <<- isTRUE(tryCatch(.Call(getNativeSymbolInfo("C_keep_cell_children", dll)),
                                          error = function(e) FALSE))
+    setHook(packageEvent("processx", "onLoad"), function(pkgname, pkgpath) release_processx_job())
     isTRUE(.Call(getNativeSymbolInfo("C_interrupt_listen", dll)))
   }, error = function(e) FALSE))
+}
+
+#' On Windows, as processx loads: have it make its job object now, with a
+#' child that only exits, and release the job at once, so a cell's first
+#' processx or callr child joins a job already released and outlives a
+#' worker killed right after starting it (#235). processx makes the job
+#' only as it starts a child, and Windows says nothing when it does, so the
+#' half-second thread in src/children.c could miss that first child.
+#' System32's cmd with `/d`, so no AutoRun command (conda's, say) runs
+#' first. The job exists once the child has started, so a child that hangs
+#' anyway is killed after two seconds and the job released all the same.
+#' Silent: an error or warning here never reaches the cell, and the job is
+#' released whatever happened (the thread is left for a start that failed).
+release_processx_job <- function() {
+  tryCatch({
+    cmd <- file.path(Sys.getenv("SystemRoot", "C:/Windows"), "System32", "cmd.exe")
+    p <- processx::process$new(cmd, c("/d", "/c", "exit"), cleanup = TRUE, windows_hide_window = TRUE)
+    p$wait(2000)
+    if (p$is_alive()) p$kill()
+  }, warning = function(w) NULL, error = function(e) NULL, finally = .Call(release_children))
+  invisible(NULL)
 }
 
 #' Drop an interrupt still pending as a run starts: it is late, for the
@@ -216,8 +240,9 @@ main <- function() {
   drop_processx_marker()
   listening <- listen_for_interrupts()
   port <- as.integer(commandArgs(trailingOnly = TRUE)[1])
+  # No-delay: see write_frame() in R/shell.R.
   con <<- socketConnection("127.0.0.1", port, blocking = TRUE, open = "r+b",
-                           timeout = 60 * 60 * 24 * 365)
+                           timeout = 60 * 60 * 24 * 365, options = "no-delay")
   install_traces()
   install_input_hook()
   # Baseline, not a cell's change: a colour terminal under Rscript has these
@@ -290,9 +315,12 @@ handle_next <- function() {
   switch(msg$type,
     run = {
       drain_late_interrupt()
+      # The release thread scans only while a run is going (#273).
+      if (!is.null(children_running)) .Call(children_running, TRUE)
       report <- run_cell(msg)
       # Before "done": the children a finished cell started are released
       # by the time the server hears it ended (src/children.c, #208).
+      if (!is.null(children_running)) .Call(children_running, FALSE)
       if (!is.null(release_children)) .Call(release_children)
       send(list(type = "done", cell = msg$cell, token = msg$token, report = report))
     },
@@ -367,8 +395,8 @@ send <- function(msg) {
   on.exit(trace_line("sent", msg$type))
   uninterrupted({
     payload <- serialize(msg, NULL)
-    writeBin(length(payload), con, endian = "big")
-    writeBin(payload, con)
+    # One write: see write_frame() in R/shell.R.
+    writeBin(c(writeBin(length(payload), raw(), endian = "big"), payload), con)
     flush(con)
   })
   invisible()
@@ -427,7 +455,8 @@ trace_line <- function(...) {
 #' attached), formula_misses, columns (see global_columns()), globals (see
 #' summarise_globals()),
 #' changed_in_place (names of other cells' environments, R6 objects and
-#' reference class objects this run changed; env_fingerprint())).
+#' reference class objects this run changed; env_fingerprint()), from_lock
+#' (the packages of the install calls it didn't run, `msg$installs`)).
 #' `error$span` is set only for role "text": the 1-based index of the
 #' failing line (into `inline_spans()`'s rows).
 #'
@@ -449,7 +478,8 @@ run_cell <- function(msg) {
              runtime = NA_real_, created = character(), changed = character(),
              removed = character(), settings = list(), load_notes = list(),
              attached = list(), formula_misses = character(), loaded = character(),
-             globals = list(), changed_in_place = character(), columns = list(), inputs = list())
+             globals = list(), changed_in_place = character(), columns = list(), inputs = list(),
+             from_lock = character())
 
   # `dev`/`console` are closed here (not just at their normal point of use
   # below) so an interrupt landing anywhere in this function -- including
@@ -537,9 +567,18 @@ run_cell <- function(msg) {
           # even when it's an assignment, as in Pluto); an earlier visible
           # value prints to the console when it's made (design.md, "Which
           # values a cell shows").
+          skip <- vapply(msg$installs %||% list(), function(s) as.integer(s$index), integer(1))
           for (k in seq_along(exprs)) {
             at <- k   # the top-level expression index; error$line reads its srcref
             datatable_clear_mark()
+            if (k %in% skip) {
+              # An install call: the lock already answers it, so it doesn't
+              # run (packages.md, "Install calls"). The cell says so; ""
+              # stands for a call whose packages couldn't be read.
+              s <- msg$installs[[match(k, skip)]]
+              rc$from_lock <- union(rc$from_lock, if (length(s$packages)) as.character(s$packages) else "")
+              next
+            }
             input_expect <<- input_expectation(msg$inputs, k, exprs[[k]])
             r <- withVisible(eval(exprs[[k]], globalenv()))
             # A bound input's value changes without the cell rerunning, so
@@ -1103,9 +1142,10 @@ ENV_FINGERPRINT_ONE_MAX <- 1000L
 
 #' Fingerprints of the reference-valued globals in `before` (a
 #' `snapshot_globals()` result) named in `names`: a named list of
-#' `list(env, print)`. Environments, R6 objects, reference class objects
-#' and data.tables are the values a cell can change without rebinding the
-#' name, so `compare_globals()` can't see it (#167, #172). Package
+#' `list(env, print)`. Environments, R6 objects, reference class objects,
+#' data.tables and closures' environments are the values a cell can change
+#' without rebinding the name, so `compare_globals()` can't see it (#167,
+#' #172, #333). Package
 #' namespaces and the global environment are skipped, and so is an
 #' environment too big to read.
 env_fingerprints <- function(before, names) {
@@ -1124,10 +1164,20 @@ env_fingerprints <- function(before, names) {
 
 #' The fingerprint of one global, or `NULL` when it isn't a value that
 #' changes in place (or is too big to read): an environment's from
-#' `env_fingerprint()`, a data.table's from `datatable_fingerprint()`.
+#' `env_fingerprint()`, a data.table's from `datatable_fingerprint()`, and a
+#' closure's from its enclosing environment's.
 ref_fingerprint <- function(v, budget) {
   if (inherits(v, "data.table")) return(datatable_fingerprint(v))
-  if (!is.environment(v) || is_shared_env(v)) return(NULL)
+  # A closure keeps its state in the environment it was made in, which a
+  # call changes in place (a function factory's `n <<- n + 1`, a memoised
+  # function's cache; #333). One made at top level or in a package has a
+  # shared environment, skipped below. An S4 generic caches the methods it
+  # dispatched to in its own environment when called, which isn't a change.
+  if (is.function(v) && !is.primitive(v)) {
+    if (isS4(v)) return(NULL)
+    v <- environment(v)
+  }
+  if (!is.environment(v) || is_shared_env(v) || is_python_object(v)) return(NULL)
   env_fingerprint(v, budget)
 }
 
@@ -1180,6 +1230,13 @@ datatable_clear_mark <- function() {
   tryCatch({ g <- asNamespace("data.table")$.global; g$print <- "" }, error = function(e) NULL)
   invisible()
 }
+
+#' A reticulate object: an R environment holding a pointer to a Python
+#' object (`pyobj`). Its state lives in Python, so its R bindings can't
+#' show a change in place, and the first `py_to_r()` caches one more
+#' binding (`simple`) there, which isn't a change (#259). Read by
+#' identity only.
+is_python_object <- function(v) inherits(v, "python.builtin.object")
 
 # ---- data.table row writes (#201, #216) ------------------------------------
 #
@@ -1461,7 +1518,7 @@ env_fingerprint_ <- function(e, budget, depth, seen) {
       out[[n]] <- NULL
       next
     }
-    if (is.environment(v) && depth > 1L && !is_shared_env(v)) {
+    if (is.environment(v) && depth > 1L && !is_shared_env(v) && !is_python_object(v)) {
       inner <- env_fingerprint_(v, budget, depth - 1L, seen)
       out[[n]] <- if (is.null(inner)) list(env = v) else list(env = v, print = inner)
     } else {
@@ -1683,6 +1740,25 @@ current_theme <- function() {
   tryCatch(get("theme_get", envir = asNamespace("ggplot2"))(), error = function(e) NULL)
 }
 
+#' `requireNamespace(pkg)`, remembering a package that isn't installed
+#' until a library on the path changes. Display asks for knitr and repr on
+#' every value, and the figure device for ragg on every run; for a package
+#' the notebook's library doesn't have, each ask searched every library
+#' again and went through the load hooks, about 20 ms a cell (#316). A
+#' package added to a library changes that folder's modification time, so
+#' an install (or `.libPaths()` moving to another library) is seen on the
+#' next ask.
+has_namespace <- function(pkg) {
+  if (isNamespaceLoaded(pkg)) return(TRUE)
+  libs <- .libPaths()
+  key <- paste(pkg, paste(libs, unclass(file.mtime(libs)), collapse = "\r"), sep = "\r")
+  if (exists(key, envir = missing_namespaces, inherits = FALSE)) return(FALSE)
+  ok <- requireNamespace(pkg, quietly = TRUE)
+  if (!ok) assign(key, TRUE, envir = missing_namespaces)
+  ok
+}
+missing_namespaces <- new.env(hash = TRUE, parent = emptyenv())
+
 #' The global settings, as one comparable value.
 snapshot_settings <- function() {
   list(options = options(), env = as.list(Sys.getenv()), wd = getwd(),
@@ -1694,12 +1770,21 @@ snapshot_settings <- function() {
 #' for every option, environment variable, locale category and the
 #' (non-package) search path that differ, plus the working directory.
 diff_settings <- function(before, after) {
+  # Runs after every cell, over a few hundred options and environment
+  # variables, and almost always finds nothing: the whole-list check comes
+  # first, and names are matched once rather than searched for each (#316).
   diff_named <- function(b, a, kind) {
+    # Most cells change nothing: one comparison of the whole list instead
+    # of one per option (#316).
+    if (identical(b, a)) return(list())
+    nms <- union(names(b), names(a))
+    bi <- match(nms, names(b))
+    ai <- match(nms, names(a))
     diffs <- list()
-    for (n in union(names(b), names(a))) {
-      bv <- if (n %in% names(b)) b[[n]] else NULL
-      av <- if (n %in% names(a)) a[[n]] else NULL
-      if (!identical(bv, av)) diffs[[length(diffs) + 1]] <- list(kind = kind, name = n, before = bv, after = av)
+    for (i in seq_along(nms)) {
+      bv <- if (is.na(bi[[i]])) NULL else b[[bi[[i]]]]
+      av <- if (is.na(ai[[i]])) NULL else a[[ai[[i]]]]
+      if (!identical(bv, av)) diffs[[length(diffs) + 1]] <- list(kind = kind, name = nms[[i]], before = bv, after = av)
     }
     diffs
   }
@@ -2422,6 +2507,188 @@ check_formulas <- function(formulas) {
 
 # ---- Console and devices -----------------------------------------------------------------
 
+#' `txt` as a terminal leaves it: on each line, a "\r" moves back to the
+#' start, and what follows overwrites what was there, column by column
+#' (#358). A progress bar that redraws itself 300 times
+#' (`txtProgressBar()`, which writes "\r" before each redraw) ends as one
+#' line, as in the R console, and a redraw shorter than the line before it
+#' leaves that line's tail, as a terminal does. "\r\n" has already become
+#' "\n".
+#'
+#' Colors are on in the worker, so a line can hold ANSI escapes. They take
+#' no columns: each column keeps the colors it was written with, and the
+#' line is written back with them. On a line with a "\r", "\033[K" clears
+#' to the end of the line ("\033[2K" all of it), "\033[<n>G" moves to
+#' column n, and any other escape that isn't a color is dropped. A wide
+#' character (CJK, most emoji) takes two columns. Lines with no "\r" are
+#' left as they are, and so is text R can't split into characters.
+apply_carriage_returns <- function(txt) {
+  if (!grepl("\r", txt, fixed = TRUE)) return(txt)
+  tryCatch({
+    lines <- strsplit(txt, "\n", fixed = TRUE)[[1]]
+    if (endsWith(txt, "\n")) lines <- c(lines, "")
+    sgr <- SGR_NONE  # the colors in force, carried from line to line
+    with_cr <- which(grepl("\r", lines, fixed = TRUE))
+    from <- 1L
+    for (i in with_cr) {
+      # The lines before it are left as they are; only their colors count.
+      if (i > from) {
+        between <- paste(lines[from:(i - 1L)], collapse = "\n")
+        for (e in regmatches(between, gregexpr("\033\\[[0-9;]*m", between))[[1]]) sgr <- sgr_after(sgr, e)
+      }
+      res <- terminal_line(lines[[i]], sgr)
+      lines[[i]] <- res$text
+      sgr <- res$sgr
+      from <- i + 1L
+    }
+    paste(lines, collapse = "\n")
+  }, error = function(e) txt)
+}
+
+#' The colors in force, one field per attribute, so the state stays the
+#' same size however many escapes a chunk holds: a code that sets or
+#' clears an attribute replaces that field ("\033[39m" clears the
+#' foreground, "\033[22m" bold and faint), and 0 clears them all.
+SGR_NONE <- c(fg = "", bg = "", bold = "", faint = "", italic = "", underline = "",
+              blink = "", inverse = "", hidden = "", strike = "")
+
+#' `sgr` after `seq`, one "\033[...m". What `seq` does to the fields is
+#' worked out once per distinct escape: a chunk repeats a few of them.
+sgr_after <- function(sgr, seq) {
+  delta <- SGR_DELTAS[[seq]]
+  if (is.null(delta)) {
+    delta <- sgr_delta(seq)
+    assign(seq, delta, envir = SGR_DELTAS)
+  }
+  if (delta$reset) sgr <- SGR_NONE
+  sgr[names(delta$set)] <- delta$set
+  sgr
+}
+SGR_DELTAS <- new.env(parent = emptyenv())
+
+#' What `seq` does, as `list(reset, set)`: whether it clears every field
+#' first, then the fields it sets ("" for one it clears).
+sgr_delta <- function(seq) {
+  sgr <- stats::setNames(rep(NA_character_, length(SGR_NONE)), names(SGR_NONE))
+  reset <- FALSE
+  params <- substr(seq, 3L, nchar(seq) - 1L)
+  codes <- if (nzchar(params)) strsplit(params, ";", fixed = TRUE)[[1]] else "0"
+  codes[!nzchar(codes)] <- "0"
+  k <- 1L
+  while (k <= length(codes)) {
+    n <- suppressWarnings(as.integer(codes[[k]]))
+    if (is.na(n)) { k <- k + 1L; next }
+    if (n %in% c(38L, 48L)) {
+      # An extended color: 38;5;n or 38;2;r;g;b (48 for the background).
+      len <- if (k < length(codes) && codes[[k + 1L]] == "5") 3L else if (k < length(codes) && codes[[k + 1L]] == "2") 5L else 1L
+      code <- paste(codes[k:min(length(codes), k + len - 1L)], collapse = ";")
+      sgr[[if (n == 38L) "fg" else "bg"]] <- code
+      k <- k + len
+      next
+    }
+    field <- if (n == 0L) "all" else if ((n >= 30L && n <= 37L) || (n >= 90L && n <= 97L)) "fg"
+      else if (n == 39L) "-fg" else if ((n >= 40L && n <= 47L) || (n >= 100L && n <= 107L)) "bg"
+      else if (n == 49L) "-bg" else if (n == 1L) "bold" else if (n == 2L) "faint" else if (n == 22L) "-boldfaint"
+      else if (n == 3L) "italic" else if (n == 23L) "-italic" else if (n == 4L) "underline" else if (n == 24L) "-underline"
+      else if (n == 5L) "blink" else if (n == 25L) "-blink" else if (n == 7L) "inverse" else if (n == 27L) "-inverse"
+      else if (n == 8L) "hidden" else if (n == 28L) "-hidden" else if (n == 9L) "strike" else if (n == 29L) "-strike"
+      else ""
+    if (field == "all") { reset <- TRUE; sgr[] <- NA_character_ }
+    else if (field == "-boldfaint") sgr[c("bold", "faint")] <- ""
+    else if (startsWith(field, "-")) sgr[[substring(field, 2L)]] <- ""
+    else if (nzchar(field)) sgr[[field]] <- as.character(n)
+    k <- k + 1L
+  }
+  list(reset = reset, set = sgr[!is.na(sgr)])
+}
+
+#' The escape that sets `sgr` from nothing; "" for no colors.
+sgr_code <- function(sgr) {
+  on <- sgr[nzchar(sgr)]
+  if (length(on)) paste0("\033[", paste(on, collapse = ";"), "m") else ""
+}
+
+#' One line with a "\r" in it, as a terminal leaves it, starting with the
+#' colors `sgr` in force. Returns `list(text, sgr)`, `sgr` being the
+#' colors in force at its end.
+terminal_line <- function(line, sgr) {
+  start <- sgr_code(sgr)
+  ch <- character()   # per column: the character, "" for the second column of a wide one
+  st <- character()   # per column: the colors it was written with
+  col <- 0L
+  put <- function(chars, widths) {
+    for (k in seq_along(chars)) {
+      w <- widths[[k]]
+      if (w <= 0L) next
+      at <- col + seq_len(w)
+      if (max(at) > length(ch)) {
+        pad <- (length(ch) + 1L):max(at)
+        ch[pad] <<- " "; st[pad] <<- sgr_code(sgr)
+      }
+      # Overwriting half of a wide character leaves a space in its other half.
+      if (identical(ch[[at[1]]], "") && at[1] > 1L) ch[[at[1] - 1L]] <<- " "
+      last <- at[length(at)]
+      if (last < length(ch) && identical(ch[[last + 1L]], "")) ch[[last + 1L]] <<- " "
+      ch[at] <<- c(chars[[k]], rep("", w - 1L))
+      st[at] <<- sgr_code(sgr)
+      col <<- last
+    }
+  }
+  # An OSC sequence (a hyperlink, a window title) ends at BEL or ESC \;
+  # it is dropped with the other escapes that aren't colors.
+  toks <- regmatches(line, gregexpr("\033\\][^\a\033]*(?:\a|\033\\\\)?|\033\\[[0-9;?]*[ -/]*[@-~]|\033.|\r|[^\033\r]+", line, perl = TRUE))[[1]]
+  for (t in toks) {
+    if (identical(t, "\r")) {
+      col <- 0L
+    } else if (startsWith(t, "\033")) {
+      final <- substring(t, nchar(t))
+      params <- substr(t, 3L, nchar(t) - 1L)
+      if (startsWith(t, "\033[") && final == "m") {
+        sgr <- sgr_after(sgr, t)
+      } else if (startsWith(t, "\033[") && final == "K") {
+        if (params %in% c("", "0")) {
+          keep <- seq_len(min(col, length(ch)))
+          ch <- ch[keep]; st <- st[keep]
+        } else if (params == "2") {
+          ch[] <- " "; st[] <- sgr_code(sgr)
+        }
+      } else if (startsWith(t, "\033[") && final == "G") {
+        col <- max(0L, (if (nzchar(params)) as.integer(params) else 1L) - 1L)
+      }
+    } else {
+      chars <- strsplit(t, "")[[1]]
+      widths <- nchar(chars, type = "width")
+      if (all(widths == 1L)) {
+        # The common case, a run of ordinary characters: written at once.
+        at <- col + seq_along(chars)
+        if (max(at) > length(ch)) {
+          pad <- (length(ch) + 1L):max(at)
+          ch[pad] <- " "; st[pad] <- sgr_code(sgr)
+        }
+        if (identical(ch[[at[1]]], "") && at[1] > 1L) ch[[at[1] - 1L]] <- " "
+        last <- at[length(at)]
+        if (last < length(ch) && identical(ch[[last + 1L]], "")) ch[[last + 1L]] <- " "
+        ch[at] <- chars; st[at] <- sgr_code(sgr)
+        col <- last
+      } else {
+        put(chars, widths)
+      }
+    }
+  }
+  # Written back with each change of colors, starting from those in force
+  # before the line, and ending with those in force after it.
+  out <- character()
+  cur <- start
+  for (k in seq_along(ch)) {
+    if (!nzchar(ch[[k]])) next
+    if (!identical(st[[k]], cur)) { out <- c(out, "\033[0m", st[[k]]); cur <- st[[k]] }
+    out <- c(out, ch[[k]])
+  }
+  end <- sgr_code(sgr)
+  if (!identical(cur, end)) out <- c(out, "\033[0m", end)
+  list(text = paste(out, collapse = ""), sgr = sgr)
+}
+
 #' Collect console items in order and stream each to the server.
 #'
 #' stdout is captured with sink() into a textConnection; before a message
@@ -2479,6 +2746,7 @@ console_collector <- function(cell, token) {
     self$read_pos <- size
     # The sink file is in text mode, which writes "\r\n" on Windows.
     txt <- gsub("\r\n", "\n", rawToChar(raw_bytes), fixed = TRUE)
+    txt <- apply_carriage_returns(txt)
     if (nzchar(txt)) add_item("stdout", txt)
   }
 
@@ -2565,7 +2833,7 @@ clamp_pixels <- function(width, height) {
 open_device <- function(fig) {
   px <- figure_pixels(fig, FIG_RES)
   path <- tempfile(fileext = ".png")
-  if (requireNamespace("ragg", quietly = TRUE)) {
+  if (has_namespace("ragg")) {
     ragg::agg_png(filename = path, width = px$width, height = px$height, res = px$res, background = "white")
   } else {
     grDevices::png(filename = path, width = px$width, height = px$height, res = px$res, bg = "white")
@@ -2986,7 +3254,7 @@ knit_print_method_exists <- function(cl) {
 #' value reaches this step. When its result isn't used, `pass(held)` gets
 #' the messages and warnings it held back (#193).
 try_knit_print <- function(value, pass = function(held) NULL) {
-  if (!requireNamespace("knitr", quietly = TRUE)) return(NULL)
+  if (!has_namespace("knitr")) return(NULL)
   if (!any(vapply(class(value), knit_print_method_exists, logical(1)))) return(NULL)
   # knit_print() gives a kable in the kable's own format, which is markdown
   # ("pipe") unless the cell asked for HTML. Only an HTML one is shown as
@@ -3032,7 +3300,7 @@ try_knit_print <- function(value, pass = function(held) NULL) {
 
 #' repr::repr_html() etc. (IRkernel's MIME types).
 try_repr <- function(value) {
-  if (!requireNamespace("repr", quietly = TRUE)) return(NULL)
+  if (!has_namespace("repr")) return(NULL)
   html <- tryCatch(repr::repr_html(value), error = function(e) NULL)
   if (is.null(html)) return(NULL)
   tf <- html_text_form(value, html)
@@ -3062,7 +3330,7 @@ dep_to_wire <- function(d) {
 #' htmlwidgets / htmltools HTML and its dependencies, resolved
 #' (`htmltools::resolveDependencies()` keeps the newest of each name).
 display_html <- function(value) {
-  if (!requireNamespace("htmltools", quietly = TRUE)) return(display_text(value))
+  if (!has_namespace("htmltools")) return(display_text(value))
   rendered <- tryCatch(htmltools::renderTags(value), error = function(e) NULL)
   if (is.null(rendered)) return(display_text(value))
   tf <- html_text_form(value, rendered$html)
@@ -3212,7 +3480,7 @@ render_plot <- function(msg) {
   }
   bytes <- tryCatch({
     path <- tempfile(fileext = ".png")
-    if (requireNamespace("ragg", quietly = TRUE)) {
+    if (has_namespace("ragg")) {
       ragg::agg_png(filename = path, width = px$width, height = px$height, res = px$res, background = "white")
     } else {
       grDevices::png(filename = path, width = px$width, height = px$height, res = px$res, bg = "white")

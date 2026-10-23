@@ -164,6 +164,16 @@ test_that("two installs of one key racing in two processes leave one library and
 
 # ---- The index memo (61) ---------------------------------------------------
 
+test_that("a Bioconductor 404 can mean not published yet from three days back to tomorrow in UTC (#282)", {
+  now <- as.POSIXct("2026-10-20 01:30:00", tz = "UTC")
+  expect_true(may_be_unpublished("bioc/2026-10-18/3.23", now))
+  expect_true(may_be_unpublished("bioc-ann/2026-10-17/3.23", now))
+  expect_true(may_be_unpublished("bioc-exp/2026-10-21/3.23", now))
+  expect_false(may_be_unpublished("bioc/2026-10-16/3.23", now))
+  expect_false(may_be_unpublished("bioc/2026-10-22/3.23", now))
+  expect_false(may_be_unpublished("cran/2026-10-17", now))   # CRAN's window is unchanged
+})
+
 test_that("a 404 can mean not published yet only from yesterday to tomorrow in UTC (#162, #221)", {
   now <- as.POSIXct("2026-10-16 01:30:00", tz = "UTC")
   expect_true(may_be_unpublished("cran/2026-10-15", now))
@@ -282,6 +292,29 @@ test_that("two installs with the same lock key but different library paths are s
 
   job_leave(infoA$path, nbA)
   job_leave(infoB$path, nbB)
+})
+
+test_that("a job that ends before the first poll still hands every line to make_progress, before make_done (#19)", {
+  key <- paste0("job-fast-", uuid())
+  rscript <- file.path(R.home("bin"), "Rscript")
+  cmd <- list(command = rscript, args = c("--vanilla", "-e", "cat('EMBER-NO-BINARY cli=3.6.2\\nlast line')"),
+              env = "current")
+  nb <- fake_sub()
+  seen <- character()
+  job_start(key, cmd, nb, make_progress = function(line) {
+    seen <<- c(seen, line)
+    NULL
+  }, make_done = function(status, output) {
+    seen <<- c(seen, "done")
+    NULL
+  })
+  # Ended before poll_jobs() ever read it: all its output comes with the exit.
+  jobs[[key]]$proc$wait()
+  poll_jobs(NULL)
+  # Windows ends the lines with "\r\n" (the parsers trim it), as it does
+  # the lines read while a job runs.
+  expect_equal(sub("\r$", "", seen), c("EMBER-NO-BINARY cli=3.6.2", "last line", "done"))
+  expect_null(jobs[[key]])
 })
 
 test_that("job_leave by the last subscriber kills the process (63)", {
@@ -486,6 +519,34 @@ test_that("disk_use() without du sums file sizes, which counts a linked file twi
   expect_gte(use$indexes, 50000)
 })
 
+#' A `du` that runs the real one and exits as `status`, after printing
+#' only the lines `keep` selects: a folder vanishing mid-walk, without the
+#' race.
+fake_du <- function(status, keep = "cat") {
+  path <- tempfile("du-")
+  writeLines(c("#!/bin/sh", sprintf("%s \"$@\" 2>/dev/null | %s", Sys.which("du"), keep),
+               sprintf("exit %d", status)), path)
+  Sys.chmod(path, "755")
+  path
+}
+
+test_that("disk_use() keeps du's totals when it exits 1 because a folder vanished (#332)", {
+  skip_if(!nzchar(Sys.which("du")) || .Platform$OS.type == "windows", "no du on this system")
+  d <- make_disk_use_cache()
+  on.exit(unlink(d$root, recursive = TRUE))
+  exact <- disk_use(d$root)
+  du <- fake_du(1L)
+  on.exit(unlink(du), add = TRUE)
+  use <- disk_use(d$root, du = du)
+  expect_true(use$exact)
+  expect_equal(use[c("libraries", "cache", "indexes")], exact[c("libraries", "cache", "indexes")])
+
+  # A root with no total of its own still falls back to summing.
+  partial <- fake_du(1L, keep = "grep -v libraries")
+  on.exit(unlink(partial), add = TRUE)
+  expect_false(disk_use(d$root, du = partial)$exact)
+})
+
 test_that("disk_use() of a cache dir with nothing in it is all zero (#38)", {
   root <- tempfile("ember-cache-")
   dir.create(root)
@@ -556,6 +617,59 @@ test_that("clean(cache = TRUE) deletes only cache entries no manifest lists (66)
   expect_true(dir.exists(used_entry))
 })
 
+test_that("clean() deletes a library folder without a manifest once it is a day old, unless kept (#152)", {
+  root <- tempfile("ember-cache-")
+  dir.create(root)
+  on.exit(unlink(root, recursive = TRUE), add = TRUE)
+  # What a delete cut short leaves: the manifest gone first, packages left.
+  half <- function(key, age_days) {
+    path <- make_fake_library(root, key, last_used_days_ago = 90)
+    unlink(file.path(path, "ember-library.rds"))
+    dir.create(file.path(path, "pkgA"))
+    writeLines("x", file.path(path, "pkgA", "DESCRIPTION"))
+    Sys.setFileTime(path, Sys.time() - age_days * 86400)
+    path
+  }
+  old <- half("oldhalf", 2)
+  young <- half("younghalf", 0.1)
+  kept <- half("kepthalf", 2)
+  expect_null(read_library_manifest(old))
+
+  plan <- clean(max_age = 60, cache = FALSE, dry_run = TRUE, dir = root, keep = kept)
+  expect_equal(plan$path, old)
+  expect_equal(plan$kind, "library")
+  expect_true(dir.exists(old))
+
+  out <- clean(max_age = 60, cache = FALSE, dry_run = FALSE, dir = root, keep = kept)
+  expect_equal(out$path, old)
+  expect_false(dir.exists(old))
+  expect_true(dir.exists(young))
+  expect_true(dir.exists(kept))
+})
+
+test_that("delete_library() removes the manifest and the folder; an install replaces a half-deleted one (#152)", {
+  root <- tempfile("ember-cache-")
+  dir.create(root)
+  on.exit(unlink(root, recursive = TRUE), add = TRUE)
+  path <- make_fake_library(root, "gone", last_used_days_ago = 90)
+  expect_true(delete_library(path))
+  expect_false(dir.exists(path))
+
+  # A folder left by a delete cut short doesn't stop the next install's
+  # rename: it is no library, so the new one replaces it.
+  path <- make_fake_library(root, "half")
+  unlink(file.path(path, "ember-library.rds"))
+  writeLines("x", file.path(path, "leftover"))
+  staging <- paste0(path, ".staging-1")
+  dir.create(staging)
+  manifest <- list(lock_lines = character(), r = r_info(), installed = character(),
+                   exports = list(), cache_entries = character(), created = Sys.time())
+  expect_true(finish_library(staging, path, manifest))
+  expect_false(is.null(read_library_manifest(path)))
+  expect_false(file.exists(file.path(path, "leftover")))
+  expect_false(dir.exists(staging))
+})
+
 # ---- clean_up(): the Packages tab's clean-up button (#128) --------------------
 
 # A cache dir with two cache entries, each 100 KB: `kept` is listed by an
@@ -621,6 +735,16 @@ test_that("clean_up() without du estimates bytes from file sizes (#128)", {
   on.exit(unlink(d$root, recursive = TRUE))
   plan <- clean_up(d$root, keep = d$open_lib, dry_run = TRUE, du = "")
   expect_gte(plan$bytes, 100000)
+})
+
+test_that("clean_up() keeps du's total when it exits 1 because a path vanished (#332)", {
+  skip_if(!nzchar(Sys.which("du")) || .Platform$OS.type == "windows", "no du on this system")
+  d <- make_clean_up_cache()
+  on.exit(unlink(d$root, recursive = TRUE))
+  # A total no sum of file sizes gives, so the test sees which was used.
+  du <- fake_du(1L, keep = "sed 's/^[0-9]*\\(.total\\)$/7\\1/'")
+  on.exit(unlink(du), add = TRUE)
+  expect_equal(clean_up(d$root, keep = d$open_lib, dry_run = TRUE, du = du)$bytes, 7 * 1024)
 })
 
 test_that("clean_up_command() runs clean_up() in a subprocess and prints JSON (#128)", {
@@ -735,6 +859,35 @@ test_that("a release-list fetch fails on a missing file and on a file with no re
   expect_false(file.exists(bioc_config_rds_path(other, cache)))
 })
 
+test_that("a cut-off PACKAGES.gz fails the fetch instead of caching half an index (#264)", {
+  dir <- tempfile("ember-index-test-")
+  contrib <- file.path(dir, "src", "contrib"); dir.create(contrib, recursive = TRUE)
+  text <- paste0("Package: p", sprintf("%04d", 1:2000), "\nVersion: 1.0\n\n", collapse = "")
+  con <- gzfile(file.path(contrib, "PACKAGES.gz"), "wb"); writeLines(text, con); close(con)
+  whole <- readBin(file.path(contrib, "PACKAGES.gz"), "raw", file.size(file.path(contrib, "PACKAGES.gz")))
+  expect_true(gz_complete(file.path(contrib, "PACKAGES.gz")))
+  url <- paste0("file://", normalizePath(dir))
+  path <- file.path(dir, "index.rds")
+  fetch_index_main("cran/2026-09-01", url, path)
+  expect_equal(length(readRDS(path)$name), 2000)
+
+  # Cut in the middle, and with only gzip's trailer missing: both read as
+  # far as they go with no error (at most a warning), so only the trailer
+  # check catches them.
+  for (cut in c(length(whole) %/% 2, length(whole) - 4)) {
+    unlink(path)
+    writeBin(whole[seq_len(cut)], file.path(contrib, "PACKAGES.gz"))
+    expect_gt(nrow(suppressWarnings(read.dcf(file.path(contrib, "PACKAGES.gz"), fields = "Package"))), 0)
+    expect_false(gz_complete(file.path(contrib, "PACKAGES.gz")))
+    expect_error(fetch_index_main("cran/2026-09-01", url, path), "arrived incomplete")
+    expect_false(file.exists(path))
+  }
+
+  # A page that isn't gzip at all, sent under the index's name.
+  writeLines("<html>Service Unavailable</html>", file.path(contrib, "PACKAGES.gz"))
+  expect_false(gz_complete(file.path(contrib, "PACKAGES.gz")))
+})
+
 test_that("clean_up() keeps the cache entries an install in progress links to (#128)", {
   skip_on_os("windows")  # symlinks
   d <- make_clean_up_cache()
@@ -800,3 +953,79 @@ test_that("clean_up() through a symlinked cache dir keeps an open library's own 
   expect_true(dir.exists(d2$open_lib))
 })
 
+
+# ---- Large downloads (#37) ----------------------------------------------------
+
+#' The fixture Bioconductor repositories copied to a temporary folder, with
+#' a GO.db tarball of `bytes` bytes in the annotation one:
+#' `list(repos, cache)`, `repos` named as the installer's.
+large_download_repos <- function(bytes) {
+  root <- withr::local_tempdir(.local_envir = parent.frame())
+  file.copy(testthat::test_path("fixtures", "bioc"), root, recursive = TRUE)
+  base <- file.path(root, "bioc", "2026-09-01", "packages", "3.23")
+  ann <- file.path(base, "data", "annotation", "src", "contrib")
+  writeBin(raw(bytes), file.path(ann, "GO.db_3.22.0.tar.gz"))
+  url <- function(...) paste0("file://", normalizePath(file.path(base, ...), winslash = "/"))
+  list(repos = c(CRAN = "file:///nowhere", BioCsoft = url("bioc"), BioCann = url("data", "annotation"),
+                 BioCexp = url("data", "experiment")),
+       cache = file.path(root, "cache"))
+}
+
+go_lock <- function() {
+  new_lock(name = c("AnnotationDbi", "GO.db", "dplyr"), version = c("1.71.1", "3.22.0", "1.1.4"),
+           source = c("Bioc", "Bioc", "CRAN"))
+}
+
+test_that("large_downloads() sizes the data packages renv's cache lacks (130)", {
+  fx <- large_download_repos(2048)
+  big <- large_downloads(go_lock(), fx$repos, fx$cache, minor = "4.6")
+  expect_equal(big$package, "GO.db")
+  expect_equal(big$bytes, 2048)
+
+  # In renv's cache already: nothing to download.
+  dir.create(file.path(fx$cache, "renv-cache", "v5", "linux-ubuntu-noble", "R-4.6",
+                       "x86_64-pc-linux-gnu", "GO.db", "3.22.0", "abc123"), recursive = TRUE)
+  expect_equal(nrow(large_downloads(go_lock(), fx$repos, fx$cache, minor = "4.6")), 0)
+  # Another R's copy doesn't count.
+  expect_equal(nrow(large_downloads(go_lock(), fx$repos, fx$cache, minor = "4.5")), 1)
+})
+
+test_that("large_downloads() skips CRAN-only installs and notebooks without a Bioconductor pin (130)", {
+  fx <- large_download_repos(2048)
+  cran_only <- new_lock(name = "dplyr", version = "1.1.4", source = "CRAN")
+  expect_equal(nrow(large_downloads(cran_only, fx$repos, fx$cache)), 0)
+  expect_equal(nrow(large_downloads(go_lock(), fx$repos["CRAN"], fx$cache)), 0)
+})
+
+test_that("ask_before_install() asks only above ask_above, and never with Inf (130)", {
+  fx <- large_download_repos(2048)
+  plan <- list(repos = fx$repos, cache = fx$cache, r = list(minor = "4.6"), ask_above = 1000)
+  expect_output(expect_true(ask_before_install(plan, go_lock())), "EMBER-DOWNLOAD GO.db 3.22.0 2048")
+  plan$ask_above <- 4096
+  expect_silent(expect_false(ask_before_install(plan, go_lock())))
+  plan$ask_above <- Inf
+  expect_false(ask_before_install(plan, go_lock()))
+  plan$ask_above <- NULL
+  expect_false(ask_before_install(plan, go_lock()))
+})
+
+test_that("file_url_path() and read_contrib() read a file:// index with two slashes or three (130)", {
+  # On Windows the tests' URLs are file://D:/..., which available.packages()
+  # reads as the network path //D:/... (the first Windows CI run of #267).
+  expect_equal(file_url_path("file:///tmp/x"), "/tmp/x")
+  if (.Platform$OS.type == "windows") {
+    expect_equal(file_url_path("file:///D:/x"), "D:/x")
+    expect_equal(file_url_path("file://D:/x"), "D:/x")
+  }
+  fx <- large_download_repos(2048)
+  contrib <- paste0(fx$repos[["BioCann"]], "/src/contrib")
+  expect_true("GO.db" %in% read_contrib(contrib)[, "Package"])
+  expect_null(read_contrib("file:///no/such/src/contrib"))
+})
+
+test_that("url_size() reads a file:// URL's size and gives NA for a missing one (130)", {
+  path <- withr::local_tempfile()
+  writeBin(raw(10), path)
+  expect_equal(url_size(paste0("file://", normalizePath(path, winslash = "/"))), 10)
+  expect_true(is.na(url_size("file:///no/such/file.tar.gz")))
+})

@@ -19,8 +19,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Each job's timeout-minutes is about twice its slowest successful run in
+  # recent runs (#341 lists them), so a hung step fails the job instead of
+  # running until GitHub's six-hour limit (#339). It guards against a hung
+  # runner, not a slow test: on 10-22 a slow Ubuntu mirror made setup-r alone
+  # take 27 minutes and green e2e jobs take up to 85. If a job is slower than
+  # its limit, find out why before raising it.
   R-CMD-check:
     runs-on: ${{ matrix.os }}
+    # Slowest: 46 minutes (ubuntu-latest).
+    timeout-minutes: 90
     name: R CMD check (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -57,6 +65,8 @@ jobs:
 
   grammar:
     runs-on: ubuntu-latest
+    # Usually a minute; 27 when setup-r was slow.
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: grammar
@@ -83,6 +93,8 @@ jobs:
 
   e2e:
     runs-on: ${{ matrix.os }}
+    # Slowest: 85 minutes (ubuntu-latest, with the WebKit sweep).
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -119,6 +131,18 @@ jobs:
         run: npx playwright-core install --with-deps chromium
       - working-directory: tests/e2e
         run: npm test
+      # The UI sweep and the first-cell check (#284) again in WebKit, the
+      # engine Endeavor's notebook pane uses (WebKitGTK on Linux), where
+      # layout differs from Chromium. Only on ubuntu, where Playwright's
+      # WebKit is close to WebKitGTK.
+      - name: UI sweep in WebKit
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: tests/e2e
+        env:
+          EMBER_BROWSER: webkit
+        run: |
+          npx playwright-core install --with-deps webkit
+          node run.mjs tests/ui-sweep.test.mjs tests/first-cell.test.mjs
       - name: Upload server logs and screenshots on failure
         if: failure()
         uses: actions/upload-artifact@v4
@@ -129,6 +153,8 @@ jobs:
 
   frontend-build:
     runs-on: ubuntu-latest
+    # Under a minute; no R.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

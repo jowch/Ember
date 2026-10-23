@@ -57,15 +57,34 @@ async function point_in_cell(page, id, needle, offset = 0) {
   }, [cellSelector(id), needle, offset]);
 }
 
+/** Waits for the help page to include `text`. On a timeout, says what the
+ * Help tab shows and asked for: the query, the page, and window.ember_docs
+ * (LiveDocsTab.js), so a failure on CI carries its own evidence (#110). */
+async function wait_for_help_page(page, text, timeout = 15000) {
+  try {
+    await page.waitForFunction(
+      (text) => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes(text),
+      text, { timeout });
+  } catch (e) {
+    const seen = await page.evaluate(() => ({
+      query: document.querySelector("#live-docs-search")?.value,
+      desired: window.editor_state?.desired_doc_query,
+      explicit: window.editor_state?.doc_query_explicit,
+      worker: window.editor_state?.notebook?.process_status,
+      page: document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.slice(0, 300),
+      docs: window.ember_docs,
+    })).catch((why) => ({ unreadable: String(why) }));
+    throw new Error(`the help page never showed "${text}": ${e.message}\n${JSON.stringify(seen, null, 1)}`);
+  }
+}
+
 const help_query = (page) => page.locator("#live-docs-search").inputValue();
 const help_text = (page) => page.locator("#helpbox-wrapper .ember-help-page").innerText();
 
 async function show_mean_from_code(page) {
   const p = await point_in_cell(page, "C", "mean(c(", 1);
   await page.mouse.click(p.x, p.y);
-  await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("Arithmetic Mean"),
-    null, { timeout: 15000 });
+  await wait_for_help_page(page, "Arithmetic Mean");
   assert.equal(await help_query(page), "mean");
 }
 
@@ -148,13 +167,9 @@ test("help: double-clicking a word in text shows no mgcv page; the cursor finds 
 
   // A typed search still looks through every installed package.
   await page.locator("#live-docs-search").fill("lm");
-  await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("Fitting Linear Models"),
-    null, { timeout: 15000 });
+  await wait_for_help_page(page, "Fitting Linear Models");
   await page.locator("#live-docs-search").fill("s");
-  await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("mgcv"),
-    null, { timeout: 15000 });
+  await wait_for_help_page(page, "mgcv");
   assertNoProblems(page);
 });
 

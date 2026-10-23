@@ -156,13 +156,14 @@ Any event that changes what the notebook wants reaches the same code, so no hand
 
 - The index cache is a dated index saved as RDS forever, plus a memo per process so sessions share one R object. The exception is an index dated yesterday or later in UTC (`index_may_change()`, #39): Package Manager may still add to that day's snapshot. Opening still reads the saved copy (fetching a CRAN index costs about 11 s), but the slot is marked `provisional` (the shell judges the date; the core has no clock), and a date preview fetches it again: the preview asks for every index it fetches `fresh`, and the shell skips the saved copy of a `fresh` key whose date may change, whether or not the session held it. That fetch replaces the saved copy and the memo, so sessions opened later read it. When it fails (offline), the saved copy stands in.
 - A new notebook is dated today, and Package Manager publishes a day's snapshot hours after that day starts in UTC. Until then the date's index is a 404, and east of UTC that is most of a local morning (#162). `fetch_index_main()` says so when the server answers 404 (`index_not_published()`), and the shell passes `unpublished` on `index_failed` for a date from yesterday to tomorrow in UTC (`may_be_unpublished()`). A date further ahead is no clock's today, so its 404 is a plain failure. While the lock is empty, nothing came from that date, so the core moves the notebook's date back a day and resolves there. The saved file then carries the date its packages came from. It stops at the day before yesterday in UTC, where the failure shows as `index_unavailable`. Offline, the fetch fails without a 404, so the date stays today; the next fetch once online moves it if the snapshot still isn't out. A notebook with locked packages keeps its date: its lock was resolved from that date's index, so the date was published. A date preview of a day that isn't published yet moves back the same way: "Update all" is a preview of today, so early in a day it offers the newest published date instead of failing with no changes. The proposal keeps the date it was asked for as `asked`, and its `date` is the one it would move to.
+- Package Manager publishes a day's Bioconductor snapshot about two days after CRAN's (#282), so a notebook dated today can find CRAN's index and get a 404 from Bioconductor's. For a Bioconductor key `may_be_unpublished()` covers three days back to tomorrow in UTC, and while the lock is empty a 404 for one of Bioconductor's indexes at the notebook's date moves the whole date back a day as CRAN's does, so both resolve at one date. With packages locked the failed index shows as `index_unavailable` at first; a cell that needs a name CRAN lacks says Bioconductor couldn't be looked in (`unlooked_message()`, as the Packages tab does since #264) rather than that the package is in no repository. Ember then steps the date back on its own (#311), once resolution at the notebook's date has settled with a name not found while one of Bioconductor's indexes there answered an unpublished 404: a `"back"` proposal at the day before (`propose_step_back()`), moving back another day while that one isn't published either (CRAN's or Bioconductor's index answers 404 within `may_be_unpublished()`'s window), re-resolved in `"keep"` mode. The date is only how new packages are found and the URL renv installs from, and the lock pins versions, so when the earlier date finds a missing name and every locked version is also the one there, the move applies with nothing shown: the user just gets the package. Cells that need a name not found wait while the step back fetches, so they don't fail first. When a locked version isn't there (a package released in the last day or two), only those packages are resolved from the earlier date, and the move waits as the Packages tab's update question, listing the locked packages that change, until the user moves (`set_date()`, which takes the earlier date) or cancels. A step back that finds no missing name (a typo, a GitHub package not in `[sources]`), would lose a locked package the earlier date lacks, or fails (an index past the window, or offline) is dropped, and the `index_unavailable` row stays. It isn't proposed over a preview the user asked for, nor again for the same date and missing names until the notebook runs again (`back_tried`). There is no control for moving the date back by hand.
 - Libraries are built in a staging folder and then renamed into place. A process that loses the race deletes its copy, so no locks are needed.
 - The renv cache is Ember's own, so `clean()` can never break the user's renv projects.
 - `clean()` and `ember::run()` sit outside the core.
 
 One process-wide table, `jobs`, lets two sessions that want the same index or library share one subprocess. It holds processes and subscribers and makes no decisions.
 
-**Jobs end with the server.** A job is killed when its last session leaves (the session closed or cancelled the install), and the server closes its notebooks on the way out, including on Ctrl-C. If the server is killed instead, processx's supervisor ends the job, and on Unix the job runs under `sh`, which takes the job's children (`R CMD INSTALL`, the compiler) with it (`job_process()`, #141). On Windows there is no `sh`, and none is needed: R's `system()` and `system2()` start each child in a job object that ends it once the R process that started it ends. So when processx's job object, the supervisor or a cancel ends the job's process, `R CMD INSTALL` and the compiler go too. That covers children started through `system()`/`system2()`, as renv starts `R CMD INSTALL`, or through processx; a child started some other way isn't covered (#148). A killed install leaves only its staging folder, which `clean()` removes.
+**Jobs end with the server.** A job is killed when its last session leaves (the session closed or cancelled the install), and the server closes its notebooks on the way out, including on Ctrl-C. If the server is killed instead, processx's supervisor ends the job, and on Unix the job runs under `sh`, which takes the job's children (`R CMD INSTALL`, the compiler) with it (`job_process()`, #141). On Windows there is no `sh`, and none is needed: R's `system()` and `system2()` start each child in a job object that ends it once the R process that started it ends. So when processx's job object, the supervisor or a cancel ends the job's process, `R CMD INSTALL` and the compiler go too. That covers children started through `system()`/`system2()`, as renv starts `R CMD INSTALL`, or through processx; a child started some other way isn't covered (#148). A killed install leaves only its staging folder, which `clean()` removes. A library is deleted manifest first (`delete_library()`, #152), so a delete cut short leaves a folder that reads as no library: the next install replaces it, and `clean()` removes it once it is a day old.
 
 **renv comes from the server's own library** as an Imports dependency. Only the installer subprocess loads it, never the server or the worker.
 
@@ -176,6 +177,7 @@ One process-wide table, `jobs`, lets two sessions that want the same index or li
 - `run` and `clean`
 - `ember_repos` and `cache_dir`, plus `repos`/`cache` arguments to `open_notebook`
 - `preview_update` in increment 3
+- `approve_install`, for a large download (#37)
 
 Behind that sit detection, resolution, index caching, library naming, installs, waiting cells, the worker library switch, restarts, exports for the graph, the missing-package fix and cleanup. No caller ever asks for an install or a resolution: they edit code and run cells, as in Pluto.
 
@@ -206,19 +208,51 @@ Behind that sit detection, resolution, index caching, library naming, installs, 
    - Bioconductor (`bioc_version`, its index keys, the date-window warning): built, see [Bioconductor](#bioconductor)
    - `[sources]` GitHub as one-row indexes: built, see [GitHub sources](#github-sources)
    - `[sources]` r-universe the same way: built, see [r-universe sources](#r-universe-sources)
-   - the install plan job: download size and consent
+   - install calls name the source: built, see [Install calls](#install-calls) (#79)
+   - asking before a large download: built for Bioconductor's annotation and experiment-data packages, see [Large downloads](#large-downloads) (#37)
    - compiler and system-library checks: built, see [Install checks](#install-checks)
-   - old snapshot dates that build from source on a newer R: explained when the build fails, see [Install checks](#install-checks); saying so before the install waits for the install plan
+   - old snapshot dates that build from source on a newer R: built. Said while the packages build, and explained when a build fails, see [Install checks](#install-checks) (#19)
    - disk use: built. The Packages tab shows the libraries', the cache's and the indexes' disk use for all notebooks, from one `du` run so a hard-linked file counts once (`disk_use()`); without `du` (Windows) it sums file sizes and says the libraries' figure includes shared files. (#38)
    - clean up: built. "Clean up…" in the Packages tab deletes libraries no open notebook in this server uses and unused for 30 days, then the cache entries no remaining library lists (`clean_up()`, `clean()` with `max_age = 30` and the open notebooks' libraries kept; indexes are left to the startup sweep). Each Ember process touches its open notebooks' `ember-last-used` markers hourly, so a notebook open in another process counts as used. `clean()` keeps cache entries made in the last day and those a young staging folder links to, so an install in progress keeps its packages. It shows the counts and the space it frees (`du` over what it would delete), deletes nothing until Delete and judges the deletion at the preview's time; a read-only notebook can't (#128)
    - R minor version change with a Bioconductor pin: built, see [Bioconductor](#bioconductor)
 3. **Release dates:** built. `preview_update()` updates one package or pins it to an older version: CRAN's own index of its files gives the date (`cran_release_table()`), checked against that day's snapshot, and the increment-1 preview shows what changes. The Packages tab has no control for it yet (#23).
 
+### Large downloads
+
+Built (#37). design.md's "Large installs ask first": an install that would
+download more than `options(ember.ask_above)` bytes (500 MB by default,
+`Inf` never asks) stops before downloading anything and waits for the
+user's OK.
+
+- **What's counted.** Bioconductor's annotation and experiment-data
+  packages in the lock that renv's cache doesn't hold for this R
+  (`large_downloads()`). Those are the large ones: `org.Hs.eg.db`,
+  `BSgenome.*` and the like run from hundreds of MB to several GB. CRAN's
+  and Bioconductor's software packages are kept under 5 MB by those
+  repositories' rules, and a GitHub package is one repository's source, so
+  neither is counted. The size is the source tarball's: a HEAD request's
+  Content-Length, after one read of each data repository's index. None of
+  the package indexes carries a size.
+- **Where it stops.** The installer (and the fake one) measures after the
+  compiler check and before renv runs. Above the threshold it writes one
+  `EMBER-DOWNLOAD <package> <version> <bytes>` line per package and exits
+  with status 3. The shell turns that into `ev_install_done(download =)`,
+  and the target library goes to `"asking"`: not failed, no problem row.
+  Cells that use the packages wait, as for any install.
+- **The OK.** The Packages tab opens with a card: "This install downloads
+  2.1 GB", the large packages with their sizes, and Install
+  (`ember_approve_install`). From R and for agents, `package_status(nb)`
+  shows `library$status` `"asking"` and `library$download`, and
+  `approve_install(nb)` says yes. The target goes back to `"missing"` with
+  `approved`, and the install runs with no limit. Running cells again
+  isn't an OK. To say no, remove the package from the code.
+- **`ember::run()`** never asks: there may be nobody to answer.
+
 ### Bioconductor
 
 Built from increment 2. Resolution, the lock, the pin and the install's
-repositories; the install plan (download size and consent, compilers) is
-not.
+repositories. Asking before a large download is in
+[Large downloads](#large-downloads).
 
 - **Three repositories per release.** Bioconductor splits a release into
   software (`bioc`), annotation data (`data/annotation`: `GO.db`,
@@ -263,10 +297,18 @@ not.
   their indexes when its wanted set changes, rather than reporting each
   one `not_in_index`.
 - **A failed Bioconductor index** is left out of resolution until the
-  wanted set changes, so its packages resolve as `not_found` next to an
-  `index_unavailable` row naming the index, instead of waiting forever.
-  Then its slot is dropped rather than refetched, so it is fetched again
-  only if a name still needs it.
+  wanted set changes or the user runs again, so its packages resolve as
+  `not_found` next to an `index_unavailable` row naming the index, instead
+  of waiting forever. The page shows those packages as `lookup_failed`
+  ("couldn't look up"), with the reason, not as "not found in any
+  repository": they may well be in the index that failed (#264). The same
+  goes for names found nowhere because the release list couldn't be
+  fetched. Then the slot is dropped rather than refetched, so it is
+  fetched again only if a name still needs it.
+- **A cut-off index** is a failed fetch. `read.dcf()` reads a
+  `PACKAGES.gz` cut off part way as far as it goes, with no error, and
+  the parse would be cached for good, so the fetch checks the length in
+  gzip's trailer first (`gz_complete()`).
 - **The pin.** `header$bioc_version` is set to the release used once the
   lock holds a `Bioc` entry, and cleared when it holds none. A pinned
   release is kept on every later resolution; on another R,
@@ -291,7 +333,11 @@ not.
   only the Bioconductor packages at the same date (`resolve_lock(mode =
   "bioc")`, CRAN entries kept) and applies itself, restarting R if a
   loaded package changes. The old pin's library isn't installed while the
-  move is pending. With no release for the running R at that date, the
+  move is pending, or while the release list that decides one is being
+  fetched. A date preview or a package update asked for meanwhile (the
+  page's Update, `preview_date()`, `preview_update()`) waits and is made
+  once the move has applied or failed, and Cancel leaves the move alone
+  (#323): replacing it would drop the move for the session. With no release for the running R at that date, the
   pin stays and the row says so; moving the date (which moves the pin to
   that date's release) is the way out. A move whose index can't be
   fetched keeps the pin, shows a `bioc_move_failed` row, lets the old
@@ -379,12 +425,27 @@ what was missing.
   Update (a newer date, whose versions have binaries) or an older R.
   "ERROR: loading failed" after a source build (R's own load test) counts
   as a failed build (`compile`).
-  Not built: saying so before the install. It is cheap to detect (one
-  request on Linux with Package Manager; on macOS and Windows a second
-  read of the binary index renv reads anyway), but it shouldn't stop the
-  install, since pure R packages build fine, and there is nowhere yet to
-  show a notice that doesn't stop it: that is the install plan's consent
-  step, which isn't built.
+- **Saying so while they build (#19).** Before renv starts, the
+  installer names the CRAN packages that will build from source for want
+  of a binary for this R (`source_only_packages()`), leaving out those
+  renv's cache already holds. On Linux with Package Manager binaries it
+  asks about one package, as the compiler check does, at the binary URL
+  renv downloads from (`installer_repos()`: at CRAN's own URL Package
+  Manager sends the source at every date). At a date from before Package
+  Manager built binaries for this R it sends the source of every package,
+  so when a second package comes as source too, all of them count; when
+  only the first does (a failed binary build, a release from this week),
+  only it does. On macOS and Windows it reads the
+  binary index, as `no_binary_packages()` does. On Linux without those
+  binaries everything always builds from source, so nothing is said. It
+  prints one `EMBER-NO-BINARY <package>=<version> ...` line, the shell
+  turns it into `ev_install_no_binary()`, and the target keeps it as
+  `no_binary` until the next install starts (`package_status()$library$no_binary`).
+  It doesn't stop the install, since pure R packages build fine: the
+  Packages tab shows one line under "Installing..." naming them, saying
+  it takes longer and that versions from before this R may not build,
+  with the header's Update as the way to a date that has binaries. If a
+  build fails, the `no_binary` card above takes over.
 - **A compiler missing during a build.** A build that fails because make
   or configure can't find the compiler (`gcc: No such file or directory`,
   `no acceptable C compiler`, `xcrun: error: invalid active developer
@@ -602,6 +663,73 @@ r-universe.
 Not built: guessing the universe for a name that isn't found; a
 universe's own dependencies resolve from CRAN, so a dependency only on
 r-universe needs its own entry.
+
+### Install calls
+
+Built for #79. A package that isn't on CRAN or Bioconductor is named the
+way R users already do it: an install call says where it lives, and
+`library(pkg)` is what fetches it. Nobody has to edit `[sources]`.
+
+```r
+remotes::install_github("lab/mypkg")
+install.packages("emberui", repos = "https://jowch.r-universe.dev")
+library(mypkg)
+```
+
+- **What counts** (`install_calls`, rules.R): `remotes::` or
+  `devtools::install_github("user/repo")`, with `@ref` or `ref =`;
+  `pak::pak()` and `pak::pkg_install()` with `"user/repo"`,
+  `"github::user/repo"` or `"pkg=user/repo"`; `install.packages()` with
+  one r-universe among `repos` (CRAN's own, `cran.r-universe.dev`, isn't
+  one); `BiocManager::install()`, which names no source. `install_github`,
+  `pak`, `pkg_install` and `install.packages` also count bare. Only
+  literal strings are read. The package is the repository's name, or the
+  name before `=` for pak; when it differs from the package's only in
+  case, the wanted name is used.
+- **Where they count.** In a cell's own code, outside function bodies,
+  including inside `if` or a wrapper such as `suppressMessages()`. One in
+  a function or a `source()`d file is an ordinary call. Only a call that
+  is a whole top-level expression is skipped (below), so only its own
+  package (remotes, pak) isn't one the notebook needs; any other runs
+  when it is reached, and its package is locked like any other.
+- **The header stays the record.** Each step writes the sources the code
+  gives, for the packages the notebook wants, into `[sources]`
+  (`declared_sources()`, `sync_sources()`, packages-core.R stage 1). The
+  code wins over a hand-written entry, and the source ops refuse to
+  change a package's entry while an install call names it ("change it
+  there instead"); an entry whose call is gone stays, so deleting the
+  line doesn't move a package. Two calls giving one
+  package different sources are a graph error on their cells
+  (`source_conflict`, "Keep one install call for pkg"), and neither is
+  written: which one is meant is the user's to say. A call in a disabled
+  cell doesn't count.
+- **Ember's own packages are built in** (`builtin_sources`): one there
+  needs no install call, and its source only fills a gap (an entry
+  already in the header stays). The table is empty for now: emberui goes
+  in as `universe:jowch` once that universe builds it, since until then
+  the entry would send `library(emberui)` to a universe without it.
+- **They don't run.** The lock already answers them, and running one would
+  install behind the lock's back into a shared library. The run message
+  lists the top-level install calls (`run_installs()`); the worker skips
+  them and reports their packages, and the cell shows one muted line
+  ("Install calls don't run in Ember: it installs mypkg from the
+  notebook's lock when a cell uses them. To get a newer version, use the
+  Packages tab."). One inside `if` isn't skipped: in the usual
+  `if (!requireNamespace("mypkg")) remotes::install_github(...)` the
+  package is installed from the lock, so the call isn't reached.
+- **`ember::run()` does the same.** It runs a copy of the file with the
+  top-level install calls replaced by `invisible(NULL)`, every other line
+  where it was, from the file's own folder, and says once which packages
+  the lock gives (`without_install_calls()`). The copy is a temporary
+  file, so `commandArgs()` names it, not the notebook. A package missing from the
+  lock still only warns: `run()` doesn't resolve.
+
+Not built: an install call's subdirectory (`"user/repo/pkg"` or
+`subdir =`) or pull request (`"user/repo#12"`), which can't be a source
+yet; it is still skipped. So is `install.packages("pkg.tar.gz", repos =
+NULL)`, a local file the lock can't answer: `library(pkg)` then doesn't
+resolve. The note can be noisy with many such packages; it is one line
+per cell, and to be revisited once in use.
 
 ## Where the direction strains
 

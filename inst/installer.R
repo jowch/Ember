@@ -5,8 +5,9 @@
 #   Rscript --vanilla installer.R <plan.rds>
 #
 # Plan: list(lock_lines, repos (name -> dated URL), r, staging, path, cache,
-# github (the GitHub API GitHub packages install from)). `repos` also names
-# each universe the lock's r-universe packages come from (`repo_urls()`).
+# github (the GitHub API GitHub packages install from), ask_above (bytes;
+# see below)). `repos` also names each universe the lock's r-universe
+# packages come from (`repo_urls()`).
 #
 # Output on stdout, one per line, for the shell to turn into
 # `ev_install_progress` (best effort: renv's own per-package reporting
@@ -19,6 +20,14 @@
 # built for a newer system, or against another version of a library), or
 # a package that failed to build had no binary for this R
 # (install-checks.R).
+#   EMBER-NO-BINARY <package>=<version> ...
+# once, before renv starts, naming the CRAN packages that have no binary
+# for this R at their locked version and so build from source (#19,
+# `source_only_packages()`); the install goes on.
+#   EMBER-DOWNLOAD <package> <version> <bytes>
+# one per large package, before anything downloads, when they add up to
+# more than `ask_above` (`ask_before_install()`); then exit status 3, and
+# the session waits for the user's OK (#37).
 # Exit status 0 iff the manifest was written and the rename made (which
 # includes losing a race to another process: see `finish_library()`).
 
@@ -44,25 +53,35 @@ main <- function(plan_path) {
   wanted <- ember:::lock_versions(lock)
   total <- length(wanted)
 
-  # renv's own Linux binary rewrite gets Bioconductor's URLs wrong
-  # (`ppm_binary_repos()`), so they go in already rewritten, following
-  # what renv's rewrite makes of the CRAN URL. `renv_ppm_transform` is
-  # renv internal: if it is renamed, this falls back to the 404, and the
-  # `[net]` S4Vectors test in test-packages-session.R is what catches it.
-  cran_binary <- tryCatch(
-    unname(utils::getFromNamespace("renv_ppm_transform", "renv")(plan$repos[["CRAN"]])),
-    error = function(e) NULL)
-  repos <- ember:::ppm_binary_repos(plan$repos, cran_binary)
-  # Bioconductor's own binaries, for those Package Manager doesn't build
-  # on macOS and Windows (`bioc_binary_repos()`).
-  repos <- ember:::bioc_binary_repos(repos)
+  # The repositories renv installs from, and the URLs it really downloads
+  # from, for the checks that ask Package Manager (`installer_repos()`).
+  inst_repos <- ember:::installer_repos(plan$repos)
+  repos <- inst_repos$repos
+  linux_binaries <- inst_repos$linux_binaries
 
   # A package that builds from source needs a compiler. Checked before
   # renv downloads anything, so a missing one says what to install
   # instead of failing a build minutes in (install-checks.R).
-  linux_binaries <- !is.null(cran_binary) && grepl("/__linux__/", cran_binary)
-  compiler <- ember:::compiler_check(lock, plan$repos, linux_binaries, binary_repos = repos)
+  compiler <- ember:::compiler_check(lock, plan$repos, linux_binaries, binary_repos = inst_repos$probe)
   if (!is.null(compiler)) stop_missing(plan, compiler = compiler)
+
+  if (ember:::ask_before_install(plan, lock)) {
+    unlink(plan$staging, recursive = TRUE)
+    quit(status = 3L, save = "no")
+  }
+
+  # Packages with no binary for this R at their locked version build from
+  # source, which is slow and, for versions from before this R, often
+  # fails (#19). Said before renv starts, so the session can show it while
+  # they build; the install goes on.
+  no_binary <- tryCatch(ember:::source_only_packages(lock, plan$repos, plan$cache, binary_repos = inst_repos$probe,
+                                                     linux_binaries = linux_binaries,
+                                                     minor = if (is.null(plan$r$minor)) ember:::r_info()$minor else plan$r$minor),
+                        error = function(e) character())
+  if (length(no_binary) > 0) {
+    cat(ember:::no_binary_notice_line(no_binary), "\n", sep = "")
+    flush(stdout())
+  }
 
   github <- if (is.null(plan$github)) "https://api.github.com" else plan$github
   deps <- ember:::github_install_deps(lock, plan$cache, github, plan$repos)
@@ -103,7 +122,7 @@ main <- function(plan_path) {
     failed <- ember:::renv_failed_packages(msg)
     if (length(failed) > 0) failed <- ember:::failed_builds(failed, ember:::read_available(plan$repos, "source"))
     no_binary <- ember:::no_binary_packages(failed, lock, plan$repos,
-                                            binary_repos = repos, linux_binaries = linux_binaries)
+                                            binary_repos = inst_repos$probe, linux_binaries = linux_binaries)
     if (length(no_binary) > 0) writeLines(ember:::missing_report_lines(no_binary = no_binary), con = stderr())
     flush(stderr())
     quit(status = 1L, save = "no")
