@@ -98,9 +98,31 @@ export function assertNoProblems(page) {
  * servers and browsers started at once (#417). */
 export async function openNotebook(page, origin, secret, notebookPath) {
   const url = `${origin}open?path=${encodeURIComponent(notebookPath)}&secret=${secret}`;
-  await page.goto(url);
-  await page.waitForSelector("pluto-cell");
-  await page.waitForFunction(() => !document.querySelector("pluto-editor")?.classList.contains("loading"));
+  // One of the editor's own files that fails to load leaves it loading for
+  // good. Fail now and name the file, not after the test file's 5-minute
+  // timeout, which also cancels the file's other tests (#412).
+  let onFailed;
+  const failed = new Promise((_, reject) => {
+    onFailed = (r) => {
+      const error = r.failure()?.errorText ?? "";
+      if (r.url().startsWith(origin) && error !== "net::ERR_ABORTED")
+        reject(new Error(`opening the notebook: ${r.url().split("?")[0]} failed to load: ${error}`));
+    };
+  });
+  failed.catch(() => {});
+  page.on("requestfailed", onFailed);
+  try {
+    const loaded = (async () => {
+      await page.goto(url);
+      await page.waitForSelector("pluto-cell");
+      await page.waitForFunction(() => !document.querySelector("pluto-editor")?.classList.contains("loading"));
+    })();
+    // After a failed load, these waits end when the test closes the page.
+    loaded.catch(() => {});
+    await Promise.race([failed, loaded]);
+  } finally {
+    page.off("requestfailed", onFailed);
+  }
   return new URL(page.url()).searchParams.get("id");
 }
 

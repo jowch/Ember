@@ -328,9 +328,11 @@ schedule <- function(state) {
   state <- dg$state
   # Dropping a result marks that cell's dependents stale. If `id` reads one
   # of them, it runs after it, with every ancestor between them, as when a
-  # cell is run by hand (#176), not with its old value (#326).
+  # cell is run by hand (#176), not with its old value (#326). So does any
+  # other queued cell that reads one: it is dispatched later, when nothing
+  # is left to drop and this check doesn't run again (#449).
   if (length(dg$dropped) > 0) {
-    ups <- upstream_of_set(state$graph, id)
+    ups <- upstream_of_set(state$graph, union(id, state$pending))
     stale <- Filter(function(a) isTRUE(state$results[[a]]$stale) && can_run(state, a), ups)
     if (length(stale) > 0) {
       between <- reached_from(state$graph, stale, setdiff(ups, stale))
