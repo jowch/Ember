@@ -124,7 +124,7 @@ test("Packages tab lists a missing package and the preview banner names the inst
   const rows = await page.locator("#ember-packages-tab .ember-package-row").count();
   assert.ok(rows > 0, "expected at least one package row");
   const statuses = await page.locator("#ember-packages-tab .ember-package-row td:last-child").allInnerTexts();
-  assert.ok(statuses.some((s) => s.includes("missing")));
+  assert.ok(statuses.some((s) => s.includes("Missing")));
 
   // Close the panel first: open, it covers the banner's own button.
   await page.getByRole("button", { name: "Packages", exact: true }).click();

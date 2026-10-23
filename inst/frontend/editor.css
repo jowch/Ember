@@ -94,8 +94,10 @@ pluto-editor main {
     position: relative;
     transition: margin-right 0.18s ease;
 }
+/* `> main`: the notebook's own column. A help page's Rd2HTML <main> sits
+   inside the panel, and this rule's id out-ranks its reset below (#433). */
 @media screen and (min-width: 1240px) {
-    pluto-editor:not(.disable_ui):has(#helpbox-wrapper.open) main {
+    pluto-editor:not(.disable_ui):has(#helpbox-wrapper.open) > main {
         margin-right: max(var(--ember-main-free) / 2, min(var(--ember-main-free), var(--ember-panel-width) + var(--ember-panel-gap)));
     }
 }
@@ -1147,17 +1149,50 @@ nav#at_the_top .ember-menu {
     opacity: 0.7;
 }
 
+/* The Panel3 board's table (ui-3.md): 12.5 px, fixed columns of 32 % and
+   24 % with the rest for Status, a quiet 11.5 px header. The tab's own
+   padding is the board's 16 px edge, so the outer cells add none. */
 .ember-packages-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.85rem;
+    table-layout: fixed;
+    font-size: 12.5px;
 }
 
 .ember-packages-table th,
 .ember-packages-table td {
     text-align: left;
-    padding: 0.25em 0.6em;
-    border-bottom: 1px solid var(--rule-color);
+    vertical-align: middle;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--ember-line);
+}
+
+.ember-packages-table th {
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--ember-faint);
+}
+
+.ember-packages-table th:nth-child(1) {
+    width: 32%;
+}
+.ember-packages-table th:nth-child(2) {
+    width: 24%;
+}
+
+.ember-packages-table :is(th, td):first-child {
+    padding-left: 0;
+}
+.ember-packages-table :is(th, td):last-child {
+    padding-right: 0;
+}
+
+/* A long name, version or GitHub source line breaks onto another line
+   inside its fixed column rather than widening it or being cut short.
+   Mono names have no spaces, so it may break anywhere. */
+.ember-package-row td:nth-child(-n + 2),
+.ember-package-row .ember-package-source {
+    overflow-wrap: anywhere;
 }
 
 .ember-package-row.ember-package-missing td:last-child,
@@ -1168,10 +1203,6 @@ nav#at_the_top .ember-menu {
        4.5:1 against --main-bg-color in both themes (computed), unlike
        --error-color's ~1.9:1 in the light theme. */
     color: var(--ember-upstream-error-label-color);
-}
-
-.ember-package-row.ember-package-installed td:last-child {
-    opacity: 0.7;
 }
 
 /* A package's GitHub source line (#78): under its row, across the table. */

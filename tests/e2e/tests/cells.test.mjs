@@ -5,9 +5,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
+import { writeFileSync } from "node:fs";
+import { startServer, tempNotebook, artifactsDir, tempDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector } from "../browser.mjs";
 
 const rect = (page, sel) => page.locator(sel).evaluate((el) => {
@@ -20,6 +19,17 @@ const rects = (page, sels) => page.evaluate((sels) => Object.fromEntries(Object.
   const r = document.querySelector(sel).getBoundingClientRect();
   return [k, { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height }];
 })), sels);
+// Where a cell is and what its editor holds, for a failure message.
+const viewState = (page, id) => page.evaluate((id) => {
+  const cell = document.querySelector(`pluto-cell[id="${id}"]`);
+  const r = cell.getBoundingClientRect();
+  const editor = cell.querySelector("pluto-input .cm-editor");
+  return {
+    top: r.top, bottom: r.bottom, viewHeight: innerHeight, scrollY, scrollHeight: document.documentElement.scrollHeight,
+    fake: editor?.classList.contains("cm-ssr-fake") ?? null, height: editor?.style.height, minHeight: editor?.style.minHeight,
+    fakes: [...document.querySelectorAll("pluto-input .cm-ssr-fake")].map((f) => f.closest("pluto-cell").id),
+  };
+}, id);
 const near = (actual, expected, what) => assert.ok(Math.abs(actual - expected) < 0.6, `${what}: ${actual}, expected ${expected}`);
 
 // A theme token as the browser computes it, for comparing with a computed
@@ -231,7 +241,7 @@ test("cell menu: item order, move down, hide code, Disable on every code cell (1
 // height until then, so those cells sit above B too (#379).
 test("opening: a cell's static code is as tall as its editor, so nothing below moves when editors load (#375, #379)", async (t) => {
   const long = `x <- c(${Array.from({ length: 300 }, (_, i) => i).join(", ")})`;
-  const notebook = path.join(mkdtempSync(path.join(tmpdir(), "ember-e2e-static-")), "static.R");
+  const notebook = path.join(tempDir("ember-e2e-static-"), "static.R");
   writeFileSync(notebook, [
     "### An Ember notebook ###", "# /// environment", '# ember_version = "0.0.0.9000"', '# r_version = "4.6.1"', '# snapshot = "2026-01-01"', "# ///", "",
     "# %% id=S", "",
@@ -276,7 +286,16 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
       return cell?.id ?? null;
     });
     if (id === null) break;
-    await page.waitForFunction((sel) => !document.querySelector(`${sel} .cm-ssr-fake`), cellSelector(id), { timeout: 20000 });
+    await page.waitForFunction((sel) => !document.querySelector(`${sel} .cm-ssr-fake`), cellSelector(id), { timeout: 20000 })
+      .catch(async () => assert.fail(`cell ${id}'s editor loads once it is scrolled into view: ${JSON.stringify(await viewState(page, id))}`));
+  }
+  // An editor scrolled past before its first measure keeps the static
+  // code's height until it is back in view (#416), so bring each one into
+  // view until it has measured its text and let that height go.
+  for (const id of ["S", "A", "I", "L", "W", "T", "U", "B"]) {
+    await page.evaluate((sel) => document.querySelector(sel).scrollIntoView(), cellSelector(id));
+    await page.waitForFunction((sel) => document.querySelector(`${sel} pluto-input .cm-editor`).style.height === "", cellSelector(id), { timeout: 20000 })
+      .catch(async () => assert.fail(`cell ${id}'s editor lets go of the static code's height once in view: ${JSON.stringify(await viewState(page, id))}`));
   }
   // U's last lines are rendered once they come into view; until then U's
   // editor keeps the static code's height as its minimum.
@@ -298,6 +317,61 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
   assert.deepEqual(Object.keys(statics).sort(), ["A", "B", "I", "L", "S", "T", "U", "W"], "every cell showed its static code first");
   for (const [id, h] of Object.entries(statics)) near(h, editors[id], `cell ${id}'s static code height`);
   assert.deepEqual([...new Set(tops)], [tops[0]], "B never moves while the editors load");
+
+  assertNoProblems(page);
+});
+
+// An editor scrolled out of view before its first measure: CodeMirror
+// doesn't measure an editor it can't see, but its measure requests still
+// run, so the static code's height was let go for CodeMirror's guess, 393
+// px for W's 250 (the opening test's failure on macOS CI). The editor keeps
+// the static height until it is in view and measured (#416).
+test("opening: an editor scrolled past before its first measure keeps the static code's height until it is measured (#416)", async (t) => {
+  const notebook = path.join(tempDir("ember-e2e-static-"), "scrolled.R");
+  writeFileSync(notebook, [
+    "### An Ember notebook ###", "# /// environment", '# ember_version = "0.0.0.9000"', '# r_version = "4.6.1"', '# snapshot = "2026-01-01"', "# ///", "",
+    ...Array.from({ length: 30 }, (_, i) => [`# %% id=P${i}`, `p${i} <- ${i}`, ""]).flat(),
+    "# %% id=W", `s <- "${"abcdefghij".repeat(80)}"`, "",
+    ...Array.from({ length: 60 }, (_, i) => [`# %% id=Q${i}`, `q${i} <- ${i}`, ""]).flat(),
+  ].join("\n"), "utf8");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-static-scrolled.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const w = cellSelector("W");
+  // The notebook stops loading before every cell is drawn, so wait for W's
+  // static code; it starts below the view (#420).
+  await page.waitForFunction((sel) => document.querySelector(`${sel} .cm-ssr-fake`), w, { timeout: 20000 })
+    .catch(() => assert.fail("W shows its static code when the notebook opens"));
+  const { staticHeight, top, viewHeight } = await page.evaluate((sel) => ({
+    staticHeight: document.querySelector(`${sel} .cm-ssr-fake`).getBoundingClientRect().height,
+    top: document.querySelector(sel).getBoundingClientRect().top,
+    viewHeight: innerHeight,
+  }), w);
+  assert.ok(top > viewHeight, `W starts below the view: its top is ${top}, the view's height ${viewHeight}`);
+  // Bring W into view, and scroll to the end the moment its editor replaces
+  // the static code, before CodeMirror's first measure.
+  await page.evaluate((sel) => new Promise((resolve) => {
+    const cell = document.querySelector(sel);
+    new MutationObserver((_, observer) => {
+      if (cell.querySelector(".cm-ssr-fake")) return;
+      observer.disconnect();
+      window.scrollTo(0, document.body.scrollHeight);
+      resolve();
+    }).observe(cell, { subtree: true, childList: true });
+    cell.scrollIntoView();
+  }), w);
+  // Every frame for a while out of view: the static height, never the guess.
+  const editorHeight = (sel) => page.evaluate((sel) => new Promise((resolve) =>
+    requestAnimationFrame(() => resolve(document.querySelector(`${sel} pluto-input .cm-editor`).getBoundingClientRect().height))), sel);
+  for (let i = 0; i < 20; i++) near(await editorHeight(w), staticHeight, `W's editor out of view, frame ${i}`);
+
+  // Back in view, it measures its text and lets the height go.
+  await page.locator(w).scrollIntoViewIfNeeded();
+  await page.waitForFunction((sel) => document.querySelector(`${sel} pluto-input .cm-editor`).style.height === "", w, { timeout: 20000 });
+  near(await editorHeight(w), staticHeight, "W's editor once measured");
 
   assertNoProblems(page);
 });
@@ -454,7 +528,7 @@ test("empty notebook: placeholder and hints show, and typing removes them (151)"
   // A real new notebook (new_notebook(), R/api.R) has two empty cells
   // (setup, then one code cell), not one -- made through the start page,
   // like a person actually gets there.
-  const dir = mkdtempSync(path.join(tmpdir(), "ember-e2e-empty-"));
+  const dir = tempDir("ember-e2e-empty-");
   const server = await startServer([], { cwd: dir, logFile: path.join(artifactsDir(), "cells-empty.server.log") });
   const browser = await launchBrowser();
   t.after(async () => { await browser.close(); server.stop(); });
@@ -566,7 +640,7 @@ test('chips: NEVER (loaded with code, never run) shows "Not run yet" with no out
   const id = new URL(page.url()).searchParams.get("id");
   const res = await fetch(`${server.origin}notebookexport?id=${id}&secret=${server.secret}`);
   assert.equal(res.status, 200);
-  const file = path.join(mkdtempSync(path.join(tmpdir(), "ember-e2e-export-")), "cells.html");
+  const file = path.join(tempDir("ember-e2e-export-"), "cells.html");
   writeFileSync(file, await res.text(), "utf8");
   const exported = await newPage(browser);
   await exported.goto(`file://${file}`);
@@ -685,6 +759,9 @@ test('chips: "Run this notebook" moves the page up only at the click, then only 
   await page.evaluate((sel) => {
     window.__txt_tops = [];
     window.__stop = false;
+    // How many tops were recorded before the click. One means the page had
+    // settled before it (#391); the run's moves are judged from there on.
+    document.addEventListener("click", () => { window.__txt_at_click ??= window.__txt_tops.length; }, { capture: true });
     const tick = () => {
       const top = document.querySelector(sel).getBoundingClientRect().top + window.scrollY;
       const tops = window.__txt_tops;
@@ -698,7 +775,9 @@ test('chips: "Run this notebook" moves the page up only at the click, then only 
   await page.waitForFunction(
     () => document.querySelectorAll('pluto-cell[data-rail="run"], pluto-cell[data-rail="queued"]').length === 0,
     null, { timeout: 30000 });
-  const tops = await page.evaluate(() => { window.__stop = true; return window.__txt_tops; });
+  const { all, atClick } = await page.evaluate(() => { window.__stop = true; return { all: window.__txt_tops, atClick: window.__txt_at_click }; });
+  assert.equal(atClick, 1, `the page had settled before the click (#391): ${JSON.stringify(all)}`);
+  const tops = all.slice(atClick - 1);
   const moves = tops.slice(1).map((top, i) => Math.round(top - tops[i]));
   const firstDown = moves.findIndex((m) => m > 0);
   assert.ok(firstDown >= 0, `outputs moved TXT down: ${JSON.stringify(moves)}`);

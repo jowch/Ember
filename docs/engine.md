@@ -246,7 +246,13 @@ after each dispatch.
   `reduce_data_changed` skips a reader that saw the new version, or that
   is queued or running. The shell checks the files on its poll and again
   just before it queues a run's `wk_done` (`check_data_files()`), so a
-  writer's readers are queued or stale before the notebook goes idle.
+  writer's readers are queued or stale before the notebook goes idle. The
+  poll skips the files the running cell writes (`running_writes()`), since
+  a look mid-write can find the file cut short, compared by resolved path.
+  A changed size counts even with the same modified time, and the record
+  keeps the last hash with its size (`hash_size`), so a short look by a
+  writer the skip can't see doesn't cost the next same-bytes rewrite a
+  rerun (#405).
 - **Computed `source()` paths are kept for the session only**; the learned
   definitions they produce go into the footer like any other.
 - **Formula checks** evaluate the `data` argument only when it is a symbol

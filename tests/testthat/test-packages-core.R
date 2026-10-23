@@ -2049,6 +2049,19 @@ test_that("a pinned release is kept on another R and flagged; an R with no known
   expect_true("bioc_unavailable" %in% r$state$packages$problems$kind)
 })
 
+test_that("with no Bioconductor release for this R at the date, a cell's error and the page say so, not \"not found in any repository\"", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")),
+                 options = list(r = list(version = "9.9.0", minor = "9.9", platform = "x")))
+  r <- open_with_cran(s)
+  why <- "DESeq2 isn't on CRAN at this date, and Bioconductor has no release for R 9.9 at 2026-09-01, so Bioconductor packages can't be found"
+  err <- missing_package_error(r$state, "DESeq2")$error
+  expect_equal(err$message, paste0("there is no package called 'DESeq2': ", why))
+  view <- packages_view(r$state)
+  row <- view$packages[view$packages$name == "DESeq2", ]
+  expect_equal(row$status, "not_found")  # running again won't find it
+  expect_equal(row$message, why)
+})
+
 test_that("a date move keeps Bioconductor packages, and fails rather than dropping them when its index can't be fetched (87)", {
   s <- pkg_state(list(S = cell(""), A = cell("library(DESeq2)")), options = list(r = r46))
   r <- deliver_bioc(open_with_cran(s)$state)

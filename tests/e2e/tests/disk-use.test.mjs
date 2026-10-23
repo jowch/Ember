@@ -5,16 +5,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { startServer, tempNotebook, artifactsDir, tempDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook } from "../browser.mjs";
 
 /** A cache folder of the test's own, one file in each part. Not the shared
  * cache: every other server in the run installs into that one, and its size
  * is whatever this machine has gathered (#327). */
 function seedCache() {
-  const root = mkdtempSync(path.join(tmpdir(), "ember-e2e-disk-use-"));
+  const root = tempDir("ember-e2e-disk-use-");
   for (const [dir, bytes] of [["libraries/R-4.6/testplat/key", 300000], ["renv-cache/v5/pkg", 200000], ["indexes", 100000]]) {
     mkdirSync(path.join(root, dir), { recursive: true });
     writeFileSync(path.join(root, dir, "file"), Buffer.alloc(bytes));
