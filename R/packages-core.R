@@ -737,7 +737,8 @@ schedule_packages <- function(state, old) {
                                 failed_index_problems(p$indexes[failed]),
                                 bioc_problems(state$file$header, state$options$r, p$bioc_releases$table),
                                 bioc_unavailable_problem(needed, res$problems, state$file$header,
-                                                         state$options$r))
+                                                         state$options$r,
+                                                         releases_at(p, state$file$header$snapshot)))
           } else {
             for (k in res$fetch) {
               if (is.null(p$indexes[[k]]) || !identical(p$indexes[[k]]$status, "fetching")) {

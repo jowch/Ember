@@ -265,14 +265,37 @@ bioc_release_for <- function(minor, date, releases) {
 #' A `bioc_unavailable` row for a notebook with no Bioconductor release to
 #' look in (`needed` holds no Bioconductor key) and a name not found
 #' elsewhere, so "not found in any repository" isn't the only explanation.
-#' None otherwise.
-bioc_unavailable_problem <- function(needed, problems, header, r) {
+#' None otherwise. With the release list at hand, it also says what to do,
+#' as BiocManager does for a release built for another R ("Bioconductor
+#' version '3.20' requires R version '4.4'"): run the notebook on the R
+#' the release at its date was built for, or move the date to this R's
+#' first release or later (#431). Update in the Packages tab moves it to
+#' today, the only way to move a date by hand.
+bioc_unavailable_problem <- function(needed, problems, header, r, releases = empty_bioc_releases()) {
   if (!is.na(bioc_release_in(needed)) || !any(problems$kind == "not_found")) {
     return(empty_package_problems())
   }
-  package_problem("bioc_unavailable", NA_character_, sprintf(
-    "Bioconductor has no release for R %s at %s, so Bioconductor packages can't be found",
-    r$minor, header$snapshot))
+  date <- if (is.na(header$snapshot)) NA else as.Date(header$snapshot)
+  then <- if (is.na(date)) releases[0, , drop = FALSE] else releases[releases$released <= date, , drop = FALSE]
+  then <- if (nrow(then) > 0) then[nrow(then), , drop = FALSE] else NULL
+  first <- releases[releases$r == r$minor, , drop = FALSE]
+  first <- if (nrow(first) > 0) first[1, , drop = FALSE] else NULL
+  why <- c(
+    if (!is.null(then)) sprintf("the release then, %s, requires R %s", then$version, then$r),
+    if (!is.null(first) && !is.na(date) && first$released > date) {
+      sprintf("R %s's first, %s, came out on %s", r$minor, first$version, format(first$released))
+    })
+  todo <- c(
+    if (!is.null(then)) sprintf("run the notebook on R %s", then$r),
+    if (!is.null(first)) sprintf("move its date to %s or later with Update in the Packages tab", format(first$released)))
+  msg <- sprintf("Bioconductor has no release for R %s at %s", r$minor, header$snapshot)
+  if (length(why) > 0) msg <- sprintf("%s (%s)", msg, paste(why, collapse = "; "))
+  msg <- paste0(msg, ", so Bioconductor packages can't be found")
+  if (length(todo) > 0) {
+    todo <- paste(todo, collapse = ", or ")
+    msg <- paste0(msg, ". To use them, ", todo)
+  }
+  package_problem("bioc_unavailable", NA_character_, msg)
 }
 
 #' The Bioconductor release a notebook uses: the header's pin when it has
