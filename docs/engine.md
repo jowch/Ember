@@ -244,7 +244,9 @@ after each dispatch.
   reports the versions the run ended with (`data_seen`, kept on the
   result) and the files someone else changed during it (`data_changed`).
   `reduce_data_changed` skips a reader that saw the new version, or that
-  is queued or running.
+  is queued or running. The shell checks the files on its poll and again
+  just before it queues a run's `wk_done` (`check_data_files()`), so a
+  writer's readers are queued or stale before the notebook goes idle.
 - **Computed `source()` paths are kept for the session only**; the learned
   definitions they produce go into the footer like any other.
 - **Formula checks** evaluate the `data` argument only when it is a symbol
