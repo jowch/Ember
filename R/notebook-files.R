@@ -75,18 +75,24 @@ complete_path <- function(query, dirs_only = FALSE) {
   # 20,000 on Windows, per key typed (#218).
   show_hidden <- startsWith(partial, ".")
   candidates <- sort(entries[startsWith(entries, partial) & (show_hidden | !startsWith(entries, "."))])
-  # Folders only, out of many: list.dirs() names them from the listing
-  # itself, where stat-ing until 200 are found could cover most of the
-  # folder (about 0.6 s for %TEMP% here, against 3 s).
-  if (isTRUE(dirs_only) && length(candidates) > 1024L) {
-    dirs <- tryCatch(list.dirs(expanded, full.names = FALSE, recursive = FALSE),
-                     error = function(e) character())
-    candidates <- candidates[candidates %in% dirs]
-  }
   results <- character()
   starts <- if (length(candidates)) seq(1L, length(candidates), by = 256L) else integer()
   for (from in starts) {
     if (length(results) > 200) break
+    # Folders only, and still short of 200 after 1024 stat-ed: folders are
+    # sparse among the matches, so list.dirs() names the rest from the
+    # listing itself, where stat-ing on could cover most of the folder
+    # (0.6 s for %TEMP% here, against 3 s). Stat-ing first keeps a
+    # prefix matching many folders fast: 1.1 s per key for %TEMP% when
+    # list.dirs() ran first (#424).
+    if (isTRUE(dirs_only) && from > 1024L) {
+      rest <- candidates[from:length(candidates)]
+      dirs <- tryCatch(list.dirs(expanded, full.names = FALSE, recursive = FALSE),
+                       error = function(e) character())
+      found <- rest[rest %in% dirs]
+      if (length(found)) results <- c(results, paste0(found, "/"))
+      break
+    }
     chunk <- candidates[from:min(from + 255L, length(candidates))]
     info <- file.info(file.path(expanded, chunk))$isdir
     is_dir <- !is.na(info) & info

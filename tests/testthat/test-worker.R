@@ -1214,6 +1214,14 @@ test_that("interrupt_between_runs_swallowed", {
   r <- run_and_wait(h, "a", 1L, "1 + 1")
   expect_identical(r$status, "ok")
   expect_identical(r$output$text, "[1] 2")
+  # The trace names how the top level took it, so a worker that does die
+  # of one can be told apart in a test's failure (#407). On Windows the
+  # next run drains it instead (drain_late_interrupt()), so no line.
+  if (.Platform$OS.type != "windows") {
+    trace <- readLines(h$err_file, warn = FALSE)
+    expect_true(any(grepl("interrupt at top level: (resumed|passed on)", trace)))
+    expect_false(any(grepl("not resumable", trace)))
+  }
 })
 
 test_that("sigint_reset_when_inherited_ignored", {

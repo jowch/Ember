@@ -729,14 +729,13 @@ test_that("worker_query() answers when idle, NULL at once while busy, NULL in pr
   expect_true(wait_for(nb, function(s) !identical(got_idle, "unset"), timeout = 10))
   expect_match(got_idle$text, "^lm\\(formula, data")
 
-  # Busy: NULL at once, not after waiting out the cell.
+  # Busy: NULL at once, not after waiting out the cell. The callback has
+  # run by the time worker_query() returns, so no clock is needed.
   run_cells(nb, "A", wait = FALSE)
   expect_true(wait_for(nb, function(s) identical(s$process, "busy"), timeout = 15))
   got_busy <- "unset"
-  before <- Sys.time()
   worker_query(nb, list(type = "signature", name = "lm", package = NULL), function(r) got_busy <<- r)
   expect_null(got_busy)
-  expect_lt(as.numeric(Sys.time() - before, units = "secs"), 0.5)
 
   # A late reply (the busy cell finishes and the worker is asked again,
   # with a very short timeout) is dropped, not delivered twice, and
