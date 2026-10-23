@@ -6,13 +6,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { startServer, artifactsDir } from "../server.mjs";
+import { startServer, artifactsDir, tempDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems } from "../browser.mjs";
 
 test("start page: New notebook creates and opens it; the round button closes it to the recent rows; Forget removes it but keeps the file (97)", async (t) => {
-  const dir = mkdtempSync(path.join(tmpdir(), "ember-e2e-start-"));
+  const dir = tempDir("ember-e2e-start-");
   const server = await startServer([], { cwd: dir, logFile: path.join(artifactsDir(), "start-page.server.log") });
   const browser = await launchBrowser();
   t.after(async () => { await browser.close(); server.stop(); });
@@ -53,7 +51,7 @@ test("start page: New notebook creates and opens it; the round button closes it 
 });
 
 test("start page: Open a file completes a typed path and opens it in the editor (100)", async (t) => {
-  const dir = mkdtempSync(path.join(tmpdir(), "ember-e2e-start-open-"));
+  const dir = tempDir("ember-e2e-start-open-");
   const nbPath = path.join(dir, "existing.R");
   fs.writeFileSync(nbPath, "### A Pluto.jl notebook ###\n");
   const server = await startServer([], { cwd: dir, logFile: path.join(artifactsDir(), "start-page-open.server.log") });
@@ -90,7 +88,7 @@ test("start page: Open a file finds a name past the first 200 entries of a big f
   // 250 folders that sort before the one we want: the server lists only
   // 200 entries, so the list for the bare folder can't include it, and
   // typing its name has to ask again rather than narrow that list.
-  const dir = mkdtempSync(path.join(tmpdir(), "ember-e2e-start-big-"));
+  const dir = tempDir("ember-e2e-start-big-");
   for (let i = 0; i < 250; i++) fs.mkdirSync(path.join(dir, `a${String(i).padStart(3, "0")}`));
   fs.mkdirSync(path.join(dir, "zz-target"));
   const server = await startServer([], { cwd: dir, logFile: path.join(artifactsDir(), "start-page-big.server.log") });

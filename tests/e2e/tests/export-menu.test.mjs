@@ -4,14 +4,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
+import { readFileSync, rmSync } from "node:fs";
+import { startServer, tempNotebook, artifactsDir, tempDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook } from "../browser.mjs";
 
 /** A temp folder for the test's downloads, removed when the test ends. */
 function downloadsDir(t) {
-  const dir = mkdtempSync(path.join(tmpdir(), "ember-e2e-export-"));
+  const dir = tempDir("ember-e2e-export-");
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
 }
