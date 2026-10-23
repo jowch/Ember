@@ -32,7 +32,7 @@ test("add + run + delete a cell, then reload: state matches the file", async (t)
   assert.ok(newCellId, "a new cell was inserted right after B");
 
   const newSel = `pluto-cell[id="${newCellId}"]`;
-  await page.locator(`${newSel} .cm-content`).click();
+  await page.locator(`${newSel} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.keyboard.type("41 + 1", { delay: 2 });
   await page.keyboard.press("Shift+Enter");
   await page.waitForFunction(

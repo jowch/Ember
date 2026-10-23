@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, codeSelector } from "../browser.mjs";
 
 const rect = (page, sel) => page.locator(sel).evaluate((el) => {
   const r = el.getBoundingClientRect();
@@ -120,7 +120,7 @@ test("syntax: the Cells board's token colours in light and dark, nothing bold or
   await page.locator(cellSelector("W")).scrollIntoViewIfNeeded();
   await page.waitForSelector(`${cellSelector("W")} .cm-editor:not(.cm-ssr-fake)`);
 
-  const tokens = (id) => page.locator(`${cellSelector(id)} .cm-content`).evaluate((el) =>
+  const tokens = (id) => page.locator(codeSelector(id)).evaluate((el) =>
     [...el.querySelectorAll(".cm-line span")].filter((s) => s.children.length === 0 && s.textContent.trim() !== "").map((s) => {
       const c = getComputedStyle(s);
       return { text: s.textContent, color: c.color, weight: c.fontWeight, style: c.fontStyle };
@@ -166,7 +166,7 @@ test("geometry: the run button sits on the code box's top-left corner and gives 
 
   // A has no output, so its code box starts at the cell's top, right under
   // the gap's "+".
-  await page.hover(`${cellSelector("A")} .cm-content`);
+  await page.hover(codeSelector("A"));
   const run = page.locator(`${cellSelector("A")} button.ember-run`);
   await page.waitForFunction((el) => getComputedStyle(el).opacity === "1", await run.elementHandle(), { timeout: 5000 });
   const { box, button } = await rects(page, { box: `${cellSelector("A")} .cm-editor`, button: `${cellSelector("A")} button.ember-run` });
@@ -249,7 +249,7 @@ test("cell menu: the ⋯ is in pluto-input after the code, on the code box even 
     [...input.children].map((c) => c.matches(".cm-editor") ? "code" : c.matches("button.ember-run") ? "run" : c.matches("button.input_context_menu") ? "menu" : null).filter(Boolean));
   assert.deepEqual(order, ["code", "run", "menu"], "Tab reaches the code first, then run, then ⋯");
 
-  await page.hover(`${cellSelector("ERR")} .cm-content`);
+  await page.hover(codeSelector("ERR"));
   const { box, more, output } = await rects(page, {
     box: `${cellSelector("ERR")} .cm-editor`,
     more: `${cellSelector("ERR")} button.input_context_menu`,
@@ -263,7 +263,7 @@ test("cell menu: the ⋯ is in pluto-input after the code, on the code box even 
   await page.locator(`${cellSelector("B")} button.input_context_menu`).click();
   await page.locator(`${cellSelector("B")} button.hide_code`).click();
   await page.waitForSelector(`${cellSelector("B")}.code_folded:not(.show_input)`, { timeout: 10000 });
-  assert.equal(await page.locator(`${cellSelector("B")} .cm-editor`).isVisible(), false, "the folded cell's code is hidden");
+  assert.equal(await page.locator(codeSelector("B", "")).isVisible(), false, "the folded cell's code is hidden");
 
   await page.hover(cellSelector("B"));
   await page.locator(`${cellSelector("B")} button.input_context_menu`).click();
@@ -271,7 +271,7 @@ test("cell menu: the ⋯ is in pluto-input after the code, on the code box even 
   assert.equal(await showItem.innerText(), "Show code");
   await showItem.click();
   await page.waitForFunction((sel) => !document.querySelector(sel).classList.contains("code_folded"), cellSelector("B"), { timeout: 10000 });
-  await page.locator(`${cellSelector("B")} .cm-editor`).waitFor({ state: "visible", timeout: 5000 });
+  await page.locator(codeSelector("B", "")).waitFor({ state: "visible", timeout: 5000 });
 
   assertNoProblems(page);
 });

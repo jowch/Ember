@@ -10,7 +10,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, frames } from "../browser.mjs";
 
 // 110. The column at a wide (1440 x 900) viewport, where the panel starts
 // open: the column sits just left of the 400 px panel and its 32 px gap.
@@ -36,7 +36,7 @@ test("layout: the 720px column and sticky header at 1440x900 (110)", async (t) =
   assert.ok(Math.abs(before.y - 0) <= 1, `expected header.y ~= 0 before scroll, got ${before.y}`);
 
   await page.evaluate(() => window.scrollTo(0, 1000));
-  await page.waitForTimeout(100);
+  await frames(page);
   const after = await header.boundingBox();
   assert.ok(Math.abs(after.y - 0) <= 1, `expected header.y ~= 0 after scrolling 1000px, got ${after.y}`);
 

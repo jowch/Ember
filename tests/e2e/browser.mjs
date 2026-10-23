@@ -77,6 +77,109 @@ export async function openNotebook(page, origin, secret, notebookPath) {
 
 export function cellSelector(id) { return `pluto-cell[id="${id}"]`; }
 
+/** Cell `id`'s live editor, or `part` inside it. A cell still showing
+ * CellInput.js's static copy of its code (`.cm-ssr-fake`) never matches:
+ * a wait the copy satisfies ends before the real editor is there, and a
+ * click on the copy loses focus to <body>. */
+export function codeSelector(id, part = ".cm-content") {
+  return `${cellSelector(id)} .cm-editor:not(.cm-ssr-fake)${part ? " " + part : ""}`;
+}
+
+/** Waits for `n` animation frames: what the page renders from state it
+ * already has is on screen by then. */
+export async function frames(page, n = 2) {
+  await page.evaluate((n) => new Promise((resolve) => {
+    const step = (left) => (left === 0 ? resolve() : requestAnimationFrame(() => step(left - 1)));
+    step(n);
+  }), n);
+}
+
+/** Waits until the server has handled everything this page sent before
+ * the call and the page has rendered the state it sent back
+ * (window.ember_round_trip, Editor.js). A check that nothing more
+ * happened (no second run, no move, nothing undone) waits on this, not on
+ * a fixed time: whatever would happen has come back by then. */
+export async function roundTrip(page) {
+  await page.evaluate(() => window.ember_round_trip());
+  await frames(page);
+}
+
+/** Waits until a passing state (queued, running, "Not run yet", ...) the
+ * page held back before the call has either shown or been dropped: one
+ * shows only once it has lasted common/useSettled.js's SETTLE_MS, on a
+ * timer, and a timer set after it for as long runs after it. Call it once
+ * the page has rendered what it waits on, e.g. after roundTrip(). */
+export async function afterSettle(page) {
+  await page.evaluate(async () => {
+    const src = document.querySelector('script[src$="editor.js"]').src;
+    const { SETTLE_MS } = await import(new URL("common/useSettled.js", src).href);
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
+  });
+  await frames(page);
+}
+
+/** Waits until the page's layout holds still: no CSS transition running,
+ * and the boxes of the cells, the column and the side panel the same in
+ * two frames in a row. For a check after a resize, a scroll or a theme
+ * change. */
+export async function layoutSettled(page) {
+  await page.evaluate(() => new Promise((resolve) => {
+    const boxes = () => JSON.stringify([...document.querySelectorAll("pluto-cell, pluto-notebook, #helpbox-wrapper, header")]
+      .map((el) => { const r = el.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }));
+    let last = null;
+    const check = () => {
+      const now = boxes();
+      const moving = document.getAnimations().some((a) => a instanceof CSSTransition && a.playState === "running");
+      if (!moving && now === last) resolve();
+      else { last = now; requestAnimationFrame(check); }
+    };
+    requestAnimationFrame(check);
+  }));
+}
+
+/** Waits until the page has finished what its clock last started: no try
+ * and no key check still out (window.ember_connection, PlutoConnection.js),
+ * so it is waiting for its next try, connected, or knows its key was
+ * refused. The tries run for real, on the network, so this is what a step
+ * of a fake clock (page.clock) waits on. Polled from here: the page's own
+ * timers and frames run on that clock, which may be paused. */
+export async function connectionSettled(page) {
+  const done = () => page.evaluate(() => {
+    const c = window.ember_connection;
+    return c != null && c.state !== "trying" && c.state !== "syncing" && c.key_checks_out === 0;
+  });
+  while (!(await done())) await new Promise((resolve) => setTimeout(resolve, 20));
+}
+
+/** The websocket messages `page` sends whose bytes include `type`, as a
+ * list that grows while the page runs. msgpack keeps a short string's
+ * UTF-8 bytes as they are, so the message type's name shows up verbatim.
+ * Playwright reports frames in the order they were sent, so after
+ * roundTrip() the list holds every one sent before it. `reach(n)` waits
+ * until the list holds `n`. */
+export function sentMessages(page, type) {
+  const seen = [];
+  const waiting = [];
+  seen.reach = (n) => new Promise((resolve) => {
+    if (seen.length >= n) resolve();
+    else waiting.push([n, resolve]);
+  });
+  page.on("websocket", (ws) => {
+    ws.on("framesent", (frame) => {
+      const payload = frame.payload ?? "";
+      const text = Buffer.isBuffer(payload) ? payload.toString("latin1") : String(payload);
+      let found = text.includes(type);
+      if (!found && !Buffer.isBuffer(payload)) {
+        try { found = Buffer.from(text, "base64").toString("latin1").includes(type); } catch { /* not base64 */ }
+      }
+      if (!found) return;
+      seen.push(Date.now());
+      for (const w of waiting.filter(([n]) => seen.length >= n)) { waiting.splice(waiting.indexOf(w), 1); w[1](); }
+    });
+  });
+  return seen;
+}
+
 /** Wait until the worker is ready and no cell is running or queued. No
  * timeout of its own, as openNotebook(): a cold worker start is still a
  * start (#417). */

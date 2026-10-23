@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import fs from "node:fs";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, setCellCode, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, setCellCode, cellSelector, codeSelector } from "../browser.mjs";
 
 const open_panel = (page, tab) => page.evaluate((t) => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: t })), tab);
 
@@ -106,7 +106,7 @@ test("Help tab: back/forward over the queries shown (122)", async (t) => {
   await open_panel(page, "docs");
   await page.waitForSelector("#live-docs-search");
 
-  await page.locator(`${cellSelector("B")} .cm-content`).click();
+  await page.locator(codeSelector("B")).click();
   await page.keyboard.press("End");
   await page.keyboard.type(" lm", { delay: 10 });
   // Put the cursor inside "lm" so the docs query follows it.

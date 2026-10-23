@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import http from "node:http";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, openNotebook, assertNoProblems } from "../browser.mjs";
+import { launchBrowser, newPage, openNotebook, assertNoProblems, connectionSettled } from "../browser.mjs";
 
 test("key page: '/' without the key explains it in light and dark, and echoes nothing", async (t) => {
   const notebook = tempNotebook();
@@ -69,6 +69,7 @@ test("key page: an editor tab open across a restart says Ember restarted and sto
   const page = await newPage(browser);
   let sockets = 0;
   page.on("websocket", () => { sockets += 1; });
+  await page.clock.install();
   await openNotebook(page, first.origin, first.secret, notebook);
 
   await first.stop();
@@ -80,8 +81,10 @@ test("key page: an editor tab open across a restart says Ember restarted and sto
   assert.match(await page.locator("#ember-r-status").innerText(), /Ember restarted/);
   await page.screenshot({ path: path.join(artifactsDir(), "key-page-restarted-tab.png") });
 
+  // Well past every wait the page has between tries, on its own clock.
   const after_refusal = sockets;
-  await page.waitForTimeout(3000);
+  await page.clock.fastForward(60000);
+  await connectionSettled(page);
   assert.equal(sockets, after_refusal, "no further reconnect attempts once the key was refused");
 });
 
@@ -103,6 +106,7 @@ test("key page: a refused key check while the socket can't connect says Ember re
   const page = await newPage(browser);
   let sockets = 0;
   page.on("websocket", () => { sockets += 1; });
+  await page.clock.install();
   await openNotebook(page, first.origin, first.secret, notebook);
 
   await first.stop();
@@ -115,9 +119,10 @@ test("key page: a refused key check while the socket can't connect says Ember re
   assert.match(await dialog.innerText(), /Ember restarted, so this page's key no longer works/);
   await page.locator("#ember-r-status", { hasText: "Ember restarted" }).waitFor({ timeout: 30000 });
 
-  // Longer than the page's retry delay after a failed connect (5 s).
+  // Well past every wait the page has between tries, on its own clock.
   const after_refusal = sockets;
-  await page.waitForTimeout(7000);
+  await page.clock.fastForward(60000);
+  await connectionSettled(page);
   assert.equal(sockets, after_refusal, "no further reconnect attempts once the key check was refused");
   assert.equal(await page.getByRole("alertdialog").count(), 1, "one dialog, not a lost-connection one as well");
 });

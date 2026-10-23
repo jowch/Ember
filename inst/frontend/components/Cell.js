@@ -106,6 +106,11 @@ const useCellApi = (node_ref, published_object_keys, pluto_actions) => {
     return cell_api_ready
 }
 
+/** How long a click on a text cell's output waits for a second click
+ * before it opens the source. Exported for the e2e tests, which wait for
+ * this timer to have run rather than for a fixed time. */
+export const TEXT_CLICK_MS = 300
+
 /**
  * @param {{
  *  cell_result: import("./Editor.js").CellResultData,
@@ -387,7 +392,7 @@ export const Cell = ({
         if (e.detail > 1 || !(window.getSelection()?.isCollapsed ?? true)) return
         text_click_timer.current = setTimeout(() => {
             if (window.getSelection()?.isCollapsed ?? true) set_text_open(true)
-        }, 300)
+        }, TEXT_CLICK_MS)
     }
     const was_text_open = useRef(false)
     const select_on_close = useRef(false)

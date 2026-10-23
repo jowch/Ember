@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector, layoutSettled, roundTrip } from "../browser.mjs";
 
 test("table and print: TBL is a table with Show more buttons under it, FIT prints text (39)", async (t) => {
   const notebook = tempNotebook("rich.R");
@@ -138,7 +138,10 @@ test("plot: PLT is a fixed-size image that never redraws when the viewport narro
   const naturalBefore = await page.evaluate((sel) => document.querySelector(sel).naturalWidth, `${cellSelector("PLT")} img`);
 
   await page.setViewportSize({ width: 600, height: 800 });
-  await page.waitForTimeout(3000);
+  // A request the narrower page would make goes out from the frames that
+  // lay it out, and is seen here once the server has answered past it.
+  await layoutSettled(page);
+  await roundTrip(page);
 
   assert.equal(renderRequests.length, 0, "expected no ember_render_plot request after narrowing the viewport");
   const naturalAfter = await page.evaluate((sel) => document.querySelector(sel).naturalWidth, `${cellSelector("PLT")} img`);
@@ -259,9 +262,15 @@ test("plot: a 3x-density tab asks for one redraw at res 288; a 1x tab asks for n
     `${cellSelector("PLT")} img`, { timeout: 10000 });
   assert.equal(requests3.length, 1, "expected exactly one render request from the 3x tab");
 
-  await page1.waitForTimeout(10000);
+  // Each tab asks, if at all, as its image loads and lays out; the 3x tab's
+  // new image has loaded. Requests sent by then are seen once the server
+  // has answered past them.
+  for (const page of [page1, page3]) {
+    await layoutSettled(page);
+    await roundTrip(page);
+  }
   assert.equal(requests1.length, 0, "expected no render request from the 1x tab");
-  assert.equal(requests3.length, 1, "expected no further render request from the 3x tab over the next 10s");
+  assert.equal(requests3.length, 1, "expected no further render request from the 3x tab once its image loaded");
 
   assertNoProblems(page1);
   assertNoProblems(page3);

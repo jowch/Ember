@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector, frames } from "../browser.mjs";
 
 const rect = (page, sel) => page.locator(sel).evaluate((el) => {
   const r = el.getBoundingClientRect();
@@ -413,9 +413,15 @@ test("text cells: serif text with tinted values that copy as plain text; click o
   }, cellSelector("A"), { timeout: 30000 });
   const isOpen = () => page.locator(cell).evaluate((el) => el.classList.contains("show_input"));
   // A click opens the source once the double-click interval has passed, so
-  // "didn't open" is only known after that.
+  // "didn't open" is only known after that: after Cell.js's timer has run.
+  // A timer set after it for as long runs after it.
   const staysClosed = async (what) => {
-    await page.waitForTimeout(700);
+    await page.evaluate(async () => {
+      const src = document.querySelector('script[src$="editor.js"]').src;
+      const { TEXT_CLICK_MS } = await import(new URL("components/Cell.js", src).href);
+      await new Promise((resolve) => setTimeout(resolve, TEXT_CLICK_MS));
+    });
+    await frames(page);
     assert.equal(await isOpen(), false, what);
   };
   const closes = async (what) => {

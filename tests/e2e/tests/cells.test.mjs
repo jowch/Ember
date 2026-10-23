@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { writeFileSync } from "node:fs";
 import { startServer, tempNotebook, artifactsDir, tempDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector, codeSelector, sentMessages, frames } from "../browser.mjs";
 
 // Where a cell is and what its editor holds, for a failure message.
 const viewState = (page, id) => page.evaluate((id) => {
@@ -59,7 +59,7 @@ test("rail: idle before running, amber when edited, red on error, blue while run
     assert.equal(await computed(page, rail(id), "backgroundColor"), idle, `${id}'s rail is --ember-rail-idle`);
   }
 
-  await page.locator(`${cellSelector("B")} .cm-content`).click();
+  await page.locator(codeSelector("B")).click();
   await page.keyboard.type(" ", { delay: 2 });
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.getAttribute("data-rail") === "due",
@@ -70,8 +70,8 @@ test("rail: idle before running, amber when edited, red on error, blue while run
   // The tip belongs to the rail alone: not to hovering or focusing the
   // rest of the cell.
   const tip = page.locator(`${cellSelector("B")} ember-rail-tip`);
-  await page.locator(`${cellSelector("A")} .cm-content`).click();
-  await page.hover(`${cellSelector("B")} .cm-content`);
+  await page.locator(codeSelector("A")).click();
+  await page.hover(codeSelector("B"));
   assert.equal(await tip.isVisible(), false, "no tip while hovering B's code");
   // Near the rail's foot: B is one line, so with its chip's space above
   // the code (#139) the rail's middle sits under the run button's corner.
@@ -79,7 +79,7 @@ test("rail: idle before running, amber when edited, red on error, blue while run
   await page.hover(rail("B"), { position: { x: railBox.width / 2, y: railBox.height - 3 } });
   await tip.waitFor({ state: "visible", timeout: 5000 });
   assert.equal(await tip.innerText(), "Press Shift + Enter to run this cell");
-  await page.locator(`${cellSelector("B")} .cm-content`).click();
+  await page.locator(codeSelector("B")).click();
   assert.equal(await tip.isVisible(), false, "no tip once the pointer leaves the rail, with B focused");
 
   await runCell(page, "ERR");
@@ -286,13 +286,13 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
   // view until it has measured its text and let that height go.
   for (const id of ["S", "A", "I", "L", "W", "T", "U", "B"]) {
     await page.evaluate((sel) => document.querySelector(sel).scrollIntoView(), cellSelector(id));
-    await page.waitForFunction((sel) => document.querySelector(`${sel} pluto-input .cm-editor`).style.height === "", cellSelector(id), { timeout: 20000 })
+    await page.waitForFunction((sel) => document.querySelector(`${sel} pluto-input .cm-editor:not(.cm-ssr-fake)`)?.style.height === "", cellSelector(id), { timeout: 20000 })
       .catch(async () => assert.fail(`cell ${id}'s editor lets go of the static code's height once in view: ${JSON.stringify(await viewState(page, id))}`));
   }
   // U's last lines are rendered once they come into view; until then U's
   // editor keeps the static code's height as its minimum.
   await page.evaluate(() => document.querySelector('pluto-cell[id="U"] pluto-input').scrollIntoView({ block: "end" }));
-  await page.waitForFunction(() => [...document.querySelectorAll("pluto-input .cm-editor")].every((e) => e.style.minHeight === ""), null, { timeout: 20000 })
+  await page.waitForFunction(() => !document.querySelector("pluto-input .cm-ssr-fake") && [...document.querySelectorAll("pluto-input .cm-editor")].every((e) => e.style.minHeight === ""), null, { timeout: 20000 })
     .catch(() => assert.fail("every editor lets go of the static code's height once its lines are measured"));
   // One more frame, so the recorder has seen the layout with every editor.
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
@@ -362,7 +362,7 @@ test("opening: an editor scrolled past before its first measure keeps the static
 
   // Back in view, it measures its text and lets the height go.
   await page.locator(w).scrollIntoViewIfNeeded();
-  await page.waitForFunction((sel) => document.querySelector(`${sel} pluto-input .cm-editor`).style.height === "", w, { timeout: 20000 });
+  await page.waitForFunction((sel) => document.querySelector(`${sel} pluto-input .cm-editor:not(.cm-ssr-fake)`)?.style.height === "", w, { timeout: 20000 });
   near(await editorHeight(w), staticHeight, "W's editor once measured");
 
   assertNoProblems(page);
@@ -431,7 +431,7 @@ test("Endeavor's hooks after piece 6a (extends ui-2-tests.md 12) (152)", async (
   await page.waitForSelector(`${cellSelector("ERR")}.errored`, { timeout: 15000 });
   assert.ok(await page.locator(`${cellSelector("ERR")} jlerror > header`).count() > 0);
 
-  await page.locator(`${cellSelector("B")} .cm-content`).click();
+  await page.locator(codeSelector("B")).click();
   await page.keyboard.type(" ", { delay: 2 });
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.classList.contains("code_differs"),
@@ -463,14 +463,14 @@ test("argument tooltips close when the cursor leaves their cell (alongside 152)"
     (sel) => document.querySelector(sel)?.innerText.includes("2"),
     cellSelector("B") + " pluto-output", { timeout: 20000 });
 
-  await page.locator(`${cellSelector("A")} .cm-content`).click();
+  await page.locator(codeSelector("A")).click();
   await page.keyboard.press("End");
   await page.keyboard.type("; mean(", { delay: 10 });
   await page.waitForSelector(".cm-ember-signature-tooltip", { timeout: 5000 });
 
   // Clicking into a different cell moves the cursor out of A entirely:
   // the tooltip must not be left floating over B.
-  await page.locator(`${cellSelector("B")} .cm-content`).click();
+  await page.locator(codeSelector("B")).click();
   await page.waitForFunction(
     () => document.querySelector(".cm-ember-signature-tooltip") == null,
     null, { timeout: 2000 });
@@ -485,6 +485,7 @@ test("argument tooltips: a reply that arrives after blur (worker busy) doesn't r
   t.after(async () => { await browser.close(); server.stop(); });
 
   const page = await newPage(browser);
+  const asked = sentMessages(page, "ember_signature");
   await openNotebook(page, server.origin, server.secret, notebook);
   await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(
@@ -496,20 +497,28 @@ test("argument tooltips: a reply that arrives after blur (worker busy) doesn't r
   await runCell(page, "LOOP");
   await page.waitForSelector(`${cellSelector("LOOP")}.running`, { timeout: 15000 });
 
-  await page.locator(`${cellSelector("A")} .cm-content`).click();
+  await page.locator(codeSelector("A")).click();
   await page.keyboard.press("End");
+  const replies = () => page.evaluate(() => window.pluto_get_message_log().filter((m) => m.type === "ember_signature").length);
+  const replied_before = await replies();
+  const asked_before = asked.length;
   await page.keyboard.type("; mean(1:3", { delay: 10 });
-  await page.waitForTimeout(300); // past the 150ms debounce: the request is now in flight
+  // Past the 150 ms debounce: the request is in flight.
+  await asked.reach(asked_before + 1);
 
   // Move to a different cell well before LOOP (and so the queued
   // request) can finish.
-  await page.locator(`${cellSelector("B")} .cm-content`).click();
+  await page.locator(codeSelector("B")).click();
 
   // Give LOOP, and the request behind it, time to finish and reply.
   await page.waitForFunction(
     (sel) => !document.querySelector(sel)?.classList.contains("running"),
     cellSelector("LOOP"), { timeout: 10000 });
-  await page.waitForTimeout(1000);
+  // The reply to the request has come, whether or not the page still
+  // waited for it (CellInput.js gives up after 5 s), and been rendered.
+  await page.waitForFunction((before) => window.pluto_get_message_log().filter((m) => m.type === "ember_signature").length > before,
+    replied_before, { timeout: 0 });
+  await frames(page);
 
   assert.equal(await page.locator(".cm-ember-signature-tooltip").count(), 0, "no tooltip reopened over B");
 

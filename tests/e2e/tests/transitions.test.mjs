@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector, codeSelector, roundTrip, afterSettle } from "../browser.mjs";
 
 const RUN_AND_ADD = process.platform === "darwin" ? "Meta+Enter" : "Control+Enter";
 
@@ -78,7 +78,8 @@ test("transitions: a run never paints queued, running or \"Not run yet\" in its 
   await page.keyboard.press(RUN_AND_ADD);
   await page.waitForFunction(() => document.querySelectorAll("pluto-notebook > pluto-cell").length === 7, null, { timeout: 10000 });
   const id = await newCellAfter(page, "B");
-  await page.waitForTimeout(400);
+  await roundTrip(page);
+  await afterSettle(page);
   const adding = await stopFrames(page);
   const queuedWhileAdding = settledOnly(adding).flatMap((f) => f.cells.filter((c) => c.rail === "queued" || /queued/.test(c.label)).map((c) => `${c.id} at ${f.t.toFixed(0)} ms`));
   assert.deepEqual(queuedWhileAdding, [], "no cell shows queued while a cell is added");
@@ -91,7 +92,7 @@ test("transitions: a run never paints queued, running or \"Not run yet\" in its 
   let frames = null;
   let ran_in = null;
   for (const [attempt, code, result] of [[1, "1 + 1", "2"], [2, "1 + 2", "3"], [3, "1 + 3", "4"]]) {
-    await page.locator(`${cellSelector(id)} .cm-content`).click();
+    await page.locator(codeSelector(id)).click();
     await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
     await page.keyboard.type(code, { delay: 2 });
     await startFrames(page);
@@ -99,7 +100,8 @@ test("transitions: a run never paints queued, running or \"Not run yet\" in its 
     await page.waitForFunction(
       ([sel, result]) => document.querySelector(sel)?.innerText.includes(result),
       [cellSelector(id) + " > pluto-output", result], { timeout: 15000 });
-    await page.waitForTimeout(400);
+    await roundTrip(page);
+    await afterSettle(page);
     frames = await stopFrames(page);
     ran_in = frames.find((f) => f.cells.find((c) => c.id === id)?.output.includes(result))?.t;
     assert.ok(ran_in != null, `attempt ${attempt}: a recorded frame shows the result`);
@@ -135,15 +137,16 @@ test("transitions: a text cell run with Cmd+Enter ends idle, not queued", async 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  await page.locator(`${cellSelector("B")} .cm-content`).click();
+  await page.locator(codeSelector("B")).click();
   await page.keyboard.press(RUN_AND_ADD);
   await page.waitForFunction(() => document.querySelectorAll("pluto-notebook > pluto-cell").length === 7, null, { timeout: 10000 });
   const id = await newCellAfter(page, "B");
-  await page.locator(`${cellSelector(id)} .cm-content`).click();
+  await page.locator(codeSelector(id)).click();
   await page.keyboard.type("#' Hello", { delay: 2 });
   await page.keyboard.press(RUN_AND_ADD);
   await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("Hello"), `${cellSelector(id)} > pluto-output`, { timeout: 15000 });
-  await page.waitForTimeout(1000);
+  await roundTrip(page);
+  await afterSettle(page);
 
   const state = await page.locator(cellSelector(id)).evaluate((el) => ({
     rail: el.dataset.rail,

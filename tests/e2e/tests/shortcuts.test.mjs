@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, runCell } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, runCell, frames } from "../browser.mjs";
 
 /** userAgentData, where the browser has it, wins over navigator.platform in
  * is_mac_keyboard, so both are set. */
@@ -83,7 +83,8 @@ test("shortcuts: the sheet opens from ⋯ with this computer's keys, Esc closes 
   await page.keyboard.press("F1");
   await page.keyboard.press("Control+?");
   await page.keyboard.press("Control+Shift+Slash");
-  await page.waitForTimeout(300);
+  await page.waitForSelector("#helpbox-wrapper.open", { timeout: 0 });
+  await frames(page);
   assert.equal(await page.locator("dialog[open]").count(), 0, "neither F1 nor Ctrl + ? opens a dialog");
   assert.equal(await page.locator("#helpbox-wrapper.open").count(), 1, "F1 outside a cell opens Help");
   assertNoProblems(page);

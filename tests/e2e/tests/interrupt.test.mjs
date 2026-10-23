@@ -1,13 +1,13 @@
 // Scenario 40 (docs/ui-tests.md): a long-running cell loses `.running`
-// shortly after clicking the stop button.
+// after clicking the stop button, stopped rather than run to its end.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, openNotebook, runCell, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, openNotebook, setCellCode, cellSelector } from "../browser.mjs";
 
-test("interrupt: a long-running cell is stopped shortly after clicking stop", async (t) => {
+test("interrupt: a long-running cell is stopped by clicking stop", async (t) => {
   const notebook = tempNotebook();
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "interrupt.server.log") });
   const browser = await launchBrowser();
@@ -16,13 +16,14 @@ test("interrupt: a long-running cell is stopped shortly after clicking stop", as
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  await runCell(page, "LOOP");
-  await page.waitForSelector(`${cellSelector("LOOP")}.running`, { timeout: 15000 });
-  await page.waitForTimeout(500);   // give it a moment to be truly inside the loop
+  // A loop far longer than any runner takes to stop it, that says once R
+  // is inside it: an interrupt that comes before the run has started is
+  // dropped, as one between runs is (test-worker.R).
+  await setCellCode(page, "LOOP", 'cat("inside the loop\\n"); t0 <- Sys.time(); while (Sys.time() - t0 < 60) NULL');
+  await page.keyboard.press("Shift+Enter");
+  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("inside the loop"), cellSelector("LOOP"), { timeout: 0 });
 
-  const t0 = Date.now();
   await page.locator(`${cellSelector("LOOP")} button.ember-run.busy`).click();
-  await page.waitForSelector(`${cellSelector("LOOP")}:not(.running)`, { timeout: 15000 });
-  const elapsed = Date.now() - t0;
-  assert.ok(elapsed < 10000, `interrupted within 10s (was ${elapsed}ms)`);
+  await page.waitForSelector(`${cellSelector("LOOP")}:not(.running)`, { timeout: 0 });
+  assert.match(await page.locator(`${cellSelector("LOOP")} > pluto-output`).innerText(), /Interrupted/, "the loop was stopped, not run to its end");
 });

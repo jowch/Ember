@@ -20,7 +20,7 @@ import net from "node:net";
 import http from "node:http";
 import crypto from "node:crypto";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, openNotebook } from "../browser.mjs";
+import { launchBrowser, newPage, openNotebook, connectionSettled } from "../browser.mjs";
 
 /** No uncaught error on the page. Failed connects log console errors of
  * their own (the browser's and the page's), which are expected here. */
@@ -51,13 +51,15 @@ function startForwarder(targetPort, port = 0) {
 }
 
 /** Move the page's fake clock forward a step at a time until `locator`
- * shows up: the page's own waits fire, the tries they start run for real. */
+ * shows up: the page's own waits fire, the tries they start run for real,
+ * and each step waits for them to end. */
 async function fastForwardUntil(page, locator, { step = 5000, limit = 120000 } = {}) {
   for (let moved = 0; moved <= limit; moved += step) {
     if (await locator.count() > 0) return;
     await page.clock.fastForward(step);
-    try { await locator.waitFor({ timeout: 1000 }); return; } catch {}
+    await connectionSettled(page);
   }
+  if (await locator.count() > 0) return;
   throw new Error(`still no ${locator} after moving the clock ${limit} ms`);
 }
 
@@ -153,7 +155,7 @@ test("dead port: an outage shorter than 30 s reconnects without a dialog", async
 
   for (let moved = 0; moved < 25000; moved += 5000) {
     await page.clock.fastForward(5000);
-    await page.waitForTimeout(200);
+    await connectionSettled(page);
   }
   await bringBack();
   await fastForwardUntil(page, status.filter({ hasText: "R not started" }), { step: 1000, limit: 10000 });
@@ -172,13 +174,13 @@ test("dead port: a sleep in the middle of an outage doesn't count towards the 30
   // One failed try, then an hour's sleep. The clock stays paused from here
   // on, so only fastForward moves it, however slow the runner is.
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
-  await page.waitForTimeout(200);
+  await connectionSettled(page);
   await page.clock.setSystemTime(await page.evaluate(() => Date.now() + 60 * 60 * 1000));
 
   // Tries after waking, about 20 s of the page's own waits: still no dialog.
   for (let moved = 0; moved < 20000; moved += 1000) {
     await page.clock.fastForward(1000);
-    await page.waitForTimeout(100);
+    await connectionSettled(page);
   }
   assert.deepEqual(await page.evaluate(() => window.ember_dialogs.map((d) => d.title)), []);
 
