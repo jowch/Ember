@@ -296,6 +296,21 @@ test_that("active_binding_not_forced", {
   expect_identical(check$output$text, "[1] 0")
 })
 
+test_that("a global holding the empty symbol is compared, not read as a missing argument (#387)", {
+  # `get()` on such a binding fails with "argument is missing", which ended
+  # the worker on the next cell; plain R keeps going.
+  h <- worker_harness()
+  on.exit(h$close())
+  r <- run_and_wait(h, "a", 1L, "x <- quote(expr = )")
+  expect_identical(r$status, "ok")
+  expect_identical(r$created, "x")
+  r <- run_and_wait(h, "b", 2L, "y <- 1")
+  expect_identical(r$status, "ok")
+  expect_identical(r$changed, character())
+  r <- run_and_wait(h, "c", 3L, "x <- 2")
+  expect_identical(r$changed, "x")
+})
+
 test_that("an options change is reported, and applies only where its cell is in effect", {
   h <- worker_harness()
   on.exit(h$close())
