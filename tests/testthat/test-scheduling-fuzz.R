@@ -91,6 +91,22 @@ for (mode in c("autorun", "lazy")) {
   })
 }
 
+# The same, with data files and replacement functions: cells write and read
+# files, define replacement functions (plain, or an S3 generic and its
+# default method) and call them, and a step can rewrite a file from outside.
+# A reader that isn't stale must show what the file holds now. Known
+# failures here are keyed "extras <mode> <seed>".
+for (mode in c("autorun", "lazy")) {
+  test_that(paste("random edits with data files and replacement functions match a run from scratch,", mode, "mode"), {
+    for (seed in union(fuzz_seeds(), known_seeds(paste("extras", mode)))) {
+      trace <- fuzz_trace(seed, mode, steps = fuzz_steps(), extras = TRUE)
+      known <- fuzz_known[[paste("extras", mode, seed)]]
+      if (!is.null(known) && fuzz_steps() >= known$step) expect_known_failure(trace, known)
+      else expect_trace_passes(trace)
+    }
+  })
+}
+
 # Regression tests: shrunk traces of what the random runs found.
 
 test_that("autorun runs a queued dependent's stale ancestors first (#176)", {
