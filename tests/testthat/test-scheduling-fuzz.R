@@ -27,9 +27,7 @@ fuzz_steps <- function() {
 # entry's checks that its trace passes up to there. A known trace stops at
 # its failure, so its later steps aren't checked. Entries look like
 #   "lazy 30" = list(issue = 174, step = 5L, kind = "after running every cell, _ isn't fresh")
-fuzz_known <- list(
-  "conflicts autorun 366" = list(issue = 436, step = 14L, kind = "_ can run but shows a graph error"),
-  "conflicts lazy 366" = list(issue = 436, step = 14L, kind = "_ can run but shows a graph error"))
+fuzz_known <- list()
 
 known_seeds <- function(mode) {
   keys <- as.character(names(fuzz_known))
