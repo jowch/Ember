@@ -1004,6 +1004,41 @@ test_that("the Packages tab's check fetches CRAN's release dates once, and each 
   expect_length(r$effects, 0)
 })
 
+test_that("the tab's check fetches release dates again once they are a day old, keeping the old ones meanwhile (#23)", {
+  s <- pkg_state(list(S = cell(""), A = cell("library(dplyr)")))
+  r <- open_with_cran(s)
+  t0 <- 100
+  r <- drive(r$state, ev_check_releases(at(3)))
+  r <- drive(r$state, ev_cran_releases_fetched(release_table(), at(t0)))
+  available <- function(state) {
+    rows <- packages_view(state)$packages
+    rows$available[rows$name == "dplyr"]
+  }
+
+  # A session stays open for days: under a day, nothing is fetched.
+  r <- drive(r$state, ev_check_releases(at(t0 + cran_releases_max_age - 1)))
+  expect_length(r$effects, 0)
+  r <- drive(r$state, ev_check_releases(at(t0 + cran_releases_max_age)))
+  expect_equal(effect_types(r), "fetch_cran_releases")
+  expect_equal(available(r$state), "1.1.5")
+
+  # A failed fetch keeps the old dates, and the next check tries again.
+  r <- drive(r$state, ev_cran_releases_failed("couldn't fetch CRAN's release dates from x", at(t0 + cran_releases_max_age + 1)))
+  expect_equal(r$state$packages$cran_releases$status, "ready")
+  expect_equal(available(r$state), "1.1.5")
+  r <- drive(r$state, ev_check_releases(at(t0 + cran_releases_max_age + 2)))
+  expect_equal(effect_types(r), "fetch_cran_releases")
+
+  # An update asked for meanwhile waits for the new dates.
+  r <- drive(r$state, ev_preview_update("dplyr", NULL, today, at(t0 + cran_releases_max_age + 3), page = TRUE))
+  expect_equal(r$state$packages$proposal$status, "dates")
+  newer <- rbind(release_table(), data.frame(package = "dplyr", version = "1.1.6", date = as.Date("2026-10-05")))
+  r <- drive(r$state, ev_cran_releases_fetched(newer, at(t0 + cran_releases_max_age + 4)))
+  expect_equal(available(r$state), "1.1.6")
+  expect_equal(r$state$packages$proposal$update$version, "1.1.6")
+  expect_equal(r$state$packages$proposal$date, "2026-10-05")
+})
+
 test_that("available_versions names only a newer CRAN version of a package the lock has from CRAN (#23)", {
   rows <- data.frame(name = c("dplyr", "dplyr2", "mypkg", "gone", "cli"),
                      version = c("1.1.4", "1.1.5", "0.1.0", NA, "3.6.6"),

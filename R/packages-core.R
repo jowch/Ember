@@ -140,14 +140,16 @@ new_index_slot <- function(status, index = NULL, message = NULL, wanted = NULL, 
 #' CRAN's release dates as the session knows them (`cran_release_table()`).
 #' `latest`: each package's current version, named by package, worked out
 #' once here because `packages_view()` reads it on every dispatch (#23).
-new_cran_releases_slot <- function(status = "unknown", table = NULL, message = NULL) {
+#' `at`: when `table` arrived, so the Packages tab's check can fetch again
+#' once it is a day old (`reduce_check_releases()`).
+new_cran_releases_slot <- function(status = "unknown", table = NULL, message = NULL, at = NULL) {
   latest <- NULL
   if (!is.null(table)) {
     # Oldest first within a package, so a package's last row is its current version.
     last <- table[!duplicated(table$package, fromLast = TRUE), , drop = FALSE]
     latest <- stats::setNames(last$version, last$package)
   }
-  list(status = status, table = table, message = message, latest = latest)
+  list(status = status, table = table, message = message, latest = latest, at = at)
 }
 
 #' Bioconductor's release list as the session knows it.
@@ -1875,12 +1877,22 @@ update_failed_message <- function(prop, got) {
 }
 
 #' The Packages tab wants to know which rows CRAN has a newer version of
-#' (#23): fetch the release dates if they aren't known or on their way. A
-#' failed fetch is tried again, as the next `preview_update()` would.
+#' (#23): fetch the release dates if they aren't known or on their way, or
+#' are a day old (`cran_releases_max_age`): a session can stay open for
+#' days. While they are fetched again, the old table stays, and with it
+#' each row's `available`. A failed fetch is tried again, as the next
+#' `preview_update()` would.
 reduce_check_releases <- function(state, event) {
-  status <- state$packages$cran_releases$status
-  if (status %in% c("ready", "fetching")) return(list(state = state, effects = list(), reply = NULL))
-  state$packages$cran_releases <- new_cran_releases_slot("fetching")
+  rel <- state$packages$cran_releases
+  fresh <- identical(rel$status, "ready") && !is.null(rel$at) &&
+    as.numeric(event$at) - as.numeric(rel$at) < cran_releases_max_age
+  if (identical(rel$status, "fetching") || fresh) return(list(state = state, effects = list(), reply = NULL))
+  if (identical(rel$status, "ready")) {
+    rel$status <- "fetching"
+    state$packages$cran_releases <- rel
+  } else {
+    state$packages$cran_releases <- new_cran_releases_slot("fetching")
+  }
   list(state = state, effects = list(fx_fetch_cran_releases(state$options$repos$cran_meta)), reply = NULL)
 }
 
@@ -1890,7 +1902,8 @@ reduce_check_releases <- function(state, event) {
 #' every row until CRAN's release dates are known (`reduce_check_releases()`).
 available_versions <- function(rows, releases) {
   out <- rep(NA_character_, nrow(rows))
-  if (!identical(releases$status, "ready") || is.null(releases$latest) || nrow(rows) == 0) return(out)
+  # `latest` stays while a day-old table is fetched again.
+  if (is.null(releases$latest) || nrow(rows) == 0) return(out)
   latest <- unname(releases$latest[rows$name])
   for (i in which(!is.na(latest) & rows$source %in% "CRAN" & !is.na(rows$version))) {
     newer <- tryCatch(package_version(latest[[i]]) > package_version(rows$version[[i]]), error = function(e) FALSE)
@@ -1904,20 +1917,30 @@ reduce_cran_releases_fetched <- function(state, event) {
   if (!identical(state$packages$cran_releases$status, "fetching")) {
     return(list(state = state, effects = list(), reply = NULL))
   }
-  state$packages$cran_releases <- new_cran_releases_slot("ready", event$table)
+  state$packages$cran_releases <- new_cran_releases_slot("ready", event$table, at = event$at)
   prop <- state$packages$proposal
   if (!is.null(prop) && identical(prop$status, "dates")) state <- start_update(state, prop$update)
   list(state = state, effects = list(), reply = NULL)
 }
 
 #' CRAN's release dates couldn't be fetched: a waiting update fails, and
-#' the next one fetches again.
+#' the next one fetches again. When they were being fetched again because
+#' they were a day old (`reduce_check_releases()`), the old table stays,
+#' still a day old so the next check tries again, and a waiting update
+#' uses it.
 reduce_cran_releases_failed <- function(state, event) {
-  if (!identical(state$packages$cran_releases$status, "fetching")) {
+  rel <- state$packages$cran_releases
+  if (!identical(rel$status, "fetching")) {
+    return(list(state = state, effects = list(), reply = NULL))
+  }
+  prop <- state$packages$proposal
+  if (!is.null(rel$table)) {
+    rel$status <- "ready"
+    state$packages$cran_releases <- rel
+    if (!is.null(prop) && identical(prop$status, "dates")) state <- start_update(state, prop$update)
     return(list(state = state, effects = list(), reply = NULL))
   }
   state$packages$cran_releases <- new_cran_releases_slot("failed", message = event$message)
-  prop <- state$packages$proposal
   if (!is.null(prop) && identical(prop$status, "dates")) {
     state$packages$proposal <- new_proposal(NA_character_, status = "failed", message = event$message,
                                             update = prop$update)
