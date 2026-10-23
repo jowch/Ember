@@ -28,11 +28,11 @@ test("look: logo, title and body text say Ember, not Pluto/Julia (8)", async (t)
   const fill = await page.locator("header#pluto-nav h1 svg").evaluate((el) => getComputedStyle(el.querySelector("g")).fill);
   assert.equal(fill, "rgb(232, 89, 12)");
   await page.emulateMedia({ colorScheme: "dark" });
-  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark", null, { timeout: 5000 });
+  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark");
   const darkFill = await page.locator("header#pluto-nav h1 svg").evaluate((el) => getComputedStyle(el.querySelector("g")).fill);
   assert.equal(darkFill, "rgb(240, 112, 50)");
   await page.emulateMedia({ colorScheme: "light" });
-  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "light", null, { timeout: 5000 });
+  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "light");
 
   assert.match(await page.title(), /^basic\.R — Ember$/);
 
@@ -62,7 +62,7 @@ test("look: no requests to external calling-home servers; no Fix with AI (9)", a
 
   await openNotebook(page, server.origin, server.secret, notebook);
   await page.locator("#ember-safe-preview button").click();
-  await page.waitForSelector(`${cellSelector("PARSE")} jlerror.syntax-error`, { timeout: 20000 });
+  await page.waitForSelector(`${cellSelector("PARSE")} jlerror.syntax-error`);
 
   const blocked = ["plutojl.org", "fonsp.com", "openai.com", "gstatic.com", "api.github.com"];
   for (const host of blocked) {
@@ -89,7 +89,7 @@ test("look: cell menu has only Delete/Copy output/Disable cell; no feedback form
   await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("55"),
-    cellSelector("B") + " pluto-output", { timeout: 20000 });
+    cellSelector("B") + " pluto-output");
 
   // The ⋯ trigger only takes clicks while its cell is hovered or
   // focused (cells.css; it's otherwise pointer-events: none, hidden).
@@ -129,7 +129,7 @@ test("look: markdown cell renders folded, with R tokens in its fenced block (11)
   assert.match(await page.locator(`${cellSelector("MD")} pluto-output`).innerText(), /Rich outputs/);
 
   await page.locator("#ember-safe-preview button").click();
-  await page.waitForFunction(() => document.querySelectorAll("#ember-safe-preview").length === 0, null, { timeout: 20000 });
+  await page.waitForFunction(() => document.querySelectorAll("#ember-safe-preview").length === 0);
 
   const isFolded = await page.locator(cellSelector("MD")).evaluate((el) => el.classList.contains("code_folded"));
   assert.ok(isFolded, "MD opens folded, as its file says");

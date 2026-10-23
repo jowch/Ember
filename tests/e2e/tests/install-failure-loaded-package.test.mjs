@@ -38,13 +38,13 @@ test("failing-dep.R: a locked notebook's failed dependency shows on the card of 
   await page.getByRole("button", { name: "Packages", exact: true }).click();
   // toyA's card appears once the index the failure asked for arrives.
   const card = page.locator(".ember-install-failure-card", { hasText: "toyA couldn't install" });
-  await card.waitFor({ timeout: 30000 });
+  await card.waitFor();
   const sentences = await card.locator(".ember-install-failure-sentence").allInnerTexts();
   assert.equal(sentences.length, 1);
   assert.match(sentences[0], /^A package it needs, toyB 1\.0, doesn't build on R \S+\.$/);
   assert.equal(await card.locator("button", { hasText: "Update" }).count(), 1);
   assert.equal(await page.locator(".ember-install-failure-card").count(), 1);
-  await page.locator("tr.ember-package-row.ember-package-failed", { hasText: "toyA" }).waitFor({ timeout: 10000 });
+  await page.locator("tr.ember-package-row.ember-package-failed", { hasText: "toyA" }).waitFor();
 
   assertNoProblems(page);
 });

@@ -22,7 +22,7 @@ test("long runs: the dialog names the rerun, never answers itself, and Cancel ru
   await page.waitForFunction(() => {
     const r = window.editor_state?.notebook?.cell_results?.LOOP;
     return r != null && !r.running && !r.queued && r.runtime > 1e9;
-  }, null, { timeout: 60000 });
+  });
   const ran_at = await page.evaluate(() => window.editor_state.notebook.cell_results.LOOP.output.last_run_timestamp);
 
   await page.locator(`${cellSelector("LOOP")} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
@@ -31,7 +31,7 @@ test("long runs: the dialog names the rerun, never answers itself, and Cancel ru
   await page.keyboard.press("Shift+Enter");
 
   const dialog = page.locator("dialog.confirm-before-long-runtime[open]");
-  await dialog.waitFor({ timeout: 5000 });
+  await dialog.waitFor();
   // LOOP busy-waits 8 s; a slow runner takes longer, so only the shape and a sensible range are fixed.
   const sentence = (await dialog.locator("p").innerText()).trim();
   const took = sentence.match(/^This reruns 1 cell that took about (\d+) sec last time\.$/);
@@ -52,7 +52,7 @@ test("long runs: the dialog names the rerun, never answers itself, and Cancel ru
   assert.equal(await dialog.count(), 1, "still open after 25 s");
 
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await dialog.waitFor({ state: "detached", timeout: 5000 });
+  await dialog.waitFor({ state: "detached" });
   await roundTrip(page);
   const after = await page.evaluate(() => {
     const r = window.editor_state.notebook.cell_results.LOOP;

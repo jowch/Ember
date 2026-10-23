@@ -23,7 +23,7 @@ test("markdown: editing and running a text cell renders the new text", async (t)
   await runCell(page, "MD");
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("Changed"),
-    cellSelector("MD") + " pluto-output", { timeout: 15000 });
+    cellSelector("MD") + " pluto-output");
 
   assertNoProblems(page);
 });
@@ -42,7 +42,7 @@ test("markdown: a new cell typed as `#' ...` becomes a text cell and stays unfol
   await page.keyboard.press(process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
   await page.waitForFunction(
     (before) => document.querySelectorAll("pluto-cell").length > before,
-    cellCountBefore, { timeout: 15000 });
+    cellCountBefore);
 
   const newCellId = await page.evaluate((bid) => {
     const cells = Array.from(document.querySelectorAll("pluto-cell"));
@@ -58,11 +58,11 @@ test("markdown: a new cell typed as `#' ...` becomes a text cell and stays unfol
 
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("Hello"),
-    `${newSel} pluto-output`, { timeout: 15000 });
+    `${newSel} pluto-output`);
   assert.ok(await page.locator(newSel).evaluate((el) => el.classList.contains("text_cell")));
   assert.equal(await page.locator(newSel).evaluate((el) => el.classList.contains("code_folded")), false,
     "a text cell is never folded for you");
-  await page.locator(`${newSel} pluto-input .cm-editor:not(.cm-ssr-fake)`).waitFor({ state: "visible", timeout: 5000 });
+  await page.locator(`${newSel} pluto-input .cm-editor:not(.cm-ssr-fake)`).waitFor({ state: "visible" });
 
   assertNoProblems(page);
 });

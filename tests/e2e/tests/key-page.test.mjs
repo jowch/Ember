@@ -76,7 +76,7 @@ test("key page: an editor tab open across a restart says Ember restarted and sto
   second = await startServer([notebook], { logFile, port: first.port, secret: "second-session-secret" });
 
   const dialog = page.getByRole("alertdialog");
-  await dialog.waitFor({ timeout: 30000 });
+  await dialog.waitFor();
   assert.match(await dialog.innerText(), /Ember restarted, so this page's key no longer works\. Open the link Ember just printed in the R console/);
   assert.match(await page.locator("#ember-r-status").innerText(), /Ember restarted/);
   await page.screenshot({ path: path.join(artifactsDir(), "key-page-restarted-tab.png") });
@@ -115,9 +115,9 @@ test("key page: a refused key check while the socket can't connect says Ember re
   await new Promise((resolve) => standIn.listen(first.port, "127.0.0.1", resolve));
 
   const dialog = page.getByRole("alertdialog");
-  await dialog.waitFor({ timeout: 30000 });
+  await dialog.waitFor();
   assert.match(await dialog.innerText(), /Ember restarted, so this page's key no longer works/);
-  await page.locator("#ember-r-status", { hasText: "Ember restarted" }).waitFor({ timeout: 30000 });
+  await page.locator("#ember-r-status", { hasText: "Ember restarted" }).waitFor();
 
   // Well past every wait the page has between tries, on its own clock.
   const after_refusal = sockets;

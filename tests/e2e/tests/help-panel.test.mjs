@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector, frames } from "../browser.mjs";
+import { waitingFor } from "../waits.mjs";
 
 const SELECT_ALL = process.platform === "darwin" ? "Meta+A" : "Control+A";
 
@@ -24,7 +25,7 @@ async function open_idle_notebook(t, logName) {
     const nb = window.editor_state?.notebook;
     return nb?.process_status === "ready" && nb.cell_results?.C?.runtime != null &&
       Object.values(nb.cell_results).every((r) => !r.running && !r.queued);
-  }, null, { timeout: 60000 });
+  });
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
   return page;
 }
@@ -57,25 +58,21 @@ async function point_in_cell(page, id, needle, offset = 0) {
   }, [cellSelector(id), needle, offset]);
 }
 
-/** Waits for the help page to include `text`. On a timeout, says what the
- * Help tab shows and asked for: the query, the page, and window.ember_docs
- * (LiveDocsTab.js), so a failure on CI carries its own evidence (#110). */
-async function wait_for_help_page(page, text, timeout = 15000) {
-  try {
-    await page.waitForFunction(
-      (text) => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes(text),
-      text, { timeout });
-  } catch (e) {
-    const seen = await page.evaluate(() => ({
+/** Waits for the help page to include `text`. If it never does, the
+ * report of what the test waited for says what the Help tab shows and
+ * asked for: the query, the page, and window.ember_docs (LiveDocsTab.js),
+ * so a failure on CI carries its own evidence (#110). */
+async function wait_for_help_page(page, text) {
+  await waitingFor(`the help page shows "${text}"`, page.waitForFunction(
+    (text) => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes(text), text),
+    () => page.evaluate(() => ({
       query: document.querySelector("#live-docs-search")?.value,
       desired: window.editor_state?.desired_doc_query,
       explicit: window.editor_state?.doc_query_explicit,
       worker: window.editor_state?.notebook?.process_status,
       page: document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.slice(0, 300),
       docs: window.ember_docs,
-    })).catch((why) => ({ unreadable: String(why) }));
-    throw new Error(`the help page never showed "${text}": ${e.message}\n${JSON.stringify(seen, null, 1)}`);
-  }
+    })));
 }
 
 const help_query = (page) => page.locator("#live-docs-search").inputValue();
@@ -97,17 +94,17 @@ async function settle(page) {
   await page.waitForFunction(() => {
     const ended = new Set(window.ember_docs.filter((e) => e.event !== "sent").map((e) => e.request));
     return window.ember_docs.filter((e) => e.event === "sent").every((e) => ended.has(e.request));
-  }, null, { timeout: 0 });
+  });
   await frames(page);
 }
 
-test("help: a text cell, a #' line, a comment and a non-name selection never change the query", { timeout: 120000 }, async (t) => {
+test("help: a text cell, a #' line, a comment and a non-name selection never change the query", async (t) => {
   const page = await open_idle_notebook(t, "help-text-query.server.log");
   await show_mean_from_code(page);
 
   // Open the text cell for editing, then select all of it.
   await page.locator(`${cellSelector("T")} pluto-output`).click();
-  await page.waitForSelector(`${cellSelector("T")} .cm-editor:not(.cm-ssr-fake) .cm-content`, { timeout: 10000 });
+  await page.waitForSelector(`${cellSelector("T")} .cm-editor:not(.cm-ssr-fake) .cm-content`);
   await page.locator(`${cellSelector("T")} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.keyboard.press(SELECT_ALL);
   await settle(page);
@@ -155,17 +152,17 @@ test("help: a text cell, a #' line, a comment and a non-name selection never cha
   await frames(page);
   assert.equal(await page.locator(".cm-tooltip-autocomplete").count(), 0, "no completions while typing in a comment");
   await page.keyboard.press("Control+Space");
-  await page.waitForSelector(".cm-tooltip-autocomplete", { timeout: 5000 });
+  await page.waitForSelector(".cm-tooltip-autocomplete");
   await page.keyboard.press("Escape");
   assertNoProblems(page);
 });
 
-test("help: double-clicking a word in text shows no mgcv page; the cursor finds only attached packages", { timeout: 120000 }, async (t) => {
+test("help: double-clicking a word in text shows no mgcv page; the cursor finds only attached packages", async (t) => {
   const page = await open_idle_notebook(t, "help-mgcv.server.log");
   await show_mean_from_code(page);
 
   await page.locator(`${cellSelector("T")} pluto-output`).click();
-  await page.waitForSelector(`${cellSelector("T")} .cm-editor:not(.cm-ssr-fake) .cm-content`, { timeout: 10000 });
+  await page.waitForSelector(`${cellSelector("T")} .cm-editor:not(.cm-ssr-fake) .cm-content`);
   const s = await point_in_cell(page, "T", "Let's", 4);
   await page.mouse.dblclick(s.x, s.y);
   await settle(page);
@@ -177,7 +174,7 @@ test("help: double-clicking a word in text shows no mgcv page; the cursor finds 
   // count, so mgcv's `s` (installed, never attached) isn't shown.
   const s_call = await point_in_cell(page, "G", "s(wt)", 0);
   await page.mouse.click(s_call.x + 2, s_call.y);
-  await page.waitForFunction(() => document.querySelector("#live-docs-search")?.value === "s", null, { timeout: 5000 });
+  await page.waitForFunction(() => document.querySelector("#live-docs-search")?.value === "s");
   await settle(page);
   assert.doesNotMatch(await help_text(page), /mgcv/);
   assert.match(await help_text(page), /Arithmetic Mean/);
@@ -190,13 +187,12 @@ test("help: double-clicking a word in text shows no mgcv page; the cursor finds 
   assertNoProblems(page);
 });
 
-test("help: the page fits the panel, is padded, and has no Rd header table or query heading", { timeout: 120000 }, async (t) => {
+test("help: the page fits the panel, is padded, and has no Rd header table or query heading", async (t) => {
   const page = await open_idle_notebook(t, "help-layout.server.log");
   const p = await point_in_cell(page, "C", "lm(mpg", 1);
   await page.mouse.click(p.x, p.y);
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper .ember-help-page h2")?.innerText === "Fitting Linear Models",
-    null, { timeout: 15000 });
+    () => document.querySelector("#helpbox-wrapper .ember-help-page h2")?.innerText === "Fitting Linear Models");
 
   const m = await page.evaluate(() => {
     const panel = document.querySelector("pluto-helpbox").getBoundingClientRect();
@@ -235,13 +231,12 @@ test("help: the page fits the panel, is padded, and has no Rd header table or qu
 // description sits under the title); See Also is a row of links (and of
 // names R didn't link, tested in R on ?max); the
 // search field is 30 px on the page's background with a search icon.
-test("help: no Description heading, See Also is a row of links, and the search field matches Panel3 (#51)", { timeout: 120000 }, async (t) => {
+test("help: no Description heading, See Also is a row of links, and the search field matches Panel3 (#51)", async (t) => {
   const page = await open_idle_notebook(t, "help-panel3.server.log");
   const p = await point_in_cell(page, "C", "lm(mpg", 1);
   await page.mouse.click(p.x, p.y);
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper .ember-help-page h2")?.innerText === "Fitting Linear Models",
-    null, { timeout: 15000 });
+    () => document.querySelector("#helpbox-wrapper .ember-help-page h2")?.innerText === "Fitting Linear Models");
 
   const m = await page.evaluate(() => {
     const page_el = document.querySelector(".ember-help-page");
@@ -288,14 +283,13 @@ test("help: no Description heading, See Also is a row of links, and the search f
   assertNoProblems(page);
 });
 
-test("help: no link on a page leaves the notebook; a clicked link isn't labelled as following the cursor (#30)", { timeout: 120000 }, async (t) => {
+test("help: no link on a page leaves the notebook; a clicked link isn't labelled as following the cursor (#30)", async (t) => {
   const page = await open_idle_notebook(t, "help-links.server.log");
   const start_url = page.url();
   const p = await point_in_cell(page, "C", "lm(mpg", 1);
   await page.mouse.click(p.x, p.y);
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper .ember-help-page h2")?.innerText === "Fitting Linear Models",
-    null, { timeout: 15000 });
+    () => document.querySelector("#helpbox-wrapper .ember-help-page h2")?.innerText === "Fitting Linear Models");
 
   const links = await page.evaluate(() => Array.from(document.querySelectorAll("#helpbox-wrapper .ember-help-page a[href]")).map((a) => ({
     href: a.getAttribute("href"), target: a.getAttribute("target"), text: a.innerText,
@@ -319,14 +313,13 @@ test("help: no link on a page leaves the notebook; a clicked link isn't labelled
     const target = document.getElementById(id)?.getBoundingClientRect();
     const panel = document.querySelector("#helpbox-wrapper").getBoundingClientRect();
     return target != null && target.top >= panel.top - 1 && target.top <= panel.top + panel.height / 2;
-  }, target_id, { timeout: 5000 });
+  }, target_id);
 
   // A See Also link: a new page, still on the notebook, and asked for
   // explicitly, so no "follows the cursor" line.
   await page.locator('#helpbox-wrapper .ember-help-page a[href="@ref stats::summary.lm"]').first().click();
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper .ember-help-page h2")?.innerText === "Summarizing Linear Model Fits",
-    null, { timeout: 15000 });
+    () => document.querySelector("#helpbox-wrapper .ember-help-page h2")?.innerText === "Summarizing Linear Model Fits");
   assert.equal(await help_query(page), "stats::summary.lm");
   assert.equal(await page.locator(".ember-help-package").count(), 0, "no 'follows the cursor' line after a clicked link");
   assert.equal(page.url(), start_url);

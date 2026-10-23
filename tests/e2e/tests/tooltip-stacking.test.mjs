@@ -16,13 +16,13 @@ test("tooltips: the completion list covers the next cell's code", async (t) => {
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
   await runCell(page, "A");
-  await page.waitForFunction(() => window.editor_state.notebook.cell_results.A?.output?.last_run_timestamp > 0, null, { timeout: 30000 });
+  await page.waitForFunction(() => window.editor_state.notebook.cell_results.A?.output?.last_run_timestamp > 0);
 
   await page.locator(codeSelector("A")).click();
   await page.keyboard.press("End");
   await page.keyboard.type("\nli", { delay: 20 });
   const list = page.locator(`${cellSelector("A")} .cm-tooltip-autocomplete`);
-  await list.waitFor({ timeout: 15000 });
+  await list.waitFor();
   await layoutSettled(page);
 
   const listBox = await list.boundingBox();

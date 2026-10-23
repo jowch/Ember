@@ -61,8 +61,8 @@ test("transitions: a run never paints queued, running or \"Not run yet\" in its 
 
   // R started and warm, so the timed run below is only the run itself.
   await runCell(page, "B");
-  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("55"), cellSelector("B") + " pluto-output", { timeout: 30000 });
-  await page.waitForFunction(() => document.querySelector("#ember-r-status")?.innerText === "R ready", null, { timeout: 10000 });
+  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("55"), cellSelector("B") + " pluto-output");
+  await page.waitForFunction(() => document.querySelector("#ember-r-status")?.innerText === "R ready");
 
   // A passing state shows only once it has lasted SETTLE_MS, counted from
   // when the page first saw it, which is after the key press and so after
@@ -76,7 +76,7 @@ test("transitions: a run never paints queued, running or \"Not run yet\" in its 
   // Cmd+Enter on unchanged code only adds a cell below.
   await startFrames(page);
   await page.keyboard.press(RUN_AND_ADD);
-  await page.waitForFunction(() => document.querySelectorAll("pluto-notebook > pluto-cell").length === 7, null, { timeout: 10000 });
+  await page.waitForFunction(() => document.querySelectorAll("pluto-notebook > pluto-cell").length === 7);
   const id = await newCellAfter(page, "B");
   await roundTrip(page);
   await afterSettle(page);
@@ -99,7 +99,7 @@ test("transitions: a run never paints queued, running or \"Not run yet\" in its 
     await page.keyboard.press("Shift+Enter");
     await page.waitForFunction(
       ([sel, result]) => document.querySelector(sel)?.innerText.includes(result),
-      [cellSelector(id) + " > pluto-output", result], { timeout: 15000 });
+      [cellSelector(id) + " > pluto-output", result]);
     await roundTrip(page);
     await afterSettle(page);
     frames = await stopFrames(page);
@@ -139,12 +139,12 @@ test("transitions: a text cell run with Cmd+Enter ends idle, not queued", async 
 
   await page.locator(codeSelector("B")).click();
   await page.keyboard.press(RUN_AND_ADD);
-  await page.waitForFunction(() => document.querySelectorAll("pluto-notebook > pluto-cell").length === 7, null, { timeout: 10000 });
+  await page.waitForFunction(() => document.querySelectorAll("pluto-notebook > pluto-cell").length === 7);
   const id = await newCellAfter(page, "B");
   await page.locator(codeSelector(id)).click();
   await page.keyboard.type("#' Hello", { delay: 2 });
   await page.keyboard.press(RUN_AND_ADD);
-  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("Hello"), `${cellSelector(id)} > pluto-output`, { timeout: 15000 });
+  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("Hello"), `${cellSelector(id)} > pluto-output`);
   await roundTrip(page);
   await afterSettle(page);
 

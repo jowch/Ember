@@ -32,8 +32,7 @@ test("docstring: Help shows a notebook function's signature, doc and a working G
 
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Drop rows with a missing value."),
-    null, { timeout: 15000 });
+    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Drop rows with a missing value."));
 
   const helpText = await page.locator("#helpbox-wrapper").innerText();
   assert.match(helpText, /clean\(df\)/);
@@ -47,7 +46,7 @@ test("docstring: Help shows a notebook function's signature, doc and a working G
       const r = document.querySelector(sel)?.getBoundingClientRect();
       return r != null && r.top >= 0 && r.top < window.innerHeight;
     },
-    cellSelector("FN"), { timeout: 10000 });
+    cellSelector("FN"));
 
   assertNoProblems(page);
 });

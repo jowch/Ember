@@ -31,7 +31,7 @@ test("adding a cell re-renders O(1) cells, not every cell", async (t) => {
   await page.waitForFunction(() => [...document.querySelectorAll("pluto-input")].every((input) => {
     const r = input.getBoundingClientRect();
     return r.bottom < 0 || r.top > window.innerHeight || input.querySelector(".cm-ssr-fake") == null;
-  }), null, { timeout: 0 });
+  }));
   await layoutSettled(page);
   await page.evaluate(() => {
     window.__ember_renders = {};
@@ -44,7 +44,7 @@ test("adding a cell re-renders O(1) cells, not every cell", async (t) => {
   const newId = await page.evaluate((a) => document.getElementById(a)?.nextElementSibling?.id, anchor);
   // The re-renders came with the server's reply, which adds the new cell's
   // cell_dependencies (#289): wait for it, then let renders settle.
-  await page.waitForFunction((id) => window.editor_state?.notebook?.cell_dependencies?.[id] != null, newId, { timeout: 15000 });
+  await page.waitForFunction((id) => window.editor_state?.notebook?.cell_dependencies?.[id] != null, newId);
   // The same counts in two frames in a row.
   await page.evaluate(() => new Promise((resolve) => {
     let last = null;

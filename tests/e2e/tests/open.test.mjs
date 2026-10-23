@@ -28,7 +28,7 @@ test("open: loads every cell with safe preview, R highlighting, no console error
   // any styled token span beyond the empty-line placeholder is evidence the
   // R grammar tokenized and highlighted the code (not just plain text).
   const tokens = page.locator("pluto-cell .cm-content span[class]:not(.cm-placeholder)");
-  await tokens.first().waitFor({ timeout: 10000 });
+  await tokens.first().waitFor();
   const highlighted = await tokens.count();
   assert.ok(highlighted > 0, "R code is syntax-highlighted (styled CodeMirror token spans exist)");
 
@@ -57,4 +57,5 @@ test("open: an editor file that fails to load fails openNotebook, naming the fil
   await page.route("**/common/SliderServerClient.js", (route) => route.abort("failed"));
   await assert.rejects(openNotebook(page, server.origin, server.secret, notebook),
     /common\/SliderServerClient\.js failed to load: net::ERR_FAILED/);
+  await page.close();
 });

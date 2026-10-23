@@ -137,7 +137,21 @@ the same ones Endeavor relies on (`pluto-cell[id]`, `.running`, `.queued`,
 `.code_differs`, `pluto-output`, `jlerror`), and on the file on disk where
 it matters.
 
-Every wait is for a condition, never for a fixed time (`waitForTimeout`).
+Every wait is for a condition, never for a fixed time (`waitForTimeout`),
+and no wait has a time limit of its own: Playwright's default limit is
+off (`launchBrowser()`), no call passes `timeout`, no test sets one, and
+`startServer()` waits for the server's "listening" line as long as it
+takes. The only bound is run.mjs's `--test-timeout`, which under Node 22
+stops a whole test file. A wait that never ends still says what it was
+waiting for: `waits.mjs` lists every pending Playwright call and every
+wait labelled with `waitingFor(label, promise, state)` or `poll(label,
+check, state)` (a condition outside the page, such as the notebook's
+file), with where the test started it, in `test-results/waiting-<file>.txt`. run.mjs prints a
+list a stopped file leaves behind, with the end of each server's log and,
+except on Windows, what each page showed (its connection, its running
+and queued cells, its focus) and each labelled wait's `state()`. A test
+that ends while one of its waits is still pending prints the same list.
+
 `browser.mjs` has the conditions that are hard to see from the page:
 
 - `roundTrip()`: the server has handled everything the page sent before
