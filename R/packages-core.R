@@ -737,7 +737,8 @@ schedule_packages <- function(state, old) {
                                 failed_index_problems(p$indexes[failed]),
                                 bioc_problems(state$file$header, state$options$r, p$bioc_releases$table),
                                 bioc_unavailable_problem(needed, res$problems, state$file$header,
-                                                         state$options$r))
+                                                         state$options$r,
+                                                         releases_at(p, state$file$header$snapshot)))
           } else {
             for (k in res$fetch) {
               if (is.null(p$indexes[[k]]) || !identical(p$indexes[[k]]$status, "fetching")) {
@@ -759,6 +760,9 @@ schedule_packages <- function(state, old) {
     }
   }
   state$packages <- p
+  ru <- retry_update_for_lock(state)
+  state <- ru$state
+  effects <- c(effects, ru$effects)
 
   # ---- 2. Proposal --------------------------------------------------------
   state <- propose_bioc_move(state)
@@ -1717,12 +1721,36 @@ hold_preview <- function(state, event) {
 replay_held <- function(state) {
   event <- state$packages$held
   state$packages$held <- NULL
-  # The reply is dropped: a held request has passed its refusals already
-  # (they come before the hold), and the move keeps the lock's CRAN
-  # entries, so nothing replayed here is refused today. A refusal added
-  # after the hold would be lost, so keep them before it.
+  # A request held before its package was locked (#419) can be refused
+  # now: it fails, saying why, rather than being dropped.
   r <- if (identical(event$type, "preview_update")) reduce_preview_update(state, event) else reduce_preview_date(state, event)
-  list(state = r$state, effects = r$effects)
+  list(state = fail_refused_update(r$state, r$reply, event), effects = r$effects)
+}
+
+#' A replayed update refused: its proposal fails with the reason, since
+#' nobody is waiting for the reply (#419). Returns the state.
+fail_refused_update <- function(state, reply, event) {
+  if (!inherits(reply, "ember_refused")) return(state)
+  message <- conditionMessage(reply)
+  update <- list(name = event$name, version = event$version, today = event$today, page = isTRUE(event$page))
+  state$packages$proposal <- new_proposal(NA_character_, status = "failed", message = message, update = update)
+  state
+}
+
+#' Why the lock lacks `name` once resolution is over: the code doesn't
+#' load it, or its own problem (not found), or else the problems that
+#' stopped resolution (an index that failed), never that the notebook
+#' doesn't use a name it loads (#419).
+unlocked_message <- function(state, name) {
+  probs <- state$packages$problems
+  if (!name %in% wanted_packages(state$graph, state$file$header)) {
+    return(sprintf("%s is not in this notebook's packages", name))
+  }
+  own <- probs$message[!is.na(probs$package) & probs$package == name]
+  if (length(own) > 0) return(sprintf("%s isn't in this notebook's lock: %s", name, own[[1]]))
+  why <- unique(probs$message[is.na(probs$package)])
+  sprintf("%s isn't in this notebook's lock: its packages couldn't be resolved%s", name,
+          if (length(why) > 0) sprintf(" (%s)", paste(why, collapse = "; ")) else "")
 }
 
 #' The request that would make date proposal `prop` again: its package
@@ -1802,17 +1830,30 @@ update_tries <- 3L
 
 #' Preview moving the date so that `event$name` is at `event$version`.
 #' Refused unless the lock has `name` from CRAN: Bioconductor and GitHub
-#' packages have no CRAN dates. With CRAN's release dates not yet known,
-#' fetches them first (the proposal waits with status `"dates"`); then
+#' packages have no CRAN dates. A name the code loads that the lock lacks
+#' only because it is still being resolved waits for it (`resolving()`,
+#' #419). With CRAN's release dates not yet known, fetches them first (the proposal waits with status `"dates"`); then
 #' `start_update()` turns the version into a date and previews that date
 #' as `preview_date()` does. Waits while a Bioconductor move is pending
 #' (`hold_preview()`). Reply: `TRUE`.
 reduce_preview_update <- function(state, event) {
   entries <- state$file$lock$entries
   row <- if (is.null(entries)) integer() else which(entries$name == event$name)
+  wanted_unlocked <- length(row) == 0 && event$name %in% wanted_packages(state$graph, state$file$header)
+  # A pending Bioconductor move is kept, so the request waits for it
+  # instead, and is asked again once it is over (`replay_held()`).
+  if (wanted_unlocked && bioc_move_pending(state)) return(hold_preview(state, event))
+  if (wanted_unlocked && resolving(state)) {
+    # The code loads it, but the lock doesn't have it yet (#419): the
+    # proposal waits with status `"lock"`, and `schedule_packages()` asks
+    # again once resolution is over.
+    update <- list(name = event$name, version = event$version, today = event$today, page = isTRUE(event$page))
+    state$packages$proposal <- new_proposal(NA_character_, status = "lock", update = update)
+    return(list(state = state, effects = list(), reply = TRUE))
+  }
   if (length(row) == 0) {
     return(list(state = state, effects = list(),
-                reply = refused(sprintf("%s is not in this notebook's packages", event$name))))
+                reply = refused(unlocked_message(state, event$name))))
   }
   if (!identical(entries$source[[row]], "CRAN")) {
     return(list(state = state, effects = list(),
@@ -1833,6 +1874,35 @@ reduce_preview_update <- function(state, event) {
     }
   }
   list(state = state, effects = effects, reply = TRUE)
+}
+
+#' `TRUE` while the lock is being resolved for what the code wants: it
+#' doesn't answer the wanted set or the header's sources yet (the Resolve
+#' stage's own test), and an index or Bioconductor's release list is
+#' being fetched (any index: one a preview fetches only makes the wait
+#' longer). A resolution that is stuck (an index that failed) isn't
+#' running, so nothing waits on it.
+resolving <- function(state) {
+  p <- state$packages
+  if (setequal(wanted_packages(state$graph, state$file$header), p$resolved_for %||% character()) &&
+      identical(readable_sources(state$file$header), p$sources_for %||% character())) return(FALSE)
+  fetching <- vapply(p$indexes, function(slot) identical(slot$status, "fetching"), logical(1))
+  any(fetching) || identical(p$bioc_releases$status, "fetching")
+}
+
+#' An update waiting for the lock to have its package (status `"lock"`,
+#' #419), asked again once resolution is over: it goes on as if just asked
+#' for, or fails, saying why, when the lock still lacks the package.
+#' Returns `list(state, effects)`.
+retry_update_for_lock <- function(state) {
+  prop <- state$packages$proposal
+  if (is.null(prop) || !identical(prop$status, "lock") || resolving(state)) {
+    return(list(state = state, effects = list()))
+  }
+  state$packages$proposal <- NULL
+  event <- preview_event(prop)
+  r <- reduce_preview_update(state, event)
+  list(state = fail_refused_update(r$state, r$reply, event), effects = r$effects)
 }
 
 #' With CRAN's release dates known: the date for `update`, previewed as

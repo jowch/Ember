@@ -16,6 +16,16 @@
 # (`` `s<n><-` ``, plain or an S3 generic with a default method in another
 # cell) and call them (`s<n>(v) <- k`), and a step can change a file from
 # outside the notebook: list(op = "outside", file, value).
+#
+# With `prompts`, some cells ask (#186): `readline("q<n>? ")` or
+# `menu(c("q<n>-a", "q<n>-b", "q<n>-c"))`, and use the answer. Each
+# question has one answer (`fuzz_answer()`), so the reference answers it
+# too, and an answer given to the wrong question shows in a value. A step
+# can carry `asking`, actions to take while a cell waits on a question,
+# before answering it: list(act = "interrupt"), list(act = "edit", ops),
+# list(act = "run", cell) (a cell id, "all", or "self" for the asking
+# cell), or list(act = "wrong"), an answer naming a question that isn't
+# waiting, which must be refused.
 
 # Generating ---------------------------------------------------------------
 
@@ -33,10 +43,11 @@
 #' With `extras = TRUE`, cells write and read data files and define and call
 #' replacement functions (`fuzz_add()`), and about one step in four also
 #' rewrites a file from outside the notebook.
-fuzz_trace <- function(seed, mode, steps = 12, cells = 6, conflicts = FALSE, extras = FALSE) {
+fuzz_trace <- function(seed, mode, steps = 12, cells = 6, conflicts = FALSE, extras = FALSE, prompts = FALSE) {
   with_seed(seed, {
     g <- fuzz_gen_new()
     g$extras <- extras
+    g$prompts <- prompts
     g <- fuzz_gen_shape(g, sample(c("chain", "diamond", "fan", "random"), 1), cells)
     initial <- g$cells
     # Cell order in the file doesn't decide run order: shuffle it sometimes.
@@ -45,6 +56,7 @@ fuzz_trace <- function(seed, mode, steps = 12, cells = 6, conflicts = FALSE, ext
     trace <- list(seed = seed, mode = mode, conflicts = conflicts,
                   cells = lapply(initial[order], `[[`, "code"), steps = list())
     if (extras) trace$extras <- TRUE
+    if (prompts) trace$prompts <- TRUE
     g$order <- order
     for (s in seq_len(steps)) {
       if (conflicts) {
@@ -79,9 +91,34 @@ fuzz_trace <- function(seed, mode, steps = 12, cells = 6, conflicts = FALSE, ext
       run <- if (length(below) && stats::runif(1) < 0.5) sample(below, 1)
         else if (u < 0.6 && length(live)) sample(live, 1) else if (u < 0.8) "all" else NULL
       trace$steps[[s]] <- list(ops = ops, run = run)
+      if (prompts) {
+        out <- fuzz_gen_asking(g)
+        g <- out$g
+        if (length(out$asking)) trace$steps[[s]]$asking <- out$asking
+      }
     }
     trace
   })
+}
+
+#' Up to two things to do while a cell waits on a question, before it is
+#' answered: interrupt it, edit the notebook, run a cell (the asking one
+#' too), or give an answer naming a question that isn't waiting.
+fuzz_gen_asking <- function(g) {
+  asking <- list()
+  for (k in seq_len(sample(0:2, 1, prob = c(0.4, 0.4, 0.2)))) {
+    act <- sample(c("interrupt", "edit", "run", "wrong"), 1, prob = c(0.2, 0.4, 0.25, 0.15))
+    if (act == "edit") {
+      out <- fuzz_gen_op(g)
+      g <- out$g
+      asking <- c(asking, list(list(act = "edit", ops = out$ops)))
+    } else if (act == "run") {
+      asking <- c(asking, list(list(act = "run", cell = sample(c(setdiff(g$order, "S"), "all", "self"), 1))))
+    } else {
+      asking <- c(asking, list(list(act = act)))
+    }
+  }
+  list(g = g, asking = asking)
 }
 
 with_seed <- function(seed, expr) {
@@ -95,7 +132,36 @@ with_seed <- function(seed, expr) {
 fuzz_gen_new <- function() {
   list(cells = list(S = list(code = "", rank = 0, defs = character(), refs = character())),
        order = "S", next_name = 1L, next_id = 1L, extras = FALSE,
-       files = list(), next_file = 1L, setters = list(), next_setter = 1L)
+       files = list(), next_file = 1L, setters = list(), next_setter = 1L,
+       prompts = FALSE, next_ask = 1L)
+}
+
+#' A new question for a cell: list(n, kind), kind "readline" or "menu".
+fuzz_new_ask <- function(g) {
+  ask <- list(n = g$next_ask, kind = sample(c("readline", "menu"), 1))
+  g$next_ask <- g$next_ask + 1L
+  list(g = g, ask = ask)
+}
+
+#' The term a question adds to a cell's code, `NULL` for none.
+fuzz_ask_term <- function(ask) {
+  if (is.null(ask)) return(NULL)
+  if (identical(ask$kind, "menu")) sprintf('menu(c("q%1$d-a", "q%1$d-b", "q%1$d-c"))', ask$n)
+  else sprintf('as.numeric(readline("q%d? "))', ask$n)
+}
+
+#' The one answer to question `n`: a number for readline(), a choice's
+#' number for menu().
+fuzz_answer <- function(n, menu = FALSE) {
+  if (menu) n %% 3L + 1L else (n * 7L) %% 50L + 1L
+}
+
+#' The answer to a waiting prompt (a snapshot's `prompt`), as typed.
+fuzz_answer_text <- function(p) {
+  menu <- length(p$choices) > 0
+  label <- regmatches(if (menu) p$choices[[1]] else p$text, regexpr("q[0-9]+", if (menu) p$choices[[1]] else p$text))
+  if (!length(label)) return("")
+  as.character(fuzz_answer(as.integer(substring(label, 2)), menu))
 }
 
 fuzz_fresh_names <- function(g, n) {
@@ -106,9 +172,9 @@ fuzz_fresh_names <- function(g, n) {
 
 #' Code for a cell. One definition `v <- expr`; two, where the second uses
 #' the first; or none, a cell that only shows a value. One cell in ten fails.
-fuzz_code <- function(defs, refs, fail = FALSE, files = character()) {
+fuzz_code <- function(defs, refs, fail = FALSE, files = character(), ask = NULL) {
   k <- sample.int(90, 1)
-  reads <- c(refs, sprintf('as.numeric(readLines("%s"))', files))
+  reads <- c(refs, sprintf('as.numeric(readLines("%s"))', files), fuzz_ask_term(ask))
   terms <- if (length(reads)) paste0(seq_along(reads), " * ", reads, collapse = " + ") else NULL
   expr <- if (is.null(terms)) as.character(k) else sprintf("(%d + %s) %%%% 997", k, terms)
   if (fail) expr <- sprintf('stop("fail %d")', k)
@@ -136,7 +202,7 @@ fuzz_cell_code <- function(c, fail = FALSE) {
       generic = sprintf("`%s<-` <- function(x, value) UseMethod(\"%s<-\")\n%d", c$setter, c$setter, k),
       method = sprintf("`%s<-.default` <- function(x, value) (x * %d + value) %%%% 997\n%d", c$setter, k %% 7 + 2, k)))
   }
-  lines <- fuzz_code(c$defs, c$refs, fail, files = c$reads %||% character())
+  lines <- fuzz_code(c$defs, c$refs, fail, files = c$reads %||% character(), ask = c$ask)
   if (!length(c$defs) || (is.null(c$uses) && is.null(c$writes))) return(lines)
   last <- c$defs[length(c$defs)]
   paste(c(lines,
@@ -211,6 +277,18 @@ fuzz_add <- function(g, refs, ndefs = sample(0:2, 1, prob = c(0.2, 0.55, 0.25)),
     out$c$code <- fuzz_cell_code(out$c, fail = stats::runif(1) < 0.1 && is.null(out$c$setter))
     g$cells[[id]] <- out$c
   }
+  if (isTRUE(g$prompts)) {
+    # A third of the cells ask a question.
+    c <- g$cells[[id]]
+    c$refs <- refs[!is.na(refs)]
+    if (stats::runif(1) < 0.35) {
+      out <- fuzz_new_ask(g)
+      g <- out$g
+      c$ask <- out$ask
+    }
+    c$code <- fuzz_cell_code(c, fail = stats::runif(1) < 0.1)
+    g$cells[[id]] <- c
+  }
   list(g = g, id = id)
 }
 
@@ -264,6 +342,19 @@ fuzz_gen_op <- function(g) {
         c$reads <- if (length(files) && stats::runif(1) < 0.5) sample(files, 1)
       }
       c$code <- fuzz_cell_code(c, fail = stats::runif(1) < 0.1 && is.null(c$setter))
+      return(list(g = g, ops = list(set(id, c))))
+    }
+    if (isTRUE(g$prompts)) {
+      # It can start or stop asking, and ask a new question.
+      if (stats::runif(1) < 0.5) c$refs <- fuzz_pick_refs(g, c$rank)
+      if (stats::runif(1) < 0.3) {
+        if (!is.null(c$ask) && stats::runif(1) < 0.5) c$ask <- NULL else {
+          out <- fuzz_new_ask(g)
+          g <- out$g
+          c$ask <- out$ask
+        }
+      }
+      c$code <- fuzz_cell_code(c, fail = stats::runif(1) < 0.1)
       return(list(g = g, ops = list(set(id, c))))
     }
     if (stats::runif(1) < 0.5) c$refs <- fuzz_pick_refs(g, c$rank)
@@ -408,15 +499,24 @@ fuzz_defs <- function(code) {
   unique(c(m, substring(f, 2)))
 }
 
-#' Names `code` reads from other cells: every name in it but those it
-#' assigns whole. A replacement (`v[1] <- k`) reads the old value.
+#' Names `code` reads from other cells: as in R, line by line, every name
+#' it uses before the line that assigns it whole. That line's right side
+#' still reads the old value (`v <- v + 1`, #436), and so does a
+#' replacement (`v[1] <- k`).
 fuzz_refs <- function(code) {
-  m <- regmatches(code, gregexpr("\\bv[0-9]+\\b", code, perl = TRUE))[[1]]
-  whole <- regmatches(code, gregexpr("(?m)^v[0-9]+(?= <-)", code, perl = TRUE))[[1]]
-  # `s1(v) <- k` runs `s1<-`, and through it the method another cell defines.
-  calls <- regmatches(code, gregexpr("(?m)^s[0-9]+(?=\\()", code, perl = TRUE))[[1]]
-  setters <- if (length(calls)) c(paste0(calls, "<-"), paste0(calls, "<-.default"))
-  setdiff(unique(c(m, setters)), whole)
+  out <- character()
+  whole <- character()
+  for (line in strsplit(code, "\n", fixed = TRUE)[[1]]) {
+    m <- regmatches(line, gregexpr("\\bv[0-9]+\\b", line, perl = TRUE))[[1]]
+    lhs <- regmatches(line, regexpr("^v[0-9]+(?= <-)", line, perl = TRUE))
+    if (length(lhs)) m <- m[-1]
+    # `s1(v) <- k` runs `s1<-`, and through it the method another cell defines.
+    call <- regmatches(line, regexpr("^s[0-9]+(?=\\()", line, perl = TRUE))
+    if (length(call)) m <- c(m, paste0(call, "<-"), paste0(call, "<-.default"))
+    out <- union(out, setdiff(m, whole))
+    whole <- union(whole, lhs)
+  }
+  out
 }
 
 #' What `code` reads among `codes`: fuzz_refs(), less a default method
@@ -525,6 +625,13 @@ fuzz_descendants <- function(codes, id) {
 #' reader that isn't stale shows what the file holds. Writes do nothing.
 fuzz_reference <- function(codes, dir = NULL) {
   env <- new.env(parent = baseenv())
+  # A question gets its one answer (fuzz_answer()).
+  env$readline <- function(prompt = "") {
+    as.character(fuzz_answer(as.integer(sub("^q([0-9]+).*", "\\1", prompt))))
+  }
+  env$menu <- function(choices, graphics = FALSE, title = NULL) {
+    fuzz_answer(as.integer(sub("^q([0-9]+).*", "\\1", choices[1])), menu = TRUE)
+  }
   if (!is.null(dir)) {
     env$writeLines <- function(...) invisible(NULL)
     old <- setwd(dir)
@@ -589,6 +696,7 @@ fuzz_replay <- function(trace, timeout = 30) {
   ran_ok <- list()
   last <- list()
   dir <- if (isTRUE(trace$extras)) dirname(nb$state$path)
+  prompts <- isTRUE(trace$prompts)
   for (s in seq_along(trace$steps)) {
     step <- trace$steps[[s]]
     for (op in step$ops) {
@@ -603,7 +711,18 @@ fuzz_replay <- function(trace, timeout = 30) {
     if (!is.null(step$run) && (identical(step$run, "all") ||
                                step$run %in% vapply(notebook_snapshot(nb)$cells, `[[`, "", "id"))) {
       ids <- if (identical(step$run, "all")) NULL else step$run
-      res <- run_cells(nb, ids, wait = TRUE, timeout = timeout)
+      res <- run_cells(nb, ids, wait = !prompts, timeout = timeout)
+    }
+    interrupted <- FALSE
+    if (prompts) {
+      # Cells that ask wait for an answer, so the notebook goes idle only
+      # once each question is answered, after the step's `asking` actions.
+      d <- fuzz_drive(nb, step$asking, timeout)
+      if (length(d$problems)) return(list(step = s, problems = d$problems))
+      # An interrupt, an edit or another run after the run was asked for
+      # can leave cells it ran not fresh, as it should: a run by hand
+      # reruns a failed ancestor, which marks its other readers stale.
+      interrupted <- d$interrupted || d$disturbed
     }
     if (!wait_for(nb, is_idle, timeout = timeout)) {
       return(list(step = s, problems = "the notebook never went idle"))
@@ -611,14 +730,16 @@ fuzz_replay <- function(trace, timeout = 30) {
     snap <- notebook_snapshot(nb)
     for (v in snap$cells) {
       if (!identical(v$last_run, last[[v$id]])) {
-        ran[[v$id]] <- v$code
+        # With prompts, an edit can land while the cell runs, so take the
+        # code the result came from.
+        ran[[v$id]] <- if (prompts) nb$state$results[[v$id]]$code %||% v$code else v$code
         ran_ok[[v$id]] <- identical(v$status, "ok")
       }
     }
     last <- stats::setNames(lapply(snap$cells, `[[`, "last_run"), vapply(snap$cells, `[[`, "", "id"))
     ran <- ran[intersect(names(ran), names(last))]
     ran_ok <- ran_ok[intersect(names(ran_ok), names(last))]
-    problems <- fuzz_check(snap, ran, trace$mode, step$run, res, ran_ok, dir)
+    problems <- fuzz_check(snap, ran, trace$mode, if (!interrupted) step$run, res, ran_ok, dir)
     if (length(problems)) return(list(step = s, problems = problems))
     # A cell whose result is gone defines nothing as far as Ember's next
     # submit of it goes (drop_graph_error_results() reads `old$defined`
@@ -628,19 +749,79 @@ fuzz_replay <- function(trace, timeout = 30) {
   NULL
 }
 
+#' Answer each question a cell asks until the notebook is idle, taking the
+#' `asking` actions first, one per wait. Edits left over (no cell asked)
+#' are made at the end, and their runs driven too. Returns list(problems,
+#' interrupted, disturbed), `disturbed` when an edit or another run came
+#' after the step's run was asked for. An answer naming a question that
+#' isn't waiting must be refused, and an answer given must close its
+#' question.
+fuzz_drive <- function(nb, asking, timeout) {
+  problems <- character()
+  interrupted <- FALSE
+  disturbed <- FALSE
+  waiting <- function(snap) Find(function(v) !is.null(v$prompt), snap$cells)
+  for (k in seq_len(100)) {
+    if (!wait_for(nb, function(s) is_idle(s) || !is.null(waiting(s)), timeout = timeout)) {
+      return(list(problems = "the notebook never went idle or asked", interrupted = interrupted, disturbed = disturbed))
+    }
+    v <- waiting(notebook_snapshot(nb))
+    if (is.null(v)) {
+      edits <- Filter(function(a) identical(a$act, "edit"), asking)
+      if (!length(edits)) break
+      for (a in edits) for (op in a$ops) fuzz_apply(nb, op)
+      disturbed <- TRUE
+      asking <- list()
+      next
+    }
+    p <- v$prompt
+    act <- if (length(asking)) asking[[1]] else list(act = "answer")
+    asking <- asking[-1]
+    if (identical(act$act, "interrupt")) {
+      interrupt_notebook(nb)
+      interrupted <- TRUE
+      if (!wait_for(nb, function(s) { w <- waiting(s); is.null(w) || !identical(w$prompt$id, p$id) }, timeout = timeout)) {
+        return(list(problems = paste0("an interrupt didn't stop ", v$id, "'s question"), interrupted = TRUE, disturbed = disturbed))
+      }
+    } else if (identical(act$act, "edit")) {
+      for (op in act$ops) fuzz_apply(nb, op)
+      disturbed <- TRUE
+    } else if (identical(act$act, "run")) {
+      ids <- vapply(notebook_snapshot(nb)$cells, `[[`, "", "id")
+      cell <- if (identical(act$cell, "self")) v$id else act$cell
+      if (identical(cell, "all")) run_cells(nb) else if (cell %in% ids) run_cells(nb, cell)
+      disturbed <- TRUE
+    } else if (identical(act$act, "wrong")) {
+      taken <- tryCatch({ answer_input(nb, fuzz_answer_text(p), id = p$id + 1L); TRUE }, error = function(e) FALSE)
+      if (taken) problems <- c(problems, paste0("an answer naming a question that isn't waiting was given to ", v$id))
+    } else {
+      ok <- tryCatch({ answer_input(nb, fuzz_answer_text(p), cell = v$id, id = p$id); TRUE },
+                     error = function(e) conditionMessage(e))
+      # It can have stopped asking since the snapshot (an edit's rerun).
+      if (!isTRUE(ok) && !is.null(w <- waiting(notebook_snapshot(nb))) && identical(w$prompt$id, p$id)) {
+        problems <- c(problems, paste0("the answer to ", v$id, "'s question was refused: ", ok))
+      }
+      if (!wait_for(nb, function(s) { w <- waiting(s); is.null(w) || !identical(w$prompt$id, p$id) }, timeout = timeout)) {
+        problems <- c(problems, paste0("the answer to ", v$id, "'s question was lost: it still waits"))
+      }
+    }
+    if (length(problems)) break
+  }
+  list(problems = problems, interrupted = interrupted, disturbed = disturbed)
+}
+
 #' Wait until every cell whose last run read `file` and that has a result
 #' has taken in its change from outside: it is stale, queued or running, or
-#' has run again since `before`. A cell edited since it ran counts only
-#' when its code still reads the file: Ember watches what its code reads
-#' now. The shell sees the change on its poll, so
+#' has run again since `before`. A cell edited since it ran counts too:
+#' its result came from the file (#439). The shell sees the change on its
+#' poll, so
 #' this is what waiting for the notebook means after a file changes. FALSE
 #' if one hasn't within `timeout` seconds.
 fuzz_noticed <- function(nb, before, ran, file, timeout) {
   last <- stats::setNames(lapply(before$cells, `[[`, "last_run"), vapply(before$cells, `[[`, "", "id"))
   pattern <- sprintf('readLines("%s")', file)
   readers <- names(Filter(function(code) grepl(pattern, code, fixed = TRUE), ran))
-  code_now <- stats::setNames(lapply(before$cells, `[[`, "code"), names(last))
-  readers <- Filter(function(id) !is.null(last[[id]]) && grepl(pattern, code_now[[id]] %||% "", fixed = TRUE), readers)
+  readers <- Filter(function(id) !is.null(last[[id]]), readers)
   if (!length(readers)) return(TRUE)
   wait_for(nb, function(snap) {
     views <- stats::setNames(snap$cells, vapply(snap$cells, `[[`, "", "id"))
@@ -681,27 +862,16 @@ fuzz_check <- function(snap, ran, mode, run, res, ran_ok = list(), dir = NULL) {
   # outputs from scratch gives, so the reference uses the code each cell
   # ran. A cell edited since it ran keeps its old output, marked as edited.
   shown <- Filter(function(id) has_run(views[[id]]) && !is.null(ran[[id]]), names(views))
-  # A cell edited to stop reading a file isn't watched for it any more
-  # (#439), so it and what reads from it aren't checked against the file.
-  files_read <- function(code) regmatches(code, gregexpr('readLines\\("[^"]+"\\)', code))[[1]]
-  unwatched <- Filter(function(id) {
-    isTRUE(views[[id]]$code_differs) && length(setdiff(files_read(ran[[id]]), files_read(current[[id]])))
-  }, shown)
   ref <- fuzz_reference(ran[shown], dir)
   for (id in shown) {
     v <- views[[id]]
     # A cell that can't run now keeps its last output under its graph error
     # until something runs (drop_graph_error_results()): it is marked.
     if (isTRUE(v$stale) || id %in% blocked) next
-    # A file only an edited cell's old code read isn't watched any more
-    # (fuzz_noticed(), #439), so neither its value nor the values of what
-    # reads from it follow the file. Their staleness is still checked.
     reads <- fuzz_ancestors(ran[shown], id)
     want <- ref[[id]]
     got <- v$output$text
-    if (any(c(id, reads) %in% unwatched)) {
-      # not compared
-    } else if (!identical(v$status, want$status)) {
+    if (!identical(v$status, want$status)) {
       say(id, " shows ", v$status, " but running from scratch gives ", want$status)
     } else if (identical(want$status, "ok") && !identical(got, want$text)) {
       say(id, " shows ", deparse(got), " but running from scratch gives ", deparse(want$text))
@@ -774,7 +944,7 @@ fuzz_check <- function(snap, ran, mode, run, res, ran_ok = list(), dir = NULL) {
 #' A trace as R code that rebuilds it, for a failure message or a
 #' regression test.
 fuzz_format <- function(trace) {
-  paste(deparse(trace[intersect(c("mode", "extras", "cells", "steps"), names(trace))], width.cutoff = 100), collapse = "\n")
+  paste(deparse(trace[intersect(c("mode", "extras", "prompts", "cells", "steps"), names(trace))], width.cutoff = 100), collapse = "\n")
 }
 
 #' A problem without its cell ids and values, so shrinking keeps the same
@@ -808,6 +978,9 @@ fuzz_shrink <- function(trace, fails = NULL) {
       cands <- list()
       for (i in seq_len(n)) for (j in seq_along(trace$steps[[i]]$ops)) {
         t <- trace; t$steps[[i]]$ops <- t$steps[[i]]$ops[-j]; cands <- c(cands, list(t))
+      }
+      for (i in seq_len(n)) for (j in seq_along(trace$steps[[i]]$asking)) {
+        t <- trace; t$steps[[i]]$asking <- t$steps[[i]]$asking[-j]; cands <- c(cands, list(t))
       }
       for (i in seq_len(n)) if (!is.null(trace$steps[[i]]$run)) {
         t <- trace; t$steps[[i]]["run"] <- list(NULL); cands <- c(cands, list(t))

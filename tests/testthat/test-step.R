@@ -1094,6 +1094,59 @@ test_that("a data file that changed after its reader ran reruns the reader and i
   expect_false("W" %in% c(r2$state$pending, r2$state$worker$running$cell))
 })
 
+test_that("a cell edited to stop reading a data file goes stale when that file changes before it runs again (#439)", {
+  # Its result, and U's, came from the old file, so they are out of date
+  # the same as for a cell that still reads it.
+  r <- data_file_notebook("lazy")
+  r <- drive(r$state, ev_apply(list(op_set_code("R", "d <- data.frame(x = 4)")), at(20)))
+  expect_equal(r$state$graph$analyses$R$data_files, character())
+  expect_equal(watched_data_files(r$state), "d.csv")
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(21)))
+  expect_true(isTRUE(r2$state$results$R$stale))
+  expect_true(isTRUE(r2$state$results$U$stale))
+  expect_length(r2$state$pending, 0)
+  # Once it runs its new code, its result reads no file and nothing is watched.
+  r3 <- drive(r2$state, ev_run("R", at(22)))
+  r3 <- drive(r3$state, wk_done(1, r3$state$worker$running$token, report(created = "d"), at(23)))
+  expect_equal(watched_data_files(r3$state), character())
+})
+
+test_that("a run whose upstream cell is deleted while it runs ends stale, as the delete would leave it idle (#451)", {
+  s <- fake_state(list(S = cell(""), A = cell("v1 <- 1"), B = cell("v2 <- v1 + 5")))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "v1"), at(5)))
+  expect_equal(r$state$worker$running$cell, "B")
+  r2 <- drive(r$state, ev_apply(list(op_delete("A")), at(6)))
+  r3 <- drive(r2$state, wk_done(1, last_token(r), report(created = "v2"), at(7)))
+  expect_equal(r3$state$results$B$status, "ok")
+  expect_true(isTRUE(r3$state$results$B$stale))
+  # An edit runs nothing, in autorun too.
+  expect_equal(r3$state$pending, character())
+  # Its first run too, with no result to mark when the delete came.
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "v1"), at(5)))
+  r$state$results$B <- NULL
+  r2 <- drive(r$state, ev_apply(list(op_delete("A")), at(6)))
+  r3 <- drive(r2$state, wk_done(1, last_token(r), report(created = "v2"), at(7)))
+  expect_true(isTRUE(r3$state$results$B$stale))
+})
+
+test_that("in lazy mode a hand run that makes a queued cell's ancestor stale reruns that ancestor first (#453)", {
+  s <- fake_state(list(S = cell(""), C1 = cell("v1 <- 1"), C2 = cell("v2 <- v1 + 1"),
+                       C3 = cell("v3 <- v2 + 1"), C4 = cell("v3 + 1")), on_cell_change = "lazy")
+  r <- boot(s, c("C1", "C2", "C3", "C4"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "v1"), at(5)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "v2"), at(6)))
+  expect_equal(r$state$worker$running$cell, "C3")
+  # Run C2 again while C3 runs: C2 goes before C4, and makes C3 stale.
+  r <- drive(r$state, ev_run("C2", at(7)))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = "v3"), at(8)))
+  expect_equal(r$state$worker$running$cell, "C2")
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = "v2"), at(9)))
+  expect_equal(r$state$worker$running$cell, "C3")
+  expect_equal(r$state$pending, "C4")
+})
+
 test_that("in autorun a reader the file change reruns runs its stale ancestors first, not with their old values (#437)", {
   # Found by the scheduling fuzz test with data files: B was left stale (its
   # upstream deleted), and R reran alone on the change, reading B's old j.
@@ -2807,6 +2860,25 @@ test_that("a prompt from an older run or worker is ignored, and one that closes 
   r2 <- drive(r$state, wk_done(1, tok, report(status = "interrupted"), at(12)))
   expect_null(r2$state$worker$running)
   expect_s3_class(drive(r2$state, ev_answer_input("late", at(13)))$reply, "ember_refused")
+})
+
+test_that("deleting the cell that waits on a prompt interrupts it, so the worker is free again (#452)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell('y <- readline("Name? ")')))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(5)))
+  tok <- last_token(r)
+  r <- drive(r$state, wk_running(1, tok, at(6)), wk_input(1, tok, 1L, "Name? ", NULL, at(7)))
+  r2 <- drive(r$state, ev_apply(list(op_delete("B")), at(8)))
+  expect_null(r2$state$worker$running$prompt)
+  expect_true(any(vapply(r2$effects, function(e) identical(e$type, "interrupt"), logical(1))))
+  r3 <- drive(r2$state, wk_done(1, tok, report(status = "interrupted"), at(9)))
+  expect_equal(r3$state$worker$status, "ready")
+  expect_null(r3$state$results$B)
+  # A cell deleted while it runs without asking isn't interrupted: its run is discarded as before.
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(5)))
+  r2 <- drive(r$state, ev_apply(list(op_delete("B")), at(8)))
+  expect_false(any(vapply(r2$effects, function(e) identical(e$type, "interrupt"), logical(1))))
 })
 
 test_that("the page's projection carries the prompt and updates when only the prompt changes (#186)", {
