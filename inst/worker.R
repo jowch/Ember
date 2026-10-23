@@ -547,6 +547,7 @@ run_cell <- function(msg) {
     if (!is_text) exprs <- parse(text = msg$code, keep.source = TRUE,
                                  srcfile = srcfilecopy(msg$cell, msg$code))
     trace_line("eval", msg$cell)
+    watch_data <- data_watch_start(msg$data)
     dt_before <- datatable_before(before, unlist(owned, use.names = FALSE), if (is_text) text_lines else exprs)
 
     tryCatch(
@@ -581,6 +582,7 @@ run_cell <- function(msg) {
             }
             input_expect <<- input_expectation(msg$inputs, k, exprs[[k]])
             r <- withVisible(eval(exprs[[k]], globalenv()))
+            watch_data <- data_watch_step(watch_data, k)
             # A bound input's value changes without the cell rerunning, so
             # it isn't shown as the assigned value (design.md, "Which
             # values a cell shows"); the widget will be.
@@ -700,6 +702,11 @@ run_cell <- function(msg) {
     # An interrupt arriving inside is passed on once the block completes
     # (caught by the `interrupt=` below), so the cell is reported
     # "interrupted" with the bookkeeping done.
+    # The expression that stopped the run (an error or an interrupt) had
+    # its change, if any, counted here.
+    watch_data <- data_watch_step(watch_data, at)
+    rc$data_seen <- watch_data$seen
+    rc$data_changed <- watch_data$changed
     trace_line("evaluated", msg$cell, rc$status)
     uninterrupted({
       rc$runtime <- unname((proc.time() - t0)[["elapsed"]])
@@ -863,6 +870,42 @@ run_cell <- function(msg) {
   })
 
   rc
+}
+
+#' A data file's version (#276), as the server's shell.R data_signature()
+#' writes it: modified time and size, or "missing".
+data_signature <- function(full) {
+  info <- tryCatch(file.info(full), error = function(e) NULL)
+  if (is.null(info) || is.na(info$mtime)) return("missing")
+  sprintf("%.6f %.0f", as.numeric(info$mtime), as.numeric(info$size))
+}
+
+#' The data files a run watches (#276; the run message's `data`): each
+#' one's version before the cell's code runs. `NULL` when it reads none.
+data_watch_start <- function(files) {
+  if (length(files) == 0) return(NULL)
+  paths <- vapply(files, function(f) f$path, character(1))
+  list(files = files,
+       seen = stats::setNames(lapply(files, function(f) data_signature(f$full)), paths),
+       changed = character())
+}
+
+#' After top-level expression `k`: a data file whose version changed
+#' during it, after an earlier expression read or wrote it, and that `k`
+#' itself doesn't read or write, was changed by someone else while the
+#' cell held what it read (#276). A change before the cell reads the file
+#' is read with it.
+data_watch_step <- function(data, k) {
+  if (is.null(data) || length(k) != 1 || k < 1) return(data)
+  for (f in data$files) {
+    now <- data_signature(f$full)
+    if (!identical(now, data$seen[[f$path]])) {
+      touch <- as.integer(unlist(f$touch))
+      if (length(touch) && k > min(touch) && !(k %in% touch)) data$changed <- union(data$changed, f$path)
+      data$seen[[f$path]] <- now
+    }
+  }
+  data
 }
 
 #' Remove a cell's globals and display data (before a rerun, or on delete).

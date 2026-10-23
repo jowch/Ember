@@ -40,6 +40,7 @@ new_accumulator <- function(read_file, file, stack) {
   acc$extra_pkgs <- list()
   acc$extra_settings <- list()
   acc$extra_sourced <- list()
+  acc$data_rows <- list()
   acc$extra_notes <- list()
   acc$method_rows <- list()
   acc$no_formals <- character()
