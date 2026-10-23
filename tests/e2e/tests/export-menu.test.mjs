@@ -17,7 +17,7 @@ function downloadsDir(t) {
 
 async function download(page, dir, name) {
   const [file] = await Promise.all([
-    page.waitForEvent("download", { timeout: 10000 }),
+    page.waitForEvent("download", { timeout: 0 }),
     page.getByRole("menuitem", { name, exact: true }).click(),
   ]);
   const dest = path.join(dir, file.suggestedFilename());
@@ -65,20 +65,37 @@ test("export menu: three items, downloads, Esc returns focus (161)", async (t) =
   assertNoProblems(page);
 });
 
-test("export menu: safe preview shows the note and downloads without asking (162)", async (t) => {
+test("export menu: safe preview shows the note and downloads without asking (162)", { timeout: 240000 }, async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "export-menu-162.server.log") });
   const browser = await launchBrowser();
-  t.after(async () => { await browser.close(); server.stop(); });
+  const page = await newPage(browser);
+  // The step it is on. It failed once with no message kept (#383), so a
+  // failure says where it was and what the page showed. The waits have no
+  // timeouts of their own; the test's, under the runner's 300 s, is only
+  // there so the test is the one cancelled and this hook runs.
+  let at = "";
+  t.after(async () => {
+    if (at) {
+      const shown = await page.evaluate(() => document.body.innerText.slice(0, 2000).replace(/\s*\n\s*/g, " | "))
+        .catch((e) => `(unreadable: ${e.message})`);
+      t.diagnostic(`stopped at: ${at}; the page shows: ${shown}`);
+    }
+    await browser.close();
+    server.stop();
+  });
   const downloads = downloadsDir(t);
 
-  const page = await newPage(browser);
+  at = "opening the notebook";
   await openNotebook(page, server.origin, server.secret, notebook);
-  await page.locator("#ember-safe-preview").waitFor({ timeout: 10000 });
+  at = "waiting for the safe preview banner";
+  await page.locator("#ember-safe-preview").waitFor({ timeout: 0 });
 
+  at = "opening the Export menu";
   await page.locator("header#pluto-nav button.toggle_export").click();
   const menu = page.locator('[role="menu"]');
-  await menu.waitFor({ timeout: 5000 });
+  await menu.waitFor({ timeout: 0 });
+  at = "reading the Export menu";
   assert.equal(
     (await menu.locator(".ember-menu-note").innerText()).trim(),
     "This notebook hasn't run, so HTML and PDF have code but no outputs.");
@@ -86,13 +103,16 @@ test("export menu: safe preview shows the note and downloads without asking (162
     await menu.locator(".ember-menuitem-desc").allInnerTexts(),
     ["The notebook itself. Runs with Rscript.", "Code only, for now.", "Code only, for now."]);
 
+  at = "downloading HTML";
   const exported = await download(page, downloads, "Download HTML");
   assert.match(exported.text, /id="ember-modules"/);
 
   // On a phone the items are in ⋯, which isn't about exporting, so each item points at the note.
+  at = "opening ⋯ at 390 px";
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole("button", { name: "More", exact: true }).click();
-  await page.waitForSelector(".ember-menu .ember-menu-note", { timeout: 5000 });
+  await page.waitForSelector(".ember-menu .ember-menu-note", { timeout: 0 });
+  at = "reading ⋯";
   const described = await page.evaluate(() =>
     [...document.querySelectorAll('.ember-menu a.ember-menuitem[aria-labelledby^="ember-export"]')].map((a) => a.getAttribute("aria-describedby")));
   assert.deepEqual(described, [
@@ -101,4 +121,5 @@ test("export menu: safe preview shows the note and downloads without asking (162
     "ember-export-print-desc ember-export-note",
   ]);
   assertNoProblems(page);
+  at = "";
 });
