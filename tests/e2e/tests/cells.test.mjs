@@ -253,12 +253,14 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
   await page.addInitScript(() => {
     window.__bTops = [];
     window.__staticHeights = {};
+    window.__fontAtFirstStatic = null;
     const tick = () => {
       const b = document.querySelector('pluto-cell[id="B"]');
       if (b) window.__bTops.push(b.getBoundingClientRect().top + window.scrollY);
       for (const c of document.querySelectorAll("pluto-cell")) {
         const fake = c.querySelector("pluto-input .cm-ssr-fake");
         if (fake && !(c.id in window.__staticHeights)) window.__staticHeights[c.id] = fake.getBoundingClientRect().height;
+        if (fake && window.__fontAtFirstStatic == null) window.__fontAtFirstStatic = document.fonts.check(`13px ${getComputedStyle(fake.querySelector(".cm-content")).fontFamily}`);
       }
       requestAnimationFrame(tick);
     };
@@ -284,11 +286,15 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
   // One more frame, so the recorder has seen the layout with every editor.
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 
-  const { tops, statics, editors } = await page.evaluate(() => ({
+  const { tops, statics, editors, font } = await page.evaluate(() => ({
+    font: window.__fontAtFirstStatic,
     tops: window.__bTops,
     statics: window.__staticHeights,
     editors: Object.fromEntries([...document.querySelectorAll("pluto-cell")].map((c) => [c.id, c.querySelector("pluto-input .cm-editor").getBoundingClientRect().height])),
   }));
+  // In a fallback font a long line can wrap into a different number of
+  // rows (Consolas on Windows, #400).
+  assert.equal(font, true, "the code font is loaded when the first static code is drawn");
   assert.deepEqual(Object.keys(statics).sort(), ["A", "B", "I", "L", "S", "T", "U", "W"], "every cell showed its static code first");
   for (const [id, h] of Object.entries(statics)) near(h, editors[id], `cell ${id}'s static code height`);
   assert.deepEqual([...new Set(tops)], [tops[0]], "B never moves while the editors load");
