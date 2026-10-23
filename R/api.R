@@ -314,6 +314,33 @@ interrupt_notebook <- function(nb) {
   invisible(NULL)
 }
 
+#' Answer the prompt the running cell waits on (#186).
+#'
+#' A cell that asks a question (`readline()`, `menu()`, `askYesNo()`,
+#' `select.list()`, so a package's "Do you want to download...?") waits for
+#' an answer, as in an R console. The snapshot shows the question as the
+#' running cell's `prompt`, `list(id, text, choices)`; `choices` are
+#' `menu()`'s, answered by number or by the choice itself. Interrupting the
+#' cell stops the wait.
+#'
+#' @param text The answer, one string, as typed at the prompt.
+#' @param cell The cell the answer is for (id or index), or `NULL` for
+#'   whichever cell runs. Given, an answer meant for a cell that has since
+#'   stopped waiting is refused rather than given to another cell's prompt.
+#' @param id The prompt's `id` from the snapshot, or `NULL` for whichever
+#'   question waits. Given, an answer to a question already answered (and
+#'   asked again, as `menu()` does after a bad answer) is refused.
+#' @return `TRUE`, invisibly. With nothing waiting (or another cell
+#'   waiting), an `ember_refused` error.
+#' @export
+answer_input <- function(nb, text, cell = NULL, id = NULL) {
+  if (!is.character(text) || length(text) != 1 || is.na(text)) stop("ember: `text` must be one string")
+  if (!is.null(cell)) cell <- resolve_cell_id(nb, cell)
+  reply <- dispatch(nb, ev_answer_input(text, at = Sys.time(), cell = cell, id = id))
+  if (inherits(reply, "ember_refused")) stop(reply)
+  invisible(TRUE)
+}
+
 #' Replace the worker with a new one. Every cell is left not run.
 #'
 #' Refused (an `ember_refused` condition) in safe preview.

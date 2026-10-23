@@ -184,8 +184,9 @@ preview_update <- function(nb, name, version = NULL, wait = TRUE, timeout = 60) 
 #'
 #' Reads the lock from the file, builds its library if needed (blocking;
 #' the same installer and layout as a session), then runs the file with
-#' `Rscript --vanilla` and `R_LIBS_USER` set to that library, as the worker
-#' is started. Does not resolve: the lock is the authority here. If the
+#' `Rscript --vanilla` and `R_LIBS_USER` set to that library. Unlike the
+#' worker, which runs interactive (#186), it is not interactive, so a cell
+#' that asks (`readline()`, `menu()`) gets "" or fails, as under `Rscript`. Does not resolve: the lock is the authority here. If the
 #' code names packages the lock lacks, it says so and runs anyway (R will
 #' report the missing package), since resolving would change the file.
 #'

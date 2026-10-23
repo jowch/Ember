@@ -228,7 +228,10 @@ session uses. Install calls (\code{remotes::install_github()},
 \code{install.packages()}, ...) at a cell's top level don't run, as in a
 session: \code{run()} runs a copy of the file without them, from the file's
 own folder, and says once which packages the lock gives. The copy is a
-temporary file, so \code{commandArgs()} names it, not the notebook.
+temporary file, so \code{commandArgs()} names it, not the notebook. It
+runs under \code{Rscript}, which isn't interactive as a session's cells
+are, so a cell that asks (\code{readline()}, \code{menu()}) gets \code{""}
+or fails there.
 
 \code{clean()} never deletes a library an open session in this process is using,
 and never touches a user's own renv projects: Ember keeps its own renv

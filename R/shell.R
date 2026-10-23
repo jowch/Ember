@@ -65,6 +65,7 @@ session_start <- function(state) {
   nb$rx <- list(chunks = list(), n = 0L)
   nb$out_tail <- ""
   nb$watch <- list()
+  nb$data_watch <- list()
   nb$last_watch_check <- NULL
   nb$last_mem_check <- NULL
   nb$worker_rss_reported <- NULL
@@ -439,6 +440,7 @@ after_dispatch <- function(nb, before) {
   if (!identical(inputs, nb$watch_inputs)) {
     nb$watch_inputs <- inputs
     sync_watch(nb, watched_files(nb$state))
+    sync_data_watch(nb, watched_data_files(nb$state))
   }
   # Any dispatch can have changed `target`/`active` (an install finished, a
   # switch happened, a close unregistered this session already): keep
@@ -822,7 +824,7 @@ ready_worker_image <- function(src = system.file("worker.R", package = "ember"),
   NULL
 }
 
-#' The `-e` line a worker starts with: load the compiled image named by
+#' The line a worker boots with (`send_worker_boot()`): load the compiled image named by
 #' EMBER_WORKER_IMAGE into a private environment whose parent is
 #' baseenv(), or, with no image or one that fails to load, source
 #' worker.R there (worker.R's header), then call main().
@@ -831,6 +833,33 @@ worker_boot <- function() {
     "local({e <- new.env(parent = baseenv()); img <- Sys.getenv('EMBER_WORKER_IMAGE'); ",
     "if (!nzchar(img) || inherits(tryCatch(compiler::loadcmp(img, e), error = identity), 'error')) ",
     "sys.source(Sys.getenv('EMBER_WORKER'), e); e$main()})")
+}
+
+#' The command a worker starts with (#186): an interactive R, so
+#' `interactive()` is `TRUE` and a package's prompt asks, as in an R
+#' console (worker.R's "Prompts"). It reads its boot line from stdin
+#' (`send_worker_boot()`): R reading its code from a file, as `Rscript -e`
+#' does, is never interactive, whatever the flags. On Windows Rterm's
+#' `--ess` asserts interactive use, as `--interactive` does elsewhere.
+#' `--no-echo` keeps R's prompt off the worker's output.
+worker_command <- function(port) {
+  args <- c("--no-echo", "--vanilla", "--args", as.character(port))
+  if (.Platform$OS.type == "windows") {
+    list(command = file.path(R.home("bin"), "Rterm.exe"), args = c("--ess", args))
+  } else {
+    list(command = file.path(R.home("bin"), "R"), args = c("--interactive", args))
+  }
+}
+
+#' Write the boot line to a worker just started with `stdin = "|"`, then
+#' close its stdin, so R's own console reads in a cell (`scan("")`,
+#' `readLines(stdin())`) get no input, as under `Rscript`, and the worker
+#' ends when its loop does.
+send_worker_boot <- function(proc) {
+  rest <- charToRaw(paste0(worker_boot(), "\n"))
+  while (length(rest)) rest <- proc$write_input(rest)
+  close(proc$get_input_connection())
+  invisible(NULL)
 }
 
 #' Spawn a worker. Never waits for it: the connection is accepted by the
@@ -851,8 +880,7 @@ start_worker_process <- function(nb, fx) {
   if (!dir.exists(lib)) dir.create(lib, recursive = TRUE, showWarnings = FALSE)
   tryCatch(touch_library(lib), error = function(e) NULL)
 
-  rscript <- file.path(R.home("bin"), "Rscript")
-  boot <- worker_boot()
+  cmd <- worker_command(nb$port)
   env <- c("current",
            R_LIBS_USER = lib, R_LIBS = "", R_LIBS_SITE = "",
            EMBER_WORKER = system.file("worker.R", package = "ember"),
@@ -870,9 +898,10 @@ start_worker_process <- function(nb, fx) {
   # reach the worker itself. Processes a cell started go with the worker's
   # process group, through `start_reaper()` (#150).
   proc <- processx::process$new(
-    rscript, c("--vanilla", "-e", boot, as.character(nb$port)),
-    env = env, wd = wd, stdout = "|", stderr = "2>&1", cleanup_tree = TRUE,
+    cmd$command, cmd$args,
+    env = env, wd = wd, stdin = "|", stdout = "|", stderr = "2>&1", cleanup_tree = TRUE,
     supervise = TRUE)
+  send_worker_boot(proc)
   end_reaper(nb)
   nb$reaper <- start_reaper(proc)
 
@@ -1132,6 +1161,7 @@ poll <- function(nb) {
         }
         ev <- worker_event(msg, nb$proc_gen, Sys.time(), secret = nb$secret)
         if (identical(ev$type, "wk_hello")) nb$worker_tmp <- worker_tempdir(msg$tempdir)
+        if (identical(ev$type, "wk_done")) check_data_files(nb, enqueue)
         enqueue(nb, ev)
         if (identical(ev$type, "wk_failed")) {
           # A worker that speaks nonsense, or gives the wrong secret, can't
@@ -1191,6 +1221,7 @@ poll <- function(nb) {
       }
     }
     if (length(changed) > 0) dispatch(nb, ev_files_read(changed, at = Sys.time()))
+    check_data_files(nb, dispatch)
   }
 
   watch_worker_output(nb)
@@ -1268,6 +1299,37 @@ write_frame <- function(con, msg) {
   invisible(NULL)
 }
 
+#' Compare the watched data files with what the shell last saw (#276) and
+#' send `data_changed` for those whose contents changed, through `send`
+#' (`dispatch` from the poll, `enqueue` ahead of a run's result). Checked
+#' before a run's result is queued, too, so that a cell that wrote one of
+#' them has its readers queued or stale before the notebook goes idle: the
+#' poll alone would find the change only after `run_cells(wait = TRUE)`
+#' had returned with the readers' old results.
+check_data_files <- function(nb, send) {
+  # Data files (#276): only a change of contents counts, so a file
+  # rewritten with the same bytes reruns nothing. A new size is a change
+  # without reading the file; the same size is told apart by its hash,
+  # which a file has only after its first such rewrite (hashing every
+  # data file when the notebook opens would read them all).
+  data_changed <- list()
+  for (p in names(nb$data_watch)) {
+    full <- resolve_source_path(nb, p)
+    info <- data_file_info(full)
+    w <- nb$data_watch[[p]]
+    if (!isTRUE(identical(info$mtime, w$mtime))) {
+      same_size <- isTRUE(identical(info$size, w$size)) && !is.na(info$size)
+      hash <- if (same_size) data_file_hash(full) else NA_character_
+      nb$data_watch[[p]] <- list(mtime = info$mtime, size = info$size, hash = hash)
+      if (!same_size || is.na(hash) || !identical(hash, w$hash)) {
+        data_changed[[p]] <- data_signature(info)
+      }
+    }
+  }
+  if (length(data_changed) > 0) send(nb, ev_data_changed(data_changed, at = Sys.time()))
+  invisible(NULL)
+}
+
 #' Turn a wire message into a core event (the boundary: validate here,
 #' trust inside). A malformed message, or a hello with the wrong secret,
 #' becomes `wk_failed(gen, "protocol error: ...")`; the poll kills the
@@ -1282,6 +1344,8 @@ worker_event <- function(msg, gen, at, secret = NULL) {
     running  = c("token"),
     console  = c("token", "item"),
     source   = c("token", "path", "text"),
+    input    = c("token", "id", "prompt"),
+    input_closed = c("token", "id"),
     done     = c("token", "report"),
     rendered = c("cell", "token"),
     input_set = c("cell", "name", "ok"),
@@ -1305,6 +1369,8 @@ worker_event <- function(msg, gen, at, secret = NULL) {
     running  = wk_running(gen, msg$token, at),
     console  = wk_console(gen, msg$token, msg$item, at),
     source   = wk_source(gen, msg$token, msg$path, msg$text, at),
+    input    = wk_input(gen, msg$token, msg$id, msg$prompt, msg$choices, at),
+    input_closed = wk_input_closed(gen, msg$token, msg$id, at),
     done     = {
       report <- msg$report
       report$output <- as_display(report$output)
@@ -1402,6 +1468,38 @@ sync_watch <- function(nb, paths) {
     nb$watch[[p]] <- NULL
   }
   invisible(NULL)
+}
+
+#' The same for data files (#276), keeping each one's modified time and
+#' size; the poll adds a hash once a rewrite keeps the size.
+sync_data_watch <- function(nb, paths) {
+  old <- names(nb$data_watch)
+  for (p in setdiff(paths, old)) {
+    info <- data_file_info(resolve_source_path(nb, p))
+    nb$data_watch[[p]] <- list(mtime = info$mtime, size = info$size, hash = NA_character_)
+  }
+  for (p in setdiff(old, paths)) {
+    nb$data_watch[[p]] <- NULL
+  }
+  invisible(NULL)
+}
+
+#' A data file's modified time and size, both `NA` when it is missing.
+data_file_info <- function(full) {
+  tryCatch(as.list(file.info(full)[, c("mtime", "size")]),
+           error = function(e) list(mtime = NA, size = NA))
+}
+
+#' What step.R compares to tell whether a reader saw a data file's current
+#' version (#276): its modified time and size as text, or `"missing"`.
+data_signature <- function(info) {
+  # inst/worker.R's data_signature() must write the same text.
+  if (is.na(info$mtime)) "missing" else sprintf("%.6f %.0f", as.numeric(info$mtime), as.numeric(info$size))
+}
+
+#' A data file's md5, or `NA` when it is missing or can't be read.
+data_file_hash <- function(path) {
+  tryCatch(unname(tools::md5sum(path)), error = function(e) NA_character_)
 }
 
 #' What a failed index fetch said, for a problem row: the child's `stop()`

@@ -551,6 +551,102 @@ const SourceDetail = ({ row, read_only }) => {
     `
 }
 
+/**
+ * Under a package's version, when CRAN has a newer one (#23): "1.2.1
+ * available · Update". Update asks Ember to move the notebook's date to
+ * the first day that version was current (`ember_update_package`), and
+ * the row's question (`PackageUpdateDetail`) shows what else moves before
+ * anything changes. Nothing to click in a read-only notebook, or while
+ * this row's update is already being asked.
+ *
+ * @param {{ row: import("./Editor.js").EmberPackageRow, read_only: boolean, asking: boolean }} props
+ */
+const AvailableVersion = ({ row, read_only, asking }) => {
+    const pluto_actions = useContext(PlutoActionsContext)
+    if (row.available == null) return null
+    return html`<div class="ember-package-available">
+        ${t("t_ember_packages_available", { version: row.available })}
+        ${read_only || asking
+            ? null
+            : html` · <button
+                      type="button"
+                      class="ember-link-btn"
+                      aria-label=${t("t_ember_packages_update_one_label", { name: row.name, version: row.available })}
+                      onClick=${() => pluto_actions.ember_update_package(row.name, row.available)}
+                  >
+                      ${t("t_ember_update_packages")}
+                  </button>`}
+    </div>`
+}
+
+/** One other package a row's update moves: "name from → to", one it adds, or one it drops. */
+const update_one_change = (c) =>
+    c.from == null
+        ? t("t_ember_packages_update_one_added", { name: c.name, version: c.to })
+        : c.to == null
+        ? t("t_ember_packages_step_back_dropped", { name: c.name, version: c.from })
+        : `${c.name} ${c.from} → ${c.to}`
+
+/**
+ * The question under a row whose Update was clicked (#23, `packages.package_update`):
+ * "Finding the date…" while Ember looks it up, then what moving the date
+ * changes besides this package, with Update and Cancel; or why it can't,
+ * with Close.
+ *
+ * @param {{ update: import("./Editor.js").EmberPackageUpdate }} props
+ */
+const PackageUpdateDetail = ({ update }) => {
+    const pluto_actions = useContext(PlutoActionsContext)
+    const cancel = html`<button type="button" class="ember-btn" onClick=${() => pluto_actions.ember_cancel_update()}>
+        ${update.status === "failed" ? t("t_close") : t("t_cancel")}
+    </button>`
+    return html`
+        <tr class="ember-package-detail ember-package-update" key=${`${update.name} update`}>
+            <td colspan="3">
+                ${update.status === "checking"
+                    ? html`<p class="ember-package-update-checking">
+                          ${t("t_ember_packages_update_one_checking", { name: update.name, version: update.version ?? "" })}
+                      </p>`
+                    : update.status === "failed"
+                    ? html`<p class="ember-package-source-failed">
+                              ${t("t_ember_packages_update_one_failed", { name: update.name, reason: update.message ?? "" })}
+                          </p>
+                          <div class="ember-package-source-actions">${cancel}</div>`
+                    : html`<p class="ember-package-update-question">
+                              ${update.changes.length === 0
+                                  ? t("t_ember_packages_update_one_alone", { name: update.name, version: update.version ?? "", date: update.date ?? "" })
+                                  : t("t_ember_packages_update_one_question", {
+                                        name: update.name,
+                                        version: update.version ?? "",
+                                        date: update.date ?? "",
+                                        changes: update.changes.map(update_one_change).join(", "),
+                                    })}
+                              ${update.restart.length > 0 ? " " + t("t_ember_packages_step_back_restart", { names: update.restart.join(", ") }) : ""}
+                          </p>
+                          <div class="ember-package-source-actions">
+                              <button type="button" class="ember-btn primary" onClick=${() => pluto_actions.ember_apply_update(update.date)}>
+                                  ${t("t_ember_packages_update_one_apply", { name: update.name })}
+                              </button>
+                              ${cancel}
+                          </div>`}
+            </td>
+        </tr>
+    `
+}
+
+/**
+ * Asks the server, once per opening of the tab, for CRAN's release dates
+ * (`ember_check_versions`, #23), so rows can say when CRAN has a newer
+ * version. They are cached for a day, so this is usually instant.
+ */
+const CheckVersions = () => {
+    const pluto_actions = useContext(PlutoActionsContext)
+    useEffect(() => {
+        pluto_actions.ember_check_versions?.()
+    }, [])
+    return null
+}
+
 /** Bytes as "512 KB", "3.4 MB", "1.2 GB" (powers of 1000, as file managers show them). */
 export const format_bytes = (bytes, lang = getCurrentLanguage()) => {
     const units = ["B", "KB", "MB", "GB", "TB"]
@@ -686,7 +782,7 @@ const DiskUse = () => {
  */
 export const PackagesTab = ({ packages, read_only = false }) => {
     if (packages == null) return null
-    const { snapshot, r_version, library, rows, update } = packages
+    const { snapshot, r_version, library, rows, update, package_update } = packages
     const direct_rows = rows.filter((row) => row.direct)
     const cards = install_cards(library.failures, direct_rows.map((row) => row.name))
     // The one card that shows the system-library command (`failure_fixes()`).
@@ -746,14 +842,20 @@ export const PackagesTab = ({ packages, read_only = false }) => {
                           ${direct_rows.map(
                               (row) => html`<tr class="ember-package-row ember-package-${row.status}" key=${row.name}>
                                       <td class="ember-mono">${row.name}</td>
-                                      <td class="ember-mono">${row.version ?? "—"}${github_source_label(row.source)}</td>
+                                      <td class="ember-mono">
+                                          ${row.version ?? "—"}${github_source_label(row.source)}
+                                          <${AvailableVersion} row=${row} read_only=${read_only} asking=${package_update?.name === row.name} />
+                                      </td>
                                       <td title=${row.message ?? ""}><${PackageStatus} row=${row} /></td>
                                   </tr>
+                                  ${package_update?.name === row.name && !read_only
+                                      ? html`<${PackageUpdateDetail} key=${`${row.name} update`} update=${package_update} />`
+                                      : null}
                                   <${SourceDetail} key=${`${row.name} source`} row=${row} read_only=${read_only} />`
                           )}
                       </tbody>
                   </table>`}
-            ${read_only ? null : html`<${DiskUse} />`}
+            ${read_only ? null : html`<${DiskUse} /><${CheckVersions} />`}
         </div>
     `
 }

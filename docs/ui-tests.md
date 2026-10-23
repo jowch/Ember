@@ -156,6 +156,10 @@ it matters.
     undo history; outside the editors, Ctrl+Z brings back deletes, last
     first. Backspace pressed while a delete is in flight still deletes
     (#349, #353, `undo-delete.test.mjs`).
+47. Prompts: a cell's `readline()` waits under its console with the field
+    focused; the typed answer and Enter finish the cell, whose console shows
+    the question and the answer. `menu()`'s choices are buttons that answer
+    with their number (#186, `prompts.test.mjs`).
 
 **Running locally**: `npm --prefix tests/e2e ci` then `npm --prefix
 tests/e2e test`. `npm test` (tests/e2e/run.mjs) installs the working tree
