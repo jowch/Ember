@@ -24,8 +24,11 @@ import { pageProblems, emulatePlatform, formatProblems } from "../layout-check.m
 const WIDTHS = [600, 900, 1440];
 
 /** Known open bugs: { rule, where (a substring of the problem's where),
- * issue }. */
-const KNOWN = [];
+ * detail (optional, a substring of its detail), issue }. */
+const KNOWN = [
+  // The floating "Run all changed" button covers a scrolled cell's menu.
+  { rule: "covered", where: "button.input_context_menu", detail: "by preamble > div#saveall-container", issue: 456 },
+];
 const used = new Set();
 
 /** Check the page at each width (and in dark mode at 900), save a
@@ -40,7 +43,7 @@ async function sweep(page, label) {
     const name = `ui-sweep-${label}-${width}-${scheme}`;
     await page.screenshot({ path: path.join(artifactsDir(), name + ".png"), fullPage: true });
     for (const p of await pageProblems(page)) {
-      const known = KNOWN.find((k) => k.rule === p.rule && p.where.includes(k.where));
+      const known = KNOWN.find((k) => k.rule === p.rule && p.where.includes(k.where) && p.detail.includes(k.detail ?? ""));
       if (known) used.add(known);
       else found.push({ ...p, at: `${width} ${scheme}` });
     }
