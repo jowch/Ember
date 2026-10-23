@@ -279,7 +279,7 @@ test_that("release dates that can't be fetched fail the preview and say where fr
 # ---- #450: a download cut short is fetched again --------------------------------
 
 test_that("a package download cut short is deleted and fetched again, and the install finishes (#450)", {
-  # The toy repo over HTTP, cutting renv's first download of each archive
+  # The toy repo over HTTP, cutting the first download of each archive
   # in half: renv installs what it downloaded without opening it, so
   # without the installer's second try the install fails.
   root <- normalizePath(testthat::test_path("fixtures", "repos", "toy"), mustWork = TRUE)
@@ -314,8 +314,10 @@ test_that("a package download cut short is deleted and fetched again, and the in
   expect_equal(status$library$status, "ready",
                info = paste(c(status$library$message, notebook_state(nb)$packages$target$log), collapse = "\n"))
   expect_equal(snap_view(notebook_snapshot(nb), "A")$output$text, "[1] \"toyA 0.1 says: hello from toyB\"")
-  # Each archive was cut once and fetched whole the second time.
-  got <- c(first, server$read_output_lines())
+  # Each archive was cut once and fetched whole the second time. The
+  # server is asked to exit first, so all it printed can be read to the end.
+  invisible(tryCatch(curlGetHeaders(sprintf("http://127.0.0.1:%s/__quit", port)), error = function(e) NULL))
+  got <- c(first, server$read_all_output_lines())
   expect_true(all(c("GET toyA_0.1.tar.gz 2", "GET toyB_1.0.tar.gz 2") %in% trimws(got)), info = paste(got, collapse = "\n"))
 })
 
