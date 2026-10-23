@@ -18,6 +18,33 @@ pluto-input .cm-editor .cm-gutters {
 pluto-input .cm-editor .cm-gutter.cm-lineNumbers {
     min-width: 34px;
 }
+/* The static code shown until a cell's editor loads (StaticCodeMirrorFaker
+   in CellInput.js) reuses CodeMirror's class names, but CodeMirror adds its
+   own styles only when the first editor is made. Without these, the gutter
+   sits above the code instead of beside it, and every cell below moves up
+   23 px when the editor replaces it (#375). Taken from CodeMirror's base
+   theme. */
+pluto-input .cm-ssr-fake .cm-scroller {
+    display: flex;
+    align-items: flex-start;
+}
+pluto-input .cm-ssr-fake .cm-gutters {
+    display: flex;
+    flex-shrink: 0;
+    min-height: 100%;
+}
+pluto-input .cm-ssr-fake .cm-content {
+    display: block;
+    flex-grow: 2;
+    flex-shrink: 1;
+    box-sizing: border-box;
+    min-height: 100%;
+    margin: 0;
+    white-space: pre-wrap;
+    white-space: break-spaces;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+}
 pluto-input .cm-editor .cm-lineNumbers .cm-gutterElement {
     box-sizing: border-box;
     padding: 0 10px 0 4px;

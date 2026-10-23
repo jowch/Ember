@@ -221,6 +221,71 @@ test("cell menu: item order, move down, hide code, Disable on every code cell (1
   assertNoProblems(page);
 });
 
+// Until a cell's editor loads, its code is shown by a static copy
+// (StaticCodeMirrorFaker). The copy has to be as tall as the editor, or every
+// cell below moves when the editor replaces it: by 23 px per cell above
+// before #375. L and W, whose lines wrap, sit below B: a new editor's first
+// frame guesses a wrapped line's height (#379), which would move B too.
+test("opening: a cell's static code is as tall as its editor, so nothing below moves when editors load (#375)", async (t) => {
+  const long = `x <- c(${Array.from({ length: 300 }, (_, i) => i).join(", ")})`;
+  const notebook = path.join(mkdtempSync(path.join(tmpdir(), "ember-e2e-static-")), "static.R");
+  writeFileSync(notebook, [
+    "### An Ember notebook ###", "# /// environment", '# ember_version = "0.0.0.9000"', '# r_version = "4.6.1"', '# snapshot = "2026-01-01"', "# ///", "",
+    "# %% id=S", "",
+    "# %% id=A", "x <- 1", "",
+    "# %% id=I", "f <- function(a) {", "    if (a) {", "        print(a)", "", "    }", "}", "",
+    "# %% id=B", "x + 1", "",
+    "# %% id=L", long, "",
+    "# %% id=W", `s <- "${"abcdefghij".repeat(80)}"`, "",
+  ].join("\n"), "utf8");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-static.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  // From the first frame: B's top, and each cell's height while it shows
+  // the static copy.
+  await page.addInitScript(() => {
+    window.__bTops = [];
+    window.__staticHeights = {};
+    const tick = () => {
+      const b = document.querySelector('pluto-cell[id="B"]');
+      if (b) window.__bTops.push(b.getBoundingClientRect().top + window.scrollY);
+      for (const c of document.querySelectorAll("pluto-cell")) {
+        const fake = c.querySelector("pluto-input .cm-ssr-fake");
+        if (fake && !(c.id in window.__staticHeights)) window.__staticHeights[c.id] = fake.getBoundingClientRect().height;
+      }
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+  await openNotebook(page, server.origin, server.secret, notebook);
+  // An editor loads once its cell is in view, so bring each static one into
+  // view in turn and wait for its editor.
+  for (;;) {
+    const id = await page.evaluate(() => {
+      const cell = document.querySelector("pluto-input .cm-ssr-fake")?.closest("pluto-cell");
+      cell?.scrollIntoView();
+      return cell?.id ?? null;
+    });
+    if (id === null) break;
+    await page.waitForFunction((sel) => !document.querySelector(`${sel} .cm-ssr-fake`), cellSelector(id), { timeout: 20000 });
+  }
+  // One more frame, so the recorder has seen the layout with every editor.
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+
+  const { tops, statics, editors } = await page.evaluate(() => ({
+    tops: window.__bTops,
+    statics: window.__staticHeights,
+    editors: Object.fromEntries([...document.querySelectorAll("pluto-cell")].map((c) => [c.id, c.querySelector("pluto-input .cm-editor").getBoundingClientRect().height])),
+  }));
+  assert.deepEqual(Object.keys(statics).sort(), ["A", "B", "I", "L", "S", "W"], "every cell showed its static code first");
+  for (const [id, h] of Object.entries(statics)) near(h, editors[id], `cell ${id}'s static code height`);
+  assert.deepEqual([...new Set(tops)], [tops[0]], "B never moves while the editors load");
+
+  assertNoProblems(page);
+});
+
 test('"+": hovering the gap shows the line and circle without moving cells; clicking adds a cell (143)', async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-add.server.log") });
@@ -232,6 +297,14 @@ test('"+": hovering the gap shows the line and circle without moving cells; clic
 
   const addBeforeB = page.locator(`${cellSelector("B")} button.add_cell.before`);
   const pageTop = (sel) => page.evaluate((sel) => document.querySelector(sel).getBoundingClientRect().top + window.scrollY, sel);
+  // Measure once the cells above B have their editors, so only the hover
+  // could move B (#375).
+  await page.waitForFunction((sel) => {
+    const b = document.querySelector(sel);
+    return [...document.querySelectorAll("pluto-cell")]
+      .filter((c) => c.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .every((c) => !c.querySelector(".cm-ssr-fake"));
+  }, cellSelector("B"), { timeout: 20000 });
   const beforeTop = await pageTop(cellSelector("B"));
 
   await addBeforeB.hover();
