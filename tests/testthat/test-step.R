@@ -2684,3 +2684,83 @@ test_that("a failed install's cell error says why it failed, as package_status()
   out <- missing_package_error(r$state, "s2")
   expect_equal(out$error$message, paste0("there is no package called 's2': ", why))
 })
+
+# ---- Prompts (#186) --------------------------------------------------------------
+
+test_that("a prompt waits on the running cell until answered, and the answer goes to the worker (#186)", {
+  s <- fake_state(list(S = cell(""), A = cell('x <- readline("Name? ")')))
+  r <- boot(s, "A")
+  tok <- last_token(r)
+  r <- drive(r$state, wk_running(1, tok, at(9)), wk_input(1, tok, 1L, "Name? ", NULL, at(10)))
+  expect_equal(r$state$worker$running$prompt, list(id = 1L, text = "Name? ", choices = NULL))
+  view <- Find(function(v) identical(v$id, "A"), snapshot_of(r$state)$cells)
+  expect_equal(view$prompt$text, "Name? ")
+  expect_true(view$running)
+
+  r2 <- drive(r$state, ev_answer_input("Ada", at(11), cell = "A"))
+  expect_true(r2$reply)
+  expect_equal(last_sent(r2), list(type = "input_reply", id = 1L, text = "Ada"))
+  expect_null(r2$state$worker$running$prompt)
+  # Answered once: a second answer has no prompt to go to.
+  r3 <- drive(r2$state, ev_answer_input("again", at(12)))
+  expect_s3_class(r3$reply, "ember_refused")
+  expect_length(r3$effects, 0)
+})
+
+test_that("an answer is refused for another cell, or when it isn't one string (#186)", {
+  s <- fake_state(list(S = cell(""), A = cell('x <- readline("Name? ")'), B = cell("1")))
+  r <- boot(s, "A")
+  tok <- last_token(r)
+  r <- drive(r$state, wk_input(1, tok, 1L, "Name? ", NULL, at(10)))
+  expect_s3_class(drive(r$state, ev_answer_input("Ada", at(11), cell = "B"))$reply, "ember_refused")
+  expect_s3_class(drive(r$state, ev_answer_input(c("a", "b"), at(11)))$reply, "ember_refused")
+  expect_s3_class(drive(r$state, ev_answer_input(NA_character_, at(11)))$reply, "ember_refused")
+  expect_false(is.null(r$state$worker$running$prompt))
+})
+
+test_that("an answer that names its prompt is refused once that prompt has gone (#186)", {
+  s <- fake_state(list(S = cell(""), A = cell('x <- menu(c("a", "b"))')))
+  r <- boot(s, "A")
+  tok <- last_token(r)
+  # menu() asked again after a bad answer: an answer typed for the first question isn't given to the second.
+  r <- drive(r$state, wk_input(1, tok, 2L, "Selection: ", c("a", "b"), at(10)))
+  stale <- drive(r$state, ev_answer_input("1", at(11), id = 1L))
+  expect_s3_class(stale$reply, "ember_refused")
+  expect_match(conditionMessage(stale$reply), "already answered", fixed = TRUE)
+  expect_length(stale$effects, 0)
+  ok <- drive(r$state, ev_answer_input("1", at(11), id = 2L))
+  expect_true(isTRUE(ok$reply))
+  expect_equal(last_sent(ok), list(type = "input_reply", id = 2L, text = "1"))
+})
+
+test_that("a prompt from an older run or worker is ignored, and one that closes or ends with the run goes (#186)", {
+  s <- fake_state(list(S = cell(""), A = cell('x <- readline("Name? ")')))
+  r <- boot(s, "A")
+  tok <- last_token(r)
+  expect_null(drive(r$state, wk_input(2, tok, 1L, "Name? ", NULL, at(10)))$state$worker$running$prompt)
+  expect_null(drive(r$state, wk_input(1, tok + 1L, 1L, "Name? ", NULL, at(10)))$state$worker$running$prompt)
+
+  r <- drive(r$state, wk_input(1, tok, 1L, "Name? ", NULL, at(10)))
+  # A close for another prompt leaves this one.
+  expect_false(is.null(drive(r$state, wk_input_closed(1, tok, 2L, at(11)))$state$worker$running$prompt))
+  expect_null(drive(r$state, wk_input_closed(1, tok, 1L, at(11)))$state$worker$running$prompt)
+  # The run ends (interrupted): nothing waits.
+  r2 <- drive(r$state, wk_done(1, tok, report(status = "interrupted"), at(12)))
+  expect_null(r2$state$worker$running)
+  expect_s3_class(drive(r2$state, ev_answer_input("late", at(13)))$reply, "ember_refused")
+})
+
+test_that("the page's projection carries the prompt and updates when only the prompt changes (#186)", {
+  s <- fake_state(list(S = cell(""), A = cell('pick <- menu(c("red", "blue"))')))
+  r <- boot(s, "A")
+  tok <- last_token(r)
+  r <- drive(r$state, wk_running(1, tok, at(9)))
+  before <- pluto_state(r$state)
+  r2 <- drive(r$state, wk_input(1, tok, 3L, "Selection: ", c("red", "blue"), at(10)))
+  after <- pluto_state(r2$state, previous = before)
+  expect_equal(after$js$cell_results$A$ember$prompt,
+               list(id = 3L, text = "Selection: ", choices = list("red", "blue")))
+  expect_null(before$js$cell_results$A$ember$prompt)
+  # Built from scratch, the same.
+  expect_equal(after$js$cell_results$A, pluto_state(r2$state)$js$cell_results$A)
+})
