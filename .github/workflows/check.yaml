@@ -66,9 +66,26 @@ jobs:
           path: ~/apt-archives
           key: ${{ steps.apt-key.outputs.key }}
           restore-keys: apt-${{ github.job }}-
+      # apt checks only a cached file's size, not its hash, so only files
+      # whose SHA256 matches apt's signed package lists are handed over: a
+      # damaged or altered one is left out and downloaded again.
       - name: Hand apt its downloads
         if: runner.os == 'Linux' && steps.apt-cache.outputs.cache-matched-key != ''
-        run: sudo find ~/apt-archives -name '*.deb' -exec cp -t /var/cache/apt/archives {} +
+        run: |
+          sudo apt-get update -qq
+          used=0 skipped=0
+          for deb in ~/apt-archives/*.deb; do
+            read -r pkg ver arch <<< "$(dpkg-deb -W --showformat='${Package} ${Version} ${Architecture}' "$deb")"
+            want=$(apt-cache show --no-all-versions "$pkg:$arch=$ver" 2>/dev/null | awk '/^SHA256:/ { print $2; exit }')
+            if [ -n "$want" ] && [ "$(sha256sum < "$deb" | cut -d' ' -f1)" = "$want" ]; then
+              sudo cp "$deb" /var/cache/apt/archives/
+              used=$((used + 1))
+            else
+              echo "Left out $(basename "$deb"): no such version in apt's lists, or its SHA256 differs"
+              skipped=$((skipped + 1))
+            fi
+          done
+          echo "Handed apt $used cached files; left out $skipped"
       - uses: r-lib/actions/setup-r@v2
         with:
           use-public-rspm: true
@@ -165,9 +182,26 @@ jobs:
           path: ~/apt-archives
           key: ${{ steps.apt-key.outputs.key }}
           restore-keys: apt-${{ github.job }}-
+      # apt checks only a cached file's size, not its hash, so only files
+      # whose SHA256 matches apt's signed package lists are handed over: a
+      # damaged or altered one is left out and downloaded again.
       - name: Hand apt its downloads
         if: runner.os == 'Linux' && steps.apt-cache.outputs.cache-matched-key != ''
-        run: sudo find ~/apt-archives -name '*.deb' -exec cp -t /var/cache/apt/archives {} +
+        run: |
+          sudo apt-get update -qq
+          used=0 skipped=0
+          for deb in ~/apt-archives/*.deb; do
+            read -r pkg ver arch <<< "$(dpkg-deb -W --showformat='${Package} ${Version} ${Architecture}' "$deb")"
+            want=$(apt-cache show --no-all-versions "$pkg:$arch=$ver" 2>/dev/null | awk '/^SHA256:/ { print $2; exit }')
+            if [ -n "$want" ] && [ "$(sha256sum < "$deb" | cut -d' ' -f1)" = "$want" ]; then
+              sudo cp "$deb" /var/cache/apt/archives/
+              used=$((used + 1))
+            else
+              echo "Left out $(basename "$deb"): no such version in apt's lists, or its SHA256 differs"
+              skipped=$((skipped + 1))
+            fi
+          done
+          echo "Handed apt $used cached files; left out $skipped"
       - uses: r-lib/actions/setup-r@v2
         with:
           use-public-rspm: true
