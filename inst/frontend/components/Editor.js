@@ -243,6 +243,7 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  * @type {{
  *  date: string, status: "checking" | "ready" | "failed",
  *  restart: Array<string>, changes: number, message: string?,
+ *  back?: { from: string, changes: Array<{ name: string, from: string?, to: string? }> },
  * }}
  */
 

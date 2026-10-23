@@ -983,6 +983,12 @@ project_nbpkg <- function(state) {
 #'   shows nothing here: its proposal has `apply = FALSE`. `status`
 #'   `"checking"` is the proposal's `"fetching"` (the page's wording, not
 #'   the core's); `message` is set only once `status == "failed"`.
+#'   A step back that would change a locked version (`kind = "back"`,
+#'   #311) is the same question once `"ready"`, with `back = list(from,
+#'   changes = arr(list(name, from, to)))`: the date Bioconductor hasn't
+#'   published yet, and each package that moves (`from`/`to` `NULL` for
+#'   one added or dropped). The page's answer is `ember_apply_update` or
+#'   `ember_cancel_update`, as for an update.
 #' * `on_cell_change`: `state$file$header$on_cell_change`, `"autorun"` or
 #'   `"lazy"`.
 #' * `r_version`, `worker_started_at`: the running worker's own report
@@ -1073,6 +1079,17 @@ project_ember <- function(state, ctx) {
                             restart = as_arr(pv$proposal$restart %||% character()),
                             changes = if (is.null(pv$proposal$changes)) 0L else nrow(pv$proposal$changes),
                             message = pv$proposal$message)
+  } else if (!is.null(pv$proposal) && identical(pv$proposal$kind, "back") &&
+             identical(pv$proposal$status, "ready")) {
+    # A step back that would change a locked version (#311) asks first.
+    ch <- pv$proposal$changes
+    na_null <- function(x) if (is.na(x)) NULL else x
+    packages$update <- list(date = pv$proposal$date, status = "ready",
+                            restart = as_arr(pv$proposal$restart %||% character()),
+                            changes = if (is.null(ch)) 0L else nrow(ch), message = NULL,
+                            back = list(from = pv$proposal$asked, changes = as_arr(lapply(seq_len(NROW(ch)), function(i) {
+                              list(name = ch$name[[i]], from = na_null(ch$from[[i]]), to = na_null(ch$to[[i]]))
+                            }))))
   }
 
   plan <- pv$plan
