@@ -230,6 +230,22 @@ const InstallFailureCard = ({ card, rows, r_version, log, show_command }) => {
     `
 }
 
+/**
+ * The line under "Installing..." when packages build from source for want
+ * of a binary for this R (#19, `source_only_packages()`, R/install-checks.R).
+ * It doesn't stop the install: pure R packages build fine. If one doesn't,
+ * the failure card says why, with the same Update.
+ *
+ * @param {Array<{ package: string, version: string }>} packages
+ * @param {string?} r_version
+ */
+const no_binary_notice = (packages, r_version) =>
+    t("t_ember_install_no_binary", {
+        count: packages.length,
+        packages: name_list(packages.map((p) => `${p.package} ${p.version}`)),
+        r_version: r_version ?? "",
+    })
+
 /** A byte count in words: "2.1 GB", "640 MB", "25 MB", "2 kB". */
 export const size_words = (/** @type {number} */ bytes) =>
     bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : bytes >= 1e6 ? `${Math.round(bytes / 1e6)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} kB`
@@ -261,6 +277,13 @@ const LargeDownloadCard = ({ download }) => {
     `
 }
 
+/** One locked package a step back changes (#311): "name from → to", or
+ * one it no longer needs. The packages it adds aren't listed: they are
+ * what the user asked for, and for a Bioconductor package that is a long
+ * list of dependencies. */
+const step_back_change = (c) =>
+    c.to != null ? `${c.name} ${c.from} → ${c.to}` : t("t_ember_packages_step_back_dropped", { name: c.name, version: c.from })
+
 /**
  * The header's Update button and, once `update` fills in, what it found:
  * "Checking…" while fetching, the in-tab restart question when applying
@@ -274,6 +297,11 @@ const LargeDownloadCard = ({ download }) => {
  * just clicked Update like nothing happened. `justFinished` tracks that
  * transition locally and shows a short "Already up to date" note for it,
  * unless the library went on to install something (a real update).
+ *
+ * The same place asks about a step back (`update.back`, #311): the
+ * notebook's date isn't published for Bioconductor yet, and the newest
+ * date that is would change a locked version. Ember moves back on its own
+ * when nothing locked would change, so this shows only then.
  *
  * @param {{ update: import("./Editor.js").EmberPackagesUpdate?, library_status: string }} props
  */
@@ -318,6 +346,26 @@ const PackagesUpdate = ({ update, library_status }) => {
                 ? html`<span class="ember-packages-update-failed"
                       >${t("t_ember_packages_update_failed", { reason: update.message ?? "" })}</span
                   >`
+                : update.back != null
+                ? html`<div class="ember-packages-update-question">
+                      <p>
+                          ${t("t_ember_packages_step_back_question", {
+                              from: update.back.from,
+                              date: update.date,
+                              changes: update.back.changes
+                                  .filter((c) => c.from != null)
+                                  .map(step_back_change)
+                                  .join(", "),
+                          })}
+                          ${update.restart.length > 0
+                              ? " " + t("t_ember_packages_step_back_restart", { names: update.restart.join(", ") })
+                              : ""}
+                      </p>
+                      <button type="button" class="ember-btn primary" onClick=${() => pluto_actions.ember_apply_update(update.date)}>
+                          ${t("t_ember_packages_step_back_apply", { date: update.date })}
+                      </button>
+                      <button type="button" class="ember-btn" onClick=${() => pluto_actions.ember_cancel_update()}>${t("t_cancel")}</button>
+                  </div>`
                 : update.restart.length > 0
                 ? html`<div class="ember-packages-update-question">
                       <p>${t("t_ember_packages_update_restart_question", { names: update.restart.join(", ") })}</p>
@@ -662,6 +710,9 @@ export const PackagesTab = ({ packages, read_only = false }) => {
                       ${library.progress != null ? ` (${library.progress.done}/${library.progress.total})` : ""}
                       ${library.message != null && library.failures.length === 0
                           ? html`<br /><span class="ember-packages-library-message">${library.message}</span>`
+                          : null}
+                      ${library.status === "installing" && library.no_binary != null && library.no_binary.length > 0
+                          ? html`<br /><span class="ember-packages-library-message ember-packages-no-binary">${no_binary_notice(library.no_binary, r_version)}</span>`
                           : null}
                   </p>`}
             ${library.status === "asking" && library.download != null

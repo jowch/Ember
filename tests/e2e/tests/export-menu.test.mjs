@@ -54,6 +54,7 @@ test("export menu: three items, downloads, Esc returns focus (161)", async (t) =
 
   await button.click();
   const exported = await download(page, downloads, "Download HTML");
+  assert.equal(exported.name, "basic.html", "named after the notebook");
   assert.match(exported.text, /id="ember-modules"/, "expected the self-contained export");
 
   await button.click();

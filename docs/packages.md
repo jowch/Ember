@@ -156,7 +156,7 @@ Any event that changes what the notebook wants reaches the same code, so no hand
 
 - The index cache is a dated index saved as RDS forever, plus a memo per process so sessions share one R object. The exception is an index dated yesterday or later in UTC (`index_may_change()`, #39): Package Manager may still add to that day's snapshot. Opening still reads the saved copy (fetching a CRAN index costs about 11 s), but the slot is marked `provisional` (the shell judges the date; the core has no clock), and a date preview fetches it again: the preview asks for every index it fetches `fresh`, and the shell skips the saved copy of a `fresh` key whose date may change, whether or not the session held it. That fetch replaces the saved copy and the memo, so sessions opened later read it. When it fails (offline), the saved copy stands in.
 - A new notebook is dated today, and Package Manager publishes a day's snapshot hours after that day starts in UTC. Until then the date's index is a 404, and east of UTC that is most of a local morning (#162). `fetch_index_main()` says so when the server answers 404 (`index_not_published()`), and the shell passes `unpublished` on `index_failed` for a date from yesterday to tomorrow in UTC (`may_be_unpublished()`). A date further ahead is no clock's today, so its 404 is a plain failure. While the lock is empty, nothing came from that date, so the core moves the notebook's date back a day and resolves there. The saved file then carries the date its packages came from. It stops at the day before yesterday in UTC, where the failure shows as `index_unavailable`. Offline, the fetch fails without a 404, so the date stays today; the next fetch once online moves it if the snapshot still isn't out. A notebook with locked packages keeps its date: its lock was resolved from that date's index, so the date was published. A date preview of a day that isn't published yet moves back the same way: "Update all" is a preview of today, so early in a day it offers the newest published date instead of failing with no changes. The proposal keeps the date it was asked for as `asked`, and its `date` is the one it would move to.
-- Package Manager publishes a day's Bioconductor snapshot about two days after CRAN's (#282), so a notebook dated today can find CRAN's index and get a 404 from Bioconductor's. For a Bioconductor key `may_be_unpublished()` covers three days back to tomorrow in UTC, and while the lock is empty a 404 for one of Bioconductor's indexes at the notebook's date moves the whole date back a day as CRAN's does, so both resolve at one date. With packages locked the date stays, and the failed index shows as `index_unavailable`; a cell that needs a name CRAN lacks says Bioconductor couldn't be looked in (`unlooked_message()`, as the Packages tab does since #264) rather than that the package is in no repository.
+- Package Manager publishes a day's Bioconductor snapshot about two days after CRAN's (#282), so a notebook dated today can find CRAN's index and get a 404 from Bioconductor's. For a Bioconductor key `may_be_unpublished()` covers three days back to tomorrow in UTC, and while the lock is empty a 404 for one of Bioconductor's indexes at the notebook's date moves the whole date back a day as CRAN's does, so both resolve at one date. With packages locked the failed index shows as `index_unavailable` at first; a cell that needs a name CRAN lacks says Bioconductor couldn't be looked in (`unlooked_message()`, as the Packages tab does since #264) rather than that the package is in no repository. Ember then steps the date back on its own (#311), once resolution at the notebook's date has settled with a name not found while one of Bioconductor's indexes there answered an unpublished 404: a `"back"` proposal at the day before (`propose_step_back()`), moving back another day while that one isn't published either (CRAN's or Bioconductor's index answers 404 within `may_be_unpublished()`'s window), re-resolved in `"keep"` mode. The date is only how new packages are found and the URL renv installs from, and the lock pins versions, so when the earlier date finds a missing name and every locked version is also the one there, the move applies with nothing shown: the user just gets the package. Cells that need a name not found wait while the step back fetches, so they don't fail first. When a locked version isn't there (a package released in the last day or two), only those packages are resolved from the earlier date, and the move waits as the Packages tab's update question, listing the locked packages that change, until the user moves (`set_date()`, which takes the earlier date) or cancels. A step back that finds no missing name (a typo, a GitHub package not in `[sources]`), would lose a locked package the earlier date lacks, or fails (an index past the window, or offline) is dropped, and the `index_unavailable` row stays. It isn't proposed over a preview the user asked for, nor again for the same date and missing names until the notebook runs again (`back_tried`). There is no control for moving the date back by hand.
 - Libraries are built in a staging folder and then renamed into place. A process that loses the race deletes its copy, so no locks are needed.
 - The renv cache is Ember's own, so `clean()` can never break the user's renv projects.
 - `clean()` and `ember::run()` sit outside the core.
@@ -209,9 +209,9 @@ Behind that sit detection, resolution, index caching, library naming, installs, 
    - `[sources]` GitHub as one-row indexes: built, see [GitHub sources](#github-sources)
    - `[sources]` r-universe the same way: built, see [r-universe sources](#r-universe-sources)
    - install calls name the source: built, see [Install calls](#install-calls) (#79)
-   - asking before a large download: built for Bioconductor's annotation and experiment-data packages, see [Large downloads](#large-downloads) (#37). A notice that doesn't stop the install (#19) is not built
+   - asking before a large download: built for Bioconductor's annotation and experiment-data packages, see [Large downloads](#large-downloads) (#37)
    - compiler and system-library checks: built, see [Install checks](#install-checks)
-   - old snapshot dates that build from source on a newer R: explained when the build fails, see [Install checks](#install-checks); saying so before the install waits for the install plan
+   - old snapshot dates that build from source on a newer R: built. Said while the packages build, and explained when a build fails, see [Install checks](#install-checks) (#19)
    - disk use: built. The Packages tab shows the libraries', the cache's and the indexes' disk use for all notebooks, from one `du` run so a hard-linked file counts once (`disk_use()`); without `du` (Windows) it sums file sizes and says the libraries' figure includes shared files. (#38)
    - clean up: built. "Clean up…" in the Packages tab deletes libraries no open notebook in this server uses and unused for 30 days, then the cache entries no remaining library lists (`clean_up()`, `clean()` with `max_age = 30` and the open notebooks' libraries kept; indexes are left to the startup sweep). Each Ember process touches its open notebooks' `ember-last-used` markers hourly, so a notebook open in another process counts as used. `clean()` keeps cache entries made in the last day and those a young staging folder links to, so an install in progress keeps its packages. It shows the counts and the space it frees (`du` over what it would delete), deletes nothing until Delete and judges the deletion at the preview's time; a read-only notebook can't (#128)
    - R minor version change with a Bioconductor pin: built, see [Bioconductor](#bioconductor)
@@ -425,12 +425,27 @@ what was missing.
   Update (a newer date, whose versions have binaries) or an older R.
   "ERROR: loading failed" after a source build (R's own load test) counts
   as a failed build (`compile`).
-  Not built: saying so before the install. It is cheap to detect (one
-  request on Linux with Package Manager; on macOS and Windows a second
-  read of the binary index renv reads anyway), but it shouldn't stop the
-  install, since pure R packages build fine. The card for a large download
-  ([Large downloads](#large-downloads)) shows only when an install stops,
-  so a notice that doesn't stop it still has nowhere to go (#19).
+- **Saying so while they build (#19).** Before renv starts, the
+  installer names the CRAN packages that will build from source for want
+  of a binary for this R (`source_only_packages()`), leaving out those
+  renv's cache already holds. On Linux with Package Manager binaries it
+  asks about one package, as the compiler check does, at the binary URL
+  renv downloads from (`installer_repos()`: at CRAN's own URL Package
+  Manager sends the source at every date). At a date from before Package
+  Manager built binaries for this R it sends the source of every package,
+  so when a second package comes as source too, all of them count; when
+  only the first does (a failed binary build, a release from this week),
+  only it does. On macOS and Windows it reads the
+  binary index, as `no_binary_packages()` does. On Linux without those
+  binaries everything always builds from source, so nothing is said. It
+  prints one `EMBER-NO-BINARY <package>=<version> ...` line, the shell
+  turns it into `ev_install_no_binary()`, and the target keeps it as
+  `no_binary` until the next install starts (`package_status()$library$no_binary`).
+  It doesn't stop the install, since pure R packages build fine: the
+  Packages tab shows one line under "Installing..." naming them, saying
+  it takes longer and that versions from before this R may not build,
+  with the header's Update as the way to a date that has binaries. If a
+  build fails, the `no_binary` card above takes over.
 - **A compiler missing during a build.** A build that fails because make
   or configure can't find the compiler (`gcc: No such file or directory`,
   `no acceptable C compiler`, `xcrun: error: invalid active developer

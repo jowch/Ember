@@ -618,6 +618,44 @@ test('chips: "Run this notebook" moves the page up only at the click, then only 
   assertNoProblems(page);
 });
 
+test('view anchor: scrolled into the notebook, "Run this notebook" leaves the code at the top of the view where it is, even as its own table lands above it', async (t) => {
+  const notebook = tempNotebook("view-anchor.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-view-anchor.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await page.setViewportSize({ width: 900, height: 800 });
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.evaluate((sel) => document.querySelector(sel).scrollIntoView({ block: "start" }), cellSelector("C08"));
+  await page.waitForTimeout(300);
+
+  // Read where C08's code is in every frame something resizes, after the
+  // page's own observer has run (observers run in the order they were
+  // made), so this is what gets painted. C08 prints a table, which lands
+  // above its code: the cell's own top holding still isn't enough.
+  await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    window.__tops = [];
+    const ro = new ResizeObserver(() => window.__tops.push(el.getBoundingClientRect().top));
+    ro.observe(document.body);
+    for (const c of document.querySelectorAll("pluto-cell")) ro.observe(c);
+  }, `${cellSelector("C08")} > pluto-input`);
+  const before = await rect(page, `${cellSelector("C08")} > pluto-input`);
+  // Clicked in script: Playwright's click would scroll the banner into view first.
+  await page.evaluate(() => document.querySelector("#ember-safe-preview button").click());
+  await page.waitForFunction(() => !document.querySelector("#ember-safe-preview"), null, { timeout: 30000 });
+  await page.waitForFunction(() => document.querySelectorAll("pluto-cell.running, pluto-cell.queued").length === 0, null, { timeout: 60000 });
+  await page.waitForTimeout(500);
+
+  const tops = await page.evaluate(() => window.__tops);
+  assert.ok(tops.length > 5, `outputs landed above C08 (${tops.length} frames)`);
+  const off = tops.filter((top) => Math.abs(top - before.top) > 1);
+  assert.deepEqual(off, [], `C08's code stayed at ${before.top} in every frame`);
+  assert.ok(await page.locator(`${cellSelector("C08")} > pluto-output table`).count() > 0, "C08's table landed");
+  assertNoProblems(page);
+});
+
 test('chips: "Stale · x changed" after an upstream edit in lazy mode, with a greyed output (144)', async (t) => {
   const notebook = tempNotebook("lazy.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-stale.server.log") });
@@ -1449,27 +1487,46 @@ test("cell menu: on a cell at the bottom of the window it opens upwards, so ever
   await page.setViewportSize({ width: 900, height: 700 });
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  // The last cell whose code box is wholly in view, and the first one.
-  const [first, last] = await page.evaluate(() => {
-    const seen = [...document.querySelectorAll("pluto-cell")].filter((c) => {
-      const r = c.querySelector("pluto-input").getBoundingClientRect();
-      return r.top >= 0 && r.bottom <= innerHeight;
-    });
-    return [seen[0].id, seen.at(-1).id];
-  });
+  // The first cell whose code box is wholly in view.
+  const first = await page.evaluate(() => [...document.querySelectorAll("pluto-cell")].find((c) => {
+    const r = c.querySelector("pluto-input").getBoundingClientRect();
+    return r.top >= 0 && r.bottom <= innerHeight;
+  }).id);
   const open = async (id) => {
-    await page.hover(cellSelector(id));
+    // The code box, not the whole cell: the cell's middle can be below the
+    // window, and hovering there would scroll it.
+    await page.hover(`${cellSelector(id)} pluto-input`);
+    const before = (await rects(page, { more: `${cellSelector(id)} button.input_context_menu` })).more;
     await page.locator(`${cellSelector(id)} button.input_context_menu`).click();
-    return rects(page, {
-      menu: `${cellSelector(id)} div.input_context_menu[role="menu"]`,
-      more: `${cellSelector(id)} button.input_context_menu`,
-    });
+    return {
+      before,
+      ...await rects(page, {
+        menu: `${cellSelector(id)} div.input_context_menu[role="menu"]`,
+        more: `${cellSelector(id)} button.input_context_menu`,
+      }),
+    };
   };
 
-  const bottom = await open(last);
+  // A one-line cell whose code box ends at the bottom of the window. Where
+  // cells land on their own depends on font metrics and on off-screen cells
+  // swapping their stand-in for the real editor (#373), so this one is put
+  // there: scrolled to the bottom until its real editor is in and it stays
+  // put for a frame.
+  const low = "C10";
+  await page.waitForFunction((sel) => {
+    const input = document.querySelector(`${sel} pluto-input`);
+    input.scrollIntoView({ block: "end" });
+    const bottom = input.getBoundingClientRect().bottom;
+    const still = window.__low_bottom === bottom;
+    window.__low_bottom = bottom;
+    return still && Math.abs(bottom - innerHeight) < 1 && input.querySelector(".cm-editor:not(.cm-ssr-fake)") != null;
+  }, cellSelector(low), { polling: "raf", timeout: 10000 });
+  const bottom = await open(low);
+  assert.ok(700 - bottom.before.bottom < 3 + bottom.menu.height, `the ⋯ ended at ${bottom.before.bottom} before the menu opened, so the menu fit below it and this cell can't show the flip`);
   assert.ok(bottom.menu.bottom <= 700, `menu ends at ${bottom.menu.bottom}, below the 700px window`);
   near(bottom.more.top - bottom.menu.bottom, 3, "3px above the ⋯");
   await page.keyboard.press("Escape");
+  await page.evaluate(() => scrollTo(0, 0));
 
   const top = await open(first);
   near(top.menu.top - top.more.bottom, 3, "3px below the ⋯");

@@ -149,6 +149,13 @@ step <- function(state, event) {
   # graph no longer has.
   lost <- setdiff(effective_settings(state$graph), effective_settings(to$state$graph))
   if (length(lost) > 0) to$state <- stale_after_settings(to$state, state$graph, lost)
+  # A cell that leaves a graph error (its cycle or second definition is
+  # fixed) no longer stands behind the "contains errors" message of the
+  # cells that read from it: mark those stale (#315).
+  if (length(state$graph$errors) > 0) {
+    cleared <- setdiff(blocked_cells(state$graph), blocked_cells(to$state$graph))
+    if (length(cleared) > 0) to$state <- stale_upstream_errors(to$state, cleared)
+  }
   pk <- schedule_packages(to$state, old = state)
   s <- schedule(pk$state)
   reads <- missing_file_reads(s$state)
@@ -205,6 +212,7 @@ reduce <- function(state, event) {
     cran_releases_failed  = reduce_cran_releases_failed(state, event),
     library_checked  = reduce_library_checked(state, event),
     install_progress = reduce_install_progress(state, event),
+    install_no_binary = reduce_install_no_binary(state, event),
     install_done     = reduce_install_done(state, event),
     approve_install  = reduce_approve_install(state, event),
     stop("unknown event type: ", event$type)
@@ -425,6 +433,7 @@ drop_graph_error_results <- function(state, ids = NULL, queue = FALSE) {
   for (id in stale_results) {
     old <- state$results[[id]]
     state$results[[id]] <- NULL
+    state$graph_dropped[[id]] <- old$code
     names <- if (queue) union(old$defined, state$graph$cells[[id]]$definitions) else old$defined
     state <- invalidate_dependents(state, id, names, queue = queue,
                                    was_setting = isTRUE(old$setting))
@@ -600,6 +609,35 @@ stale_after_settings <- function(state, old_graph, ids) {
       r$stale <- TRUE
       state$results[[cid]] <- r
     }
+  }
+  state
+}
+
+#' The cells whose result a graph error dropped (`drop_graph_error_results()`)
+#' that still have none and still hold the code that ran: the result they
+#' would have if the graph error hadn't been, so a dependent queued in
+#' autorun runs after them (#315).
+graph_dropped_cells <- function(state) {
+  ids <- names(state$graph_dropped)
+  if (length(ids) == 0) return(character())
+  Filter(function(id) {
+    is.null(state$results[[id]]) && !is.null(state$cells[[id]]) &&
+      identical(state$graph_dropped[[id]], state$cells[[id]]$code)
+  }, ids)
+}
+
+#' Mark stale every result whose upstream error names one of `ids`
+#' (`failed_definers()`): the cells it blames have changed, so the message
+#' is no longer about the notebook as it is. Not queued: called from
+#' `step()` for any event, an edit included, and an edit never runs
+#' anything.
+stale_upstream_errors <- function(state, ids) {
+  for (cid in names(state$results)) {
+    r <- state$results[[cid]]
+    if (isTRUE(r$stale) || !identical(r$error$kind, "upstream")) next
+    if (!any(ids %in% r$error$cells)) next
+    r$stale <- TRUE
+    state$results[[cid]] <- r
   }
   state
 }
@@ -784,7 +822,9 @@ is_fresh <- function(state, id) {
 #' downstream. A masked name the reader's data provides (`x` in
 #' `subset(df, x > 1)` with a column `x`, `masked_none`) doesn't count: R
 #' never read the global. Only cells with a result are touched: a cell that hasn't run
-#' stays not run, in both modes.
+#' stays not run, in both modes, unless a graph error dropped its result
+#' and a queued dependent reads it (`invalidate_cells()`: it then runs
+#' first, as for a run by hand, #315).
 #'
 #' Every touched result gets `stale = TRUE`. In autorun, and when `queue` is
 #' `TRUE`, they are also added to `pending`, unless the cell is off (a
@@ -855,16 +895,18 @@ invalidate_cells <- function(state, id, dependents, queue = TRUE, g = run_graph(
   } else character()
   if (length(queued)) state$pending <- union(state$pending, queued)
   # A queued dependent can read a stale cell outside this run (a delete, a
-  # rename or an interrupt can leave one stale). As when it is run by hand,
-  # its stale ancestors run first, with every ancestor between them and it
-  # (#176).
-  # Only a stale cell not already pending needs adding, so the walk is
+  # rename or an interrupt can leave one stale), or one whose result a
+  # graph error dropped (`graph_dropped`, #315). As when it is run by hand,
+  # those ancestors run first, with every ancestor between them and it
+  # (#176). Other cells with no result stay not run: a draft never run, or
+  # a dropped cell edited since, runs only when asked.
+  # Only such a cell not already pending needs adding, so the walk is
   # skipped when there is none, as in the usual rerun after an edit, where
   # every stale cell is one of the queued dependents.
   outside <- if (length(queued)) {
     ids <- names(state$results)
-    stale <- vapply(state$results, function(r) isTRUE(r$stale), logical(1))
-    ids[stale & !(ids %in% state$pending) & ids != id]
+    stale <- ids[vapply(state$results, function(r) isTRUE(r$stale), logical(1))]
+    setdiff(union(stale, graph_dropped_cells(state)), c(state$pending, id))
   } else character()
   if (length(outside)) {
     ancestors <- setdiff(upstream_of_set(g, queued), id)
@@ -1249,6 +1291,9 @@ reduce_run <- function(state, event) {
     state$packages$proposal <- NULL
     state$packages$bioc_move_tried <- FALSE
   }
+  # A step back that found nothing, or was cancelled, may be tried again
+  # (#311): the indexes that failed are fetched again too.
+  state$packages$back_tried <- NULL
   runnable_ids <- Filter(function(i) cell_runs(state$cells[[i]]), names(state$cells))
   ids <- event$ids %||% runnable_ids
   ids <- ids[ids %in% names(state$cells)]
@@ -1330,6 +1375,7 @@ restart_worker <- function(state, reason = NULL) {
                             class = "ember_worker_state")
   effects <- c(effects, list(fx_start_worker(gen, state$packages$active$path, dirname(state$path))))
   state$results <- list()
+  state$graph_dropped <- list()
   state <- forget_columns(state)
   state$pending <- character()
   list(state = state, effects = effects)
@@ -1959,6 +2005,7 @@ reduce_wk_done <- function(state, event) {
                        from_lock = as.character(report$from_lock %||% character()))
   if (late_stale) result$stale <- TRUE
   state$results[[id]] <- result
+  state$graph_dropped[[id]] <- NULL
   if (identical(status, "ok")) state <- keep_input_values(state, id, w$running$code, result$inputs)
   if (length(state$footer_sources) && all_code_cells_ran(state)) {
     state$footer_sources <- character()
@@ -2109,6 +2156,7 @@ reduce_wk_exited <- function(state, event) {
   if (!eq(event$gen, state$worker$gen)) return(list(state = state, effects = list(), reply = NULL))
   running <- state$worker$running
   state$results <- list()
+  state$graph_dropped <- list()
   state <- forget_columns(state)
   if (!is.null(running)) {
     state$results[[running$cell]] <- new_result(
