@@ -13,16 +13,18 @@ inputs:
 runs:
   using: composite
   steps:
+    # always(): the caller runs this after a failed step too, and a
+    # composite step's implicit success() would skip it then.
     # Only what this runner's apt can still use: autoclean drops versions
     # its package lists no longer have.
-    - if: runner.os == 'Linux' && inputs.cache-hit != 'true'
+    - if: always() && runner.os == 'Linux' && inputs.cache-hit != 'true'
       shell: bash
       run: |
         sudo apt-get autoclean -qq
         rm -rf ~/apt-archives && mkdir ~/apt-archives
         find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -t ~/apt-archives {} +
         du -sh ~/apt-archives; ls ~/apt-archives | wc -l
-    - if: runner.os == 'Linux' && inputs.cache-hit != 'true'
+    - if: always() && runner.os == 'Linux' && inputs.cache-hit != 'true'
       uses: actions/cache/save@v4
       with:
         path: ~/apt-archives
