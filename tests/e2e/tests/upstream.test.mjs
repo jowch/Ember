@@ -8,7 +8,7 @@ import { test } from "node:test";
 import path from "node:path";
 import assert from "node:assert/strict";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, codeSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector } from "../browser.mjs";
 
 /** `true` when every point of `sel`'s bounding box is inside the current
  * viewport, `false` when it's fully or partly outside. */
@@ -53,7 +53,7 @@ test("upstream: a dependent names the failed cell and links to it; an unrelated 
   const link = b_error.locator("header a", { hasText: "a" });
   assert.equal(await link.count(), 1);
 
-  await page.locator(codeSelector("C")).scrollIntoViewIfNeeded();
+  await page.locator(`${cellSelector("C")} pluto-input`).scrollIntoViewIfNeeded();
   assert.equal(await isInViewport(page, cellSelector("A")), false, "A is scrolled out of view");
 
   await link.click();
