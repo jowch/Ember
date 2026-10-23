@@ -993,9 +993,9 @@ project_nbpkg <- function(state, pv = packages_view(state)) {
 #' * `packages`: the snapshot date, R/Bioconductor versions, the library's
 #'   status, and one row per locked or not-found package (and per package
 #'   whose `[sources]` lookup is running or failed), from
-#'   `packages_view(state)`. `spec` is the row's `[sources]` entry. `NA`
-#'   fields (no version, no source, no message, no spec) become `NULL` for
-#'   the wire.
+#'   `packages_view(state)`. `spec` is the row's `[sources]` entry,
+#'   `available` CRAN's newer version (#23). `NA` fields (no version, no
+#'   source, no message, no spec, nothing newer) become `NULL` for the wire.
 #'
 #'   `packages$library` adds `log` (one string, the installer's last 200
 #'   lines, joined with "\n") and `failures` (`arr(list(package, version,
@@ -1020,6 +1020,15 @@ project_nbpkg <- function(state, pv = packages_view(state)) {
 #'   published yet, and each package that moves (`from`/`to` `NULL` for
 #'   one added or dropped). The page's answer is `ember_apply_update` or
 #'   `ember_cancel_update`, as for an update.
+#' * `package_update`: `list(name, version, date, status =
+#'   "checking"|"ready"|"failed", changes = arr(list(name, from, to)),
+#'   restart = arr(<names>), message)` while a proposal from a row's Update
+#'   (`ember_update_package`, `ev_preview_update(..., page = TRUE)`, #23)
+#'   exists, else absent. `changes` are the other packages that move
+#'   (`from`/`to` `NULL` for one added or dropped), `restart` the loaded
+#'   ones among them and the package itself, `date` `NULL` until CRAN's
+#'   release dates give one. The page's answer is `ember_apply_update`
+#'   with `date`, or `ember_cancel_update`.
 #' * `on_cell_change`: `state$file$header$on_cell_change`, `"autorun"` or
 #'   `"lazy"`.
 #' * `r_version`, `worker_started_at`: the running worker's own report
@@ -1048,7 +1057,8 @@ project_ember <- function(state, ctx, pv = packages_view(state)) {
         source = if (is.na(pkgs$source[[i]])) NULL else pkgs$source[[i]],
         direct = isTRUE(pkgs$direct[[i]]), status = pkgs$status[[i]],
         message = if (is.na(pkgs$message[[i]])) NULL else pkgs$message[[i]],
-        spec = if (is.na(pkgs$spec[[i]])) NULL else pkgs$spec[[i]])
+        spec = if (is.na(pkgs$spec[[i]])) NULL else pkgs$spec[[i]],
+        available = if (is.null(pkgs$available) || is.na(pkgs$available[[i]])) NULL else pkgs$available[[i]])
   })
   library_failed <- identical(pv$library$status, "failed")
   log <- if (library_failed && length(pv$library$log) > 0) {
@@ -1120,6 +1130,26 @@ project_ember <- function(state, ctx, pv = packages_view(state)) {
                             back = list(from = pv$proposal$asked, changes = as_arr(lapply(seq_len(NROW(ch)), function(i) {
                               list(name = ch$name[[i]], from = na_null(ch$from[[i]]), to = na_null(ch$to[[i]]))
                             }))))
+  }
+
+  # A row's Update (#23): the update the page asked for, as that row's
+  # question. A `preview_update()` call from R itself shows nothing here.
+  prop <- state$packages$proposal
+  if (!is.null(prop) && isTRUE(prop$update$page)) {
+    u <- prop$update
+    ch <- prop$changes
+    others <- if (is.null(ch)) ch else ch[ch$name != u$name, , drop = FALSE]
+    na_null <- function(x) if (is.na(x)) NULL else x
+    moved <- if (is.null(ch)) character() else ch$name[ch$change %in% c("upgraded", "downgraded", "source", "removed")]
+    status <- switch(prop$status, fetching = "checking", dates = "checking", prop$status)
+    packages$package_update <- list(
+      name = u$name, version = u$version %||% NULL,
+      date = if (is.na(prop$date)) NULL else prop$date, status = status,
+      changes = as_arr(lapply(seq_len(NROW(others)), function(i) {
+        list(name = others$name[[i]], from = na_null(others$from[[i]]), to = na_null(others$to[[i]]))
+      })),
+      restart = as_arr(as.character(intersect(moved, names(state$worker$loaded %||% character())))),
+      message = if (identical(status, "failed")) prop$message else NULL)
   }
 
   plan <- pv$plan

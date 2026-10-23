@@ -581,7 +581,10 @@ export const CellInput = ({
                 run: (/** @type {EditorView} */ cm) => !cm.state.facet(EditorState.readOnly) && redo_or_redelete_returned(cm),
                 preventDefault: true,
             },
+            // Ctrl+Shift+Z too, off a Mac, as outside the editors (Editor.js).
+            // historyKeymap binds it on Linux only, so on Windows it did nothing.
             {
+                win: "Ctrl-Shift-z",
                 linux: "Ctrl-Shift-z",
                 run: (/** @type {EditorView} */ cm) => !cm.state.facet(EditorState.readOnly) && redo_or_redelete_returned(cm),
                 preventDefault: true,

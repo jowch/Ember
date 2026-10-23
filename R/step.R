@@ -218,6 +218,7 @@ reduce <- function(state, event) {
     preview_date     = reduce_preview_date(state, event),
     set_date         = reduce_set_date(state, event),
     preview_update   = reduce_preview_update(state, event),
+    check_releases   = reduce_check_releases(state, event),
     cancel_preview   = reduce_cancel_preview(state, event),
     index_fetched    = reduce_index_fetched(state, event),
     index_failed     = reduce_index_failed(state, event),
@@ -660,17 +661,21 @@ graph_dropped_cells <- function(state) {
 
 #' Mark stale every result whose upstream error names one of `ids`
 #' (`failed_definers()`): the cells it blames have changed, so the message
-#' is no longer about the notebook as it is. Not queued: called from
-#' `step()` for any event, an edit included, and an edit never runs
-#' anything.
+#' is no longer about the notebook as it is, and so is what read from them.
+#' Not queued: called from `step()` for any event, an edit included, and
+#' an edit never runs anything.
 stale_upstream_errors <- function(state, ids) {
+  marked <- character()
   for (cid in names(state$results)) {
     r <- state$results[[cid]]
     if (isTRUE(r$stale) || !identical(r$error$kind, "upstream")) next
     if (!any(ids %in% r$error$cells)) next
     r$stale <- TRUE
     state$results[[cid]] <- r
+    marked <- c(marked, cid)
   }
+  # A dependent's own upstream error names the cell it read, not `ids`.
+  for (cid in marked) state <- invalidate_dependents(state, cid, character(), queue = FALSE)
   state
 }
 

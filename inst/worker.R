@@ -1291,13 +1291,22 @@ remove_globals <- function(globals) {
 #' are captured by their function (never called: calling one could run
 #' code or have side effects, e.g. a counter).
 snapshot_globals <- function(names) {
+  env <- globalenv()
+  active <- logical(length(names))
+  for (i in seq_along(names)) active[[i]] <- bindingIsActive(names[[i]], env)
+  # One mget() for the plain values, not a get() each: with many globals
+  # that was most of this function's time (#387). mget() also reads a
+  # binding to the empty symbol, where get() fails as a missing argument.
+  values <- mget(names[!active], envir = env, inherits = FALSE)
   out <- vector("list", length(names))
   names(out) <- names
-  for (n in names) {
-    if (bindingIsActive(n, globalenv())) {
-      out[[n]] <- list(active = TRUE, fn = activeBindingFunction(n, globalenv()))
+  j <- 0L
+  for (i in seq_along(names)) {
+    if (active[[i]]) {
+      out[[i]] <- list(active = TRUE, fn = activeBindingFunction(names[[i]], env))
     } else {
-      out[[n]] <- list(active = FALSE, value = get(n, envir = globalenv(), inherits = FALSE))
+      j <- j + 1L
+      out[[i]] <- list(active = FALSE, value = values[[j]])
     }
   }
   out
@@ -1317,19 +1326,29 @@ compare_globals <- function(before_names, before) {
   created <- setdiff(now, before_names)
   removed <- setdiff(before_names, now)
   common <- intersect(before_names, now)
-  changed <- character()
-  for (n in common) {
-    b <- before[[n]]
-    now_active <- bindingIsActive(n, globalenv())
-    if (b$active || now_active) {
-      before_fn <- if (b$active) b$fn else NULL
-      now_fn <- if (now_active) activeBindingFunction(n, globalenv()) else NULL
-      if (b$active != now_active || !identical(before_fn, now_fn)) changed <- c(changed, n)
+  env <- globalenv()
+  b <- before[common]
+  before_active <- now_active <- logical(length(common))
+  for (i in seq_along(common)) {
+    before_active[[i]] <- b[[i]]$active
+    now_active[[i]] <- bindingIsActive(common[[i]], env)
+  }
+  plain <- !before_active & !now_active
+  # The plain values in one mget(), as in snapshot_globals() (#387).
+  now_vals <- mget(common[plain], envir = env, inherits = FALSE)
+  differs <- logical(length(common))
+  j <- 0L
+  for (i in seq_along(common)) {
+    if (plain[[i]]) {
+      j <- j + 1L
+      differs[[i]] <- !identical(b[[i]]$value, now_vals[[j]])
     } else {
-      now_val <- get(n, envir = globalenv(), inherits = FALSE)
-      if (!identical(b$value, now_val)) changed <- c(changed, n)
+      before_fn <- if (before_active[[i]]) b[[i]]$fn else NULL
+      now_fn <- if (now_active[[i]]) activeBindingFunction(common[[i]], env) else NULL
+      differs[[i]] <- before_active[[i]] != now_active[[i]] || !identical(before_fn, now_fn)
     }
   }
+  changed <- common[differs]
   list(created = created, changed = changed, removed = removed)
 }
 

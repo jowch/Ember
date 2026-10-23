@@ -1033,7 +1033,9 @@ the git commit for both (an r-universe serves only its latest build).
   each date is checked against that day's snapshot, and a snapshot that
   doesn't have the version yet (or, for a pin, already has the next one) is
   passed over for the next day's. Each shows every version that changes
-  before applying (`preview_update()`).
+  before applying (`preview_update()`). On the Packages tab, a row whose
+  package CRAN has a newer version of offers that update; pinning back is
+  an R call.
 - **No solver is needed.** Each package version was current for one span of
   time, from its release to the next. Versions that were all current at one
   moment form a valid lock, and for spans of time, overlapping pairwise

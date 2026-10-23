@@ -222,7 +222,17 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  * "github:user/repo[@ref]".
  *
  * @typedef EmberPackageRow
- * @type {{ name: string, version: string?, source: string?, direct: boolean, status: string, message: string?, spec: string? }}
+ * @type {{ name: string, version: string?, source: string?, direct: boolean, status: string, message: string?, spec: string?, available?: string? }}
+ */
+
+/**
+ * A row's Update (#23): the package, the version asked for, the date it
+ * moves to (`null` until known), and the other packages that move.
+ * @typedef EmberPackageUpdate
+ * @type {{
+ *  name: string, version: string?, date: string?, status: "checking" | "ready" | "failed",
+ *  changes: Array<{ name: string, from: string?, to: string? }>, restart: Array<string>, message: string?,
+ * }}
  */
 
 /**
@@ -262,6 +272,7 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  *  },
  *  rows: Array<EmberPackageRow>,
  *  update: EmberPackagesUpdate?,
+ *  package_update?: EmberPackageUpdate,
  * }}
  */
 
@@ -722,6 +733,9 @@ export class Editor extends Component {
                 this.client.send("ember_apply_update", { date }, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_cancel_update: () =>
                 this.client.send("ember_cancel_update", {}, { notebook_id: this.state.notebook.notebook_id }, false),
+            ember_update_package: (name, version) =>
+                this.client.send("ember_update_package", { name, version }, { notebook_id: this.state.notebook.notebook_id }, false),
+            ember_check_versions: () => this.client.send("ember_check_versions", {}, { notebook_id: this.state.notebook.notebook_id }, false),
             ember_set_package_source: (name, source) =>
                 this.client.send("ember_set_package_source", { name, source }, { notebook_id: this.state.notebook.notebook_id }),
             ember_remove_package_source: (name) =>

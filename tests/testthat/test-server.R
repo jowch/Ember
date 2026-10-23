@@ -698,7 +698,7 @@ test_that("every request type in the handler table is answered as documented (36
                "ember_remove_package_source")
   silent <- c("interrupt_all", "restart_process", "shutdown_notebook", "reshow_cell", "ember_render_plot",
              "ember_run_all", "ember_retry_install", "ember_split_cell", "ember_apply_update", "ember_cancel_update", "ember_approve_install",
-             "ember_set_mode", "ember_answer_input", "request_js_link_response", "nbpkg_available_versions",
+             "ember_update_package", "ember_check_versions", "ember_set_mode", "ember_answer_input", "request_js_link_response", "nbpkg_available_versions",
              "nbpkg_get_project_toml", "nbpkg_set_project_toml", "pkg_update")
   # Answered once a subprocess exits, so not counted here: see its own test.
   answered_later <- c("ember_disk_use", "ember_clean_up")
@@ -712,12 +712,14 @@ test_that("every request type in the handler table is answered as documented (36
     # A local, file:// repo (never the real default CRAN mirror): the cell
     # itself names no package, but `ember_update_packages` always starts an
     # index fetch for "today" regardless, and a real network call has no
-    # place in this generic table-driven check.
+    # place in this generic table-driven check. `cran_meta` likewise, for
+    # `ember_check_versions`'s fetch of CRAN's release dates.
     root <- normalizePath(testthat::test_path("fixtures", "repos", "cran"), mustWork = TRUE)
     cache <- tempfile("ember-pkg-cache-")
     dir.create(cache, recursive = TRUE)
     on.exit(unlink(cache, recursive = TRUE), add = TRUE)
-    nb <- open_notebook(path, repos = ember_repos(cran = paste0("file://", root)), cache = cache)
+    nb <- open_notebook(path, repos = ember_repos(cran = paste0("file://", root), cran_meta = paste0("file://", root)),
+                        cache = cache)
     on.exit(close_notebook(nb), add = TRUE)
     server <- new_server("s", throttle = 0)
     host_notebook(server, nb)
