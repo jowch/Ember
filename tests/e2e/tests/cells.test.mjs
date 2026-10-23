@@ -226,7 +226,8 @@ test("cell menu: item order, move down, hide code, Disable on every code cell (1
 // cell below moves when the editor replaces it: by 23 px per cell above
 // before #375. Until an editor has measured its text, CodeMirror guesses
 // line heights: a wrapped line's gutter row (L, W) far too tall, and lines
-// past its first viewport (T) too short. The editor keeps the static code's
+// past its first viewport too short (T; U, whose wrapped lines come after
+// more lines than fit in the window). The editor holds the static code's
 // height until then, so those cells sit above B too (#379).
 test("opening: a cell's static code is as tall as its editor, so nothing below moves when editors load (#375, #379)", async (t) => {
   const long = `x <- c(${Array.from({ length: 300 }, (_, i) => i).join(", ")})`;
@@ -239,6 +240,7 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
     "# %% id=L", long, "",
     "# %% id=W", `s <- "${"abcdefghij".repeat(80)}"`, "",
     "# %% id=T", "y <- 2", long, ...Array.from({ length: 60 }, (_, i) => `t${i} <- ${i}`), "",
+    "# %% id=U", "y <- 2", ...Array.from({ length: 150 }, (_, i) => `u${i} <- ${i}`), long, long, "",
     "# %% id=B", "x + 1", "",
   ].join("\n"), "utf8");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-static.server.log") });
@@ -274,6 +276,11 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
     if (id === null) break;
     await page.waitForFunction((sel) => !document.querySelector(`${sel} .cm-ssr-fake`), cellSelector(id), { timeout: 20000 });
   }
+  // U's last lines are rendered once they come into view; until then U's
+  // editor keeps the static code's height as its minimum.
+  await page.evaluate(() => document.querySelector('pluto-cell[id="U"] pluto-input').scrollIntoView({ block: "end" }));
+  await page.waitForFunction(() => [...document.querySelectorAll("pluto-input .cm-editor")].every((e) => e.style.minHeight === ""), null, { timeout: 20000 })
+    .catch(() => assert.fail("every editor lets go of the static code's height once its lines are measured"));
   // One more frame, so the recorder has seen the layout with every editor.
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 
@@ -282,7 +289,7 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
     statics: window.__staticHeights,
     editors: Object.fromEntries([...document.querySelectorAll("pluto-cell")].map((c) => [c.id, c.querySelector("pluto-input .cm-editor").getBoundingClientRect().height])),
   }));
-  assert.deepEqual(Object.keys(statics).sort(), ["A", "B", "I", "L", "S", "T", "W"], "every cell showed its static code first");
+  assert.deepEqual(Object.keys(statics).sort(), ["A", "B", "I", "L", "S", "T", "U", "W"], "every cell showed its static code first");
   for (const [id, h] of Object.entries(statics)) near(h, editors[id], `cell ${id}'s static code height`);
   assert.deepEqual([...new Set(tops)], [tops[0]], "B never moves while the editors load");
 
