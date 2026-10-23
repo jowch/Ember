@@ -342,6 +342,101 @@ test('chips: "Stale · x changed" after an upstream edit in lazy mode, with a gr
   assertNoProblems(page);
 });
 
+// A name in a chip or note links to the one cell defining it; clicking
+// goes there and selects the definition, as go-to-definition does (#285).
+const focused = (page) => page.evaluate(() => ({
+  cell: document.activeElement?.closest("pluto-cell")?.id ?? null,
+  text: window.getSelection()?.toString() ?? "",
+}));
+
+test('chips: the names in "Stale · x changed" link to the cell defining each, and clicking one selects its definition (#285)', async (t) => {
+  const notebook = tempNotebook("lazy.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-stale-link.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.innerText.includes("2"),
+    cellSelector("B") + " pluto-output", { timeout: 20000 });
+  await setCellCode(page, "A", "y <- 0\nx <- 2");
+  await runCell(page, "A");
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.innerText === "Stale · x changed",
+    cellSelector("B") + " ember-chip", { timeout: 20000 });
+
+  const link = page.locator(`${cellSelector("B")} > ember-chip a`);
+  assert.equal(await link.count(), 1, "the chip has one link");
+  assert.equal(await link.innerText(), "x");
+  await link.click();
+  await page.waitForFunction(() => document.activeElement?.closest("pluto-cell")?.id === "A" && window.getSelection()?.toString() === "x",
+    null, { timeout: 10000 }).catch(async () => assert.fail(`clicking x selects x's definition in A: ${JSON.stringify(await focused(page))}`));
+  // The link doesn't navigate, and B stays stale.
+  assert.equal(new URL(page.url()).hash, "");
+  assert.ok(await page.locator(`${cellSelector("B")}.stale`).count() === 1, "B is still stale");
+
+  assertNoProblems(page);
+});
+
+test('notes: "Changed cnt in place, which another cell defines" links cnt to the cell defining it (#285)', async (t) => {
+  const notebook = path.join(tempDir("ember-e2e-in-place-"), "in-place.R");
+  writeFileSync(notebook, [
+    "### An Ember notebook ###", "# /// environment", '# ember_version = "0.0.0.9000"', '# r_version = "4.6.1"', '# snapshot = "2026-01-01"', "# ///", "",
+    "# %% id=S", "",
+    "# %% id=A", "cnt <- new.env()", "",
+    "# %% id=B", 'assign("n", 1, envir = cnt)', "",
+  ].join("\n"), "utf8");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-in-place-link.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.locator("#ember-safe-preview button").click();
+  const note = page.locator(`${cellSelector("B")} ember-settings-note.in-place-note`);
+  await note.waitFor({ timeout: 20000 });
+  assert.match(await note.innerText(), /^Changed cnt in place, which another cell defines/);
+  const link = note.locator("a");
+  assert.equal(await link.innerText(), "cnt");
+  await link.click();
+  await page.waitForFunction(() => document.activeElement?.closest("pluto-cell")?.id === "A" && window.getSelection()?.toString() === "cnt",
+    null, { timeout: 10000 }).catch(async () => assert.fail(`clicking cnt selects cnt's definition in A: ${JSON.stringify(await focused(page))}`));
+
+  assertNoProblems(page);
+});
+
+// A name no single cell defines reaches th() as plain text, and th() parses
+// a bare string as markup, so `a<b` once showed as "b" (#454 review).
+test("chips: a plain-text name keeps characters th() would read as markup (#285)", async (t) => {
+  const notebook = tempNotebook("lazy.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chips-plain-name.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const shown = await page.evaluate(async () => {
+    const { th } = await import("./common/lang.js");
+    const { html, render } = await import("./imports/Preact.js");
+    const { join_parts } = await import("./components/Cell.js");
+    const out = {};
+    for (const [label, parts] of [["one", ["a<b"]], ["two", ["a<b", "<i>q</i>"]], ["with a link", [html`<a href="#">x</a>`, "a<b"]]]) {
+      const el = document.createElement("div");
+      render(th("t_chip_stale_names", { names: join_parts(parts) }), el);
+      out[label] = { text: el.textContent, markup: el.querySelectorAll("i, b").length };
+    }
+    return out;
+  });
+  assert.deepEqual(shown, {
+    "one": { text: "Stale · a<b changed", markup: 0 },
+    "two": { text: "Stale · a<b and <i>q</i> changed", markup: 0 },
+    "with a link": { text: "Stale · x and a<b changed", markup: 0 },
+  });
+  assertNoProblems(page);
+});
+
 test("chips: a chip's text can't be selected, by double-click or by dragging across the cell (#285)", async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-chip-select.server.log") });

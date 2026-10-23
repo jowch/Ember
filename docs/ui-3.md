@@ -65,7 +65,10 @@ out of the way of the data, the code and the results.
   icon and its own tint: "Not run yet" (neutral, no output), "Stale · `x`
   changed" (amber tint; lazy mode only; the old output is greyed out on a
   grey wash), "Disabled" (solid grey; the code sits on a grey background,
-  dimmed).
+  dimmed). Each name in a chip, or in the "Changed `cnt` in place" note,
+  links to the one cell that defines it, and clicking it selects the
+  definition there, as go-to-definition does (#285). A name no single cell
+  defines stays plain text. Chip text can't be selected.
 - **Errors** are a red-tinted box joined to the code box with no gap: the
   message in bold, "Error in `call` · line n", and a traceback that starts
   collapsed ("Show traceback (n calls)"). Opened, calls from the notebook are

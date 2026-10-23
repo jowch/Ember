@@ -26,3 +26,19 @@ export const stale_names = (notebook, cell_id) => {
     }
     return [...names].sort()
 }
+
+/**
+ * The one cell other than `cell_id` that defines `name`, or null when no
+ * cell or more than one does: a chip or note naming it links there (#285).
+ *
+ * @param {import("../components/Editor.js").NotebookData} notebook
+ * @param {string} cell_id
+ * @param {string} name
+ * @returns {string?}
+ */
+export const defining_cell = (notebook, cell_id, name) => {
+    const definers = (notebook.cell_order ?? []).filter(
+        (id) => id !== cell_id && Object.hasOwn(notebook.cell_dependencies?.[id]?.downstream_cells_map ?? {}, name)
+    )
+    return definers.length === 1 ? definers[0] : null
+}
