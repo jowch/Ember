@@ -88,6 +88,28 @@ test_that("what a running cell prints is sent while it runs, a whole line at a t
   expect_identical(r$console, c(stdout, list(list(kind = "message", text = "m\n"))))
 })
 
+test_that("a forked child doesn't send its parent's printed text again (#470)", {
+  # mclapply()'s children inherit the hook, the console file and the
+  # socket; only the worker may send. Unix only: Windows has no fork, and
+  # no hook (#482). Each child runs until the parent has sent the line.
+  skip_on_os("windows")
+  h <- worker_harness()
+  on.exit(h$close())
+  go <- tempfile("ember-go-")
+  on.exit(unlink(go), add = TRUE)
+  code <- sprintf('cat("before\\n"); invisible(parallel::mclapply(1:4, function(i) { while (!file.exists("%s")) NULL; i }, mc.cores = 4))', go)
+  h$send(run_msg("a", 1L, code))
+  sent <- list()
+  r <- wait_for_done(h, on_frame = function(m) if (identical(m$type, "console")) {
+    sent[[length(sent) + 1]] <<- m$item
+    writeLines("", go)
+  })
+  expect_identical(r$status, "ok")
+  # The children's copies would come as console frames of their own.
+  expect_identical(sent, list(list(kind = "stdout", text = "before\n")))
+  expect_identical(r$console, sent)
+})
+
 test_that("a progress bar's redraws end as one line, as in the R console (#358)", {
   h <- worker_harness()
   on.exit(h$close())

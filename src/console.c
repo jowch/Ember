@@ -22,6 +22,7 @@
 #if !defined(_WIN32)
 #include <R_ext/eventloop.h>
 #include <time.h>
+#include <unistd.h>
 static double now(void) {
   struct timespec t;
   clock_gettime(CLOCK_MONOTONIC, &t);
@@ -32,6 +33,7 @@ static void (*previous)(void) = NULL;
 static SEXP fun = NULL;
 static double every = 0.25, last = 0;
 static int busy = 0;
+static pid_t owner = 0;
 
 static void call_fun(void *unused) {
   SEXP call = PROTECT(Rf_lang1(fun));
@@ -41,7 +43,10 @@ static void call_fun(void *unused) {
 
 static void console_poll(void) {
   if (previous) previous();
-  if (fun == NULL || busy) return;
+  /* A forked child (parallel::mclapply()) inherits the hook, the sink
+     file and the socket: only the worker itself may send what was
+     printed, or each child would send the parent's text again. */
+  if (fun == NULL || busy || getpid() != owner) return;
   double t = now();
   if (t - last < every) return;
   last = t;
@@ -64,7 +69,13 @@ SEXP C_console_poll(SEXP f, SEXP seconds) {
   R_PreserveObject(f);
   fun = f;
   every = Rf_asReal(seconds);
+  owner = getpid();
   if (R_PolledEvents != console_poll) { previous = R_PolledEvents; R_PolledEvents = console_poll; }
+  /* How long R's waits (Sys.sleep(), a socket select) go before checking
+     events, as tcltk sets it: by default R sleeps the whole wait in one
+     go, so a line printed before Sys.sleep(3) would wait for its end. */
+  int usec = (int) (every * 1e6);
+  if (R_wait_usec == 0 || R_wait_usec > usec) R_wait_usec = usec;
   return ScalarLogical(TRUE);
 #endif
 }
