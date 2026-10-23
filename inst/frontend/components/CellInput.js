@@ -648,8 +648,9 @@ export const CellInput = ({
         // renders every line, so its height is the right one at this width.
         // The editor takes it as its height until the first measure, which
         // ends every guess that's too tall, and then as its minimum until its
-        // own height reaches it, so nothing below moves (#379). An edit or a
-        // new width ends the minimum, since the static height no longer holds.
+        // own height reaches it, so nothing below moves (#379). An edit, a
+        // new width or focus (a fold needs it) ends the minimum, since the
+        // static height may no longer hold.
         const static_height = static_height_ref.current
         static_height_ref.current = null
         let height_floor = /** @type {{ height: number, width: number }?} */ (null)
@@ -675,7 +676,7 @@ export const CellInput = ({
                         const { view } = update
                         // Once every line is rendered and measured, there's nothing left to guess.
                         const measured_all = update.geometryChanged && !update.viewportChanged && view.viewport.from === 0 && view.viewport.to === view.state.doc.length
-                        if (update.docChanged || measured_all || view.contentHeight >= height_floor.height - 0.5 || view.dom.offsetWidth !== height_floor.width) end_height_floor(view)
+                        if (update.docChanged || view.hasFocus || measured_all || view.contentHeight >= height_floor.height - 0.5 || view.dom.offsetWidth !== height_floor.width) end_height_floor(view)
                     }),
                     highlightLinePlugin(),
                     highlightRangePlugin(),
