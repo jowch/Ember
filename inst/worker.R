@@ -3886,6 +3886,69 @@ mask_active_bindings <- function(envir) {
   }
 }
 
+#' The argument names of every function called `x`, as utils' `argNames()`
+#' finds them through `getAnywhere()`: on the search path, as a registered
+#' S3 method, and in every loaded namespace, each distinct function once.
+#' `getAnywhere()` looks on the search path with `find()`, which lists
+#' every attached environment with `ls()` for each name, and inside a call
+#' utils asks this for the function and each of its S3 methods: 619 names
+#' for `print(` with a Bioconductor stack attached, 8 s (#288). Here each
+#' environment is asked with `exists()`, the environments are listed once
+#' per completion (`envs`), and `base::` is explicit because packages such
+#' as BiocGenerics make `get` an S4 generic. Same names, same order.
+arg_names_anywhere <- function(x, envs) {
+  objs <- list()
+  for (env in envs$search) {
+    if (base::exists(x, envir = env, inherits = FALSE)) objs <- c(objs, list(base::get(x, envir = env, inherits = FALSE)))
+  }
+  if (grepl(".", x, fixed = TRUE)) {
+    parts <- strsplit(x, ".", fixed = TRUE)[[1L]]
+    np <- length(parts)
+    for (i in 2:np) {
+      gen <- paste(parts[1L:(i - 1)], collapse = ".")
+      cl <- paste(parts[i:np], collapse = ".")
+      if (gen == "" || cl == "") next
+      f <- utils::getS3method(gen, cl, TRUE)
+      if (!is.null(f) && !is.null(environment(f))) objs <- c(objs, list(f))
+    }
+  }
+  for (ns in envs$namespaces) {
+    if (base::exists(x, envir = ns, inherits = FALSE)) objs <- c(objs, list(base::get(x, envir = ns, inherits = FALSE)))
+  }
+  n <- length(objs)
+  dups <- logical(n)
+  if (n > 1L) for (i in 2L:n) for (j in 1L:(i - 1L)) if (identical(objs[[i]], objs[[j]], ignore.environment = TRUE)) {
+    dups[i] <- TRUE
+    break
+  }
+  out <- unlist(lapply(objs[!dups], function(f) if (is.function(f)) names(formals(args(f)))))
+  if (is.null(out)) character() else out
+}
+
+#' Before `.completeToken()`: the names whose arguments it will look up
+#' for the call the cursor is in (the function, and its S3 methods when
+#' `rc.settings(S3 = TRUE)`, as `functionArgs()` picks them), put into
+#' `utils:::.FunArgEnv`, the table `argNames()` reads first. Returns the
+#' names added, for `complete_line()` to take out again, so the table
+#' never answers for a function the notebook has since redefined.
+fill_arg_names <- function() {
+  env <- utils:::.CompletionEnv
+  if (utils:::isInsideQuotes() || !isTRUE(env$settings[["args"]]) || !isTRUE(env$settings[["argdb"]])) return(character())
+  fun <- utils:::inFunction(env[["linebuffer"]], env[["start"]])
+  if (length(fun) < 1L || any(fun == "")) return(character())
+  # Looked up from utils' namespace, as `functionArgs()` does.
+  if (isTRUE(env$settings[["S3"]]) && exists(fun, envir = asNamespace("utils"), mode = "function")) {
+    fun <- c(fun, tryCatch(utils::methods(fun), warning = function(w) NULL, error = function(e) NULL))
+  }
+  db <- utils:::.FunArgEnv
+  todo <- setdiff(unique(fun), ls(db, all.names = TRUE))
+  if (length(todo) == 0) return(character())
+  envs <- list(search = lapply(seq_along(search()), as.environment),
+               namespaces = lapply(loadedNamespaces(), asNamespace))
+  for (name in todo) assign(name, arg_names_anywhere(name, envs), envir = db)
+  todo
+}
+
 #' utils' own line completion, as IRkernel does: `.assignLinebuffer()` and
 #' `.assignEnd()` set the line and cursor the internal completer reads,
 #' `.guessTokenFromLine()` finds the token being typed, `.completeToken()`
@@ -3907,6 +3970,8 @@ complete_line <- function(line, cursor) {
     utils:::.assignLinebuffer(line)
     utils:::.assignEnd(cursor)
     utils:::.guessTokenFromLine()
+    filled <- tryCatch(fill_arg_names(), error = function(e) character())
+    on.exit(rm(list = filled, envir = utils:::.FunArgEnv), add = TRUE)
     utils:::.completeToken()
     comps <- utils:::.retrieveCompletions()
     token <- tryCatch(utils:::.CompletionEnv$token, error = function(e) NULL) %||% ""

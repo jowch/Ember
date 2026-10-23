@@ -2496,6 +2496,41 @@ test_that("complete_line() (44)", {
   expect_identical(before, after)
 })
 
+test_that("argument completion inside a call gives utils' own names, methods' too, and leaves its table as it was (#288)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  arg_items <- function(id, line) {
+    h$send(list(type = "complete", id = id, line = line, cursor = nchar(line)))
+    m <- h$receive()
+    sort(vapply(Filter(function(it) identical(it$kind, "argument"), m$items), `[[`, character(1), "name"))
+  }
+  # What plain R's completer gives, read in a cell, where nothing has been
+  # put into the table: the argument names (`...` isn't one).
+  utils_args <- function(label, n, fun, text) {
+    out <- run_and_wait(h, label, n, sprintf('cat(sort(utils:::functionArgs("%s", "%s")), sep = "\\n")', fun, text))
+    printed <- Filter(function(i) identical(i$kind, "stdout"), out$console)
+    all <- strsplit(paste(vapply(printed, `[[`, "", "text"), collapse = ""), "\n")[[1]]
+    all[grepl("=$", all)]
+  }
+  table_size <- function(label, n) run_and_wait(h, label, n, 'length(ls(utils:::.FunArgEnv, all.names = TRUE))')$output$text
+
+  before <- table_size("a", 1L)
+  run_and_wait(h, "b", 2L, "print.ember_t <- function(x, gamma_ember, ...) invisible(x)")
+  got <- arg_items(1L, "print(x, ")
+  expect_identical(got, utils_args("c", 3L, "print", ""))
+  # print.default's and the notebook's own method's arguments.
+  expect_true(all(c("digits=", "gamma_ember=") %in% got))
+  expect_identical(arg_items(2L, "summary(x, d"), utils_args("d", 4L, "summary", "d"))
+
+  # A function the notebook redefines: its new arguments, not the old ones.
+  run_and_wait(h, "e", 5L, "my_fun <- function(alpha_x) 1")
+  expect_identical(arg_items(3L, "my_fun(al"), "alpha_x=")
+  run_and_wait(h, "f", 6L, "my_fun <- function(alto_y) 1")
+  expect_identical(arg_items(4L, "my_fun(al"), "alto_y=")
+
+  expect_identical(table_size("g", 7L), before)
+})
+
 test_that("completion restores a locked active binding's lock (mask_active_bindings())", {
   h <- worker_harness()
   on.exit(h$close())
