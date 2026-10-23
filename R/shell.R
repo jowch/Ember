@@ -66,6 +66,7 @@ session_start <- function(state) {
   nb$out_tail <- ""
   nb$watch <- list()
   nb$data_watch <- list()
+  nb$run_data <- NULL
   nb$last_watch_check <- NULL
   nb$last_mem_check <- NULL
   nb$worker_rss_reported <- NULL
@@ -486,6 +487,11 @@ run_effect <- function(nb, fx) {
     },
     send = {
       if (identical(nb$proc_gen, fx$gen) && !is.null(nb$con)) {
+        if (identical(fx$msg$type, "run")) {
+          # The data files whose versions the run's result records (#276).
+          nb$run_data <- list(token = fx$msg$token,
+                              paths = nb$state$graph$analyses[[fx$msg$cell]]$data_files %||% character())
+        }
         tryCatch(write_frame(nb$con, fx$msg), error = function(e) NULL)
         note_worker_io(nb)
       }
@@ -1133,6 +1139,10 @@ poll <- function(nb) {
           next
         }
         ev <- worker_event(msg, nb$proc_gen, Sys.time(), secret = nb$secret)
+        if (identical(ev$type, "wk_done") && identical(ev$token, nb$run_data$token)) {
+          ev$data_end <- data_signatures(nb, nb$run_data$paths)
+          nb$run_data <- NULL
+        }
         if (identical(ev$type, "wk_hello")) nb$worker_tmp <- worker_tempdir(msg$tempdir)
         enqueue(nb, ev)
         if (identical(ev$type, "wk_failed")) {
@@ -1201,14 +1211,14 @@ poll <- function(nb) {
     data_changed <- list()
     for (p in names(nb$data_watch)) {
       full <- resolve_source_path(nb, p)
-      info <- tryCatch(file.info(full)[, c("mtime", "size")], error = function(e) list(mtime = NA, size = NA))
+      info <- data_file_info(full)
       w <- nb$data_watch[[p]]
       if (!isTRUE(identical(info$mtime, w$mtime))) {
         same_size <- isTRUE(identical(info$size, w$size)) && !is.na(info$size)
         hash <- if (same_size) data_file_hash(full) else NA_character_
         nb$data_watch[[p]] <- list(mtime = info$mtime, size = info$size, hash = hash)
         if (!same_size || is.na(hash) || !identical(hash, w$hash)) {
-          data_changed[[p]] <- if (is.na(info$mtime)) Sys.time() else info$mtime
+          data_changed[[p]] <- data_signature(info)
         }
       }
     }
@@ -1431,14 +1441,30 @@ sync_watch <- function(nb, paths) {
 sync_data_watch <- function(nb, paths) {
   old <- names(nb$data_watch)
   for (p in setdiff(paths, old)) {
-    info <- tryCatch(file.info(resolve_source_path(nb, p))[, c("mtime", "size")],
-                     error = function(e) list(mtime = NA, size = NA))
+    info <- data_file_info(resolve_source_path(nb, p))
     nb$data_watch[[p]] <- list(mtime = info$mtime, size = info$size, hash = NA_character_)
   }
   for (p in setdiff(old, paths)) {
     nb$data_watch[[p]] <- NULL
   }
   invisible(NULL)
+}
+
+#' A data file's modified time and size, both `NA` when it is missing.
+data_file_info <- function(full) {
+  tryCatch(as.list(file.info(full)[, c("mtime", "size")]),
+           error = function(e) list(mtime = NA, size = NA))
+}
+
+#' What step.R compares to tell whether a reader saw a data file's current
+#' version (#276): its modified time and size as text, or `"missing"`.
+data_signature <- function(info) {
+  if (is.na(info$mtime)) "missing" else sprintf("%.6f %s", as.numeric(info$mtime), format(info$size))
+}
+
+#' The signatures of a cell's data files, by path.
+data_signatures <- function(nb, paths) {
+  stats::setNames(lapply(paths, function(p) data_signature(data_file_info(resolve_source_path(nb, p)))), paths)
 }
 
 #' A data file's md5, or `NA` when it is missing or can't be read.

@@ -366,6 +366,11 @@ test_that("a reader called with a literal path records the file it reads (#276)"
   expect_true(all(c("d", "x") %in% a$definitions$name))
 })
 
+test_that("fread() takes its path as input or file (#276)", {
+  a <- read_cell('a <- data.table::fread(input = "a.csv")\nb <- fread(file = "b.csv")\nc <- fread("c.csv")')
+  expect_equal(a$data_files, c("a.csv", "b.csv", "c.csv"))
+})
+
 test_that("a reader with a computed path gets the untracked_file note (#276)", {
   a <- read_cell('d <- readRDS(f)')
   expect_equal(a$data_files, character())

@@ -986,6 +986,7 @@ test_that("a sourced file's change invalidates the sourcing cell (53)", {
 # ---- Data files a cell reads (#276) -----------------------------------------
 
 # W writes d.csv, R reads it, U uses what R read: no edge between W and R.
+# R's result saw d.csv at version "v1" (the shell's signature of the file).
 data_file_notebook <- function(on_cell_change = "autorun") {
   s <- fake_state(list(S = cell(""),
                        W = cell('write.csv(data.frame(x = 1:3), "d.csv", row.names = FALSE)'),
@@ -994,10 +995,11 @@ data_file_notebook <- function(on_cell_change = "autorun") {
                   on_cell_change = on_cell_change)
   r <- boot(s, c("W", "R", "U"))
   for (created in list(character(), "d", character())) {
+    seen <- if (identical(created, "d")) list("d.csv" = "v1") else list()
     r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = created),
-                                at(r$state$worker$running$started_at + 2)))
+                                at(r$state$worker$running$started_at + 2), data_end = seen))
   }
-  r  # W finished at 5, R at 7, U at 9
+  r
 }
 
 test_that("a cell that reads a data file by a literal path has it in its analysis (#276)", {
@@ -1005,49 +1007,67 @@ test_that("a cell that reads a data file by a literal path has it in its analysi
   expect_equal(r$state$graph$analyses$R$data_files, "d.csv")
   expect_equal(r$state$graph$analyses$W$data_files, character())
   expect_equal(watched_data_files(r$state), "d.csv")
+  expect_equal(r$state$results$R$data_seen, list("d.csv" = "v1"))
 })
 
 test_that("a data file that changed after its reader ran reruns the reader and its dependents in autorun (#276)", {
   r <- data_file_notebook()
-  r2 <- drive(r$state, ev_data_changed(list("d.csv" = 20), at(21)))
-  expect_true(isTRUE(r2$state$results$R$stale) || "R" %in% r2$state$pending)
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(21)))
   expect_equal(r2$state$worker$running$cell, "R")
   expect_true(isTRUE(r2$state$results$U$stale) || "U" %in% r2$state$pending)
   expect_false("W" %in% c(r2$state$pending, r2$state$worker$running$cell))
 })
 
+test_that("a writer that runs right after its reader reruns the reader, however coarse the file clock (#276)", {
+  # R sits above W: run all runs R, then W. W's write can carry a modified
+  # time from before R's result arrived; only the version counts.
+  s <- fake_state(list(S = cell(""), R = cell('d <- read.csv("d.csv")'),
+                       W = cell('write.csv(data.frame(x = 1:3), "d.csv", row.names = FALSE)')))
+  r <- boot(s, c("R", "W"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "d"), at(5),
+                              data_end = list("d.csv" = "v1")))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(5.004)))
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(6)))
+  expect_equal(r2$state$worker$running$cell, "R")
+})
+
 test_that("in lazy mode a changed data file marks its reader and dependents stale, and runs nothing (#276)", {
   r <- data_file_notebook("lazy")
-  r2 <- drive(r$state, ev_data_changed(list("d.csv" = 20), at(21)))
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(21)))
   expect_true(isTRUE(r2$state$results$R$stale))
   expect_true(isTRUE(r2$state$results$U$stale))
   expect_equal(r2$state$pending, character())
   expect_null(r2$state$worker$running)
 })
 
-test_that("a data file changed before its reader's run finished doesn't wake the reader (#276)", {
-  # A cell that writes the file it reads: the change is its own run's.
+test_that("a data file at the version its reader's result saw doesn't wake the reader (#276)", {
+  # As when a cell writes the file it reads: its result saw its own write.
   r <- data_file_notebook()
-  r2 <- drive(r$state, ev_data_changed(list("d.csv" = 6), at(10)))
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = "v1"), at(10)))
   expect_false(isTRUE(r2$state$results$R$stale))
   expect_equal(r2$state$pending, character())
   expect_null(r2$state$worker$running)
 })
 
-test_that("a data file that changes while its reader is running or queued leaves it alone (#276)", {
-  s <- fake_state(list(S = cell(""), R = cell('d <- read.csv("d.csv")')))
-  r <- boot(s, "R")
-  r2 <- drive(r$state, ev_data_changed(list("d.csv" = 3), at(4)))
+test_that("a data file that changes while its reader runs counts as seen by that run (#276)", {
+  # Ember can't tell the run's own write from someone else's; marking the
+  # result stale would rerun a cell that writes the file it reads, as the
+  # stale ancestor of U, again and again.
+  s <- fake_state(list(S = cell(""), R = cell('d <- read.csv("d.csv")'), U = cell("d")))
+  r <- boot(s, c("R", "U"))
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(4)))
   expect_equal(r2$state$worker$running$cell, "R")
-  expect_equal(r2$state$pending, character())
-  r3 <- drive(r2$state, wk_done(1, r2$state$worker$running$token, report(created = "d"), at(5)))
+  expect_equal(r2$state$pending, "U")
+  r3 <- drive(r2$state, wk_done(1, r2$state$worker$running$token, report(created = "d"), at(5),
+                                data_end = list("d.csv" = "v2")))
   expect_false(isTRUE(r3$state$results$R$stale))
-  expect_null(r3$state$worker$running)
+  expect_equal(r3$state$results$R$data_seen, list("d.csv" = "v2"))
+  expect_equal(r3$state$worker$running$cell, "U")
 })
 
 test_that("a change to a file no cell reads does nothing (#276)", {
   r <- data_file_notebook()
-  r2 <- drive(r$state, ev_data_changed(list("other.csv" = 20), at(21)))
+  r2 <- drive(r$state, ev_data_changed(list("other.csv" = "v2"), at(21)))
   expect_identical(r2$state$results, r$state$results)
   expect_null(r2$state$worker$running)
 })

@@ -238,9 +238,11 @@ after each dispatch.
   memory needs R 4.5). The footer line is `helpers.R md5:<hex>`.
 - **Data files are watched by modified time, then size, then MD5**
   (#276). The shell keeps them in `nb$data_watch`, apart from sourced
-  files, and dispatches `data_changed` with each changed path's modified
-  time; `reduce_data_changed` skips a reader whose last run finished after
-  it, or that is queued or running.
+  files, and dispatches `data_changed` with each changed path's version
+  (`data_signature()`: modified time and size). A run's `wk_done` carries
+  the versions of the cell's data files as its result arrived, kept as
+  the result's `data_seen`; `reduce_data_changed` skips a reader that saw
+  the new version, or that is queued or running.
 - **Computed `source()` paths are kept for the session only**; the learned
   definitions they produce go into the footer like any other.
 - **Formula checks** evaluate the `data` argument only when it is a symbol

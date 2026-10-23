@@ -647,7 +647,7 @@ literal_signature <- function(a) {
 walk_data_read <- function(e, scope, acc, name, arg_pids, head_pos) {
   args <- as.list(e)[-1]
   nms <- names2(args)
-  i <- which(nms == data_readers[[name]])[1]
+  i <- which(nms %in% c(data_readers[[name]], "file"))[1]
   if (is.na(i)) i <- which(nms == "")[1]
   if (!is.na(i) && !missing_arg(args[[i]])) {
     p <- args[[i]]

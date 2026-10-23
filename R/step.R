@@ -56,7 +56,7 @@ ev_show_more   <- function(cell, path, dim, at)
 
 # From the shell's own IO
 ev_files_read  <- function(files, at) event("files_read", at, files = files)  # path -> list(text, hash)
-ev_data_changed <- function(files, at) event("data_changed", at, files = files)  # path -> modified time
+ev_data_changed <- function(files, at) event("data_changed", at, files = files)  # path -> signature (shell.R's data_signature())
 ev_save_failed <- function(message, at) event("save_failed", at, message = message)
 
 # From the worker (built by `worker_event()` in shell.R from wire messages)
@@ -68,8 +68,10 @@ wk_console  <- function(gen, token, item, at)
   event("wk_console", at, gen = gen, token = token, item = item)
 wk_source   <- function(gen, token, path, text, at)
   event("wk_source", at, gen = gen, token = token, path = path, text = text)
-wk_done     <- function(gen, token, report, at)
-  event("wk_done", at, gen = gen, token = token, report = report)
+#' `data_end` is the signatures of the cell's data files (#276) when its
+#' result arrived.
+wk_done     <- function(gen, token, report, at, data_end = list())
+  event("wk_done", at, gen = gen, token = token, report = report, data_end = data_end)
 wk_rendered <- function(gen, cell, display, at)
   event("wk_rendered", at, gen = gen, cell = cell, display = display)
 #' The worker's answer to a `set_input` message: `ok`, the value as
@@ -1606,16 +1608,18 @@ reduce_files_read <- function(state, event) {
 }
 
 #' Data files that cells read by a literal path changed (#276): the shell's
-#' watcher saw a new modified time and new contents. `event$files` maps
-#' each path to the time it changed (the file's modified time, or the
-#' time the change was seen for a file that is gone).
+#' watcher saw new contents. `event$files` maps each path to its new
+#' signature (shell.R's `data_signature()`).
 #'
-#' A cell that reads one of them (its analysis's `data_files`) and whose
-#' last result finished before the change goes stale with its dependents,
-#' and autorun also queues it, as for a sourced file. A cell that is
-#' running or queued is left alone: its run reads the new file. So is one
-#' whose last result finished after the change, so a cell that writes the
-#' file it reads doesn't wake itself.
+#' A cell that reads one of them (its analysis's `data_files`) goes stale
+#' with its dependents, and autorun also queues it, as for a sourced file,
+#' unless its last result already saw that signature (`data_seen`, taken
+#' when the result arrived). So a cell that writes the file it reads
+#' doesn't wake itself, and a reader that ran after the writer isn't run
+#' twice; comparing signatures rather than times doesn't depend on how
+#' fine the file system's clock is. A cell that is running or queued is
+#' left alone: a queued one reads the new file, and a running one's result
+#' takes the version there when it arrives (`reduce_wk_done()`).
 reduce_data_changed <- function(state, event) {
   autorun <- identical(state$file$header$on_cell_change, "autorun")
   running <- state$worker$running$cell
@@ -1625,14 +1629,11 @@ reduce_data_changed <- function(state, event) {
     if (length(hit) == 0 || identical(running, id) || id %in% state$pending) next
     r <- state$results[[id]]
     if (is.null(r)) next
-    finished <- as.numeric(r$started_at) + (r$runtime %||% 0)
-    changed_at <- max(vapply(event$files[hit], as.numeric, numeric(1)))
-    if (length(finished) == 1 && !is.na(finished) && finished >= changed_at) next
+    seen <- r$data_seen %||% list()
+    if (all(vapply(hit, function(p) identical(seen[[p]], event$files[[p]]), logical(1)))) next
     r$stale <- TRUE
     state$results[[id]] <- r
-    if (autorun && isTRUE(state$allowed) && can_run(state, id)) {
-      state$pending <- union(state$pending, id)
-    }
+    if (autorun && isTRUE(state$allowed) && can_run(state, id)) state$pending <- union(state$pending, id)
     state <- invalidate_dependents(state, id, character())
   }
   list(state = state, effects = list(), reply = NULL)
@@ -2039,6 +2040,12 @@ reduce_wk_done <- function(state, event) {
                        inputs = if (identical(status, "ok")) report$inputs %||% list() else list(),
                        from_lock = as.character(report$from_lock %||% character()))
   if (late_stale) result$stale <- TRUE
+  # The versions of its data files the result saw (#276). A file that
+  # changed during the run counts as seen: Ember can't tell the cell's own
+  # write from someone else's, and marking it stale would rerun a cell that
+  # writes the file it reads over and over, as an ancestor of its queued
+  # dependents.
+  result$data_seen <- event$data_end %||% list()
   state$results[[id]] <- result
   state$graph_dropped[[id]] <- NULL
   if (identical(status, "ok")) state <- keep_input_values(state, id, w$running$code, result$inputs)

@@ -98,7 +98,8 @@ untracked_reads <- c("get", "get0", "mget", "exists", "dynGet",
 #' (#276). A literal path there is watched as a `source()` path is: when
 #' the file changes, the cell and its dependents rerun or go stale. Any
 #' other value gets an `untracked_file` note. The argument is taken by
-#' name, or else as the first unnamed one.
+#' name (or as `file`, which `fread()` also takes), or else as the first
+#' unnamed one.
 data_readers <- c(
   # base and utils
   read.csv = "file", read.csv2 = "file", read.delim = "file", read.delim2 = "file",
@@ -109,7 +110,7 @@ data_readers <- c(
   read_table = "file", read_fwf = "file", read_lines = "file", read_file = "file",
   read_rds = "file", vroom = "file",
   # data.table, readxl, arrow, haven, jsonlite
-  fread = "file", read_excel = "path", read_xlsx = "path", read_xls = "path",
+  fread = "input", read_excel = "path", read_xlsx = "path", read_xls = "path",
   read_parquet = "file", read_feather = "file", read_ipc_file = "file",
   read_csv_arrow = "file", read_sav = "file", read_dta = "file", read_sas = "data_file",
   read_xpt = "file", read_json = "path")
