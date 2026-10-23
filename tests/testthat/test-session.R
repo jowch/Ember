@@ -1155,6 +1155,77 @@ test_that("worker_tempdir() keeps only an existing R temp folder that isn't the 
   expect_null(worker_tempdir(c(d, d)))
 })
 
+# check_data_files() on a stand-in notebook: its folder, the shell's record
+# of d.csv, and the events it sends.
+data_check_nb <- function(running = NULL, touch = NULL) {
+  dir <- normalizePath(tempfile("ember-check-"), winslash = "/", mustWork = FALSE)
+  dir.create(dir)
+  nb <- new.env()
+  nb$state <- list(path = file.path(dir, "nb.R"), worker = list(running = running),
+                   graph = list(analyses = list(W = list(data_touch = touch))))
+  nb$data_watch <- list("d.csv" = list(mtime = NA, size = NA, hash = NA_character_))
+  nb$sent <- list()
+  nb$send <- function(nb, ev) nb$sent[[length(nb$sent) + 1]] <- ev
+  nb$file <- file.path(dir, "d.csv")
+  nb
+}
+
+test_that("a data file whose size changes within one clock tick is still a change (#405)", {
+  nb <- data_check_nb()
+  writeLines("", nb$file, sep = "")
+  t <- as.POSIXct("2026-01-01 00:00:00", tz = "UTC")
+  Sys.setFileTime(nb$file, t)
+  check_data_files(nb, nb$send)
+  expect_length(nb$sent, 1)
+  # The write finishes with the same modified time as the look that found it empty.
+  writeLines("1,2", nb$file)
+  Sys.setFileTime(nb$file, t)
+  check_data_files(nb, nb$send)
+  expect_length(nb$sent, 2)
+  expect_identical(nb$data_watch[["d.csv"]]$size, file.info(nb$file)$size)
+})
+
+test_that("the poll leaves a file the running cell writes to the check at the run's end (#405)", {
+  touch <- data.frame(path = "d.csv", index = 1L, read = FALSE, stringsAsFactors = FALSE)
+  nb <- data_check_nb(running = list(cell = "W"), touch = touch)
+  writeLines("1,2", nb$file)
+  expect_identical(running_writes(nb$state), "d.csv")
+  check_data_files(nb, nb$send, skip = running_writes(nb$state))
+  expect_length(nb$sent, 0)
+  check_data_files(nb, nb$send)
+  expect_length(nb$sent, 1)
+  # A write to a computed path may be any file.
+  nb$state$graph$analyses$W$data_touch$path <- NA_character_
+  expect_identical(running_writes(nb$state), NA_character_)
+  nb$state$worker$running <- NULL
+  expect_identical(running_writes(nb$state), character())
+})
+
+test_that("the poll's skip matches a running writer's file however its path is spelled (#405)", {
+  touch <- data.frame(path = "./d.csv", index = 1L, read = FALSE, stringsAsFactors = FALSE)
+  nb <- data_check_nb(running = list(cell = "W"), touch = touch)
+  writeLines("1,2", nb$file)
+  check_data_files(nb, nb$send, skip = running_writes(nb$state))
+  expect_length(nb$sent, 0)
+})
+
+test_that("a look that found the file cut short doesn't cost the next same-bytes rewrite a rerun (#405)", {
+  nb <- data_check_nb()
+  at <- function(s) as.POSIXct("2026-01-01 00:00:00", tz = "UTC") + s
+  put <- function(text, s) { writeLines(text, nb$file, sep = ""); Sys.setFileTime(nb$file, at(s)) }
+  put("1,2\n", 1); check_data_files(nb, nb$send)
+  put("1,2\n", 2); check_data_files(nb, nb$send)   # the first same-size rewrite has no hash to compare
+  expect_length(nb$sent, 2)
+  # A writer the skip can't see: one look mid-write, then the finished file
+  # in the same clock tick. Both are changes (a reader may have read the
+  # short file), and the hash is kept.
+  put("", 3); check_data_files(nb, nb$send)
+  put("1,2\n", 3); check_data_files(nb, nb$send)
+  expect_length(nb$sent, 4)
+  put("1,2\n", 4); check_data_files(nb, nb$send)
+  expect_length(nb$sent, 4)
+})
+
 # ---- Prompts (#186) ------------------------------------------------------------
 
 #' Run `id` and wait until its prompt shows; returns the prompt.
