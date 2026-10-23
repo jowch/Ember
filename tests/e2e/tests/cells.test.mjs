@@ -327,7 +327,7 @@ test("opening: a cell's static code is as tall as its editor, so nothing below m
 // px for W's 250 (the opening test's failure on macOS CI). The editor keeps
 // the static height until it is in view and measured (#416).
 test("opening: an editor scrolled past before its first measure keeps the static code's height until it is measured (#416)", async (t) => {
-  const notebook = path.join(mkdtempSync(path.join(tmpdir(), "ember-e2e-static-")), "scrolled.R");
+  const notebook = path.join(tempDir("ember-e2e-static-"), "scrolled.R");
   writeFileSync(notebook, [
     "### An Ember notebook ###", "# /// environment", '# ember_version = "0.0.0.9000"', '# r_version = "4.6.1"', '# snapshot = "2026-01-01"', "# ///", "",
     ...Array.from({ length: 30 }, (_, i) => [`# %% id=P${i}`, `p${i} <- ${i}`, ""]).flat(),
