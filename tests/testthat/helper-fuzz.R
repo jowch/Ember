@@ -681,6 +681,8 @@ fuzz_check <- function(snap, ran, mode, run, res, ran_ok = list(), dir = NULL) {
   # outputs from scratch gives, so the reference uses the code each cell
   # ran. A cell edited since it ran keeps its old output, marked as edited.
   shown <- Filter(function(id) has_run(views[[id]]) && !is.null(ran[[id]]), names(views))
+  # A cell edited to stop reading a file isn't watched for it any more
+  # (#439), so it and what reads from it aren't checked against the file.
   files_read <- function(code) regmatches(code, gregexpr('readLines\\("[^"]+"\\)', code))[[1]]
   unwatched <- Filter(function(id) {
     isTRUE(views[[id]]$code_differs) && length(setdiff(files_read(ran[[id]]), files_read(current[[id]])))
