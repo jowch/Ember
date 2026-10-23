@@ -408,15 +408,24 @@ fuzz_defs <- function(code) {
   unique(c(m, substring(f, 2)))
 }
 
-#' Names `code` reads from other cells: every name in it but those it
-#' assigns whole. A replacement (`v[1] <- k`) reads the old value.
+#' Names `code` reads from other cells: as in R, line by line, every name
+#' it uses before the line that assigns it whole. That line's right side
+#' still reads the old value (`v <- v + 1`, #436), and so does a
+#' replacement (`v[1] <- k`).
 fuzz_refs <- function(code) {
-  m <- regmatches(code, gregexpr("\\bv[0-9]+\\b", code, perl = TRUE))[[1]]
-  whole <- regmatches(code, gregexpr("(?m)^v[0-9]+(?= <-)", code, perl = TRUE))[[1]]
-  # `s1(v) <- k` runs `s1<-`, and through it the method another cell defines.
-  calls <- regmatches(code, gregexpr("(?m)^s[0-9]+(?=\\()", code, perl = TRUE))[[1]]
-  setters <- if (length(calls)) c(paste0(calls, "<-"), paste0(calls, "<-.default"))
-  setdiff(unique(c(m, setters)), whole)
+  out <- character()
+  whole <- character()
+  for (line in strsplit(code, "\n", fixed = TRUE)[[1]]) {
+    m <- regmatches(line, gregexpr("\\bv[0-9]+\\b", line, perl = TRUE))[[1]]
+    lhs <- regmatches(line, regexpr("^v[0-9]+(?= <-)", line, perl = TRUE))
+    if (length(lhs)) m <- m[-1]
+    # `s1(v) <- k` runs `s1<-`, and through it the method another cell defines.
+    call <- regmatches(line, regexpr("^s[0-9]+(?=\\()", line, perl = TRUE))
+    if (length(call)) m <- c(m, paste0(call, "<-"), paste0(call, "<-.default"))
+    out <- union(out, setdiff(m, whole))
+    whole <- union(whole, lhs)
+  }
+  out
 }
 
 #' What `code` reads among `codes`: fuzz_refs(), less a default method
