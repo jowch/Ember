@@ -45,3 +45,16 @@ test("open: /open and /edit refuse without the secret", async (t) => {
   const resp = await page.goto(`${server.origin}open?path=${encodeURIComponent(notebook)}`);
   assert.equal(resp.status(), 403);
 });
+
+test("open: an editor file that fails to load fails openNotebook, naming the file (#412)", async (t) => {
+  const notebook = tempNotebook();
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "open-failed-file.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  // The file #412's Windows run lost, failed the same way on purpose.
+  const page = await newPage(browser);
+  await page.route("**/common/SliderServerClient.js", (route) => route.abort("failed"));
+  await assert.rejects(openNotebook(page, server.origin, server.secret, notebook),
+    /common\/SliderServerClient\.js failed to load: net::ERR_FAILED/);
+});
