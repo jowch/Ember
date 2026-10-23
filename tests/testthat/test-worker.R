@@ -2739,3 +2739,26 @@ test_that("a run reports its data files' versions, and a change after the read b
   expect_length(r2$data_changed, 0)
   expect_identical(r2$data_seen[["d.csv"]], ember:::data_signature(as.list(file.info(f)[, c("mtime", "size")])))
 })
+
+test_that("menu()'s answer is a number in range, 0, or a choice typed out (#186)", {
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  ch <- c("red", "blue", "10")
+  expect_equal(e$menu_choice("2", ch), 2L)
+  expect_equal(e$menu_choice("0", ch), 0L)
+  expect_true(is.na(e$menu_choice("4", ch)))
+  expect_equal(e$menu_choice("blue", ch), 2L)
+  # A number is a number first, as in R's menu().
+  expect_equal(e$menu_choice("10", ch), NA_integer_)
+  expect_true(is.na(e$menu_choice("", ch)))
+  expect_true(is.na(e$menu_choice("green", ch)))
+})
+
+test_that("outside a run nothing can answer: readline() gives \"\" and menu() 0 (#186)", {
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  expect_null(e$running)
+  expect_identical(e$prompt_readline("Name? "), "")
+  if (interactive()) expect_identical(e$prompt_menu(c("a", "b")), 0L)
+  else expect_error(e$prompt_menu(c("a", "b")), "non-interactively")
+})

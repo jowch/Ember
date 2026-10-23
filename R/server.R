@@ -898,6 +898,7 @@ answer_from_subprocess <- function(cmd, answer, ok, failure) {
 #' | ember_open_notebook            | {path}: open_or_find() (shared with /open); reply {url} or {error}. No hub |
 #' | ember_forget_recent            | {path}: forget_notebook(), then the ember_start_page reply. No hub |
 #' | ember_set_mode                 | {mode}: "autorun" or "lazy", else refused; refused when read-only. set_cell_change_mode(nb, mode); flush. No reply |
+#' | ember_answer_input             | {cell_id, text}: the answer to the running cell's prompt (#186), answer_input(); a refusal (the prompt has gone) is logged. Flush. No reply |
 #' | request_js_link_response, nbpkg_available_versions, nbpkg_get_project_toml, nbpkg_set_project_toml, pkg_update | Julia-only; their UI is disabled in the frontend. Logged, no reply |
 #'
 #' Replies use the reply type Pluto uses for each (connect "\U0001F44B", ping
@@ -1362,6 +1363,26 @@ handlers <- list(
       if (isTRUE(notebook_snapshot(hub$nb)$read_only)) stop(refused("read-only notebook"))
       set_cell_change_mode(hub$nb, mode)
     }, ember_refused = function(e) message("ember: refused ember_set_mode: ", conditionMessage(e)))
+    flush_clients(server, hub)
+  },
+
+  #' A cell's prompt answered on the page (#186). A refusal (the prompt
+  #' closed or was answered meanwhile, a bad body) is logged, never thrown
+  #' at the client: the page sends without awaiting a reply.
+  ember_answer_input = function(server, cl, hub, req) {
+    if (is.null(hub)) return(invisible(NULL))
+    cell <- req$body$cell_id
+    text <- req$body$text
+    tryCatch({
+      if (!(is.character(text) && length(text) == 1 && !is.na(text))) {
+        stop(refused("ember_answer_input: text must be one string"))
+      }
+      if (!(is.character(cell) && length(cell) == 1 && !is.na(cell))) {
+        stop(refused("ember_answer_input: cell_id must be one string"))
+      }
+      reply <- dispatch(hub$nb, ev_answer_input(text, at = Sys.time(), cell = cell))
+      if (inherits(reply, "ember_refused")) stop(reply)
+    }, ember_refused = function(e) message("ember: refused ember_answer_input: ", conditionMessage(e)))
     flush_clients(server, hub)
   }
 )

@@ -157,13 +157,15 @@ This maps one to one onto Pluto's server and workers:
   its event loop, processx to start and watch workers. It must never block:
   it watches workers without waiting on them, and package installs run in
   their own subprocess.
-- **Worker** (the notebook's library): a plain `Rscript` running a loop
+- **Worker** (the notebook's library): an R process running a loop
   written in base R plus the packages that ship with R (utils, tools,
   grDevices, codetools). It exchanges `serialize()`d messages with the server
   over a socket. Its code is `inst/worker.R`, found with
   `system.file("worker.R", package = "ember")`: files in `R/` are built into
   Ember's namespace at install, so the worker couldn't read them without
-  loading Ember. It starts as `Rscript --vanilla` with `R_LIBS_USER` set to
+  loading Ember. It starts as an interactive R (`R --interactive --vanilla`,
+  `Rterm --ess --vanilla` on Windows) that reads one boot line from its
+  stdin, which is then closed (#186; see "Prompts" under Running cells), with `R_LIBS_USER` set to
   the notebook's library and `R_LIBS` and `R_LIBS_SITE` unset, which leaves
   exactly the notebook's library and R's own (measured: the user's personal
   library, where rig puts pak, is hidden). A worker starts and connects in
@@ -711,6 +713,29 @@ Earlier visible values, `print()`,
 `cat()`, messages and warnings go to a console area below the output, in
 order. A plot drawn with no visible value after it is the output. R
 Markdown instead shows every visible value inline.
+
+**Prompts** (#186). A cell runs as R code does in an R console:
+`interactive()` is `TRUE`, so a package that asks before it acts ("Do you
+want to download...?") asks. Under `Rscript` it would fail ("menu() cannot
+be used non-interactively") or take its default. The question waits under
+the cell's console, with a field for the answer; `menu()`'s choices are
+buttons too. The answer goes back to R, and the console then shows the
+question and the answer, as R's console does. Interrupting the cell stops
+the wait. The worker replaces `readline()` (which `askYesNo()` and most
+packages use), `menu()` and `select.list()` with versions that ask the
+server over the socket. R's own console reads have no input, since the
+worker's stdin is closed, so `scan("")` and `readLines(stdin())` return at
+once, as under `Rscript`, and `browser()` carries on. The API answers with
+`answer_input()`, and the snapshot shows the waiting question as the
+running cell's `prompt`.
+
+Measured before this was built (10-17): shapes.R, penguins.R and deseq.R
+give the same status, output, plots and messages with `interactive()`
+`TRUE`; a cli progress bar updates more often, and lifecycle adds its
+"displayed once per session" footer. Ember's own installs run in a
+separate non-interactive `Rscript`, so they never ask. `Rscript -e` can't
+be made interactive: R reading its code from a file never is, whatever the
+flags, so the worker reads its boot line from stdin instead.
 
 **How values display.** Julia has one display function in its base
 language, `show(io, MIME"text/html"(), x)`, that every package extends. R has

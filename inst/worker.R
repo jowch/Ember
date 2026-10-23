@@ -1,9 +1,10 @@
 # Ember worker. Base R and the packages shipped with R only (utils, tools,
 # grDevices, graphics, stats, methods). Never loaded as a package.
 #
-# Started by the server as
-#   Rscript --vanilla -e '<boot>' <port>
-# where <boot> (worker_boot(), R/shell.R) loads this file's compiled image
+# Started by the server as an interactive R (#186)
+#   R --interactive --no-echo --vanilla --args <port>     (Rterm --ess on Windows)
+# reading one line, <boot>, from its stdin, which is then closed. <boot>
+# (worker_boot(), R/shell.R) loads this file's compiled image
 # (EMBER_WORKER_IMAGE, made by compiler::cmpfile(); #229), or sources the
 # file when there is none, into a private environment whose parent is
 # baseenv(), then calls main():
@@ -46,6 +47,8 @@
 #   drop_globals cell                drop a failed cell's globals, keeping
 #                                    its attached packages
 #   source_reply allow, message      only while a `source` request waits
+#   input_reply  id, text            the answer to the `input` request `id`
+#                                    (a prompt in a running cell, #186)
 #   more         cell, path, dim     grow a table's or tree's paging limit
 #                                    at `path` (dim 1 rows/items, 2 columns)
 #   render       cell, res, width?, height?, id?   re-render the cell's
@@ -65,6 +68,11 @@
 #   console      cell, token, item = list(kind, text)   streamed during a run
 #   source       cell, token, path, text                before a computed
 #                                                       source() runs; waits
+#   input        cell, token, id, prompt, choices       a prompt (readline(),
+#                                                       menu(), ...) waits for
+#                                                       an answer (#186)
+#   input_closed cell, token, id     the prompt `id` stopped waiting
+#                                    unanswered (an interrupt)
 #   done         cell, token, report (see run_cell())
 #   rendered     cell, token, display, id?   display is NULL when the cell
 #                                       has no kept value to page or
@@ -122,8 +130,10 @@ cell_settings <- list() # cell id -> list(kind, name, after): the settings its o
 touched <- list()       # every list(kind, name) any cell has changed this session;
                         # reset to the baseline before each run. Never shrinks.
 search_added <- character()  # every attach() entry any cell has added this session
-running <- NULL        # list(cell, token) during a run (for the source trace)
-deferred <- list()     # messages read while waiting for a source_reply
+running <- NULL        # list(cell, token, console) during a run (for the source
+                       # trace and prompts)
+deferred <- list()     # messages read while waiting for a source_reply or input_reply
+prompt_seq <- 0L       # the id of the last `input` request (ask_for_input())
 interrupt_drain <- NULL # Windows: the DLL routine that drops a late interrupt (listen_for_interrupts())
 release_children <- NULL # Windows: the DLL routine that releases a cell's processx children (#208)
 children_running <- NULL # Windows: the DLL routine that tells the release thread a run is going (#273)
@@ -245,6 +255,7 @@ main <- function() {
                            timeout = 60 * 60 * 24 * 365, options = "no-delay")
   install_traces()
   install_input_hook()
+  install_prompts()
   # Baseline, not a cell's change: a colour terminal under Rscript has these
   # on, and a settings cell can still change them (each run resets to this
   # baseline, same as any other setting).
@@ -529,6 +540,7 @@ run_cell <- function(msg) {
     fig <- msg$fig %||% FIGURE_DEFAULT
     dev <- open_device(fig)
     console <- console_collector(msg$cell, msg$token)
+    running$console <<- console
     for (p in fig$problems %||% character()) console$warning(simpleWarning(p))
     t0 <- proc.time()
 
@@ -1019,6 +1031,146 @@ set_input_value <- function(msg) {
   reply$value <- v[[1]]
   reply$globals <- tryCatch(summarise_globals(msg$name), error = function(e) list())
   reply
+}
+
+# ---- Prompts (#186) -----------------------------------------------------------
+#
+# The worker runs as an interactive R, so a package that checks
+# interactive() before asking ("Do you want to download...?") asks, as it
+# would in an R console. Its stdin is closed, so R's own console reads get
+# no input. The functions that ask are replaced with ones that put the
+# question to the server and wait for its answer: readline() (which
+# askYesNo() and most packages use), menu() and select.list(). Other reads
+# of the console (scan(""), readLines(stdin())) see no input, as under
+# Rscript. Outside a run nothing can answer: readline() returns "" and
+# menu() 0, as if the user gave no answer.
+
+#' Replace readline() in base, and menu() and select.list() in utils (its
+#' namespace, so `utils::menu()` and a package that imports it get this
+#' one, and its attached environment, for a bare `menu()`).
+install_prompts <- function() {
+  replace <- function(env, name, value) {
+    if (!exists(name, envir = env, inherits = FALSE)) return(invisible())
+    locked <- bindingIsLocked(name, env)
+    if (locked) unlockBinding(name, env)
+    assign(name, value, envir = env)
+    if (locked) lockBinding(name, env)
+  }
+  replace(baseenv(), "readline", prompt_readline)
+  utils_envs <- list(asNamespace("utils"))
+  if ("package:utils" %in% search()) utils_envs <- c(utils_envs, list(as.environment("package:utils")))
+  for (env in utils_envs) {
+    replace(env, "menu", prompt_menu)
+    replace(env, "select.list", prompt_select_list)
+  }
+  invisible()
+}
+
+#' readline() as R has it, with the same argument.
+prompt_readline <- function(prompt = "") {
+  if (is.null(running)) return("")
+  ask_for_input(as.character(prompt)[1])
+}
+
+#' menu() as R has it in a console without graphics: the title and the
+#' numbered choices, then "Selection: " until the answer is a choice's
+#' number, 0, or a choice itself.
+prompt_menu <- function(choices, graphics = FALSE, title = NULL) {
+  if (!interactive()) stop("menu() cannot be used non-interactively")
+  if (is.null(running)) return(0L)
+  nc <- length(choices)
+  if (length(title) && nzchar(title[1L])) cat(title[1L], "\n")
+  op <- paste0(format(seq_len(nc)), ": ", choices)
+  if (nc > 10L) {
+    fop <- format(op)
+    nw <- nchar(fop[1L], "w") + 2L
+    ncol <- getOption("width") %/% nw
+    if (ncol > 1L) op <- paste0(fop, c(rep.int("  ", min(nc, ncol) - 1L), "\n"), collapse = "")
+  }
+  cat("", op, "", sep = "\n")
+  repeat {
+    ans <- trimws(ask_for_input("Selection: ", choices = as.character(choices)))
+    ind <- menu_choice(ans, choices)
+    if (!is.na(ind)) return(ind)
+    cat("Enter an item from the menu, or 0 to exit\n")
+  }
+}
+
+#' The number an answer to menu() picks: the number typed, if it is 0 or
+#' a choice's, or the choice typed out. NA otherwise.
+menu_choice <- function(ans, choices) {
+  if (grepl("^[0-9]+$", ans)) {
+    n <- suppressWarnings(as.integer(ans))
+    if (!is.na(n) && n <= length(choices)) return(n)
+    return(NA_integer_)
+  }
+  hit <- match(ans, choices)
+  if (is.na(hit)) NA_integer_ else hit
+}
+
+#' select.list() as R has it without graphics: one choice through menu(),
+#' several as numbers separated by spaces (0 cancels).
+prompt_select_list <- function(choices, preselect = NULL, multiple = FALSE, title = NULL,
+                               graphics = getOption("menu.graphics")) {
+  if (!interactive()) stop("select.list() cannot be used non-interactively")
+  if (!is.null(title) && (!is.character(title) || length(title) != 1))
+    stop("'title' must be NULL or a length-1 character vector")
+  if (!multiple) {
+    res <- prompt_menu(choices, FALSE, title)
+    return(if (res < 1L || res > length(choices)) "" else choices[res])
+  }
+  if (is.null(running)) return(character())
+  nc <- length(choices)
+  if (length(title) && nzchar(title[1L])) cat(title, "\n", sep = "")
+  def <- if (is.null(preselect)) rep.int(FALSE, nc) else choices %in% preselect
+  op <- paste0(format(seq_len(nc)), ": ", ifelse(def, "+", " "), " ", choices)
+  cat("", op, "", sep = "\n")
+  cat("Enter one or more numbers separated by spaces and then ENTER, or 0 to cancel\n")
+  repeat {
+    ans <- ask_for_input("")
+    res <- suppressWarnings(as.numeric(strsplit(trimws(ans), "[[:space:],]+")[[1]]))
+    if (!anyNA(res)) break
+    cat("Invalid input, please try again\n")
+  }
+  if (any(res == 0)) return(character())
+  if (!is.null(preselect)) res <- c(which(def), res)
+  res <- unique(res)
+  res <- sort(res[1 <= res & res <= nc])
+  choices[res]
+}
+
+#' Put `prompt` to the server and wait for the answer, which is returned
+#' and, after the prompt, written to the cell's output as an R console
+#' shows it. What the cell printed so far goes first, so the page shows
+#' the question under it. `choices`: menu()'s, so the page can offer
+#' them. An interrupt stops the wait (the server is told the prompt
+#' closed); messages that arrive meanwhile wait for the run's end, as
+#' while a `source_reply` is awaited.
+ask_for_input <- function(prompt, choices = NULL) {
+  if (!is.null(running$console)) running$console$flush()
+  prompt_seq <<- prompt_seq + 1L
+  id <- prompt_seq
+  cell <- running$cell
+  token <- running$token
+  send(list(type = "input", cell = cell, token = token, id = id, prompt = prompt, choices = choices))
+  answered <- FALSE
+  on.exit(if (!answered) send(list(type = "input_closed", cell = cell, token = token, id = id)))
+  repeat {
+    # Interruptible: only the read of a frame that is there is whole.
+    while (!isTRUE(socketSelect(list(con), timeout = 1))) NULL
+    reply <- receive()
+    if (is.null(reply)) quit(save = "no")  # server gone
+    if (identical(reply$type, "input_reply")) {
+      if (identical(as.integer(reply$id), id)) break
+      next  # an answer to a prompt that already closed
+    }
+    deferred[[length(deferred) + 1]] <<- reply
+  }
+  answered <- TRUE
+  text <- reply$text
+  text <- if (is.character(text) && length(text) >= 1 && !is.na(text[1])) text[1] else ""
+  cat(prompt, text, "\n", sep = "")
+  text
 }
 
 # ---- Registered methods ------------------------------------------------------
@@ -2809,6 +2961,7 @@ console_collector <- function(cell, token) {
     if (nzchar(txt)) add_item("stdout", txt)
   }
 
+  self$flush <- flush_stdout
   self$message <- function(m) { flush_stdout(); add_item("message", conditionMessage(m)) }
   self$warning <- function(w) {
     flush_stdout()

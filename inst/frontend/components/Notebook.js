@@ -51,7 +51,7 @@ const CellMemo = ({
 }) => {
     const { body, last_run_timestamp, mime, persist_js_state, rootassignee } = cell_result?.output || {}
     const { queued, running, runtime, errored, depends_on_disabled_cells, logs, depends_on_skipped_cells, ember } = cell_result || {}
-    const { stale, code_changed, split } = ember || {}
+    const { stale, code_changed, split, prompt } = ember || {}
     const { cell_id, code, code_folded, metadata } = cell_input || {}
     return useMemo(() => {
         return html`
@@ -85,6 +85,8 @@ const CellMemo = ({
         stale,
         code_changed,
         split,
+        // A prompt can come and go with nothing else in the cell changing (#186).
+        prompt,
         queued,
         running,
         runtime,

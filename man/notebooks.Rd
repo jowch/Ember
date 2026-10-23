@@ -9,6 +9,7 @@
 \alias{allow_execution}
 \alias{run_cells}
 \alias{interrupt_notebook}
+\alias{answer_input}
 \alias{restart_notebook}
 \alias{notebook_snapshot}
 \alias{dependency_graph}
@@ -43,6 +44,8 @@ run_cells(nb, ids = NULL, wait = FALSE, timeout = 60)
 set_input(nb, name, value, wait = FALSE, timeout = 60)
 
 interrupt_notebook(nb)
+
+answer_input(nb, text, cell = NULL)
 
 restart_notebook(nb)
 
@@ -85,7 +88,10 @@ and \code{on_notebook_event()} instead.}
 (\code{n} for \code{n <- input_slider(10, 500)}).}
 \item{value}{For \code{set_input()}, the input's new value, as the input
 would return it.}
-\item{cell}{A cell id or 1-based display index.}
+\item{cell}{A cell id or 1-based display index. For \code{answer_input()}, the
+cell the answer is for, or \code{NULL} for whichever cell runs.}
+\item{text}{For \code{answer_input()}, the answer to the running cell's
+prompt, one string, as typed at the prompt.}
 \item{width, height}{Requested pixel size for \code{render_png()}. \code{NULL} for
 both returns the output's stored image unchanged.}
 \item{res}{Pixel density (dots per inch) for \code{render_png()}'s re-render,
@@ -144,6 +150,15 @@ advanced callers (the step-4 UI).
 \code{on_notebook_event()} returns a function that unsubscribes when called.
 
 \code{wait_for()} returns \code{TRUE} if the predicate held, \code{FALSE} on timeout.
+
+\code{answer_input()} returns \code{TRUE}, invisibly. A cell that asks a
+question (\code{readline()}, \code{menu()}, \code{askYesNo()},
+\code{select.list()}, so a package's "Do you want to download...?") waits for
+an answer, as in an R console: the snapshot shows it as the running cell's
+\code{prompt}, \code{list(id, text, choices)}, \code{choices} being
+\code{menu()}'s (answered by number or by the choice itself). With no prompt
+waiting, or another cell's, the answer is an error. Interrupting the cell
+stops the wait.
 
 \code{set_cell_change_mode()}, \code{interrupt_notebook()} return \code{NULL},
 invisibly. \code{restart_notebook()} returns the dispatch reply, invisibly.

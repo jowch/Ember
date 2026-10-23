@@ -46,6 +46,9 @@ ev_move        <- function(path, at) event("move", at, path = path)
 ev_set_mode    <- function(mode, at) event("set_mode", at, mode = mode)
 #' A new value for the input bound to `name` (docs/inputs.md).
 ev_set_input   <- function(name, value, at) event("set_input", at, name = name, value = value)
+#' The answer to the prompt the running cell waits on (#186): `text`, one
+#' string. `cell`: the cell the answer is for, or `NULL` for whichever runs.
+ev_answer_input <- function(text, at, cell = NULL) event("answer_input", at, text = text, cell = cell)
 #' A redraw at the cell's own figure size and a new pixel density
 #' (`ember_render_plot`, a density change: 3a). `render_png()`'s one-off
 #' pixel sizes don't come through here: they never change the state (#28).
@@ -68,6 +71,13 @@ wk_console  <- function(gen, token, item, at)
   event("wk_console", at, gen = gen, token = token, item = item)
 wk_source   <- function(gen, token, path, text, at)
   event("wk_source", at, gen = gen, token = token, path = path, text = text)
+#' A prompt in the running cell waits for an answer (#186): `id` the
+#' worker's number for it, `prompt` its text, `choices` menu()'s or `NULL`.
+wk_input    <- function(gen, token, id, prompt, choices, at)
+  event("wk_input", at, gen = gen, token = token, id = id, prompt = prompt, choices = choices)
+#' The prompt `id` stopped waiting unanswered (an interrupt).
+wk_input_closed <- function(gen, token, id, at)
+  event("wk_input_closed", at, gen = gen, token = token, id = id)
 wk_done     <- function(gen, token, report, at)
   event("wk_done", at, gen = gen, token = token, report = report)
 wk_rendered <- function(gen, cell, display, at)
@@ -184,6 +194,7 @@ reduce <- function(state, event) {
     move             = reduce_move(state, event),
     set_mode         = reduce_set_mode(state, event),
     set_input        = reduce_set_input(state, event),
+    answer_input     = reduce_answer_input(state, event),
     render           = reduce_render(state, event),
     show_more        = reduce_show_more(state, event),
     files_read       = reduce_files_read(state, event),
@@ -195,6 +206,8 @@ reduce <- function(state, event) {
     wk_running       = reduce_wk_running(state, event),
     wk_console       = reduce_wk_console(state, event),
     wk_source        = reduce_wk_source(state, event),
+    wk_input         = reduce_wk_input(state, event),
+    wk_input_closed  = reduce_wk_input_closed(state, event),
     wk_done          = reduce_wk_done(state, event),
     wk_rendered      = reduce_wk_rendered(state, event),
     wk_input_set     = reduce_wk_input_set(state, event),
@@ -1740,6 +1753,51 @@ reduce_wk_console <- function(state, event) {
   }
   state$worker$running$console <- c(w$running$console, list(event$item))
   list(state = state, effects = list(), reply = NULL)
+}
+
+#' A prompt in the running cell waits (gen and token check): kept as
+#' `worker$running$prompt`, `list(id, text, choices)`, until it is
+#' answered (`reduce_answer_input()`), closes, or the run ends.
+reduce_wk_input <- function(state, event) {
+  w <- state$worker
+  if (!eq(event$gen, w$gen) || is.null(w$running) ||
+      !eq(event$token, w$running$token)) {
+    return(list(state = state, effects = list(), reply = NULL))
+  }
+  state$worker$running$prompt <- list(id = event$id, text = event$prompt %||% "",
+                                      choices = event$choices)
+  list(state = state, effects = list(), reply = NULL)
+}
+
+#' The prompt stopped waiting unanswered: drop it, if it's still the one
+#' kept (an answer may have closed it already).
+reduce_wk_input_closed <- function(state, event) {
+  w <- state$worker
+  if (!eq(event$gen, w$gen) || is.null(w$running) ||
+      !eq(event$token, w$running$token) || !eq(event$id, w$running$prompt$id)) {
+    return(list(state = state, effects = list(), reply = NULL))
+  }
+  state$worker$running$prompt <- NULL
+  list(state = state, effects = list(), reply = NULL)
+}
+
+#' Answer the waiting prompt: the text goes to the worker, and the prompt
+#' is dropped at once, so a second answer is refused rather than sent to
+#' a prompt that has gone. Refused when nothing waits, or (with
+#' `event$cell`) when the prompt is another cell's.
+reduce_answer_input <- function(state, event) {
+  no <- function(reason) list(state = state, effects = list(), reply = refused(reason, op = "answer_input"))
+  w <- state$worker
+  p <- w$running$prompt
+  if (is.null(p)) return(no("no prompt is waiting for an answer"))
+  if (!is.null(event$cell) && !identical(event$cell, w$running$cell)) {
+    return(no("that cell isn't waiting for an answer"))
+  }
+  text <- event$text
+  if (!is.character(text) || length(text) != 1 || is.na(text)) return(no("the answer must be one string"))
+  state$worker$running$prompt <- NULL
+  effects <- list(fx_send(w$gen, list(type = "input_reply", id = p$id, text = text)))
+  list(state = state, effects = effects, reply = TRUE)
 }
 
 #' The worker asks before a computed `source()` runs its file.

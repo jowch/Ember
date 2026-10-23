@@ -144,6 +144,7 @@ pluto_state <- function(state, previous = NULL) {
 #'
 #' `list(cell = state$cells[[id]], result = state$results[[id]],
 #'       console = <worker$running$console when this cell runs, else NULL>,
+#'       prompt = <worker$running$prompt when this cell runs, else NULL>,
 #'       flags = ctx$flags[[id]],   # queued, running, waiting_for
 #'       errors = ctx$errors[[id]], # graph errors on this cell: shared within one graph
 #'       disabled_by = ctx$disabled_by[[id]],  # off, from graph$off
@@ -173,6 +174,7 @@ cell_key <- function(state, ctx, i) {
   is_running <- !is.null(running) && identical(running$cell, id)
   list(cell = state$cells[[i]], result = ctx$results[[i]],
        is_running = is_running, console = if (is_running) running$console else NULL,
+       prompt = if (is_running) running$prompt,
        queued = ctx$queued[[i]], waiting_for = ctx$waiting[[i]],
        errors = ctx$errors_by_cell[[i]], disabled_by = ctx$disabled_by[[i]],
        settings = ctx$settings[[i]], untracked = ctx$untracked[[i]],
@@ -194,6 +196,7 @@ key_unchanged <- function(state, ctx, i, prev_key) {
   is_running <- !is.null(running) && identical(running$cell, id)
   if (!identical(is_running, prev_key$is_running)) return(FALSE)
   if (!identical(if (is_running) running$console else NULL, prev_key$console)) return(FALSE)
+  if (!identical(if (is_running) running$prompt, prev_key$prompt)) return(FALSE)
   if (!identical(ctx$queued[[i]], prev_key$queued)) return(FALSE)
   if (!identical(ctx$waiting[[i]], prev_key$waiting_for)) return(FALSE)
   if (!identical(ctx$errors_by_cell[[i]], prev_key$errors)) return(FALSE)
@@ -402,6 +405,8 @@ project_cell_result <- function(view, known_ids = NULL) {
             if (length(view$untracked_reads) > 0) list(untracked_reads = as_arr(view$untracked_reads)),
             if (length(view$untracked_files) > 0) list(untracked_files = as_arr(view$untracked_files)),
             if (!is.null(split)) list(split = split),
+            if (!is.null(view$prompt)) list(prompt = list(id = view$prompt$id, text = view$prompt$text,
+                                                          choices = as_arr(view$prompt$choices %||% character()))),
             if (!is.null(figure)) list(figure = figure),
             if (length(view$variables) > 0) list(variables = as_arr(view$variables)))
   list(cell_id = view$id,
