@@ -1677,6 +1677,7 @@ reduce_data_changed <- function(state, event) {
   autorun <- identical(state$file$header$on_cell_change, "autorun")
   running <- state$worker$running$cell
   changed <- names(event$files)
+  marked <- FALSE
   for (id in state$graph$ids) {
     hit <- intersect(state$graph$analyses[[id]]$data_files, changed)
     if (length(hit) == 0 || identical(running, id) || id %in% state$pending) next
@@ -1688,12 +1689,13 @@ reduce_data_changed <- function(state, event) {
     state$results[[id]] <- r
     if (autorun && isTRUE(state$allowed) && can_run(state, id)) state$pending <- union(state$pending, id)
     state <- invalidate_dependents(state, id, character())
-    # A queued cell's stale ancestors run first, as when it is run by hand
-    # (#176), so it doesn't read their old values (#437): the reader queued
-    # here, or in lazy mode a cell still queued in the same run, such as a
-    # run of every cell that reaches the writer after the reader.
-    if (length(state$pending) && isTRUE(state$allowed)) state <- queue_stale_ancestors(state, state$pending)
+    marked <- TRUE
   }
+  # A queued cell's stale ancestors run first, as when it is run by hand
+  # (#176), so it doesn't read their old values (#437): a reader queued
+  # here, or in lazy mode a cell still queued in the same run, such as a
+  # run of every cell that reaches the writer after the reader.
+  if (marked && length(state$pending) && isTRUE(state$allowed)) state <- queue_stale_ancestors(state, state$pending)
   list(state = state, effects = list(), reply = NULL)
 }
 

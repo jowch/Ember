@@ -694,12 +694,14 @@ fuzz_check <- function(snap, ran, mode, run, res, ran_ok = list(), dir = NULL) {
     # until something runs (drop_graph_error_results()): it is marked.
     if (isTRUE(v$stale) || id %in% blocked) next
     # A file only an edited cell's old code read isn't watched any more
-    # (fuzz_noticed()), so neither it nor what reads from it follows the file.
+    # (fuzz_noticed(), #439), so neither its value nor the values of what
+    # reads from it follow the file. Their staleness is still checked.
     reads <- fuzz_ancestors(ran[shown], id)
-    if (any(c(id, reads) %in% unwatched)) next
     want <- ref[[id]]
     got <- v$output$text
-    if (!identical(v$status, want$status)) {
+    if (any(c(id, reads) %in% unwatched)) {
+      # not compared
+    } else if (!identical(v$status, want$status)) {
       say(id, " shows ", v$status, " but running from scratch gives ", want$status)
     } else if (identical(want$status, "ok") && !identical(got, want$text)) {
       say(id, " shows ", deparse(got), " but running from scratch gives ", deparse(want$text))
