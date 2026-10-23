@@ -744,8 +744,12 @@ cells_maybe_changed <- function(old, old_ctx, new, new_ctx, at) {
   a <- new_ctx$disabled_by; b <- old_ctx$disabled_by[at]
   maybe <- maybe | !((a == b) %in% TRUE | (is.na(a) & is.na(b)))
   # The running cell, before and after: its own key holds the console.
-  run_new <- if (is.null(new_ctx$running)) logical(n) else new_ctx$ids == new_ctx$running$cell
-  run_old <- if (is.null(old_ctx$running)) logical(n) else (old_ctx$ids[at] == old_ctx$running$cell) %in% TRUE
+  running_at <- function(ctx, ids) {
+    cell <- ctx$running$cell
+    if (is.null(cell)) logical(n) else (ids == cell) %in% TRUE
+  }
+  run_new <- running_at(new_ctx, new_ctx$ids)
+  run_old <- running_at(old_ctx, old_ctx$ids[at])
   maybe <- maybe | run_new != run_old
   if (!identical(new_ctx$running$console, old_ctx$running$console)) maybe <- maybe | run_new
   maybe

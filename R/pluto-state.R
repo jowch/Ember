@@ -33,12 +33,14 @@ CELL_METADATA_DISABLED <- list(disabled = TRUE, show_logs = TRUE, skip_as_script
 #'   inputs its two entries were built from (see cell_key()). A cell whose
 #'   key is identical() keeps its previous entries without rebuilding them.
 #' * `graph`: the `ember_graph` `js$cell_dependencies` was built from.
+#' * `ctx`: `view_context(state)`, kept so the next projection can compare
+#'   against it (`cells_maybe_changed()`, state.R) without building it again.
 #' * `packages`: the `packages_view(state)` that `js$nbpkg` and
 #'   `js$ember$packages` were built from, kept for the next projection
 #'   while `packages_inputs_same()` (state.R) holds: a worker message
 #'   rarely touches packages, and the view costs a few milliseconds.
-new_pluto_state <- function(js, state, keys, graph, packages = NULL) {
-  structure(list(js = js, state = state, keys = keys, graph = graph, packages = packages),
+new_pluto_state <- function(js, state, keys, graph, packages = NULL, ctx = NULL) {
+  structure(list(js = js, state = state, keys = keys, graph = graph, packages = packages, ctx = ctx),
             class = "ember_pluto_state")
 }
 
@@ -65,7 +67,7 @@ pluto_state <- function(state, previous = NULL) {
                                              # in a loop (quadratic, spike)
   inputs <- results <- keys <- vector("list", n)
   maybe <- if (is.null(previous)) rep(TRUE, n) else {
-    cells_maybe_changed(previous$state, view_context(previous$state), state, ctx, at)
+    cells_maybe_changed(previous$state, previous$ctx %||% view_context(previous$state), state, ctx, at)
   }
   for (i in seq_len(n)) {
     j <- at[i]
@@ -133,7 +135,7 @@ pluto_state <- function(state, previous = NULL) {
     cell_dependencies = deps,
     cell_execution_order = reuse(as_arr(state$graph$order), if (!is.null(pj)) pj$cell_execution_order else NULL),
     ember = reuse_fields(project_ember(state, ctx, pv), if (!is.null(pj)) pj$ember else NULL))
-  new_pluto_state(js, state, keys, state$graph, pv)
+  new_pluto_state(js, state, keys, state$graph, pv, ctx)
 }
 
 #' What a cell's two entries depend on, as a list whose big parts are the
