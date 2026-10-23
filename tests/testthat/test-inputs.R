@@ -340,6 +340,11 @@ test_that("the page gets each cell's inputs, disabled while the cell is stale, e
                         labels = list("A", "B")))
   expect_null(p$js$cell_results$B$ember$inputs)
   expect_identical(p$js$bonds, list(n = list(value = 5)))
+  # An integer input says so: its box rounds before checking its limits, as R does.
+  expect_false(ins[[1]]$integer)
+  s <- r$state
+  s$results$I$inputs[[1]]$spec$value <- 5L
+  expect_true(pluto_state(s, p)$js$cell_results$I$ember$inputs[[1]]$integer)
 
   s <- r$state
   s$results$I$stale <- TRUE

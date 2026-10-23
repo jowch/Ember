@@ -136,13 +136,19 @@ const Widget = ({ group, input, label, value, send, disabled }) => {
     }
 }
 
-/** Why `n` doesn't fit the number box's limits (`null` when it does), worded as the worker words it. */
+/**
+ * Why `n` doesn't fit the number box's limits (`null` when it does), worded
+ * as the worker words it. An integer input rounds first, as R does, so the
+ * rounded value is the one checked.
+ */
 const out_of_range = (input, n) => {
     const lo = input.min ?? null
     const hi = input.max ?? null
-    if ((lo == null || n >= lo) && (hi == null || n <= hi)) return null
-    if (lo != null && hi != null) return t("t_input_range", { min: lo, max: hi })
-    return lo != null ? t("t_input_min", { min: lo }) : t("t_input_max", { max: hi })
+    const x = input.integer ? Math.round(n) : n
+    if ((lo == null || x >= lo) && (hi == null || x <= hi)) return null
+    const w = input.integer ? "_whole" : ""
+    if (lo != null && hi != null) return t(`t_input_range${w}`, { min: lo, max: hi })
+    return lo != null ? t(`t_input_min${w}`, { min: lo }) : t(`t_input_max${w}`, { max: hi })
 }
 
 /**
@@ -160,7 +166,7 @@ const NumberWidget = ({ input, label, value, send, disabled }) => {
     }, [value])
     const commit = () => {
         const n = Number(draft)
-        if (draft.trim() === "" || !Number.isFinite(n)) return set_problem(t("t_input_number"))
+        if (draft.trim() === "" || !Number.isFinite(n)) return set_problem(t(input.integer ? "t_input_whole" : "t_input_number"))
         const why = out_of_range(input, n)
         if (why != null) return set_problem(why)
         set_problem(null)

@@ -163,7 +163,8 @@ project_inputs <- function(view) {
            changed = !identical(i$value, i$default),
            disabled = busy || !isTRUE(i$bound)),
       if (s$type %in% c("slider", "number"))
-        Filter(Negate(is.null), list(min = na_null(s$min), max = na_null(s$max), step = na_null(s$step))),
+        c(Filter(Negate(is.null), list(min = na_null(s$min), max = na_null(s$max), step = na_null(s$step))),
+          list(integer = is.integer(s$value))),
       if (s$type %in% c("select", "radio")) list(labels = as_arr(s$labels %||% character())),
       if (identical(s$type, "select")) list(multiple = isTRUE(s$multiple)))
   }))

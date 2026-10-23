@@ -102,12 +102,20 @@ test("inputs.R: the widgets show, and moving one reruns its readers with the new
   await number.press("Enter");
   const error = page.locator(`${cellSelector("I")} ember-input.number .ember-input-error`);
   await error.waitFor();
-  assert.equal(await error.textContent(), "The value must be a number from 0 to 10.");
+  assert.equal(await error.textContent(), "The value must be a whole number from 0 to 10.");
   assert.equal(await number.inputValue(), "999");
   await number.fill("3");
   await number.press("Enter");
   await waitOutput(page, "B", /8 spearman FALSE Done 3 x/);
   assert.equal(await error.count(), 0);
+  // An integer input rounds first, as R does: 10.4 is 10, inside the limits.
+  await number.fill("10.4");
+  await number.press("Enter");
+  await waitOutput(page, "B", /8 spearman FALSE Done 10 x/);
+  assert.equal(await error.count(), 0);
+  await number.fill("3");
+  await number.press("Enter");
+  await waitOutput(page, "B", /8 spearman FALSE Done 3 x/);
 
   // A drag: many values in a row, faster than the cells run. B ends at the last one.
   for (const v of ["2", "3", "4", "6", "7", "9", "10", "1"]) await slider.fill(v);

@@ -13,7 +13,7 @@ n <- input_slider(1L, 10L, 5L)
 method <- input_select(c(Pearson = "pearson", Spearman = "spearman"))
 show <- input_checkbox(TRUE, label = "Show points")
 title <- input_text("Results")
-k <- input_number(5, min = 0, max = 10)
+k <- input_number(5L, min = 0L, max = 10L)
 round(input_number(2))
 
 # %% id=J
