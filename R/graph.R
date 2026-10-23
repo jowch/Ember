@@ -16,7 +16,10 @@
 #'   first, and every later cell depends on them.
 #' * `untracked`: `<id -> character>` for only the cells whose code reads
 #'   globals untrackably (`get(paste0(...))`, `eval()`), in display order:
-#'   their analyses' `untracked`, the calls the cell's note names (#357).
+#'   the calls the cell's note names (#357). A cell that calls a function
+#'   whose body does (`load_site <- function(s) get(s)`), directly or
+#'   through another function, names that function instead (#365); see
+#'   `untracked_of()`.
 #'   Kept here so the page's projection loops over these few cells, not
 #'   every analysis.
 #' * `analyses`: `ember_cell_analysis` per cell (the cache for the next
@@ -258,8 +261,7 @@ notebook_graph <- function(cells, exports = list(),
   names(is_markdown) <- ids
   settings <- ids[!(ids %in% disabled) &
                     vapply(cells_resolved, function(c) nrow(c$setting_keys) > 0, logical(1))]
-  untracked <- analyses[vapply(analyses, function(a) length(a$untracked) > 0, logical(1))]
-  untracked <- lapply(untracked, `[[`, "untracked")
+  untracked <- untracked_of(analyses)
   order <- compute_order(ids, settings, upstream_list, attaches_list, comp_of, is_markdown)
 
   # 6. setting edges: every non-markdown cell to each settings cell before
@@ -1304,4 +1306,38 @@ neighbour_lists <- function(ids, rank, key, value) {
     }
   }
   out
+}
+
+#' `graph$untracked` from the analyses: each cell's own `untracked`, plus
+#' the functions it calls that read untrackably. Those are the top-level
+#' functions with a note in their body (`fn_untracked`), and then, until
+#' none is added, the ones whose body calls one of them (`fn_calls`). The
+#' one-definition rule makes a name enough to say which function it is. A
+#' cell that only defines such a function gets no note for it: running it
+#' reads nothing. But a function nothing calls by a name Ember sees (called
+#' through a computed name, say) keeps its note on the cell defining it, so
+#' the note isn't lost. Only cells with a note are kept.
+untracked_of <- function(analyses) {
+  shown <- lapply(analyses, `[[`, "untracked")
+  fns <- unique(unlist(lapply(analyses, function(a) names(a$fn_untracked)), use.names = FALSE))
+  if (length(fns) > 0) {
+    fn_calls <- do.call(c, unname(lapply(analyses, `[[`, "fn_calls")))
+    repeat {
+      more <- names(fn_calls)[vapply(fn_calls, function(r) any(r %in% fns), logical(1))]
+      more <- setdiff(more, fns)
+      if (length(more) == 0) break
+      fns <- c(fns, more)
+    }
+    shown <- lapply(analyses, function(a) unique(c(a$untracked, fns[fns %in% a$calls])))
+    called <- unique(c(unlist(lapply(analyses, `[[`, "calls"), use.names = FALSE),
+                       unlist(lapply(names(fn_calls), function(f) setdiff(fn_calls[[f]], f)), use.names = FALSE)))
+    for (f in setdiff(fns, called)) {
+      for (id in names(analyses)) {
+        a <- analyses[[id]]
+        if (!(f %in% c(names(a$fn_untracked), names(a$fn_calls)))) next
+        shown[[id]] <- unique(c(shown[[id]], a$fn_untracked[[f]], intersect(a$fn_calls[[f]], fns)))
+      }
+    }
+  }
+  shown[lengths(shown) > 0]
 }

@@ -24,14 +24,15 @@ walk_expr <- function(e, scope, acc, pid = NA_integer_) {
     # `lapply(site_names, get)`: get() passed as a function reads whatever
     # names it is handed, which static reading can't follow (#357).
     passed <- get_family_value(e, scope)
-    if (!is.null(passed)) record_note(acc, "untracked_read", passed, pd_position(acc, pid))
+    if (!is.null(passed)) record_untracked(acc, passed, pd_position(acc, pid))
     return(invisible())
   }
+  if (is.character(e) && length(e) == 1 && !is.na(e) && nzchar(e)) record_call_string(acc, e)
   if (!is.call(e)) return(invisible())
   # `lapply(site_names, base::get)`, the same as the bare symbol above. A
   # call's head never comes here: `base::get(x)` is walk_qualified_call()'s.
   passed <- get_family_value(e, scope)
-  if (!is.null(passed)) record_note(acc, "untracked_read", passed, pd_position(acc, pid))
+  if (!is.null(passed)) record_untracked(acc, passed, pd_position(acc, pid))
 
   head <- e[[1]]
   if (is.call(head)) {
@@ -236,7 +237,7 @@ dispatch_call_by_name <- function(e, scope, acc, name, qualified = FALSE,
     if (is_get_family(name)) {
       walk_get_family_call(e, scope, acc, name, arg_pids, head_pos)
     } else {
-      record_note(acc, "untracked_read", name, head_pos())
+      record_untracked(acc, name, head_pos())
       walk_call_args(e, scope, acc, arg_pids)
     }
     return(invisible())
@@ -544,7 +545,20 @@ walk_assignment <- function(e, scope, acc, op, pid = NA_integer_) {
   raw_target_pid <- if (identical(side, "lhs")) target_pid else value_pid
   value_expr_pid <- if (identical(side, "lhs")) value_pid else target_pid
 
-  walk_expr(value, scope, acc, value_expr_pid)
+  # `load_site <- function(s) get(s)` at the top level: what the body
+  # reads is the function's, for the cells that call it (#365).
+  fn_name <- if (identical(scope$kind, "top") && is.null(acc$fn_target) &&
+                 is_function_literal(value) && !(op %in% c("<<-", "->>", "%<>%")) &&
+                 (is.symbol(raw_target) || (is.character(raw_target) && length(raw_target) == 1))) {
+    as.character(raw_target)
+  }
+  if (!is.null(fn_name)) {
+    acc$fn_target <- fn_name
+    walk_expr(value, scope, acc, value_expr_pid)
+    acc$fn_target <- NULL
+  } else {
+    walk_expr(value, scope, acc, value_expr_pid)
+  }
 
   if (identical(op, "%<>%")) {
     target_name <- extract_target_name(raw_target)
@@ -694,6 +708,7 @@ walk_call_args <- function(e, scope, acc, arg_pids = NULL) {
   is_bracket_call <- identical(bare_fn, "[")
   # `args(get)`, `?get`: the function is looked at, not called (#357).
   looks_at_function <- !is.null(bare_fn) && bare_fn %in% function_object_heads
+  is_c_call <- identical(bare_fn, "c")
 
   has_data <- FALSE
   data_expr <- NULL
@@ -721,8 +736,14 @@ walk_call_args <- function(e, scope, acc, arg_pids = NULL) {
     if (is_bracket_call && is.symbol(a) && is_dotdot_prefixed_name(as.character(a))) {
       stripped <- substr(as.character(a), 3, nchar(as.character(a)))
       record_read(acc, scope, stripped, pos = pd_position(acc, arg_pids[[i]]))
+    } else if (looks_at_function && is.symbol(a)) {
+      # Looked at, not called: no note for get, and `args(load_site)`
+      # isn't a call of load_site (#365).
+      record_read(acc, scope, as.character(a), pos = pd_position(acc, arg_pids[[i]]), call = FALSE)
     } else if (looks_at_function && !is.null(get_family_value(a, scope))) {
-      if (is.symbol(a)) record_read(acc, scope, as.character(a), pos = pd_position(acc, arg_pids[[i]]))
+    } else if (is_c_call && is.character(a)) {
+      # A string in c() is data, not a function's name: a long literal
+      # vector would otherwise cost a lookup per element (#365).
     } else if (is.call(a) && is.symbol(a[[1]]) && identical(as.character(a[[1]]), "~")) {
       site <- formula_site(acc$index, acc$line, fn_display, data_text, character())
       walk_formula(a, scope, acc, has_data, site, arg_pids[[i]])
