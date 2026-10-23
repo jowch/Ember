@@ -854,18 +854,22 @@ invalidate_dependents <- function(state, id, names, queue = TRUE,
   edited <- edited_cells(state)
   g <- run_graph(state, edited)
   dependents <- downstream(g, id, transitive = TRUE)
+  below <- dependents
   if (was_setting) {
     pos <- match(id, state$graph$order)
     if (!is.na(pos)) dependents <- union(dependents, state$graph$order[-seq_len(pos)])
   }
-  if (length(names) > 0) dependents <- union(dependents, readers_of(state, id, names, edited, g))
+  if (length(names) > 0) dependents <- union(dependents, readers_of(state, id, names, edited, g, known = below))
   invalidate_cells(state, id, setdiff(dependents, id), queue = queue, g = g)
 }
 
 #' The cells other than `id` that read any of `names`, and everything
-#' downstream of them.
+#' downstream of them. `known` is cells the caller already has with
+#' everything downstream of them in `g`: no walk starts from those, as it
+#' could only find more of them, so a reader found here may be missing
+#' its own dependents when it is in `known`.
 readers_of <- function(state, id, names, edited = edited_cells(state),
-                       g = run_graph(state, edited)) {
+                       g = run_graph(state, edited), known = character()) {
   # Runs twice for every cell that runs, so it is one pass over the cells
   # with `%in%`, and one walk for all the readers (#316).
   others <- state$graph$ids[state$graph$ids != id]
@@ -877,7 +881,7 @@ readers_of <- function(state, id, names, edited = edited_cells(state),
   readers <- union(readers, Filter(function(cid) {
     !identical(cid, id) && any(names %in% ran_references(state, cid))
   }, edited))
-  union(readers, reach(g$downstream, readers))
+  union(readers, reach(g$downstream, readers[!readers %in% known]))
 }
 
 #' Mark `dependents` (of `id`) stale and, in autorun when `queue`, queue
