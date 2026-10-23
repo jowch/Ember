@@ -153,9 +153,10 @@ const out_of_range = (input, n) => {
     const hi = input.max ?? null
     const x = input.integer ? round_r(n) : n
     if ((lo == null || x >= lo) && (hi == null || x <= hi)) return null
-    const w = input.integer ? "_whole" : ""
-    if (lo != null && hi != null) return t(`t_input_range${w}`, { min: lo, max: hi })
-    return lo != null ? t(`t_input_min${w}`, { min: lo }) : t(`t_input_max${w}`, { max: hi })
+    const whole = input.integer
+    if (lo != null && hi != null) return t(whole ? "t_input_range_whole" : "t_input_range", { min: lo, max: hi })
+    if (lo != null) return t(whole ? "t_input_min_whole" : "t_input_min", { min: lo })
+    return t(whole ? "t_input_max_whole" : "t_input_max", { max: hi })
 }
 
 /**
