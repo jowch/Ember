@@ -89,13 +89,39 @@ setting_kinds <- c(options = "option", local_options = "option",
 #' FALSE` argument says otherwise, each name is recorded as a reference
 #' instead, and the note is dropped -- the cell no longer reads
 #' untrackably, it reads a specific global. A non-literal name
-#' (`get(paste0("fit_", i))`) keeps the note, same as before.
+#' (`get(paste0("fit_", i))`) keeps the note, same as before. So does one
+#' of them passed as a function (`lapply(names, get)`, walk.R).
 untracked_reads <- c("get", "get0", "mget", "exists", "dynGet",
                      "eval", "evalq", "eval.parent")
 
 #' The subset of `untracked_reads` whose name argument is checked for a
 #' literal before falling back to the plain `untracked_read` note.
 get_family_functions <- c("get", "get0", "exists", "mget", "dynGet")
+
+#' Calls that take a function as an object to look at, not to call:
+#' `args(get)` or `?get` reads no global through `get`, so a get-family
+#' function that is a direct argument of one gets no note (#357).
+function_object_heads <- c("?", "help", "args", "formals", "body",
+                           "environment", "debug", "debugonce", "undebug",
+                           "trace", "untrace", "identical", "bquote")
+
+#' The get-family function `e` passes as a value, or `NULL`: a bare
+#' `get` (unless a local binds it) or `base::get` / `base:::get` that isn't
+#' being called (#357).
+get_family_value <- function(e, scope) {
+  if (is.symbol(e)) {
+    name <- as.character(e)
+    if (name %in% get_family_functions && !is_bound_locally(scope, name)) return(name)
+    return(NULL)
+  }
+  if (is.call(e) && length(e) == 3 && is.symbol(e[[1]]) &&
+      as.character(e[[1]]) %in% c("::", ":::") &&
+      identical(as.character(e[[2]]), "base") &&
+      as.character(e[[3]]) %in% get_family_functions) {
+    return(as.character(e[[3]]))
+  }
+  NULL
+}
 
 is_get_family <- function(name) {
   name %in% get_family_functions

@@ -250,6 +250,9 @@ test("keyboard: Backspace on a selected cell selects the next one, or the one ab
     order: window.editor_state.notebook.cell_order,
   }));
   const settled = (focus) => page.waitForFunction((focus) => document.activeElement?.id === focus, focus, { timeout: 5000 }).catch(() => {});
+  // The neighbour is selected as soon as a delete starts (#353), before the
+  // notebook's order changes, so wait for the order as well.
+  const orderIs = (order) => page.waitForFunction((order) => window.editor_state.notebook.cell_order.join() === order.join(), order, { timeout: 10000 }).catch(() => {});
   const select = async (id) => {
     await page.locator(cellSelector(id)).scrollIntoViewIfNeeded();
     await page.evaluate((id) => document.getElementById(id).focus(), id);
@@ -266,15 +269,18 @@ test("keyboard: Backspace on a selected cell selects the next one, or the one ab
   await settled(added);
   await page.keyboard.press("Backspace");
   await settled("ERR");
+  await orderIs(["S", "A", "B", "ERR", "LOOP", "MD"]);
   assert.deepEqual(await state(), { focus: "ERR", selected: ["ERR"], order: ["S", "A", "B", "ERR", "LOOP", "MD"] });
 
   await page.locator("#undo_delete a").click();
   await settled(added);
+  await orderIs(["S", "A", "B", added, "ERR", "LOOP", "MD"]);
   assert.deepEqual(await state(), { focus: added, selected: [added], order: ["S", "A", "B", added, "ERR", "LOOP", "MD"] });
 
   await select("MD");
   await page.keyboard.press("Backspace");
   await settled("LOOP");
+  await orderIs(["S", "A", "B", added, "ERR", "LOOP"]);
   assert.deepEqual(await state(), { focus: "LOOP", selected: ["LOOP"], order: ["S", "A", "B", added, "ERR", "LOOP"] });
   assertNoProblems(page);
 });

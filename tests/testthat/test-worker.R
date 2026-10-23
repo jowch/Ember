@@ -2658,3 +2658,39 @@ test_that("run_cell(): a top-level install call doesn't run, and the report name
   r <- run_and_wait(h, "b", 2L, "y <- 2")
   expect_identical(r$from_lock, character())
 })
+
+test_that("a package the library doesn't have is looked up once, until a library changes (#316)", {
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  lib <- withr::local_tempdir()
+  withr::local_libpaths(lib, action = "prefix")
+  asked <- 0L
+  e$requireNamespace <- function(package, ..., quietly = TRUE) { asked <<- asked + 1L; FALSE }
+  for (i in 1:5) expect_false(e$has_namespace("notapkg.ember316"))
+  expect_equal(asked, 1L)
+  # An install adds a folder to the library, which changes its time.
+  Sys.setFileTime(lib, Sys.time() + 5)
+  expect_false(e$has_namespace("notapkg.ember316"))
+  expect_equal(asked, 2L)
+  # A loaded namespace never asks.
+  expect_true(e$has_namespace("stats"))
+  expect_equal(asked, 2L)
+})
+
+test_that("diff_settings finds each changed, added and removed entry (#316)", {
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  s <- list(options = list(a = 1, b = "x", f = mean), env = list(HOME = "/h", X = "1"),
+            locale = list(LC_COLLATE = "C"), wd = "/w", search = character(), theme = NULL)
+  expect_identical(e$diff_settings(s, s), list())
+  t <- s
+  t$options$b <- "y"; t$options$a <- NULL; t$options$c <- TRUE
+  t$env$X <- "2"
+  d <- e$diff_settings(s, t)
+  got <- vapply(d, function(x) paste(x$kind, x$name), "")
+  expect_setequal(got, c("option a", "option b", "option c", "env X"))
+  b <- d[[match("option b", got)]]
+  expect_identical(list(b$before, b$after), list("x", "y"))
+  a <- d[[match("option a", got)]]
+  expect_identical(list(a$before, a$after), list(1, NULL))
+})

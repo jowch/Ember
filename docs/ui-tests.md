@@ -151,6 +151,11 @@ it matters.
     in the other tab that wasn't run yet comes back with one Ctrl+Z, and
     the cell says so (#318, `edit-sync.test.mjs`).
 45. No secret: `/edit` without it gives 403.
+46. Undo a delete: Ctrl+Z in the editor the cursor went to after a delete
+    undoes the typing there since, then brings the cell back with its own
+    undo history; outside the editors, Ctrl+Z brings back deletes, last
+    first. Backspace pressed while a delete is in flight still deletes
+    (#349, #353, `undo-delete.test.mjs`).
 
 **Running locally**: `npm --prefix tests/e2e ci` then `npm --prefix
 tests/e2e test`. `npm test` (tests/e2e/run.mjs) installs the working tree

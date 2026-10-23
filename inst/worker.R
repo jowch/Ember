@@ -1740,6 +1740,25 @@ current_theme <- function() {
   tryCatch(get("theme_get", envir = asNamespace("ggplot2"))(), error = function(e) NULL)
 }
 
+#' `requireNamespace(pkg)`, remembering a package that isn't installed
+#' until a library on the path changes. Display asks for knitr and repr on
+#' every value, and the figure device for ragg on every run; for a package
+#' the notebook's library doesn't have, each ask searched every library
+#' again and went through the load hooks, about 20 ms a cell (#316). A
+#' package added to a library changes that folder's modification time, so
+#' an install (or `.libPaths()` moving to another library) is seen on the
+#' next ask.
+has_namespace <- function(pkg) {
+  if (isNamespaceLoaded(pkg)) return(TRUE)
+  libs <- .libPaths()
+  key <- paste(pkg, paste(libs, unclass(file.mtime(libs)), collapse = "\r"), sep = "\r")
+  if (exists(key, envir = missing_namespaces, inherits = FALSE)) return(FALSE)
+  ok <- requireNamespace(pkg, quietly = TRUE)
+  if (!ok) assign(key, TRUE, envir = missing_namespaces)
+  ok
+}
+missing_namespaces <- new.env(hash = TRUE, parent = emptyenv())
+
 #' The global settings, as one comparable value.
 snapshot_settings <- function() {
   list(options = options(), env = as.list(Sys.getenv()), wd = getwd(),
@@ -1751,15 +1770,21 @@ snapshot_settings <- function() {
 #' for every option, environment variable, locale category and the
 #' (non-package) search path that differ, plus the working directory.
 diff_settings <- function(before, after) {
+  # Runs after every cell, over a few hundred options and environment
+  # variables, and almost always finds nothing: the whole-list check comes
+  # first, and names are matched once rather than searched for each (#316).
   diff_named <- function(b, a, kind) {
     # Most cells change nothing: one comparison of the whole list instead
     # of one per option (#316).
     if (identical(b, a)) return(list())
+    nms <- union(names(b), names(a))
+    bi <- match(nms, names(b))
+    ai <- match(nms, names(a))
     diffs <- list()
-    for (n in union(names(b), names(a))) {
-      bv <- if (n %in% names(b)) b[[n]] else NULL
-      av <- if (n %in% names(a)) a[[n]] else NULL
-      if (!identical(bv, av)) diffs[[length(diffs) + 1]] <- list(kind = kind, name = n, before = bv, after = av)
+    for (i in seq_along(nms)) {
+      bv <- if (is.na(bi[[i]])) NULL else b[[bi[[i]]]]
+      av <- if (is.na(ai[[i]])) NULL else a[[ai[[i]]]]
+      if (!identical(bv, av)) diffs[[length(diffs) + 1]] <- list(kind = kind, name = nms[[i]], before = bv, after = av)
     }
     diffs
   }
@@ -2808,7 +2833,7 @@ clamp_pixels <- function(width, height) {
 open_device <- function(fig) {
   px <- figure_pixels(fig, FIG_RES)
   path <- tempfile(fileext = ".png")
-  if (requireNamespace("ragg", quietly = TRUE)) {
+  if (has_namespace("ragg")) {
     ragg::agg_png(filename = path, width = px$width, height = px$height, res = px$res, background = "white")
   } else {
     grDevices::png(filename = path, width = px$width, height = px$height, res = px$res, bg = "white")
@@ -3229,7 +3254,7 @@ knit_print_method_exists <- function(cl) {
 #' value reaches this step. When its result isn't used, `pass(held)` gets
 #' the messages and warnings it held back (#193).
 try_knit_print <- function(value, pass = function(held) NULL) {
-  if (!requireNamespace("knitr", quietly = TRUE)) return(NULL)
+  if (!has_namespace("knitr")) return(NULL)
   if (!any(vapply(class(value), knit_print_method_exists, logical(1)))) return(NULL)
   # knit_print() gives a kable in the kable's own format, which is markdown
   # ("pipe") unless the cell asked for HTML. Only an HTML one is shown as
@@ -3275,7 +3300,7 @@ try_knit_print <- function(value, pass = function(held) NULL) {
 
 #' repr::repr_html() etc. (IRkernel's MIME types).
 try_repr <- function(value) {
-  if (!requireNamespace("repr", quietly = TRUE)) return(NULL)
+  if (!has_namespace("repr")) return(NULL)
   html <- tryCatch(repr::repr_html(value), error = function(e) NULL)
   if (is.null(html)) return(NULL)
   tf <- html_text_form(value, html)
@@ -3305,7 +3330,7 @@ dep_to_wire <- function(d) {
 #' htmlwidgets / htmltools HTML and its dependencies, resolved
 #' (`htmltools::resolveDependencies()` keeps the newest of each name).
 display_html <- function(value) {
-  if (!requireNamespace("htmltools", quietly = TRUE)) return(display_text(value))
+  if (!has_namespace("htmltools")) return(display_text(value))
   rendered <- tryCatch(htmltools::renderTags(value), error = function(e) NULL)
   if (is.null(rendered)) return(display_text(value))
   tf <- html_text_form(value, rendered$html)
@@ -3455,7 +3480,7 @@ render_plot <- function(msg) {
   }
   bytes <- tryCatch({
     path <- tempfile(fileext = ".png")
-    if (requireNamespace("ragg", quietly = TRUE)) {
+    if (has_namespace("ragg")) {
       ragg::agg_png(filename = path, width = px$width, height = px$height, res = px$res, background = "white")
     } else {
       grDevices::png(filename = path, width = px$width, height = px$height, res = px$res, bg = "white")

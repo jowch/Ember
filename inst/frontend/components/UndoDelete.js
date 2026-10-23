@@ -18,10 +18,17 @@ export const UndoDelete = ({ recently_deleted, on_click }) => {
             return () => {
                 clearTimeout(interval)
             }
+        } else {
+            // Brought back another way, such as Ctrl+Z (#349).
+            set_hidden(true)
         }
     }, [recently_deleted])
 
-    let text = recently_deleted == null ? "" : t("t_undo_delete", { count: recently_deleted.length })
+    // Keeps its text while it slides away.
+    const [text, set_text] = useState("")
+    useEffect(() => {
+        if (recently_deleted != null && recently_deleted.length > 0) set_text(t("t_undo_delete", { count: recently_deleted.length }))
+    }, [recently_deleted])
 
     return html`
         <nav id="undo_delete" inert=${hidden} class=${cl({ hidden })}>

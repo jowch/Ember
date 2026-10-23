@@ -14,6 +14,7 @@ import { BottomRightPanel, open_bottom_right_panel } from "./BottomRightPanel.js
 import { DropRuler, get_drop_index_for_paste } from "./DropRuler.js"
 import { SelectionArea } from "./SelectionArea.js"
 import { UndoDelete } from "./UndoDelete.js"
+import { live_view, record_delete, expect_return, set_cell_undo_handlers } from "./CellInput/cell_undo.js"
 import { Scroller } from "./Scroller.js"
 import { Popup } from "./Popup.js"
 
@@ -142,7 +143,7 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  *  precedence_heuristic: number?,
  *  depends_on_disabled_cells: boolean,
  *  depends_on_skipped_cells: boolean,
- *  ember: { stale: boolean, code_changed: boolean, upstream_error?: {name: string, cell: string}[], disabled_by?: string, can_disable: boolean, settings?: {name: string, found: string}[], settings_found?: string[], load_notes?: {package: string, setting: string}[], changed_in_place?: string[], from_lock?: string[], split?: number },
+ *  ember: { stale: boolean, code_changed: boolean, upstream_error?: {name: string, cell: string}[], disabled_by?: string, can_disable: boolean, settings?: {name: string, found: string}[], settings_found?: string[], load_notes?: {package: string, setting: string}[], changed_in_place?: string[], from_lock?: string[], untracked_reads?: string[], split?: number },
  *  output: {
  *      body: string | Object,
  *      persist_js_state: boolean,
@@ -540,7 +541,20 @@ export class Editor extends Component {
                 const delta = before_or_after == "before" ? 0 : 1
                 return await this.actions.add_remote_cell_at(index + delta, code)
             },
-            confirm_delete_multiple: async (cell_ids, /** @type {(() => void)?} */ after_delete = null) => {
+            /**
+             * Delete `cell_ids`, after a confirmation when there are several
+             * of them. The delete is kept so it can be undone (#349): from
+             * the bottom bar, with Ctrl+Z outside the editors, and as a step
+             * in the undo history of the cell that keeps focus, the "host":
+             * the cell before them when `host_direction` is -1 (Backspace in
+             * an empty cell), else the cell after them, or before them when
+             * they were last.
+             * @param {string[]} cell_ids
+             * @param {{ host_direction?: 1 | -1, select_neighbor?: boolean }} options
+             *   `select_neighbor`: select the host as the delete starts, so
+             *   a key pressed while it's still in flight acts on the host (#353).
+             */
+            confirm_delete_multiple: async (cell_ids, { host_direction = 1, select_neighbor = false } = {}) => {
                 if (
                     cell_ids.length <= 1 ||
                     (await ask({
@@ -566,42 +580,35 @@ export class Editor extends Component {
                             this.actions.interrupt_remote(cell_ids[0])
                         }
                     } else {
-                        this.setState(
-                            immer((/** @type {EditorState} */ state) => {
-                                state.recently_deleted = cell_ids.map((cell_id) => {
-                                    return {
-                                        index: this.state.notebook.cell_order.indexOf(cell_id),
-                                        cell: this.state.notebook.cell_inputs[cell_id],
-                                    }
-                                })
-                                state.selected_cells = []
-                            })
-                        )
-                        await update_notebook((notebook) => {
-                            for (let cell_id of cell_ids) {
-                                delete notebook.cell_inputs[cell_id]
-                            }
-                            notebook.cell_order = notebook.cell_order.filter((cell_id) => !cell_ids.includes(cell_id))
-                        })
-                        after_delete?.()
-                        await this.client.send("run_multiple_cells", { cells: [] }, { notebook_id: this.state.notebook.notebook_id })
+                        await this.delete_cells(cell_ids, { host_direction, select_neighbor })
                     }
                 }
             },
-            /** Delete `cell_ids` (asking first, as `confirm_delete_multiple` does), then select the cell after them, or the one before when they were last, so focus stays on a cell (#317). */
+            /**
+             * Delete `cell_ids`, then select the cell after them, or before
+             * them when they were last, so focus doesn't fall to the page
+             * (#317). Esc + Backspace and the cell menu's Delete both go
+             * through here; deleting an empty cell from its editor moves the
+             * cursor itself instead.
+             */
             delete_and_select_neighbor: async (cell_ids) => {
-                const order = this.state.notebook.cell_order
-                const indices = cell_ids.map((id) => order.indexOf(id))
-                const kept = (id) => !cell_ids.includes(id)
-                const neighbor =
-                    order.slice(Math.max(...indices) + 1).find(kept) ??
-                    order
-                        .slice(0, Math.max(0, Math.min(...indices)))
-                        .reverse()
-                        .find(kept)
-                await this.actions.confirm_delete_multiple(cell_ids, () => {
-                    if (neighbor != null) this.actions.select_cell(neighbor)
-                })
+                return await this.actions.confirm_delete_multiple(cell_ids, { select_neighbor: true })
+            },
+            /**
+             * Bring back the last delete that isn't undone yet, from the
+             * bottom bar or Ctrl+Z outside the editors. Its cells come back
+             * selected.
+             */
+            undo_last_delete: () => {
+                const record = _.findLast(this.deleted_records, (r) => !r.restored)
+                if (record == null || !this.restore_cells(record.id, { focus: "select" })) return false
+                this.redoable_deletes.push(record.id)
+                return true
+            },
+            /** Ctrl+Shift+Z (Ctrl+Y) outside the editors: delete again what Ctrl+Z there brought back. */
+            redo_last_delete: () => {
+                const id = this.redoable_deletes.pop()
+                return id != null && this.redelete_cells(id)
             },
             fold_remote_cells: async (cell_ids, new_value) => {
                 await update_notebook((notebook) => {
@@ -620,7 +627,7 @@ export class Editor extends Component {
                 await this.actions.set_and_run_multiple(changed)
                 return changed.length > 0
             },
-            set_and_run_multiple: async (cell_ids) => {
+            set_and_run_multiple: async (cell_ids, { keep_local = false } = {}) => {
                 // This function is called with an empty list when you press Shift+Enter without any selected cells.
                 if (cell_ids.length > 0) {
                     if (await maybe_abort_long_runtime(this.state.notebook, cell_ids)) {
@@ -638,7 +645,7 @@ export class Editor extends Component {
 
                     await update_notebook((notebook) => {
                         for (let cell_id of cell_ids) {
-                            if (this.state.cell_inputs_local[cell_id]) {
+                            if (!keep_local && this.state.cell_inputs_local[cell_id]) {
                                 if (notebook.cell_inputs[cell_id]) {
                                     notebook.cell_inputs[cell_id].code = this.state.cell_inputs_local[cell_id].code
                                 }
@@ -1184,6 +1191,161 @@ all patches: ${JSON.stringify(patches, null, 1)}
                 false
             )
         }
+        /**
+         * Deletes that can be undone (#349), oldest first. `cells` are the
+         * deleted cells with the positions they had; `editor_states` the
+         * states of their editors, history included; `host` the cell whose
+         * editor history holds the delete as a step, if any.
+         * @type {Array<{ id: string, cells: Array<{ index: number, prev: string?, next: string?, cell: CellInputData }>, editor_states: Map<string, any>, host: string?, restored: boolean }>}
+         */
+        this.deleted_records = []
+        /** Ids of deletes brought back by Ctrl+Z outside the editors, for Ctrl+Shift+Z there. */
+        this.redoable_deletes = /** @type {string[]} */ ([])
+        /** Cells whose delete is still on its way to the notebook (#353). */
+        this.cells_being_deleted = new Set()
+
+        this.delete_cells = async (/** @type {string[]} */ cell_ids, { host_direction = 1, select_neighbor = false, record = null } = {}) => {
+            // The order as it will be once deletes still in flight land, so
+            // a quick second delete finds the right neighbour (#353).
+            const order = this.state.notebook.cell_order.filter((id) => !this.cells_being_deleted.has(id) || cell_ids.includes(id))
+            cell_ids = order.filter((id) => cell_ids.includes(id))
+            if (cell_ids.length === 0) return
+            const indices = cell_ids.map((id) => order.indexOf(id))
+            const kept = (id) => !cell_ids.includes(id)
+            const after = order.slice(Math.max(...indices) + 1).find(kept)
+            const before = order
+                .slice(0, Math.max(0, Math.min(...indices)))
+                .reverse()
+                .find(kept)
+            const neighbor = host_direction === -1 ? before : after ?? before
+
+            const editor_states = new Map()
+            for (const id of cell_ids) {
+                const view = live_view(id)
+                if (view != null) editor_states.set(id, view.state)
+            }
+            // Each cell keeps the cells around it as well as its index, so it
+            // goes back next to them even after other cells came or went.
+            const cells = cell_ids.map((id, i) => ({
+                index: indices[i],
+                prev: order[indices[i] - 1] ?? null,
+                next: order.slice(indices[i] + 1).find(kept) ?? null,
+                cell: this.state.notebook.cell_inputs[id],
+            }))
+            if (record == null) {
+                const host_view = neighbor == null ? null : live_view(neighbor)
+                record = { id: uuidv4(), cells, editor_states, host: host_view == null ? null : neighbor, restored: false }
+                this.deleted_records.push(record)
+                if (this.deleted_records.length > 100) this.deleted_records.shift()
+                this.redoable_deletes = []
+                if (host_view != null) record_delete(host_view, record.id)
+            } else {
+                // Redo: the same record, deleted again.
+                Object.assign(record, { cells, editor_states, restored: false })
+            }
+
+            const previous_selection = this.state.selected_cells
+            for (const id of cell_ids) this.cells_being_deleted.add(id)
+            this.setState(
+                immer((/** @type {EditorState} */ state) => {
+                    state.recently_deleted = cells
+                    state.selected_cells = select_neighbor && neighbor != null ? [neighbor] : []
+                }),
+                () => {
+                    if (select_neighbor && neighbor != null) document.getElementById(neighbor)?.focus({ preventScroll: true })
+                }
+            )
+            if (select_neighbor && neighbor != null) document.getElementById(neighbor)?.scrollIntoView({ block: "nearest" })
+            try {
+                await this.update_notebook((notebook) => {
+                    for (let cell_id of cell_ids) {
+                        delete notebook.cell_inputs[cell_id]
+                    }
+                    notebook.cell_order = notebook.cell_order.filter((cell_id) => !cell_ids.includes(cell_id))
+                })
+            } catch (e) {
+                record.restored = true
+                if (select_neighbor) this.setState({ selected_cells: previous_selection })
+                throw e
+            } finally {
+                for (const id of cell_ids) this.cells_being_deleted.delete(id)
+            }
+            await this.client.send("run_multiple_cells", { cells: [] }, { notebook_id: this.state.notebook.notebook_id })
+        }
+
+        /**
+         * Put a delete's cells back where they were and run them. `focus`:
+         * "editor" puts the cursor in the first one (Ctrl+Z in an editor),
+         * "select" selects them all (the bottom bar, Ctrl+Z outside the
+         * editors). Returns false when the delete was already undone.
+         */
+        this.restore_cells = (/** @type {string} */ record_id, { focus = "editor" } = {}) => {
+            const record = this.deleted_records.find((r) => r.id === record_id)
+            if (record == null || record.restored) return false
+            if (record.cells.some(({ cell }) => this.state.notebook.cell_inputs[cell.cell_id] != null)) return false
+            record.restored = true
+            const cells = _.sortBy(record.cells, "index")
+            const ids = cells.map(({ cell }) => cell.cell_id)
+            ids.forEach((id, i) => expect_return(id, record.editor_states.get(id) ?? null, focus === "editor" && i === 0, record.id))
+            if (this.state.recently_deleted === record.cells) this.setState({ recently_deleted: null })
+            this.update_notebook((notebook) => {
+                // In their old order, each after the cell that was before it
+                // (another restored cell, perhaps), else before the cell
+                // that was after them, else at its old index.
+                for (let { index, prev, next, cell } of cells) {
+                    notebook.cell_inputs[cell.cell_id] = cell
+                    const order = notebook.cell_order
+                    const at =
+                        prev != null && order.includes(prev)
+                            ? order.indexOf(prev) + 1
+                            : next != null && order.includes(next)
+                              ? order.indexOf(next)
+                              : Math.min(index, order.length)
+                    notebook.cell_order = [...order.slice(0, at), cell.cell_id, ...order.slice(at)]
+                }
+            }).then(() => {
+                if (focus === "select") {
+                    this.setState({ selected_cells: ids }, () => document.getElementById(ids[0])?.focus({ preventScroll: true }))
+                    document.getElementById(ids[0])?.scrollIntoView({ block: "nearest" })
+                }
+                // They run with the code they had last run; typing in them
+                // that wasn't run stays typing, as it was before the delete.
+                this.actions.set_and_run_multiple(ids, { keep_local: true })
+            })
+            return true
+        }
+
+        /**
+         * Delete a restored record's cells again (redo). Returns false when
+         * they're already gone. `from_returned`: the redo came from one of
+         * those cells, so the delete goes back into its host's history (its
+         * step there was undone) and the cursor goes back to the host, as
+         * a redo in one editor puts it back where the undo found it.
+         */
+        this.redelete_cells = (/** @type {string} */ record_id, { from_returned = false } = {}) => {
+            const record = this.deleted_records.find((r) => r.id === record_id)
+            if (record == null || !record.restored) return false
+            const ids = record.cells.map(({ cell }) => cell.cell_id)
+            if (!ids.every((id) => this.state.notebook.cell_inputs[id] != null)) return false
+            this.delete_cells(ids, { record })
+            const host_view = from_returned && record.host != null ? live_view(record.host) : null
+            if (host_view != null) {
+                record_delete(host_view, record.id)
+                host_view.focus()
+            }
+            return true
+        }
+
+        set_cell_undo_handlers({
+            restore: (id) => this.restore_cells(id),
+            redelete: (id) => this.redelete_cells(id),
+            redelete_returned: (id) => this.redelete_cells(id, { from_returned: true }),
+            restore_unhosted: () => {
+                const record = _.findLast(this.deleted_records, (r) => !r.restored && (r.host == null || live_view(r.host) == null))
+                return record != null && this.restore_cells(record.id)
+            },
+        })
+
         this.delete_selected = () => {
             const active = /** @type {HTMLElement?} */ (document.activeElement)
             const typing = active != null && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable)
@@ -1277,6 +1439,20 @@ all patches: ${JSON.stringify(patches, null, 1)}
                 e.preventDefault()
             } else if (["BracketLeft", "BracketRight"].includes(e.code) && (is_mac_keyboard ? e.altKey && e.metaKey : e.ctrlKey && e.shiftKey)) {
                 if (!in_editor) this.fold_selected(e.code === "BracketLeft")
+            } else if (
+                // Outside the editors, Ctrl+Z brings back the last delete and
+                // Ctrl+Shift+Z or Ctrl+Y deletes it again (#349). In an
+                // editor, its own history has the deletes as steps.
+                (e.key?.toLowerCase() === "z" || (e.key?.toLowerCase() === "y" && !is_mac_keyboard)) &&
+                has_ctrl_or_cmd_pressed(e) &&
+                !e.altKey &&
+                !in_editor &&
+                !in_textarea_or_input()
+            ) {
+                const redo = e.key.toLowerCase() === "y" || e.shiftKey
+                if (redo ? this.actions.redo_last_delete() : this.actions.undo_last_delete()) {
+                    e.preventDefault()
+                }
             } else if (e.key === "Backspace" || e.key === "Delete") {
                 if (this.delete_selected()) {
                     e.preventDefault()
@@ -1579,20 +1755,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                     />
                     <${UndoDelete}
                         recently_deleted=${this.state.recently_deleted}
-                        on_click=${() => {
-                            const rd = this.state.recently_deleted
-                            if (rd == null) return
-                            this.update_notebook((notebook) => {
-                                for (let { index, cell } of rd) {
-                                    notebook.cell_inputs[cell.cell_id] = cell
-                                    notebook.cell_order = [...notebook.cell_order.slice(0, index), cell.cell_id, ...notebook.cell_order.slice(index, Infinity)]
-                                }
-                            }).then(() => {
-                                const ids = rd.map(({ cell }) => cell.cell_id)
-                                this.setState({ selected_cells: ids }, () => document.getElementById(ids[0])?.focus({ preventScroll: true }))
-                                this.actions.set_and_run_multiple(ids)
-                            })
-                        }}
+                        on_click=${() => this.actions.undo_last_delete()}
                     />
                     <${Popup} />
                 </${PlutoJSInitializingContext.Provider}>
