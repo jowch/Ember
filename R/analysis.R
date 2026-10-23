@@ -82,6 +82,7 @@
 #'   the name's token or the generic argument's.
 #' * `notes`: data frame `kind`, `line`, `col`, `end_col`, `detail`. `kind`
 #'   is one of `"untracked_read"` (`get`, `exists`, `eval(parse())`),
+#'   `"untracked_file"` (a data reader with a computed path),
 #'   `"computed_source"`, `"computed_package"`, `"missing_file"`,
 #'   `"source_parse_error"` (a sourced file that fails to parse; `detail`
 #'   is the parser's message). `col`/`end_col` are `NA` for a note with no
@@ -89,6 +90,12 @@
 #' * `untracked`: the `detail` of the `untracked_read` notes, once each
 #'   (`"get"`, `"eval"`): the calls the cell's note names (#357), kept
 #'   here so the graph doesn't look at every cell's `notes` per build.
+#' * `data_files`: the literal paths the cell (or a file it sources) reads
+#'   data from with one of the `data_readers` (`read.csv("d.csv")`), once
+#'   each. The shell watches them (#276).
+#' * `untracked_files`: the `detail` of the `untracked_file` notes, once
+#'   each: the readers called with a computed path (`read.csv(f)`), which
+#'   the cell's note names.
 #'
 #' Invariants: rows are in source order within the cell's own code and
 #' within each sourced file; a sourced file's rows are appended as a block
@@ -114,13 +121,16 @@ new_cell_analysis <- function(code,
                               masked = empty_masked(),
                               sourced = empty_sourced(),
                               notes = empty_notes(),
-                              methods = no_methods) {
+                              methods = no_methods,
+                              data_files = character()) {
   untracked <- unique(notes$detail[notes$kind == "untracked_read"])
+  untracked_files <- unique(notes$detail[notes$kind == "untracked_file"])
   structure(list(code = code, parse_error = parse_error,
                  definitions = definitions, references = references,
                  packages = packages, installs = installs, settings = settings,
                  formulas = formulas, masked = masked, sourced = sourced,
-                 notes = notes, untracked = untracked, methods = methods),
+                 notes = notes, untracked = untracked, methods = methods,
+                 data_files = unique(data_files), untracked_files = untracked_files),
             class = "ember_cell_analysis")
 }
 
@@ -408,7 +418,8 @@ finish <- function(acc, code) {
   new_cell_analysis(code, parse_error = NULL, definitions = defs,
                      references = refs, packages = pkgs, installs = installs, settings = settings,
                      formulas = acc$formulas, masked = masked, sourced = sourced, notes = notes,
-                     methods = methods)
+                     methods = methods,
+                     data_files = c(acc$data_paths, unlist(acc$extra_data, use.names = FALSE)))
 }
 
 #' The `"name"`-form method rows of a cell's own definitions: each

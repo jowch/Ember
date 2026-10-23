@@ -357,3 +357,35 @@ test_that("a cell using str_interp() gets a definition edge on the cell defining
                     g$edges$name == "hello" & g$edges$via == "definition"))
 })
 
+
+test_that("a reader called with a literal path records the file it reads (#276)", {
+  a <- read_cell('d <- read.csv("data/d.csv")\nx <- readr::read_csv(file = "raw/a.csv")\nload("e.RData")')
+  expect_equal(a$data_files, c("data/d.csv", "raw/a.csv", "e.RData"))
+  expect_equal(a$untracked_files, character())
+  expect_equal(nrow(a$notes), 0)
+  expect_true(all(c("d", "x") %in% a$definitions$name))
+})
+
+test_that("a reader with a computed path gets the untracked_file note (#276)", {
+  a <- read_cell('d <- readRDS(f)')
+  expect_equal(a$data_files, character())
+  expect_equal(a$notes$kind, "untracked_file")
+  expect_equal(a$untracked_files, "readRDS")
+  expect_true("f" %in% refs(a))
+})
+
+test_that("text, URLs and function bodies record no file (#276)", {
+  for (code in c('read.csv(text = "a,b\\n1,2")',
+                 'read.csv("https://example.org/d.csv")',
+                 'g <- function() read.csv("d.csv")',
+                 'readLines(textConnection(x))', 'readRDS(url(u))')) {
+    a <- read_cell(code)
+    expect_equal(a$data_files, character(), info = code)
+    expect_equal(a$untracked_files, character(), info = code)
+  }
+})
+
+test_that("a sourced file's literal reads count as the cell's (#276)", {
+  a <- read_cell('source("load.R")', function(path) 'd <- read.csv("d.csv")')
+  expect_equal(a$data_files, "d.csv")
+})

@@ -133,6 +133,35 @@ test_that("autorun: running a cell after editing its grandparent runs each cell 
   expect_identical(sort(readLines(log)), c("A", "B", "C"))
 })
 
+test_that("autorun: a cell that reads a file another cell writes reruns when the contents change, not on the same bytes (#276)", {
+  log <- normalizePath(tempfile("ember-runs-"), winslash = "/", mustWork = FALSE)
+  cells <- list(S = cell(""), W = cell("k <- 1; writeLines(as.character(k), 'd.txt')"),
+                R = cell(sprintf("cat('R\\n', file = '%s', append = TRUE); d <- readLines('d.txt')", log)),
+                U = cell("paste(d, '!')"))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_cells(nb, wait = TRUE, timeout = 20)
+  data <- file.path(dirname(path), "d.txt")
+  # The shell has seen the file W wrote: R ran after it, so it stays as is.
+  seen <- function(...) identical(nb$data_watch[["d.txt"]]$mtime, file.info(data)$mtime)
+  expect_true(wait_for(nb, function(snap) seen() && is_idle(snap), timeout = 20))
+  expect_identical(readLines(log), "R")
+  shown_u <- function(snap) snap_view(snap, "U")$output$text
+
+  # New contents: R and U rerun, though neither reads a variable W defines.
+  edit_notebook(nb, set_code("W", "k <- 2; writeLines(as.character(k), 'd.txt')"))
+  run_cells(nb, "W", wait = TRUE, timeout = 20)
+  expect_true(wait_for(nb, function(snap) identical(shown_u(snap), '[1] "2 !"') && is_idle(snap), timeout = 20))
+  expect_identical(readLines(log), c("R", "R"))
+
+  # The same bytes again: the shell sees the write and reruns nothing.
+  edit_notebook(nb, set_code("W", "k <- 2; writeLines(as.character(k), 'd.txt'); NULL"))
+  run_cells(nb, "W", wait = TRUE, timeout = 20)
+  expect_true(wait_for(nb, function(snap) seen() && is_idle(snap), timeout = 20))
+  expect_identical(readLines(log), c("R", "R"))
+})
+
 test_that("the file on disk matches the state after an edit, and file_saved fires (110)", {
   cells <- list(S = cell(""), A = cell("1"))
   path <- write_session_notebook(cells)

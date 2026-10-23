@@ -56,6 +56,7 @@ ev_show_more   <- function(cell, path, dim, at)
 
 # From the shell's own IO
 ev_files_read  <- function(files, at) event("files_read", at, files = files)  # path -> list(text, hash)
+ev_data_changed <- function(files, at) event("data_changed", at, files = files)  # path -> modified time
 ev_save_failed <- function(message, at) event("save_failed", at, message = message)
 
 # From the worker (built by `worker_event()` in shell.R from wire messages)
@@ -186,6 +187,7 @@ reduce <- function(state, event) {
     render           = reduce_render(state, event),
     show_more        = reduce_show_more(state, event),
     files_read       = reduce_files_read(state, event),
+    data_changed     = reduce_data_changed(state, event),
     save_failed      = reduce_save_failed(state, event),
     wk_started       = reduce_wk_started(state, event),
     wk_failed        = reduce_wk_failed(state, event),
@@ -1599,6 +1601,39 @@ reduce_files_read <- function(state, event) {
       # cell alone.
       state <- invalidate_dependents(state, id, character())
     }
+  }
+  list(state = state, effects = list(), reply = NULL)
+}
+
+#' Data files that cells read by a literal path changed (#276): the shell's
+#' watcher saw a new modified time and new contents. `event$files` maps
+#' each path to the time it changed (the file's modified time, or the
+#' time the change was seen for a file that is gone).
+#'
+#' A cell that reads one of them (its analysis's `data_files`) and whose
+#' last result finished before the change goes stale with its dependents,
+#' and autorun also queues it, as for a sourced file. A cell that is
+#' running or queued is left alone: its run reads the new file. So is one
+#' whose last result finished after the change, so a cell that writes the
+#' file it reads doesn't wake itself.
+reduce_data_changed <- function(state, event) {
+  autorun <- identical(state$file$header$on_cell_change, "autorun")
+  running <- state$worker$running$cell
+  changed <- names(event$files)
+  for (id in state$graph$ids) {
+    hit <- intersect(state$graph$analyses[[id]]$data_files, changed)
+    if (length(hit) == 0 || identical(running, id) || id %in% state$pending) next
+    r <- state$results[[id]]
+    if (is.null(r)) next
+    finished <- as.numeric(r$started_at) + (r$runtime %||% 0)
+    changed_at <- max(vapply(event$files[hit], as.numeric, numeric(1)))
+    if (length(finished) == 1 && !is.na(finished) && finished >= changed_at) next
+    r$stale <- TRUE
+    state$results[[id]] <- r
+    if (autorun && isTRUE(state$allowed) && can_run(state, id)) {
+      state$pending <- union(state$pending, id)
+    }
+    state <- invalidate_dependents(state, id, character())
   }
   list(state = state, effects = list(), reply = NULL)
 }

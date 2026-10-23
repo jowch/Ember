@@ -637,6 +637,32 @@ literal_signature <- function(a) {
   paste(out, collapse = ",")
 }
 
+#' `read.csv("d.csv")` or another of the `data_readers` at top scope (or
+#' `local()` nested there), #276. A literal path goes in `acc$data_paths`,
+#' for the shell to watch. Any other value of the path argument gets an
+#' `untracked_file` note naming the function. A URL, or `fread()`'s text
+#' with a newline in it, is neither: there is no file to watch. Nor is a
+#' connection made in the call (`readLines(textConnection(x))`). Without
+#' the argument (`read.csv(text = s)`) there is nothing to note.
+walk_data_read <- function(e, scope, acc, name, arg_pids, head_pos) {
+  args <- as.list(e)[-1]
+  nms <- names2(args)
+  i <- which(nms == data_readers[[name]])[1]
+  if (is.na(i)) i <- which(nms == "")[1]
+  if (!is.na(i) && !missing_arg(args[[i]])) {
+    p <- args[[i]]
+    if (is.character(p) && length(p) == 1 && !is.na(p)) {
+      if (nzchar(p) && !grepl("^[A-Za-z][A-Za-z0-9+.-]*://", p) && !grepl("\n", p)) {
+        acc$data_paths <- c(acc$data_paths, p)
+      }
+    } else if (!(is.call(p) && is.symbol(p[[1]]) &&
+                 as.character(p[[1]]) %in% c("textConnection", "rawConnection", "url", "stdin", "pipe"))) {
+      record_note(acc, "untracked_file", name, head_pos())
+    }
+  }
+  walk_call_args(e, scope, acc, arg_pids)
+}
+
 #' `source("p.R")` at top scope (or `local()` nested there).
 walk_source <- function(e, scope, acc, arg_pids = NULL) {
   args <- as.list(e)[-1]
@@ -711,6 +737,7 @@ walk_source <- function(e, scope, acc, arg_pids = NULL) {
   acc$extra_settings[[length(acc$extra_settings) + 1]] <- sub$settings
   acc$formulas <- c(acc$formulas, sub$formulas)
   acc$extra_sourced[[length(acc$extra_sourced) + 1]] <- sub$sourced
+  acc$extra_data[[length(acc$extra_data) + 1]] <- sub$data_files
   acc$extra_notes[[length(acc$extra_notes) + 1]] <- sub$notes
   acc$extra_methods[[length(acc$extra_methods) + 1]] <- sub$methods
   if (nrow(sub$definitions) > 0) {

@@ -236,6 +236,11 @@ after each dispatch.
 - **Sourced-file hashes are MD5**, computed by the shell from the file
   (`tools::md5sum()` on a path works on every supported R; hashing text in
   memory needs R 4.5). The footer line is `helpers.R md5:<hex>`.
+- **Data files are watched by modified time, then size, then MD5**
+  (#276). The shell keeps them in `nb$data_watch`, apart from sourced
+  files, and dispatches `data_changed` with each changed path's modified
+  time; `reduce_data_changed` skips a reader whose last run finished after
+  it, or that is queued or running.
 - **Computed `source()` paths are kept for the session only**; the learned
   definitions they produce go into the footer like any other.
 - **Formula checks** evaluate the `data` argument only when it is a symbol

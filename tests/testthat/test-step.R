@@ -768,6 +768,25 @@ test_that("a cell that reads globals by a computed name shows the can't-track no
   expect_null(pluto_state(r2$state, p1)$js$cell_results$B$ember$untracked_reads)
 })
 
+test_that("a cell that reads a file by a computed path shows the can't-track note (#276)", {
+  s <- fake_state(list(F = cell("f <- 'd.csv'"),
+                       X = cell("d <- read.csv(f)"),
+                       Y = cell("e <- read.csv('e.csv')")))
+  snap <- snapshot_of(s)
+  expect_equal(snap$cells$X$untracked_files, "read.csv")
+  expect_equal(snap$cells$Y$untracked_files, character())
+  js <- pluto_state(s)$js
+  check_wire(js)
+  expect_equal(js$cell_results$X$ember$untracked_files, as_arr("read.csv"))
+  expect_null(js$cell_results$Y$ember$untracked_files)
+
+  # An edit to a literal path drops it, and the cached projection follows.
+  p1 <- pluto_state(s)
+  r <- drive(s, ev_apply(list(op_set_code("X", "d <- read.csv('d.csv')")), at(20)))
+  expect_equal(snapshot_of(r$state)$cells$X$untracked_files, character())
+  expect_null(pluto_state(r$state, p1)$js$cell_results$X$ember$untracked_files)
+})
+
 test_that("a package load that resets a setting a settings cell set shows a note on the loading cell (#61)", {
   # A loads mgcv inside a function, so the fake lock needs no entry for it;
   # the worker's report is what matters here.
@@ -962,6 +981,75 @@ test_that("a sourced file's change invalidates the sourcing cell (53)", {
 
   r2 <- drive(r$state, ev_files_read(list("h.R" = list(text = "z <- 2", hash = "v2")), at(12)))
   expect_true(isTRUE(r2$state$results$A$stale) || "A" %in% r2$state$pending)
+})
+
+# ---- Data files a cell reads (#276) -----------------------------------------
+
+# W writes d.csv, R reads it, U uses what R read: no edge between W and R.
+data_file_notebook <- function(on_cell_change = "autorun") {
+  s <- fake_state(list(S = cell(""),
+                       W = cell('write.csv(data.frame(x = 1:3), "d.csv", row.names = FALSE)'),
+                       R = cell('d <- read.csv("d.csv")'),
+                       U = cell("print(sum(d$x))")),
+                  on_cell_change = on_cell_change)
+  r <- boot(s, c("W", "R", "U"))
+  for (created in list(character(), "d", character())) {
+    r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = created),
+                                at(r$state$worker$running$started_at + 2)))
+  }
+  r  # W finished at 5, R at 7, U at 9
+}
+
+test_that("a cell that reads a data file by a literal path has it in its analysis (#276)", {
+  r <- data_file_notebook()
+  expect_equal(r$state$graph$analyses$R$data_files, "d.csv")
+  expect_equal(r$state$graph$analyses$W$data_files, character())
+  expect_equal(watched_data_files(r$state), "d.csv")
+})
+
+test_that("a data file that changed after its reader ran reruns the reader and its dependents in autorun (#276)", {
+  r <- data_file_notebook()
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = 20), at(21)))
+  expect_true(isTRUE(r2$state$results$R$stale) || "R" %in% r2$state$pending)
+  expect_equal(r2$state$worker$running$cell, "R")
+  expect_true(isTRUE(r2$state$results$U$stale) || "U" %in% r2$state$pending)
+  expect_false("W" %in% c(r2$state$pending, r2$state$worker$running$cell))
+})
+
+test_that("in lazy mode a changed data file marks its reader and dependents stale, and runs nothing (#276)", {
+  r <- data_file_notebook("lazy")
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = 20), at(21)))
+  expect_true(isTRUE(r2$state$results$R$stale))
+  expect_true(isTRUE(r2$state$results$U$stale))
+  expect_equal(r2$state$pending, character())
+  expect_null(r2$state$worker$running)
+})
+
+test_that("a data file changed before its reader's run finished doesn't wake the reader (#276)", {
+  # A cell that writes the file it reads: the change is its own run's.
+  r <- data_file_notebook()
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = 6), at(10)))
+  expect_false(isTRUE(r2$state$results$R$stale))
+  expect_equal(r2$state$pending, character())
+  expect_null(r2$state$worker$running)
+})
+
+test_that("a data file that changes while its reader is running or queued leaves it alone (#276)", {
+  s <- fake_state(list(S = cell(""), R = cell('d <- read.csv("d.csv")')))
+  r <- boot(s, "R")
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = 3), at(4)))
+  expect_equal(r2$state$worker$running$cell, "R")
+  expect_equal(r2$state$pending, character())
+  r3 <- drive(r2$state, wk_done(1, r2$state$worker$running$token, report(created = "d"), at(5)))
+  expect_false(isTRUE(r3$state$results$R$stale))
+  expect_null(r3$state$worker$running)
+})
+
+test_that("a change to a file no cell reads does nothing (#276)", {
+  r <- data_file_notebook()
+  r2 <- drive(r$state, ev_data_changed(list("other.csv" = 20), at(21)))
+  expect_identical(r2$state$results, r$state$results)
+  expect_null(r2$state$worker$running)
 })
 
 test_that("every run message carries the current code-cell run order (54)", {

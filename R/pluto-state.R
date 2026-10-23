@@ -161,6 +161,7 @@ cell_key <- function(state, ctx, i) {
        queued = ctx$queued[[i]], waiting_for = ctx$waiting[[i]],
        errors = ctx$errors_by_cell[[i]], disabled_by = ctx$disabled_by[[i]],
        settings = ctx$settings[[i]], untracked = ctx$untracked[[i]],
+       untracked_files = ctx$untracked_files[[i]],
        allowed = state$allowed)
 }
 
@@ -184,6 +185,7 @@ key_unchanged <- function(state, ctx, i, prev_key) {
   if (!identical(ctx$disabled_by[[i]], prev_key$disabled_by)) return(FALSE)
   if (!identical(ctx$settings[[i]], prev_key$settings)) return(FALSE)
   if (!identical(ctx$untracked[[i]], prev_key$untracked)) return(FALSE)
+  if (!identical(ctx$untracked_files[[i]], prev_key$untracked_files)) return(FALSE)
   identical(state$allowed, prev_key$allowed)
 }
 
@@ -306,7 +308,7 @@ span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
 #'   (Pluto's own field, Run.jl:86-91) -- true for a disabled cell itself,
 #'   too.
 #' * `ember`: `list(stale, code_changed, upstream_error?, disabled_by?,
-#'   can_disable, settings?, settings_found?, load_notes?, changed_in_place?, from_lock?, untracked_reads?, split?, figure?)`, from the view's `stale` and
+#'   can_disable, settings?, settings_found?, load_notes?, changed_in_place?, from_lock?, untracked_reads?, untracked_files?, split?, figure?)`, from the view's `stale` and
 #'   `code_differs` -- both already in `cell_key()`'s key (`code_differs`
 #'   is derived from `cell$code` and `result$code`). `stale` is
 #'   `isTRUE(view$stale) && !off`: an off cell shows as disabled, not also
@@ -334,7 +336,9 @@ span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
 #'   names (`"get"`), when the cell's code reads globals by a name static
 #'   reading can't follow: the note that the cell doesn't rerun when they
 #'   change (#357). It comes from the graph's analysis, so `cell_key()`
-#'   holds it too. `split` is present, as `length(split_mixed(view$code))`,
+#'   holds it too. `untracked_files` is the same for data readers called
+#'   with a computed path (`"read.csv"`): the note that the cell doesn't
+#'   rerun when the file changes (#276). `split` is present, as `length(split_mixed(view$code))`,
 #'   only when `view$errors` has a `mixed_text` error: the Split button's
 #'   label (Cell.js), answered by the `ember_split_cell` request (server.R).
 #'   `figure` is present, as `list(width, height)` inches plus `alt` when
@@ -381,6 +385,7 @@ project_cell_result <- function(view, known_ids = NULL) {
             if (length(view$changed_in_place) > 0) list(changed_in_place = as_arr(display_names(view$changed_in_place))),
             if (length(view$from_lock) > 0) list(from_lock = as_arr(setdiff(view$from_lock, ""))),
             if (length(view$untracked_reads) > 0) list(untracked_reads = as_arr(view$untracked_reads)),
+            if (length(view$untracked_files) > 0) list(untracked_files = as_arr(view$untracked_files)),
             if (!is.null(split)) list(split = split),
             if (!is.null(figure)) list(figure = figure),
             if (length(view$variables) > 0) list(variables = as_arr(view$variables)))

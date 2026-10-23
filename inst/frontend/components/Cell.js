@@ -548,6 +548,7 @@ export const Cell = ({
     const load_notes = ember?.load_notes ?? []
     const changed_in_place = ember?.changed_in_place ?? []
     const untracked_reads = ember?.untracked_reads ?? []
+    const untracked_files = ember?.untracked_files ?? []
     const from_lock = ember?.from_lock
 
     const cell_state =
@@ -648,6 +649,9 @@ export const Cell = ({
                 : null}
             ${untracked_reads.length > 0
                 ? html`<ember-settings-note class="untracked-note" role="status">${t("t_untracked_read_note", { names: join_names(untracked_reads.map((name) => `${name}()`)) })}</ember-settings-note>`
+                : null}
+            ${untracked_files.length > 0
+                ? html`<ember-settings-note class="untracked-file-note" role="status">${t("t_untracked_file_note", { names: join_names(untracked_files.map((name) => `${name}()`)) })}</ember-settings-note>`
                 : null}
             ${from_lock != null
                 ? html`<ember-settings-note class="from-lock-note" role="status">${from_lock.length > 0 ? t("t_from_lock_note", { names: join_names(from_lock) }) : t("t_from_lock_note_unnamed")}</ember-settings-note>`

@@ -94,6 +94,26 @@ setting_kinds <- c(options = "option", local_options = "option",
 untracked_reads <- c("get", "get0", "mget", "exists", "dynGet",
                      "eval", "evalq", "eval.parent")
 
+#' Functions that read a data file, each with the argument that names it
+#' (#276). A literal path there is watched as a `source()` path is: when
+#' the file changes, the cell and its dependents rerun or go stale. Any
+#' other value gets an `untracked_file` note. The argument is taken by
+#' name, or else as the first unnamed one.
+data_readers <- c(
+  # base and utils
+  read.csv = "file", read.csv2 = "file", read.delim = "file", read.delim2 = "file",
+  read.table = "file", read.fwf = "file", read.dcf = "file", readRDS = "file",
+  load = "file", readLines = "con", scan = "file",
+  # readr and vroom
+  read_csv = "file", read_csv2 = "file", read_tsv = "file", read_delim = "file",
+  read_table = "file", read_fwf = "file", read_lines = "file", read_file = "file",
+  read_rds = "file", vroom = "file",
+  # data.table, readxl, arrow, haven, jsonlite
+  fread = "file", read_excel = "path", read_xlsx = "path", read_xls = "path",
+  read_parquet = "file", read_feather = "file", read_ipc_file = "file",
+  read_csv_arrow = "file", read_sav = "file", read_dta = "file", read_sas = "data_file",
+  read_xpt = "file", read_json = "path")
+
 #' The subset of `untracked_reads` whose name argument is checked for a
 #' literal before falling back to the plain `untracked_read` note.
 get_family_functions <- c("get", "get0", "exists", "mget", "dynGet")

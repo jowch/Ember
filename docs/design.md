@@ -400,6 +400,37 @@ like part of the cell:
   its own file; the notebook alone is no longer the whole record, and the
   UI says so.
 
+**Data files a cell reads (#276).** A cell that reads a file with a literal
+path, such as `read.csv("data/survey.csv")`, `readRDS("fit.rds")` or
+`load("e.RData")`, depends on that file the way it depends on a sourced
+helper. The readers are a fixed list in `rules.R` (`data_readers`): base R
+and utils, readr, vroom, data.table's `fread`, readxl, arrow, haven and
+jsonlite. A literal path in a file the cell sources counts too.
+
+- The engine watches each such file. When its contents change, the reader
+  and its dependents rerun or are marked stale, following the autorun or
+  lazy setting. So a cell that writes a file and a cell that reads it stay
+  in step, though no variable connects them.
+- Only a change after the reader last finished counts. A reader that is
+  queued or running is left alone, so a cell that writes the file it reads
+  doesn't wake itself, and a reader that ran after the writer isn't run
+  twice.
+- A file saved with the same bytes isn't a change. The shell compares sizes
+  first and hashes a file only when a rewrite keeps its size; the first
+  such rewrite after opening counts as a change, since there is no earlier
+  hash to compare with. Opening a notebook reads no data file.
+- A computed path (`read.csv(f)`, `readRDS(file.path(dir, "fit.rds"))`)
+  runs normally, and the cell shows a note that Ember can't tell which file
+  it reads, so it doesn't rerun when the file changes. The snapshot carries
+  it as `untracked_files`. Text (`read.csv(text = …)`), URLs and calls
+  inside a function body record nothing.
+- Writes aren't tracked: the writer doesn't become an upstream of the
+  reader, so running the reader alone doesn't run the writer first. The
+  reader reruns once the file has changed.
+- Paths are resolved against the notebook's folder, where the worker
+  starts. A cell that calls `setwd()` reads elsewhere; Ember watches the
+  wrong file there.
+
 The user docs also recommend the module form, R's version of PlutoLinks'
 `@ingredients`: `h <- new.env(); sys.source("helpers.R", envir = h)` or
 `box::use(./helpers)`, then `h$fit_growth(…)`. The graph sees one name. This
