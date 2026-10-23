@@ -368,6 +368,62 @@ test("opening: an editor scrolled past before its first measure keeps the static
   assertNoProblems(page);
 });
 
+// A tall editor whose lines above the viewport are still guessed: scrolled
+// to the end of the page before its first measure, it let go of the static
+// code's height at that measure, for a layout or more at CodeMirror's guess,
+// 364 px short. At the end of the page that pulled the scroll up for good,
+// so the last cell, just scrolled into view, ended up below it and kept its
+// static code (#429, #435: the opening test's failure on macOS CI).
+test("opening: scrolled to the end as a tall editor above loads, the page stays at the end and the last cell loads (#429)", async (t) => {
+  const long = `x <- c(${Array.from({ length: 300 }, (_, i) => i).join(", ")})`;
+  const notebook = path.join(tempDir("ember-e2e-static-"), "end.R");
+  writeFileSync(notebook, [
+    "### An Ember notebook ###", "# /// environment", '# ember_version = "0.0.0.9000"', '# r_version = "4.6.1"', '# snapshot = "2026-01-01"', "# ///", "",
+    ...Array.from({ length: 30 }, (_, i) => [`# %% id=P${i}`, `p${i} <- ${i}`, ""]).flat(),
+    "# %% id=U", "y <- 2", ...Array.from({ length: 150 }, (_, i) => `u${i} <- ${i}`), long, long, "",
+    "# %% id=B", "x + 1", "",
+  ].join("\n"), "utf8");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-static-end.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const u = cellSelector("U");
+  // The notebook stops loading before every cell is drawn, so wait for U's
+  // static code; it starts below the view.
+  await page.waitForFunction((sel) => document.querySelector(`${sel} .cm-ssr-fake`), u, { timeout: 20000 })
+    .catch(() => assert.fail("U shows its static code when the notebook opens"));
+  // Bring U into view, and scroll B into view the moment U's editor
+  // replaces the static code, before CodeMirror's first measure.
+  await page.evaluate((sel) => new Promise((resolve) => {
+    const cell = document.querySelector(sel);
+    new MutationObserver((_, observer) => {
+      if (cell.querySelector(".cm-ssr-fake")) return;
+      observer.disconnect();
+      document.querySelector('pluto-cell[id="B"]').scrollIntoView();
+      resolve();
+    }).observe(cell, { subtree: true, childList: true });
+    cell.scrollIntoView();
+  }), u);
+  // U's first measure in view ends the hold on its height.
+  await page.waitForFunction((sel) => document.querySelector(`${sel} pluto-input .cm-editor`).style.height === "", u, { timeout: 20000 })
+    .catch(() => assert.fail("U's editor lets go of the static code's height once in view"));
+  const frame = () => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve({
+    scrollY: Math.round(scrollY),
+    end: document.documentElement.scrollHeight - innerHeight,
+    bTop: document.querySelector('pluto-cell[id="B"]').getBoundingClientRect().top,
+    viewHeight: innerHeight,
+  })))));
+  const at = await frame();
+  assert.ok(at.end - at.scrollY <= 1, `the page stays scrolled to the end: ${JSON.stringify(at)}`);
+  assert.ok(at.bTop < at.viewHeight, `B stays in view: ${JSON.stringify(at)}`);
+  await page.waitForFunction(() => !document.querySelector('pluto-cell[id="B"] .cm-ssr-fake'), null, { timeout: 20000 })
+    .catch(async () => assert.fail(`B's editor loads: ${JSON.stringify(await frame())}`));
+
+  assertNoProblems(page);
+});
+
 test('"+": hovering the gap shows the line and circle without moving cells; clicking adds a cell (143)', async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-add.server.log") });
