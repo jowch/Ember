@@ -1720,12 +1720,36 @@ hold_preview <- function(state, event) {
 replay_held <- function(state) {
   event <- state$packages$held
   state$packages$held <- NULL
-  # The reply is dropped: a held request has passed its refusals already
-  # (they come before the hold), and the move keeps the lock's CRAN
-  # entries, so nothing replayed here is refused today. A refusal added
-  # after the hold would be lost, so keep them before it.
+  # A request held before its package was locked (#419) can be refused
+  # now: it fails, saying why, rather than being dropped.
   r <- if (identical(event$type, "preview_update")) reduce_preview_update(state, event) else reduce_preview_date(state, event)
-  list(state = r$state, effects = r$effects)
+  list(state = fail_refused_update(r$state, r$reply, event), effects = r$effects)
+}
+
+#' A replayed update refused: its proposal fails with the reason, since
+#' nobody is waiting for the reply (#419). Returns the state.
+fail_refused_update <- function(state, reply, event) {
+  if (!inherits(reply, "ember_refused")) return(state)
+  message <- conditionMessage(reply)
+  update <- list(name = event$name, version = event$version, today = event$today, page = isTRUE(event$page))
+  state$packages$proposal <- new_proposal(NA_character_, status = "failed", message = message, update = update)
+  state
+}
+
+#' Why the lock lacks `name` once resolution is over: the code doesn't
+#' load it, or its own problem (not found), or else the problems that
+#' stopped resolution (an index that failed), never that the notebook
+#' doesn't use a name it loads (#419).
+unlocked_message <- function(state, name) {
+  probs <- state$packages$problems
+  if (!name %in% wanted_packages(state$graph, state$file$header)) {
+    return(sprintf("%s is not in this notebook's packages", name))
+  }
+  own <- probs$message[!is.na(probs$package) & probs$package == name]
+  if (length(own) > 0) return(sprintf("%s isn't in this notebook's lock: %s", name, own[[1]]))
+  why <- unique(probs$message[is.na(probs$package)])
+  sprintf("%s isn't in this notebook's lock: its packages couldn't be resolved%s", name,
+          if (length(why) > 0) sprintf(" (%s)", paste(why, collapse = "; ")) else "")
 }
 
 #' The request that would make date proposal `prop` again: its package
@@ -1814,7 +1838,11 @@ update_tries <- 3L
 reduce_preview_update <- function(state, event) {
   entries <- state$file$lock$entries
   row <- if (is.null(entries)) integer() else which(entries$name == event$name)
-  if (length(row) == 0 && event$name %in% wanted_packages(state$graph, state$file$header) && resolving(state)) {
+  wanted_unlocked <- length(row) == 0 && event$name %in% wanted_packages(state$graph, state$file$header)
+  # A pending Bioconductor move is kept, so the request waits for it
+  # instead, and is asked again once it is over (`replay_held()`).
+  if (wanted_unlocked && bioc_move_pending(state)) return(hold_preview(state, event))
+  if (wanted_unlocked && resolving(state)) {
     # The code loads it, but the lock doesn't have it yet (#419): the
     # proposal waits with status `"lock"`, and `schedule_packages()` asks
     # again once resolution is over.
@@ -1824,7 +1852,7 @@ reduce_preview_update <- function(state, event) {
   }
   if (length(row) == 0) {
     return(list(state = state, effects = list(),
-                reply = refused(sprintf("%s is not in this notebook's packages", event$name))))
+                reply = refused(unlocked_message(state, event$name))))
   }
   if (!identical(entries$source[[row]], "CRAN")) {
     return(list(state = state, effects = list(),
@@ -1871,12 +1899,9 @@ retry_update_for_lock <- function(state) {
     return(list(state = state, effects = list()))
   }
   state$packages$proposal <- NULL
-  r <- reduce_preview_update(state, preview_event(prop))
-  if (inherits(r$reply, "ember_refused")) {
-    r$state$packages$proposal <- new_proposal(NA_character_, status = "failed", message = conditionMessage(r$reply),
-                                              update = prop$update)
-  }
-  list(state = r$state, effects = r$effects)
+  event <- preview_event(prop)
+  r <- reduce_preview_update(state, event)
+  list(state = fail_refused_update(r$state, r$reply, event), effects = r$effects)
 }
 
 #' With CRAN's release dates known: the date for `update`, previewed as
