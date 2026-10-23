@@ -276,6 +276,39 @@ test_that("release dates that can't be fetched fail the preview and say where fr
   expect_match(res$message, "couldn't fetch CRAN's release dates from file://", fixed = TRUE)
 })
 
+# ---- #450: a download cut short is fetched again --------------------------------
+
+test_that("a package download cut short is deleted and fetched again, and the install finishes (#450)", {
+  # The toy repo over HTTP, cutting renv's first download of each archive
+  # in half: renv installs what it downloaded without opening it, so
+  # without the installer's second try the install fails.
+  root <- normalizePath(testthat::test_path("fixtures", "repos", "toy"), mustWork = TRUE)
+  server <- processx::process$new(file.path(R.home("bin"), "Rscript"),
+                                  c("--vanilla", testthat::test_path("fixtures", "cut-download-server.R"), root),
+                                  stdout = "|", stderr = "|")
+  on.exit(server$kill(), add = TRUE)
+  server$poll_io(-1)
+  first <- server$read_output_lines()
+  port <- sub("^PORT ([0-9]+).*", "\\1", first[[1]])
+  expect_match(first[[1]], "^PORT [0-9]+")
+
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  nb <- open_notebook(write_toy_notebook("2026-09-01"),
+                      repos = ember_repos(cran = sprintf("http://127.0.0.1:%s", port)), cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  res <- run_cells(nb, wait = TRUE, timeout = 120)
+  expect_false(res$timed_out)
+
+  status <- package_status(nb)
+  expect_equal(status$library$status, "ready",
+               info = paste(c(status$library$message, notebook_state(nb)$packages$target$log), collapse = "\n"))
+  expect_equal(snap_view(notebook_snapshot(nb), "A")$output$text, "[1] \"toyA 0.1 says: hello from toyB\"")
+  # Each archive was cut once and fetched whole the second time.
+  got <- c(first[-1], server$read_output_lines())
+  expect_true(all(c("GET toyA_0.1.tar.gz 2", "GET toyB_1.0.tar.gz 2") %in% trimws(got)), info = paste(got, collapse = "\n"))
+})
+
 # ---- #39: today's index is fetched again --------------------------------------
 
 test_that("an index dated today is fetched again by a preview of today, a later session reads that copy, and the saved copy stands in offline (#39)", {
