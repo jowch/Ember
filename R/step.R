@@ -865,29 +865,19 @@ invalidate_dependents <- function(state, id, names, queue = TRUE,
 #' downstream of them.
 readers_of <- function(state, id, names, edited = edited_cells(state),
                        g = run_graph(state, edited)) {
-  readers <- unique(unlist(name_readers(state$graph)[names], use.names = FALSE))
-  readers <- setdiff(state$graph$ids[state$graph$ids %in% readers], id)
+  # Runs twice for every cell that runs, so it is one pass over the cells
+  # with `%in%`, and one walk for all the readers (#316).
+  others <- state$graph$ids[state$graph$ids != id]
+  reads <- vapply(state$graph$cells[others], function(c) {
+    any(names %in% c$references & !(names %in% c$masked_none))
+  }, logical(1))
+  readers <- others[reads]
   # An edited cell's result read what its old code read (#175).
   readers <- union(readers, Filter(function(cid) {
     !identical(cid, id) && any(names %in% ran_references(state, cid))
   }, edited))
   union(readers, reach(g$downstream, readers))
 }
-
-#' Name to the cells that read it (a masked name their data provides
-#' doesn't count), for `readers_of()`. It runs for every cell that starts
-#' or finishes, and a scan of every cell each time made a run of the whole
-#' notebook quadratic (#316), so the index is built once per graph.
-name_readers <- function(graph) {
-  if (identical(name_readers_memo$graph, graph)) return(name_readers_memo$value)
-  ids <- graph$ids
-  refs <- lapply(graph$cells[ids], function(c) unique(setdiff(c$references, c$masked_none)))
-  value <- split(rep(ids, lengths(refs)), unlist(refs, use.names = FALSE))
-  name_readers_memo$graph <- graph
-  name_readers_memo$value <- value
-  value
-}
-name_readers_memo <- new.env(parent = emptyenv())
 
 #' Mark `dependents` (of `id`) stale and, in autorun when `queue`, queue
 #' them: `invalidate_dependents()`'s rule, for a set of cells already
