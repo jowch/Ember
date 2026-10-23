@@ -56,6 +56,7 @@ ev_show_more   <- function(cell, path, dim, at)
 
 # From the shell's own IO
 ev_files_read  <- function(files, at) event("files_read", at, files = files)  # path -> list(text, hash)
+ev_data_changed <- function(files, at) event("data_changed", at, files = files)  # path -> signature (shell.R's data_signature())
 ev_save_failed <- function(message, at) event("save_failed", at, message = message)
 
 # From the worker (built by `worker_event()` in shell.R from wire messages)
@@ -186,6 +187,7 @@ reduce <- function(state, event) {
     render           = reduce_render(state, event),
     show_more        = reduce_show_more(state, event),
     files_read       = reduce_files_read(state, event),
+    data_changed     = reduce_data_changed(state, event),
     save_failed      = reduce_save_failed(state, event),
     wk_started       = reduce_wk_started(state, event),
     wk_failed        = reduce_wk_failed(state, event),
@@ -203,6 +205,7 @@ reduce <- function(state, event) {
     preview_date     = reduce_preview_date(state, event),
     set_date         = reduce_set_date(state, event),
     preview_update   = reduce_preview_update(state, event),
+    check_releases   = reduce_check_releases(state, event),
     cancel_preview   = reduce_cancel_preview(state, event),
     index_fetched    = reduce_index_fetched(state, event),
     index_failed     = reduce_index_failed(state, event),
@@ -545,7 +548,24 @@ run_message <- function(state, id, token) {
       order = order, settings = settings_in_effect(state, id), formulas = state$graph$analyses[[id]]$formulas,
       library = state$packages$active$path, fig = cell_figure_size(cell$code),
       inputs = if (!is_text) run_inputs(state, id),
-      installs = if (!is_text) run_installs(state$graph$analyses[[id]]))
+      installs = if (!is_text) run_installs(state$graph$analyses[[id]]),
+      data = if (!is_text) run_data_files(state, id))
+}
+
+#' The data part of a run message (#276): for each file the cell reads,
+#' its path resolved against the notebook's folder and the top-level
+#' expressions that read or write it (a write to a computed path counts
+#' for every file), so the worker can tell someone else's change during
+#' the run from the cell's own. `NULL` for a cell that reads none.
+run_data_files <- function(state, id) {
+  a <- state$graph$analyses[[id]]
+  if (length(a$data_files) == 0) return(NULL)
+  touch <- a$data_touch
+  dir <- dirname(state$path %||% ".")
+  lapply(a$data_files, function(p) {
+    list(path = p, full = if (is_absolute_path(p)) p else file.path(dir, p),
+         touch = sort(unique(touch$index[touch$path %in% p | is.na(touch$path)])))
+  })
 }
 
 #' The install part of a run message: the cell's top-level install calls,
@@ -628,17 +648,21 @@ graph_dropped_cells <- function(state) {
 
 #' Mark stale every result whose upstream error names one of `ids`
 #' (`failed_definers()`): the cells it blames have changed, so the message
-#' is no longer about the notebook as it is. Not queued: called from
-#' `step()` for any event, an edit included, and an edit never runs
-#' anything.
+#' is no longer about the notebook as it is, and so is what read from them.
+#' Not queued: called from `step()` for any event, an edit included, and
+#' an edit never runs anything.
 stale_upstream_errors <- function(state, ids) {
+  marked <- character()
   for (cid in names(state$results)) {
     r <- state$results[[cid]]
     if (isTRUE(r$stale) || !identical(r$error$kind, "upstream")) next
     if (!any(ids %in% r$error$cells)) next
     r$stale <- TRUE
     state$results[[cid]] <- r
+    marked <- c(marked, cid)
   }
+  # A dependent's own upstream error names the cell it read, not `ids`.
+  for (cid in marked) state <- invalidate_dependents(state, cid, character(), queue = FALSE)
   state
 }
 
@@ -1607,6 +1631,38 @@ reduce_files_read <- function(state, event) {
   list(state = state, effects = list(), reply = NULL)
 }
 
+#' Data files that cells read by a literal path changed (#276): the shell's
+#' watcher saw new contents. `event$files` maps each path to its new
+#' signature (shell.R's `data_signature()`).
+#'
+#' A cell that reads one of them (its analysis's `data_files`) goes stale
+#' with its dependents, and autorun also queues it, as for a sourced file,
+#' unless its last result already saw that signature (`data_seen`, taken
+#' when the result arrived). So a cell that writes the file it reads
+#' doesn't wake itself, and a reader that ran after the writer isn't run
+#' twice; comparing signatures rather than times doesn't depend on how
+#' fine the file system's clock is. A cell that is running or queued is
+#' left alone: a queued one reads the new file, and a running one's result
+#' takes the version there when it arrives (`reduce_wk_done()`).
+reduce_data_changed <- function(state, event) {
+  autorun <- identical(state$file$header$on_cell_change, "autorun")
+  running <- state$worker$running$cell
+  changed <- names(event$files)
+  for (id in state$graph$ids) {
+    hit <- intersect(state$graph$analyses[[id]]$data_files, changed)
+    if (length(hit) == 0 || identical(running, id) || id %in% state$pending) next
+    r <- state$results[[id]]
+    if (is.null(r)) next
+    seen <- r$data_seen %||% list()
+    if (all(vapply(hit, function(p) identical(seen[[p]], event$files[[p]]), logical(1)))) next
+    r$stale <- TRUE
+    state$results[[id]] <- r
+    if (autorun && isTRUE(state$allowed) && can_run(state, id)) state$pending <- union(state$pending, id)
+    state <- invalidate_dependents(state, id, character())
+  }
+  list(state = state, effects = list(), reply = NULL)
+}
+
 #' A save failed: kept in `problems` so the snapshot shows it. The next
 #' change tries again (the shell compares against the last text written,
 #' which a failed write didn't update).
@@ -2008,6 +2064,26 @@ reduce_wk_done <- function(state, event) {
                        inputs = if (identical(status, "ok")) report$inputs %||% list() else list(),
                        from_lock = as.character(report$from_lock %||% character()))
   if (late_stale) result$stale <- TRUE
+  # The versions of its data files the run ended with (#276), and the ones
+  # someone else changed after the cell read them: the run may have read
+  # the old contents, so the result is stale, and autorun runs it again.
+  # Its own writes don't count (the worker knows which top-level
+  # expressions write each file, `data_touch`). A write Ember can't see
+  # (through a helper function) costs one extra run; a run that still saw
+  # such a change right after one that did leaves the result as it is, so
+  # it doesn't loop.
+  result$data_seen <- report$data_seen %||% list()
+  outside <- as.character(report$data_changed %||% character())
+  if (length(outside) > 0) {
+    result$data_changed <- outside
+    prev <- state$results[[id]]
+    if (length(prev$data_changed %||% character()) == 0) {
+      result$stale <- TRUE
+      if (identical(state$file$header$on_cell_change, "autorun") && isTRUE(state$allowed) && can_run(state, id)) {
+        state$pending <- union(state$pending, id)
+      }
+    }
+  }
   state$results[[id]] <- result
   state$graph_dropped[[id]] <- NULL
   if (identical(status, "ok")) state <- keep_input_values(state, id, w$running$code, result$inputs)

@@ -65,6 +65,7 @@ session_start <- function(state) {
   nb$rx <- list(chunks = list(), n = 0L)
   nb$out_tail <- ""
   nb$watch <- list()
+  nb$data_watch <- list()
   nb$last_watch_check <- NULL
   nb$last_mem_check <- NULL
   nb$worker_rss_reported <- NULL
@@ -439,6 +440,7 @@ after_dispatch <- function(nb, before) {
   if (!identical(inputs, nb$watch_inputs)) {
     nb$watch_inputs <- inputs
     sync_watch(nb, watched_files(nb$state))
+    sync_data_watch(nb, watched_data_files(nb$state))
   }
   # Any dispatch can have changed `target`/`active` (an install finished, a
   # switch happened, a close unregistered this session already): keep
@@ -1191,6 +1193,26 @@ poll <- function(nb) {
       }
     }
     if (length(changed) > 0) dispatch(nb, ev_files_read(changed, at = Sys.time()))
+    # Data files (#276): only a change of contents counts, so a file
+    # rewritten with the same bytes reruns nothing. A new size is a change
+    # without reading the file; the same size is told apart by its hash,
+    # which a file has only after its first such rewrite (hashing every
+    # data file when the notebook opens would read them all).
+    data_changed <- list()
+    for (p in names(nb$data_watch)) {
+      full <- resolve_source_path(nb, p)
+      info <- data_file_info(full)
+      w <- nb$data_watch[[p]]
+      if (!isTRUE(identical(info$mtime, w$mtime))) {
+        same_size <- isTRUE(identical(info$size, w$size)) && !is.na(info$size)
+        hash <- if (same_size) data_file_hash(full) else NA_character_
+        nb$data_watch[[p]] <- list(mtime = info$mtime, size = info$size, hash = hash)
+        if (!same_size || is.na(hash) || !identical(hash, w$hash)) {
+          data_changed[[p]] <- data_signature(info)
+        }
+      }
+    }
+    if (length(data_changed) > 0) dispatch(nb, ev_data_changed(data_changed, at = Sys.time()))
   }
 
   watch_worker_output(nb)
@@ -1402,6 +1424,38 @@ sync_watch <- function(nb, paths) {
     nb$watch[[p]] <- NULL
   }
   invisible(NULL)
+}
+
+#' The same for data files (#276), keeping each one's modified time and
+#' size; the poll adds a hash once a rewrite keeps the size.
+sync_data_watch <- function(nb, paths) {
+  old <- names(nb$data_watch)
+  for (p in setdiff(paths, old)) {
+    info <- data_file_info(resolve_source_path(nb, p))
+    nb$data_watch[[p]] <- list(mtime = info$mtime, size = info$size, hash = NA_character_)
+  }
+  for (p in setdiff(old, paths)) {
+    nb$data_watch[[p]] <- NULL
+  }
+  invisible(NULL)
+}
+
+#' A data file's modified time and size, both `NA` when it is missing.
+data_file_info <- function(full) {
+  tryCatch(as.list(file.info(full)[, c("mtime", "size")]),
+           error = function(e) list(mtime = NA, size = NA))
+}
+
+#' What step.R compares to tell whether a reader saw a data file's current
+#' version (#276): its modified time and size as text, or `"missing"`.
+data_signature <- function(info) {
+  # inst/worker.R's data_signature() must write the same text.
+  if (is.na(info$mtime)) "missing" else sprintf("%.6f %.0f", as.numeric(info$mtime), as.numeric(info$size))
+}
+
+#' A data file's md5, or `NA` when it is missing or can't be read.
+data_file_hash <- function(path) {
+  tryCatch(unname(tools::md5sum(path)), error = function(e) NA_character_)
 }
 
 #' What a failed index fetch said, for a problem row: the child's `stop()`

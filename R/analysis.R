@@ -82,13 +82,34 @@
 #'   the name's token or the generic argument's.
 #' * `notes`: data frame `kind`, `line`, `col`, `end_col`, `detail`. `kind`
 #'   is one of `"untracked_read"` (`get`, `exists`, `eval(parse())`),
+#'   `"untracked_file"` (a data reader with a computed path),
 #'   `"computed_source"`, `"computed_package"`, `"missing_file"`,
 #'   `"source_parse_error"` (a sourced file that fails to parse; `detail`
 #'   is the parser's message). `col`/`end_col` are `NA` for a note with no
 #'   single responsible token (`"missing_file"`, `"source_parse_error"`).
-#' * `untracked`: the `detail` of the `untracked_read` notes, once each
-#'   (`"get"`, `"eval"`): the calls the cell's note names (#357), kept
-#'   here so the graph doesn't look at every cell's `notes` per build.
+#' * `untracked`: the `detail` of the `untracked_read` notes outside any
+#'   top-level function, once each (`"get"`, `"eval"`): the calls the
+#'   cell's note names (#357), kept here so the graph doesn't look at every
+#'   cell's `notes` per build.
+#' * `fn_untracked`: `<function name -> character>`, the same for the notes
+#'   inside each top-level function literal (`load_site <- function(s)
+#'   get(s)`). Those belong to the cells that call the function (#365).
+#' * `fn_calls`: `<function name -> character>`, the names each top-level
+#'   function's body reads, so a function calling `load_site` is found too.
+#' * `calls`: the names the cell reads outside its top-level functions,
+#'   its own top-level definitions included (it may call one it defines).
+#' * `data_files`: the literal paths the cell (or a file it sources) reads
+#'   data from with one of the `data_readers` (`read.csv("d.csv")`), once
+#'   each. The shell watches them (#276).
+#' * `data_touch`: data frame `path`, `index`, `read`: each top-level
+#'   expression that reads (`read`) or writes a data file, the expressions
+#'   of a sourced file counting as the `source()` call's. `path` is `NA`
+#'   for a write to a path that isn't a literal, which may be any file.
+#'   The worker uses it to tell the cell's own changes to its data files
+#'   from someone else's during a run.
+#' * `untracked_files`: the `detail` of the `untracked_file` notes, once
+#'   each: the readers called with a computed path (`read.csv(f)`), which
+#'   the cell's note names.
 #'
 #' Invariants: rows are in source order within the cell's own code and
 #' within each sourced file; a sourced file's rows are appended as a block
@@ -114,13 +135,20 @@ new_cell_analysis <- function(code,
                               masked = empty_masked(),
                               sourced = empty_sourced(),
                               notes = empty_notes(),
-                              methods = no_methods) {
-  untracked <- unique(notes$detail[notes$kind == "untracked_read"])
+                              methods = no_methods,
+                              untracked = unique(notes$detail[notes$kind == "untracked_read"]),
+                              fn_untracked = list(), fn_calls = list(),
+                              calls = character(),
+                              data_touch = empty_data_touch()) {
+  untracked_files <- unique(notes$detail[notes$kind == "untracked_file"])
   structure(list(code = code, parse_error = parse_error,
                  definitions = definitions, references = references,
                  packages = packages, installs = installs, settings = settings,
                  formulas = formulas, masked = masked, sourced = sourced,
-                 notes = notes, untracked = untracked, methods = methods),
+                 notes = notes, untracked = untracked, fn_untracked = fn_untracked,
+                 fn_calls = fn_calls, calls = calls, methods = methods,
+                 data_files = unique(data_touch$path[data_touch$read & !is.na(data_touch$path)]),
+                 data_touch = data_touch, untracked_files = untracked_files),
             class = "ember_cell_analysis")
 }
 
@@ -408,7 +436,24 @@ finish <- function(acc, code) {
   new_cell_analysis(code, parse_error = NULL, definitions = defs,
                      references = refs, packages = pkgs, installs = installs, settings = settings,
                      formulas = acc$formulas, masked = masked, sourced = sourced, notes = notes,
-                     methods = methods)
+                     methods = methods, untracked = unique(acc$top_untracked),
+                     fn_untracked = lapply(acc$fn_untracked, unique),
+                     fn_calls = lapply(acc$fn_calls, ls, all.names = TRUE),
+                     calls = ls(acc$calls, all.names = TRUE),
+                     data_touch = data_touch_of(acc$data_rows))
+}
+
+empty_data_touch <- function() data.frame(path = character(), index = integer(), read = logical(),
+                                          stringsAsFactors = FALSE)
+
+data_touch_of <- function(rows) {
+  if (length(rows) == 0) return(empty_data_touch())
+  d <- data.frame(path = vapply(rows, function(r) r$path, character(1)),
+                  index = vapply(rows, function(r) as.integer(r$index), integer(1)),
+                  read = vapply(rows, function(r) r$read, logical(1)), stringsAsFactors = FALSE)
+  d <- d[!duplicated(d), , drop = FALSE]
+  row.names(d) <- NULL
+  d
 }
 
 #' The `"name"`-form method rows of a cell's own definitions: each
