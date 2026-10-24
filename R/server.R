@@ -145,13 +145,14 @@ start_server <- function(path = NULL, port = 0L, open = interactive(), timeout =
                          allowed_hosts = character()) {
   secret <- random_secret(32)
   path_env <- if (!is.null(path)) normalizePath(path, mustWork = TRUE) else ""
-  r_bin <- file.path(R.home("bin"), "Rscript")
-
-  proc <- processx::process$new(
-    r_bin, c("--vanilla", "-e", "ember:::serve_child()"),
+  cmd <- rscript_command(
+    file.path(R.home("bin"), "Rscript"), "ember:::serve_child()",
     env = c("current", EMBER_SECRET = secret, EMBER_PORT = as.character(port),
             EMBER_PATHS = path_env,
-            EMBER_ALLOWED_HOSTS = join_allowed_hosts_env(allowed_hosts)),
+            EMBER_ALLOWED_HOSTS = join_allowed_hosts_env(allowed_hosts)))
+
+  proc <- processx::process$new(
+    cmd$command, cmd$args, env = cmd$env,
     stdout = "|", stderr = "2>&1", cleanup = TRUE, supervise = TRUE)
 
   deadline <- Sys.time() + timeout

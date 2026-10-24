@@ -826,10 +826,25 @@ ready_worker_image <- function(src = system.file("worker.R", package = "ember"),
     "old <- setdiff(list.files(dirname(args[2]), full.names = TRUE), args[2])",
     "unlink(old[difftime(Sys.time(), file.info(old)$mtime, units = 'days') > 1])",
     sep = "; ")
+  cmd <- rscript_command(file.path(R.home("bin"), "Rscript"), code, args = c(src, path))
   worker_image_build$proc <- tryCatch(
-    processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code, src, path)),
+    processx::process$new(cmd$command, cmd$args, env = cmd$env),
     error = function(e) NULL)
   NULL
+}
+
+#' How Ember starts an `Rscript` of its own that runs `code`:
+#' `list(command, args, env)`, for processx. The code goes in
+#' `EMBER_RUN_CODE`, and Rscript runs the script the package ships for it
+#' (inst/run-code.R), not `Rscript -e code`. On Windows `-e` writes the code
+#' to an `Rscript<hex>` file in the temp folder and removes it only when
+#' Rscript returns, so each child Ember ends (a stopped server, a cancelled
+#' job) left one there (#512). `args` follow the script, for
+#' `commandArgs(TRUE)`; `env` is processx's, `"current"` and the rest.
+rscript_command <- function(rscript, code, env = "current", args = character()) {
+  list(command = rscript,
+       args = c("--vanilla", system.file("run-code.R", package = "ember"), args),
+       env = c(env, EMBER_RUN_CODE = code))
 }
 
 #' The line a worker boots with (`send_worker_boot()`): load the compiled image named by
