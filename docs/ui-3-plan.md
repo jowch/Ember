@@ -3167,7 +3167,7 @@ render (1656-1667) change; `export_menu_open` and `header.show_export` go.
 - Not ported: the desktop-app branch, the pride card, the shapes, Edit
   frontmatter, Start presentation, the close button,
   `WarnForVisisblePasswords` (it checks password inputs inside bonds;
-  Ember has no bonds yet, see #36). Old CSS (editor.css:549-704,
+  Ember has no password input yet, see #36). Old CSS (editor.css:549-704,
   1171-1202, 2178-2193) goes.
 
 piece 5's ⋯ menu changes one item: "Keyboard shortcuts" opens 7d's sheet.

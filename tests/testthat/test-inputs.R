@@ -466,6 +466,9 @@ test_that("a kept value is used if the input still allows it, and the default ot
   expect_identical(r$output$text, "[1] 8")
   r <- inputs_run(h, "I", 4L, "n <- input_slider(1, 10, 5)", values = list(n = 80))
   expect_identical(r$inputs[[1]]$value, 5)
+  # Off a slider's new step, as after its step is edited (#448).
+  r <- inputs_run(h, "I", 5L, "n <- input_slider(1, 10, 5, step = 2)", values = list(n = 8))
+  expect_identical(r$inputs[[1]]$value, 5)
 })
 
 test_that("set_input checks the value against the input, assigns it, and answers", {
@@ -487,6 +490,15 @@ test_that("set_input checks the value against the input, assigns it, and answers
   expect_identical(a$error, "The value must be a whole number from 1 to 10.")
   h$send(list(type = "set_input", cell = "I", name = "g", value = 2))
   expect_true(reply_of(h, "input_set")$ok)
+  # A slider refuses a value between its steps; a number box takes its step
+  # as a hint (#448).
+  inputs_run(h, "S", 4L, "s <- input_slider(10, 500, 100, step = 10)\nb <- input_number(10, step = 10)")
+  h$send(list(type = "set_input", cell = "S", name = "s", value = 255))
+  a <- reply_of(h, "input_set")
+  expect_false(a$ok)
+  expect_identical(a$error, "The value must be a number from 10 to 500 in steps of 10.")
+  h$send(list(type = "set_input", cell = "S", name = "b", value = 7.3))
+  expect_identical(reply_of(h, "input_set")$value, 7.3)
   h$send(list(type = "set_input", cell = "I", name = "zz", value = 1))
   expect_false(reply_of(h, "input_set")$ok)
 })

@@ -99,6 +99,36 @@ test_that("each spec's check returns a value as the input would, or says what it
   expect_error(spec_of(input_number(2L, max = 2.6))$check(2.55), "at most 2.6")
   expect_identical(spec_of(input_number(2L, max = 2.6))$check(2.45), 2L)
 
+  # A slider's values are its steps, counted from `min` (#448). A decimal
+  # step matches the page's decimals; an integer slider rounds first.
+  stepped <- spec_of(input_slider(10, 500, value = 100, step = 10))
+  expect_identical(stepped$check(250), 250)
+  expect_identical(stepped$check(500), 500)
+  expect_error(stepped$check(255), "The value must be a number from 10 to 500 in steps of 10.", fixed = TRUE)
+  expect_error(stepped$check(600), "in steps of 10")
+  from_one <- spec_of(input_slider(1L, 9L, step = 2))
+  expect_identical(from_one$check(5), 5L)
+  expect_identical(from_one$check(4.8), 5L)
+  expect_error(from_one$check(4), "whole number from 1 to 9 in steps of 2")
+  tenths <- spec_of(input_slider(0, 1, step = 0.1))
+  expect_identical(tenths$check(0.3), 0.3)
+  expect_identical(tenths$check(0.7), 0.7)
+  expect_error(tenths$check(0.35), "in steps of 0.1")
+  expect_identical(spec_of(input_slider(1, 10))$check(2.5), 2.5)
+  # The message names the last step, where the slider stops.
+  thirds <- spec_of(input_slider(0, 10, step = 3))
+  expect_error(thirds$check(10), "The value must be a number from 0 to 9 in steps of 3.", fixed = TRUE)
+  expect_error(spec_of(input_slider(0, 1, step = 0.1))$check(0.35), "from 0 to 1 in steps of 0.1", fixed = TRUE)
+  # The tolerance doesn't grow to a whole step on a long slider (review).
+  long <- spec_of(input_slider(0, 1e10, step = 1))
+  expect_identical(long$check(5e9), 5e9)
+  expect_error(long$check(5e9 + 0.5), "in steps of 1")
+  # A default off its step is an error in Ember and in Rscript alike.
+  expect_error(input_slider(10, 500, value = 105, step = 10), "in steps of 10")
+  # A number box takes its step as a hint, as Pluto and Shiny do.
+  expect_identical(spec_of(input_number(10, step = 10))$check(7.3), 7.3)
+  expect_identical(input_number(7, min = 0, step = 5), 7)
+
   number <- spec_of(input_number(1.5, max = 2))
   expect_identical(number$check(-100), -100)
   expect_error(number$check(3), "at most 2")

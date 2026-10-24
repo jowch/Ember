@@ -291,6 +291,13 @@ id.
 | `input_radio(choices, selected = choices[[1]], label = NULL)` | an element of `choices` | `Radio`, `mo.ui.radio`, `radioButtons` |
 
 - A number keeps `value`'s type: `input_slider(1L, 10L)` returns an integer.
+- A slider's values are its steps, counted from `min`, as Pluto's `Slider`
+  does. The page's slider can only move to them, and `set_input()` refuses a
+  value between them: "The value must be a number from 10 to 500 in steps
+  of 10." A default between steps is an error, in Ember and in `Rscript`.
+  A number box takes its `step` as a hint and allows any value in range, as
+  Pluto's `NumberField` and Shiny's `numericInput` do. Jonathan chose this
+  on 2026-10-24 (#448).
 - `choices` may be any vector or list. Names, if present, are what the
   widget shows (as in Shiny); the value is the element itself, not its
   label. PlutoUI's `Select` takes pairs for the same reason.
@@ -312,8 +319,7 @@ its own HTML; Ember's way keeps the package free of HTML and dependencies.
 
 **Later, not in the first version:** date, range slider, button and run
 button, file picker, forms that send several inputs at once (marimo's
-`form`, PlutoUI's `confirm`), combined inputs (`combine`, `mo.ui.array`),
-inputs inside markdown text, "Make this the default", and third-party inputs (an htmlwidget that
+`form`, PlutoUI's `confirm`), inputs inside markdown text, "Make this the default", and third-party inputs (an htmlwidget that
 reports a value, the way any Julia package can implement
 AbstractPlutoDingetjes' `Bonds`). A password input would also bring back
 Pluto's export check for visible passwords (#36).
