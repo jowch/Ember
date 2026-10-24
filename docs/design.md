@@ -297,7 +297,10 @@ and its `findGlobals()` rules differ from Ember's (it treats `s` in
   arguments (#507). `.data` and `.env` are the exception: Ember never
   reads them as notebook objects, since in dplyr code they are rlang's
   pronouns, so a cell that assigns one at top level is an error that
-  suggests dropping the dot (#509). The user docs also recommend
+  suggests dropping the dot (#509). That holds even for a cell that only
+  reads its own `.data`: a read such as `nrow(.data)` is a call argument,
+  which is where the pronoun lives too, so it can't be told apart. The
+  user docs also recommend
   `local({ … })`, R's equivalent of Julia's `let`, for a block of private
   work; the engine already treats it as its own scope.
 

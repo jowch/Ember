@@ -1001,7 +1001,7 @@ find_errors <- function(cells, analyses, edges, ids, components,
         kind = "private_name", cells = b, names = n,
         lines = data.frame(cell = b, line = if (length(ln)) ln[[1]] else NA_integer_,
                            stringsAsFactors = FALSE),
-        message = sprintf("%s is rlang's pronoun, so other cells can't use it as an object.", n),
+        message = sprintf("%s is rlang's pronoun, so Ember can't track it as an object.", n),
         fixes = sprintf("Drop the dot: %s", sub("^\\.", "", n)))
     }
   }

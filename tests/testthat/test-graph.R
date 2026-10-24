@@ -131,10 +131,10 @@ test_that("a cell assigning .data or .env is a private-name error; reading them 
                         C = "mutate(df, y = .data$a, z = .env$k)",
                         D = "assign('.env', 3)", E = "for (.env in 1:3) NULL",
                         L = "local(.data <- 2)", F = "f <- function(.data) .data$a",
-                        G = "g <- function() .env <<- 1"))
+                        G = "g <- function() .env <<- 1", H = ".env <<- 1"))
   err <- Filter(function(e) e$kind == "private_name", g$errors)
-  expect_equal(vapply(err, function(e) e$cells, ""), c("A", "D", "E"))
-  expect_equal(vapply(err, function(e) e$names, ""), c(".data", ".env", ".env"))
+  expect_equal(vapply(err, function(e) e$cells, ""), c("A", "D", "E", "H"))
+  expect_equal(vapply(err, function(e) e$names, ""), c(".data", ".env", ".env", ".env"))
   expect_equal(err[[1]]$lines, data.frame(cell = "A", line = 2L, stringsAsFactors = FALSE))
   expect_equal(err[[1]]$fixes, "Drop the dot: data")
   expect_false(any(g$edges$to == "A"))
