@@ -319,8 +319,7 @@ its own HTML; Ember's way keeps the package free of HTML and dependencies.
 
 **Later, not in the first version:** date, range slider, button and run
 button, file picker, forms that send several inputs at once (marimo's
-`form`, PlutoUI's `confirm`), combined inputs (`combine`, `mo.ui.array`),
-inputs inside markdown text, "Make this the default", and third-party inputs (an htmlwidget that
+`form`, PlutoUI's `confirm`), inputs inside markdown text, "Make this the default", and third-party inputs (an htmlwidget that
 reports a value, the way any Julia package can implement
 AbstractPlutoDingetjes' `Bonds`). A password input would also bring back
 Pluto's export check for visible passwords (#36).
