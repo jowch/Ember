@@ -394,7 +394,6 @@ test_that("a cell using str_interp() gets a definition edge on the cell defining
 test_that("a reader called with a literal path records the file it reads (#276)", {
   a <- read_cell('d <- read.csv("data/d.csv")\nx <- readr::read_csv(file = "raw/a.csv")\nload("e.RData")')
   expect_equal(a$data_files, c("data/d.csv", "raw/a.csv", "e.RData"))
-  expect_equal(a$untracked_files, character())
   expect_equal(nrow(a$notes), 0)
   expect_true(all(c("d", "x") %in% a$definitions$name))
 })
@@ -404,11 +403,10 @@ test_that("fread() takes its path as input or file (#276)", {
   expect_equal(a$data_files, c("a.csv", "b.csv", "c.csv"))
 })
 
-test_that("a reader with a computed path gets the untracked_file note (#276)", {
-  a <- read_cell('d <- readRDS(f)')
+test_that("a reader with a computed path records no file and no note: the run learns it", {
+  a <- read_cell('d <- readRDS(f)\ne <- read.csv(file.path(dir, "e.csv"))')
   expect_equal(a$data_files, character())
-  expect_equal(a$notes$kind, "untracked_file")
-  expect_equal(a$untracked_files, "readRDS")
+  expect_equal(nrow(a$notes), 0)
   expect_true("f" %in% refs(a))
 })
 
@@ -419,7 +417,7 @@ test_that("text, URLs and function bodies record no file (#276)", {
                  'readLines(textConnection(x))', 'readRDS(url(u))')) {
     a <- read_cell(code)
     expect_equal(a$data_files, character(), info = code)
-    expect_equal(a$untracked_files, character(), info = code)
+    expect_equal(nrow(a$notes), 0, info = code)
   }
 })
 

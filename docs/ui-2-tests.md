@@ -23,7 +23,7 @@ New fixtures:
   `attachDependencies(tags$div(id = "w1", "?"), jquery_core())` plus a
   `tags$script` that writes `typeof jQuery` into the div. Its packages
   install for real, so scenarios using it run only when
-  `EMBER_E2E_INSTALLS=1` (set in CI on ubuntu-latest).
+  `EMBER_E2E_INSTALLS=1` (set in CI on every OS).
 - `tests/testthat/fixtures/pluto-css-variables.txt`: the CSS variable names
   from Pluto v1.0.3's `themes/light.css` that Ember's frontend still reads,
   one per line. The names nothing reads were dropped, from here and

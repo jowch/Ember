@@ -76,6 +76,7 @@ import { moveLineDown } from "../imports/CodemirrorPlutoSetup.js"
 import { detect_indent_unit, indent_unit_of_setting } from "./CellInput/detect_indent_unit.js"
 import { t } from "../common/lang.js"
 import { tell } from "../common/dialogs.js"
+import { toast } from "./Toast.js"
 import { useMenu } from "../common/useMenu.js"
 import { RunButton } from "./RunButton.js"
 import { alt_or_options_name } from "../common/KeyboardShortcuts.js"
@@ -793,11 +794,13 @@ export const CellInput = ({
                         pluto_actions,
                         cell_id,
                     }),
-                    // Update live docs when in a cell that starts with `?`
+                    // Update live docs when in a cell that starts with `?`,
+                    // leaving focus in the cell: the rest of `?mean` is still
+                    // being typed here (#558).
                     EditorView.updateListener.of((update) => {
                         if (!update.docChanged) return
                         if (update.state.doc.length > 0 && update.state.sliceDoc(0, 1) === "?") {
-                            open_bottom_right_panel("docs")
+                            open_bottom_right_panel("docs", { focus: false })
                         }
                     }),
                     EditorState.tabSize.of(4),
@@ -1098,10 +1101,13 @@ const InputContextMenu = ({ cell_id, on_delete, code_folded, on_code_fold, can_d
                   cell_result.output.body.plain_error
 
         if (cell_output != null)
-            navigator.clipboard.writeText(strip_ansi_codes(cell_output)).catch((err) => {
-                console.error("Couldn't copy the output", err)
-                tell({ body: t("t_copy_output_failed") })
-            })
+            navigator.clipboard.writeText(strip_ansi_codes(cell_output)).then(
+                () => toast(t("t_copy_output_done")),
+                (err) => {
+                    console.error("Couldn't copy the output", err)
+                    tell({ body: t("t_copy_output_failed") })
+                }
+            )
     }
 
     const items = [

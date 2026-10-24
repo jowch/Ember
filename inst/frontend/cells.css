@@ -228,6 +228,17 @@ button.ember-run {
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
     padding: 0;
 }
+/* A transform, so the cell's layout never moves (#538). */
+button.ember-run:hover {
+    background: color-mix(in srgb, var(--ember-accent) 86%, var(--ember-text));
+    transform: scale(1.08);
+}
+button.ember-run:active {
+    transform: scale(0.94);
+}
+button.ember-run.busy:hover {
+    background: color-mix(in srgb, var(--ember-rail-run) 86%, var(--ember-text));
+}
 
 button.ember-run.busy {
     width: 26px;
@@ -263,7 +274,10 @@ button.ember-run,
 button.input_context_menu {
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.15s ease-in-out;
+    transition:
+        opacity 0.15s ease-in-out,
+        transform 0.1s ease,
+        background-color 0.12s ease;
 }
 
 ember-runtime {
@@ -516,7 +530,9 @@ div.input_context_menu[role="menu"] .ember-menuitem {
     padding: 7px 10px;
     color: var(--ember-text);
 }
-div.input_context_menu[role="menu"] .ember-menuitem:is(:hover, :focus) {
+/* One highlighted row, as in the header's menus (editor.css, #538). */
+div.input_context_menu[role="menu"]:not(:has(.ember-menuitem:focus-visible)) .ember-menuitem:hover,
+div.input_context_menu[role="menu"] .ember-menuitem:focus-visible {
     background: var(--ember-active);
 }
 div.input_context_menu[role="menu"] .ember-menuitem-danger {

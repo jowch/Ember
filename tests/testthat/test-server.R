@@ -10,6 +10,10 @@
 # needs a real installed ember on its library path; under devtools::load_all()
 # there is no such install, so this makes one (cached) the way the
 # subprocess tests in test-packages-session.R already do.
+# Too slow for CRAN's check time (#536): CI runs the whole file, with
+# NOT_CRAN=true.
+skip_on_cran()
+
 use_installed_ember()
 
 # ---- 26. connect, then an empty update_notebook syncs the page --------------

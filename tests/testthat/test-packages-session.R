@@ -16,6 +16,10 @@
 
 # ---- Helpers ---------------------------------------------------------------
 
+# Too slow for CRAN's check time (#536): CI runs the whole file, with
+# NOT_CRAN=true.
+skip_on_cran()
+
 use_installed_ember()
 
 #' `ember_repos()` pointed at the toy fixture repo instead of CRAN: the
@@ -1015,6 +1019,17 @@ test_that("a notebook with the failing-installer option reports the real compile
   expect_match(status$library$message, "compilation failed for package", fixed = TRUE)
   expect_gt(length(status$library$log), 10)
   expect_equal(status$library$failures$package, "brokenpkg")
+})
+
+test_that("ember::run()'s failed install says why: renv's build output on stdout, not only stderr's last line (#522)", {
+  withr::local_options(ember.installer_script = testthat::test_path("fixtures", "failing-installer.R"))
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  path <- write_broken_notebook()
+
+  # The fixture prints everything on stdout, as renv does a failed build.
+  expect_error(run(path, cache = cache, echo = FALSE),
+               "fatal error: 'nonexistent.h' file not found", fixed = TRUE)
 })
 
 test_that("packages with no binary for this R are named while they build, and the install goes on (#19)", {

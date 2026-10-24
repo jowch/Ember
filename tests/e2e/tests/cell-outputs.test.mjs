@@ -528,8 +528,7 @@ test("text cells: a click's pending open is dropped when focus moves on first, s
   t.after(async () => { await browser.close(); server.stop(); });
 
   const page = await newPage(browser);
-  // The page's clock is paused from the click until the test has typed, so
-  // the double-click interval can't run out between them on a slow runner.
+  // A fake clock, so the test can run Cell.js's timer when it chooses.
   await page.clock.install();
   await openNotebook(page, server.origin, server.secret, notebook);
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
@@ -544,14 +543,20 @@ test("text cells: a click's pending open is dropped when focus moves on first, s
     const src = document.querySelector('script[src$="editor.js"]').src;
     return (await import(new URL("components/Cell.js", src).href)).TEXT_CLICK_MS;
   });
-  const p = await page.locator(`${cell} > pluto-output p`).boundingBox();
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
-  await page.mouse.click(p.x + 2, p.y + p.height / 2);
-  await page.locator("#live-docs-search").focus();
+  // The click and the move to the Help box happen in one task, as the
+  // browser would do them: focus on mousedown, then the click, then the
+  // Help box. No timer can run between them, however slow the runner, so
+  // nothing here depends on how much time passes (#557).
+  await page.evaluate((sel) => {
+    const cell = document.querySelector(sel);
+    const p = cell.querySelector(":scope > pluto-output p");
+    cell.focus();
+    p.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, detail: 1 }));
+    document.querySelector("#live-docs-search").focus();
+  }, cell);
   await page.keyboard.insertText("lm");
-  // Past the interval: Cell.js's timer runs here, if it's still set.
+  // Past the interval: Cell.js's timer has run by now, if it was still set.
   await page.clock.runFor(text_click_ms);
-  await page.clock.resume();
   await frames(page);
   assert.equal(await page.locator(cell).evaluate((el) => el.classList.contains("show_input")), false, "the source stays closed");
   assert.equal(await page.evaluate(() => document.activeElement?.id), "live-docs-search", "focus stays in the Help box");

@@ -15,7 +15,7 @@ input_types <- c("slider", "number", "checkbox", "text", "select", "radio", "lis
 #' right-hand side is the input call. `bind` holds the assignments that
 #' meet rules 1 and 3; `blocked` those that meet rule 1 only, because
 #' something else in the cell reads or redefines the name (shown as a
-#' read-only line, "Read `n` in another cell"). Empty for code that doesn't
+#' read-only line, "To move it, read `n` in another cell, not this one"). Empty for code that doesn't
 #' parse or names no input function.
 input_bindings <- function(code) {
   none <- list(bind = list(), blocked = list())

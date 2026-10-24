@@ -576,7 +576,27 @@ run_message <- function(state, id, token) {
       library = state$packages$active$path, fig = cell_figure_size(cell$code),
       inputs = if (!is_text) run_inputs(state, id),
       installs = if (!is_text) run_installs(state$graph$analyses[[id]]),
-      data = if (!is_text) run_data_files(state, id))
+      data = if (!is_text) run_data_files(state, id),
+      data_writes = if (!is_text) run_data_writes(state, id))
+}
+
+#' The writes part of a run message: each top-level expression that
+#' writes a file (`data_touch`), with the path resolved as in
+#' `run_data_files()`, or no `full` for a path that isn't text, which may
+#' be any file. The worker counts a change these expressions make to a
+#' file the run reads as the cell's own, for the files it learns as they
+#' are read as well as the ones the code names. `NULL` when it writes none.
+run_data_writes <- function(state, id) {
+  touch <- state$graph$analyses[[id]]$data_touch
+  if (is.null(touch)) return(NULL)
+  touch <- touch[!touch$read, , drop = FALSE]
+  if (nrow(touch) == 0) return(NULL)
+  dir <- dirname(state$path %||% ".")
+  lapply(seq_len(nrow(touch)), function(k) {
+    p <- touch$path[[k]]
+    c(list(index = touch$index[[k]]),
+      if (!is.na(p)) list(full = if (is_absolute_path(p)) p else file.path(dir, p)))
+  })
 }
 
 #' The data part of a run message (#276): for each file the cell reads,
@@ -1606,6 +1626,8 @@ input_cell <- function(state, name) {
 #' the session (or forgotten, back at its default), shown on the cell's
 #' result, and the cells that read the name rerun (autorun) or turn stale
 #' (lazy), as if the input's cell had just run, but not that cell itself.
+#' A value the same as the input's last one reruns nothing, unless a
+#' reader is stale or failed.
 #' Only readers of this name: a cell reading another input of the same
 #' cell is left alone.
 reduce_wk_input_set <- function(state, event) {
@@ -1664,9 +1686,11 @@ answer_set_input <- function(state, event) {
     return(list(state = state, effects = list(), reply = NULL))
   }
   default <- NULL
+  before <- NULL
   r$inputs <- lapply(r$inputs, function(i) {
     if (isTRUE(i$bound) && identical(i$name, name)) {
       default <<- i$default
+      before <<- list(i$value)
       i$value <- event$value
     }
     i
@@ -1678,6 +1702,15 @@ answer_set_input <- function(state, event) {
   }
   g <- run_graph(state)
   dependents <- setdiff(readers_of(state, id, name, g = g), id)
+  # The same value as before (a slider moved within one whole number, which
+  # the worker rounds back to it) changes nothing its readers could see, so
+  # they don't rerun (#553), unless one is stale or failed: then setting
+  # the value again reruns them, as before.
+  same <- identical(before, list(event$value))
+  if (same && all(vapply(dependents, function(cid) is_fresh(state, cid) && !(cid %in% state$pending), logical(1)))) {
+    state <- outcome(state, TRUE, value = event$value)
+    return(list(state = state, effects = list(), reply = NULL))
+  }
   state <- invalidate_cells(state, id, dependents, g = g)
   state <- outcome(state, TRUE, value = event$value,
                    cells = Filter(function(cid) !is.null(state$results[[cid]]), dependents))
@@ -2308,6 +2341,10 @@ reduce_wk_done <- function(state, event) {
   # such a change right after one that did leaves the result as it is, so
   # it doesn't loop.
   result$data_seen <- report$data_seen %||% list()
+  # The readers it called with something that names no file Ember can
+  # watch (the worker's data_learn()), for the cell's note.
+  unresolved <- as.character(unlist(report$data_unresolved %||% character()))
+  if (length(unresolved) > 0) result$data_unresolved <- unresolved
   # A stop asked for during this run (reduce_interrupt()) that the run
   # finished before: nothing runs on its account, as for an interrupted
   # run (#486).

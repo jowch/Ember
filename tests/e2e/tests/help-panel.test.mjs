@@ -325,3 +325,29 @@ test("help: no link on a page leaves the notebook; a clicked link isn't labelled
   assert.equal(page.url(), start_url);
   assertNoProblems(page);
 });
+
+// #558: `?mean` typed key by key stays in the cell. The `?` opens Help
+// beside it (live docs follow a `?` line), and focus used to go with it,
+// so "mean" went into the search box. Running the cell then opens mean's
+// page, as `?mean` does at R's console.
+test("help: typing ?mean keeps every key in the cell, and running it opens mean's page (#558)", async (t) => {
+  const page = await open_idle_notebook(t, "help-question-mark.server.log");
+  const open_tab = (tab) => page.evaluate((tab) => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: tab })), tab);
+  await open_tab("variables");
+  const editor = `${cellSelector("S")} .cm-editor:not(.cm-ssr-fake) .cm-content`;
+  await page.locator(cellSelector("S")).scrollIntoViewIfNeeded();
+  await page.locator(editor).click();
+  await page.keyboard.type("?mean", { delay: 40 });
+  await settle(page);
+  assert.equal(await page.evaluate(() => window.editor_state.cell_inputs_local?.S?.code), "?mean", "every key reached the cell");
+  assert.ok(await page.evaluate((sel) => document.querySelector(sel).contains(document.activeElement), editor), "focus stayed in the cell");
+  await wait_for_help_page(page, "Arithmetic Mean");
+
+  // Away from Help, then run the cell: Help opens on mean's page.
+  await open_tab("variables");
+  await page.waitForFunction(() => document.querySelector("#helpbox-wrapper .ember-help-page") == null);
+  await page.keyboard.press("Shift+Enter");
+  await wait_for_help_page(page, "Arithmetic Mean");
+  assert.equal(await help_query(page), "mean");
+  assertNoProblems(page);
+});

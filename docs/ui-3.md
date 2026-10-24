@@ -253,6 +253,10 @@ keys for the computer it's on (⌘ and ⌥ on a Mac).
 
 - One focus ring: 2 px accent outline, 2 px offset, on :focus-visible only.
   Nothing removes an outline without it (today the Help search box does).
+- Every button answers the pointer: a hover fill and a darker pressed state,
+  the same on every page (#538). A menu lights one row: the one under the
+  pointer, or the keyboard's once the arrows are used. An action with no
+  other trace on the page (Copy output) says it worked in a short note.
 - Keyboard path: a "Skip to the notebook" link; the header left to right;
   then cells. In a cell, Esc selects the cell (ringed); ↑/↓ move between
   cells, Enter edits, Tab reaches the run button, ⋯ and the "+" below. The

@@ -786,33 +786,49 @@ test_that("a cell that reads globals by a computed name shows the can't-track no
   expect_null(pluto_state(r2$state, p1)$js$cell_results$B$ember$untracked_reads)
 })
 
-test_that("a cell that reads a file by a computed path shows the can't-track note (#276)", {
-  s <- fake_state(list(F = cell("f <- 'd.csv'"),
-                       X = cell("d <- read.csv(f)"),
-                       Y = cell("e <- read.csv('e.csv')")))
-  snap <- snapshot_of(s)
-  expect_equal(snap$cells$X$untracked_files, "read.csv")
-  expect_equal(snap$cells$Y$untracked_files, character())
-  js <- pluto_state(s)$js
-  check_wire(js)
-  expect_equal(js$cell_results$X$ember$untracked_files, as_arr("read.csv"))
-  expect_null(js$cell_results$Y$ember$untracked_files)
-
-  # An edit to a literal path drops it, and the cached projection follows.
-  p1 <- pluto_state(s)
-  r <- drive(s, ev_apply(list(op_set_code("X", "d <- read.csv('d.csv')")), at(20)))
+test_that("a cell that reads a file by a computed path has no note, before or after it runs", {
+  s <- fake_state(list(S = cell(""), F = cell("f <- 'd.csv'"), X = cell("d <- read.csv(f)")))
+  expect_equal(snapshot_of(s)$cells$X$untracked_files, character())
+  r <- boot(s, c("F", "X"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "f"), at(5)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "d", data_seen = list("d.csv" = "v1")), at(6)))
   expect_equal(snapshot_of(r$state)$cells$X$untracked_files, character())
-  expect_null(pluto_state(r$state, p1)$js$cell_results$X$ember$untracked_files)
+  expect_null(pluto_state(r$state)$js$cell_results$X$ember$untracked_files)
 })
 
-test_that("a sourced file that starts reading by a computed path shows the note on a cell that hasn't run, from a cached page state (#276)", {
-  s <- fake_state(list(S = cell(""), A = cell('source("h.R")')))
-  r <- drive(s, ev_files_read(list("h.R" = list(text = "z <- 1", hash = "v1")), at(2)))
-  p1 <- pluto_state(r$state)
-  expect_null(p1$js$cell_results$A$ember$untracked_files)
-  r2 <- drive(r$state, ev_files_read(list("h.R" = list(text = "d <- read.csv(f)", hash = "v2")), at(3)))
-  expect_equal(r2$state$graph$analyses$A$untracked_files, "read.csv")
-  expect_equal(pluto_state(r2$state, p1)$js$cell_results$A$ember$untracked_files, as_arr("read.csv"))
+test_that("a file a run learned it read is watched like a literal one: a change makes the reader stale and reruns it", {
+  s <- fake_state(list(S = cell(""), F = cell("f <- 'd.csv'"), X = cell("d <- read.csv(f)"), Y = cell("nrow(d)")))
+  r <- boot(s, c("F", "X", "Y"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "f"), at(5)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "d", data_seen = list("d.csv" = "v1")), at(6)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(7)))
+  expect_true("d.csv" %in% watched_data_files(r$state))
+  # The version it read is no change.
+  r1 <- drive(r$state, ev_data_changed(list("d.csv" = "v1"), at(20)))
+  expect_null(r1$state$worker$running)
+  r2 <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(21)))
+  expect_equal(r2$state$worker$running$cell, "X")
+  expect_true(isTRUE(r2$state$results$Y$stale))
+})
+
+test_that("a run that called a reader with something that names no file shows the note, until a run that didn't", {
+  s <- fake_state(list(S = cell(""), X = cell("d <- readRDS(con)")))
+  r <- boot(s, "X")
+  p0 <- pluto_state(r$state)
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "d", data_unresolved = "readRDS"), at(5)))
+  expect_equal(r$state$results$X$data_unresolved, "readRDS")
+  snap <- snapshot_of(r$state)
+  expect_equal(snap$cells$X$untracked_files, "readRDS")
+  p1 <- pluto_state(r$state, p0)
+  check_wire(p1$js)
+  expect_equal(p1$js$cell_results$X$ember$untracked_files, as_arr("readRDS"))
+
+  # The next run read a file it could watch: the note goes, and the cached
+  # projection follows.
+  r <- drive(r$state, ev_run("X", at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "d", data_seen = list("d.rds" = "v1")), at(11)))
+  expect_equal(snapshot_of(r$state)$cells$X$untracked_files, character())
+  expect_null(pluto_state(r$state, p1)$js$cell_results$X$ember$untracked_files)
 })
 
 test_that("a cell that calls a function reading through get() shows the note, not the cell defining it (#365)", {
@@ -1366,7 +1382,13 @@ test_that("a run message carries each data file with the expressions that read o
   expect_equal(msg$data[[1]]$path, "d.csv")
   expect_equal(msg$data[[1]]$full, file.path(dirname(s$path), "d.csv"))
   expect_equal(msg$data[[1]]$touch, c(1L, 3L, 4L))
-  expect_null(last_sent(boot(fake_state(list(S = cell(""), A = cell("1"))), "A"))$data)
+  # The writes, for the files the worker learns as they are read: each
+  # with its path, or none when it isn't text.
+  expect_equal(msg$data_writes, list(list(index = 3L, full = file.path(dirname(s$path), "d.csv")),
+                                     list(index = 4L)))
+  none <- last_sent(boot(fake_state(list(S = cell(""), A = cell("1"))), "A"))
+  expect_null(none$data)
+  expect_null(none$data_writes)
 })
 
 test_that("a change to a file no cell reads does nothing (#276)", {
@@ -1707,6 +1729,7 @@ test_that("shutdown kills the worker and closes; later events are no-ops (66)", 
 # validation gap, and several lower-severity reducer fixes.
 
 test_that("running all of a 2000-cell chain grows about linearly, not with the square (item 4)", {
+  skip_on_cran()  # too slow for CRAN's check time; CI runs it (#536)
   # Before the fix, `reduce_run()` called `unfresh_ancestors()` (a full
   # `upstream(..., transitive = TRUE)` walk) once per requested id, making
   # "run all" quadratic: 0.58s at 500 cells, 22s at 2000 (38x for 4x the
@@ -1726,6 +1749,7 @@ test_that("running all of a 2000-cell chain grows about linearly, not with the s
 })
 
 test_that("rerunning a chain marks each cell's dependents stale in linear time, not square (#316)", {
+  skip_on_cran()  # too slow for CRAN's check time; CI runs it (#536)
   # Every cell that starts marks all later cells stale again. The walk
   # looked names up in growing vectors and `union()`ed one cell at a time,
   # so one step grew with the square of the chain: about 20x from 250 to

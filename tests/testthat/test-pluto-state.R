@@ -637,6 +637,7 @@ test_that("an edit that changes one cell's references changes only its own and i
 # ---- Sharing and performance (engine.md, Performance) ---------------------------
 
 test_that("a one-cell change at 2000 cells keeps every other cell's projection identical(), and costs a fraction of a full projection", {
+  skip_on_cran()  # too slow for CRAN's check time; CI runs it (#536)
   x <- perf_projection(2000)
   s2 <- x$state; p1 <- x$previous
   p2 <- pluto_state(s2, p1)
@@ -669,6 +670,7 @@ test_that("a one-cell change at 2000 cells keeps every other cell's projection i
 })
 
 test_that("a one-cell change at 2000 cells builds one cell's key and view, and settings views only for settings cells", {
+  skip_on_cran()  # too slow for CRAN's check time; CI runs it (#536)
   # Counts calls instead of timing them, so it has no noise and catches a
   # per-cell call that is only a constant factor slower, which neither the
   # ratios above nor bench/ can see on a shared runner: PR #3 first called
@@ -687,6 +689,7 @@ test_that("a one-cell change at 2000 cells builds one cell's key and view, and s
 })
 
 test_that("a one-cell change at 2000 cells stays fast when every cell has a result (review4 item 7)", {
+  skip_on_cran()  # too slow for CRAN's check time; CI runs it (#536)
   # The quadratic case the bare timing test above didn't catch: with no
   # results at all, `state$results[[id]]` is a named lookup into an empty
   # list, which is cheap regardless of the loop around it. Once every cell
@@ -1111,6 +1114,7 @@ test_that("cell_inputs carry ember_spans from the graph, and check_wire() passes
 })
 
 test_that("Run all at 2000 cells reads no cell's spans again: they depend only on the code (4e, review)", {
+  skip_on_cran()  # too slow for CRAN's check time; CI runs it (#536)
   # Run all changes every cell's key (queued), so every cell input is
   # rebuilt; the spans must come from the previous projection. Counted,
   # not timed, like the cell_key test above.

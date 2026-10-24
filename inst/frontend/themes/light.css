@@ -83,7 +83,7 @@
 
     /* Shared dialogs and menus (piece 7a). --ember-dialog-shadow and
        --ember-dialog-backdrop alias the tokens above: same values, one
-       name. --ember-menu-hover-bg, --ember-menu-muted-color and
+       name, as does --ember-danger for --ember-red (one red, #538). --ember-menu-hover-bg, --ember-menu-muted-color and
        --ember-border stay their own, translucent-on-anything tokens --
        unlike --ember-hover/--ember-muted/--ember-line, which are solid
        hex meant for a known background. */
@@ -92,7 +92,7 @@
     --ember-menu-hover-bg: rgba(0, 0, 0, 0.06);
     --ember-menu-muted-color: rgba(0, 0, 0, 0.55);
     --ember-border: rgba(0, 0, 0, 0.15);
-    --ember-danger: rgb(153, 27, 27);
+    --ember-danger: var(--ember-red);
     --ember-focus-ring: var(--ember-accent);
 
     /* Page and chrome */
