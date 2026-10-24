@@ -528,6 +528,9 @@ test("text cells: a click's pending open is dropped when focus moves on first, s
   t.after(async () => { await browser.close(); server.stop(); });
 
   const page = await newPage(browser);
+  // The page's clock is paused from the click until the test has typed, so
+  // the double-click interval can't run out between them on a slow runner.
+  await page.clock.install();
   await openNotebook(page, server.origin, server.secret, notebook);
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
   await page.waitForSelector("#live-docs-search");
@@ -537,16 +540,18 @@ test("text cells: a click's pending open is dropped when focus moves on first, s
 
   // A click on the text, then the Help box before the double-click
   // interval ends: the source mustn't open later and take the typing.
+  const text_click_ms = await page.evaluate(async () => {
+    const src = document.querySelector('script[src$="editor.js"]').src;
+    return (await import(new URL("components/Cell.js", src).href)).TEXT_CLICK_MS;
+  });
   const p = await page.locator(`${cell} > pluto-output p`).boundingBox();
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
   await page.mouse.click(p.x + 2, p.y + p.height / 2);
   await page.locator("#live-docs-search").focus();
   await page.keyboard.insertText("lm");
-  // After Cell.js's timer has run: a timer set after it for as long runs after it.
-  await page.evaluate(async () => {
-    const src = document.querySelector('script[src$="editor.js"]').src;
-    const { TEXT_CLICK_MS } = await import(new URL("components/Cell.js", src).href);
-    await new Promise((resolve) => setTimeout(resolve, TEXT_CLICK_MS));
-  });
+  // Past the interval: Cell.js's timer runs here, if it's still set.
+  await page.clock.runFor(text_click_ms);
+  await page.clock.resume();
   await frames(page);
   assert.equal(await page.locator(cell).evaluate((el) => el.classList.contains("show_input")), false, "the source stays closed");
   assert.equal(await page.evaluate(() => document.activeElement?.id), "live-docs-search", "focus stays in the Help box");
