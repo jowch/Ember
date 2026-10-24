@@ -924,7 +924,7 @@ answer_from_subprocess <- function(cmd, answer, ok, failure) {
 #' | ember_clean_up                 | {dry_run, as_of}: clean_up() of the notebook's cache dir in a subprocess, keeping open notebooks' libraries; dry_run (default true) only counts; a deletion is judged at the preview's as_of. Reply {libraries, cache, bytes, dry_run, as_of} or {error} when it exits; refused when read-only (#128) |
 #' | ember_move_notebook            | {name, folder}: notebook_target_path() + move_notebook(); reply {path} or {error}; flush |
 #' | ember_start_page               | {}: reply start_page_reply() -- start_dir, new_name, open and recent notebooks. No hub |
-#' | ember_new_notebook             | {name, folder}: notebook_target_path() + new_notebook() + host_notebook(owned = TRUE); reply {url} or {error}. No hub |
+#' | ember_new_notebook             | {name, folder}: notebook_target_path() + new_notebook() + host_notebook(owned = TRUE) + allow_execution(); reply {url} or {error}. No hub |
 #' | ember_open_notebook            | {path}: open_or_find() (shared with /open); reply {url} or {error}. No hub |
 #' | ember_forget_recent            | {path}: forget_notebook(), then the ember_start_page reply. No hub |
 #' | ember_set_mode                 | {mode}: "autorun" or "lazy", else refused; refused when read-only. set_cell_change_mode(nb, mode); flush. No reply |
@@ -1404,6 +1404,11 @@ handlers <- list(
       target <- notebook_target_path(b$name, b$folder)
       nb <- new_notebook(target)
       host_notebook(server, nb, owned = TRUE, remember = TRUE)
+      # Made here, by this user, just now: there is nothing in it to
+      # distrust, so it opens ready to run rather than in safe preview, as a
+      # new notebook does in Pluto (design.md, "Every notebook opens in safe
+      # preview").
+      allow_execution(nb)
       list(url = relative_edit_url(server, notebook_state(nb)$id))
     }, error = function(e) {
       # new_notebook() already wrote the file and started a session by

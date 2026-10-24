@@ -1,6 +1,8 @@
 // Tests 97 and 100 (docs/ui-3-tests.md, piece 4): the start page
 // (GET /, StartPage.js) -- New notebook, the running row's round
-// stop/close button, Forget, and "Open a file" with path completion.
+// stop/close button, Forget, and "Open a file" with path completion. A
+// new notebook opens ready to run; a file opened from disk opens in safe
+// preview.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -26,6 +28,12 @@ test("start page: New notebook creates and opens it; the round button closes it 
   await page.getByRole("button", { name: "Create", exact: true }).click();
 
   await page.waitForURL(/edit\?id=/);
+  // Made just now: it opens ready to run, with no safe-preview banner, as
+  // a new notebook does in Pluto (design.md, safe preview). R starts at
+  // once, so the status is never "waiting_for_permission".
+  await page.waitForSelector("pluto-cell");
+  assert.notEqual(await page.evaluate(() => window.editor_state.notebook.process_status), "waiting_for_permission");
+  assert.equal(await page.getByRole("button", { name: "Run this notebook" }).count(), 0, "no safe-preview banner");
   const target = path.join(dir, "first.R");
   assert.ok(fs.existsSync(target), "the notebook file exists in the server's start folder");
 
@@ -78,6 +86,10 @@ test("start page: Open a file completes a typed path and opens it in the editor 
 
   await page.locator(".ember-start-open-file button").click();
   await page.waitForURL(/edit\?id=/);
+  // A file from disk opens in safe preview, unlike a new notebook (97).
+  await page.waitForSelector("pluto-cell");
+  assert.equal(await page.evaluate(() => window.editor_state.notebook.process_status), "waiting_for_permission");
+  await page.getByRole("button", { name: "Run this notebook" }).waitFor({ state: "visible" });
 
   assertNoProblems(page);
 });

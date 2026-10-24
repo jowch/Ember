@@ -82,8 +82,8 @@ repository depends on them.
 - **Open without running.** Running a cell runs its unrun ancestors first.
   "Run all" is one click. Long simulations don't start just because a
   notebook was opened.
-- **Every notebook opens in safe preview**, as in Pluto, even one that ran
-  before: no worker and no installs. This protects against unfamiliar code
+- **Every notebook opened from a file starts in safe preview**, as in Pluto,
+  even one that ran before: no worker and no installs. This protects against unfamiliar code
   (installing detected packages runs their install scripts, and loading runs
   their `.onLoad`) and against a crash loop, where code that crashed the last
   session crashes the next one as soon as it opens. The user can read and
@@ -91,6 +91,9 @@ repository depends on them.
   ("starts R, installs 3 packages"). The first run the user asks for, a cell
   or "Run all", allows execution for the session: it starts the worker,
   installs what's missing, then runs. Nothing is remembered between sessions.
+  A notebook made with the start page's New notebook skips safe preview: it
+  was written just now, by the person looking at it, so it opens ready to
+  run, as a new notebook does in Pluto (`SessionActions.new()` runs it).
   Endeavor's `allow_execution` tool maps onto this. marimo has no such
   state: it opens without running by default (`auto_instantiate = False`),
   but its `--sandbox` mode starts installing a notebook's packages as soon as
