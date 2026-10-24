@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, runCell } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, runCell, frames } from "../browser.mjs";
 
 /** userAgentData, where the browser has it, wins over navigator.platform in
  * is_mac_keyboard, so both are set. */
@@ -22,7 +22,7 @@ async function openSheet(page) {
   await page.getByRole("button", { name: "More", exact: true }).click();
   await page.getByRole("menuitem", { name: "Keyboard shortcuts", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Keyboard shortcuts", exact: true });
-  await dialog.waitFor({ timeout: 5000 });
+  await dialog.waitFor();
   return dialog;
 }
 
@@ -76,14 +76,15 @@ test("shortcuts: the sheet opens from ⋯ with this computer's keys, Esc closes 
   assert.ok(!sheet.flatMap((g) => g.rows).some((r) => r.includes("⌘") || r.includes("⌥")), "no Mac keys off a Mac");
 
   await page.keyboard.press("Escape");
-  await dialog.waitFor({ state: "detached", timeout: 5000 });
-  await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "More", null, { timeout: 2000 });
+  await dialog.waitFor({ state: "detached" });
+  await page.waitForFunction(() => document.activeElement?.getAttribute("aria-label") === "More");
 
   await page.locator("body").click({ position: { x: 5, y: 300 } });
   await page.keyboard.press("F1");
   await page.keyboard.press("Control+?");
   await page.keyboard.press("Control+Shift+Slash");
-  await page.waitForTimeout(300);
+  await page.waitForSelector("#helpbox-wrapper.open");
+  await frames(page);
   assert.equal(await page.locator("dialog[open]").count(), 0, "neither F1 nor Ctrl + ? opens a dialog");
   assert.equal(await page.locator("#helpbox-wrapper.open").count(), 1, "F1 outside a cell opens Help");
   assertNoProblems(page);
@@ -116,7 +117,7 @@ test("shortcuts: F1 in a cell opens Help on the name at the cursor (165)", async
     const nb = window.editor_state?.notebook;
     return nb?.process_status === "ready" && nb.cell_results?.A?.runtime != null &&
       Object.values(nb.cell_results).every((r) => !r.running && !r.queued);
-  }, null, { timeout: 30000 });
+  });
   assert.equal(await page.locator("#helpbox-wrapper.open").count(), 0, "Help starts closed");
 
   const content = page.locator(`${cellSelector("B")} .cm-editor:not(.cm-ssr-fake) .cm-content`);
@@ -126,8 +127,7 @@ test("shortcuts: F1 in a cell opens Help on the name at the cursor (165)", async
   await page.keyboard.press("F1");
 
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper.open")?.innerText.includes("Sum of Vector Elements"),
-    null, { timeout: 15000 });
+    () => document.querySelector("#helpbox-wrapper.open")?.innerText.includes("Sum of Vector Elements"));
   assert.equal(await page.locator("dialog[open]").count(), 0, "F1 opens no dialog");
   assertNoProblems(page);
 });

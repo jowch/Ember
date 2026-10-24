@@ -67,7 +67,7 @@ test("packages tab: Clean up… shows what it would delete, and Delete deletes i
 
   await page.getByRole("button", { name: "Clean up…", exact: true }).click();
   const question = page.locator("#ember-packages-tab .ember-packages-clean-up-question");
-  await question.waitFor({ timeout: 60000 });
+  await question.waitFor();
   assert.match(await question.innerText(),
     /^Delete 1 library not used by an open notebook or in the last 30 days, and 1 package cache entry no other library uses\? This frees about [\d.,]+ [KMGT]?B\./);
   // The preview deleted nothing.
@@ -75,7 +75,7 @@ test("packages tab: Clean up… shows what it would delete, and Delete deletes i
 
   await question.getByRole("button", { name: "Delete", exact: true }).click();
   const done = page.locator("#ember-packages-tab .ember-packages-disk p", { hasText: /^Deleted / });
-  await done.waitFor({ timeout: 60000 });
+  await done.waitFor();
   assert.match(await done.innerText(), /^Deleted 1 library and 1 package cache entry, about [\d.,]+ [KMGT]?B\.$/);
   assert.ok(!existsSync(cache.stale), "the stale library is deleted");
   assert.ok(!existsSync(cache.entry), "the cache entry only it listed is deleted");
@@ -92,7 +92,7 @@ test("packages tab: Cancel on the clean-up question deletes nothing (#128)", asy
 
   await page.getByRole("button", { name: "Clean up…", exact: true }).click();
   const question = page.locator("#ember-packages-tab .ember-packages-clean-up-question");
-  await question.waitFor({ timeout: 60000 });
+  await question.waitFor();
   await question.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.getByRole("button", { name: "Clean up…", exact: true }).waitFor();
   assert.ok(existsSync(cache.stale) && existsSync(cache.entry) && existsSync(cache.recent));

@@ -10,7 +10,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, frames } from "../browser.mjs";
 
 // 110. The column at a wide (1440 x 900) viewport, where the panel starts
 // open: the column sits just left of the 400 px panel and its 32 px gap.
@@ -36,7 +36,7 @@ test("layout: the 720px column and sticky header at 1440x900 (110)", async (t) =
   assert.ok(Math.abs(before.y - 0) <= 1, `expected header.y ~= 0 before scroll, got ${before.y}`);
 
   await page.evaluate(() => window.scrollTo(0, 1000));
-  await page.waitForTimeout(100);
+  await frames(page);
   const after = await header.boundingBox();
   assert.ok(Math.abs(after.y - 0) <= 1, `expected header.y ~= 0 after scrolling 1000px, got ${after.y}`);
 
@@ -91,7 +91,7 @@ test("layout: the side panel docks at 1440x900 and main clears it (111)", async 
   assert.ok(main_open.x + main_open.width <= panel.x - 32 + 1, "main clears the panel by the gap");
 
   const main_x_settles_at = (x) =>
-    page.waitForFunction((x) => Math.abs(document.querySelector("main").getBoundingClientRect().x - x) <= 1, x, { timeout: 2000 });
+    page.waitForFunction((x) => Math.abs(document.querySelector("main").getBoundingClientRect().x - x) <= 1, x);
 
   // Clicking Variables closes the panel (its tab was showing); main centres.
   await variables_icon.click();
@@ -161,7 +161,12 @@ test("layout: the side panel opens as a bottom sheet at 390x844 (113)", async (t
   await open_panel(page, "variables");
   await page.waitForSelector("#helpbox-wrapper.open");
   const panel = await page.locator("#helpbox-wrapper").boundingBox();
-  assert.ok(Math.abs(panel.x + panel.width - 390) <= 1, "the sheet spans the full width");
+  // What the page measured, so a failure says why (#463).
+  const seen = await page.evaluate(() => ({
+    inner: innerWidth, client: document.documentElement.clientWidth, scroll: [document.documentElement.scrollWidth, document.documentElement.scrollHeight],
+    sheet: getComputedStyle(document.querySelector("#helpbox-wrapper")).width, narrow: matchMedia("(max-width: 640px)").matches,
+  }));
+  assert.ok(Math.abs(panel.x + panel.width - 390) <= 1, `the sheet spans the full width: ${JSON.stringify({ x: panel.x, width: panel.width, ...seen })}`);
   assert.ok(panel.y + panel.height >= 844 - 1, "the sheet is anchored to the bottom");
 
   // The sheet covers the bottom of the viewport; click the scrim where it's

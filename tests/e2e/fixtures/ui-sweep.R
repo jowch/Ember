@@ -14,7 +14,8 @@ cat(strrep("a long line of printed output ", 12), "\n")
 #' One of each kind of output, for the layout checks in
 #' `tests/ui-sweep.test.mjs` and the screenshots in `shots.mjs`.
 #' The first cell is a code cell with no upstream, so it stays unrun
-#' when only `B` runs (#284).
+#' when only `B` runs (#284). The last cell is empty, so it never shows
+#' "Not run yet".
 
 # %% id=A
 x <- 1:10
@@ -41,6 +42,9 @@ stop("boom: a deliberate error")
 # %% id=DOWN
 x * 2
 
+# %% id=EMPTY
+
+
 # /// cell order
 # LONG
 # MD
@@ -50,4 +54,5 @@ x * 2
 # PLT
 # ERR
 # DOWN
+# EMPTY
 # ///

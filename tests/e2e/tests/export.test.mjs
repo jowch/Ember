@@ -11,6 +11,7 @@ import path from "node:path";
 import { writeFileSync } from "node:fs";
 import { startServer, tempNotebook, artifactsDir, tempDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector } from "../browser.mjs";
+import { waitingFor } from "../waits.mjs";
 
 /** `html` with every `<script>...</script>`/`<style>...</style>` element's
  * text content blanked (tags kept): real `src=`/`href=`/`url()` attributes
@@ -61,7 +62,7 @@ for (const offlineBundle of [false, true]) {
     const id = await openNotebook(livePage, server.origin, server.secret, notebook);
     await runCell(livePage, "DF");
     await runCell(livePage, "TBL");
-    await livePage.waitForSelector(`${cellSelector("TBL")} table.pluto-table`, { timeout: 20000 });
+    await livePage.waitForSelector(`${cellSelector("TBL")} table.pluto-table`);
     await livePage.close();
 
     const html = await fetchExport(server, id, { offlineBundle });
@@ -72,7 +73,7 @@ for (const offlineBundle of [false, true]) {
     const file = saveExport(html, "rich-export.html");
 
     const page = await openFileOffline(browser, file);
-    await page.waitForSelector("pluto-cell", { timeout: 20000 });
+    await page.waitForSelector("pluto-cell");
 
     const cellIds = ["S", "DF", "TBL", "FIT", "LST", "PLT", "ANSI", "MD"];
     for (const cid of cellIds) {
@@ -80,7 +81,7 @@ for (const offlineBundle of [false, true]) {
       assert.ok(count > 0, `expected cell ${cid} to be present in the export`);
     }
 
-    await page.waitForSelector(`${cellSelector("TBL")} table.pluto-table`, { timeout: 20000 });
+    await page.waitForSelector(`${cellSelector("TBL")} table.pluto-table`);
 
     // Code highlighted as R, not Julia (ui-2-tests.md 20's own wording):
     // a code cell's editor tokenizes with CodeMirror's R grammar (any
@@ -94,8 +95,8 @@ for (const offlineBundle of [false, true]) {
     // after TBL's table shows. So wait for the real editor's spans rather than
     // count them once (#340).
     await page.locator(cellSelector("DF")).scrollIntoViewIfNeeded();
-    await page.locator(`${cellSelector("DF")} .cm-editor:not(.cm-ssr-fake) .cm-content span[class]`).first().waitFor({ timeout: 20000 })
-      .catch(() => assert.fail("expected the DF cell's code to have highlighted spans"));
+    await waitingFor("the DF cell's code has highlighted spans",
+      page.locator(`${cellSelector("DF")} .cm-editor:not(.cm-ssr-fake) .cm-content span[class]`).first().waitFor());
     const mdCodeClass = await page.locator(`${cellSelector("MD")} pre code`).first().getAttribute("class");
     assert.match(mdCodeClass, /\blanguage-r\b/);
 
@@ -109,7 +110,6 @@ for (const offlineBundle of [false, true]) {
 // fixtures note); gated the same way.
 test("export: an htmlwidget's dependency files are inlined and run (20)", {
   skip: !process.env.EMBER_E2E_INSTALLS && "set EMBER_E2E_INSTALLS=1 (needs network to resolve the lock)",
-  timeout: 150000,
 }, async (t) => {
   const notebook = tempNotebook("export-widget.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "export-widget.server.log") });
@@ -124,7 +124,7 @@ test("export: an htmlwidget's dependency files are inlined and run (20)", {
   await livePage.locator("#ember-safe-preview button").click();
 
   await runCell(livePage, "WIDGET");
-  await livePage.waitForSelector(`${cellSelector("WIDGET")} #widget-marker`, { timeout: 120000 });
+  await livePage.waitForSelector(`${cellSelector("WIDGET")} #widget-marker`);
   await livePage.close();
 
   const html = await fetchExport(server, id);
@@ -133,8 +133,7 @@ test("export: an htmlwidget's dependency files are inlined and run (20)", {
 
   const page = await openFileOffline(browser, file);
   await page.waitForFunction(
-    () => document.querySelector("#widget-marker")?.textContent === "widget-ran",
-    null, { timeout: 20000 });
+    () => document.querySelector("#widget-marker")?.textContent === "widget-ran");
 
   assertNoProblems(page);
   await page.close();
@@ -151,14 +150,14 @@ test("export: a notebook exported in safe preview shows no safe-preview banner",
 
   const livePage = await newPage(browser);
   const id = await openNotebook(livePage, server.origin, server.secret, notebook);
-  await livePage.waitForSelector("#ember-safe-preview button", { timeout: 20000 });
+  await livePage.waitForSelector("#ember-safe-preview button");
   await livePage.close();
 
   const html = await fetchExport(server, id);
   const file = saveExport(html, "safe-preview-export.html");
 
   const page = await openFileOffline(browser, file);
-  await page.waitForSelector("pluto-cell", { timeout: 20000 });
+  await page.waitForSelector("pluto-cell");
   // The flag the banner used to key on is still in the exported state.
   assert.equal(await page.evaluate(() => window.editor_state.notebook.process_status), "waiting_for_permission");
   assert.equal(await page.locator("#ember-safe-preview").count(), 0, "a static export shows no safe-preview banner");

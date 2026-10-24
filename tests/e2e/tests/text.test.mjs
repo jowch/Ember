@@ -20,11 +20,11 @@ test("text: inline values render once the notebook runs; a bad one shows its own
 
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("Half of it is 10.5."),
-    cellSelector("T") + " pluto-output", { timeout: 20000 });
+    cellSelector("T") + " pluto-output");
   const span = await page.locator(`${cellSelector("T")} pluto-output span.ember-inline`).innerText();
   assert.equal(span, "10.5");
 
-  await page.waitForSelector(`${cellSelector("E")} jlerror`, { timeout: 20000 });
+  await page.waitForSelector(`${cellSelector("E")} jlerror`);
   assert.equal(await page.locator(`${cellSelector("E")} jlerror.ember > header > p:first-child`).innerText(), "object 'carz' not found");
   assert.match(await page.locator(`${cellSelector("E")} jlerror.ember > header > p.ember-error-where`).innerText(), /· line 1$/);
 
@@ -46,14 +46,14 @@ test("text: a dependent text cell updates when its ancestor runs, without itself
   await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("Half of it is 10.5."),
-    cellSelector("T") + " pluto-output", { timeout: 20000 });
+    cellSelector("T") + " pluto-output");
 
   await setCellCode(page, "A", "x <- 42");
   await runCell(page, "A");
 
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("Half of it is 21."),
-    cellSelector("T") + " pluto-output", { timeout: 20000 });
+    cellSelector("T") + " pluto-output");
 
   assertNoProblems(page);
 });

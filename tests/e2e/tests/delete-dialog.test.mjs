@@ -45,7 +45,7 @@ test("delete several cells: in-page dialog, Tab trapped, Esc cancels and restore
   await page.keyboard.press("Backspace");
 
   const dialog = page.locator("dialog.ember-dialog[open]");
-  await dialog.waitFor({ state: "visible", timeout: 5000 });
+  await dialog.waitFor({ state: "visible" });
   assert.match(await dialog.innerText(), /Delete 2 cells\?/);
 
   const deleteButton = dialog.getByRole("button", { name: "Delete" });
@@ -63,7 +63,7 @@ test("delete several cells: in-page dialog, Tab trapped, Esc cancels and restore
   }
 
   await page.keyboard.press("Escape");
-  await dialog.waitFor({ state: "hidden", timeout: 5000 });
+  await dialog.waitFor({ state: "hidden" });
 
   assert.equal(await page.locator('pluto-cell[id="A"]').count(), 1, "A survives Esc");
   assert.equal(await page.locator('pluto-cell[id="B"]').count(), 1, "B survives Esc");
@@ -72,19 +72,18 @@ test("delete several cells: in-page dialog, Tab trapped, Esc cancels and restore
   // own post-close focus handling, so the dialog being hidden doesn't
   // guarantee focus has settled yet; wait for the real end state instead
   // of checking once right away.
-  await page.waitForFunction((el) => el === document.activeElement, beforeEsc, { timeout: 2000 });
+  await page.waitForFunction((el) => el === document.activeElement, beforeEsc);
 
   // --- Delete: removes both cells ---
 
   await selectAandB();
   await page.keyboard.press("Backspace");
-  await dialog.waitFor({ state: "visible", timeout: 5000 });
+  await dialog.waitFor({ state: "visible" });
   await dialog.getByRole("button", { name: "Delete" }).click();
-  await dialog.waitFor({ state: "hidden", timeout: 5000 });
+  await dialog.waitFor({ state: "hidden" });
 
   await page.waitForFunction(
-    () => !document.getElementById("A") && !document.getElementById("B"),
-    null, { timeout: 10000 });
+    () => !document.getElementById("A") && !document.getElementById("B"));
 
   // A host embedding the page reads what was asked and answered here.
   const log = await page.evaluate(() => window.ember_dialogs.map(({ body, answer }) => ({ body, answer })));
@@ -109,13 +108,13 @@ test("delete several cells: a click on the dialog's backdrop cancels", async (t)
   await page.keyboard.press("Backspace");
 
   const dialog = page.locator("dialog.ember-dialog[open]");
-  await dialog.waitFor({ state: "visible", timeout: 5000 });
+  await dialog.waitFor({ state: "visible" });
 
   // A click in a corner of the viewport lands on the <dialog> element
   // itself (its backdrop covers the page once shown modally), not on its
   // centred content box.
   await page.mouse.click(5, 5);
-  await dialog.waitFor({ state: "hidden", timeout: 5000 });
+  await dialog.waitFor({ state: "hidden" });
 
   assert.equal(await page.locator('pluto-cell[id="A"]').count(), 1, "A survives a backdrop click");
   assert.equal(await page.locator('pluto-cell[id="B"]').count(), 1, "B survives a backdrop click");
@@ -141,12 +140,12 @@ test("delete from the cell menu: focus moves to the next cell, or the previous o
     await cell.locator(".cm-editor:not(.cm-ssr-fake) .cm-content").click();
     await cell.locator("button.input_context_menu").click();
     await cell.locator("div.input_context_menu button.delete").click();
-    await page.locator(`pluto-cell[id="${id}"]`).waitFor({ state: "detached", timeout: 10000 });
+    await page.locator(`pluto-cell[id="${id}"]`).waitFor({ state: "detached" });
   };
   const focus = () => page.waitForFunction(() => {
     const el = document.activeElement;
     return el != null && el !== document.body ? { cell: el.closest("pluto-cell")?.id ?? null, tag: el.tagName } : null;
-  }, null, { timeout: 5000 }).then((h) => h.jsonValue());
+  }).then((h) => h.jsonValue());
   const selected = () => page.evaluate(() => window.editor_state.selected_cells);
 
   await deleteFromMenu("B");
@@ -161,7 +160,7 @@ test("delete from the cell menu: focus moves to the next cell, or the previous o
 
   // The keyboard still works from there: Backspace deletes the selected cell.
   await page.keyboard.press("Backspace");
-  await page.locator(`pluto-cell[id="${before}"]`).waitFor({ state: "detached", timeout: 10000 });
+  await page.locator(`pluto-cell[id="${before}"]`).waitFor({ state: "detached" });
 
   assertNoProblems(page);
 });
@@ -181,12 +180,12 @@ test("delete from the cell menu by keyboard, and inside a selection, focuses the
   const focusedCell = () => page.waitForFunction(() => {
     const el = document.activeElement;
     return el != null && el.tagName === "PLUTO-CELL" ? el.id : null;
-  }, null, { timeout: 5000 }).then((h) => h.jsonValue());
+  }).then((h) => h.jsonValue());
   const selected = () => page.evaluate(() => window.editor_state.selected_cells);
   // End moves focus to the menu's last item, Delete; wait for it before Enter.
   const deleteFocused = (id) => page.waitForFunction((id) =>
     document.activeElement === document.querySelector(`pluto-cell[id="${id}"] div.input_context_menu button.delete`),
-  id, { timeout: 5000 });
+  id);
 
   // Keyboard only: focus the menu button, open it, go to its last item
   // (Delete), and press Enter.
@@ -195,11 +194,11 @@ test("delete from the cell menu by keyboard, and inside a selection, focuses the
   const menuButton = page.locator(`pluto-cell[id="${first}"] button.input_context_menu`);
   await menuButton.focus();
   await page.keyboard.press("Enter");
-  await page.locator(`pluto-cell[id="${first}"] div.input_context_menu button.delete`).waitFor({ state: "visible", timeout: 5000 });
+  await page.locator(`pluto-cell[id="${first}"] div.input_context_menu button.delete`).waitFor({ state: "visible" });
   await page.keyboard.press("End");
   await deleteFocused(first);
   await page.keyboard.press("Enter");
-  await page.locator(`pluto-cell[id="${first}"]`).waitFor({ state: "detached", timeout: 10000 });
+  await page.locator(`pluto-cell[id="${first}"]`).waitFor({ state: "detached" });
   assert.equal(await focusedCell(), second);
   assert.deepEqual(await selected(), [second]);
 
@@ -210,16 +209,16 @@ test("delete from the cell menu by keyboard, and inside a selection, focuses the
   const cell = page.locator(`pluto-cell[id="${second}"]`);
   await cell.locator("button.input_context_menu").focus();
   await page.keyboard.press("Enter");
-  await cell.locator("div.input_context_menu button.delete").waitFor({ state: "visible", timeout: 5000 });
+  await cell.locator("div.input_context_menu button.delete").waitFor({ state: "visible" });
   assert.deepEqual(await selected(), [second, third], "opening the menu by keyboard keeps the selection");
   await page.keyboard.press("End");
   await deleteFocused(second);
   await page.keyboard.press("Enter");
   const dialog = page.locator("dialog.ember-dialog[open]");
-  await dialog.waitFor({ state: "visible", timeout: 5000 });
+  await dialog.waitFor({ state: "visible" });
   assert.match(await dialog.innerText(), /Delete 2 cells\?/);
   await page.keyboard.press("Enter");
-  await page.locator(`pluto-cell[id="${third}"]`).waitFor({ state: "detached", timeout: 10000 });
+  await page.locator(`pluto-cell[id="${third}"]`).waitFor({ state: "detached" });
   assert.equal(await page.locator(`pluto-cell[id="${second}"]`).count(), 0);
   assert.equal(await focusedCell(), fourth);
   assert.deepEqual(await selected(), [fourth]);

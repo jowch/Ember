@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, codeSelector } from "../browser.mjs";
 
 const rect = (page, sel) => page.locator(sel).evaluate((el) => {
   const r = el.getBoundingClientRect();
@@ -80,7 +80,7 @@ test("gutter: every code cell shows its line numbers, focused or not, 12px faint
   await openNotebook(page, server.origin, server.secret, notebook);
   await page.locator(cellSelector("W")).scrollIntoViewIfNeeded();
   const gutter = `${cellSelector("W")} .cm-gutter.cm-lineNumbers`;
-  await page.waitForFunction((sel) => document.querySelectorAll(`${sel} .cm-gutterElement`).length >= 6, gutter, { timeout: 10000 });
+  await page.waitForFunction((sel) => document.querySelectorAll(`${sel} .cm-gutterElement`).length >= 6, gutter);
   const faint = await tokenColor(page, "--ember-faint");
   const numbers = await page.locator(`${gutter} .cm-gutterElement`).evaluateAll((els) => els
     .filter((el) => el.textContent !== "" && el.style.visibility !== "hidden")
@@ -120,7 +120,7 @@ test("syntax: the Cells board's token colours in light and dark, nothing bold or
   await page.locator(cellSelector("W")).scrollIntoViewIfNeeded();
   await page.waitForSelector(`${cellSelector("W")} .cm-editor:not(.cm-ssr-fake)`);
 
-  const tokens = (id) => page.locator(`${cellSelector(id)} .cm-content`).evaluate((el) =>
+  const tokens = (id) => page.locator(codeSelector(id)).evaluate((el) =>
     [...el.querySelectorAll(".cm-line span")].filter((s) => s.children.length === 0 && s.textContent.trim() !== "").map((s) => {
       const c = getComputedStyle(s);
       return { text: s.textContent, color: c.color, weight: c.fontWeight, style: c.fontStyle };
@@ -149,7 +149,7 @@ test("syntax: the Cells board's token colours in light and dark, nothing bold or
   };
   await check("light");
   await page.emulateMedia({ colorScheme: "dark" });
-  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark", null, { timeout: 5000 });
+  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark");
   await check("dark");
 
   assertNoProblems(page);
@@ -166,9 +166,9 @@ test("geometry: the run button sits on the code box's top-left corner and gives 
 
   // A has no output, so its code box starts at the cell's top, right under
   // the gap's "+".
-  await page.hover(`${cellSelector("A")} .cm-content`);
+  await page.hover(codeSelector("A"));
   const run = page.locator(`${cellSelector("A")} button.ember-run`);
-  await page.waitForFunction((el) => getComputedStyle(el).opacity === "1", await run.elementHandle(), { timeout: 5000 });
+  await page.waitForFunction((el) => getComputedStyle(el).opacity === "1", await run.elementHandle());
   const { box, button } = await rects(page, { box: `${cellSelector("A")} .cm-editor`, button: `${cellSelector("A")} button.ember-run` });
   near(button.left - box.left, -15, "run button left");
   near(button.top - box.top, -13, "run button top");
@@ -176,8 +176,8 @@ test("geometry: the run button sits on the code box's top-left corner and gives 
   const strip = await rect(page, `${cellSelector("A")} button.add_cell.before`);
   await page.mouse.move(strip.left + 300, strip.top + strip.height / 2);
   const circle = `${cellSelector("A")} button.add_cell.before > span`;
-  await page.waitForFunction((sel) => getComputedStyle(document.querySelector(sel)).opacity === "1", circle, { timeout: 5000 });
-  await page.waitForFunction((el) => getComputedStyle(el).opacity === "0", await run.elementHandle(), { timeout: 5000 });
+  await page.waitForFunction((sel) => getComputedStyle(document.querySelector(sel)).opacity === "1", circle);
+  await page.waitForFunction((el) => getComputedStyle(el).opacity === "0", await run.elementHandle());
 
   // Insert5: the circle is centred on the gap, its left edge 11px left of the rail.
   // The circle's lower half is where the run button would be: it must be
@@ -241,7 +241,7 @@ test("cell menu: the ⋯ is in pluto-input after the code, on the code box even 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
   await page.locator("#ember-safe-preview button").click();
-  await page.waitForSelector(`${cellSelector("ERR")}.errored`, { timeout: 20000 });
+  await page.waitForSelector(`${cellSelector("ERR")}.errored`);
 
   assert.equal(await page.locator("pluto-cell > button.input_context_menu").count(), 0);
   assert.equal(await page.locator("pluto-cell > pluto-input > button.input_context_menu").count(), await page.locator("pluto-cell").count());
@@ -249,7 +249,7 @@ test("cell menu: the ⋯ is in pluto-input after the code, on the code box even 
     [...input.children].map((c) => c.matches(".cm-editor") ? "code" : c.matches("button.ember-run") ? "run" : c.matches("button.input_context_menu") ? "menu" : null).filter(Boolean));
   assert.deepEqual(order, ["code", "run", "menu"], "Tab reaches the code first, then run, then ⋯");
 
-  await page.hover(`${cellSelector("ERR")} .cm-content`);
+  await page.hover(codeSelector("ERR"));
   const { box, more, output } = await rects(page, {
     box: `${cellSelector("ERR")} .cm-editor`,
     more: `${cellSelector("ERR")} button.input_context_menu`,
@@ -262,16 +262,16 @@ test("cell menu: the ⋯ is in pluto-input after the code, on the code box even 
   await page.hover(cellSelector("B"));
   await page.locator(`${cellSelector("B")} button.input_context_menu`).click();
   await page.locator(`${cellSelector("B")} button.hide_code`).click();
-  await page.waitForSelector(`${cellSelector("B")}.code_folded:not(.show_input)`, { timeout: 10000 });
-  assert.equal(await page.locator(`${cellSelector("B")} .cm-editor`).isVisible(), false, "the folded cell's code is hidden");
+  await page.waitForSelector(`${cellSelector("B")}.code_folded:not(.show_input)`);
+  assert.equal(await page.locator(codeSelector("B", "")).isVisible(), false, "the folded cell's code is hidden");
 
   await page.hover(cellSelector("B"));
   await page.locator(`${cellSelector("B")} button.input_context_menu`).click();
   const showItem = page.locator(`${cellSelector("B")} button.hide_code`);
   assert.equal(await showItem.innerText(), "Show code");
   await showItem.click();
-  await page.waitForFunction((sel) => !document.querySelector(sel).classList.contains("code_folded"), cellSelector("B"), { timeout: 10000 });
-  await page.locator(`${cellSelector("B")} .cm-editor`).waitFor({ state: "visible", timeout: 5000 });
+  await page.waitForFunction((sel) => !document.querySelector(sel).classList.contains("code_folded"), cellSelector("B"));
+  await page.locator(codeSelector("B", "")).waitFor({ state: "visible" });
 
   assertNoProblems(page);
 });
@@ -319,7 +319,7 @@ test("cell menu: on a cell at the bottom of the window it opens upwards, so ever
     const still = window.__low_bottom === bottom;
     window.__low_bottom = bottom;
     return still && Math.abs(bottom - innerHeight) < 1 && input.querySelector(".cm-editor:not(.cm-ssr-fake)") != null;
-  }, cellSelector(low), { polling: "raf", timeout: 10000 });
+  }, cellSelector(low), { polling: "raf" });
   const bottom = await open(low);
   assert.ok(700 - bottom.before.bottom < 3 + bottom.menu.height, `the ⋯ ended at ${bottom.before.bottom} before the menu opened, so the menu fit below it and this cell can't show the flip`);
   assert.ok(bottom.menu.bottom <= 700, `menu ends at ${bottom.menu.bottom}, below the 700px window`);
@@ -406,7 +406,7 @@ test("cell menu: text-only one-line items with a right-aligned key hint, panel a
   assert.deepEqual(header, { direction: "column", padding: "8px 10px" });
 
   await page.keyboard.press("Escape");
-  await page.waitForFunction((el) => !el.classList.contains("on"), await trigger.elementHandle(), { timeout: 5000 });
+  await page.waitForFunction((el) => !el.classList.contains("on"), await trigger.elementHandle());
 
   assertNoProblems(page);
 });

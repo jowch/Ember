@@ -957,17 +957,14 @@ test_that("summarise_globals(): the over-budget path doesn't call an active bind
 test_that("summarise_globals(): a slow method is bounded by its own time limit rather than holding up the whole report, and never leaks into a later run (review: setTimeLimit)", {
   h <- worker_harness()
   on.exit(h$close())
-  t0 <- Sys.time()
   r <- run_and_wait(h, "a", 1L, paste(
     "slow <- Sys.Date()",
     "format.Date <- function(x, ...) { t0 <- Sys.time(); repeat if (as.numeric(Sys.time() - t0) > 30) break; 'slow' }",
     sep = "\n"), timeout = 35)
-  elapsed <- as.numeric(Sys.time() - t0, units = "secs")
   # A busy R loop, not Sys.sleep(): setTimeLimit() is checked while R code
-  # runs and does not cut a sleep short. The budget is 0.25 s; the method
-  # runs 30 s unless it is cut short, so 10 s tells the two apart however
-  # slow the runner, where 4 s against a 5 s method did not leave room.
-  expect_lt(elapsed, 10)
+  # runs and does not cut a sleep short. The budget is 0.25 s; a method
+  # that ran its 30 s would have returned 'slow' and been summarised, so
+  # "none" is the method cut short.
   expect_equal(r$globals$slow$kind, "none")
 
   r2 <- run_and_wait(h, "b", 2L, "1 + 1", timeout = 3)
@@ -1131,14 +1128,10 @@ test_that("interrupt_r_code", {
   deadline <- Sys.time() + 10
   while (!file.exists(started) && Sys.time() < deadline) Sys.sleep(0.05)
   expect_true(file.exists(started))
-  t0 <- Sys.time()
   h$interrupt()
   r <- wait_for_done(h, timeout = 5)
-  elapsed <- as.numeric(Sys.time() - t0, units = "secs")
+  # An unheeded interrupt runs the loop its full 10 s and ends "ok".
   expect_identical(r$status, "interrupted")
-  # An unheeded interrupt runs the loop its full 10 s (and times out
-  # above), so 3 s still tells them apart with room for a slow runner.
-  expect_lt(elapsed, 3)
 
   check <- run_and_wait(h, "c", 3L, 'c(x, y)')
   expect_identical(check$output$text, "[1] 1 2")
@@ -1210,7 +1203,14 @@ test_that("interrupt_between_runs_swallowed", {
   h <- worker_harness()
   on.exit(h$close())
   h$interrupt()
-  Sys.sleep(0.2)
+  # The run goes once the top level has taken the interrupt, which it says
+  # in the trace. On Windows the next run drains it instead, whenever it
+  # came, so there is nothing to wait for.
+  if (.Platform$OS.type != "windows") {
+    took <- function() any(grepl("interrupt at top level", readLines(h$err_file, warn = FALSE)))
+    deadline <- Sys.time() + 60
+    while (!took() && Sys.time() < deadline) Sys.sleep(0.05)
+  }
   r <- run_and_wait(h, "a", 1L, "1 + 1")
   expect_identical(r$status, "ok")
   expect_identical(r$output$text, "[1] 2")
@@ -1328,10 +1328,15 @@ test_that("known_attached_packages_never_shrink", {
 test_that("interrupt_during_display_still_completes_bookkeeping", {
   h <- worker_harness()
   on.exit(h$close())
-  run_and_wait(h, "a", 1L,
-    'registerS3method("print", "slowprint", function(x, ...) { Sys.sleep(3); cat("slow\\n") })')
+  started <- tempfile()
+  run_and_wait(h, "a", 1L, sprintf(
+    'registerS3method("print", "slowprint", function(x, ...) { writeLines("go", %s); Sys.sleep(3); cat("slow\\n") })',
+    deparse(started)))
   h$send(run_msg("b", 2L, 'options(digits = 3); orphan <- 42; structure(1, class = "slowprint")'))
-  Sys.sleep(1)
+  # Interrupted while it prints, which it says it has begun.
+  deadline <- Sys.time() + 60
+  while (!file.exists(started) && Sys.time() < deadline) Sys.sleep(0.05)
+  expect_true(file.exists(started))
   h$interrupt()
   r <- wait_for_done(h, timeout = 10)
   expect_identical(r$status, "interrupted")
@@ -2494,6 +2499,42 @@ test_that("complete_line() (44)", {
   h$receive()
   after <- run_and_wait(h, "d", 4L, peek)$output$text
   expect_identical(before, after)
+})
+
+test_that("argument completion inside a call gives utils' own names, methods' too, and leaves its table as it was (#288)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  arg_items <- function(id, line) {
+    h$send(list(type = "complete", id = id, line = line, cursor = nchar(line)))
+    m <- h$receive()
+    sort(vapply(Filter(function(it) identical(it$kind, "argument"), m$items), `[[`, character(1), "name"), method = "radix")
+  }
+  # What plain R's completer gives, read in a cell, where nothing has been
+  # put into the table: the argument names (`...` isn't one). Both sides
+  # sort by bytes, since the worker and the cell may sort in other locales.
+  utils_args <- function(label, n, fun, text) {
+    out <- run_and_wait(h, label, n, sprintf('cat(sort(utils:::functionArgs("%s", "%s"), method = "radix"), sep = "\\n")', fun, text))
+    printed <- Filter(function(i) identical(i$kind, "stdout"), out$console)
+    all <- strsplit(paste(vapply(printed, `[[`, "", "text"), collapse = ""), "\n")[[1]]
+    all[grepl("=$", all)]
+  }
+  table_size <- function(label, n) run_and_wait(h, label, n, 'length(ls(utils:::.FunArgEnv, all.names = TRUE))')$output$text
+
+  before <- table_size("a", 1L)
+  run_and_wait(h, "b", 2L, "print.ember_t <- function(x, gamma_ember, ...) invisible(x)")
+  got <- arg_items(1L, "print(x, ")
+  expect_identical(got, utils_args("c", 3L, "print", ""))
+  # print.default's and the notebook's own method's arguments.
+  expect_true(all(c("digits=", "gamma_ember=") %in% got))
+  expect_identical(arg_items(2L, "summary(x, d"), utils_args("d", 4L, "summary", "d"))
+
+  # A function the notebook redefines: its new arguments, not the old ones.
+  run_and_wait(h, "e", 5L, "my_fun <- function(alpha_x) 1")
+  expect_identical(arg_items(3L, "my_fun(al"), "alpha_x=")
+  run_and_wait(h, "f", 6L, "my_fun <- function(alto_y) 1")
+  expect_identical(arg_items(4L, "my_fun(al"), "alto_y=")
+
+  expect_identical(table_size("g", 7L), before)
 })
 
 test_that("completion restores a locked active binding's lock (mask_active_bindings())", {

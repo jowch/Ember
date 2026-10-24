@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, runCell } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, runCell, frames, roundTrip } from "../browser.mjs";
 
 test("long runs: the dialog names the rerun, never answers itself, and Cancel runs nothing (169)", async (t) => {
   const notebook = tempNotebook("basic.R");
@@ -15,13 +15,14 @@ test("long runs: the dialog names the rerun, never answers itself, and Cancel ru
 
   const page = await newPage(browser);
   await page.addInitScript(() => localStorage.setItem("pluto_setting_CONFIRM_LONG_RUNTIMES_SECONDS", "1"));
+  await page.clock.install();
   await openNotebook(page, server.origin, server.secret, notebook);
 
   await runCell(page, "LOOP");
   await page.waitForFunction(() => {
     const r = window.editor_state?.notebook?.cell_results?.LOOP;
     return r != null && !r.running && !r.queued && r.runtime > 1e9;
-  }, null, { timeout: 60000 });
+  });
   const ran_at = await page.evaluate(() => window.editor_state.notebook.cell_results.LOOP.output.last_run_timestamp);
 
   await page.locator(`${cellSelector("LOOP")} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
@@ -30,7 +31,7 @@ test("long runs: the dialog names the rerun, never answers itself, and Cancel ru
   await page.keyboard.press("Shift+Enter");
 
   const dialog = page.locator("dialog.confirm-before-long-runtime[open]");
-  await dialog.waitFor({ timeout: 5000 });
+  await dialog.waitFor();
   // LOOP busy-waits 8 s; a slow runner takes longer, so only the shape and a sensible range are fixed.
   const sentence = (await dialog.locator("p").innerText()).trim();
   const took = sentence.match(/^This reruns 1 cell that took about (\d+) sec last time\.$/);
@@ -45,12 +46,14 @@ test("long runs: the dialog names the rerun, never answers itself, and Cancel ru
   });
   assert.deepEqual(notification, ["analysis.R finished", "5 cells ran in 3 min"]);
 
-  await page.waitForTimeout(25000);
+  // Its own clock moved on: nothing in the page answers it.
+  await page.clock.fastForward(25000);
+  await frames(page);
   assert.equal(await dialog.count(), 1, "still open after 25 s");
 
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-  await dialog.waitFor({ state: "detached", timeout: 5000 });
-  await page.waitForTimeout(1000);
+  await dialog.waitFor({ state: "detached" });
+  await roundTrip(page);
   const after = await page.evaluate(() => {
     const r = window.editor_state.notebook.cell_results.LOOP;
     return { running: r.running, queued: r.queued, ran_at: r.output.last_run_timestamp };

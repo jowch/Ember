@@ -941,6 +941,12 @@ all patches: ${JSON.stringify(patches, null, 1)}
             window.version_info = this.client.version_info // for debugging
             // @ts-ignore
             window.kill_socket = this.client.kill // for debugging
+            // For tests: resolves once the server has handled everything this
+            // page sent before it and the state it sends back is applied, as
+            // the first sync below. A test that checks nothing more happened
+            // waits on this instead of a fixed time.
+            // @ts-ignore
+            window.ember_round_trip = () => this.client.send("update_notebook", { updates: [] }, { notebook_id: this.state.notebook.notebook_id }, false)
 
             if (!client.notebook_exists) {
                 console.error("Notebook does not exist. Not connecting.")

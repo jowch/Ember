@@ -593,6 +593,24 @@ test_that("a dependent queued by submitting a graph error runs after a cell the 
   expect_true("E" %in% r3$state$pending)
 })
 
+test_that("a queued cell runs after a cell that dropping a graph error's result left stale, though another ran first (#449)", {
+  # E is edited to define x, which A defines: both have a graph error. D
+  # reads B's y and C's z, and B reads A's w. Dispatching C, which hasn't
+  # run, drops A's result, so B is stale: D must run after it, not with its
+  # old y. C reads nothing from B, so checking only C's ancestors missed it.
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1\nw <- 2"), B = cell("y <- w + 1"),
+                       C = cell("z <- 5"), E = cell(""), D = cell("y + z")))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = c("x", "w")), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(11)))
+
+  r2 <- drive(r$state, ev_apply(list(op_set_code("E", "x <- 2")), at(20)))
+  r3 <- drive(r2$state, ev_run("D", at(21)))
+  expect_null(r3$state$results$A)
+  expect_equal(last_sent(r3)$cell, "B")
+  expect_true(all(c("C", "D") %in% r3$state$pending))
+})
+
 test_that("two definers of the same name give one upstream entry, the first in display order (ui-3 7c, fix 2)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1"), A2 = cell("x <- 2"), C = cell("x + 1")))
   r <- boot(s, "C")
@@ -1093,6 +1111,42 @@ test_that("a cell edited to stop reading a data file goes stale when that file c
   expect_equal(watched_data_files(r3$state), character())
 })
 
+test_that("a run whose upstream cell is deleted while it runs ends stale, as the delete would leave it idle (#451)", {
+  s <- fake_state(list(S = cell(""), A = cell("v1 <- 1"), B = cell("v2 <- v1 + 5")))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "v1"), at(5)))
+  expect_equal(r$state$worker$running$cell, "B")
+  r2 <- drive(r$state, ev_apply(list(op_delete("A")), at(6)))
+  r3 <- drive(r2$state, wk_done(1, last_token(r), report(created = "v2"), at(7)))
+  expect_equal(r3$state$results$B$status, "ok")
+  expect_true(isTRUE(r3$state$results$B$stale))
+  # An edit runs nothing, in autorun too.
+  expect_equal(r3$state$pending, character())
+  # Its first run too, with no result to mark when the delete came.
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "v1"), at(5)))
+  r$state$results$B <- NULL
+  r2 <- drive(r$state, ev_apply(list(op_delete("A")), at(6)))
+  r3 <- drive(r2$state, wk_done(1, last_token(r), report(created = "v2"), at(7)))
+  expect_true(isTRUE(r3$state$results$B$stale))
+})
+
+test_that("in lazy mode a hand run that makes a queued cell's ancestor stale reruns that ancestor first (#453)", {
+  s <- fake_state(list(S = cell(""), C1 = cell("v1 <- 1"), C2 = cell("v2 <- v1 + 1"),
+                       C3 = cell("v3 <- v2 + 1"), C4 = cell("v3 + 1")), on_cell_change = "lazy")
+  r <- boot(s, c("C1", "C2", "C3", "C4"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "v1"), at(5)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "v2"), at(6)))
+  expect_equal(r$state$worker$running$cell, "C3")
+  # Run C2 again while C3 runs: C2 goes before C4, and makes C3 stale.
+  r <- drive(r$state, ev_run("C2", at(7)))
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = "v3"), at(8)))
+  expect_equal(r$state$worker$running$cell, "C2")
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = "v2"), at(9)))
+  expect_equal(r$state$worker$running$cell, "C3")
+  expect_equal(r$state$pending, "C4")
+})
+
 test_that("in autorun a reader the file change reruns runs its stale ancestors first, not with their old values (#437)", {
   # Found by the scheduling fuzz test with data files: B was left stale (its
   # upstream deleted), and R reran alone on the change, reading B's old j.
@@ -1132,6 +1186,35 @@ test_that("in lazy mode a run that reaches the writer after the reader reruns th
   # With nothing queued that reads it, lazy mode only marks it stale.
   r4 <- drive(data_file_notebook("lazy")$state, ev_data_changed(list("d.csv" = "v2"), at(21)))
   expect_equal(r4$state$pending, character())
+})
+
+test_that("a data file that changes while its reader is queued leaves the reader stale if a stop empties the queue (#472)", {
+  # Run W and R by hand: W runs, R waits. d.csv changes, then a stop
+  # empties the queue. R's result read the old file, so it and U, which
+  # read R's value, are stale, and nothing more runs.
+  for (mode in c("lazy", "autorun")) {
+    r <- data_file_notebook(mode)
+    r <- drive(r$state, ev_run(c("W", "R"), at(30)))
+    expect_equal(r$state$worker$running$cell, "W")
+    expect_equal(r$state$pending, "R")
+    r <- drive(r$state, wk_running(1, r$state$worker$running$token, at(31)),
+               ev_data_changed(list("d.csv" = "v2"), at(32)))
+    expect_equal(r$state$pending, "R")
+    expect_true(r$state$results$R$stale, info = mode)
+    r <- drive(r$state, ev_interrupt(at(33)),
+               wk_done(1, r$state$worker$running$token, report(status = "interrupted"), at(34)))
+    expect_equal(r$state$pending, character(), info = mode)
+    expect_true(r$state$results$R$stale, info = mode)
+    expect_true(r$state$results$U$stale, info = mode)
+  }
+  # Not stopped, R runs and its new result is current.
+  r <- data_file_notebook("lazy")
+  r <- drive(r$state, ev_run(c("W", "R"), at(30)))
+  r <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(31)),
+             wk_done(1, r$state$worker$running$token, report(), at(32)))
+  expect_equal(r$state$worker$running$cell, "R")
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = "d", data_seen = list("d.csv" = "v2")), at(33)))
+  expect_false(isTRUE(r$state$results$R$stale))
 })
 
 test_that("a writer that runs right after its reader reruns the reader, however coarse the file clock (#276)", {
@@ -2806,6 +2889,25 @@ test_that("a prompt from an older run or worker is ignored, and one that closes 
   r2 <- drive(r$state, wk_done(1, tok, report(status = "interrupted"), at(12)))
   expect_null(r2$state$worker$running)
   expect_s3_class(drive(r2$state, ev_answer_input("late", at(13)))$reply, "ember_refused")
+})
+
+test_that("deleting the cell that waits on a prompt interrupts it, so the worker is free again (#452)", {
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1"), B = cell('y <- readline("Name? ")')))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(5)))
+  tok <- last_token(r)
+  r <- drive(r$state, wk_running(1, tok, at(6)), wk_input(1, tok, 1L, "Name? ", NULL, at(7)))
+  r2 <- drive(r$state, ev_apply(list(op_delete("B")), at(8)))
+  expect_null(r2$state$worker$running$prompt)
+  expect_true(any(vapply(r2$effects, function(e) identical(e$type, "interrupt"), logical(1))))
+  r3 <- drive(r2$state, wk_done(1, tok, report(status = "interrupted"), at(9)))
+  expect_equal(r3$state$worker$status, "ready")
+  expect_null(r3$state$results$B)
+  # A cell deleted while it runs without asking isn't interrupted: its run is discarded as before.
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "x"), at(5)))
+  r2 <- drive(r$state, ev_apply(list(op_delete("B")), at(8)))
+  expect_false(any(vapply(r2$effects, function(e) identical(e$type, "interrupt"), logical(1))))
 })
 
 test_that("the page's projection carries the prompt and updates when only the prompt changes (#186)", {

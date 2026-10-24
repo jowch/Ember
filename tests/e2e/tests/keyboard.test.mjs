@@ -6,37 +6,19 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import fs from "node:fs";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, sentMessages, roundTrip } from "../browser.mjs";
+import { waitingFor } from "../waits.mjs";
 
 const mac = process.platform === "darwin";
-
-/** The websocket messages `page` sends whose bytes include `type`, as a
- * list that grows while the page runs. msgpack keeps a short string's
- * UTF-8 bytes as they are, so the message type's name shows up verbatim. */
-function sentMessages(page, type) {
-  const seen = [];
-  page.on("websocket", (ws) => {
-    ws.on("framesent", (frame) => {
-      const payload = frame.payload ?? "";
-      const text = Buffer.isBuffer(payload) ? payload.toString("latin1") : String(payload);
-      let found = text.includes(type);
-      if (!found && !Buffer.isBuffer(payload)) {
-        try { found = Buffer.from(text, "base64").toString("latin1").includes(type); } catch { /* not base64 */ }
-      }
-      if (found) seen.push(Date.now());
-    });
-  });
-  return seen;
-}
 
 /** Click into cell `id`'s code, Esc to select the cell, Enter to go back to the code. */
 async function reenterCode(page, id) {
   await page.locator(cellSelector(id)).scrollIntoViewIfNeeded();
   await page.locator(`${cellSelector(id)} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.keyboard.press("Escape");
-  await page.waitForFunction((id) => document.activeElement === document.getElementById(id), id, { timeout: 5000 });
+  await page.waitForFunction((id) => document.activeElement === document.getElementById(id), id);
   await page.keyboard.press("Enter");
-  await page.waitForFunction((id) => document.activeElement?.matches(`pluto-cell[id="${id}"] .cm-content`) ?? false, id, { timeout: 5000 });
+  await page.waitForFunction((id) => document.activeElement?.matches(`pluto-cell[id="${id}"] .cm-content`) ?? false, id);
 }
 
 /** What has focus: the element's tag, cell id, classes and accessible name. */
@@ -107,7 +89,7 @@ test("keyboard path: skip link, Esc selects the cell, arrows, Enter, Tab to run,
     const cell = document.querySelector(`pluto-cell[id="${id}"]`);
     const shown = (sel) => getComputedStyle(cell.querySelector(sel)).opacity === "1";
     return JSON.stringify([shown("button.ember-run"), shown("button.input_context_menu")]) === JSON.stringify(want);
-  }, [order[1], want], { timeout: 3000 });
+  }, [order[1], want]);
   await controls([true, true]);
   await page.keyboard.press("Escape");
   await controls([false, false]);
@@ -117,10 +99,10 @@ test("keyboard path: skip link, Esc selects the cell, arrows, Enter, Tab to run,
   assert.deepEqual([f.tag, f.cell, f.label], ["button", order[1], "Run cell (Shift + Enter)"]);
 
   await page.getByRole("button", { name: "Help", exact: true }).click();
-  await page.waitForSelector("#helpbox-wrapper.open", { timeout: 5000 });
-  await page.waitForFunction(() => document.activeElement?.closest("#helpbox-wrapper") != null, null, { timeout: 5000 });
+  await page.waitForSelector("#helpbox-wrapper.open");
+  await page.waitForFunction(() => document.activeElement?.closest("#helpbox-wrapper") != null);
   await page.keyboard.press("Escape");
-  await page.waitForFunction(() => !document.querySelector("#helpbox-wrapper").classList.contains("open"), null, { timeout: 5000 });
+  await page.waitForFunction(() => !document.querySelector("#helpbox-wrapper").classList.contains("open"));
   f = await focused(page);
   assert.deepEqual([f.tag, f.label, f.in_panel], ["button", "Help", false]);
 
@@ -132,8 +114,8 @@ test("keyboard path: skip link, Esc selects the cell, arrows, Enter, Tab to run,
   await page.waitForFunction(() => {
     const r = window.editor_state.notebook.cell_results.B;
     return (r?.output?.last_run_timestamp ?? 0) > 0 && !r.running && !r.queued;
-  }, null, { timeout: 30000 });
-  await page.waitForTimeout(500);
+  });
+  await roundTrip(page);
   assert.equal(runs.length - runs_before, 1, "Shift + Enter in the code sends one run");
 
   await reenterCode(page, "B");
@@ -141,8 +123,8 @@ test("keyboard path: skip link, Esc selects the cell, arrows, Enter, Tab to run,
   const moved = before_move.filter((id) => id !== "B");
   moved.splice(before_move.indexOf("B") + 1, 0, "B");
   await page.keyboard.press("Alt+ArrowDown");
-  await page.waitForFunction((before) => JSON.stringify(window.editor_state.notebook.cell_order) !== JSON.stringify(before), before_move, { timeout: 5000 });
-  await page.waitForTimeout(500);
+  await page.waitForFunction((before) => JSON.stringify(window.editor_state.notebook.cell_order) !== JSON.stringify(before), before_move);
+  await roundTrip(page);
   assert.deepEqual(await page.evaluate(() => window.editor_state.notebook.cell_order), moved, "Alt + ↓ moves the cell one place");
 
   // A selection left on another cell: the fold key in the code folds only this one.
@@ -150,8 +132,8 @@ test("keyboard path: skip link, Esc selects the cell, arrows, Enter, Tab to run,
   await page.locator(`${cellSelector("ERR")} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.evaluate(() => window.editor_state_set({ selected_cells: ["A"] }));
   await page.keyboard.press(mac ? "Meta+Alt+BracketLeft" : "Control+Shift+BracketLeft");
-  await page.waitForFunction(() => window.editor_state.notebook.cell_inputs.ERR.code_folded, null, { timeout: 5000 });
-  await page.waitForTimeout(500);
+  await page.waitForFunction(() => window.editor_state.notebook.cell_inputs.ERR.code_folded);
+  await roundTrip(page);
   assert.deepEqual(await page.evaluate(() => ["A", "ERR"].map((id) => window.editor_state.notebook.cell_inputs[id].code_folded)), [false, true]);
   assertNoProblems(page);
 });
@@ -202,7 +184,7 @@ test("keyboard: Tab passes through cells' code without editing it, and indents o
   await a.click();
   await page.keyboard.press("Home");
   await page.keyboard.press("Tab");
-  await page.waitForFunction(() => document.querySelector('pluto-cell[id="A"]').classList.contains("code_differs"), null, { timeout: 5000 });
+  await page.waitForFunction(() => document.querySelector('pluto-cell[id="A"]').classList.contains("code_differs"));
   assert.match(await a.textContent(), /^\s+x <- 1:10/, "Tab indented A after a click");
   assert.equal((await focused(page)).cell, "A", "and focus stayed in A");
 
@@ -214,30 +196,34 @@ test("keyboard: Tab passes through cells' code without editing it, and indents o
   await page.keyboard.press("Enter");
   await page.keyboard.press("Home");
   await page.keyboard.press("Tab");
-  await page.waitForFunction((id) => document.querySelector(`pluto-cell[id="${id}"]`).classList.contains("code_differs"), f.cell, { timeout: 5000 });
+  await page.waitForFunction((id) => document.querySelector(`pluto-cell[id="${id}"]`).classList.contains("code_differs"), f.cell);
   assert.equal((await focused(page)).cell, f.cell, "Tab indented the cell Enter went into");
 
   // Arrowed down into the next cell's code: Tab indents there too.
   const next = await page.evaluate((id) => document.getElementById(id).nextElementSibling.id, f.cell);
   await page.keyboard.press("End");
   await page.keyboard.press("ArrowDown");
-  await page.waitForFunction((id) => document.activeElement?.closest("pluto-cell")?.id === id, next, { timeout: 5000 });
+  await page.waitForFunction((id) => document.activeElement?.closest("pluto-cell")?.id === id, next);
   await page.keyboard.press("Home");
   await page.keyboard.press("Tab");
-  await page.waitForFunction((id) => document.querySelector(`pluto-cell[id="${id}"]`).classList.contains("code_differs"), next, { timeout: 5000 });
+  await page.waitForFunction((id) => document.querySelector(`pluto-cell[id="${id}"]`).classList.contains("code_differs"), next);
   assert.equal((await focused(page)).cell, next, "Tab indented the cell ArrowDown went into");
 
   // Away to another window and back: still working there, so Tab indents.
   const content_sel = `${cellSelector(next)} .cm-editor:not(.cm-ssr-fake) .cm-content`;
   const content = page.locator(content_sel);
   const text = await content.textContent();
-  await content.evaluate((el) => el.dispatchEvent(new FocusEvent("blur", { relatedTarget: null })));
-  await page.waitForTimeout(500);
+  // How long it is away doesn't matter: what the blur starts is a 0 ms
+  // timer at most (CellInput.js), done once one has run after it.
+  await content.evaluate((el) => {
+    el.dispatchEvent(new FocusEvent("blur", { relatedTarget: null }));
+    return new Promise((resolve) => setTimeout(resolve, 0));
+  });
   await content.evaluate((el) => el.dispatchEvent(new FocusEvent("focus", { relatedTarget: null })));
   await page.keyboard.press("Tab");
   assert.equal((await focused(page)).cell, next, "Tab after coming back stayed in the cell");
   await page.waitForFunction(([sel, t]) => document.querySelector(sel).textContent !== t,
-    [content_sel, text], { timeout: 5000 });
+    [content_sel, text]);
 
   assert.equal(fs.readFileSync(notebook, "utf8"), on_disk, "nothing was saved: the edits were never run");
   assertNoProblems(page);
@@ -256,10 +242,10 @@ test("keyboard: Backspace on a selected cell selects the next one, or the one ab
     selected: window.editor_state.selected_cells,
     order: window.editor_state.notebook.cell_order,
   }));
-  const settled = (focus) => page.waitForFunction((focus) => document.activeElement?.id === focus, focus, { timeout: 5000 }).catch(() => {});
+  const settled = (focus) => waitingFor(`focus moves to ${focus}`, page.waitForFunction((focus) => document.activeElement?.id === focus, focus), state);
   // The neighbour is selected as soon as a delete starts (#353), before the
   // notebook's order changes, so wait for the order as well.
-  const orderIs = (order) => page.waitForFunction((order) => window.editor_state.notebook.cell_order.join() === order.join(), order, { timeout: 10000 }).catch(() => {});
+  const orderIs = (order) => waitingFor(`the order becomes ${order.join(", ")}`, page.waitForFunction((order) => window.editor_state.notebook.cell_order.join() === order.join(), order), state);
   const select = async (id) => {
     await page.locator(cellSelector(id)).scrollIntoViewIfNeeded();
     await page.evaluate((id) => document.getElementById(id).focus(), id);
@@ -269,9 +255,9 @@ test("keyboard: Backspace on a selected cell selects the next one, or the one ab
   // The cell deleted and brought back is one added here, with a UUID id;
   // disabled.test.mjs undoes the delete of a cell with a short id ("A").
   await page.locator(`${cellSelector("ERR")} button.add_cell.before`).click();
-  await page.waitForFunction(() => window.editor_state.notebook.cell_order.length === 7, null, { timeout: 10000 });
+  await page.waitForFunction(() => window.editor_state.notebook.cell_order.length === 7);
   const added = (await state()).order[3];
-  await page.waitForFunction((id) => document.activeElement?.matches(`pluto-cell[id="${id}"] .cm-content`) ?? false, added, { timeout: 5000 });
+  await page.waitForFunction((id) => document.activeElement?.matches(`pluto-cell[id="${id}"] .cm-content`) ?? false, added);
   await page.keyboard.press("Escape");
   await settled(added);
   await page.keyboard.press("Backspace");
@@ -323,9 +309,9 @@ test("focus ring: 2 px accent outline 2 px out on keyboard focus, none after a c
 
   // Opens the menu, then closes it; the menu hands focus back to the button.
   await page.locator("button.toggle_export").click();
-  await page.waitForSelector("[role=menu]", { timeout: 5000 });
+  await page.waitForSelector("[role=menu]");
   await page.locator("button.toggle_export").click();
-  await page.waitForSelector("[role=menu]", { state: "detached", timeout: 5000 });
+  await page.waitForSelector("[role=menu]", { state: "detached" });
   const mouse = await ring();
   assert.ok(mouse.focused, "the button keeps focus after the click");
   assert.equal(mouse.style, "none");
@@ -354,7 +340,7 @@ test("cell menu: keys pressed right after it opens by keyboard aren't lost, even
   await page.keyboard.press("Enter");
   await page.keyboard.press("End");
   await page.keyboard.press("Enter");
-  await page.locator(`pluto-cell[id="${first}"]`).waitFor({ state: "detached", timeout: 10000 });
+  await page.locator(`pluto-cell[id="${first}"]`).waitFor({ state: "detached" });
 
   assertNoProblems(page);
 });

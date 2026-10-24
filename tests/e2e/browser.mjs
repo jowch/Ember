@@ -8,9 +8,12 @@
 // spikes/server-worker/browser3.mjs's local-Mac path.
 
 import { chromium, webkit } from "playwright-core";
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { artifactsDir } from "./server.mjs";
+import { untimed, waitingFor } from "./waits.mjs";
 
 function macCacheExecutable() {
   const base = path.join(os.homedir(), "Library", "Caches", "ms-playwright", "chromium-1234");
@@ -26,11 +29,17 @@ function resolveExecutable() {
 
 /** `EMBER_BROWSER=webkit` runs the suite in Playwright's WebKit instead
  * (on Linux, the WebKitGTK engine Endeavor's notebook pane uses). Only the
- * UI sweep runs there in CI; the rest of the suite assumes Chromium. */
+ * UI sweep runs there in CI; the rest of the suite assumes Chromium.
+ *
+ * No Playwright call on its pages has a time limit (waits.mjs): a wait
+ * ends when what it waits for happens, and the runner bounds the test.
+ * The browser stays up on a signal, so the report of what a stopped test
+ * was waiting for can still ask its pages; it goes when node exits. */
 export async function launchBrowser() {
-  if (process.env.EMBER_BROWSER === "webkit") return webkit.launch({ headless: true });
+  const options = { headless: true, handleSIGINT: false, handleSIGTERM: false, handleSIGHUP: false };
+  if (process.env.EMBER_BROWSER === "webkit") return untimed(await webkit.launch(options));
   const executablePath = resolveExecutable();
-  return chromium.launch({ executablePath, headless: true });
+  return untimed(await chromium.launch({ executablePath, ...options }));
 }
 
 /** A page wired to fail the test on a console error, an uncaught page
@@ -47,7 +56,30 @@ export async function newPage(browser) {
   page.on("pageerror", (e) => problems.push("pageerror: " + e.message));
   page.on("dialog", async (d) => { problems.push("dialog: " + d.message()); await d.dismiss(); });
   page.problems = problems;
+  page.on("requestfailed", (r) => { if (/ERR_NO_BUFFER_SPACE/.test(r.failure()?.errorText ?? "")) noBufferSpace(page, r.url()); });
   return page;
+}
+
+/** On Windows, when a load fails with ERR_NO_BUFFER_SPACE (#412), write
+ * what the machine looks like at that moment to test-results/: the time, the
+ * nonpaged pool, the TCP connections by state, the UDP endpoints, the
+ * processes holding the most nonpaged memory, and netstat. The 5 s socket
+ * samples ruled out running out of ports; this looks at the rest. Once per
+ * page. Read-only. */
+function noBufferSpace(page, url) {
+  if (process.platform !== "win32" || page.noBufferSpace) return;
+  page.noBufferSpace = true;
+  const file = path.join(artifactsDir(), `412-${Date.now()}.txt`);
+  const ps = `& {
+    "$(Get-Date -Format HH:mm:ss.fff) ERR_NO_BUFFER_SPACE: ${url.split("?")[0].replace(/[`"$]/g, "")}"
+    "nonpaged pool MB: " + [math]::Round((Get-CimInstance Win32_PerfRawData_PerfOS_Memory).PoolNonpagedBytes / 1MB, 1)
+    Get-NetTCPConnection | Group-Object State | Select-Object Count, Name | Format-Table -AutoSize | Out-String
+    "UDP endpoints: " + @(Get-NetUDPEndpoint).Count
+    Get-Process | Sort-Object NPM -Descending | Select-Object -First 15 Name, Id, Handles, NPM | Format-Table -AutoSize | Out-String
+    netstat -ano -p tcp
+  } *> '${file}'`;
+  execFile("powershell.exe", ["-NoProfile", "-Command", ps], () => {});
+  console.error(`#412: ERR_NO_BUFFER_SPACE on ${url.split("?")[0]}; the machine's state is in ${file}`);
 }
 
 export function assertNoProblems(page) {
@@ -61,30 +93,159 @@ export function assertNoProblems(page) {
  * /edit?id=... URL. `origin` is the server's base URL (`http://host:port/`,
  * no query string).
  *
- * No timeouts of our own on the waits: the page and its notebook arrive
- * when the server sends them, and the test runner's timeout bounds them.
- * 30 s ran out for the first tests of a Windows run, while three files'
- * first servers and browsers started at once (#417). */
+ * The page and its notebook arrive when the server sends them. 30 s ran
+ * out for the first tests of a Windows run, while three files' first
+ * servers and browsers started at once (#417). */
 export async function openNotebook(page, origin, secret, notebookPath) {
   const url = `${origin}open?path=${encodeURIComponent(notebookPath)}&secret=${secret}`;
-  await page.goto(url, { timeout: 0 });
-  await page.waitForSelector("pluto-cell", { timeout: 0 });
-  await page.waitForFunction(
-    () => !document.querySelector("pluto-editor")?.classList.contains("loading"),
-    null, { timeout: 0 });
+  // One of the editor's own files that fails to load leaves it loading for
+  // good. Fail now and name the file, not after the test file's 5-minute
+  // timeout, which also cancels the file's other tests (#412).
+  let onFailed;
+  const failed = new Promise((_, reject) => {
+    onFailed = (r) => {
+      const error = r.failure()?.errorText ?? "";
+      if (r.url().startsWith(origin) && error !== "net::ERR_ABORTED")
+        reject(new Error(`opening the notebook: ${r.url().split("?")[0]} failed to load: ${error}`));
+    };
+  });
+  failed.catch(() => {});
+  page.on("requestfailed", onFailed);
+  try {
+    const loaded = (async () => {
+      await page.goto(url);
+      await page.waitForSelector("pluto-cell");
+      await page.waitForFunction(() => !document.querySelector("pluto-editor")?.classList.contains("loading"));
+    })();
+    // After a failed load, these waits end when the test closes the page.
+    loaded.catch(() => {});
+    await Promise.race([failed, loaded]);
+  } finally {
+    page.off("requestfailed", onFailed);
+  }
+  // Pluto draws a long notebook's cells in chunks, after `loading` drops:
+  // wait for every cell, so a raw querySelector of a late one finds it (#428).
+  await page.waitForFunction(() => {
+    const order = window.editor_state?.notebook?.cell_order;
+    return Array.isArray(order) && order.every((id) => document.querySelector(`pluto-cell[id="${id}"]`));
+  });
   return new URL(page.url()).searchParams.get("id");
 }
 
 export function cellSelector(id) { return `pluto-cell[id="${id}"]`; }
 
-/** Wait until the worker is ready and no cell is running or queued. No
- * timeout of its own, as openNotebook(): a cold worker start is still a
- * start (#417). */
+/** Cell `id`'s live editor, or `part` inside it. A cell still showing
+ * CellInput.js's static copy of its code (`.cm-ssr-fake`) never matches:
+ * a wait the copy satisfies ends before the real editor is there, and a
+ * click on the copy loses focus to <body>. */
+export function codeSelector(id, part = ".cm-content") {
+  return `${cellSelector(id)} .cm-editor:not(.cm-ssr-fake)${part ? " " + part : ""}`;
+}
+
+/** Waits for `n` animation frames: what the page renders from state it
+ * already has is on screen by then. */
+export async function frames(page, n = 2) {
+  await page.evaluate((n) => new Promise((resolve) => {
+    const step = (left) => (left === 0 ? resolve() : requestAnimationFrame(() => step(left - 1)));
+    step(n);
+  }), n);
+}
+
+/** Waits until the server has handled everything this page sent before
+ * the call and the page has rendered the state it sent back
+ * (window.ember_round_trip, Editor.js). A check that nothing more
+ * happened (no second run, no move, nothing undone) waits on this, not on
+ * a fixed time: whatever would happen has come back by then. */
+export async function roundTrip(page) {
+  await page.evaluate(() => window.ember_round_trip());
+  await frames(page);
+}
+
+/** Waits until a passing state (queued, running, "Not run yet", ...) the
+ * page held back before the call has either shown or been dropped: one
+ * shows only once it has lasted common/useSettled.js's SETTLE_MS, on a
+ * timer, and a timer set after it for as long runs after it. Call it once
+ * the page has rendered what it waits on, e.g. after roundTrip(). */
+export async function afterSettle(page) {
+  await page.evaluate(async () => {
+    const src = document.querySelector('script[src$="editor.js"]').src;
+    const { SETTLE_MS } = await import(new URL("common/useSettled.js", src).href);
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
+  });
+  await frames(page);
+}
+
+/** Waits until the page's layout holds still: no CSS transition running,
+ * and the boxes of the cells, the column and the side panel the same in
+ * two frames in a row. For a check after a resize, a scroll or a theme
+ * change. */
+export async function layoutSettled(page) {
+  await page.evaluate(() => new Promise((resolve) => {
+    const boxes = () => JSON.stringify([...document.querySelectorAll("pluto-cell, pluto-notebook, #helpbox-wrapper, header")]
+      .map((el) => { const r = el.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }));
+    let last = null;
+    const check = () => {
+      const now = boxes();
+      const moving = document.getAnimations().some((a) => a instanceof CSSTransition && a.playState === "running");
+      if (!moving && now === last) resolve();
+      else { last = now; requestAnimationFrame(check); }
+    };
+    requestAnimationFrame(check);
+  }));
+}
+
+/** Waits until the page has finished what its clock last started: no try
+ * and no key check still out (window.ember_connection, PlutoConnection.js),
+ * so it is waiting for its next try, connected, or knows its key was
+ * refused. The tries run for real, on the network, so this is what a step
+ * of a fake clock (page.clock) waits on. Polled from here: the page's own
+ * timers and frames run on that clock, which may be paused. */
+export async function connectionSettled(page) {
+  const done = () => page.evaluate(() => {
+    const c = window.ember_connection;
+    return c != null && c.state !== "trying" && c.state !== "syncing" && c.key_checks_out === 0;
+  });
+  const settled = (async () => { while (!(await done())) await new Promise((resolve) => setTimeout(resolve, 20).unref()); })();
+  await waitingFor("the connection settles (connectionSettled)", settled,
+    () => page.evaluate(() => JSON.stringify(window.ember_connection)));
+}
+
+/** The websocket messages `page` sends whose bytes include `type`, as a
+ * list that grows while the page runs. msgpack keeps a short string's
+ * UTF-8 bytes as they are, so the message type's name shows up verbatim.
+ * Playwright reports frames in the order they were sent, so after
+ * roundTrip() the list holds every one sent before it. `reach(n)` waits
+ * until the list holds `n`. */
+export function sentMessages(page, type) {
+  const seen = [];
+  const waiting = [];
+  seen.reach = (n) => waitingFor(`${n} sent "${type}" messages (sentMessages)`, new Promise((resolve) => {
+    if (seen.length >= n) resolve();
+    else waiting.push([n, resolve]);
+  }), () => `${seen.length} sent`);
+  page.on("websocket", (ws) => {
+    ws.on("framesent", (frame) => {
+      const payload = frame.payload ?? "";
+      const text = Buffer.isBuffer(payload) ? payload.toString("latin1") : String(payload);
+      let found = text.includes(type);
+      if (!found && !Buffer.isBuffer(payload)) {
+        try { found = Buffer.from(text, "base64").toString("latin1").includes(type); } catch { /* not base64 */ }
+      }
+      if (!found) return;
+      seen.push(Date.now());
+      for (const w of waiting.filter(([n]) => seen.length >= n)) { waiting.splice(waiting.indexOf(w), 1); w[1](); }
+    });
+  });
+  return seen;
+}
+
+/** Wait until the worker is ready and no cell is running or queued. A
+ * cold worker start is still a start (#417). */
 export async function waitIdle(page) {
   await page.waitForFunction(() => {
     const nb = window.editor_state?.notebook;
     return nb?.process_status === "ready" && Object.values(nb.cell_results).every((r) => !r.running && !r.queued);
-  }, null, { timeout: 0 });
+  });
 }
 
 /** Hover a cell (at `part` inside it, if given) and wait until the cell is
@@ -94,7 +255,7 @@ export async function waitIdle(page) {
  * pointer that doesn't move (#271). */
 export async function hoverCell(page, id, part = "") {
   await page.locator(part ? `${cellSelector(id)} ${part}` : cellSelector(id)).hover();
-  await page.waitForFunction((sel) => document.querySelector(sel)?.matches(":hover"), cellSelector(id), { timeout: 15000 });
+  await page.waitForFunction((sel) => document.querySelector(sel)?.matches(":hover"), cellSelector(id));
 }
 
 /** Click into a cell's editor and select-all + type new code, the way a

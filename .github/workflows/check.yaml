@@ -48,6 +48,44 @@ jobs:
       EMBER_TEST_BIOC_BINARIES: ${{ matrix.os != 'ubuntu-latest' && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
+      # The .deb files apt downloads in this job (R's system libraries,
+      # pandoc, cmake), kept between runs.
+      # Some runners reach an Ubuntu mirror that serves them at 30-50 kB/s:
+      # on 10-23 an e2e job spent 57 of its 85 minutes downloading 157 MB
+      # that a runner at the same time fetched in 9 s. With them here, apt
+      # downloads only what changed. One cache per job and runner image.
+      - name: Name apt's cache
+        id: apt-key
+        if: runner.os == 'Linux'
+        run: echo "key=apt-${{ github.job }}-$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+      - name: Restore apt's downloads
+        id: apt-cache
+        if: runner.os == 'Linux'
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/apt-archives
+          key: ${{ steps.apt-key.outputs.key }}
+          restore-keys: apt-${{ github.job }}-
+      # apt checks only a cached file's size, not its hash, so only files
+      # whose SHA256 matches apt's signed package lists are handed over: a
+      # damaged or altered one is left out and downloaded again.
+      - name: Hand apt its downloads
+        if: runner.os == 'Linux' && steps.apt-cache.outputs.cache-matched-key != ''
+        run: |
+          sudo apt-get update -qq
+          used=0 skipped=0
+          for deb in ~/apt-archives/*.deb; do
+            read -r pkg ver arch <<< "$(dpkg-deb -W --showformat='${Package} ${Version} ${Architecture}' "$deb")"
+            want=$(apt-cache show --no-all-versions "$pkg:$arch=$ver" 2>/dev/null | awk '/^SHA256:/ { print $2; exit }')
+            if [ -n "$want" ] && [ "$(sha256sum < "$deb" | cut -d' ' -f1)" = "$want" ]; then
+              sudo cp "$deb" /var/cache/apt/archives/
+              used=$((used + 1))
+            else
+              echo "Left out $(basename "$deb"): no such version in apt's lists, or its SHA256 differs"
+              skipped=$((skipped + 1))
+            fi
+          done
+          echo "Handed apt $used cached files; left out $skipped"
       - uses: r-lib/actions/setup-r@v2
         with:
           use-public-rspm: true
@@ -62,6 +100,20 @@ jobs:
           # mismatch both reached main while CI stayed green. NOTEs still pass.
           error-on: '"warning"'
           upload-snapshots: true
+      # Only what this runner's apt can still use: autoclean drops versions
+      # its package lists no longer have.
+      - name: Keep apt's downloads
+        if: always() && runner.os == 'Linux' && steps.apt-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get autoclean -qq
+          rm -rf ~/apt-archives && mkdir ~/apt-archives
+          find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -t ~/apt-archives {} +
+          du -sh ~/apt-archives; ls ~/apt-archives | wc -l
+      - if: always() && runner.os == 'Linux' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/apt-archives
+          key: ${{ steps.apt-key.outputs.key }}
 
   grammar:
     runs-on: ubuntu-latest
@@ -112,6 +164,44 @@ jobs:
       EMBER_E2E_INSTALLS: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
+      # The .deb files apt downloads in this job (R's system libraries,
+      # pandoc, the browsers' libraries), kept between runs.
+      # Some runners reach an Ubuntu mirror that serves them at 30-50 kB/s:
+      # on 10-23 an e2e job spent 57 of its 85 minutes downloading 157 MB
+      # that a runner at the same time fetched in 9 s. With them here, apt
+      # downloads only what changed. One cache per job and runner image.
+      - name: Name apt's cache
+        id: apt-key
+        if: runner.os == 'Linux'
+        run: echo "key=apt-${{ github.job }}-$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+      - name: Restore apt's downloads
+        id: apt-cache
+        if: runner.os == 'Linux'
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/apt-archives
+          key: ${{ steps.apt-key.outputs.key }}
+          restore-keys: apt-${{ github.job }}-
+      # apt checks only a cached file's size, not its hash, so only files
+      # whose SHA256 matches apt's signed package lists are handed over: a
+      # damaged or altered one is left out and downloaded again.
+      - name: Hand apt its downloads
+        if: runner.os == 'Linux' && steps.apt-cache.outputs.cache-matched-key != ''
+        run: |
+          sudo apt-get update -qq
+          used=0 skipped=0
+          for deb in ~/apt-archives/*.deb; do
+            read -r pkg ver arch <<< "$(dpkg-deb -W --showformat='${Package} ${Version} ${Architecture}' "$deb")"
+            want=$(apt-cache show --no-all-versions "$pkg:$arch=$ver" 2>/dev/null | awk '/^SHA256:/ { print $2; exit }')
+            if [ -n "$want" ] && [ "$(sha256sum < "$deb" | cut -d' ' -f1)" = "$want" ]; then
+              sudo cp "$deb" /var/cache/apt/archives/
+              used=$((used + 1))
+            else
+              echo "Left out $(basename "$deb"): no such version in apt's lists, or its SHA256 differs"
+              skipped=$((skipped + 1))
+            fi
+          done
+          echo "Handed apt $used cached files; left out $skipped"
       - uses: r-lib/actions/setup-r@v2
         with:
           use-public-rspm: true
@@ -129,8 +219,32 @@ jobs:
         run: npm ci
       - working-directory: tests/e2e
         run: npx playwright-core install --with-deps chromium
+      # #412: on the Windows runner a page sometimes fails to load a file
+      # with ERR_NO_BUFFER_SPACE. The TCP settings, and a socket count every
+      # 5 s during the run, go in the log to find out why, with what
+      # browser.mjs records at the moment of a failure. Read-only.
+      - name: TCP settings and a socket sampler (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          netsh int ipv4 show dynamicport tcp
+          Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters -ErrorAction SilentlyContinue | Select-Object TcpTimedWaitDelay, MaxUserPort | Format-List
+          # Defender's state, and the network filter drivers that run: the
+          # captures so far show no port or pool shortage at a failure.
+          try { Get-MpComputerStatus | Select-Object AMRunningMode, RealTimeProtectionEnabled, NISEnabled, BehaviorMonitorEnabled, OnAccessProtectionEnabled | Format-List } catch { "Get-MpComputerStatus failed: $_" }
+          try { Get-MpPreference | Select-Object DisableRealtimeMonitoring, EnableNetworkProtection | Format-List } catch { "Get-MpPreference failed: $_" }
+          try { Get-CimInstance Win32_SystemDriver -Filter "State='Running'" | Where-Object Name -match '^(Wd|WFP|NetBT|NetIO|tcpip|afd|ndis|mpsdrv|MsSec|vfp|vms|Wcifs)' | Select-Object Name, DisplayName | Format-Table -AutoSize } catch { "the running drivers query failed: $_" }
+          $p = Start-Process pwsh -PassThru -WindowStyle Hidden -ArgumentList "-NoProfile", "-File", "${{ github.workspace }}\.github\windows-sockets\sample.ps1", "-Out", "$env:RUNNER_TEMP\sockets.csv"
+          $p.Id | Set-Content "$env:RUNNER_TEMP\sampler.pid"
       - working-directory: tests/e2e
         run: npm test
+      - name: The socket samples (Windows)
+        if: always() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (Test-Path "$env:RUNNER_TEMP\sampler.pid") { Stop-Process -Id (Get-Content "$env:RUNNER_TEMP\sampler.pid") -ErrorAction SilentlyContinue }
+          Get-Content "$env:RUNNER_TEMP\sockets.csv" -ErrorAction SilentlyContinue
+          Get-ChildItem tests\e2e\test-results\412-*.txt -ErrorAction SilentlyContinue | ForEach-Object { "== $($_.Name)"; Get-Content $_.FullName }
       # The UI sweep, the first-cell check (#284) and the reload check (#385)
       # again in WebKit, the engine Endeavor's notebook pane uses (WebKitGTK
       # on Linux), where layout differs from Chromium. Only on ubuntu, where
@@ -143,6 +257,20 @@ jobs:
         run: |
           npx playwright-core install --with-deps webkit
           node run.mjs tests/ui-sweep.test.mjs tests/first-cell.test.mjs tests/ws-reload.test.mjs
+      # Only what this runner's apt can still use: autoclean drops versions
+      # its package lists no longer have.
+      - name: Keep apt's downloads
+        if: always() && runner.os == 'Linux' && steps.apt-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get autoclean -qq
+          rm -rf ~/apt-archives && mkdir ~/apt-archives
+          find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -t ~/apt-archives {} +
+          du -sh ~/apt-archives; ls ~/apt-archives | wc -l
+      - if: always() && runner.os == 'Linux' && steps.apt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/apt-archives
+          key: ${{ steps.apt-key.outputs.key }}
       - name: Upload server logs and screenshots on failure
         if: failure()
         uses: actions/upload-artifact@v4

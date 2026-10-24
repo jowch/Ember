@@ -25,11 +25,11 @@ test("header: click the file name, rename and move to a different folder, Save: 
   await runCell(page, "B");
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("55"),
-    cellSelector("B") + " pluto-output", { timeout: 20000 });
+    cellSelector("B") + " pluto-output");
 
   await page.locator("#ember-file-name").click();
   const dialog = page.locator("dialog.ember-dialog[open]");
-  await dialog.waitFor({ state: "visible", timeout: 5000 });
+  await dialog.waitFor({ state: "visible" });
 
   const nameField = dialog.locator("#ember-move-name");
   await nameField.click();
@@ -51,9 +51,9 @@ test("header: click the file name, rename and move to a different folder, Save: 
   await nameField.click();
 
   await dialog.getByRole("button", { name: "Save" }).click();
-  await dialog.waitFor({ state: "hidden", timeout: 15000 });
+  await dialog.waitFor({ state: "hidden" });
 
-  await page.waitForFunction(() => document.title === "renamed.R — Ember", null, { timeout: 5000 });
+  await page.waitForFunction(() => document.title === "renamed.R — Ember");
 
   assert.equal(fs.existsSync(notebook), false, "the old file is gone");
   const renamedPath = path.join(newDir, "renamed.R");
@@ -71,7 +71,7 @@ test("header: click the file name, rename and move to a different folder, Save: 
   const needle = path.basename(newDir);
   await page.waitForFunction(
     ({ sel, needle }) => document.querySelector(sel)?.innerText.includes(needle),
-    { sel: cellSelector("LOOP") + " pluto-output", needle }, { timeout: 20000 });
+    { sel: cellSelector("LOOP") + " pluto-output", needle });
 
   assertNoProblems(page);
 });

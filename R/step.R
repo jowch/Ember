@@ -328,9 +328,11 @@ schedule <- function(state) {
   state <- dg$state
   # Dropping a result marks that cell's dependents stale. If `id` reads one
   # of them, it runs after it, with every ancestor between them, as when a
-  # cell is run by hand (#176), not with its old value (#326).
+  # cell is run by hand (#176), not with its old value (#326). So does any
+  # other queued cell that reads one: it is dispatched later, when nothing
+  # is left to drop and this check doesn't run again (#449).
   if (length(dg$dropped) > 0) {
-    ups <- upstream_of_set(state$graph, id)
+    ups <- upstream_of_set(state$graph, union(id, state$pending))
     stale <- Filter(function(a) isTRUE(state$results[[a]]$stale) && can_run(state, a), ups)
     if (length(stale) > 0) {
       between <- reached_from(state$graph, stale, setdiff(ups, stale))
@@ -961,6 +963,11 @@ invalidate_cells <- function(state, id, dependents, queue = TRUE, g = run_graph(
   autorun <- identical(state$file$header$on_cell_change, "autorun")
   # Whole vectors at a time: a chain's rerun passes most of the notebook
   # here for every cell, and a lookup by name scans the names (#316).
+  # The running cell's run started from what this invalidates (an
+  # upstream cell deleted or rerun while it ran): its result will be
+  # stale when it ends (reduce_wk_done(), #451).
+  running <- state$worker$running$cell
+  if (!is.null(running) && running %in% dependents) state$worker$running$invalidated <- TRUE
   ids <- dependents[dependents %in% names(state$results)]
   if (length(ids) == 0) return(state)
   state$results[ids] <- lapply(state$results[ids], function(r) { r$stale <- TRUE; r })
@@ -968,7 +975,11 @@ invalidate_cells <- function(state, id, dependents, queue = TRUE, g = run_graph(
     ids[vapply(state$cells[ids], cell_runs, logical(1)) & !(ids %in% names(state$graph$off))]
   } else character()
   if (length(queued)) state$pending <- union(state$pending, queued)
-  queue_stale_ancestors(state, queued, id, g)
+  # A cell already pending (a run asked for by hand, in lazy mode) that
+  # reads what this just made stale needs it rerun first, as when the run
+  # was asked for (#453). An edit never runs anything, so not for `queue = FALSE`.
+  waiting <- if (queue) intersect(state$pending, dependents) else character()
+  queue_stale_ancestors(state, union(queued, waiting), id, g)
 }
 
 #' Queue the stale ancestors of `queued`, cells autorun has just queued.
@@ -1302,8 +1313,16 @@ reduce_apply <- function(state, event) {
 #' must free the worker without storing or learning anything from it, the
 #' same as a `done` for a cell deleted mid-run.
 forget_run <- function(state, id) {
+  effects <- list()
   if (identical(state$worker$running$cell, id)) {
     state$worker$running$discard <- TRUE
+    # A prompt it waits on can't be answered any more (the page shows no
+    # cell asking), so the run would wait forever and nothing after it
+    # could run: stop it, as an interrupt would (#452).
+    if (!is.null(state$worker$running$prompt)) {
+      state$worker$running$prompt <- NULL
+      effects <- list(fx_interrupt(state$worker$gen))
+    }
   }
   old_result <- state$results[[id]]
   state$results[[id]] <- NULL
@@ -1313,12 +1332,11 @@ forget_run <- function(state, id) {
   state <- invalidate_dependents(state, id,
                                  if (!is.null(old_result)) old_result$defined else character(),
                                  queue = FALSE)
-  effects <- list()
   if (state$worker$status %in% c("starting", "ready", "busy")) {
     order <- Filter(function(i) {
       !is.null(state$cells[[i]]) && identical(state$cells[[i]]$kind, "code")
     }, state$graph$order)
-    effects <- list(fx_send(state$worker$gen, list(type = "remove_cell", cell = id, order = order)))
+    effects <- c(effects, list(fx_send(state$worker$gen, list(type = "remove_cell", cell = id, order = order))))
   }
   list(state = state, effects = effects)
 }
@@ -1693,9 +1711,11 @@ reduce_files_read <- function(state, event) {
 #' when the result arrived). So a cell that writes the file it reads
 #' doesn't wake itself, and a reader that ran after the writer isn't run
 #' twice; comparing signatures rather than times doesn't depend on how
-#' fine the file system's clock is. A cell that is running or queued is
-#' left alone: a queued one reads the new file, and a running one's result
-#' takes the version there when it arrives (`reduce_wk_done()`).
+#' fine the file system's clock is. A running cell is left alone: its
+#' result takes the version there when it arrives (`reduce_wk_done()`). A
+#' queued one reads the new file when it runs, but is marked stale with
+#' its dependents now all the same, queueing nothing: a stop empties the
+#' queue, and its old result would then show as current (#472).
 reduce_data_changed <- function(state, event) {
   autorun <- identical(state$file$header$on_cell_change, "autorun")
   running <- state$worker$running$cell
@@ -1703,7 +1723,8 @@ reduce_data_changed <- function(state, event) {
   marked <- FALSE
   for (id in state$graph$ids) {
     r <- state$results[[id]]
-    if (is.null(r) || identical(running, id) || id %in% state$pending) next
+    if (is.null(r) || identical(running, id)) next
+    queued <- id %in% state$pending
     # What its code reads now, and what its result's run read: a cell
     # edited to stop reading a file still shows a result from it (#439).
     seen <- r$data_seen %||% list()
@@ -1712,6 +1733,10 @@ reduce_data_changed <- function(state, event) {
     if (all(vapply(hit, function(p) identical(seen[[p]], event$files[[p]]), logical(1)))) next
     r$stale <- TRUE
     state$results[[id]] <- r
+    if (queued) {
+      state <- invalidate_dependents(state, id, character(), queue = FALSE)
+      next
+    }
     if (autorun && isTRUE(state$allowed) && can_run(state, id)) state$pending <- union(state$pending, id)
     state <- invalidate_dependents(state, id, character())
     marked <- TRUE
@@ -2148,14 +2173,15 @@ reduce_wk_done <- function(state, event) {
       state$pending <- union(state$pending, stale_anc)
     }
   }
-  # An input found after the cell was sent (a formula term that isn't a
-  # column, or a masked name the data turned out not to have, learned from
-  # this run or an upstream one) from a cell that is stale and not about
-  # to run: the result came from that cell's old value, so it is stale
-  # too, as it would be had the edge been there when the run was asked for.
-  late <- setdiff(state$graph$upstream[[id]], w$running$upstream)
-  late_stale <- any(vapply(late, function(u) isTRUE(state$results[[u]]$stale) && !(u %in% state$pending),
-                           logical(1)))
+  # A cell it reads that is stale and not about to run: the result came
+  # from that cell's old value, so it is stale too. Usually a run's stale
+  # ancestors run first, but an input can be found after the cell was sent
+  # (a formula term that isn't a column, or a masked name the data turned
+  # out not to have, learned from this run or an upstream one), and an
+  # ancestor can be made stale while the run waits or runs (its own
+  # upstream deleted mid-run, #451).
+  upstream_stale <- any(vapply(state$graph$upstream[[id]], function(u) isTRUE(state$results[[u]]$stale) && !(u %in% state$pending),
+                               logical(1)))
 
   runtime <- as.numeric(event$at) - as.numeric(w$running$started_at)
   # Variables are kept only for an "ok" result: a run the worker itself
@@ -2172,7 +2198,7 @@ reduce_wk_done <- function(state, event) {
                        load_notes = load_notes, changed_in_place = as.character(changed_in_place),
                        inputs = if (identical(status, "ok")) report$inputs %||% list() else list(),
                        from_lock = as.character(report$from_lock %||% character()))
-  if (late_stale) result$stale <- TRUE
+  if (upstream_stale || isTRUE(w$running$invalidated)) result$stale <- TRUE
   # The versions of its data files the run ended with (#276), and the ones
   # someone else changed after the cell read them: the run may have read
   # the old contents, so the result is stale, and autorun runs it again.

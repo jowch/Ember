@@ -25,26 +25,24 @@ test("start page: New notebook creates and opens it; the round button closes it 
   await page.keyboard.type("first");
   await page.getByRole("button", { name: "Create", exact: true }).click();
 
-  await page.waitForURL(/edit\?id=/, { timeout: 10000 });
+  await page.waitForURL(/edit\?id=/);
   const target = path.join(dir, "first.R");
   assert.ok(fs.existsSync(target), "the notebook file exists in the server's start folder");
 
   await page.goto(server.url);
   const openRow = page.locator(".ember-start-row", { has: page.locator(".ember-start-name", { hasText: "first.R" }) });
-  await openRow.waitFor({ state: "visible", timeout: 10000 });
+  await openRow.waitFor({ state: "visible" });
 
   await openRow.locator(".ember-start-stop").click();
   await page.waitForFunction(
-    () => !document.querySelector(".ember-start-stop"),
-    null, { timeout: 10000 });
+    () => !document.querySelector(".ember-start-stop"));
 
   const recentRow = page.locator(".ember-start-row", { has: page.locator(".ember-start-name", { hasText: "first.R" }) });
-  await recentRow.waitFor({ state: "visible", timeout: 10000 });
+  await recentRow.waitFor({ state: "visible" });
   await recentRow.locator(".ember-start-forget").click();
 
   await page.waitForFunction(
-    () => !Array.from(document.querySelectorAll(".ember-start-name")).some((a) => a.textContent.includes("first.R")),
-    null, { timeout: 10000 });
+    () => !Array.from(document.querySelectorAll(".ember-start-name")).some((a) => a.textContent.includes("first.R")));
   assert.ok(fs.existsSync(target), "forgetting the notebook never deletes the file");
 
   assertNoProblems(page);
@@ -73,13 +71,13 @@ test("start page: Open a file completes a typed path and opens it in the editor 
   await openInput.click();
   await page.keyboard.type(dir);
   const option = (name) => page.locator(".cm-tooltip-autocomplete li", { hasText: name });
-  await option(path.basename(dir)).waitFor({ state: "visible", timeout: 0 });
+  await option(path.basename(dir)).waitFor({ state: "visible" });
   await page.keyboard.type(path.sep);
-  await option("existing.R").waitFor({ state: "visible", timeout: 0 });
+  await option("existing.R").waitFor({ state: "visible" });
   await option("existing.R").click();
 
   await page.locator(".ember-start-open-file button").click();
-  await page.waitForURL(/edit\?id=/, { timeout: 10000 });
+  await page.waitForURL(/edit\?id=/);
 
   assertNoProblems(page);
 });
@@ -101,9 +99,9 @@ test("start page: Open a file finds a name past the first 200 entries of a big f
   const option = (name) => page.locator(".cm-tooltip-autocomplete li", { hasText: name });
   await page.locator(".ember-start-open-file .cm-content").click();
   await page.keyboard.type(dir + path.sep);
-  await option("a000/").waitFor({ state: "visible", timeout: 0 });
+  await option("a000/").waitFor({ state: "visible" });
   await page.keyboard.type("zz");
-  await option("zz-target/").waitFor({ state: "visible", timeout: 0 });
+  await option("zz-target/").waitFor({ state: "visible" });
 
   assertNoProblems(page);
 });

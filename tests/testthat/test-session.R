@@ -357,10 +357,8 @@ test_that("a failing save is not retried within one drain, and is retried on the
   # within this one drain (the text never changes, so the write is retried
   # every time the event is processed), pinning a core at 100% CPU. This
   # must return and record the failure exactly once. The broken version
-  # never returned, so the ceiling only has to be finite: 10 s, not a
-  # budget a slow runner can miss.
-  t <- system.time(edit_notebook(nb, set_code("A", "2")))
-  expect_lt(t[["elapsed"]], 10)
+  # never returned; returning at all is the check, so no time limit.
+  edit_notebook(nb, set_code("A", "2"))
   problems <- notebook_state(nb)$problems
   expect_equal(sum(problems$kind == "save_failed"), 1)
 

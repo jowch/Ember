@@ -427,7 +427,9 @@ jsonlite. A literal path in a file the cell sources counts too.
   counts, so a cell that writes the file it reads doesn't wake itself, and
   a reader that ran after the writer isn't run twice. Comparing versions,
   not times, holds however coarse the file system's clock is. A reader
-  that is queued is left alone: its run reads the new file.
+  that is queued is marked stale with its dependents, and nothing more is
+  queued: its run reads the new file, and if a stop empties the queue
+  first, its old result doesn't look current (#472).
 - The engine checks the files again as each run's result arrives, before
   the notebook can look finished. So running a writer and waiting for the
   notebook (`run_cells(wait = TRUE)`, an agent's execute-and-wait) returns
@@ -916,7 +918,12 @@ settings cells' changes, so a deleted setting doesn't linger.
 **Editor services** run in the worker with base R: completion through
 `utils`'s completion functions (as IRkernel does), help pages through
 `tools::Rd2HTML`, signatures through `args()`. These use internal `utils`
-functions, so they're tested on each R release.
+functions, so they're tested on each R release. Inside a call, utils looks
+up the arguments of the function and each of its S3 methods by listing
+every attached package per name, which takes seconds for `print(` with a
+large package stack. The worker finds the same names with `exists()` and
+puts them in utils' argument table for that one completion, so the items
+don't change (#288).
 
 ### Attached packages
 

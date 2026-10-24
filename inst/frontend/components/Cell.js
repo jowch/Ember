@@ -11,7 +11,7 @@ import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { useEventListener } from "../common/useEventListener.js"
 import { t, th } from "../common/lang.js"
 import { CircleIcon, ClockIcon, EyeIcon, EyeOffIcon, SlashCircleIcon, SlidersIcon } from "../common/Icons.js"
-import { stale_names } from "../common/stale_names.js"
+import { stale_names, defining_cell } from "../common/stale_names.js"
 import { display_name } from "../common/display_name.js"
 import { useSettled, wait_for_on } from "../common/useSettled.js"
 import { EditorSelection, EditorView } from "../imports/CodemirrorPlutoSetup.js"
@@ -24,11 +24,30 @@ import { ctrl_or_cmd_name } from "../common/KeyboardShortcuts.js"
  * 'and N more'").
  */
 const format_stale_chip = (notebook, cell_id) => {
-    const names = stale_names(notebook, cell_id).map(display_name)
+    const names = stale_names(notebook, cell_id)
     if (names.length === 0) return t("t_chip_stale")
-    const shown = names.slice(0, 3)
+    const shown = names.slice(0, 3).map((name) => name_link(notebook, cell_id, name))
     const rest = names.length - shown.length
-    return t("t_chip_stale_names", { names: join_names(rest > 0 ? [...shown, t("t_n_more", { count: rest })] : shown) })
+    return th("t_chip_stale_names", { names: join_parts(rest > 0 ? [...shown, t("t_n_more", { count: rest })] : shown) })
+}
+
+/**
+ * A name in a chip or note, as a link to the one cell that defines it:
+ * clicking scrolls there and selects the definition, as go-to-definition
+ * does (#285). Plain text when no one cell defines it (a double
+ * definition, or the definer was deleted).
+ */
+const name_link = (notebook, cell_id, /** @type {string} */ name) => {
+    const definer = defining_cell(notebook, cell_id, name)
+    if (definer == null) return display_name(name)
+    return html`<a
+        href="#"
+        onClick=${(e) => {
+            e.preventDefault()
+            window.dispatchEvent(new CustomEvent("cell_focus", { detail: { cell_id: definer, line: 0, definition_of: name } }))
+        }}
+        >${display_name(name)}</a
+    >`
 }
 
 /**
@@ -55,6 +74,13 @@ const settings_chip = (/** @type {{name: string, found: string}[]} */ settings) 
 const join_names = (/** @type {string[]} */ parts) =>
     parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} ${t("t_and")} ${parts[parts.length - 1]}`
 
+/** join_names() for parts that may be links: "a", "a and b", "a, b and c".
+ * Never a bare string: th() parses a string as markup, so a name like `a<b`
+ * would lose its text. html`${x}` returns x itself, so a lone part goes in
+ * an array, which th() renders as a slot, escaped. */
+export const join_parts = (/** @type {any[]} */ parts) =>
+    parts.length === 1 ? [parts[0]] : html`${parts.slice(0, -1).map((part, i) => (i === 0 ? part : html`, ${part}`))} ${t("t_and")} ${parts[parts.length - 1]}`
+
 const is_busy_rail = (/** @type {string} */ rail) => rail === "run" || rail === "queued"
 /** A run shows on the rail only once it has lasted SETTLE_MS; one already
  * shown moves from queued to running at once. */
@@ -79,6 +105,11 @@ const useCellApi = (node_ref, published_object_keys, pluto_actions) => {
 
     return cell_api_ready
 }
+
+/** How long a click on a text cell's output waits for a second click
+ * before it opens the source. Exported for the e2e tests, which wait for
+ * this timer to have run rather than for a fixed time. */
+export const TEXT_CLICK_MS = 300
 
 /**
  * @param {{
@@ -361,7 +392,7 @@ export const Cell = ({
         if (e.detail > 1 || !(window.getSelection()?.isCollapsed ?? true)) return
         text_click_timer.current = setTimeout(() => {
             if (window.getSelection()?.isCollapsed ?? true) set_text_open(true)
-        }, 300)
+        }, TEXT_CLICK_MS)
     }
     const was_text_open = useRef(false)
     const select_on_close = useRef(false)
@@ -654,7 +685,7 @@ export const Cell = ({
                 ? html`<ember-settings-note role="status">${t("t_settings_found_note", { names: join_names(settings_found) })}</ember-settings-note>`
                 : null}
             ${changed_in_place.length > 0
-                ? html`<ember-settings-note class="in-place-note" role="status">${t("t_changed_in_place_note", { names: join_names(changed_in_place) })}</ember-settings-note>`
+                ? html`<ember-settings-note class="in-place-note" role="status">${th("t_changed_in_place_note", { names: join_parts(changed_in_place.map((name) => name_link(pluto_actions.get_notebook(), cell_id, name))) })}</ember-settings-note>`
                 : null}
             ${untracked_reads.length > 0
                 ? html`<ember-settings-note class="untracked-note" role="status">${t("t_untracked_read_note", { names: join_names(untracked_reads.map((name) => `${name}()`)) })}</ember-settings-note>`

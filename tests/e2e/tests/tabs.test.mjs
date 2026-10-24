@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import fs from "node:fs";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, setCellCode, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, setCellCode, cellSelector, codeSelector } from "../browser.mjs";
 
 const open_panel = (page, tab) => page.evaluate((t) => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: t })), tab);
 
@@ -28,8 +28,7 @@ test("Variables tab: alphabetical, click selects the cell, Filter narrows, stale
   // `aardvark <- sum(x)` is an assignment: no visible output, so wait for
   // the run itself to finish.
   await page.waitForFunction(
-    () => window.editor_state?.notebook?.cell_results?.B?.output?.last_run_timestamp > 0,
-    null, { timeout: 30000 });
+    () => window.editor_state?.notebook?.cell_results?.B?.output?.last_run_timestamp > 0);
 
   await open_panel(page, "variables");
   await page.waitForSelector("#helpbox-wrapper.open");
@@ -40,14 +39,12 @@ test("Variables tab: alphabetical, click selects the cell, Filter narrows, stale
   // Clicking a name selects and scrolls to its defining cell.
   await page.locator("#ember-variables-tab .ember-variable-name", { hasText: "aardvark" }).click();
   await page.waitForFunction(
-    () => document.querySelector('pluto-cell[id="B"]')?.classList.contains("selected"),
-    null, { timeout: 5000 });
+    () => document.querySelector('pluto-cell[id="B"]')?.classList.contains("selected"));
 
   // Filter narrows the rows shown.
   await page.locator(".ember-variables-filter input").fill("aard");
   await page.waitForFunction(
-    () => document.querySelectorAll("#ember-variables-tab .ember-variable-row").length === 1,
-    null, { timeout: 5000 });
+    () => document.querySelectorAll("#ember-variables-tab .ember-variable-row").length === 1);
   await page.locator(".ember-variables-filter input").fill("");
 
   assertNoProblems(page);
@@ -68,8 +65,7 @@ test("Variables tab: a stale cell's rows are faint (lazy.R) (121)", async (t) =>
   await runCell(page, "A");
   await runCell(page, "B");
   await page.waitForFunction(
-    () => window.editor_state?.notebook?.cell_results?.B?.output?.last_run_timestamp > 0,
-    null, { timeout: 30000 });
+    () => window.editor_state?.notebook?.cell_results?.B?.output?.last_run_timestamp > 0);
 
   const a_ran_before = await page.evaluate(() => window.editor_state?.notebook?.cell_results?.A?.output?.last_run_timestamp);
   await setCellCode(page, "A", "x <- 100");
@@ -77,13 +73,12 @@ test("Variables tab: a stale cell's rows are faint (lazy.R) (121)", async (t) =>
   await page.waitForFunction(
     (before) => window.editor_state?.notebook?.cell_results?.A?.output?.last_run_timestamp > before &&
           document.querySelector('pluto-cell[id="B"]')?.classList.contains("stale"),
-    a_ran_before, { timeout: 30000 });
+    a_ran_before);
 
   await open_panel(page, "variables");
   await page.waitForSelector("#helpbox-wrapper.open");
   await page.waitForFunction(
-    () => document.querySelector("#ember-variables-tab .ember-variable-row.stale")?.innerText.includes("y"),
-    null, { timeout: 10000 });
+    () => document.querySelector("#ember-variables-tab .ember-variable-row.stale")?.innerText.includes("y"));
 
   assertNoProblems(page);
 });
@@ -100,20 +95,18 @@ test("Help tab: back/forward over the queries shown (122)", async (t) => {
   await openNotebook(page, server.origin, server.secret, notebook);
   await runCell(page, "A"); // Help needs R running to answer.
   await page.waitForFunction(
-    () => window.editor_state?.notebook?.cell_results?.A?.output?.last_run_timestamp > 0,
-    null, { timeout: 30000 });
+    () => window.editor_state?.notebook?.cell_results?.A?.output?.last_run_timestamp > 0);
 
   await open_panel(page, "docs");
   await page.waitForSelector("#live-docs-search");
 
-  await page.locator(`${cellSelector("B")} .cm-content`).click();
+  await page.locator(codeSelector("B")).click();
   await page.keyboard.press("End");
   await page.keyboard.type(" lm", { delay: 10 });
   // Put the cursor inside "lm" so the docs query follows it.
   await page.keyboard.press("ArrowLeft");
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Fitting Linear Models"),
-    null, { timeout: 15000 });
+    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Fitting Linear Models"));
 
   // One key at a time (not .fill(), which sets the value in one shot): a
   // history entry must come only from the final, successful "mean" reply,
@@ -123,18 +116,15 @@ test("Help tab: back/forward over the queries shown (122)", async (t) => {
   await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
   await search.pressSequentially("mean", { delay: 30 });
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Arithmetic Mean"),
-    null, { timeout: 15000 });
+    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Arithmetic Mean"));
 
   await page.locator('button[aria-label="Back"]').click();
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Fitting Linear Models"),
-    null, { timeout: 15000 });
+    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Fitting Linear Models"));
 
   await page.locator('button[aria-label="Forward"]').click();
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Arithmetic Mean"),
-    null, { timeout: 15000 });
+    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Arithmetic Mean"));
 
   assertNoProblems(page);
 });
@@ -153,8 +143,7 @@ test("Status tab: the autorun/lazy radio reflects and sets on_cell_change; Versi
   await openNotebook(page, server.origin, server.secret, notebook);
   await runCell(page, "A");
   await page.waitForFunction(
-    () => window.editor_state?.notebook?.cell_results?.A?.output?.last_run_timestamp > 0,
-    null, { timeout: 30000 });
+    () => window.editor_state?.notebook?.cell_results?.A?.output?.last_run_timestamp > 0);
 
   await open_panel(page, "process");
   await page.waitForSelector("#helpbox-wrapper.open");
@@ -172,7 +161,7 @@ test("Status tab: the autorun/lazy radio reflects and sets on_cell_change; Versi
   await page.waitForFunction(() => document.querySelectorAll('#ember-status-tab input[name="ember-on-cell-change"]')[0]?.checked === true);
 
   await page.reload();
-  await page.waitForSelector("pluto-cell", { timeout: 30000 });
+  await page.waitForSelector("pluto-cell");
   await open_panel(page, "process");
   await page.waitForSelector("#helpbox-wrapper.open");
   await page.waitForFunction(() => document.querySelectorAll('#ember-status-tab input[name="ember-on-cell-change"]')[0]?.checked === true);

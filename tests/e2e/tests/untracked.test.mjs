@@ -9,7 +9,7 @@ import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, waitIdle } from "../browser.mjs";
 
-test("a cell that reads globals through get() on a computed name says Ember can't track them (#357)", { timeout: 60000 }, async (t) => {
+test("a cell that reads globals through get() on a computed name says Ember can't track them (#357)", async (t) => {
   const notebook = tempNotebook("untracked.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "untracked.server.log") });
   const browser = await launchBrowser();
@@ -21,7 +21,7 @@ test("a cell that reads globals through get() on a computed name says Ember can'
   const note = `${cellSelector("B")} ember-settings-note.untracked-note`;
   const text = "Ember can't tell which variables this cell reads through get(), so it doesn't rerun when they change. " +
     "Name the variables in the code, or keep the values in one list.";
-  await page.waitForSelector(note, { timeout: 20000 });
+  await page.waitForSelector(note);
   assert.equal(await page.locator(note).innerText(), text, "shown in safe preview, before anything runs");
   for (const id of ["N", "A", "L"]) {
     assert.equal(await page.locator(`${cellSelector(id)} ember-settings-note`).count(), 0, `no note on ${id}`);

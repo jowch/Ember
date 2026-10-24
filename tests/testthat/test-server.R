@@ -1540,12 +1540,15 @@ test_that("ember_render_plot {cell_id, res} re-renders at the cell's own figure 
   expect_equal(out$size$width, round(7.5 * 384))
   expect_equal(out$size$height, round(5 * 384))
 
-  # a text cell: nothing happens
+  # a text cell: nothing happens. B's redraw at a new res, asked for
+  # after it, comes back after anything the worker did for A's.
   before_a <- notebook_state(nb)$results[[a]]
   handle_message(server, ws, wire("ember_render_plot", notebook_id = id, cell_id = a,
                                   width = 500, height = 500, res = 96))
-  Sys.sleep(0.2)
-  later::run_now(timeout = 0.2)
+  handle_message(server, ws, wire("ember_render_plot", notebook_id = id, cell_id = b, res = 200))
+  expect_true(wait_for(nb, function(s) {
+    identical(notebook_state(nb)$results[[b]]$output$size$res, 200L)
+  }, timeout = 10))
   expect_identical(notebook_state(nb)$results[[a]], before_a)
 })
 
