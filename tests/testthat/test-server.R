@@ -1835,6 +1835,33 @@ test_that("ember_open_notebook finds an already-open notebook and opens a closed
   expect_true(is.character(r3$message$error))
 })
 
+test_that("Open a file and /open say a path doesn't exist or is a folder, and what to do (#559)", {
+  dir <- tempfile("ember-start-open-bad-")
+  dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  server$port <- 40011L
+  ws <- fake_socket()
+  missing <- file.path(dir, "nothere.R")
+  full <- normalizePath(missing, mustWork = FALSE)
+
+  handle_message(server, ws, wire("ember_open_notebook", path = missing))
+  expect_identical(ws$last()$message$error,
+                   sprintf("%s doesn't exist. Check the spelling, or use New notebook to make one.", full))
+  handle_message(server, ws, wire("ember_open_notebook", path = dir))
+  expect_identical(ws$last()$message$error, sprintf("%s is a folder, not a notebook file.", normalizePath(dir)))
+  # Open a file submitted with nothing typed.
+  handle_message(server, ws, wire("ember_open_notebook", path = ""))
+  expect_identical(ws$last()$message$error, "No file was given. Type the path of a notebook file.")
+
+  resp <- http_call(server, fake_req("/open", sprintf("path=%s&secret=s", utils::URLencode(missing, reserved = TRUE))))
+  expect_equal(resp$status, 400L)
+  expect_identical(resp$body, sprintf("Couldn't open %s: %s doesn't exist. Check the spelling.", missing, full))
+  resp <- http_call(server, fake_req("/open", sprintf("path=%s&secret=s", utils::URLencode(dir, reserved = TRUE))))
+  expect_identical(resp$body, sprintf("Couldn't open %s: %s is a folder, not a notebook file.", dir, normalizePath(dir)))
+  expect_length(ls(server$hubs), 0L)
+})
+
 # ---- Editor services (ui-2.md, 4) -------------------------------------------
 
 test_that("complete in safe preview replies from the fallback within handle_message(); with an idle worker, df$ offers mpg (not df$mpg: start/stop already skip the $, and the worker's own 'df$mpg' token/item name is stripped to match, worker_completion_items()) (57)", {

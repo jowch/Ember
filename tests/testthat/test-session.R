@@ -22,6 +22,25 @@ test_that("open_notebook starts no process; the snapshot is preview (106)", {
   expect_false(snap$allowed)
 })
 
+test_that("open_notebook() on a missing path or a folder says which, with the full path, not R's generic error (#559)", {
+  dir <- tempfile("ember-open-bad-")
+  dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  missing <- file.path(dir, "nothere.R")
+  full <- normalizePath(missing, mustWork = FALSE)
+
+  err <- tryCatch(open_notebook(missing), error = function(e) e)
+  expect_s3_class(err, "ember_no_file")
+  expect_identical(conditionMessage(err), sprintf("ember: %s doesn't exist. Check the spelling", full))
+  # No "cannot open file" warning left behind: nothing tried to read it.
+  expect_no_warning(tryCatch(open_notebook(missing), error = function(e) NULL))
+
+  err <- tryCatch(open_notebook(dir), error = function(e) e)
+  expect_s3_class(err, "ember_no_file")
+  expect_identical(conditionMessage(err),
+                   sprintf("ember: %s is a folder, not a notebook file", normalizePath(dir)))
+})
+
 test_that("run_cells(wait = TRUE) runs every cell with the expected outputs (107)", {
   cells <- list(S = cell(""), A = cell("x <- 21"), B = cell("y <- x * 2"), C = cell("y + 1"))
   path <- write_session_notebook(cells)

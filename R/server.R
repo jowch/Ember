@@ -1421,6 +1421,8 @@ handlers <- list(
   ember_open_notebook = function(server, cl, hub, req) {
     result <- tryCatch(
       list(url = relative_edit_url(server, open_or_find(server, req$body$path))),
+      ember_no_file = function(e) list(error = paste0(
+        e$text, if (identical(e$kind, "missing")) ", or use New notebook to make one." else ".")),
       error = function(e) list(error = conditionMessage(e)))
     send(cl, reply_message(req, "ember_open_notebook", result))
   },
@@ -1878,6 +1880,7 @@ http_open <- function(server, req) {
   q <- parse_query_string(req$QUERY_STRING)
   if (is.null(q$path) || !nzchar(q$path)) return(http_text(400L, "missing path"))
   id <- tryCatch(open_or_find(server, q$path), error = function(e) e)
+  if (inherits(id, "ember_no_file")) return(http_text(400L, sprintf("Couldn't open %s: %s.", q$path, id$text)))
   if (inherits(id, "error")) return(http_text(400L, sprintf("Couldn't open %s: %s.", q$path, sub("\\.$", "", conditionMessage(id)))))
   list(status = 302L, headers = list("Location" = relative_edit_url(server, id)), body = "")
 }
