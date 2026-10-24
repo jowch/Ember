@@ -398,13 +398,17 @@ what was missing.
   what to install (`compiler_instructions()`). GitHub sources aren't
   counted: whether they compile is known only once downloaded.
 - **On Linux with Package Manager binaries**, the compiler check above
-  is skipped unless Package Manager has no binaries for this R at the
-  snapshot date. A date from before it built binaries for this R gets
-  none, for every package (measured at 2024-06-01 on R 4.6). The installer
-  asks about one locked package (`ppm_serves_binary()`: the
-  `X-Package-Type` header Package Manager sends for R's user agent), and
-  only then reads the source index and names every compiled package. The
-  instructions add that a newer date needs no compiler.
+  is skipped unless Package Manager sends some locked packages as
+  source. A date from before it built binaries for this R gets none for
+  most packages: none at all at 2024-06-01 on R 4.6, and at 2025-03-20
+  all but the versions still current when it started building for this
+  R, such as MASS 7.3-65 and R6 2.6.1 (#520). The installer asks
+  Package Manager (`ppm_source_only()`, then `ppm_serves_binary()`: the
+  `X-Package-Type` header it sends for R's user agent) about four
+  packages spread through the lock, and about every package once one of
+  those comes as source. Only then does it read the source index and name
+  the compiled packages that come as source. The instructions add that a
+  newer date needs no compiler.
 - **A build that fails with no binary for this R (#19).** A snapshot date
   from before the running R came out has no binaries for that R, so renv
   builds from source, and versions that old often don't build on a newer
@@ -436,13 +440,13 @@ what was missing.
   installer names the CRAN packages that will build from source for want
   of a binary for this R (`source_only_packages()`), leaving out those
   renv's cache already holds. On Linux with Package Manager binaries it
-  asks about one package, as the compiler check does, at the binary URL
-  renv downloads from (`installer_repos()`: at CRAN's own URL Package
-  Manager sends the source at every date). At a date from before Package
-  Manager built binaries for this R it sends the source of every package,
-  so when a second package comes as source too, all of them count; when
-  only the first does (a failed binary build, a release from this week),
-  only it does. On macOS and Windows it reads the
+  asks Package Manager the same way as the compiler check, at the binary
+  URL renv downloads from (`installer_repos()`: at CRAN's own URL Package
+  Manager sends the source at every date), and names the packages that
+  come as source. It stops asking after two answers in a row it can't
+  get. A date where all four sampled packages happen to have binaries
+  says nothing, and a failed build is still explained afterwards. On
+  macOS and Windows it reads the
   binary index, as `no_binary_packages()` does. On Linux without those
   binaries everything always builds from source, so nothing is said. It
   prints one `EMBER-NO-BINARY <package>=<version> ...` line, the shell

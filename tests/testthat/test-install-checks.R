@@ -159,7 +159,7 @@ test_that("compiler_check() on macOS counts a binary from any of binary_repos, s
                              binary_repos = c(repos, Bioconductor = file_url(bioc))))
 })
 
-test_that("compiler_check() on Linux with Package Manager binaries asks about one package, and counts source builds when it comes as source (117)", {
+test_that("compiler_check() on Linux with Package Manager binaries asks Package Manager, and counts the source builds it sends (117, #520)", {
   lock <- parse_lock_lines(c("Rcpp 1.0.12 CRAN", "glue 1.8.0 CRAN"))$lock
   repo <- paste0(if (.Platform$OS.type == "windows") "file:///" else "file://",
                  normalizePath(testthat::test_path("fixtures", "repos", "cran", "2026-09-01"), winslash = "/"))
@@ -171,7 +171,8 @@ test_that("compiler_check() on Linux with Package Manager binaries asks about on
   expect_null(compiler_check(lock, c(CRAN = "file:///nonexistent/ember-test-repo"), linux_binaries = TRUE,
                              os = "linux", compiler = FALSE, binary_repos = binary_repos,
                              serves_binary = answer(TRUE)))
-  expect_equal(asked, "https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/Rcpp_1.0.12.tar.gz")
+  expect_equal(asked, c("https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/Rcpp_1.0.12.tar.gz",
+                        "https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/glue_1.8.0.tar.gz"))
   # Can't tell: left to the build's own error, as before.
   expect_null(compiler_check(lock, c(CRAN = repo), linux_binaries = TRUE, os = "linux", compiler = FALSE,
                              binary_repos = binary_repos, serves_binary = answer(NA)))
@@ -182,6 +183,13 @@ test_that("compiler_check() on Linux with Package Manager binaries asks about on
   expect_equal(got$packages, "Rcpp")
   expect_match(got$instructions, compiler_instructions(os = "linux"), fixed = TRUE)
   expect_match(got$instructions, "updating the packages to a newer date, which has them, needs no compiler", fixed = TRUE)
+  # A date from before then that still has binaries for some versions
+  # (#520): Matrix, asked first, has one, and the rest come as source.
+  # The compiled ones that come as source count, and Matrix doesn't.
+  mixed <- parse_lock_lines(c("Matrix 1.6-5 CRAN", "Rcpp 1.0.12 CRAN", "glue 1.8.0 CRAN", "rlang 1.1.3 CRAN"))$lock
+  got <- compiler_check(mixed, c(CRAN = repo), linux_binaries = TRUE, os = "linux", compiler = FALSE,
+                        binary_repos = binary_repos, serves_binary = function(url) grepl("/Matrix_", url))
+  expect_equal(got$packages, c("Rcpp", "rlang"))
   # With the compiler there nothing is asked.
   asked <- character()
   expect_null(compiler_check(lock, c(CRAN = repo), linux_binaries = TRUE, os = "linux", compiler = TRUE,
@@ -318,6 +326,37 @@ test_that("source_only_packages() names, before the install, the CRAN packages t
                                      os = "linux", serves_binary = answer(TRUE), minor = "4.6"), 0)
   expect_length(source_only_packages(lock, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE,
                                      os = "linux", serves_binary = answer(NA), minor = "4.6"), 0)
+  # A date that has binaries: only the few spread through the lock are asked.
+  asked <- character()
+  many <- parse_lock_lines(sprintf("p%02d 1.0 CRAN", 1:10))$lock
+  expect_length(source_only_packages(many, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE,
+                                     os = "linux", serves_binary = answer(TRUE), minor = "4.6"), 0)
+  expect_equal(sub(".*/", "", asked), sprintf("p%02d_1.0.tar.gz", c(1, 4, 7, 10)))
+  # A date from before binaries for this R with some anyway (#520): the
+  # first package, still CRAN's current version, has one, and so does
+  # another; the rest come as source. Every package is asked about, and
+  # just those count.
+  mixed <- parse_lock_lines(c("MASS 7.3-65 CRAN", "Matrix 1.7-3 CRAN", "R6 2.6.1 CRAN", "cli 3.6.4 CRAN", "dplyr 1.1.4 CRAN",
+                              "fansi 1.0.6 CRAN", "isoband 0.2.7 CRAN", "rlang 1.1.5 CRAN", "stringi 1.8.4 CRAN"))$lock
+  asked <- character()
+  got <- source_only_packages(mixed, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE, os = "linux",
+                              serves_binary = function(url) { asked <<- c(asked, url); grepl("/(MASS|R6)_", url) },
+                              minor = "4.6")
+  expect_equal(got, c(Matrix = "1.7-3", cli = "3.6.4", dplyr = "1.1.4", fansi = "1.0.6", isoband = "0.2.7",
+                      rlang = "1.1.5", stringi = "1.8.4"))
+  expect_length(unique(asked), 9)
+  # Package Manager stops answering partway: asking stops after two
+  # answers in a row it couldn't get, and what it did learn counts.
+  asked <- character()
+  got <- source_only_packages(many, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE, os = "linux",
+                              serves_binary = function(url) {
+                                asked <<- c(asked, url)
+                                if (grepl("p0[1-4]_|p10_", url)) grepl("p01_", url) else NA
+                              }, minor = "4.6")
+  # Asked: p01, p04, p07 (no answer) and p10 first, then p02 and p03, and
+  # p05 and p06 with no answer, which stops it.
+  expect_equal(got, c(p02 = "1.0", p03 = "1.0", p04 = "1.0", p10 = "1.0"))
+  expect_equal(sub(".*/", "", asked), sprintf("p%02d_1.0.tar.gz", c(1, 4, 7, 10, 2, 3, 5, 6)))
   # Linux without them: everything builds there anyway, so nothing is asked.
   expect_length(source_only_packages(lock, binary_repos, cache, linux_binaries = FALSE, os = "linux",
                                      serves_binary = function(url) stop("not asked"), minor = "4.6"), 0)
@@ -399,6 +438,16 @@ test_that("[net] at a date with binaries for this R, the installer's own URLs na
   lock_old <- parse_lock_lines(c("cli 3.6.2 CRAN", "glue 1.7.0 CRAN"))$lock
   expect_equal(source_only_packages(lock_old, old, NULL, binary_repos = r_old$probe, linux_binaries = TRUE),
                c(cli = "3.6.2", glue = "1.7.0"))
+  # A date from before binaries for this R that still has some (#520):
+  # MASS 7.3-65 and R6 2.6.1 were still current when Package Manager
+  # started building for R 4.6, so they have binaries, and MASS sorts
+  # first. The rest build from source, and are named.
+  mixed <- c(CRAN = "https://packagemanager.posit.co/cran/2025-03-20")
+  r_mixed <- installer_repos(mixed)
+  lock_mixed <- parse_lock_lines(c("MASS 7.3-65 CRAN", "R6 2.6.1 CRAN", "cli 3.6.4 CRAN", "rlang 1.1.5 CRAN",
+                                   "stringi 1.8.4 CRAN"))$lock
+  expect_equal(source_only_packages(lock_mixed, mixed, NULL, binary_repos = r_mixed$probe, linux_binaries = TRUE),
+               c(cli = "3.6.4", rlang = "1.1.5", stringi = "1.8.4"))
 })
 
 test_that("the EMBER-NO-BINARY line reads back as it was written (#19)", {
