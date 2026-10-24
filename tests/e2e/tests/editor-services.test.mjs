@@ -608,6 +608,45 @@ test("signature: the cursor after lm( shows a tooltip containing formula within 
   assertNoProblems(page);
 });
 
+// #600: the tooltip is for a cursor inside a call's arguments. Once the
+// closing ")" is typed the call is done and the tooltip closes, but a call
+// it sits in keeps its own.
+test("signature: the tooltip closes once the call's ) is typed (#600)", async (t) => {
+  const notebook = tempNotebook("rich.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-signature-close.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+
+  await page.hover(cellSelector("DF"));
+  await page.locator(`${cellSelector("DF")} button.add_cell.after`).click({ force: true });
+  const newCellId = await page.evaluate((bid) => {
+    const cells = Array.from(document.querySelectorAll("pluto-cell"));
+    const i = cells.findIndex((c) => c.id === bid);
+    return cells[i + 1]?.id ?? null;
+  }, "DF");
+  const newSel = `pluto-cell[id="${newCellId}"]`;
+  const tooltip = page.locator(".cm-ember-signature-tooltip");
+
+  await page.locator(`${newSel} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
+  await page.keyboard.type("lm(summary(1", { delay: 10 });
+  await page.waitForFunction(
+    () => /object/.test(document.querySelector(".cm-ember-signature-tooltip")?.innerText ?? ""));
+  // The ")" types over the one closeBrackets added, leaving the cursor
+  // after summary()'s ")" and inside lm()'s arguments.
+  await page.keyboard.type(")");
+  await page.waitForFunction(
+    () => /formula/.test(document.querySelector(".cm-ember-signature-tooltip")?.innerText ?? ""));
+  await page.keyboard.type(")");
+  await tooltip.waitFor({ state: "detached" });
+  const code = await page.locator(`${newSel} .cm-editor:not(.cm-ssr-fake) .cm-content`).innerText();
+  assert.equal(code.trim(), "lm(summary(1))");
+
+  assertNoProblems(page);
+});
+
 // #34: the tooltip sits above the call's line. For a call on a cell's
 // first line that is over the cell before it, and a click there must reach
 // that cell, not the tooltip.

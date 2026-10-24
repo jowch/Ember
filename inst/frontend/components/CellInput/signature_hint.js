@@ -2,8 +2,11 @@ import { StateField, StateEffect, ViewPlugin, showTooltip, syntaxTree } from "..
 
 /**
  * The call the cursor is inside, if any: the innermost `Call` whose
- * `ArgList` contains the cursor (the same rule `get_selected_doc_from_state`
- * uses, ui-2.md "4d. Signatures"). `name`/`package` split a `pkg::name` or
+ * `ArgList` contains the cursor (the rule `get_selected_doc_from_state`
+ * uses, ui-2.md "4d. Signatures"), except that a cursor right after the
+ * closing `)` is outside it: the call is typed, so its tooltip closes, as
+ * RStudio's does (#600). In `f(g(x)|` that leaves the cursor in `f`'s
+ * arguments. `name`/`package` split a `pkg::name` or
  * `pkg:::name` callee; `from` is the call's start; `pos` is where the
  * tooltip anchors: the call's own
  * start while the cursor is on the call's first line, so it stays put
@@ -17,6 +20,7 @@ function call_at_cursor(state) {
     let tree = syntaxTree(state)
     for (let n = tree.resolveInner(pos, -1); n != null; n = n.parent) {
         if (n.name === "ArgList" && n.parent?.name === "Call") {
+            if (pos === n.to && n.lastChild?.name === "ParenR") continue
             let call = n.parent
             let callee = call.firstChild
             if (callee == null) return null
