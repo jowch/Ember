@@ -32,8 +32,7 @@ fuzz_steps <- function() {
 # its failure, so its later steps aren't checked. Entries look like
 #   "lazy 30" = list(issue = 174, step = 5L, kind = "after running every cell, _ isn't fresh")
 fuzz_known <- list(
-  "conflicts autorun 2895" = list(issue = 603, step = 20L, kind = "_ isn't stale but reads from _, which is"),
-  "inputs lazy 2959" = list(issue = 604, step = 15L, kind = "after running _, it isn't fresh"))
+  "conflicts autorun 2895" = list(issue = 603, step = 20L, kind = "_ isn't stale but reads from _, which is"))
 
 known_seeds <- function(mode) {
   keys <- as.character(names(fuzz_known))

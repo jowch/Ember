@@ -313,10 +313,14 @@ schedule <- function(state) {
     if (!is.null(waiting[[candidate]])) {
       # Leave it queued (it isn't blocked, just not ready yet) and look
       # further down the queue for something that can run now, dropping
-      # anything else along the way that can't (same rule as below).
+      # anything else along the way that can't (same rule as below). A
+      # cell downstream of a waiting one, by the graph or by what an edited
+      # cell's last run defined (run_graph()), waits with it: run now, it
+      # would read the waiting cell's old values (#604).
+      held <- reach(run_graph(state)$downstream, intersect(queue, names(waiting)))
       found <- NULL
       for (q in setdiff(queue, candidate)) {
-        if (!is.null(waiting[[q]])) next
+        if (!is.null(waiting[[q]]) || q %in% held) next
         if (can_run(state, q)) { found <- q; break }
         state$pending <- setdiff(state$pending, q)
       }
