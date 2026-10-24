@@ -14,6 +14,7 @@ import { BottomRightPanel, open_bottom_right_panel } from "./BottomRightPanel.js
 import { DropRuler, get_drop_index_for_paste } from "./DropRuler.js"
 import { SelectionArea } from "./SelectionArea.js"
 import { UndoDelete } from "./UndoDelete.js"
+import { Toast } from "./Toast.js"
 import { live_view, record_delete, expect_return, set_cell_undo_handlers } from "./CellInput/cell_undo.js"
 import { Scroller } from "./Scroller.js"
 import { Popup } from "./Popup.js"
@@ -1808,6 +1809,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                         recently_deleted=${this.state.recently_deleted}
                         on_click=${() => this.actions.undo_last_delete()}
                     />
+                    <${Toast} />
                     <${Popup} />
                 </${PlutoJSInitializingContext.Provider}>
                 </${PlutoBondsContext.Provider}>

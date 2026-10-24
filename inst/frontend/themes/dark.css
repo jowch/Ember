@@ -81,7 +81,7 @@
     --ember-menu-hover-bg: rgba(255, 255, 255, 0.08);
     --ember-menu-muted-color: rgba(255, 255, 255, 0.55);
     --ember-border: rgba(255, 255, 255, 0.15);
-    --ember-danger: rgb(255, 140, 140);
+    --ember-danger: var(--ember-red);
     --ember-focus-ring: var(--ember-accent);
 
     /* Page and chrome */

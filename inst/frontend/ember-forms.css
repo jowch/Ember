@@ -22,6 +22,9 @@
     --roboto-mono-font-stack: var(--ember-code-font);
     --system-fonts-mono: var(--ember-code-font);
     --ember-prose-font-stack: var(--ember-prose-font);
+    /* Native radios, checkboxes and range inputs in the accent, not the
+       browser's blue (#538). */
+    accent-color: var(--ember-accent);
 }
 
 .mono {
@@ -60,21 +63,51 @@
     color: var(--ember-danger);
 }
 
+/* One button for both pages (#538): the start page used to have its own
+   outlined primary, while the notebook's primary is filled. Hover and
+   pressed are the same on every button, as the cell menu's ⋯ already does. */
 .ember-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     font: inherit;
     font-size: 13px;
     font-weight: 500;
-    color: var(--pluto-output-color);
-    background: var(--header-bg-color);
-    border: 1px solid var(--ember-border);
+    color: var(--ember-text);
+    background: var(--ember-panel);
+    border: 1px solid var(--ember-line);
     border-radius: 7px;
-    padding: 6px 14px;
+    padding: 0 12px;
+    height: 32px;
     cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+    transition:
+        background-color 0.12s ease,
+        border-color 0.12s ease;
 }
-
+.ember-btn:hover:not(:disabled) {
+    background: var(--ember-hover);
+}
+.ember-btn:active:not(:disabled) {
+    background: var(--ember-active);
+}
 .ember-btn.primary {
-    color: var(--ember-accent);
+    background: var(--ember-accent);
     border-color: var(--ember-accent);
+    color: var(--ember-on-accent);
+}
+.ember-btn.primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--ember-accent) 86%, var(--ember-text));
+    border-color: color-mix(in srgb, var(--ember-accent) 86%, var(--ember-text));
+}
+.ember-btn.primary:active:not(:disabled) {
+    background: color-mix(in srgb, var(--ember-accent) 74%, var(--ember-text));
+    border-color: color-mix(in srgb, var(--ember-accent) 74%, var(--ember-text));
+}
+.ember-btn:disabled {
+    cursor: default;
+    opacity: 0.55;
 }
 
 .ember-btn.danger {
