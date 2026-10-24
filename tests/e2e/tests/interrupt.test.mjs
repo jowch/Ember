@@ -20,7 +20,7 @@ test("interrupt: a long-running cell is stopped by clicking stop", async (t) => 
   // is inside it: a stop that comes before the run has started only
   // cancels it (#472).
   // message(), not cat(): the worker sends a message to the page at once,
-  // while printed text waits for the next message or the run's end.
+  // while printed text waits for the next tick, a few times a second.
   await setCellCode(page, "LOOP", 'message("inside the loop"); t0 <- Sys.time(); while (Sys.time() - t0 < 60) NULL');
   await page.keyboard.press("Shift+Enter");
   // In the cell's console, not anywhere in the cell: its code says it too,
