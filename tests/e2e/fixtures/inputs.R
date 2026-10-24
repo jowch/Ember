@@ -33,6 +33,10 @@ other <- input_radio(c("p", "q"))
 q <- input_slider(1, 3, 2)
 round(input_number(2))
 
+# %% id=P
+plot(1:3)
+np <- input_slider(1, 3, 2)
+
 # %% id=B
 paste(n, method, show, title, k, pick)
 
@@ -46,5 +50,6 @@ paste(n, method, show, title, k, pick)
 # J
 # R
 # X
+# P
 # B
 # ///

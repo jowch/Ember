@@ -130,7 +130,10 @@ cell's output is its last line's value. When the last line is a bound
 input (`n <- input_slider(...)`), the widget is the cell's output, the one
 thing in its output area, as in Pluto, where `@bind` returns the widget as
 the cell's value. In R the variable is a number, so there is nothing else
-to print; the worker shows the input itself.
+to print; the worker shows the input itself. Anything else the run
+showed isn't the output then, so it goes below the cell: a plot drawn on an
+earlier line shows under the code, and printed values stay in the console,
+as they do for any cell.
 
 Any other input in the cell isn't its output, and an interactive widget
 anywhere but the output area would confuse (Jonathan, 2026-10-24). So it
@@ -400,8 +403,9 @@ R API. Nothing shows on the page yet.
 - **The widgets on the page.** Each cell's inputs go to the page as
   `cell_results[id].ember.inputs` (`project_inputs()` in R/inputs.R), and
   CellInputs.js draws them. The input marked `output` is drawn as its
-  widget in the output area, in place of `pluto-output`; every other input
-  is a read-only line below the code. A run that failed shows its error as
+  widget in the output area, in place of `pluto-output`, and a plot the
+  cell drew shows below the code instead; every other input is a
+  read-only line below the code. A run that failed shows its error as
   the output, and all its inputs as lines. The outline above had a new
   output type inside `<bond>` elements; Pluto's `Bond.js` isn't used, and
   the widgets call `set_bond` themselves.

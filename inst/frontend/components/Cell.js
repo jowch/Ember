@@ -219,6 +219,9 @@ export const Cell = ({
     // A bound input on the cell's last line is the cell's output (docs/inputs.md): its
     // widget takes the output area alone. A failed run's output is its error.
     const input_is_output = !errored && (ember?.inputs ?? []).some((i) => i.output)
+    // What else the run showed (a plot drawn on an earlier line) isn't the output then,
+    // so it goes below the cell rather than being lost (Jonathan, 2026-10-24).
+    const output_below = input_is_output && !(output?.mime === "text/plain" && (output?.body ?? "") === "")
 
     // When reading the code in a static HTML preview
     const [inspecting_hidden_code_here, set_inspecting_hidden_code_here] = useState(false)
@@ -721,6 +724,9 @@ export const Cell = ({
                 on_run=${on_run}
                 on_interrupt=${on_interrupt}
             />
+            ${!code_not_trusted_yet && output_below && cell_api_ready
+                ? html`<${CellOutput} errored=${errored} ...${output} ember_figure=${ember?.figure} ember_split=${split_n} on_split=${on_split} sanitize_html=${sanitize_html} cell_id=${cell_id} />`
+                : null}
             ${!code_not_trusted_yet && (ember?.inputs ?? []).some((i) => !i.output || errored)
                 ? html`<${CellInputs} cell_id=${cell_id} inputs=${ember.inputs} place=${errored ? "all-below" : "below"} disabled=${disable_input} />`
                 : null}

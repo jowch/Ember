@@ -58,7 +58,7 @@ test("inputs.R: an input on a cell's last line is its output widget, and moving 
   await waitRan(page, "L");
   await runCell(page, "B");
   await waitOutput(page, "B", /5 pearson TRUE Results 5 y/);
-  for (const id of ["R", "X"]) {
+  for (const id of ["R", "X", "P"]) {
     await runCell(page, id);
     await waitRan(page, id);
   }
@@ -81,6 +81,16 @@ test("inputs.R: an input on a cell's last line is its output widget, and moving 
   const lines = page.locator(`${cellSelector("X")} ember-input`);
   assert.match(await lines.nth(0).textContent(), /q = 2 \(slider\).*Only the input on the cell's last line can be moved/);
   assert.match(await lines.nth(1).textContent(), /= 2 \(number\).*Assign this input to a name at the top of the cell/);
+
+  // A plot drawn before the input isn't the output: it shows below the code, not lost.
+  const plotBelow = await page.evaluate((sel) => {
+    const cell = document.querySelector(sel);
+    const out = cell.querySelector(":scope > pluto-output");
+    return out != null && out.querySelector("img") != null &&
+      !!(cell.querySelector("pluto-input").compareDocumentPosition(out) & Node.DOCUMENT_POSITION_FOLLOWING);
+  }, cellSelector("P"));
+  assert.equal(plotBelow, true);
+  assert.deepEqual(await placed("P"), [{ cls: "output", n: 1, controls: 1, before_code: true }]);
 
   // The slider: B reruns with the new value; N doesn't rerun, and the slider is marked as off its default.
   const slider = page.locator(`${cellSelector("N")} input[type="range"]`);
