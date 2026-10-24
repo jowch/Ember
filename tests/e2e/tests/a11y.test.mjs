@@ -204,6 +204,12 @@ test("reduced motion: the running rail is still and menus, dialogs and the panel
  * aria-describedby or aria-labelledby naming an id that isn't on the page
  * (axe only lists those as "needs review"). */
 async function axeFindings(page, label) {
+  // Scanned once everything has settled: a dialog fading in (#538) has
+  // its text below full contrast for 130 ms. The rail's endless pulse is
+  // left out, since it never finishes.
+  await page.evaluate(() => Promise.all(document.getAnimations()
+    .filter((a) => a.effect?.getComputedTiming().endTime !== Infinity)
+    .map((a) => a.finished.catch(() => {}))));
   const { violations } = await new AxeBuilder({ page }).analyze();
   const dangling = await page.evaluate(() =>
     [...document.querySelectorAll("[aria-describedby], [aria-labelledby]")].flatMap((el) =>

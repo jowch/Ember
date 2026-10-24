@@ -297,6 +297,8 @@ test("cell menu: on a cell at the bottom of the window it opens upwards, so ever
     await page.hover(`${cellSelector(id)} pluto-input`);
     const before = (await rects(page, { more: `${cellSelector(id)} button.input_context_menu` })).more;
     await page.locator(`${cellSelector(id)} button.input_context_menu`).click();
+    // Measured where it settles: the menu rises 4 px as it opens (#538).
+    await page.locator(`${cellSelector(id)} div.input_context_menu[role="menu"]`).evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
     return {
       before,
       ...await rects(page, {
