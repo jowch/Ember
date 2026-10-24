@@ -562,6 +562,11 @@ turn_off <- function(state, ids) {
 #' `code_differs` (state.R) still compares like for like, since
 #' `worker$running$code` is set from the cell's own code separately
 #' (`schedule()`, step.R).
+#'
+#' `defines` is the names the graph says the cell defines. A name that
+#' moved to it from another cell is still that cell's in the worker, whose
+#' next run would remove it after this cell set it; the worker hands it
+#' over first (`take_over_globals()`, #611).
 run_message <- function(state, id, token) {
   # A vector test, not a lookup by name per cell: those scan the names, and
   # this runs for every cell during Run all (#44).
@@ -577,7 +582,8 @@ run_message <- function(state, id, token) {
       inputs = if (!is_text) run_inputs(state, id),
       installs = if (!is_text) run_installs(state$graph$analyses[[id]]),
       data = if (!is_text) run_data_files(state, id),
-      data_writes = if (!is_text) run_data_writes(state, id))
+      data_writes = if (!is_text) run_data_writes(state, id),
+      defines = if (!is_text) as.character(state$graph$cells[[id]]$definitions))
 }
 
 #' The writes part of a run message: each top-level expression that

@@ -36,7 +36,8 @@
 #                applied over the baseline first; apply_settings_context()),
 #                formulas (list of formula_site),
 #                fig (list(width, height, problems), inches: the figure
-#                size to open the plot device at).
+#                size to open the plot device at), defines (the names
+#                the graph says the cell defines: take_over_globals()).
 #                For role "text", each line of `code` is one inline
 #                expression (a text cell's `` `r expr` `` spans, one per
 #                line); the report's `output` is an "inline" display
@@ -572,6 +573,7 @@ run_cell <- function(msg) {
     # interrupts a cell within milliseconds of it starting).
     cell_order <<- msg$order
     remove_cell(msg$cell)
+    take_over_globals(msg$cell, msg$defines)
     apply_settings_context(msg$settings %||% character())
 
     before_names <- ls(globalenv(), all.names = TRUE)
@@ -1663,6 +1665,23 @@ undo_registrations <- function(cell) {
         suppressMessages(methods::setMethod(r$f, r$signature, r$old, where = globalenv()))
       }
     }, error = function(e) NULL)
+  }
+  invisible()
+}
+
+#' Hand `cell` the names it now defines (`defines`, from the graph) that
+#' another cell's earlier run created, before it runs: remove each, as
+#' that cell's rerun would, and take it out of that cell's globals. A
+#' definition moved from C4 to C1 otherwise stays C4's, and C4's next run
+#' removes the value C1 just set (#611). If C1's run doesn't set it, it
+#' stays gone, as it would be in a fresh session.
+take_over_globals <- function(cell, defines) {
+  if (length(defines) == 0) return(invisible())
+  for (other in setdiff(names(owned), cell)) {
+    moved <- intersect(owned[[other]], defines)
+    if (length(moved) == 0) next
+    remove_globals(moved)
+    owned[[other]] <<- setdiff(owned[[other]], moved)
   }
   invisible()
 }

@@ -245,6 +245,22 @@ test_that("a hand run of an edited cell runs the ancestor that read its old code
                  list(ops = list(list(op = "set_code", cell = "C2", code = "v3 <- (77 + 1 * v9) %% 997")), run = "all"))))
 })
 
+test_that("a definition moved to another cell isn't removed by the old definer's next run (#611)", {
+  # v4 moves from C4 to C1. The run of C6 runs C1, then C4, whose start
+  # used to remove the v4 its last run created, which C1 had just set.
+  moved <- function(mode, c1) list(mode = mode,
+    cells = list(C1 = "v1 <- 20", C4 = "v4 <- 14 + v1", C6 = "v6 <- 84 + v4"),
+    steps = list(list(ops = list(), run = "C6"),
+                 list(ops = list(list(op = "set_code", cell = "C1", code = c1)), run = NULL),
+                 list(ops = list(list(op = "set_code", cell = "C4", code = "v9 <- 14 + v1")), run = "C6")))
+  for (mode in c("autorun", "lazy")) {
+    expect_trace_passes(moved(mode, "v4 <- 73\nv1 <- 20"))
+    # C1 takes v4 over but doesn't set it: C4's old v4 must not be left
+    # for C6 to read.
+    expect_trace_passes(moved(mode, "if (FALSE) v4 <- 73\nv1 <- 20"))
+  }
+})
+
 test_that("a queued cell runs after a cell that dropping a graph error's result left stale (#449)", {
   # C4 is edited to define v1, which C1 defines. C7 goes first and drops
   # C1's result, so C3 is stale: C6, queued too, must run after it.
