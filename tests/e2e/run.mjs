@@ -25,7 +25,10 @@ const { lib, owned: ownLib } = ensureLib();
 // the runner stops at its time limit is ended outright on Windows, so
 // its own exit handler never removes its folders (#471).
 const runDir = mkdtempSync(path.join(tmpdir(), "ember-e2e-run-"));
-const env = { ...process.env, EMBER_E2E_LIB: lib, EMBER_E2E_RUN_DIR: runDir };
+// The OS temp folder is the run folder too, for whatever else a stopped
+// file leaves there: the servers' private caches, R's own Rtmp folders,
+// Chromium's profiles (TMPDIR on Unix, TMP and TEMP on Windows).
+const env = { ...process.env, EMBER_E2E_LIB: lib, EMBER_E2E_RUN_DIR: runDir, TMPDIR: runDir, TMP: runDir, TEMP: runDir };
 const files = process.argv.slice(2);
 const tests = files.length ? files
   : readdirSync(path.join(HERE, "tests")).filter((f) => f.endsWith(".test.mjs")).sort().map((f) => path.join("tests", f));
@@ -47,7 +50,8 @@ const finish = (code, signal) => {
     console.log(`\n== test-results/${f}\n${readFileSync(path.join(RESULTS, f), "utf8")}`);
   }
   if (ownLib) rmSync(lib, { recursive: true, force: true });
-  rmSync(runDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  // A file something still holds is left for the OS, not a failed run.
+  try { rmSync(runDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* left for the OS */ }
   process.exit(code ?? (signal ? 1 : 0));
 };
 
