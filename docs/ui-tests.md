@@ -217,6 +217,14 @@ checks, for looking at a change before and after
 with screenshots and measurements for the periodic UI audit
 (`.claude/skills/ui-audit`).
 
+**Known failures**: `tests/e2e/known.mjs` lists failures that come from an
+open issue, each with the exact error it matches. A run whose only
+failures match an entry passes, and each one is printed as a warning that
+names its issue. Any other failure, even in the same test, still fails the
+run, and nothing is skipped. The PR that fixes the issue removes its
+entry. Today it holds only #412's `ERR_NO_BUFFER_SPACE` on Windows, when it
+hits while a notebook opens.
+
 **In CI**: a job `e2e` on ubuntu-latest and macos-latest:
 `r-lib/actions/setup-r` and `setup-r-dependencies`,
 `actions/setup-node` (22), `npm ci` in `tests/e2e`, `npx playwright install
