@@ -3,6 +3,10 @@
 # server, no `later`. Every wait is a read with no time limit
 # (worker_harness()'s $receive(), next_frame()), never Sys.sleep polling.
 
+# Too slow for CRAN's check time (#536): CI runs the whole file, with
+# NOT_CRAN=true.
+skip_on_cran()
+
 run_msg <- function(cell, token, code, role = "cell", order = character(), formulas = list(),
                     library = NULL, fig = NULL, settings = character(), data = NULL) {
   list(type = "run", cell = cell, token = token, code = code, role = role,

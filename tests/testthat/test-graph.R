@@ -592,6 +592,7 @@ test_that("unknown learned ids are dropped", {
 })
 
 test_that("an edit at 2000 cells resolves only the edited cell's view, and gives the from-scratch graph (#43)", {
+  skip_on_cran()  # too slow for CRAN's check time; CI runs it (#536)
   # Each cell's resolved view (definitions, references, setting keys) is
   # kept from `previous` when its analysis and learned names are unchanged.
   # Counted, not timed: a count can't be noisy.
@@ -627,6 +628,7 @@ test_that("a cell's view is resolved again when only its learned names change (#
 })
 
 test_that("a graph built from `previous` equals one built from scratch, over random edits (#43)", {
+  skip_on_cran()  # too slow for CRAN's check time; CI runs it (#536)
   # The views kept from `previous` must be exactly the ones a fresh build
   # gives, whatever happened in between: edits, undo to older code,
   # deletes, inserts, disabling, learned names added, removed or edited in

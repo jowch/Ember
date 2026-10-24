@@ -102,6 +102,7 @@ test_that("changed_views() and changed_cells() match comparing every cell, step 
 })
 
 test_that("a worker message at 2000 cells builds only the views that may have changed (#44)", {
+  skip_on_cran()  # too slow for CRAN's check time; CI runs it (#536)
   st <- perf_running(2000)
   tok <- st$worker$running$token
   new <- step(st, wk_done(1, tok, report(), at(10)))$state
@@ -217,6 +218,7 @@ test_that("an unrelated edit shares unchanged parts of the state (identical())",
 })
 
 test_that("a step that touches no cell rebuilds no graph: a small fraction of one that does", {
+  skip_on_cran()  # too slow for CRAN's check time; CI runs it (#536)
   # An event that doesn't touch `cells`/`exports`/`files` never
   # rebuilds the graph (rebuild_graph() is only called from the handlers
   # that change one of those); this is the common case while a notebook is

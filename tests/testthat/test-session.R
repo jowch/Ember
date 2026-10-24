@@ -7,6 +7,10 @@
 #
 # Covers engine-tests.md items 106-117 ("End to end").
 
+# Too slow for CRAN's check time (#536): CI runs the whole file, with
+# NOT_CRAN=true.
+skip_on_cran()
+
 test_that("open_notebook starts no process; the snapshot is preview (106)", {
   path <- write_session_notebook(list(S = cell("")))
   nb <- open_notebook(path)
