@@ -38,19 +38,24 @@ On macOS (arm64, R 4.6.1), `R CMD check --as-cran` gives:
 * checking installed package size ... INFO
   installed size is  5.3Mb
   sub-directories of 1Mb or more:
-    R          2.1Mb
     frontend   2.7Mb
+    R          2.1Mb
 ```
 
-Linux (4.6 MB by `du -k`) and Windows stay under 5 MB. Other check
-machines may print this as a NOTE.
+The files themselves come to 3.8 MB. The check measures disk use (`du -k`),
+which rounds every file up to the disk's blocks: Linux reports 4.5 MB and
+Windows 4.3 MB, both OK. On the macOS runner `R/ember.rdb`, a 1.2 MB file,
+takes 2.1 MB of disk, which is what puts it over 5 MB. That's measured on
+GitHub's macos-latest without kept source (`R_KEEP_PKG_SOURCE` unset); why
+macOS allocates that much, and whether CRAN's macOS machines do the same,
+isn't known.
 
-`inst/frontend` is the notebook editor that Ember serves in the browser:
-JavaScript, CSS and fonts, all bundled so that Ember works offline and loads
-nothing from the network (a test checks that). Its largest part is the code
-editor (CodeMirror), at about 650 KB. The TypeScript declaration files that
-sit next to the JavaScript in the source are left out of the build
-(`.Rbuildignore`). Minifying the rest is tracked on #60.
+The largest part is `inst/frontend`, the notebook editor Ember serves in the
+browser: JavaScript, CSS and fonts, bundled so that Ember works offline and
+loads nothing from the network (a test checks that). The code editor
+(CodeMirror) alone is about 650 KB. The TypeScript declaration files next to
+the JavaScript in the source are left out of the build (`.Rbuildignore`).
+Minifying the rest is tracked on #60.
 
-If CRAN asks, say that the size is the bundled editor, which Ember needs to
-run without a network.
+If CRAN asks, say the files come to 3.8 MB, and that the size is the bundled
+editor, which Ember needs to run without a network.
