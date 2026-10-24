@@ -66,10 +66,8 @@ you already have, use the start page's file field, or pass the file to
 `start_server("analysis.R")`. From inside a notebook, the flame at the top
 left or ⋯ → **Open another notebook** goes back to the start page.
 
-Every notebook opens in safe preview, a new one too: you can read and edit
-it, but nothing runs and nothing installs until you ask. Click **Run this
-notebook**, or run any cell, and Ember starts R for it. Then write code in
-the cells. Shift+Enter runs a
+A notebook you open from a file starts in safe preview: click **Run this
+notebook** to run it. Then write code in the cells. Shift+Enter runs a
 cell, and ⋯ → **Keyboard shortcuts** lists the rest. When you're done:
 
 ```r

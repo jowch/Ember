@@ -14,8 +14,6 @@ stays responsive.
 The public surface is grouped onto a few pages:
 
 \itemize{
-  \item \link{server}: \code{start_server()} opens Ember in your browser, the
-    usual way to use it.
   \item \link{notebooks}: open, run and inspect a notebook (\code{open_notebook},
     \code{run_cells}, \code{notebook_snapshot}, and the rest of the session API).
   \item \link{edit_notebook}: stage edits to a notebook's cells.
