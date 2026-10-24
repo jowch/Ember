@@ -841,6 +841,7 @@ run_cell <- function(msg) {
       console <- NULL
       running <<- NULL
 
+      seal_registrations(msg$cell)
       facts <- compare_globals(before_names, before)
       owned[[msg$cell]] <<- facts$created
       rc$created <- facts$created
@@ -1642,15 +1643,53 @@ record_registration <- function(r) {
   registrations[[running$cell]] <<- c(registrations[[running$cell]], list(r))
 }
 
+#' The method a registration's key holds now: the S3 table's entry, or
+#' the S4 method for exactly that signature. `NULL` for none.
+registered_now <- function(r) {
+  if (identical(r$kind, "s3")) {
+    table <- r$defenv[[".__S3MethodsTable__."]]
+    if (is.null(table) || !exists(r$key, envir = table, inherits = FALSE)) return(NULL)
+    get(r$key, envir = table, inherits = FALSE)
+  } else {
+    tryCatch(methods::getMethod(r$f, r$signature, optional = TRUE, where = globalenv()),
+             error = function(e) NULL)
+  }
+}
+
+#' After a cell's run, record in each of its registrations the method it
+#' left (`new`), so undo_registrations() can tell when another cell has
+#' since registered its own (#611).
+seal_registrations <- function(cell) {
+  regs <- registrations[[cell]]
+  if (length(regs) == 0) return(invisible())
+  for (k in seq_along(regs)) regs[[k]]["new"] <- list(registered_now(regs[[k]]))
+  registrations[[cell]] <<- regs
+}
+
 #' Undo a cell's method registrations, newest first, so two registrations
 #' of one method in a cell restore what was there before the first.
+#' A method that is no longer the one the cell's run left is another
+#' cell's now and stays: a generic and its method moved from C4 to C1
+#' would otherwise lose the method C1 just set when C4 next starts (#611).
+#' Methods are compared with their srcrefs, which each run's parse makes
+#' new, so the same code registered by C1 isn't taken for C4's.
 undo_registrations <- function(cell) {
   regs <- registrations[[cell]]
   registrations[[cell]] <<- NULL
   if (length(regs) == 0) return(invisible())
   undoing <<- TRUE
   on.exit(undoing <<- FALSE)
+  # Decided once per method, at the newest registration of it, before any
+  # undo changes what it holds.
+  foreign <- character()
+  seen <- character()
   for (r in rev(regs)) {
+    id <- if (identical(r$kind, "s3")) paste("s3", r$key) else paste(c("s4", r$f, r$signature), collapse = "\r")
+    if (!(id %in% seen)) {
+      seen <- c(seen, id)
+      if ("new" %in% names(r) && !identical(registered_now(r), r$new, ignore.srcref = FALSE)) foreign <- c(foreign, id)
+    }
+    if (id %in% foreign) next
     tryCatch({
       if (identical(r$kind, "s3")) {
         table <- r$defenv[[".__S3MethodsTable__."]]
@@ -1677,7 +1716,11 @@ undo_registrations <- function(cell) {
 #' stays gone, as it would be in a fresh session.
 take_over_globals <- function(cell, defines) {
   if (length(defines) == 0) return(invisible())
-  for (other in setdiff(names(owned), cell)) {
+  others <- setdiff(names(owned), cell)
+  # One vector test first: this runs before every cell, and a loop over
+  # every cell's globals costs a Run all of thousands of cells (#44).
+  if (!any(unlist(owned[others], use.names = FALSE) %in% defines)) return(invisible())
+  for (other in others) {
     moved <- intersect(owned[[other]], defines)
     if (length(moved) == 0) next
     remove_globals(moved)
