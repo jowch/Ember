@@ -686,7 +686,12 @@ test("signature: a click on the tooltip lands in the code under it (#34)", async
  * have held still for 10 frames (the debounced recompute and CodeMirror's
  * measure both land on later frames); both are read in the same frame.
  * `text` is the start of the tooltip's text, `left` its left edge,
- * `line_number` the focused editor's line the cursor is on. */
+ * `line_number` the focused editor's line the cursor is on. `content`,
+ * `gutter`, `fonts` and `completion` (the editor text's left edge, the
+ * gutter's width, `document.fonts.status`, and whether the completion
+ * popup is open) are there to tell a tooltip that moved from a page that
+ * moved under it: on Windows #476's test once saw `left` change by 1 px,
+ * and 100 runs there didn't repeat it. */
 const tooltip_settled = (page) => page.waitForFunction(() => {
   const tooltip = document.querySelector(".cm-ember-signature-tooltip");
   const editor = document.querySelector(".cm-editor.cm-focused");
@@ -699,7 +704,9 @@ const tooltip_settled = (page) => page.waitForFunction(() => {
     const b = l.getBoundingClientRect();
     return c.top + c.height / 2 > b.top && c.top + c.height / 2 < b.bottom;
   }) + 1;
-  const now = { text: tooltip.textContent.slice(0, 12), left: t.left, tooltip: [t.top, t.bottom], cursor: [c.top, c.bottom], line_number, class: tooltip.className };
+  const now = { text: tooltip.textContent.slice(0, 12), left: t.left, tooltip: [t.top, t.bottom], cursor: [c.top, c.bottom], line_number, class: tooltip.className,
+    content: editor.querySelector(".cm-content").getBoundingClientRect().left, gutter: editor.querySelector(".cm-gutters")?.getBoundingClientRect().width ?? null,
+    fonts: document.fonts.status, completion: document.querySelector(".cm-tooltip-autocomplete") != null };
   const s = (window.__placed ??= { last: null, frames: 0 });
   const key = JSON.stringify(now);
   if (key !== s.last) {
@@ -723,10 +730,14 @@ async function tooltip_frames(page) {
     const frame = () => {
       if (window.__frames !== frames) return;
       const tooltip = document.querySelector(".cm-ember-signature-tooltip");
-      const cursor = document.querySelector(".cm-editor.cm-focused .cm-cursor");
+      const editor = document.querySelector(".cm-editor.cm-focused");
+      const cursor = editor?.querySelector(".cm-cursor");
       if (tooltip != null && cursor != null && /cm-tooltip-(above|below)/.test(tooltip.className)) {
         const c = cursor.getBoundingClientRect(), t = tooltip.getBoundingClientRect();
-        const now = { text: tooltip.textContent.slice(0, 12), left: t.left, tooltip: [t.top, t.bottom], cursor: [c.top, c.bottom] };
+        // As in tooltip_settled.
+        const now = { text: tooltip.textContent.slice(0, 12), left: t.left, tooltip: [t.top, t.bottom], cursor: [c.top, c.bottom],
+          content: editor.querySelector(".cm-content").getBoundingClientRect().left, gutter: editor.querySelector(".cm-gutters")?.getBoundingClientRect().width ?? null,
+          fonts: document.fonts.status, completion: document.querySelector(".cm-tooltip-autocomplete") != null };
         if (JSON.stringify(now) !== JSON.stringify(frames.at(-1))) frames.push(now);
       }
       requestAnimationFrame(frame);
@@ -819,7 +830,7 @@ test("signature: a call typed inside a multi-line call keeps the outer tooltip a
   // The line is indented, so paste's own anchor is right of the line's start.
   assert.ok(inner.left > outer.left, `paste's tooltip anchors at paste, right of the line's start: ${JSON.stringify({ outer, inner })}`);
   const moved = seen.filter((f) => f.text === outer.text && f.left !== outer.left);
-  assert.deepEqual(moved, [], `read.table's tooltip stays at the line's start while paste( is typed: ${JSON.stringify(outer)}`);
+  assert.deepEqual(moved, [], `read.table's tooltip stays at the line's start while paste( is typed: ${JSON.stringify({ outer, seen })}`);
   assert.deepEqual(seen.filter(covers), [], "no frame has the tooltip over the cursor's line");
 
   assertNoProblems(page);
