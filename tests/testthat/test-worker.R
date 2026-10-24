@@ -1346,7 +1346,7 @@ test_that("on Windows a worker with no console is interrupted all the same (#48)
 
 test_that("on Windows interrupting a process with no interrupt event says it wasn't delivered (#48)", {
   skip_on_os(c("mac", "linux", "solaris"))
-  p <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", "Sys.sleep(30)"))
+  p <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", script_file("Sys.sleep(30)")))
   on.exit(p$kill())
   expect_false(interrupt_worker(p))
   expect_true(p$is_alive())

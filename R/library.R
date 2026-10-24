@@ -246,8 +246,8 @@ index_not_published <- function(base) {
 
 #' The command that downloads and parses the index for `key`, as a job
 #' (see Jobs). `url` may be `file://`: the test seam. Runs the same way
-#' the worker is booted (shell.R's `start_worker_process()`): an inline
-#' `Rscript -e` that loads the installed `ember` and calls one internal
+#' every Rscript Ember starts (shell.R's `rscript_command()`, #512): a line
+#' of code that loads the installed `ember` and calls one internal
 #' function, so there is no separate top-level script to keep in sync with
 #' the function it calls.
 index_fetch_command <- function(key, url, cache = cache_dir()) {
@@ -263,7 +263,7 @@ index_fetch_command <- function(key, url, cache = cache_dir()) {
   # the same Ember the server runs.
   env <- c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep),
            R_LIBS_USER = "", R_LIBS_SITE = "")
-  list(command = rscript, args = c("--vanilla", "-e", code), env = env)
+  rscript_command(rscript, code, env)
 }
 
 # ---- GitHub sources ----------------------------------------------------------
@@ -700,7 +700,7 @@ bioc_config_fetch_command <- function(url, cache = cache_dir()) {
     deparse(url), ", ", deparse(path), ")})")
   env <- c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep),
            R_LIBS_USER = "", R_LIBS_SITE = "")
-  list(command = rscript, args = c("--vanilla", "-e", code), env = env)
+  rscript_command(rscript, code, env)
 }
 
 #' The process-wide job key for fetching the release list from `url` into
@@ -788,7 +788,7 @@ cran_releases_fetch_command <- function(url, cache = cache_dir()) {
     deparse(url), ", ", deparse(path), ")})")
   env <- c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep),
            R_LIBS_USER = "", R_LIBS_SITE = "")
-  list(command = rscript, args = c("--vanilla", "-e", code), env = env)
+  rscript_command(rscript, code, env)
 }
 
 cran_releases_job_key <- function(url, cache) paste("cran-releases", url, cache, sep = "\u0001")
@@ -1562,13 +1562,13 @@ disk_use_main <- function(dir) {
 }
 
 #' The command that measures disk use for `dir`, as `index_fetch_command()`
-#' builds its own: an inline `Rscript -e` that loads the installed `ember`.
+#' builds its own: a line of code that loads the installed `ember`.
 disk_use_command <- function(dir = cache_dir()) {
   rscript <- file.path(R.home("bin"), "Rscript")
   code <- paste0("local({library(ember); ember:::disk_use_main(", deparse(dir), ")})")
   env <- c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep),
            R_LIBS_USER = "", R_LIBS_SITE = "")
-  list(command = rscript, args = c("--vanilla", "-e", code), env = env)
+  rscript_command(rscript, code, env)
 }
 
 #' The Packages tab's clean-up button (#128): `clean()` with the rule
@@ -1628,5 +1628,5 @@ clean_up_command <- function(dir = cache_dir(), keep = character(), dry_run = TR
                  deparse(isTRUE(dry_run)), ", ", format(as.numeric(now), digits = 17), ")})")
   env <- c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep),
            R_LIBS_USER = "", R_LIBS_SITE = "")
-  list(command = rscript, args = c("--vanilla", "-e", code), env = env)
+  rscript_command(rscript, code, env)
 }

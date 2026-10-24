@@ -382,3 +382,29 @@ test_that("macOS: serverSocket() can share a port held on 127.0.0.1, and the che
   on.exit(close(s), add = TRUE)
   expect_false(loopback_reaches(s, port, wait = 0.2))
 })
+
+test_that("rscript_command() runs its code with its arguments, from the package's script, not -e (#512)", {
+  cmd <- rscript_command(file.path(R.home("bin"), "Rscript"), "cat(commandArgs(TRUE), Sys.getenv('EMBER_RUN_CODE'), sep = '|')",
+                         env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
+                         args = c("a", "b c"))
+  expect_false("-e" %in% cmd$args)
+  res <- processx::run(cmd$command, cmd$args, env = cmd$env)
+  # The code sees its arguments, and not itself in the environment.
+  expect_identical(res$stdout, "a|b c|")
+})
+
+test_that("on Windows a killed rscript_command() child leaves no Rscript file in the temp folder (#512)", {
+  skip_on_os(c("mac", "linux", "solaris"))
+  tmp <- dirname(tempdir())
+  before <- list.files(tmp, "^Rscript[0-9a-f]+$")
+  cmd <- rscript_command(file.path(R.home("bin"), "Rscript"), "cat('up\n'); Sys.sleep(60)",
+                         env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)))
+  p <- processx::process$new(cmd$command, cmd$args, env = cmd$env, stdout = "|")
+  on.exit(if (p$is_alive()) p$kill(), add = TRUE)
+  line <- character()
+  while (!length(line) && p$is_alive()) { p$poll_io(10000); line <- p$read_output_lines() }
+  expect_identical(line, "up")
+  p$kill()
+  p$wait()
+  expect_length(setdiff(list.files(tmp, "^Rscript[0-9a-f]+$"), before), 0)
+})

@@ -144,7 +144,7 @@ test_that("two installs of one key racing in two processes leave one library and
   # load fails with "The package renv is required". RENV_EXT_ENABLED=FALSE
   # skips the rebuild; renv falls back to its R implementations.
   procs <- lapply(stagings, function(st) {
-    processx::process$new(rscript, c("--vanilla", "-e", race_code(st)),
+    processx::process$new(rscript, c("--vanilla", script_file(race_code(st))),
                           env = c("current", RENV_EXT_ENABLED = "FALSE"),
                           stdout = "|", stderr = "2>&1")
   })
@@ -320,7 +320,7 @@ test_that("a job that ends before the first poll still hands every line to make_
 test_that("job_leave by the last subscriber kills the process (63)", {
   key <- paste0("job-kill-", uuid())
   rscript <- file.path(R.home("bin"), "Rscript")
-  cmd <- list(command = rscript, args = c("--vanilla", "-e", "Sys.sleep(30)"), env = "current")
+  cmd <- list(command = rscript, args = c("--vanilla", script_file("Sys.sleep(30)")), env = "current")
   nb <- fake_sub()
 
   job_start(key, cmd, nb, make_progress = function(line) NULL,
@@ -344,12 +344,13 @@ test_that("job_leave by the last subscriber kills the process (63)", {
 grandchild_cmd <- function() {
   rscript <- file.path(R.home("bin"), "Rscript")
   code <- if (.Platform$OS.type == "windows") {
-    sprintf("system2('%s', c('--vanilla', '-e', shQuote('cat(Sys.getpid(), fill = TRUE); flush(stdout()); Sys.sleep(300)')))",
-            normalizePath(rscript, winslash = "/", mustWork = FALSE))
+    grandchild <- script_file("cat(Sys.getpid(), fill = TRUE); flush(stdout()); Sys.sleep(300)")
+    sprintf("system2('%s', c('--vanilla', '%s'))",
+            normalizePath(rscript, winslash = "/", mustWork = FALSE), normalizePath(grandchild, winslash = "/"))
   } else {
     "system('sleep 300 & echo $!'); Sys.sleep(300)"
   }
-  list(command = rscript, args = c("--vanilla", "-e", code), env = "current")
+  list(command = rscript, args = c("--vanilla", script_file(code)), env = "current")
 }
 
 test_that("job_leave by the last subscriber kills the job's children too (#141)", {
@@ -381,7 +382,7 @@ test_that("a job and its children end when the server that started it is killed 
     "p <- ember:::jobs[['k']]$proc; l <- character(); ",
     "while (!length(l) && p$is_alive()) { invisible(p$poll_io(30000)); l <- p$read_output_lines() }; ",
     "cat(p$get_pid(), l[1], '\\n'); flush(stdout()); Sys.sleep(300)")
-  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
+  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", script_file(code)),
                                   env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
                                   stdout = "|", stderr = "2>&1")
   on.exit(if (server$is_alive()) server$kill(), add = TRUE)

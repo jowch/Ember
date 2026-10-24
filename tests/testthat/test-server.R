@@ -2270,7 +2270,7 @@ test_that("start_server()'s watcher waits on the child's pipe instead of reading
   skip_on_os("windows")  # Windows pipes can't be waited on: it reads every 0.5 s there
   proc <- processx::process$new(
     file.path(R.home("bin"), "Rscript"),
-    c("--vanilla", "-e", "cat('one\\n'); Sys.sleep(2); cat('two\\n'); Sys.sleep(2)"),
+    c("--vanilla", script_file("cat('one\\n'); Sys.sleep(2); cat('two\\n'); Sys.sleep(2)")),
     stdout = "|", stderr = "2>&1", cleanup = TRUE)
   on.exit(proc$kill(), add = TRUE)
   reads <- 0L

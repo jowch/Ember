@@ -707,7 +707,10 @@ schedule_packages <- function(state, old) {
       }
       if (length(to_fetch) == 0 && length(needed) > 0) {
         first <- p$indexes[[repos_needed[[1]]]]
-        up_status <- vapply(upfront, function(k) p$indexes[[k]]$status %||% "missing", character(1))
+        # A failed lookup for a source the notebook doesn't use stops
+        # nothing, unless resolution meets its name after all (#519).
+        idle <- idle_failed_sources(gh, p$indexes, wanted)
+        up_status <- vapply(setdiff(upfront, idle), function(k) p$indexes[[k]]$status %||% "missing", character(1))
         loaded_gh <- lapply(p$indexes[unname(gh)], function(s) s$index)
         mismatch <- source_problems(state$file$header, gh, loaded_gh)
         mismatch <- mismatch[mismatch$package %in% names(gh), , drop = FALSE]
@@ -717,17 +720,22 @@ schedule_packages <- function(state, old) {
           p$problems <- mismatch
         } else if (all(up_status == "ready")) {
           failed <- Filter(function(k) identical(p$indexes[[k]]$status, "failed"), later)
-          usable <- setdiff(needed, failed)
+          usable <- setdiff(needed, c(failed, idle))
           loaded_idx <- Filter(Negate(is.null), lapply(p$indexes[usable], function(s) s$index))
           res <- resolve_lock(wanted, lock_for_sources(state$file$lock, state$file$header,
                                                        p$sources_for %||% character()),
                               loaded_idx, needed = usable, mode = "keep")
+          met <- names(idle)[names(idle) %in% c(res$lock$entries$name, res$problems$package)]
           # Which release `needed` names comes from Bioconductor's list:
           # fetch it when resolution first meets Bioconductor (a name CRAN
           # lacks, which without the list has no Bioconductor key to look
           # in, or a Bioc entry), then resolve again with it.
           meets_bioc <- needs_bioc(res)
-          if (meets_bioc && releases_unsettled(p, state$file$header$snapshot)) {
+          if (length(met) > 0) {
+            # A dependency has that source: CRAN's copy would be another
+            # package, so this stops as a wanted one's failure does.
+            p$problems <- source_failed_problems(state$file$header, idle[met], p$indexes)
+          } else if (meets_bioc && releases_unsettled(p, state$file$header$snapshot)) {
             fr <- fetch_releases(p, state$options, state$file$header$snapshot)
             p <- fr$p
             effects <- c(effects, fr$effects)
@@ -739,6 +747,7 @@ schedule_packages <- function(state, old) {
             p$resolved_for <- wanted
             p$sources_for <- sources
             p$problems <- rbind(res$problems, source_problems(state$file$header),
+                                source_failed_problems(state$file$header, idle, p$indexes),
                                 failed_index_problems(p$indexes[failed]),
                                 bioc_problems(state$file$header, state$options$r, p$bioc_releases$table),
                                 bioc_unavailable_problem(needed, res$problems, state$file$header,
@@ -794,8 +803,11 @@ schedule_packages <- function(state, old) {
       # lock holds, and moving it forward asks branches again
       # (`source_keys()`, `refreshes_sources()`).
       sources_for <- state$packages$sources_for %||% character()
-      gh <- unname(source_keys(state$file$header, state$file$lock, sources_for,
-                               refresh = refreshes_sources(state$file$header, prop$date, prop$kind)))
+      gh_of <- source_keys(state$file$header, state$file$lock, sources_for,
+                           refresh = refreshes_sources(state$file$header, prop$date, prop$kind))
+      # As when resolving: an unused source's failed lookup is left out (#519).
+      idle <- idle_failed_sources(gh_of, state$packages$indexes, wanted)
+      gh <- setdiff(unname(gh_of), idle)
       repos_needed <- needed_repos(date_header, state$options$r, releases)
       needed <- c(gh, repos_needed)
       key <- repos_needed[[1]]
@@ -868,7 +880,13 @@ schedule_packages <- function(state, old) {
           base$entries <- base$entries[!(base$entries$name %in% back_moved), , drop = FALSE]
           res <- resolve_lock(wanted, base, indexes_loaded, needed = needed, mode = "keep")
         }
-        if (needs_bioc(res) && releases_unsettled(state$packages, prop$date)) {
+        met <- names(idle)[names(idle) %in% c(res$lock$entries$name, res$problems$package)]
+        if (length(met) > 0) {
+          state$packages$proposal <- new_proposal(prop$date, status = "failed", apply = prop$apply,
+                                                  message = source_failed_problems(state$file$header, idle[met],
+                                                                                   state$packages$indexes)$message[[1]],
+                                                  kind = prop$kind, update = prop$update, asked = prop$asked %||% prop$date)
+        } else if (needs_bioc(res) && releases_unsettled(state$packages, prop$date)) {
           fr <- fetch_releases(state$packages, state$options, prop$date)
           state$packages <- fr$p
           effects <- c(effects, fr$effects)
@@ -1148,6 +1166,17 @@ source_failed_problems <- function(header, keys, indexes) {
       slot$message %||% "no answer")))
   }
   out
+}
+
+#' The `[sources]` keys (`keys`, `source_keys()`) whose lookup failed for
+#' a package the notebook doesn't use: an entry whose install call is gone
+#' stays in the header (packages.md, "Install calls"), and its failure
+#' shouldn't stop the packages the notebook does use (#519). That includes
+#' one still locked from before its use was dropped. Resolution leaves them
+#' out, and stops only if it meets the name (a dependency, locked or not).
+idle_failed_sources <- function(keys, indexes, wanted) {
+  failed <- vapply(keys, function(k) identical(indexes[[k]]$status, "failed"), logical(1))
+  keys[failed & !names(keys) %in% wanted]
 }
 
 #' One `index_unavailable` row per failed index slot (Bioconductor's,
