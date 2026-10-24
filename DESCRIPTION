@@ -2,13 +2,15 @@ Package: ember
 Title: Reactive Notebooks for R
 Version: 0.0.0.9000
 Authors@R: c(
-    person("Jonathan", "Chen", email = "jonathanwchen@pm.me", role = c("aut", "cre")),
+    person("Jonathan", "Chen", email = "jonathanwchen@pm.me", role = c("aut", "cre", "cph")),
     person("The Pluto.jl authors", role = "cph",
            comment = "frontend in inst/frontend, forked from Pluto.jl (MIT)"))
 Description: A reactive notebook engine for R in the style of 'Pluto.jl'.
     Cells are read statically into a dependency graph, so editing a cell
     reruns the cells that depend on it.
 License: MIT + file LICENSE
+URL: https://github.com/jowch/Ember
+BugReports: https://github.com/jowch/Ember/issues
 Copyright: See inst/COPYRIGHTS.
 Encoding: UTF-8
 Language: en-GB

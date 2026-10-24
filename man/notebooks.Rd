@@ -186,14 +186,15 @@ of \code{"notebook_opened"}, \code{"cell_state"}, \code{"topology_changed"},
 \code{"file_saved"}, \code{"execution_done"}, \code{"notebook_shut_down"}.
 }
 \examples{
-\dontrun{
-nb <- open_notebook("growth.R")
+# A new notebook in a temporary folder, with Ember's library cache there too,
+# so the example writes nothing outside tempdir().
+cache <- file.path(tempdir(), "ember-cache")
+nb <- new_notebook(tempfile(fileext = ".R"), cache = cache)
+edit_notebook(nb, insert_cell(1, "x <- c(2, 4, 9)"), insert_cell(2, "mean(x)"))
 nb
-run_cells(nb, 4, wait = TRUE)
+run_cells(nb, 2, wait = TRUE)
 snap <- notebook_snapshot(nb)
-snap$cells[[4]]$output$text
-interrupt_notebook(nb)
-restart_notebook(nb)
+snap$cells[[2]]$output$text
+dependency_graph(nb)
 close_notebook(nb)
-}
 }
