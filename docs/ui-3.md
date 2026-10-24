@@ -165,6 +165,9 @@ out of the way of the data, the code and the results.
   Status, icons for Variables, Help and Packages (each opens the panel at that
   tab, or closes it), Export, and ⋯ (Keyboard shortcuts, Settings, Open
   another notebook). See Menus and Settings below.
+- Below 641 px, when "Run N not run" and "Run changed" would both show, they
+  are one "Run" button that runs the edits and then the cells not run; the
+  two together pushed ⋯ off a phone's screen (#501).
 - While R is busy: "Running 2 of 5 cells" and Stop.
 - Safe preview is one banner with "Run this notebook". Each code cell also
   shows its "Not run yet" chip, as Pluto marks every cell in safe preview,
