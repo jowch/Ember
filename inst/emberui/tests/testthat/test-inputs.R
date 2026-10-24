@@ -115,6 +115,14 @@ test_that("each spec's check returns a value as the input would, or says what it
   expect_identical(tenths$check(0.7), 0.7)
   expect_error(tenths$check(0.35), "in steps of 0.1")
   expect_identical(spec_of(input_slider(1, 10))$check(2.5), 2.5)
+  # The message names the last step, where the slider stops.
+  thirds <- spec_of(input_slider(0, 10, step = 3))
+  expect_error(thirds$check(10), "The value must be a number from 0 to 9 in steps of 3.", fixed = TRUE)
+  expect_error(spec_of(input_slider(0, 1, step = 0.1))$check(0.35), "from 0 to 1 in steps of 0.1", fixed = TRUE)
+  # The tolerance doesn't grow to a whole step on a long slider (review).
+  long <- spec_of(input_slider(0, 1e10, step = 1))
+  expect_identical(long$check(5e9), 5e9)
+  expect_error(long$check(5e9 + 0.5), "in steps of 1")
   # A default off its step is an error in Ember and in Rscript alike.
   expect_error(input_slider(10, 500, value = 105, step = 10), "in steps of 10")
   # A number box takes its step as a hint, as Pluto and Shiny do.

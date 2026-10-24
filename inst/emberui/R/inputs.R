@@ -186,17 +186,24 @@ number_check <- function(value, min, max, step = NULL) {
 # as a hint, as Pluto's NumberField and Shiny's numericInput do (#448). The
 # page sends decimals (0.3 from 0 in steps of 0.1), which differ from
 # min + k * step by a rounding error, so a step is matched to within 1e-9 of
-# one.
+# one, plus the error that grows with k (a few ulps of k).
 on_step <- function(x, min, step) {
   if (is.null(step) || is.na(step)) return(TRUE)
   k <- (x - min) / step
-  abs(k - round(k)) <= 1e-9 * max(1, abs(k))
+  abs(k - round(k)) <= 1e-9 + 8 * .Machine$double.eps * abs(k)
+}
+
+# A slider's last step, which is `max` only when `max` is on a step: the
+# browser's slider stops at the last step (0, 3, 6, 9 for 0 to 10 by 3).
+last_step <- function(min, max, step) {
+  min + floor((max - min) / step + 1e-9) * step
 }
 
 number_allowed <- function(min, max, integer, step = NULL) {
   what <- if (integer) "a whole number" else "a number"
   if (!is.null(step) && !is.na(step)) {
-    sprintf("The value must be %s from %s to %s in steps of %s.", what, format(min), format(max), format(step))
+    sprintf("The value must be %s from %s to %s in steps of %s.", what, format(min),
+            format(last_step(min, max, step)), format(step))
   } else if (!is.na(min) && !is.na(max)) {
     sprintf("The value must be %s from %s to %s.", what, format(min), format(max))
   } else if (!is.na(min)) {
