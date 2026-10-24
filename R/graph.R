@@ -108,7 +108,8 @@ new_graph <- function(ids, settings, analyses, learned, exports, cells, edges,
 #' * multiple definitions of `df` where one is a replacement: "Move the line
 #'   into the cell that defines df, or name the result (df2 <- ...)".
 #' * `for (i ...)` in two cells: "Use a private name: .i".
-#' * private name used elsewhere: "Drop the dot: x".
+#' * private name used elsewhere: "Drop the dot: x". Also given to a cell
+#'   that assigns `.data` or `.env` (#509).
 #' * cycle through a name only read inside call arguments: "If x is a
 #'   column name, rename the global".
 #' * setting in two cells: "Set it in one cell, or use
@@ -984,6 +985,23 @@ find_errors <- function(cells, analyses, edges, ids, components,
       errors[[length(errors) + 1]] <- new_graph_error(
         kind = "private_name", cells = b, names = n, lines = NULL,
         message = sprintf("%s is private to the cell that defines it.", n),
+        fixes = sprintf("Drop the dot: %s", sub("^\\.", "", n)))
+    }
+  }
+  # A cell assigning .data or .env (pronoun_names, #509): reading them is
+  # never a reference, so a cell that reads one would go silently stale.
+  # The assignment is the error, on its own cell, even with no reader in
+  # sight: a reader can't be found. Same kind and fix as above.
+  # From the private-name owners above, so no work per cell.
+  for (n in pronoun_names) {
+    for (b in private_owner_map[[n]]) {
+      d <- analyses[[b]]$definitions
+      ln <- d$line[d$name == n & is.na(d$file)]  # NA when sourced or learned
+      errors[[length(errors) + 1]] <- new_graph_error(
+        kind = "private_name", cells = b, names = n,
+        lines = data.frame(cell = b, line = if (length(ln)) ln[[1]] else NA_integer_,
+                           stringsAsFactors = FALSE),
+        message = sprintf("%s is rlang's pronoun, so Ember can't track it as an object.", n),
         fixes = sprintf("Drop the dot: %s", sub("^\\.", "", n)))
     }
   }

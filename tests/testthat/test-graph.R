@@ -123,6 +123,23 @@ test_that("another cell's .x is a private-name error too; a lambda's .x isn't (#
   expect_false(any(g$edges$from == "C"))
 })
 
+test_that("a cell assigning .data or .env is a private-name error; reading them isn't (#509)", {
+  # Reading .data or .env is never a reference (in dplyr code they are
+  # rlang's pronouns), so a reader in another cell would go stale
+  # silently. The assignment is the error instead, with no reader needed.
+  g <- notebook_graph(c(A = "x <- 1\n.data <- data.frame(a = 1)", B = ".data$a + 1",
+                        C = "mutate(df, y = .data$a, z = .env$k)",
+                        D = "assign('.env', 3)", E = "for (.env in 1:3) NULL",
+                        L = "local(.data <- 2)", F = "f <- function(.data) .data$a",
+                        G = "g <- function() .env <<- 1", H = ".env <<- 1"))
+  err <- Filter(function(e) e$kind == "private_name", g$errors)
+  expect_equal(vapply(err, function(e) e$cells, ""), c("A", "D", "E", "H"))
+  expect_equal(vapply(err, function(e) e$names, ""), c(".data", ".env", ".env", ".env"))
+  expect_equal(err[[1]]$lines, data.frame(cell = "A", line = 2L, stringsAsFactors = FALSE))
+  expect_equal(err[[1]]$fixes, "Drop the dot: data")
+  expect_false(any(g$edges$to == "A"))
+})
+
 test_that("a private-name error's message has no cell id, only the private name", {
   owner_id <- "ca1b0a64-d117-466f-898a-8603bbc24e75"
   reader_id <- "e2f5c0a1-8a8e-4e8e-9a0e-1a2b3c4d5e6f"

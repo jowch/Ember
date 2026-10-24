@@ -420,8 +420,9 @@ data_masking_calls <- list(
 #' `.` is a formula placeholder and the magrittr pipe placeholder.
 #' `.Random.seed` follows the random-numbers decision. `.data` and `.env`
 #' are rlang's pronouns in tidy-eval code (`filter(df, .data$x > 1)`), and
-#' Ember can't tell which calls mask data, so they are never a notebook
-#' object. `.x` and `.y` aren't here: they are a `~` lambda's arguments only
+#' Ember can't tell which calls mask data, so reading them is never a
+#' reference. Assigning them is still recorded (`pronoun_names`), so the
+#' graph can refuse it (#509). `.x` and `.y` aren't here: they are a `~` lambda's arguments only
 #' inside the lambda (`walk_formula_lambda()` binds them there), and
 #' anywhere else they are a cell's own dot-names like any other (#507).
 #' `break` and `next` parse as zero-argument calls
@@ -432,6 +433,12 @@ data_masking_calls <- list(
 ignored_names <- c(".", ".Random.seed", "T", "F", "TRUE", "FALSE", "NULL",
                    "NA", "Inf", "NaN", "...",
                    ".data", ".env", "break", "next")
+
+#' The ignored names a cell may not define: rlang's pronouns. Another cell
+#' reading one would go silently stale, since reads of them aren't
+#' references, so a top-level assignment is a `private_name` error
+#' instead (`find_errors()`, #509).
+pronoun_names <- c(".data", ".env")
 
 #' Is `name` a `..N` positional lambda pronoun (`..1`, `..2`, `..42`, ...)?
 is_dot_dot_name <- function(name) {
