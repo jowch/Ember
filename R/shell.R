@@ -840,7 +840,9 @@ ready_worker_image <- function(src = system.file("worker.R", package = "ember"),
 #' to an `Rscript<hex>` file in the temp folder and removes it only when
 #' Rscript returns, so each child Ember ends (a stopped server, a cancelled
 #' job) left one there (#512). `args` follow the script, for
-#' `commandArgs(TRUE)`; `env` is processx's, `"current"` and the rest.
+#' `commandArgs(TRUE)`; `env` is processx's, `"current"` and the rest. Unlike
+#' `-e`, a visible value the code returns isn't printed: every caller's
+#' code prints what it means to, and returns `invisible(NULL)`.
 rscript_command <- function(rscript, code, env = "current", args = character()) {
   list(command = rscript,
        args = c("--vanilla", system.file("run-code.R", package = "ember"), args),

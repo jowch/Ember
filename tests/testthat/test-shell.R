@@ -405,6 +405,6 @@ test_that("on Windows a killed rscript_command() child leaves no Rscript file in
   while (!length(line) && p$is_alive()) { p$poll_io(10000); line <- p$read_output_lines() }
   expect_identical(line, "up")
   p$kill()
-  p$wait(5000)
+  p$wait()
   expect_length(setdiff(list.files(tmp, "^Rscript[0-9a-f]+$"), before), 0)
 })
