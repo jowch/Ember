@@ -3206,6 +3206,68 @@ test_that("a folder a run lists is watched by what the listing returns as the ru
   expect_match(r$data_seen[[key("0 1 0 0 0 0", "")]], "^4 ")
 })
 
+test_that("a folder a run globs or lists the folders of is watched by what that returns (#595)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  d <- tempfile("ember-list-")
+  dir.create(file.path(d, "data", "sub"), recursive = TRUE)
+  d <- normalizePath(d, winslash = "/")
+  for (f in c("a.csv", "b.txt", file.path("sub", "c.csv"))) writeLines("1", file.path(d, "data", f))
+  r <- run_and_wait(h, "a", 1L, paste(sep = "\n",
+    sprintf("setwd(%s)", deparse(d)),
+    "x <- Sys.glob('data/*.csv')",
+    "y <- Sys.glob(file.path('.', 'data', '*', 'c.csv'), dirmark = TRUE)",
+    "z <- list.dirs('data', recursive = FALSE)",
+    "w <- Sys.glob(file.path(R.home(), '*'))",
+    "writeLines('2', file.path('data', 'new.csv'))"))
+  expect_identical(r$status, "ok", info = r$error$message)
+  # Each pattern's wildcard-free folder is resolved; R's own aren't watched.
+  expect_setequal(names(r$data_seen), c(paste("Sys.glob", "0", file.path(d, "data", "*.csv"), sep = "\n"),
+                                        paste("Sys.glob", "1", file.path(d, "data", "*", "c.csv"), sep = "\n"),
+                                        paste("list.dirs", file.path(d, "data"), "1 0", sep = "\n")))
+  for (k in names(r$data_seen)) expect_identical(r$data_seen[[k]], data_listing_signature(k))
+  expect_match(r$data_seen[[paste("Sys.glob", "0", file.path(d, "data", "*.csv"), sep = "\n")]], "^2 ")
+})
+
+test_that("fs::dir_ls() is watched once fs loads, and the shell lists as fs does (#595)", {
+  skip_if_not_installed("fs")
+  h <- worker_harness(extra_libs = .libPaths())
+  on.exit(h$close())
+  d <- tempfile("ember-list-")
+  dir.create(file.path(d, "data", "sub"), recursive = TRUE)
+  d <- normalizePath(d, winslash = "/")
+  for (f in c("a.csv", "b.txt", file.path("sub", "c.csv"))) writeLines("1", file.path(d, "data", f))
+  r <- run_and_wait(h, "a", 1L, paste(sep = "\n",
+    sprintf("setwd(%s)", deparse(d)),
+    "x <- fs::dir_ls('data', glob = '*.csv')",
+    "y <- fs::dir_ls('./data', recurse = TRUE, type = 'file', regexp = 'C', ignore.case = TRUE)",
+    "z <- fs::dir_info('data')",
+    "writeLines('2', file.path('data', 'new.csv'))"))
+  expect_identical(r$status, "ok", info = r$error$message)
+  key <- function(shown, flags, mask, glob, regexp) paste("dir_ls", file.path(d, "data"), shown, flags, mask, glob, regexp, sep = "\n")
+  # dir_info() lists with dir_ls(), so it's watched too.
+  expect_setequal(names(r$data_seen), c(key("data", "0 0 0 0 0 0", "-1", "*.csv", ""),
+                                        key("./data", "0 -1 0 1 0 0", "2", "", "C"),
+                                        key("data", "0 0 0 0 0 0", "-1", "", "")))
+  for (k in names(r$data_seen)) expect_identical(r$data_seen[[k]], data_listing_signature(k))
+  # What the shell lists is what fs returned, with the cell's new file.
+  e <- new.env()
+  sys.source(worker_script_path(), e)
+  withr::with_dir(d, {
+    expect_setequal(e$data_listing_names(key("data", "0 0 0 0 0 0", "-1", "*.csv", "")), c("data/a.csv", "data/new.csv"))
+    expect_setequal(e$data_listing_names(key("./data", "0 -1 0 1 0 0", "2", "", "C")),
+                    as.character(fs::dir_ls("./data", recurse = TRUE, type = "file", regexp = "C", ignore.case = TRUE)))
+  })
+})
+
+test_that("the worker's listing functions are the shell's (#514, #595)", {
+  e <- new.env()
+  sys.source(worker_script_path(), e)
+  for (name in c("data_listing_names", "data_listing_signature")) {
+    expect_identical(deparse(e[[name]]), deparse(get(name, envir = asNamespace("ember"))), info = name)
+  }
+})
+
 test_that("fread() is learned once data.table loads, by input or file =, and text input isn't", {
   skip_if_not_installed("data.table")
   h <- worker_harness(extra_libs = .libPaths())
