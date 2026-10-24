@@ -1684,7 +1684,16 @@ reduce_files_read <- function(state, event) {
       a <- state$graph$analyses[[id]]
       lit <- if (!is.null(a$sourced) && nrow(a$sourced) > 0) a$sourced$path else character()
       comp <- state$computed_sources[[id]] %||% character()
-      if (length(intersect(c(lit, comp), changed_paths)) == 0) next
+      hit <- intersect(c(lit, comp), changed_paths)
+      if (length(hit) == 0) next
+      # The running cell's result, when it arrives, is built from what its
+      # `source()` read: stale if that was the old text, and autorun runs
+      # it again, first run or not (#485).
+      if (identical(state$worker$running$cell, id) &&
+          any(vapply(hit, function(p) read_old_source(state$worker$running$sources, p, event$files[[p]]$text), logical(1)))) {
+        state$worker$running$invalidated <- TRUE
+        if (autorun && isTRUE(state$allowed) && can_run(state, id)) state$pending <- union(state$pending, id)
+      }
       r <- state$results[[id]]
       if (is.null(r)) next
       r$stale <- TRUE
@@ -1699,6 +1708,27 @@ reduce_files_read <- function(state, event) {
     }
   }
   list(state = state, effects = list(), reply = NULL)
+}
+
+#' Whether a run's `source()` read a version of `path` other than `text`,
+#' its contents now. `sources` is what the run's `wk_source` requests
+#' carried: `list(path, text)` each, the path absolute and normalized.
+#' `path` is as the notebook names it (relative to its folder, or
+#' absolute), so it is matched by its tail, or by its file name when it
+#' climbs out with `..`. A file the run hasn't sourced yet is read new. The
+#' worker's text is `readLines()` joined by newlines and the shell's is the
+#' raw file, so both are compared without line endings or a final newline.
+read_old_source <- function(sources, path, text) {
+  if (length(sources) == 0 || length(text) != 1 || is.na(text)) return(FALSE)
+  tail <- sub("^(\\./)+", "", gsub("\\\\", "/", path))
+  tail <- if (grepl("(^|/)\\.\\.(/|$)", tail)) basename(tail) else tail
+  read <- Filter(function(s) {
+    p <- gsub("\\\\", "/", s$path)
+    identical(p, tail) || endsWith(p, paste0("/", tail))
+  }, sources)
+  if (length(read) == 0) return(FALSE)
+  flat <- function(t) sub("\n+$", "", gsub("\r\n?", "\n", t))
+  !any(vapply(read, function(s) identical(flat(s$text), flat(text)), logical(1)))
 }
 
 #' Data files that cells read by a literal path changed (#276): the shell's
@@ -1889,6 +1919,9 @@ reduce_wk_source <- function(state, event) {
     return(list(state = state, effects = list(), reply = NULL))
   }
   id <- w$running$cell
+  # What this run read, so a change seen while it runs can tell whether
+  # its result was built from the old file (`reduce_files_read()`, #485).
+  state$worker$running$sources <- c(w$running$sources, list(list(path = event$path, text = event$text)))
   a <- read_cell(event$text)
   defs <- definitions_of(a)
 

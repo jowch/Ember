@@ -1059,6 +1059,69 @@ test_that("a sourced file's change invalidates the sourcing cell (53)", {
   expect_true(isTRUE(r2$state$results$A$stale) || "A" %in% r2$state$pending)
 })
 
+test_that("a sourced file that changes while its cell runs, after source() read it, leaves the result stale (#485)", {
+  # A sources h.R, then works on. h.R changes while A runs: in lazy mode
+  # the result A sends, built from the old h.R, is stale; in autorun A runs
+  # again and that result is current.
+  start <- function(mode) {
+    s <- fake_state(list(S = cell(""), A = cell('source("h.R"); Sys.sleep(3); z'), B = cell("z + 1")),
+                    on_cell_change = mode)
+    s$path <- "/proj/nb.R"
+    r <- drive(s, ev_files_read(list("h.R" = list(text = "z <- 1\n", hash = "v1")), at(1)))
+    r <- boot(r$state, c("A", "B"), at0 = 2)
+    tok <- r$state$worker$running$token
+    # The worker's text is readLines() joined, with no final newline.
+    drive(r$state, wk_source(1, tok, "/proj/h.R", "z <- 1", at(11)))
+  }
+  r <- start("lazy")
+  tok <- r$state$worker$running$token
+  r <- drive(r$state, ev_files_read(list("h.R" = list(text = "z <- 2\n", hash = "v2")), at(12)),
+             wk_done(1, tok, report(created = "z"), at(13)))
+  expect_true(r$state$results$A$stale)
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(), at(14)))
+  expect_true(r$state$results$B$stale)
+  expect_equal(r$state$pending, character())
+
+  r <- start("autorun")
+  tok <- r$state$worker$running$token
+  r <- drive(r$state, ev_files_read(list("h.R" = list(text = "z <- 2\n", hash = "v2")), at(12)),
+             wk_done(1, tok, report(created = "z"), at(13)))
+  expect_equal(r$state$worker$running$cell, "A")
+  expect_true(r$state$results$A$stale)
+
+  # A change seen before source() read the file: the run reads the new
+  # text, so its result is current.
+  s <- fake_state(list(S = cell(""), A = cell('Sys.sleep(1); source("h.R"); z')), on_cell_change = "lazy")
+  s$path <- "/proj/nb.R"
+  r <- drive(s, ev_files_read(list("h.R" = list(text = "z <- 1\n", hash = "v1")), at(1)))
+  r <- boot(r$state, "A", at0 = 2)
+  tok <- r$state$worker$running$token
+  r <- drive(r$state, ev_files_read(list("h.R" = list(text = "z <- 2\n", hash = "v2")), at(11)),
+             wk_source(1, tok, "/proj/h.R", "z <- 2", at(12)),
+             wk_done(1, tok, report(created = "z"), at(13)))
+  expect_false(isTRUE(r$state$results$A$stale))
+  # Nor when it changes back to the text the run read.
+  r <- drive(r$state, ev_run("A", at(20)))
+  tok <- r$state$worker$running$token
+  r <- drive(r$state, wk_source(1, tok, "/proj/h.R", "z <- 2", at(31)),
+             ev_files_read(list("h.R" = list(text = "z <- 3", hash = "v3")), at(32)),
+             ev_files_read(list("h.R" = list(text = "z <- 2\r\n", hash = "v2")), at(33)),
+             wk_done(1, tok, report(created = "z"), at(34)))
+  expect_true(r$state$results$A$stale)
+})
+
+test_that("read_old_source() matches a sourced path by its tail and compares text without line endings (#485)", {
+  src <- list(list(path = "/proj/R/h.R", text = "a\nb"))
+  expect_false(read_old_source(src, "R/h.R", "a\r\nb\r\n"))
+  expect_true(read_old_source(src, "R/h.R", "a\nc\n"))
+  expect_true(read_old_source(src, "./R/h.R", "x"))
+  expect_true(read_old_source(src, "../proj/R/h.R", "x"))
+  expect_false(read_old_source(src, "S/h.R", "x"))
+  expect_false(read_old_source(list(), "R/h.R", "x"))
+  expect_false(read_old_source(src, "R/h.R", NA_character_))
+  expect_true(read_old_source(list(list(path = "C:\\proj\\h.R", text = "a")), "h.R", "b"))
+})
+
 # ---- Data files a cell reads (#276) -----------------------------------------
 
 # W writes d.csv, R reads it, U uses what R read: no edge between W and R.

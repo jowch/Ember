@@ -393,7 +393,9 @@ like part of the cell:
   `library()` calls) as the cell's own, following `source()` calls inside it.
 - It watches the file. When the file changes, the cell and its dependents
   rerun or are marked stale, following the notebook's autorun or lazy
-  setting, like marimo's module reloader.
+  setting, like marimo's module reloader. A change while the cell runs,
+  after its `source()` read the file, counts too: the result built from the
+  old text arrives stale, and autorun runs the cell again (#485).
 - A computed path (`source(file.path(dir, "helpers.R"))`, a loop over
   `list.files()`) is learned when the cell runs. The worker traces
   `base::source` and `sys.source`, which also catches `base::source()` and
