@@ -12,14 +12,20 @@
 // ember you installed there.
 
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureLib } from "./install.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { lib, owned: ownLib } = ensureLib();
-const env = { ...process.env, EMBER_E2E_LIB: lib };
+// One folder for the run, which every test file's temp folders go under
+// (server.mjs's `tempDir()`), removed once the runner has exited. A file
+// the runner stops at its time limit is ended outright on Windows, so
+// its own exit handler never removes its folders (#471).
+const runDir = mkdtempSync(path.join(tmpdir(), "ember-e2e-run-"));
+const env = { ...process.env, EMBER_E2E_LIB: lib, EMBER_E2E_RUN_DIR: runDir };
 const files = process.argv.slice(2);
 const tests = files.length ? files
   : readdirSync(path.join(HERE, "tests")).filter((f) => f.endsWith(".test.mjs")).sort().map((f) => path.join("tests", f));
@@ -41,6 +47,7 @@ const finish = (code, signal) => {
     console.log(`\n== test-results/${f}\n${readFileSync(path.join(RESULTS, f), "utf8")}`);
   }
   if (ownLib) rmSync(lib, { recursive: true, force: true });
+  rmSync(runDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   process.exit(code ?? (signal ? 1 : 0));
 };
 

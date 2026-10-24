@@ -35,12 +35,14 @@ function freePort() {
   });
 }
 
-/** A fresh folder under the OS temp folder, removed when this test
- * process exits (the "exit" handler below), so runs don't pile up
- * folders there (#421). */
+/** A fresh folder under run.mjs's folder for the run (or the OS temp folder
+ * without one), removed when this test process exits (the "exit" handler
+ * below), so runs don't pile up folders there (#421, #471). */
 const tempDirs = new Set();
 export function tempDir(prefix) {
-  const dir = mkdtempSync(path.join(tmpdir(), prefix));
+  // Under run.mjs's folder for the run when there is one (#471).
+  const base = process.env.EMBER_E2E_RUN_DIR && existsSync(process.env.EMBER_E2E_RUN_DIR) ? process.env.EMBER_E2E_RUN_DIR : tmpdir();
+  const dir = mkdtempSync(path.join(base, prefix));
   tempDirs.add(dir);
   return dir;
 }
