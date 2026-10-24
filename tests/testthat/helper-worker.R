@@ -1,7 +1,8 @@
 # Test-only helpers for test-worker.R: a harness that starts the real
 # inst/worker.R with processx and exchanges wire frames with it over a
-# real socket. No server and no `later`; every wait has a deadline (see
-# wait_socket()).
+# real socket. No server. No wait has a time limit: a read waits for its
+# frame, failing at once if the worker exited and after HANG_GUARD seconds
+# of silence (next_frame(), helper-wait.R).
 
 #' The package root, from testthat's working directory
 #' (tests/testthat while tests run).
@@ -53,10 +54,10 @@ fixture_lib <- function() {
   fixtures_dir <- normalizePath(testthat::test_path("fixtures"), mustWork = TRUE)
   pkgs <- c(list.dirs(fixtures_dir, recursive = FALSE), emberui_source())
   r_bin <- file.path(R.home("bin"), "R")
-  res <- processx::run(r_bin,
+  res <- run_guarded(r_bin,
     c("CMD", "INSTALL", "--no-byte-compile", "--no-help", "--no-docs",
       "--no-test-load", paste0("--library=", lib), pkgs),
-    error_on_status = FALSE, timeout = 180)
+    error_on_status = FALSE)
   if (res$status != 0) {
     stop("failed to install worker test fixtures:\n", res$stdout, "\n", res$stderr)
   }
@@ -134,7 +135,7 @@ test_worker_image <- local({
 #'   h$process   the processx handle
 #'   h$interrupt() interrupts the running cell as the server does
 #'   h$send(msg) write a message to the worker
-#'   h$receive(timeout = 5) read the next message, or NULL on timeout
+#'   h$receive() read the next message, however long it takes (next_frame())
 #'   h$close()   close the socket and stop the worker
 #'
 #' `extra_libs` are prepended to R_LIBS_USER (ahead of the private temp
@@ -144,7 +145,7 @@ test_worker_image <- local({
 #' default it is test_worker_image(), as a real worker boots once its
 #' image exists; `image = ""` sources worker.R instead.
 worker_harness <- function(secret = "ember-test-secret", extra_libs = character(), detached = FALSE,
-                            connect_timeout = 10, hello_timeout = 10, image = test_worker_image()) {
+                            image = test_worker_image()) {
   srv <- open_server_socket()
 
   user_lib <- tempfile("ember-worker-lib-")
@@ -175,15 +176,17 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
     stop(..., call. = FALSE)
   }
 
-  deadline <- Sys.time() + connect_timeout
+  # However long the worker takes to start: it fails at once if the
+  # worker exits, and after HANG_GUARD seconds of a live worker that
+  # never connects.
+  started <- Sys.time()
   con <- NULL
   repeat {
-    remaining <- as.numeric(deadline - Sys.time(), units = "secs")
-    if (remaining <= 0) {
-      fail("worker did not connect within ", connect_timeout, "s:\n",
+    if (as.numeric(Sys.time() - started, units = "secs") >= HANG_GUARD) {
+      fail("hung: the worker did not connect in ", HANG_GUARD, " s:\n",
            paste(if (file.exists(err_file)) readLines(err_file, warn = FALSE), collapse = "\n"))
     }
-    if (wait_socket(srv$socket, Sys.time() + min(remaining, 0.1))) {
+    if (wait_socket(srv$socket, Sys.time() + 0.1)) {
       con <- socketAccept(srv$socket, blocking = TRUE, open = "a+b", timeout = 60 * 60 * 24)
       break
     }
@@ -204,7 +207,7 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
   # As the server interrupts a cell (shell.R): SIGINT on Unix, the
   # worker's interrupt event on Windows.
   h$interrupt <- function() interrupt_worker(p)
-  h$receive <- function(timeout = 5) read_frame(con, timeout)
+  h$receive <- function() next_frame(h)
   h$close <- function() {
     if (h$closed) return(invisible())
     h$closed <- TRUE
@@ -215,7 +218,7 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
     }
   }
 
-  hello <- h$receive(hello_timeout)
+  hello <- h$receive()
   if (is.null(hello) || !identical(hello$type, "hello")) {
     h$close()
     stop("worker did not say hello")
@@ -224,13 +227,12 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
   h
 }
 
-#' Read frames from `h` until a "done" (returning its report). With a
-#' `timeout`, fail once that many seconds have passed in total; without
-#' one, wait for the reply however long it takes (next_frame()).
+#' Read frames from `h` until a "done" (returning its report), however
+#' long the reply takes (next_frame()).
 #'
 #' For tests that need to see or react to frames before "done" (a
 #' "source" request, an interrupt's reply) and so can't use
-#' run_and_wait()'s simple loop. A bare `repeat { m <- h$receive(5);
+#' run_and_wait()'s simple loop. A bare `repeat { m <- read_frame(con, 5);
 #' expect_false(is.null(m)); if (identical(m$type, "done")) break }`
 #' looks bounded by the 5s read timeout but isn't: `expect_false()`, like
 #' every `expect_*()` (and `testthat::fail()` itself -- both just signal a
@@ -238,7 +240,7 @@ worker_harness <- function(secret = "ember-test-secret", extra_libs = character(
 #' going rather than stopping the test, so a worker that never replies
 #' (dead, or an interrupt lost to the host shell's own SIGINT disposition
 #' -- see sigint_reset_when_inherited_ignored) makes that loop call
-#' h$receive() forever, hanging the whole test run instead of failing one
+#' read_frame() forever, hanging the whole test run instead of failing one
 #' test (measured: confirmed `testthat::fail()` alone doesn't stop a
 #' `repeat` either). `stop()` is what actually unwinds out of the test;
 #' test_that() turns it into a normal recorded failure. `on_frame`, if
@@ -266,41 +268,31 @@ no_reply <- function(h, timeout) {
 
 #' Read frames until a "rendered" message arrives (a "more"/"render"
 #' request's reply never comes as "done").
-wait_for_done_or_rendered <- function(h, timeout = NULL) {
-  deadline <- if (!is.null(timeout)) Sys.time() + timeout
+wait_for_done_or_rendered <- function(h) {
   repeat {
-    m <- next_frame(h, deadline, timeout)
+    m <- next_frame(h)
     if (identical(m$type, "rendered")) return(m)
   }
 }
 
-wait_for_done <- function(h, timeout = NULL, on_frame = NULL) {
-  deadline <- if (!is.null(timeout)) Sys.time() + timeout
+wait_for_done <- function(h, on_frame = NULL) {
   repeat {
-    m <- next_frame(h, deadline, timeout)
+    m <- next_frame(h)
     if (identical(m$type, "done")) return(m$report)
     if (!is.null(on_frame)) on_frame(m)
   }
 }
 
-#' The worker's next frame. With a `deadline` (a test that passed a
-#' `timeout`), fail once it passes. Without one, wait for the frame
-#' itself, however slow the machine (#229): fail at once if the worker
-#' has exited, and only after `hang_guard` seconds of silence from a live
-#' worker, which is a hang, not a slow step. The socket is polled for a
-#' frame's first byte, never mid-frame, so no frame is cut short.
-next_frame <- function(h, deadline = NULL, timeout = NULL, hang_guard = 600) {
-  if (!is.null(deadline)) {
-    remaining <- as.numeric(deadline - Sys.time(), units = "secs")
-    if (remaining <= 0) no_reply(h, timeout)
-    m <- h$receive(remaining)
-    if (is.null(m)) no_reply(h, timeout)
-    return(m)
-  }
+#' The worker's next frame, however slow the machine (#229, #468): fail
+#' at once if the worker has exited, and only after `hang_guard` seconds
+#' of silence from a live worker, which is a hang, not a slow step. The
+#' socket is polled for a frame's first byte, never mid-frame, so no frame
+#' is cut short.
+next_frame <- function(h, hang_guard = HANG_GUARD) {
   quiet_since <- Sys.time()
   repeat {
     if (wait_socket(h$con, Sys.time() + 0.5)) {
-      m <- h$receive(hang_guard)
+      m <- read_frame(h$con, hang_guard)
       if (is.null(m)) no_reply(h, round(as.numeric(Sys.time() - quiet_since, units = "secs")))
       return(m)
     }

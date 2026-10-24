@@ -359,7 +359,7 @@ test_that("loopback_reaches(): another connection arriving first doesn't pass th
   mine <- pick_listen_socket()
   other <- pick_listen_socket()
   on.exit({ close(mine$socket); close(other$socket) }, add = TRUE)
-  intruder <- socketConnection("127.0.0.1", mine$port, blocking = TRUE, open = "r+b", timeout = 2)
+  intruder <- socketConnection("127.0.0.1", mine$port, blocking = TRUE, open = "r+b")
   on.exit(close(intruder), add = TRUE)
   expect_false(loopback_reaches(mine$socket, other$port, wait = 0.2))
 })

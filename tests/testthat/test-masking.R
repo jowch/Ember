@@ -234,8 +234,7 @@ test_that("the issue's notebook runs, and follows R as the data's columns change
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 30)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
   snap <- notebook_snapshot(nb)
   for (id in c("D", "F", "X")) expect_equal(snap_view(snap, id)$status, "ok", info = id)
   expect_equal(snap_view(snap, "F")$output$text, "[1] 3")
@@ -243,18 +242,15 @@ test_that("the issue's notebook runs, and follows R as the data's columns change
   # df without x: subset() reads the global x, so F and X form a real
   # cycle, as they would under Rscript.
   edit_notebook(nb, set_code("D", "df <- data.frame(y = 1:4)"))
-  res <- run_cells(nb, "D", wait = TRUE, timeout = 30)
-  expect_false(res$timed_out)
+  res <- run_settled(nb, "D")
   errs <- snap_view(notebook_snapshot(nb), "F")$error
   expect_true(any(vapply(errs, function(e) identical(e$kind, "cycle"), logical(1))))
 
   # And back. Run all skips F and X while they're still in the cycle
   # (D hasn't rerun yet), so it takes a second run, as for any cycle.
   edit_notebook(nb, set_code("D", "df <- data.frame(x = 1:4, y = 1:4)"))
-  res <- run_cells(nb, wait = TRUE, timeout = 30)
-  expect_false(res$timed_out)
-  res <- run_cells(nb, wait = TRUE, timeout = 30)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
+  res <- run_settled(nb)
   snap <- notebook_snapshot(nb)
   for (id in c("D", "F", "X")) expect_equal(snap_view(snap, id)$status, "ok", info = id)
   expect_equal(snap_view(snap, "F")$output$text, "[1] 3")
@@ -268,12 +264,10 @@ test_that("a global the data doesn't shadow is read, and its edit reruns the rea
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 30)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
   expect_equal(snap_view(notebook_snapshot(nb), "F")$output$text, "[1] 3")
   edit_notebook(nb, set_code("C", "cutoff <- 3"))
-  res <- run_cells(nb, "C", wait = TRUE, timeout = 30)
-  expect_false(res$timed_out)
+  res <- run_settled(nb, "C")
   expect_equal(snap_view(notebook_snapshot(nb), "F")$output$text, "[1] 1")
 })
 
@@ -284,12 +278,12 @@ test_that("a staged edit to the global's cell doesn't make a column read stale (
                                  on_cell_change = "lazy")
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  expect_false(run_cells(nb, wait = TRUE, timeout = 30)$timed_out)
+  run_settled(nb)
   # X's last run defined x; staged, it doesn't. F reads the column x, not
   # the global, so X going stale when A runs leaves F as it was.
   edit_notebook(nb, set_code("X", "x2 <- a"))
   edit_notebook(nb, set_code("A", "a <- 2"))
-  expect_false(run_cells(nb, "A", wait = TRUE, timeout = 30)$timed_out)
+  run_settled(nb, "A")
   snap <- notebook_snapshot(nb)
   expect_true(isTRUE(snap_view(snap, "X")$stale))
   expect_false(isTRUE(snap_view(snap, "F")$stale))

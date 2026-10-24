@@ -46,8 +46,7 @@ compile_stuck_lib <- function() {
 
   r_bin <- file.path(R.home("bin"), "R")
   res <- tryCatch(
-    processx::run(r_bin, c("CMD", "SHLIB", "stuck.c"), wd = src_dir,
-                  error_on_status = FALSE, timeout = 60),
+    run_guarded(r_bin, c("CMD", "SHLIB", "stuck.c"), wd = src_dir, error_on_status = FALSE),
     error = function(e) NULL)
   if (is.null(res) || res$status != 0) return(NULL)
 
@@ -70,10 +69,10 @@ use_installed_ember <- function() {
   lib <- file.path(tempdir(), "ember-self-lib")
   if (!dir.exists(file.path(lib, "ember", "Meta"))) {
     dir.create(lib, showWarnings = FALSE, recursive = TRUE)
-    res <- processx::run(file.path(R.home("bin"), "R"),
+    res <- run_guarded(file.path(R.home("bin"), "R"),
       c("CMD", "INSTALL", "--no-docs", "--no-help", "--no-test-load",
         paste0("--library=", lib), path),
-      error_on_status = FALSE, timeout = 300)
+      error_on_status = FALSE)
     if (res$status != 0) stop("could not install ember for the subprocess tests:\n", res$stderr)
   }
   if (!lib %in% .libPaths()) .libPaths(c(lib, .libPaths()))
@@ -93,10 +92,8 @@ pid_running <- function(pid) {
   length(st) > 0 && nzchar(trimws(st[1])) && !startsWith(trimws(st[1]), "Z")
 }
 
-#' Waits until `pid` is no longer running. The deadline only keeps a
-#' broken kill from hanging the suite.
+#' Waits until `pid` is no longer running.
 wait_pid_gone <- function(pid) {
-  deadline <- Sys.time() + 60
-  while (pid_running(pid) && Sys.time() < deadline) Sys.sleep(0.05)
+  waiting_for(sprintf("process %s to end", pid), while (pid_running(pid)) later::run_now(timeout = 0.05))
   !pid_running(pid)
 }

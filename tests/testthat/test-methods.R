@@ -368,13 +368,12 @@ test_that("editing a method reruns the cell that called its generic", {
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, wait = TRUE, timeout = 20)
+  run_settled(nb)
   expect_match(snap_view(notebook_snapshot(nb), "P")$output$text, "old")
 
   edit_notebook(nb, set_code("M", "format.foo <- function(x, ...) 'new'"))
-  res <- run_cells(nb, "M", wait = TRUE, timeout = 20)
+  res <- run_settled(nb, "M")
 
-  expect_false(res$timed_out)
   expect_match(snap_view(notebook_snapshot(nb), "P")$output$text, "new")
 })
 
@@ -388,9 +387,8 @@ test_that("S4 methods in separate cells all run", {
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 30)
+  res <- run_settled(nb)
 
-  expect_false(res$timed_out)
   snap <- notebook_snapshot(nb)
   for (id in c("C", "G", "A", "B", "U")) expect_equal(snap_view(snap, id)$status, "ok", info = id)
   expect_equal(snap_view(snap, "U")$output$text, "[1] 7")
@@ -404,12 +402,12 @@ test_that("deleting a registerS3method cell unregisters its method", {
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, wait = TRUE, timeout = 20)
+  run_settled(nb)
   expect_match(snap_view(notebook_snapshot(nb), "P")$output$text, "registered")
 
   edit_notebook(nb, delete_cell("M"))
   expect_true(isTRUE(snap_view(notebook_snapshot(nb), "P")$stale))
-  run_cells(nb, "P", wait = TRUE, timeout = 20)
+  run_settled(nb, "P")
   expect_false(any(grepl("registered", snap_view(notebook_snapshot(nb), "P")$output$text)))
 })
 
@@ -422,11 +420,11 @@ test_that("disabling a setMethod cell removes the S4 method", {
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, wait = TRUE, timeout = 30)
+  run_settled(nb)
   expect_equal(snap_view(notebook_snapshot(nb), "U")$output$text, "[1] 9")
 
   edit_notebook(nb, disable_cell("A"))
-  run_cells(nb, "U", wait = TRUE, timeout = 20)
+  run_settled(nb, "U")
   expect_equal(snap_view(notebook_snapshot(nb), "U")$output$text, '[1] "no method"')
 })
 
@@ -439,11 +437,11 @@ test_that("editing a setMethod signature removes the old method", {
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, wait = TRUE, timeout = 30)
+  run_settled(nb)
 
   edit_notebook(nb, set_code("A", "setMethod('area', 'Ci', function(shape) 3 * shape@r^2)"))
-  run_cells(nb, "A", wait = TRUE, timeout = 20)
-  run_cells(nb, "U", wait = TRUE, timeout = 20)
+  run_settled(nb, "A")
+  run_settled(nb, "U")
   expect_equal(snap_view(notebook_snapshot(nb), "U")$output$text, '[1] "no method"')
 })
 
@@ -456,11 +454,11 @@ test_that("rerunning one registerS3method cell keeps another cell's method on a 
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, wait = TRUE, timeout = 30)
+  run_settled(nb)
   expect_equal(snap_view(notebook_snapshot(nb), "U")$output$text, "[1] 7")
   edit_notebook(nb, set_code("A", "registerS3method('area', 'sq', function(s) s$w^3)"))
-  run_cells(nb, "A", wait = TRUE, timeout = 30)
-  run_cells(nb, "U", wait = TRUE, timeout = 30)
+  run_settled(nb, "A")
+  run_settled(nb, "U")
   expect_equal(snap_view(notebook_snapshot(nb), "U")$output$text, "[1] 11")
 })
 
@@ -472,12 +470,11 @@ test_that("editing a group method reruns the cell using its operator", {
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, wait = TRUE, timeout = 20)
+  run_settled(nb)
   expect_match(snap_view(notebook_snapshot(nb), "P")$output$text, "old")
 
   edit_notebook(nb, set_code("M", "Ops.money <- function(e1, e2) 'new'"))
-  res <- run_cells(nb, "M", wait = TRUE, timeout = 20)
+  res <- run_settled(nb, "M")
 
-  expect_false(res$timed_out)
   expect_match(snap_view(notebook_snapshot(nb), "P")$output$text, "new")
 })
