@@ -38,6 +38,15 @@ const signature_tooltip_field = StateField.define({
         // all and type) leaves it past the end of the document, and
         // CodeMirror's next measure of the tooltip throws (#314).
         if (value != null && tr.docChanged) value = { ...value, pos: tr.changes.mapPos(value.pos) }
+        // The anchor's line follows the cursor in the same transaction: an
+        // Enter inside a call otherwise leaves it on the line above until
+        // the debounce and the signature request have both come back, and
+        // with no room above, the tooltip covers the new line meanwhile
+        // (#476). The text stays the old call's until then.
+        if (value != null && (tr.docChanged || tr.selection != null)) {
+            let call = call_at_cursor(tr.state)
+            if (call != null && call.pos !== value.pos) value = { ...value, pos: call.pos }
+        }
         for (let e of tr.effects) if (e.is(set_signature_tooltip)) value = e.value
         return value
     },

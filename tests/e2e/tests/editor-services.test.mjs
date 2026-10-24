@@ -716,6 +716,24 @@ test("signature: in a multi-line call at the top of the window, the tooltip leav
 
   await page.keyboard.type("read.table(", { delay: 10 });
   await page.waitForSelector(".cm-ember-signature-tooltip.cm-tooltip-above, .cm-ember-signature-tooltip.cm-tooltip-below");
+  // Every frame from the Enter on, not only the settled one: the anchor
+  // used to wait for the debounce and the signature request, so the
+  // tooltip covered the new line until then, and the wait below sometimes
+  // settled on that (#476). Started before the Enter, stopped after.
+  await page.evaluate(() => {
+    const covered = (window.__covered = []);
+    const frame = () => {
+      if (window.__covered !== covered) return;
+      const tooltip = document.querySelector(".cm-ember-signature-tooltip");
+      const cursor = document.querySelector(".cm-editor.cm-focused .cm-cursor");
+      if (tooltip != null && cursor != null && /cm-tooltip-(above|below)/.test(tooltip.className)) {
+        const c = cursor.getBoundingClientRect(), t = tooltip.getBoundingClientRect();
+        if (Math.min(t.bottom, c.bottom) - Math.max(t.top, c.top) > 0) covered.push({ tooltip: [t.top, t.bottom], cursor: [c.top, c.bottom] });
+      }
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  });
   // Enter only: typing an argument would open the completion popup, and
   // CodeMirror moves the tooltip clear of it.
   await page.keyboard.press("Enter");
@@ -753,6 +771,8 @@ test("signature: in a multi-line call at the top of the window, the tooltip leav
   assert.match(placed.class, /cm-tooltip-below/, `no room above, so the tooltip goes below: ${JSON.stringify(placed)}`);
   const overlap = Math.min(placed.tooltip[1], placed.cursor[1]) - Math.max(placed.tooltip[0], placed.cursor[0]);
   assert.ok(overlap <= 0, `the tooltip doesn't cover the text being typed: ${JSON.stringify(placed)}`);
+  const covered = await page.evaluate(() => { const c = window.__covered; delete window.__covered; return c; });
+  assert.deepEqual(covered, [], `no frame after the Enter has the tooltip over the cursor's line (#476)`);
 
   assertNoProblems(page);
 });
