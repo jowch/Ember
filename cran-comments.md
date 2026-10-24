@@ -29,3 +29,28 @@ checks are on #511.
 If CRAN asks, answer with the Writing R Extensions wording above. The
 flavors on CRAN's check page that run R 4.6 will show this NOTE: r-release
 until R 4.7.0 comes out, and r-oldrel for a year after that.
+
+### Installed size on macOS (about 5.3 MB)
+
+On macOS (arm64, R 4.6.1), `R CMD check --as-cran` gives:
+
+```
+* checking installed package size ... INFO
+  installed size is  5.3Mb
+  sub-directories of 1Mb or more:
+    R          2.1Mb
+    frontend   2.7Mb
+```
+
+Linux (4.6 MB by `du -k`) and Windows stay under 5 MB. Other check
+machines may print this as a NOTE.
+
+`inst/frontend` is the notebook editor that Ember serves in the browser:
+JavaScript, CSS and fonts, all bundled so that Ember works offline and loads
+nothing from the network (a test checks that). Its largest part is the code
+editor (CodeMirror), at about 650 KB. The TypeScript declaration files that
+sit next to the JavaScript in the source are left out of the build
+(`.Rbuildignore`). Minifying the rest is tracked on #60.
+
+If CRAN asks, say that the size is the bundled editor, which Ember needs to
+run without a network.
