@@ -1021,6 +1021,17 @@ test_that("a notebook with the failing-installer option reports the real compile
   expect_equal(status$library$failures$package, "brokenpkg")
 })
 
+test_that("ember::run()'s failed install says why: renv's build output on stdout, not only stderr's last line (#522)", {
+  withr::local_options(ember.installer_script = testthat::test_path("fixtures", "failing-installer.R"))
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  path <- write_broken_notebook()
+
+  # The fixture prints everything on stdout, as renv does a failed build.
+  expect_error(run(path, cache = cache, echo = FALSE),
+               "fatal error: 'nonexistent.h' file not found", fixed = TRUE)
+})
+
 test_that("packages with no binary for this R are named while they build, and the install goes on (#19)", {
   withr::local_options(ember.installer_script = testthat::test_path("fixtures", "no-binary-notice-installer.R"))
   cache <- toy_cache()

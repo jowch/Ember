@@ -1012,6 +1012,9 @@ installer_command <- function(lock, repos, path, cache = cache_dir(), github = "
 #' session and may block. The same installer, the same staging and rename,
 #' so a library built here and one built by a session are the same.
 #' Returns `path`, or stops with the installer's message and last lines.
+#' Those are the last lines of both streams as one, as a session reads them:
+#' renv prints a failed build's output on stdout and the installer its own
+#' "Error:" line on stderr, so stderr alone would leave out why (#522).
 ensure_library <- function(lock, repos, r = r_info(), cache = cache_dir(),
                            echo = TRUE, github = "https://api.github.com") {
   info <- library_for(lock, r, cache)
@@ -1021,9 +1024,9 @@ ensure_library <- function(lock, repos, r = r_info(), cache = cache_dir(),
   }
   cmd <- installer_command(lock, repos, info$path, cache, github = github)
   res <- processx::run(cmd$command, cmd$args, env = cmd$env, echo = echo,
-                       error_on_status = FALSE)
+                       stderr_to_stdout = TRUE, error_on_status = FALSE)
   if (is.null(read_library_manifest(info$path))) {
-    tail <- paste(utils::tail(strsplit(res$stderr, "\n", fixed = TRUE)[[1]], 20),
+    tail <- paste(utils::tail(strsplit(res$stdout, "\n", fixed = TRUE)[[1]], 40),
                   collapse = "\n")
     stop("ember: installing ", info$path, " failed (status ", res$status, ")\n", tail,
         call. = FALSE)
