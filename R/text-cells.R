@@ -134,9 +134,22 @@ inline_spans <- function(code) {
 
 #' One expression per line, joined with "\n": what the graph analyses and
 #' what the worker runs. "" when there are none.
+#'
+#' The worker runs each span on its own, so the graph must not read one
+#' span on into the next: joined, `` `r 1 +` `` and `` `r 2` `` parse as
+#' `1 + 2` (#574). When every span parses alone, the joined text parses to
+#' the same expressions, one per line, since a complete expression ends at
+#' its newline. Otherwise the text stops after the first span that fails:
+#' the spans before it are complete, so it fails on its own line with its
+#' own message, and the cell gets a parse error before it runs, as a code
+#' cell does. `span_parse_error()` (state.R) then names the span.
 inline_code <- function(code) {
   spans <- inline_spans(code)
   if (nrow(spans) == 0) return("")
+  for (k in seq_len(nrow(spans))) {
+    ok <- tryCatch({ parse(text = spans$expr[[k]], keep.source = FALSE); TRUE }, error = function(e) FALSE)
+    if (!ok) return(paste(spans$expr[seq_len(k)], collapse = "\n"))
+  }
   paste(spans$expr, collapse = "\n")
 }
 

@@ -57,6 +57,10 @@ test_that("inline_spans counts the spans the page does, matched on the prose aft
 test_that("inline_code joins one expression per line", {
   expect_equal(inline_code("#' `r a`\n#' text\n#' `r b`"), "a\nb")
   expect_equal(inline_code("#' no expr here"), "")
+  # It stops after the first span that doesn't parse alone, so that span
+  # can't read on into the next (#574).
+  expect_equal(inline_code("#' `r a`\n#' `r 1 +`\n#' `r 2`"), "a\n1 +")
+  expect_error(parse(text = inline_code("#' `r 1 +`\n#' `r 2`")), "end of input")
 })
 
 test_that("cell_runs: code cells always; text cells only with inline values", {
