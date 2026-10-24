@@ -639,6 +639,16 @@ pluto-cell.depends_on_disabled_cells > ember-chip {
     border: 1px solid var(--ember-chip-dis-bg);
     color: var(--ember-chip-dis-text);
 }
+/* Waiting for an install (#590): neutral, as "Not run yet", on a stale
+   cell too. The time keeps its width as it ticks. */
+pluto-cell > ember-chip.waiting {
+    background: var(--ember-panel);
+    border: 1px solid var(--ember-line);
+    color: var(--ember-muted);
+}
+ember-chip .ember-chip-time {
+    font-variant-numeric: tabular-nums;
+}
 
 /* The wash is a grid item behind the output and chip, not a wrapper:
    Endeavor selects pluto-output as a direct child of pluto-cell. */

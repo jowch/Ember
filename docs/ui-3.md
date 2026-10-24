@@ -68,7 +68,13 @@ out of the way of the data, the code and the results.
   changed" (amber tint; lazy mode only; the old output is greyed out on a
   grey wash but still reads at 4.5 : 1, and its console loses its colour,
   #538), "Disabled" (solid grey; the code sits on a grey background,
-  dimmed). Each name in a chip, or in the "Changed `cnt` in place" note,
+  dimmed), and on a queued cell that waits for packages to install
+  "Waiting for `dplyr` to install · 1:05" (neutral, #590): the time counts
+  from the install's start and ticks each second, unread by screen
+  readers, and each name opens the Packages tab. Before the install starts
+  it is "Waiting for `dplyr`", and while a large download asks first
+  "Waiting for your OK to install `dplyr`". It takes the slot before
+  Stale. Each name in a chip, or in the "Changed `cnt` in place" note,
   links to the one cell that defines it, and clicking it selects the
   definition there, as go-to-definition does (#285). A name no single cell
   defines stays plain text. Chip text can't be selected.

@@ -372,6 +372,10 @@ span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
 #'   last run called any input (docs/inputs.md): the widgets. It comes
 #'   from `result` and the cell's flags, all in the key; the values the
 #'   widgets show come from the top-level `bonds` (`project_bonds()`).
+#'   `waiting_for` is present, as `as_arr()` of package names, only while
+#'   the cell is queued and waits for those packages to install
+#'   (`waiting_cells()`): the "Waiting for … to install" chip (#590). It
+#'   comes from `ctx$waiting` and the queued flag, both in the key.
 #'   `variables` is present, as `as_arr(view$variables)` (already
 #'   `list(name, type, value, kind)` per global, sorted, dot-names and an
 #'   off cell's excluded by `cell_variables()`), only when non-empty: the
@@ -414,6 +418,7 @@ project_cell_result <- function(view, known_ids = NULL) {
                                                           choices = as_arr(view$prompt$choices %||% character()))),
             if (!is.null(figure)) list(figure = figure),
             if (length(view$inputs) > 0) list(inputs = project_inputs(view)),
+            if (isTRUE(view$queued) && length(view$waiting_for) > 0) list(waiting_for = as_arr(view$waiting_for)),
             if (length(view$variables) > 0) list(variables = as_arr(view$variables)))
   list(cell_id = view$id,
       queued = isTRUE(view$queued), running = isTRUE(view$running),
@@ -1044,9 +1049,22 @@ project_nbpkg <- function(state, pv = packages_view(state)) {
 #'   (`state$worker$info$r_version`, `state$worker$started_at`), `NULL`
 #'   before the current worker's `wk_hello`, in safe preview, and once it
 #'   stops (`reduce_wk_exited()`/`reduce_wk_failed()` clear both).
+#' * `install_started_at`: when the target library's install started
+#'   (`state$packages$install$started_at`, the clock at `fx_install`), in
+#'   seconds, `NULL` when no install of the target runs. The waiting chip's
+#'   elapsed time (#590).
 #' * `read_only`: `isTRUE(state$read_only)`, the same flag
 #'   `notebook_snapshot()` projects -- the page disables the Status tab's
 #'   autorun/lazy radios with it; `ember_set_mode` refuses regardless.
+#' `state$packages$install$started_at` as seconds while that install is of
+#' the target library, else `NULL`: an install of an old target that is
+#' only finishing isn't what the cells wait for.
+install_started_at <- function(state) {
+  inst <- state$packages$install
+  if (is.null(inst$started_at) || !identical(inst$key, state$packages$target$key)) return(NULL)
+  as.numeric(inst$started_at)
+}
+
 project_ember <- function(state, ctx, pv = packages_view(state)) {
   stale <- 0L
   if (isTRUE(state$allowed)) {
@@ -1177,5 +1195,6 @@ project_ember <- function(state, ctx, pv = packages_view(state)) {
       r_version = state$worker$info$r_version %||% NULL,
       worker_started_at = if (is.null(state$worker$started_at)) NULL
                           else as.numeric(state$worker$started_at),
+      install_started_at = install_started_at(state),
       read_only = isTRUE(state$read_only))
 }
