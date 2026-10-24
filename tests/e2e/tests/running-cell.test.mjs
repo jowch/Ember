@@ -3,7 +3,8 @@
 // box has a blue outline, under reduced motion too. Off screen, the
 // header's "Running i of n cells" shows ↑ or ↓ and a click goes to the
 // cell. The light rails reach 3 : 1 on the page, and a stale output is
-// greyed but readable.
+// greyed but readable. The running and edited outlines stay while you type
+// in the cell: CodeMirror's focused rule used to hide them.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -34,14 +35,15 @@ const contrast = (a, b) => {
   return (hi + 0.05) / (lo + 0.05);
 };
 
-/** A notebook whose last cell runs until stopped, below enough cells to be off screen. */
+/** A notebook with a cell that runs until stopped, between enough cells to be off screen either way. */
 function longNotebook() {
   const notebook = path.join(tempDir("ember-e2e-running-"), "running.R");
-  const fillers = Array.from({ length: 12 }, (_, i) => [`# %% id=F${i}`, `f${i} <- ${i}`, ""]).flat();
+  const fillers = (from) => Array.from({ length: 12 }, (_, i) => [`# %% id=F${from + i}`, `f${from + i} <- ${i}`, ""]).flat();
   writeFileSync(notebook, [
     "### An Ember notebook ###", "# /// environment", '# ember_version = "0.0.0.9000"', '# r_version = "4.6.1"', '# snapshot = "2026-01-01"', "# ///", "",
-    ...fillers,
+    ...fillers(0),
     "# %% id=LONG", "while (TRUE) Sys.sleep(0.1)", "",
+    ...fillers(12),
   ].join("\n"), "utf8");
   return notebook;
 }
@@ -59,10 +61,11 @@ test("running cell: a blue outline on screen, and the header points to it and go
   await runCell(page, "LONG");
   await page.waitForSelector(`${cellSelector("LONG")}[data-rail="run"]`);
 
-  // On screen: the outline, though the rail can't pulse.
+  // On screen: the outline, though the rail can't pulse, and while the
+  // cursor is in the cell (runCell left it there).
   const run = await token(page, "--ember-rail-run");
   const editor = page.locator(`${cellSelector("LONG")} .cm-editor:not(.cm-ssr-fake)`);
-  assert.deepEqual(await editor.evaluate((el) => [getComputedStyle(el).outlineStyle, getComputedStyle(el).outlineColor]), ["solid", run]);
+  assert.deepEqual(await editor.evaluate((el) => [el.matches(".cm-focused"), getComputedStyle(el).outlineStyle, getComputedStyle(el).outlineColor]), [true, "solid", run]);
   assert.equal(await page.locator(`${cellSelector("LONG")} > pluto-trafficlight`).evaluate((el) => getComputedStyle(el).animationName), "none");
   const status = page.locator("#ember-r-status");
   assert.equal(await status.locator(".ember-r-status-where").count(), 0, "no arrow while the cell is in view");
@@ -78,6 +81,14 @@ test("running cell: a blue outline on screen, and the header points to it and go
     const r = document.querySelector(sel).getBoundingClientRect();
     return r.top >= 0 && r.bottom <= window.innerHeight;
   }, cellSelector("LONG")));
+  await waitingFor("the arrow goes once the cell is in view", where.waitFor({ state: "detached" }));
+  assert.equal(await page.locator("#ember-status-tab").count(), 0, "Status didn't open");
+
+  // Off screen below the fold: ↑.
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await waitingFor("the header points up to the running cell", where.waitFor());
+  assert.equal(await where.innerText(), "↑");
+  await status.click();
   await waitingFor("the arrow goes once the cell is in view", where.waitFor({ state: "detached" }));
   assert.equal(await page.locator("#ember-status-tab").count(), 0, "Status didn't open");
 
@@ -109,6 +120,18 @@ test("state colours: light rails reach 3 : 1, and a stale output is greyed but r
   await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("2"), cellSelector("B") + " pluto-output");
   await waitIdle(page);
   await setCellCode(page, "A", "x <- 5");
+  // Edited and still being typed in: the amber outline stays.
+  await page.waitForSelector(`${cellSelector("A")}[data-rail="due"]`);
+  const due = await page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.style.outline = "1px solid var(--ember-due-line)";
+    document.body.appendChild(probe);
+    const value = getComputedStyle(probe).outlineColor;
+    probe.remove();
+    return value;
+  });
+  assert.deepEqual(await page.locator(`${cellSelector("A")} .cm-editor:not(.cm-ssr-fake)`).evaluate((el) =>
+    [el.matches(".cm-focused"), getComputedStyle(el).outlineStyle, getComputedStyle(el).outlineColor]), [true, "solid", due]);
   await runCell(page, "A");
   await page.waitForSelector(`${cellSelector("B")}.stale`);
   const output = page.locator(`${cellSelector("B")} > pluto-output`);
