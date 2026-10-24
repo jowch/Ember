@@ -566,8 +566,9 @@ Built from increment 2 (#20).
   index failing does: falling back to CRAN would install a different
   package. An `index_unavailable` row names the package, and running
   retries. That holds for a package the notebook uses. An entry for one it
-  neither uses nor has locked (its install call deleted, say) is left out
-  instead, so its failure doesn't stop the rest; its row still shows. If
+  doesn't use (its install call deleted, say, even while the lock still
+  holds it) is left out instead, so its failure doesn't stop the rest; its
+  row still shows. If
   resolution meets the name anyway, as a dependency, it stops as before
   (`idle_failed_sources()`, #519). A date preview does the same. An
   entry that holds another package than its name gets a `source` row

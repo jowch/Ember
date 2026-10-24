@@ -704,7 +704,7 @@ schedule_packages <- function(state, old) {
         first <- p$indexes[[repos_needed[[1]]]]
         # A failed lookup for a source the notebook doesn't use stops
         # nothing, unless resolution meets its name after all (#519).
-        idle <- idle_failed_sources(gh, p$indexes, wanted, state$file$lock)
+        idle <- idle_failed_sources(gh, p$indexes, wanted)
         up_status <- vapply(setdiff(upfront, idle), function(k) p$indexes[[k]]$status %||% "missing", character(1))
         loaded_gh <- lapply(p$indexes[unname(gh)], function(s) s$index)
         mismatch <- source_problems(state$file$header, gh, loaded_gh)
@@ -801,7 +801,7 @@ schedule_packages <- function(state, old) {
       gh_of <- source_keys(state$file$header, state$file$lock, sources_for,
                            refresh = refreshes_sources(state$file$header, prop$date, prop$kind))
       # As when resolving: an unused source's failed lookup is left out (#519).
-      idle <- idle_failed_sources(gh_of, state$packages$indexes, wanted, state$file$lock)
+      idle <- idle_failed_sources(gh_of, state$packages$indexes, wanted)
       gh <- setdiff(unname(gh_of), idle)
       repos_needed <- needed_repos(date_header, state$options$r, releases)
       needed <- c(gh, repos_needed)
@@ -1164,13 +1164,14 @@ source_failed_problems <- function(header, keys, indexes) {
 }
 
 #' The `[sources]` keys (`keys`, `source_keys()`) whose lookup failed for
-#' a package the notebook neither wants nor has locked: an entry whose
-#' install call is gone stays in the header (packages.md, "Install calls"),
-#' and its failure shouldn't stop the packages the notebook does use
-#' (#519). Resolution leaves them out, and stops only if it meets the name.
-idle_failed_sources <- function(keys, indexes, wanted, lock) {
+#' a package the notebook doesn't use: an entry whose install call is gone
+#' stays in the header (packages.md, "Install calls"), and its failure
+#' shouldn't stop the packages the notebook does use (#519). That includes
+#' one still locked from before its use was dropped. Resolution leaves them
+#' out, and stops only if it meets the name (a dependency, locked or not).
+idle_failed_sources <- function(keys, indexes, wanted) {
   failed <- vapply(keys, function(k) identical(indexes[[k]]$status, "failed"), logical(1))
-  keys[failed & !names(keys) %in% c(wanted, lock$entries$name)]
+  keys[failed & !names(keys) %in% wanted]
 }
 
 #' One `index_unavailable` row per failed index slot (Bioconductor's,

@@ -439,6 +439,18 @@ test_that("a date preview isn't refused for a source no cell uses whose lookup f
   expect_setequal(prop$changes$name, c("cli", "dplyr"))
 })
 
+test_that("a locked GitHub package whose use is dropped doesn't block the rest when its lookup then fails (#519)", {
+  r <- open_toyc()                                       # toyC locked from GitHub at C2
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "library(dplyr)")), at(4)))
+  # The wanted set changed, so the source is asked again; on a machine
+  # without that commit cached, GitHub refuses.
+  keys <- effect_keys(r)
+  expect_true(github_key("lab", "toyC", C2) %in% keys)
+  for (k in keys) r <- drive(r$state, ev_index_failed(k, "GitHub refused (403)", at(5)))
+  expect_equal(format_lock_lines(r$state$file$lock), c("cli 3.6.5 CRAN", "dplyr 1.1.4 CRAN", "glue 1.8.0 CRAN"))
+  expect_equal(r$state$packages$problems$package, "toyC")
+})
+
 test_that("a failed lookup for a dependency's source stops resolution rather than take CRAN's copy (#519)", {
   # No cell names glue, but dplyr imports it, and the header says where it comes from.
   s <- src_state(list(S = cell(""), A = cell("library(dplyr)")), sources = c(glue = "github:tidy/glue"))
