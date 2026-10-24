@@ -339,6 +339,26 @@ test_that("a package download that never started is asked for again, and the ins
   expect_true(all(c("GET toyA_0.1.tar.gz 3", "GET toyB_1.0.tar.gz 3") %in% got), info = paste(got, collapse = "\n"))
 })
 
+test_that("a package that never downloads is said not to have downloaded, not not to build (#481)", {
+  # Every download is refused, so both tries fail. On macOS and Windows
+  # renv then reports the binary it couldn't find; toyA and toyB have
+  # none, and before #481 they were said to have been built from source
+  # and failed to build.
+  server <- start_toy_server(refuse = 1000L)
+  on.exit(server$process$kill(), add = TRUE)
+  cache <- toy_cache()
+  on.exit(unlink(cache, recursive = TRUE), add = TRUE)
+  nb <- open_notebook(write_toy_notebook("2026-09-01"),
+                      repos = ember_repos(cran = sprintf("http://127.0.0.1:%s", server$port)), cache = cache)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_settled(nb)
+  status <- package_status(nb)
+  expect_equal(status$library$status, "failed")
+  expect_match(status$library$message, "toyA, toyB didn't download, after trying again", fixed = TRUE)
+  expect_no_match(status$library$message, "build", fixed = TRUE)
+  expect_false(any(grepl("EMBER-MISSING binary", notebook_state(nb)$packages$target$log, fixed = TRUE)))
+})
+
 # ---- #39: today's index is fetched again --------------------------------------
 
 test_that("an index dated today is fetched again by a preview of today, a later session reads that copy, and the saved copy stands in offline (#39)", {
