@@ -77,12 +77,24 @@ export const getCurrentLanguage = _.memoize(() => {
     return getLanguage(to_search)
 })
 
+const parses = (/** @type {string} */ code) => {
+    try {
+        new Intl.Locale(code)
+        return true
+    } catch (e) {
+        return false
+    }
+}
+
 export const getWritingDirection = () => {
     return t("t_language_direction") === "rtl" ? "rtl" : "ltr"
 }
-const getLanguage = _.memoize((to_search) => {
+export const getLanguage = _.memoize((to_search) => {
     for (const lang of to_search) {
-        if (lang != null) {
+        // A tag Intl.Locale can't read ("en-US@posix", from a headless
+        // browser under LANG=C) is skipped: it threw, and every page was
+        // blank (#560).
+        if (lang != null && parses(lang)) {
             const only_lang_region = (code) => {
                 const loc = new Intl.Locale(code)
                 return `${loc.language}-${loc.region}`
