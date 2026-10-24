@@ -443,6 +443,7 @@ test_that("while another cell runs, a cell waiting for an install costs an event
 })
 
 test_that("waiting_cells() stays linear in the number of cells while one waits for an install (#258)", {
+  skip_on_cran()  # too slow for CRAN's check time; CI runs it (#536)
   # A waits on dplyr, whose exports aren't known yet; every cell below it
   # also has a reference that resolves to nothing, so each one goes through
   # the unknown-exports check and is a waiting cell with its own downstream.
@@ -1343,6 +1344,7 @@ test_that("check_state() holds after every step across a full packages lifecycle
 # vectorised and fixed costs dominate, so 1500 packages cost a few times
 # 150; one data frame per row costs ten times as much.
 test_that("packages_view() is built column-wise: 1500 packages cost a few times 150", {
+  skip_on_cran()  # too slow for CRAN's check time; CI runs it (#536)
   small <- perf_packages(150)
   big <- perf_packages(1500)
   r <- time_ratio(function() packages_view(big), function() packages_view(small),

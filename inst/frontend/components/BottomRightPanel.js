@@ -14,7 +14,13 @@ import { t } from "../common/lang.js"
  * @type {"variables" | "docs" | "packages" | "process" | null}
  */
 
-export const open_bottom_right_panel = (/** @type {PanelTabName} */ tab) => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: tab }))
+// `focus: false` opens Help without moving focus into its search box: for an
+// open the typing in a cell causes (a cell starting with `?`), where the next
+// keys must stay in the cell (#558). The detail stays the tab name (its
+// contract, below), so the choice rides on the event itself.
+export const open_bottom_right_panel = (/** @type {PanelTabName} */ tab, { focus = true } = {}) => {
+    window.dispatchEvent(Object.assign(new CustomEvent("open_bottom_right_panel", { detail: tab }), { ember_focus: focus }))
+}
 
 /** The width from which the panel docks beside the column (editor.css's 1239px query). */
 const DOCKED_QUERY = "(min-width: 1240px)"
@@ -93,7 +99,7 @@ export let BottomRightPanel = ({ desired_doc_query, doc_query_explicit, on_updat
         window,
         "open_bottom_right_panel",
         (/** @type {CustomEvent} */ e) => {
-            focus_docs_on_open_ref.current = e.detail === "docs"
+            focus_docs_on_open_ref.current = e.detail === "docs" && /** @type {any} */ (e).ember_focus !== false
             const active = /** @type {HTMLElement?} */ (document.activeElement)
             if (e.detail != null && !container_ref.current?.contains(active)) opener_ref.current = active != null && active !== document.body ? active : null
             write_stored("ember_panel_open", String(e.detail != null))

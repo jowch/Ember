@@ -34,6 +34,7 @@
     --ember-due-line: #5a4b29;
     --ember-wash: #1e2420;
     --ember-dis-bg: #202522;
+    --ember-stale-opacity: 0.55;
     --ember-syn-kw: #c9a3e0;
     --ember-syn-fn: #6cc7b2;
     --ember-syn-str: #c3cf7a;
@@ -81,7 +82,7 @@
     --ember-menu-hover-bg: rgba(255, 255, 255, 0.08);
     --ember-menu-muted-color: rgba(255, 255, 255, 0.55);
     --ember-border: rgba(255, 255, 255, 0.15);
-    --ember-danger: rgb(255, 140, 140);
+    --ember-danger: var(--ember-red);
     --ember-focus-ring: var(--ember-accent);
 
     /* Page and chrome */
@@ -137,7 +138,8 @@
     --pluto-tree-color: rgb(209 207 207 / 61%);
 
     /*pluto cell styling*/
-    --selected-cell-bg-color: rgb(108 199 178 / 35%);
+    /* 3 : 1 against the page and the code box; 35% was 2.2 : 1. */
+    --selected-cell-bg-color: rgb(108 199 178 / 60%);
     --hover-scrollbar-color-1: rgba(0, 0, 0, 0.15);
     --hover-scrollbar-color-2: rgba(0, 0, 0, 0.05);
     --skip-as-script-background-color: #888;
@@ -160,10 +162,6 @@
     --dead-process-header-color: rgba(250, 75, 21, 0.473);
     --loading-header-color: hsl(0deg 0% 20% / 50%);
     --disconnected-header-color: rgba(255, 169, 114, 0.56);
-
-    /*loading bar*/
-    --loading-grad-color-1: #a9d4f1;
-    --loading-grad-color-2: #d0d4d7;
 
     /*saveall container*/
     --overlay-button-border: #9e9e9e70;

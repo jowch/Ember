@@ -92,7 +92,8 @@ Any other input call returns its default, as under `Rscript`, and it
 shows as a read-only line below the cell, with a note naming the fix. A
 call inside a function, a loop or `round(...)` gets "Assign this input to
 a name at the top of the cell to use it." A binding broken by rule 3 gets
-"Read `n` in another cell." No R warning, since plain R wouldn't give one.
+"To move it, read `n` in another cell, not this one." No R warning, since
+plain R wouldn't give one.
 
 Why so strict: Ember sets the variable without rerunning the cell. That is
 only the same as rerunning when the variable *is* the call's value and the
@@ -229,6 +230,8 @@ new is a way to change `n` without editing code.
 
 Only cells that read the name that changed rerun. If one cell binds `n`
 and `bins`, moving `n` doesn't rerun a cell that reads only `bins`.
+A value the worker turns into the one the input already has (8.3 on an
+integer input that is at 8) reruns nothing (#553).
 
 **Values arriving faster than cells run.** A slider sends while it is
 dragged. Pluto's page already holds new values back while a run is in
@@ -291,6 +294,8 @@ id.
 | `input_radio(choices, selected = choices[[1]], label = NULL)` | an element of `choices` | `Radio`, `mo.ui.radio`, `radioButtons` |
 
 - A number keeps `value`'s type: `input_slider(1L, 10L)` returns an integer.
+  An integer slider without a `step` moves by 1, as Pluto's `Slider` and
+  Shiny's `sliderInput` do, by keyboard too (#553).
 - A slider's values are its steps, counted from `min`, as Pluto's `Slider`
   does. The page's slider can only move to them, and `set_input()` refuses a
   value between them: "The value must be a number from 10 to 500 in steps
@@ -464,7 +469,7 @@ R API. Nothing shows on the page yet.
   Give this one its own cell, or combine the cell's inputs into one with
   input_list()." when bound, otherwise
   "Assign this input to a name at the top of the cell to use it." or
-  "Read `n` in another cell.".
+  "To move it, read `n` in another cell, not this one.".
 - **Sending.** A slider sends as it moves; a number box and a text box send
   on Enter or when the user leaves them; the others on each change. A
   number box sends only a number within its `min` and `max`; anything

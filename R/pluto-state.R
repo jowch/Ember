@@ -180,7 +180,6 @@ cell_key <- function(state, ctx, i) {
        queued = ctx$queued[[i]], waiting_for = ctx$waiting[[i]],
        errors = ctx$errors_by_cell[[i]], disabled_by = ctx$disabled_by[[i]],
        settings = ctx$settings[[i]], untracked = ctx$untracked[[i]],
-       untracked_files = ctx$untracked_files[[i]],
        allowed = state$allowed)
 }
 
@@ -205,7 +204,6 @@ key_unchanged <- function(state, ctx, i, prev_key) {
   if (!identical(ctx$disabled_by[[i]], prev_key$disabled_by)) return(FALSE)
   if (!identical(ctx$settings[[i]], prev_key$settings)) return(FALSE)
   if (!identical(ctx$untracked[[i]], prev_key$untracked)) return(FALSE)
-  if (!identical(ctx$untracked_files[[i]], prev_key$untracked_files)) return(FALSE)
   identical(state$allowed, prev_key$allowed)
 }
 
@@ -356,9 +354,10 @@ span_offsets <- function(code, line, col, end_col, lines = code_lines(code)) {
 #'   names (`"get"`), when the cell's code reads globals by a name static
 #'   reading can't follow: the note that the cell doesn't rerun when they
 #'   change (#357). It comes from the graph's analysis, so `cell_key()`
-#'   holds it too. `untracked_files` is the same for data readers called
-#'   with a computed path (`"read.csv"`): the note that the cell doesn't
-#'   rerun when the file changes (#276). `split` is present, as `length(split_mixed(view$code))`,
+#'   holds it too. `untracked_files` is present, as `as_arr()` of reader
+#'   names (`"read.csv"`), when the last run called a data reader with
+#'   something that names no file Ember can watch: the note that the cell
+#'   doesn't rerun when the file changes. It comes from the result. `split` is present, as `length(split_mixed(view$code))`,
 #'   only when `view$errors` has a `mixed_text` error: the Split button's
 #'   label (Cell.js), answered by the `ember_split_cell` request (server.R).
 #'   `figure` is present, as `list(width, height)` inches plus `alt` when
@@ -453,9 +452,9 @@ project_cell_result <- function(view, known_ids = NULL) {
 #' | text/latex, anything else    | text/plain                                | `text` (the print() form)  |
 #'
 #' The running cell shows its previous output, as the snapshot does. A text
-#' cell's errors (including a parse error: its line numbers are in
-#' `inline_code()`'s analysed code, not the cell's own, so
-#' `project_parse_error()` would misalign them) show as for code, ahead of
+#' cell's errors (including a parse error, which names its inline span
+#' and line, span_parse_error() in state.R: `project_parse_error()` marks
+#' lines of code, and a text cell shows its prose) show as for code, ahead of
 #' `project_text()` -- the one place a text cell without inline values still
 #' takes the early return a code cell never reaches, since it has no
 #' `output` to fall through to.

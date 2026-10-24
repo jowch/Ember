@@ -62,13 +62,16 @@ read_file_utf8 <- function(path) {
 #' argument to hand it a different one.
 #'
 #' @param path Path to an existing `.R` file. A file without Ember's header
-#'   opens as a notebook too (see `parse_notebook()`).
+#'   opens as a notebook too (see `parse_notebook()`). A path that doesn't
+#'   exist or names a folder is an error that says which (`open_path_error()`).
 #' @param repos `ember_repos()`: where indexes and packages come from.
 #' @param cache `cache_dir()`: where libraries, indexes and renv's cache
 #'   live.
 #' @return An `ember_notebook`.
 #' @export
 open_notebook <- function(path, repos = ember_repos(), cache = cache_dir()) {
+  bad <- open_path_error(path)
+  if (!is.null(bad)) stop(bad)
   text <- read_file_utf8(path)
   file <- parse_notebook(text, new_id = uuid)
   state <- new_state(file, path = path, id = uuid(),
@@ -77,6 +80,26 @@ open_notebook <- function(path, repos = ember_repos(), cache = cache_dir()) {
   nb <- session_start(state)
   dispatch(nb, ev_open(at = Sys.time()))
   nb
+}
+
+#' Why `path` can't be opened as a notebook file, as a condition, or `NULL`
+#' when it names a file. Checked before reading, because reading a missing
+#' file or a folder fails with R's generic "cannot open the connection" and
+#' leaves the reason in a warning (#559). Classed `ember_no_file` (with
+#' `kind` "missing", "folder" or "empty") so the start page can add what to
+#' do there.
+#' The path is shown in full, so the message says which path was tried.
+#' An empty path (Open a file submitted with nothing typed) has none to show.
+open_path_error <- function(path) {
+  full <- normalizePath(path, mustWork = FALSE)
+  kind <- if (!nzchar(path)) "empty" else if (dir.exists(path)) "folder"
+          else if (!file.exists(path)) "missing" else return(NULL)
+  text <- switch(kind,
+    empty = "No file was given. Type the path of a notebook file",
+    folder = sprintf("%s is a folder, not a notebook file", full),
+    missing = sprintf("%s doesn't exist. Check the spelling", full))
+  structure(class = c("ember_no_file", "error", "condition"),
+            list(message = paste0("ember: ", text), call = NULL, text = text, kind = kind))
 }
 
 #' Create a new notebook file and open it.

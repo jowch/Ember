@@ -7,6 +7,10 @@
 #
 # Covers engine-tests.md items 106-117 ("End to end").
 
+# Too slow for CRAN's check time (#536): CI runs the whole file, with
+# NOT_CRAN=true.
+skip_on_cran()
+
 test_that("open_notebook starts no process; the snapshot is preview (106)", {
   path <- write_session_notebook(list(S = cell("")))
   nb <- open_notebook(path)
@@ -16,6 +20,25 @@ test_that("open_notebook starts no process; the snapshot is preview (106)", {
   snap <- notebook_snapshot(nb)
   expect_equal(snap$process, "preview")
   expect_false(snap$allowed)
+})
+
+test_that("open_notebook() on a missing path or a folder says which, with the full path, not R's generic error (#559)", {
+  dir <- tempfile("ember-open-bad-")
+  dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  missing <- file.path(dir, "nothere.R")
+  full <- normalizePath(missing, mustWork = FALSE)
+
+  err <- tryCatch(open_notebook(missing), error = function(e) e)
+  expect_s3_class(err, "ember_no_file")
+  expect_identical(conditionMessage(err), sprintf("ember: %s doesn't exist. Check the spelling", full))
+  # No "cannot open file" warning left behind: nothing tried to read it.
+  expect_no_warning(tryCatch(open_notebook(missing), error = function(e) NULL))
+
+  err <- tryCatch(open_notebook(dir), error = function(e) e)
+  expect_s3_class(err, "ember_no_file")
+  expect_identical(conditionMessage(err),
+                   sprintf("ember: %s is a folder, not a notebook file", normalizePath(dir)))
 })
 
 test_that("run_cells(wait = TRUE) runs every cell with the expected outputs (107)", {
@@ -164,6 +187,29 @@ test_that("autorun: a cell that reads a file another cell writes reruns when the
   run_settled(nb, "W")
   settle(nb, function(snap) seen() && is_idle(snap))
   expect_identical(readLines(log), c("R", "R"))
+})
+
+test_that("autorun: a cell that reads a file by a path built in code reruns when another cell rewrites it", {
+  cells <- list(S = cell(""), P = cell("dir <- '.'; name <- 'd.txt'"),
+                W = cell("k <- 1; writeLines(as.character(k), file.path(dir, name))"),
+                R = cell("d <- readLines(file.path(dir, name))"),
+                U = cell("paste(d, '!')"))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_settled(nb)
+  shown_u <- function(snap) snap_view(snap, "U")$output$text
+  expect_identical(shown_u(notebook_snapshot(nb)), '[1] "1 !"')
+  expect_identical(snap_view(notebook_snapshot(nb), "R")$untracked_files, character())
+  # The run told the shell which file R read, by its path in the folder.
+  settle(nb, function(snap) !is.null(nb$data_watch[["d.txt"]]) && is_idle(snap))
+
+  # W writes new contents: R and U rerun, though W defines nothing R reads
+  # but the file.
+  edit_notebook(nb, set_code("W", "k <- 2; writeLines(as.character(k), file.path(dir, name))"))
+  run_settled(nb, "W")
+  settle(nb, function(snap) identical(shown_u(snap), '[1] "2 !"') && is_idle(snap))
+  expect_false(isTRUE(snap_view(notebook_snapshot(nb), "R")$stale))
 })
 
 test_that("a cell that reads a file and appends to it runs once, as in plain R (#276)", {
@@ -924,6 +970,30 @@ test_that("a worker busy in a long cell ends when the server that started it is 
 unscanned_cell <- function(name, code) {
   cell(sprintf("%s <- eval(parse(text = %s))", name, paste(deparse(code), collapse = "")))
 }
+
+test_that("autorun: a cell whose file isn't there yet reruns once it appears (#564)", {
+  skip_if_not_installed("readr")
+  skip_if_not_installed("data.table")
+  libs <- paste(deparse(normalizePath(.libPaths(), winslash = "/")), collapse = "")
+  readers <- c(readr = "readr::read_csv(file.path('.', 'later.csv'), show_col_types = FALSE)$x",
+               fread = "data.table::fread(file.path('.', 'later.csv'))$x")
+  for (reader in names(readers)) local({
+    cells <- list(S = cell(""), R = unscanned_cell("d", sprintf(".libPaths(c(%s, .libPaths())); %s", libs, readers[[reader]])),
+                  U = cell("paste(d, '!')"))
+    path <- write_session_notebook(cells)
+    nb <- open_notebook(path)
+    on.exit(close_notebook(nb), add = TRUE)
+    run_settled(nb)
+    expect_equal(snap_view(notebook_snapshot(nb), "R")$status, "error", label = reader)
+    # The run told the shell which missing file R tried, by its path in the folder.
+    settle(nb, function(snap) !is.null(nb$data_watch[["later.csv"]]) && is_idle(snap))
+
+    writeLines(c("x", "1"), file.path(dirname(path), "later.csv"))
+    shown_u <- function(snap) snap_view(snap, "U")$output$text
+    settle(nb, function(snap) identical(shown_u(snap), '[1] "1 !"') && is_idle(snap))
+    expect_equal(snap_view(notebook_snapshot(nb), "R")$status, "ok", label = reader)
+  })
+})
 
 test_that("a cell's processx child outlives a restart, also once the server collects the old worker (#232)", {
   # The old worker's process object ends its marked tree when collected;

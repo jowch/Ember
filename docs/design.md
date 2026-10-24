@@ -82,8 +82,8 @@ repository depends on them.
 - **Open without running.** Running a cell runs its unrun ancestors first.
   "Run all" is one click. Long simulations don't start just because a
   notebook was opened.
-- **Every notebook opens in safe preview**, as in Pluto, even one that ran
-  before: no worker and no installs. This protects against unfamiliar code
+- **Every notebook opened from a file starts in safe preview**, as in Pluto,
+  even one that ran before: no worker and no installs. This protects against unfamiliar code
   (installing detected packages runs their install scripts, and loading runs
   their `.onLoad`) and against a crash loop, where code that crashed the last
   session crashes the next one as soon as it opens. The user can read and
@@ -91,6 +91,9 @@ repository depends on them.
   ("starts R, installs 3 packages"). The first run the user asks for, a cell
   or "Run all", allows execution for the session: it starts the worker,
   installs what's missing, then runs. Nothing is remembered between sessions.
+  A notebook made with the start page's New notebook skips safe preview: it
+  was written just now, by the person looking at it, so it opens ready to
+  run, as a new notebook does in Pluto (`SessionActions.new()` runs it).
   Endeavor's `allow_execution` tool maps onto this. marimo has no such
   state: it opens without running by default (`auto_instantiate = False`),
   but its `--sandbox` mode starts installing a notebook's packages as soon as
@@ -421,12 +424,41 @@ like part of the cell:
   its own file; the notebook alone is no longer the whole record, and the
   UI says so.
 
-**Data files a cell reads (#276).** A cell that reads a file with a literal
-path, such as `read.csv("data/survey.csv")`, `readRDS("fit.rds")` or
+**Data files a cell reads (#276).** A cell that reads a file, such as
+`read.csv("data/survey.csv")`, `readRDS(file.path(dir, "fit.rds"))` or
 `load("e.RData")`, depends on that file the way it depends on a sourced
-helper. The readers are a fixed list in `rules.R` (`data_readers`): base R
-and utils, readr, vroom, data.table's `fread`, readxl, arrow, haven and
-jsonlite. A literal path in a file the cell sources counts too.
+helper. However the path is built, Ember learns the file when the read runs:
+the worker traces base R's file connections (`file()`, `gzfile()` and the
+other compressed ones, `unz()`), which every base reader opens, and a fixed
+list of readers (`data_readers` in `rules.R`, `data_reader_args` in the
+worker): base R and utils, readr, vroom, data.table's `fread`, readxl, arrow,
+nanoparquet, haven, jsonlite, qs2 and xml2. A package's readers are
+traced when its namespace loads.
+So a read inside a helper function, `lapply(files, read.csv)`, a sourced
+file's read, and any reader built on R connections (`jsonlite::read_json`,
+`Matrix::readMM`) count too. A literal path is also known from the code
+before the cell runs.
+
+- Each run replaces the files the last one read, so a path that changes
+  between runs (`file.path(dir, input$file)`) is followed. A file inside
+  the notebook's folder is named relative to it, as a literal path is.
+- A file a run tried to read and found missing is watched too, so the cell
+  reruns once it appears. A reader that takes the "file" for something
+  else isn't watched: `fread()` takes an `input` with a space as a shell
+  command, and xml2 takes text with `<` or `>` as XML. A read of R's own
+  files (the libraries, R itself, the session's `tempdir()`) isn't
+  watched.
+- The cost, measured in the worker on a cloud container, is about 15 µs
+  for each read of a file the run already read and about 0.2 ms the first
+  time (`lapply()` over 2000 small CSVs: 1.3 s, against 0.74 s in plain R).
+  Code that reads no file pays nothing. After each top-level expression
+  the worker checks every file the run has read so far, in one
+  `file.info()` call: about 7 ms for 2000 files. The worker hooks the connections
+  and readers by putting a call first in their bodies, not with `trace()`,
+  and leaves alone the readers whose body has a loop (read.table() and
+  read.fwf(), which reach a connection through `file()` or `isOpen()`, and
+  read.dcf() and scan() given a connection made in another cell, which
+  Ember doesn't see).
 
 - The engine watches each such file. When its contents change, the reader
   and its dependents rerun or are marked stale, following the autorun or
@@ -456,15 +488,17 @@ jsonlite. A literal path in a file the cell sources counts too.
   from it until it runs again. So the file stays watched until then, and a
   change marks that result stale, with what reads from it (#439).
 - A change while the reader runs is checked by the worker. It knows which
-  top-level expressions of the cell read or write each file (literal
-  paths given to a fixed list of writers, `data_writers`, such as
-  `write.csv` and `saveRDS`; a writer with a computed path counts for
-  every file). After each expression it compares each file's version. A
-  change during an expression that neither reads nor writes the file,
+  top-level expressions of the cell read or write each file: the
+  expression it was reading in, literal paths given to a fixed list of
+  writers (`data_writers`, such as `write.csv` and `saveRDS`; a writer
+  with a computed path counts for every file), and a write through a file
+  connection it sees open. After each expression it compares each file's
+  version. A change during an expression that neither reads nor writes the file,
   after the cell first read it, is someone else's: the result is marked
   stale, and autorun runs it again. A change before the cell reads the
   file is read with it, and the cell's own writes don't count.
-- A write Ember can't see, such as one inside a helper function, looks
+- A write Ember can't see, such as readr's `write_csv()` (compiled code,
+  no R connection) inside a helper function, looks
   like someone else's, and costs one extra run, which repeats the cell's
   side effects (an append, a download). A run that sees such a change
   right after a run that saw one keeps its result as it is, so the cell
@@ -472,28 +506,38 @@ jsonlite. A literal path in a file the cell sources counts too.
   `writeLines`, `writeBin`, `writeChar`, `sink`, `capture.output`,
   `file.append`, `file.copy`, `file.rename` and `download.file`, besides
   the table and serialization writers.
-- The check is per top-level expression. An expression that reads the
-  file and then works for a long time (`d <- read.csv("d.csv") |>
-  slow_step()`) treats a change during that work as read with it.
+- The check is per top-level expression. For a literal path, an
+  expression that reads the file and then works for a long time
+  (`d <- read.csv("d.csv") |> slow_step()`) treats a change during that
+  work as read with it. A file the run learns has its version taken as it
+  is read, so a change after that, even in the same expression, is someone
+  else's unless the expression writes the file.
 - A file saved with the same bytes isn't a change. The shell compares sizes
   first and hashes a file only when a rewrite keeps its size; the first
   such rewrite after opening counts as a change, since there is no earlier
   hash to compare with. Opening a notebook reads no data file. The hash
   runs on the shell's own loop, so a writer that rewrites a large file
   with the same size makes the page wait while it is read.
-- A computed path (`read.csv(f)`, `readRDS(file.path(dir, "fit.rds"))`)
-  runs normally, and the cell shows a note that Ember can't tell which file
-  it reads, so it doesn't rerun when the file changes. The snapshot carries
-  it as `untracked_files`. Text (`read.csv(text = …)`), URLs and calls
-  inside a function body record nothing, and so does a reader passed as a
-  function (`lapply(files, read.csv)`, `purrr::map(files, read_csv)`):
-  it gets no note either.
+- A listed reader given something that names no file Ember can watch,
+  such as a connection of a kind it doesn't know, gets a note after the
+  run: Ember can't tell which file the cell read, so it doesn't rerun when
+  the file changes. The snapshot carries it as `untracked_files`. Text
+  (`read.csv(text = …)`, readr's `I()`), URLs, `textConnection()` and
+  `pipe()` read no file, and get no note.
+- Ember can't see a read in compiled code by a reader not on the list
+  (sf, terra, hdf5, a database), or by another process
+  (`system("python prep.py")`). Those get no note: Ember doesn't know they
+  read a file. Nor does it watch a folder: a file added to a folder a cell
+  lists (`list.files("data")`) is read only when the cell runs again.
+- A connection opened with no mode and then written (`con <- file(p);
+  writeLines(x, con)`) counts as a read when the file exists. Its own write
+  is in the same expression, so it doesn't rerun itself.
 - Writes aren't tracked: the writer doesn't become an upstream of the
   reader, so running the reader alone doesn't run the writer first. The
   reader reruns once the file has changed.
-- Paths are resolved against the notebook's folder, where the worker
-  starts. A cell that calls `setwd()` reads elsewhere; Ember watches the
-  wrong file there.
+- A literal path is resolved against the notebook's folder, where the
+  worker starts. A file the run learns is the one it actually read, so a
+  cell that calls `setwd()` is watched correctly once it has run.
 
 The user docs also recommend the module form, R's version of PlutoLinks'
 `@ingredients`: `h <- new.env(); sys.source("helpers.R", envir = h)` or

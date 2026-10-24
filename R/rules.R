@@ -96,8 +96,10 @@ untracked_reads <- c("get", "get0", "mget", "exists", "dynGet",
 #' Functions that read a data file, each with the argument that names it
 #' (#276). A literal path there is watched as a `source()` path is: when
 #' the file changes, the cell and its dependents rerun or go stale. Any
-#' other value gets an `untracked_file` note. The argument is taken by
-#' name (or as `file`, which `fread()` also takes), or else as the first
+#' other value is learned when the call runs: inst/worker.R traces these
+#' same readers (`data_reader_args`, by package, which a test keeps equal
+#' to this list) and base R's connections. The argument is taken by name
+#' (or as `file`, which `fread()` also takes), or else as the first
 #' unnamed one.
 data_readers <- c(
   # base and utils
@@ -108,11 +110,14 @@ data_readers <- c(
   read_csv = "file", read_csv2 = "file", read_tsv = "file", read_delim = "file",
   read_table = "file", read_fwf = "file", read_lines = "file", read_file = "file",
   read_rds = "file", vroom = "file",
-  # data.table, readxl, arrow, haven, jsonlite
+  # data.table, readxl, arrow and nanoparquet, haven, jsonlite
   fread = "input", read_excel = "path", read_xlsx = "path", read_xls = "path",
   read_parquet = "file", read_feather = "file", read_ipc_file = "file",
-  read_csv_arrow = "file", read_sav = "file", read_dta = "file", read_sas = "data_file",
-  read_xpt = "file", read_json = "path")
+  read_csv_arrow = "file", read_tsv_arrow = "file", read_delim_arrow = "file",
+  read_json_arrow = "file", read_sav = "file", read_dta = "file", read_sas = "data_file",
+  read_xpt = "file", read_json = "path",
+  # qs2, xml2
+  qs_read = "file", qd_read = "file", read_xml = "x", read_html = "x")
 
 #' Functions that write a file, each with the argument that names it and
 #' its position (#276). They aren't watched: they tell the worker which

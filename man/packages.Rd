@@ -124,14 +124,20 @@ version's release date for \code{preview_update()}. Kept in \code{cache} for a d
 \code{package_status()} returns a plain list, the same value as
 \code{notebook_snapshot(nb)$packages}: \code{list(snapshot, r_version,
 bioc_version, library = list(status, path, progress, message, log, failures,
-download),
-packages = data.frame(name, version, source, direct, status, message),
-problems, proposal, plan)}. Per package, \code{status} is one of
+download, no_binary),
+packages = data.frame(name, version, source, direct, status, message, spec,
+available), problems, proposal, plan)}. Per package, \code{status} is one of
 \code{"installed"}, \code{"installing"}, \code{"missing"}, \code{"failed"} (named by
 \code{library$failures}, or a direct package that needs one of them),
 \code{"not_installed"} (every other package in a library that failed: its
 staging folder is never renamed into place, so nothing in that install
-actually landed), \code{"not_found"}. \code{plan} is \code{NULL} or
+actually landed), \code{"not_found"}, \code{"lookup_failed"} (not found while
+Bioconductor couldn't be looked in, so it may be there; \code{message} says
+why), and, for a package with a \code{[sources]} entry, \code{"looking_up"} and
+\code{"source_failed"}. \code{spec} is the package's \code{[sources]} entry as
+written (\code{NA} without one). \code{available} is CRAN's newest version where it
+is newer than the locked one, and \code{NA} otherwise or until CRAN's release
+dates are known. \code{plan} is \code{NULL} or
 \code{list(install = <n packages>, restart = <names>)}, what running would do
 (a \code{"not_installed"} package counts toward it exactly as \code{"missing"}
 does).
@@ -140,7 +146,10 @@ does).
 failed install, whatever \code{status} is now: it isn't cleared by a later
 successful install, so it can be stale (describing an earlier failure)
 once \code{status} has moved past \code{"failed"}. \code{character()} before any
-install has ever failed. \code{library$failures} is a data frame
+install has ever failed. \code{library$no_binary} is \code{NULL}, or the packages the
+installer said will build from source for want of a binary for this R (a
+named character vector, package to version), kept until the next install.
+\code{library$failures} is a data frame
 \code{package}, \code{kind} (\code{"compile"}, \code{"configure"}, \code{"dependency"},
 \code{"download"}, \code{"other"}), \code{detail} (the missing dependency's name for
 \code{"dependency"}, the first \code{ERROR} line for \code{"other"}, \code{NA} otherwise),
@@ -241,18 +250,30 @@ and never touches a user's own renv projects: Ember keeps its own renv
 cache under \code{cache_dir()}.
 }
 \examples{
+cache <- file.path(tempdir(), "ember-cache")
+nb <- new_notebook(tempfile(fileext = ".R"), cache = cache)
+edit_notebook(nb, insert_cell(1, "summary(c(2, 4, 9))"))
+package_status(nb)$packages
+package_status(nb)$plan
+close_notebook(nb)
+
+# Run a notebook file as a script, from its own library.
+path <- tempfile(fileext = ".R")
+writeLines("x <- c(2, 4, 9)\nprint(mean(x))", path)
+run(path, cache = cache)
+
+clean(dry_run = TRUE, dir = cache)
+
 \dontrun{
+# These need the internet: Package Manager's index at the chosen date,
+# and the packages themselves.
 nb <- open_notebook("growth.R")
 edit_notebook(nb, insert_cell(2, "library(dplyr)\n curves |> filter(od > 0.1)"))
-package_status(nb)$plan
 run_cells(nb, 2, wait = TRUE)
 package_status(nb)$library$status
 
 p <- preview_date(nb, Sys.Date())
 p$changes
 set_date(nb, Sys.Date())
-
-ember::run("growth.R")
-ember::clean(dry_run = TRUE)
 }
 }

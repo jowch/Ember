@@ -1376,10 +1376,17 @@ check_data_files <- function(nb, send, skip = character()) {
   # rewrite a rerun.
   skip_full <- if (anyNA(skip)) NA_character_ else canonical_path(vapply(skip, function(s) resolve_source_path(nb, s), character(1)))
   data_changed <- list()
-  for (p in names(nb$data_watch)) {
-    full <- resolve_source_path(nb, p)
-    if (anyNA(skip_full) || canonical_path(full) %in% skip_full) next
-    info <- data_file_info(full)
+  paths <- names(nb$data_watch)
+  if (length(paths) == 0) return(invisible(NULL))
+  fulls <- vapply(paths, function(p) resolve_source_path(nb, p), character(1), USE.NAMES = FALSE)
+  # One file.info() for all of them: a run that reads a folder of files
+  # has the shell watch thousands, every half second.
+  infos <- tryCatch(file.info(fulls, extra_cols = FALSE), error = function(e) NULL)
+  for (k in seq_along(paths)) {
+    p <- paths[[k]]
+    full <- fulls[[k]]
+    if (anyNA(skip_full) || (length(skip_full) && canonical_path(full) %in% skip_full)) next
+    info <- if (is.null(infos)) data_file_info(full) else list(mtime = infos$mtime[[k]], size = infos$size[[k]])
     w <- nb$data_watch[[p]]
     if (!isTRUE(identical(info$mtime, w$mtime)) || !isTRUE(identical(info$size, w$size))) {
       same_size <- isTRUE(identical(info$size, w$size)) && !is.na(info$size)

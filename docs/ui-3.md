@@ -55,7 +55,9 @@ out of the way of the data, the code and the results.
 - **Rail**: Pluto's status bar, flush with the cell's left edge and the full
   height of the cell, always present. Solid, soft colours:
   - grey: nothing happening (up to date, not run, stale or disabled);
-  - blue: running (pulsing), faded while queued;
+  - blue: running (pulsing), faded while queued; the running code box also
+    gets a blue outline and gutter, so the cell is easy to spot, with
+    reduced motion too (#538);
   - amber: edited and not run yet; the code also gets an amber outline and
     gutter, as in Pluto. Hovering the rail says "Press Shift + Enter to run
     this cell" in a small light label;
@@ -64,7 +66,8 @@ out of the way of the data, the code and the results.
 - **Chips** in the output area say why the output isn't current, each with an
   icon and its own tint: "Not run yet" (neutral, no output), "Stale · `x`
   changed" (amber tint; lazy mode only; the old output is greyed out on a
-  grey wash), "Disabled" (solid grey; the code sits on a grey background,
+  grey wash but still reads at 4.5 : 1, and its console loses its colour,
+  #538), "Disabled" (solid grey; the code sits on a grey background,
   dimmed). Each name in a chip, or in the "Changed `cnt` in place" note,
   links to the one cell that defines it, and clicking it selects the
   definition there, as go-to-definition does (#285). A name no single cell
@@ -169,7 +172,10 @@ out of the way of the data, the code and the results.
   are one "Run N" button that runs the edits and then the cells not run (N
   counts both, each cell once); the
   two together pushed ⋯ off a phone's screen (#501).
-- While R is busy: "Running 2 of 5 cells" and Stop.
+- While R is busy: "Running 2 of 5 cells" and Stop. While the running cell
+  is scrolled out of view, the status shows ↑ or ↓ and a click scrolls to
+  the cell instead of opening Status (#538). A thin bar along the top of
+  the window, in the running rail's blue, fills as the run goes.
 - Safe preview is one banner with "Run this notebook". Each code cell also
   shows its "Not run yet" chip, as Pluto marks every cell in safe preview,
   so the first view has no unexplained gaps (#298).
@@ -253,6 +259,12 @@ keys for the computer it's on (⌘ and ⌥ on a Mac).
 
 - One focus ring: 2 px accent outline, 2 px offset, on :focus-visible only.
   Nothing removes an outline without it (today the Help search box does).
+- A selected cell without the keyboard's focus has a 4 px accent band
+  around it, 3 : 1 against the page and its code in both themes.
+- Every button answers the pointer: a hover fill and a darker pressed state,
+  the same on every page (#538). A menu lights one row: the one under the
+  pointer, or the keyboard's once the arrows are used. An action with no
+  other trace on the page (Copy output) says it worked in a short note.
 - Keyboard path: a "Skip to the notebook" link; the header left to right;
   then cells. In a cell, Esc selects the cell (ringed); ↑/↓ move between
   cells, Enter edits, Tab reaches the run button, ⋯ and the "+" below. The
@@ -264,8 +276,11 @@ keys for the computer it's on (⌘ and ⌥ on a Mac).
   defining fit, error"), chips and errors carry words.
 - One polite announcement when a run you started ends ("Finished: 3 cells",
   "fit: error"). Inline values read as plain text.
-- Reduced motion: the running rail is solid, menus don't slide. 200% zoom
-  without horizontal scrolling.
+- Motion is short and says where a thing came from: menus and dialogs fade
+  in with a 4 px rise (130 ms), and the side panel slides in from its edge
+  (180 ms) when it covers the notebook. They close at once. Reduced motion
+  turns all of it off: the running rail is solid, nothing slides or fades.
+  200% zoom without horizontal scrolling.
 - Every alert() and confirm() becomes an in-page dialog.
 
 ## Wording

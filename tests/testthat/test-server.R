@@ -10,6 +10,10 @@
 # needs a real installed ember on its library path; under devtools::load_all()
 # there is no such install, so this makes one (cached) the way the
 # subprocess tests in test-packages-session.R already do.
+# Too slow for CRAN's check time (#536): CI runs the whole file, with
+# NOT_CRAN=true.
+skip_on_cran()
+
 use_installed_ember()
 
 # ---- 26. connect, then an empty update_notebook syncs the page --------------
@@ -1741,6 +1745,8 @@ test_that("ember_new_notebook replies a url starting edit?id=, hosts the file as
   expect_true(isTRUE(hub$owned))
   on.exit(close_notebook(hub$nb), add = TRUE)
   expect_true(normalize_recent_path(target) %in% read_recent())
+  # Made just now from the start page: ready to run, not in safe preview.
+  expect_true(isTRUE(notebook_state(hub$nb)$allowed))
 
   handle_message(server, ws, wire("ember_new_notebook", name = "fit", folder = dir))
   r2 <- ws$last()
@@ -1829,6 +1835,33 @@ test_that("ember_open_notebook finds an already-open notebook and opens a closed
   suppressWarnings(handle_message(server, ws, wire("ember_open_notebook", path = file.path(dir, "does-not-exist.R"))))
   r3 <- ws$last()
   expect_true(is.character(r3$message$error))
+})
+
+test_that("Open a file and /open say a path doesn't exist or is a folder, and what to do (#559)", {
+  dir <- tempfile("ember-start-open-bad-")
+  dir.create(dir)
+  on.exit(unlink(dir, recursive = TRUE), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  server$port <- 40011L
+  ws <- fake_socket()
+  missing <- file.path(dir, "nothere.R")
+  full <- normalizePath(missing, mustWork = FALSE)
+
+  handle_message(server, ws, wire("ember_open_notebook", path = missing))
+  expect_identical(ws$last()$message$error,
+                   sprintf("%s doesn't exist. Check the spelling, or use New notebook to make one.", full))
+  handle_message(server, ws, wire("ember_open_notebook", path = dir))
+  expect_identical(ws$last()$message$error, sprintf("%s is a folder, not a notebook file.", normalizePath(dir)))
+  # Open a file submitted with nothing typed.
+  handle_message(server, ws, wire("ember_open_notebook", path = ""))
+  expect_identical(ws$last()$message$error, "No file was given. Type the path of a notebook file.")
+
+  resp <- http_call(server, fake_req("/open", sprintf("path=%s&secret=s", utils::URLencode(missing, reserved = TRUE))))
+  expect_equal(resp$status, 400L)
+  expect_identical(resp$body, sprintf("Couldn't open %s: %s doesn't exist. Check the spelling.", missing, full))
+  resp <- http_call(server, fake_req("/open", sprintf("path=%s&secret=s", utils::URLencode(dir, reserved = TRUE))))
+  expect_identical(resp$body, sprintf("Couldn't open %s: %s is a folder, not a notebook file.", dir, normalizePath(dir)))
+  expect_length(ls(server$hubs), 0L)
 })
 
 # ---- Editor services (ui-2.md, 4) -------------------------------------------

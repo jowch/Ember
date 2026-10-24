@@ -10,6 +10,10 @@
 # the whole trace without shrinking it, which is much faster):
 #   EMBER_FUZZ_SEEDS=1:200 EMBER_FUZZ_STEPS=30 Rscript -e 'testthat::test_local(filter = "scheduling-fuzz")'
 
+# Too slow for CRAN's check time (#536): CI runs the whole file, with
+# NOT_CRAN=true.
+skip_on_cran()
+
 fuzz_seeds <- function() {
   s <- Sys.getenv("EMBER_FUZZ_SEEDS")
   if (nzchar(s)) eval(parse(text = s), baseenv()) else 1:6

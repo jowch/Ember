@@ -20,7 +20,7 @@ import net from "node:net";
 import http from "node:http";
 import crypto from "node:crypto";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, openNotebook, connectionSettled } from "../browser.mjs";
+import { launchBrowser, newPage, openNotebook, connectionSettled, pauseClock } from "../browser.mjs";
 
 /** No uncaught error on the page. Failed connects log console errors of
  * their own (the browser's and the page's), which are expected here. */
@@ -80,7 +80,14 @@ async function fastForwardUntil(page, locator, { step = 5000, limit = 120000 } =
     await connectionSettled(page);
   }
   if (await locator.count() > 0) return;
-  throw new Error(`still no ${locator} after moving the clock ${limit} ms`);
+  // What the page did meanwhile (PlutoConnection.js), to say why (#491).
+  const seen = await page.evaluate(() => JSON.stringify({
+    connection: window.ember_connection, dialogs: window.ember_dialogs,
+    queue: window.ember_dialog_queue, queue_events: window.ember_dialog_events,
+    in_page: [...document.querySelectorAll("dialog")].map((d) => ({ open: d.open, class: d.className, role: d.getAttribute("role"), title: d.querySelector(".ember-dialog-title")?.textContent ?? null })),
+  }, null, 1));
+  // A dialog whose showModal() threw is in the page but not open: its error is here.
+  throw new Error(`still no ${locator} after moving the clock ${limit} ms; the page's connection: ${seen}; its problems: ${JSON.stringify(page.problems ?? [], null, 1)}`);
 }
 
 /** Open the notebook through a forwarder, then take the forwarder away. */
@@ -222,7 +229,7 @@ test("dead port: a sleep in the middle of an outage doesn't count towards the 30
 
   // One failed try, then an hour's sleep. The clock stays paused from here
   // on, so only fastForward moves it, however slow the runner is.
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  await pauseClock(page, 1000);
   await connectionSettled(page);
   await page.clock.setSystemTime(await page.evaluate(() => Date.now() + 60 * 60 * 1000));
 

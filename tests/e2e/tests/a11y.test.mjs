@@ -156,7 +156,7 @@ test("a run started while another is going is announced, even when its cells sho
   assertNoProblems(page);
 });
 
-test("reduced motion: the running rail is still and the menu doesn't move (170)", async (t) => {
+test("reduced motion: the running rail is still and menus, dialogs and the panel don't move (170)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "a11y-170.server.log") });
   const browser = await launchBrowser();
@@ -184,6 +184,18 @@ test("reduced motion: the running rail is still and the menu doesn't move (170)"
       .filter((s) => s.animationName !== "none" || s.transitionDuration.split(",").some((d) => parseFloat(d) > 0))
       .length);
   assert.equal(motion, 0, "nothing in the menu animates or transitions");
+
+  // Nor do the dialogs and the side panel, which rise and slide in
+  // without the preference (#538).
+  await page.getByRole("menuitem", { name: "Keyboard shortcuts", exact: true }).click();
+  await page.waitForSelector("dialog.ember-shortcuts[open]");
+  assert.deepEqual(await page.locator("dialog.ember-shortcuts[open]").evaluate((el) =>
+    [getComputedStyle(el).animationName, getComputedStyle(el, "::backdrop").animationName]), ["none", "none"]);
+  await page.keyboard.press("Escape");
+  await page.locator("dialog.ember-shortcuts").waitFor({ state: "detached" });
+  await page.locator('header#pluto-nav button[aria-label="Variables"]').click();
+  await page.waitForSelector("#helpbox-wrapper.open");
+  assert.equal(await page.locator("#helpbox-wrapper.open").evaluate((el) => getComputedStyle(el).animationName), "none");
   assertNoProblems(page);
 });
 
@@ -192,6 +204,12 @@ test("reduced motion: the running rail is still and the menu doesn't move (170)"
  * aria-describedby or aria-labelledby naming an id that isn't on the page
  * (axe only lists those as "needs review"). */
 async function axeFindings(page, label) {
+  // Scanned once everything has settled: a dialog fading in (#538) has
+  // its text below full contrast for 130 ms. The rail's endless pulse is
+  // left out, since it never finishes.
+  await page.evaluate(() => Promise.all(document.getAnimations()
+    .filter((a) => a.effect?.getComputedTiming().endTime !== Infinity)
+    .map((a) => a.finished.catch(() => {}))));
   const { violations } = await new AxeBuilder({ page }).analyze();
   const dangling = await page.evaluate(() =>
     [...document.querySelectorAll("[aria-describedby], [aria-labelledby]")].flatMap((el) =>
@@ -264,6 +282,43 @@ for (const scheme of ["light", "dark"]) {
 
 // #294: a plot's text alternative is its cell's #| fig-alt, else its
 // #| fig-cap, else "Plot".
+test("selected cell: the band around it is 3 : 1 against the page and its code, in both themes", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "a11y-selected.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  // Selected without the keyboard's focus: the band, not the focus ring.
+  await page.evaluate(() => window.editor_state_set({ selected_cells: ["A"] }));
+  await page.waitForSelector(`${cellSelector("A")}.selected`);
+  const parse = (c) => c.match(/[\d.]+/g).map(Number);
+  const lum = ([r, g, b]) => {
+    const [R, G, B] = [r, g, b].map((v) => v / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * R + 0.7152 * G + 0.0722 * B;
+  };
+  const contrast = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+  for (const scheme of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.waitForFunction((scheme) => document.documentElement.dataset.theme === scheme, scheme);
+    const [shadow, pageBg, code] = await page.locator(cellSelector("A")).evaluate((el) => [
+      getComputedStyle(el).boxShadow,
+      getComputedStyle(document.body).backgroundColor,
+      getComputedStyle(el.querySelector(".cm-editor")).backgroundColor,
+    ]);
+    // "rgba(r, g, b, a) 0px 0px 0px 4px", over the page.
+    const [r, g, b, a = 1] = parse(shadow.slice(0, shadow.indexOf(")") + 1));
+    const under = parse(pageBg);
+    const band = [r, g, b].map((v, i) => v * a + under[i] * (1 - a));
+    for (const [what, against] of [["page", under], ["code", parse(code)]]) {
+      const c = contrast(band, against);
+      assert.ok(c >= 3, `${scheme}: the band against the ${what} is ${c.toFixed(2)} : 1`);
+    }
+  }
+  assertNoProblems(page);
+});
+
 test("plots: alt text from #| fig-alt or fig-cap, else \"Plot\" (#294)", async (t) => {
   const notebook = tempNotebook("ui-sweep.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "a11y-294.server.log") });

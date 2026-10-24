@@ -4,7 +4,7 @@ import immer, { applyPatches, produceWithPatches } from "../imports/immer.js"
 import _ from "../imports/lodash-es.js"
 
 import { empty_notebook_state, is_editor_embedded_inside_editor, set_disable_ui_css } from "../editor.js"
-import { create_pluto_connection } from "../common/PlutoConnection.js"
+import { create_pluto_connection, connection_lost_message } from "../common/PlutoConnection.js"
 import { ask, tell, reload_prompt } from "../common/dialogs.js"
 import { serialize_cells, deserialize_cells, detect_deserializer } from "../common/Serialization.js"
 
@@ -14,6 +14,7 @@ import { BottomRightPanel, open_bottom_right_panel } from "./BottomRightPanel.js
 import { DropRuler, get_drop_index_for_paste } from "./DropRuler.js"
 import { SelectionArea } from "./SelectionArea.js"
 import { UndoDelete } from "./UndoDelete.js"
+import { Toast } from "./Toast.js"
 import { live_view, record_delete, expect_return, set_cell_undo_handlers } from "./CellInput/cell_undo.js"
 import { Scroller } from "./Scroller.js"
 import { Popup } from "./Popup.js"
@@ -680,29 +681,40 @@ export class Editor extends Component {
                         })
                     )
 
-                    await update_notebook((notebook) => {
-                        for (let cell_id of cell_ids) {
-                            if (!keep_local && this.state.cell_inputs_local[cell_id]) {
-                                if (notebook.cell_inputs[cell_id]) {
-                                    notebook.cell_inputs[cell_id].code = this.state.cell_inputs_local[cell_id].code
-                                }
-                            }
-                        }
-                    })
-                    await this.setStatePromise(
-                        immer((/** @type {EditorState} */ state) => {
+                    try {
+                        await update_notebook((notebook) => {
                             for (let cell_id of cell_ids) {
-                                // This is a "dirty" trick, as this should actually be stored in some shared request_status => status state
-                                // But for now... this is fine 😼
-                                if (state.notebook.cell_results[cell_id] != null) {
-                                    state.notebook.cell_results[cell_id].queued = this.is_process_ready()
-                                } else {
-                                    // nothing
+                                if (!keep_local && this.state.cell_inputs_local[cell_id]) {
+                                    if (notebook.cell_inputs[cell_id]) {
+                                        notebook.cell_inputs[cell_id].code = this.state.cell_inputs_local[cell_id].code
+                                    }
                                 }
                             }
                         })
-                    )
-                    await this.client.send("run_multiple_cells", { cells: cell_ids }, { notebook_id: this.state.notebook.notebook_id })
+                        await this.setStatePromise(
+                            immer((/** @type {EditorState} */ state) => {
+                                for (let cell_id of cell_ids) {
+                                    // This is a "dirty" trick, as this should actually be stored in some shared request_status => status state
+                                    // But for now... this is fine 😼
+                                    if (state.notebook.cell_results[cell_id] != null) {
+                                        state.notebook.cell_results[cell_id].queued = this.is_process_ready()
+                                    } else {
+                                        // nothing
+                                    }
+                                }
+                            })
+                        )
+                        await this.client.send("run_multiple_cells", { cells: cell_ids }, { notebook_id: this.state.notebook.notebook_id })
+                    } catch (e) {
+                        if (e?.message !== connection_lost_message) throw e
+                        // The socket closed before the run was asked for or
+                        // answered (#584). The cells stop showing as waiting;
+                        // the reconnect's reset_shared_state brings back what
+                        // the server has, and an edited cell still shows its
+                        // edit, to run again.
+                        window.dispatchEvent(new CustomEvent("ember_run_acknowledged", { detail: { cell_ids } }))
+                        return false
+                    }
                     window.dispatchEvent(new CustomEvent("ember_run_acknowledged", { detail: { cell_ids } }))
                     return true
                 }
@@ -1222,7 +1234,11 @@ all patches: ${JSON.stringify(patches, null, 1)}
                     document.body._update_is_ongoing = this.pending_local_updates > 0
                 }
             })
-            last_update_notebook_task = new_task.catch(console.error)
+            // A lost connection fails the update on purpose (#584), and the
+            // reconnect resyncs; only another failure is worth logging.
+            last_update_notebook_task = new_task.catch((e) => {
+                if (e?.message !== connection_lost_message) console.error(e)
+            })
             return new_task
         }
         this.update_notebook = update_notebook
@@ -1808,6 +1824,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                         recently_deleted=${this.state.recently_deleted}
                         on_click=${() => this.actions.undo_last_delete()}
                     />
+                    <${Toast} />
                     <${Popup} />
                 </${PlutoJSInitializingContext.Provider}>
                 </${PlutoBondsContext.Provider}>

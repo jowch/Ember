@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector, setCellCode, codeSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector, setCellCode, codeSelector, pauseClock } from "../browser.mjs";
 import { waitingFor } from "../waits.mjs";
 
 /** Resolves once the page hasn't scrolled for 10 frames in a row. The
@@ -519,7 +519,7 @@ test("help: a late \"R is busy\" for an older query doesn't cancel the current q
   // From here the clock moves only by hand: 100 ms lets the page draw and
   // send `s` (an effect waits for the next frame), well short of the 1 s
   // retry. Each "R is busy" reply is told apart by when it came.
-  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
+  await pauseClock(page, 1000);
   const mark_replies = () => page.evaluate(() => { window.__seen_messages = new Set(window.pluto_get_message_log()); });
   const new_busy_reply = () => page.waitForFunction(
     () => window.pluto_get_message_log().some((m) => m.message?.status === "⌛" && !window.__seen_messages.has(m)));
