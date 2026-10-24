@@ -151,6 +151,22 @@ export async function frames(page, n = 2) {
   }), n);
 }
 
+/** Pauses the page's fake clock (page.clock.install()) about `ahead` ms
+ * from now. pauseAt() needs a time ahead of the page's own, which keeps
+ * running while the test reads it and asks; on a slow runner the time
+ * read can already be past, and pauseAt() throws (#557). It has paused the
+ * clock by then (Playwright pauses first, then moves to the time), so the
+ * time read again stays put and the second try succeeds. */
+export async function pauseClock(page, ahead) {
+  for (;;) {
+    try {
+      return await page.clock.pauseAt(await page.evaluate((ms) => Date.now() + ms, ahead));
+    } catch (e) {
+      if (!/Cannot fast-forward to the past/.test(e.message)) throw e;
+    }
+  }
+}
+
 /** Waits until the server has handled everything this page sent before
  * the call and the page has rendered the state it sent back
  * (window.ember_round_trip, Editor.js). A check that nothing more
