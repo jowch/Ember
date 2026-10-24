@@ -196,15 +196,15 @@ stream_console <- function(dll) {
                      error = function(e) FALSE))
 }
 
-#' Send the whole lines a running cell has printed since the last ones
-#' sent. Skipped while a frame is being sent or the console is reading
+#' Send what a running cell has printed since the last tick: its whole
+#' lines, and the line it is still writing as a partial item (#483). Skipped while a frame is being sent or the console is reading
 #' its own file (a message or warning arriving), which this could
 #' otherwise interleave with, and silent: whatever goes wrong here must
 #' not reach the cell or its output.
 console_tick <- function() {
   console <- running$console
   if (sending || is.null(console) || isTRUE(console$busy)) return(invisible())
-  tryCatch(suppressWarnings(console$flush_lines()), error = function(e) NULL)
+  tryCatch(suppressWarnings(console$flush_live()), error = function(e) NULL)
   invisible()
 }
 
@@ -2975,6 +2975,30 @@ terminal_line <- function(line, sgr) {
   list(text = paste(out, collapse = ""), sgr = sgr)
 }
 
+#' What the cell printed, as text: "\r\n" as "\n" (the sink file is in
+#' text mode, which writes "\r\n" on Windows), and each line's "\r"
+#' redraws applied. `before` is the start of the first line, already
+#' drawn.
+stdout_text <- function(bytes, before = "") {
+  apply_carriage_returns(gsub("\r\n", "\n", paste0(before, rawToChar(bytes)), fixed = TRUE))
+}
+
+#' `bytes` without a UTF-8 character cut short at its end (the cell is
+#' still writing it); a "\r" at the end is held back too, since a "\n"
+#' may follow it.
+utf8_whole <- function(bytes) {
+  n <- length(bytes)
+  if (n > 0 && bytes[n] == as.raw(13L)) return(utf8_whole(bytes[-n]))
+  # Continuation bytes are 10xxxxxx; the byte before them leads the
+  # character and says how long it is.
+  k <- 0L
+  while (k < min(3L, n) && bitwAnd(as.integer(bytes[n - k]), 0xC0L) == 0x80L) k <- k + 1L
+  if (k == n) return(bytes)
+  lead <- as.integer(bytes[n - k])
+  need <- if (lead >= 0xF0L) 4L else if (lead >= 0xE0L) 3L else if (lead >= 0xC0L) 2L else 1L
+  if (need > k + 1L) bytes[seq_len(n - k - 1L)] else bytes
+}
+
 #' Collect console items in order and stream each to the server.
 #'
 #' stdout is captured with sink() into a textConnection; before a message
@@ -2983,12 +3007,20 @@ terminal_line <- function(line, sgr) {
 #' `console` frame as soon as it is complete. Total console text per cell
 #' is capped (1 MB); past it a single "output truncated" item is added and
 #' the rest dropped.
+#'
+#' While the cell runs, the line it is still writing is sent as a stdout
+#' item with `partial = TRUE` (#483), so a progress bar redrawn with "\r"
+#' moves as in an R console. A partial item is always the last one, and
+#' the next item replaces it: the bytes it showed are read again, with
+#' whatever came after them.
 console_collector <- function(cell, token) {
   self <- new.env()
   self$items <- list()
   self$capped <- FALSE
   self$total <- 0L
   self$read_pos <- 0
+  self$line <- ""   # the unfinished line up to read_pos, drawn (flush_stdout())
+  self$seen <- -1   # the file's size at the last live read
   self$limit <- 1024L * 1024L
   # A real file, not textConnection(): textConnectionValue() only surfaces
   # complete (newline-terminated) lines, so cat("a") with no trailing
@@ -3005,9 +3037,16 @@ console_collector <- function(cell, token) {
 
   # `call` is the deparsed call behind a warning item (one line), kept
   # only when set -- a message item, or a warning with none, carries no
-  # `call` key at all, rather than an explicit NULL.
-  add_item <- function(kind, text, call = NULL) {
+  # `call` key at all, rather than an explicit NULL. Any item replaces a
+  # partial one before it, on the server too (reduce_wk_console()).
+  add_item <- function(kind, text, call = NULL, partial = FALSE) {
     if (self$capped) return(invisible())
+    n <- length(self$items)
+    if (n > 0 && isTRUE(self$items[[n]]$partial)) {
+      if (partial && identical(self$items[[n]]$text, text)) return(invisible())
+      self$total <- self$total - nchar(self$items[[n]]$text, type = "bytes")
+      self$items[[n]] <- NULL
+    }
     self$total <- self$total + nchar(text, type = "bytes")
     if (self$total > self$limit) {
       item <- list(kind = "text", text = "output truncated")
@@ -3017,33 +3056,53 @@ console_collector <- function(cell, token) {
       return(invisible())
     }
     item <- if (is.null(call)) list(kind = kind, text = text) else list(kind = kind, text = text, call = call)
+    if (partial) item$partial <- TRUE
     self$items[[length(self$items) + 1]] <- item
     send(list(type = "console", cell = cell, token = token, item = item))
   }
 
-  # `lines`: only up to the last newline, for console_tick(), which
-  # reads while the cell is still printing: the rest of a line, or a
-  # progress bar redrawn over it with "\r", comes in a later read, and a
-  # bar split across two items would show both of its drawings.
-  flush_stdout <- function(lines = FALSE) {
+  # `live`, for console_tick(), which reads while the cell is still
+  # printing: the whole lines become an item, and the rest of the last
+  # line a partial one, read again next time, since more of the line, or
+  # a progress bar redrawn over it with "\r", may follow. Only from its
+  # last "\r" on: what comes before is kept drawn (`self$line`), so a bar
+  # redrawn thousands of times isn't read again from its start at each
+  # tick.
+  flush_stdout <- function(live = FALSE) {
     if (isTRUE(self$closed)) return(invisible())
     flush(self$out)
     size <- file.info(self$path)$size
     if (is.na(size) || size <= self$read_pos) return(invisible())
+    if (live && size == self$seen) return(invisible())
+    self$seen <- size
     con <- file(self$path, open = "rb")
     on.exit(close(con))
     seek(con, self$read_pos)
     raw_bytes <- readBin(con, "raw", n = size - self$read_pos)
-    if (lines) {
+    rest <- raw()
+    if (live) {
       nl <- which(raw_bytes == as.raw(10L))
-      if (length(nl) == 0) return(invisible())
-      raw_bytes <- raw_bytes[seq_len(nl[length(nl)])]
+      whole <- if (length(nl) > 0) nl[length(nl)] else 0L
+      rest <- utf8_whole(raw_bytes[seq_along(raw_bytes) > whole])
+      raw_bytes <- raw_bytes[seq_len(whole)]
     }
     self$read_pos <- self$read_pos + length(raw_bytes)
-    # The sink file is in text mode, which writes "\r\n" on Windows.
-    txt <- gsub("\r\n", "\n", rawToChar(raw_bytes), fixed = TRUE)
-    txt <- apply_carriage_returns(txt)
-    if (nzchar(txt)) add_item("stdout", txt)
+    if (length(raw_bytes) > 0) {
+      txt <- stdout_text(raw_bytes, self$line)
+      self$line <- ""
+      if (nzchar(txt)) add_item("stdout", txt)
+    }
+    if (length(rest) > 0) {
+      cr <- which(rest == as.raw(13L))
+      k <- if (length(cr) > 0) cr[length(cr)] - 1L else 0L
+      if (k > 0) {
+        self$line <- stdout_text(rest[seq_len(k)], self$line)
+        self$read_pos <- self$read_pos + k
+        rest <- rest[-seq_len(k)]
+      }
+      txt <- stdout_text(rest, self$line)
+      if (nzchar(txt)) add_item("stdout", txt, partial = TRUE)
+    }
   }
 
   # `busy` while a method below reads the file or adds an item, so
@@ -3056,7 +3115,7 @@ console_collector <- function(cell, token) {
     f(...)
   }
   self$flush <- guarded(function() flush_stdout())
-  self$flush_lines <- guarded(function() flush_stdout(lines = TRUE))
+  self$flush_live <- guarded(function() flush_stdout(live = TRUE))
   self$message <- guarded(function(m) { flush_stdout(); add_item("message", conditionMessage(m)) })
   self$warning <- guarded(function(w) {
     flush_stdout()
