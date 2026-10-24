@@ -135,7 +135,7 @@ the trace can shrink.
 
 83. `hello_and_secret`
 84. `run_value_and_console_order`: `cat("a"); message("b"); warning("c"); 1 + 1` gives console items stdout, message and warning in that order, with output text `[1] 2`.
-    A cell that prints a line and then keeps running sends that line before it ends (#470). An unfinished line is sent as a partial item, which its next drawing or the whole line replaces, in the worker and on the server (#483).
+    A cell that prints a line and then keeps running sends that line before it ends (#470). An unfinished line is sent as a partial item, which its next drawing or the whole line replaces, in the worker and on the server (#483). Each drawing matches reading the whole line at once, and four times the redraws cost about four times as long, not sixteen; a worker exit keeps the last drawing as a plain item.
 85. `earlier_visible_values_to_console`: `1; 2` gives output `2` and the console prints `1`.
 86. `error_with_traceback`: an error inside a function gives a traceback that ends at that function, with no worker frames.
 87. `rerun_removes_previous_globals`: a cell defines `x`, its code changes to define `y`, and after the rerun `x` is gone.

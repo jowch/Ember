@@ -2412,8 +2412,12 @@ reduce_wk_exited <- function(state, event) {
   state$graph_dropped <- list()
   state <- forget_columns(state)
   if (!is.null(running)) {
+    # The line it was still writing (#483) is all of it there will be.
+    console <- running$console
+    n <- length(console)
+    if (n > 0 && isTRUE(console[[n]]$partial)) console[[n]]$partial <- NULL
     state$results[[running$cell]] <- new_result(
-      code = running$code, status = "error", output = NULL, console = running$console,
+      code = running$code, status = "error", output = NULL, console = console,
       error = new_run_error("worker_exited",
         message = sprintf("R exited while running this cell (status %s). Run a cell to start a new R process.",
                           event$status)),

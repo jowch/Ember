@@ -372,6 +372,10 @@ test_that("a running cell's unfinished line is replaced in place, by its next dr
                    list(list(kind = "stdout", text = "a\n"), list(kind = "stdout", text = " 20%", partial = TRUE)))
   expect_identical(r4$state$worker$running$console,
                    list(list(kind = "stdout", text = "a\n"), list(kind = "stdout", text = "100%\n")))
+  # If R exits mid-line, the last drawing is what the result keeps.
+  r5 <- drive(r3$state, wk_exited(1, 1L, "killed", at(13)))
+  expect_identical(r5$state$results$A$console,
+                   list(list(kind = "stdout", text = "a\n"), list(kind = "stdout", text = " 20%")))
   # The page gets only the redrawn item's text, not the whole log again.
   p2 <- pluto_state(r2$state)
   p3 <- pluto_state(r3$state, p2)

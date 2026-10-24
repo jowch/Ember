@@ -2973,9 +2973,10 @@ terminal_line <- function(line, sgr) {
 
 #' What the cell printed, as text: "\r\n" as "\n" (the sink file is in
 #' text mode, which writes "\r\n" on Windows), and each line's "\r"
-#' redraws applied.
-stdout_text <- function(bytes) {
-  apply_carriage_returns(gsub("\r\n", "\n", rawToChar(bytes), fixed = TRUE))
+#' redraws applied. `before` is the start of the first line, already
+#' drawn.
+stdout_text <- function(bytes, before = "") {
+  apply_carriage_returns(gsub("\r\n", "\n", paste0(before, rawToChar(bytes)), fixed = TRUE))
 }
 
 #' `bytes` without a UTF-8 character cut short at its end (the cell is
@@ -3014,6 +3015,8 @@ console_collector <- function(cell, token) {
   self$capped <- FALSE
   self$total <- 0L
   self$read_pos <- 0
+  self$line <- ""   # the unfinished line up to read_pos, drawn (flush_stdout())
+  self$seen <- -1   # the file's size at the last live read
   self$limit <- 1024L * 1024L
   # A real file, not textConnection(): textConnectionValue() only surfaces
   # complete (newline-terminated) lines, so cat("a") with no trailing
@@ -3057,12 +3060,17 @@ console_collector <- function(cell, token) {
   # `live`, for console_tick(), which reads while the cell is still
   # printing: the whole lines become an item, and the rest of the last
   # line a partial one, read again next time, since more of the line, or
-  # a progress bar redrawn over it with "\r", may follow.
+  # a progress bar redrawn over it with "\r", may follow. Only from its
+  # last "\r" on: what comes before is kept drawn (`self$line`), so a bar
+  # redrawn thousands of times isn't read again from its start at each
+  # tick.
   flush_stdout <- function(live = FALSE) {
     if (isTRUE(self$closed)) return(invisible())
     flush(self$out)
     size <- file.info(self$path)$size
     if (is.na(size) || size <= self$read_pos) return(invisible())
+    if (live && size == self$seen) return(invisible())
+    self$seen <- size
     con <- file(self$path, open = "rb")
     on.exit(close(con))
     seek(con, self$read_pos)
@@ -3076,11 +3084,19 @@ console_collector <- function(cell, token) {
     }
     self$read_pos <- self$read_pos + length(raw_bytes)
     if (length(raw_bytes) > 0) {
-      txt <- stdout_text(raw_bytes)
+      txt <- stdout_text(raw_bytes, self$line)
+      self$line <- ""
       if (nzchar(txt)) add_item("stdout", txt)
     }
     if (length(rest) > 0) {
-      txt <- stdout_text(rest)
+      cr <- which(rest == as.raw(13L))
+      k <- if (length(cr) > 0) cr[length(cr)] - 1L else 0L
+      if (k > 0) {
+        self$line <- stdout_text(rest[seq_len(k)], self$line)
+        self$read_pos <- self$read_pos + k
+        rest <- rest[-seq_len(k)]
+      }
+      txt <- stdout_text(rest, self$line)
       if (nzchar(txt)) add_item("stdout", txt, partial = TRUE)
     }
   }
