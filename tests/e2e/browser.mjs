@@ -123,6 +123,12 @@ export async function openNotebook(page, origin, secret, notebookPath) {
   } finally {
     page.off("requestfailed", onFailed);
   }
+  // Pluto draws a long notebook's cells in chunks, after `loading` drops:
+  // wait for every cell, so a raw querySelector of a late one finds it (#428).
+  await page.waitForFunction(() => {
+    const order = window.editor_state?.notebook?.cell_order;
+    return Array.isArray(order) && order.every((id) => document.querySelector(`pluto-cell[id="${id}"]`));
+  });
   return new URL(page.url()).searchParams.get("id");
 }
 

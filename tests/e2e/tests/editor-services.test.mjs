@@ -682,13 +682,67 @@ test("signature: a click on the tooltip lands in the code under it (#34)", async
   assertNoProblems(page);
 });
 
-// #103: with no room above (the cell just under the header), CodeMirror
-// puts the tooltip below the line it is anchored to. In a call that spans
-// several lines, that line must be the cursor's, not the call's first, or
-// the tooltip covers the line being typed.
-test("signature: in a multi-line call at the top of the window, the tooltip leaves the cursor's line visible (#103)", async (t) => {
+/** Resolves with the signature tooltip's placement once it and the cursor
+ * have held still for 10 frames (the debounced recompute and CodeMirror's
+ * measure both land on later frames); both are read in the same frame.
+ * `text` is the start of the tooltip's text, `left` its left edge,
+ * `line_number` the focused editor's line the cursor is on. */
+const tooltip_settled = (page) => page.waitForFunction(() => {
+  const tooltip = document.querySelector(".cm-ember-signature-tooltip");
+  const editor = document.querySelector(".cm-editor.cm-focused");
+  const cursor = editor?.querySelector(".cm-cursor");
+  if (tooltip == null || cursor == null || !/cm-tooltip-(above|below)/.test(tooltip.className)) return false;
+  // The text the cursor is in spans the caret's own box (the line's box
+  // is a little taller, and CodeMirror places the tooltip from the text).
+  const c = cursor.getBoundingClientRect(), t = tooltip.getBoundingClientRect();
+  const line_number = Array.from(editor.querySelectorAll(".cm-line")).findIndex((l) => {
+    const b = l.getBoundingClientRect();
+    return c.top + c.height / 2 > b.top && c.top + c.height / 2 < b.bottom;
+  }) + 1;
+  const now = { text: tooltip.textContent.slice(0, 12), left: t.left, tooltip: [t.top, t.bottom], cursor: [c.top, c.bottom], line_number, class: tooltip.className };
+  const s = (window.__placed ??= { last: null, frames: 0 });
+  const key = JSON.stringify(now);
+  if (key !== s.last) {
+    s.last = key;
+    s.frames = 0;
+    return false;
+  }
+  if (++s.frames < 10) return false;
+  delete window.__placed;
+  return now;
+}, null, { polling: "raf" }).then((h) => h.jsonValue());
+
+/** Records the signature tooltip's placement on every frame from now
+ * until the returned function is called, which resolves with the frames
+ * (only those where CodeMirror has placed it, and only when it changed):
+ * the settled placement alone misses one that is wrong for a while
+ * (#476). */
+async function tooltip_frames(page) {
+  await page.evaluate(() => {
+    const frames = (window.__frames = []);
+    const frame = () => {
+      if (window.__frames !== frames) return;
+      const tooltip = document.querySelector(".cm-ember-signature-tooltip");
+      const cursor = document.querySelector(".cm-editor.cm-focused .cm-cursor");
+      if (tooltip != null && cursor != null && /cm-tooltip-(above|below)/.test(tooltip.className)) {
+        const c = cursor.getBoundingClientRect(), t = tooltip.getBoundingClientRect();
+        const now = { text: tooltip.textContent.slice(0, 12), left: t.left, tooltip: [t.top, t.bottom], cursor: [c.top, c.bottom] };
+        if (JSON.stringify(now) !== JSON.stringify(frames.at(-1))) frames.push(now);
+      }
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  });
+  return () => page.evaluate(() => { const f = window.__frames; delete window.__frames; return f; });
+}
+
+const covers = (p) => Math.min(p.tooltip[1], p.cursor[1]) - Math.max(p.tooltip[0], p.cursor[0]) > 0;
+
+/** A new cell after DF in rich.R, right under the header with its editor
+ * focused, so the signature tooltip has no room above. */
+async function cell_under_header(t, name) {
   const notebook = tempNotebook("rich.R");
-  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-signature-multiline.server.log") });
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), `${name}.server.log`) });
   const browser = await launchBrowser();
   t.after(async () => { await browser.close(); server.stop(); });
 
@@ -713,46 +767,60 @@ test("signature: in a multi-line call at the top of the window, the tooltip leav
     window.scrollBy({ top: el.getBoundingClientRect().top - header, behavior: "instant" });
   });
   await scroll_settled(page);
+  return page;
+}
+
+// #103: with no room above (the cell just under the header), CodeMirror
+// puts the tooltip below the line it is anchored to. In a call that spans
+// several lines, that line must be the cursor's, not the call's first, or
+// the tooltip covers the line being typed.
+test("signature: in a multi-line call at the top of the window, the tooltip leaves the cursor's line visible (#103)", async (t) => {
+  const page = await cell_under_header(t, "editor-signature-multiline");
 
   await page.keyboard.type("read.table(", { delay: 10 });
   await page.waitForSelector(".cm-ember-signature-tooltip.cm-tooltip-above, .cm-ember-signature-tooltip.cm-tooltip-below");
+  // Every frame from the Enter on, not only the settled one: the anchor
+  // used to wait for the debounce and the signature request, so the
+  // tooltip covered the new line until then, and the wait below sometimes
+  // settled on that (#476).
+  const frames = await tooltip_frames(page);
   // Enter only: typing an argument would open the completion popup, and
   // CodeMirror moves the tooltip clear of it.
   await page.keyboard.press("Enter");
-
-  // Wait until the cursor's line and the tooltip have held still for 10
-  // frames (the debounced re-anchor and CodeMirror's measure both land on
-  // later frames); both are read in the same frame.
-  const placed = await page.waitForFunction(() => {
-    const tooltip = document.querySelector(".cm-ember-signature-tooltip");
-    const editor = document.querySelector(".cm-editor.cm-focused");
-    const cursor = editor?.querySelector(".cm-cursor");
-    if (tooltip == null || cursor == null || !/cm-tooltip-(above|below)/.test(tooltip.className)) return false;
-    // The text the cursor is in spans the caret's own box (the line's box
-    // is a little taller, and CodeMirror places the tooltip from the text).
-    const c = cursor.getBoundingClientRect(), t = tooltip.getBoundingClientRect();
-    const line_number = Array.from(editor.querySelectorAll(".cm-line")).findIndex((l) => {
-      const b = l.getBoundingClientRect();
-      return c.top + c.height / 2 > b.top && c.top + c.height / 2 < b.bottom;
-    }) + 1;
-    const now = { tooltip: [t.top, t.bottom], cursor: [c.top, c.bottom], line_number, class: tooltip.className };
-    const s = (window.__placed ??= { last: null, frames: 0 });
-    const key = JSON.stringify(now);
-    if (key !== s.last) {
-      s.last = key;
-      s.frames = 0;
-      return false;
-    }
-    if (++s.frames < 10) return false;
-    delete window.__placed;
-    return now;
-  }, null, { polling: "raf" }).then((h) => h.jsonValue());
+  const placed = await tooltip_settled(page);
 
   assert.equal(placed.line_number, 2, `the cursor is on the call's second line: ${JSON.stringify(placed)}`);
   // #103 only happens below the line: with room above, main passes too.
   assert.match(placed.class, /cm-tooltip-below/, `no room above, so the tooltip goes below: ${JSON.stringify(placed)}`);
-  const overlap = Math.min(placed.tooltip[1], placed.cursor[1]) - Math.max(placed.tooltip[0], placed.cursor[0]);
-  assert.ok(overlap <= 0, `the tooltip doesn't cover the text being typed: ${JSON.stringify(placed)}`);
+  assert.ok(!covers(placed), `the tooltip doesn't cover the text being typed: ${JSON.stringify(placed)}`);
+  assert.deepEqual((await frames()).filter(covers), [], "no frame after the Enter has the tooltip over the cursor's line (#476)");
+
+  assertNoProblems(page);
+});
+
+// #476: the anchor follows the cursor's line at once, but by the shown
+// call's own rule. A call typed inside it isn't shown until the debounced
+// recompute, so until then the outer call's tooltip must not move to it.
+test("signature: a call typed inside a multi-line call keeps the outer tooltip at the cursor's line until its own signature shows (#476)", async (t) => {
+  const page = await cell_under_header(t, "editor-signature-nested");
+
+  await page.keyboard.type("read.table(", { delay: 10 });
+  await page.waitForSelector(".cm-ember-signature-tooltip.cm-tooltip-above, .cm-ember-signature-tooltip.cm-tooltip-below");
+  await page.keyboard.press("Enter");
+  const outer = await tooltip_settled(page);
+  assert.equal(outer.line_number, 2, `the cursor is on the call's second line: ${JSON.stringify(outer)}`);
+
+  const frames = await tooltip_frames(page);
+  await page.keyboard.type("paste(", { delay: 10 });
+  const inner = await page.waitForFunction(() => /^paste/.test(document.querySelector(".cm-ember-signature-tooltip")?.textContent ?? "")).then(() => tooltip_settled(page));
+  const seen = await frames();
+
+  assert.match(inner.text, /^paste/, `paste's signature shows at last: ${JSON.stringify(inner)}`);
+  // The line is indented, so paste's own anchor is right of the line's start.
+  assert.ok(inner.left > outer.left, `paste's tooltip anchors at paste, right of the line's start: ${JSON.stringify({ outer, inner })}`);
+  const moved = seen.filter((f) => f.text === outer.text && f.left !== outer.left);
+  assert.deepEqual(moved, [], `read.table's tooltip stays at the line's start while paste( is typed: ${JSON.stringify(outer)}`);
+  assert.deepEqual(seen.filter(covers), [], "no frame has the tooltip over the cursor's line");
 
   assertNoProblems(page);
 });

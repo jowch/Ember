@@ -12,14 +12,24 @@
 // ember you installed there.
 
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureLib } from "./install.mjs";
+import { knownFor } from "./known.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const { lib, owned: ownLib } = ensureLib();
-const env = { ...process.env, EMBER_E2E_LIB: lib };
+// One folder for the run, which every test file's temp folders go under
+// (server.mjs's `tempDir()`), removed once the runner has exited. A file
+// the runner stops at its time limit is ended outright on Windows, so
+// its own exit handler never removes its folders (#471).
+const runDir = mkdtempSync(path.join(tmpdir(), "ember-e2e-run-"));
+// The OS temp folder is the run folder too, for whatever else a stopped
+// file leaves there: the servers' private caches, R's own Rtmp folders,
+// Chromium's profiles (TMPDIR on Unix, TMP and TEMP on Windows).
+const env = { ...process.env, EMBER_E2E_LIB: lib, EMBER_E2E_RUN_DIR: runDir, TMPDIR: runDir, TMP: runDir, TEMP: runDir };
 const files = process.argv.slice(2);
 const tests = files.length ? files
   : readdirSync(path.join(HERE, "tests")).filter((f) => f.endsWith(".test.mjs")).sort().map((f) => path.join("tests", f));
@@ -36,11 +46,30 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => {
 const RESULTS = path.join(HERE, "test-results");
 const waitLists = () => (existsSync(RESULTS) ? readdirSync(RESULTS).filter((f) => /^waiting-.*\.txt$/.test(f)) : []);
 for (const f of waitLists()) rmSync(path.join(RESULTS, f), { force: true });
+// Each failed test, written by known-reporter.mjs (known.mjs).
+const failures = path.join(runDir, "failures.jsonl");
+// A run whose only failures are known ones (known.mjs) passes, with each
+// named. Any other failure, or a run that ended any other way, fails as it
+// would without the list.
+const knownOnly = () => {
+  if (!existsSync(failures)) return false;
+  const failed = readFileSync(failures, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  if (failed.length === 0 || !failed.every((f) => knownFor(f.message))) return false;
+  for (const f of failed) {
+    const line = `known #${knownFor(f.message).issue}, not counted: "${f.name}" failed with ${f.message}`;
+    console.log(process.env.GITHUB_ACTIONS ? `::warning::${line}` : line);
+  }
+  return true;
+};
 const finish = (code, signal) => {
   for (const f of waitLists()) {
     console.log(`\n== test-results/${f}\n${readFileSync(path.join(RESULTS, f), "utf8")}`);
   }
+  if (code === 1 && !signal && !stopped && knownOnly()) code = 0;
   if (ownLib) rmSync(lib, { recursive: true, force: true });
+  // A file something still holds is left for the OS, not a failed run.
+  try { rmSync(runDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
+  catch (e) { console.error(`run.mjs: could not remove the run folder ${runDir}, so it is left behind (#471): ${e.message}`); }
   process.exit(code ?? (signal ? 1 : 0));
 };
 
@@ -51,7 +80,11 @@ child = spawn(process.execPath, ["warmup.mjs"], { cwd: HERE, stdio: "inherit", e
 child.on("exit", () => {
   if (stopped) return finish(1);
   child = spawn(process.execPath,
-    ["--test", "--test-timeout=300000", "--test-concurrency=3", ...tests],
+    ["--test", "--test-timeout=300000", "--test-concurrency=3",
+     // The usual output, as node picks it, plus the failures for known.mjs.
+     `--test-reporter=${process.stdout.isTTY ? "spec" : "tap"}`, "--test-reporter-destination=stdout",
+     "--test-reporter=./known-reporter.mjs", `--test-reporter-destination=${failures}`,
+     ...tests],
     { cwd: HERE, stdio: "inherit", env });
   child.on("exit", finish);
 });
