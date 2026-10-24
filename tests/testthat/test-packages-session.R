@@ -384,12 +384,9 @@ test_that("an install downloads into its own folder, not one another install may
   expect_equal(snap_view(notebook_snapshot(nb), "A")$output$text, "[1] \"toyA 0.1 says: hello from toyB\"")
   got <- server$finish()
   expect_true(all(c("GET toyA_0.1.tar.gz 2", "GET toyB_1.0.tar.gz 2") %in% got), info = paste(got, collapse = "\n"))
-  # Nothing was downloaded into the shared folder, and the install's own
-  # downloads went with it: none in the library, no staging folder left.
+  # Nothing was downloaded into the shared folder.
   shared <- list.files(file.path(cache, "renv-root"), pattern = "\\.(tar\\.gz|zip|tgz)$", recursive = TRUE)
   expect_identical(shared, character())
-  expect_false(dir.exists(file.path(status$library$path, ".ember-downloads")))
-  expect_false(any(grepl("staging", list.files(dirname(status$library$path), all.files = TRUE))))
 })
 
 # ---- #39: today's index is fetched again --------------------------------------

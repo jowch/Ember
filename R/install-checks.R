@@ -419,8 +419,8 @@ failed_builds <- function(failed, index) {
 }
 
 #' The archives renv downloaded for `packages`, under `root` (the
-#' install's `downloads_dir()`, which holds renv's `RENV_PATHS_SOURCE` and
-#' `RENV_PATHS_BINARY`: `<root>/source/.../<package>/<file>` and
+#' installer's downloads folder, which holds renv's `RENV_PATHS_SOURCE`
+#' and `RENV_PATHS_BINARY`: `<root>/source/.../<package>/<file>` and
 #' `<root>/binary/.../<package>/<file>`), that can't be read. renv 1.3
 #' installs what its parallel downloader fetched without opening it
 #' first: it counts any file that isn't empty as downloaded, even when
