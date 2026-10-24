@@ -2208,13 +2208,17 @@ reduce_wk_done <- function(state, event) {
   # such a change right after one that did leaves the result as it is, so
   # it doesn't loop.
   result$data_seen <- report$data_seen %||% list()
+  # A stop asked for during this run (reduce_interrupt()) that the run
+  # finished before: nothing runs on its account, as for an interrupted
+  # run (#486).
+  stopped <- !is.null(w$interrupt)
   outside <- as.character(report$data_changed %||% character())
   if (length(outside) > 0) {
     result$data_changed <- outside
     prev <- state$results[[id]]
     if (length(prev$data_changed %||% character()) == 0) {
       result$stale <- TRUE
-      if (identical(state$file$header$on_cell_change, "autorun") && isTRUE(state$allowed) && can_run(state, id)) {
+      if (!stopped && identical(state$file$header$on_cell_change, "autorun") && isTRUE(state$allowed) && can_run(state, id)) {
         state$pending <- union(state$pending, id)
       }
     }
@@ -2235,10 +2239,13 @@ reduce_wk_done <- function(state, event) {
   if (!identical(status, "ok")) {
     effects <- list(fx_send(state$worker$gen, list(type = "drop_globals", cell = id)))
   }
-  if (identical(status, "interrupted")) {
+  if (identical(status, "interrupted") || stopped) {
     # An interrupt means "stop": pending's already been emptied by
     # reduce_interrupt(), so `queue = FALSE` -- nothing is queued even in
-    # autorun. Readers of names the graph hasn't learned yet (only
+    # autorun. That holds too for a run that finished "ok" or "error"
+    # before the stop reached it: in plain R, Esc drops the lines still
+    # waiting even when the current one has just finished (#486).
+    # Readers of names the graph hasn't learned yet (only
     # `report$created` knows them) still need marking stale, the same as
     # the "ok"/"error" branch below; that's what invalidate_dependents()
     # (not drop_downstream(), which only walks graph edges) is for.
