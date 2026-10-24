@@ -116,8 +116,8 @@ data_readers <- c(
   read_csv_arrow = "file", read_tsv_arrow = "file", read_delim_arrow = "file",
   read_json_arrow = "file", read_sav = "file", read_dta = "file", read_sas = "data_file",
   read_xpt = "file", read_json = "path",
-  # fst, qs2, xml2
-  read_fst = "path", qs_read = "file", qd_read = "file", read_xml = "x", read_html = "x")
+  # qs2, xml2
+  qs_read = "file", qd_read = "file", read_xml = "x", read_html = "x")
 
 #' Functions that write a file, each with the argument that names it and
 #' its position (#276). They aren't watched: they tell the worker which

@@ -1071,7 +1071,6 @@ data_reader_args <- list(
   nanoparquet = c(read_parquet = "file"),
   haven = c(read_sav = "file", read_dta = "file", read_sas = "data_file", read_xpt = "file"),
   jsonlite = c(read_json = "path"),
-  fst = c(read_fst = "path"),
   qs2 = c(qs_read = "file", qd_read = "file"),
   xml2 = c(read_xml = "x", read_html = "x"))
 

@@ -429,7 +429,7 @@ the worker traces base R's file connections (`file()`, `gzfile()` and the
 other compressed ones, `unz()`), which every base reader opens, and a fixed
 list of readers (`data_readers` in `rules.R`, `data_reader_args` in the
 worker): base R and utils, readr, vroom, data.table's `fread`, readxl, arrow,
-nanoparquet, haven, jsonlite, fst, qs2 and xml2. A package's readers are
+nanoparquet, haven, jsonlite, qs2 and xml2. A package's readers are
 traced when its namespace loads.
 So a read inside a helper function, `lapply(files, read.csv)`, a sourced
 file's read, and any reader built on R connections (`jsonlite::read_json`,

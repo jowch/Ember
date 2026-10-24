@@ -3202,14 +3202,6 @@ test_that("nanoparquet's read_parquet() is learned once nanoparquet loads", {
                 'n <- nanoparquet::read_parquet(file.path(D, "n.parquet"))', "n.parquet")
 })
 
-test_that("fst's read_fst() is learned once fst loads", {
-  skip_if_not_installed("fst")
-  # On the macOS CI runner fstcore's binary is installed but won't load (#576).
-  skip_if_not(requireNamespace("fst", quietly = TRUE), "fst is installed but won't load (#576)")
-  expect_learns(function(d) fst::write_fst(data.frame(x = 1:2), file.path(d, "f.fst")),
-                'f <- fst::read_fst(file.path(D, "f.fst"))', "f.fst")
-})
-
 test_that("qs2's qs_read() and qd_read() are learned once qs2 loads", {
   skip_if_not_installed("qs2")
   expect_learns(function(d) {
