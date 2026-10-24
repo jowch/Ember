@@ -43,14 +43,23 @@ jobs:
         run: npm ci
       - working-directory: tests/e2e
         run: npx playwright-core install chromium
-      - name: The #476 test under load, with two other files at once, 20 times
+      - name: "#529 and #476 under load: three files at once, 20 times, full output on failure"
         working-directory: tests/e2e
         shell: bash
         run: |
           fails=0
           for i in $(seq 1 20); do
             echo "=== run $i"
-            node run.mjs tests/editor-services.test.mjs tests/cells.test.mjs tests/ui-sweep.test.mjs > out.txt 2>&1 || fails=$((fails + 1))
-            grep -E "DIAG476|^not ok|read.table's tooltip|^# (pass|fail)" out.txt | cut -c1-8000
+            if [ "${{ matrix.shard }}" = 1 ]; then files="tests/editor-services.test.mjs tests/cells.test.mjs tests/ui-sweep.test.mjs"; else files="tests/cells.test.mjs tests/a11y.test.mjs tests/add-delete-reload.test.mjs"; fi
+            if node run.mjs $files > out.txt 2>&1; then
+              grep -E "DIAG476|^# (pass|fail)|warm-up" out.txt | cut -c1-8000
+            else
+              fails=$((fails + 1))
+              echo "--- full output of run $i"
+              cat out.txt
+              for f in test-results/*.txt; do echo "== $f"; cat "$f"; done
+              echo "--- end of run $i"
+            fi
+            rm -rf test-results
           done
           echo "runs with a failure: $fails of 20"
