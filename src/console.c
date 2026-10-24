@@ -17,10 +17,14 @@
    R exports (tcltk's, R_Tcl_do, is set through a call that refuses anyone
    else), but its event processing dispatches the main thread's window
    messages, so a thread timer's callback runs there instead (#482).
-   Sys.sleep() on Windows processes events every 0.5 s. */
+   Sys.sleep() on Windows processes events every 0.5 s. Any other message
+   loop on the main thread also dispatches it (a modal dialog's, COM's),
+   so there a tick can run R code inside C code that didn't expect it, as
+   tcltk's callbacks can; a headless worker rarely runs one. */
 
 #if defined(_WIN32)
 #include <windows.h>
+#include <Rembedded.h>   /* UserBreak */
 #else
 #include <R_ext/eventloop.h>
 #include <time.h>
@@ -49,10 +53,25 @@ static void call_now(void) {
 
 #if defined(_WIN32)
 static UINT_PTR timer = 0;
+/* Test-only (C_console_test_break()): 1 holds ticks off; 2 sets
+   UserBreak at the next tick, as if an interrupt arrived just as it
+   began. */
+static int test_break = 0;
 
 /* Dispatched only on the thread that set the timer, the main one. */
 static VOID CALLBACK console_timer(HWND hwnd, UINT msg, UINT_PTR id, DWORD ms) {
+  if (test_break == 1) return;
+  int pending = R_interrupts_pending;
+  if (test_break == 2) { test_break = 0; UserBreak = 1; }
   call_now();
+  /* The tick's send runs R_ProcessEvents() (every socket write waits in
+     it), which turns an interrupt that arrived meanwhile (UserBreak) into
+     a pending one, interrupts being held off. Only R_CheckUserInterrupt()
+     takes a pending one, and on Windows Sys.sleep() and socket waits
+     never call it, so it could wait out an hour's sleep. Give it back as
+     UserBreak, which the R_ProcessEvents() that dispatched this checks
+     next. */
+  if (R_interrupts_pending && !pending) { R_interrupts_pending = 0; UserBreak = 1; }
 }
 #else
 static double now(void) {
@@ -102,4 +121,14 @@ SEXP C_console_poll(SEXP f, SEXP seconds) {
   if (R_wait_usec == 0 || R_wait_usec > usec) R_wait_usec = usec;
 #endif
   return ScalarLogical(TRUE);
+}
+
+/* Test-only (test-worker.R, #482): on Windows, `what` 1 holds ticks off,
+   so a line printed meanwhile waits; 2 lets them run again, the next one
+   starting with an interrupt arrived. Nothing else calls it. */
+SEXP C_console_test_break(SEXP what) {
+#if defined(_WIN32)
+  test_break = Rf_asInteger(what);
+#endif
+  return R_NilValue;
 }

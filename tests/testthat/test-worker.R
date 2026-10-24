@@ -120,6 +120,25 @@ test_that("a line printed before a long Sys.sleep() is sent during the sleep (#4
   expect_identical(sent, list(list(kind = "stdout", text = "before the sleep\n")))
 })
 
+test_that("an interrupt that lands while printed text is sent still stops a Sys.sleep() (#482)", {
+  # On Windows the tick's send runs R's event processing with interrupts
+  # held off, which turns one that just arrived into a pending interrupt
+  # that Sys.sleep() never takes there. C_console_test_break() holds ticks
+  # off while the line is printed, then lets the next one start with an
+  # interrupt arrived, so that tick is the one that sends the line. Nothing
+  # else interrupts.
+  skip_if_not(.Platform$OS.type == "windows", "the tick's interrupt hand-back is Windows' own")
+  h <- worker_harness()
+  on.exit(h$close())
+  code <- paste('tb <- getNativeSymbolInfo("C_console_test_break", "ember")',
+                'invisible(.Call(tb, 1L)); cat("1\\n"); invisible(.Call(tb, 2L)); Sys.sleep(3600)', sep = "\n")
+  h$send(run_msg("a", 1L, code))
+  sent <- list()
+  r <- wait_for_done(h, on_frame = function(m) if (identical(m$type, "console")) sent[[length(sent) + 1]] <<- m$item)
+  expect_identical(r$status, "interrupted")
+  expect_identical(sent, list(list(kind = "stdout", text = "1\n")))
+})
+
 test_that("a progress bar's redraws end as one line, as in the R console (#358)", {
   h <- worker_harness()
   on.exit(h$close())

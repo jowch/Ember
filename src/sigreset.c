@@ -33,6 +33,7 @@ extern SEXP C_cell_children_running(SEXP on);
 extern SEXP C_cell_children_released(void);
 /* Defined in console.c. */
 extern SEXP C_console_poll(SEXP f, SEXP seconds);
+extern SEXP C_console_test_break(SEXP what);
 
 static const R_CallMethodDef call_methods[] = {
   {"C_reset_sigint", (DL_FUNC) &C_reset_sigint, 0},
@@ -46,6 +47,7 @@ static const R_CallMethodDef call_methods[] = {
   {"C_cell_children_running", (DL_FUNC) &C_cell_children_running, 1},
   {"C_cell_children_released", (DL_FUNC) &C_cell_children_released, 0},
   {"C_console_poll", (DL_FUNC) &C_console_poll, 2},
+  {"C_console_test_break", (DL_FUNC) &C_console_test_break, 1},
   {NULL, NULL, 0}
 };
 
