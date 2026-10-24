@@ -992,9 +992,9 @@ find_errors <- function(cells, analyses, edges, ids, components,
   # never a reference, so a cell that reads one would go silently stale.
   # The assignment is the error, on its own cell, even with no reader in
   # sight: a reader can't be found. Same kind and fix as above.
-  for (i in which(enabled)) {
-    b <- ids[[i]]
-    for (n in intersect(pronoun_names, cells[[i]]$private)) {
+  # From the private-name owners above, so no work per cell.
+  for (n in pronoun_names) {
+    for (b in private_owner_map[[n]]) {
       d <- analyses[[b]]$definitions
       ln <- d$line[d$name == n & is.na(d$file)]  # NA when sourced or learned
       errors[[length(errors) + 1]] <- new_graph_error(
