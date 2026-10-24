@@ -959,9 +959,10 @@ invalidate_dependents <- function(state, id, names, queue = TRUE, waiting = queu
   state <- invalidate_cells(state, id, setdiff(dependents, id), queue = queue, waiting = waiting, g = g)
   # A stop the walk reached with a result is stale now, and so is every
   # result that read from it, since a result is never fresh on a stale one
-  # (#603). Those can't run on anything new until the stop's graph error
-  # clears, so they are marked, not queued. The walk goes only through
-  # results: a cell past the stop that has none read nothing from it (#390).
+  # (#603). They are marked, not queued: running one again would read the
+  # same stale value, and the stop's own next run queues them. A stop with
+  # no result changed nothing past it (#390), and the walk goes only
+  # through results, so a cell that never ran doesn't get one.
   done <- c(dependents, id)
   from <- intersect(intersect(dependents, stops), names(state$results))
   while (length(from) > 0) {

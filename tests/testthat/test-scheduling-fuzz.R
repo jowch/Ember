@@ -211,6 +211,14 @@ test_that("a cell a stopped walk marks stale marks what read from it (#603)", {
                  list(ops = list(list(op = "set_code", cell = "C4", code = "v3 <- 62\nv4 <- (81 + 1 * v3) %% 997\nv5 <- (v4 * 3 + 81) %% 997")), run = NULL),
                  list(ops = list(list(op = "set_code", cell = "C3", code = "v7[1] <- 24\nv3 <- stop(\"fail 72\")")), run = NULL),
                  list(ops = list(), run = "C4"))))
+  # C3 and C5 both define v2, so the walk from C1 stops at C3, which has a
+  # result; C4 reads from C3 but never ran, so it still has no result.
+  expect_trace_passes(list(mode = "lazy",
+    cells = list(C1 = "v1 <- stop(\"fail 64\")", C3 = "v2 <- 64", C4 = "v3 <- (81 + 1 * v2) %% 997\nv4 <- (v3 * 3 + 81) %% 997",
+                 C5 = "v5 <- stop(\"fail 23\")\nv6 <- (v5 * 3 + 23) %% 997"),
+    steps = list(list(ops = list(list(op = "set_code", cell = "C3", code = "v2 <- (62 + 1 * v1) %% 997")), run = "C3"),
+                 list(ops = list(list(op = "set_code", cell = "C5", code = "v2 <- 1\nv5 <- stop(\"fail 23\")\nv6 <- (v5 * 3 + 23) %% 997")), run = NULL),
+                 list(ops = list(list(op = "set_code", cell = "C1", code = ".data = 60\nv1 <- stop(\"fail 64\")")), run = "C1"))))
 })
 
 test_that("a hand run doesn't leave a cell stale through a cell that can't run (#390)", {
