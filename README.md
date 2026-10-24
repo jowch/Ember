@@ -24,8 +24,8 @@ the order the graph needs, not the order they appear on the page.
 - **Safe to open.** A notebook opens in safe preview: you can read it
   without running anything until you choose to.
 - **Rich outputs.** Data frames as paged tables, lists as expandable
-  trees, plots that redraw to fit, htmlwidgets such as DT, and
-  coloured console output.
+  trees, plots at a fixed size that stay sharp on any screen,
+  htmlwidgets such as DT, and coloured console output.
 - **Help as you type.** Autocomplete from your session, help pages in a
   side panel, and a function's arguments shown while you type a call.
 - **Runs in your browser.** The interface is a fork of
@@ -113,7 +113,8 @@ n <- input_slider(10, 500, value = 100, step = 10)
 hist(rnorm(n))
 ```
 
-Under plain `Rscript`, `n` is the default, 100. `?emberui::input_slider`
+Under plain `Rscript`, `n` is the default, 100, once emberui is installed
+(`install.packages("emberui", repos = "https://jowch.r-universe.dev")`). `?emberui::input_slider`
 lists the other inputs, and `input_list()` combines several into one.
 
 To run a saved notebook from start to finish outside the browser, with the

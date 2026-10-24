@@ -13,9 +13,10 @@ The first release.
   `run()` runs a saved notebook from start to finish with those versions.
 * A notebook opens in safe preview and runs nothing until you allow it.
 * The browser interface (`start_server()`) is a fork of Pluto.jl's. It shows
-  data frames as paged tables, lists as trees, plots that redraw to fit, and
-  htmlwidgets.
-* Interactive inputs bound to variables: a slider, text box or dropdown made
-  with the emberui package reruns the cells that read it.
+  data frames as paged tables, lists as trees, plots at a fixed size that stay
+  sharp on high-density screens, and htmlwidgets.
+* Interactive inputs bound to variables, from the emberui package: a slider,
+  number box, checkbox, text box, dropdown or radio buttons, or several in
+  one with `input_list()`. Moving one reruns the cells that read it.
 * An R API for driving notebooks from code: `open_notebook()`,
   `edit_notebook()`, `run_cells()`, `notebook_snapshot()` and the rest.
