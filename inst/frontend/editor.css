@@ -45,6 +45,12 @@ body {
     background-color: var(--main-bg-color);
 }
 
+@media screen {
+    pluto-editor:not(.disable_ui) {
+        padding-top: var(--ember-header-height);
+    }
+}
+
 pluto-editor {
     flex: 1 1 auto;
     display: flex;
@@ -543,10 +549,16 @@ pluto-output details[open] summary {
 
 /* HEADER */
 
+/* Fixed, not sticky (#586): html's scroll-padding-top leaves the band a
+   sticky header sits in outside what counts as visible, so focusing one of
+   its controls (Tab, or a test's click) scrolled the page half a window to
+   "reach" it. A fixed box never needs scrolling to. The padding below
+   keeps the space it held in the flow. */
 header#pluto-nav {
-    position: sticky;
+    position: fixed;
     top: 0;
-    width: 100%;
+    left: 0;
+    right: 0;
     height: var(--ember-header-height);
     z-index: 60;
     background-color: var(--header-bg-color);
@@ -680,8 +692,6 @@ pluto-editor.nbpkg_restart_recommended > header#pluto-nav,
 pluto-editor.nbpkg_restart_required > header#pluto-nav,
 pluto-editor.process_dead > header#pluto-nav,
 pluto-editor.disconnected > header#pluto-nav {
-    position: sticky;
-    top: 0;
     backdrop-filter: blur(10px);
 }
 
