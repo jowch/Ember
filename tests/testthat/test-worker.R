@@ -97,7 +97,7 @@ test_that("a forked child doesn't send its parent's printed text again (#470)", 
   on.exit(h$close())
   go <- tempfile("ember-go-")
   on.exit(unlink(go), add = TRUE)
-  code <- sprintf('cat("before\\n"); invisible(parallel::mclapply(1:4, function(i) { while (!file.exists("%s")) NULL; i }, mc.cores = 4))', go)
+  code <- sprintf('cat("before\\n"); invisible(parallel::mclapply(1:4, function(i) { while (!file.exists("%s")) NULL; i }, mc.cores = 2))', go)
   h$send(run_msg("a", 1L, code))
   sent <- list()
   r <- wait_for_done(h, on_frame = function(m) if (identical(m$type, "console")) {
