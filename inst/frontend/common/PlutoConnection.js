@@ -183,7 +183,7 @@ const create_ws_connection = (address, { on_message, on_socket_close, on_event =
 
         const timeout_handle = setTimeout(() => {
             console.warn("Creating websocket timed out", new Date().toLocaleTimeString())
-            on_event("socket timed out")
+            on_event(`socket timed out, ready state ${socket.readyState}`)
             try_close_socket_connection(socket)
             reject("Socket timeout")
         }, timeout_s * 1000)
@@ -391,7 +391,7 @@ export const create_pluto_connection = async ({
     // "connected", or "key refused"; and how many key checks (which run
     // beside the wait after a failed try) are still out. Like
     // window.ember_docs (LiveDocsTab.js).
-    // `events`: the last few things that happened to the connection
+    // `events`: the last 200 things that happened to the connection
     // (sockets opening, erroring and closing, key checks and what they
     // found), oldest first, for a test that fails to say why (#491).
     const connection = { state: "trying", key_checks_out: 0, events: /** @type {string[]} */ ([]) }
@@ -399,7 +399,7 @@ export const create_pluto_connection = async ({
     window.ember_connection = connection
     const note_event = (/** @type {string} */ what) => {
         connection.events.push(`${Date.now()} ${connection.state}: ${what}`)
-        if (connection.events.length > 40) connection.events.shift()
+        if (connection.events.length > 200) connection.events.shift()
     }
     let auto_reconnect = true
 
