@@ -572,10 +572,10 @@ cell_variables <- function(result, off) {
 #' message naming the span, since a code span that starts with `r `
 #' (`` `r = 0.5` ``) runs as R, as in knitr, whether or not it was meant to.
 #' The span is the first one that fails to parse on its own, with its own
-#' message. The graph's error line can't say: it parses `inline_code()`,
-#' the spans joined one per line, and an unclosed span reads on into the
-#' next one, which then takes the blame (#574). Unchanged when every span
-#' parses alone.
+#' message. `inline_code()` stops after that span (#574), so the graph's
+#' error is that span's, but its line counts spans, not the cell's lines,
+#' and its message says nothing of the span.
+#' Unchanged when every span parses alone.
 span_parse_error <- function(e, code) {
   spans <- inline_spans(code)
   for (k in seq_len(nrow(spans))) {
