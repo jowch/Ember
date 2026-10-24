@@ -44,3 +44,28 @@ test("install waiting: the cell says what it waits for and how long the install 
 
   assertNoProblems(page);
 });
+
+test("install waiting: the elapsed time is right when the browser's clock is an hour ahead of the server's (#590)", async (t) => {
+  const notebook = tempNotebook("failing.R");
+  const server = await startServer([notebook], {
+    installerScript: SLOW_INSTALLER,
+    logFile: path.join(artifactsDir(), "install-waiting-skew.server.log"),
+  });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  // Fakes Date and the timers from page load; time still flows.
+  await page.clock.install({ time: Date.now() + 3600 * 1000 });
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await runCell(page, "S");
+
+  // The time shows only once the clocks' offset is measured, and counts
+  // from the install's start on the server's clock: well under a minute,
+  // not "1:00:02".
+  const time = page.locator(`${cellSelector("S")} > ember-chip.waiting .ember-chip-time`);
+  await time.waitFor();
+  assert.match(await time.innerText(), /^0:\d\d$/);
+
+  assertNoProblems(page);
+});

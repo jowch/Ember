@@ -70,8 +70,9 @@ out of the way of the data, the code and the results.
   #538), "Disabled" (solid grey; the code sits on a grey background,
   dimmed), and on a queued cell that waits for packages to install
   "Waiting for `dplyr` to install · 1:05" (neutral, #590): the time counts
-  from the install's start and ticks each second, unread by screen
-  readers, and each name opens the Packages tab. Before the install starts
+  from the install's start on the server's clock, corrected by the measured
+  gap between the clocks and shown once that is known, and ticks each
+  second, unread by screen readers, and each name opens the Packages tab. Before the install starts
   it is "Waiting for `dplyr`", and while a large download asks first
   "Waiting for your OK to install `dplyr`". It takes the slot before
   Stale. Each name in a chip, or in the "Changed `cnt` in place" note,

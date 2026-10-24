@@ -262,6 +262,7 @@
     "t_chip_disabled": "Disabled",
     "t_chip_waiting": "Waiting for {{names}}",
     "t_chip_waiting_install": "Waiting for {{names}} to install · {{time}}",
+    "t_chip_waiting_install_untimed": "Waiting for {{names}} to install",
     "t_chip_waiting_ok": "Waiting for your OK to install {{names}}",
     "t_plot_alt": "Plot",
     "t_image_alt": "Image",

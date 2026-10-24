@@ -19,6 +19,7 @@ import { EditorSelection, EditorView } from "../imports/CodemirrorPlutoSetup.js"
 import { ctrl_or_cmd_name } from "../common/KeyboardShortcuts.js"
 import { help_query_of } from "../common/help_query.js"
 import { open_bottom_right_panel } from "./BottomRightPanel.js"
+import { my_clock_is_ahead_by_now } from "../common/clock_sync.js"
 
 /**
  * The "Stale" chip's text: "Stale" alone when no names are known, else
@@ -101,8 +102,10 @@ const format_elapsed = (/** @type {number} */ seconds) => {
  * "Waiting for dplyr" before the install starts. Each name opens the
  * Packages tab. It reads the install's state from the notebook and ticks
  * every second itself, since the cell doesn't re-render as the install
- * moves on. The time is hidden from screen readers: the chip is a status
- * region, and a clock in one would be read out every second.
+ * moves on. The start is the server's clock, so the time is corrected by
+ * the panel's measured offset between the clocks, and left out until one
+ * is measured. The time is hidden from screen readers: the chip is a
+ * status region, and a clock in one would be read out every second.
  */
 const WaitingChipText = ({ names }) => {
     const pluto_actions = useContext(PlutoActionsContext)
@@ -114,6 +117,7 @@ const WaitingChipText = ({ names }) => {
     const ember = pluto_actions.get_notebook()?.ember
     const status = ember?.packages?.library?.status
     const started_at = ember?.install_started_at
+    const offset = my_clock_is_ahead_by_now()
     const shown = names.slice(0, 3).map(
         (name) =>
             html`<a
@@ -128,10 +132,11 @@ const WaitingChipText = ({ names }) => {
     const rest = names.length - shown.length
     const joined = join_parts(rest > 0 ? [...shown, t("t_n_more", { count: rest })] : shown)
     if (status === "asking") return th("t_chip_waiting_ok", { names: joined })
-    if (status === "installing" && started_at != null) {
+    if (status === "installing") {
+        if (started_at == null || offset == null) return th("t_chip_waiting_install_untimed", { names: joined })
         return th("t_chip_waiting_install", {
             names: joined,
-            time: html`<span class="ember-chip-time" aria-hidden="true">${format_elapsed(now - started_at)}</span>`,
+            time: html`<span class="ember-chip-time" aria-hidden="true">${format_elapsed(now - offset - started_at)}</span>`,
         })
     }
     return th("t_chip_waiting", { names: joined })
