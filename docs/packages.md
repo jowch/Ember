@@ -167,7 +167,7 @@ One process-wide table, `jobs`, lets two sessions that want the same index or li
 
 **renv comes from the server's own library** as an Imports dependency. Only the installer subprocess loads it, never the server or the worker.
 
-**A bad download is tried again, once.** renv 1.3 downloads packages in parallel and installs what it got without opening it: any file that isn't empty counts as downloaded, even when curl said the transfer failed. One dropped connection then fails the whole install ("zip file '…' cannot be opened", or a tar error). When renv fails, the installer lists the archives it downloaded for the packages that didn't install, deletes any that can't be read, and runs the restore once more (`unreadable_downloads()`, #450). What already installed stays. A second failure is reported as usual. A bad file isn't kept for later installs either way: renv's parallel downloader fetches every archive again rather than reuse one. A download that never started (curl couldn't resolve the host, say) leaves no file; renv has already asked for it twice by then, and reports it as "error downloading '<url>' [error code N]" (on macOS and Windows, where renv then looks for a binary, as "failed to find binary for '<pkg> <version>' in package repositories"). The installer reads that from renv's report (`renv_download_failures()`, #478) and tries again in the same second restore.
+**A bad download is tried again, once.** renv 1.3 downloads packages in parallel and installs what it got without opening it: any file that isn't empty counts as downloaded, even when curl said the transfer failed. One dropped connection then fails the whole install ("zip file '…' cannot be opened", or a tar error). When renv fails, the installer lists the archives it downloaded for the packages that didn't install, deletes any that can't be read, and runs the restore once more (`unreadable_downloads()`, #450). What already installed stays. A second failure is reported as usual. A bad file isn't kept for later installs either way: renv's parallel downloader fetches every archive again rather than reuse one. A download that never started (curl couldn't resolve the host, say) leaves no file; renv has already asked for it twice by then, and reports it as "error downloading '<url>' [error code N]" (on macOS and Windows, where renv then looks for a binary, as "failed to find binary for '<pkg> <version>' in package repositories"). The installer reads that from renv's report (`renv_download_failures()`, #478) and tries again in the same second restore. If a package still hasn't downloaded after that, the installer says so ("toyA didn't download, after trying again"), and doesn't say it failed to build: a package that never downloaded was never built, so the explanation for a failed build with no binary (#19, below) doesn't apply to it (#481).
 
 **The test seam is the repository URL.** `ember_repos(cran = "file://…/fixtures/repos/cran")` drives the same code that reads PPM, with no mock. Resolution unit tests call `resolve_lock()` with a parsed fixture index. An offline end-to-end test installs two toy source packages from a `file://` repo. One opt-in test uses PPM.
 
@@ -633,9 +633,9 @@ r-universe.
   build came from (`RemoteUrl`, `RemoteSha`, `RemoteSubdir`). The key is
   `universe/<name>/<package>`, and it always moves, like a GitHub branch.
 - **The lock fixes the commit, not the build.** The lock line is
-  `emberui 0.1.0 universe:jowch/github.com/jowch/emberui@<sha>`: the
-  universe, then the repository without `https://`, then the commit, with
-  `//<subdir>` before the `@` for a package in a subdirectory. So the
+  `emberui 0.0.0.9000 universe:jowch/github.com/jowch/Ember//inst/emberui@<sha>`:
+  the universe, then the repository without `https://`, then the commit,
+  with `//<subdir>` before the `@` for a package in a subdirectory. So the
   file alone says where the code is after the universe has moved on.
   Once locked, a package keeps its commit, under the key
   `universe-commit/<package>/...`, which never changes. A machine that
@@ -712,9 +712,9 @@ library(mypkg)
   cell doesn't count.
 - **Ember's own packages are built in** (`builtin_sources`): one there
   needs no install call, and its source only fills a gap (an entry
-  already in the header stays). The table is empty for now: emberui goes
-  in as `universe:jowch` once that universe builds it, since until then
-  the entry would send `library(emberui)` to a universe without it.
+  already in the header stays). Today that is emberui, as
+  `universe:jowch`: `library(emberui)` alone writes that entry and
+  installs the jowch universe's build.
 - **They don't run.** The lock already answers them, and running one would
   install behind the lock's back into a shared library. The run message
   lists the top-level install calls (`run_installs()`); the worker skips

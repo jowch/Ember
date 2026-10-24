@@ -68,13 +68,30 @@ test_that("lm(d$y ~ d$x) references d only", {
   expect_false("x" %in% refs(a))
 })
 
-test_that(".x, .y, .data and .env are never references", {
+test_that("in a lambda, .x and .y are its arguments, and .data and .env are never references", {
   # A one-sided formula passed to a non-model function is walked as a
   # lambda's function body (item 13), so `+` is an ordinary call head, the
   # same as in any other function body; only the pronouns themselves are
   # never references.
   a <- read_cell("map(xs, ~ .x + .data$col + .env$k)")
   expect_setequal(refs(a), c("map", "xs", "+", "$"))
+  a <- read_cell("map2(xs, ys, ~ .x * .y + total)")
+  expect_setequal(refs(a), c("map2", "xs", "ys", "*", "+", "total"))
+  a <- read_cell("f <- function(xs) purrr::map(xs, ~ .x + 1)")
+  expect_false(".x" %in% refs(a))
+})
+
+test_that(".x and .y outside a lambda are a cell's own names, like any dot-name (#507)", {
+  a <- read_cell(".x <- faithful$eruptions\nhist(.x)")
+  expect_equal(a$definitions$name, ".x")
+  expect_false(".x" %in% refs(a))
+  a <- read_cell(".y + 1")
+  expect_true(".y" %in% refs(a))
+  a <- read_cell("for (.y in 1:3) print(.y)")
+  expect_equal(a$definitions$name, ".y")
+  # A model formula's .x is a variable, as in plain R.
+  a <- read_cell("lm(y ~ .x)")
+  expect_true(".x" %in% refs(a))
 })
 
 test_that("lm(y ~ x, , d): an empty data argument is skipped, not read", {

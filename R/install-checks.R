@@ -356,6 +356,14 @@ renv_download_failures <- function(lines) {
   unique(vapply(Filter(length, m), `[[`, character(1), 2))
 }
 
+#' The `Error:` line for packages that didn't download, even after the
+#' installer's second try (`renv_download_failures()`): a failed download
+#' isn't a failed build, so it gets none of the build's explanations (#481).
+download_report_line <- function(packages) {
+  sprintf("Error: %s didn't download, after trying again. The install log has renv's reason for %s.",
+          paste(packages, collapse = ", "), if (length(packages) == 1) "it" else "each")
+}
+
 #' Whether the zip or tarball at `path` lists: a cut-short zip "cannot be
 #' opened" and a cut-short tarball has an "incomplete block".
 archive_readable <- function(path) {

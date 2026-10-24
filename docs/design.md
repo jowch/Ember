@@ -292,7 +292,9 @@ and its `findGlobals()` rules differ from Ember's (it treats `s` in
 - **Private names:** names starting with a dot (`.i`, `.tmp`) are private to
   their cell, like marimo's `_` names (R doesn't allow a leading `_`). R
   already hides dot-names from `ls()`. Using one from another cell is an
-  error that suggests dropping the dot. The user docs also recommend
+  error that suggests dropping the dot. `.x` and `.y` count too; only
+  inside a `~` lambda (`map(xs, ~ .x + 1)`) are they the lambda's own
+  arguments (#507). The user docs also recommend
   `local({ … })`, R's equivalent of Julia's `let`, for a block of private
   work; the engine already treats it as its own scope.
 
@@ -768,8 +770,10 @@ blank a later cell that shows the table, as it would at the console.
 Earlier visible values, `print()`,
 `cat()`, messages and warnings go to a console area below the output, in
 order. They show while the cell runs, as in an R console: messages and
-warnings at once, and printed text a whole line at a time, a few times a
-second (#470). The worker reads what the cell printed from R's event
+warnings at once, and printed text a few times a second (#470). The line
+still being written shows as it stands and is redrawn in place, so a
+progress bar drawn with `"\r"` moves (#483); each read starts at the line's last `"\r"`, so a
+bar redrawn many times costs no more per read. The worker reads what the cell printed from R's event
 processing, which R reaches wherever it checks for an interrupt; a cell
 inside C code that doesn't check shows its text when that code returns.
 On Windows, where R exports no such hook, a timer that R's event

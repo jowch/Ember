@@ -1,8 +1,8 @@
 # Interactive inputs
 
-_Design, 2026-10-17, for #36 (build step 5). The engine and worker side
-and the emberui package are built; the page and the agent tool are not. See "Built so
-far" at the end._
+_Design, 2026-10-17, for #36 (build step 5). The engine and worker side,
+the emberui package and the widgets on the page are built; the agent tool
+is not. See "Built so far" at the end._
 
 ## Summary
 
@@ -84,13 +84,15 @@ hold:
 3. Nothing else in the cell reads or redefines `name`.
 
 A cell may hold several. One definition per global already makes the name
-unique, so the name is the input's key, as in Pluto's `bonds[name]`.
+unique, so the name is the input's key, as in Pluto's `bonds[name]`. Only
+the one on the cell's last line can be moved on the page ("Where the
+widget shows", below); `set_input()` can set any of them.
 
-Any other input call returns its default, as under `Rscript`, and its
-widget shows greyed with a note naming the fix. A call inside a function, a
-loop or `round(...)` gets "Assign this input to a name at the top of the
-cell to use it." A binding broken by rule 3 gets "Read `n` in another
-cell." No R warning, since plain R wouldn't give one.
+Any other input call returns its default, as under `Rscript`, and it
+shows as a read-only line below the cell, with a note naming the fix. A
+call inside a function, a loop or `round(...)` gets "Assign this input to
+a name at the top of the cell to use it." A binding broken by rule 3 gets
+"Read `n` in another cell." No R warning, since plain R wouldn't give one.
 
 Why so strict: Ember sets the variable without rerunning the cell. That is
 only the same as rerunning when the variable *is* the call's value and the
@@ -123,13 +125,25 @@ group <- input_select(levels(penguins$species))
 reads `penguins`, and the cell depends on the cell that defines it. When
 `penguins` changes, the input's cell reruns and the dropdown is rebuilt.
 
-**Where the widget shows.** A cell's bound inputs are shown in its output
-area, in the order they were called, above the cell's own output if it has
-one. `n <- input_slider(...)` has no visible value, so the slider is the
-whole output. This differs from Pluto, where `@bind` returns the widget as
-the cell's value, and from marimo, where the cell must end with the element
-to show it. In R the variable is a number, so there is nothing to print;
-the worker shows the input itself.
+**Where the widget shows.** It follows design.md's output rule: the
+cell's output is its last line's value. When the last line is a bound
+input (`n <- input_slider(...)`), the widget is the cell's output, the one
+thing in its output area, as in Pluto, where `@bind` returns the widget as
+the cell's value. In R the variable is a number, so there is nothing else
+to print; the worker shows the input itself. Anything else the run
+showed isn't the output then, so it goes below the cell: a plot drawn on an
+earlier line shows under the code, and printed values stay in the console,
+as they do for any cell.
+
+Any other input in the cell isn't its output, and an interactive widget
+anywhere but the output area would confuse (Jonathan, 2026-10-24). So it
+shows below the cell's code as a read-only line, `n = 8 (slider)`, with a
+note saying how to make it movable. The note for a bound input says to give
+it its own cell, ending with it; for an unbound one, why it isn't bound.
+A cell that needs several widgets together will use a composite,
+`input_list(n = input_slider(...), method = input_select(...))`, as PlutoUI
+combines widgets: one bound value, a named list read as `p$n`, whose widget
+is the cell's output (next increment).
 
 ## Under plain `Rscript`
 
@@ -364,11 +378,12 @@ R API. Nothing shows on the page yet.
   It uses `check` both for a kept value when the cell reruns and for a
   new value. The `check` function stays in the worker; the rest of the
   spec goes to the server.
-- **A bound input shows no value** as the cell's output, since moving it
-  doesn't rerun the cell (design.md's output rule names the exception).
+- **A bound input on the last line is the cell's output**: its widget,
+  not a printed value, since moving it doesn't rerun the cell (design.md's
+  output rule names the exception). The worker marks its report `output`.
 - **Every input call is reported**, bound or not. An unbound one says why:
-  `not_assigned` (rule 1 or 2) or `read_elsewhere` (rule 3). The page will
-  use this for the greyed widget and its note.
+  `not_assigned` (rule 1 or 2) or `read_elsewhere` (rule 3). The page
+  shows this in the input's note.
 - **`set_input(nb, name, value, wait = FALSE)`** goes through steps 2 to
   5 above. One value is with the worker at a time; nothing new is sent to
   run until it answers. With `wait = TRUE` a refused value is an error,
@@ -385,8 +400,56 @@ R API. Nothing shows on the page yet.
   spec also has `labels`: each choice's name or, without one, the
   element printed.
 
-Next: the widgets on the page (the `bonds` projection), then EndeavorMCP's
-tool.
+- **The widgets on the page.** Each cell's inputs go to the page as
+  `cell_results[id].ember.inputs` (`project_inputs()` in R/inputs.R), and
+  CellInputs.js draws them. The input marked `output` is drawn as its
+  widget in the output area, in place of `pluto-output`, and a plot the
+  cell drew shows below the code instead; every other input is a
+  read-only line below the code. A run that failed shows its error as
+  the output, and all its inputs as lines. The outline above had a new
+  output type inside `<bond>` elements; Pluto's `Bond.js` isn't used, and
+  the widgets call `set_bond` themselves.
+- **Values.** The server projects `bonds` (`project_bonds()`): each bound
+  input's value, as the page last asked for it. A dropdown's or radio's
+  value is the 0-based position of its choice (a list of them for a
+  multiple dropdown), since a choice may be any R object; the server turns
+  it back into the element (`input_from_page()`). A `bonds` patch from
+  the page becomes `set_input()` (`pluto_edits()`, then
+  `set_page_input()` in R/server.R); a refused value gets a thumbs-down,
+  and the next diff puts the widget back.
+- **Values faster than the worker.** Pluto's page holds new values back
+  while a cell runs, but not while a value is with the worker and nothing
+  runs yet. So a page value arriving then waits (`worker$next_inputs`,
+  the latest for each name) and goes when the worker answers, before any
+  reader runs. A value from the R API is still refused then, so its
+  caller knows.
+- **Disabled.** A cell's widget is disabled while the cell is stale,
+  edited since it ran, queued or running, and when the page can't change
+  the notebook (an HTML export, or no connection). A value off its default
+  is marked "changed", on the widget or the read-only line; its tooltip
+  gives the default.
+- **Read-only lines.** An input that isn't the output shows its value and
+  type, and a note: "Only the input on the cell's last line can be moved.
+  Give this one its own cell, ending with it." when bound, otherwise
+  "Assign this input to a name at the top of the cell to use it." or
+  "Read `n` in another cell.".
+- **Sending.** A slider sends as it moves; a number box and a text box send
+  on Enter or when the user leaves them; the others on each change. A
+  number box sends only a number within its `min` and `max`; anything
+  else stays in the box with a note saying what the input allows.
+- **Refused values.** When the worker refuses a page value, the widget
+  goes back to the input's value and shows the worker's message under it
+  (`bonds[name].error`, from `state$input_errors`), until the next value
+  or the cell's next run. A value set through the R API keeps its own
+  outcome (by token), so a page value answered meanwhile can't report in
+  its place.
+- **Duplicate choices.** A dropdown or radio with two equal choices
+  (`c(A = 1, B = 1)`) shows the first as picked whichever was chosen; R
+  gets the same value either way.
+
+Next: `input_list()`, the composite, after which the bound-input note
+names it. EndeavorMCP's tool (its `set_input` and `read_cell` text) is
+left to the Endeavor side.
 
 ## Decided with Jonathan (2026-10-17)
 
@@ -396,11 +459,10 @@ tool.
   archival if one is missed), and everyone who sees a widget already has
   Ember, which ships the same way. The `Rscript` fallback needs only the
   package, from wherever it comes. This needs notebooks to be able to
-  install from r-universe (#203); today `ember_repos()` in R/resolve.R
-  knows only CRAN, Bioconductor and GitHub sources. #203 plans a
-  `[sources]` entry `emberui = "universe:jowch"`, which Ember writes itself
-  when it sees the package. Until it lands, Ember writes a GitHub
-  `[sources]` entry instead.
+  install from r-universe (#203, done). The jowch universe builds emberui
+  from inst/emberui, and Ember writes the `[sources]` entry
+  `emberui = "universe:jowch"` itself when a notebook uses the package
+  (`builtin_sources`, R/rules.R; #278).
 
 The other choices are decided above: `input_*` names (matching plain R),
 keeping a value on rerun (Pluto), lazy mode marking dependents stale

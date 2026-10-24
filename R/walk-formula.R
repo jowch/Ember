@@ -87,8 +87,11 @@ walk_formula <- function(e, scope, acc, has_data, site = NULL, pid = NA_integer_
 #' A one-sided formula's right side used as a purrr/rlang lambda: walked as
 #' a function body with its own scope, so a local it assigns (`~ { v <- .x
 #' * 2; v + 1 }`) isn't a reference, the same as any other function body.
+#' `.x` and `.y` are its arguments (rlang's `as_function()`), so they are
+#' bound there and only there: outside a lambda they are ordinary names
+#' (#507). `..1`, `..2`... are ignored everywhere (`is_dot_dot_name()`).
 walk_formula_lambda <- function(body, scope, acc, pid = NA_integer_) {
-  inner <- new_scope("function", character(), parent = scope)
+  inner <- new_scope("function", c(".x", ".y"), parent = scope)
   inner$home <- inner
   inner$defer_target <- scope$home
   walk_expr(body, inner, acc, pid)

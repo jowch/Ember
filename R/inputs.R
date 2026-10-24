@@ -13,8 +13,8 @@ input_types <- c("slider", "number", "checkbox", "text", "select", "radio")
 #' the top-level expression (1-based, in the cell's own parse) whose
 #' right-hand side is the input call. `bind` holds the assignments that
 #' meet rules 1 and 3; `blocked` those that meet rule 1 only, because
-#' something else in the cell reads or redefines the name (the widget is
-#' shown greyed, "Read `n` in another cell"). Empty for code that doesn't
+#' something else in the cell reads or redefines the name (shown as a
+#' read-only line, "Read `n` in another cell"). Empty for code that doesn't
 #' parse or names no input function.
 input_bindings <- function(code) {
   none <- list(bind = list(), blocked = list())
@@ -71,4 +71,103 @@ is_input_function <- function(f) {
     f <- f[[3]]
   }
   is.name(f) && as.character(f) %in% paste0("input_", input_types)
+}
+
+# ---- On the page ------------------------------------------------------------------
+#
+# A dropdown's or radio's value goes to the page as the 0-based position of
+# its choice (a list of them for a multiple dropdown), since a choice may be
+# any R object; every other input's value goes as it is. The page sends
+# values back the same way (`input_from_page()`).
+
+#' Where `x` is in `choices` (1-based), or NA: emberui's `choice_index()`,
+#' which the worker's check uses, so a value the worker accepted is found.
+input_choice_index <- function(choices, x) {
+  x <- unname(x)
+  plain <- function(v) is.numeric(v) && is.null(attr(v, "class"))
+  for (i in seq_along(choices)) {
+    ch <- unname(choices[[i]])
+    if (identical(ch, x)) return(i)
+    if (plain(ch) && plain(x) && length(ch) == length(x) && length(x) > 0 && isTRUE(all(ch == x))) return(i)
+  }
+  NA_integer_
+}
+
+#' An input's R value as the page shows it, or `NULL` when a choice can't
+#' be found (the page then shows none picked).
+input_to_page <- function(spec, value) {
+  if (!(spec$type %in% c("select", "radio"))) return(value)
+  if (isTRUE(spec$multiple)) {
+    items <- if (is.list(value)) value else as.list(value)
+    idx <- vapply(items, function(v) input_choice_index(spec$choices, v), integer(1))
+    return(as_arr(idx[!is.na(idx)] - 1L))
+  }
+  i <- input_choice_index(spec$choices, value)
+  if (is.na(i)) NULL else i - 1L
+}
+
+#' The page's value for an input as the R value to set, or a refusal (one
+#' sentence) for a position that isn't a choice. Everything else is left
+#' to the worker's check, which says what the input allows.
+input_from_page <- function(spec, v) {
+  if (!(spec$type %in% c("select", "radio"))) {
+    return(if (is.list(v)) unlist(v) else v)
+  }
+  idx <- unlist(v, use.names = FALSE) %||% integer()
+  n <- length(spec$choices)
+  if (!is.numeric(idx) || anyNA(idx) || any(idx != round(idx)) || any(idx < 0 | idx >= n) ||
+      (!isTRUE(spec$multiple) && length(idx) != 1)) {
+    return(structure("That isn't one of the input's choices.", class = "ember_page_refusal"))
+  }
+  i <- as.integer(idx) + 1L
+  if (isTRUE(spec$multiple)) unname(spec$choices[i]) else spec$choices[[i]]
+}
+
+#' The value the page shows for each bound input, as Pluto's `bonds`:
+#' `name -> list(value)`. A value waiting to be sent, else the one with the
+#' worker, else the cell's: the page's own latest value, so its widget
+#' doesn't snap back while the worker catches up. When the worker refused
+#' the page's last value for the name, the entry also has `error`, its
+#' message (`state$input_errors`), which the widget shows; `set_bond`
+#' replaces the entry with `{value}`, so a new value clears it on the page
+#' at once.
+project_bonds <- function(state) {
+  out <- emptymap()
+  w <- state$worker
+  for (r in state$results) {
+    for (i in r$inputs) {
+      if (!isTRUE(i$bound) || is.null(i$name)) next
+      value <- if (!is.null(w$next_inputs[[i$name]])) w$next_inputs[[i$name]]$value
+               else if (identical(w$input$name, i$name)) w$input$value
+               else i$value
+      out[[i$name]] <- c(list(value = input_to_page(i$spec, value)),
+                         if (!is.null(state$input_errors[[i$name]])) list(error = state$input_errors[[i$name]]))
+    }
+  }
+  out
+}
+
+#' A cell's inputs as the page draws them (`cell_results[id].ember.inputs`),
+#' in the order the cell called them. `output`: the bound input on the
+#' cell's last line, drawn as its widget in the cell's output area; the
+#' others are read-only lines below the cell. `disabled` while the cell is stale,
+#' edited since it ran, queued or running: a value checked against an old
+#' spec must not reach the worker (`reduce_set_input()`).
+project_inputs <- function(view) {
+  busy <- isTRUE(view$stale) || isTRUE(view$code_differs) || isTRUE(view$queued) || isTRUE(view$running)
+  as_arr(lapply(view$inputs, function(i) {
+    s <- i$spec
+    na_null <- function(x) if (is.null(x) || (length(x) == 1 && is.na(x))) NULL else x
+    c(list(type = s$type, name = i$name, label = s[["label"]] %||% i$name,
+           bound = isTRUE(i$bound), output = isTRUE(i$output)),
+      if (!isTRUE(i$bound)) list(reason = i$reason %||% "not_assigned"),
+      list(value = input_to_page(s, i$value), default = input_to_page(s, i$default),
+           changed = !identical(i$value, i$default),
+           disabled = busy || !isTRUE(i$bound)),
+      if (s$type %in% c("slider", "number"))
+        c(Filter(Negate(is.null), list(min = na_null(s$min), max = na_null(s$max), step = na_null(s$step))),
+          list(integer = is.integer(s$value))),
+      if (s$type %in% c("select", "radio")) list(labels = as_arr(s$labels %||% character())),
+      if (identical(s$type, "select")) list(multiple = isTRUE(s$multiple)))
+  }))
 }

@@ -58,27 +58,130 @@ test_that("run_value_and_console_order", {
 
 test_that("what a running cell prints is sent while it runs, a whole line at a time (#470)", {
   # The cell prints, then waits on a file the test writes only once the
-  # printed line has arrived: before #470 nothing came until the run ended,
-  # and before #482 on Windows.
+  # printed text has arrived: before #470 nothing came until the run ended,
+  # and before #482 on Windows. The unfinished line comes as a partial item
+  # (#483), which the finished line replaces.
   h <- worker_harness()
   on.exit(h$close())
   go <- tempfile("ember-go-")
   on.exit(unlink(go), add = TRUE)
   code <- sprintf('cat("inside the loop\\n"); cat("half"); while (!file.exists(%s)) NULL; cat(" line\\n"); message("m")', deparse(go))
   h$send(run_msg("a", 1L, code))
+  sent <- list()
   repeat {
     m <- next_frame(h)
     expect_false(identical(m$type, "done"))
-    if (identical(m$type, "console")) break
+    if (identical(m$type, "console")) sent[[length(sent) + 1]] <- m$item
+    if (isTRUE(m$item$partial)) break
   }
-  expect_identical(m$item, list(kind = "stdout", text = "inside the loop\n"))
+  expect_identical(sent, list(list(kind = "stdout", text = "inside the loop\n"),
+                              list(kind = "stdout", text = "half", partial = TRUE)))
   writeLines("", go)
   r <- wait_for_done(h)
   expect_identical(r$status, "ok")
-  # The unfinished line was held back, then sent whole, before the message.
+  # The partial line was replaced by the whole one, before the message.
   expect_identical(r$console, list(list(kind = "stdout", text = "inside the loop\n"),
                                    list(kind = "stdout", text = "half line\n"),
                                    list(kind = "message", text = "m\n")))
+})
+
+test_that("a progress bar redrawn with \\r shows each drawing while the cell runs (#483)", {
+  # The cell draws, then waits for the test to see that drawing before the
+  # next. Each drawing replaces the last; the finished line replaces them
+  # all.
+  h <- worker_harness()
+  on.exit(h$close())
+  go <- c(tempfile("ember-go-"), tempfile("ember-go-"))
+  on.exit(unlink(go), add = TRUE)
+  wait <- function(f) sprintf("while (!file.exists(%s)) NULL", deparse(f))
+  code <- paste('cat("\\r 10%")', wait(go[1]), 'cat("\\r 20%")', wait(go[2]),
+                'cat("\\r100%\\n"); message("m")', sep = "; ")
+  h$send(run_msg("a", 1L, code))
+  sent <- list()
+  r <- wait_for_done(h, on_frame = function(m) if (identical(m$type, "console")) {
+    sent[[length(sent) + 1]] <<- m$item
+    if (identical(m$item$text, " 10%")) writeLines("", go[1])
+    if (identical(m$item$text, " 20%")) writeLines("", go[2])
+  })
+  expect_identical(r$status, "ok")
+  expect_identical(sent, list(list(kind = "stdout", text = " 10%", partial = TRUE),
+                              list(kind = "stdout", text = " 20%", partial = TRUE),
+                              list(kind = "stdout", text = "100%\n"),
+                              list(kind = "message", text = "m\n")))
+  expect_identical(r$console, sent[3:4])
+})
+
+#' A console collector from inst/worker.R in this process, whose sent
+#' items go to `$sent`. Its `finish()` must run, to end its sink().
+local_collector <- function(env = parent.frame()) {
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  sent <- new.env()
+  sent$items <- list()
+  e$send <- function(msg) sent$items[[length(sent$items) + 1]] <- msg$item
+  col <- e$console_collector("a", 1L)
+  withr::defer(if (!isTRUE(col$closed)) col$finish(), envir = env)
+  list(col = col, sent = sent, worker = e)
+}
+
+test_that("an unfinished line is drawn from its kept start and what came after its last \\r (#483)", {
+  # Each drawing is the one reading the line whole from its start would
+  # give, though the tick reads only from the last "\r".
+  x <- local_collector()
+  printed <- ""
+  live <- function(text) {
+    cat(text)
+    printed <<- paste0(printed, text)
+    x$col$flush_live()
+    x$sent$items[[length(x$sent$items)]]$text
+  }
+  expect_identical(live("abcdef"), "abcdef")
+  # A shorter drawing overwrites only the start of the longer one.
+  expect_identical(live("\rxy"), "xycdef")
+  expect_identical(live("\rz"), "zycdef")
+  for (text in c("\033[31m\rw", "\033[0m", "\r\u4e2d", "\rq\033[K", "\r", "s"))
+    expect_identical(live(text), x$worker$apply_carriage_returns(printed), info = text)
+  cat("\n")
+  x$col$finish()
+  whole <- list(kind = "stdout", text = x$worker$apply_carriage_returns(paste0(printed, "\n")))
+  expect_identical(x$sent$items[[length(x$sent$items)]], whole)
+  expect_identical(x$col$items, list(whole))
+})
+
+test_that("a line redrawn many times costs each tick only what was printed since the last (#483)", {
+  # Before the fix, each tick read the whole line again: four times the
+  # redraws took about sixteen times as long, and a cell printing a
+  # counter 300,000 times hadn't finished after ten minutes.
+  redraw <- function(n) function() {
+    x <- local_collector()
+    for (i in seq_len(n)) {
+      cat("\r", i)
+      if (i %% 50L == 0L) x$col$flush_live()
+    }
+    x$col$finish()
+  }
+  r <- time_ratio(redraw(8000), redraw(2000), samples = 5L)
+  cat(sprintf("\n[timing] 8000 redraws %.0f ms, 2000 redraws %.0f ms (%.1fx)\n", r$a * 1000, r$b * 1000, r$ratio))
+  expect_lt(r$ratio, 8)
+})
+
+test_that("an unfinished line cut inside a character is sent up to that character (#483)", {
+  # The cell writes "a" and the first byte of "\u00e9", then the rest once the
+  # test has seen the partial line: sent while cut, it wouldn't be UTF-8.
+  h <- worker_harness()
+  on.exit(h$close())
+  go <- tempfile("ember-go-")
+  on.exit(unlink(go), add = TRUE)
+  code <- sprintf('cat(rawToChar(as.raw(c(0x61, 0xc3)))); while (!file.exists(%s)) NULL; cat(rawToChar(as.raw(c(0xa9, 0x0a))))', deparse(go))
+  h$send(run_msg("a", 1L, code))
+  sent <- list()
+  r <- wait_for_done(h, on_frame = function(m) if (identical(m$type, "console")) {
+    sent[[length(sent) + 1]] <<- m$item
+    writeLines("", go)
+  })
+  expect_identical(r$status, "ok")
+  expect_identical(sent, list(list(kind = "stdout", text = "a", partial = TRUE),
+                              list(kind = "stdout", text = "a\u00e9\n")))
 })
 
 test_that("a forked child doesn't send its parent's printed text again (#470)", {
