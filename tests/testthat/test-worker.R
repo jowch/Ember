@@ -3032,7 +3032,8 @@ test_that("text, URLs, writes, R's own files and a sourced helper aren't learned
 test_that("a missing file a run tried to read is watched, so the cell reruns once it appears", {
   h <- worker_harness()
   on.exit(h$close())
-  f <- normalizePath(tempfile("ember-missing-", fileext = ".csv"), winslash = "/", mustWork = FALSE)
+  # The folder exists, so normalize it (macOS: /var is a link to /private/var); the file doesn't.
+  f <- file.path(normalizePath(tempdir(), winslash = "/"), basename(tempfile("ember-missing-", fileext = ".csv")))
   r <- run_and_wait(h, "a", 1L, sprintf("d <- read.csv(%s)", deparse(f)))
   expect_identical(r$status, "error")
   expect_identical(r$data_seen[[f]], "missing")
