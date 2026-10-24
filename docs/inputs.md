@@ -229,6 +229,8 @@ new is a way to change `n` without editing code.
 
 Only cells that read the name that changed rerun. If one cell binds `n`
 and `bins`, moving `n` doesn't rerun a cell that reads only `bins`.
+A value the worker turns into the one the input already has (8.3 on an
+integer input that is at 8) reruns nothing (#553).
 
 **Values arriving faster than cells run.** A slider sends while it is
 dragged. Pluto's page already holds new values back while a run is in
@@ -291,6 +293,8 @@ id.
 | `input_radio(choices, selected = choices[[1]], label = NULL)` | an element of `choices` | `Radio`, `mo.ui.radio`, `radioButtons` |
 
 - A number keeps `value`'s type: `input_slider(1L, 10L)` returns an integer.
+  An integer slider without a `step` moves by 1, as Pluto's `Slider` and
+  Shiny's `sliderInput` do, by keyboard too (#553).
 - A slider's values are its steps, counted from `min`, as Pluto's `Slider`
   does. The page's slider can only move to them, and `set_input()` refuses a
   value between them: "The value must be a number from 10 to 500 in steps
