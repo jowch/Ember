@@ -81,7 +81,11 @@ body {
     border-bottom: none;
 }
 
+/* The name is how you find the row, so on a narrow row the folder gives
+   way first (#597). A long name still truncates, past half the row. */
 .ember-start-name {
+    flex: none;
+    max-width: 50%;
     font-weight: 500;
     color: var(--pluto-output-color);
     text-decoration: none;
