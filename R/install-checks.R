@@ -315,6 +315,62 @@ renv_failed_packages <- function(message) {
   unique(gsub("[\"\u201c\u201d]", "", m))
 }
 
+#' The lines that say why each of renv's failed builds failed, for the
+#' installer's log (#522). renv 1.3 builds each source package in a worker
+#' (`cmd.exe /c "R CMD INSTALL ... 2>&1"` on Windows, run with
+#' `system(intern = TRUE)`) and reports a failed one only by the build's
+#' output: not its exit status, and nothing at all when the build printed
+#' nothing, which left the row saying only "install failed". `errors` is
+#' the list renv reports from (`renv_graph_install_errors()`): one
+#' `list(package, message, output)` per failed package, `output` carrying
+#' the exit status as its `status` attribute when it isn't 0. A build that
+#' printed nothing gets an `ERROR:` line, which `install_failures()` and
+#' `install_failure_message()` take as its reason (its status is 0 when
+#' the attribute is missing: only `system()` gives an empty output). One
+#' that printed something gets a line with its status only when it has
+#' one: a failure renv describes itself (a binary that didn't install, a
+#' worker that died or timed out) has no status, and its words are already
+#' renv's output. -> character.
+build_failure_lines <- function(errors) {
+  out <- character()
+  for (item in errors) {
+    if (!identical(item$message, "install failed")) next
+    status <- attr(item$output, "status")
+    if (length(item$output) == 0) {
+      out <- c(out, sprintf("ERROR: building package '%s' printed nothing and installed nothing (exit status %s)",
+                            item$package, exit_status_text(status)))
+    } else if (!is.null(status)) {
+      out <- c(out, sprintf("ember: building package '%s' failed with exit status %s", item$package, exit_status_text(status)))
+    }
+  }
+  out
+}
+
+#' An exit status as text: `"0"` for `NULL` (`system()` sets none for 0),
+#' and a negative one (a Windows NTSTATUS, such as `0xC0000142` when a
+#' process can't start) also in hexadecimal.
+exit_status_text <- function(status) {
+  if (is.null(status) || length(status) != 1 || is.na(status)) return("0")
+  status <- as.numeric(status)
+  if (status >= 0) return(format(status, scientific = FALSE))
+  u <- status + 2^32
+  sprintf("%s, 0x%04X%04X", format(status, scientific = FALSE), as.integer(u %/% 65536), as.integer(u %% 65536))
+}
+
+#' Run in the installer before renv: has renv's report of failed packages
+#' (`renv_graph_install_errors()`) print `build_failure_lines()` first;
+#' an error there is dropped, so renv's own report always follows.
+#' `FALSE` when this renv has no such function, so a renv that reports
+#' differently still installs; test-install-checks.R checks the installed
+#' renv has it.
+trace_renv_build_failures <- function(ns = asNamespace("renv")) {
+  if (!exists("renv_graph_install_errors", envir = ns, inherits = FALSE)) return(FALSE)
+  suppressMessages(trace("renv_graph_install_errors", where = ns, print = FALSE,
+                         tracer = quote(tryCatch(suppressWarnings(writeLines(ember:::build_failure_lines(errors))),
+                                                 error = function(e) NULL))))
+  TRUE
+}
+
 #' The packages in `failed` that renv tried to build: those whose own
 #' dependencies (`Depends`, `Imports`, `LinkingTo` in `index`, the source
 #' `available.packages()` matrix) include no other failed package. renv's

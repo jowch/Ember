@@ -396,6 +396,11 @@ install_failures <- function(lines) {
     } else if (grepl("failed to retrieve.*package '[^']+'", line, ignore.case = TRUE)) {
       add(capture(".*failed to retrieve.*package '([^']+)'", line, ignore.case = TRUE),
          "download", NA_character_)
+    } else if (grepl("^ERROR: building package '[^']+' printed nothing", line)) {
+      # The installer's line for a build that failed without a word
+      # (`build_failure_lines()`, #522): the reason renv's "install failed"
+      # leaves out.
+      add(capture("^ERROR: building package '([^']+)'", line), "other", sub("^ERROR: ", "", line))
     } else if (grepl("^- \\[?[A-Za-z.][A-Za-z0-9._@-]*\\]?:", line)) {
       # renv's one-line-per-failed-package summary ("The following
       # package(s) were not installed successfully:"), real wording seen

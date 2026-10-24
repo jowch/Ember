@@ -458,6 +458,16 @@ what was missing.
   `no acceptable C compiler`, `xcrun: error: invalid active developer
   path`) is also `missing_compiler`; a missing Fortran compiler gets the
   Fortran instructions.
+- **A build's exit status, and a build that printed nothing (#522).**
+  renv reports a failed build only by what it printed: not its exit
+  status, and nothing at all for a build that printed nothing (seen once
+  on Windows), whose row then said only "install failed". The installer
+  traces renv's report (`trace_renv_build_failures()`) to print a failed
+  build's exit status first, when renv kept one, and, for a silent one, an `ERROR:
+  building package 'x' printed nothing and installed nothing (exit status
+  N)` line, which becomes the package's reason. A negative status is
+  also shown in hexadecimal, as Windows names it (`0xC0000142`: the
+  process couldn't start).
 - **System libraries, after renv (Linux).** renv's own load test is off
   (`RENV_INSTALL_TEST_LOAD`): it stops at the first package that fails,
   so a notebook with sf, units and xml2 would need three tries. Instead the
