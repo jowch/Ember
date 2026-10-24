@@ -209,16 +209,18 @@ test("a disabled cell reads at 3 : 1 or better: its greyed output and its uncolo
       assert.ok(ratio >= 3, `${scheme}: B's output text ${c} reads at ${ratio.toFixed(2)} : 1`);
     }
 
-    // A's code and line numbers on its grey background, at full opacity.
+    // A's code and line numbers on its grey background, at full opacity:
+    // the code in the muted grey at 4.5 : 1, as ui-3.md says, and the line
+    // numbers, in the faint grey, at 3 : 1.
     const code = await page.locator(`${cellSelector("A")} > pluto-input .cm-editor`).evaluate((ed) => {
       const texts = [];
-      for (const part of [ed.querySelector(".cm-content"), ed.querySelector(".cm-gutters")]) {
+      for (const [where, part] of [["code", ed.querySelector(".cm-content")], ["gutter", ed.querySelector(".cm-gutters")]]) {
         const walker = document.createTreeWalker(part, NodeFilter.SHOW_TEXT);
         for (let n = walker.nextNode(); n != null; n = walker.nextNode()) {
           if (n.textContent.trim() === "") continue;
           let opacity = 1;
           for (let e = n.parentElement; e != null && e !== ed; e = e.parentElement) opacity *= Number(getComputedStyle(e).opacity);
-          texts.push({ text: n.textContent, colour: getComputedStyle(n.parentElement).color, opacity });
+          texts.push({ where, text: n.textContent, colour: getComputedStyle(n.parentElement).color, opacity });
         }
       }
       return { texts, bg: getComputedStyle(ed).backgroundColor };
@@ -227,7 +229,8 @@ test("a disabled cell reads at 3 : 1 or better: its greyed output and its uncolo
     for (const x of code.texts) {
       assert.equal(x.opacity, 1, `${scheme}: "${x.text}" in A's code isn't faded`);
       const ratio = contrast(parse(x.colour), parse(code.bg));
-      assert.ok(ratio >= 3, `${scheme}: "${x.text}" in A's code reads at ${ratio.toFixed(2)} : 1`);
+      const want = x.where === "code" ? 4.5 : 3;
+      assert.ok(ratio >= want, `${scheme}: "${x.text}" in A's ${x.where} reads at ${ratio.toFixed(2)} : 1, under ${want}`);
     }
   }
   assertNoProblems(page);
