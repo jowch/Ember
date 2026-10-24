@@ -143,7 +143,7 @@ const Widget = ({ group, input, label, value, send, disabled }) => {
                     type="range"
                     min=${input.min}
                     max=${input.max}
-                    step=${input.step ?? "any"}
+                    step=${input.step ?? (input.integer ? 1 : "any")}
                     value=${value}
                     disabled=${disabled}
                     onInput=${(e) => send(Number(e.target.value))}

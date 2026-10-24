@@ -1606,6 +1606,7 @@ input_cell <- function(state, name) {
 #' the session (or forgotten, back at its default), shown on the cell's
 #' result, and the cells that read the name rerun (autorun) or turn stale
 #' (lazy), as if the input's cell had just run, but not that cell itself.
+#' A value the same as the input's last one reruns nothing.
 #' Only readers of this name: a cell reading another input of the same
 #' cell is left alone.
 reduce_wk_input_set <- function(state, event) {
@@ -1664,9 +1665,11 @@ answer_set_input <- function(state, event) {
     return(list(state = state, effects = list(), reply = NULL))
   }
   default <- NULL
+  before <- NULL
   r$inputs <- lapply(r$inputs, function(i) {
     if (isTRUE(i$bound) && identical(i$name, name)) {
       default <<- i$default
+      before <<- list(i$value)
       i$value <- event$value
     }
     i
@@ -1675,6 +1678,13 @@ answer_set_input <- function(state, event) {
   state$results[[id]] <- r
   state$input_values[[name]] <- if (!identical(event$value, default)) {
     list(cell = id, code = r$code, value = event$value)
+  }
+  # The same value as before (a slider moved within one whole number, which
+  # the worker rounds back to it) changes nothing its readers could see, so
+  # they don't rerun (#553).
+  if (identical(before, list(event$value))) {
+    state <- outcome(state, TRUE, value = event$value)
+    return(list(state = state, effects = list(), reply = NULL))
   }
   g <- run_graph(state)
   dependents <- setdiff(readers_of(state, id, name, g = g), id)

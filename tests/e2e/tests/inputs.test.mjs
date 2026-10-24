@@ -137,6 +137,14 @@ test("inputs.R: an input on a cell's last line is its output widget, and moving 
   await slider.fill("8");
   await waitOutput(page, "B", /8 pearson TRUE Results 5 y/);
   await page.locator(`${cellSelector("N")} ember-input.slider.changed`).waitFor();
+  // An integer slider without a step moves one whole number at a time, by keyboard too (#553).
+  assert.equal(await slider.getAttribute("step"), "1");
+  await slider.focus();
+  await page.keyboard.press("ArrowRight");
+  assert.equal(await slider.inputValue(), "9");
+  await waitOutput(page, "B", /9 pearson TRUE Results 5 y/);
+  await page.keyboard.press("ArrowLeft");
+  await waitOutput(page, "B", /8 pearson TRUE Results 5 y/);
 
   // The dropdown sends its choice, and B gets the element, not the label.
   await page.locator(`${cellSelector("M")} select`).selectOption({ label: "Spearman" });
