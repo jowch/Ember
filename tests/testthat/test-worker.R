@@ -1124,7 +1124,10 @@ test_that("interrupt_r_code", {
   h$send(run_msg("b", 2L, sprintf(
     "writeLines('go', %s); t0 <- Sys.time(); repeat { if (as.numeric(Sys.time() - t0) > 10) break }",
     deparse(started))))
-  waiting_for("the cell to start", while (!file.exists(started)) later::run_now(timeout = 0.05))
+  waiting_for("the cell to start", while (!file.exists(started)) {
+    if (!h$process$is_alive()) stop("the worker exited before the cell started")
+    later::run_now(timeout = 0.05)
+  })
   expect_true(file.exists(started))
   h$interrupt()
   r <- wait_for_done(h)
@@ -1327,7 +1330,10 @@ test_that("interrupt_during_display_still_completes_bookkeeping", {
     deparse(started)))
   h$send(run_msg("b", 2L, 'options(digits = 3); orphan <- 42; structure(1, class = "slowprint")'))
   # Interrupted while it prints, which it says it has begun.
-  waiting_for("the cell to start", while (!file.exists(started)) later::run_now(timeout = 0.05))
+  waiting_for("the cell to start", while (!file.exists(started)) {
+    if (!h$process$is_alive()) stop("the worker exited before the cell started")
+    later::run_now(timeout = 0.05)
+  })
   expect_true(file.exists(started))
   h$interrupt()
   r <- wait_for_done(h)

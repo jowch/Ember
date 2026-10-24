@@ -26,7 +26,8 @@ error says what the test was waiting for and what the notebook showed:
 each cell's status, its last output lines, the process and the packages.
 A wait inside the API (`preview_date()`, `render_png()`) runs under
 `waiting_for(label, expr, nb)`, which checks the same thing from a `later`
-callback. The scheduling fuzz is the one exception: it reports a lost
+callback. Given no notebook, it has nothing to watch, so its guard is
+600 seconds in total; tests pass the notebook whenever there is one. The scheduling fuzz is the one exception: it reports a lost
 answer, interrupt or run after `FUZZ_QUIET` (30) seconds of silence, so
 the trace can shrink.
 

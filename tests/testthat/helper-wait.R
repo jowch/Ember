@@ -8,6 +8,7 @@
 # - run_settled(nb, ids, label): run_cells(wait = TRUE) with no deadline.
 # - waiting_for(label, expr, nb): any wait that services `later` (the API's
 #   own, a preview_date(), a loop over later::run_now()) under the guard.
+#   Without `nb`, the guard is HANG_GUARD seconds in total.
 # - wait_until(check, label, nb): a loop on any condition, under the guard.
 # - run_guarded(command, args): processx::run() that fails after HANG_GUARD
 #   seconds with no output, not after a set time.
@@ -56,8 +57,10 @@ describe_notebook <- function(nb) {
 }
 
 #' Run `expr`, a wait that services `later`, failing it if nothing changes
-#' for HANG_GUARD seconds: in `nb` when given, or at all otherwise. The
-#' error names `label`, says how long the wait had gone on, and shows `nb`.
+#' in `nb` for HANG_GUARD seconds. Without `nb` there is no progress to
+#' watch, so the guard is HANG_GUARD seconds in total: pass `nb` whenever
+#' one is in scope. The error names `label`, says how long the wait had
+#' gone on, and shows `nb`.
 #' The check runs as a `later` callback, so its error ends the wait from
 #' inside the wait's own later::run_now().
 waiting_for <- function(label, expr, nb = NULL) {

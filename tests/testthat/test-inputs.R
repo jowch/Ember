@@ -392,7 +392,7 @@ test_that("set_input through the API reruns the readers with the new value, and 
   # The input's own cell shows no value that could go stale.
   expect_null(snap_view(notebook_snapshot(nb), "I")$output)
 
-  out <- set_input(nb, "n", 7, wait = TRUE)
+  out <- waiting_for("B to rerun with n = 7", set_input(nb, "n", 7, wait = TRUE, timeout = Inf), nb)
   expect_identical(out$cell, "I")
   expect_identical(out$value, 7L)
   expect_identical(out$cells, "B")
@@ -403,7 +403,7 @@ test_that("set_input through the API reruns the readers with the new value, and 
   expect_error(set_input(nb, "m", 1), "No input is bound")
 
   # The input's cell reruns (as when something it reads changes): the value stays.
-  run_cells(nb, "I", wait = TRUE)
+  run_settled(nb, "I")
   expect_identical(snap_view(notebook_snapshot(nb), "I")$inputs[[1]]$value, 7L)
   expect_identical(out_of("B"), "[1] 14")
 })

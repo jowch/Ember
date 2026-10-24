@@ -757,7 +757,7 @@ test_that("ember_disk_use replies with the disk use of the notebook's cache dir 
   waiting_for("the ember_disk_use reply", while (length(replies) == 0) {
     later::run_now(timeout = 0.5)
     replies <- Filter(function(m) identical(m$type, "ember_disk_use"), ws$messages)
-  })
+  }, nb)
   expect_length(replies, 1)
   msg <- replies[[1]]$message
   expect_null(msg$error)
@@ -1478,7 +1478,7 @@ test_that("editing a cell's #| line through update_notebook marks it code_differ
   handle_message(server, ws, wire("connect", notebook_id = id))
   handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
 
-  run_cells(nb, a, wait = TRUE)
+  run_settled(nb, a)
   figure_before <- pluto_state(notebook_state(nb))$js$cell_results[[a]]$ember$figure
   expect_equal(figure_before, list(width = 7.5, height = 5))
 
@@ -1490,7 +1490,7 @@ test_that("editing a cell's #| line through update_notebook marks it code_differ
   view_after_edit <- Find(function(c) identical(c$id, a), notebook_snapshot(nb)$cells)
   expect_true(view_after_edit$code_differs)
 
-  run_cells(nb, a, wait = TRUE)
+  run_settled(nb, a)
   figure_after <- pluto_state(notebook_state(nb))$js$cell_results[[a]]$ember$figure
   expect_equal(figure_after, list(width = 8, height = 4))
   view_after_run <- Find(function(c) identical(c$id, a), notebook_snapshot(nb)$cells)
@@ -1865,7 +1865,7 @@ test_that("complete in safe preview replies from the fallback within handle_mess
       names <- vapply(reply_msg$results, `[[`, character(1), 1)
       found <- "mpg" %in% names
     }
-  })
+  }, nb)
   expect_true(found)
   # The range inserting "mpg" at [start, stop) over "df$" gives "df$mpg",
   # not "df$df$mpg" (the worker's own token/items for a `$` completion
@@ -1907,7 +1907,7 @@ test_that("docs: preview mean needs R running, a notebook-defined f shows its co
   waiting_for("the docs reply for mean", while (length(docs_msgs) <= n_before) {
     later::run_now(timeout = 1)
     docs_msgs <- Filter(function(m) identical(m$type, "docs"), ws$messages)
-  })
+  }, nb)
   r3 <- docs_msgs[[length(docs_msgs)]]$message
   expect_identical(r3$status, "\U0001F44D")
   expect_match(r3$doc, "Arithmetic Mean")
@@ -1992,7 +1992,7 @@ test_that("docs: a help lookup slower than a completion's timeout is waited for,
   waiting_for("the docs reply for mean", while (length(docs_msgs) == 0) {
     later::run_now(timeout = 1)
     docs_msgs <- Filter(function(m) identical(m$type, "docs"), ws$messages)
-  })
+  }, nb)
   expect_length(docs_msgs, 1)
   r <- docs_msgs[[1]]$message
   expect_identical(r$status, "\U0001F44D")
@@ -2020,7 +2020,7 @@ test_that("docs: a lookup slower than the docs timeout is kept for the next ask,
   docs_replies <- function() Filter(function(m) identical(m$type, "docs"), ws$messages)
 
   handle_message(server, ws, wire("docs", notebook_id = id, query = "mean", all_packages = TRUE))
-  wait_until(function() length(docs_replies()) == 1, "the first docs reply")
+  wait_until(function() length(docs_replies()) == 1, "the first docs reply", nb)
   r1 <- docs_replies()[[1]]$message
   expect_identical(r1$status, "\u231B")
   expect_match(r1$doc, "answer in time")
@@ -2035,7 +2035,7 @@ test_that("docs: a lookup slower than the docs timeout is kept for the next ask,
   wait_until(function() {
     entry <- mget("mean\r\rTRUE", envir = nb$help_lookups, ifnotfound = list(NULL))[[1]]
     !is.null(entry$reply)
-  }, "the help lookup for mean to end")
+  }, "the help lookup for mean to end", nb)
   handle_message(server, ws, wire("docs", notebook_id = id, query = "mean", all_packages = TRUE))
   r3 <- docs_replies()[[3]]$message
   expect_identical(r3$status, "\U0001F44D")
@@ -2061,17 +2061,17 @@ test_that("docs: a late help page is not kept past a run, which may have changed
   docs_replies <- function() Filter(function(m) identical(m$type, "docs"), ws$messages)
 
   handle_message(server, ws, wire("docs", notebook_id = id, query = "mean", all_packages = TRUE))
-  wait_until(function() length(docs_replies()) == 1, "the first docs reply")
+  wait_until(function() length(docs_replies()) == 1, "the first docs reply", nb)
   wait_until(function() {
     entry <- mget("mean\r\rTRUE", envir = nb$help_lookups, ifnotfound = list(NULL))[[1]]
     !is.null(entry$reply)
-  }, "the help lookup for mean to end")
+  }, "the help lookup for mean to end", nb)
 
   # A run in between: the kept page goes, and the next ask looks it up again.
   expect_true(run_settled(nb, "B")$accepted)
   expect_length(ls(nb$help_lookups), 0)
   handle_message(server, ws, wire("docs", notebook_id = id, query = "mean", all_packages = TRUE))
-  wait_until(function() length(docs_replies()) == 2, "the second docs reply")
+  wait_until(function() length(docs_replies()) == 2, "the second docs reply", nb)
   r2 <- docs_replies()[[2]]$message
   expect_identical(r2$status, "\u231B")
   expect_match(r2$doc, "answer in time")
@@ -2099,7 +2099,7 @@ test_that("docs: a help lookup that fails says so, with R's message, instead of 
   waiting_for("the docs reply", while (length(docs_msgs) == 0) {
     later::run_now(timeout = 1)
     docs_msgs <- Filter(function(m) identical(m$type, "docs"), ws$messages)
-  })
+  }, nb)
   expect_length(docs_msgs, 1)
   r <- docs_msgs[[1]]$message
   expect_identical(r$status, "\U0001F44D")
@@ -2127,7 +2127,7 @@ test_that("docs: a reply says whether the lookup was asked to, and did, search e
     waiting_for("the docs reply", while (length(docs_msgs) == 0) {
       later::run_now(timeout = 1)
       docs_msgs <- Filter(function(m) identical(m$type, "docs"), ws$messages)
-    })
+    }, nb)
     expect_length(docs_msgs, 1)
     docs_msgs[[1]]$message
   }
@@ -2187,7 +2187,7 @@ test_that("ember_signature with a worker and without one (59)", {
   waiting_for("the signature reply", while (length(sig_msgs) <= n_before) {
     later::run_now(timeout = 1)
     sig_msgs <- Filter(function(m) identical(m$type, "ember_signature"), ws$messages)
-  })
+  }, nb)
   expect_match(sig_msgs[[length(sig_msgs)]]$message$text, "^lm\\(formula, data")
 })
 

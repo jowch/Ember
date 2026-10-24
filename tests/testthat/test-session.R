@@ -529,7 +529,7 @@ test_that("Endeavor-shaped calls: apply with expected, run(wait = FALSE), seq, r
   nb2 <- open_notebook(path2)
   on.exit(close_notebook(nb2), add = TRUE)
   run_settled(nb2)
-  png <- render_png(nb2, "P")
+  png <- waiting_for("P's redraw", render_png(nb2, "P", timeout = HANG_GUARD), nb2)
   expect_equal(png$mime, "image/png")
   expect_true(is.raw(png$png))
 })
@@ -548,11 +548,11 @@ test_that("render_png() at a pixel size returns that image and leaves the stored
   unsub <- on_notebook_event(nb, function(note) {
     if (identical(note$kind, "cell_state")) seen <<- c(seen, unlist(note$cells))
   })
-  r <- render_png(nb, "P", width = 200, height = 100)
+  r <- waiting_for("P's redraw at 200 x 100", render_png(nb, "P", width = 200, height = 100, timeout = HANG_GUARD), nb)
   expect_equal(r$mime, "image/png")
   expect_equal(png_px(r$png), c(200, 100))
   expect_identical(nb$state$results$P$output, stored)
-  expect_identical(render_png(nb, "P")$png, stored$data)
+  expect_identical(waiting_for("P's redraw at its stored size", render_png(nb, "P", timeout = HANG_GUARD), nb)$png, stored$data)
 
   # A busy worker answers once its run ends.
   run_cells(nb, "B", wait = FALSE)
@@ -679,7 +679,7 @@ test_that("notebook_snapshot() strips ANSI from output and console text; noteboo
     A = cell('cat("\\033[31mred\\033[39m\\n"); "\\033[32mgreen\\033[39m"')))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, wait = TRUE)
+  run_settled(nb)
 
   snap <- notebook_snapshot(nb)
   a <- snap_view(snap, names(snap$cells)[2])
@@ -710,7 +710,7 @@ test_that("worker_query() answers when idle, NULL at once while busy, NULL in pr
 
   # Idle: a real reply.
   got_idle <- "unset"
-  worker_query(nb, list(type = "signature", name = "lm", package = NULL), function(r) got_idle <<- r)
+  worker_query(nb, list(type = "signature", name = "lm", package = NULL), function(r) got_idle <<- r, timeout = HANG_GUARD)
   settle(nb, function(s) !identical(got_idle, "unset"))
   expect_match(got_idle$text, "^lm\\(formula, data")
 
@@ -747,7 +747,7 @@ test_that("worker_query() answers when idle, NULL at once while busy, NULL in pr
   # order on one socket, so the late reply has been read by then, and was
   # dropped.
   got_again <- "unset"
-  worker_query(nb, list(type = "signature", name = "lm", package = NULL), function(r) got_again <<- r)
+  worker_query(nb, list(type = "signature", name = "lm", package = NULL), function(r) got_again <<- r, timeout = HANG_GUARD)
   settle(nb, function(s) !identical(got_again, "unset"))
   expect_match(got_again$text, "^lm\\(formula, data")
   expect_identical(late_calls, 1L)
