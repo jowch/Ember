@@ -1,12 +1,12 @@
-// docs/inputs.md: a cell's inputs show above its output, and moving one
-// sets its variable and reruns the cells that read it, not its own cell.
-// emberui comes from a file:// repository built from inst/emberui, as the
-// R tests' ui_repo() builds it.
+// docs/inputs.md: an input on a cell's last line is the cell's output, and moving
+// it sets its variable and reruns the cells that read it, not its own cell.
+// emberui comes from a file:// stand-in for its r-universe, built from
+// inst/emberui, as the R tests' ui_universe() builds it.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startServer, tempNotebook, tempDir, artifactsDir } from "../server.mjs";
@@ -15,17 +15,44 @@ import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSe
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EMBERUI = path.join(HERE, "..", "..", "..", "inst", "emberui");
 
-/** A CRAN-like file:// repository holding emberui, dated as the fixture's snapshot. */
-const uiRepo = () => {
-  const root = tempDir("ember-e2e-ui-repo-");
-  const contrib = path.join(root, "2026-09-01", "src", "contrib");
-  mkdirSync(contrib, { recursive: true });
+/**
+ * A file:// stand-in for the jowch r-universe holding this checkout's
+ * emberui, as test-inputs.R's ui_universe() builds it: `library(emberui)`
+ * alone sends emberui to the universe (R/rules.R's builtin_sources), so the
+ * page must get it from here, not the published build. Also an empty CRAN
+ * snapshot dated as the fixture's.
+ */
+const uiUniverse = () => {
+  const root = tempDir("ember-e2e-ui-universe-");
   const rscript = process.env.EMBER_RSCRIPT ?? "Rscript";
   const r = path.basename(rscript) === rscript ? "R" : path.join(path.dirname(rscript), "R");
-  const built = spawnSync(r, ["CMD", "build", "--no-manual", "--no-build-vignettes", EMBERUI], { cwd: contrib, encoding: "utf8" });
+  const code = `
+    root <- ${JSON.stringify(root)}
+    contrib <- file.path(root, "jowch", "src", "contrib")
+    api <- file.path(root, "jowch", "api", "packages")
+    cran <- file.path(root, "cran", "2026-09-01", "src", "contrib")
+    for (d in c(contrib, api, cran)) dir.create(d, recursive = TRUE)
+    file.create(file.path(cran, "PACKAGES"))
+    src <- file.path(root, "src")
+    dir.create(src)
+    file.copy(${JSON.stringify(EMBERUI)}, src, recursive = TRUE)
+    src <- file.path(src, "emberui")
+    remote <- c(RemoteUrl = "https://github.com/jowch/Ember", RemoteSha = "5ae01f2fb57e9e69be8a55c94f2f9e37c22c3ba2", RemoteSubdir = "inst/emberui")
+    desc <- read.dcf(file.path(src, "DESCRIPTION"))
+    write.dcf(cbind(desc, t(remote)), file.path(src, "DESCRIPTION"))
+    old <- setwd(contrib)
+    stopifnot(system2(${JSON.stringify(r)}, c("CMD", "build", "--no-manual", "--no-build-vignettes", shQuote(src))) == 0)
+    setwd(old)
+    tools::write_PACKAGES(contrib, type = "source")
+    info <- c(list(Package = "emberui", Version = unname(desc[1, "Version"])), as.list(remote),
+              list(NeedsCompilation = "no", \`_dependencies\` = list(list(package = "R", version = ">= 4.1.0", role = "Depends"))))
+    jsonlite::write_json(info, file.path(api, "emberui"), auto_unbox = TRUE)
+  `;
+  // From a file, not `-e`: Rscript on Windows crashed on the multi-line `-e` argument.
+  const script = path.join(root, "build.R");
+  writeFileSync(script, code);
+  const built = spawnSync(rscript, [script], { encoding: "utf8" });
   assert.equal(built.status, 0, built.stderr);
-  const indexed = spawnSync(rscript, ["-e", `tools::write_PACKAGES(${JSON.stringify(contrib)}, type = "source")`], { encoding: "utf8" });
-  assert.equal(indexed.status, 0, indexed.stderr);
   return root;
 };
 
@@ -44,8 +71,9 @@ const waitOutput = (page, id, re) =>
 
 test("inputs.R: an input on a cell's last line is its output widget, and moving it reruns its readers", async (t) => {
   const notebook = tempNotebook("inputs.R");
+  const ui = uiUniverse();
   const server = await startServer([notebook], {
-    repos: { cran: `file://${uiRepo()}`, bioc_config: null },
+    repos: { cran: `file://${ui}/cran`, universe: `file://${ui}/%s`, bioc_config: null },
     logFile: path.join(artifactsDir(), "inputs.server.log"),
   });
   const browser = await launchBrowser();
@@ -91,6 +119,17 @@ test("inputs.R: an input on a cell's last line is its output widget, and moving 
   }, cellSelector("P"));
   assert.equal(plotBelow, true);
   assert.deepEqual(await placed("P"), [{ cls: "output", n: 1, controls: 1, before_code: true }]);
+
+  // input_list(): one input whose widget shows each part; moving a part sets the list, and its readers rerun.
+  await runCell(page, "D");
+  await waitOutput(page, "D", /"2 u"/);
+  assert.deepEqual(await placed("C"), [{ cls: "output", n: 3, controls: 3, before_code: true }]);
+  await page.locator(`${cellSelector("C")} input[type="range"]`).fill("4");
+  await waitOutput(page, "D", /"4 u"/);
+  await page.locator(`${cellSelector("C")} input[type="radio"]`).nth(1).check();
+  await waitOutput(page, "D", /"4 v"/);
+  await page.locator(`${cellSelector("C")} ember-input.slider.changed`).waitFor();
+  assert.equal(await page.locator(`${cellSelector("C")} input[type="range"]`).inputValue(), "4");
 
   // The slider: B reruns with the new value; N doesn't rerun, and the slider is marked as off its default.
   const slider = page.locator(`${cellSelector("N")} input[type="range"]`);

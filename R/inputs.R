@@ -4,8 +4,9 @@
 # reports itself) is the worker's, at run time (`input_hook()` in
 # inst/worker.R).
 
-#' The input functions of the first version, without the `input_` prefix.
-input_types <- c("slider", "number", "checkbox", "text", "select", "radio")
+#' The input functions, without the `input_` prefix: the six of the first
+#' version and `list`, several of them as one input (`input_list()`).
+input_types <- c("slider", "number", "checkbox", "text", "select", "radio", "list")
 
 #' The bindings a code cell's text sets up.
 #'
@@ -96,6 +97,10 @@ input_choice_index <- function(choices, x) {
 #' An input's R value as the page shows it, or `NULL` when a choice can't
 #' be found (the page then shows none picked).
 input_to_page <- function(spec, value) {
+  if (identical(spec$type, "list")) {
+    out <- lapply(names(spec$parts), function(nm) input_to_page(spec$parts[[nm]], value[[nm]]))
+    return(structure(out, names = names(spec$parts)))
+  }
   if (!(spec$type %in% c("select", "radio"))) return(value)
   if (isTRUE(spec$multiple)) {
     items <- if (is.list(value)) value else as.list(value)
@@ -110,6 +115,17 @@ input_to_page <- function(spec, value) {
 #' sentence) for a position that isn't a choice. Everything else is left
 #' to the worker's check, which says what the input allows.
 input_from_page <- function(spec, v) {
+  if (identical(spec$type, "list")) {
+    # Every part, by name; each turned back as its own input's value.
+    nms <- names(spec$parts)
+    if (!is.list(v) || !setequal(names(v) %||% character(), nms)) {
+      return(structure("That isn't a value for each of the input's parts.", class = "ember_page_refusal"))
+    }
+    out <- lapply(nms, function(nm) input_from_page(spec$parts[[nm]], v[[nm]]))
+    refused <- Find(function(x) inherits(x, "ember_page_refusal"), out)
+    if (!is.null(refused)) return(refused)
+    return(structure(out, names = nms))
+  }
   if (!(spec$type %in% c("select", "radio"))) {
     return(if (is.list(v)) unlist(v) else v)
   }
@@ -157,17 +173,29 @@ project_inputs <- function(view) {
   busy <- isTRUE(view$stale) || isTRUE(view$code_differs) || isTRUE(view$queued) || isTRUE(view$running)
   as_arr(lapply(view$inputs, function(i) {
     s <- i$spec
-    na_null <- function(x) if (is.null(x) || (length(x) == 1 && is.na(x))) NULL else x
     c(list(type = s$type, name = i$name, label = s[["label"]] %||% i$name,
            bound = isTRUE(i$bound), output = isTRUE(i$output)),
       if (!isTRUE(i$bound)) list(reason = i$reason %||% "not_assigned"),
       list(value = input_to_page(s, i$value), default = input_to_page(s, i$default),
            changed = !identical(i$value, i$default),
            disabled = busy || !isTRUE(i$bound)),
-      if (s$type %in% c("slider", "number"))
-        c(Filter(Negate(is.null), list(min = na_null(s$min), max = na_null(s$max), step = na_null(s$step))),
-          list(integer = is.integer(s$value))),
-      if (s$type %in% c("select", "radio")) list(labels = as_arr(s$labels %||% character())),
-      if (identical(s$type, "select")) list(multiple = isTRUE(s$multiple)))
+      input_widget_fields(s))
   }))
+}
+
+#' What the page needs to draw an input's widget, beyond its value: limits,
+#' choices' labels, or for `input_list()` each part's own, in order, with
+#' its name and label.
+input_widget_fields <- function(s) {
+  na_null <- function(x) if (is.null(x) || (length(x) == 1 && is.na(x))) NULL else x
+  c(if (s$type %in% c("slider", "number"))
+      c(Filter(Negate(is.null), list(min = na_null(s$min), max = na_null(s$max), step = na_null(s$step))),
+        list(integer = is.integer(s$value))),
+    if (s$type %in% c("select", "radio")) list(labels = as_arr(s$labels %||% character())),
+    if (identical(s$type, "select")) list(multiple = isTRUE(s$multiple)),
+    if (identical(s$type, "list"))
+      list(parts = as_arr(lapply(names(s$parts), function(nm) {
+        p <- s$parts[[nm]]
+        c(list(type = p$type, name = nm, label = p[["label"]] %||% nm), input_widget_fields(p))
+      }))))
 }
