@@ -3,7 +3,6 @@ import _ from "../../imports/lodash-es.js"
 import { EditorView, keymap, autocomplete, syntaxTree } from "../../imports/CodemirrorPlutoSetup.js"
 import { get_selected_doc_from_state } from "./LiveDocsFromCursor.js"
 import { cl } from "../../common/ClassTable.js"
-import { open_bottom_right_panel } from "../BottomRightPanel.js"
 import { GlobalDefinitionsFacet } from "./go_to_definition_plugin.js"
 import { t } from "../../common/lang.js"
 
@@ -41,18 +40,12 @@ const tab_completion_command = (cm) => {
     return autocomplete.startCompletion(cm)
 }
 
-let open_docs_if_autocomplete_is_open_command = (cm) => {
-    if (autocomplete.completionStatus(cm.state) != null) {
-        open_bottom_right_panel("docs")
-        return true
-    }
-    return false
-}
-
-const pluto_autocomplete_keymap = (/** @type {boolean} */ tab_completes) => [
-    ...(tab_completes ? [{ key: "Tab", run: tab_completion_command }] : []),
-    { key: "?", run: open_docs_if_autocomplete_is_open_command },
-]
+// No `?` key here. Pluto's opened Help when `?` was typed with completions
+// showing, and swallowed the key; completions show while typing, so `?mean`
+// at the start of a cell lost its `?` and focus (#558). `?` is R's help
+// operator: it goes into the cell, and Help follows the selected completion
+// anyway (update_docs_from_autocomplete_selection).
+const pluto_autocomplete_keymap = (/** @type {boolean} */ tab_completes) => [...(tab_completes ? [{ key: "Tab", run: tab_completion_command }] : [])]
 
 /**
  * @param {(query: string) => void} on_update_doc_query
