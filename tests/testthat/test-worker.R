@@ -1,7 +1,7 @@
 # Worker harness tests (docs/engine-tests.md, "Worker harness"): the real
 # inst/worker.R under processx, talked to directly over a socket. No
-# server, no `later`. Every wait is a blocking read with a timeout
-# (worker_harness()'s $receive()), never Sys.sleep polling.
+# server, no `later`. Every wait is a read with no time limit
+# (worker_harness()'s $receive(), next_frame()), never Sys.sleep polling.
 
 run_msg <- function(cell, token, code, role = "cell", order = character(), formulas = list(),
                     library = NULL, fig = NULL, settings = character(), data = NULL) {
@@ -11,11 +11,10 @@ run_msg <- function(cell, token, code, role = "cell", order = character(), formu
 }
 
 #' Run code in a fresh harness and return the `done` report. Fails the
-#' test if the worker exits or hangs before replying (next_frame()), or,
-#' with a `timeout`, once that many seconds pass.
-run_and_wait <- function(h, cell, token, code, ..., timeout = NULL) {
+#' test if the worker exits or hangs before replying (next_frame()).
+run_and_wait <- function(h, cell, token, code, ...) {
   h$send(run_msg(cell, token, code, ...))
-  wait_for_done(h, timeout)
+  wait_for_done(h)
 }
 
 png_dims <- function(bytes) {
@@ -390,7 +389,7 @@ test_that("library(ggplot2) and theme_set() in one cell: the theme is that cell'
   skip_if_not_installed("ggplot2")
   h <- worker_harness(extra_libs = .libPaths())
   on.exit(h$close())
-  r <- run_and_wait(h, "t", 1L, "library(ggplot2); theme_set(theme_minimal(base_size = 21))", timeout = 30)
+  r <- run_and_wait(h, "t", 1L, "library(ggplot2); theme_set(theme_minimal(base_size = 21))")
   expect_identical(r$status, "ok")
   kinds <- vapply(r$settings, function(d) d$kind, character(1))
   expect_true("theme" %in% kinds)
@@ -416,7 +415,7 @@ test_that("ggplot2's theme is a setting the worker resets and reapplies", {
   skip_if_not_installed("ggplot2")
   h <- worker_harness(extra_libs = .libPaths())
   on.exit(h$close())
-  run_and_wait(h, "l", 1L, "loadNamespace('ggplot2')", timeout = 30)
+  run_and_wait(h, "l", 1L, "loadNamespace('ggplot2')")
   r <- run_and_wait(h, "t", 2L, "ggplot2::theme_set(ggplot2::theme_minimal(base_size = 21))")
   expect_true(any(vapply(r$settings, function(d) identical(d$kind, "theme"), logical(1))))
   on <- run_and_wait(h, "c", 3L, "ggplot2::theme_get()$text$size", settings = "t")
@@ -792,7 +791,7 @@ test_that("base_plot_output", {
   expect_identical(as.integer(r$output$data[1:8]), c(137L, 80L, 78L, 71L, 13L, 10L, 26L, 10L))
 
   h$send(list(type = "render", cell = "a", width = 200, height = 150))
-  rendered <- h$receive(5)
+  rendered <- h$receive()
   expect_identical(rendered$type, "rendered")
   dims <- png_dims(rendered$display$data)
   expect_identical(dims, list(width = 200, height = 150))
@@ -853,7 +852,7 @@ test_that("render_plot() and open_device() don't crash the worker on a hand-buil
   # render_plot() with no recorded display (an unreplayable or missing
   # record) reports display = NULL rather than erroring.
   h$send(list(type = "render", cell = "nonexistent", res = 96L))
-  m <- h$receive(5)
+  m <- h$receive()
   expect_identical(m$type, "rendered")
   expect_null(m$display)
 
@@ -941,7 +940,7 @@ test_that("summarise_globals(): the over-budget path doesn't call an active bind
     "format.Date <- function(x, ...) { Sys.sleep(1); 'slow' }",
     "n_calls <- 0",
     "makeActiveBinding('zzz_counter', function() { n_calls <<- n_calls + 1; n_calls }, environment())",
-    sep = "\n"), timeout = 10)
+    sep = "\n"))
 
   expect_equal(r$globals$zzz_counter$type, "active binding")
   expect_equal(r$globals$zzz_counter$kind, "none")
@@ -960,14 +959,14 @@ test_that("summarise_globals(): a slow method is bounded by its own time limit r
   r <- run_and_wait(h, "a", 1L, paste(
     "slow <- Sys.Date()",
     "format.Date <- function(x, ...) { t0 <- Sys.time(); repeat if (as.numeric(Sys.time() - t0) > 30) break; 'slow' }",
-    sep = "\n"), timeout = 35)
+    sep = "\n"))
   # A busy R loop, not Sys.sleep(): setTimeLimit() is checked while R code
   # runs and does not cut a sleep short. The budget is 0.25 s; a method
   # that ran its 30 s would have returned 'slow' and been summarised, so
   # "none" is the method cut short.
   expect_equal(r$globals$slow$kind, "none")
 
-  r2 <- run_and_wait(h, "b", 2L, "1 + 1", timeout = 3)
+  r2 <- run_and_wait(h, "b", 2L, "1 + 1")
   expect_identical(r2$status, "ok")
   expect_identical(r2$output$text, "[1] 2")
 })
@@ -979,7 +978,7 @@ test_that("summarise_globals(): a slow format() leaves later names (alphabetical
     "slow <- Sys.Date()",
     "format.Date <- function(x, ...) { Sys.sleep(1); 'slow' }",
     "zzz_after <- 1",
-    sep = "\n"), timeout = 10)
+    sep = "\n"))
 
   expect_equal(r$globals$zzz_after$kind, "none")
 })
@@ -1107,7 +1106,7 @@ test_that("an interrupt sent on the running frame stops that run", {
   on.exit(h$close())
   for (i in 1:10) {
     h$send(run_msg(paste0("c", i), i, "Sys.sleep(5)"))
-    r <- wait_for_done(h, timeout = 30, on_frame = function(m) {
+    r <- wait_for_done(h, on_frame = function(m) {
       if (identical(m$type, "running")) h$interrupt()
     })
     expect_identical(r$status, "interrupted")
@@ -1125,11 +1124,10 @@ test_that("interrupt_r_code", {
   h$send(run_msg("b", 2L, sprintf(
     "writeLines('go', %s); t0 <- Sys.time(); repeat { if (as.numeric(Sys.time() - t0) > 10) break }",
     deparse(started))))
-  deadline <- Sys.time() + 10
-  while (!file.exists(started) && Sys.time() < deadline) Sys.sleep(0.05)
+  waiting_for("the cell to start", while (!file.exists(started)) later::run_now(timeout = 0.05))
   expect_true(file.exists(started))
   h$interrupt()
-  r <- wait_for_done(h, timeout = 5)
+  r <- wait_for_done(h)
   # An unheeded interrupt runs the loop its full 10 s and ends "ok".
   expect_identical(r$status, "interrupted")
 
@@ -1148,7 +1146,7 @@ test_that("on Windows a worker with no console is interrupted all the same (#48)
   on.exit(h$close())
   for (code in c("Sys.sleep(20)", "t0 <- Sys.time(); repeat if (Sys.time() - t0 > 20) break")) {
     h$send(run_msg("a", 1L, code))
-    r <- wait_for_done(h, timeout = 10, on_frame = function(m) {
+    r <- wait_for_done(h, on_frame = function(m) {
       if (identical(m$type, "running")) expect_true(h$interrupt())
     })
     expect_identical(r$status, "interrupted")
@@ -1171,7 +1169,7 @@ test_that("an interrupt just after a run's done doesn't stop the next run (#48)"
   on.exit(h$close())
   for (i in 1:50) {
     h$send(run_msg(paste0("c", i), i, "1 + 1"))
-    r <- wait_for_done(h, timeout = 10)
+    r <- wait_for_done(h)
     expect_identical(r$status, "ok")
     h$interrupt()
   }
@@ -1191,7 +1189,7 @@ test_that("on Windows a late interrupt the listener took but hasn't applied does
   expect_identical(r$status, "ok")
   for (i in 1:10) {
     h$send(run_msg(paste0("c", i), i + 1L, "1 + 1"))
-    r <- wait_for_done(h, timeout = 10)
+    r <- wait_for_done(h)
     expect_identical(r$status, "ok")
     h$interrupt()
   }
@@ -1203,14 +1201,9 @@ test_that("interrupt_between_runs_swallowed", {
   h <- worker_harness()
   on.exit(h$close())
   h$interrupt()
-  # The run goes once the top level has taken the interrupt, which it says
-  # in the trace. On Windows the next run drains it instead, whenever it
-  # came, so there is nothing to wait for.
-  if (.Platform$OS.type != "windows") {
-    took <- function() any(grepl("interrupt at top level", readLines(h$err_file, warn = FALSE)))
-    deadline <- Sys.time() + 60
-    while (!took() && Sys.time() < deadline) Sys.sleep(0.05)
-  }
+  # Nothing to wait for. A worker waiting for a message holds the interrupt
+  # while it reads (uninterrupted()) and passes it on once the next message
+  # is read, so the top level takes it before this run starts.
   r <- run_and_wait(h, "a", 1L, "1 + 1")
   expect_identical(r$status, "ok")
   expect_identical(r$output$text, "[1] 2")
@@ -1245,28 +1238,23 @@ test_that("sigint_reset_when_inherited_ignored", {
     '          EMBER_WORKER = args[[2]], EMBER_SECRET = args[[4]]),',
     '  stdout = "|", stderr = "|")',
     'con <- NULL',
-    'deadline <- Sys.time() + 10',
     'repeat {',
-    '  remaining <- as.numeric(deadline - Sys.time(), units = "secs")',
-    '  if (remaining <= 0) { cat("CONNECT_TIMEOUT\\n"); quit(status = 1) }',
-    '  if (isTRUE(socketSelect(list(srv), timeout = remaining))) {',
+    '  if (isTRUE(socketSelect(list(srv), timeout = 1))) {',
     '    con <- socketAccept(srv, blocking = TRUE, open = "a+b", timeout = 60 * 60 * 24)',
     '    break',
     '  }',
+    '  if (!p$is_alive()) { cat("WORKER_EXITED\\n"); quit(status = 1) }',
     '}',
     'close(srv)',
     'write_frame <- function(con, msg) {',
     '  payload <- serialize(msg, NULL)',
     '  writeBin(length(payload), con, endian = "big"); writeBin(payload, con); flush(con)',
     '}',
-    'read_frame <- function(con, timeout) {',
-    '  deadline <- Sys.time() + timeout',
-    '  wait <- function() {',
-    '    remaining <- as.numeric(deadline - Sys.time(), units = "secs")',
-    '    if (remaining <= 0) return(FALSE)',
-    '    isTRUE(socketSelect(list(con), timeout = remaining))',
-    '  }',
-    '  if (!wait()) return(NULL)',
+    '# No time limit: a worker that exits closes the socket, and the read',
+    '# then returns NULL.',
+    'read_frame <- function(con) {',
+    '  wait <- function() { while (!isTRUE(socketSelect(list(con), timeout = 1))) NULL; TRUE }',
+    '  wait()',
     '  n <- readBin(con, "integer", n = 1, endian = "big")',
     '  if (length(n) == 0) return(NULL)',
     '  got <- raw(0)',
@@ -1278,16 +1266,21 @@ test_that("sigint_reset_when_inherited_ignored", {
     '  }',
     '  unserialize(got)',
     '}',
-    'hello <- read_frame(con, 10)',
+    'hello <- read_frame(con)',
     'if (is.null(hello) || !identical(hello$type, "hello")) { cat("NO_HELLO\\n"); quit(status = 1) }',
     'write_frame(con, list(type = "run", cell = "a", token = 1L,',
     '  code = "t0<-Sys.time(); repeat { if (as.numeric(Sys.time()-t0) > 10) break }",',
     '  role = "cell", order = character(), formulas = list()))',
-    'Sys.sleep(0.3)',
+    '# Interrupt once the worker says the cell runs, as the server does.',
+    'repeat {',
+    '  m <- read_frame(con)',
+    '  if (is.null(m)) { cat("NO_RUNNING\\n"); quit(status = 1) }',
+    '  if (identical(m$type, "running")) break',
+    '}',
     'p$interrupt()',
     'report <- NULL',
     'repeat {',
-    '  m <- read_frame(con, 5)',
+    '  m <- read_frame(con)',
     '  if (is.null(m)) { cat("NO_DONE\\n"); quit(status = 1) }',
     '  if (identical(m$type, "done")) { report <- m$report; break }',
     '}',
@@ -1303,7 +1296,7 @@ test_that("sigint_reset_when_inherited_ignored", {
   shell_cmd <- sprintf("trap '' INT; exec %s --vanilla %s %s %s %s %s",
     shQuote(r_bin), shQuote(script), shQuote(ember_so), shQuote(worker_script_path()),
     shQuote(user_lib), shQuote("sigint-test-secret"))
-  res <- processx::run("sh", c("-c", shell_cmd), timeout = 30, error_on_status = FALSE)
+  res <- run_guarded("sh", c("-c", shell_cmd), error_on_status = FALSE)
   expect_match(res$stdout, "WAS_IGNORED: TRUE")
   expect_match(res$stdout, "STATUS: interrupted")
 })
@@ -1334,11 +1327,10 @@ test_that("interrupt_during_display_still_completes_bookkeeping", {
     deparse(started)))
   h$send(run_msg("b", 2L, 'options(digits = 3); orphan <- 42; structure(1, class = "slowprint")'))
   # Interrupted while it prints, which it says it has begun.
-  deadline <- Sys.time() + 60
-  while (!file.exists(started) && Sys.time() < deadline) Sys.sleep(0.05)
+  waiting_for("the cell to start", while (!file.exists(started)) later::run_now(timeout = 0.05))
   expect_true(file.exists(started))
   h$interrupt()
-  r <- wait_for_done(h, timeout = 10)
+  r <- wait_for_done(h)
   expect_identical(r$status, "interrupted")
   expect_true("orphan" %in% r$created)
   expect_length(r$settings, 1)
@@ -1995,14 +1987,14 @@ test_that("ggplot2's \"Removed n rows\" warning and geom_smooth()'s message show
   skip_if_not_installed("ggplot2")
   h <- worker_harness(extra_libs = .libPaths())
   on.exit(h$close())
-  run_and_wait(h, "l", 1L, "library(ggplot2)", order = c("l", "a", "b"), timeout = 30)
+  run_and_wait(h, "l", 1L, "library(ggplot2)", order = c("l", "a", "b"))
   r <- run_and_wait(h, "a", 2L, paste(
     'd <- data.frame(x = c(1, 2, NA), y = c(1, NA, 3))',
-    'ggplot(d, aes(x, y)) + geom_point()', sep = "\n"), order = c("l", "a", "b"), timeout = 30)
+    'ggplot(d, aes(x, y)) + geom_point()', sep = "\n"), order = c("l", "a", "b"))
   expect_identical(r$output$kind, "plot")
   expect_identical(console_kinds(r), "warning")
   expect_match(console_texts(r), "Removed 2 rows")
-  r <- run_and_wait(h, "b", 3L, "ggplot(mtcars, aes(wt, mpg)) + geom_smooth()", order = c("l", "a", "b"), timeout = 30)
+  r <- run_and_wait(h, "b", 3L, "ggplot(mtcars, aes(wt, mpg)) + geom_smooth()", order = c("l", "a", "b"))
   expect_identical(r$output$kind, "plot")
   expect_identical(console_kinds(r), "message")
   expect_match(console_texts(r), "geom_smooth()", fixed = TRUE)
@@ -2380,7 +2372,7 @@ test_that("an HTML output whose print() text is its source or empty gets the HTM
   expect_identical(r$output$text, "a \uFFFD b \uFFFD c")
 
   # A long table is read only to its 60th row: the text form keeps 50 lines.
-  r <- run_and_wait(h, "e", 5L, paste0('htmltools::HTML(paste0("<table>", strrep("<tr><td>x</td><td>1</td></tr>", 1e5), "</table>"))'), timeout = 30)
+  r <- run_and_wait(h, "e", 5L, paste0('htmltools::HTML(paste0("<table>", strrep("<tr><td>x</td><td>1</td></tr>", 1e5), "</table>"))'))
   expect_identical(r$output$kind, "html")
   expect_identical(r$output$text, paste(rep("x\t1", 50), collapse = "\n"))
   expect_true(r$output$truncated)
@@ -2437,12 +2429,12 @@ test_that("a value that prints many lines shows at once, and print() keeps every
     'print.many_lines <- function(x, ...) { cat(sprintf("line %d\\n", seq_len(attr(x, "n"))), sep = ""); invisible(x) }',
     'x <- structure(list(), class = "many_lines", n = 150000)',
     'y <- structure(list(), class = "many_lines", n = 50000)', "invisible()", sep = "\n"))
-  r <- run_and_wait(h, "b", 2L, "x", timeout = 30)
+  r <- run_and_wait(h, "b", 2L, "x")
   expect_identical(r$status, "ok")
   expect_true(r$output$truncated)
   expect_identical(strsplit(r$output$text, "\n")[[1]][c(1, 50)], c("line 1", "line 50\033[0m"))
 
-  r2 <- run_and_wait(h, "c", 3L, "print(y); invisible()", timeout = 30)
+  r2 <- run_and_wait(h, "c", 3L, "print(y); invisible()")
   printed <- Filter(function(i) identical(i$kind, "stdout"), r2$console)
   lines <- strsplit(paste(vapply(printed, `[[`, "", "text"), collapse = "\n"), "\n")[[1]]
   expect_identical(length(lines), 50000L)

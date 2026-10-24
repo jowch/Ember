@@ -10,9 +10,9 @@
 # repository URL").
 #
 # Covers docs/packages-tests.md items 70-75 ("Session end to end, offline"
-# and the opt-in network test). Waits use `wait_for()`/`run_cells(wait =
-# TRUE)`/`preview_date(wait = TRUE)`, never `Sys.sleep` loops. Every
-# notebook and temp cache made here is removed on exit.
+# and the opt-in network test). Waits use `settle()`/`run_settled()`/
+# `waiting_for()` (helper-wait.R): no time limit, never `Sys.sleep` loops.
+# Every notebook and temp cache made here is removed on exit.
 
 # ---- Helpers ---------------------------------------------------------------
 
@@ -86,8 +86,7 @@ test_that("a notebook with library(toyA) on the file:// toy repo installs toyA a
   nb <- open_notebook(path, repos = repos, cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
 
-  res <- run_cells(nb, wait = TRUE, timeout = 120)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
 
   snap <- notebook_snapshot(nb)
   expect_equal(snap_view(snap, "A")$status, "ok")
@@ -114,8 +113,7 @@ test_that("adding a second notebook with the same lock reuses the library folder
   path1 <- write_toy_notebook("2026-09-01")
   nb1 <- open_notebook(path1, repos = repos, cache = cache)
   on.exit(close_notebook(nb1), add = TRUE)
-  res1 <- run_cells(nb1, wait = TRUE, timeout = 120)
-  expect_false(res1$timed_out)
+  res1 <- run_settled(nb1)
   lib1 <- package_status(nb1)$library$path
 
   path2 <- write_toy_notebook("2026-09-01")
@@ -123,9 +121,8 @@ test_that("adding a second notebook with the same lock reuses the library folder
   on.exit(close_notebook(nb2), add = TRUE)
   watch <- watch_library_statuses(nb2)
 
-  res2 <- run_cells(nb2, wait = TRUE, timeout = 120)
+  res2 <- run_settled(nb2)
   watch$stop()
-  expect_false(res2$timed_out)
 
   lib2 <- package_status(nb2)$library$path
   expect_equal(lib2, lib1)
@@ -146,12 +143,11 @@ test_that("moving the toy date upgrades toyA, restarts the loaded worker, and th
 
   nb <- open_notebook(path, repos = repos, cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 120)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
   expect_equal(snap_view(notebook_snapshot(nb), "A")$output$text,
               "[1] \"toyA 0.1 says: hello from toyB\"")
 
-  preview <- preview_date(nb, as.Date("2026-09-30"), wait = TRUE, timeout = 120)
+  preview <- waiting_for("the preview of the date", preview_date(nb, as.Date("2026-09-30"), wait = TRUE, timeout = Inf), nb)
   expect_equal(preview$status, "ready")
   up <- preview$changes[preview$changes$name == "toyA", ]
   expect_equal(up$change, "upgraded")
@@ -163,15 +159,13 @@ test_that("moving the toy date upgrades toyA, restarts the loaded worker, and th
   # The new library installs, then the worker restarts (toyA's version
   # changed under it) once that library is ready: every cell goes back to
   # not run, with the restart's reason in worker_message.
-  ok <- wait_for(nb, function(snap) {
+  settle(nb, function(snap) {
     v <- snap_view(snap, "A")
     identical(v$status, "not_run") && !is.null(snap$worker_message) &&
       grepl("toyA", snap$worker_message, fixed = TRUE)
-  }, timeout = 120)
-  expect_true(ok)
+  }, "the restart for toyA")
 
-  res2 <- run_cells(nb, wait = TRUE, timeout = 120)
-  expect_false(res2$timed_out)
+  res2 <- run_settled(nb)
   expect_equal(snap_view(notebook_snapshot(nb), "A")$output$text,
               "[1] \"toyA 0.2 says: hello from toyB\"")
   expect_equal(notebook_state(nb)$file$header$snapshot, "2026-09-30")
@@ -192,10 +186,9 @@ test_that("preview_update finds toyA's dates in CRAN's index of its files and pr
 
   nb <- open_notebook(path, repos = repos, cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 120)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
 
-  up <- preview_update(nb, "toyA", timeout = 120)
+  up <- waiting_for("the preview of the update to toyA", preview_update(nb, "toyA", timeout = Inf), nb)
   expect_equal(up$status, "ready")
   expect_equal(up$date, "2026-09-30")
   row <- up$changes[up$changes$name == "toyA", ]
@@ -205,14 +198,14 @@ test_that("preview_update finds toyA's dates in CRAN's index of its files and pr
   set_date(nb, up$date)
   expect_equal(notebook_state(nb)$file$header$snapshot, "2026-09-30")
 
-  pin <- preview_update(nb, "toyA", "0.1", timeout = 120)
+  pin <- waiting_for("the preview of the update to toyA", preview_update(nb, "toyA", "0.1", timeout = Inf), nb)
   expect_equal(pin$status, "ready")
   expect_equal(pin$date, "2026-09-29")
   row <- pin$changes[pin$changes$name == "toyA", ]
   expect_equal(c(row$from, row$to, row$change), c("0.2", "0.1", "downgraded"))
 
   expect_error(preview_update(nb, "ggplot2"), "not in this notebook's packages", class = "ember_refused")
-  never <- preview_update(nb, "toyA", "0.3", timeout = 120)
+  never <- waiting_for("the preview of the update to toyA", preview_update(nb, "toyA", "0.3", timeout = Inf), nb)
   expect_equal(never$status, "failed")
   expect_match(never$message, "never released toyA 0.3")
 })
@@ -225,8 +218,7 @@ test_that("a row's Update through the server: CRAN's newer toyA shows, its quest
   on.exit(unlink(cache, recursive = TRUE), add = TRUE)
   nb <- open_notebook(write_toy_notebook("2026-09-01"), repos = repos, cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 120)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
 
   server <- new_server("s", throttle = 0)
   host_notebook(server, nb)
@@ -238,16 +230,16 @@ test_that("a row's Update through the server: CRAN's newer toyA shows, its quest
 
   # The tab opening asks for CRAN's release dates.
   handle_message(server, ws, wire("ember_check_versions", notebook_id = id))
-  expect_true(wait_for(nb, function(snap) {
+  settle(nb, function(snap) {
     pk <- snap$packages$packages
     identical(pk$available[pk$name == "toyA"], "0.2")
-  }, timeout = 120))
+  })
   expect_equal(row_of("toyA")$available, "0.2")
 
   handle_message(server, ws, wire("ember_update_package", notebook_id = id, name = "toyA", version = "0.2"))
-  expect_true(wait_for(nb, function(snap) {
+  settle(nb, function(snap) {
     identical(snap$packages$proposal$status, "ready")
-  }, timeout = 120))
+  })
   pu <- pluto_state(notebook_state(nb))$js$ember$packages$package_update
   expect_equal(pu$name, "toyA")
   expect_equal(pu$status, "ready")
@@ -270,8 +262,8 @@ test_that("release dates that can't be fetched fail the preview and say where fr
   on.exit(unlink(cache, recursive = TRUE), add = TRUE)
   nb <- open_notebook(write_toy_notebook("2026-09-01"), repos = repos, cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, wait = TRUE, timeout = 120)
-  res <- preview_update(nb, "toyA", timeout = 120)
+  run_settled(nb)
+  res <- waiting_for("the preview of the update to toyA", preview_update(nb, "toyA", timeout = Inf), nb)
   expect_equal(res$status, "failed")
   expect_match(res$message, "couldn't fetch CRAN's release dates from file://", fixed = TRUE)
 })
@@ -307,8 +299,7 @@ test_that("a package download cut short is deleted and fetched again, and the in
   nb <- open_notebook(write_toy_notebook("2026-09-01"),
                       repos = ember_repos(cran = sprintf("http://127.0.0.1:%s", port)), cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 120)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
 
   status <- package_status(nb)
   expect_equal(status$library$status, "ready",
@@ -350,14 +341,13 @@ test_that("an index dated today is fetched again by a preview of today, a later 
   }
   open_locked <- function(snapshot = today) {
     nb <- open_notebook(write_toy_notebook(snapshot), repos = repos, cache = cache)
-    ok <- wait_for(nb, function(snap) length(toyA(nb)) == 1, timeout = 120)
-    list(nb = nb, ok = ok)
+    settle(nb, function(snap) length(toyA(nb)) == 1, "the lock to have toyA")
+    list(nb = nb)
   }
 
   publish("2026-09-01")
   o1 <- open_locked()
   on.exit(close_notebook(o1$nb), add = TRUE)
-  expect_true(o1$ok)
   expect_equal(toyA(o1$nb), "0.1")
 
   # toyA 0.2 is added to today's snapshot. Opening reads the saved copy, as
@@ -365,34 +355,31 @@ test_that("an index dated today is fetched again by a preview of today, a later 
   publish("2026-09-30")
   o2 <- open_locked()
   on.exit(close_notebook(o2$nb), add = TRUE)
-  expect_true(o2$ok)
   expect_equal(toyA(o2$nb), "0.1")
 
   # An older notebook updating to today fetches today's index rather than
   # reading the copy the first session saved this morning.
   old <- open_locked("2026-09-01")
   on.exit(close_notebook(old$nb), add = TRUE)
-  expect_true(old$ok)
-  preview0 <- preview_date(old$nb, today, wait = TRUE, timeout = 120)
+  preview0 <- waiting_for("the preview of the date", preview_date(old$nb, today, wait = TRUE, timeout = Inf), old$nb)
   expect_equal(preview0$status, "ready")
   expect_equal(preview0$changes$to[preview0$changes$name == "toyA"], "0.2")
 
   # So does updating to today in a session that already has an index for
   # today.
-  preview <- preview_date(o1$nb, today, wait = TRUE, timeout = 120)
+  preview <- waiting_for("the preview of the date", preview_date(o1$nb, today, wait = TRUE, timeout = Inf), o1$nb)
   expect_equal(preview$status, "ready")
   expect_equal(preview$changes$to[preview$changes$name == "toyA"], "0.2")
 
   # A session opened after that reads the copy that fetch saved.
   o3 <- open_locked()
   on.exit(close_notebook(o3$nb), add = TRUE)
-  expect_true(o3$ok)
   expect_equal(toyA(o3$nb), "0.2")
 
   # Offline, updating to today in the session still on the morning's copy:
   # the fetch fails, and the copy saved by the last fetch stands in.
   unlink(root, recursive = TRUE)
-  preview2 <- preview_date(o2$nb, today, wait = TRUE, timeout = 120)
+  preview2 <- waiting_for("the preview of the date", preview_date(o2$nb, today, wait = TRUE, timeout = Inf), o2$nb)
   expect_equal(preview2$status, "ready")
   expect_equal(preview2$changes$to[preview2$changes$name == "toyA"], "0.2")
 })
@@ -414,14 +401,14 @@ test_that("a new notebook dated a day the repository hasn't published yet instal
   path <- write_toy_notebook(format(today))
   nb <- open_notebook(path, repos = ember_repos(cran = paste0("file://", root)), cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, "A", wait = TRUE, timeout = 120)
+  run_settled(nb, "A")
 
   expect_equal(package_status(nb)$snapshot, yesterday)
   expect_equal(notebook_snapshot(nb)$cells[[2]]$status, "ok")
   e <- notebook_state(nb)$file$lock$entries
   expect_equal(e$version[e$name == "toyA"], "0.1")
   expect_equal(nrow(package_status(nb)$problems), 0)
-  expect_true(wait_for(nb, function(snap) any(grepl(yesterday, readLines(path), fixed = TRUE)), timeout = 30))
+  settle(nb, function(snap) any(grepl(yesterday, readLines(path), fixed = TRUE)))
 })
 
 test_that("updating to a day the repository hasn't published yet offers the day before, and set_date() applies it (#162)", {
@@ -441,9 +428,9 @@ test_that("updating to a day the repository hasn't published yet offers the day 
   path <- write_toy_notebook("2026-09-01")
   nb <- open_notebook(path, repos = ember_repos(cran = paste0("file://", root)), cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, "A", wait = TRUE, timeout = 120)
+  run_settled(nb, "A")
 
-  preview <- preview_date(nb, format(today), wait = TRUE, timeout = 120)
+  preview <- waiting_for("the preview of the date", preview_date(nb, format(today), wait = TRUE, timeout = Inf), nb)
   expect_equal(preview$status, "ready")
   expect_equal(preview$date, yesterday)
   expect_equal(preview$changes$to[preview$changes$name == "toyA"], "0.2")
@@ -467,14 +454,14 @@ test_that("Update with nothing loaded applies the newest published date and prev
   nb <- open_notebook(path, repos = ember_repos(cran = paste0("file://", root)), cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
 
-  res <- preview_date(nb, format(today), apply = TRUE, wait = TRUE, timeout = 60)
+  res <- waiting_for("the preview of the date", preview_date(nb, format(today), apply = TRUE, wait = TRUE, timeout = Inf), nb)
   expect_equal(res$status, "ready")
   expect_equal(res$date, yesterday)
   expect_equal(package_status(nb)$snapshot, yesterday)
 
   # A date further ahead than tomorrow in UTC is no clock's today: it fails
   # at once instead of stepping back day by day.
-  far <- preview_date(nb, format(today + 30), wait = TRUE, timeout = 60)
+  far <- waiting_for("the preview of the date", preview_date(nb, format(today + 30), wait = TRUE, timeout = Inf), nb)
   expect_equal(far$status, "failed")
   expect_equal(far$date, format(today + 30))
 })
@@ -488,8 +475,7 @@ test_that("the saved file's lock block lists toyA and toyB and round-trips uncha
   path <- write_toy_notebook("2026-09-01")
 
   nb <- open_notebook(path, repos = repos, cache = cache)
-  res <- run_cells(nb, wait = TRUE, timeout = 120)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
   close_notebook(nb)
 
   text1 <- read_file_utf8(path)
@@ -498,7 +484,7 @@ test_that("the saved file's lock block lists toyA and toyB and round-trips uncha
 
   nb2 <- open_notebook(path, repos = repos, cache = cache)
   on.exit(close_notebook(nb2), add = TRUE)
-  wait_for(nb2, is_idle, timeout = 10)
+  settle(nb2, is_idle)
   close_notebook(nb2)
 
   text2 <- read_file_utf8(path)
@@ -517,8 +503,7 @@ test_that("ember::run() on the saved file installs if needed and prints the cell
   # run() itself never resolves (docs/packages.md: "the lock is the
   # authority here").
   nb <- open_notebook(path, repos = repos, cache = cache)
-  res <- run_cells(nb, wait = TRUE, timeout = 120)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
   close_notebook(nb)
 
   out <- testthat::capture_output(status <- run(path, repos = repos, cache = cache, echo = TRUE))
@@ -535,8 +520,7 @@ test_that("an install call runs neither in the session nor in ember::run(): the 
   # into.
   path <- write_toy_notebook("2026-09-01", code = 'install.packages("toyA")\nlibrary(toyA)\ntoyA_hello()')
   nb <- open_notebook(path, repos = repos, cache = cache)
-  res <- run_cells(nb, wait = TRUE, timeout = 120)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
   view <- snap_view(notebook_snapshot(nb), "A")
   expect_equal(view$status, "ok")
   expect_equal(view$from_lock, "toyA")
@@ -589,8 +573,7 @@ test_that("a package from a [sources] GitHub entry installs at the ref's commit 
 
   nb <- open_notebook(path, repos = repos, cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 120)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
 
   status <- package_status(nb)
   expect_equal(status$library$status, "ready",
@@ -609,8 +592,7 @@ test_that("ember::run() installs a saved GitHub lock on a machine that never res
   path <- write_toyc_notebook("github:lab/toyC")
 
   nb <- open_notebook(path, repos = repos, cache = cache)
-  res <- run_cells(nb, wait = TRUE, timeout = 120)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
   close_notebook(nb)
   expect_match(read_file_utf8(path), "# toyC 0.4.0 github:lab/toyC@8e4b7d2c1f0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c",
                fixed = TRUE)
@@ -664,8 +646,7 @@ test_that("a package from a [sources] universe entry installs from the universe 
 
   nb <- open_notebook(path, repos = repos, cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 120)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
 
   status <- package_status(nb)
   expect_equal(status$library$status, "ready",
@@ -691,8 +672,7 @@ test_that("a universe build that isn't the commit its universe names is installe
 
   nb <- open_notebook(path, repos = repos, cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 120)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
   status <- package_status(nb)
   expect_equal(status$library$status, "ready",
                info = paste(c(status$library$message, notebook_state(nb)$packages$target$log), collapse = "\n"))
@@ -740,8 +720,7 @@ test_that("[net] a notebook with library(dplyr) at a fixed past date resolves, i
 
   nb <- open_notebook(path, repos = ember_repos(), cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 300)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
 
   status <- package_status(nb)
   expect_true("dplyr" %in% status$packages$name)
@@ -776,11 +755,11 @@ test_that("[net] preview_update(nb, \"dplyr\", \"1.1.4\") finds the date from CR
   # Safe preview resolves the lock without installing anything.
   nb <- open_notebook(path, repos = ember_repos(), cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
-  expect_true(wait_for(nb, function(snap) "dplyr" %in% snap$packages$packages$name, timeout = 120))
+  settle(nb, function(snap) "dplyr" %in% snap$packages$packages$name)
   expect_equal(package_status(nb)$packages$version[package_status(nb)$packages$name == "dplyr"], "1.2.1")
 
   # 1.2.0 came out on 2026-02-03, so 1.1.4 was last current on 02-02.
-  res <- preview_update(nb, "dplyr", "1.1.4", timeout = 300)
+  res <- waiting_for("the preview of the update to dplyr", preview_update(nb, "dplyr", "1.1.4", timeout = Inf), nb)
   expect_equal(res$status, "ready")
   expect_equal(res$date, "2026-02-02")
   row <- res$changes[res$changes$name == "dplyr", ]
@@ -811,8 +790,7 @@ test_that("[net] an r-universe package installs from its universe, and a commit 
   write_atomic(path, format_notebook(file))
 
   nb <- open_notebook(path, cache = cache)
-  res <- run_cells(nb, wait = TRUE, timeout = 300)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
   status <- package_status(nb)
   # A failed universe lookup is reported (highr's row is "source_failed"),
   # not passed off as success, and running again retries it. r-universe
@@ -822,8 +800,7 @@ test_that("[net] an r-universe package installs from its universe, and a commit 
     any(status$packages$status[status$packages$name == "highr"] == "source_failed")
   }
   if (failed(status)) {
-    res <- run_cells(nb, wait = TRUE, timeout = 300)
-    expect_false(res$timed_out)
+    res <- run_settled(nb)
     status <- package_status(nb)
   }
   why <- function(status) {
@@ -881,8 +858,7 @@ test_that("[net] a notebook with library(S4Vectors) installs from Bioconductor o
 
   nb <- open_notebook(path, repos = ember_repos(), cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 600)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
 
   status <- package_status(nb)
   expect_equal(status$library$status, "ready")
@@ -925,8 +901,7 @@ test_that("[net] on macOS and Windows, a Bioconductor package Package Manager ha
   started <- Sys.time()
   nb <- open_notebook(path, repos = ember_repos(), cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 600)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
 
   status <- package_status(nb)
   # What a failure needs to explain itself: the problems say why a name
@@ -986,8 +961,7 @@ test_that("a notebook with the failing-installer option reports the real compile
   nb <- open_notebook(path, cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
 
-  res <- run_cells(nb, wait = TRUE, timeout = 60)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
 
   status <- package_status(nb)
   expect_equal(status$library$status, "failed")
@@ -1005,9 +979,7 @@ test_that("packages with no binary for this R are named while they build, and th
   nb <- open_notebook(path, cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
   run_cells(nb, wait = FALSE)
-  expect_true(wait_for(nb, function(snap) length(snap$packages$library$no_binary) > 0, timeout = 120),
-              info = paste(c(package_status(nb)$library$status, package_status(nb)$library$message),
-                           collapse = ": "))
+  settle(nb, function(snap) length(snap$packages$library$no_binary) > 0)
   status <- package_status(nb)
   expect_equal(status$library$status, "installing")
   expect_equal(status$library$no_binary, c(brokenpkg = "0.1.0", rlang = "1.1.3"))
@@ -1021,8 +993,7 @@ test_that("a failed install keeps its no-binary notice, beside the no_binary fai
 
   nb <- open_notebook(path, cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 60)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
   status <- package_status(nb)
   expect_equal(status$library$status, "failed")
   expect_equal(status$library$no_binary, c(brokenpkg = "0.1.0"))
@@ -1069,14 +1040,12 @@ test_that("an install of a large Bioconductor data package waits for approve_ins
   nb <- open_notebook(path, repos = repos, cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
   run_cells(nb, wait = FALSE)
-  expect_true(wait_for(nb, function(snap) identical(snap$packages$library$status, "asking"), timeout = 120),
-              info = paste(c(package_status(nb)$library$status, package_status(nb)$library$message),
-                           collapse = ": "))
+  settle(nb, function(snap) identical(snap$packages$library$status, "asking"))
   download <- package_status(nb)$library$download
   expect_equal(download$package, "GO.db")
   expect_equal(download$bytes, 2048)
 
   approve_install(nb)
-  expect_true(wait_for(nb, function(snap) identical(snap$packages$library$status, "ready"), timeout = 120))
+  settle(nb, function(snap) identical(snap$packages$library$status, "ready"))
   expect_error(approve_install(nb), "no install is waiting")
 })

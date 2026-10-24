@@ -234,16 +234,12 @@ inputs_run_msg <- function(cell, token, code, inputs = input_bindings(code), val
 
 inputs_run <- function(h, cell, token, code, ...) {
   h$send(inputs_run_msg(cell, token, code, ...))
-  wait_for_done(h, timeout = 10)
+  wait_for_done(h)
 }
 
-reply_of <- function(h, type, timeout = 5) {
-  deadline <- Sys.time() + timeout
+reply_of <- function(h, type) {
   repeat {
-    remaining <- as.numeric(deadline - Sys.time(), units = "secs")
-    if (remaining <= 0) no_reply(h, timeout)
-    m <- h$receive(remaining)
-    if (is.null(m)) no_reply(h, timeout)
+    m <- next_frame(h)
     if (identical(m$type, type)) return(m)
   }
 }
@@ -371,8 +367,8 @@ ui_repo <- function(date = "2026-09-01") {
   contrib <- file.path(root, date, "src", "contrib")
   dir.create(contrib, recursive = TRUE)
   src <- emberui_source()
-  res <- processx::run(file.path(R.home("bin"), "R"), c("CMD", "build", "--no-manual", "--no-build-vignettes", src),
-                       wd = contrib, error_on_status = FALSE, timeout = 120)
+  res <- run_guarded(file.path(R.home("bin"), "R"), c("CMD", "build", "--no-manual", "--no-build-vignettes", src),
+                     wd = contrib, error_on_status = FALSE)
   if (res$status != 0) stop("could not build emberui:\n", res$stderr)
   tools::write_PACKAGES(contrib, type = "source")
   root
@@ -390,8 +386,7 @@ test_that("set_input through the API reruns the readers with the new value, and 
     B = cell("n * 2")), snapshot = "2026-09-01")
   nb <- open_notebook(path, repos = ember_repos(cran = paste0("file://", root)), cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 180)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
   out_of <- function(id) snap_view(notebook_snapshot(nb), id)$output$text
   expect_identical(out_of("B"), "[1] 10")
   # The input's own cell shows no value that could go stale.

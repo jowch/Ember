@@ -2,7 +2,8 @@
 # installs: every notebook cell here is base R only, so `open_notebook()`'s
 # default `repos`/`cache` never resolve anything (an empty lock's library is
 # the empty one, no network, no install).
-# Waits use `wait_for()`/`run_cells(wait = TRUE)`, never `Sys.sleep`.
+# Waits use `settle()`/`run_settled()` (helper-wait.R): no time limit,
+# never `Sys.sleep`.
 #
 # Covers engine-tests.md items 106-117 ("End to end").
 
@@ -23,10 +24,9 @@ test_that("run_cells(wait = TRUE) runs every cell with the expected outputs (107
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
 
-  res <- run_cells(nb, wait = TRUE, timeout = 20)
+  res <- run_settled(nb)
 
   expect_true(res$accepted)
-  expect_false(res$timed_out)
   snap <- notebook_snapshot(nb)
   code_views <- Filter(function(v) identical(v$kind, "code"), snap$cells)
   for (v in code_views) expect_equal(v$status, "ok")
@@ -38,12 +38,11 @@ test_that("editing an upstream cell reruns dependents in autorun (108)", {
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, wait = TRUE, timeout = 20)
+  run_settled(nb)
 
   edit_notebook(nb, set_code("A", "x <- 5"))
-  res <- run_cells(nb, "A", wait = TRUE, timeout = 20)
+  res <- run_settled(nb, "A")
 
-  expect_false(res$timed_out)
   snap <- notebook_snapshot(nb)
   expect_equal(snap_view(snap, "B")$output$text, "[1] 50")
 })
@@ -53,16 +52,16 @@ test_that("lazy mode marks dependents stale, then runs them on request (109)", {
   path <- write_session_notebook(cells, on_cell_change = "lazy")
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, wait = TRUE, timeout = 20)
+  run_settled(nb)
 
   edit_notebook(nb, set_code("A", "x <- 5"))
-  run_cells(nb, "A", wait = TRUE, timeout = 20)
+  run_settled(nb, "A")
 
   snap <- notebook_snapshot(nb)
   expect_true(snap_view(snap, "B")$stale)
   expect_equal(snap_view(snap, "B")$status, "ok")  # the old result, shown stale
 
-  run_cells(nb, "B", wait = TRUE, timeout = 20)
+  run_settled(nb, "B")
 
   snap2 <- notebook_snapshot(nb)
   expect_false(snap_view(snap2, "B")$stale)
@@ -75,7 +74,7 @@ test_that("lazy mode: running a cell runs every ancestor between an edited one a
   path <- write_session_notebook(cells, on_cell_change = "lazy")
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, wait = TRUE, timeout = 20)
+  run_settled(nb)
 
   # Every cell's text, and whether it is shown stale: one with no stale mark
   # must show what its current code gives.
@@ -91,7 +90,7 @@ test_that("lazy mode: running a cell runs every ancestor between an edited one a
 
   # Edit three steps up from D: A, B and C all run before it.
   edit_notebook(nb, set_code("A", "x <- 2"))
-  r <- run_cells(nb, "D", wait = TRUE, timeout = 20)
+  r <- run_settled(nb, "D")
   expect_identical(r$queued, c("A", "B", "C", "D"))
   v <- views()
   expect_identical(shown(v)[c("A", "B", "C", "D")], c(A = "[1] 2", B = "[1] 20", C = "[1] 21", D = "[1] 42"))
@@ -101,13 +100,13 @@ test_that("lazy mode: running a cell runs every ancestor between an edited one a
 
   # Edit two steps up: B and C run, A doesn't.
   edit_notebook(nb, set_code("B", "y <- x * 100"))
-  r <- run_cells(nb, "D", wait = TRUE, timeout = 20)
+  r <- run_settled(nb, "D")
   expect_identical(r$queued, c("B", "C", "D"))
   expect_identical(shown(views())[c("B", "C", "D")], c(B = "[1] 200", C = "[1] 201", D = "[1] 402"))
 
   # The cell run is in the middle of the chain: D isn't run, and is stale.
   edit_notebook(nb, set_code("A", "x <- 3"))
-  r <- run_cells(nb, "C", wait = TRUE, timeout = 20)
+  r <- run_settled(nb, "C")
   expect_identical(r$queued, c("A", "B", "C"))
   v <- views()
   expect_identical(shown(v)[c("A", "B", "C")], c(A = "[1] 3", B = "[1] 300", C = "[1] 301"))
@@ -121,12 +120,12 @@ test_that("autorun: running a cell after editing its grandparent runs each cell 
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, wait = TRUE, timeout = 20)
+  run_settled(nb)
   unlink(log)
 
   edit_notebook(nb, set_code("A", sprintf('cat("A\\n", file = "%s", append = TRUE); x <- 2', log)))
-  run_cells(nb, "C", wait = TRUE, timeout = 20)
-  wait_for(nb, is_idle, timeout = 20)
+  run_settled(nb, "C")
+  settle(nb, is_idle)
   snap <- notebook_snapshot(nb)
   expect_identical(vapply(c("B", "C"), function(id) snap_view(snap, id)$output$text, character(1)),
                    c(B = "[1] 20", C = "[1] 21"))
@@ -141,11 +140,11 @@ test_that("autorun: a cell that reads a file another cell writes reruns when the
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, wait = TRUE, timeout = 20)
+  run_settled(nb)
   data <- file.path(dirname(path), "d.txt")
   # The shell has seen the file W wrote: R ran after it, so it stays as is.
   seen <- function(...) identical(nb$data_watch[["d.txt"]]$mtime, file.info(data)$mtime)
-  expect_true(wait_for(nb, function(snap) seen() && is_idle(snap), timeout = 20))
+  settle(nb, function(snap) seen() && is_idle(snap))
   expect_identical(readLines(log), "R")
   shown_u <- function(snap) snap_view(snap, "U")$output$text
 
@@ -154,16 +153,16 @@ test_that("autorun: a cell that reads a file another cell writes reruns when the
   # for the poll, which is held off here so only that path can see it.
   edit_notebook(nb, set_code("W", "k <- 2; writeLines(as.character(k), 'd.txt')"))
   nb$last_watch_check <- Sys.time() + 3600
-  run_cells(nb, "W", wait = TRUE, timeout = 20)
+  run_settled(nb, "W")
   expect_identical(shown_u(notebook_snapshot(nb)), '[1] "2 !"')
   nb$last_watch_check <- NULL
-  expect_true(wait_for(nb, function(snap) identical(shown_u(snap), '[1] "2 !"') && is_idle(snap), timeout = 20))
+  settle(nb, function(snap) identical(shown_u(snap), '[1] "2 !"') && is_idle(snap))
   expect_identical(readLines(log), c("R", "R"))
 
   # The same bytes again: the shell sees the write and reruns nothing.
   edit_notebook(nb, set_code("W", "k <- 2; writeLines(as.character(k), 'd.txt'); NULL"))
-  run_cells(nb, "W", wait = TRUE, timeout = 20)
-  expect_true(wait_for(nb, function(snap) seen() && is_idle(snap), timeout = 20))
+  run_settled(nb, "W")
+  settle(nb, function(snap) seen() && is_idle(snap))
   expect_identical(readLines(log), c("R", "R"))
 })
 
@@ -174,10 +173,10 @@ test_that("a cell that reads a file and appends to it runs once, as in plain R (
   writeLines("start", log)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, wait = TRUE, timeout = 20)
+  run_settled(nb)
   # The shell's poll has seen the append, and nothing ran after it.
   seen <- function(...) identical(nb$data_watch[["log.txt"]]$mtime, file.info(log)$mtime)
-  expect_true(wait_for(nb, function(snap) seen() && is_idle(snap), timeout = 20))
+  settle(nb, function(snap) seen() && is_idle(snap))
   expect_identical(readLines(log), c("start", "entry"))
   expect_false(isTRUE(snap_view(notebook_snapshot(nb), "L")$stale))
 })
@@ -214,8 +213,7 @@ test_that("running cells formats the file and gathers watched paths only when th
   local_mocked_bindings(
     format_notebook = function(...) { formatted <<- formatted + 1L; real_format(...) },
     sync_watch = function(...) { synced <<- synced + 1L; real_sync(...) })
-  res <- run_cells(nb, wait = TRUE, timeout = 20)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
   # Twenty cells finishing are dozens of worker messages, none of which
   # changes the file or what it sources.
   expect_lt(formatted, 5L)
@@ -318,7 +316,7 @@ test_that("move_notebook() while R is running keeps the worker and getwd() follo
   path <- write_session_notebook(list(S = cell(""), A = cell("1")))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, wait = TRUE, timeout = 20)
+  run_settled(nb)
   pid0 <- notebook_state(nb)$worker$info$pid
   expect_true(is.numeric(pid0))
 
@@ -333,7 +331,7 @@ test_that("move_notebook() while R is running keeps the worker and getwd() follo
 
   res <- edit_notebook(nb, insert_cell(2, "getwd()"))
   new_id <- res$inserted[[1]]
-  run_cells(nb, new_id, wait = TRUE, timeout = 20)
+  run_settled(nb, new_id)
 
   snap <- notebook_snapshot(nb)
   expect_equal(snap_view(snap, new_id)$output$text,
@@ -382,8 +380,7 @@ test_that("a learned definition from load() is saved in the footer and orders ce
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
 
-  res <- run_cells(nb, wait = TRUE, timeout = 20)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
   snap <- notebook_snapshot(nb)
   expect_equal(snap_view(snap, "B")$output$text, "[1] 43")
 
@@ -422,8 +419,9 @@ test_that("interrupting a stuck cell offers a restart after the grace period (11
   # top-level statement next to the .Call() gives R a safe point to notice
   # the interrupt between the two, before the stuck C loop (which never
   # calls R_CheckUserInterrupt()) is even entered.
+  marker <- tempfile("ember-stuck-")
   cells <- list(S = cell(sprintf("lib <- dyn.load(%s)", deparse(so))),
-               A = cell('invisible(lib)\n.Call("stuck", 6L)'))
+               A = cell(sprintf('invisible(lib)\n.Call("stuck", 6L, %s)', deparse(marker))))
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
@@ -431,24 +429,16 @@ test_that("interrupting a stuck cell offers a restart after the grace period (11
   run_cells(nb, "A", wait = FALSE)
   # Wait for A itself to run: "busy" is already true while S runs, and an
   # interrupt then would clear the queue before A starts (#149).
-  busy <- wait_for(nb, function(s) isTRUE(snap_view(s, "A")$running), timeout = 15)
-  expect_true(busy)
-  # Give the cell a moment to truly be inside the C loop (not still
-  # starting up) before interrupting, via the later loop rather than a
-  # sleep.
-  busy_at <- Sys.time()
-  wait_for(nb, function(s) as.numeric(Sys.time() - busy_at, units = "secs") > 1, timeout = 10)
+  settle(nb, function(s) isTRUE(snap_view(s, "A")$running), "A to start")
+  # Interrupt only once A is inside the C loop, not still starting up.
+  wait_until(function() file.exists(marker), "the stuck C loop to begin", nb)
 
   interrupt_notebook(nb)
-  offered <- wait_for(nb, function(s) isTRUE(s$restart_offered), timeout = 15)
-  # On a failure, say whether A stopped cleanly or the worker died (#149).
-  snap <- notebook_snapshot(nb)
-  expect_true(offered, info = sprintf("process %s, worker_message %s, A %s",
-    snap$process, format(snap$worker_message %||% "NULL"), snap_view(snap, "A")$status))
+  # A hang here shows whether A stopped cleanly or the worker died (#149).
+  settle(nb, function(s) isTRUE(s$restart_offered), "the restart to be offered")
 
   restart_notebook(nb)
-  ready <- wait_for(nb, function(s) identical(s$process, "ready"), timeout = 15)
-  expect_true(ready)
+  settle(nb, function(s) identical(s$process, "ready"), "R to be ready again")
 
   snap <- notebook_snapshot(nb)
   expect_equal(snap_view(snap, "A")$status, "not_run")
@@ -462,14 +452,12 @@ test_that("an interrupt sent as a run is dispatched stops that run", {
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, "A", wait = TRUE, timeout = 15)   # the worker is up
+  run_settled(nb, "A")   # the worker is up
 
   run_cells(nb, "B", wait = FALSE)
   interrupt_notebook(nb)
-  # A lost interrupt lets the sleep run to the end and report "ok"; the
-  # timeout only catches a hang.
-  done <- wait_for(nb, function(s) identical(s$process, "ready"), timeout = 30)
-  expect_true(done)
+  # A lost interrupt lets the sleep run to the end and report "ok".
+  settle(nb, function(s) identical(s$process, "ready"), "B to end")
   expect_equal(snap_view(notebook_snapshot(nb), "B")$status, "interrupted")
 })
 
@@ -481,13 +469,13 @@ test_that("on Windows an interrupt that can't reach the worker offers the restar
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, "A", wait = TRUE, timeout = 15)
+  run_settled(nb, "A")
   run_cells(nb, "B", wait = FALSE)
-  expect_true(wait_for(nb, function(s) isTRUE(nb$state$worker$running$begun), timeout = 15))
+  settle(nb, function(s) isTRUE(nb$state$worker$running$begun))
   interrupt_notebook(nb)
   # Only the failure path sets interrupt_failed: the grace timer sets
   # restart_offered alone.
-  expect_true(wait_for(nb, function(s) isTRUE(s$interrupt_failed), timeout = 15))
+  settle(nb, function(s) isTRUE(s$interrupt_failed))
   expect_true(notebook_snapshot(nb)$restart_offered)
 })
 
@@ -497,7 +485,7 @@ test_that("a crashed worker reports worker_exited, and the next run starts a new
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
 
-  run_cells(nb, "A", wait = TRUE, timeout = 15)
+  run_settled(nb, "A")
   snap <- notebook_snapshot(nb)
   view <- snap_view(snap, "A")
   expect_equal(view$status, "error")
@@ -506,7 +494,7 @@ test_that("a crashed worker reports worker_exited, and the next run starts a new
   # Rerunning the same self-killing code would just crash the new worker
   # again; edit it first to prove a fresh worker actually starts and runs.
   edit_notebook(nb, set_code("A", "1 + 1"))
-  run_cells(nb, "A", wait = TRUE, timeout = 15)
+  run_settled(nb, "A")
   snap2 <- notebook_snapshot(nb)
   expect_equal(snap2$process, "ready")
   expect_equal(snap_view(snap2, "A")$status, "ok")
@@ -532,16 +520,15 @@ test_that("Endeavor-shaped calls: apply with expected, run(wait = FALSE), seq, r
   })
   res <- run_cells(nb, wait = FALSE)
   expect_true(res$accepted)
-  ok <- wait_for(nb, function(s) done, timeout = 20)
+  settle(nb, function(s) done, "the execution_done event")
   unsub()
-  expect_true(ok)
   expect_gte(notebook_snapshot(nb)$seq, seq_before)
 
   cells2 <- list(S = cell(""), P = cell("plot(1:10)"))
   path2 <- write_session_notebook(cells2)
   nb2 <- open_notebook(path2)
   on.exit(close_notebook(nb2), add = TRUE)
-  run_cells(nb2, wait = TRUE, timeout = 20)
+  run_settled(nb2)
   png <- render_png(nb2, "P")
   expect_equal(png$mime, "image/png")
   expect_true(is.raw(png$png))
@@ -552,7 +539,7 @@ test_that("render_png() at a pixel size returns that image and leaves the stored
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
   allow_execution(nb)
-  run_cells(nb, wait = TRUE, timeout = 20)
+  run_settled(nb)
   # PNG width and height: big-endian integers at bytes 17-24 (IHDR).
   png_px <- function(b) c(sum(as.integer(b[17:20]) * 256^(3:0)), sum(as.integer(b[21:24]) * 256^(3:0)))
 
@@ -569,10 +556,11 @@ test_that("render_png() at a pixel size returns that image and leaves the stored
 
   # A busy worker answers once its run ends.
   run_cells(nb, "B", wait = FALSE)
-  expect_true(wait_for(nb, function(s) identical(s$process, "busy"), timeout = 15))
-  r2 <- render_png(nb, "P", width = 300, height = 150, timeout = 15)
+  settle(nb, function(s) identical(s$process, "busy"))
+  r2 <- waiting_for("P's redraw at 300 x 150",
+                    render_png(nb, "P", width = 300, height = 150, timeout = HANG_GUARD), nb)
   expect_equal(png_px(r2$png), c(300, 150))
-  expect_true(wait_for(nb, timeout = 20))
+  settle(nb)
   unsub()
   expect_identical(nb$state$results$P$output, stored)
   expect_false("P" %in% seen)
@@ -583,7 +571,7 @@ test_that("two consecutive notebook_state() values share unchanged cells (116)",
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, wait = TRUE, timeout = 20)
+  run_settled(nb)
 
   s1 <- notebook_state(nb)
   edit_notebook(nb, set_code("A", "11"))
@@ -611,10 +599,9 @@ test_that("a later callback keeps firing during a 2 s busy cell (117)", {
   on.exit(stop_ticking <<- TRUE, add = TRUE)
 
   run_cells(nb, "A", wait = FALSE)
-  ok <- wait_for(nb, is_idle, timeout = 15)
+  settle(nb, is_idle, "A to finish")
   stop_ticking <- TRUE
 
-  expect_true(ok)
   expect_gt(length(ticks), 10)
   times <- vapply(ticks, as.numeric, numeric(1))
   gaps <- diff(times)
@@ -632,7 +619,7 @@ test_that("worker_output_pipe_drained", {
   rscript <- deparse(file.path(R.home("bin"), "Rscript"))
   code <- paste0("system2(", rscript, ", c('-e', shQuote('cat(strrep(\"x\", 2e5))'))); 1")
   edit_notebook(nb, set_code(1, code))
-  run_cells(nb, wait = TRUE, timeout = 30)
+  run_settled(nb)
   expect_identical(notebook_snapshot(nb)$cells[[1]]$status, "ok")
 })
 
@@ -719,18 +706,18 @@ test_that("worker_query() answers when idle, NULL at once while busy, NULL in pr
   expect_null(nb$proc)
 
   allow_execution(nb)
-  run_cells(nb, wait = TRUE, timeout = 20)
+  run_settled(nb)
 
   # Idle: a real reply.
   got_idle <- "unset"
   worker_query(nb, list(type = "signature", name = "lm", package = NULL), function(r) got_idle <<- r)
-  expect_true(wait_for(nb, function(s) !identical(got_idle, "unset"), timeout = 10))
+  settle(nb, function(s) !identical(got_idle, "unset"))
   expect_match(got_idle$text, "^lm\\(formula, data")
 
   # Busy: NULL at once, not after waiting out the cell. The callback has
   # run by the time worker_query() returns, so no clock is needed.
   run_cells(nb, "A", wait = FALSE)
-  expect_true(wait_for(nb, function(s) identical(s$process, "busy"), timeout = 15))
+  settle(nb, function(s) identical(s$process, "busy"))
   got_busy <- "unset"
   worker_query(nb, list(type = "signature", name = "lm", package = NULL), function(r) got_busy <<- r)
   expect_null(got_busy)
@@ -742,7 +729,7 @@ test_that("worker_query() answers when idle, NULL at once while busy, NULL in pr
   # on Windows) would otherwise run first and could read the real reply
   # before the timeout (#402). Then the poll resumes and reads the reply,
   # whose query has timed out.
-  expect_true(wait_for(nb, timeout = 20))
+  settle(nb)
   late_calls <- 0L
   late_reply <- "unset"
   cancel_poll(nb)
@@ -752,7 +739,7 @@ test_that("worker_query() answers when idle, NULL at once while busy, NULL in pr
   expect_identical(late_calls, 1L)
   expect_null(late_reply)
   schedule_poll(nb)
-  expect_true(wait_for(nb, timeout = 5))
+  settle(nb)
   expect_false(is.null(nb$proc))
 
   # The worker is still alive and answers again: a fresh query, with no
@@ -761,7 +748,7 @@ test_that("worker_query() answers when idle, NULL at once while busy, NULL in pr
   # dropped.
   got_again <- "unset"
   worker_query(nb, list(type = "signature", name = "lm", package = NULL), function(r) got_again <<- r)
-  expect_true(wait_for(nb, function(s) !identical(got_again, "unset"), timeout = 10))
+  settle(nb, function(s) !identical(got_again, "unset"))
   expect_match(got_again$text, "^lm\\(formula, data")
   expect_identical(late_calls, 1L)
 
@@ -771,13 +758,13 @@ test_that("worker_query() answers when idle, NULL at once while busy, NULL in pr
   # already on the socket before the process dies), so this registers
   # callbacks directly, the way `worker_query()` itself would, and checks
   # that an actual exit (not a manual call) clears them.
-  expect_true(wait_for(nb, timeout = 20))
+  settle(nb)
   got_a <- "unset"
   got_b <- "unset"
   assign("9001", function(r) got_a <<- r, envir = nb$queries)
   assign("9002", function(r) got_b <<- r, envir = nb$queries)
   nb$proc$kill()
-  expect_true(wait_for(nb, function(s) identical(s$process, "stopped"), timeout = 15))
+  settle(nb, function(s) identical(s$process, "stopped"))
   expect_null(got_a)
   expect_null(got_b)
   expect_identical(length(ls(nb$queries)), 0L)
@@ -790,14 +777,14 @@ test_that("a worker that dies while idle is noticed at once, not at the next slo
   path <- write_session_notebook(list(S = cell(""), A = cell("x <- 1")))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, NULL, wait = TRUE, timeout = 20)
+  run_settled(nb, NULL)
   expect_true(watch_worker_output(nb))
 
   # Nothing would poll for an hour: only the pipe can bring it forward.
   cancel_poll(nb)
   schedule_poll(nb, 3600)
   nb$proc$kill()
-  expect_true(wait_for(nb, function(s) identical(s$process, "stopped"), timeout = 15))
+  settle(nb, function(s) identical(s$process, "stopped"))
   expect_null(nb$proc)
   expect_null(nb$output_watch)
 })
@@ -808,14 +795,14 @@ test_that("a dependent of a failed cell runs on its own and reruns once the ance
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
 
-  run_cells(nb, NULL, wait = TRUE, timeout = 20)
+  run_settled(nb, NULL)
   snap <- notebook_snapshot(nb)
   expect_equal(snap_view(snap, "B")$status, "error")
   expect_equal(snap_view(snap, "B")$errors[[length(snap_view(snap, "B")$errors)]]$kind, "upstream")
   expect_equal(snap_view(snap, "C")$output$text, "[1] FALSE")
 
   edit_notebook(nb, set_code("A", "a <- 1"))
-  run_cells(nb, "A", wait = TRUE, timeout = 20)
+  run_settled(nb, "A")
   snap2 <- notebook_snapshot(nb)
   expect_equal(snap_view(snap2, "B")$status, "ok")
 })
@@ -831,7 +818,7 @@ test_that("disabling a cell removes it from R; Rscript on the saved file still r
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
 
-  run_cells(nb, NULL, wait = TRUE, timeout = 20)
+  run_settled(nb, NULL)
   snap <- notebook_snapshot(nb)
   expect_equal(snap_view(snap, "B")$status, "ok")
 
@@ -841,7 +828,7 @@ test_that("disabling a cell removes it from R; Rscript on the saved file still r
   expect_match(on_disk, "## x \\+ 1")
   expect_match(on_disk, "# B commented", fixed = TRUE)
 
-  run_cells(nb, "H", wait = TRUE, timeout = 20)
+  run_settled(nb, "H")
   snap2 <- notebook_snapshot(nb)
   expect_equal(snap_view(snap2, "H")$output$text, "[1] FALSE FALSE")
 
@@ -850,7 +837,7 @@ test_that("disabling a cell removes it from R; Rscript on the saved file still r
 
   b_before <- snap_view(snap2, "B")
   edit_notebook(nb, disable_cell("A", FALSE))
-  run_cells(nb, "A", wait = TRUE, timeout = 20)
+  run_settled(nb, "A")
   snap3 <- notebook_snapshot(nb)
   b_after <- snap_view(snap3, "B")
   expect_equal(b_after$status, "ok")
@@ -871,10 +858,8 @@ test_that("a worker busy in a long cell ends when the server that started it is 
                                   env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
                                   stdout = "|", stderr = "2>&1")
   on.exit(if (server$is_alive()) server$kill(), add = TRUE)
-  # Until the cell is running. The deadline only keeps a broken server
-  # from hanging the suite.
-  deadline <- Sys.time() + 60
-  while (!file.exists(pidfile) && server$is_alive() && Sys.time() < deadline) Sys.sleep(0.05)
+  # Until the cell is running, or the server has died.
+  waiting_for("the cell to write its pid file", while (!file.exists(pidfile) && server$is_alive()) later::run_now(timeout = 0.05))
   # read_all_output() waits for the server to end, so a server still
   # running without the file is ended first.
   if (!file.exists(pidfile) && server$is_alive()) server$kill()
@@ -912,7 +897,7 @@ test_that("a cell's processx child outlives a restart, also once the server coll
   on.exit(close_notebook(nb), add = TRUE)
   # Nothing to resolve or install: the default cache stays untouched.
   expect_identical(nrow(notebook_snapshot(nb)$packages$packages), 0L)
-  run_cells(nb, "A", wait = TRUE, timeout = 60)
+  run_settled(nb, "A")
   expect_identical(snap_view(notebook_snapshot(nb), "A")$status, "ok")
   pids <- as.integer(readLines(pidfile))
   on.exit(tools::pskill(pids[2]), add = TRUE)
@@ -954,7 +939,7 @@ test_that("on Windows a cell's processx and callr children outlive a restart; it
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
   # The worker releases processx's job before it says a run is done.
-  run_cells(nb, "A", wait = TRUE, timeout = 60)
+  run_settled(nb, "A")
   expect_identical(snap_view(notebook_snapshot(nb), "A")$status, "ok")
   pids <- as.integer(readLines(pidfile))
   on.exit(for (p in pids[-1]) tools::pskill(p), add = TRUE)
@@ -987,8 +972,7 @@ test_that("on Windows a busy worker's processx and callr children outlive a kill
                                   env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
                                   stdout = "|", stderr = "2>&1")
   on.exit(if (server$is_alive()) server$kill(), add = TRUE)
-  deadline <- Sys.time() + 60
-  while (!file.exists(marker) && server$is_alive() && Sys.time() < deadline) Sys.sleep(0.05)
+  waiting_for("the cell to write its marker", while (!file.exists(marker) && server$is_alive()) later::run_now(timeout = 0.05))
   # read_all_output() waits for the server to end, so a server still
   # running without the file is ended first.
   if (!file.exists(marker) && server$is_alive()) server$kill()
@@ -1028,8 +1012,7 @@ test_that("on Windows a busy cell's own processx and callr children outlive a ki
                                   env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
                                   stdout = "|", stderr = "2>&1")
   on.exit(if (server$is_alive()) server$kill(), add = TRUE)
-  deadline <- Sys.time() + 60
-  while (!file.exists(pidfile) && server$is_alive() && Sys.time() < deadline) Sys.sleep(0.05)
+  waiting_for("the cell to write its pid file", while (!file.exists(pidfile) && server$is_alive()) later::run_now(timeout = 0.05))
   # read_all_output() waits for the server to end, so a server still
   # running without the file is ended first.
   if (!file.exists(pidfile) && server$is_alive()) server$kill()
@@ -1066,8 +1049,7 @@ test_that("on Windows a cell's first processx child outlives a server killed rig
                                   env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
                                   stdout = "|", stderr = "2>&1")
   on.exit(if (server$is_alive()) server$kill(), add = TRUE)
-  deadline <- Sys.time() + 60
-  while (!file.exists(pidfile) && server$is_alive() && Sys.time() < deadline) Sys.sleep(0.01)
+  waiting_for("the cell to write its pid file", while (!file.exists(pidfile) && server$is_alive()) later::run_now(timeout = 0.01))
   # read_all_output() waits for the server to end, so a server still
   # running without the file is ended first.
   if (!file.exists(pidfile) && server$is_alive()) server$kill()
@@ -1097,10 +1079,8 @@ test_that("what a busy cell started with system() ends when the server is killed
                                   env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
                                   stdout = "|", stderr = "2>&1")
   on.exit(if (server$is_alive()) server$kill(), add = TRUE)
-  # Until the cell is running. The deadline only keeps a broken server
-  # from hanging the suite.
-  deadline <- Sys.time() + 60
-  while (!file.exists(pidfile) && server$is_alive() && Sys.time() < deadline) Sys.sleep(0.05)
+  # Until the cell is running, or the server has died.
+  waiting_for("the cell to write its pid file", while (!file.exists(pidfile) && server$is_alive()) later::run_now(timeout = 0.05))
   # read_all_output() waits for the server to end, so a server still
   # running without the file is ended first.
   if (!file.exists(pidfile) && server$is_alive()) server$kill()
@@ -1123,7 +1103,7 @@ test_that("closing or restarting a notebook removes the stopped worker's temp fo
   closed <- FALSE
   on.exit(if (!closed) close_notebook(nb), add = TRUE)
   worker_tmp <- function() {
-    run_cells(nb, "A", wait = TRUE, timeout = 20)
+    run_settled(nb, "A")
     eval(parse(text = sub("^\\[1\\] ", "", snap_view(notebook_snapshot(nb), "A")$output$text)))
   }
 
@@ -1228,8 +1208,7 @@ test_that("a look that found the file cut short doesn't cost the next same-bytes
 #' Run `id` and wait until its prompt shows; returns the prompt.
 run_until_prompt <- function(nb, id) {
   run_cells(nb, id, wait = FALSE)
-  shown <- wait_for(nb, function(s) !is.null(snap_view(s, id)$prompt), timeout = 30)
-  expect_true(shown, info = sprintf("process %s", notebook_snapshot(nb)$process))
+  settle(nb, function(s) !is.null(snap_view(s, id)$prompt), sprintf("%s's prompt to show", id))
   snap_view(notebook_snapshot(nb), id)$prompt
 }
 
@@ -1239,7 +1218,7 @@ test_that("a cell runs with interactive() TRUE, as in an R console (#186)", {
   path <- write_session_notebook(list(S = cell(""), A = cell("interactive()")))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, "A", wait = TRUE, timeout = 30)
+  run_settled(nb, "A")
   expect_match(snap_view(notebook_snapshot(nb), "A")$output$text, "TRUE", fixed = TRUE)
 })
 
@@ -1253,7 +1232,7 @@ test_that("an interactive worker still draws to pdf and doesn't offer installs (
   path <- write_session_notebook(list(S = cell(""), A = cell(code)))
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, "A", wait = TRUE, timeout = 30)
+  run_settled(nb, "A")
   view <- snap_view(notebook_snapshot(nb), "A")
   expect_equal(view$status, "ok")
   expect_match(view$output$text, "TRUE TRUE", fixed = TRUE)
@@ -1272,7 +1251,7 @@ test_that("readline() in a cell waits for the answer and the cell carries on wit
   expect_match(console_text(view), "Before", fixed = TRUE)
 
   answer_input(nb, "Ada", cell = "A")
-  expect_true(wait_for(nb, function(s) identical(s$process, "ready"), timeout = 30))
+  settle(nb, function(s) identical(s$process, "ready"))
   view <- snap_view(notebook_snapshot(nb), "A")
   expect_equal(view$status, "ok")
   expect_null(view$prompt)
@@ -1292,15 +1271,14 @@ test_that("menu() offers its choices and takes a number or a choice; askYesNo() 
   expect_equal(unlist(prompt$choices), c("red", "blue"))
   # Not a choice: menu() asks again, as R's does.
   answer_input(nb, "green")
-  expect_true(wait_for(nb, function(s) {
+  settle(nb, function(s) {
     p <- snap_view(s, "A")$prompt
     !is.null(p) && grepl("Enter an item", console_text(snap_view(s, "A")), fixed = TRUE)
-  }, timeout = 30))
+  })
   answer_input(nb, "blue")
-  expect_true(wait_for(nb, function(s) identical(snap_view(s, "A")$prompt$text, "Go on? (Yes/no/cancel) "),
-                       timeout = 30))
+  settle(nb, function(s) identical(snap_view(s, "A")$prompt$text, "Go on? (Yes/no/cancel) "))
   answer_input(nb, "no")
-  expect_true(wait_for(nb, function(s) identical(s$process, "ready"), timeout = 30))
+  settle(nb, function(s) identical(s$process, "ready"))
   view <- snap_view(notebook_snapshot(nb), "A")
   expect_equal(view$status, "ok")
   expect_match(view$output$text, "2 0", fixed = TRUE)
@@ -1313,7 +1291,7 @@ test_that("interrupting a cell that waits on a prompt stops it, and the prompt g
   on.exit(close_notebook(nb), add = TRUE)
   run_until_prompt(nb, "A")
   interrupt_notebook(nb)
-  expect_true(wait_for(nb, function(s) identical(s$process, "ready"), timeout = 30))
+  settle(nb, function(s) identical(s$process, "ready"))
   view <- snap_view(notebook_snapshot(nb), "A")
   expect_equal(view$status, "interrupted")
   expect_null(view$prompt)
@@ -1330,8 +1308,8 @@ test_that("a prompt whose interrupt the cell catches closes, and the cell's next
   # SIGINT straight to the worker, as the server interrupts on Unix, but
   # without clearing the run: the cell catches it and asks again.
   tools::pskill(nb$proc$get_pid(), tools::SIGINT)
-  expect_true(wait_for(nb, function(s) identical(snap_view(s, "A")$prompt$text, "Second? "), timeout = 30))
+  settle(nb, function(s) identical(snap_view(s, "A")$prompt$text, "Second? "))
   answer_input(nb, "two")
-  expect_true(wait_for(nb, function(s) identical(s$process, "ready"), timeout = 30))
+  settle(nb, function(s) identical(s$process, "ready"))
   expect_match(snap_view(notebook_snapshot(nb), "A")$output$text, "stopped two", fixed = TRUE)
 })

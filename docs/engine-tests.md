@@ -12,10 +12,23 @@ Four layers. Most tests are in the first two and start no process.
 - **Shell pieces:** framing, the wire-to-event boundary, atomic writes.
   No worker.
 - **Worker harness:** `worker_harness()` starts the real `inst/worker.R`
-  with processx and talks frames to it directly, using blocking reads with
-  a timeout. There is no server, no `later`, and no sleeps.
-- **End to end:** the R API with a real worker. Waits use
-  `wait_for(nb, predicate, timeout)`, never `Sys.sleep`.
+  with processx and talks frames to it directly. There is no server and
+  no sleeps.
+- **End to end:** the R API with a real worker. Waits use `settle(nb,
+  predicate, label)` and `run_settled(nb, ids)`, never `Sys.sleep`.
+
+No wait has a time limit (`tests/testthat/helper-wait.R`, #468): a test
+waits for its condition however slow the machine. A worker read fails at
+once if the worker exited. What ends a wait that truly hangs is
+`HANG_GUARD`, 600 seconds in which nothing changed (no frame from the
+worker, nothing new in the notebook, no output from a subprocess). Its
+error says what the test was waiting for and what the notebook showed:
+each cell's status, its last output lines, the process and the packages.
+A wait inside the API (`preview_date()`, `render_png()`) runs under
+`waiting_for(label, expr, nb)`, which checks the same thing from a `later`
+callback. The scheduling fuzz is the one exception: it reports a lost
+answer, interrupt or run after `FUZZ_QUIET` (30) seconds of silence, so
+the trace can shrink.
 
 ## File format (test-notebook-file.R)
 

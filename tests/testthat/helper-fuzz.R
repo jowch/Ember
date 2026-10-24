@@ -683,9 +683,18 @@ fuzz_apply <- function(nb, op) {
   edit_notebook(nb, e)
 }
 
+#' How long the fuzz waits through silence, nothing in the notebook
+#' changing, before it names a lost action: an answer, an interrupt or a
+#' run that never lands never resolves, so only silence can say it was
+#' lost, and returning it as a problem lets the trace shrink (a hang guard
+#' of HANG_GUARD seconds would make each shrinking replay take that long).
+#' Silence, not total time: a slow step keeps changing the notebook (a
+#' cell starts, a status, an output), so it never reaches this.
+FUZZ_QUIET <- 30
+
 #' Replay `trace` in a real worker and check it after every step. Returns
 #' NULL, or the first failure: list(step, problems).
-fuzz_replay <- function(trace, timeout = 30) {
+fuzz_replay <- function(trace) {
   cells <- lapply(trace$cells, cell)
   cells <- c(list(S = cell("")), cells[setdiff(names(cells), "S")])
   nb <- open_notebook(write_session_notebook(cells, on_cell_change = trace$mode))
@@ -703,28 +712,27 @@ fuzz_replay <- function(trace, timeout = 30) {
       before <- notebook_snapshot(nb)
       ok <- tryCatch({ fuzz_apply(nb, op); TRUE }, error = function(e) conditionMessage(e))
       if (!isTRUE(ok)) return(list(step = s, problems = paste("edit refused:", ok)))
-      if (identical(op$op, "outside") && !fuzz_noticed(nb, before, ran, op$file, timeout)) {
+      if (identical(op$op, "outside") && !fuzz_noticed(nb, before, ran, op$file)) {
         return(list(step = s, problems = paste0("a reader of ", op$file, " never noticed it change")))
       }
     }
-    res <- NULL
     if (!is.null(step$run) && (identical(step$run, "all") ||
                                step$run %in% vapply(notebook_snapshot(nb)$cells, `[[`, "", "id"))) {
       ids <- if (identical(step$run, "all")) NULL else step$run
-      res <- run_cells(nb, ids, wait = !prompts, timeout = timeout)
+      run_cells(nb, ids)
     }
     interrupted <- FALSE
     if (prompts) {
       # Cells that ask wait for an answer, so the notebook goes idle only
       # once each question is answered, after the step's `asking` actions.
-      d <- fuzz_drive(nb, step$asking, timeout)
+      d <- fuzz_drive(nb, step$asking)
       if (length(d$problems)) return(list(step = s, problems = d$problems))
       # An interrupt, an edit or another run after the run was asked for
       # can leave cells it ran not fresh, as it should: a run by hand
       # reruns a failed ancestor, which marks its other readers stale.
       interrupted <- d$interrupted || d$disturbed
     }
-    if (!wait_for(nb, is_idle, timeout = timeout)) {
+    if (!quiet_wait(nb, is_idle, FUZZ_QUIET)) {
       return(list(step = s, problems = "the notebook never went idle"))
     }
     snap <- notebook_snapshot(nb)
@@ -739,7 +747,7 @@ fuzz_replay <- function(trace, timeout = 30) {
     last <- stats::setNames(lapply(snap$cells, `[[`, "last_run"), vapply(snap$cells, `[[`, "", "id"))
     ran <- ran[intersect(names(ran), names(last))]
     ran_ok <- ran_ok[intersect(names(ran_ok), names(last))]
-    problems <- fuzz_check(snap, ran, trace$mode, if (!interrupted) step$run, res, ran_ok, dir)
+    problems <- fuzz_check(snap, ran, trace$mode, if (!interrupted) step$run, ran_ok, dir)
     if (length(problems)) return(list(step = s, problems = problems))
     # A cell whose result is gone defines nothing as far as Ember's next
     # submit of it goes (drop_graph_error_results() reads `old$defined`
@@ -756,13 +764,13 @@ fuzz_replay <- function(trace, timeout = 30) {
 #' after the step's run was asked for. An answer naming a question that
 #' isn't waiting must be refused, and an answer given must close its
 #' question.
-fuzz_drive <- function(nb, asking, timeout) {
+fuzz_drive <- function(nb, asking) {
   problems <- character()
   interrupted <- FALSE
   disturbed <- FALSE
   waiting <- function(snap) Find(function(v) !is.null(v$prompt), snap$cells)
   for (k in seq_len(100)) {
-    if (!wait_for(nb, function(s) is_idle(s) || !is.null(waiting(s)), timeout = timeout)) {
+    if (!quiet_wait(nb, function(s) is_idle(s) || !is.null(waiting(s)), FUZZ_QUIET)) {
       return(list(problems = "the notebook never went idle or asked", interrupted = interrupted, disturbed = disturbed))
     }
     v <- waiting(notebook_snapshot(nb))
@@ -780,7 +788,7 @@ fuzz_drive <- function(nb, asking, timeout) {
     if (identical(act$act, "interrupt")) {
       interrupt_notebook(nb)
       interrupted <- TRUE
-      if (!wait_for(nb, function(s) { w <- waiting(s); is.null(w) || !identical(w$prompt$id, p$id) }, timeout = timeout)) {
+      if (!quiet_wait(nb, function(s) { w <- waiting(s); is.null(w) || !identical(w$prompt$id, p$id) }, FUZZ_QUIET)) {
         return(list(problems = paste0("an interrupt didn't stop ", v$id, "'s question"), interrupted = TRUE, disturbed = disturbed))
       }
     } else if (identical(act$act, "edit")) {
@@ -801,7 +809,7 @@ fuzz_drive <- function(nb, asking, timeout) {
       if (!isTRUE(ok) && !is.null(w <- waiting(notebook_snapshot(nb))) && identical(w$prompt$id, p$id)) {
         problems <- c(problems, paste0("the answer to ", v$id, "'s question was refused: ", ok))
       }
-      if (!wait_for(nb, function(s) { w <- waiting(s); is.null(w) || !identical(w$prompt$id, p$id) }, timeout = timeout)) {
+      if (!quiet_wait(nb, function(s) { w <- waiting(s); is.null(w) || !identical(w$prompt$id, p$id) }, FUZZ_QUIET)) {
         problems <- c(problems, paste0("the answer to ", v$id, "'s question was lost: it still waits"))
       }
     }
@@ -816,33 +824,31 @@ fuzz_drive <- function(nb, asking, timeout) {
 #' its result came from the file (#439). The shell sees the change on its
 #' poll, so
 #' this is what waiting for the notebook means after a file changes. FALSE
-#' if one hasn't within `timeout` seconds.
-fuzz_noticed <- function(nb, before, ran, file, timeout) {
+#' if one hasn't after FUZZ_QUIET seconds with nothing changing.
+fuzz_noticed <- function(nb, before, ran, file) {
   last <- stats::setNames(lapply(before$cells, `[[`, "last_run"), vapply(before$cells, `[[`, "", "id"))
   pattern <- sprintf('readLines("%s")', file)
   readers <- names(Filter(function(code) grepl(pattern, code, fixed = TRUE), ran))
   readers <- Filter(function(id) !is.null(last[[id]]), readers)
   if (!length(readers)) return(TRUE)
-  wait_for(nb, function(snap) {
+  quiet_wait(nb, function(snap) {
     views <- stats::setNames(snap$cells, vapply(snap$cells, `[[`, "", "id"))
     all(vapply(readers, function(id) {
       v <- views[[id]]
       is.null(v) || isTRUE(v$stale) || v$queued || v$running || !identical(v$last_run, last[[id]])
     }, TRUE))
-  }, timeout = timeout)
+  }, FUZZ_QUIET)
 }
 
 #' What's wrong with `snap`, as sentences; empty when nothing is.
 #' `dir` is the notebook's folder when cells read data files.
-fuzz_check <- function(snap, ran, mode, run, res, ran_ok = list(), dir = NULL) {
+fuzz_check <- function(snap, ran, mode, run, ran_ok = list(), dir = NULL) {
   problems <- character()
   say <- function(...) problems <<- c(problems, paste0(...))
   views <- stats::setNames(snap$cells, vapply(snap$cells, `[[`, "", "id"))
   views <- views[names(views) != "S"]
   current <- lapply(views, `[[`, "code")
   has_run <- function(v) v$status %in% c("ok", "error")
-
-  if (!is.null(res) && isTRUE(res$timed_out)) say("the run timed out")
 
   # A cell that can't run shows why, and one that can shows no such error.
   blocked <- names(fuzz_blocked(current))

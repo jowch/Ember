@@ -150,8 +150,7 @@ test_that("run_multiple_cells answers run_feedback first, then the cell runs (29
     isTRUE(ws$page()$cell_results[[a]]$running)
   expect_true(queued_or_running)
 
-  ok <- wait_for(nb, timeout = 20)
-  expect_true(ok)
+  settle(nb)
   expect_match(ws$page()$cell_results[[a]]$output$body, "55")
 })
 
@@ -261,7 +260,7 @@ test_that("update_notebook to a text cell, then running it: kind markdown, not f
   expect_equal(ws$last()$message$response$update_went_well, "\U0001F44D")
 
   handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list(a)))
-  expect_true(wait_for(nb, timeout = 20))
+  settle(nb)
 
   page <- ws$page()
   expect_equal(page$cell_inputs[[a]]$kind, "markdown")
@@ -283,7 +282,7 @@ test_that("running a failing cell flushes ember_call/ember_line and a stacktrace
   handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
 
   handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list("ERR")))
-  expect_true(wait_for(nb, timeout = 20))
+  settle(nb)
 
   body <- ws$page()$cell_results[["ERR"]]$output$body
   expect_true(startsWith(body$ember_call, "model.frame.default("))
@@ -425,7 +424,8 @@ test_that("interrupt_all sends SIGINT to the running cell (31)", {
   so <- compile_stuck_lib()
   skip_if(is.null(so), "could not compile the stuck.c fixture (no compiler available)")
 
-  cells <- list(S = cell(sprintf("dyn.load(%s)", deparse(so))), A = cell('.Call("stuck", 6L)'))
+  marker <- tempfile("ember-stuck-")
+  cells <- list(S = cell(sprintf("dyn.load(%s)", deparse(so))), A = cell(sprintf('.Call("stuck", 6L, %s)', deparse(marker))))
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
@@ -439,14 +439,11 @@ test_that("interrupt_all sends SIGINT to the running cell (31)", {
   # S loads the library; with no setup cell it only runs when asked.
   handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list("S", "A")))
 
-  busy <- wait_for(nb, function(s) isTRUE(s$cells[[2]]$running), timeout = 15)
-  expect_true(busy)
-  busy_at <- Sys.time()
-  wait_for(nb, function(s) as.numeric(Sys.time() - busy_at, units = "secs") > 1, timeout = 10)
+  settle(nb, function(s) isTRUE(s$cells[[2]]$running), "A to start")
+  wait_until(function() file.exists(marker), "the stuck C loop to begin", nb)
 
   handle_message(server, ws, wire("interrupt_all", notebook_id = id))
-  offered <- wait_for(nb, function(s) isTRUE(s$restart_offered), timeout = 15)
-  expect_true(offered)
+  settle(nb, function(s) isTRUE(s$restart_offered), "the restart to be offered")
 
   # restart_offered has no per-cell view, so it carries no `cell_state`/
   # `topology_changed` notification for the listener to flush on; the
@@ -478,13 +475,12 @@ test_that("restart_process runs nothing in preview, ember_run_notebook runs all,
   expect_equal(snap_view(notebook_snapshot(nb), a)$status, "not_run")
 
   handle_message(server, ws, wire("ember_run_notebook", notebook_id = id))
-  ok <- wait_for(nb, timeout = 20)
-  expect_true(ok)
+  settle(nb)
   expect_equal(snap_view(notebook_snapshot(nb), a)$status, "ok")
 
   handle_message(server, ws, wire("restart_process", notebook_id = id))
-  wait_for(nb, function(snap) identical(snap$process, "preview") || snap$process == "starting" ||
-             identical(snap_view(snap, a)$status, "not_run"), timeout = 10)
+  settle(nb, function(snap) identical(snap$process, "preview") || snap$process == "starting" ||
+             identical(snap_view(snap, a)$status, "not_run"))
   expect_equal(snap_view(notebook_snapshot(nb), a)$status, "not_run")
 })
 
@@ -757,13 +753,11 @@ test_that("ember_disk_use replies with the disk use of the notebook's cache dir 
   baseline <- length(ws$messages)
   handle_message(server, ws, wire("ember_disk_use", notebook_id = id))
   expect_equal(length(ws$messages), baseline)  # the reply comes when the subprocess exits
-  # A guard against a hang, not a timing check.
-  deadline <- Sys.time() + 60
   replies <- list()
-  while (length(replies) == 0 && Sys.time() < deadline) {
+  waiting_for("the ember_disk_use reply", while (length(replies) == 0) {
     later::run_now(timeout = 0.5)
     replies <- Filter(function(m) identical(m$type, "ember_disk_use"), ws$messages)
-  }
+  })
   expect_length(replies, 1)
   msg <- replies[[1]]$message
   expect_null(msg$error)
@@ -774,15 +768,13 @@ test_that("ember_disk_use replies with the disk use of the notebook's cache dir 
 })
 
 # Wait for one reply of `type` to reach `ws`: the clean-up and disk use
-# replies come when their subprocess exits. A guard against a hang, not
-# a timing check.
+# replies come when their subprocess exits.
 await_reply <- function(ws, type) {
-  deadline <- Sys.time() + 60
   replies <- list()
-  while (length(replies) == 0 && Sys.time() < deadline) {
+  waiting_for(sprintf("the %s reply", type), while (length(replies) == 0) {
     later::run_now(timeout = 0.5)
     replies <- Filter(function(m) identical(m$type, type), ws$messages)
-  }
+  })
   replies
 }
 
@@ -794,9 +786,7 @@ test_that("a failed subprocess answers with its stderr and logs its exit status 
   logged <- character()
   withCallingHandlers({
     answer_from_subprocess(cmd, function(m) got <<- m, function(x) x, "could not measure disk use")
-    # A guard against a hang, not a timing check.
-    deadline <- Sys.time() + 60
-    while (is.null(got) && Sys.time() < deadline) later::run_now(timeout = 0.5)
+    waiting_for("the subprocess's answer", while (is.null(got)) later::run_now(timeout = 0.5))
   }, message = function(m) { logged <<- c(logged, conditionMessage(m)); invokeRestart("muffleMessage") })
   expect_equal(got, list(error = "no du here"))
   expect_match(logged, "ember: could not measure disk use (exit status 3): no du here", fixed = TRUE, all = FALSE)
@@ -1466,14 +1456,13 @@ test_that("reshow_cell pages a table through a real worker (36)", {
   handle_message(server, ws, wire("connect", notebook_id = id))
   handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
   handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list(a)))
-  expect_true(wait_for(nb, timeout = 20))
+  settle(nb)
 
   handle_message(server, ws, wire("reshow_cell", notebook_id = id, cell_id = a, objectid = "", dim = 1))
-  got_more <- wait_for(nb, function(s) {
+  settle(nb, function(s) {
     v <- Find(function(c) identical(c$id, a), s$cells)
     !is.null(v$output) && length(v$output$data$rows) == 32
-  }, timeout = 10)
-  expect_true(got_more)
+  }, "32 rows in A's output")
 })
 
 test_that("editing a cell's #| line through update_notebook marks it code_differs; running it gives the new ember$figure (ui-3 73)", {
@@ -1522,16 +1511,15 @@ test_that("ember_render_plot {cell_id, res} re-renders at the cell's own figure 
   handle_message(server, ws, wire("connect", notebook_id = id))
   handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
   handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list(a, b)))
-  expect_true(wait_for(nb, timeout = 20))
+  settle(nb)
 
   before <- Find(function(c) identical(c$id, b), notebook_snapshot(nb)$cells)$output$data
   handle_message(server, ws, wire("ember_render_plot", notebook_id = id, cell_id = b,
                                   width = 99999, height = 1, res = 1000))
-  changed <- wait_for(nb, function(s) {
+  settle(nb, function(s) {
     v <- Find(function(c) identical(c$id, b), s$cells)
     !is.null(v$output) && !identical(v$output$data, before)
-  }, timeout = 10)
-  expect_true(changed)
+  }, "B's plot to be redrawn")
 
   # res clamped to <= 384; width/height from the body are ignored -- the
   # cell's own figure size (the default, 7.5 x 5 in) is used instead.
@@ -1546,9 +1534,9 @@ test_that("ember_render_plot {cell_id, res} re-renders at the cell's own figure 
   handle_message(server, ws, wire("ember_render_plot", notebook_id = id, cell_id = a,
                                   width = 500, height = 500, res = 96))
   handle_message(server, ws, wire("ember_render_plot", notebook_id = id, cell_id = b, res = 200))
-  expect_true(wait_for(nb, function(s) {
+  settle(nb, function(s) {
     identical(notebook_state(nb)$results[[b]]$output$size$res, 200L)
-  }, timeout = 10))
+  })
   expect_identical(notebook_state(nb)$results[[a]], before_a)
 })
 
@@ -1590,8 +1578,7 @@ test_that("ember_update_packages dispatches the preview with apply = TRUE; the f
 
   handle_message(server, ws, wire("ember_update_packages", notebook_id = id))
 
-  ok <- wait_for(nb, function(snap) identical(snap$packages$snapshot, today), timeout = 30)
-  expect_true(ok, info = notebook_state(nb)$packages$target$message %||% "")
+  settle(nb, function(snap) identical(snap$packages$snapshot, today), "the snapshot to move to today")
   expect_null(notebook_state(nb)$packages$proposal)
 })
 
@@ -1864,14 +1851,13 @@ test_that("complete in safe preview replies from the fallback within handle_mess
 
   a <- names(notebook_state(nb)$cells)[2]
   handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list(a)))
-  expect_true(wait_for(nb, timeout = 20))
+  settle(nb)
 
   n_before <- length(ws$messages)
   handle_message(server, ws, wire("complete", notebook_id = id, query = "df$", query_full = "df$"))
-  deadline <- Sys.time() + 10
   found <- FALSE
   reply_msg <- NULL
-  while (!found && Sys.time() < deadline) {
+  waiting_for("a completion of df$ that offers mpg", while (!found) {
     later::run_now(timeout = 1)
     results <- Filter(function(m) identical(m$type, "complete_result"), ws$messages)
     if (length(results) > 0) {
@@ -1879,7 +1865,7 @@ test_that("complete in safe preview replies from the fallback within handle_mess
       names <- vapply(reply_msg$results, `[[`, character(1), 1)
       found <- "mpg" %in% names
     }
-  }
+  })
   expect_true(found)
   # The range inserting "mpg" at [start, stop) over "df$" gives "df$mpg",
   # not "df$df$mpg" (the worker's own token/items for a `$` completion
@@ -1914,15 +1900,14 @@ test_that("docs: preview mean needs R running, a notebook-defined f shows its co
 
   a <- names(notebook_state(nb)$cells)[2]
   handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list(a)))
-  expect_true(wait_for(nb, timeout = 20))
+  settle(nb)
   n_before <- length(Filter(function(m) identical(m$type, "docs"), ws$messages))
   handle_message(server, ws, wire("docs", notebook_id = id, query = "mean"))
-  deadline <- Sys.time() + 10
   docs_msgs <- list()
-  while (length(docs_msgs) <= n_before && Sys.time() < deadline) {
+  waiting_for("the docs reply for mean", while (length(docs_msgs) <= n_before) {
     later::run_now(timeout = 1)
     docs_msgs <- Filter(function(m) identical(m$type, "docs"), ws$messages)
-  }
+  })
   r3 <- docs_msgs[[length(docs_msgs)]]$message
   expect_identical(r3$status, "\U0001F44D")
   expect_match(r3$doc, "Arithmetic Mean")
@@ -1961,7 +1946,7 @@ test_that("docs: an idle worker that doesn't answer in time says so, not 'needs 
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
   allow_execution(nb)
-  expect_true(run_cells(nb, wait = TRUE, timeout = 20)$accepted)
+  expect_true(run_settled(nb)$accepted)
 
   server <- new_server("s", throttle = 0)
   host_notebook(server, nb)
@@ -1993,7 +1978,7 @@ test_that("docs: a help lookup slower than a completion's timeout is waited for,
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
   allow_execution(nb)
-  expect_true(run_cells(nb, wait = TRUE, timeout = 20)$accepted)
+  expect_true(run_settled(nb)$accepted)
 
   server <- new_server("s", throttle = 0)
   host_notebook(server, nb)
@@ -2003,12 +1988,11 @@ test_that("docs: a help lookup slower than a completion's timeout is waited for,
   handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
 
   handle_message(server, ws, wire("docs", notebook_id = id, query = "mean", all_packages = TRUE))
-  deadline <- Sys.time() + 20
   docs_msgs <- list()
-  while (length(docs_msgs) == 0 && Sys.time() < deadline) {
+  waiting_for("the docs reply for mean", while (length(docs_msgs) == 0) {
     later::run_now(timeout = 1)
     docs_msgs <- Filter(function(m) identical(m$type, "docs"), ws$messages)
-  }
+  })
   expect_length(docs_msgs, 1)
   r <- docs_msgs[[1]]$message
   expect_identical(r$status, "\U0001F44D")
@@ -2025,7 +2009,7 @@ test_that("docs: a lookup slower than the docs timeout is kept for the next ask,
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
   allow_execution(nb)
-  expect_true(run_cells(nb, wait = TRUE, timeout = 20)$accepted)
+  expect_true(run_settled(nb)$accepted)
 
   server <- new_server("s", throttle = 0)
   host_notebook(server, nb)
@@ -2034,14 +2018,9 @@ test_that("docs: a lookup slower than the docs timeout is kept for the next ask,
   handle_message(server, ws, wire("connect", notebook_id = id))
   handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
   docs_replies <- function() Filter(function(m) identical(m$type, "docs"), ws$messages)
-  wait_until <- function(done) {
-    deadline <- Sys.time() + 20
-    while (!done() && Sys.time() < deadline) later::run_now(timeout = 0.1)
-    expect_true(done())
-  }
 
   handle_message(server, ws, wire("docs", notebook_id = id, query = "mean", all_packages = TRUE))
-  wait_until(function() length(docs_replies()) == 1)
+  wait_until(function() length(docs_replies()) == 1, "the first docs reply")
   r1 <- docs_replies()[[1]]$message
   expect_identical(r1$status, "\u231B")
   expect_match(r1$doc, "answer in time")
@@ -2056,7 +2035,7 @@ test_that("docs: a lookup slower than the docs timeout is kept for the next ask,
   wait_until(function() {
     entry <- mget("mean\r\rTRUE", envir = nb$help_lookups, ifnotfound = list(NULL))[[1]]
     !is.null(entry$reply)
-  })
+  }, "the help lookup for mean to end")
   handle_message(server, ws, wire("docs", notebook_id = id, query = "mean", all_packages = TRUE))
   r3 <- docs_replies()[[3]]$message
   expect_identical(r3$status, "\U0001F44D")
@@ -2071,7 +2050,7 @@ test_that("docs: a late help page is not kept past a run, which may have changed
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
   allow_execution(nb)
-  expect_true(run_cells(nb, wait = TRUE, timeout = 20)$accepted)
+  expect_true(run_settled(nb)$accepted)
 
   server <- new_server("s", throttle = 0)
   host_notebook(server, nb)
@@ -2080,24 +2059,19 @@ test_that("docs: a late help page is not kept past a run, which may have changed
   handle_message(server, ws, wire("connect", notebook_id = id))
   handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
   docs_replies <- function() Filter(function(m) identical(m$type, "docs"), ws$messages)
-  wait_until <- function(done) {
-    deadline <- Sys.time() + 20
-    while (!done() && Sys.time() < deadline) later::run_now(timeout = 0.1)
-    expect_true(done())
-  }
 
   handle_message(server, ws, wire("docs", notebook_id = id, query = "mean", all_packages = TRUE))
-  wait_until(function() length(docs_replies()) == 1)
+  wait_until(function() length(docs_replies()) == 1, "the first docs reply")
   wait_until(function() {
     entry <- mget("mean\r\rTRUE", envir = nb$help_lookups, ifnotfound = list(NULL))[[1]]
     !is.null(entry$reply)
-  })
+  }, "the help lookup for mean to end")
 
   # A run in between: the kept page goes, and the next ask looks it up again.
-  expect_true(run_cells(nb, "B", wait = TRUE, timeout = 20)$accepted)
+  expect_true(run_settled(nb, "B")$accepted)
   expect_length(ls(nb$help_lookups), 0)
   handle_message(server, ws, wire("docs", notebook_id = id, query = "mean", all_packages = TRUE))
-  wait_until(function() length(docs_replies()) == 2)
+  wait_until(function() length(docs_replies()) == 2, "the second docs reply")
   r2 <- docs_replies()[[2]]$message
   expect_identical(r2$status, "\u231B")
   expect_match(r2$doc, "answer in time")
@@ -2111,7 +2085,7 @@ test_that("docs: a help lookup that fails says so, with R's message, instead of 
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
   allow_execution(nb)
-  expect_true(run_cells(nb, wait = TRUE, timeout = 20)$accepted)
+  expect_true(run_settled(nb)$accepted)
 
   server <- new_server("s", throttle = 0)
   host_notebook(server, nb)
@@ -2121,12 +2095,11 @@ test_that("docs: a help lookup that fails says so, with R's message, instead of 
   handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
 
   handle_message(server, ws, wire("docs", notebook_id = id, query = "mean", all_packages = TRUE))
-  deadline <- Sys.time() + 20
   docs_msgs <- list()
-  while (length(docs_msgs) == 0 && Sys.time() < deadline) {
+  waiting_for("the docs reply", while (length(docs_msgs) == 0) {
     later::run_now(timeout = 1)
     docs_msgs <- Filter(function(m) identical(m$type, "docs"), ws$messages)
-  }
+  })
   expect_length(docs_msgs, 1)
   r <- docs_msgs[[1]]$message
   expect_identical(r$status, "\U0001F44D")
@@ -2138,7 +2111,7 @@ test_that("docs: a reply says whether the lookup was asked to, and did, search e
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
   allow_execution(nb)
-  expect_true(run_cells(nb, wait = TRUE, timeout = 20)$accepted)
+  expect_true(run_settled(nb)$accepted)
 
   server <- new_server("s", throttle = 0)
   host_notebook(server, nb)
@@ -2150,12 +2123,11 @@ test_that("docs: a reply says whether the lookup was asked to, and did, search e
   docs_reply <- function(...) {
     ws$messages <- list()
     handle_message(server, ws, wire("docs", notebook_id = id, query = "zzznotatopic", ...))
-    deadline <- Sys.time() + 20
     docs_msgs <- list()
-    while (length(docs_msgs) == 0 && Sys.time() < deadline) {
+    waiting_for("the docs reply", while (length(docs_msgs) == 0) {
       later::run_now(timeout = 1)
       docs_msgs <- Filter(function(m) identical(m$type, "docs"), ws$messages)
-    }
+    })
     expect_length(docs_msgs, 1)
     docs_msgs[[1]]$message
   }
@@ -2184,7 +2156,7 @@ test_that("docs: a busy worker answers with an hourglass, so the help panel asks
   handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
   a <- names(notebook_state(nb)$cells)[2]
   handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list(a)))
-  expect_true(wait_for(nb, function(s) identical(s$process, "busy"), timeout = 15))
+  settle(nb, function(s) identical(s$process, "busy"))
 
   handle_message(server, ws, wire("docs", notebook_id = id, query = "mean"))
   r <- ws$last()$message
@@ -2208,15 +2180,14 @@ test_that("ember_signature with a worker and without one (59)", {
 
   a <- names(notebook_state(nb)$cells)[2]
   handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list(a)))
-  expect_true(wait_for(nb, timeout = 20))
+  settle(nb)
   n_before <- length(Filter(function(m) identical(m$type, "ember_signature"), ws$messages))
   handle_message(server, ws, wire("ember_signature", notebook_id = id, name = "lm"))
-  deadline <- Sys.time() + 10
   sig_msgs <- list()
-  while (length(sig_msgs) <= n_before && Sys.time() < deadline) {
+  waiting_for("the signature reply", while (length(sig_msgs) <= n_before) {
     later::run_now(timeout = 1)
     sig_msgs <- Filter(function(m) identical(m$type, "ember_signature"), ws$messages)
-  }
+  })
   expect_match(sig_msgs[[length(sig_msgs)]]$message$text, "^lm\\(formula, data")
 })
 
@@ -2242,7 +2213,7 @@ test_that("start_server() returns a working handle, and stop() ends the child (s
   path <- write_session_notebook(list(S = cell(""), A = cell("1")))
   started <- NULL
   expect_message(
-    started <- withVisible(start_server(path, open = FALSE, timeout = 30)),
+    started <- withVisible(start_server(path, open = FALSE, timeout = HANG_GUARD)),
     sprintf("^Ember has %s open at http://127\\.0\\.0\\.1:[1-9][0-9]*/edit\\?id=[^&]+&secret=[^ \n]+\nStop it by calling \\$stop\\(\\) on the returned server, or by quitting R\\.",
             gsub(".", "\\.", basename(path), fixed = TRUE)))
   handle <- started$value
@@ -2276,7 +2247,7 @@ test_that("start_server() prints its link, and prints it again when a browser as
 
   handle <- NULL
   expect_message(
-    handle <- start_server(port = pick_free_port(), open = FALSE, timeout = 30),
+    handle <- start_server(port = pick_free_port(), open = FALSE, timeout = HANG_GUARD),
     "^Ember is running at http://127\\.0\\.0\\.1:[1-9][0-9]*/\\?secret=[^ \n]+\nStop it by")
   on.exit(try(handle$stop(), silent = TRUE), add = TRUE)
   port <- as.integer(sub("^http://[^:]+:([0-9]+)/.*$", "\\1", handle$url))
@@ -2286,13 +2257,12 @@ test_that("start_server() prints its link, and prints it again when a browser as
   expect_equal(resp$headers[["content-type"]], "text/html; charset=utf-8")
 
   seen <- character()
-  deadline <- Sys.time() + 10
-  while (length(seen) == 0 && Sys.time() < deadline) {
+  waiting_for("the message about a request without the key", while (length(seen) == 0) {
     withCallingHandlers(later::run_now(0.2), message = function(m) {
       seen <<- c(seen, conditionMessage(m))
       invokeRestart("muffleMessage")
     })
-  }
+  })
   expect_equal(seen, paste0("A browser asked for Ember without its key. Open: ", handle$url, "\n"))
 })
 
@@ -2315,10 +2285,7 @@ test_that("start_server()'s watcher waits on the child's pipe instead of reading
     is_alive = function() proc$is_alive())
 
   expect_equal(watch_child(handle), "pipe")
-  # Until the watcher has read the pipe to its end. The deadline only keeps
-  # a broken watcher from hanging the suite.
-  deadline <- Sys.time() + 60
-  while (proc$is_incomplete_output() && Sys.time() < deadline) later::run_now(0.1)
+  waiting_for("the watcher to read the pipe to its end", while (proc$is_incomplete_output()) later::run_now(0.1))
   expect_false(proc$is_incomplete_output())
   expect_equal(handle$output, c("one", "two"))
   # A read per line and one at the end, not one every 0.5 s through the
@@ -2346,7 +2313,7 @@ test_that("serve() answers hashed vendor files immutable and everything else no-
   # after an on.exit `stop()`) has been flaky under the full suite's
   # timing, landing this test on a leftover process instead of its own.
   path <- write_session_notebook(list(S = cell(""), A = cell("1")))
-  handle <- suppressMessages(start_server(path, port = pick_free_port(), open = FALSE, timeout = 30))
+  handle <- suppressMessages(start_server(path, port = pick_free_port(), open = FALSE, timeout = HANG_GUARD))
   on.exit(try(handle$stop(), silent = TRUE), add = TRUE)
 
   m <- regmatches(handle$url, regexec("^http://127\\.0\\.0\\.1:([0-9]+)/\\?secret=(.*)$", handle$url))[[1]]
@@ -2429,10 +2396,10 @@ test_that("ember_set_package_source replies ok and the row looks the source up; 
     Find(function(r) identical(r$name, "toyC"), ws$page()$ember$packages$rows)
   }
   status_is <- function(status) {
-    wait_for(nb, function(snap) {
+    settle(nb, function(snap) {
       rows <- snap$packages$packages
       identical(rows$status[rows$name == "toyC"], status)
-    }, timeout = 30)
+    })
   }
   replies <- function(type) Filter(function(m) identical(m$type, type), ws$messages)
   expect_true(status_is("not_found"))
