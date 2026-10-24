@@ -170,7 +170,7 @@ const try_close_socket_connection = (/** @type {WebSocket} */ socket) => {
  * @param {number} timeout_s Timeout for creating the websocket connection (seconds)
  * @returns {Promise<WebsocketConnection>}
  */
-const create_ws_connection = (address, { on_message, on_socket_close }, timeout_s = connect_timeout_ms / 1000) => {
+const create_ws_connection = (address, { on_message, on_socket_close, on_event = (/** @type {string} */ what) => {} }, timeout_s = connect_timeout_ms / 1000) => {
     return new Promise((resolve, reject) => {
         const socket = new WebSocket(address)
         // Messages arrive already read, as ArrayBuffers, not as Blobs to read
@@ -183,6 +183,7 @@ const create_ws_connection = (address, { on_message, on_socket_close }, timeout_
 
         const timeout_handle = setTimeout(() => {
             console.warn("Creating websocket timed out", new Date().toLocaleTimeString())
+            on_event("socket timed out")
             try_close_socket_connection(socket)
             reject("Socket timeout")
         }, timeout_s * 1000)
@@ -226,8 +227,11 @@ const create_ws_connection = (address, { on_message, on_socket_close }, timeout_
 
         socket.onerror = async (e) => {
             console.error(`Socket did an oopsie - ${e.type}`, new Date().toLocaleTimeString(), "was open:", has_been_open, e)
+            on_event(`socket error, was open: ${has_been_open}`)
 
-            if (await socket_is_alright_with_grace_period(socket)) {
+            const alright = await socket_is_alright_with_grace_period(socket)
+            on_event(`socket error, after its grace period: ${alright ? "recovered" : has_been_open ? "closing" : "failing the try"}`)
+            if (alright) {
                 console.log("The socket somehow recovered from an error?! Onbegrijpelijk")
                 console.log(socket)
                 console.log(socket.readyState)
@@ -242,6 +246,7 @@ const create_ws_connection = (address, { on_message, on_socket_close }, timeout_
         }
         socket.onclose = async (e) => {
             console.warn(`Socket did an oopsie - ${e.type}`, new Date().toLocaleTimeString(), "was open:", has_been_open, e)
+            on_event(`socket close ${e.code}, was open: ${has_been_open}`)
 
             if (has_been_open) {
                 on_socket_close(e)
@@ -252,6 +257,7 @@ const create_ws_connection = (address, { on_message, on_socket_close }, timeout_
         }
         socket.onopen = () => {
             console.log("Socket opened", new Date().toLocaleTimeString())
+            on_event("socket open")
             clearInterval(timeout_handle)
             has_been_open = true
             resolve({
@@ -385,9 +391,16 @@ export const create_pluto_connection = async ({
     // "connected", or "key refused"; and how many key checks (which run
     // beside the wait after a failed try) are still out. Like
     // window.ember_docs (LiveDocsTab.js).
-    const connection = { state: "trying", key_checks_out: 0 }
+    // `events`: the last few things that happened to the connection
+    // (sockets opening, erroring and closing, key checks and what they
+    // found), oldest first, for a test that fails to say why (#491).
+    const connection = { state: "trying", key_checks_out: 0, events: /** @type {string[]} */ ([]) }
     // @ts-ignore
     window.ember_connection = connection
+    const note_event = (/** @type {string} */ what) => {
+        connection.events.push(`${Date.now()} ${connection.state}: ${what}`)
+        if (connection.events.length > 40) connection.events.shift()
+    }
     let auto_reconnect = true
 
     // Connect tries that failed in a row, how long they have been failing,
@@ -455,6 +468,7 @@ export const create_pluto_connection = async ({
 
     /** The page's key was refused: Ember restarted at this address. Stop retrying and say so. */
     const say_key_refused = () => {
+        note_event("key refused")
         stop_unreachable()
         connection.state = "key refused"
         on_key_refused()
@@ -473,15 +487,22 @@ export const create_pluto_connection = async ({
      * close.
      */
     const failed_try_found_key_refused = async (/** @type {any} */ ex) => {
+        note_event(`failed try: ${ex instanceof CloseEvent ? `close ${ex.code}` : ex == null ? "no event" : String(ex?.type ?? ex)}`)
         if (is_key_refused(ex)) return true
         note_failure()
         connection.key_checks_out += 1
         return await Promise.race([
-            key_check_refused(ws_address, ex)
-                .catch(() => false)
+            key_check_refused(ws_address, ex, note_event)
+                .catch((e) => {
+                    note_event(`key check failed: ${e}`)
+                    return false
+                })
                 .finally(() => (connection.key_checks_out -= 1))
                 .then((r) => (r ? true : new Promise(() => {}))),
-            wait_between_tries().then(() => false),
+            wait_between_tries().then(() => {
+                note_event("waited for the next try")
+                return false
+            }),
         ])
     }
 
@@ -540,6 +561,7 @@ export const create_pluto_connection = async ({
         connection.state = "trying"
         try {
             ws_connection = await create_ws_connection(String(ws_address), {
+                on_event: note_event,
                 on_message: (update) => {
                     message_log.push(update)
 
@@ -557,6 +579,7 @@ export const create_pluto_connection = async ({
                     on_unrequested_update(update, by_me)
                 },
                 on_socket_close: async (/** @type {CloseEvent=} */ e) => {
+                    note_event(`socket lost: ${e ? `close ${e.code}` : "no event"}, said hello: ${said_hello}`)
                     on_connection_status(false, false)
                     if (is_key_refused(e)) {
                         say_key_refused()
@@ -630,6 +653,7 @@ export const create_pluto_connection = async ({
             return u.message
         } catch (ex) {
             console.error("connect() failed", ex)
+            note_event("try failed")
             if (await failed_try_found_key_refused(ex)) {
                 on_connection_status(false, false)
                 say_key_refused()
@@ -651,9 +675,13 @@ export const create_pluto_connection = async ({
  * can arrive first: a socket that dropped while the old server was gone
  * gets its answer from the new one.
  */
-const key_check_refused = async (/** @type {string | URL} */ ws_url, ex) => {
-    if (!(ex instanceof CloseEvent) || ex.code !== 1006) return false
+const key_check_refused = async (/** @type {string | URL} */ ws_url, ex, note = (/** @type {string} */ what) => {}) => {
+    if (!(ex instanceof CloseEvent) || ex.code !== 1006) {
+        note("no key check: not a 1006 close")
+        return false
+    }
     const response = await fetch(auth_check_url_from_ws(ws_url))
+    note(`key check: ${response.status}`)
     if (response.status !== 403 && response.status !== 401) return false
     return !is_desktop() || (await is_backend_server_loaded())
 }
