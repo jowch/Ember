@@ -195,7 +195,8 @@ read_available <- function(repos, type) {
 #' unused elsewhere. With them almost nothing builds from source, except
 #' at a snapshot date from before Package Manager built binaries for this
 #' R (#19): then most of its packages have none. So Package Manager is
-#' asked (`ppm_source_only()`), at the URL renv will use (`binary_repos`,
+#' asked about each (`ppm_source_only()`, `cores` at a time), at the URL
+#' renv will use (`binary_repos`,
 #' `installer_repos()$probe`), and the CRAN packages it sends as source
 #' are counted, as without binaries. (Measured: at 2024-06-01 Package
 #' Manager sent R 4.6 the source of every package asked about, pure R ones
@@ -209,7 +210,7 @@ read_available <- function(repos, type) {
 #' downloaded, so a missing compiler shows up from their build instead.
 compiler_check <- function(lock, repos, linux_binaries = FALSE, os = os_kind(),
                            compiler = NULL, binary_type = .Platform$pkgType,
-                           binary_repos = repos, serves_binary = ppm_serves_binary) {
+                           binary_repos = repos, serves_binary = ppm_serves_binary, cores = default_cores()) {
   linux <- identical(os, "linux")
   if (is.null(compiler)) compiler <- has_compiler(os)
   if (isTRUE(compiler)) return(NULL)
@@ -218,7 +219,7 @@ compiler_check <- function(lock, repos, linux_binaries = FALSE, os = os_kind(),
   if (linux && linux_binaries) {
     cran <- entries[entries$source == "CRAN", , drop = FALSE]
     if (nrow(cran) == 0 || !"CRAN" %in% names(binary_repos)) return(NULL)
-    source <- ppm_source_only(cran, binary_repos[["CRAN"]], serves_binary)
+    source <- ppm_source_only(cran, binary_repos[["CRAN"]], serves_binary, cores = cores)
     if (!any(source)) return(NULL)
     # Only the CRAN packages Package Manager sends as source build here.
     entries <- entries[entries$source != "CRAN" | entries$name %in% cran$name[source], , drop = FALSE]
@@ -309,32 +310,30 @@ ppm_serves_binary <- function(url, timeout = 10L) {
   grepl("binary", type[[length(type)]], ignore.case = TRUE)
 }
 
+#' How many of `ppm_source_only()`'s requests run at a time: eight, or one
+#' on Windows, where `parallel::mclapply()` can't fork (only tests ask
+#' there, for Linux).
+default_cores <- function() if (.Platform$OS.type == "windows") 1L else 8L
+
 #' Which of `entries` (lock rows) Package Manager sends as source from
-#' `repo`, a `__linux__` repository: logical, one per row. Four rows
-#' spread through them are asked about first (`serves_binary`). When all
-#' four come as binaries, none count, so an install at a date with
-#' binaries asks four times only. When one comes as source, every row is
-#' asked about. A date from before Package Manager built binaries for
-#' this R isn't all source: a version that was still CRAN's current one
-#' when it started building for this R has a binary (at 2025-03-20 on R
-#' 4.6, MASS 7.3-65 and R6 2.6.1 do, #520), so one answer can't stand for
-#' the rest. Asking stops after two answers in a row it can't get (`NA`),
-#' and those count as binaries.
-ppm_source_only <- function(entries, repo, serves_binary = ppm_serves_binary) {
+#' `repo`, a `__linux__` repository: logical, one per row. Every row is
+#' asked about (`serves_binary`): a date from before Package Manager built
+#' binaries for this R isn't all source, since a version that was still
+#' CRAN's current one when it started building for this R has a binary
+#' (at 2025-03-20 on R 4.6, MASS 7.3-65 and R6 2.6.1 do, #520), so no
+#' answer stands for another. Package Manager's Linux index doesn't say
+#' which versions have binaries, so each is a HEAD request (about 0.3 s
+#' here); they run `cores` at a time (49 packages: 13 s one at a time,
+#' 2 s eight at a time). The first is asked alone: when it can't be
+#' answered (`NA`) none count, rather than wait out a timeout for each.
+ppm_source_only <- function(entries, repo, serves_binary = ppm_serves_binary, cores = default_cores()) {
   n <- nrow(entries)
   if (n == 0) return(logical())
-  answers <- rep(NA, n)
   ask <- function(i) serves_binary(package_url(repo, entries$name[[i]], entries$version[[i]]))
-  sample <- unique(round(seq(1, n, length.out = min(n, 4L))))
-  for (i in sample) answers[[i]] <- ask(i)
-  if (!any(answers[sample] %in% FALSE)) return(rep(FALSE, n))
-  unreachable <- 0L
-  for (i in setdiff(seq_len(n), sample)) {
-    if (unreachable >= 2L) break
-    answers[[i]] <- ask(i)
-    unreachable <- if (is.na(answers[[i]])) unreachable + 1L else 0L
-  }
-  answers %in% FALSE
+  first <- ask(1L)
+  if (is.na(first)) return(rep(FALSE, n))
+  rest <- if (n > 1) parallel::mclapply(2:n, ask, mc.cores = cores) else list()
+  c(identical(first, FALSE), vapply(rest, function(a) identical(a, FALSE), logical(1)))
 }
 
 #' The packages renv names in its "failed to install" error, or none for
@@ -450,15 +449,16 @@ no_binary_packages <- function(failed, lock, repos, binary_repos = repos, linux_
 #'
 #' Packages renv's cache already holds (`in_renv_cache()`, under
 #' `cache`) aren't counted: they don't build again. On Linux with Package
-#' Manager binaries Package Manager is asked (`ppm_source_only()`), at the
-#' URL renv downloads from (`binary_repos`, `installer_repos()$probe`). On
+#' Manager binaries Package Manager is asked about each (`ppm_source_only()`,
+#' `cores` at a time), at the URL renv downloads from (`binary_repos`,
+#' `installer_repos()$probe`). On
 #' macOS and Windows the
 #' binary index is read (`no_binary_packages()`). On Linux without those
 #' binaries everything builds from source, as it always does there, so
 #' none: the date isn't why.
 source_only_packages <- function(lock, repos, cache, binary_repos = repos, linux_binaries = FALSE,
                                  os = os_kind(), binary_type = .Platform$pkgType,
-                                 serves_binary = ppm_serves_binary, minor = r_info()$minor) {
+                                 serves_binary = ppm_serves_binary, minor = r_info()$minor, cores = default_cores()) {
   none <- stats::setNames(character(), character())
   e <- lock$entries[lock$entries$source == "CRAN", , drop = FALSE]
   if (!is.null(cache)) {
@@ -469,7 +469,7 @@ source_only_packages <- function(lock, repos, cache, binary_repos = repos, linux
   if (nrow(e) == 0) return(none)
   if (identical(os, "linux")) {
     if (!linux_binaries || !"CRAN" %in% names(binary_repos)) return(none)
-    source <- ppm_source_only(e, binary_repos[["CRAN"]], serves_binary)
+    source <- ppm_source_only(e, binary_repos[["CRAN"]], serves_binary, cores = cores)
     return(stats::setNames(e$version[source], e$name[source])[order(e$name[source])])
   }
   lock$entries <- e

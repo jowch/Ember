@@ -170,7 +170,7 @@ test_that("compiler_check() on Linux with Package Manager binaries asks Package 
   # Binaries for this R at this date: nothing to count, no index read.
   expect_null(compiler_check(lock, c(CRAN = "file:///nonexistent/ember-test-repo"), linux_binaries = TRUE,
                              os = "linux", compiler = FALSE, binary_repos = binary_repos,
-                             serves_binary = answer(TRUE)))
+                             serves_binary = answer(TRUE), cores = 1L))
   expect_equal(asked, c("https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/Rcpp_1.0.12.tar.gz",
                         "https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/glue_1.8.0.tar.gz"))
   # Can't tell: left to the build's own error, as before.
@@ -313,7 +313,7 @@ test_that("source_only_packages() names, before the install, the CRAN packages t
   }
   got <- source_only_packages(lock, c(CRAN = "https://ppm.example/cran/2024-06-01"), cache,
                               binary_repos = binary_repos, linux_binaries = TRUE, os = "linux",
-                              serves_binary = answer(FALSE), minor = "4.6")
+                              serves_binary = answer(FALSE), minor = "4.6", cores = 1L)
   expect_equal(got, c(cli = "3.6.2", glue = "1.7.0"))
   expect_equal(asked, c("https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/cli_3.6.2.tar.gz",
                         "https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/glue_1.7.0.tar.gz"))
@@ -326,37 +326,30 @@ test_that("source_only_packages() names, before the install, the CRAN packages t
                                      os = "linux", serves_binary = answer(TRUE), minor = "4.6"), 0)
   expect_length(source_only_packages(lock, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE,
                                      os = "linux", serves_binary = answer(NA), minor = "4.6"), 0)
-  # A date that has binaries: only the few spread through the lock are asked.
+  # Every package is asked about, so a date where only the last one
+  # comes as source names it (#520).
   asked <- character()
   many <- parse_lock_lines(sprintf("p%02d 1.0 CRAN", 1:10))$lock
-  expect_length(source_only_packages(many, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE,
-                                     os = "linux", serves_binary = answer(TRUE), minor = "4.6"), 0)
-  expect_equal(sub(".*/", "", asked), sprintf("p%02d_1.0.tar.gz", c(1, 4, 7, 10)))
+  expect_equal(source_only_packages(many, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE,
+                                    os = "linux", serves_binary = function(url) { asked <<- c(asked, url); !grepl("p10_", url) },
+                                    minor = "4.6", cores = 1L),
+               c(p10 = "1.0"))
+  expect_equal(sub(".*/", "", asked), sprintf("p%02d_1.0.tar.gz", 1:10))
   # A date from before binaries for this R with some anyway (#520): the
   # first package, still CRAN's current version, has one, and so does
-  # another; the rest come as source. Every package is asked about, and
-  # just those count.
+  # another; the rest come as source, and just those count.
   mixed <- parse_lock_lines(c("MASS 7.3-65 CRAN", "Matrix 1.7-3 CRAN", "R6 2.6.1 CRAN", "cli 3.6.4 CRAN", "dplyr 1.1.4 CRAN",
                               "fansi 1.0.6 CRAN", "isoband 0.2.7 CRAN", "rlang 1.1.5 CRAN", "stringi 1.8.4 CRAN"))$lock
-  asked <- character()
   got <- source_only_packages(mixed, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE, os = "linux",
-                              serves_binary = function(url) { asked <<- c(asked, url); grepl("/(MASS|R6)_", url) },
-                              minor = "4.6")
+                              serves_binary = function(url) grepl("/(MASS|R6)_", url), minor = "4.6", cores = 1L)
   expect_equal(got, c(Matrix = "1.7-3", cli = "3.6.4", dplyr = "1.1.4", fansi = "1.0.6", isoband = "0.2.7",
                       rlang = "1.1.5", stringi = "1.8.4"))
-  expect_length(unique(asked), 9)
-  # Package Manager stops answering partway: asking stops after two
-  # answers in a row it couldn't get, and what it did learn counts.
+  # Package Manager can't be asked about the first: nothing else is asked
+  # and none count, rather than wait out a timeout for each.
   asked <- character()
-  got <- source_only_packages(many, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE, os = "linux",
-                              serves_binary = function(url) {
-                                asked <<- c(asked, url)
-                                if (grepl("p0[1-4]_|p10_", url)) grepl("p01_", url) else NA
-                              }, minor = "4.6")
-  # Asked: p01, p04, p07 (no answer) and p10 first, then p02 and p03, and
-  # p05 and p06 with no answer, which stops it.
-  expect_equal(got, c(p02 = "1.0", p03 = "1.0", p04 = "1.0", p10 = "1.0"))
-  expect_equal(sub(".*/", "", asked), sprintf("p%02d_1.0.tar.gz", c(1, 4, 7, 10, 2, 3, 5, 6)))
+  expect_length(source_only_packages(many, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE,
+                                     os = "linux", serves_binary = answer(NA), minor = "4.6", cores = 1L), 0)
+  expect_equal(sub(".*/", "", asked), "p01_1.0.tar.gz")
   # Linux without them: everything builds there anyway, so nothing is asked.
   expect_length(source_only_packages(lock, binary_repos, cache, linux_binaries = FALSE, os = "linux",
                                      serves_binary = function(url) stop("not asked"), minor = "4.6"), 0)
@@ -420,6 +413,15 @@ test_that("on Linux the checks ask Package Manager at the binary URL renv downlo
   other <- installer_repos(c(CRAN = "file:///repos/cran"), cran_binary = NULL)
   expect_false(other$linux_binaries)
   expect_equal(other$probe, other$repos)
+})
+
+test_that("ppm_source_only() asks several at a time, with the same answers as one at a time (#520)", {
+  skip_on_os("windows") # mclapply forks; the Linux path it serves runs only on Linux
+  entries <- parse_lock_lines(sprintf("p%02d 1.0 CRAN", 1:20))$lock$entries
+  serves <- function(url) !grepl("p(03|11|20)_", url)
+  one <- ppm_source_only(entries, "https://ppm.example/cran/__linux__/noble/2025-03-20", serves, cores = 1L)
+  expect_equal(which(one), c(3L, 11L, 20L))
+  expect_equal(ppm_source_only(entries, "https://ppm.example/cran/__linux__/noble/2025-03-20", serves, cores = 4L), one)
 })
 
 test_that("[net] at a date with binaries for this R, the installer's own URLs name no package (#19)", {
