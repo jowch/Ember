@@ -401,6 +401,69 @@ test_that("a failed GitHub lookup doesn't fall back to CRAN: the lock stays and 
   expect_true(key %in% effect_keys(r))
 })
 
+test_that("a failed lookup for a source no cell uses doesn't stop the packages the notebook uses (#519)", {
+  # The entry an install call wrote stays once the call is gone.
+  s <- src_state(list(S = cell(""), A = cell("library(dplyr)")), sources = c(toyC = "github:lab/toyC"))
+  key <- "github/lab/toyC@HEAD"
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_at(), at(2)))
+  r <- drive(r$state, ev_index_failed(key, "GitHub refused to look up github:lab/toyC@HEAD", at(3)))
+  expect_equal(format_lock_lines(r$state$file$lock), c("cli 3.6.5 CRAN", "dplyr 1.1.4 CRAN", "glue 1.8.0 CRAN"))
+  expect_equal(r$state$file$header$sources, c(toyC = "github:lab/toyC"))
+  # The failure still shows, on its own row.
+  probs <- r$state$packages$problems
+  expect_equal(probs$kind, "index_unavailable")
+  expect_equal(probs$package, "toyC")
+  expect_match(probs$message, "github:lab/toyC", fixed = TRUE)
+
+  # Once a cell uses it again, its failure stops resolution as before.
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "library(dplyr)\nlibrary(toyC)")), at(4)))
+  r <- drive(r$state, ev_index_failed(key, "GitHub refused to look up github:lab/toyC@HEAD", at(5)))
+  expect_false("toyC" %in% r$state$file$lock$entries$name)
+  expect_equal(r$state$packages$problems$package, "toyC")
+})
+
+test_that("a date preview isn't refused for a source no cell uses whose lookup fails (#519)", {
+  s <- src_state(list(S = cell(""), A = cell("library(dplyr)")), sources = c(toyC = "github:lab/toyC"))
+  key <- "github/lab/toyC@HEAD"
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_at(), at(2)))
+  r <- drive(r$state, ev_index_failed(key, "GitHub refused to look up github:lab/toyC@HEAD", at(3)))
+  r <- drive(r$state, ev_preview_date("2026-09-30", at(4)))
+  # The preview asks the source again, as it asks every failed index.
+  expect_setequal(effect_keys(r), c(key, "cran/2026-09-30"))
+  r <- drive(r$state, ev_index_failed(key, "GitHub refused to look up github:lab/toyC@HEAD", at(5)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-30"), cran_at("2026-09-30"), at(6)))
+  prop <- r$state$packages$proposal
+  expect_equal(prop$status, "ready")
+  expect_setequal(prop$changes$name, c("cli", "dplyr"))
+})
+
+test_that("a locked GitHub package whose use is dropped doesn't block the rest when its lookup then fails (#519)", {
+  r <- open_toyc()                                       # toyC locked from GitHub at C2
+  r <- drive(r$state, ev_apply(list(op_set_code("A", "library(dplyr)")), at(4)))
+  # The wanted set changed, so the source is asked again; on a machine
+  # without that commit cached, GitHub refuses.
+  keys <- effect_keys(r)
+  expect_true(github_key("lab", "toyC", C2) %in% keys)
+  for (k in keys) r <- drive(r$state, ev_index_failed(k, "GitHub refused (403)", at(5)))
+  expect_equal(format_lock_lines(r$state$file$lock), c("cli 3.6.5 CRAN", "dplyr 1.1.4 CRAN", "glue 1.8.0 CRAN"))
+  expect_equal(r$state$packages$problems$package, "toyC")
+})
+
+test_that("a failed lookup for a dependency's source stops resolution rather than take CRAN's copy (#519)", {
+  # No cell names glue, but dplyr imports it, and the header says where it comes from.
+  s <- src_state(list(S = cell(""), A = cell("library(dplyr)")), sources = c(glue = "github:tidy/glue"))
+  key <- "github/tidy/glue@HEAD"
+  r <- drive(s, ev_open(at(1)))
+  r <- drive(r$state, ev_index_fetched(repo_key("cran", "2026-09-01"), cran_at(), at(2)))
+  r <- drive(r$state, ev_index_failed(key, "GitHub refused to look up github:tidy/glue@HEAD", at(3)))
+  expect_equal(r$state$file$lock$entries$name, character())
+  probs <- r$state$packages$problems
+  expect_equal(probs$kind, "index_unavailable")
+  expect_equal(probs$package, "glue")
+})
+
 test_that("a source holding another package says so and resolves nothing", {
   s <- src_state(list(S = cell(""), A = cell("library(dplyr)")), sources = c(dplyr = "github:lab/toyC"))
   key <- "github/lab/toyC@HEAD"
