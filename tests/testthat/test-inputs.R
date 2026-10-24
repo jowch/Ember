@@ -520,6 +520,10 @@ test_that("input_list() binds as one input: its parts' values in a named list, s
   r <- inputs_run(h, "I", 4L, "p <- input_list(n = input_slider(1L, 10L, 5L), m = input_select(c(A = 'a', B = 'b')))",
                   values = list(p = list(n = 9L, m = "b")))
   expect_identical(r$inputs[[1]]$value, list(n = 9L, m = "b"))
+  # Part by part: a part that no longer allows its value gets its default, the others keep theirs.
+  r <- inputs_run(h, "I", 5L, "p <- input_list(n = input_slider(1L, 10L, 5L), m = input_select(c(A = 'a', B = 'b')))",
+                  values = list(p = list(n = 99L, m = "b")))
+  expect_identical(r$inputs[[1]]$value, list(n = 5L, m = "b"))
 })
 
 test_that("a failed run leaves no input to set", {

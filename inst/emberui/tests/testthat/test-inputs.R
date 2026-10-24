@@ -161,6 +161,16 @@ test_that("input_list() is a named list of its inputs' values, and reports once,
   seen <- list()
   with_hook(hook, input_list(n = input_slider(1, input_number(10))))
   expect_identical(vapply(seen, function(s) s$spec$type, ""), c("number", "list"))
+  # Even one identical to another part's call (review).
+  seen <- list()
+  value <- with_hook(hook, input_list(a = input_number(10), b = input_slider(1, input_number(10))))
+  expect_identical(value, list(a = 10, b = 1))
+  expect_identical(vapply(seen, function(s) s$spec$type, ""), c("number", "list"))
+
+  # A kept value is kept part by part: a part that no longer fits gets its default.
+  expect_identical(spec$keep(list(n = 99L, show = FALSE)), list(n = 5L, show = FALSE))
+  expect_identical(spec$keep(list(show = FALSE)), list(n = 5L, show = FALSE))
+  expect_identical(spec$keep("junk"), list(n = 5L, show = TRUE))
 })
 
 test_that("input_list() needs named input calls, each once, and no list inside", {

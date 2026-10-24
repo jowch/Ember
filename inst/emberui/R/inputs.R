@@ -117,9 +117,14 @@ input_list <- function(...) {
   if (anyDuplicated(nms)) {
     stop(sprintf("Each name in `input_list()` must be used once; `%s` is repeated.", nms[anyDuplicated(nms)]), call. = FALSE)
   }
+  # One part at a time, with only that part's call listed: an input inside
+  # its arguments identical to another part's call reports as usual.
   outer <- .state$parts
-  .state$parts <- c(outer, unname(as.list(exprs)))
-  values <- tryCatch(list(...), finally = .state$parts <- outer)
+  values <- structure(vector("list", length(exprs)), names = nms)
+  for (k in seq_along(exprs)) {
+    .state$parts <- c(outer, list(exprs[[k]]))
+    values[k] <- list(tryCatch(...elt(k), finally = .state$parts <- outer))
+  }
   bad <- !vapply(values, inherits, logical(1), "emberui_part")
   if (any(bad)) {
     stop(sprintf("`%s` in `input_list()` must be an input call, such as `%s = input_slider(1, 10)`.",
@@ -141,10 +146,20 @@ input_list <- function(...) {
     names(out) <- nms
     out
   }
+  # A kept value is kept part by part: a part that no longer allows its
+  # value goes back to its default, and the others keep theirs.
+  keep <- function(x) {
+    out <- lapply(nms, function(nm) {
+      v <- if (is.list(x)) x[[nm]]
+      tryCatch(checks[[nm]](v), error = function(e) specs[[nm]]$value)
+    })
+    names(out) <- nms
+    out
+  }
   parts <- lapply(specs, function(s) s[names(s) != "check"])
   names(parts) <- nms
   report(list(type = "list", value = lapply(parts, `[[`, "value"), parts = parts,
-              check = check), call)
+              check = check, keep = keep), call)
 }
 
 # A number in [min, max] (`NA` is no limit), returned with `value`'s type:

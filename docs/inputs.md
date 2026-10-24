@@ -161,7 +161,12 @@ of the user's that calls one), and a list can't hold another list. An
 input nested inside a part's own arguments
 (`input_slider(1, input_number(10))`) is reported on its own, as anywhere
 else. Its check takes a list with every part's name and checks each part,
-naming the part that failed ("`n`: The value must be ...").
+naming the part that failed ("`n`: The value must be ..."), so
+`set_input()` (and an agent's tool) sets the whole list:
+`set_input(nb, "p", list(n = 3, method = "b"))`. When the cell reruns, the
+kept value is kept part by part: a part whose input no longer allows its
+value goes back to its default, and the others keep theirs (the spec's
+`keep`, which the worker uses for a kept value in place of `check`).
 
 ## Under plain `Rscript`
 
