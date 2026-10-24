@@ -956,7 +956,21 @@ invalidate_dependents <- function(state, id, names, queue = TRUE, waiting = queu
     if (!is.na(pos)) dependents <- union(dependents, state$graph$order[-seq_len(pos)])
   }
   if (length(names) > 0) dependents <- union(dependents, readers_of(state, id, names, edited, walk, known = below))
-  invalidate_cells(state, id, setdiff(dependents, id), queue = queue, waiting = waiting, g = g)
+  state <- invalidate_cells(state, id, setdiff(dependents, id), queue = queue, waiting = waiting, g = g)
+  # A stop the walk reached with a result is stale now, and so is every
+  # result that read from it, since a result is never fresh on a stale one
+  # (#603). Those can't run on anything new until the stop's graph error
+  # clears, so they are marked, not queued. The walk goes only through
+  # results: a cell past the stop that has none read nothing from it (#390).
+  done <- c(dependents, id)
+  from <- intersect(intersect(dependents, stops), names(state$results))
+  while (length(from) > 0) {
+    from <- setdiff(unique(unlist(lapply(from, function(s) downstream(g, s)))), done)
+    from <- intersect(from, names(state$results))
+    done <- c(done, from)
+    state$results[from] <- lapply(state$results[from], function(r) { r$stale <- TRUE; r })
+  }
+  state
 }
 
 #' The cells other than `id` that read any of `names`, and everything

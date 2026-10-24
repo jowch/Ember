@@ -32,7 +32,6 @@ fuzz_steps <- function() {
 # its failure, so its later steps aren't checked. Entries look like
 #   "lazy 30" = list(issue = 174, step = 5L, kind = "after running every cell, _ isn't fresh")
 fuzz_known <- list(
-  "conflicts autorun 2895" = list(issue = 603, step = 20L, kind = "_ isn't stale but reads from _, which is"),
   "inputs lazy 2959" = list(issue = 604, step = 15L, kind = "after running _, it isn't fresh"))
 
 known_seeds <- function(mode) {
@@ -199,6 +198,19 @@ test_that("a cell newly marked stale by a changed upstream error marks what read
                  list(ops = list(list(op = "set_code", cell = "C4", code = "v4[1] <- 63\nv5 <- (87 + 1 * v1) %% 997")), run = NULL),
                  list(ops = list(list(op = "set_code", cell = "C6", code = "(53 + 1 * v8) %% 997")), run = "C6"),
                  list(ops = list(list(op = "set_code", cell = "C3", code = "v9 <- (2 + 1 * v2) %% 997")), run = NULL))))
+})
+
+test_that("a cell a stopped walk marks stale marks what read from it (#603)", {
+  # C3 assigns v7, which C5 defines, so the walk from running C4 stops at
+  # C5 and marks it stale; C6 read from C5, so it ends stale too.
+  expect_trace_passes(list(mode = "autorun",
+    cells = list(C3 = "v3 <- (55 + 1 * v2) %% 997", C4 = "v4 <- (62 + 1 * v3) %% 997\nv5 <- (v4 * 3 + 62) %% 997",
+                 C5 = "v6 <- (14 + 1 * v4) %% 997\nv7 <- (v6 * 3 + 14) %% 997",
+                 C6 = "v8 <- (73 + 1 * v6) %% 997\nv9 <- (v8 * 3 + 73) %% 997"),
+    steps = list(list(ops = list(), run = "C6"),
+                 list(ops = list(list(op = "set_code", cell = "C4", code = "v3 <- 62\nv4 <- (81 + 1 * v3) %% 997\nv5 <- (v4 * 3 + 81) %% 997")), run = NULL),
+                 list(ops = list(list(op = "set_code", cell = "C3", code = "v7[1] <- 24\nv3 <- stop(\"fail 72\")")), run = NULL),
+                 list(ops = list(), run = "C4"))))
 })
 
 test_that("a hand run doesn't leave a cell stale through a cell that can't run (#390)", {
