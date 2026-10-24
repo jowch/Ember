@@ -216,6 +216,9 @@ export const Cell = ({
     // Markdown cells never run: their output is always the rendered text.
     const no_output_yet = kind !== "markdown" && (output?.last_run_timestamp ?? 0) === 0
     const code_not_trusted_yet = process_waiting_for_permission && no_output_yet
+    // A bound input on the cell's last line is the cell's output (docs/inputs.md): its
+    // widget takes the output area alone. A failed run's output is its error.
+    const input_is_output = !errored && (ember?.inputs ?? []).some((i) => i.output)
 
     // When reading the code in a static HTML preview
     const [inspecting_hidden_code_here, set_inspecting_hidden_code_here] = useState(false)
@@ -669,12 +672,11 @@ export const Cell = ({
             ${load_notes.map(
                 (note) => html`<ember-settings-note class="load-note" role="status">${t("t_load_note", { package: note.package, name: note.setting })}</ember-settings-note>`
             )}
-            ${!code_not_trusted_yet && (ember?.inputs?.length ?? 0) > 0
-                ? html`<${CellInputs} cell_id=${cell_id} inputs=${ember.inputs} disabled=${disable_input} />`
-                : null}
             ${code_not_trusted_yet
                 ? null
-                : cell_api_ready
+                : input_is_output
+                  ? html`<${CellInputs} cell_id=${cell_id} inputs=${ember.inputs} place="output" disabled=${disable_input} />`
+                  : cell_api_ready
                   ? html`<${CellOutput} errored=${errored} ...${output} ember_figure=${ember?.figure} text_cell=${kind === "markdown" && !disable_input} ember_split=${split_n} on_split=${on_split} sanitize_html=${sanitize_html} cell_id=${cell_id} />`
                   : html``}
             <${CellInput}
@@ -719,6 +721,9 @@ export const Cell = ({
                 on_run=${on_run}
                 on_interrupt=${on_interrupt}
             />
+            ${!code_not_trusted_yet && (ember?.inputs ?? []).some((i) => !i.output || errored)
+                ? html`<${CellInputs} cell_id=${cell_id} inputs=${ember.inputs} place=${errored ? "all-below" : "below"} disabled=${disable_input} />`
+                : null}
             ${remote_replaced
                 ? html`<ember-settings-note class="remote-replace-note" role="status">${t("t_remote_replace_note", { mod: ctrl_or_cmd_name })}</ember-settings-note>`
                 : null}

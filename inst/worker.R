@@ -611,12 +611,13 @@ run_cell <- function(msg) {
               rc$from_lock <- union(rc$from_lock, if (length(s$packages)) as.character(s$packages) else "")
               next
             }
-            input_expect <<- input_expectation(msg$inputs, k, exprs[[k]])
+            input_expect <<- input_expectation(msg$inputs, k, exprs[[k]], last = k == length(exprs))
             r <- withVisible(eval(exprs[[k]], globalenv()))
             watch_data <- data_watch_step(watch_data, k)
             # A bound input's value changes without the cell rerunning, so
             # it isn't shown as the assigned value (design.md, "Which
-            # values a cell shows"); the widget will be.
+            # values a cell shows"): on the last line, the widget is the
+            # output instead (its report's `output`, docs/inputs.md).
             bound_here <- !is.null(input_expect) && input_expect$used && !input_expect$blocked
             input_expect <<- NULL
             if (k < length(exprs)) {
@@ -981,7 +982,9 @@ install_input_hook <- function() {
 #' server's binding for it (`input_bindings()` in R/inputs.R: rules 1 and
 #' 3), with the call it expects (the assignment's right-hand side, rule 2)
 #' and the value kept for the name, if any. `NULL` when it binds nothing.
-input_expectation <- function(inputs, k, expr) {
+#' `last`: `k` is the cell's last top-level expression, whose value is the
+#' cell's output, so a bound input there is shown as the output.
+input_expectation <- function(inputs, k, expr, last = FALSE) {
   find <- function(bs) Find(function(b) identical(as.integer(b$index), as.integer(k)), bs)
   b <- find(inputs$bind)
   blocked <- is.null(b)
@@ -989,7 +992,7 @@ input_expectation <- function(inputs, k, expr) {
   if (is.null(b) || !is.call(expr) || length(expr) != 3) return(NULL)
   kept <- !blocked && b$name %in% names(inputs$values)
   list(name = b$name, call = expr[[3]], blocked = blocked, used = FALSE,
-       kept = kept, value = if (kept) inputs$values[[b$name]])
+       kept = kept, value = if (kept) inputs$values[[b$name]], last = isTRUE(last))
 }
 
 #' The hook every emberui input function calls: `spec` as above, `call`
@@ -1018,6 +1021,7 @@ input_hook <- function(spec, call) {
     name = if (matched) e$name,
     bound = matched && !e$blocked,
     reason = if (!matched) "not_assigned" else if (e$blocked) "read_elsewhere",
+    output = matched && !e$blocked && isTRUE(e$last),
     spec = spec[!vapply(spec, is.function, logical(1))],
     default = spec$value, value = value)
   value

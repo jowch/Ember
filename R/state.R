@@ -305,9 +305,10 @@ new_worker_state <- function() {
 #'   rebinding them (the worker's report, #167). Cells that read them don't
 #'   rerun, so the cell shows a note.
 #' * `inputs`: one entry per input call the run made, in order (the
-#'   worker's report, `input_hook()`): `list(name, bound, reason, spec,
-#'   default, value)`. `bound` inputs can be set (`set_input()`); an
-#'   unbound one has `reason` `"not_assigned"` (not the right-hand side of
+#'   worker's report, `input_hook()`): `list(name, bound, reason, output,
+#'   spec, default, value)`. `output` is `TRUE` for a bound input on the
+#'   cell's last line: its widget is the cell's output. `bound` inputs can
+#'   be set (`set_input()`); an unbound one has `reason` `"not_assigned"` (not the right-hand side of
 #'   a top-level assignment) or `"read_elsewhere"` (the cell reads or
 #'   redefines `name` too). `spec` is the input's type and arguments.
 #'   `value` follows `set_input()`.

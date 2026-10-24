@@ -13,8 +13,8 @@ input_types <- c("slider", "number", "checkbox", "text", "select", "radio")
 #' the top-level expression (1-based, in the cell's own parse) whose
 #' right-hand side is the input call. `bind` holds the assignments that
 #' meet rules 1 and 3; `blocked` those that meet rule 1 only, because
-#' something else in the cell reads or redefines the name (the widget is
-#' shown greyed, "Read `n` in another cell"). Empty for code that doesn't
+#' something else in the cell reads or redefines the name (shown as a
+#' read-only line, "Read `n` in another cell"). Empty for code that doesn't
 #' parse or names no input function.
 input_bindings <- function(code) {
   none <- list(bind = list(), blocked = list())
@@ -148,7 +148,9 @@ project_bonds <- function(state) {
 }
 
 #' A cell's inputs as the page draws them (`cell_results[id].ember.inputs`),
-#' in the order the cell called them. `disabled` while the cell is stale,
+#' in the order the cell called them. `output`: the bound input on the
+#' cell's last line, drawn as its widget in the cell's output area; the
+#' others are read-only lines below the cell. `disabled` while the cell is stale,
 #' edited since it ran, queued or running: a value checked against an old
 #' spec must not reach the worker (`reduce_set_input()`).
 project_inputs <- function(view) {
@@ -157,7 +159,7 @@ project_inputs <- function(view) {
     s <- i$spec
     na_null <- function(x) if (is.null(x) || (length(x) == 1 && is.na(x))) NULL else x
     c(list(type = s$type, name = i$name, label = s[["label"]] %||% i$name,
-           bound = isTRUE(i$bound)),
+           bound = isTRUE(i$bound), output = isTRUE(i$output)),
       if (!isTRUE(i$bound)) list(reason = i$reason %||% "not_assigned"),
       list(value = input_to_page(s, i$value), default = input_to_page(s, i$default),
            changed = !identical(i$value, i$default),

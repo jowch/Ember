@@ -42,7 +42,7 @@ const waitOutput = (page, id, re) =>
   page.waitForFunction(([sel, src]) => new RegExp(src).test(document.querySelector(sel)?.textContent ?? ""),
     [`${cellSelector(id)} pluto-output`, re.source], { timeout: 60000 });
 
-test("inputs.R: the widgets show, and moving one reruns its readers with the new value", async (t) => {
+test("inputs.R: an input on a cell's last line is its output widget, and moving it reruns its readers", async (t) => {
   const notebook = tempNotebook("inputs.R");
   const server = await startServer([notebook], {
     repos: { cran: `file://${uiRepo()}`, bioc_config: null },
@@ -53,37 +53,50 @@ test("inputs.R: the widgets show, and moving one reruns its readers with the new
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  // emberui installs from the repository; running the reader runs the input's cell first.
+  // emberui installs from the repository; running the reader runs the inputs' cells first.
   await runCell(page, "L");
   await waitRan(page, "L");
   await runCell(page, "B");
   await waitOutput(page, "B", /5 pearson TRUE Results 5 y/);
-  await runCell(page, "K");
-  await waitRan(page, "K");
-  const inputs = page.locator(`${cellSelector("I")} ember-input`);
-  assert.equal(await inputs.count(), 6);
+  for (const id of ["R", "X"]) {
+    await runCell(page, id);
+    await waitRan(page, id);
+  }
 
-  // The unbound input is greyed, with the note naming the fix.
-  const unbound = page.locator(`${cellSelector("I")} ember-input.unbound`);
-  assert.equal(await unbound.count(), 1);
-  assert.match(await unbound.textContent(), /Assign this input to a name at the top of the cell/);
-  assert.equal(await unbound.locator("input").isDisabled(), true);
+  // An input on the cell's last line is its output: the one widget in the output area, above the code.
+  // An input that isn't the output is a read-only line below the code, with the note saying why.
+  const placed = (id) => page.evaluate((sel) => {
+    const cell = document.querySelector(sel);
+    const code = cell.querySelector("pluto-input");
+    return [...cell.querySelectorAll("ember-inputs")].map((el) => ({
+      cls: el.className, n: el.querySelectorAll("ember-input").length,
+      controls: el.querySelectorAll("input, select").length,
+      before_code: !!(el.compareDocumentPosition(code) & Node.DOCUMENT_POSITION_FOLLOWING),
+    }));
+  }, cellSelector(id));
+  assert.deepEqual(await placed("N"), [{ cls: "output", n: 1, controls: 1, before_code: true }]);
+  assert.equal(await page.locator(`${cellSelector("N")} pluto-output`).count(), 0);
+  assert.deepEqual(await placed("X"), [{ cls: "below", n: 2, controls: 0, before_code: false }]);
+  assert.match(await output(page, "X"), /\[1\] 2/);
+  const lines = page.locator(`${cellSelector("X")} ember-input`);
+  assert.match(await lines.nth(0).textContent(), /q = 2 \(slider\).*Only the input on the cell's last line can be moved/);
+  assert.match(await lines.nth(1).textContent(), /= 2 \(number\).*Assign this input to a name at the top of the cell/);
 
-  // The slider: B reruns with the new value; I doesn't rerun, and the slider is marked as off its default.
-  const slider = page.locator(`${cellSelector("I")} input[type="range"]`);
+  // The slider: B reruns with the new value; N doesn't rerun, and the slider is marked as off its default.
+  const slider = page.locator(`${cellSelector("N")} input[type="range"]`);
   assert.equal(await slider.inputValue(), "5");
   await slider.fill("8");
   await waitOutput(page, "B", /8 pearson TRUE Results 5 y/);
-  await page.locator(`${cellSelector("I")} ember-input.slider.changed`).waitFor();
+  await page.locator(`${cellSelector("N")} ember-input.slider.changed`).waitFor();
 
   // The dropdown sends its choice, and B gets the element, not the label.
-  await page.locator(`${cellSelector("I")} select`).selectOption({ label: "Spearman" });
+  await page.locator(`${cellSelector("M")} select`).selectOption({ label: "Spearman" });
   await waitOutput(page, "B", /8 spearman TRUE Results 5 y/);
 
   // The checkbox, and the text box (sent on Enter).
-  await page.locator(`${cellSelector("I")} input[type="checkbox"]`).uncheck();
+  await page.locator(`${cellSelector("CB")} input[type="checkbox"]`).uncheck();
   await waitOutput(page, "B", /8 spearman FALSE Results 5 y/);
-  const text = page.locator(`${cellSelector("I")} ember-input.text input`);
+  const text = page.locator(`${cellSelector("TX")} input[type="text"]`);
   await text.fill("Done");
   await text.press("Enter");
   await waitOutput(page, "B", /8 spearman FALSE Done 5 y/);
@@ -91,16 +104,16 @@ test("inputs.R: the widgets show, and moving one reruns its readers with the new
   // Radio groups in different cells are separate groups: each keeps its own pick.
   const radio = (id, k) => page.locator(`${cellSelector(id)} input[type="radio"]`).nth(k);
   assert.deepEqual([await radio("J", 0).isChecked(), await radio("J", 1).isChecked()], [false, true]);
-  assert.deepEqual([await radio("K", 0).isChecked(), await radio("K", 1).isChecked()], [true, false]);
+  assert.deepEqual([await radio("R", 0).isChecked(), await radio("R", 1).isChecked()], [true, false]);
   await radio("J", 0).check();
   await waitOutput(page, "B", /8 spearman FALSE Done 5 x/);
-  assert.equal(await radio("K", 0).isChecked(), true);
+  assert.equal(await radio("R", 0).isChecked(), true);
 
   // A number outside the input's limits stays in the box with what the input allows, and isn't sent.
-  const number = page.locator(`${cellSelector("I")} ember-input.number`).first().locator("input");
+  const number = page.locator(`${cellSelector("K")} input[type="number"]`);
   await number.fill("999");
   await number.press("Enter");
-  const error = page.locator(`${cellSelector("I")} ember-input.number .ember-input-error`);
+  const error = page.locator(`${cellSelector("K")} .ember-input-error`);
   await error.waitFor();
   assert.equal(await error.textContent(), "The value must be a whole number from 0 to 10.");
   assert.equal(await number.inputValue(), "999");
@@ -124,14 +137,12 @@ test("inputs.R: the widgets show, and moving one reruns its readers with the new
   assert.equal(await slider.inputValue(), "1");
   assert.match(await output(page, "B"), /"1 spearman FALSE Done 3 x"/);
 
-  // The input's own cell reruns: every input keeps its value, so B's doesn't change.
-  const ran = await lastRun(page, "I");
-  await runCell(page, "I");
-  await waitRan(page, "I", ran);
+  // The input's own cell reruns: it keeps its value, so B's doesn't change.
+  const ran = await lastRun(page, "N");
+  await runCell(page, "N");
+  await waitRan(page, "N", ran);
   await waitIdle(page);
   assert.equal(await slider.inputValue(), "1");
-  assert.equal(await page.locator(`${cellSelector("I")} select`).inputValue(), "1");
-  assert.equal(await text.inputValue(), "Done");
   assert.match(await output(page, "B"), /"1 spearman FALSE Done 3 x"/);
 
   assertNoProblems(page);

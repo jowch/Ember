@@ -4,34 +4,47 @@ import { t } from "../common/lang.js"
 
 /**
  * A cell's inputs (docs/inputs.md): the widgets of the `input_*()` calls its
- * last run made, in order, above its output. A bound input's value is
+ * last run made, in order. A bound input's value is
  * `bonds[name].value`, which the page changes itself with `set_bond` as the
  * widget moves and the server sets with `set_input()`; Pluto's page holds
  * new values back while cells run and sends only the latest. A dropdown's
  * or radio's value is the 0-based position of its choice (a list of them
  * for a multiple dropdown), since a choice may be any R object.
  *
- * An unbound input is drawn greyed at its default, with the note that says
- * how to bind it. Every widget is disabled while the cell is stale, edited,
+ * Every widget is disabled while the cell is stale, edited,
  * queued or running (`input.disabled`, from the server), and when the page
  * can't change the notebook (`disabled`: an HTML export, or no
  * connection). A value off its default is marked: `Rscript` would give
  * different results. When the worker refused the page's last value, the
  * bond carries its message (`bonds[name].error`), shown under the widget.
  *
+ * Where they go follows the cell's output rule: the bound input on the
+ * cell's last line (`input.output`) is the cell's output, the one widget
+ * in the output area (`place = "output"`). The others aren't output, so
+ * they go below the cell as read-only lines (`n = 8 (slider)`), each with
+ * the note that says how to make it movable: interactive widgets anywhere
+ * but the output area would confuse (Jonathan, 2026-10-24). `place =
+ * "below"` draws those; `"all-below"` draws every input that way, for a
+ * run that failed and whose output is its error.
+ *
  * @param {{
  *  cell_id: string,
  *  inputs: Array<Record<string, any>>,
+ *  place: "output" | "below" | "all-below",
  *  disabled: boolean,
  * }} props
  */
-export const CellInputs = ({ cell_id, inputs, disabled }) => {
+export const CellInputs = ({ cell_id, inputs, place, disabled }) => {
     const bonds = useContext(PlutoBondsContext)
     const pluto_actions = useContext(PlutoActionsContext)
-    return html`<ember-inputs>
+    const here = (input) => (place === "output" ? input.output : place === "below" ? !input.output : true)
+    return html`<ember-inputs class=${place === "output" ? "output" : "below"}>
         ${inputs.map((input, i) => {
+            // The position in the whole list names a radio group, so it stays the same wherever the input is drawn.
+            if (!here(input)) return null
             const bond = input.bound && input.name != null ? bonds?.[input.name] : null
             const value = bond != null ? bond.value : input.bound ? input.value : input.default
+            if (place !== "output") return html`<${ReadOnlyRow} key=${`${i}-${input.name ?? ""}`} input=${input} value=${value} />`
             const send = (v) => {
                 if (input.bound && input.name != null) pluto_actions.set_bond(input.name, v)
             }
@@ -60,21 +73,34 @@ const shown = (input, v) => {
 
 const same = (a, b) => (Array.isArray(a) && Array.isArray(b) ? a.length === b.length && a.every((x, k) => x === b[k]) : a === b)
 
+const ChangedMark = ({ input }) =>
+    html`<span class="ember-input-changed" title=${t("t_input_changed", { value: shown(input, input.default) })}>${t("t_input_changed_short")}</span>`
+
+/** The cell's output: the one movable widget. */
 const InputRow = ({ group, input, value, error, send, disabled }) => {
-    const changed = input.bound && !same(value, input.default)
+    const changed = !same(value, input.default)
     const label = input.label ?? input.name ?? input.type
+    return html`<ember-input class=${`${input.type}${changed ? " changed" : ""}`}>
+        <${Widget} group=${group} input=${input} label=${label} value=${value} send=${send} disabled=${disabled} />
+        ${changed ? html`<${ChangedMark} input=${input} />` : null}
+        ${error != null ? html`<span class="ember-input-error" role="alert">${error}</span>` : null}
+    </ember-input>`
+}
+
+/** An input that isn't the cell's output: its value as text, and why it can't be moved here. */
+const ReadOnlyRow = ({ input, value }) => {
+    const changed = input.bound && !same(value, input.default)
     const note = !input.bound
         ? input.reason === "read_elsewhere"
             ? t("t_input_read_elsewhere", { name: input.name })
             : t("t_input_not_assigned")
-        : null
-    return html`<ember-input class=${`${input.type}${input.bound ? "" : " unbound"}${changed ? " changed" : ""}`}>
-        <${Widget} group=${group} input=${input} label=${label} value=${value} send=${send} disabled=${disabled} />
-        ${changed
-            ? html`<span class="ember-input-changed" title=${t("t_input_changed", { value: shown(input, input.default) })}>${t("t_input_changed_short")}</span>`
-            : null}
-        ${note != null ? html`<span class="ember-input-note">${note}</span>` : null}
-        ${error != null ? html`<span class="ember-input-error" role="alert">${error}</span>` : null}
+        : t("t_input_not_output")
+    return html`<ember-input class=${`${input.type} read-only${input.bound ? "" : " unbound"}${changed ? " changed" : ""}`}>
+        <span class="ember-input-line"
+            ><code>${input.name ?? input.label ?? "input"} = ${shown(input, value)}</code> <span class="ember-input-type">(${input.type})</span></span
+        >
+        ${changed ? html`<${ChangedMark} input=${input} />` : null}
+        <span class="ember-input-note">${note}</span>
     </ember-input>`
 }
 

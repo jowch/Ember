@@ -84,13 +84,15 @@ hold:
 3. Nothing else in the cell reads or redefines `name`.
 
 A cell may hold several. One definition per global already makes the name
-unique, so the name is the input's key, as in Pluto's `bonds[name]`.
+unique, so the name is the input's key, as in Pluto's `bonds[name]`. Only
+the one on the cell's last line can be moved on the page ("Where the
+widget shows", below); `set_input()` can set any of them.
 
-Any other input call returns its default, as under `Rscript`, and its
-widget shows greyed with a note naming the fix. A call inside a function, a
-loop or `round(...)` gets "Assign this input to a name at the top of the
-cell to use it." A binding broken by rule 3 gets "Read `n` in another
-cell." No R warning, since plain R wouldn't give one.
+Any other input call returns its default, as under `Rscript`, and it
+shows as a read-only line below the cell, with a note naming the fix. A
+call inside a function, a loop or `round(...)` gets "Assign this input to
+a name at the top of the cell to use it." A binding broken by rule 3 gets
+"Read `n` in another cell." No R warning, since plain R wouldn't give one.
 
 Why so strict: Ember sets the variable without rerunning the cell. That is
 only the same as rerunning when the variable *is* the call's value and the
@@ -123,13 +125,22 @@ group <- input_select(levels(penguins$species))
 reads `penguins`, and the cell depends on the cell that defines it. When
 `penguins` changes, the input's cell reruns and the dropdown is rebuilt.
 
-**Where the widget shows.** A cell's bound inputs are shown in its output
-area, in the order they were called, above the cell's own output if it has
-one. `n <- input_slider(...)` has no visible value, so the slider is the
-whole output. This differs from Pluto, where `@bind` returns the widget as
-the cell's value, and from marimo, where the cell must end with the element
-to show it. In R the variable is a number, so there is nothing to print;
-the worker shows the input itself.
+**Where the widget shows.** It follows design.md's output rule: the
+cell's output is its last line's value. When the last line is a bound
+input (`n <- input_slider(...)`), the widget is the cell's output, the one
+thing in its output area, as in Pluto, where `@bind` returns the widget as
+the cell's value. In R the variable is a number, so there is nothing else
+to print; the worker shows the input itself.
+
+Any other input in the cell isn't its output, and an interactive widget
+anywhere but the output area would confuse (Jonathan, 2026-10-24). So it
+shows below the cell's code as a read-only line, `n = 8 (slider)`, with a
+note saying how to make it movable. The note for a bound input says to give
+it its own cell, ending with it; for an unbound one, why it isn't bound.
+A cell that needs several widgets together will use a composite,
+`input_list(n = input_slider(...), method = input_select(...))`, as PlutoUI
+combines widgets: one bound value, a named list read as `p$n`, whose widget
+is the cell's output (next increment).
 
 ## Under plain `Rscript`
 
@@ -364,11 +375,12 @@ R API. Nothing shows on the page yet.
   It uses `check` both for a kept value when the cell reruns and for a
   new value. The `check` function stays in the worker; the rest of the
   spec goes to the server.
-- **A bound input shows no value** as the cell's output, since moving it
-  doesn't rerun the cell (design.md's output rule names the exception).
+- **A bound input on the last line is the cell's output**: its widget,
+  not a printed value, since moving it doesn't rerun the cell (design.md's
+  output rule names the exception). The worker marks its report `output`.
 - **Every input call is reported**, bound or not. An unbound one says why:
-  `not_assigned` (rule 1 or 2) or `read_elsewhere` (rule 3). The page will
-  use this for the greyed widget and its note.
+  `not_assigned` (rule 1 or 2) or `read_elsewhere` (rule 3). The page
+  shows this in the input's note.
 - **`set_input(nb, name, value, wait = FALSE)`** goes through steps 2 to
   5 above. One value is with the worker at a time; nothing new is sent to
   run until it answers. With `wait = TRUE` a refused value is an error,
@@ -387,12 +399,12 @@ R API. Nothing shows on the page yet.
 
 - **The widgets on the page.** Each cell's inputs go to the page as
   `cell_results[id].ember.inputs` (`project_inputs()` in R/inputs.R), and
-  CellInputs.js draws them above the cell's output. This differs from the
-  outline above, which had a new output type inside `<bond>` elements: a
-  cell's output is its value, and a bound input's cell often has one of
-  its own (`round(input_number(2))` beside a slider), so the inputs sit
-  beside the output instead of in it. Pluto's `Bond.js` isn't used; the
-  widgets call `set_bond` themselves.
+  CellInputs.js draws them. The input marked `output` is drawn as its
+  widget in the output area, in place of `pluto-output`; every other input
+  is a read-only line below the code. A run that failed shows its error as
+  the output, and all its inputs as lines. The outline above had a new
+  output type inside `<bond>` elements; Pluto's `Bond.js` isn't used, and
+  the widgets call `set_bond` themselves.
 - **Values.** The server projects `bonds` (`project_bonds()`): each bound
   input's value, as the page last asked for it. A dropdown's or radio's
   value is the 0-based position of its choice (a list of them for a
@@ -407,12 +419,16 @@ R API. Nothing shows on the page yet.
   the latest for each name) and goes when the worker answers, before any
   reader runs. A value from the R API is still refused then, so its
   caller knows.
-- **Disabled and greyed.** A cell's widgets are disabled while it is
-  stale, edited since it ran, queued or running, and when the page can't
-  change the notebook (an HTML export, or no connection). An unbound
-  input shows greyed at its default, with "Assign this input to a name at
-  the top of the cell to use it." or "Read `n` in another cell.". A value
-  off its default is marked "changed"; its tooltip gives the default.
+- **Disabled.** A cell's widget is disabled while the cell is stale,
+  edited since it ran, queued or running, and when the page can't change
+  the notebook (an HTML export, or no connection). A value off its default
+  is marked "changed", on the widget or the read-only line; its tooltip
+  gives the default.
+- **Read-only lines.** An input that isn't the output shows its value and
+  type, and a note: "Only the input on the cell's last line can be moved.
+  Give this one its own cell, ending with it." when bound, otherwise
+  "Assign this input to a name at the top of the cell to use it." or
+  "Read `n` in another cell.".
 - **Sending.** A slider sends as it moves; a number box and a text box send
   on Enter or when the user leaves them; the others on each change. A
   number box sends only a number within its `min` and `max`; anything
@@ -427,8 +443,9 @@ R API. Nothing shows on the page yet.
   (`c(A = 1, B = 1)`) shows the first as picked whichever was chosen; R
   gets the same value either way.
 
-Next: EndeavorMCP's tool (its `set_input` and `read_cell` text), which
-the Endeavor side picks up.
+Next: `input_list()`, the composite, after which the bound-input note
+names it. EndeavorMCP's tool (its `set_input` and `read_cell` text) is
+left to the Endeavor side.
 
 ## Decided with Jonathan (2026-10-17)
 

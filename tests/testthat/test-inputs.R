@@ -340,6 +340,11 @@ test_that("the page gets each cell's inputs, disabled while the cell is stale, e
                         labels = list("A", "B")))
   expect_null(p$js$cell_results$B$ember$inputs)
   expect_identical(p$js$bonds, list(n = list(value = 5)))
+  # Only an input the worker reported as the cell's output is drawn as it.
+  expect_false(ins[[1]]$output)
+  s <- r$state
+  s$results$I$inputs[[1]]$output <- TRUE
+  expect_true(pluto_state(s, p)$js$cell_results$I$ember$inputs[[1]]$output)
   # An integer input says so: its box rounds before checking its limits, as R does.
   expect_false(ins[[1]]$integer)
   s <- r$state
@@ -411,15 +416,21 @@ test_that("the worker binds an input only when the assignment's own call reports
   expect_length(r$inputs, 0)
 })
 
-test_that("a bound input isn't shown as the cell's output; a blocked one is (review)", {
+test_that("a bound input on the last line is the cell's output, as its widget; a blocked one shows its value (review)", {
   h <- worker_harness(extra_libs = fixture_lib())
   on.exit(h$close())
   inputs_run(h, "L", 1L, "library(emberui)")
   r <- inputs_run(h, "I", 2L, "d <- input_slider(1L, 7L, 3L)")
   expect_true(r$inputs[[1]]$bound)
+  expect_true(r$inputs[[1]]$output)
   expect_null(r$output)
   r <- inputs_run(h, "J", 3L, "e <- input_slider(1L, 7L, 3L)\nf <- e")
   expect_identical(r$output$text, "[1] 3")
+  expect_false(r$inputs[[1]]$output)
+  # Not on the last line: not the output, and the last line's value is.
+  r <- inputs_run(h, "K", 4L, "g <- input_slider(1L, 7L, 3L)\n2 + 2")
+  expect_false(r$inputs[[1]]$output)
+  expect_identical(r$output$text, "[1] 4")
 })
 
 test_that("a blocked binding is reported with its name and gets its default", {
