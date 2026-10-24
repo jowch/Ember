@@ -66,8 +66,10 @@ you already have, use the start page's file field, or pass the file to
 `start_server("analysis.R")`. From inside a notebook, the flame at the top
 left or ⋯ → **Open another notebook** goes back to the start page.
 
-A notebook you open from a file starts in safe preview: click **Run this
-notebook** to run it. Then write code in the cells. Shift+Enter runs a
+Every notebook opens in safe preview, a new one too: you can read and edit
+it, but nothing runs and nothing installs until you ask. Click **Run this
+notebook**, or run any cell, and Ember starts R for it. Then write code in
+the cells. Shift+Enter runs a
 cell, and ⋯ → **Keyboard shortcuts** lists the rest. When you're done:
 
 ```r
@@ -98,6 +100,22 @@ Ember reads the install call as where the package lives and records it in
 the notebook. The call itself doesn't run, in Ember or in `ember::run()`:
 the notebook's lock decides what is installed, and the cell says so.
 
+For a slider, text box or dropdown whose value is a variable, use the
+emberui package. Ember installs it like any other package. Moving the input
+reruns the cells that read the variable:
+
+```r
+library(emberui)
+n <- input_slider(10, 500, value = 100, step = 10)
+```
+
+```r
+hist(rnorm(n))
+```
+
+Under plain `Rscript`, `n` is the default, 100. `?emberui::input_slider`
+lists the other inputs, and `input_list()` combines several into one.
+
 To run a saved notebook from start to finish outside the browser, with the
 package versions it records:
 
@@ -106,9 +124,6 @@ ember::run("analysis.R")
 ```
 
 ## What's missing
-
-Ember is being built in steps. Not yet available: interactive inputs, like
-Pluto's `@bind`.
 
 Known gaps are tracked as [GitHub issues](https://github.com/jowch/Ember/issues),
 labelled P1 to P3 by priority, and the design is in [docs/design.md](https://github.com/jowch/Ember/blob/main/docs/design.md).
