@@ -222,6 +222,10 @@ test("layout: the side panel opens as a bottom sheet at 390x844 (113)", async (t
 
   await open_panel(page, "variables");
   await page.waitForSelector("#helpbox-wrapper.open");
+  // The sheet slides up for 0.18 s, and its box includes that transform:
+  // read straight after .open, it sits 560 px below where it ends. Measure
+  // where it settles (#463).
+  await page.locator("#helpbox-wrapper").evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
   const panel = await page.locator("#helpbox-wrapper").boundingBox();
   // What the page measured, so a failure says why (#463).
   const seen = await page.evaluate(() => ({
@@ -229,7 +233,7 @@ test("layout: the side panel opens as a bottom sheet at 390x844 (113)", async (t
     sheet: getComputedStyle(document.querySelector("#helpbox-wrapper")).width, narrow: matchMedia("(max-width: 640px)").matches,
   }));
   assert.ok(Math.abs(panel.x + panel.width - 390) <= 1, `the sheet spans the full width: ${JSON.stringify({ x: panel.x, width: panel.width, ...seen })}`);
-  assert.ok(panel.y + panel.height >= 844 - 1, "the sheet is anchored to the bottom");
+  assert.ok(Math.abs(panel.y + panel.height - 844) <= 1, `the sheet is anchored to the bottom: ${JSON.stringify({ y: panel.y, height: panel.height })}`);
 
   // The sheet covers the bottom of the viewport; click the scrim where it's
   // not covered by the sheet (the top-left corner).
