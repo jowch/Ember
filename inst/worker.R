@@ -1066,9 +1066,13 @@ data_reader_args <- list(
   vroom = c(vroom = "file"),
   data.table = c(fread = "input"),
   readxl = c(read_excel = "path", read_xlsx = "path", read_xls = "path"),
-  arrow = c(read_parquet = "file", read_feather = "file", read_ipc_file = "file", read_csv_arrow = "file"),
+  arrow = c(read_parquet = "file", read_feather = "file", read_ipc_file = "file", read_csv_arrow = "file",
+            read_tsv_arrow = "file", read_delim_arrow = "file", read_json_arrow = "file"),
+  nanoparquet = c(read_parquet = "file"),
   haven = c(read_sav = "file", read_dta = "file", read_sas = "data_file", read_xpt = "file"),
-  jsonlite = c(read_json = "path"))
+  jsonlite = c(read_json = "path"),
+  qs2 = c(qs_read = "file", qd_read = "file"),
+  xml2 = c(read_xml = "x", read_html = "x"))
 
 #' The readers that open their path through a connection, the connections
 #' whose file Ember can watch, and the classes that read no file (text, a
