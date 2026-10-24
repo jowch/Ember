@@ -287,7 +287,7 @@
     "t_remote_replace_note": "Changed elsewhere (another tab or the agent). Undo ({{mod}}+Z) to get your edit back.",
     "t_changed_in_place_note": "Changed {{names}} in place, which another cell defines, so the cells that read it don't rerun. Make the change in the cell that defines it.",
     "t_untracked_read_note": "Ember can't tell which variables this cell reads through {{names}}, so it doesn't rerun when they change. Name the variables in the code, or keep the values in one list.",
-    "t_untracked_file_note": "Ember can't tell which file this cell reads through {{names}}, so it doesn't rerun when the file changes. Write the path as text in the call, such as read.csv(\"data/survey.csv\").",
+    "t_untracked_file_note": "Ember can't tell which file this cell read through {{names}}, so it doesn't rerun when the file changes. Pass a file path or a file() connection, such as read.csv(file.path(dir, \"survey.csv\")).",
     "t_load_note": "Loading {{package}} resets {{name}}, which a settings cell sets. Under Rscript the setting is lost, because settings cells come first in the file. Move it into this cell, after {{package}} loads.",
     "t_chip_depends_on_disabled": "Depends on a disabled cell. {{link}}",
     "t_go_to_it": "Go to it",

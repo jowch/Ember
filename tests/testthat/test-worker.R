@@ -2978,8 +2978,11 @@ test_that("a run reports its data files' versions, and a change after the read b
   on.exit(h$close())
   f <- normalizePath(tempfile("ember-data-", fileext = ".csv"), winslash = "/", mustWork = FALSE)
   writeLines("a", f)
-  code <- sprintf('d <- readLines("%1$s")\nwriteLines("bb", "%1$s")\nn <- 1', f)
-  # Expression 2 stands for someone else: it isn't in `touch`.
+  other <- normalizePath(tempfile("ember-other-"), winslash = "/", mustWork = FALSE)
+  writeLines("bb", other)
+  # Expression 2 stands for someone else: it isn't in `touch`, and
+  # file.copy() opens no connection the worker sees as the cell's write.
+  code <- sprintf('d <- readLines("%1$s")\nfile.copy("%2$s", "%1$s", overwrite = TRUE)\nn <- 1', f, other)
   r <- run_and_wait(h, "a", 1L, code, data = list(list(path = "d.csv", full = f, touch = 1L)))
   expect_identical(r$status, "ok")
   expect_identical(r$data_changed, "d.csv")
@@ -2994,6 +2997,196 @@ test_that("a run reports its data files' versions, and a change after the read b
   expect_identical(r2$status, "ok")
   expect_length(r2$data_changed, 0)
   expect_identical(r2$data_seen[["d.csv"]], ember:::data_signature(as.list(file.info(f)[, c("mtime", "size")])))
+})
+
+test_that("a run learns the files it reads however the path is built, with each one's version", {
+  h <- worker_harness()
+  on.exit(h$close())
+  d <- tempfile("ember-learn-")
+  dir.create(d)
+  # After creating it: Windows keeps an 8.3 short name for a path that doesn't exist yet.
+  d <- normalizePath(d, winslash = "/")
+  write.csv(data.frame(x = 1:3), file.path(d, "a.csv"), row.names = FALSE)
+  saveRDS(1:3, file.path(d, "b.rds"))
+  writeLines(c("p", "q"), file.path(d, "c.txt"))
+  write.csv(data.frame(x = 4), file.path(d, "e.csv"), row.names = FALSE)
+  code <- paste(sprintf("dir <- %s", deparse(d)),
+                'a <- read.csv(file.path(dir, "a.csv"))',
+                'b <- readRDS(file.path(dir, "b.rds"))',
+                'load_txt <- function(n) readLines(file.path(dir, n))',
+                'c <- load_txt("c.txt")',
+                'e <- lapply(file.path(dir, "e.csv"), read.csv)',
+                sep = "\n")
+  r <- run_and_wait(h, "a", 1L, code)
+  expect_identical(r$status, "ok")
+  files <- file.path(d, c("a.csv", "b.rds", "c.txt", "e.csv"))
+  expect_setequal(names(r$data_seen), files)
+  for (f in files) {
+    info <- file.info(f)
+    expect_identical(r$data_seen[[f]], sprintf("%.6f %.0f", as.numeric(info$mtime), as.numeric(info$size)), info = f)
+  }
+  expect_length(r$data_changed, 0)
+  expect_length(r$data_unresolved, 0)
+
+  # A file read once and then changed by someone else, after the read and
+  # by an expression that doesn't write it, is a change the run may have
+  # missed, as for a file the message names.
+  other <- file.path(d, "other.csv")
+  write.csv(data.frame(x = 9:10), other, row.names = FALSE)
+  code2 <- sprintf('a <- read.csv(file.path(%1$s, "a.csv"))\nfile.copy(%2$s, file.path(%1$s, "a.csv"), overwrite = TRUE)\nn <- 1',
+                   deparse(d), deparse(other))
+  r2 <- run_and_wait(h, "b", 2L, code2)
+  expect_identical(r2$data_changed, file.path(d, "a.csv"))
+  info <- file.info(file.path(d, "a.csv"))
+  expect_identical(r2$data_seen[[file.path(d, "a.csv")]],
+                   sprintf("%.6f %.0f", as.numeric(info$mtime), as.numeric(info$size)))
+
+  # The cell's own write after its read isn't someone else's.
+  code3 <- sprintf('a <- read.csv(file.path(%1$s, "a.csv"))\nwrite.csv(a, file.path(%1$s, "a.csv"), row.names = FALSE)\nn <- 1', deparse(d))
+  r3 <- run_and_wait(h, "c", 3L, code3)
+  expect_length(r3$data_changed, 0)
+  expect_identical(names(r3$data_seen), file.path(d, "a.csv"))
+})
+
+test_that("a relative path read in a loop over folders is learned in each folder, and a missing one where it was looked for", {
+  h <- worker_harness()
+  on.exit(h$close())
+  d <- tempfile("ember-wd-")
+  dir.create(d)
+  d <- normalizePath(d, winslash = "/")
+  for (s in c("a", "b")) {
+    dir.create(file.path(d, s), recursive = TRUE)
+    writeLines("x\n1", file.path(d, s, "data.csv"))
+  }
+  r <- run_and_wait(h, "a", 1L, sprintf('for (s in c("a", "b")) { setwd(file.path(%s, s)); x <- read.csv("data.csv") }', deparse(d)))
+  expect_identical(r$status, "ok")
+  expect_setequal(names(r$data_seen), file.path(d, c("a", "b"), "data.csv"))
+
+  r2 <- run_and_wait(h, "b", 2L, sprintf('setwd(file.path(%s, "a")); v <- try(read.csv("nope.csv"), silent = TRUE)', deparse(d)))
+  expect_identical(r2$data_seen, stats::setNames(list("missing"), file.path(d, "a", "nope.csv")))
+})
+
+test_that("a change after the read within the reading expression is someone else's", {
+  h <- worker_harness()
+  on.exit(h$close())
+  d <- tempfile("ember-within-")
+  dir.create(d)
+  # After creating it: Windows keeps an 8.3 short name for a path that doesn't exist yet.
+  d <- normalizePath(d, winslash = "/")
+  writeLines("x\n1", file.path(d, "a.csv"))
+  writeLines("x\n22", file.path(d, "other.csv"))
+  r <- run_and_wait(h, "a", 1L, sprintf('{ a <- read.csv(file.path(%1$s, "a.csv")); file.copy(file.path(%1$s, "other.csv"), file.path(%1$s, "a.csv"), overwrite = TRUE) }', deparse(d)))
+  expect_identical(r$data_changed, file.path(d, "a.csv"))
+  # Its own write in that expression isn't.
+  r2 <- run_and_wait(h, "b", 2L, sprintf('{ a <- read.csv(file.path(%1$s, "a.csv")); write.csv(a, file.path(%1$s, "a.csv")) }', deparse(d)))
+  expect_length(r2$data_changed, 0)
+})
+
+test_that("a learned file inside the notebook's folder is named relative to it, as a literal path is", {
+  h <- worker_harness()
+  on.exit(h$close())
+  r0 <- run_and_wait(h, "w", 1L, "getwd()")
+  home <- eval(parse(text = sub("^\\[1\\] ", "", r0$output$text)))
+  name <- basename(tempfile("ember-rel-", fileext = ".csv"))
+  writeLines("x\n1", file.path(home, name))
+  on.exit(unlink(file.path(home, name)), add = TRUE)
+  r <- run_and_wait(h, "a", 2L, sprintf('f <- %s; d <- read.csv(file.path(".", f))', deparse(name)))
+  expect_identical(names(r$data_seen), name)
+})
+
+test_that("a connection made in one run is learned by the run that reads it", {
+  h <- worker_harness()
+  on.exit(h$close())
+  f <- tempfile("ember-con-", fileext = ".txt")
+  writeLines(c("a", "b"), f)
+  f <- normalizePath(f, winslash = "/")
+  run_and_wait(h, "a", 1L, sprintf("con <- file(%s)", deparse(f)))
+  r <- run_and_wait(h, "b", 2L, "x <- readLines(con)")
+  expect_identical(r$status, "ok")
+  expect_identical(names(r$data_seen), f)
+})
+
+test_that("text, URLs, writes, R's own files and a sourced helper aren't learned as data; a reader given no file is unresolved", {
+  h <- worker_harness()
+  on.exit(h$close())
+  d <- tempfile("ember-skip-")
+  dir.create(d)
+  # After creating it: Windows keeps an 8.3 short name for a path that doesn't exist yet.
+  d <- normalizePath(d, winslash = "/")
+  code <- paste('a <- read.csv(text = "x,y\\n1,2")',
+                'b <- readLines(textConnection(c("p", "q")))',
+                sprintf('write.csv(a, file.path(%s, "out.csv"))', deparse(d)),
+                sprintf('saveRDS(a, file.path(%s, "out.rds"))', deparse(d)),
+                'desc <- read.dcf(system.file("DESCRIPTION", package = "stats"))',
+                't <- tempfile(); writeLines("z", t); z <- readLines(t)',
+                sep = "\n")
+  r <- run_and_wait(h, "a", 1L, code)
+  expect_identical(r$status, "ok")
+  expect_length(r$data_seen, 0)
+  expect_length(r$data_unresolved, 0)
+
+  # A helper source() runs is a sourced file, not data; what it reads is data.
+  write.csv(data.frame(x = 1), file.path(d, "in.csv"), row.names = FALSE)
+  writeLines(sprintf('hv <- read.csv(file.path(%s, "in.csv"))', deparse(d)), file.path(d, "h.R"))
+  h$send(run_msg("b", 2L, sprintf('source(file.path(%s, "h.R"))', deparse(d))))
+  r2 <- wait_for_done(h, on_frame = function(m) {
+    if (identical(m$type, "source")) h$send(list(type = "source_reply", allow = TRUE))
+  })
+  expect_identical(r2$status, "ok")
+  expect_identical(names(r2$data_seen), file.path(d, "in.csv"))
+
+  r3 <- run_and_wait(h, "c", 3L, 'v <- try(readRDS(42), silent = TRUE)')
+  expect_identical(r3$data_unresolved, "readRDS")
+})
+
+test_that("a missing file a run tried to read is watched, so the cell reruns once it appears", {
+  h <- worker_harness()
+  on.exit(h$close())
+  # The folder exists, so normalize it (macOS: /var is a link to /private/var); the file doesn't.
+  f <- file.path(normalizePath(tempdir(), winslash = "/"), basename(tempfile("ember-missing-", fileext = ".csv")))
+  r <- run_and_wait(h, "a", 1L, sprintf("d <- read.csv(%s)", deparse(f)))
+  expect_identical(r$status, "error")
+  expect_identical(r$data_seen[[f]], "missing")
+})
+
+test_that("fread() is learned once data.table loads, by input or file =, and text input isn't", {
+  skip_if_not_installed("data.table")
+  h <- worker_harness(extra_libs = .libPaths())
+  on.exit(h$close())
+  d <- tempfile("ember-pkg-")
+  dir.create(d)
+  # After creating it: Windows keeps an 8.3 short name for a path that doesn't exist yet.
+  d <- normalizePath(d, winslash = "/")
+  for (n in c("a.csv", "f.csv")) writeLines("x,y\n1,2", file.path(d, n))
+  r <- run_and_wait(h, "a", 1L, sprintf('a <- data.table::fread(file.path(%1$s, "a.csv"))\nt <- data.table::fread("x,y\\n3,4")\nf <- data.table::fread(file = file.path(%1$s, "f.csv"))',
+                                         deparse(d)))
+  expect_identical(r$status, "ok", info = r$error$message)
+  expect_setequal(names(r$data_seen), file.path(d, c("a.csv", "f.csv")))
+})
+
+test_that("a readr reader is learned once readr loads, by :: or attached", {
+  skip_if_not_installed("readr")
+  # readr's dependencies may be in any library this R has.
+  h <- worker_harness(extra_libs = .libPaths())
+  on.exit(h$close())
+  d <- tempfile("ember-pkg-")
+  dir.create(d)
+  d <- normalizePath(d, winslash = "/")
+  for (n in c("b.csv", "c.csv")) writeLines("x,y\n1,2", file.path(d, n))
+  r <- run_and_wait(h, "a", 1L, sprintf('b <- readr::read_csv(file.path(%s, "b.csv"), show_col_types = FALSE)', deparse(d)))
+  expect_identical(r$status, "ok", info = r$error$message)
+  expect_identical(names(r$data_seen), file.path(d, "b.csv"))
+  r2 <- run_and_wait(h, "b", 2L, sprintf('library(readr)\nc <- read_csv(file.path(%s, "c.csv"), show_col_types = FALSE)', deparse(d)))
+  expect_identical(r2$status, "ok")
+  expect_identical(names(r2$data_seen), file.path(d, "c.csv"))
+})
+
+test_that("the readers the worker traces are rules.R's data_readers", {
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  traced <- unlist(unname(e$data_reader_args))
+  expect_setequal(names(traced), names(data_readers))
+  expect_identical(traced[names(data_readers)], data_readers)
 })
 
 test_that("menu()'s answer is a number in range, 0, or a choice typed out (#186)", {

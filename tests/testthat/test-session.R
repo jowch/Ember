@@ -170,6 +170,29 @@ test_that("autorun: a cell that reads a file another cell writes reruns when the
   expect_identical(readLines(log), c("R", "R"))
 })
 
+test_that("autorun: a cell that reads a file by a path built in code reruns when another cell rewrites it", {
+  cells <- list(S = cell(""), P = cell("dir <- '.'; name <- 'd.txt'"),
+                W = cell("k <- 1; writeLines(as.character(k), file.path(dir, name))"),
+                R = cell("d <- readLines(file.path(dir, name))"),
+                U = cell("paste(d, '!')"))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_settled(nb)
+  shown_u <- function(snap) snap_view(snap, "U")$output$text
+  expect_identical(shown_u(notebook_snapshot(nb)), '[1] "1 !"')
+  expect_identical(snap_view(notebook_snapshot(nb), "R")$untracked_files, character())
+  # The run told the shell which file R read, by its path in the folder.
+  settle(nb, function(snap) !is.null(nb$data_watch[["d.txt"]]) && is_idle(snap))
+
+  # W writes new contents: R and U rerun, though W defines nothing R reads
+  # but the file.
+  edit_notebook(nb, set_code("W", "k <- 2; writeLines(as.character(k), file.path(dir, name))"))
+  run_settled(nb, "W")
+  settle(nb, function(snap) identical(shown_u(snap), '[1] "2 !"') && is_idle(snap))
+  expect_false(isTRUE(snap_view(notebook_snapshot(nb), "R")$stale))
+})
+
 test_that("a cell that reads a file and appends to it runs once, as in plain R (#276)", {
   cells <- list(S = cell(""), L = cell("d <- readLines('log.txt')\ncat('entry\\n', file = 'log.txt', append = TRUE)"))
   path <- write_session_notebook(cells)
