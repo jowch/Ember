@@ -3,7 +3,9 @@
 // suite's other first files, as the slow opens did. Each open is a fresh
 // server, browser and page, three at once, ten rounds. Times are from the
 // open's start; any open over 5 s also lists every request that took over
-// 1 s, failed, or never finished. Prints only; asserts nothing.
+// 1 s, failed, or never finished. The open's time stops before teardown;
+// browser.close() and server.stop() are timed on their own after it.
+// Prints only; asserts nothing.
 
 import { test } from "node:test";
 import { startServer, tempNotebook } from "../server.mjs";
@@ -15,7 +17,7 @@ async function probe(label) {
   const at = () => ((Date.now() - t0) / 1000).toFixed(2);
   const marks = [];
   const mark = (name) => marks.push(`${name} ${at()}`);
-  let server, browser;
+  let server, browser, teardown;
   const requests = new Map();
   try {
     server = await startServer([notebook], { timeoutMs: 0 });
@@ -45,17 +47,23 @@ async function probe(label) {
     });
     mark("all cells");
   } finally {
+    const opened = (Date.now() - t0) / 1000;
+    let c = Date.now();
     await browser?.close();
+    const close = (Date.now() - c) / 1000;
+    c = Date.now();
     await server?.stop();
+    const stop = (Date.now() - c) / 1000;
+    teardown = { opened, close, stop };
   }
-  const total = (Date.now() - t0) / 1000;
-  let line = `${label}: ${marks.join(", ")}`;
+  const total = teardown.opened;
+  let line = `${label}: ${marks.join(", ")}; then browser.close ${teardown.close.toFixed(2)}, server.stop ${teardown.stop.toFixed(2)}`;
   if (total > 5) {
     const slow = [...requests.values()].filter((q) => q.end === undefined || q.failed || q.end - q.start > 1000)
       .map((q) => `${q.url} ${q.end === undefined ? "never finished" : ((q.end - q.start) / 1000).toFixed(2) + " s"}${q.failed ? " failed " + q.failed : ""}`);
     line += `\n  slow requests: ${slow.length ? slow.join("; ") : "none"}`;
   }
-  return { total, line };
+  return { total, line, ...teardown };
 }
 
 test("measure: where a first open spends its time (#417, #529)", async () => {
@@ -66,6 +74,8 @@ test("measure: where a first open spends its time (#417, #529)", async () => {
   for (const r of results) console.log(r.line);
   const totals = results.map((r) => r.total).sort((a, b) => a - b);
   const q = (p) => totals[Math.min(totals.length - 1, Math.floor(p * totals.length))].toFixed(2);
-  const summary = `first opens on ${process.platform}: ${totals.length} opens, median ${q(0.5)} s, p90 ${q(0.9)} s, max ${totals.at(-1).toFixed(2)} s`;
+  const stat = (xs) => { xs = [...xs].sort((a, b) => a - b); return `median ${xs[Math.floor(xs.length / 2)].toFixed(2)} s, max ${xs.at(-1).toFixed(2)} s`; };
+  const summary = `first opens on ${process.platform}: ${totals.length} opens, median ${q(0.5)} s, p90 ${q(0.9)} s, max ${totals.at(-1).toFixed(2)} s; ` +
+    `browser.close ${stat(results.map((r) => r.close))}; server.stop ${stat(results.map((r) => r.stop))}`;
   console.log(process.env.GITHUB_ACTIONS ? `::notice title=first-open probe::${summary}` : summary);
 });
