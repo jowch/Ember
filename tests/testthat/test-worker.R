@@ -3203,6 +3203,8 @@ test_that("nanoparquet's read_parquet() is learned once nanoparquet loads", {
 })
 
 test_that("fst's read_fst() is learned once fst loads", {
+  # fst isn't in Suggests: fstcore's macOS binary fails to load on the CI
+  # runner (a missing OpenMP symbol, upstream), so this runs locally only.
   skip_if_not_installed("fst")
   expect_learns(function(d) fst::write_fst(data.frame(x = 1:2), file.path(d, "f.fst")),
                 'f <- fst::read_fst(file.path(D, "f.fst"))', "f.fst")
