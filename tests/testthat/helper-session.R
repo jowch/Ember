@@ -97,3 +97,18 @@ wait_pid_gone <- function(pid) {
   waiting_for(sprintf("process %s to end", pid), while (pid_running(pid)) later::run_now(timeout = 0.05))
   !pid_running(pid)
 }
+
+#' A file holding `code`, for an Rscript a test starts and may kill:
+#' `Rscript --vanilla <file>` where a test would write `Rscript -e code`.
+#' On Windows `-e` leaves its code in an `Rscript<hex>` file in the temp
+#' folder when the Rscript is killed (#512). The file is in this R's own
+#' tempdir(), which goes when the test process ends.
+script_file <- function(code) {
+  f <- tempfile("script-", fileext = ".R")
+  writeLines(code, f)
+  f
+}
+
+#' `script_file("Sys.sleep(300)")`'s path with forward slashes, for a code
+#' string a cell runs: a child that sleeps until the test kills it.
+sleep_script <- function() normalizePath(script_file("Sys.sleep(300)"), winslash = "/")
