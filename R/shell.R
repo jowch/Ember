@@ -1376,8 +1376,14 @@ check_data_files <- function(nb, send, skip = character()) {
   # rewrite a rerun.
   skip_full <- if (anyNA(skip)) NA_character_ else canonical_path(vapply(skip, function(s) resolve_source_path(nb, s), character(1)))
   data_changed <- list()
-  paths <- names(nb$data_watch)
-  if (length(paths) == 0) return(invisible(NULL))
+  keys <- names(nb$data_watch)
+  listings <- keys[is_listing_key(keys)]
+  if (length(listings)) data_changed <- check_data_listings(nb, listings)
+  paths <- setdiff(keys, listings)
+  if (length(paths) == 0) {
+    if (length(data_changed) > 0) send(nb, ev_data_changed(data_changed, at = Sys.time()))
+    return(invisible(NULL))
+  }
   fulls <- vapply(paths, function(p) resolve_source_path(nb, p), character(1), USE.NAMES = FALSE)
   # One file.info() for all of them: a run that reads a folder of files
   # has the shell watch thousands, every half second.
@@ -1564,10 +1570,20 @@ sync_watch <- function(nb, paths) {
 }
 
 #' The same for data files (#276), keeping each one's modified time and
-#' size; the poll adds a hash once a rewrite keeps the size.
+#' size; the poll adds a hash once a rewrite keeps the size. A folder
+#' listing's key (#514) keeps what `data_listing_watch()` takes.
 sync_data_watch <- function(nb, paths) {
   old <- names(nb$data_watch)
   for (p in setdiff(paths, old)) {
+    if (is_listing_key(p)) {
+      w <- data_listing_watch(p)
+      # The version the run ended with: a change since it ended counts,
+      # found by the next poll, which lists again while the watch is new.
+      seen <- listing_seen(nb$state, p)
+      if (!is.null(seen)) w$sig <- seen
+      nb$data_watch[[p]] <- w
+      next
+    }
     info <- data_file_info(resolve_source_path(nb, p))
     nb$data_watch[[p]] <- list(mtime = info$mtime, size = info$size, hash = NA_character_)
   }
@@ -1588,6 +1604,108 @@ data_file_info <- function(full) {
 data_signature <- function(info) {
   # inst/worker.R's data_signature() must write the same text.
   if (is.na(info$mtime)) "missing" else sprintf("%.6f %.0f", as.numeric(info$mtime), as.numeric(info$size))
+}
+
+#' Whether data-watch key `p` is a folder listing's (#514), made by
+#' inst/worker.R's `data_listing_key()`, rather than a file's path.
+is_listing_key <- function(p) startsWith(as.character(p), "list.files\n")
+
+#' What a listing's key lists now, as text a watcher compares: the number
+#' of names and their MD5, sorted in C order, or "missing" for a folder
+#' that isn't there.
+data_listing_signature <- function(key) {
+  # inst/worker.R's data_listing_signature() must write the same text.
+  f <- strsplit(key, "\n", fixed = TRUE)[[1]]
+  path <- f[[2]]
+  flags <- strsplit(f[[3]], " ", fixed = TRUE)[[1]] == "1"
+  pattern <- paste(f[-(1:3)], collapse = "\n")
+  if (!dir.exists(path)) return("missing")
+  args <- list(path, pattern = if (nzchar(pattern)) pattern, all.files = flags[[1]], recursive = flags[[2]],
+               ignore.case = flags[[3]], include.dirs = flags[[4]], no.. = flags[[5]])
+  if ("fixed" %in% names(formals(list.files))) args$fixed <- flags[[6]]
+  names <- tryCatch(sort(enc2utf8(do.call(list.files, args)), method = "radix"), error = function(e) NULL)
+  if (is.null(names)) return("missing")
+  bytes <- charToRaw(paste(names, collapse = "\n"))
+  md5 <- if (getRversion() >= "4.5.0") tools::md5sum(bytes = bytes) else {
+    tmp <- tempfile()
+    on.exit(unlink(tmp))
+    writeBin(bytes, tmp)
+    tools::md5sum(tmp)
+  }
+  paste(length(names), unname(md5))
+}
+
+#' A listing's watch record: the folders it looks in (its folder, and
+#' with `recursive` each one under it) with their modified times, and its
+#' signature. Adding, removing or renaming a file changes its folder's
+#' time, so the poll lists again only when one moved: listing 20,000
+#' files takes about 140 ms, checking one folder's time well under 1 ms.
+#'
+#' Times are this machine's clock (`Sys.time()`), never compared with a
+#' folder's, which on a network drive is the server's. `seen_at` is when
+#' the poll first saw the folders' current times: for 2 s after it, a
+#' second change in the same tick of a coarse clock (FAT's 2 s, HFS+'s
+#' 1 s) would leave them as they are, so the poll lists again until a
+#' listing starts after then (`listed_from`), as git does for its index. And it lists again every `every` seconds
+#' whatever the times say (10 s, or 100 times the listing's own time,
+#' whichever is longer): a file system that doesn't move a folder's time
+#' when its entries change still has its change found.
+data_listing_watch <- function(key, seen_at = as.numeric(Sys.time())) {
+  f <- strsplit(key, "\n", fixed = TRUE)[[1]]
+  path <- f[[2]]
+  recursive <- strsplit(f[[3]], " ", fixed = TRUE)[[1]][[2]] == "1"
+  start <- as.numeric(Sys.time())
+  dirs <- if (recursive && dir.exists(path)) unique(c(path, list.dirs(path, full.names = TRUE))) else path
+  mtimes <- folder_mtimes(dirs)
+  sig <- data_listing_signature(key)
+  listed_at <- as.numeric(Sys.time())
+  list(dirs = dirs, mtimes = mtimes, sig = sig, seen_at = seen_at, listed_from = start,
+       listed_at = listed_at, every = max(10, 100 * (listed_at - start)))
+}
+
+#' The signature a result's run saw for listing `key` (its `data_seen`),
+#' or `NULL` when none did.
+listing_seen <- function(state, key) {
+  for (r in state$results) {
+    s <- .subset2(.subset2(r, "data_seen"), key)
+    if (is.character(s) && length(s) == 1) return(s)
+  }
+  NULL
+}
+
+#' Folders' modified times as numbers, `NA` for one that isn't there: one
+#' `file.info()` call for all of them.
+folder_mtimes <- function(dirs) {
+  if (length(dirs) == 0) return(numeric())
+  tryCatch(as.numeric(file.info(dirs, extra_cols = FALSE)$mtime), error = function(e) rep(NA_real_, length(dirs)))
+}
+
+#' The listings among the watched keys whose names changed (#514), by key
+#' to their new signature, for `check_data_files()`. A listing whose
+#' folders' times moved is listed again, as is one whose last listing
+#' began within 2 s of its `seen_at`, or past its `every`
+#' (`data_listing_watch()`); only a new
+#' signature is a change, so a file the listing wouldn't return (an Excel
+#' lock file beside the CSVs) reruns nothing.
+check_data_listings <- function(nb, listings) {
+  changed <- list()
+  dirs <- lapply(listings, function(k) nb$data_watch[[k]]$dirs)
+  now <- folder_mtimes(unlist(dirs, use.names = FALSE))
+  at <- 0L
+  for (i in seq_along(listings)) {
+    k <- listings[[i]]
+    w <- nb$data_watch[[k]]
+    n <- length(dirs[[i]])
+    m <- now[at + seq_len(n)]
+    at <- at + n
+    same <- identical(m, w$mtimes)
+    t <- as.numeric(Sys.time())
+    if (same && w$listed_from > w$seen_at + 2 && t <= w$listed_at + w$every) next
+    fresh <- data_listing_watch(k, seen_at = if (same) w$seen_at else t)
+    nb$data_watch[[k]] <- fresh
+    if (!identical(fresh$sig, w$sig)) changed[[k]] <- fresh$sig
+  }
+  changed
 }
 
 #' A data file's md5, or `NA` when it is missing or can't be read.
