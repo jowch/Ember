@@ -40,7 +40,7 @@
 #'   (status `"ready"`, nothing installed): before a worker has ever run,
 #'   that is exactly what it has loaded, and it keeps the "`active$status`
 #'   is always `"ready"`" invariant true from the moment the state exists.
-#' * `install`: `NULL` or `list(token, key)`: the one install job this
+#' * `install`: `NULL` or `list(token, key, path, started_at)`: the one install job this
 #'   session has running. At most one at a time, so two renv processes never
 #'   build libraries for the same notebook at once.
 #' * `proposal`: `NULL` or `ember_proposal` (a date move being previewed,
@@ -1000,7 +1000,7 @@ schedule_packages <- function(state, old) {
       !bioc_move_pending(state)) {
     token <- state$packages$next_token
     state$packages$next_token <- token + 1L
-    state$packages$install <- list(token = token, key = tgt$key, path = tgt$path)
+    state$packages$install <- list(token = token, key = tgt$key, path = tgt$path, started_at = state$clock)
     tgt$status <- "installing"
     tgt$progress <- NULL
     tgt$no_binary <- NULL
