@@ -21,7 +21,7 @@ concurrency:
 jobs:
   probe476:
     runs-on: windows-latest
-    timeout-minutes: 120
+    timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
@@ -43,16 +43,14 @@ jobs:
         run: npm ci
       - working-directory: tests/e2e
         run: npx playwright-core install chromium
-      - name: The #476 test, 30 times
+      - name: The #476 test under load, with two other files at once, 20 times
         working-directory: tests/e2e
         shell: bash
-        env:
-          NODE_OPTIONS: --test-name-pattern=keeps.the.outer.tooltip
         run: |
           fails=0
-          for i in $(seq 1 30); do
+          for i in $(seq 1 20); do
             echo "=== run $i"
-            node run.mjs tests/editor-services.test.mjs > out.txt 2>&1 || fails=$((fails + 1))
-            grep -E "DIAG476|^not ok|^ok|read.table's tooltip" out.txt | cut -c1-6000
+            node run.mjs tests/editor-services.test.mjs tests/cells.test.mjs tests/ui-sweep.test.mjs > out.txt 2>&1 || fails=$((fails + 1))
+            grep -E "DIAG476|^not ok|read.table's tooltip|^# (pass|fail)" out.txt | cut -c1-8000
           done
-          echo "failed $fails of 30"
+          echo "runs with a failure: $fails of 20"

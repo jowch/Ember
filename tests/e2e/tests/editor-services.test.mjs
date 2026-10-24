@@ -699,7 +699,7 @@ const tooltip_settled = (page) => page.waitForFunction(() => {
     const b = l.getBoundingClientRect();
     return c.top + c.height / 2 > b.top && c.top + c.height / 2 < b.bottom;
   }) + 1;
-  const now = { text: tooltip.textContent.slice(0, 12), left: t.left, tooltip: [t.top, t.bottom], cursor: [c.top, c.bottom], line_number, class: tooltip.className, cx: c.left, ex: editor.getBoundingClientRect().left, gw: editor.querySelector('.cm-gutters')?.getBoundingClientRect().width, cl: editor.querySelector('.cm-content')?.getBoundingClientRect().left, ll: editor.querySelector('.cm-line:nth-child(2)')?.getBoundingClientRect().left, sw: window.innerWidth - document.documentElement.clientWidth };
+  const now = { text: tooltip.textContent.slice(0, 12), left: t.left, tooltip: [t.top, t.bottom], cursor: [c.top, c.bottom], line_number, class: tooltip.className, cx: c.left, ex: editor.getBoundingClientRect().left, gw: editor.querySelector('.cm-gutters')?.getBoundingClientRect().width, cl: editor.querySelector('.cm-content')?.getBoundingClientRect().left, ll: editor.querySelector('.cm-line:nth-child(2)')?.getBoundingClientRect().left, sw: window.innerWidth - document.documentElement.clientWidth, fs: document.fonts.status };
   const s = (window.__placed ??= { last: null, frames: 0 });
   const key = JSON.stringify(now);
   if (key !== s.last) {
@@ -726,7 +726,7 @@ async function tooltip_frames(page) {
       const cursor = document.querySelector(".cm-editor.cm-focused .cm-cursor");
       if (tooltip != null && cursor != null && /cm-tooltip-(above|below)/.test(tooltip.className)) {
         const c = cursor.getBoundingClientRect(), t = tooltip.getBoundingClientRect();
-        const now = { text: tooltip.textContent.slice(0, 12), left: t.left, tooltip: [t.top, t.bottom], cursor: [c.top, c.bottom], cx: c.left, ex: document.querySelector('.cm-editor.cm-focused').getBoundingClientRect().left, gw: document.querySelector('.cm-editor.cm-focused .cm-gutters')?.getBoundingClientRect().width, cl: document.querySelector('.cm-editor.cm-focused .cm-content')?.getBoundingClientRect().left, ll: document.querySelector('.cm-editor.cm-focused .cm-line:nth-child(2)')?.getBoundingClientRect().left, ac: document.querySelector('.cm-tooltip-autocomplete') != null, sw: window.innerWidth - document.documentElement.clientWidth };
+        const now = { text: tooltip.textContent.slice(0, 12), left: t.left, tooltip: [t.top, t.bottom], cursor: [c.top, c.bottom], cx: c.left, ex: document.querySelector('.cm-editor.cm-focused').getBoundingClientRect().left, gw: document.querySelector('.cm-editor.cm-focused .cm-gutters')?.getBoundingClientRect().width, cl: document.querySelector('.cm-editor.cm-focused .cm-content')?.getBoundingClientRect().left, ll: document.querySelector('.cm-editor.cm-focused .cm-line:nth-child(2)')?.getBoundingClientRect().left, ac: document.querySelector('.cm-tooltip-autocomplete') != null, sw: window.innerWidth - document.documentElement.clientWidth, fs: document.fonts.status };
         if (JSON.stringify(now) !== JSON.stringify(frames.at(-1))) frames.push(now);
       }
       requestAnimationFrame(frame);
