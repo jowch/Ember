@@ -24,8 +24,8 @@ the order the graph needs, not the order they appear on the page.
 - **Safe to open.** A notebook opens in safe preview: you can read it
   without running anything until you choose to.
 - **Rich outputs.** Data frames as paged tables, lists as expandable
-  trees, plots that redraw to fit, htmlwidgets such as DT, and
-  coloured console output.
+  trees, plots at a fixed size that stay sharp on any screen,
+  htmlwidgets such as DT, and coloured console output.
 - **Help as you type.** Autocomplete from your session, help pages in a
   side panel, and a function's arguments shown while you type a call.
 - **Runs in your browser.** The interface is a fork of
@@ -98,6 +98,23 @@ Ember reads the install call as where the package lives and records it in
 the notebook. The call itself doesn't run, in Ember or in `ember::run()`:
 the notebook's lock decides what is installed, and the cell says so.
 
+For a slider, text box or dropdown whose value is a variable, use the
+emberui package. Ember installs it like any other package. Moving the input
+reruns the cells that read the variable:
+
+```r
+library(emberui)
+n <- input_slider(10, 500, value = 100, step = 10)
+```
+
+```r
+hist(rnorm(n))
+```
+
+Under plain `Rscript`, `n` is the default, 100, once emberui is installed
+(`install.packages("emberui", repos = "https://jowch.r-universe.dev")`). `?emberui::input_slider`
+lists the other inputs, and `input_list()` combines several into one.
+
 To run a saved notebook from start to finish outside the browser, with the
 package versions it records:
 
@@ -106,9 +123,6 @@ ember::run("analysis.R")
 ```
 
 ## What's missing
-
-Ember is being built in steps. Not yet available: interactive inputs, like
-Pluto's `@bind`.
 
 Known gaps are tracked as [GitHub issues](https://github.com/jowch/Ember/issues),
 labelled P1 to P3 by priority, and the design is in [docs/design.md](https://github.com/jowch/Ember/blob/main/docs/design.md).
