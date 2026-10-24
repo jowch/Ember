@@ -9,7 +9,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir, tempDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, setCellCode, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, setCellCode, cellSelector, sentMessages } from "../browser.mjs";
+import { waitingFor } from "../waits.mjs";
 
 test("header: click the file name, rename and move to a different folder, Save: title changes, R keeps running, getwd() matches the new folder (98)", async (t) => {
   const notebook = tempNotebook();
@@ -50,8 +51,30 @@ test("header: click the file name, rename and move to a different folder, Save: 
   // whole dialog instead (dialogs.js's own Esc-to-close).
   await nameField.click();
 
+  // If the dialog stays open, say which of the three ways it can (#473):
+  // it shows a move error, it is still saving with the reply never come,
+  // or the Save click never sent the request.
+  const asked = sentMessages(page, "ember_move_notebook");
+  const answered = [];
+  page.on("websocket", (ws) => ws.on("framereceived", (frame) => {
+    const payload = frame.payload ?? "";
+    if ((Buffer.isBuffer(payload) ? payload.toString("latin1") : String(payload)).includes("ember_move_notebook")) answered.push(Date.now());
+  }));
   await dialog.getByRole("button", { name: "Save" }).click();
-  await dialog.waitFor({ state: "hidden" });
+  await waitingFor("the move dialog closes after Save", dialog.waitFor({ state: "hidden" }), async () => {
+    const shown = await page.evaluate(() => {
+      const d = document.querySelector("dialog.ember-dialog[open]");
+      if (!d) return { open: false };
+      const button = (label) => [...d.querySelectorAll("button")].find((b) => b.textContent.trim() === label)?.disabled;
+      return {
+        open: true,
+        error: d.querySelector(".ember-dialog-error")?.textContent ?? null,
+        saveDisabled: button("Save"), cancelDisabled: button("Cancel"),
+        name: d.querySelector("#ember-move-name")?.value, folder: d.querySelector("#ember-move-folder")?.value,
+      };
+    }).catch((e) => ({ unreadable: String(e) }));
+    return { ...shown, requestsSent: asked.length, repliesReceived: answered.length };
+  });
 
   await page.waitForFunction(() => document.title === "renamed.R — Ember");
 

@@ -599,6 +599,31 @@ test_that("a later callback keeps firing during a 2 s busy cell (117)", {
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
+  # The worker starts on the first run, and starting it holds the server
+  # for as long as the process takes to spawn (about 0.3 s, more on a
+  # loaded machine). That isn't the busy cell this test is about (#490):
+  # start it first.
+  run_cells(nb, "S", wait = TRUE, timeout = 20)
+
+  # What the server did, so a long gap can say what fell inside it (#490):
+  # each poll's start and length, and each event step() handled.
+  t0 <- as.numeric(Sys.time())
+  polls <- list()
+  steps <- list()
+  real_poll <- poll
+  real_step <- step
+  local_mocked_bindings(
+    poll = function(nb) {
+      start <- as.numeric(Sys.time())
+      on.exit(polls[[length(polls) + 1]] <<- c(start, as.numeric(Sys.time())))
+      real_poll(nb)
+    },
+    step = function(state, event) {
+      start <- as.numeric(Sys.time())
+      on.exit(steps[[length(steps) + 1]] <<- list(start = start, end = as.numeric(Sys.time()), type = event$type))
+      real_step(state, event)
+    }
+  )
 
   ticks <- list()
   stop_ticking <- FALSE
@@ -618,9 +643,27 @@ test_that("a later callback keeps firing during a 2 s busy cell (117)", {
   expect_gt(length(ticks), 10)
   times <- vapply(ticks, as.numeric, numeric(1))
   gaps <- diff(times)
+  # Where the longest gap fell: its start and end, from when the test
+  # began ticking, the run's own events, and the polls and steps inside it.
+  i <- which.max(gaps)
+  from <- times[i]
+  to <- times[i + 1]
+  at <- function(x) sprintf("%.3f", x - t0)
+  step_lines <- vapply(steps, function(s) sprintf("  %s at %s, %.3f s", s$type, at(s$start), s$end - s$start), "")
+  inside <- function(start, end) end >= from & start <= to
+  run_events <- step_lines[vapply(steps, function(s) s$type %in% c("wk_running", "wk_done"), NA)]
+  in_gap <- c(
+    step_lines[vapply(steps, function(s) inside(s$start, s$end), NA)],
+    vapply(Filter(function(p) inside(p[1], p[2]), polls), function(p) sprintf("  poll at %s, %.3f s", at(p[1]), p[2] - p[1]), "")
+  )
+  where <- paste(c(
+    sprintf("longest gap %.3f s, from %s to %s s", gaps[i], at(from), at(to)),
+    "the run:", run_events,
+    "inside the gap:", if (length(in_gap)) in_gap else "  nothing the server recorded"
+  ), collapse = "\n")
   # A blocked server would show a gap near the cell's 2 s; shared CI
   # machines show occasional pauses of a few hundred ms.
-  expect_lt(max(gaps), 0.5)
+  expect_lt(max(gaps), 0.5, label = where)
 })
 
 test_that("worker_output_pipe_drained", {
