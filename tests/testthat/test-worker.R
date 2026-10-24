@@ -2892,8 +2892,10 @@ test_that("a run reports its data files' versions, and a change after the read b
 test_that("a run learns the files it reads however the path is built, with each one's version", {
   h <- worker_harness()
   on.exit(h$close())
-  d <- normalizePath(tempfile("ember-learn-"), winslash = "/", mustWork = FALSE)
+  d <- tempfile("ember-learn-")
   dir.create(d)
+  # After creating it: Windows keeps an 8.3 short name for a path that doesn't exist yet.
+  d <- normalizePath(d, winslash = "/")
   write.csv(data.frame(x = 1:3), file.path(d, "a.csv"), row.names = FALSE)
   saveRDS(1:3, file.path(d, "b.rds"))
   writeLines(c("p", "q"), file.path(d, "c.txt"))
@@ -2939,7 +2941,9 @@ test_that("a run learns the files it reads however the path is built, with each 
 test_that("a relative path read in a loop over folders is learned in each folder, and a missing one where it was looked for", {
   h <- worker_harness()
   on.exit(h$close())
-  d <- normalizePath(tempfile("ember-wd-"), winslash = "/", mustWork = FALSE)
+  d <- tempfile("ember-wd-")
+  dir.create(d)
+  d <- normalizePath(d, winslash = "/")
   for (s in c("a", "b")) {
     dir.create(file.path(d, s), recursive = TRUE)
     writeLines("x\n1", file.path(d, s, "data.csv"))
@@ -2955,8 +2959,10 @@ test_that("a relative path read in a loop over folders is learned in each folder
 test_that("a change after the read within the reading expression is someone else's", {
   h <- worker_harness()
   on.exit(h$close())
-  d <- normalizePath(tempfile("ember-within-"), winslash = "/", mustWork = FALSE)
+  d <- tempfile("ember-within-")
   dir.create(d)
+  # After creating it: Windows keeps an 8.3 short name for a path that doesn't exist yet.
+  d <- normalizePath(d, winslash = "/")
   writeLines("x\n1", file.path(d, "a.csv"))
   writeLines("x\n22", file.path(d, "other.csv"))
   r <- run_and_wait(h, "a", 1L, sprintf('{ a <- read.csv(file.path(%1$s, "a.csv")); file.copy(file.path(%1$s, "other.csv"), file.path(%1$s, "a.csv"), overwrite = TRUE) }', deparse(d)))
@@ -2981,8 +2987,9 @@ test_that("a learned file inside the notebook's folder is named relative to it, 
 test_that("a connection made in one run is learned by the run that reads it", {
   h <- worker_harness()
   on.exit(h$close())
-  f <- normalizePath(tempfile("ember-con-", fileext = ".txt"), winslash = "/", mustWork = FALSE)
+  f <- tempfile("ember-con-", fileext = ".txt")
   writeLines(c("a", "b"), f)
+  f <- normalizePath(f, winslash = "/")
   run_and_wait(h, "a", 1L, sprintf("con <- file(%s)", deparse(f)))
   r <- run_and_wait(h, "b", 2L, "x <- readLines(con)")
   expect_identical(r$status, "ok")
@@ -2992,8 +2999,10 @@ test_that("a connection made in one run is learned by the run that reads it", {
 test_that("text, URLs, writes, R's own files and a sourced helper aren't learned as data; a reader given no file is unresolved", {
   h <- worker_harness()
   on.exit(h$close())
-  d <- normalizePath(tempfile("ember-skip-"), winslash = "/", mustWork = FALSE)
+  d <- tempfile("ember-skip-")
   dir.create(d)
+  # After creating it: Windows keeps an 8.3 short name for a path that doesn't exist yet.
+  d <- normalizePath(d, winslash = "/")
   code <- paste('a <- read.csv(text = "x,y\\n1,2")',
                 'b <- readLines(textConnection(c("p", "q")))',
                 sprintf('write.csv(a, file.path(%s, "out.csv"))', deparse(d)),
@@ -3035,8 +3044,10 @@ test_that("a package reader that reads in compiled code is learned once its pack
   # readr's dependencies may be in any library this R has.
   h <- worker_harness(extra_libs = .libPaths())
   on.exit(h$close())
-  d <- normalizePath(tempfile("ember-pkg-"), winslash = "/", mustWork = FALSE)
+  d <- tempfile("ember-pkg-")
   dir.create(d)
+  # After creating it: Windows keeps an 8.3 short name for a path that doesn't exist yet.
+  d <- normalizePath(d, winslash = "/")
   for (n in c("a.csv", "b.csv", "c.csv", "f.csv")) writeLines("x,y\n1,2", file.path(d, n))
   r <- run_and_wait(h, "a", 1L, sprintf('a <- data.table::fread(file.path(%1$s, "a.csv"))\nb <- readr::read_csv(file.path(%1$s, "b.csv"), show_col_types = FALSE)\nt <- data.table::fread("x,y\\n3,4")\nf <- data.table::fread(file = file.path(%1$s, "f.csv"))',
                                          deparse(d)))
