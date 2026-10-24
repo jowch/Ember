@@ -5,7 +5,8 @@
 # pinned here. Adding a field is safe: Ember ignores what it doesn't read.
 # Removing or renaming one, or changing how the hook is called, breaks
 # notebooks on a released Ember, so a change to this file needs a plan for
-# those (#537).
+# those (#537). The worker's own reads (`check`, and `keep` for
+# input_list()) are covered by test-inputs.R, which runs a real worker.
 
 #' The fields every spec has, then each type's own. Each `type` is one of
 #' these names.
@@ -24,6 +25,9 @@ contract_fields <- list(
 #' One call of each input, and a value its `check` must refuse.
 contract_calls <- list(
   list(quote(input_slider(1, 10, 5, step = 1, label = "n")), bad = 11),
+  # A whole-number slider's value is an integer, which the page's
+  # `integer` flag comes from.
+  list(quote(input_slider(1L, 10L, 5L)), bad = 11L, type = "integer"),
   list(quote(input_number(2, 0, 9, 1)), bad = "x"),
   list(quote(input_checkbox(TRUE)), bad = "yes"),
   list(quote(input_text("a")), bad = 1),
@@ -62,6 +66,7 @@ test_that("emberui hands the hook each input's spec and its own call, and return
     expect_true(is.function(s$check), label = label)
     expect_identical(s$check(s$value), s$value, label = label)
     expect_error(s$check(k$bad), label = label)
+    if (!is.null(k$type)) expect_type(s$value, k$type)
     if (s$type %in% c("select", "radio")) {
       expect_type(s$labels, "character")
       expect_length(s$labels, length(s$choices))
@@ -91,7 +96,7 @@ test_that("Ember draws and sets an input whose spec has only the pinned fields, 
     radio = list(type = "radio", value = "x", label = NULL, check = check, choices = c("x", "y"), labels = c("x", "y")),
     list = list(type = "list", value = list(n = 1, m = "a"), check = check, keep = check,
                 parts = list(n = list(type = "slider", value = 1, label = NULL, min = 1, max = 10, step = NULL),
-                             m = list(type = "select", value = "a", label = NULL, choices = c("a", "b"),
+                             m = list(type = "select", value = "a", label = "Mode", choices = c("a", "b"),
                                       labels = c("a", "b"), multiple = FALSE))))
   # The worker sends each spec without its functions (inst/worker.R, input_hook()).
   plain <- function(s) s[!vapply(s, is.function, logical(1))]
@@ -103,6 +108,10 @@ test_that("Ember draws and sets an input whose spec has only the pinned fields, 
   expect_identical(vapply(drawn, `[[`, character(1), "type"), names(specs))
   by_type <- structure(drawn, names = names(specs))
   expect_identical(by_type$slider[c("min", "max", "step", "integer")], list(min = 1, max = 10, step = 1, integer = FALSE))
+  # A spec's own label, and a part's, are what the page shows.
+  expect_identical(by_type$checkbox$label, "Show")
+  expect_identical(by_type$slider$label, "slider")
+  expect_identical(vapply(by_type$list$parts, `[[`, character(1), "label"), c("n", "Mode"))
   expect_identical(by_type$select$value, 1L)
   expect_identical(by_type$select$labels, list("A", "B"))
   expect_identical(by_type$radio$value, 0L)
