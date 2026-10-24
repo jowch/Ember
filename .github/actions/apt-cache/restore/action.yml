@@ -1,0 +1,50 @@
+name: Restore apt's downloads
+description: >
+  Hands apt the .deb files an earlier run of this job downloaded, so apt
+  fetches only what changed. Does nothing off Linux. Pair it with
+  ./.github/actions/apt-cache/save at the end of the job.
+# Some runners reach an Ubuntu mirror that serves .deb files at 30-50 kB/s:
+# on 10-23 an e2e job spent 57 of its 85 minutes downloading 157 MB that a
+# runner at the same time fetched in 9 s, and the grammar job's setup-r
+# spent 17 minutes on 30 MB. One cache per job and runner image.
+outputs:
+  key:
+    description: The cache's key, for the save action.
+    value: ${{ steps.key.outputs.key }}
+  cache-hit:
+    description: "'true' when the cache matched the key exactly, so there is nothing new to save."
+    value: ${{ steps.cache.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - id: key
+      if: runner.os == 'Linux'
+      shell: bash
+      run: echo "key=apt-${{ github.job }}-$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
+    - id: cache
+      if: runner.os == 'Linux'
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/apt-archives
+        key: ${{ steps.key.outputs.key }}
+        restore-keys: apt-${{ github.job }}-
+    # apt checks only a cached file's size, not its hash, so only files
+    # whose SHA256 matches apt's signed package lists are handed over: a
+    # damaged or altered one is left out and downloaded again.
+    - if: runner.os == 'Linux' && steps.cache.outputs.cache-matched-key != ''
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        used=0 skipped=0
+        for deb in ~/apt-archives/*.deb; do
+          read -r pkg ver arch <<< "$(dpkg-deb -W --showformat='${Package} ${Version} ${Architecture}' "$deb")"
+          want=$(apt-cache show --no-all-versions "$pkg:$arch=$ver" 2>/dev/null | awk '/^SHA256:/ { print $2; exit }')
+          if [ -n "$want" ] && [ "$(sha256sum < "$deb" | cut -d' ' -f1)" = "$want" ]; then
+            sudo cp "$deb" /var/cache/apt/archives/
+            used=$((used + 1))
+          else
+            echo "Left out $(basename "$deb"): no such version in apt's lists, or its SHA256 differs"
+            skipped=$((skipped + 1))
+          fi
+        done
+        echo "Handed apt $used cached files; left out $skipped"

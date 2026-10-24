@@ -578,6 +578,10 @@ export const create_pluto_connection = async ({
                         return
                     }
                     await connect() // reconnect!
+                    // A try that found the key refused ends the reconnect:
+                    // there is no socket to resync on, and sending on the
+                    // one that closed throws (#510).
+                    if (connection.state === "key refused") return
 
                     console.log(`Starting state sync`, new Date().toLocaleTimeString())
                     const accept = await on_reconnect()
