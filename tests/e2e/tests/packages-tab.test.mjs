@@ -25,7 +25,7 @@ test("packages tab: an installing row keeps its cells side by side; Update is a 
   await runCell(page, "S");
   await page.getByRole("button", { name: "Packages", exact: true }).click();
   const row = page.locator("tr.ember-package-row.ember-package-installing");
-  await row.waitFor({ timeout: 30000 });
+  await row.waitFor();
 
   assert.equal(await row.evaluate((el) => getComputedStyle(el).display), "table-row");
   const cells = await row.locator("td").evaluateAll((tds) => tds.map((td) => td.getBoundingClientRect()).map((r) => ({ top: r.top, left: r.left })));

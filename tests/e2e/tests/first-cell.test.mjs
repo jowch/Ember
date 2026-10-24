@@ -43,7 +43,7 @@ test("the first cell shows the same chip on load as an identical cell further do
   await openNotebook(page, server.origin, server.secret, notebook);
   await runCell(page, "RUN");
   await page.waitForFunction(() => document.querySelectorAll("pluto-cell.running, pluto-cell.queued").length === 0
-    && document.getElementById("RUN")?.classList.contains("no_output_yet") === false, null, { timeout: 60000 });
+    && document.getElementById("RUN")?.classList.contains("no_output_yet") === false);
 
   for (const width of [1200, 600]) {
     await page.setViewportSize({ width, height: 800 });
@@ -52,9 +52,8 @@ test("the first cell shows the same chip on load as an identical cell further do
     // chip, and any passing state held back from before then has shown.
     await page.evaluate(() => sessionStorage.setItem("record_looks", "1"));
     await page.reload();
-    await page.waitForFunction(() => !document.querySelector("pluto-editor")?.classList.contains("loading"),
-      null, { timeout: 30000 });
-    await page.waitForFunction(() => window.__look("LATER").shown, null, { timeout: 0 });
+    await page.waitForFunction(() => !document.querySelector("pluto-editor")?.classList.contains("loading"));
+    await page.waitForFunction(() => window.__look("LATER").shown);
     await afterSettle(page);
     const samples = await page.evaluate(() => { window.__stop_looks = true; return window.__looks; });
     assert.ok(samples.length > 0, "frames were recorded during the load");

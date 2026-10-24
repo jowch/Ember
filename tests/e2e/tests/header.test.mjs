@@ -22,8 +22,7 @@ test("header: R status reads \"R ready\" after a run and opens Status (117)", as
 
   await runCell(page, "A");
   await page.waitForFunction(
-    () => document.querySelector("#ember-r-status .ember-r-status-words")?.innerText === "R ready",
-    null, { timeout: 30000 });
+    () => document.querySelector("#ember-r-status .ember-r-status-words")?.innerText === "R ready");
 
   await page.locator("#ember-r-status").click();
   await page.waitForSelector("#helpbox-wrapper.open");
@@ -43,16 +42,14 @@ test("header: busy shows \"Running N of N cells\" and Stop, which ends the run (
   await openNotebook(page, server.origin, server.secret, notebook);
 
   await runCell(page, "LOOP");
-  await page.waitForSelector(`${cellSelector("LOOP")}.running`, { timeout: 15000 });
+  await page.waitForSelector(`${cellSelector("LOOP")}.running`);
   await page.waitForFunction(
-    () => /Running \d+ of \d+ cells/.test(document.querySelector("#ember-r-status .ember-r-status-words")?.innerText ?? ""),
-    null, { timeout: 15000 });
+    () => /Running \d+ of \d+ cells/.test(document.querySelector("#ember-r-status .ember-r-status-words")?.innerText ?? ""));
 
   await page.locator('header#pluto-nav button.ember-btn').filter({ hasText: "Stop" }).click();
-  await page.waitForSelector(`${cellSelector("LOOP")}:not(.running)`, { timeout: 15000 });
+  await page.waitForSelector(`${cellSelector("LOOP")}:not(.running)`);
   await page.waitForFunction(
-    () => document.querySelector("#ember-r-status .ember-r-status-words")?.innerText === "R ready",
-    null, { timeout: 15000 });
+    () => document.querySelector("#ember-r-status .ember-r-status-words")?.innerText === "R ready");
 
   assertNoProblems(page);
 });
@@ -71,21 +68,18 @@ test('header: "Run N not run" counts, and clicking it clears it (119)', async (t
 
   await runCell(page, "A");
   await page.waitForFunction(
-    () => document.querySelector("#ember-r-status .ember-r-status-words")?.innerText === "R ready",
-    null, { timeout: 30000 });
+    () => document.querySelector("#ember-r-status .ember-r-status-words")?.innerText === "R ready");
 
   // Restart from the Status tab, where the plan puts it.
   await page.locator("#ember-r-status").click();
   await page.waitForSelector("#ember-status-restart");
   await page.locator("#ember-status-restart").click();
   await page.waitForFunction(
-    () => document.querySelector("header#pluto-nav button.ember-btn")?.innerText.includes("4 not run"),
-    null, { timeout: 30000 });
+    () => document.querySelector("header#pluto-nav button.ember-btn")?.innerText.includes("4 not run"));
 
   await page.locator("header#pluto-nav button.ember-btn").click();
   await page.waitForFunction(
-    () => document.querySelector("header#pluto-nav button.ember-btn") == null,
-    null, { timeout: 30000 });
+    () => document.querySelector("header#pluto-nav button.ember-btn") == null);
   assert.equal(await page.locator("#ember-not-run-bar").count(), 0, "no separate bar above the notebook");
 
   assertNoProblems(page);
@@ -155,8 +149,7 @@ test("header: the R status button's accessible name is the state words, at every
   await page.setViewportSize({ width: 1440, height: 900 });
   await openNotebook(page, server.origin, server.secret, notebook);
   await page.waitForFunction(
-    () => document.querySelector("#ember-r-status .ember-r-status-words")?.innerText === "R not started",
-    null, { timeout: 15000 });
+    () => document.querySelector("#ember-r-status .ember-r-status-words")?.innerText === "R not started");
 
   const wide_button = page.locator("#ember-r-status");
   assert.equal(await wide_button.getAttribute("aria-label"), "R not started");
@@ -184,7 +177,7 @@ test("header: the flame goes back to the start page, which lists the open notebo
     page.locator("nav#at_the_top > a").first().click(),
   ]);
   assert.equal(resp.status(), 200, "the start page accepts the flame's link");
-  await page.locator(".ember-start-row").first().waitFor({ state: "visible", timeout: 10000 });
+  await page.locator(".ember-start-row").first().waitFor({ state: "visible" });
   assert.ok(await page.locator('a[href*="edit?id="]').count() > 0, "the open notebook is listed");
 
   assertNoProblems(page);

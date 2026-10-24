@@ -21,7 +21,7 @@ test("run: running B runs its ancestor A first, and shows the output", async (t)
   await runCell(page, "B");
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("55"),
-    cellSelector("B") + " pluto-output", { timeout: 20000 });
+    cellSelector("B") + " pluto-output");
 
   const bClass = await page.locator(cellSelector("B")).getAttribute("class");
   assert.ok(!bClass.includes("running") && !bClass.includes("queued"));
@@ -45,7 +45,7 @@ test("edit + Shift-Enter: new output appears, and the file on disk has the new c
   await runCell(page, "B");
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("110"),
-    cellSelector("B") + " pluto-output", { timeout: 20000 });
+    cellSelector("B") + " pluto-output");
 
   const onDisk = fs.readFileSync(notebook, "utf8");
   assert.match(onDisk, /sum\(x\) \* 2/);
@@ -68,8 +68,7 @@ test("run: cell_results[A].ember.variables reports x's name, type and value (ui-
     () => {
       const v = window.editor_state?.notebook?.cell_results?.["A"]?.ember?.variables;
       return Array.isArray(v) && v.length > 0;
-    },
-    null, { timeout: 20000 });
+    });
 
   const variables = await page.evaluate(() => window.editor_state.notebook.cell_results["A"]?.ember?.variables);
   assert.deepEqual(variables, [{ name: "x", type: "numeric", value: "1", kind: "value" }]);

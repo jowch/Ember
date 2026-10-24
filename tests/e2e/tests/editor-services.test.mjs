@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector, setCellCode, codeSelector } from "../browser.mjs";
+import { waitingFor } from "../waits.mjs";
 
 /** Resolves once the page hasn't scrolled for 10 frames in a row. The
  * check runs once a frame and returns a plain value: waitForFunction
@@ -23,37 +24,27 @@ const scroll_settled = (page) => page.waitForFunction(() => {
   if (++s.frames < 10) return false;
   delete window.__scroll_settled;
   return true;
-}, null, { polling: "raf", timeout: 30000 });
+}, null, { polling: "raf" });
 
-/** Type `code` into the cell at `sel`, open the completion popup and check
- * `predicate(labels)`, retrying (clear, retype) for up to `timeout`ms. A
- * CI runner busy with other e2e suites can be slow enough that the first
- * keystroke's request answers after the worker reaches "ready" but the
- * popup still shows an earlier, now-stale result; retyping forces a fresh
- * request rather than waiting out a race that already happened. */
-async function completion_eventually(page, sel, code, predicate, timeout = 30000) {
-  await page.waitForSelector(sel, { timeout });
-  const locator = page.locator(`${sel} .cm-content`);
-  const deadline = Date.now() + timeout;
-  let labels = [];
-  while (Date.now() < deadline) {
-    // Re-focus every attempt: closing the popup with Escape can also blur
-    // the cell, and typing into nothing would retry forever on the same
-    // stale (never actually retyped) text.
-    await locator.click({ timeout });
-    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
-    await page.keyboard.press("Backspace");
-    await page.keyboard.type(code, { delay: 10 });
-    try {
-      await page.waitForSelector(".cm-tooltip-autocomplete .cm-completionLabel", { timeout: 3000 });
-      labels = await page.locator(".cm-tooltip-autocomplete .cm-completionLabel").allInnerTexts();
-      if (predicate(labels)) return labels;
-    } catch {
-      // no popup yet within this attempt's window; retry.
-    }
-    await page.keyboard.press("Escape");
-  }
-  throw new Error(`completion for ${JSON.stringify(code)} never satisfied the predicate; last labels: ${JSON.stringify(labels)}`);
+/** Replace the text of the cell at `sel` with `code`, typed, and wait
+ * until the completion popup lists `label` (anything, when `label` is
+ * null); returns the popup's labels. Called once the worker is ready, so
+ * the request the last keystroke sends is answered by R itself. No
+ * retyping: a popup that keeps an earlier, stale answer is a bug to fix,
+ * and its labels are in the report of what the test was waiting for. */
+async function completion(page, sel, code, label = null) {
+  await page.locator(`${sel} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+  await page.keyboard.press("Backspace");
+  await page.keyboard.type(code, { delay: 10 });
+  const labels = ".cm-tooltip-autocomplete .cm-completionLabel";
+  await waitingFor(label == null ? `completions for ${JSON.stringify(code)}` : `"${label}" among the completions for ${JSON.stringify(code)}`,
+    page.waitForFunction(([sel, label]) => {
+      const shown = [...document.querySelectorAll(sel)].map((el) => el.innerText);
+      return label == null ? shown.length > 0 : shown.includes(label);
+    }, [labels, label]),
+    () => page.locator(labels).allInnerTexts());
+  return page.locator(labels).allInnerTexts();
 }
 
 /** Click the completion option whose label is exactly `label` (open popup
@@ -62,19 +53,17 @@ async function completion_eventually(page, sel, code, predicate, timeout = 30000
  * the receiver, e.g. "df$df$mpg") and finding 1 (a multi-line cell's
  * replace range landing on the wrong line) both only show up once a
  * completion is actually accepted, not just listed. Never leaves the cell
- * empty between steps (deliberately, like completion_eventually() above):
+ * empty between steps (deliberately, like completion() above):
  * an empty cell that loses focus gets removed. */
 async function accept_completion(page, sel, label) {
   const option = page.locator(".cm-tooltip-autocomplete .cm-completionLabel").filter({ hasText: new RegExp(`^${label}$`) }).first();
   await option.click();
   await page.waitForFunction(
-    () => document.querySelector(".cm-tooltip-autocomplete") == null,
-    null, { timeout: 5000 }
-  ).catch(() => {}); // the popup may already be gone by the time this runs
+    () => document.querySelector(".cm-tooltip-autocomplete") == null);
   return await page.locator(`${sel} .cm-content`).innerText();
 }
 
-test("completion: typing me then Ctrl+Space lists mean; after running DF, df$ lists mpg (60)", { timeout: 120000 }, async (t) => {
+test("completion: typing me then Ctrl+Space lists mean; after running DF, df$ lists mpg (60)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-complete.server.log") });
   const browser = await launchBrowser();
@@ -96,7 +85,7 @@ test("completion: typing me then Ctrl+Space lists mean; after running DF, df$ li
   await page.locator(`${newSel} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.keyboard.type("me", { delay: 10 });
   await page.keyboard.press("Control+Space");
-  await page.waitForSelector(".cm-tooltip-autocomplete .cm-completionLabel", { timeout: 10000 });
+  await page.waitForSelector(".cm-tooltip-autocomplete .cm-completionLabel");
   const labels = await page.locator(".cm-tooltip-autocomplete .cm-completionLabel").allInnerTexts();
   assert.ok(labels.includes("mean"), `expected "mean" among ${JSON.stringify(labels)}`);
 
@@ -106,7 +95,7 @@ test("completion: typing me then Ctrl+Space lists mean; after running DF, df$ li
   // Not cleared to empty here: a brand-new cell that's empty when focus
   // leaves it gets removed (found by watching the cell vanish right after
   // runCell(DF) below, long before anything types into it again).
-  // completion_eventually() below replaces "me" the same way it replaces
+  // completion() below replaces "me" the same way it replaces
   // any other stale text.
 
   await runCell(page, "DF");
@@ -119,9 +108,9 @@ test("completion: typing me then Ctrl+Space lists mean; after running DF, df$ li
     const r = nb?.cell_results?.DF;
     return nb?.process_status === "ready" && r && !r.running && !r.queued &&
       (r.output?.last_run_timestamp ?? 0) > 0;
-  }, null, { timeout: 60000 });
+  });
 
-  await completion_eventually(page, newSel, "df$", (ls) => ls.includes("mpg"), 60000);
+  await completion(page, newSel, "df$", "mpg");
   await page.screenshot({ path: path.join(artifactsDir(), "completion-notebook-var.png") });
   // Accepting "mpg" must replace only the part after "$": the worker's own
   // completion token/items for a `$` completion include the receiver
@@ -130,9 +119,9 @@ test("completion: typing me then Ctrl+Space lists mean; after running DF, df$ li
   const after_field_completion = await accept_completion(page, newSel, "mpg");
   assert.equal(after_field_completion, "df$mpg");
 
-  // completion_eventually() does its own clear-and-retype (never leaving
+  // completion() does its own clear-and-retype (never leaving
   // the cell empty and unfocused, which would get it removed).
-  const stats_labels = await completion_eventually(page, newSel, "stats::", (ls) => ls.length > 0);
+  const stats_labels = await completion(page, newSel, "stats::");
   assert.ok(stats_labels.length > 0, "stats:: offered some completions");
   await page.screenshot({ path: path.join(artifactsDir(), "completion-stats-namespace.png") });
   await page.keyboard.press("Escape");
@@ -142,7 +131,7 @@ test("completion: typing me then Ctrl+Space lists mean; after running DF, df$ li
   // accepting here would land on the wrong line (finding 1).
   // `keyboard.type()` presses Enter for an embedded "\n", same as typing
   // the second line by hand.
-  await completion_eventually(page, newSel, "x <- 1\nme", (ls) => ls.includes("mean"), 30000);
+  await completion(page, newSel, "x <- 1\nme", "mean");
   const after_multiline_completion = await accept_completion(page, newSel, "mean");
   assert.equal(after_multiline_completion, "x <- 1\nmean");
 
@@ -163,15 +152,14 @@ test("completion still works on the notebook's names and base R while a cell run
   await setCellCode(page, "LOOP", "repeat NULL");
   await page.keyboard.press("Shift+Enter");
   await page.waitForFunction(
-    () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
-    null, { timeout: 10000 });
+    () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"));
 
   await page.hover(cellSelector("B"));
   const cellCountBefore = await page.locator("pluto-cell").count();
   await page.locator(`${cellSelector("B")} button.add_cell.after`).click({ force: true });
   await page.waitForFunction(
     (before) => document.querySelectorAll("pluto-cell").length > before,
-    cellCountBefore, { timeout: 10000 });
+    cellCountBefore);
   const newCellId = await page.evaluate((bid) => {
     const cells = Array.from(document.querySelectorAll("pluto-cell"));
     const i = cells.findIndex((c) => c.id === bid);
@@ -181,7 +169,7 @@ test("completion still works on the notebook's names and base R while a cell run
 
   await page.locator(`${newSel} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.keyboard.type("su", { delay: 10 });
-  await page.waitForSelector(".cm-tooltip-autocomplete .cm-completionLabel", { timeout: 0 });
+  await page.waitForSelector(".cm-tooltip-autocomplete .cm-completionLabel");
   // LOOP never ends by itself: still running means the answer didn't wait for R.
   assert.ok(await page.locator(`${cellSelector("LOOP")}.running`).count() === 1, "the fallback answered while the worker was busy");
   const labels = await page.locator(".cm-tooltip-autocomplete .cm-completionLabel").allInnerTexts();
@@ -212,7 +200,7 @@ test("completion: typing a number asks R for nothing; a name typed after it stil
   await page.locator(`${cellSelector("B")} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
   await page.keyboard.type("z <- c(12345, 2L, 3.14, 0x1F, 1i) + me", { delay: 150 });
-  await page.waitForSelector(".cm-tooltip-autocomplete .cm-completionLabel", { timeout: 10000 });
+  await page.waitForSelector(".cm-tooltip-autocomplete .cm-completionLabel");
   const labels = await page.locator(".cm-tooltip-autocomplete .cm-completionLabel").allInnerTexts();
   assert.ok(labels.includes("mean"), `expected "mean" among ${JSON.stringify(labels)}`);
   assert.ok(queries.some((q) => /\+ me?$/.test(q)), `a request for "me": ${JSON.stringify(queries)}`);
@@ -221,7 +209,7 @@ test("completion: typing a number asks R for nothing; a name typed after it stil
   assertNoProblems(page);
 });
 
-test("help: the cursor inside mean( shows Arithmetic Mean; a link loads another page; examples highlight as R (61)", { timeout: 120000 }, async (t) => {
+test("help: the cursor inside mean( shows Arithmetic Mean; a link loads another page; examples highlight as R (61)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help.server.log") });
   const browser = await launchBrowser();
@@ -238,7 +226,7 @@ test("help: the cursor inside mean( shows Arithmetic Mean; a link loads another 
     const nb = window.editor_state?.notebook;
     return nb?.process_status === "ready" && nb.cell_results?.DF?.runtime != null &&
       Object.values(nb.cell_results).every((r) => !r.running && !r.queued);
-  }, null, { timeout: 30000 });
+  });
 
   await page.hover(cellSelector("DF"));
   await page.locator(`${cellSelector("DF")} button.add_cell.after`).click({ force: true });
@@ -255,8 +243,7 @@ test("help: the cursor inside mean( shows Arithmetic Mean; a link loads another 
 
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Arithmetic Mean"),
-    null, { timeout: 15000 });
+    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Arithmetic Mean"));
 
   await page.screenshot({ path: path.join(artifactsDir(), "help-panel-light.png") });
   await page.emulateMedia({ colorScheme: "dark" });
@@ -267,7 +254,7 @@ test("help: the cursor inside mean( shows Arithmetic Mean; a link loads another 
   // must come back highlighted as R, not as plain text: RawHTMLContainer's
   // highlighting pass (CellOutput.js) turns that into hljs's own markup.
   const examples_code = page.locator("#helpbox-wrapper pre code").first();
-  await examples_code.waitFor({ timeout: 15000 });
+  await examples_code.waitFor();
   const examples_class = await examples_code.getAttribute("class");
   assert.match(examples_class ?? "", /\bhljs\b/, "the examples code block was passed to hljs");
   const highlighted_tokens = await examples_code.locator('[class*="hljs-"]').count();
@@ -284,12 +271,12 @@ test("help: the cursor inside mean( shows Arithmetic Mean; a link loads another 
       const title = document.querySelector("#helpbox-wrapper .ember-help-page h2")?.innerText;
       return title != null && title !== prev;
     },
-    "Arithmetic Mean", { timeout: 15000 });
+    "Arithmetic Mean");
 
   assertNoProblems(page);
 });
 
-test("help: opened while a cell runs, the panel says R is busy, then shows mean's page once the run ends, with no new keystroke (61)", { timeout: 120000 }, async (t) => {
+test("help: opened while a cell runs, the panel says R is busy, then shows mean's page once the run ends, with no new keystroke (61)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help-busy.server.log") });
   const browser = await launchBrowser();
@@ -300,15 +287,14 @@ test("help: opened while a cell runs, the panel says R is busy, then shows mean'
 
   await runCell(page, "LOOP");
   await page.waitForFunction(
-    () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
-    null, { timeout: 10000 });
+    () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"));
 
   await page.hover(cellSelector("B"));
   const cellCountBefore = await page.locator("pluto-cell").count();
   await page.locator(`${cellSelector("B")} button.add_cell.after`).click({ force: true });
   await page.waitForFunction(
     (before) => document.querySelectorAll("pluto-cell").length > before,
-    cellCountBefore, { timeout: 10000 });
+    cellCountBefore);
   const newCellId = await page.evaluate((bid) => {
     const cells = Array.from(document.querySelectorAll("pluto-cell"));
     const i = cells.findIndex((c) => c.id === bid);
@@ -322,21 +308,19 @@ test("help: opened while a cell runs, the panel says R is busy, then shows mean'
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
 
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("R is busy running a cell"),
-    null, { timeout: 15000 });
+    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("R is busy running a cell"));
   assert.ok(
     await page.evaluate(() => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running")),
     "LOOP was still running when the busy message showed");
 
   // LOOP runs for 8s; the panel must ask again on its own once R is free.
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Arithmetic Mean"),
-    null, { timeout: 30000 });
+    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("Arithmetic Mean"));
 
   assertNoProblems(page);
 });
 
-test("help: a query typed while R is busy is still a typed query when it's asked again (#92)", { timeout: 120000 }, async (t) => {
+test("help: a query typed while R is busy is still a typed query when it's asked again (#92)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help-busy-typed.server.log") });
   const browser = await launchBrowser();
@@ -347,24 +331,21 @@ test("help: a query typed while R is busy is still a typed query when it's asked
 
   await runCell(page, "LOOP");
   await page.waitForFunction(
-    () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
-    null, { timeout: 10000 });
+    () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"));
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
 
   // `s` is mgcv's, installed but never attached: only a typed search
   // looks through every installed package (help-panel.test.mjs).
   await page.locator("#live-docs-search").fill("s");
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("R is busy running a cell"),
-    null, { timeout: 15000 });
+    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("R is busy running a cell"));
 
   // The retry once LOOP ends must keep the typed search's scope and
   // label: mgcv's page, and no "follows the cursor" line. If it never
   // comes, say what the panel shows and what the docs replies were.
-  await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("mgcv"),
-    null, { timeout: 30000 }).catch(async (e) => {
-    const seen = await page.evaluate(() => ({
+  await waitingFor("mgcv's page shows in the Help tab", page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("mgcv")),
+    () => page.evaluate(() => ({
       query: document.querySelector("#live-docs-search")?.value,
       package_line: document.querySelector(".ember-help-package")?.innerText ?? null,
       page: document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.slice(0, 300),
@@ -374,14 +355,12 @@ test("help: a query typed while R is busy is still a typed query when it's asked
           // How far a 👍's lookup looked: asked to search every installed
           // package, and whether help() did (#121).
           ...(m.message.status === "👍" ? [{ all_packages: m.message.all_packages, tried_all_packages: m.message.tried_all_packages }] : [])]).slice(-12),
-    }));
-    throw new Error(`${e.message}\nthe panel: ${JSON.stringify(seen, null, 1)}`);
-  });
+    })));
   assert.equal(await page.locator(".ember-help-package").count(), 0, "no 'follows the cursor' line on a typed query's retry");
   assertNoProblems(page);
 });
 
-test("help: a typed query keeps its scope when the Help tab is closed and reopened while R is busy (#121)", { timeout: 120000 }, async (t) => {
+test("help: a typed query keeps its scope when the Help tab is closed and reopened while R is busy (#121)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help-busy-reopen.server.log") });
   const browser = await launchBrowser();
@@ -392,26 +371,23 @@ test("help: a typed query keeps its scope when the Help tab is closed and reopen
 
   await runCell(page, "LOOP");
   await page.waitForFunction(
-    () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
-    null, { timeout: 10000 });
+    () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"));
   const open_tab = (tab) => page.evaluate((tab) => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: tab })), tab);
   await open_tab("docs");
   await page.locator("#live-docs-search").fill("s");
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("R is busy running a cell"),
-    null, { timeout: 15000 });
+    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("R is busy running a cell"));
 
   // Another tab and back while R is still busy: the Help tab is a new
   // component, but the query is still the one typed, so it still looks
   // through every installed package and finds mgcv's `s`.
   await open_tab("variables");
-  await page.waitForFunction(() => document.querySelector("#ember-variables-tab") != null, null, { timeout: 5000 });
+  await page.waitForFunction(() => document.querySelector("#ember-variables-tab") != null);
   await open_tab("docs");
   assert.ok(await page.locator('pluto-cell[id="LOOP"]').evaluate((el) => el.classList.contains("running")),
     "LOOP was still running when the Help tab came back");
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("mgcv"),
-    null, { timeout: 30000 });
+    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("mgcv"));
   assert.equal(await page.locator(".ember-help-package").count(), 0, "no 'follows the cursor' line on a typed query");
   assertNoProblems(page);
 });
@@ -422,7 +398,7 @@ test("help: a typed query keeps its scope when the Help tab is closed and reopen
 // was once a one-shot ref that the first fetch used up, so `sum` went out
 // as typed and `s` as a cursor query, which can't see mgcv. Here the
 // typing comes in the same task as the opening, so it always comes first.
-test("help: a query typed before the Help tab's first effects run keeps its typed scope (#121)", { timeout: 120000 }, async (t) => {
+test("help: a query typed before the Help tab's first effects run keeps its typed scope (#121)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help-typed-first.server.log") });
   const browser = await launchBrowser();
@@ -456,7 +432,7 @@ test("help: a query typed before the Help tab's first effects run keeps its type
     const nb = window.editor_state?.notebook;
     return nb?.process_status === "ready" && nb.cell_results?.A?.runtime != null &&
       Object.values(nb.cell_results).every((r) => !r.running && !r.queued);
-  }, null, { timeout: 30000 });
+  });
 
   await page.locator(`${cellSelector("B")} .cm-editor:not(.cm-ssr-fake) .cm-content`).click();
   await page.keyboard.press("Home");
@@ -478,16 +454,13 @@ test("help: a query typed before the Help tab's first effects run keeps its type
   });
   assert.equal(effects_ran_first, false, "the search box was there, and no docs request had gone out, when `s` was typed");
 
-  await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("mgcv"),
-    null, { timeout: 30000 }).catch(async (e) => {
-    const seen = await page.evaluate(() => ({
+  await waitingFor("mgcv's page shows in the Help tab", page.waitForFunction(
+    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("mgcv")),
+    () => page.evaluate(() => ({
       page: document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.slice(0, 300),
       replies: window.pluto_get_message_log().filter((m) => m.message?.doc !== undefined)
         .map((m) => [m.message.status, String(m.message.doc).replace(/<[^>]*>/g, "").slice(0, 80), m.message.all_packages]),
-    }));
-    throw new Error(`${e.message}\nthe panel: ${JSON.stringify(seen, null, 1)}`);
-  });
+    })));
   assert.equal(await page.locator(".ember-help-package").count(), 0, "no 'follows the cursor' line on a typed query");
   assertNoProblems(page);
 });
@@ -498,7 +471,7 @@ test("help: a query typed before the Help tab's first effects run keeps its type
 // clock is paused, so `s`'s retry can't fire before `mean`'s late "R is
 // busy" lands. That late reply used to cancel `s`'s retry, and the panel
 // said R was busy for good.
-test("help: a late \"R is busy\" for an older query doesn't cancel the current query's retry (#132)", { timeout: 120000 }, async (t) => {
+test("help: a late \"R is busy\" for an older query doesn't cancel the current query's retry (#132)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help-busy-late.server.log") });
   const browser = await launchBrowser();
@@ -530,8 +503,7 @@ test("help: a late \"R is busy\" for an older query doesn't cancel the current q
   await setCellCode(page, "LOOP", "t0 <- Sys.time(); while (Sys.time() - t0 < 20) NULL");
   await runCell(page, "LOOP");
   await page.waitForFunction(
-    () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
-    null, { timeout: 10000 });
+    () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"));
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
 
   // `mean` replaces whatever the cursor asked for, and its request is held.
@@ -541,8 +513,8 @@ test("help: a late \"R is busy\" for an older query doesn't cancel the current q
   held = [];
   await page.locator("#live-docs-search").fill("mean");
   await mean_held;
-  await page.waitForFunction(() => document.querySelector(".live-docs-searchbox")?.classList.contains("loading"), null, { timeout: 5000 });
-  await page.waitForFunction(() => !document.querySelector(".live-docs-searchbox")?.classList.contains("loading"), null, { timeout: 15000 });
+  await page.waitForFunction(() => document.querySelector(".live-docs-searchbox")?.classList.contains("loading"));
+  await page.waitForFunction(() => !document.querySelector(".live-docs-searchbox")?.classList.contains("loading"));
 
   // From here the clock moves only by hand: 100 ms lets the page draw and
   // send `s` (an effect waits for the next frame), well short of the 1 s
@@ -550,8 +522,7 @@ test("help: a late \"R is busy\" for an older query doesn't cancel the current q
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
   const mark_replies = () => page.evaluate(() => { window.__seen_messages = new Set(window.pluto_get_message_log()); });
   const new_busy_reply = () => page.waitForFunction(
-    () => window.pluto_get_message_log().some((m) => m.message?.status === "⌛" && !window.__seen_messages.has(m)),
-    null, { timeout: 15000 });
+    () => window.pluto_get_message_log().some((m) => m.message?.status === "⌛" && !window.__seen_messages.has(m)));
   await mark_replies();
   await page.locator("#live-docs-search").fill("s");
   await page.clock.runFor(100);
@@ -571,13 +542,12 @@ test("help: a late \"R is busy\" for an older query doesn't cancel the current q
   // and find mgcv's page.
   await page.clock.resume();
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("mgcv"),
-    null, { timeout: 45000 });
+    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("mgcv"));
   assert.equal(await page.locator("#live-docs-search").inputValue(), "s");
   assertNoProblems(page);
 });
 
-test("help: a search that finds nothing once R is free replaces \"R is busy\" (#121)", { timeout: 120000 }, async (t) => {
+test("help: a search that finds nothing once R is free replaces \"R is busy\" (#121)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "editor-help-busy-notfound.server.log") });
   const browser = await launchBrowser();
@@ -588,20 +558,17 @@ test("help: a search that finds nothing once R is free replaces \"R is busy\" (#
 
   await runCell(page, "LOOP");
   await page.waitForFunction(
-    () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"),
-    null, { timeout: 10000 });
+    () => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"));
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
 
   await page.locator("#live-docs-search").fill("zzznotatopic");
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("R is busy running a cell"),
-    null, { timeout: 15000 });
+    () => document.querySelector("#helpbox-wrapper")?.innerText.includes("R is busy running a cell"));
 
   // Once LOOP ends the retry finds nothing. The page must say so, not
   // keep saying R is busy.
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("No help page for zzznotatopic"),
-    null, { timeout: 30000 });
+    () => document.querySelector("#helpbox-wrapper .ember-help-page")?.innerText.includes("No help page for zzznotatopic"));
   assert.doesNotMatch(await page.locator("#helpbox-wrapper .ember-help-page").innerText(), /R is busy/);
   assertNoProblems(page);
 });
@@ -628,7 +595,7 @@ test("signature: the cursor after lm( shows a tooltip containing formula within 
   await page.keyboard.type("lm", { delay: 10 });
   const start = Date.now();
   await page.keyboard.type("(");
-  await page.waitForSelector(".cm-ember-signature-tooltip", { timeout: 1000 });
+  await page.waitForSelector(".cm-ember-signature-tooltip");
   const text = await page.locator(".cm-ember-signature-tooltip").innerText();
   assert.match(text, /formula/);
   assert.ok(Date.now() - start < 1000);
@@ -674,16 +641,16 @@ test("signature: a click on the tooltip lands in the code under it (#34)", async
   // focuses itself on a timer and scrolls itself into view (smoothly,
   // focus_after_creation in CellInput.js); wait for that focus and for the
   // page to stop scrolling, then centre the cell and wait again.
-  await page.waitForSelector(`${newSel} .cm-editor.cm-focused`, { timeout: 30000 });
+  await page.waitForSelector(`${newSel} .cm-editor.cm-focused`);
   await scroll_settled(page);
   await page.locator(newSel).evaluate((el) => el.scrollIntoView({ block: "center" }));
   await scroll_settled(page);
 
   await page.keyboard.type("read.table(", { delay: 10 });
   const tooltip = page.locator(".cm-ember-signature-tooltip");
-  await tooltip.waitFor({ timeout: 30000 });
+  await tooltip.waitFor();
   // Created first, placed on CodeMirror's next measure.
-  await page.waitForSelector(".cm-ember-signature-tooltip.cm-tooltip-above, .cm-ember-signature-tooltip.cm-tooltip-below", { timeout: 30000 });
+  await page.waitForSelector(".cm-ember-signature-tooltip.cm-tooltip-above, .cm-ember-signature-tooltip.cm-tooltip-below");
   const where = async () => JSON.stringify({
     tooltip: await tooltip.boundingBox(),
     class: await tooltip.getAttribute("class"),
@@ -707,7 +674,7 @@ test("signature: a click on the tooltip lands in the code under it (#34)", async
   const y = (top + bottom) / 2;
 
   await page.mouse.click(x, y);
-  await tooltip.waitFor({ state: "detached", timeout: 30000 });
+  await tooltip.waitFor({ state: "detached" });
   await page.keyboard.type("Z");
   assert.match(await page.locator(codeSelector("DF", ".cm-line")).first().innerText(), /Z/, "the click put the cursor in DF");
   assert.equal(await page.locator(`${newSel} .cm-line`).first().innerText(), "read.table()", "the new cell is unchanged");
@@ -739,7 +706,7 @@ test("signature: in a multi-line call at the top of the window, the tooltip leav
 
   // As in #34's test: wait out the new cell's own focus and smooth scroll,
   // then put the cell right under the header, and wait again.
-  await page.waitForSelector(`${newSel} .cm-editor.cm-focused`, { timeout: 30000 });
+  await page.waitForSelector(`${newSel} .cm-editor.cm-focused`);
   await scroll_settled(page);
   await page.locator(newSel).evaluate((el) => {
     const header = document.querySelector("header")?.getBoundingClientRect().bottom ?? 0;
@@ -748,7 +715,7 @@ test("signature: in a multi-line call at the top of the window, the tooltip leav
   await scroll_settled(page);
 
   await page.keyboard.type("read.table(", { delay: 10 });
-  await page.waitForSelector(".cm-ember-signature-tooltip.cm-tooltip-above, .cm-ember-signature-tooltip.cm-tooltip-below", { timeout: 30000 });
+  await page.waitForSelector(".cm-ember-signature-tooltip.cm-tooltip-above, .cm-ember-signature-tooltip.cm-tooltip-below");
   // Enter only: typing an argument would open the completion popup, and
   // CodeMirror moves the tooltip clear of it.
   await page.keyboard.press("Enter");
@@ -779,7 +746,7 @@ test("signature: in a multi-line call at the top of the window, the tooltip leav
     if (++s.frames < 10) return false;
     delete window.__placed;
     return now;
-  }, null, { polling: "raf", timeout: 30000 }).then((h) => h.jsonValue());
+  }, null, { polling: "raf" }).then((h) => h.jsonValue());
 
   assert.equal(placed.line_number, 2, `the cursor is on the call's second line: ${JSON.stringify(placed)}`);
   // #103 only happens below the line: with room above, main passes too.
@@ -810,7 +777,7 @@ test("brackets: the bracket at the cursor and its partner are marked, for every 
     await page.keyboard.press("Home");
     for (let i = 0; i < pos; i++) await page.keyboard.press("ArrowRight");
   };
-  const marks_become = (n) => page.waitForFunction(([sel, n]) => document.querySelectorAll(sel).length === n, [marks, n], { timeout: 30000 });
+  const marks_become = (n) => page.waitForFunction(([sel, n]) => document.querySelectorAll(sel).length === n, [marks, n]);
 
   // [cursor position, what it sits next to, the pair expected]
   const cases = [
@@ -836,7 +803,7 @@ test("brackets: the bracket at the cursor and its partner are marked, for every 
   await cursor_at(2);
   await marks_become(2);
   for (let i = 2; i < 29; i++) await page.keyboard.press("ArrowRight");
-  await page.waitForFunction((sel) => document.querySelectorAll(sel).length !== 2, marks, { timeout: 30000 });
+  await page.waitForFunction((sel) => document.querySelectorAll(sel).length !== 2, marks);
   assert.ok(!(await marked()).includes(")"), `the ( in the string isn't paired: ${JSON.stringify(await marked())}`);
 
   assertNoProblems(page);
@@ -855,7 +822,7 @@ test("signature: select all and retype inside a call keeps every key (#314)", as
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
   await runCell(page, "A");
-  await page.waitForFunction(() => window.editor_state.notebook.cell_results.A?.output?.last_run_timestamp > 0, null, { timeout: 30000 });
+  await page.waitForFunction(() => window.editor_state.notebook.cell_results.A?.output?.last_run_timestamp > 0);
 
   // A call over two lines: the cell gets shorter on the first key, so
   // CodeMirror measures the tooltip straight away (on a one-line cell it
@@ -866,7 +833,7 @@ test("signature: select all and retype inside a call keeps every key (#314)", as
   await page.keyboard.press("ArrowLeft");
   await page.keyboard.press("ArrowLeft");
   await page.keyboard.press("ArrowLeft");
-  await page.waitForSelector(".cm-ember-signature-tooltip", { timeout: 30000 });
+  await page.waitForSelector(".cm-ember-signature-tooltip");
 
   await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
   await page.keyboard.type("x * 10", { delay: 120 });

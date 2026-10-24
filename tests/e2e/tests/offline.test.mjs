@@ -11,13 +11,15 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, setCellCode, cellSelector } from "../browser.mjs";
+import { waitingFor } from "../waits.mjs";
 
 /** The times the page gave up typesetting TeX (CellOutput.js logs each
  * one), as a list that grows; `reach(n)` waits until it holds `n`. */
 function typesetFailures(page) {
   const seen = [];
   const waiting = [];
-  seen.reach = (n) => new Promise((resolve) => (seen.length >= n ? resolve() : waiting.push([n, resolve])));
+  seen.reach = (n) => waitingFor(`${n} "Failed to typeset TeX" messages`, new Promise((resolve) => (seen.length >= n ? resolve() : waiting.push([n, resolve]))),
+    () => `${seen.length} so far`);
   page.on("console", (m) => {
     if (!m.text().startsWith("Failed to typeset TeX")) return;
     seen.push(m.text());
@@ -82,8 +84,7 @@ test("offline: rich.R works with every non-local request aborted (18)", async (t
   // size), so waiting for `pluto-output` to be *visible* would depend on
   // pixels that are never there. Wait for the run to finish instead.
   await page.waitForFunction(
-    () => window.editor_state?.notebook?.cell_results?.DF?.output?.last_run_timestamp > 0,
-    null, { timeout: 20000 });
+    () => window.editor_state?.notebook?.cell_results?.DF?.output?.last_run_timestamp > 0);
 
   // `df <- ...` is an assignment (an invisible result, same as the
   // fixture's own code): editing it to a bare expression instead makes the
@@ -92,15 +93,15 @@ test("offline: rich.R works with every non-local request aborted (18)", async (t
   await runCell(page, "DF");
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("Mazda"),
-    `${cellSelector("DF")} pluto-output`, { timeout: 20000 });
+    `${cellSelector("DF")} pluto-output`);
 
   // Settings panel: SettingsBoolean listens for this window event.
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("pluto open settings")));
-  await page.waitForSelector("dialog.psettings[open]", { timeout: 5000 });
+  await page.waitForSelector("dialog.psettings[open]");
   await page.keyboard.press("Escape");
 
   await page.locator("header#pluto-nav button.toggle_export").click();
-  await page.waitForSelector('.ember-export-menu[role="menu"]', { timeout: 5000 });
+  await page.waitForSelector('.ember-export-menu[role="menu"]');
   await page.keyboard.press("Escape");
 
   // Code highlighted as R: the MD cell's fenced block (` ```r\n1 + 1\n``` `)
@@ -111,7 +112,7 @@ test("offline: rich.R works with every non-local request aborted (18)", async (t
   // specific fixture actually produces.)
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.querySelector(".hljs-number") != null,
-    cellSelector("MD"), { timeout: 10000 });
+    cellSelector("MD"));
 
   assert.deepEqual(aborted, [], "expected no request to leave the machine");
   assert.deepEqual(failedRequests, []);
@@ -144,16 +145,16 @@ test("offline: each vendored library does its job (19)", async (t) => {
   await runCell(page, "DF");
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("Mazda"),
-    `${cellSelector("DF")} pluto-output`, { timeout: 20000 });
+    `${cellSelector("DF")} pluto-output`);
 
   // ansi_up: ANSI's coloured output.
   await runCell(page, "ANSI");
   await page.waitForFunction(
-    () => document.querySelector("span.ansi-red-fg") != null, null, { timeout: 20000 });
+    () => document.querySelector("span.ansi-red-fg") != null);
 
   // dialog-polyfill: the Settings dialog opens (uses <dialog>, polyfilled where needed).
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("pluto open settings")));
-  await page.waitForSelector("dialog.psettings[open]", { timeout: 5000 });
+  await page.waitForSelector("dialog.psettings[open]");
   await page.keyboard.press("Escape");
 
   // highlight.js: the fenced R block inside MD is highlighted. Its output
@@ -163,7 +164,7 @@ test("offline: each vendored library does its job (19)", async (t) => {
   // make this pass even if highlight.js never ran).
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.querySelector(".hljs-number") != null,
-    cellSelector("MD"), { timeout: 10000 });
+    cellSelector("MD"));
 
   // lodash, semver, DOMPurify: each vendored file is a real ES module
   // served from the page's own origin, so it can be imported and exercised
@@ -232,10 +233,10 @@ test("offline: an output with TeX is what requests MathJax", async (t) => {
 
   const page = await newPage(browser);
   const aborted = blockNonLocal(page);
-  const mathjax = page.waitForRequest((r) => r.url().includes("mathjax"), { timeout: 30000 });
+  const mathjax = page.waitForRequest((r) => r.url().includes("mathjax"));
   await openNotebook(page, server.origin, server.secret, notebook);
 
-  await page.waitForSelector(`${cellSelector("T")} pluto-output .tex`, { timeout: 20000 });
+  await page.waitForSelector(`${cellSelector("T")} pluto-output .tex`);
   await mathjax;
 
   assert.equal(aborted.length, 1, `expected exactly one request to leave the machine: ${aborted}`);
@@ -273,14 +274,14 @@ test("TeX: typeset in safe preview, and again in the output the run renders", as
   });
   await openNotebook(page, server.origin, server.secret, notebook);
   const tex = `${cellSelector("T")} pluto-output .tex`;
-  await page.waitForSelector(`${tex}[data-typeset="1"]`, { timeout: 20000 });
+  await page.waitForSelector(`${tex}[data-typeset="1"]`);
 
   await page.locator(tex).evaluate((el) => { el.__before_run = true; });
   await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction((sel) => {
     const el = document.querySelector(sel);
     return el != null && el.__before_run !== true && el.dataset.typeset === "1";
-  }, tex, { timeout: 30000 });
+  }, tex);
   assert.equal(fetched.length, 1, `MathJax is fetched once: ${fetched}`);
   assertNoProblems(page);
 });
@@ -306,13 +307,13 @@ test("TeX: after MathJax fails to load, a later output with TeX tries again", as
   });
   await openNotebook(page, server.origin, server.secret, notebook);
   const tex = `${cellSelector("T")} pluto-output .tex`;
-  await page.waitForSelector(tex, { timeout: 20000 });
+  await page.waitForSelector(tex);
   await gaveUp.reach(1);
   assert.equal(fetched.length, 1);
   assert.equal(await page.locator(tex).getAttribute("data-typeset"), null, "nothing typeset while MathJax can't load");
 
   await page.locator("#ember-safe-preview button").click();
-  await page.waitForSelector(`${tex}[data-typeset="1"]`, { timeout: 30000 });
+  await page.waitForSelector(`${tex}[data-typeset="1"]`);
   assert.equal(fetched.length, 2);
   assertNoProblemsOffline(page);
 });
@@ -337,14 +338,14 @@ test("TeX: MathJax 2 in place of 3 fails quietly, and the next output with TeX l
   });
   await openNotebook(page, server.origin, server.secret, notebook);
   const tex = `${cellSelector("T")} pluto-output .tex`;
-  await page.waitForSelector(tex, { timeout: 20000 });
+  await page.waitForSelector(tex);
   await gaveUp.reach(1);
   assert.equal(fetched.length, 1);
 
   await page.locator(tex).evaluate((el) => { el.__before_run = true; });
   const failures_before = gaveUp.length;
   await page.locator("#ember-safe-preview button").click();
-  await page.waitForFunction((sel) => document.querySelector(sel)?.__before_run === undefined, tex, { timeout: 30000 });
+  await page.waitForFunction((sel) => document.querySelector(sel)?.__before_run === undefined, tex);
   // The new output asked for MathJax again, and was told no.
   await gaveUp.reach(failures_before + 1);
   assert.equal(fetched.length, 1, "with MathJax 2 on the page, no second MathJax is loaded");

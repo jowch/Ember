@@ -26,7 +26,7 @@ test('index: "/" shows Ember\'s own start page, not Pluto\'s Julia welcome page'
   // ember_start_page reply, after the page's websocket connects -- wait
   // for the script-rendered link rather than asserting on first paint.
   const editLink = page.locator('a[href*="edit?id="]').first();
-  await editLink.waitFor({ state: "visible", timeout: 10000 });
+  await editLink.waitFor({ state: "visible" });
   assert.ok(await editLink.isVisible(), "the start page links to the notebook this server was started with");
 
   const text = await page.locator("body").innerText();

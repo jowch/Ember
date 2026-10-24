@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector } from "../browser.mjs";
+import { poll } from "../waits.mjs";
 
 test("add + run + delete a cell, then reload: state matches the file", async (t) => {
   const notebook = tempNotebook();
@@ -37,32 +38,28 @@ test("add + run + delete a cell, then reload: state matches the file", async (t)
   await page.keyboard.press("Shift+Enter");
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("42"),
-    `${newSel} pluto-output`, { timeout: 20000 });
+    `${newSel} pluto-output`);
 
   await page.locator(`${newSel} button.input_context_menu`).click();
   await page.locator(`${newSel} button.delete`).click();
-  await page.waitForFunction((id) => !document.getElementById(id), newCellId, { timeout: 10000 });
-  await page.waitForSelector("nav#undo_delete:not(.hidden)", { timeout: 5000 });
+  await page.waitForFunction((id) => !document.getElementById(id), newCellId);
+  await page.waitForSelector("nav#undo_delete:not(.hidden)");
   assert.equal((await page.locator("nav#undo_delete").innerText()).trim(), "Cell deleted · Undo");
   // The menu item that had focus went with the cell: the next cell (ERR) is
   // selected and focused, as Backspace on a selected cell does, not <body> (#317).
-  await page.waitForFunction(() => document.activeElement?.matches('pluto-cell[id="ERR"]'), null, { timeout: 5000 });
+  await page.waitForFunction(() => document.activeElement?.matches('pluto-cell[id="ERR"]'));
   assert.deepEqual(await page.evaluate(() => window.editor_state.selected_cells), ["ERR"], "the next cell is selected");
 
   const countBefore = await page.locator("pluto-cell").count();
 
   // The page drops the cell before the server has saved the deletion (about
   // 100 ms later); a reload inside that window would bring the cell back.
-  const deadline = Date.now() + 15000;
-  while (/41 \+ 1/.test(fs.readFileSync(notebook, "utf8")) && Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 100));
-  }
+  await poll("the deletion is saved to the file", () => !/41 \+ 1/.test(fs.readFileSync(notebook, "utf8")));
 
   await page.reload();
-  await page.waitForSelector("pluto-cell", { timeout: 30000 });
+  await page.waitForSelector("pluto-cell");
   await page.waitForFunction(
-    () => !document.querySelector("pluto-editor")?.classList.contains("loading"),
-    null, { timeout: 30000 });
+    () => !document.querySelector("pluto-editor")?.classList.contains("loading"));
 
   const countAfter = await page.locator("pluto-cell").count();
   assert.equal(countAfter, countBefore, "cell count survives the reload");

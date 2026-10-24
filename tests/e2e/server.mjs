@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import net from "node:net";
+import { addSection, stateOnStop, waitingFor } from "./waits.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(HERE, "fixtures");
@@ -81,7 +82,10 @@ export function githubFixtureDir() {
 /** Start `ember::serve()` in a child Rscript process, hosting
  * `notebookPaths` from the start. Resolves once the child prints its
  * "ember: listening on <url>" line (R/server.R's serve()); rejects if the
- * child exits first or nothing is heard within `timeoutMs` (0: no limit).
+ * child exits first or nothing is heard within `timeoutMs` (0, the
+ * default: no limit; a server that never says it is listening shows up,
+ * with its log, in the report waits.mjs writes when the runner stops the
+ * file).
  *
  * The child's stdout/stderr are drained into a buffer as they arrive
  * (never left unread: docs/engine.md's pitfall about undrained pipes)
@@ -108,9 +112,20 @@ process.on("exit", () => {
 // A signal ends the process without "exit" unless something handles it:
 // Ctrl+C, a stop, or the terminal or console window closing (SIGHUP, also
 // what Node emits on Windows for a closed console), so the folders still go.
+// The runner's stop for a file that ran too long is a SIGTERM, so first
+// say what the file was waiting for (waits.mjs).
 for (const [signal, code] of [["SIGINT", 130], ["SIGTERM", 143], ["SIGHUP", 129]]) {
-  process.once(signal, () => process.exit(code));
+  process.once(signal, async () => { await stateOnStop(); process.exit(code); });
 }
+
+/** Every server this process started that is still running, for the
+ * report of what a stopped test was waiting for (waits.mjs): whether it
+ * said it was listening, and the end of its log. */
+const servers = new Set();
+addSection(() => [...servers].map((s) => {
+  const tail = s.log().trimEnd().split("\n").slice(-15).map((l) => `    ${l}`).join("\n");
+  return `server for ${s.notebooks}${s.listening ? "" : ", not listening yet"}; its log ends:\n${tail}`;
+}).join("\n"));
 
 /** `R_LIBS` for a server child: the library run.mjs installed this
  * checkout into, ahead of anything already on `R_LIBS`, so `ember::`
@@ -217,18 +232,20 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   };
   child.stdout.on("data", append);
   child.stderr.on("data", append);
+  const entry = { notebooks: notebookPaths.map((p) => path.basename(p)).join(", "), log: () => buffer, listening: false };
+  servers.add(entry);
+  child.on("exit", () => servers.delete(entry));
 
-  const url = await new Promise((resolve, reject) => {
+  const url = await waitingFor(`the server for ${entry.notebooks} says it is listening`, new Promise((resolve, reject) => {
     let settled = false;
     const finish = (fn, arg) => { if (!settled) { settled = true; clearTimeout(timer); fn(arg); } };
-    // 0: no timer of its own, as for the warm-up (warmup.mjs); the runner
-    // bounds the wait.
+    // 0, the default: no timer of its own; the runner bounds the wait.
     const timer = timeoutMs > 0 ? setTimeout(
       () => finish(reject, new Error(`ember server did not start within ${timeoutMs}ms:\n${buffer}`)),
       timeoutMs) : null;
     const check = () => {
       const m = buffer.match(/ember: listening on (\S+)/);
-      if (m) finish(resolve, m[1]);
+      if (m) { entry.listening = true; finish(resolve, m[1]); }
     };
     child.stdout.on("data", check);
     child.on("exit", (code) => {
@@ -237,7 +254,7 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
       finish(reject, err);
     });
     check();
-  });
+  }));
 
   return {
     url,
@@ -281,7 +298,7 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
  * `askAbove` sets `options(ember.ask_above)`: the bytes of large downloads
  * an install asks about first (#37). */
 export async function startServer(notebookPaths, opts = {}) {
-  const { timeoutMs = 30000, logFile, retries = 3, installerScript, cwd, port, secret, repos, cacheDir, askAbove } = opts;
+  const { timeoutMs = 0, logFile, retries = 3, installerScript, cwd, port, secret, repos, cacheDir, askAbove } = opts;
   let lastErr;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {

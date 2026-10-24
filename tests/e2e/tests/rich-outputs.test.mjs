@@ -18,7 +18,7 @@ test("table and print: TBL is a table with Show more buttons under it, FIT print
   await openNotebook(page, server.origin, server.secret, notebook);
 
   await runCell(page, "TBL");
-  await page.waitForSelector(`${cellSelector("TBL")} table.pluto-table`, { timeout: 20000 });
+  await page.waitForSelector(`${cellSelector("TBL")} table.pluto-table`);
   const bodyRows = await page.locator(`${cellSelector("TBL")} table.pluto-table tbody tr`).count();
   assert.equal(bodyRows, 10);
   const typesRow = await page.locator(`${cellSelector("TBL")} tr.schema-types`).innerText();
@@ -28,12 +28,12 @@ test("table and print: TBL is a table with Show more buttons under it, FIT print
   await page.locator(`${cellSelector("TBL")} .ember-table-more`).getByRole("button", { name: "Show 22 more rows", exact: true }).click();
   await page.waitForFunction(
     (sel) => document.querySelectorAll(`${sel} table.pluto-table tbody tr`).length === 32,
-    `${cellSelector("TBL")}`, { timeout: 10000 });
+    `${cellSelector("TBL")}`);
 
   await runCell(page, "FIT");
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("Coefficients"),
-    `${cellSelector("FIT")} pluto-output`, { timeout: 20000 });
+    `${cellSelector("FIT")} pluto-output`);
   const fitHasTree = await page.locator(`${cellSelector("FIT")} pluto-tree`).count();
   assert.equal(fitHasTree, 0);
 
@@ -51,7 +51,7 @@ test("tree: LST's root starts open; a nested list expands and pages (40)", async
 
   await runCell(page, "LST");
   const cell = page.locator(cellSelector("LST"));
-  await page.waitForSelector(`${cellSelector("LST")} pluto-tree`, { timeout: 20000 });
+  await page.waitForSelector(`${cellSelector("LST")} pluto-tree`);
   assert.equal(await cell.getByRole("button", { name: "list of 3", exact: true }).getAttribute("aria-expanded"), "true");
   const keys = await page.locator(`${cellSelector("LST")} pluto-tree > .ember-tree-items`).first().evaluate((items) =>
     [...items.children].map((c) => c.querySelector(":scope > .ember-tree-key, :scope > .ember-tree-row > .ember-tree-key").innerText));
@@ -63,7 +63,7 @@ test("tree: LST's root starts open; a nested list expands and pages (40)", async
   assert.equal(await long.getAttribute("aria-expanded"), "false");
   await long.click();
   await cell.getByRole("button", { name: "Show 80 more", exact: true }).click();
-  await cell.getByRole("button", { name: "Show 20 more", exact: true }).waitFor({ timeout: 10000 });
+  await cell.getByRole("button", { name: "Show 20 more", exact: true }).waitFor();
   assert.equal(await long.getAttribute("aria-expanded"), "true", "the nested list stays open after loading more");
 
   assertNoProblems(page);
@@ -114,10 +114,10 @@ test("plot: PLT is a fixed-size image that never redraws when the viewport narro
   await openNotebook(page, server.origin, server.secret, notebook);
 
   await runCell(page, "PLT");
-  await page.waitForSelector(`${cellSelector("PLT")} img`, { timeout: 20000 });
+  await page.waitForSelector(`${cellSelector("PLT")} img`);
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.naturalWidth > 0,
-    `${cellSelector("PLT")} img`, { timeout: 10000 });
+    `${cellSelector("PLT")} img`);
 
   // 720 CSS px is the figure's own size (7.5in default x 96): the image
   // never draws wider than that, and fits (scales down into) its column
@@ -167,10 +167,10 @@ test("plot: FIG's #| fig-width/fig-height lines give a fixed 480 x 384 CSS px im
   await openNotebook(page, server.origin, server.secret, notebook);
 
   await runCell(page, "FIG");
-  await page.waitForSelector(`${cellSelector("FIG")} img`, { timeout: 20000 });
+  await page.waitForSelector(`${cellSelector("FIG")} img`);
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.naturalWidth > 0,
-    `${cellSelector("FIG")} img`, { timeout: 10000 });
+    `${cellSelector("FIG")} img`);
 
   const { width, height } = await page.evaluate((sel) => {
     const r = document.querySelector(sel).getBoundingClientRect();
@@ -213,7 +213,7 @@ test("plot: FIG is 480 CSS px wide from its first painted frame, even on a slow 
   await runCell(page, "FIG");
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.naturalWidth > 0,
-    `${cellSelector("FIG")} img`, { timeout: 30000 });
+    `${cellSelector("FIG")} img`);
   // A few more frames, so a late resize would be seen too.
   await page.evaluate(() => new Promise((done) => {
     let n = 0;
@@ -229,7 +229,7 @@ test("plot: FIG is 480 CSS px wide from its first painted frame, even on a slow 
   assertNoProblems(page);
 });
 
-test("plot: a 3x-density tab asks for one redraw at res 288; a 1x tab asks for none (76)", { timeout: 60000 }, async (t) => {
+test("plot: a 3x-density tab asks for one redraw at res 288; a 1x tab asks for none (76)", async (t) => {
   const notebook = tempNotebook("rich.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "rich-plot-dpr.server.log") });
   const browser = await launchBrowser();
@@ -249,17 +249,17 @@ test("plot: a 3x-density tab asks for one redraw at res 288; a 1x tab asks for n
   await runCell(page1, "PLT");
 
   for (const page of [page1, page3]) {
-    await page.waitForSelector(`${cellSelector("PLT")} img`, { timeout: 20000 });
+    await page.waitForSelector(`${cellSelector("PLT")} img`);
     await page.waitForFunction(
       (sel) => document.querySelector(sel)?.naturalWidth > 0,
-      `${cellSelector("PLT")} img`, { timeout: 10000 });
+      `${cellSelector("PLT")} img`);
   }
 
   // The 3x tab's image should widen to res 288 (7.5in default figure width
   // x 288 = 2160px); the 1x tab's stays at the first-draw 2x density (1440).
   await page3.waitForFunction(
     (sel) => document.querySelector(sel)?.naturalWidth === 2160,
-    `${cellSelector("PLT")} img`, { timeout: 10000 });
+    `${cellSelector("PLT")} img`);
   assert.equal(requests3.length, 1, "expected exactly one render request from the 3x tab");
 
   // Each tab asks, if at all, as its image loads and lays out; the 3x tab's
@@ -289,8 +289,8 @@ test("colours: ANSI's log and output have coloured spans from the theme and no v
   // first by hand (it used to be the setup cell, which always ran first).
   await runCell(page, "S");
   await runCell(page, "ANSI");
-  await page.waitForSelector(`${cellSelector("ANSI")} pluto-logs span.ansi-red-fg`, { timeout: 20000 });
-  await page.waitForSelector(`${cellSelector("ANSI")} pluto-output span.ansi-green-fg`, { timeout: 20000 });
+  await page.waitForSelector(`${cellSelector("ANSI")} pluto-logs span.ansi-red-fg`);
+  await page.waitForSelector(`${cellSelector("ANSI")} pluto-output span.ansi-green-fg`);
 
   const bodyText = await page.locator(cellSelector("ANSI")).innerText();
   assert.doesNotMatch(bodyText, /\x1b/);

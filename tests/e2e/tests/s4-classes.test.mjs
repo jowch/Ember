@@ -22,9 +22,9 @@ test("s4 classes: a class cell runs before the cell using it, and is named as a 
 
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("[1] 2"),
-    cellSelector("U1") + " pluto-output", { timeout: 20000 });
+    cellSelector("U1") + " pluto-output");
 
-  await page.waitForSelector(`${cellSelector("U2")} jlerror`, { timeout: 20000 });
+  await page.waitForSelector(`${cellSelector("U2")} jlerror`);
   assert.equal(await page.locator(`${cellSelector("U2")} jlerror`).innerText(),
     "Another cell defining class Bad contains errors.");
 

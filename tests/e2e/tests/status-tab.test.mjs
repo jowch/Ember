@@ -26,8 +26,8 @@ test("status tab: says Ember restarted once the server refuses the page's key (#
   await first.stop();
   second = await startServer([notebook], { logFile, port: first.port, secret: "second-session-secret" });
 
-  await page.getByRole("alertdialog").waitFor({ timeout: 30000 });
-  await page.locator("#ember-r-status", { hasText: "Ember restarted" }).waitFor({ timeout: 30000 });
+  await page.getByRole("alertdialog").waitFor();
+  await page.locator("#ember-r-status", { hasText: "Ember restarted" }).waitFor();
   assert.match(await page.locator("#ember-status-tab .ember-status-state").innerText(), /Ember restarted/);
 });
 
@@ -57,9 +57,9 @@ test("status tab: Restart R is off in safe preview and runs nothing (#29)", asyn
   await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("55"),
-    cellSelector("B") + " pluto-output", { timeout: 30000 });
+    cellSelector("B") + " pluto-output");
   await page.locator("#ember-r-status").click();
-  await page.waitForFunction(() => document.querySelector("#ember-status-restart")?.disabled === false, null, { timeout: 30000 });
+  await page.waitForFunction(() => document.querySelector("#ember-status-restart")?.disabled === false);
   assertNoProblems(page);
 });
 
@@ -102,7 +102,7 @@ test("status tab: Restart R stays off while the page doesn't know R's state yet 
   const release = held;
   held = null;
   for (const m of release) to_page.send(m);
-  await page.locator("#ember-safe-preview").waitFor({ state: "visible", timeout: 30000 });
+  await page.locator("#ember-safe-preview").waitFor({ state: "visible" });
   assert.equal(await restart.isDisabled(), true, "and stays off in safe preview");
   await context.close();
 });

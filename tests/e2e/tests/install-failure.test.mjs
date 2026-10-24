@@ -30,7 +30,7 @@ test('failing.R: the Packages tab shows a failure card with "Show the error" (99
   await runCell(page, "S");
 
   await page.getByRole("button", { name: "Packages", exact: true }).click();
-  await page.waitForSelector(".ember-install-failure-card", { timeout: 30000 });
+  await page.waitForSelector(".ember-install-failure-card");
 
   // Red-tinted, as Panel3 draws a failure (#51).
   const border = await page.locator(".ember-install-failure-card").evaluate((el) => {

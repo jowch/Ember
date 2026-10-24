@@ -8,6 +8,7 @@ import path from "node:path";
 import { writeFileSync } from "node:fs";
 import { startServer, tempNotebook, artifactsDir, tempDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, runCell, cellSelector, codeSelector, layoutSettled } from "../browser.mjs";
+import { waitingFor } from "../waits.mjs";
 
 const rect = (page, sel) => page.locator(sel).evaluate((el) => {
   const r = el.getBoundingClientRect();
@@ -45,13 +46,13 @@ test('chips: "Not run yet" in safe preview and before running, "Stale" after an 
   // Safe preview: B has never run, and says so, as Pluto marks every
   // cell in safe preview (#298).
   const chip = page.locator(`${cellSelector("B")} > ember-chip:not(.held)`);
-  await chip.waitFor({ state: "visible", timeout: 10000 });
+  await chip.waitFor({ state: "visible" });
   assert.equal(await chip.innerText(), "Not run yet");
 
   await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("2"),
-    cellSelector("B") + " pluto-output", { timeout: 20000 });
+    cellSelector("B") + " pluto-output");
 
   // B just ran: no chip now that it has output.
   assert.equal(await page.locator(`${cellSelector("B")} ember-chip`).count(), 0);
@@ -75,7 +76,7 @@ test('chips: NEVER (loaded with code, never run) shows "Not run yet" with no out
   await runCell(page, "A");
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.classList.contains("not_run_yet"),
-    cellSelector("NEVER"), { timeout: 20000 });
+    cellSelector("NEVER"));
   assert.equal(await page.locator(`${cellSelector("NEVER")} ember-chip`).innerText(), "Not run yet");
   assert.equal(await page.locator(`${cellSelector("NEVER")} pluto-output`).innerText(), "");
   // Board Cells: 12px right of the rail and 12px above the code. A's run
@@ -83,7 +84,7 @@ test('chips: NEVER (loaded with code, never run) shows "Not run yet" with no out
   // NEVER down, so wait for it to finish and read every box in one round
   // trip: reads taken a moment apart once measured the chip 46px from the
   // code.
-  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached", timeout: 15000 });
+  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached" });
   const { neverCell, neverRail, neverChip, neverCode } = await rects(page, {
     neverCell: cellSelector("NEVER"),
     neverRail: `${cellSelector("NEVER")} > pluto-trafficlight`,
@@ -110,7 +111,7 @@ test('chips: NEVER (loaded with code, never run) shows "Not run yet" with no out
   writeFileSync(file, await res.text(), "utf8");
   const exported = await newPage(browser);
   await exported.goto(`file://${file}`);
-  await exported.waitForSelector(`pluto-editor.disable_ui ${cellSelector("NEVER")}.not_run_yet`, { state: "attached", timeout: 15000 });
+  await exported.waitForSelector(`pluto-editor.disable_ui ${cellSelector("NEVER")}.not_run_yet`, { state: "attached" });
   assert.equal(await exported.locator(`${cellSelector("NEVER")} ember-chip`).isVisible(), false, "no \"Not run yet\" chip in an export");
 
   assertNoProblems(page);
@@ -129,11 +130,11 @@ test('chips: a "Not run yet" cell that runs moves its code once, when the output
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
   await runCell(page, "A");
-  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached", timeout: 30000 });
+  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached" });
   await setCellCode(page, "NEVER", "Sys.sleep(1); 3 + 3");
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.classList.contains("not_run_yet"),
-    cellSelector("NEVER"), { timeout: 20000 });
+    cellSelector("NEVER"));
 
   await page.evaluate((sel) => {
     window.__code_tops = [];
@@ -149,8 +150,8 @@ test('chips: a "Not run yet" cell that runs moves its code once, when the output
     tick();
   }, cellSelector("NEVER"));
   await page.keyboard.press("Shift+Enter");
-  await page.waitForSelector(`${cellSelector("NEVER")} ember-runtime`, { state: "attached", timeout: 30000 });
-  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("6"), cellSelector("NEVER") + " > pluto-output", { timeout: 30000 });
+  await page.waitForSelector(`${cellSelector("NEVER")} ember-runtime`, { state: "attached" });
+  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("6"), cellSelector("NEVER") + " > pluto-output");
   const tops = await page.evaluate(() => { window.__stop = true; return window.__code_tops; });
 
   assert.ok(tops.length <= 2, `the code moved once at most: ${JSON.stringify(tops)}`);
@@ -173,7 +174,7 @@ test('chips: leaving safe preview doesn\'t move unrun cells: their chip is alrea
   await openNotebook(page, server.origin, server.secret, notebook);
   const ids = ["NEVER", "LOOP", "W"];
   const shown = page.locator(`${cellSelector("NEVER")} > ember-chip:not(.held)`);
-  await shown.waitFor({ state: "visible", timeout: 10000 });
+  await shown.waitFor({ state: "visible" });
   assert.equal(await shown.innerText(), "Not run yet", "safe preview shows the chip");
   assert.equal(await shown.getAttribute("aria-hidden"), null, "and reads it out");
 
@@ -192,11 +193,11 @@ test('chips: leaving safe preview doesn\'t move unrun cells: their chip is alrea
     tick();
   }, ids.map(cellSelector));
   await runCell(page, "A");
-  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached", timeout: 30000 });
+  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached" });
   for (const id of ids) {
     await page.waitForFunction(
       (sel) => document.querySelector(sel)?.classList.contains("not_run_yet"),
-      cellSelector(id), { timeout: 20000 });
+      cellSelector(id));
   }
   const tops = await page.evaluate(() => { window.__stop = true; return window.__code_tops; });
   for (const id of ids) {
@@ -220,7 +221,7 @@ test('chips: "Run this notebook" moves the page up only at the click, then only 
 
   const page = await newPage(browser);
   await openNotebook(page, server.origin, server.secret, notebook);
-  await page.locator(`${cellSelector("NEVER")} > ember-chip:not(.held)`).waitFor({ state: "visible", timeout: 15000 });
+  await page.locator(`${cellSelector("NEVER")} > ember-chip:not(.held)`).waitFor({ state: "visible" });
 
   await page.evaluate((sel) => {
     window.__txt_tops = [];
@@ -237,10 +238,9 @@ test('chips: "Run this notebook" moves the page up only at the click, then only 
     tick();
   }, cellSelector("TXT"));
   await page.locator("#ember-safe-preview button").click();
-  await page.waitForSelector(`${cellSelector("LOOP")} ember-runtime`, { state: "attached", timeout: 30000 });
+  await page.waitForSelector(`${cellSelector("LOOP")} ember-runtime`, { state: "attached" });
   await page.waitForFunction(
-    () => document.querySelectorAll('pluto-cell[data-rail="run"], pluto-cell[data-rail="queued"]').length === 0,
-    null, { timeout: 30000 });
+    () => document.querySelectorAll('pluto-cell[data-rail="run"], pluto-cell[data-rail="queued"]').length === 0);
   const { all, atClick } = await page.evaluate(() => { window.__stop = true; return { all: window.__txt_tops, atClick: window.__txt_at_click }; });
   assert.equal(atClick, 1, `the page had settled before the click (#391): ${JSON.stringify(all)}`);
   const tops = all.slice(atClick - 1);
@@ -262,7 +262,7 @@ test('view anchor: scrolled into the notebook, "Run this notebook" leaves the co
   await page.setViewportSize({ width: 900, height: 800 });
   await openNotebook(page, server.origin, server.secret, notebook);
   await page.evaluate((sel) => document.querySelector(sel).scrollIntoView({ block: "start" }), cellSelector("C08"));
-  await page.waitForSelector(codeSelector("C08", ""), { timeout: 0 });
+  await page.waitForSelector(codeSelector("C08", ""));
   await layoutSettled(page);
 
   // Read where C08's code is in every frame something resizes, after the
@@ -281,8 +281,8 @@ test('view anchor: scrolled into the notebook, "Run this notebook" leaves the co
   const beforePage = await pageTop();
   // Clicked in script: Playwright's click would scroll the banner into view first.
   await page.evaluate(() => document.querySelector("#ember-safe-preview button").click());
-  await page.waitForFunction(() => !document.querySelector("#ember-safe-preview"), null, { timeout: 30000 });
-  await page.waitForFunction(() => document.querySelectorAll("pluto-cell.running, pluto-cell.queued").length === 0, null, { timeout: 60000 });
+  await page.waitForFunction(() => !document.querySelector("#ember-safe-preview"));
+  await page.waitForFunction(() => document.querySelectorAll("pluto-cell.running, pluto-cell.queued").length === 0);
   await layoutSettled(page);
 
   const tops = await page.evaluate(() => window.__tops);
@@ -309,17 +309,17 @@ test('chips: "Stale · x changed" after an upstream edit in lazy mode, with a gr
   await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("2"),
-    cellSelector("B") + " pluto-output", { timeout: 20000 });
+    cellSelector("B") + " pluto-output");
 
   await setCellCode(page, "A", "x <- 2");
   await runCell(page, "A");
-  await page.waitForSelector(`${cellSelector("B")}.stale`, { timeout: 20000 });
+  await page.waitForSelector(`${cellSelector("B")}.stale`);
   // The chip's text depends on A's own run having landed (its new
   // last_run_timestamp), which can arrive just after the "stale" class
   // itself, so wait for the names, not only the class.
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText === "Stale · x changed",
-    cellSelector("B") + " ember-chip", { timeout: 10000 });
+    cellSelector("B") + " ember-chip");
   assert.equal(await page.locator(`${cellSelector("B")} pluto-output`).evaluate((el) => getComputedStyle(el).filter), "grayscale(1)");
 
   // Board "Cells": output, then chip, both on one full-strength wash that
@@ -361,19 +361,19 @@ test('chips: the names in "Stale · x changed" link to the cell defining each, a
   await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("2"),
-    cellSelector("B") + " pluto-output", { timeout: 20000 });
+    cellSelector("B") + " pluto-output");
   await setCellCode(page, "A", "y <- 0\nx <- 2");
   await runCell(page, "A");
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText === "Stale · x changed",
-    cellSelector("B") + " ember-chip", { timeout: 20000 });
+    cellSelector("B") + " ember-chip");
 
   const link = page.locator(`${cellSelector("B")} > ember-chip a`);
   assert.equal(await link.count(), 1, "the chip has one link");
   assert.equal(await link.innerText(), "x");
   await link.click();
-  await page.waitForFunction(() => document.activeElement?.closest("pluto-cell")?.id === "A" && window.getSelection()?.toString() === "x",
-    null, { timeout: 10000 }).catch(async () => assert.fail(`clicking x selects x's definition in A: ${JSON.stringify(await focused(page))}`));
+  await waitingFor("clicking x selects x's definition in A",
+    page.waitForFunction(() => document.activeElement?.closest("pluto-cell")?.id === "A" && window.getSelection()?.toString() === "x"), () => focused(page));
   // The link doesn't navigate, and B stays stale.
   assert.equal(new URL(page.url()).hash, "");
   assert.ok(await page.locator(`${cellSelector("B")}.stale`).count() === 1, "B is still stale");
@@ -397,13 +397,13 @@ test('notes: "Changed cnt in place, which another cell defines" links cnt to the
   await openNotebook(page, server.origin, server.secret, notebook);
   await page.locator("#ember-safe-preview button").click();
   const note = page.locator(`${cellSelector("B")} ember-settings-note.in-place-note`);
-  await note.waitFor({ timeout: 20000 });
+  await note.waitFor();
   assert.match(await note.innerText(), /^Changed cnt in place, which another cell defines/);
   const link = note.locator("a");
   assert.equal(await link.innerText(), "cnt");
   await link.click();
-  await page.waitForFunction(() => document.activeElement?.closest("pluto-cell")?.id === "A" && window.getSelection()?.toString() === "cnt",
-    null, { timeout: 10000 }).catch(async () => assert.fail(`clicking cnt selects cnt's definition in A: ${JSON.stringify(await focused(page))}`));
+  await waitingFor("clicking cnt selects cnt's definition in A",
+    page.waitForFunction(() => document.activeElement?.closest("pluto-cell")?.id === "A" && window.getSelection()?.toString() === "cnt"), () => focused(page));
 
   assertNoProblems(page);
 });
@@ -449,8 +449,8 @@ test("chips: a chip's text can't be selected, by double-click or by dragging acr
   await runCell(page, "A");
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.classList.contains("not_run_yet"),
-    cellSelector("NEVER"), { timeout: 20000 });
-  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached", timeout: 15000 });
+    cellSelector("NEVER"));
+  await page.waitForSelector(`${cellSelector("A")} ember-runtime`, { state: "attached" });
 
   const chip = page.locator(`${cellSelector("NEVER")} > ember-chip`);
   await chip.scrollIntoViewIfNeeded();

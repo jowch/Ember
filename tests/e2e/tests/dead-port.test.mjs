@@ -76,11 +76,11 @@ async function openThenKillPort(t, name) {
   const origin = `http://127.0.0.1:${forwarder.port}/`;
   await openNotebook(page, origin, server.secret, notebook);
   const status = page.locator("#ember-r-status");
-  await status.filter({ hasText: "R not started" }).waitFor({ timeout: 30000 });
+  await status.filter({ hasText: "R not started" }).waitFor();
 
   const port = forwarder.port;
   await forwarder.stop();
-  await status.filter({ hasText: "Reconnecting" }).waitFor({ timeout: 30000 });
+  await status.filter({ hasText: "Reconnecting" }).waitFor();
 
   const bringBack = async () => { forwarder = await startForwarder(server.port, port); };
   return { page, status, bringBack, port, notebook };
@@ -106,14 +106,14 @@ test("dead port: the tab says it can't reach Ember, and Try again reconnects onc
   const asked = () => page.evaluate(() => window.ember_dialogs.filter((d) => d.title === "Can't reach Ember here").length);
   assert.equal(await asked(), 1);
   await dialog.getByRole("button", { name: "Try again" }).click();
-  await page.waitForFunction(() => window.ember_dialogs.filter((d) => d.title === "Can't reach Ember here").length === 2, null, { timeout: 30000 });
-  await dialog.waitFor({ timeout: 30000 });
+  await page.waitForFunction(() => window.ember_dialogs.filter((d) => d.title === "Can't reach Ember here").length === 2);
+  await dialog.waitFor();
 
   // Try again once something answers there: the page reconnects at once,
   // without waiting for its next background try.
   await bringBack();
   await dialog.getByRole("button", { name: "Try again" }).click();
-  await status.filter({ hasText: "R not started" }).waitFor({ timeout: 30000 });
+  await status.filter({ hasText: "R not started" }).waitFor();
   assert.equal(await page.getByRole("alertdialog").count(), 0, "no dialog left once it's back");
   assertNoPageErrors(page);
 });
@@ -127,7 +127,7 @@ test("dead port: a tab that said it can't reach Ember reconnects by itself when 
 
   await bringBack();
   await fastForwardUntil(page, status.filter({ hasText: "R not started" }));
-  await dialog.waitFor({ state: "detached", timeout: 30000 });
+  await dialog.waitFor({ state: "detached" });
   assertNoPageErrors(page);
 });
 
@@ -143,7 +143,7 @@ test("dead port: a tab that said it can't reach Ember says Ember restarted when 
   t.after(() => second.stop());
   const restarted = page.getByRole("alertdialog", { name: "Ember restarted" });
   await fastForwardUntil(page, restarted);
-  await status.filter({ hasText: "Ember restarted" }).waitFor({ timeout: 30000 });
+  await status.filter({ hasText: "Ember restarted" }).waitFor();
   assert.equal(await dialog.count(), 0, "the not-running dialog went when the restart was found");
   assertNoPageErrors(page);
 });

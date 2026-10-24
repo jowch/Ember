@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
 import { launchBrowser, newPage, assertNoProblems, openNotebook, runCell, cellSelector, hoverCell, codeSelector } from "../browser.mjs";
+import { waitingFor } from "../waits.mjs";
 
 test("run button: a selected cell's run button is hidden, not half faded", async (t) => {
   const notebook = tempNotebook();
@@ -18,26 +19,21 @@ test("run button: a selected cell's run button is hidden, not half faded", async
   await openNotebook(page, server.origin, server.secret, notebook);
   const opacity = (id) => page.locator(`${cellSelector(id)} button.ember-run`).evaluate((el) => getComputedStyle(el).opacity);
   // The opacity eases over 0.15 s, so wait for the value it should end at
-  // rather than read it after a fixed pause (#144); a timeout says what it was.
-  const opacityBecomes = async (id, want, what) => {
-    try {
-      await page.waitForFunction(([sel, want]) => getComputedStyle(document.querySelector(sel)).opacity === want,
-        [`${cellSelector(id)} button.ember-run`, want], { timeout: 5000 });
-    } catch {
-      assert.equal(await opacity(id), want, what);
-    }
-  };
-  const idle = (id) => page.waitForFunction((sel) => document.querySelector(sel)?.dataset.rail === "idle", cellSelector(id), { timeout: 15000 });
+  // rather than read it after a fixed pause (#144).
+  const opacityBecomes = (id, want, what) => waitingFor(what,
+    page.waitForFunction(([sel, want]) => getComputedStyle(document.querySelector(sel)).opacity === want,
+      [`${cellSelector(id)} button.ember-run`, want]), () => opacity(id));
+  const idle = (id) => page.waitForFunction((sel) => document.querySelector(sel)?.dataset.rail === "idle", cellSelector(id));
 
   await runCell(page, "B");
-  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("55"), cellSelector("B") + " pluto-output", { timeout: 30000 });
+  await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("55"), cellSelector("B") + " pluto-output");
   await page.locator(codeSelector("A")).click();
   await page.mouse.move(1, 1);
   await opacityBecomes("A", "1", "shown while typing in A");
 
   // Esc selects the cell: focus moves to pluto-cell, still inside it.
   await page.keyboard.press("Escape");
-  await page.waitForFunction(() => document.activeElement.id === "A", null, { timeout: 5000 });
+  await page.waitForFunction(() => document.activeElement.id === "A");
   await opacityBecomes("A", "0", "a selected cell shows no run button");
 
   // Clicking the run button leaves focus on it, without :focus-visible
