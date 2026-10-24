@@ -268,17 +268,18 @@ test_that("release dates that can't be fetched fail the preview and say where fr
   expect_match(res$message, "couldn't fetch CRAN's release dates from file://", fixed = TRUE)
 })
 
-# ---- #450: a download cut short is fetched again --------------------------------
+# ---- #450, #478: a bad download is tried again -------------------------------
 
-test_that("a package download cut short is deleted and fetched again, and the install finishes (#450)", {
-  # The toy repo over HTTP, cutting the first download of each archive
-  # in half: renv installs what it downloaded without opening it, so
-  # without the installer's second try the install fails.
+#' The toy repo over HTTP through fixtures/cut-download-server.R, which
+#' cuts the first download of each archive in half or, with `refuse`,
+#' refuses the first `refuse` downloads outright. Returns the server's
+#' process, its port, the lines it printed so far, and `finish()`, which
+#' asks it to exit and returns all it printed.
+start_toy_server <- function(refuse = 0L) {
   root <- normalizePath(testthat::test_path("fixtures", "repos", "toy"), mustWork = TRUE)
   server <- processx::process$new(file.path(R.home("bin"), "Rscript"),
-                                  c("--vanilla", testthat::test_path("fixtures", "cut-download-server.R"), root),
+                                  c("--vanilla", testthat::test_path("fixtures", "cut-download-server.R"), root, refuse),
                                   stdout = "|", stderr = "|")
-  on.exit(server$kill(), add = TRUE)
   # poll_io() returns when either pipe has something or the server exits,
   # so read until its PORT line comes, and say why if it never does.
   first <- errors <- character()
@@ -293,23 +294,49 @@ test_that("a package download cut short is deleted and fetched again, and the in
     errors <- c(errors, server$read_error_lines())
   }
   port <- sub("^PORT ([0-9]+).*", "\\1", grep("^PORT [0-9]+", first, value = TRUE)[[1]])
+  # The server is asked to exit first, so all it printed can be read to the end.
+  finish <- function() {
+    invisible(tryCatch(curlGetHeaders(sprintf("http://127.0.0.1:%s/__quit", port)), error = function(e) NULL))
+    trimws(c(first, server$read_all_output_lines()))
+  }
+  list(process = server, port = port, finish = finish)
+}
 
+#' toyA's notebook installed from `server`; expects the install to finish
+#' and the cell to print toyA's greeting.
+expect_toy_install <- function(server) {
   cache <- toy_cache()
   on.exit(unlink(cache, recursive = TRUE), add = TRUE)
   nb <- open_notebook(write_toy_notebook("2026-09-01"),
-                      repos = ember_repos(cran = sprintf("http://127.0.0.1:%s", port)), cache = cache)
+                      repos = ember_repos(cran = sprintf("http://127.0.0.1:%s", server$port)), cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
   res <- run_settled(nb)
-
   status <- package_status(nb)
   expect_equal(status$library$status, "ready",
                info = paste(c(status$library$message, notebook_state(nb)$packages$target$log), collapse = "\n"))
   expect_equal(snap_view(notebook_snapshot(nb), "A")$output$text, "[1] \"toyA 0.1 says: hello from toyB\"")
-  # Each archive was cut once and fetched whole the second time. The
-  # server is asked to exit first, so all it printed can be read to the end.
-  invisible(tryCatch(curlGetHeaders(sprintf("http://127.0.0.1:%s/__quit", port)), error = function(e) NULL))
-  got <- c(first, server$read_all_output_lines())
-  expect_true(all(c("GET toyA_0.1.tar.gz 2", "GET toyB_1.0.tar.gz 2") %in% trimws(got)), info = paste(got, collapse = "\n"))
+}
+
+test_that("a package download cut short is deleted and fetched again, and the install finishes (#450)", {
+  # renv installs what it downloaded without opening it, so without the
+  # installer's second try the install fails.
+  server <- start_toy_server()
+  on.exit(server$process$kill(), add = TRUE)
+  expect_toy_install(server)
+  # Each archive was cut once and fetched whole the second time.
+  got <- server$finish()
+  expect_true(all(c("GET toyA_0.1.tar.gz 2", "GET toyB_1.0.tar.gz 2") %in% got), info = paste(got, collapse = "\n"))
+})
+
+test_that("a package download that never started is asked for again, and the install finishes (#478)", {
+  # renv asks for each archive twice in one restore (its parallel download,
+  # then one on its own), so refusing two fails renv's whole first try,
+  # as a host lookup that failed twice did on CI.
+  server <- start_toy_server(refuse = 2L)
+  on.exit(server$process$kill(), add = TRUE)
+  expect_toy_install(server)
+  got <- server$finish()
+  expect_true(all(c("GET toyA_0.1.tar.gz 3", "GET toyB_1.0.tar.gz 3") %in% got), info = paste(got, collapse = "\n"))
 })
 
 # ---- #39: today's index is fetched again --------------------------------------

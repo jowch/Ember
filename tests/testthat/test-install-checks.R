@@ -195,6 +195,19 @@ test_that("renv_failed_packages() reads renv's \"failed to install\" error, in e
   expect_equal(renv_failed_packages('failed to retrieve package "cli"'), character())
 })
 
+test_that("renv_download_failures() names the packages renv's report says didn't download, and not failed builds (#478)", {
+  report <- c("The following package(s) were not installed successfully:", "",
+              "- [RhpcBLASctl]: error downloading 'https://packagemanager.posit.co/cran/2026-10-08/bin/macosx/sonoma-arm64/contrib/4.6/RhpcBLASctl_0.23-42.tgz' [error code 6]",
+              "- [data.table]: failed to download",
+              "- [toyA]: failed to find binary for 'toyA 0.1' in package repositories",
+              "- [SNPRelate]: dependency failed (RhpcBLASctl)",
+              "- [cli]: install failed",
+              "You may need to manually download and install these packages.")
+  expect_equal(renv_download_failures(report), c("RhpcBLASctl", "data.table", "toyA"))
+  expect_equal(renv_download_failures(c("- [cli]: install failed", "")), character())
+  expect_equal(renv_download_failures(character()), character())
+})
+
 test_that("unreadable_downloads() names the cut-short zips and tarballs of the given packages, and nothing else (#450)", {
   root <- tempfile("ember-renv-root-")
   on.exit(unlink(root, recursive = TRUE), add = TRUE)

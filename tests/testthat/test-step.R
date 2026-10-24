@@ -1188,6 +1188,35 @@ test_that("in lazy mode a run that reaches the writer after the reader reruns th
   expect_equal(r4$state$pending, character())
 })
 
+test_that("a data file that changes while its reader is queued leaves the reader stale if a stop empties the queue (#472)", {
+  # Run W and R by hand: W runs, R waits. d.csv changes, then a stop
+  # empties the queue. R's result read the old file, so it and U, which
+  # read R's value, are stale, and nothing more runs.
+  for (mode in c("lazy", "autorun")) {
+    r <- data_file_notebook(mode)
+    r <- drive(r$state, ev_run(c("W", "R"), at(30)))
+    expect_equal(r$state$worker$running$cell, "W")
+    expect_equal(r$state$pending, "R")
+    r <- drive(r$state, wk_running(1, r$state$worker$running$token, at(31)),
+               ev_data_changed(list("d.csv" = "v2"), at(32)))
+    expect_equal(r$state$pending, "R")
+    expect_true(r$state$results$R$stale, info = mode)
+    r <- drive(r$state, ev_interrupt(at(33)),
+               wk_done(1, r$state$worker$running$token, report(status = "interrupted"), at(34)))
+    expect_equal(r$state$pending, character(), info = mode)
+    expect_true(r$state$results$R$stale, info = mode)
+    expect_true(r$state$results$U$stale, info = mode)
+  }
+  # Not stopped, R runs and its new result is current.
+  r <- data_file_notebook("lazy")
+  r <- drive(r$state, ev_run(c("W", "R"), at(30)))
+  r <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(31)),
+             wk_done(1, r$state$worker$running$token, report(), at(32)))
+  expect_equal(r$state$worker$running$cell, "R")
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = "d", data_seen = list("d.csv" = "v2")), at(33)))
+  expect_false(isTRUE(r$state$results$R$stale))
+})
+
 test_that("a writer that runs right after its reader reruns the reader, however coarse the file clock (#276)", {
   # R sits above W: run all runs R, then W. W's write can carry a modified
   # time from before R's result arrived; only the version counts.

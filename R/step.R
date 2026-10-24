@@ -1711,9 +1711,11 @@ reduce_files_read <- function(state, event) {
 #' when the result arrived). So a cell that writes the file it reads
 #' doesn't wake itself, and a reader that ran after the writer isn't run
 #' twice; comparing signatures rather than times doesn't depend on how
-#' fine the file system's clock is. A cell that is running or queued is
-#' left alone: a queued one reads the new file, and a running one's result
-#' takes the version there when it arrives (`reduce_wk_done()`).
+#' fine the file system's clock is. A running cell is left alone: its
+#' result takes the version there when it arrives (`reduce_wk_done()`). A
+#' queued one reads the new file when it runs, but is marked stale with
+#' its dependents now all the same, queueing nothing: a stop empties the
+#' queue, and its old result would then show as current (#472).
 reduce_data_changed <- function(state, event) {
   autorun <- identical(state$file$header$on_cell_change, "autorun")
   running <- state$worker$running$cell
@@ -1721,7 +1723,8 @@ reduce_data_changed <- function(state, event) {
   marked <- FALSE
   for (id in state$graph$ids) {
     r <- state$results[[id]]
-    if (is.null(r) || identical(running, id) || id %in% state$pending) next
+    if (is.null(r) || identical(running, id)) next
+    queued <- id %in% state$pending
     # What its code reads now, and what its result's run read: a cell
     # edited to stop reading a file still shows a result from it (#439).
     seen <- r$data_seen %||% list()
@@ -1730,6 +1733,10 @@ reduce_data_changed <- function(state, event) {
     if (all(vapply(hit, function(p) identical(seen[[p]], event$files[[p]]), logical(1)))) next
     r$stale <- TRUE
     state$results[[id]] <- r
+    if (queued) {
+      state <- invalidate_dependents(state, id, character(), queue = FALSE)
+      next
+    }
     if (autorun && isTRUE(state$allowed) && can_run(state, id)) state$pending <- union(state$pending, id)
     state <- invalidate_dependents(state, id, character())
     marked <- TRUE
