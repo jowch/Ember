@@ -440,7 +440,9 @@ before the cell runs.
   between runs (`file.path(dir, input$file)`) is followed. A file inside
   the notebook's folder is named relative to it, as a literal path is.
 - A file a run tried to read and found missing is watched too, so the cell
-  reruns once it appears. A read of R's own files (the libraries, R itself,
+  reruns once it appears. The exceptions are the arguments that may hold
+  something other than a file: `fread()`'s `input` (a shell command) and
+  xml2's `x` (inline XML); `fread(file = p)` is watched. A read of R's own files (the libraries, R itself,
   the session's `tempdir()`) isn't watched.
 - The cost, measured in the worker on a cloud container, is about 15 µs
   for each read of a file the run already read and about 0.2 ms the first

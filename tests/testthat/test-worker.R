@@ -3149,6 +3149,27 @@ test_that("a missing file a run tried to read is watched, so the cell reruns onc
   expect_identical(r$data_seen[[f]], "missing")
 })
 
+test_that("a package reader's missing file is watched too, but not fread's input or inline XML (#564)", {
+  skip_if_not_installed("data.table")
+  skip_if_not_installed("readr")
+  h <- worker_harness(extra_libs = .libPaths())
+  on.exit(h$close())
+  d <- normalizePath(tempdir(), winslash = "/")
+  nope <- function(ext) file.path(d, basename(tempfile("ember-missing-", fileext = ext)))
+  f1 <- nope(".csv")
+  f2 <- nope(".csv")
+  f3 <- nope(".csv")
+  r1 <- run_and_wait(h, "a", 1L, sprintf("x <- readr::read_csv(%s, show_col_types = FALSE)", deparse(f1)))
+  expect_identical(r1$status, "error")
+  expect_identical(r1$data_seen[[f1]], "missing")
+  r2 <- run_and_wait(h, "b", 2L, sprintf("x <- data.table::fread(file = %s)", deparse(f2)))
+  expect_identical(r2$status, "error")
+  expect_identical(r2$data_seen[[f2]], "missing")
+  # fread()'s input may be a command, so a "file" there that doesn't exist isn't watched.
+  r3 <- run_and_wait(h, "c", 3L, sprintf("x <- try(data.table::fread(%s), silent = TRUE)", deparse(f3)))
+  expect_null(r3$data_seen[[f3]])
+})
+
 test_that("fread() is learned once data.table loads, by input or file =, and text input isn't", {
   skip_if_not_installed("data.table")
   h <- worker_harness(extra_libs = .libPaths())

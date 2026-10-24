@@ -212,6 +212,22 @@ test_that("autorun: a cell that reads a file by a path built in code reruns when
   expect_false(isTRUE(snap_view(notebook_snapshot(nb), "R")$stale))
 })
 
+test_that("autorun: a cell whose file isn't there yet reruns once it appears (#564)", {
+  cells <- list(S = cell(""), R = cell("d <- readLines(file.path('.', 'later.txt'))"), U = cell("paste(d, '!')"))
+  path <- write_session_notebook(cells)
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_settled(nb)
+  expect_equal(snap_view(notebook_snapshot(nb), "R")$status, "error")
+  # The run told the shell which missing file R tried, by its path in the folder.
+  settle(nb, function(snap) !is.null(nb$data_watch[["later.txt"]]) && is_idle(snap))
+
+  writeLines("1", file.path(dirname(path), "later.txt"))
+  shown_u <- function(snap) snap_view(snap, "U")$output$text
+  settle(nb, function(snap) identical(shown_u(snap), '[1] "1 !"') && is_idle(snap))
+  expect_equal(snap_view(notebook_snapshot(nb), "R")$status, "ok")
+})
+
 test_that("a cell that reads a file and appends to it runs once, as in plain R (#276)", {
   cells <- list(S = cell(""), L = cell("d <- readLines('log.txt')\ncat('entry\\n', file = 'log.txt', append = TRUE)"))
   path <- write_session_notebook(cells)
