@@ -1707,6 +1707,7 @@ test_that("shutdown kills the worker and closes; later events are no-ops (66)", 
 # validation gap, and several lower-severity reducer fixes.
 
 test_that("running all of a 2000-cell chain grows about linearly, not with the square (item 4)", {
+  skip_on_cran()  # too slow for CRAN's check time; CI runs it (#536)
   # Before the fix, `reduce_run()` called `unfresh_ancestors()` (a full
   # `upstream(..., transitive = TRUE)` walk) once per requested id, making
   # "run all" quadratic: 0.58s at 500 cells, 22s at 2000 (38x for 4x the
@@ -1726,6 +1727,7 @@ test_that("running all of a 2000-cell chain grows about linearly, not with the s
 })
 
 test_that("rerunning a chain marks each cell's dependents stale in linear time, not square (#316)", {
+  skip_on_cran()  # too slow for CRAN's check time; CI runs it (#536)
   # Every cell that starts marks all later cells stale again. The walk
   # looked names up in growing vectors and `union()`ed one cell at a time,
   # so one step grew with the square of the chain: about 20x from 250 to

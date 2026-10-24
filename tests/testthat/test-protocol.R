@@ -174,6 +174,7 @@ test_that("diffing an object against an equal one gives no patches", {
 })
 
 test_that("fb_diff of a 2000-cell state with one changed cell grows linearly with the cells", {
+  skip_on_cran()  # too slow for CRAN's check time; CI runs it (#536)
   x <- perf_diff_pair(2000)
   patches <- fb_diff(x$old, x$new)
   touched <- vapply(patches, function(p) p$path[[2]], "")

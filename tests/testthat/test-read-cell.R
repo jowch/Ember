@@ -27,6 +27,7 @@ test_that("definitions_of and references_of return unique names in source order"
 # Compares 6000 lines with 1000, so a slow machine doesn't matter: linear
 # time gives a ratio near 6, quadratic near 36.
 test_that("read_cell() reads 6000 generated lines in linear time", {
+  skip_on_cran()  # too slow for CRAN's check time; CI runs it (#536)
   gen <- function(n) paste(sprintf("x%d <- f(x%d, y)", 1:n, 0:(n - 1)), collapse = "\n")
   short <- system.time(read_cell(gen(1000)))[["elapsed"]]
   long <- system.time(a <- read_cell(gen(6000)))[["elapsed"]]

@@ -16,6 +16,10 @@
 
 # ---- Helpers ---------------------------------------------------------------
 
+# Too slow for CRAN's check time (#536): CI runs the whole file, with
+# NOT_CRAN=true.
+skip_on_cran()
+
 use_installed_ember()
 
 #' `ember_repos()` pointed at the toy fixture repo instead of CRAN: the
