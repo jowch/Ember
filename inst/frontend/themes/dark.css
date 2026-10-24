@@ -162,10 +162,6 @@
     --loading-header-color: hsl(0deg 0% 20% / 50%);
     --disconnected-header-color: rgba(255, 169, 114, 0.56);
 
-    /*loading bar*/
-    --loading-grad-color-1: #a9d4f1;
-    --loading-grad-color-2: #d0d4d7;
-
     /*saveall container*/
     --overlay-button-border: #9e9e9e70;
     --overlay-button-border-save: #c7a74670;
