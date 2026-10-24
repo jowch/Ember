@@ -2,237 +2,61 @@ name: check
 
 on:
   push:
-    branches: [main, 'ci/**']
-  pull_request:
-    # A PR that changes only docs/ runs nothing here: no job reads docs/ (the
-    # package build ignores it). No check is required to merge today; if one
-    # ever is, a docs-only PR would wait on it forever, so drop this then.
-    paths-ignore:
-      - 'docs/**'
-
-# A new push to a pull request cancels that PR's older runs, which would only
-# report on a head nobody will merge. Every other run (a push, a run by hand)
-# gets a group of its own, so it is never cancelled and never waits: a shared
-# group would also drop a run still waiting behind another.
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: true
+    branches: ['ci/**']
 
 jobs:
-  # Each job's timeout-minutes is about twice its slowest successful run in
-  # recent runs (#341 lists them), so a hung step fails the job instead of
-  # running until GitHub's six-hour limit (#339). It guards against a hung
-  # runner, not a slow test: on 10-22 a slow Ubuntu mirror made setup-r alone
-  # take 27 minutes and green e2e jobs take up to 85. If a job is slower than
-  # its limit, find out why before raising it.
-  R-CMD-check:
+  # Throwaway probe for #536: the whole --as-cran check with NOT_CRAN unset,
+  # timed, then the per-file test times and the sizes.
+  probe536:
     runs-on: ${{ matrix.os }}
-    # Slowest: 46 minutes (ubuntu-latest).
-    timeout-minutes: 90
-    name: R CMD check (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
-    env:
-      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
-      R_KEEP_PKG_SOURCE: yes
-      # Only on ubuntu-latest: the opt-in network tests (real package
-      # installs, a real export of a real htmltools widget) need CRAN
-      # reachable, which every runner has, but running them on all three
-      # OSes would triple the network flakiness and runtime for no extra
-      # coverage this suite doesn't already get elsewhere.
-      EMBER_TEST_NETWORK: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
-      # Off Linux, one network test of its own: Bioconductor's binaries,
-      # which only macOS and Windows install (#22). One small download.
-      EMBER_TEST_BIOC_BINARIES: ${{ matrix.os != 'ubuntu-latest' && '1' || '' }}
-    steps:
-      - uses: actions/checkout@v4
-      # The .deb files apt downloads in this job (R's system libraries,
-      # pandoc, cmake), kept between runs: some runners reach an Ubuntu
-      # mirror that serves them at 30-50 kB/s (the action says more).
-      - id: apt
-        uses: ./.github/actions/apt-cache/restore
-      - uses: r-lib/actions/setup-r@v2
-        with:
-          use-public-rspm: true
-      - uses: r-lib/actions/setup-r-dependencies@v2
-        with:
-          extra-packages: any::rcmdcheck
-          needs: check
-      - uses: r-lib/actions/check-r-package@v2
-        with:
-          args: 'c("--no-manual", "--as-cran")'
-          # A WARNING fails the job (#255): a compiler warning and a codoc
-          # mismatch both reached main while CI stayed green. NOTEs still pass.
-          error-on: '"warning"'
-          upload-snapshots: true
-      - if: always() && steps.apt.outcome == 'success'
-        uses: ./.github/actions/apt-cache/save
-        with:
-          key: ${{ steps.apt.outputs.key }}
-          cache-hit: ${{ steps.apt.outputs.cache-hit }}
-
-  grammar:
-    runs-on: ubuntu-latest
-    # Usually a minute; 27 when setup-r met a slow mirror, before its apt cache.
-    timeout-minutes: 60
-    defaults:
-      run:
-        working-directory: grammar
-    steps:
-      - uses: actions/checkout@v4
-      # setup-r's own .deb files (gdebi, qpdf, devscripts, ghostscript), kept
-      # between runs: on 10-23 a slow mirror took 17 minutes over their 30 MB.
-      - id: apt
-        uses: ./.github/actions/apt-cache/restore
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: grammar/package-lock.json
-      - run: npm ci
-      - run: npm run build
-      - name: Generated parser is committed and current
-        run: git diff --exit-code -- src/parser.js src/parser.terms.js dist
-      - run: npm test
-      # The corpus test compares the grammar's top-level boundaries with
-      # R's own parser on the R files installed packages ship (#58), so it
-      # needs R and jsonlite, nothing else.
-      - uses: r-lib/actions/setup-r@v2
-        with:
-          use-public-rspm: true
-      - run: Rscript -e 'install.packages("jsonlite")'
-      - run: npm run corpus
-      - if: always() && steps.apt.outcome == 'success'
-        uses: ./.github/actions/apt-cache/save
-        with:
-          key: ${{ steps.apt.outputs.key }}
-          cache-hit: ${{ steps.apt.outputs.cache-hit }}
-
-  e2e:
-    runs-on: ${{ matrix.os }}
-    # Slowest: 85 minutes (ubuntu-latest, with the WebKit sweep).
     timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
-        # Windows too: until it ran here, Windows e2e failures reached main
-        # unseen, and only a run on a Windows machine by hand found them.
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    env:
-      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
-      # Only on ubuntu-latest, for the same reason as EMBER_TEST_NETWORK
-      # above: the install tests are the only ones that exercise a real
-      # package install (widget.R, EMBER_E2E_INSTALLS=1) end to end through
-      # the browser, and running that on every OS would multiply the
-      # install time and flakiness for no coverage this doesn't already
-      # get from the R test suite's own opt-in network tests.
-      EMBER_E2E_INSTALLS: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
+        os: [windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
-      # The .deb files apt downloads in this job (R's system libraries,
-      # pandoc, the browsers' libraries), kept between runs: some runners
-      # reach an Ubuntu mirror that serves them at 30-50 kB/s (the action
-      # says more).
-      - id: apt
-        uses: ./.github/actions/apt-cache/restore
       - uses: r-lib/actions/setup-r@v2
         with:
           use-public-rspm: true
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           needs: check
-      # No `R CMD INSTALL .`: `npm test` (tests/e2e/run.mjs) installs this
-      # checkout into a temp library of its own.
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: tests/e2e/package-lock.json
-      - working-directory: tests/e2e
-        run: npm ci
-      # --with-deps only on Linux, where it installs the browser's libraries.
-      # On Windows it only adds the Media Foundation feature (about two
-      # minutes per run), which plays audio and video, and no test plays
-      # either; on macOS it does nothing.
-      - working-directory: tests/e2e
-        run: npx playwright-core install ${{ runner.os == 'Linux' && '--with-deps' || '' }} chromium
-      # #412: on the Windows runner a page sometimes fails to load a file
-      # with ERR_NO_BUFFER_SPACE. The TCP settings, and a socket count every
-      # 5 s during the run, go in the log to find out why, with what
-      # browser.mjs records at the moment of a failure. Read-only.
-      - name: TCP settings and a socket sampler (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
+      - name: Machine
+        shell: bash
         run: |
-          netsh int ipv4 show dynamicport tcp
-          Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters -ErrorAction SilentlyContinue | Select-Object TcpTimedWaitDelay, MaxUserPort | Format-List
-          # Defender's state, and the network filter drivers that run: the
-          # captures so far show no port or pool shortage at a failure.
-          try { Get-MpComputerStatus | Select-Object AMRunningMode, RealTimeProtectionEnabled, NISEnabled, BehaviorMonitorEnabled, OnAccessProtectionEnabled | Format-List } catch { "Get-MpComputerStatus failed: $_" }
-          try { Get-MpPreference | Select-Object DisableRealtimeMonitoring, EnableNetworkProtection | Format-List } catch { "Get-MpPreference failed: $_" }
-          try { Get-CimInstance Win32_SystemDriver -Filter "State='Running'" | Where-Object Name -match '^(Wd|WFP|NetBT|NetIO|tcpip|afd|ndis|mpsdrv|MsSec|vfp|vms|Wcifs)' | Select-Object Name, DisplayName | Format-Table -AutoSize } catch { "the running drivers query failed: $_" }
-          $p = Start-Process pwsh -PassThru -WindowStyle Hidden -ArgumentList "-NoProfile", "-File", "${{ github.workspace }}\.github\windows-sockets\sample.ps1", "-Out", "$env:RUNNER_TEMP\sockets.csv"
-          $p.Id | Set-Content "$env:RUNNER_TEMP\sampler.pid"
-      - working-directory: tests/e2e
-        run: npm test
-      - name: The socket samples (Windows)
-        if: always() && runner.os == 'Windows'
-        shell: pwsh
+          Rscript -e 'cat(R.version.string, "\n"); cat("cores:", parallel::detectCores(), "\n")'
+          env | grep -E '^(NOT_CRAN|EMBER_|GITHUB_PAT|_R_)' || true
+      - name: R CMD build
+        shell: bash
         run: |
-          if (Test-Path "$env:RUNNER_TEMP\sampler.pid") { Stop-Process -Id (Get-Content "$env:RUNNER_TEMP\sampler.pid") -ErrorAction SilentlyContinue }
-          Get-Content "$env:RUNNER_TEMP\sockets.csv" -ErrorAction SilentlyContinue
-          Get-ChildItem tests\e2e\test-results\412-*.txt -ErrorAction SilentlyContinue | ForEach-Object { "== $($_.Name)"; Get-Content $_.FullName }
-      # The UI sweep, the first-cell check (#284) and the reload check (#385)
-      # again in WebKit, the engine Endeavor's notebook pane uses (WebKitGTK
-      # on Linux), where layout differs from Chromium. Only on ubuntu, where
-      # Playwright's WebKit is close to WebKitGTK.
-      - name: UI sweep in WebKit
-        if: matrix.os == 'ubuntu-latest'
-        working-directory: tests/e2e
+          start=$(date +%s)
+          R CMD build --no-manual .
+          echo "build: $(( $(date +%s) - start )) s"
+          ls -l ember_*.tar.gz
+      - name: "R CMD check --as-cran, NOT_CRAN unset, timed"
+        shell: bash
         env:
-          EMBER_BROWSER: webkit
+          _R_CHECK_CRAN_INCOMING_: "false"
+          _R_CHECK_LIMIT_CORES_: "true"
         run: |
-          npx playwright-core install --with-deps webkit
-          node run.mjs tests/ui-sweep.test.mjs tests/first-cell.test.mjs tests/ws-reload.test.mjs
-      - if: always() && steps.apt.outcome == 'success'
-        uses: ./.github/actions/apt-cache/save
-        with:
-          key: ${{ steps.apt.outputs.key }}
-          cache-hit: ${{ steps.apt.outputs.cache-hit }}
-      - name: Upload server logs and screenshots on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-artifacts-${{ matrix.os }}
-          path: tests/e2e/test-results/
-          if-no-files-found: ignore
-
-  frontend-build:
-    runs-on: ubuntu-latest
-    # Under a minute; no R.
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            grammar/package-lock.json
-            frontend-build/package-lock.json
-      - name: Build the R grammar (frontend-build depends on it by path)
-        working-directory: grammar
+          unset NOT_CRAN GITHUB_PAT GITHUB_TOKEN EMBER_CHROMIUM
+          for v in $(env | grep -o '^EMBER_TEST_[A-Z_]*'); do unset $v; done
+          start=$(date +%s)
+          set +e
+          R CMD check --as-cran --no-manual ember_*.tar.gz
+          code=$?
+          echo "== check: $(( $(date +%s) - start )) s, exit $code"
+          cat ember.Rcheck/00check.log
+          tail -40 ember.Rcheck/tests/testthat.Rout* 2>/dev/null
+          echo "== installed size by folder"
+          du -sk ember.Rcheck/ember ember.Rcheck/ember/* ember.Rcheck/ember/libs/* 2>/dev/null | sort -n
+          du -sk ember.Rcheck/ember/www/* ember.Rcheck/ember/frontend/* 2>/dev/null | sort -n | tail -20
+          exit 0
+      - name: Per-file test times, NOT_CRAN unset
+        shell: bash
         run: |
-          npm ci
-          npm run build
-      - name: Build the CodeMirror bundle, the vendor bundles, and copy assets
-        working-directory: frontend-build
-        run: |
-          npm ci
-          npm run build
-      - name: Committed frontend files match a fresh rebuild
-        run: |
-          git diff --exit-code -- inst/frontend/imports inst/frontend/img/icons
-          ! git status --porcelain -- inst/frontend/imports inst/frontend/img/icons | grep '^??'
+          unset NOT_CRAN GITHUB_PAT GITHUB_TOKEN EMBER_CHROMIUM
+          start=$(date +%s)
+          Rscript .github/probe536/per-file.R ember.Rcheck
+          echo "== per-file pass: $(( $(date +%s) - start )) s"
