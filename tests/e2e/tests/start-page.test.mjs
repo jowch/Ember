@@ -41,6 +41,13 @@ test("start page: New notebook creates and opens it; the round button closes it 
   const openRow = page.locator(".ember-start-row", { has: page.locator(".ember-start-name", { hasText: "first.R" }) });
   await openRow.waitFor({ state: "visible" });
 
+  // On a phone the folder gives way, not the name (#597).
+  await page.setViewportSize({ width: 390, height: 844 });
+  const [nameCut, folderCut] = await openRow.evaluate((row) =>
+    [".ember-start-name", ".ember-start-folder"].map((sel) => { const el = row.querySelector(sel); return el.scrollWidth > el.clientWidth; }));
+  assert.deepEqual([nameCut, folderCut], [false, true], "the folder truncates and the name shows whole");
+  await page.setViewportSize({ width: 1200, height: 800 });
+
   await openRow.locator(".ember-start-stop").click();
   await page.waitForFunction(
     () => !document.querySelector(".ember-start-stop"));
