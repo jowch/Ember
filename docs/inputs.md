@@ -396,11 +396,10 @@ tool.
   archival if one is missed), and everyone who sees a widget already has
   Ember, which ships the same way. The `Rscript` fallback needs only the
   package, from wherever it comes. This needs notebooks to be able to
-  install from r-universe (#203); today `ember_repos()` in R/resolve.R
-  knows only CRAN, Bioconductor and GitHub sources. #203 plans a
-  `[sources]` entry `emberui = "universe:jowch"`, which Ember writes itself
-  when it sees the package. Until it lands, Ember writes a GitHub
-  `[sources]` entry instead.
+  install from r-universe (#203, done). The jowch universe builds emberui
+  from inst/emberui, and Ember writes the `[sources]` entry
+  `emberui = "universe:jowch"` itself when a notebook uses the package
+  (`builtin_sources`, R/rules.R; #278).
 
 The other choices are decided above: `input_*` names (matching plain R),
 keeping a value on rerun (Pluto), lazy mode marking dependents stale

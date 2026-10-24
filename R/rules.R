@@ -43,10 +43,9 @@ install_calls_bare <- c(install_github = "github", pak = "pak", pkg_install = "p
                         install.packages = "repos")
 
 #' Sources Ember knows without an install call: its own packages, which
-#' aren't on CRAN. emberui (docs/inputs.md) goes here as
-#' `"universe:jowch"` once its universe builds it; until then an entry
-#' would send `library(emberui)` to a universe that doesn't have it.
-builtin_sources <- stats::setNames(character(), character())
+#' aren't on CRAN. emberui (docs/inputs.md) is built by the jowch
+#' universe from inst/emberui.
+builtin_sources <- c(emberui = "universe:jowch")
 
 #' Functions whose top-level call changes a global setting.
 #'

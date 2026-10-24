@@ -359,24 +359,47 @@ test_that("emberui's own tests pass", {
 
 # ---- End to end ------------------------------------------------------------------
 
-#' A `file://` CRAN-like repository holding emberui, built from
-#' inst/emberui, dated `date` (as the toy repo in
-#' test-packages-session.R is laid out). Returns the root.
-ui_repo <- function(date = "2026-09-01") {
-  root <- tempfile("ember-ui-repo-")
-  contrib <- file.path(root, date, "src", "contrib")
-  dir.create(contrib, recursive = TRUE)
-  src <- emberui_source()
+#' The commit the stand-in universe says it built emberui from.
+UI_SHA <- "5ae01f2fb57e9e69be8a55c94f2f9e37c22c3ba2"
+
+#' A `file://` stand-in for r-universe holding emberui under `jowch`, laid
+#' out as fixtures/universe is: `jowch/api/packages/emberui` the JSON,
+#' `jowch/src/contrib` the build from inst/emberui, with the `Remote*`
+#' fields r-universe writes into a build's DESCRIPTION. Also an empty
+#' CRAN-like repository dated `date`, so nothing reaches the network.
+#' Returns the root.
+ui_universe <- function(date = "2026-09-01") {
+  root <- tempfile("ember-ui-universe-")
+  contrib <- file.path(root, "jowch", "src", "contrib")
+  api <- file.path(root, "jowch", "api", "packages")
+  cran <- file.path(root, "cran", date, "src", "contrib")
+  for (d in c(contrib, api, cran)) dir.create(d, recursive = TRUE)
+  file.create(file.path(cran, "PACKAGES"))
+  src <- file.path(root, "src")
+  dir.create(src)
+  file.copy(emberui_source(), src, recursive = TRUE)
+  src <- file.path(src, basename(emberui_source()))
+  remote <- c(RemoteUrl = "https://github.com/jowch/Ember", RemoteSha = UI_SHA, RemoteSubdir = "inst/emberui")
+  desc <- read.dcf(file.path(src, "DESCRIPTION"))
+  write.dcf(cbind(desc, t(remote)), file.path(src, "DESCRIPTION"))
   res <- run_guarded(file.path(R.home("bin"), "R"), c("CMD", "build", "--no-manual", "--no-build-vignettes", src),
                      wd = contrib, error_on_status = FALSE)
   if (res$status != 0) stop("could not build emberui:\n", res$stderr)
   tools::write_PACKAGES(contrib, type = "source")
+  info <- c(list(Package = "emberui", Version = unname(desc[1, "Version"])), as.list(remote),
+            list(NeedsCompilation = "no", `_dependencies` = list(list(package = "R", version = ">= 4.1.0", role = "Depends"))))
+  jsonlite::write_json(info, file.path(api, "emberui"), auto_unbox = TRUE)
   root
+}
+
+ui_repos <- function(root) {
+  ember_repos(cran = paste0("file://", root, "/cran"), github = paste0("file://", github_fixture_dir()),
+              universe = paste0("file://", root, "/%s"))
 }
 
 test_that("set_input through the API reruns the readers with the new value, and keeps it when the input's cell reruns", {
   use_installed_ember()
-  root <- ui_repo()
+  root <- ui_universe()
   cache <- tempfile("ember-pkg-cache-")
   dir.create(cache)
   on.exit(unlink(c(root, cache), recursive = TRUE), add = TRUE)
@@ -384,9 +407,14 @@ test_that("set_input through the API reruns the readers with the new value, and 
     L = cell("library(emberui)"),
     I = cell("n <- input_slider(1L, 10L, 5L)"),
     B = cell("n * 2")), snapshot = "2026-09-01")
-  nb <- open_notebook(path, repos = ember_repos(cran = paste0("file://", root)), cache = cache)
+  nb <- open_notebook(path, repos = ui_repos(root), cache = cache)
   on.exit(close_notebook(nb), add = TRUE)
   res <- run_settled(nb)
+  # library(emberui) alone was enough: Ember wrote its universe entry and
+  # installed the universe's build.
+  pkgs <- notebook_snapshot(nb)$packages$packages
+  expect_identical(pkgs$spec[pkgs$name == "emberui"], "universe:jowch")
+  expect_identical(pkgs$status[pkgs$name == "emberui"], "installed")
   out_of <- function(id) snap_view(notebook_snapshot(nb), id)$output$text
   expect_identical(out_of("B"), "[1] 10")
   # The input's own cell shows no value that could go stale.
