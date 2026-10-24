@@ -30,7 +30,8 @@ on:
 # A new push to a pull request cancels that PR's older runs, which would only
 # report on a head nobody will merge. Every other run (a push, a run by hand)
 # gets a group of its own, so it is never cancelled and never waits: a shared
-# group would also drop a run still waiting behind another.
+# group would also drop a run still waiting behind another. On main, the
+# binary job's own group (below) cancels a build that a newer push supersedes.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
@@ -44,6 +45,14 @@ jobs:
     # Slowest successful run: 5 minutes. See check.yaml (#339).
     timeout-minutes: 20
     name: Apple Silicon binary (R ${{ matrix.r }})
+    # A newer push to main cancels this build for an older one, waiting or
+    # running: publish skips a build once main has moved on, so it would only
+    # hold a macOS runner, and every merge queued two more. Only the build is
+    # cancelled, never a publish, which keeps its own group below. Pull
+    # requests are already cancelled by the workflow's group above.
+    concurrency:
+      group: macos-binary-build-${{ matrix.r }}-${{ github.event.pull_request.number || github.ref }}
+      cancel-in-progress: true
     strategy:
       fail-fast: false
       matrix:
