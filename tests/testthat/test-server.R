@@ -2458,3 +2458,31 @@ test_that("ember_set_package_source on a read-only notebook replies with the ref
   expect_match(reply_of("ember_remove_package_source")$error, "read-only", fixed = TRUE)
   expect_equal(read_file_utf8(ro_path), before)
 })
+
+# ---- Inputs (docs/inputs.md) -------------------------------------------------------
+
+test_that("bonds sent in one patch are each set, even after one is refused", {
+  path <- write_session_notebook(list(S = cell(""), A = cell("1")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  server <- new_server("s", throttle = 0)
+  host_notebook(server, nb)
+  id <- notebook_state(nb)$id
+  ws <- fake_socket()
+  handle_message(server, ws, wire("connect", notebook_id = id))
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
+
+  tried <- character()
+  testthat::local_mocked_bindings(set_page_input = function(nb, name, value) {
+    tried <<- c(tried, name)
+    if (identical(name, "a")) stop(refused("No input is bound to `a`.", op = "set_input"))
+    invisible(NULL)
+  })
+  handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list(
+    patch("add", list("bonds", "a"), list(value = 1)),
+    patch("add", list("bonds", "b"), list(value = 2)))))
+  expect_identical(tried, c("a", "b"))
+  reply <- ws$last()
+  expect_equal(reply$message$response$update_went_well, "\U0001F44E")
+  expect_match(reply$message$response$why_not, "`a`")
+})

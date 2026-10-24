@@ -195,6 +195,13 @@ test_that("renv_failed_packages() reads renv's \"failed to install\" error, in e
   expect_equal(renv_failed_packages('failed to retrieve package "cli"'), character())
 })
 
+test_that("download_report_line() names the packages that didn't download, and says nothing of building (#481)", {
+  expect_equal(download_report_line("toyA"),
+               "Error: toyA didn't download, after trying again. The install log has renv's reason for it.")
+  expect_equal(download_report_line(c("toyA", "toyB")),
+               "Error: toyA, toyB didn't download, after trying again. The install log has renv's reason for each.")
+})
+
 test_that("renv_download_failures() names the packages renv's report says didn't download, and not failed builds (#478)", {
   report <- c("The following package(s) were not installed successfully:", "",
               "- [RhpcBLASctl]: error downloading 'https://packagemanager.posit.co/cran/2026-10-08/bin/macosx/sonoma-arm64/contrib/4.6/RhpcBLASctl_0.23-42.tgz' [error code 6]",
@@ -855,4 +862,55 @@ test_that("[net] Package Manager sends R 4.6 on Linux cli's source at 2024-06-01
   base <- "https://packagemanager.posit.co/cran/__linux__/noble/"
   expect_false(ppm_serves_binary(paste0(base, "2024-06-01/src/contrib/cli_3.6.2.tar.gz")))
   expect_true(ppm_serves_binary(paste0(base, "2026-09-01/src/contrib/cli_3.6.6.tar.gz")))
+})
+
+# ---- A build that fails without a word (#522) --------------------------------
+
+test_that("build_failure_lines() gives each failed build's exit status, and a reason for one that printed nothing (#522)", {
+  silent <- structure(character(), status = -1073741502L)
+  loud <- structure(c("* installing *source* package 'b' ...", "ERROR: compilation failed for package 'b'"), status = 1L)
+  errors <- list(list(package = "a", message = "install failed", output = silent),
+                 list(package = "b", message = "install failed", output = loud),
+                 list(package = "c", message = "install failed", output = character()),
+                 list(package = "d", message = "failed to download"),
+                 # renv's own words, with no exit status: a worker that timed out.
+                 list(package = "e", message = "install failed", output = "worker process timed out"))
+  expect_equal(build_failure_lines(errors), c(
+    "ERROR: building package 'a' printed nothing and installed nothing (exit status -1073741502, 0xC0000142)",
+    "ember: building package 'b' failed with exit status 1",
+    "ERROR: building package 'c' printed nothing and installed nothing (exit status 0)"))
+  expect_equal(build_failure_lines(list()), character())
+})
+
+test_that("a build that printed nothing is the package's reason, not renv's bare \"install failed\" (#522)", {
+  lines <- c("EMBER-PROGRESS 0 2 - restore",
+             "ERROR: building package 'toyC' printed nothing and installed nothing (exit status -1073741502, 0xC0000142)",
+             "The following package(s) were not installed successfully:",
+             "- [toyC]: install failed",
+             "Error: failed to install \"toyC\"")
+  rows <- install_failures(lines)
+  expect_equal(rows$package, "toyC")
+  expect_equal(rows$kind, "other")
+  expect_equal(rows$detail, "building package 'toyC' printed nothing and installed nothing (exit status -1073741502, 0xC0000142)")
+  expect_match(install_failure_message(lines, 1L), "ERROR: building package 'toyC' printed nothing", fixed = TRUE)
+})
+
+test_that("the installed renv reports failed packages through the function the installer traces (#522)", {
+  ns <- asNamespace("renv")
+  expect_true(exists("renv_graph_install_errors", envir = ns, inherits = FALSE))
+  expect_true("errors" %in% names(formals(get("renv_graph_install_errors", envir = ns))))
+  expect_true(trace_renv_build_failures(ns))
+  on.exit(suppressMessages(untrace("renv_graph_install_errors", where = ns)), add = TRUE)
+  errors <- list(list(package = "toyC", message = "install failed", output = structure(character(), status = 5L)))
+  out <- capture.output(get("renv_graph_install_errors", envir = ns)(errors, "toyC", list()))
+  first <- grep("building package 'toyC'", out)
+  expect_length(first, 1L)
+  expect_lt(first, grep("toyC]: install failed", out, fixed = TRUE))
+  expect_match(out[[first]], "ERROR: building package 'toyC' printed nothing and installed nothing (exit status 5)", fixed = TRUE)
+  # An error in the traced lines (a status that isn't a number) never
+  # stops renv's own report.
+  expect_error(suppressWarnings(build_failure_lines(list(list(package = "x", message = "install failed",
+                                                              output = structure(character(), status = "?"))))))
+  out <- capture.output(get("renv_graph_install_errors", envir = ns)(list(list(package = "x", message = "install failed", output = structure(character(), status = "?"))), "x", list()))
+  expect_true(any(grepl("not installed successfully", out, fixed = TRUE)))
 })

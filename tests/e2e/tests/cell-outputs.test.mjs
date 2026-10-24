@@ -521,6 +521,46 @@ test("text cells: serif text with tinted values that copy as plain text; click o
   assertNoProblems(page);
 });
 
+test("text cells: a click's pending open is dropped when focus moves on first, so typing elsewhere stays there (#110)", async (t) => {
+  const notebook = tempNotebook("cells.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-text-moved-on.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  // The page's clock is paused from the click until the test has typed, so
+  // the double-click interval can't run out between them on a slow runner.
+  await page.clock.install();
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
+  await page.waitForSelector("#live-docs-search");
+  const cell = cellSelector("TXT");
+  await page.locator(cell).scrollIntoViewIfNeeded();
+  const code = await page.evaluate(() => window.editor_state.notebook.cell_inputs.TXT.code);
+
+  // A click on the text, then the Help box before the double-click
+  // interval ends: the source mustn't open later and take the typing.
+  const text_click_ms = await page.evaluate(async () => {
+    const src = document.querySelector('script[src$="editor.js"]').src;
+    return (await import(new URL("components/Cell.js", src).href)).TEXT_CLICK_MS;
+  });
+  const p = await page.locator(`${cell} > pluto-output p`).boundingBox();
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 100));
+  await page.mouse.click(p.x + 2, p.y + p.height / 2);
+  await page.locator("#live-docs-search").focus();
+  await page.keyboard.insertText("lm");
+  // Past the interval: Cell.js's timer runs here, if it's still set.
+  await page.clock.runFor(text_click_ms);
+  await page.clock.resume();
+  await frames(page);
+  assert.equal(await page.locator(cell).evaluate((el) => el.classList.contains("show_input")), false, "the source stays closed");
+  assert.equal(await page.evaluate(() => document.activeElement?.id), "live-docs-search", "focus stays in the Help box");
+  assert.equal(await page.locator("#live-docs-search").inputValue(), "lm");
+  assert.equal(await page.evaluate(() => window.editor_state.notebook.cell_inputs.TXT.code), code);
+  assert.equal(await page.evaluate((sel) => document.querySelector(`${sel} pluto-input .cm-editor:not(.cm-ssr-fake) .cm-content`)?.innerText.includes("lm") ?? false, cell), false, "nothing typed into the source");
+  assertNoProblems(page);
+});
+
 test("text cells: keys pressed as the source opens, before it has drawn, aren't undone by the opening cursor (#120)", async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-text-early-keys.server.log") });

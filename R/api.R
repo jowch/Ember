@@ -378,10 +378,14 @@ set_input <- function(nb, name, value, wait = FALSE, timeout = 60) {
   if (is.null(reply)) stop("ember: the notebook is closed")
   result <- list(accepted = TRUE, cell = reply$cell, value = NULL, cells = character(), timed_out = FALSE)
   if (isTRUE(wait)) {
-    ok <- wait_for(nb, function(s) is.null(nb$state$worker$input) && is_idle(s), timeout = timeout)
+    # Done once this value is no longer with the worker (a page value sent
+    # after it may be) and the reruns have finished. Its own outcome, by
+    # token: a page value answered meanwhile has none.
+    mine <- function() identical(nb$state$worker$input$token, reply$token)
+    ok <- wait_for(nb, function(s) !mine() && is_idle(s), timeout = timeout)
     result$timed_out <- !ok
     out <- nb$state$input_outcome
-    if (ok && !is.null(out) && identical(out$name, name)) {
+    if (ok && !is.null(out) && identical(out$token, reply$token)) {
       if (!isTRUE(out$ok)) stop(sprintf("ember: %s", out$error), call. = FALSE)
       result$value <- out$value
       result$cells <- out$cells

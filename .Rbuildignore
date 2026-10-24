@@ -7,3 +7,4 @@
 ^\.github$
 ^tests/e2e$
 ^bench$
+^cran-comments\.md$
