@@ -30,8 +30,12 @@ function assertNoPageErrors(page) {
 }
 
 /** Forward 127.0.0.1:`port` (0 for any free port) to `targetPort`. Resolves
- * to `{ port, stop() }`; `stop()` drops every open connection too. */
-function startForwarder(targetPort, port = 0) {
+ * to `{ port, stop() }`; `stop()` drops every open connection too. With
+ * `loseCloseFrames`, a websocket close frame from the target never reaches
+ * the page: its connection is reset instead, so a socket the target opened
+ * and then closed reaches the page as a plain drop (1006), with no close
+ * code (#491). */
+function startForwarder(targetPort, port = 0, { loseCloseFrames = false } = {}) {
   const open = new Set();
   const server = net.createServer((client) => {
     const upstream = net.connect(targetPort, "127.0.0.1");
@@ -39,7 +43,20 @@ function startForwarder(targetPort, port = 0) {
     open.add(client); open.add(upstream);
     client.on("error", drop); upstream.on("error", drop);
     client.on("close", drop); upstream.on("close", drop);
-    client.pipe(upstream); upstream.pipe(client);
+    client.pipe(upstream);
+    if (!loseCloseFrames) { upstream.pipe(client); return; }
+    let upgraded = false;
+    upstream.on("data", (chunk) => {
+      let rest = chunk;
+      if (!upgraded && chunk.subarray(0, 12).toString() === "HTTP/1.1 101") {
+        const end = chunk.indexOf("\r\n\r\n") + 4;
+        upgraded = true;
+        client.write(chunk.subarray(0, end));
+        rest = chunk.subarray(end);
+      }
+      if (upgraded && rest.length > 0 && rest[0] === 0x88) { client.resetAndDestroy(); upstream.destroy(); return; }
+      if (rest.length > 0) client.write(rest);
+    });
   });
   return new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -141,6 +158,28 @@ test("dead port: a tab that said it can't reach Ember says Ember restarted when 
     logFile: path.join(artifactsDir(), "dead-port-restarted.second.server.log"), port, secret: "second-session-secret",
   });
   t.after(() => second.stop());
+  const restarted = page.getByRole("alertdialog", { name: "Ember restarted" });
+  await fastForwardUntil(page, restarted);
+  await status.filter({ hasText: "Ember restarted" }).waitFor();
+  assert.equal(await dialog.count(), 0, "the not-running dialog went when the restart was found");
+  assertNoPageErrors(page);
+});
+
+// The same restart when the new server's refusal (a 4403 close right after
+// the socket opens) reaches the page as a plain drop, with no close code.
+// The page then has only the key check to go on, and it must make it for a
+// socket that opened and dropped as for one that never opened (#491).
+test("dead port: a tab says Ember restarted when the new one's refusal reaches it as a drop (#491)", async (t) => {
+  const { page, status, port, notebook } = await openThenKillPort(t, "dead-port-restarted-drop");
+
+  const dialog = page.getByRole("alertdialog", { name: "Can't reach Ember here" });
+  await fastForwardUntil(page, dialog);
+
+  const second = await startServer([notebook], {
+    logFile: path.join(artifactsDir(), "dead-port-restarted-drop.second.server.log"), secret: "second-session-secret",
+  });
+  const lossy = await startForwarder(second.port, port, { loseCloseFrames: true });
+  t.after(async () => { await lossy.stop(); second.stop(); });
   const restarted = page.getByRole("alertdialog", { name: "Ember restarted" });
   await fastForwardUntil(page, restarted);
   await status.filter({ hasText: "Ember restarted" }).waitFor();
