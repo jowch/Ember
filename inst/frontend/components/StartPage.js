@@ -3,6 +3,7 @@ import { PlutoActionsContext } from "../common/PlutoContext.js"
 import { FolderField } from "./FolderField.js"
 import { FilePicker } from "./FilePicker.js"
 import { t } from "../common/lang.js"
+import { lost_connection_text } from "../common/lost_connection.js"
 
 /**
  * Ember's start page (`GET /`, start.js): one "My notebooks" list with
@@ -102,6 +103,8 @@ const NewNotebookRow = ({ start_dir, new_name, on_created }) => {
             } else {
                 on_created(response.message.url)
             }
+        } catch (e) {
+            set_error(lost_connection_text(e))
         } finally {
             set_creating(false)
         }
@@ -134,7 +137,14 @@ const OpenRow = ({ notebook, on_changed }) => {
 
     const stop = async () => {
         set_closing(true)
-        await pluto_actions.send("shutdown_notebook", { keep_in_session: false }, { notebook_id: notebook.notebook_id }, false)
+        try {
+            await pluto_actions.send("shutdown_notebook", { keep_in_session: false }, { notebook_id: notebook.notebook_id }, false)
+        } catch (e) {
+            // The row has no room for the text; the button working again says it.
+            lost_connection_text(e)
+            set_closing(false)
+            return
+        }
         setTimeout(on_changed, 300)
     }
 
@@ -160,18 +170,28 @@ const RecentRow = ({ notebook, on_changed }) => {
 
     const forget = async () => {
         set_forgetting(true)
-        const response = await pluto_actions.send("ember_forget_recent", { path: notebook.path })
-        on_changed(response.message)
+        set_error(null)
+        try {
+            const response = await pluto_actions.send("ember_forget_recent", { path: notebook.path })
+            on_changed(response.message)
+        } catch (e) {
+            set_error(lost_connection_text(e))
+            set_forgetting(false)
+        }
     }
 
     const open = async (/** @type {MouseEvent} */ e) => {
         e.preventDefault()
         set_error(null)
-        const response = await pluto_actions.send("ember_open_notebook", { path: notebook.path })
-        if (response.message.error != null) {
-            set_error(response.message.error)
-        } else {
-            window.location.href = response.message.url
+        try {
+            const response = await pluto_actions.send("ember_open_notebook", { path: notebook.path })
+            if (response.message.error != null) {
+                set_error(response.message.error)
+            } else {
+                window.location.href = response.message.url
+            }
+        } catch (e) {
+            set_error(lost_connection_text(e))
         }
     }
 
@@ -203,7 +223,14 @@ const OpenFileField = () => {
             readonly=${false}
             on_submit=${async (/** @type {string} */ path) => {
                 set_error(null)
-                const response = await pluto_actions.send("ember_open_notebook", { path })
+                let response
+                try {
+                    response = await pluto_actions.send("ember_open_notebook", { path })
+                } catch (e) {
+                    const text = lost_connection_text(e)
+                    set_error(text)
+                    throw new Error(text)
+                }
                 if (response.message.error != null) {
                     set_error(response.message.error)
                     throw new Error(response.message.error)

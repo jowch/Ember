@@ -2,6 +2,7 @@ import { html, useState, useContext, useEffect, useRef } from "../imports/Preact
 import { t, getCurrentLanguage } from "../common/lang.js"
 import { install_cards, cause_groups, sentence_kind, reads_same, join_names } from "../common/install_cards.js"
 import { PlutoActionsContext } from "../common/PlutoContext.js"
+import { lost_connection_text } from "../common/lost_connection.js"
 
 /**
  * A card package's own sentence ("It ..."), built from `kind`/`detail`
@@ -450,6 +451,8 @@ const SourceForm = ({ name, spec, on_close }) => {
                     } else {
                         on_close()
                     }
+                } catch (e) {
+                    set_error(lost_connection_text(e))
                 } finally {
                     set_saving(false)
                 }
@@ -536,6 +539,8 @@ const SourceDetail = ({ row, read_only }) => {
                                         try {
                                             const response = await pluto_actions.ember_remove_package_source(row.name)
                                             if (response?.message?.error != null) set_error(response.message.error)
+                                        } catch (e) {
+                                            set_error(lost_connection_text(e))
                                         } finally {
                                             set_removing(false)
                                         }
