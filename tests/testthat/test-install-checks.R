@@ -195,6 +195,13 @@ test_that("renv_failed_packages() reads renv's \"failed to install\" error, in e
   expect_equal(renv_failed_packages('failed to retrieve package "cli"'), character())
 })
 
+test_that("download_report_line() names the packages that didn't download, and says nothing of building (#481)", {
+  expect_equal(download_report_line("toyA"),
+               "Error: toyA didn't download, after trying again. The install log has renv's reason for it.")
+  expect_equal(download_report_line(c("toyA", "toyB")),
+               "Error: toyA, toyB didn't download, after trying again. The install log has renv's reason for each.")
+})
+
 test_that("renv_download_failures() names the packages renv's report says didn't download, and not failed builds (#478)", {
   report <- c("The following package(s) were not installed successfully:", "",
               "- [RhpcBLASctl]: error downloading 'https://packagemanager.posit.co/cran/2026-10-08/bin/macosx/sonoma-arm64/contrib/4.6/RhpcBLASctl_0.23-42.tgz' [error code 6]",

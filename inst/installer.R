@@ -147,14 +147,18 @@ main <- function(plan_path) {
   # A failed build of a package that had no binary for this R is most
   # often a version from before this R came out (an old snapshot date,
   # #19): its own error (a removed C API) doesn't say so, so this does.
+  # A package that didn't download was never built, so it gets no such
+  # explanation: it says it didn't download (#481).
   if (inherits(restored, "error")) {
     msg <- conditionMessage(restored)
     writeLines(paste("Error:", msg), con = stderr())
-    failed <- ember:::renv_failed_packages(msg)
+    undownloaded <- ember:::renv_download_failures(readLines(restore_log, warn = FALSE))
+    failed <- setdiff(ember:::renv_failed_packages(msg), undownloaded)
     if (length(failed) > 0) failed <- ember:::failed_builds(failed, ember:::read_available(plan$repos, "source"))
     no_binary <- ember:::no_binary_packages(failed, lock, plan$repos,
                                             binary_repos = inst_repos$probe, linux_binaries = linux_binaries)
     if (length(no_binary) > 0) writeLines(ember:::missing_report_lines(no_binary = no_binary), con = stderr())
+    if (length(undownloaded) > 0) writeLines(ember:::download_report_line(undownloaded), con = stderr())
     flush(stderr())
     quit(status = 1L, save = "no")
   }
