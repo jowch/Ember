@@ -691,7 +691,7 @@ test("signature: a click on the tooltip lands in the code under it (#34)", async
  * gutter's width, `document.fonts.status`, and whether the completion
  * popup is open) are there to tell a tooltip that moved from a page that
  * moved under it: on Windows #476's test once saw `left` change by 1 px,
- * and 100 runs there didn't repeat it. */
+ * and 100 runs there didn't repeat it. They're returned, not waited on. */
 const tooltip_settled = (page) => page.waitForFunction(() => {
   const tooltip = document.querySelector(".cm-ember-signature-tooltip");
   const editor = document.querySelector(".cm-editor.cm-focused");
@@ -708,7 +708,11 @@ const tooltip_settled = (page) => page.waitForFunction(() => {
     content: editor.querySelector(".cm-content").getBoundingClientRect().left, gutter: editor.querySelector(".cm-gutters")?.getBoundingClientRect().width ?? null,
     fonts: document.fonts.status, completion: document.querySelector(".cm-tooltip-autocomplete") != null };
   const s = (window.__placed ??= { last: null, frames: 0 });
-  const key = JSON.stringify(now);
+  // The tooltip and the cursor alone decide the settle. With the page's
+  // fields in the key too, a page that moved after the tooltip settled
+  // would restart the settle and hide the move from the test.
+  const { content, gutter, fonts, completion, ...placed } = now;
+  const key = JSON.stringify(placed);
   if (key !== s.last) {
     s.last = key;
     s.frames = 0;
