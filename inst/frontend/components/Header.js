@@ -77,7 +77,9 @@ const r_status = ({ connected, key_refused, unreachable, notebook, n, i }) => {
  * The sticky header (ui-3.md, Header; ui-3-plan.md piece 5's "Header
  * contents"): the flame, the file name, "Saved", "Run N not run", the R
  * status, the panel icons, Export and the ⋯ menu. Below 641px the three
- * panel icons become one "Side panel" icon and Export moves into ⋯.
+ * panel icons become one "Side panel" icon and Export moves into ⋯, and
+ * "Run N not run" and "Run changed" become one "Run N" when both show
+ * (#501), which together would push ⋯ off a phone's screen.
  *
  * @param {{
  * notebook: import("./Editor.js").NotebookData,
@@ -86,6 +88,8 @@ const r_status = ({ connected, key_refused, unreachable, notebook, n, i }) => {
  * unreachable?: boolean,
  * code_differs: boolean,
  * on_run_changed: () => void,
+ * run_both_count: number,
+ * on_run_both: () => void,
  * export_links: import("./ExportMenu.js").ExportLinks,
  * print_title: string,
  * on_open_move: () => void,
@@ -93,7 +97,7 @@ const r_status = ({ connected, key_refused, unreachable, notebook, n, i }) => {
  * on_interrupt: () => void,
  * }} props
  */
-export const Header = ({ notebook, connected, key_refused = false, unreachable = false, code_differs, export_links, print_title, on_open_move, on_run_all, on_run_changed, on_interrupt }) => {
+export const Header = ({ notebook, connected, key_refused = false, unreachable = false, code_differs, export_links, print_title, on_open_move, on_run_all, on_run_changed, run_both_count, on_run_both, on_interrupt }) => {
     const [open_tab, set_open_tab] = useState(initial_panel_tab)
     const last_tab_ref = useRef(last_panel_tab())
 
@@ -135,16 +139,22 @@ export const Header = ({ notebook, connected, key_refused = false, unreachable =
             <button id="ember-file-name" type="button" title=${notebook.path} onClick=${on_open_move}>${notebook.shortpath}</button>
             ${code_differs || !connected ? null : html`<span class="ember-saved">${t("t_ember_saved")}</span>`}
             <div class="ember-header-spacer"></div>
-            ${not_run > 0
-                ? html`<button class="ember-btn ember-fade-in" type="button" title=${t("t_ember_run_not_run_title", { count: not_run })} onClick=${on_run_all}>
-                      ${t("t_ember_run_not_run", { count: not_run })}
+            ${narrow && not_run > 0 && code_differs
+                ? html`<button class="ember-btn ember-fade-in ember-run-both" type="button" title=${t("t_ember_run_both_title", { count: not_run })} onClick=${on_run_both}>
+                      ${t("t_ember_run_both", { count: run_both_count })}
                   </button>`
-                : null}
-            ${code_differs
-                ? html`<button class="ember-btn ember-fade-in ember-run-changed" type="button" title=${t("t_save_all_changes_description")} onClick=${on_run_changed}>
-                      ${t("t_ember_run_changed")}
-                  </button>`
-                : null}
+                : html`
+                      ${not_run > 0
+                          ? html`<button class="ember-btn ember-fade-in" type="button" title=${t("t_ember_run_not_run_title", { count: not_run })} onClick=${on_run_all}>
+                                ${t("t_ember_run_not_run", { count: not_run })}
+                            </button>`
+                          : null}
+                      ${code_differs
+                          ? html`<button class="ember-btn ember-fade-in ember-run-changed" type="button" title=${t("t_save_all_changes_description")} onClick=${on_run_changed}>
+                                ${t("t_ember_run_changed")}
+                            </button>`
+                          : null}
+                  `}
             <button
                 id="ember-r-status"
                 type="button"

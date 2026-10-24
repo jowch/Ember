@@ -4,7 +4,8 @@ Version: 0.0.0.9000
 Authors@R:
     person("Jonathan", "Chen", email = "jonathanwchen@pm.me", role = c("aut", "cre"))
 Description: Sliders, number boxes, checkboxes, text boxes, dropdowns and
-    radio buttons for Ember notebooks. In Ember, an input assigned to a
+    radio buttons for Ember notebooks, alone or several together as one
+    input. In Ember, an input assigned to a
     name becomes a widget, and moving it reruns the cells that read the
     name. Anywhere else (Rscript, the R console, knitr) each function
     checks its arguments and returns its default value.

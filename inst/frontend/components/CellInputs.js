@@ -62,6 +62,7 @@ export const CellInputs = ({ cell_id, inputs, place, disabled }) => {
 }
 
 const shown = (input, v) => {
+    if (input.type === "list") return `list(${(input.parts ?? []).map((p) => `${p.name} = ${shown(p, v?.[p.name])}`).join(", ")})`
     if (input.type === "select" || input.type === "radio") {
         const pick = Array.isArray(v) ? v : v == null ? [] : [v]
         return pick.map((k) => input.labels?.[k] ?? "").join(", ")
@@ -76,13 +77,42 @@ const same = (a, b) => (Array.isArray(a) && Array.isArray(b) ? a.length === b.le
 const ChangedMark = ({ input }) =>
     html`<span class="ember-input-changed" title=${t("t_input_changed", { value: shown(input, input.default) })}>${t("t_input_changed_short")}</span>`
 
-/** The cell's output: the one movable widget. */
+/** The cell's output: the one movable widget, or for `input_list()` each of its parts' widgets. */
 const InputRow = ({ group, input, value, error, send, disabled }) => {
+    if (input.type === "list") return html`<${ListRow} group=${group} input=${input} value=${value} error=${error} send=${send} disabled=${disabled} />`
     const changed = !same(value, input.default)
     const label = input.label ?? input.name ?? input.type
     return html`<ember-input class=${`${input.type}${changed ? " changed" : ""}`}>
         <${Widget} group=${group} input=${input} label=${label} value=${value} send=${send} disabled=${disabled} />
         ${changed ? html`<${ChangedMark} input=${input} />` : null}
+        ${error != null ? html`<span class="ember-input-error" role="alert">${error}</span>` : null}
+    </ember-input>`
+}
+
+/**
+ * `input_list()`: one widget per part, in order, each labelled by its own
+ * label or name. Moving one sends the whole list with that part changed,
+ * since the list is one input with one value. A part off its default is
+ * marked on its own row.
+ */
+const ListRow = ({ group, input, value, error, send, disabled }) => {
+    const parts = input.parts ?? []
+    return html`<ember-input class="list">
+        ${parts.map((part, k) => {
+            const v = value?.[part.name]
+            const changed = !same(v, input.default?.[part.name])
+            return html`<ember-input class=${`${part.type}${changed ? " changed" : ""}`} key=${part.name}>
+                <${Widget}
+                    group=${`${group}-${k}`}
+                    input=${part}
+                    label=${part.label ?? part.name}
+                    value=${v}
+                    send=${(x) => send({ ...value, [part.name]: x })}
+                    disabled=${disabled}
+                />
+                ${changed ? html`<${ChangedMark} input=${{ ...part, default: input.default?.[part.name] }} />` : null}
+            </ember-input>`
+        })}
         ${error != null ? html`<span class="ember-input-error" role="alert">${error}</span>` : null}
     </ember-input>`
 }

@@ -398,13 +398,21 @@ what was missing.
   what to install (`compiler_instructions()`). GitHub sources aren't
   counted: whether they compile is known only once downloaded.
 - **On Linux with Package Manager binaries**, the compiler check above
-  is skipped unless Package Manager has no binaries for this R at the
-  snapshot date. A date from before it built binaries for this R gets
-  none, for every package (measured at 2024-06-01 on R 4.6). The installer
-  asks about one locked package (`ppm_serves_binary()`: the
-  `X-Package-Type` header Package Manager sends for R's user agent), and
-  only then reads the source index and names every compiled package. The
-  instructions add that a newer date needs no compiler.
+  is skipped unless Package Manager sends some locked packages as
+  source. A date from before it built binaries for this R gets none for
+  most packages: none at all at 2024-06-01 on R 4.6, and at 2025-03-20
+  all but the versions still current when it started building for this
+  R, such as MASS 7.3-65 and R6 2.6.1 (#520). So no package's answer
+  stands for another's, and Package Manager's Linux index doesn't say
+  which versions have binaries. The installer asks about every locked
+  CRAN package (`ppm_source_only()`, then `ppm_serves_binary()`: the
+  `X-Package-Type` header Package Manager sends for R's user agent), eight
+  at a time. For the 49 packages of a tidyverse notebook that takes about
+  2 s (13 s one at a time). The first is asked alone: if it gets no
+  answer, nothing else is asked, rather than wait out a timeout for each.
+  Only when some come as source does it read the source index and name
+  the compiled packages among them. The instructions add that a newer
+  date needs no compiler.
 - **A build that fails with no binary for this R (#19).** A snapshot date
   from before the running R came out has no binaries for that R, so renv
   builds from source, and versions that old often don't build on a newer
@@ -436,13 +444,10 @@ what was missing.
   installer names the CRAN packages that will build from source for want
   of a binary for this R (`source_only_packages()`), leaving out those
   renv's cache already holds. On Linux with Package Manager binaries it
-  asks about one package, as the compiler check does, at the binary URL
-  renv downloads from (`installer_repos()`: at CRAN's own URL Package
-  Manager sends the source at every date). At a date from before Package
-  Manager built binaries for this R it sends the source of every package,
-  so when a second package comes as source too, all of them count; when
-  only the first does (a failed binary build, a release from this week),
-  only it does. On macOS and Windows it reads the
+  asks Package Manager the same way as the compiler check, at the binary
+  URL renv downloads from (`installer_repos()`: at CRAN's own URL Package
+  Manager sends the source at every date), and names the packages that
+  come as source. On macOS and Windows it reads the
   binary index, as `no_binary_packages()` does. On Linux without those
   binaries everything always builds from source, so nothing is said. It
   prints one `EMBER-NO-BINARY <package>=<version> ...` line, the shell
@@ -458,6 +463,16 @@ what was missing.
   `no acceptable C compiler`, `xcrun: error: invalid active developer
   path`) is also `missing_compiler`; a missing Fortran compiler gets the
   Fortran instructions.
+- **A build's exit status, and a build that printed nothing (#522).**
+  renv reports a failed build only by what it printed: not its exit
+  status, and nothing at all for a build that printed nothing (seen once
+  on Windows), whose row then said only "install failed". The installer
+  traces renv's report (`trace_renv_build_failures()`) to print a failed
+  build's exit status first, when renv kept one, and, for a silent one, an `ERROR:
+  building package 'x' printed nothing and installed nothing (exit status
+  N)` line, which becomes the package's reason. A negative status is
+  also shown in hexadecimal, as Windows names it (`0xC0000142`: the
+  process couldn't start).
 - **System libraries, after renv (Linux).** renv's own load test is off
   (`RENV_INSTALL_TEST_LOAD`): it stops at the first package that fails,
   so a notebook with sf, units and xml2 would need three tries. Instead the
@@ -565,8 +580,14 @@ Built from increment 2 (#20).
 - **Failures.** A GitHub lookup that fails stops resolution, as CRAN's
   index failing does: falling back to CRAN would install a different
   package. An `index_unavailable` row names the package, and running
-  retries. An entry that holds another package than its name gets a
-  `source` row and stops resolution the same way; one that isn't
+  retries. That holds for a package the notebook uses. An entry for one it
+  doesn't use (its install call deleted, say, even while the lock still
+  holds it) is left out instead, so its failure doesn't stop the rest; its
+  row still shows. If
+  resolution meets the name anyway, as a dependency, it stops as before
+  (`idle_failed_sources()`, #519). A date preview does the same. An
+  entry that holds another package than its name gets a `source` row
+  and stops resolution the same way; one that isn't
   `github:user/repo[@ref]` gets a `source` row and is ignored. GitHub
   answers 404 for a private repository it wasn't shown a token for, and
   403 when its rate limit (60 requests an hour without a token) runs

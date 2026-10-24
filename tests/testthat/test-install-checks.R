@@ -159,7 +159,7 @@ test_that("compiler_check() on macOS counts a binary from any of binary_repos, s
                              binary_repos = c(repos, Bioconductor = file_url(bioc))))
 })
 
-test_that("compiler_check() on Linux with Package Manager binaries asks about one package, and counts source builds when it comes as source (117)", {
+test_that("compiler_check() on Linux with Package Manager binaries asks Package Manager, and counts the source builds it sends (117, #520)", {
   lock <- parse_lock_lines(c("Rcpp 1.0.12 CRAN", "glue 1.8.0 CRAN"))$lock
   repo <- paste0(if (.Platform$OS.type == "windows") "file:///" else "file://",
                  normalizePath(testthat::test_path("fixtures", "repos", "cran", "2026-09-01"), winslash = "/"))
@@ -170,8 +170,9 @@ test_that("compiler_check() on Linux with Package Manager binaries asks about on
   # Binaries for this R at this date: nothing to count, no index read.
   expect_null(compiler_check(lock, c(CRAN = "file:///nonexistent/ember-test-repo"), linux_binaries = TRUE,
                              os = "linux", compiler = FALSE, binary_repos = binary_repos,
-                             serves_binary = answer(TRUE)))
-  expect_equal(asked, "https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/Rcpp_1.0.12.tar.gz")
+                             serves_binary = answer(TRUE), cores = 1L))
+  expect_equal(asked, c("https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/Rcpp_1.0.12.tar.gz",
+                        "https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/glue_1.8.0.tar.gz"))
   # Can't tell: left to the build's own error, as before.
   expect_null(compiler_check(lock, c(CRAN = repo), linux_binaries = TRUE, os = "linux", compiler = FALSE,
                              binary_repos = binary_repos, serves_binary = answer(NA)))
@@ -182,6 +183,13 @@ test_that("compiler_check() on Linux with Package Manager binaries asks about on
   expect_equal(got$packages, "Rcpp")
   expect_match(got$instructions, compiler_instructions(os = "linux"), fixed = TRUE)
   expect_match(got$instructions, "updating the packages to a newer date, which has them, needs no compiler", fixed = TRUE)
+  # A date from before then that still has binaries for some versions
+  # (#520): Matrix, asked first, has one, and the rest come as source.
+  # The compiled ones that come as source count, and Matrix doesn't.
+  mixed <- parse_lock_lines(c("Matrix 1.6-5 CRAN", "Rcpp 1.0.12 CRAN", "glue 1.8.0 CRAN", "rlang 1.1.3 CRAN"))$lock
+  got <- compiler_check(mixed, c(CRAN = repo), linux_binaries = TRUE, os = "linux", compiler = FALSE,
+                        binary_repos = binary_repos, serves_binary = function(url) grepl("/Matrix_", url))
+  expect_equal(got$packages, c("Rcpp", "rlang"))
   # With the compiler there nothing is asked.
   asked <- character()
   expect_null(compiler_check(lock, c(CRAN = repo), linux_binaries = TRUE, os = "linux", compiler = TRUE,
@@ -305,7 +313,7 @@ test_that("source_only_packages() names, before the install, the CRAN packages t
   }
   got <- source_only_packages(lock, c(CRAN = "https://ppm.example/cran/2024-06-01"), cache,
                               binary_repos = binary_repos, linux_binaries = TRUE, os = "linux",
-                              serves_binary = answer(FALSE), minor = "4.6")
+                              serves_binary = answer(FALSE), minor = "4.6", cores = 1L)
   expect_equal(got, c(cli = "3.6.2", glue = "1.7.0"))
   expect_equal(asked, c("https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/cli_3.6.2.tar.gz",
                         "https://ppm.example/cran/__linux__/noble/2024-06-01/src/contrib/glue_1.7.0.tar.gz"))
@@ -318,6 +326,30 @@ test_that("source_only_packages() names, before the install, the CRAN packages t
                                      os = "linux", serves_binary = answer(TRUE), minor = "4.6"), 0)
   expect_length(source_only_packages(lock, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE,
                                      os = "linux", serves_binary = answer(NA), minor = "4.6"), 0)
+  # Every package is asked about, so a date where only the last one
+  # comes as source names it (#520).
+  asked <- character()
+  many <- parse_lock_lines(sprintf("p%02d 1.0 CRAN", 1:10))$lock
+  expect_equal(source_only_packages(many, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE,
+                                    os = "linux", serves_binary = function(url) { asked <<- c(asked, url); !grepl("p10_", url) },
+                                    minor = "4.6", cores = 1L),
+               c(p10 = "1.0"))
+  expect_equal(sub(".*/", "", asked), sprintf("p%02d_1.0.tar.gz", 1:10))
+  # A date from before binaries for this R with some anyway (#520): the
+  # first package, still CRAN's current version, has one, and so does
+  # another; the rest come as source, and just those count.
+  mixed <- parse_lock_lines(c("MASS 7.3-65 CRAN", "Matrix 1.7-3 CRAN", "R6 2.6.1 CRAN", "cli 3.6.4 CRAN", "dplyr 1.1.4 CRAN",
+                              "fansi 1.0.6 CRAN", "isoband 0.2.7 CRAN", "rlang 1.1.5 CRAN", "stringi 1.8.4 CRAN"))$lock
+  got <- source_only_packages(mixed, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE, os = "linux",
+                              serves_binary = function(url) grepl("/(MASS|R6)_", url), minor = "4.6", cores = 1L)
+  expect_equal(got, c(Matrix = "1.7-3", cli = "3.6.4", dplyr = "1.1.4", fansi = "1.0.6", isoband = "0.2.7",
+                      rlang = "1.1.5", stringi = "1.8.4"))
+  # Package Manager can't be asked about the first: nothing else is asked
+  # and none count, rather than wait out a timeout for each.
+  asked <- character()
+  expect_length(source_only_packages(many, binary_repos, cache, binary_repos = binary_repos, linux_binaries = TRUE,
+                                     os = "linux", serves_binary = answer(NA), minor = "4.6", cores = 1L), 0)
+  expect_equal(sub(".*/", "", asked), "p01_1.0.tar.gz")
   # Linux without them: everything builds there anyway, so nothing is asked.
   expect_length(source_only_packages(lock, binary_repos, cache, linux_binaries = FALSE, os = "linux",
                                      serves_binary = function(url) stop("not asked"), minor = "4.6"), 0)
@@ -383,6 +415,15 @@ test_that("on Linux the checks ask Package Manager at the binary URL renv downlo
   expect_equal(other$probe, other$repos)
 })
 
+test_that("ppm_source_only() asks several at a time, with the same answers as one at a time (#520)", {
+  skip_on_os("windows") # mclapply forks; the Linux path it serves runs only on Linux
+  entries <- parse_lock_lines(sprintf("p%02d 1.0 CRAN", 1:20))$lock$entries
+  serves <- function(url) !grepl("p(03|11|20)_", url)
+  one <- ppm_source_only(entries, "https://ppm.example/cran/__linux__/noble/2025-03-20", serves, cores = 1L)
+  expect_equal(which(one), c(3L, 11L, 20L))
+  expect_equal(ppm_source_only(entries, "https://ppm.example/cran/__linux__/noble/2025-03-20", serves, cores = 2L), one)
+})
+
 test_that("[net] at a date with binaries for this R, the installer's own URLs name no package (#19)", {
   skip_if_not(identical(Sys.getenv("EMBER_TEST_NETWORK"), "1"),
               "set EMBER_TEST_NETWORK=1 to run the opt-in network test")
@@ -399,6 +440,16 @@ test_that("[net] at a date with binaries for this R, the installer's own URLs na
   lock_old <- parse_lock_lines(c("cli 3.6.2 CRAN", "glue 1.7.0 CRAN"))$lock
   expect_equal(source_only_packages(lock_old, old, NULL, binary_repos = r_old$probe, linux_binaries = TRUE),
                c(cli = "3.6.2", glue = "1.7.0"))
+  # A date from before binaries for this R that still has some (#520):
+  # MASS 7.3-65 and R6 2.6.1 were still current when Package Manager
+  # started building for R 4.6, so they have binaries, and MASS sorts
+  # first. The rest build from source, and are named.
+  mixed <- c(CRAN = "https://packagemanager.posit.co/cran/2025-03-20")
+  r_mixed <- installer_repos(mixed)
+  lock_mixed <- parse_lock_lines(c("MASS 7.3-65 CRAN", "R6 2.6.1 CRAN", "cli 3.6.4 CRAN", "rlang 1.1.5 CRAN",
+                                   "stringi 1.8.4 CRAN"))$lock
+  expect_equal(source_only_packages(lock_mixed, mixed, NULL, binary_repos = r_mixed$probe, linux_binaries = TRUE),
+               c(cli = "3.6.4", rlang = "1.1.5", stringi = "1.8.4"))
 })
 
 test_that("the EMBER-NO-BINARY line reads back as it was written (#19)", {
@@ -862,4 +913,55 @@ test_that("[net] Package Manager sends R 4.6 on Linux cli's source at 2024-06-01
   base <- "https://packagemanager.posit.co/cran/__linux__/noble/"
   expect_false(ppm_serves_binary(paste0(base, "2024-06-01/src/contrib/cli_3.6.2.tar.gz")))
   expect_true(ppm_serves_binary(paste0(base, "2026-09-01/src/contrib/cli_3.6.6.tar.gz")))
+})
+
+# ---- A build that fails without a word (#522) --------------------------------
+
+test_that("build_failure_lines() gives each failed build's exit status, and a reason for one that printed nothing (#522)", {
+  silent <- structure(character(), status = -1073741502L)
+  loud <- structure(c("* installing *source* package 'b' ...", "ERROR: compilation failed for package 'b'"), status = 1L)
+  errors <- list(list(package = "a", message = "install failed", output = silent),
+                 list(package = "b", message = "install failed", output = loud),
+                 list(package = "c", message = "install failed", output = character()),
+                 list(package = "d", message = "failed to download"),
+                 # renv's own words, with no exit status: a worker that timed out.
+                 list(package = "e", message = "install failed", output = "worker process timed out"))
+  expect_equal(build_failure_lines(errors), c(
+    "ERROR: building package 'a' printed nothing and installed nothing (exit status -1073741502, 0xC0000142)",
+    "ember: building package 'b' failed with exit status 1",
+    "ERROR: building package 'c' printed nothing and installed nothing (exit status 0)"))
+  expect_equal(build_failure_lines(list()), character())
+})
+
+test_that("a build that printed nothing is the package's reason, not renv's bare \"install failed\" (#522)", {
+  lines <- c("EMBER-PROGRESS 0 2 - restore",
+             "ERROR: building package 'toyC' printed nothing and installed nothing (exit status -1073741502, 0xC0000142)",
+             "The following package(s) were not installed successfully:",
+             "- [toyC]: install failed",
+             "Error: failed to install \"toyC\"")
+  rows <- install_failures(lines)
+  expect_equal(rows$package, "toyC")
+  expect_equal(rows$kind, "other")
+  expect_equal(rows$detail, "building package 'toyC' printed nothing and installed nothing (exit status -1073741502, 0xC0000142)")
+  expect_match(install_failure_message(lines, 1L), "ERROR: building package 'toyC' printed nothing", fixed = TRUE)
+})
+
+test_that("the installed renv reports failed packages through the function the installer traces (#522)", {
+  ns <- asNamespace("renv")
+  expect_true(exists("renv_graph_install_errors", envir = ns, inherits = FALSE))
+  expect_true("errors" %in% names(formals(get("renv_graph_install_errors", envir = ns))))
+  expect_true(trace_renv_build_failures(ns))
+  on.exit(suppressMessages(untrace("renv_graph_install_errors", where = ns)), add = TRUE)
+  errors <- list(list(package = "toyC", message = "install failed", output = structure(character(), status = 5L)))
+  out <- capture.output(get("renv_graph_install_errors", envir = ns)(errors, "toyC", list()))
+  first <- grep("building package 'toyC'", out)
+  expect_length(first, 1L)
+  expect_lt(first, grep("toyC]: install failed", out, fixed = TRUE))
+  expect_match(out[[first]], "ERROR: building package 'toyC' printed nothing and installed nothing (exit status 5)", fixed = TRUE)
+  # An error in the traced lines (a status that isn't a number) never
+  # stops renv's own report.
+  expect_error(suppressWarnings(build_failure_lines(list(list(package = "x", message = "install failed",
+                                                              output = structure(character(), status = "?"))))))
+  out <- capture.output(get("renv_graph_install_errors", envir = ns)(list(list(package = "x", message = "install failed", output = structure(character(), status = "?"))), "x", list()))
+  expect_true(any(grepl("not installed successfully", out, fixed = TRUE)))
 })

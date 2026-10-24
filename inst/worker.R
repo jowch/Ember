@@ -1341,7 +1341,9 @@ input_hook <- function(spec, call) {
     input_expect$used <<- TRUE
     if (!e$blocked) {
       if (e$kept) {
-        v <- input_check(spec, e$value)
+        # `keep`, when the spec has one (input_list(): part by part), else
+        # `check`: a kept value the input no longer allows gives the default.
+        v <- input_check(if (is.function(spec$keep)) c(spec[names(spec) != "check"], list(check = spec$keep)) else spec, e$value)
         if (!inherits(v, "error")) value <- v[[1]]
       }
       input_bound[[e$name]] <<- spec

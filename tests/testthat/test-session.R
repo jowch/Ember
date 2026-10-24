@@ -920,7 +920,7 @@ test_that("a worker busy in a long cell ends when the server that started it is 
     "writeLines(as.character(Sys.getpid()), %s); Sys.sleep(300)", deparse(pidfile)))))
   code <- paste0("library(ember); nb <- open_notebook(", deparse(path), "); run_cells(nb, 'A'); ",
                  "repeat later::run_now(1)")
-  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
+  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", script_file(code)),
                                   env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
                                   stdout = "|", stderr = "2>&1")
   on.exit(if (server$is_alive()) server$kill(), add = TRUE)
@@ -956,7 +956,7 @@ test_that("a cell's processx child outlives a restart, also once the server coll
   rscript <- normalizePath(file.path(R.home("bin"), "Rscript"), winslash = "/", mustWork = FALSE)
   path <- write_session_notebook(list(S = cell(""), A = unscanned_cell("p", sprintf(paste0(
     ".libPaths(c(%s, .libPaths())); ",
-    "p <- processx::process$new('%s', c('-e', 'Sys.sleep(300)')); ",
+    "p <- processx::process$new('%s', c('--vanilla', '", sleep_script(), "')); ",
     "writeLines(as.character(c(Sys.getpid(), p$get_pid())), '%s'); p"),
     libs, rscript, normalizePath(pidfile, winslash = "/", mustWork = FALSE)))))
   nb <- open_notebook(path)
@@ -987,15 +987,18 @@ windows_children_cell <- function(pidfile) {
   rscript <- normalizePath(file.path(R.home("bin"), "Rscript.exe"), winslash = "/")
   sys_pidfile <- normalizePath(paste0(pidfile, ".sys"), winslash = "/", mustWork = FALSE)
   libs <- paste(deparse(normalizePath(.libPaths(), winslash = "/")), collapse = "")
+  sys_script <- normalizePath(script_file(sprintf(
+    "writeLines(as.character(Sys.getpid()), '%1$s.tmp'); file.rename('%1$s.tmp', '%1$s'); Sys.sleep(300)", sys_pidfile)),
+    winslash = "/")
   unscanned_cell("a", sprintf(paste0(
     ".libPaths(c(%1$s, .libPaths())); ",
-    "a <- processx::process$new('%2$s', c('-e', 'Sys.sleep(300)')); ",
+    "a <- processx::process$new('%2$s', c('--vanilla', '", sleep_script(), "')); ",
     "b <- callr::r_bg(function() Sys.sleep(300)); ",
-    "system2('%2$s', c('-e', shQuote(\"writeLines(as.character(Sys.getpid()), '%3$s.tmp'); file.rename('%3$s.tmp', '%3$s'); Sys.sleep(300)\")), wait = FALSE); ",
+    "system2('%2$s', c('--vanilla', '%5$s'), wait = FALSE); ",
     "while (!file.exists('%3$s')) Sys.sleep(0.05); ",
     "writeLines(as.character(c(Sys.getpid(), a$get_pid(), b$get_pid(), readLines('%3$s'))), '%4$s.tmp'); ",
     "file.rename('%4$s.tmp', '%4$s'); list(a, b)"),
-    libs, rscript, sys_pidfile, normalizePath(pidfile, winslash = "/", mustWork = FALSE)))
+    libs, rscript, sys_pidfile, normalizePath(pidfile, winslash = "/", mustWork = FALSE), sys_script))
 }
 
 test_that("on Windows a cell's processx and callr children outlive a restart; its system() child doesn't (#208)", {
@@ -1034,7 +1037,7 @@ test_that("on Windows a busy worker's processx and callr children outlive a kill
                                       B = cell(sprintf("a; writeLines('x', '%s'); Sys.sleep(300)", marker))))
   code <- paste0("library(ember); nb <- open_notebook(", deparse(path), "); run_cells(nb, c('A', 'B')); ",
                  "repeat later::run_now(1)")
-  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
+  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", script_file(code)),
                                   env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
                                   stdout = "|", stderr = "2>&1")
   on.exit(if (server$is_alive()) server$kill(), add = TRUE)
@@ -1066,7 +1069,7 @@ test_that("on Windows a busy cell's own processx and callr children outlive a ki
   libs <- paste(deparse(normalizePath(.libPaths(), winslash = "/")), collapse = "")
   path <- write_session_notebook(list(S = cell(""), A = unscanned_cell("a", sprintf(paste0(
     ".libPaths(c(%1$s, .libPaths())); ",
-    "a <- processx::process$new('%2$s', c('-e', 'Sys.sleep(300)')); ",
+    "a <- processx::process$new('%2$s', c('--vanilla', '", sleep_script(), "')); ",
     "b <- callr::r_bg(function() Sys.sleep(300)); ",
     "while (!.Call(getNativeSymbolInfo('C_cell_children_released', 'ember'))) Sys.sleep(0.05); ",
     "writeLines(as.character(c(Sys.getpid(), a$get_pid(), b$get_pid())), '%3$s.tmp'); ",
@@ -1074,7 +1077,7 @@ test_that("on Windows a busy cell's own processx and callr children outlive a ki
     libs, rscript, pidfile))))
   code <- paste0("library(ember); nb <- open_notebook(", deparse(path), "); run_cells(nb, 'A'); ",
                  "repeat later::run_now(1)")
-  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
+  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", script_file(code)),
                                   env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
                                   stdout = "|", stderr = "2>&1")
   on.exit(if (server$is_alive()) server$kill(), add = TRUE)
@@ -1105,13 +1108,13 @@ test_that("on Windows a cell's first processx child outlives a server killed rig
   # the worker's thread takes to find a job made only now.
   path <- write_session_notebook(list(S = cell(""), A = unscanned_cell("a", sprintf(paste0(
     ".libPaths(c(%1$s, .libPaths())); ",
-    "a <- processx::process$new('%2$s', c('-e', 'Sys.sleep(300)')); ",
+    "a <- processx::process$new('%2$s', c('--vanilla', '", sleep_script(), "')); ",
     "writeLines(as.character(c(Sys.getpid(), a$get_pid())), '%3$s.tmp'); ",
     "file.rename('%3$s.tmp', '%3$s'); Sys.sleep(300)"),
     libs, rscript, pidfile))))
   code <- paste0("library(ember); nb <- open_notebook(", deparse(path), "); run_cells(nb, 'A'); ",
                  "repeat later::run_now(1)")
-  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
+  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", script_file(code)),
                                   env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
                                   stdout = "|", stderr = "2>&1")
   on.exit(if (server$is_alive()) server$kill(), add = TRUE)
@@ -1141,7 +1144,7 @@ test_that("what a busy cell started with system() ends when the server is killed
     deparse(paste0(pidfile, ".tmp")), deparse(pidfile)))))
   code <- paste0("library(ember); nb <- open_notebook(", deparse(path), "); run_cells(nb, 'A'); ",
                  "repeat later::run_now(1)")
-  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", "-e", code),
+  server <- processx::process$new(file.path(R.home("bin"), "Rscript"), c("--vanilla", script_file(code)),
                                   env = c("current", R_LIBS = paste(.libPaths(), collapse = .Platform$path.sep)),
                                   stdout = "|", stderr = "2>&1")
   on.exit(if (server$is_alive()) server$kill(), add = TRUE)
