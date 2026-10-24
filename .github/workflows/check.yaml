@@ -49,43 +49,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # The .deb files apt downloads in this job (R's system libraries,
-      # pandoc, cmake), kept between runs.
-      # Some runners reach an Ubuntu mirror that serves them at 30-50 kB/s:
-      # on 10-23 an e2e job spent 57 of its 85 minutes downloading 157 MB
-      # that a runner at the same time fetched in 9 s. With them here, apt
-      # downloads only what changed. One cache per job and runner image.
-      - name: Name apt's cache
-        id: apt-key
-        if: runner.os == 'Linux'
-        run: echo "key=apt-${{ github.job }}-$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
-      - name: Restore apt's downloads
-        id: apt-cache
-        if: runner.os == 'Linux'
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/apt-archives
-          key: ${{ steps.apt-key.outputs.key }}
-          restore-keys: apt-${{ github.job }}-
-      # apt checks only a cached file's size, not its hash, so only files
-      # whose SHA256 matches apt's signed package lists are handed over: a
-      # damaged or altered one is left out and downloaded again.
-      - name: Hand apt its downloads
-        if: runner.os == 'Linux' && steps.apt-cache.outputs.cache-matched-key != ''
-        run: |
-          sudo apt-get update -qq
-          used=0 skipped=0
-          for deb in ~/apt-archives/*.deb; do
-            read -r pkg ver arch <<< "$(dpkg-deb -W --showformat='${Package} ${Version} ${Architecture}' "$deb")"
-            want=$(apt-cache show --no-all-versions "$pkg:$arch=$ver" 2>/dev/null | awk '/^SHA256:/ { print $2; exit }')
-            if [ -n "$want" ] && [ "$(sha256sum < "$deb" | cut -d' ' -f1)" = "$want" ]; then
-              sudo cp "$deb" /var/cache/apt/archives/
-              used=$((used + 1))
-            else
-              echo "Left out $(basename "$deb"): no such version in apt's lists, or its SHA256 differs"
-              skipped=$((skipped + 1))
-            fi
-          done
-          echo "Handed apt $used cached files; left out $skipped"
+      # pandoc, cmake), kept between runs: some runners reach an Ubuntu
+      # mirror that serves them at 30-50 kB/s (the action says more).
+      - id: apt
+        uses: ./.github/actions/apt-cache/restore
       - uses: r-lib/actions/setup-r@v2
         with:
           use-public-rspm: true
@@ -100,30 +67,25 @@ jobs:
           # mismatch both reached main while CI stayed green. NOTEs still pass.
           error-on: '"warning"'
           upload-snapshots: true
-      # Only what this runner's apt can still use: autoclean drops versions
-      # its package lists no longer have.
-      - name: Keep apt's downloads
-        if: always() && runner.os == 'Linux' && steps.apt-cache.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get autoclean -qq
-          rm -rf ~/apt-archives && mkdir ~/apt-archives
-          find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -t ~/apt-archives {} +
-          du -sh ~/apt-archives; ls ~/apt-archives | wc -l
-      - if: always() && runner.os == 'Linux' && steps.apt-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+      - if: always() && steps.apt.outcome == 'success'
+        uses: ./.github/actions/apt-cache/save
         with:
-          path: ~/apt-archives
-          key: ${{ steps.apt-key.outputs.key }}
+          key: ${{ steps.apt.outputs.key }}
+          cache-hit: ${{ steps.apt.outputs.cache-hit }}
 
   grammar:
     runs-on: ubuntu-latest
-    # Usually a minute; 27 when setup-r was slow.
+    # Usually a minute; 27 when setup-r met a slow mirror, before its apt cache.
     timeout-minutes: 60
     defaults:
       run:
         working-directory: grammar
     steps:
       - uses: actions/checkout@v4
+      # setup-r's own .deb files (gdebi, qpdf, devscripts, ghostscript), kept
+      # between runs: on 10-23 a slow mirror took 17 minutes over their 30 MB.
+      - id: apt
+        uses: ./.github/actions/apt-cache/restore
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -142,6 +104,11 @@ jobs:
           use-public-rspm: true
       - run: Rscript -e 'install.packages("jsonlite")'
       - run: npm run corpus
+      - if: always() && steps.apt.outcome == 'success'
+        uses: ./.github/actions/apt-cache/save
+        with:
+          key: ${{ steps.apt.outputs.key }}
+          cache-hit: ${{ steps.apt.outputs.cache-hit }}
 
   e2e:
     runs-on: ${{ matrix.os }}
@@ -165,43 +132,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # The .deb files apt downloads in this job (R's system libraries,
-      # pandoc, the browsers' libraries), kept between runs.
-      # Some runners reach an Ubuntu mirror that serves them at 30-50 kB/s:
-      # on 10-23 an e2e job spent 57 of its 85 minutes downloading 157 MB
-      # that a runner at the same time fetched in 9 s. With them here, apt
-      # downloads only what changed. One cache per job and runner image.
-      - name: Name apt's cache
-        id: apt-key
-        if: runner.os == 'Linux'
-        run: echo "key=apt-${{ github.job }}-$ImageOS-$ImageVersion" >> "$GITHUB_OUTPUT"
-      - name: Restore apt's downloads
-        id: apt-cache
-        if: runner.os == 'Linux'
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/apt-archives
-          key: ${{ steps.apt-key.outputs.key }}
-          restore-keys: apt-${{ github.job }}-
-      # apt checks only a cached file's size, not its hash, so only files
-      # whose SHA256 matches apt's signed package lists are handed over: a
-      # damaged or altered one is left out and downloaded again.
-      - name: Hand apt its downloads
-        if: runner.os == 'Linux' && steps.apt-cache.outputs.cache-matched-key != ''
-        run: |
-          sudo apt-get update -qq
-          used=0 skipped=0
-          for deb in ~/apt-archives/*.deb; do
-            read -r pkg ver arch <<< "$(dpkg-deb -W --showformat='${Package} ${Version} ${Architecture}' "$deb")"
-            want=$(apt-cache show --no-all-versions "$pkg:$arch=$ver" 2>/dev/null | awk '/^SHA256:/ { print $2; exit }')
-            if [ -n "$want" ] && [ "$(sha256sum < "$deb" | cut -d' ' -f1)" = "$want" ]; then
-              sudo cp "$deb" /var/cache/apt/archives/
-              used=$((used + 1))
-            else
-              echo "Left out $(basename "$deb"): no such version in apt's lists, or its SHA256 differs"
-              skipped=$((skipped + 1))
-            fi
-          done
-          echo "Handed apt $used cached files; left out $skipped"
+      # pandoc, the browsers' libraries), kept between runs: some runners
+      # reach an Ubuntu mirror that serves them at 30-50 kB/s (the action
+      # says more).
+      - id: apt
+        uses: ./.github/actions/apt-cache/restore
       - uses: r-lib/actions/setup-r@v2
         with:
           use-public-rspm: true
@@ -217,8 +152,12 @@ jobs:
           cache-dependency-path: tests/e2e/package-lock.json
       - working-directory: tests/e2e
         run: npm ci
+      # --with-deps only on Linux, where it installs the browser's libraries.
+      # On Windows it only adds the Media Foundation feature (about two
+      # minutes per run), which plays audio and video, and no test plays
+      # either; on macOS it does nothing.
       - working-directory: tests/e2e
-        run: npx playwright-core install --with-deps chromium
+        run: npx playwright-core install ${{ runner.os == 'Linux' && '--with-deps' || '' }} chromium
       # #412: on the Windows runner a page sometimes fails to load a file
       # with ERR_NO_BUFFER_SPACE. The TCP settings, and a socket count every
       # 5 s during the run, go in the log to find out why, with what
@@ -257,20 +196,11 @@ jobs:
         run: |
           npx playwright-core install --with-deps webkit
           node run.mjs tests/ui-sweep.test.mjs tests/first-cell.test.mjs tests/ws-reload.test.mjs
-      # Only what this runner's apt can still use: autoclean drops versions
-      # its package lists no longer have.
-      - name: Keep apt's downloads
-        if: always() && runner.os == 'Linux' && steps.apt-cache.outputs.cache-hit != 'true'
-        run: |
-          sudo apt-get autoclean -qq
-          rm -rf ~/apt-archives && mkdir ~/apt-archives
-          find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -t ~/apt-archives {} +
-          du -sh ~/apt-archives; ls ~/apt-archives | wc -l
-      - if: always() && runner.os == 'Linux' && steps.apt-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+      - if: always() && steps.apt.outcome == 'success'
+        uses: ./.github/actions/apt-cache/save
         with:
-          path: ~/apt-archives
-          key: ${{ steps.apt-key.outputs.key }}
+          key: ${{ steps.apt.outputs.key }}
+          cache-hit: ${{ steps.apt.outputs.cache-hit }}
       - name: Upload server logs and screenshots on failure
         if: failure()
         uses: actions/upload-artifact@v4
