@@ -726,7 +726,7 @@ async function tooltip_frames(page) {
       const cursor = document.querySelector(".cm-editor.cm-focused .cm-cursor");
       if (tooltip != null && cursor != null && /cm-tooltip-(above|below)/.test(tooltip.className)) {
         const c = cursor.getBoundingClientRect(), t = tooltip.getBoundingClientRect();
-        const now = { text: tooltip.textContent.slice(0, 12), left: t.left, tooltip: [t.top, t.bottom], cursor: [c.top, c.bottom], cx: c.left, ex: document.querySelector('.cm-editor.cm-focused').getBoundingClientRect().left, gw: document.querySelector('.cm-editor.cm-focused .cm-gutters')?.getBoundingClientRect().width, cl: document.querySelector('.cm-editor.cm-focused .cm-content')?.getBoundingClientRect().left, ll: document.querySelector('.cm-editor.cm-focused .cm-line:nth-child(2)')?.getBoundingClientRect().left, sw: window.innerWidth - document.documentElement.clientWidth };
+        const now = { text: tooltip.textContent.slice(0, 12), left: t.left, tooltip: [t.top, t.bottom], cursor: [c.top, c.bottom], cx: c.left, ex: document.querySelector('.cm-editor.cm-focused').getBoundingClientRect().left, gw: document.querySelector('.cm-editor.cm-focused .cm-gutters')?.getBoundingClientRect().width, cl: document.querySelector('.cm-editor.cm-focused .cm-content')?.getBoundingClientRect().left, ll: document.querySelector('.cm-editor.cm-focused .cm-line:nth-child(2)')?.getBoundingClientRect().left, ac: document.querySelector('.cm-tooltip-autocomplete') != null, sw: window.innerWidth - document.documentElement.clientWidth };
         if (JSON.stringify(now) !== JSON.stringify(frames.at(-1))) frames.push(now);
       }
       requestAnimationFrame(frame);
