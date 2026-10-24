@@ -108,6 +108,9 @@ main <- function(plan_path) {
   # and Windows, where renv never tests.
   Sys.setenv(RENV_INSTALL_TEST_LOAD = "FALSE")
   options(repos = repos)
+  # A failed build's exit status, and a line saying so when it printed
+  # nothing, which renv's report leaves out (#522).
+  ember:::trace_renv_build_failures()
   # renv's own report goes to stdout, for the session's log, and to a file
   # too, so the installer can read which downloads failed (#478).
   restore_log <- tempfile("ember-restore-", fileext = ".log")

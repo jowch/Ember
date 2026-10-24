@@ -856,3 +856,46 @@ test_that("[net] Package Manager sends R 4.6 on Linux cli's source at 2024-06-01
   expect_false(ppm_serves_binary(paste0(base, "2024-06-01/src/contrib/cli_3.6.2.tar.gz")))
   expect_true(ppm_serves_binary(paste0(base, "2026-09-01/src/contrib/cli_3.6.6.tar.gz")))
 })
+
+# ---- A build that fails without a word (#522) --------------------------------
+
+test_that("build_failure_lines() gives each failed build's exit status, and a reason for one that printed nothing (#522)", {
+  silent <- structure(character(), status = -1073741502L)
+  loud <- structure(c("* installing *source* package 'b' ...", "ERROR: compilation failed for package 'b'"), status = 1L)
+  errors <- list(list(package = "a", message = "install failed", output = silent),
+                 list(package = "b", message = "install failed", output = loud),
+                 list(package = "c", message = "install failed", output = character()),
+                 list(package = "d", message = "failed to download"))
+  expect_equal(build_failure_lines(errors), c(
+    "ERROR: building package 'a' printed nothing and installed nothing (exit status -1073741502, 0xC0000142)",
+    "ember: building package 'b' failed with exit status 1",
+    "ERROR: building package 'c' printed nothing and installed nothing (exit status 0)"))
+  expect_equal(build_failure_lines(list()), character())
+})
+
+test_that("a build that printed nothing is the package's reason, not renv's bare \"install failed\" (#522)", {
+  lines <- c("EMBER-PROGRESS 0 2 - restore",
+             "ERROR: building package 'toyC' printed nothing and installed nothing (exit status -1073741502, 0xC0000142)",
+             "The following package(s) were not installed successfully:",
+             "- [toyC]: install failed",
+             "Error: failed to install \"toyC\"")
+  rows <- install_failures(lines)
+  expect_equal(rows$package, "toyC")
+  expect_equal(rows$kind, "other")
+  expect_equal(rows$detail, "building package 'toyC' printed nothing and installed nothing (exit status -1073741502, 0xC0000142)")
+  expect_match(install_failure_message(lines, 1L), "ERROR: building package 'toyC' printed nothing", fixed = TRUE)
+})
+
+test_that("the installed renv reports failed packages through the function the installer traces (#522)", {
+  ns <- asNamespace("renv")
+  expect_true(exists("renv_graph_install_errors", envir = ns, inherits = FALSE))
+  expect_true("errors" %in% names(formals(get("renv_graph_install_errors", envir = ns))))
+  expect_true(trace_renv_build_failures(ns))
+  on.exit(suppressMessages(untrace("renv_graph_install_errors", where = ns)), add = TRUE)
+  errors <- list(list(package = "toyC", message = "install failed", output = structure(character(), status = 5L)))
+  out <- capture.output(get("renv_graph_install_errors", envir = ns)(errors, "toyC", list()))
+  first <- grep("building package 'toyC'", out)
+  expect_length(first, 1L)
+  expect_lt(first, grep("toyC]: install failed", out, fixed = TRUE))
+  expect_match(out[[first]], "ERROR: building package 'toyC' printed nothing and installed nothing (exit status 5)", fixed = TRUE)
+})
