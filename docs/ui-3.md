@@ -259,6 +259,8 @@ keys for the computer it's on (⌘ and ⌥ on a Mac).
 
 - One focus ring: 2 px accent outline, 2 px offset, on :focus-visible only.
   Nothing removes an outline without it (today the Help search box does).
+- A selected cell without the keyboard's focus has a 4 px accent band
+  around it, 3 : 1 against the page and its code in both themes.
 - Every button answers the pointer: a hover fill and a darker pressed state,
   the same on every page (#538). A menu lights one row: the one under the
   pointer, or the keyboard's once the arrows are used. An action with no

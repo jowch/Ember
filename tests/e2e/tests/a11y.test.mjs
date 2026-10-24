@@ -282,6 +282,43 @@ for (const scheme of ["light", "dark"]) {
 
 // #294: a plot's text alternative is its cell's #| fig-alt, else its
 // #| fig-cap, else "Plot".
+test("selected cell: the band around it is 3 : 1 against the page and its code, in both themes", async (t) => {
+  const notebook = tempNotebook("basic.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "a11y-selected.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  // Selected without the keyboard's focus: the band, not the focus ring.
+  await page.evaluate(() => window.editor_state_set({ selected_cells: ["A"] }));
+  await page.waitForSelector(`${cellSelector("A")}.selected`);
+  const parse = (c) => c.match(/[\d.]+/g).map(Number);
+  const lum = ([r, g, b]) => {
+    const [R, G, B] = [r, g, b].map((v) => v / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * R + 0.7152 * G + 0.0722 * B;
+  };
+  const contrast = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+  for (const scheme of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.waitForFunction((scheme) => document.documentElement.dataset.theme === scheme, scheme);
+    const [shadow, pageBg, code] = await page.locator(cellSelector("A")).evaluate((el) => [
+      getComputedStyle(el).boxShadow,
+      getComputedStyle(document.body).backgroundColor,
+      getComputedStyle(el.querySelector(".cm-editor")).backgroundColor,
+    ]);
+    // "rgba(r, g, b, a) 0px 0px 0px 4px", over the page.
+    const [r, g, b, a = 1] = parse(shadow.slice(0, shadow.indexOf(")") + 1));
+    const under = parse(pageBg);
+    const band = [r, g, b].map((v, i) => v * a + under[i] * (1 - a));
+    for (const [what, against] of [["page", under], ["code", parse(code)]]) {
+      const c = contrast(band, against);
+      assert.ok(c >= 3, `${scheme}: the band against the ${what} is ${c.toFixed(2)} : 1`);
+    }
+  }
+  assertNoProblems(page);
+});
+
 test("plots: alt text from #| fig-alt or fig-cap, else \"Plot\" (#294)", async (t) => {
   const notebook = tempNotebook("ui-sweep.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "a11y-294.server.log") });
