@@ -649,8 +649,10 @@ walk_data_read <- function(e, scope, acc, name, arg_pids) {
   if (is.na(i)) i <- which(nms == "")[1]
   if (!is.na(i) && !missing_arg(args[[i]])) {
     p <- args[[i]]
+    # Not a URL, text with a newline, or inline XML (xml2::read_xml("<a/>")).
     if (is.character(p) && length(p) == 1 && !is.na(p) &&
-        nzchar(p) && !grepl("^[A-Za-z][A-Za-z0-9+.-]*://", p) && !grepl("\n", p)) {
+        nzchar(p) && !grepl("^[A-Za-z][A-Za-z0-9+.-]*://", p) && !grepl("\n", p) &&
+        !grepl("^\\s*<", p)) {
       acc$data_rows[[length(acc$data_rows) + 1]] <- list(path = p, index = acc$index, read = TRUE)
     }
   }
