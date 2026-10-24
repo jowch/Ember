@@ -448,6 +448,16 @@ before the cell runs.
   command, and xml2 takes text with `<` or `>` as XML. A read of R's own
   files (the libraries, R itself, the session's `tempdir()`) isn't
   watched.
+- A folder a run lists with `list.files()` or `dir()` is watched by what
+  the listing returns (#514). So `lapply(list.files("data", "csv$",
+  full.names = TRUE), read.csv)` reruns when a CSV is added to `data/`
+  or removed, and not when another file there changes, such as the lock
+  file Excel writes beside a workbook it opens. The listing's version is
+  taken as the run ends, so files the cell writes there itself don't wake
+  it. The engine lists the folder again only when its modified time moves
+  (with `recursive`, any folder under it): about 140 ms for 20,000 files,
+  against well under 1 ms to check the time. `Sys.glob()`,
+  `list.dirs()` and `fs::dir_ls()` aren't watched yet.
 - The cost, measured in the worker on a cloud container, is about 15 µs
   for each read of a file the run already read and about 0.2 ms the first
   time (`lapply()` over 2000 small CSVs: 1.3 s, against 0.74 s in plain R).

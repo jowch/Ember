@@ -212,6 +212,38 @@ test_that("autorun: a cell that reads a file by a path built in code reruns when
   expect_false(isTRUE(snap_view(notebook_snapshot(nb), "R")$stale))
 })
 
+test_that("autorun: a cell that lists a folder reruns when a file it lists appears, not for another file (#514)", {
+  cells <- list(S = cell(""),
+                R = cell("cat('run\\n', file = 'runs.log', append = TRUE)\nn <- length(list.files('data', pattern = 'csv$'))"),
+                U = cell("n * 10"))
+  path <- write_session_notebook(cells)
+  data <- file.path(dirname(path), "data")
+  dir.create(data)
+  writeLines("1", file.path(data, "a.csv"))
+  runs <- function() length(readLines(file.path(dirname(path), "runs.log")))
+  nb <- open_notebook(path)
+  on.exit(close_notebook(nb), add = TRUE)
+  run_settled(nb)
+  shown_u <- function(snap) snap_view(snap, "U")$output$text
+  expect_identical(shown_u(notebook_snapshot(nb)), "[1] 10")
+  listing <- function() Filter(is_listing_key, names(nb$data_watch))
+  settle(nb, function(snap) length(listing()) == 1 && is_idle(snap))
+
+  # A lock file beside the CSVs: the poll lists the folder again, until its
+  # time is no longer racy, and nothing reruns.
+  writeLines("lock", file.path(data, "~$book.xlsx"))
+  seen <- function() {
+    w <- nb$data_watch[[listing()]]
+    !isTRUE(w$racy) && identical(w$mtimes, folder_mtimes(w$dirs))
+  }
+  settle(nb, function(snap) seen() && is_idle(snap))
+  expect_identical(runs(), 1L)
+
+  writeLines("2", file.path(data, "b.csv"))
+  settle(nb, function(snap) identical(shown_u(snap), "[1] 20") && is_idle(snap))
+  expect_identical(runs(), 2L)
+})
+
 test_that("a cell that reads a file and appends to it runs once, as in plain R (#276)", {
   cells <- list(S = cell(""), L = cell("d <- readLines('log.txt')\ncat('entry\\n', file = 'log.txt', append = TRUE)"))
   path <- write_session_notebook(cells)
@@ -1292,6 +1324,50 @@ test_that("the poll leaves a file the running cell writes to the check at the ru
   expect_identical(running_writes(nb$state), NA_character_)
   nb$state$worker$running <- NULL
   expect_identical(running_writes(nb$state), character())
+})
+
+test_that("the poll lists a watched folder again only when its time moves, and reports only a new listing (#514)", {
+  nb <- data_check_nb()
+  data <- file.path(dirname(nb$file), "data")
+  dir.create(data)
+  writeLines("1", file.path(data, "a.csv"))
+  Sys.setFileTime(data, as.POSIXct("2026-01-01 00:00:00", tz = "UTC"))
+  key <- paste("list.files", data, "0 0 0 0 0 0", "csv$", sep = "\n")
+  expect_true(is_listing_key(key))
+  nb$data_watch <- list()
+  sync_data_watch(nb, key)
+  expect_false(nb$data_watch[[key]]$racy)
+  check_data_files(nb, nb$send)
+  expect_length(nb$sent, 0)
+  # A file the listing doesn't return moves the folder's time, but isn't a change.
+  writeLines("lock", file.path(data, "~$book.xlsx"))
+  check_data_files(nb, nb$send)
+  expect_length(nb$sent, 0)
+  expect_true(nb$data_watch[[key]]$racy)
+  writeLines("2", file.path(data, "b.csv"))
+  check_data_files(nb, nb$send)
+  expect_length(nb$sent, 1)
+  expect_identical(nb$sent[[1]]$files[[key]], data_listing_signature(key))
+  expect_match(nb$sent[[1]]$files[[key]], "^2 ")
+  # With the folders' times as recorded, and not racy, it isn't listed again.
+  nb$data_watch[[key]]$sig <- "as recorded"
+  nb$data_watch[[key]]$racy <- FALSE
+  nb$data_watch[[key]]$mtimes <- folder_mtimes(nb$data_watch[[key]]$dirs)
+  check_data_files(nb, nb$send)
+  expect_length(nb$sent, 1)
+  unlink(data, recursive = TRUE)
+  check_data_files(nb, nb$send)
+  expect_identical(nb$sent[[2]]$files[[key]], "missing")
+})
+
+test_that("a recursive listing's watch covers the folders under it (#514)", {
+  d <- tempfile("ember-list-")
+  dir.create(file.path(d, "a", "b"), recursive = TRUE)
+  d <- normalizePath(d, winslash = "/")
+  w <- data_listing_watch(paste("list.files", d, "0 1 0 0 0 0", "", sep = "\n"))
+  expect_setequal(w$dirs, c(d, file.path(d, "a"), file.path(d, "a", "b")))
+  expect_identical(w$sig, data_listing_signature(paste("list.files", d, "0 1 0 0 0 0", "", sep = "\n")))
+  expect_identical(data_listing_watch(paste("list.files", d, "0 0 0 0 0 0", "", sep = "\n"))$dirs, d)
 })
 
 test_that("the poll's skip matches a running writer's file however its path is spelled (#405)", {
