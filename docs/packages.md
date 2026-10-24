@@ -633,9 +633,9 @@ r-universe.
   build came from (`RemoteUrl`, `RemoteSha`, `RemoteSubdir`). The key is
   `universe/<name>/<package>`, and it always moves, like a GitHub branch.
 - **The lock fixes the commit, not the build.** The lock line is
-  `emberui 0.1.0 universe:jowch/github.com/jowch/emberui@<sha>`: the
-  universe, then the repository without `https://`, then the commit, with
-  `//<subdir>` before the `@` for a package in a subdirectory. So the
+  `emberui 0.0.0.9000 universe:jowch/github.com/jowch/Ember//inst/emberui@<sha>`:
+  the universe, then the repository without `https://`, then the commit,
+  with `//<subdir>` before the `@` for a package in a subdirectory. So the
   file alone says where the code is after the universe has moved on.
   Once locked, a package keeps its commit, under the key
   `universe-commit/<package>/...`, which never changes. A machine that
@@ -712,9 +712,9 @@ library(mypkg)
   cell doesn't count.
 - **Ember's own packages are built in** (`builtin_sources`): one there
   needs no install call, and its source only fills a gap (an entry
-  already in the header stays). The table is empty for now: emberui goes
-  in as `universe:jowch` once that universe builds it, since until then
-  the entry would send `library(emberui)` to a universe without it.
+  already in the header stays). Today that is emberui, as
+  `universe:jowch`: `library(emberui)` alone writes that entry and
+  installs the jowch universe's build.
 - **They don't run.** The lock already answers them, and running one would
   install behind the lock's back into a shared library. The run message
   lists the top-level install calls (`run_installs()`); the worker skips
