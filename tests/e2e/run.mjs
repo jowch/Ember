@@ -51,7 +51,8 @@ const finish = (code, signal) => {
   }
   if (ownLib) rmSync(lib, { recursive: true, force: true });
   // A file something still holds is left for the OS, not a failed run.
-  try { rmSync(runDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* left for the OS */ }
+  try { rmSync(runDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }
+  catch (e) { console.error(`run.mjs: could not remove the run folder ${runDir}, so it is left behind (#471): ${e.message}`); }
   process.exit(code ?? (signal ? 1 : 0));
 };
 
