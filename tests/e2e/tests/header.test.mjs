@@ -88,8 +88,9 @@ test('header: "Run N not run" counts, and clicking it clears it (119)', async (t
 
 // #501. With cells not run and a cell edited, "Run N not run" and "Run
 // changed" together pushed ⋯ off a phone's screen. Below 641px they are one
-// "Run", which runs the edit and then the rest; wider windows keep both.
-test('header: on a phone, "Run N not run" and "Run changed" are one "Run" and ⋯ stays on screen (#501)', async (t) => {
+// "Run N", which runs the edit and then the rest, counting each cell once;
+// wider windows keep both.
+test('header: on a phone, "Run N not run" and "Run changed" are one "Run N" and ⋯ stays on screen (#501)', async (t) => {
   // A long name, as in #501: the file name is what gives way first.
   const base = tempNotebook("basic.R");
   const notebook = path.join(path.dirname(base), "a_much_longer_notebook_file_name_for_growth_curves_by_site_2026.R");
@@ -121,7 +122,8 @@ test('header: on a phone, "Run N not run" and "Run changed" are one "Run" and �
   for (const width of [390, 360]) {
     await page.setViewportSize({ width, height: 844 });
     await page.waitForSelector("header#pluto-nav .ember-run-both");
-    assert.deepEqual(await buttons(), ["Run"], `one button at ${width}px`);
+    // B is one of the 4 not run, so the edit adds no fifth cell.
+    assert.deepEqual(await buttons(), ["Run 4"], `one button at ${width}px`);
     const more = await page.locator('header#pluto-nav button[aria-label="More"]').boundingBox();
     assert.ok(more.x + more.width <= width, `⋯ ends at ${more.x + more.width}, inside ${width}px`);
   }

@@ -78,7 +78,7 @@ const r_status = ({ connected, key_refused, unreachable, notebook, n, i }) => {
  * contents"): the flame, the file name, "Saved", "Run N not run", the R
  * status, the panel icons, Export and the ⋯ menu. Below 641px the three
  * panel icons become one "Side panel" icon and Export moves into ⋯, and
- * "Run N not run" and "Run changed" become one "Run" when both show
+ * "Run N not run" and "Run changed" become one "Run N" when both show
  * (#501), which together would push ⋯ off a phone's screen.
  *
  * @param {{
@@ -88,6 +88,7 @@ const r_status = ({ connected, key_refused, unreachable, notebook, n, i }) => {
  * unreachable?: boolean,
  * code_differs: boolean,
  * on_run_changed: () => void,
+ * run_both_count: number,
  * on_run_both: () => void,
  * export_links: import("./ExportMenu.js").ExportLinks,
  * print_title: string,
@@ -96,7 +97,7 @@ const r_status = ({ connected, key_refused, unreachable, notebook, n, i }) => {
  * on_interrupt: () => void,
  * }} props
  */
-export const Header = ({ notebook, connected, key_refused = false, unreachable = false, code_differs, export_links, print_title, on_open_move, on_run_all, on_run_changed, on_run_both, on_interrupt }) => {
+export const Header = ({ notebook, connected, key_refused = false, unreachable = false, code_differs, export_links, print_title, on_open_move, on_run_all, on_run_changed, run_both_count, on_run_both, on_interrupt }) => {
     const [open_tab, set_open_tab] = useState(initial_panel_tab)
     const last_tab_ref = useRef(last_panel_tab())
 
@@ -140,7 +141,7 @@ export const Header = ({ notebook, connected, key_refused = false, unreachable =
             <div class="ember-header-spacer"></div>
             ${narrow && not_run > 0 && code_differs
                 ? html`<button class="ember-btn ember-fade-in ember-run-both" type="button" title=${t("t_ember_run_both_title", { count: not_run })} onClick=${on_run_both}>
-                      ${t("t_ember_run_both")}
+                      ${t("t_ember_run_both", { count: run_both_count })}
                   </button>`
                 : html`
                       ${not_run > 0

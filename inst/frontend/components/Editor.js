@@ -71,6 +71,12 @@ const Main = ({ children }) => {
 /**
  * Map of status => Bool. In order of decreasing priority.
  */
+/** The cells whose code in the editor differs from the notebook's. */
+const changed_cell_ids = (/** @type {EditorState} */ state) =>
+    state.notebook.cell_order.filter(
+        (cell_id) => state.cell_inputs_local[cell_id] != null && state.notebook.cell_inputs[cell_id]?.code !== state.cell_inputs_local[cell_id].code
+    )
+
 const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters} */ launch_params) => ({
     disconnected: !(state.connected || state.initializing || state.static_preview),
     loading: state.initializing,
@@ -92,9 +98,10 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
             (launch_params.slider_server_url != null && (state.slider_server?.connecting || state.slider_server?.interactive))
         )
     ),
-    code_differs: state.notebook.cell_order.some(
-        (cell_id) => state.cell_inputs_local[cell_id] != null && state.notebook.cell_inputs[cell_id]?.code !== state.cell_inputs_local[cell_id].code
-    ),
+    code_differs: changed_cell_ids(state).length > 0,
+    // The phone header's one "Run N" (#501): the edited cells and the ones
+    // not run, each counted once, as ember_run_changed_and_not_run runs them.
+    run_both_count: new Set([...changed_cell_ids(state), ...(state.notebook.ember?.not_run_ids ?? [])]).size,
     isolated_cell_view: launch_params.isolated_cell_ids != null && launch_params.isolated_cell_ids.length > 0,
     // Not sanitized merely for being an export: a downloaded export is an
     // HTML file and can run scripts anyway, and Ember exports inline widget
@@ -282,6 +289,7 @@ const statusmap = (/** @type {EditorState} */ state, /** @type {LaunchParameters
  *  process: "preview" | "starting" | "ready" | "busy" | "stopped",
  *  worker_memory: number?,
  *  not_run: number,
+ *  not_run_ids: Array<string>,
  *  stale: number,
  *  plan: { install: number, restart: Array<string> }?,
  *  packages: EmberPackagesData,
@@ -643,11 +651,7 @@ export class Editor extends Component {
             // edits just queued. Nothing more if the long-runtime check
             // was declined.
             ember_run_changed_and_not_run: async () => {
-                const changed = this.state.notebook.cell_order.filter(
-                    (cell_id) =>
-                        this.state.cell_inputs_local[cell_id] != null &&
-                        this.state.notebook.cell_inputs[cell_id]?.code !== this.state.cell_inputs_local[cell_id]?.code
-                )
+                const changed = changed_cell_ids(this.state)
                 if (changed.length > 0 && !(await this.actions.set_and_run_multiple(changed))) return
                 await this.actions.ember_run_all()
             },
@@ -1709,6 +1713,7 @@ all patches: ${JSON.stringify(patches, null, 1)}
                             on_open_move=${() => this.setState({ move_dialog_open: true })}
                             on_run_all=${() => this.actions.ember_run_all()}
                             on_run_changed=${() => this.actions.set_and_run_all_changed_remote_cells()}
+                            run_both_count=${status.run_both_count}
                             on_run_both=${() => this.actions.ember_run_changed_and_not_run()}
                             on_interrupt=${() => this.actions.interrupt_remote()}
                         />

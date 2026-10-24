@@ -166,7 +166,8 @@ out of the way of the data, the code and the results.
   tab, or closes it), Export, and ⋯ (Keyboard shortcuts, Settings, Open
   another notebook). See Menus and Settings below.
 - Below 641 px, when "Run N not run" and "Run changed" would both show, they
-  are one "Run" button that runs the edits and then the cells not run; the
+  are one "Run N" button that runs the edits and then the cells not run (N
+  counts both, each cell once); the
   two together pushed ⋯ off a phone's screen (#501).
 - While R is busy: "Running 2 of 5 cells" and Stop.
 - Safe preview is one banner with "Run this notebook". Each code cell also
