@@ -462,6 +462,32 @@ test_that("rerunning one registerS3method cell keeps another cell's method on a 
   expect_equal(snap_view(notebook_snapshot(nb), "U")$output$text, "[1] 11")
 })
 
+test_that("a method moved to another cell isn't undone by the old cell's next start (#611)", {
+  # C4's start undoes its own registrations. Once C1 has registered the
+  # method, it's C1's, and must stay. First a generic moved with its
+  # method; then a method alone, on a generic neither cell defines.
+  moves <- list(
+    list(def = "setGeneric('area', function(o) standardGeneric('area'))\nsetMethod('area', 'numeric', function(o) o * 2)",
+         use = "area(3)", want = "[1] 6"),
+    list(def = "setMethod('summary', 'Date', function(object, ...) 'a date')",
+         use = "summary(as.Date('2026-01-01'))", want = '[1] "a date"'),
+    list(def = "registerS3method('format', 'foo', function(x, ...) 'registered')",
+         use = "format(structure(list(), class = 'foo'))", want = '[1] "registered"'))
+  for (mode in c("autorun", "lazy")) for (m in moves) {
+    cells <- list(S = cell(""), C1 = cell("x <- 1"), C4 = cell(m$def), C6 = cell(m$use))
+    nb <- open_notebook(write_session_notebook(cells, on_cell_change = mode))
+    run_settled(nb)
+    expect_equal(snap_view(notebook_snapshot(nb), "C6")$output$text, m$want)
+    edit_notebook(nb, set_code("C1", paste0(m$def, "\nx <- 1")))
+    edit_notebook(nb, set_code("C4", "y <- 2"))
+    run_settled(nb)
+    expect_equal(snap_view(notebook_snapshot(nb), "C6")$output$text, m$want, label = paste(mode, m$use))
+    run_settled(nb, "C6")
+    expect_equal(snap_view(notebook_snapshot(nb), "C6")$output$text, m$want, label = paste(mode, m$use, "rerun"))
+    close_notebook(nb)
+  }
+})
+
 test_that("editing a group method reruns the cell using its operator", {
   cells <- list(S = cell(""),
                 M = cell("Ops.money <- function(e1, e2) 'old'"),
