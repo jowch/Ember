@@ -3142,21 +3142,33 @@ test_that("a missing file a run tried to read is watched, so the cell reruns onc
   expect_identical(r$data_seen[[f]], "missing")
 })
 
-test_that("a package reader that reads in compiled code is learned once its package loads, by :: or attached", {
+test_that("fread() is learned once data.table loads, by input or file =, and text input isn't", {
   skip_if_not_installed("data.table")
-  skip_if_not_installed("readr")
-  # readr's dependencies may be in any library this R has.
   h <- worker_harness(extra_libs = .libPaths())
   on.exit(h$close())
   d <- tempfile("ember-pkg-")
   dir.create(d)
   # After creating it: Windows keeps an 8.3 short name for a path that doesn't exist yet.
   d <- normalizePath(d, winslash = "/")
-  for (n in c("a.csv", "b.csv", "c.csv", "f.csv")) writeLines("x,y\n1,2", file.path(d, n))
-  r <- run_and_wait(h, "a", 1L, sprintf('a <- data.table::fread(file.path(%1$s, "a.csv"))\nb <- readr::read_csv(file.path(%1$s, "b.csv"), show_col_types = FALSE)\nt <- data.table::fread("x,y\\n3,4")\nf <- data.table::fread(file = file.path(%1$s, "f.csv"))',
+  for (n in c("a.csv", "f.csv")) writeLines("x,y\n1,2", file.path(d, n))
+  r <- run_and_wait(h, "a", 1L, sprintf('a <- data.table::fread(file.path(%1$s, "a.csv"))\nt <- data.table::fread("x,y\\n3,4")\nf <- data.table::fread(file = file.path(%1$s, "f.csv"))',
                                          deparse(d)))
   expect_identical(r$status, "ok", info = r$error$message)
-  expect_setequal(names(r$data_seen), file.path(d, c("a.csv", "b.csv", "f.csv")))
+  expect_setequal(names(r$data_seen), file.path(d, c("a.csv", "f.csv")))
+})
+
+test_that("a readr reader is learned once readr loads, by :: or attached", {
+  skip_if_not_installed("readr")
+  # readr's dependencies may be in any library this R has.
+  h <- worker_harness(extra_libs = .libPaths())
+  on.exit(h$close())
+  d <- tempfile("ember-pkg-")
+  dir.create(d)
+  d <- normalizePath(d, winslash = "/")
+  for (n in c("b.csv", "c.csv")) writeLines("x,y\n1,2", file.path(d, n))
+  r <- run_and_wait(h, "a", 1L, sprintf('b <- readr::read_csv(file.path(%s, "b.csv"), show_col_types = FALSE)', deparse(d)))
+  expect_identical(r$status, "ok", info = r$error$message)
+  expect_identical(names(r$data_seen), file.path(d, "b.csv"))
   r2 <- run_and_wait(h, "b", 2L, sprintf('library(readr)\nc <- read_csv(file.path(%s, "c.csv"), show_col_types = FALSE)', deparse(d)))
   expect_identical(r2$status, "ok")
   expect_identical(names(r2$data_seen), file.path(d, "c.csv"))
