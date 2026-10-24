@@ -18,14 +18,15 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { writeFileSync } from "node:fs";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, setCellCode, runCell } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, cellSelector, setCellCode, runCell, layoutSettled } from "../browser.mjs";
 import { pageProblems, emulatePlatform, formatProblems } from "../layout-check.mjs";
 
 const WIDTHS = [600, 900, 1440];
 
 /** Known open bugs: { rule, where (a substring of the problem's where),
- * issue }. */
-const KNOWN = [];
+ * detail (optional, a substring of its detail), issue }. */
+const KNOWN = [
+];
 const used = new Set();
 
 /** Check the page at each width (and in dark mode at 900), save a
@@ -36,11 +37,11 @@ async function sweep(page, label) {
   for (const [width, scheme] of shots) {
     await page.emulateMedia({ colorScheme: scheme });
     await page.setViewportSize({ width, height: 900 });
-    await page.waitForTimeout(300);
+    await layoutSettled(page);
     const name = `ui-sweep-${label}-${width}-${scheme}`;
     await page.screenshot({ path: path.join(artifactsDir(), name + ".png"), fullPage: true });
     for (const p of await pageProblems(page)) {
-      const known = KNOWN.find((k) => k.rule === p.rule && p.where.includes(k.where));
+      const known = KNOWN.find((k) => k.rule === p.rule && p.where.includes(k.where) && p.detail.includes(k.detail ?? ""));
       if (known) used.add(known);
       else found.push({ ...p, at: `${width} ${scheme}` });
     }
@@ -66,11 +67,10 @@ test("ui sweep: safe preview, run, and edited with both shortcut labels", async 
   await sweep(page, "preview");
 
   await page.locator("#ember-safe-preview button").click();
-  await page.waitForSelector(`${cellSelector("ERR")} jlerror`, { timeout: 60000 });
-  await page.waitForSelector(`${cellSelector("WIDE")} .ember-table-more`, { timeout: 30000 });
-  await page.waitForSelector(`${cellSelector("PLT")} pluto-output img`, { timeout: 30000 });
-  await page.waitForFunction(() => document.querySelectorAll("pluto-cell.running, pluto-cell.queued").length === 0,
-    null, { timeout: 30000 });
+  await page.waitForSelector(`${cellSelector("ERR")} jlerror`);
+  await page.waitForSelector(`${cellSelector("WIDE")} .ember-table-more`);
+  await page.waitForSelector(`${cellSelector("PLT")} pluto-output img`);
+  await page.waitForFunction(() => document.querySelectorAll("pluto-cell.running, pluto-cell.queued").length === 0);
   await sweep(page, "ran");
 
   for (const platform of ["other", "mac"]) {
@@ -80,8 +80,27 @@ test("ui sweep: safe preview, run, and edited with both shortcut labels", async 
       await openNotebook(p, server.origin, server.secret, notebook);
     }
     await setCellCode(p, "B", "sum(x) + 1");
-    await p.waitForSelector("#saveall-container.ask_to_save", { timeout: 10000 });
+    await p.waitForSelector("#saveall-container.ask_to_save", { state: "attached" });
     await sweep(p, `edited-${platform}`);
+    // The floating "Run all changed" covers cells over the column (#456), so it floats only in
+    // the margin, and the header's "Run changed" takes over where it can't.
+    for (const [width, floating] of [[600, false], [900, false], [1440, true]]) {
+      await p.setViewportSize({ width, height: 900 });
+      const shown = await p.evaluate(() => ({
+        floating: !!document.querySelector("#saveall-container.ask_to_save")?.getClientRects().length,
+        header: !!document.querySelector("header .ember-run-changed")?.getClientRects().length,
+      }));
+      assert.deepEqual(shown, { floating, header: !floating }, `at ${width}`);
+    }
+    // With the side panel docked, the margin is the panel's, so the button would float over the column.
+    await p.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
+    await p.waitForSelector("#helpbox-wrapper.open");
+    const docked = await p.evaluate(() => ({
+      floating: !!document.querySelector("#saveall-container.ask_to_save")?.getClientRects().length,
+      header: !!document.querySelector("header .ember-run-changed")?.getClientRects().length,
+    }));
+    assert.deepEqual(docked, { floating: false, header: true }, "at 1440 with the side panel docked");
+    await p.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: null })));
     assertNoProblems(p);
   }
 });
@@ -99,13 +118,12 @@ test("ui sweep: partly run, after a reload", async (t) => {
   await openNotebook(page, server.origin, server.secret, notebook);
   await runCell(page, "B");
   await page.waitForFunction((sel) => document.querySelector(sel)?.innerText.includes("55"),
-    cellSelector("B") + " pluto-output", { timeout: 60000 });
+    cellSelector("B") + " pluto-output");
   await page.reload();
-  await page.waitForSelector("pluto-cell", { timeout: 30000 });
-  await page.waitForFunction(() => !document.querySelector("pluto-editor")?.classList.contains("loading"),
-    null, { timeout: 30000 });
+  await page.waitForSelector("pluto-cell");
+  await page.waitForFunction(() => !document.querySelector("pluto-editor")?.classList.contains("loading"));
   // Chips settle in after a moment (Cell.js's useSettled).
-  await page.waitForSelector(`${cellSelector("DOWN")} ember-chip:not(.held)`, { timeout: 10000 });
+  await page.waitForSelector(`${cellSelector("DOWN")} ember-chip:not(.held)`);
   await sweep(page, "partial");
   assertNoProblems(page);
 });
@@ -129,17 +147,16 @@ test("ui sweep: the Help tab open on a long page, docked and not (#433)", async 
     const nb = window.editor_state?.notebook;
     return nb?.process_status === "ready" && Object.values(nb.cell_results ?? {}).length > 0 &&
       Object.values(nb.cell_results).every((r) => !r.running && !r.queued);
-  }, null, { timeout: 60000 });
+  });
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("open_bottom_right_panel", { detail: "docs" })));
   await page.locator("#live-docs-search").fill("regmatches");
   await page.waitForFunction(
-    () => document.querySelector("#helpbox-wrapper .ember-help-page h2")?.innerText.includes("Matched Substrings"),
-    null, { timeout: 30000 });
+    () => document.querySelector("#helpbox-wrapper .ember-help-page h2")?.innerText.includes("Matched Substrings"));
   await sweep(page, "help");
 
   for (const width of [1240, 1440]) {
     await page.setViewportSize({ width, height: 900 });
-    await page.waitForTimeout(300);
+    await layoutSettled(page);
     const fit = await page.evaluate(() => {
       const panel = document.querySelector("#helpbox-wrapper").getBoundingClientRect();
       const main = document.querySelector("#helpbox-wrapper .ember-help-page main").getBoundingClientRect();

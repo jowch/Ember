@@ -7,12 +7,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, layoutSettled } from "../browser.mjs";
 
 const reload = async (page) => {
   await page.reload();
-  await page.waitForSelector("pluto-cell", { timeout: 30000 });
-  await page.waitForFunction(() => !document.querySelector("pluto-editor")?.classList.contains("loading"), null, { timeout: 30000 });
+  await page.waitForSelector("pluto-cell");
+  await page.waitForFunction(() => !document.querySelector("pluto-editor")?.classList.contains("loading"));
 };
 
 const selected_tab = (page) => page.locator('#helpbox-wrapper [role="tab"][aria-selected="true"]').innerText();
@@ -124,7 +124,7 @@ test("panel: the column clears the docked panel at 1440px and is centred at 2560
   assert.ok(left_1440 < right_1440 - 10, `the column moved left of centre to clear the panel: ${JSON.stringify(at_1440)}`);
 
   await page.setViewportSize({ width: 2560, height: 1200 });
-  await page.waitForTimeout(400);
+  await layoutSettled(page);
   const at_2560 = await geometry(page);
   assert.ok(at_2560.main_right <= at_2560.panel_left, `the column ends before the panel: ${JSON.stringify(at_2560)}`);
   const left = at_2560.main_left, right = at_2560.width - at_2560.main_right;

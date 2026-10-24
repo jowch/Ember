@@ -593,6 +593,24 @@ test_that("a dependent queued by submitting a graph error runs after a cell the 
   expect_true("E" %in% r3$state$pending)
 })
 
+test_that("a queued cell runs after a cell that dropping a graph error's result left stale, though another ran first (#449)", {
+  # E is edited to define x, which A defines: both have a graph error. D
+  # reads B's y and C's z, and B reads A's w. Dispatching C, which hasn't
+  # run, drops A's result, so B is stale: D must run after it, not with its
+  # old y. C reads nothing from B, so checking only C's ancestors missed it.
+  s <- fake_state(list(S = cell(""), A = cell("x <- 1\nw <- 2"), B = cell("y <- w + 1"),
+                       C = cell("z <- 5"), E = cell(""), D = cell("y + z")))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = c("x", "w")), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(11)))
+
+  r2 <- drive(r$state, ev_apply(list(op_set_code("E", "x <- 2")), at(20)))
+  r3 <- drive(r2$state, ev_run("D", at(21)))
+  expect_null(r3$state$results$A)
+  expect_equal(last_sent(r3)$cell, "B")
+  expect_true(all(c("C", "D") %in% r3$state$pending))
+})
+
 test_that("two definers of the same name give one upstream entry, the first in display order (ui-3 7c, fix 2)", {
   s <- fake_state(list(S = cell(""), A = cell("x <- 1"), A2 = cell("x <- 2"), C = cell("x + 1")))
   r <- boot(s, "C")
@@ -1041,6 +1059,83 @@ test_that("a sourced file's change invalidates the sourcing cell (53)", {
   expect_true(isTRUE(r2$state$results$A$stale) || "A" %in% r2$state$pending)
 })
 
+test_that("a sourced file that changes while its cell runs, after source() read it, leaves the result stale (#485)", {
+  # A sources h.R, then works on. h.R changes while A runs: in lazy mode
+  # the result A sends, built from the old h.R, is stale; in autorun A runs
+  # again and that result is current.
+  start <- function(mode) {
+    s <- fake_state(list(S = cell(""), A = cell('source("h.R"); Sys.sleep(3); z'), B = cell("z + 1")),
+                    on_cell_change = mode)
+    s$path <- "/proj/nb.R"
+    r <- drive(s, ev_files_read(list("h.R" = list(text = "z <- 1\n", hash = "v1")), at(1)))
+    r <- boot(r$state, c("A", "B"), at0 = 2)
+    tok <- r$state$worker$running$token
+    # The worker's text is readLines() joined, with no final newline.
+    drive(r$state, wk_source(1, tok, "/proj/h.R", "z <- 1", at(11)))
+  }
+  r <- start("lazy")
+  tok <- r$state$worker$running$token
+  r <- drive(r$state, ev_files_read(list("h.R" = list(text = "z <- 2\n", hash = "v2")), at(12)),
+             wk_done(1, tok, report(created = "z"), at(13)))
+  expect_true(r$state$results$A$stale)
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(), at(14)))
+  expect_true(r$state$results$B$stale)
+  expect_equal(r$state$pending, character())
+
+  r <- start("autorun")
+  tok <- r$state$worker$running$token
+  r <- drive(r$state, ev_files_read(list("h.R" = list(text = "z <- 2\n", hash = "v2")), at(12)),
+             wk_done(1, tok, report(created = "z"), at(13)))
+  expect_equal(r$state$worker$running$cell, "A")
+  expect_true(r$state$results$A$stale)
+
+  # A change seen before source() read the file: the run reads the new
+  # text, so its result is current.
+  s <- fake_state(list(S = cell(""), A = cell('Sys.sleep(1); source("h.R"); z')), on_cell_change = "lazy")
+  s$path <- "/proj/nb.R"
+  r <- drive(s, ev_files_read(list("h.R" = list(text = "z <- 1\n", hash = "v1")), at(1)))
+  r <- boot(r$state, "A", at0 = 2)
+  tok <- r$state$worker$running$token
+  r <- drive(r$state, ev_files_read(list("h.R" = list(text = "z <- 2\n", hash = "v2")), at(11)),
+             wk_source(1, tok, "/proj/h.R", "z <- 2", at(12)),
+             wk_done(1, tok, report(created = "z"), at(13)))
+  expect_false(isTRUE(r$state$results$A$stale))
+  # A change after source() read it stays counted even if the file then
+  # changes back to the text the run read: the result is marked stale,
+  # which costs at most a rerun.
+  r <- drive(r$state, ev_run("A", at(20)))
+  tok <- r$state$worker$running$token
+  r <- drive(r$state, wk_source(1, tok, "/proj/h.R", "z <- 2", at(31)),
+             ev_files_read(list("h.R" = list(text = "z <- 3", hash = "v3")), at(32)),
+             ev_files_read(list("h.R" = list(text = "z <- 2\r\n", hash = "v2")), at(33)),
+             wk_done(1, tok, report(created = "z"), at(34)))
+  expect_true(r$state$results$A$stale)
+})
+
+test_that("read_old_source() matches a sourced path by its tail and compares text without line endings (#485)", {
+  src <- list(list(path = "/proj/R/h.R", text = "a\nb"))
+  expect_false(read_old_source(src, "R/h.R", "a\r\nb\r\n"))
+  expect_true(read_old_source(src, "R/h.R", "a\nc\n"))
+  expect_true(read_old_source(src, "./R/h.R", "x"))
+  expect_true(read_old_source(src, "../proj/R/h.R", "x"))
+  # No file at that tail was read: one of the same name counts, since a
+  # symlink can hide it, which costs at most a rerun.
+  expect_true(read_old_source(src, "S/h.R", "x"))
+  expect_false(read_old_source(src, "R/g.R", "x"))
+  expect_false(read_old_source(list(), "R/h.R", "x"))
+  expect_false(read_old_source(src, "R/h.R", NA_character_))
+  expect_true(read_old_source(list(list(path = "C:\\proj\\h.R", text = "a")), "h.R", "b"))
+  # A path that reads differently once normalized matches by file name.
+  expect_true(read_old_source(list(list(path = "/private/tmp/x/h.R", text = "a")), "/tmp/x/h.R", "b"))
+  expect_false(read_old_source(list(list(path = "/private/tmp/x/h.R", text = "a")), "/tmp/x/h.R", "a\n"))
+  expect_true(read_old_source(list(list(path = "C:\\Users\\me\\h.R", text = "a")), "c:/Users/me/h.R", "b"))
+  expect_true(read_old_source(list(list(path = "/home/me/real/h.R", text = "a")), "link/h.R", "b"))
+  # A file of the same name the run read isn't taken for one at the tail.
+  two <- list(list(path = "/proj/a/h.R", text = "a"), list(path = "/proj/b/h.R", text = "b"))
+  expect_false(read_old_source(two, "b/h.R", "b"))
+  expect_true(read_old_source(two, "a/h.R", "b"))
+})
+
 # ---- Data files a cell reads (#276) -----------------------------------------
 
 # W writes d.csv, R reads it, U uses what R read: no edge between W and R.
@@ -1168,6 +1263,35 @@ test_that("in lazy mode a run that reaches the writer after the reader reruns th
   # With nothing queued that reads it, lazy mode only marks it stale.
   r4 <- drive(data_file_notebook("lazy")$state, ev_data_changed(list("d.csv" = "v2"), at(21)))
   expect_equal(r4$state$pending, character())
+})
+
+test_that("a data file that changes while its reader is queued leaves the reader stale if a stop empties the queue (#472)", {
+  # Run W and R by hand: W runs, R waits. d.csv changes, then a stop
+  # empties the queue. R's result read the old file, so it and U, which
+  # read R's value, are stale, and nothing more runs.
+  for (mode in c("lazy", "autorun")) {
+    r <- data_file_notebook(mode)
+    r <- drive(r$state, ev_run(c("W", "R"), at(30)))
+    expect_equal(r$state$worker$running$cell, "W")
+    expect_equal(r$state$pending, "R")
+    r <- drive(r$state, wk_running(1, r$state$worker$running$token, at(31)),
+               ev_data_changed(list("d.csv" = "v2"), at(32)))
+    expect_equal(r$state$pending, "R")
+    expect_true(r$state$results$R$stale, info = mode)
+    r <- drive(r$state, ev_interrupt(at(33)),
+               wk_done(1, r$state$worker$running$token, report(status = "interrupted"), at(34)))
+    expect_equal(r$state$pending, character(), info = mode)
+    expect_true(r$state$results$R$stale, info = mode)
+    expect_true(r$state$results$U$stale, info = mode)
+  }
+  # Not stopped, R runs and its new result is current.
+  r <- data_file_notebook("lazy")
+  r <- drive(r$state, ev_run(c("W", "R"), at(30)))
+  r <- drive(r$state, ev_data_changed(list("d.csv" = "v2"), at(31)),
+             wk_done(1, r$state$worker$running$token, report(), at(32)))
+  expect_equal(r$state$worker$running$cell, "R")
+  r <- drive(r$state, wk_done(1, r$state$worker$running$token, report(created = "d", data_seen = list("d.csv" = "v2")), at(33)))
+  expect_false(isTRUE(r$state$results$R$stale))
 })
 
 test_that("a writer that runs right after its reader reruns the reader, however coarse the file clock (#276)", {
@@ -1399,6 +1523,74 @@ test_that("a late interrupt result withdraws the restart offer (58)", {
 
   r4 <- drive(r3$state, wk_done(1, tok, report(status = "interrupted"), at(12)))
   expect_false(r4$state$worker$restart_offered)
+})
+
+test_that("a stop the running cell finishes before still stops its dependents in autorun (#486)", {
+  # A stop that reaches the run in time gives "interrupted"; one that lands
+  # just as it finishes gives "ok" or "error". Either way the dependents
+  # the stop dropped stay stale, as Esc in plain R drops the lines waiting.
+  s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- a")))
+  r <- boot(s, c("A", "B"))
+  r <- drive(r$state, wk_done(1, last_token(r), report(created = "a"), at(10)))
+  r <- drive(r$state, wk_done(1, last_token(r), report(), at(11)))
+  r <- drive(r$state, ev_run("A", at(12)))
+  tok <- last_token(r)
+  r <- drive(r$state, wk_running(1, tok, at(13)))
+  # Without the stop, B runs again (37).
+  expect_equal(drive(r$state, wk_done(1, tok, report(created = "a"), at(15)))$state$worker$running$cell, "B")
+  r <- drive(r$state, ev_interrupt(at(14)))
+  for (rep in list(report(created = "a"), report(status = "error", error = list(message = "boom")))) {
+    r2 <- drive(r$state, wk_done(1, tok, rep, at(15)))
+    expect_null(r2$state$worker$running)
+    expect_equal(r2$state$pending, character())
+    expect_true(isTRUE(r2$state$results$B$stale))
+    expect_null(r2$state$worker$interrupt)
+  }
+  # A run asked for after the stop still runs.
+  r5 <- drive(r$state, ev_run("B", at(15)), wk_done(1, tok, report(created = "a"), at(16)))
+  expect_equal(r5$state$worker$running$cell, "B")
+})
+
+test_that("a run asked for after a stop still runs the ancestors the stopped cell made stale first (#486, #453)", {
+  # A's first run created nothing, so M reads x only once A's next run
+  # reports it. B, asked for after the stop, needs M rerun on the new x
+  # first, as when a run is asked for (#453), whether A's run ended "ok"
+  # after the stop or "interrupted".
+  for (mode in c("autorun", "lazy")) {
+    for (status in c("ok", "interrupted")) {
+      info <- paste(mode, status)
+      s <- fake_state(list(S = cell(""), A = cell('assign("x", 1, envir = globalenv())'),
+                           M = cell("y <- if (exists('x')) x + 1 else 0"), B = cell("y * 2")),
+                      on_cell_change = mode)
+      r <- boot(s, c("A", "M", "B"))
+      r <- drive(r$state, wk_done(1, last_token(r), report(), at(10)))
+      r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(11)))
+      r <- drive(r$state, wk_done(1, last_token(r), report(), at(12)))
+      r <- drive(r$state, ev_run("A", at(13)))
+      tok <- last_token(r)
+      r <- drive(r$state, wk_running(1, tok, at(14)), ev_interrupt(at(15)), ev_run("B", at(16)),
+                 wk_done(1, tok, report(status = status, created = "x"), at(17)))
+      expect_equal(r$state$worker$running$cell, "M", info = info)
+      r <- drive(r$state, wk_done(1, last_token(r), report(created = "y"), at(18)))
+      expect_equal(r$state$worker$running$cell, "B", info = info)
+      r <- drive(r$state, wk_done(1, last_token(r), report(), at(19)))
+      expect_false(isTRUE(r$state$results$B$stale), info = info)
+      expect_false(isTRUE(r$state$results$M$stale), info = info)
+      expect_null(r$state$worker$running, info = info)
+    }
+  }
+})
+
+test_that("a stop the running cell finishes before doesn't rerun it for a data file changed during the run (#486)", {
+  s <- fake_state(list(S = cell(""), R = cell('d <- read.csv("d.csv")')))
+  r <- boot(s, "R")
+  tok <- r$state$worker$running$token
+  r <- drive(r$state, wk_running(1, tok, at(4)), ev_interrupt(at(5)))
+  r2 <- drive(r$state, wk_done(1, tok, report(created = "d", data_seen = list("d.csv" = "v2"),
+                                             data_changed = "d.csv"), at(6)))
+  expect_true(isTRUE(r2$state$results$R$stale))
+  expect_null(r2$state$worker$running)
+  expect_equal(r2$state$pending, character())
 })
 
 test_that("a stale restart-offer timer does nothing (59)", {

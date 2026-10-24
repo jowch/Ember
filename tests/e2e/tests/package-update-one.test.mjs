@@ -35,12 +35,12 @@ test("packages tab: a row's Update says what moving the date changes, then moves
 
   const row = page.locator(".ember-package-row", { has: page.locator("td", { hasText: /^toyA$/ }) });
   const available = row.locator(".ember-package-available");
-  await available.waitFor({ timeout: 0 });
+  await available.waitFor();
   assert.equal((await available.innerText()).replace(/\s+/g, " ").trim(), "0.2 available · Update");
 
   await row.getByRole("button", { name: "Update toyA to 0.2" }).click();
   const question = page.locator(".ember-package-update-question");
-  await question.waitFor({ timeout: 0 });
+  await question.waitFor();
   assert.equal(
     (await question.innerText()).trim(),
     "Updating toyA to 0.2 moves the notebook's date to 2026-09-30. No other package changes."
@@ -50,9 +50,9 @@ test("packages tab: a row's Update says what moving the date changes, then moves
   assert.equal(await row.getByRole("button", { name: "Update toyA to 0.2" }).count(), 0);
 
   await page.locator(".ember-package-update").getByRole("button", { name: "Update toyA" }).click();
-  await page.locator(".ember-packages-title", { hasText: "Versions as of 2026-09-30" }).waitFor({ timeout: 0 });
-  await row.locator("td", { hasText: /^0\.2/ }).waitFor({ timeout: 0 });
-  await available.waitFor({ state: "detached", timeout: 0 });
+  await page.locator(".ember-packages-title", { hasText: "Versions as of 2026-09-30" }).waitFor();
+  await row.locator("td", { hasText: /^0\.2/ }).waitFor();
+  await available.waitFor({ state: "detached" });
   assert.equal(await page.locator(".ember-package-update").count(), 0);
 
   assertNoProblems(page);
@@ -74,10 +74,10 @@ test("packages tab: Cancel on a row's Update leaves the notebook where it was (#
   const row = page.locator(".ember-package-row", { has: page.locator("td", { hasText: /^toyA$/ }) });
   await row.getByRole("button", { name: "Update toyA to 0.2" }).click();
   const detail = page.locator(".ember-package-update");
-  await detail.locator(".ember-package-update-question").waitFor({ timeout: 0 });
+  await detail.locator(".ember-package-update-question").waitFor();
   await detail.getByRole("button", { name: "Cancel" }).click();
-  await detail.waitFor({ state: "detached", timeout: 0 });
-  await row.getByRole("button", { name: "Update toyA to 0.2" }).waitFor({ timeout: 0 });
+  await detail.waitFor({ state: "detached" });
+  await row.getByRole("button", { name: "Update toyA to 0.2" }).waitFor();
   assert.equal(await page.locator(".ember-packages-title").innerText(), "Versions as of 2026-09-01");
 
   assertNoProblems(page);

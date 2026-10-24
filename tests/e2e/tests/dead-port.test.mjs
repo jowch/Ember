@@ -20,7 +20,7 @@ import net from "node:net";
 import http from "node:http";
 import crypto from "node:crypto";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, openNotebook } from "../browser.mjs";
+import { launchBrowser, newPage, openNotebook, connectionSettled } from "../browser.mjs";
 
 /** No uncaught error on the page. Failed connects log console errors of
  * their own (the browser's and the page's), which are expected here. */
@@ -30,8 +30,12 @@ function assertNoPageErrors(page) {
 }
 
 /** Forward 127.0.0.1:`port` (0 for any free port) to `targetPort`. Resolves
- * to `{ port, stop() }`; `stop()` drops every open connection too. */
-function startForwarder(targetPort, port = 0) {
+ * to `{ port, stop() }`; `stop()` drops every open connection too. With
+ * `loseCloseFrames`, a websocket close frame from the target never reaches
+ * the page: its connection is reset instead, so a socket the target opened
+ * and then closed reaches the page as a plain drop (1006), with no close
+ * code (#491). */
+function startForwarder(targetPort, port = 0, { loseCloseFrames = false } = {}) {
   const open = new Set();
   const server = net.createServer((client) => {
     const upstream = net.connect(targetPort, "127.0.0.1");
@@ -39,7 +43,20 @@ function startForwarder(targetPort, port = 0) {
     open.add(client); open.add(upstream);
     client.on("error", drop); upstream.on("error", drop);
     client.on("close", drop); upstream.on("close", drop);
-    client.pipe(upstream); upstream.pipe(client);
+    client.pipe(upstream);
+    if (!loseCloseFrames) { upstream.pipe(client); return; }
+    let upgraded = false;
+    upstream.on("data", (chunk) => {
+      let rest = chunk;
+      if (!upgraded && chunk.subarray(0, 12).toString() === "HTTP/1.1 101") {
+        const end = chunk.indexOf("\r\n\r\n") + 4;
+        upgraded = true;
+        client.write(chunk.subarray(0, end));
+        rest = chunk.subarray(end);
+      }
+      if (upgraded && rest.length > 0 && rest[0] === 0x88) { client.resetAndDestroy(); upstream.destroy(); return; }
+      if (rest.length > 0) client.write(rest);
+    });
   });
   return new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -51,13 +68,15 @@ function startForwarder(targetPort, port = 0) {
 }
 
 /** Move the page's fake clock forward a step at a time until `locator`
- * shows up: the page's own waits fire, the tries they start run for real. */
+ * shows up: the page's own waits fire, the tries they start run for real,
+ * and each step waits for them to end. */
 async function fastForwardUntil(page, locator, { step = 5000, limit = 120000 } = {}) {
   for (let moved = 0; moved <= limit; moved += step) {
     if (await locator.count() > 0) return;
     await page.clock.fastForward(step);
-    try { await locator.waitFor({ timeout: 1000 }); return; } catch {}
+    await connectionSettled(page);
   }
+  if (await locator.count() > 0) return;
   throw new Error(`still no ${locator} after moving the clock ${limit} ms`);
 }
 
@@ -74,11 +93,11 @@ async function openThenKillPort(t, name) {
   const origin = `http://127.0.0.1:${forwarder.port}/`;
   await openNotebook(page, origin, server.secret, notebook);
   const status = page.locator("#ember-r-status");
-  await status.filter({ hasText: "R not started" }).waitFor({ timeout: 30000 });
+  await status.filter({ hasText: "R not started" }).waitFor();
 
   const port = forwarder.port;
   await forwarder.stop();
-  await status.filter({ hasText: "Reconnecting" }).waitFor({ timeout: 30000 });
+  await status.filter({ hasText: "Reconnecting" }).waitFor();
 
   const bringBack = async () => { forwarder = await startForwarder(server.port, port); };
   return { page, status, bringBack, port, notebook };
@@ -104,14 +123,14 @@ test("dead port: the tab says it can't reach Ember, and Try again reconnects onc
   const asked = () => page.evaluate(() => window.ember_dialogs.filter((d) => d.title === "Can't reach Ember here").length);
   assert.equal(await asked(), 1);
   await dialog.getByRole("button", { name: "Try again" }).click();
-  await page.waitForFunction(() => window.ember_dialogs.filter((d) => d.title === "Can't reach Ember here").length === 2, null, { timeout: 30000 });
-  await dialog.waitFor({ timeout: 30000 });
+  await page.waitForFunction(() => window.ember_dialogs.filter((d) => d.title === "Can't reach Ember here").length === 2);
+  await dialog.waitFor();
 
   // Try again once something answers there: the page reconnects at once,
   // without waiting for its next background try.
   await bringBack();
   await dialog.getByRole("button", { name: "Try again" }).click();
-  await status.filter({ hasText: "R not started" }).waitFor({ timeout: 30000 });
+  await status.filter({ hasText: "R not started" }).waitFor();
   assert.equal(await page.getByRole("alertdialog").count(), 0, "no dialog left once it's back");
   assertNoPageErrors(page);
 });
@@ -125,7 +144,7 @@ test("dead port: a tab that said it can't reach Ember reconnects by itself when 
 
   await bringBack();
   await fastForwardUntil(page, status.filter({ hasText: "R not started" }));
-  await dialog.waitFor({ state: "detached", timeout: 30000 });
+  await dialog.waitFor({ state: "detached" });
   assertNoPageErrors(page);
 });
 
@@ -141,7 +160,29 @@ test("dead port: a tab that said it can't reach Ember says Ember restarted when 
   t.after(() => second.stop());
   const restarted = page.getByRole("alertdialog", { name: "Ember restarted" });
   await fastForwardUntil(page, restarted);
-  await status.filter({ hasText: "Ember restarted" }).waitFor({ timeout: 30000 });
+  await status.filter({ hasText: "Ember restarted" }).waitFor();
+  assert.equal(await dialog.count(), 0, "the not-running dialog went when the restart was found");
+  assertNoPageErrors(page);
+});
+
+// The same restart when the new server's refusal (a 4403 close right after
+// the socket opens) reaches the page as a plain drop, with no close code.
+// The page then has only the key check to go on, and it must make it for a
+// socket that opened and dropped as for one that never opened (#491).
+test("dead port: a tab says Ember restarted when the new one's refusal reaches it as a drop (#491)", async (t) => {
+  const { page, status, port, notebook } = await openThenKillPort(t, "dead-port-restarted-drop");
+
+  const dialog = page.getByRole("alertdialog", { name: "Can't reach Ember here" });
+  await fastForwardUntil(page, dialog);
+
+  const second = await startServer([notebook], {
+    logFile: path.join(artifactsDir(), "dead-port-restarted-drop.second.server.log"), secret: "second-session-secret",
+  });
+  const lossy = await startForwarder(second.port, port, { loseCloseFrames: true });
+  t.after(async () => { await lossy.stop(); second.stop(); });
+  const restarted = page.getByRole("alertdialog", { name: "Ember restarted" });
+  await fastForwardUntil(page, restarted);
+  await status.filter({ hasText: "Ember restarted" }).waitFor();
   assert.equal(await dialog.count(), 0, "the not-running dialog went when the restart was found");
   assertNoPageErrors(page);
 });
@@ -153,7 +194,7 @@ test("dead port: an outage shorter than 30 s reconnects without a dialog", async
 
   for (let moved = 0; moved < 25000; moved += 5000) {
     await page.clock.fastForward(5000);
-    await page.waitForTimeout(200);
+    await connectionSettled(page);
   }
   await bringBack();
   await fastForwardUntil(page, status.filter({ hasText: "R not started" }), { step: 1000, limit: 10000 });
@@ -172,13 +213,13 @@ test("dead port: a sleep in the middle of an outage doesn't count towards the 30
   // One failed try, then an hour's sleep. The clock stays paused from here
   // on, so only fastForward moves it, however slow the runner is.
   await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000));
-  await page.waitForTimeout(200);
+  await connectionSettled(page);
   await page.clock.setSystemTime(await page.evaluate(() => Date.now() + 60 * 60 * 1000));
 
   // Tries after waking, about 20 s of the page's own waits: still no dialog.
   for (let moved = 0; moved < 20000; moved += 1000) {
     await page.clock.fastForward(1000);
-    await page.waitForTimeout(100);
+    await connectionSettled(page);
   }
   assert.deepEqual(await page.evaluate(() => window.ember_dialogs.map((d) => d.title)), []);
 

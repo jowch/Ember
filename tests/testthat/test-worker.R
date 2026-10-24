@@ -1,7 +1,7 @@
 # Worker harness tests (docs/engine-tests.md, "Worker harness"): the real
 # inst/worker.R under processx, talked to directly over a socket. No
-# server, no `later`. Every wait is a blocking read with a timeout
-# (worker_harness()'s $receive()), never Sys.sleep polling.
+# server, no `later`. Every wait is a read with no time limit
+# (worker_harness()'s $receive(), next_frame()), never Sys.sleep polling.
 
 run_msg <- function(cell, token, code, role = "cell", order = character(), formulas = list(),
                     library = NULL, fig = NULL, settings = character(), data = NULL) {
@@ -11,11 +11,10 @@ run_msg <- function(cell, token, code, role = "cell", order = character(), formu
 }
 
 #' Run code in a fresh harness and return the `done` report. Fails the
-#' test if the worker exits or hangs before replying (next_frame()), or,
-#' with a `timeout`, once that many seconds pass.
-run_and_wait <- function(h, cell, token, code, ..., timeout = NULL) {
+#' test if the worker exits or hangs before replying (next_frame()).
+run_and_wait <- function(h, cell, token, code, ...) {
   h$send(run_msg(cell, token, code, ...))
-  wait_for_done(h, timeout)
+  wait_for_done(h)
 }
 
 png_dims <- function(bytes) {
@@ -55,6 +54,88 @@ test_that("run_value_and_console_order", {
   expect_identical(r$console[[2]]$text, "b\n")
   expect_identical(r$console[[3]]$text, "c")
   expect_identical(r$output$text, "[1] 2")
+})
+
+test_that("what a running cell prints is sent while it runs, a whole line at a time (#470)", {
+  # The cell prints, then waits on a file the test writes only once the
+  # printed line has arrived: before #470 nothing came until the run ended,
+  # and before #482 on Windows.
+  h <- worker_harness()
+  on.exit(h$close())
+  go <- tempfile("ember-go-")
+  on.exit(unlink(go), add = TRUE)
+  code <- sprintf('cat("inside the loop\\n"); cat("half"); while (!file.exists(%s)) NULL; cat(" line\\n"); message("m")', deparse(go))
+  h$send(run_msg("a", 1L, code))
+  repeat {
+    m <- next_frame(h)
+    expect_false(identical(m$type, "done"))
+    if (identical(m$type, "console")) break
+  }
+  expect_identical(m$item, list(kind = "stdout", text = "inside the loop\n"))
+  writeLines("", go)
+  r <- wait_for_done(h)
+  expect_identical(r$status, "ok")
+  # The unfinished line was held back, then sent whole, before the message.
+  expect_identical(r$console, list(list(kind = "stdout", text = "inside the loop\n"),
+                                   list(kind = "stdout", text = "half line\n"),
+                                   list(kind = "message", text = "m\n")))
+})
+
+test_that("a forked child doesn't send its parent's printed text again (#470)", {
+  # mclapply()'s children inherit the hook, the console file and the
+  # socket; only the worker may send. Unix only: Windows has no fork. Each
+  # child runs until the parent has sent the line.
+  skip_on_os("windows")
+  h <- worker_harness()
+  on.exit(h$close())
+  go <- tempfile("ember-go-")
+  on.exit(unlink(go), add = TRUE)
+  code <- sprintf('cat("before\\n"); invisible(parallel::mclapply(1:4, function(i) { while (!file.exists(%s)) NULL; i }, mc.cores = 2))', deparse(go))
+  h$send(run_msg("a", 1L, code))
+  sent <- list()
+  r <- wait_for_done(h, on_frame = function(m) if (identical(m$type, "console")) {
+    sent[[length(sent) + 1]] <<- m$item
+    writeLines("", go)
+  })
+  expect_identical(r$status, "ok", info = r$error$message)
+  # The children's copies would come as console frames of their own.
+  expect_identical(sent, list(list(kind = "stdout", text = "before\n")))
+  expect_identical(r$console, sent)
+})
+
+test_that("a line printed before a long Sys.sleep() is sent during the sleep (#470)", {
+  # On Unix R sleeps a wait in one go unless R_wait_usec is set, so the hook
+  # would run only when the sleep ends; Windows wakes every 0.5 s (#482).
+  # The test stops the sleep once the line has arrived.
+  h <- worker_harness()
+  on.exit(h$close())
+  h$send(run_msg("a", 1L, 'cat("before the sleep\\n"); Sys.sleep(3600)'))
+  sent <- list()
+  r <- wait_for_done(h, on_frame = function(m) if (identical(m$type, "console")) {
+    sent[[length(sent) + 1]] <<- m$item
+    h$interrupt()
+  })
+  expect_identical(r$status, "interrupted")
+  expect_identical(sent, list(list(kind = "stdout", text = "before the sleep\n")))
+})
+
+test_that("an interrupt that lands while printed text is sent still stops a Sys.sleep() (#482)", {
+  # On Windows the tick's send runs R's event processing with interrupts
+  # held off, which turns one that just arrived into a pending interrupt
+  # that Sys.sleep() never takes there. C_console_test_break() holds ticks
+  # off while the line is printed, then lets the next one start with an
+  # interrupt arrived, so that tick is the one that sends the line. Nothing
+  # else interrupts.
+  skip_if_not(.Platform$OS.type == "windows", "the tick's interrupt hand-back is Windows' own")
+  h <- worker_harness()
+  on.exit(h$close())
+  code <- paste('tb <- getNativeSymbolInfo("C_console_test_break", "ember")',
+                'invisible(.Call(tb, 1L)); cat("1\\n"); invisible(.Call(tb, 2L)); Sys.sleep(3600)', sep = "\n")
+  h$send(run_msg("a", 1L, code))
+  sent <- list()
+  r <- wait_for_done(h, on_frame = function(m) if (identical(m$type, "console")) sent[[length(sent) + 1]] <<- m$item)
+  expect_identical(r$status, "interrupted")
+  expect_identical(sent, list(list(kind = "stdout", text = "1\n")))
 })
 
 test_that("a progress bar's redraws end as one line, as in the R console (#358)", {
@@ -390,7 +471,7 @@ test_that("library(ggplot2) and theme_set() in one cell: the theme is that cell'
   skip_if_not_installed("ggplot2")
   h <- worker_harness(extra_libs = .libPaths())
   on.exit(h$close())
-  r <- run_and_wait(h, "t", 1L, "library(ggplot2); theme_set(theme_minimal(base_size = 21))", timeout = 30)
+  r <- run_and_wait(h, "t", 1L, "library(ggplot2); theme_set(theme_minimal(base_size = 21))")
   expect_identical(r$status, "ok")
   kinds <- vapply(r$settings, function(d) d$kind, character(1))
   expect_true("theme" %in% kinds)
@@ -416,7 +497,7 @@ test_that("ggplot2's theme is a setting the worker resets and reapplies", {
   skip_if_not_installed("ggplot2")
   h <- worker_harness(extra_libs = .libPaths())
   on.exit(h$close())
-  run_and_wait(h, "l", 1L, "loadNamespace('ggplot2')", timeout = 30)
+  run_and_wait(h, "l", 1L, "loadNamespace('ggplot2')")
   r <- run_and_wait(h, "t", 2L, "ggplot2::theme_set(ggplot2::theme_minimal(base_size = 21))")
   expect_true(any(vapply(r$settings, function(d) identical(d$kind, "theme"), logical(1))))
   on <- run_and_wait(h, "c", 3L, "ggplot2::theme_get()$text$size", settings = "t")
@@ -792,7 +873,7 @@ test_that("base_plot_output", {
   expect_identical(as.integer(r$output$data[1:8]), c(137L, 80L, 78L, 71L, 13L, 10L, 26L, 10L))
 
   h$send(list(type = "render", cell = "a", width = 200, height = 150))
-  rendered <- h$receive(5)
+  rendered <- h$receive()
   expect_identical(rendered$type, "rendered")
   dims <- png_dims(rendered$display$data)
   expect_identical(dims, list(width = 200, height = 150))
@@ -853,7 +934,7 @@ test_that("render_plot() and open_device() don't crash the worker on a hand-buil
   # render_plot() with no recorded display (an unreplayable or missing
   # record) reports display = NULL rather than erroring.
   h$send(list(type = "render", cell = "nonexistent", res = 96L))
-  m <- h$receive(5)
+  m <- h$receive()
   expect_identical(m$type, "rendered")
   expect_null(m$display)
 
@@ -941,7 +1022,7 @@ test_that("summarise_globals(): the over-budget path doesn't call an active bind
     "format.Date <- function(x, ...) { Sys.sleep(1); 'slow' }",
     "n_calls <- 0",
     "makeActiveBinding('zzz_counter', function() { n_calls <<- n_calls + 1; n_calls }, environment())",
-    sep = "\n"), timeout = 10)
+    sep = "\n"))
 
   expect_equal(r$globals$zzz_counter$type, "active binding")
   expect_equal(r$globals$zzz_counter$kind, "none")
@@ -957,20 +1038,17 @@ test_that("summarise_globals(): the over-budget path doesn't call an active bind
 test_that("summarise_globals(): a slow method is bounded by its own time limit rather than holding up the whole report, and never leaks into a later run (review: setTimeLimit)", {
   h <- worker_harness()
   on.exit(h$close())
-  t0 <- Sys.time()
   r <- run_and_wait(h, "a", 1L, paste(
     "slow <- Sys.Date()",
     "format.Date <- function(x, ...) { t0 <- Sys.time(); repeat if (as.numeric(Sys.time() - t0) > 30) break; 'slow' }",
-    sep = "\n"), timeout = 35)
-  elapsed <- as.numeric(Sys.time() - t0, units = "secs")
+    sep = "\n"))
   # A busy R loop, not Sys.sleep(): setTimeLimit() is checked while R code
-  # runs and does not cut a sleep short. The budget is 0.25 s; the method
-  # runs 30 s unless it is cut short, so 10 s tells the two apart however
-  # slow the runner, where 4 s against a 5 s method did not leave room.
-  expect_lt(elapsed, 10)
+  # runs and does not cut a sleep short. The budget is 0.25 s; a method
+  # that ran its 30 s would have returned 'slow' and been summarised, so
+  # "none" is the method cut short.
   expect_equal(r$globals$slow$kind, "none")
 
-  r2 <- run_and_wait(h, "b", 2L, "1 + 1", timeout = 3)
+  r2 <- run_and_wait(h, "b", 2L, "1 + 1")
   expect_identical(r2$status, "ok")
   expect_identical(r2$output$text, "[1] 2")
 })
@@ -982,7 +1060,7 @@ test_that("summarise_globals(): a slow format() leaves later names (alphabetical
     "slow <- Sys.Date()",
     "format.Date <- function(x, ...) { Sys.sleep(1); 'slow' }",
     "zzz_after <- 1",
-    sep = "\n"), timeout = 10)
+    sep = "\n"))
 
   expect_equal(r$globals$zzz_after$kind, "none")
 })
@@ -1110,7 +1188,7 @@ test_that("an interrupt sent on the running frame stops that run", {
   on.exit(h$close())
   for (i in 1:10) {
     h$send(run_msg(paste0("c", i), i, "Sys.sleep(5)"))
-    r <- wait_for_done(h, timeout = 30, on_frame = function(m) {
+    r <- wait_for_done(h, on_frame = function(m) {
       if (identical(m$type, "running")) h$interrupt()
     })
     expect_identical(r$status, "interrupted")
@@ -1128,17 +1206,15 @@ test_that("interrupt_r_code", {
   h$send(run_msg("b", 2L, sprintf(
     "writeLines('go', %s); t0 <- Sys.time(); repeat { if (as.numeric(Sys.time() - t0) > 10) break }",
     deparse(started))))
-  deadline <- Sys.time() + 10
-  while (!file.exists(started) && Sys.time() < deadline) Sys.sleep(0.05)
+  waiting_for("the cell to start", while (!file.exists(started)) {
+    if (!h$process$is_alive()) stop("the worker exited before the cell started")
+    later::run_now(timeout = 0.05)
+  })
   expect_true(file.exists(started))
-  t0 <- Sys.time()
   h$interrupt()
-  r <- wait_for_done(h, timeout = 5)
-  elapsed <- as.numeric(Sys.time() - t0, units = "secs")
+  r <- wait_for_done(h)
+  # An unheeded interrupt runs the loop its full 10 s and ends "ok".
   expect_identical(r$status, "interrupted")
-  # An unheeded interrupt runs the loop its full 10 s (and times out
-  # above), so 3 s still tells them apart with room for a slow runner.
-  expect_lt(elapsed, 3)
 
   check <- run_and_wait(h, "c", 3L, 'c(x, y)')
   expect_identical(check$output$text, "[1] 1 2")
@@ -1155,7 +1231,7 @@ test_that("on Windows a worker with no console is interrupted all the same (#48)
   on.exit(h$close())
   for (code in c("Sys.sleep(20)", "t0 <- Sys.time(); repeat if (Sys.time() - t0 > 20) break")) {
     h$send(run_msg("a", 1L, code))
-    r <- wait_for_done(h, timeout = 10, on_frame = function(m) {
+    r <- wait_for_done(h, on_frame = function(m) {
       if (identical(m$type, "running")) expect_true(h$interrupt())
     })
     expect_identical(r$status, "interrupted")
@@ -1178,7 +1254,7 @@ test_that("an interrupt just after a run's done doesn't stop the next run (#48)"
   on.exit(h$close())
   for (i in 1:50) {
     h$send(run_msg(paste0("c", i), i, "1 + 1"))
-    r <- wait_for_done(h, timeout = 10)
+    r <- wait_for_done(h)
     expect_identical(r$status, "ok")
     h$interrupt()
   }
@@ -1198,7 +1274,7 @@ test_that("on Windows a late interrupt the listener took but hasn't applied does
   expect_identical(r$status, "ok")
   for (i in 1:10) {
     h$send(run_msg(paste0("c", i), i + 1L, "1 + 1"))
-    r <- wait_for_done(h, timeout = 10)
+    r <- wait_for_done(h)
     expect_identical(r$status, "ok")
     h$interrupt()
   }
@@ -1210,7 +1286,9 @@ test_that("interrupt_between_runs_swallowed", {
   h <- worker_harness()
   on.exit(h$close())
   h$interrupt()
-  Sys.sleep(0.2)
+  # Nothing to wait for. A worker waiting for a message holds the interrupt
+  # while it reads (uninterrupted()) and passes it on once the next message
+  # is read, so the top level takes it before this run starts.
   r <- run_and_wait(h, "a", 1L, "1 + 1")
   expect_identical(r$status, "ok")
   expect_identical(r$output$text, "[1] 2")
@@ -1245,28 +1323,23 @@ test_that("sigint_reset_when_inherited_ignored", {
     '          EMBER_WORKER = args[[2]], EMBER_SECRET = args[[4]]),',
     '  stdout = "|", stderr = "|")',
     'con <- NULL',
-    'deadline <- Sys.time() + 10',
     'repeat {',
-    '  remaining <- as.numeric(deadline - Sys.time(), units = "secs")',
-    '  if (remaining <= 0) { cat("CONNECT_TIMEOUT\\n"); quit(status = 1) }',
-    '  if (isTRUE(socketSelect(list(srv), timeout = remaining))) {',
+    '  if (isTRUE(socketSelect(list(srv), timeout = 1))) {',
     '    con <- socketAccept(srv, blocking = TRUE, open = "a+b", timeout = 60 * 60 * 24)',
     '    break',
     '  }',
+    '  if (!p$is_alive()) { cat("WORKER_EXITED\\n"); quit(status = 1) }',
     '}',
     'close(srv)',
     'write_frame <- function(con, msg) {',
     '  payload <- serialize(msg, NULL)',
     '  writeBin(length(payload), con, endian = "big"); writeBin(payload, con); flush(con)',
     '}',
-    'read_frame <- function(con, timeout) {',
-    '  deadline <- Sys.time() + timeout',
-    '  wait <- function() {',
-    '    remaining <- as.numeric(deadline - Sys.time(), units = "secs")',
-    '    if (remaining <= 0) return(FALSE)',
-    '    isTRUE(socketSelect(list(con), timeout = remaining))',
-    '  }',
-    '  if (!wait()) return(NULL)',
+    '# No time limit: a worker that exits closes the socket, and the read',
+    '# then returns NULL.',
+    'read_frame <- function(con) {',
+    '  wait <- function() { while (!isTRUE(socketSelect(list(con), timeout = 1))) NULL; TRUE }',
+    '  wait()',
     '  n <- readBin(con, "integer", n = 1, endian = "big")',
     '  if (length(n) == 0) return(NULL)',
     '  got <- raw(0)',
@@ -1278,16 +1351,21 @@ test_that("sigint_reset_when_inherited_ignored", {
     '  }',
     '  unserialize(got)',
     '}',
-    'hello <- read_frame(con, 10)',
+    'hello <- read_frame(con)',
     'if (is.null(hello) || !identical(hello$type, "hello")) { cat("NO_HELLO\\n"); quit(status = 1) }',
     'write_frame(con, list(type = "run", cell = "a", token = 1L,',
     '  code = "t0<-Sys.time(); repeat { if (as.numeric(Sys.time()-t0) > 10) break }",',
     '  role = "cell", order = character(), formulas = list()))',
-    'Sys.sleep(0.3)',
+    '# Interrupt once the worker says the cell runs, as the server does.',
+    'repeat {',
+    '  m <- read_frame(con)',
+    '  if (is.null(m)) { cat("NO_RUNNING\\n"); quit(status = 1) }',
+    '  if (identical(m$type, "running")) break',
+    '}',
     'p$interrupt()',
     'report <- NULL',
     'repeat {',
-    '  m <- read_frame(con, 5)',
+    '  m <- read_frame(con)',
     '  if (is.null(m)) { cat("NO_DONE\\n"); quit(status = 1) }',
     '  if (identical(m$type, "done")) { report <- m$report; break }',
     '}',
@@ -1303,7 +1381,7 @@ test_that("sigint_reset_when_inherited_ignored", {
   shell_cmd <- sprintf("trap '' INT; exec %s --vanilla %s %s %s %s %s",
     shQuote(r_bin), shQuote(script), shQuote(ember_so), shQuote(worker_script_path()),
     shQuote(user_lib), shQuote("sigint-test-secret"))
-  res <- processx::run("sh", c("-c", shell_cmd), timeout = 30, error_on_status = FALSE)
+  res <- run_guarded("sh", c("-c", shell_cmd), error_on_status = FALSE)
   expect_match(res$stdout, "WAS_IGNORED: TRUE")
   expect_match(res$stdout, "STATUS: interrupted")
 })
@@ -1328,12 +1406,19 @@ test_that("known_attached_packages_never_shrink", {
 test_that("interrupt_during_display_still_completes_bookkeeping", {
   h <- worker_harness()
   on.exit(h$close())
-  run_and_wait(h, "a", 1L,
-    'registerS3method("print", "slowprint", function(x, ...) { Sys.sleep(3); cat("slow\\n") })')
+  started <- tempfile()
+  run_and_wait(h, "a", 1L, sprintf(
+    'registerS3method("print", "slowprint", function(x, ...) { writeLines("go", %s); Sys.sleep(3); cat("slow\\n") })',
+    deparse(started)))
   h$send(run_msg("b", 2L, 'options(digits = 3); orphan <- 42; structure(1, class = "slowprint")'))
-  Sys.sleep(1)
+  # Interrupted while it prints, which it says it has begun.
+  waiting_for("the cell to start", while (!file.exists(started)) {
+    if (!h$process$is_alive()) stop("the worker exited before the cell started")
+    later::run_now(timeout = 0.05)
+  })
+  expect_true(file.exists(started))
   h$interrupt()
-  r <- wait_for_done(h, timeout = 10)
+  r <- wait_for_done(h)
   expect_identical(r$status, "interrupted")
   expect_true("orphan" %in% r$created)
   expect_length(r$settings, 1)
@@ -1990,14 +2075,14 @@ test_that("ggplot2's \"Removed n rows\" warning and geom_smooth()'s message show
   skip_if_not_installed("ggplot2")
   h <- worker_harness(extra_libs = .libPaths())
   on.exit(h$close())
-  run_and_wait(h, "l", 1L, "library(ggplot2)", order = c("l", "a", "b"), timeout = 30)
+  run_and_wait(h, "l", 1L, "library(ggplot2)", order = c("l", "a", "b"))
   r <- run_and_wait(h, "a", 2L, paste(
     'd <- data.frame(x = c(1, 2, NA), y = c(1, NA, 3))',
-    'ggplot(d, aes(x, y)) + geom_point()', sep = "\n"), order = c("l", "a", "b"), timeout = 30)
+    'ggplot(d, aes(x, y)) + geom_point()', sep = "\n"), order = c("l", "a", "b"))
   expect_identical(r$output$kind, "plot")
   expect_identical(console_kinds(r), "warning")
   expect_match(console_texts(r), "Removed 2 rows")
-  r <- run_and_wait(h, "b", 3L, "ggplot(mtcars, aes(wt, mpg)) + geom_smooth()", order = c("l", "a", "b"), timeout = 30)
+  r <- run_and_wait(h, "b", 3L, "ggplot(mtcars, aes(wt, mpg)) + geom_smooth()", order = c("l", "a", "b"))
   expect_identical(r$output$kind, "plot")
   expect_identical(console_kinds(r), "message")
   expect_match(console_texts(r), "geom_smooth()", fixed = TRUE)
@@ -2375,7 +2460,7 @@ test_that("an HTML output whose print() text is its source or empty gets the HTM
   expect_identical(r$output$text, "a \uFFFD b \uFFFD c")
 
   # A long table is read only to its 60th row: the text form keeps 50 lines.
-  r <- run_and_wait(h, "e", 5L, paste0('htmltools::HTML(paste0("<table>", strrep("<tr><td>x</td><td>1</td></tr>", 1e5), "</table>"))'), timeout = 30)
+  r <- run_and_wait(h, "e", 5L, paste0('htmltools::HTML(paste0("<table>", strrep("<tr><td>x</td><td>1</td></tr>", 1e5), "</table>"))'))
   expect_identical(r$output$kind, "html")
   expect_identical(r$output$text, paste(rep("x\t1", 50), collapse = "\n"))
   expect_true(r$output$truncated)
@@ -2432,14 +2517,16 @@ test_that("a value that prints many lines shows at once, and print() keeps every
     'print.many_lines <- function(x, ...) { cat(sprintf("line %d\\n", seq_len(attr(x, "n"))), sep = ""); invisible(x) }',
     'x <- structure(list(), class = "many_lines", n = 150000)',
     'y <- structure(list(), class = "many_lines", n = 50000)', "invisible()", sep = "\n"))
-  r <- run_and_wait(h, "b", 2L, "x", timeout = 30)
+  r <- run_and_wait(h, "b", 2L, "x")
   expect_identical(r$status, "ok")
   expect_true(r$output$truncated)
   expect_identical(strsplit(r$output$text, "\n")[[1]][c(1, 50)], c("line 1", "line 50\033[0m"))
 
-  r2 <- run_and_wait(h, "c", 3L, "print(y); invisible()", timeout = 30)
+  r2 <- run_and_wait(h, "c", 3L, "print(y); invisible()")
   printed <- Filter(function(i) identical(i$kind, "stdout"), r2$console)
-  lines <- strsplit(paste(vapply(printed, `[[`, "", "text"), collapse = "\n"), "\n")[[1]]
+  # The page joins consecutive stdout items as they are; a long print can
+  # come in several, each ending at a line (#470).
+  lines <- strsplit(paste(vapply(printed, `[[`, "", "text"), collapse = ""), "\n")[[1]]
   expect_identical(length(lines), 50000L)
   expect_identical(lines[c(1, 50000)], c("line 1", "line 50000"))
 })
@@ -2494,6 +2581,42 @@ test_that("complete_line() (44)", {
   h$receive()
   after <- run_and_wait(h, "d", 4L, peek)$output$text
   expect_identical(before, after)
+})
+
+test_that("argument completion inside a call gives utils' own names, methods' too, and leaves its table as it was (#288)", {
+  h <- worker_harness()
+  on.exit(h$close())
+  arg_items <- function(id, line) {
+    h$send(list(type = "complete", id = id, line = line, cursor = nchar(line)))
+    m <- h$receive()
+    sort(vapply(Filter(function(it) identical(it$kind, "argument"), m$items), `[[`, character(1), "name"), method = "radix")
+  }
+  # What plain R's completer gives, read in a cell, where nothing has been
+  # put into the table: the argument names (`...` isn't one). Both sides
+  # sort by bytes, since the worker and the cell may sort in other locales.
+  utils_args <- function(label, n, fun, text) {
+    out <- run_and_wait(h, label, n, sprintf('cat(sort(utils:::functionArgs("%s", "%s"), method = "radix"), sep = "\\n")', fun, text))
+    printed <- Filter(function(i) identical(i$kind, "stdout"), out$console)
+    all <- strsplit(paste(vapply(printed, `[[`, "", "text"), collapse = ""), "\n")[[1]]
+    all[grepl("=$", all)]
+  }
+  table_size <- function(label, n) run_and_wait(h, label, n, 'length(ls(utils:::.FunArgEnv, all.names = TRUE))')$output$text
+
+  before <- table_size("a", 1L)
+  run_and_wait(h, "b", 2L, "print.ember_t <- function(x, gamma_ember, ...) invisible(x)")
+  got <- arg_items(1L, "print(x, ")
+  expect_identical(got, utils_args("c", 3L, "print", ""))
+  # print.default's and the notebook's own method's arguments.
+  expect_true(all(c("digits=", "gamma_ember=") %in% got))
+  expect_identical(arg_items(2L, "summary(x, d"), utils_args("d", 4L, "summary", "d"))
+
+  # A function the notebook redefines: its new arguments, not the old ones.
+  run_and_wait(h, "e", 5L, "my_fun <- function(alpha_x) 1")
+  expect_identical(arg_items(3L, "my_fun(al"), "alpha_x=")
+  run_and_wait(h, "f", 6L, "my_fun <- function(alto_y) 1")
+  expect_identical(arg_items(4L, "my_fun(al"), "alto_y=")
+
+  expect_identical(table_size("g", 7L), before)
 })
 
 test_that("completion restores a locked active binding's lock (mask_active_bindings())", {

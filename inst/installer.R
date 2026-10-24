@@ -108,21 +108,36 @@ main <- function(plan_path) {
   # and Windows, where renv never tests.
   Sys.setenv(RENV_INSTALL_TEST_LOAD = "FALSE")
   options(repos = repos)
-  restore <- function() tryCatch(withCallingHandlers(
-    renv::restore(lockfile = lockfile_tmp, library = plan$staging,
-                  project = project_dir, prompt = FALSE, clean = FALSE),
-    message = function(m) invokeRestart("muffleMessage")),
-    error = function(e) e)
+  # renv's own report goes to stdout, for the session's log, and to a file
+  # too, so the installer can read which downloads failed (#478).
+  restore_log <- tempfile("ember-restore-", fileext = ".log")
+  # Each restore names these repositories itself. Without them renv uses
+  # its `renv.config.repos.override` option first, which renv sets when it
+  # loads under R CMD check and its version isn't CRAN's current one: then
+  # it restores from CRAN and its own copy, and finds no lock package.
+  restore <- function() {
+    sink(restore_log, split = TRUE)
+    on.exit(sink())
+    tryCatch(withCallingHandlers(
+      renv::restore(lockfile = lockfile_tmp, library = plan$staging, repos = repos,
+                    project = project_dir, prompt = FALSE, clean = FALSE),
+      message = function(m) invokeRestart("muffleMessage")),
+      error = function(e) e)
+  }
   restored <- restore()
-  # renv installs what it downloaded without opening it first, so one
-  # download cut short fails the install (#450). An archive that can't be
-  # read is deleted and the install tried once more; what installed stays.
+  # One bad download fails the whole install, so the install is tried once
+  # more after one: renv installs what it downloaded without opening it
+  # first, so an archive cut short is deleted (#450), and a download that
+  # never started (a host lookup that failed, #478) is simply asked for
+  # again. What installed stays.
   if (inherits(restored, "error")) {
     missing <- setdiff(names(wanted), list.files(plan$staging))
     root <- Sys.getenv("RENV_PATHS_ROOT", file.path(plan$cache, "renv-root"))
     bad <- ember:::unreadable_downloads(missing, root)
-    if (length(bad) > 0) {
-      writeLines(sprintf("ember: %s couldn't be read (a download cut short); downloading it again", basename(bad)),
+    undownloaded <- ember:::renv_download_failures(readLines(restore_log, warn = FALSE))
+    if (length(bad) > 0 || length(undownloaded) > 0) {
+      writeLines(c(sprintf("ember: %s couldn't be read (a download cut short); downloading it again", basename(bad)),
+                   sprintf("ember: %s didn't download; trying again", undownloaded)),
                  con = stderr())
       flush(stderr())
       unlink(bad)
@@ -155,7 +170,7 @@ main <- function(plan_path) {
     renv::lockfile_write(lf, file = lockfile_tmp)
     again <- tryCatch(withCallingHandlers(
       renv::restore(lockfile = lockfile_tmp, library = plan$staging, packages = wrong,
-                    project = project_dir, prompt = FALSE, clean = FALSE),
+                    repos = repos, project = project_dir, prompt = FALSE, clean = FALSE),
       message = function(m) invokeRestart("muffleMessage")),
       error = function(e) e)
     if (inherits(again, "error")) {

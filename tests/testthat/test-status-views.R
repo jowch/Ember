@@ -252,11 +252,11 @@ test_that("ember_run_all runs only not-run cells; a fresh one keeps its last_run
   handle_message(server, ws, wire("update_notebook", notebook_id = id, updates = list()))
 
   handle_message(server, ws, wire("run_multiple_cells", notebook_id = id, cells = list(a)))
-  expect_true(wait_for(nb, timeout = 20))
+  settle(nb)
   a_started <- notebook_state(nb)$results[[a]]$started_at
 
   handle_message(server, ws, wire("ember_run_all", notebook_id = id))
-  expect_true(wait_for(nb, timeout = 20))
+  settle(nb)
 
   snap <- notebook_snapshot(nb)
   not_run <- Filter(function(c) identical(c$status, "not_run"), snap$cells)

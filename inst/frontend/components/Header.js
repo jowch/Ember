@@ -85,6 +85,7 @@ const r_status = ({ connected, key_refused, unreachable, notebook, n, i }) => {
  * key_refused?: boolean,
  * unreachable?: boolean,
  * code_differs: boolean,
+ * on_run_changed: () => void,
  * export_links: import("./ExportMenu.js").ExportLinks,
  * print_title: string,
  * on_open_move: () => void,
@@ -92,7 +93,7 @@ const r_status = ({ connected, key_refused, unreachable, notebook, n, i }) => {
  * on_interrupt: () => void,
  * }} props
  */
-export const Header = ({ notebook, connected, key_refused = false, unreachable = false, code_differs, export_links, print_title, on_open_move, on_run_all, on_interrupt }) => {
+export const Header = ({ notebook, connected, key_refused = false, unreachable = false, code_differs, export_links, print_title, on_open_move, on_run_all, on_run_changed, on_interrupt }) => {
     const [open_tab, set_open_tab] = useState(initial_panel_tab)
     const last_tab_ref = useRef(last_panel_tab())
 
@@ -137,6 +138,11 @@ export const Header = ({ notebook, connected, key_refused = false, unreachable =
             ${not_run > 0
                 ? html`<button class="ember-btn ember-fade-in" type="button" title=${t("t_ember_run_not_run_title", { count: not_run })} onClick=${on_run_all}>
                       ${t("t_ember_run_not_run", { count: not_run })}
+                  </button>`
+                : null}
+            ${code_differs
+                ? html`<button class="ember-btn ember-fade-in ember-run-changed" type="button" title=${t("t_save_all_changes_description")} onClick=${on_run_changed}>
+                      ${t("t_ember_run_changed")}
                   </button>`
                 : null}
             <button

@@ -157,6 +157,11 @@ const identifier_char_before_cursor = /[\p{L}\p{N}._]$/u
  * CodeMirror would never ask the source again. */
 const identifier_token = /^[\p{L}\p{N}._]*$/u
 
+/** How long CodeMirror waits after a keystroke before asking the
+ * completion sources (see autocompletion() below). Exported for the e2e
+ * tests, which wait for that timer to have run rather than a fixed time. */
+export const ACTIVATE_ON_TYPING_MS = 30
+
 /** Inside a `#` comment or a `#'` text line. The line test covers a
  * comment-only line before the parser has reached it. */
 const in_comment = (/** @type {autocomplete.CompletionContext} */ ctx) => {
@@ -361,7 +366,7 @@ export let pluto_autocomplete = ({ request_autocomplete, on_update_doc_query, re
             // few requests, and the list shows about 70 ms sooner (#288). A
             // reply cut off as too long has no `validFor`, so after one of
             // those each keystroke asks again.
-            activateOnTypingDelay: 30,
+            activateOnTypingDelay: ACTIVATE_ON_TYPING_MS,
             icons: false,
             override: [
                 global_variables_completion(request_unsubmitted_global_definitions, cell_id),

@@ -170,7 +170,12 @@ export async function cellProblems(page) {
     };
     const groups = new Map();
     for (const cell of document.querySelectorAll("pluto-cell")) {
-      const kind = cell.querySelector("pluto-input .cm-editor") ? "code" : "other";
+      // An empty code cell shows no "Not run yet" chip (Cell.js), so it
+      // is its own state, not a mismatch with the unrun cells around it.
+      // The text of the code, without the placeholder an empty editor shows.
+      const code = [...cell.querySelectorAll("pluto-input .cm-line")].map((l) =>
+        [...l.childNodes].filter((n) => !n.classList?.contains("cm-placeholder")).map((n) => n.textContent).join("")).join("\n");
+      const kind = !cell.querySelector("pluto-input .cm-editor") ? "other" : code.trim() === "" ? "empty code" : "code";
       const out = cell.querySelector("pluto-output")?.textContent.trim() || cell.querySelector("pluto-output img") ? "output" : "no-output";
       const key = [kind, out, ...STATE.filter((c) => cell.classList.contains(c))].join(" ");
       const has = {};

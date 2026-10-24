@@ -27,9 +27,7 @@ fuzz_steps <- function() {
 # entry's checks that its trace passes up to there. A known trace stops at
 # its failure, so its later steps aren't checked. Entries look like
 #   "lazy 30" = list(issue = 174, step = 5L, kind = "after running every cell, _ isn't fresh")
-fuzz_known <- list(
-  "conflicts autorun 366" = list(issue = 436, step = 14L, kind = "_ can run but shows a graph error"),
-  "conflicts lazy 366" = list(issue = 436, step = 14L, kind = "_ can run but shows a graph error"))
+fuzz_known <- list()
 
 known_seeds <- function(mode) {
   keys <- as.character(names(fuzz_known))
@@ -222,6 +220,28 @@ test_that("a hand run of an edited cell runs the ancestor that read its old code
     steps = list(list(ops = list(list(op = "set_code", cell = "C3", code = "v4 <- (14 + 1 * v3) %% 997")), run = "C3"),
                  list(ops = list(list(op = "set_code", cell = "C6", code = "v2[1] <- 85\n(86 + 1 * v3 + 2 * v4 + 3 * v5 + 4 * v6) %% 997")), run = NULL),
                  list(ops = list(list(op = "set_code", cell = "C2", code = "v3 <- (77 + 1 * v9) %% 997")), run = "all"))))
+})
+
+test_that("a queued cell runs after a cell that dropping a graph error's result left stale (#449)", {
+  # C4 is edited to define v1, which C1 defines. C7 goes first and drops
+  # C1's result, so C3 is stale: C6, queued too, must run after it.
+  expect_trace_passes(list(mode = "autorun",
+    cells = list(C1 = "v1 <- 86\nv2 <- (v1 * 3 + 86) %% 997", C3 = "v4 <- (26 + 1 * v2) %% 997",
+                 C4 = "v5 <- (24 + 1 * v2) %% 997", C6 = "(60 + 1 * v3 + 2 * v4 + 3 * v5 + 4 * v6) %% 997"),
+    steps = list(list(ops = list(list(op = "set_code", cell = "C3", code = "v7 <- (26 + 1 * v2) %% 997"),
+                                 list(op = "set_code", cell = "C6", code = "(60 + 1 * v3 + 2 * v7 + 3 * v5 + 4 * v6) %% 997")), run = "all"),
+                 list(ops = list(list(op = "insert", index = 2L, id = "C7", code = "v8 <- (80 + 1 * v1) %% 997\nv9 <- (v8 * 3 + 80) %% 997")), run = "C7"),
+                 list(ops = list(list(op = "set_code", cell = "C4", code = "v1 <- 32\nv6 <- 77\nv5 <- (24 + 1 * v2) %% 997")), run = "C4"))))
+  # A hand run of C6: C4, which hasn't run, goes first and drops C1's
+  # result, which C5's edit blocked, so C3 is stale.
+  for (mode in c("autorun", "lazy")) {
+    expect_trace_passes(list(mode = mode,
+      cells = list(C1 = "v1 <- 80\nv2 <- (v1 * 3 + 80) %% 997", C3 = "v4 <- (13 + 1 * v2) %% 997",
+                   C4 = "v5 <- (32 + 1 * v2) %% 997", C5 = "v6 <- (44 + 1 * v1) %% 997", C6 = "stop(\"fail 82\")"),
+      steps = list(list(ops = list(list(op = "set_code", cell = "C3", code = "v9 <- (67 + 1 * v2) %% 997")), run = "C3"),
+                   list(ops = list(list(op = "set_code", cell = "C5", code = "v1[1] <- 78\nv6 <- (67 + 1 * v1) %% 997")), run = NULL),
+                   list(ops = list(list(op = "set_code", cell = "C6", code = "(71 + 1 * v3 + 2 * v9 + 3 * v5 + 4 * v6) %% 997")), run = "C6"))))
+  }
 })
 
 test_that("a cell reading a name it assigns whole reads the other definer's, so that edge can close a cycle (#436)", {

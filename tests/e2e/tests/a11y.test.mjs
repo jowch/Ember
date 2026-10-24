@@ -50,7 +50,7 @@ async function recordAnnouncements(page) {
 
 /** The `n`th announcement since recordAnnouncements(), once it is made. */
 const announcement = (page, n) =>
-  page.waitForFunction((n) => window.ember_announcements[n] ?? false, n, { timeout: 30000 }).then((h) => h.jsonValue());
+  page.waitForFunction((n) => window.ember_announcements[n] ?? false, n).then((h) => h.jsonValue());
 
 test("names: every visible control has a name, and an icon's name is its tooltip (160)", async (t) => {
   const notebook = tempNotebook("basic.R");
@@ -62,18 +62,18 @@ test("names: every visible control has a name, and an icon's name is its tooltip
   await openNotebook(page, server.origin, server.secret, notebook);
 
   await page.getByRole("button", { name: "More", exact: true }).click();
-  await page.waitForSelector(".ember-menu [role=menuitem]", { timeout: 5000 });
+  await page.waitForSelector(".ember-menu [role=menuitem]");
   assert.deepEqual(await unnamed(page, "body"), []);
 
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await page.waitForSelector("dialog.psettings[open]", { timeout: 5000 });
+  await page.waitForSelector("dialog.psettings[open]");
   assert.deepEqual(await unnamed(page, "dialog.psettings[open]"), []);
   await page.getByRole("button", { name: "Done", exact: true }).click();
-  await page.locator("dialog.psettings").waitFor({ state: "detached", timeout: 5000 });
+  await page.locator("dialog.psettings").waitFor({ state: "detached" });
 
   await page.getByRole("button", { name: "More", exact: true }).click();
   await page.getByRole("menuitem", { name: "Keyboard shortcuts", exact: true }).click();
-  await page.waitForSelector("dialog.ember-shortcuts[open]", { timeout: 5000 });
+  await page.waitForSelector("dialog.ember-shortcuts[open]");
   assert.deepEqual(await unnamed(page, "dialog.ember-shortcuts[open]"), []);
   assertNoProblems(page);
 });
@@ -142,7 +142,7 @@ test("a run started while another is going is announced, even when its cells sho
   await recordAnnouncements(page);
 
   await runCell(page, "LOOP");
-  await page.waitForFunction(() => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"), null, { timeout: 30000 });
+  await page.waitForFunction(() => document.querySelector('pluto-cell[id="LOOP"]')?.classList.contains("running"));
   await setCellCode(page, "ERR", 'fit <- stop("bad")');
   held = [];
   await page.keyboard.press("Shift+Enter");
@@ -166,18 +166,18 @@ test("reduced motion: the running rail is still and the menu doesn't move (170)"
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await openNotebook(page, server.origin, server.secret, notebook);
   await runCell(page, "LOOP");
-  await page.waitForSelector(`${cellSelector("LOOP")}.running`, { timeout: 30000 });
+  await page.waitForSelector(`${cellSelector("LOOP")}.running`);
   const rail = () => page.locator(`${cellSelector("LOOP")} > pluto-trafficlight`).evaluate((el) => getComputedStyle(el).animationName);
   // The running look is held back 250 ms after the cell starts (useSettled).
-  const deadline = Date.now() + 5000;
-  while ((await rail()) !== "ember-rail-pulse" && Date.now() < deadline) await page.waitForTimeout(50);
+  await page.waitForFunction((sel) => getComputedStyle(document.querySelector(sel)).animationName === "ember-rail-pulse",
+    `${cellSelector("LOOP")} > pluto-trafficlight`);
   assert.equal(await rail(), "ember-rail-pulse", "the rail pulses without the preference");
 
   await page.emulateMedia({ reducedMotion: "reduce" });
   assert.equal(await rail(), "none");
 
   await page.getByRole("button", { name: "More", exact: true }).click();
-  await page.waitForSelector(".ember-menu [role=menuitem]", { timeout: 5000 });
+  await page.waitForSelector(".ember-menu [role=menuitem]");
   const motion = await page.evaluate(() =>
     [document.querySelector(".ember-menu"), ...document.querySelectorAll(".ember-menu *")]
       .map((el) => getComputedStyle(el))
@@ -209,7 +209,7 @@ async function axeFindings(page, label) {
 /** Leave safe preview, which runs the notebook, and wait for the run to end. */
 async function runAll(page) {
   await page.locator("#ember-safe-preview button").click();
-  await page.waitForFunction(() => window.editor_state.notebook.cell_results.B?.output?.last_run_timestamp > 0, null, { timeout: 30000 });
+  await page.waitForFunction(() => window.editor_state.notebook.cell_results.B?.output?.last_run_timestamp > 0);
   await waitIdle(page);
 }
 
@@ -233,14 +233,14 @@ for (const scheme of ["light", "dark"]) {
 
     await page.getByRole("button", { name: "More", exact: true }).click();
     await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-    await page.waitForSelector("dialog.psettings[open]", { timeout: 5000 });
+    await page.waitForSelector("dialog.psettings[open]");
     findings.push(...(await axeFindings(page, "Settings")));
     await page.getByRole("button", { name: "Done", exact: true }).click();
-    await page.locator("dialog.psettings").waitFor({ state: "detached", timeout: 5000 });
+    await page.locator("dialog.psettings").waitFor({ state: "detached" });
 
     await page.getByRole("button", { name: "More", exact: true }).click();
     await page.getByRole("menuitem", { name: "Keyboard shortcuts", exact: true }).click();
-    await page.waitForSelector("dialog.ember-shortcuts[open]", { timeout: 5000 });
+    await page.waitForSelector("dialog.ember-shortcuts[open]");
     findings.push(...(await axeFindings(page, "shortcuts")));
 
     await openNotebook(page, server.origin, server.secret, cells);
@@ -250,11 +250,11 @@ for (const scheme of ["light", "dark"]) {
     // One of each kind of output, a plot among them (#294).
     await openNotebook(page, server.origin, server.secret, sweep);
     await runAll(page);
-    await page.waitForSelector(`${cellSelector("PLT")} pluto-output img`, { timeout: 30000 });
+    await page.waitForSelector(`${cellSelector("PLT")} pluto-output img`);
     findings.push(...(await axeFindings(page, "ui-sweep.R")));
 
     await page.goto(server.url);
-    await page.waitForSelector(".ember-start-row", { timeout: 10000 });
+    await page.waitForSelector(".ember-start-row");
     findings.push(...(await axeFindings(page, "start page")));
 
     assert.deepEqual(findings, []);
@@ -274,7 +274,7 @@ test("plots: alt text from #| fig-alt or fig-cap, else \"Plot\" (#294)", async (
   await openNotebook(page, server.origin, server.secret, notebook);
   const img = `${cellSelector("PLT")} pluto-output img`;
   const altBecomes = (alt) => page.waitForFunction(([sel, alt]) => document.querySelector(sel)?.getAttribute("alt") === alt,
-    [img, alt], { timeout: 30000 });
+    [img, alt]);
 
   await runCell(page, "PLT");
   await altBecomes("Plot");

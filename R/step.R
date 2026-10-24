@@ -328,9 +328,11 @@ schedule <- function(state) {
   state <- dg$state
   # Dropping a result marks that cell's dependents stale. If `id` reads one
   # of them, it runs after it, with every ancestor between them, as when a
-  # cell is run by hand (#176), not with its old value (#326).
+  # cell is run by hand (#176), not with its old value (#326). So does any
+  # other queued cell that reads one: it is dispatched later, when nothing
+  # is left to drop and this check doesn't run again (#449).
   if (length(dg$dropped) > 0) {
-    ups <- upstream_of_set(state$graph, id)
+    ups <- upstream_of_set(state$graph, union(id, state$pending))
     stale <- Filter(function(a) isTRUE(state$results[[a]]$stale) && can_run(state, a), ups)
     if (length(stale) > 0) {
       between <- reached_from(state$graph, stale, setdiff(ups, stale))
@@ -909,7 +911,7 @@ is_fresh <- function(state, id) {
 #' keep the graph from before an edit, because what matters is what the
 #' worker's globals came from, which `results[[id]]$defined` records
 #' directly.
-invalidate_dependents <- function(state, id, names, queue = TRUE,
+invalidate_dependents <- function(state, id, names, queue = TRUE, waiting = queue,
                                   was_setting = isTRUE(state$results[[id]]$setting)) {
   edited <- edited_cells(state)
   g <- run_graph(state, edited)
@@ -930,7 +932,7 @@ invalidate_dependents <- function(state, id, names, queue = TRUE,
     if (!is.na(pos)) dependents <- union(dependents, state$graph$order[-seq_len(pos)])
   }
   if (length(names) > 0) dependents <- union(dependents, readers_of(state, id, names, edited, walk, known = below))
-  invalidate_cells(state, id, setdiff(dependents, id), queue = queue, g = g)
+  invalidate_cells(state, id, setdiff(dependents, id), queue = queue, waiting = waiting, g = g)
 }
 
 #' The cells other than `id` that read any of `names`, and everything
@@ -956,8 +958,11 @@ readers_of <- function(state, id, names, edited = edited_cells(state),
 
 #' Mark `dependents` (of `id`) stale and, in autorun when `queue`, queue
 #' them: `invalidate_dependents()`'s rule, for a set of cells already
-#' worked out.
-invalidate_cells <- function(state, id, dependents, queue = TRUE, g = run_graph(state)) {
+#' worked out. `waiting` (`queue` unless given) queues the stale ancestors
+#' of dependents already pending (#453): a stop passes `queue = FALSE`,
+#' `waiting = TRUE`, since what is pending then is what the user asked
+#' for after it (#486).
+invalidate_cells <- function(state, id, dependents, queue = TRUE, waiting = queue, g = run_graph(state)) {
   autorun <- identical(state$file$header$on_cell_change, "autorun")
   # Whole vectors at a time: a chain's rerun passes most of the notebook
   # here for every cell, and a lookup by name scans the names (#316).
@@ -973,11 +978,12 @@ invalidate_cells <- function(state, id, dependents, queue = TRUE, g = run_graph(
     ids[vapply(state$cells[ids], cell_runs, logical(1)) & !(ids %in% names(state$graph$off))]
   } else character()
   if (length(queued)) state$pending <- union(state$pending, queued)
-  # A cell already pending (a run asked for by hand, in lazy mode) that
-  # reads what this just made stale needs it rerun first, as when the run
-  # was asked for (#453). An edit never runs anything, so not for `queue = FALSE`.
-  waiting <- if (queue) intersect(state$pending, dependents) else character()
-  queue_stale_ancestors(state, union(queued, waiting), id, g)
+  # A cell already pending (a run asked for by hand, in lazy mode or
+  # after a stop) that reads what this just made stale needs it rerun
+  # first, as when the run was asked for (#453). An edit never runs
+  # anything, so not for an edit's `queue = FALSE`.
+  readers <- if (waiting) intersect(state$pending, dependents) else character()
+  queue_stale_ancestors(state, union(queued, readers), id, g)
 }
 
 #' Queue the stale ancestors of `queued`, cells autorun has just queued.
@@ -1682,7 +1688,16 @@ reduce_files_read <- function(state, event) {
       a <- state$graph$analyses[[id]]
       lit <- if (!is.null(a$sourced) && nrow(a$sourced) > 0) a$sourced$path else character()
       comp <- state$computed_sources[[id]] %||% character()
-      if (length(intersect(c(lit, comp), changed_paths)) == 0) next
+      hit <- intersect(c(lit, comp), changed_paths)
+      if (length(hit) == 0) next
+      # The running cell's result, when it arrives, is built from what its
+      # `source()` read: stale if that was the old text, and autorun runs
+      # it again, first run or not (#485).
+      if (identical(state$worker$running$cell, id) &&
+          any(vapply(hit, function(p) read_old_source(state$worker$running$sources, p, event$files[[p]]$text), logical(1)))) {
+        state$worker$running$invalidated <- TRUE
+        if (autorun && isTRUE(state$allowed) && can_run(state, id)) state$pending <- union(state$pending, id)
+      }
       r <- state$results[[id]]
       if (is.null(r)) next
       r$stale <- TRUE
@@ -1699,6 +1714,27 @@ reduce_files_read <- function(state, event) {
   list(state = state, effects = list(), reply = NULL)
 }
 
+#' Whether a run's `source()` read a version of `path` other than `text`,
+#' its contents now. `sources` is what the run's `wk_source` requests
+#' carried: `list(path, text)` each, the path absolute and normalized.
+#' `path` is as the notebook names it, usually relative to its folder, and
+#' is matched by its tail. An absolute path, or one through a symlink, can
+#' read differently once normalized (/tmp is /private/tmp on macOS, `c:/`
+#' is `C:\`), and `..` climbs out of the tail: then the file name
+#' decides. A file the run hasn't sourced yet is read new. The worker's
+#' text is `readLines()` joined by newlines and the shell's is the raw
+#' file, so both are compared without line endings or a final newline.
+read_old_source <- function(sources, path, text) {
+  if (length(sources) == 0 || length(text) != 1 || is.na(text)) return(FALSE)
+  slash <- function(p) gsub("\\\\", "/", p)
+  tail <- sub("^(\\./)+", "", slash(path))
+  read <- Filter(function(s) endsWith(slash(s$path), paste0("/", tail)), sources)
+  if (length(read) == 0) read <- Filter(function(s) identical(basename(slash(s$path)), basename(tail)), sources)
+  if (length(read) == 0) return(FALSE)
+  flat <- function(t) sub("\n+$", "", gsub("\r\n?", "\n", t))
+  !any(vapply(read, function(s) identical(flat(s$text), flat(text)), logical(1)))
+}
+
 #' Data files that cells read by a literal path changed (#276): the shell's
 #' watcher saw new contents. `event$files` maps each path to its new
 #' signature (shell.R's `data_signature()`).
@@ -1709,9 +1745,11 @@ reduce_files_read <- function(state, event) {
 #' when the result arrived). So a cell that writes the file it reads
 #' doesn't wake itself, and a reader that ran after the writer isn't run
 #' twice; comparing signatures rather than times doesn't depend on how
-#' fine the file system's clock is. A cell that is running or queued is
-#' left alone: a queued one reads the new file, and a running one's result
-#' takes the version there when it arrives (`reduce_wk_done()`).
+#' fine the file system's clock is. A running cell is left alone: its
+#' result takes the version there when it arrives (`reduce_wk_done()`). A
+#' queued one reads the new file when it runs, but is marked stale with
+#' its dependents now all the same, queueing nothing: a stop empties the
+#' queue, and its old result would then show as current (#472).
 reduce_data_changed <- function(state, event) {
   autorun <- identical(state$file$header$on_cell_change, "autorun")
   running <- state$worker$running$cell
@@ -1719,7 +1757,8 @@ reduce_data_changed <- function(state, event) {
   marked <- FALSE
   for (id in state$graph$ids) {
     r <- state$results[[id]]
-    if (is.null(r) || identical(running, id) || id %in% state$pending) next
+    if (is.null(r) || identical(running, id)) next
+    queued <- id %in% state$pending
     # What its code reads now, and what its result's run read: a cell
     # edited to stop reading a file still shows a result from it (#439).
     seen <- r$data_seen %||% list()
@@ -1728,6 +1767,10 @@ reduce_data_changed <- function(state, event) {
     if (all(vapply(hit, function(p) identical(seen[[p]], event$files[[p]]), logical(1)))) next
     r$stale <- TRUE
     state$results[[id]] <- r
+    if (queued) {
+      state <- invalidate_dependents(state, id, character(), queue = FALSE)
+      next
+    }
     if (autorun && isTRUE(state$allowed) && can_run(state, id)) state$pending <- union(state$pending, id)
     state <- invalidate_dependents(state, id, character())
     marked <- TRUE
@@ -1880,6 +1923,9 @@ reduce_wk_source <- function(state, event) {
     return(list(state = state, effects = list(), reply = NULL))
   }
   id <- w$running$cell
+  # What this run read, so a change seen while it runs can tell whether
+  # its result was built from the old file (`reduce_files_read()`, #485).
+  state$worker$running$sources <- c(w$running$sources, list(list(path = event$path, text = event$text)))
   a <- read_cell(event$text)
   defs <- definitions_of(a)
 
@@ -2199,13 +2245,17 @@ reduce_wk_done <- function(state, event) {
   # such a change right after one that did leaves the result as it is, so
   # it doesn't loop.
   result$data_seen <- report$data_seen %||% list()
+  # A stop asked for during this run (reduce_interrupt()) that the run
+  # finished before: nothing runs on its account, as for an interrupted
+  # run (#486).
+  stopped <- !is.null(w$interrupt)
   outside <- as.character(report$data_changed %||% character())
   if (length(outside) > 0) {
     result$data_changed <- outside
     prev <- state$results[[id]]
     if (length(prev$data_changed %||% character()) == 0) {
       result$stale <- TRUE
-      if (identical(state$file$header$on_cell_change, "autorun") && isTRUE(state$allowed) && can_run(state, id)) {
+      if (!stopped && identical(state$file$header$on_cell_change, "autorun") && isTRUE(state$allowed) && can_run(state, id)) {
         state$pending <- union(state$pending, id)
       }
     }
@@ -2226,14 +2276,19 @@ reduce_wk_done <- function(state, event) {
   if (!identical(status, "ok")) {
     effects <- list(fx_send(state$worker$gen, list(type = "drop_globals", cell = id)))
   }
-  if (identical(status, "interrupted")) {
+  if (identical(status, "interrupted") || stopped) {
     # An interrupt means "stop": pending's already been emptied by
     # reduce_interrupt(), so `queue = FALSE` -- nothing is queued even in
-    # autorun. Readers of names the graph hasn't learned yet (only
+    # autorun. That holds too for a run that finished "ok" or "error"
+    # before the stop reached it: in plain R, Esc drops the lines still
+    # waiting even when the current one has just finished (#486).
+    # Readers of names the graph hasn't learned yet (only
     # `report$created` knows them) still need marking stale, the same as
     # the "ok"/"error" branch below; that's what invalidate_dependents()
     # (not drop_downstream(), which only walks graph edges) is for.
-    state <- invalidate_dependents(state, id, report$created %||% character(), queue = FALSE)
+    # A run asked for after the stop is pending, though: its stale
+    # ancestors still run first (#453).
+    state <- invalidate_dependents(state, id, report$created %||% character(), queue = FALSE, waiting = TRUE)
   } else {
     # "ok" and "error" both invalidate the same way: a failed cell's
     # dependents run on their own and fail if they need what it would have

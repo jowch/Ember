@@ -132,6 +132,7 @@ touched <- list()       # every list(kind, name) any cell has changed this sessi
 search_added <- character()  # every attach() entry any cell has added this session
 running <- NULL        # list(cell, token, console) during a run (for the source
                        # trace and prompts)
+sending <- FALSE       # TRUE while send() writes a frame (console_tick())
 deferred <- list()     # messages read while waiting for a source_reply or input_reply
 prompt_seq <- 0L       # the id of the last `input` request (ask_for_input())
 interrupt_drain <- NULL # Windows: the DLL routine that drops a late interrupt (listen_for_interrupts())
@@ -175,6 +176,38 @@ loaded_namespace_versions <- function() {
   stats::setNames(vapply(ns, function(n) as.character(getNamespaceVersion(n)), character(1)), ns)
 }
 
+#' The package's DLL, loaded by path (`EMBER_DLL`), since the worker
+#' never loads the package; `NULL` when there is none or it doesn't load.
+load_ember_dll <- function() {
+  path <- Sys.getenv("EMBER_DLL")
+  Sys.unsetenv("EMBER_DLL")
+  if (!nzchar(path)) return(NULL)
+  tryCatch(dyn.load(path), error = function(e) NULL)
+}
+
+#' Show what a running cell prints while it runs (#470): R calls
+#' `console_tick()` from its event processing, a few times a second
+#' (src/console.c; on Windows through a timer, #482). Without the DLL,
+#' printed text shows at the next message, warning or prompt, or at the
+#' run's end.
+stream_console <- function(dll) {
+  if (is.null(dll)) return(invisible(FALSE))
+  invisible(tryCatch(isTRUE(.Call(getNativeSymbolInfo("C_console_poll", dll), console_tick, 0.25)),
+                     error = function(e) FALSE))
+}
+
+#' Send the whole lines a running cell has printed since the last ones
+#' sent. Skipped while a frame is being sent or the console is reading
+#' its own file (a message or warning arriving), which this could
+#' otherwise interleave with, and silent: whatever goes wrong here must
+#' not reach the cell or its output.
+console_tick <- function() {
+  console <- running$console
+  if (sending || is.null(console) || isTRUE(console$busy)) return(invisible())
+  tryCatch(suppressWarnings(console$flush_lines()), error = function(e) NULL)
+  invisible()
+}
+
 #' On Windows, start listening for the server's interrupts before the
 #' hello, from the package's DLL (src/interrupt.c, #48): loaded by path
 #' (`EMBER_DLL`), since the worker never loads the package. If that fails,
@@ -183,12 +216,9 @@ loaded_namespace_versions <- function() {
 #' alive past this process (src/children.c, #208). Elsewhere the server
 #' sends SIGINT, those children are in sessions of their own, and this
 #' does nothing.
-listen_for_interrupts <- function() {
-  path <- Sys.getenv("EMBER_DLL")
-  Sys.unsetenv("EMBER_DLL")
-  if (.Platform$OS.type != "windows" || !nzchar(path)) return(invisible(FALSE))
+listen_for_interrupts <- function(dll) {
+  if (.Platform$OS.type != "windows" || is.null(dll)) return(invisible(FALSE))
   invisible(tryCatch({
-    dll <- dyn.load(path)
     interrupt_drain <<- getNativeSymbolInfo("C_interrupt_drain", dll)
     # So a cell's processx and callr children outlive this process, as
     # they do on Unix (src/children.c, #208).
@@ -248,7 +278,9 @@ drop_processx_marker <- function() {
 
 main <- function() {
   drop_processx_marker()
-  listening <- listen_for_interrupts()
+  dll <- load_ember_dll()
+  listening <- listen_for_interrupts(dll)
+  stream_console(dll)
   port <- as.integer(commandArgs(trailingOnly = TRUE)[1])
   # No-delay: see write_frame() in R/shell.R.
   con <<- socketConnection("127.0.0.1", port, blocking = TRUE, open = "r+b",
@@ -422,7 +454,8 @@ send <- function(msg) {
   # stay interruptible.
   force(msg)
   trace_line("send", msg$type)
-  on.exit(trace_line("sent", msg$type))
+  sending <<- TRUE
+  on.exit({ sending <<- FALSE; trace_line("sent", msg$type) })
   uninterrupted({
     payload <- serialize(msg, NULL)
     # One write: see write_frame() in R/shell.R.
@@ -2984,7 +3017,12 @@ console_collector <- function(cell, token) {
     send(list(type = "console", cell = cell, token = token, item = item))
   }
 
-  flush_stdout <- function() {
+  # `lines`: only up to the last newline, for console_tick(), which
+  # reads while the cell is still printing: the rest of a line, or a
+  # progress bar redrawn over it with "\r", comes in a later read, and a
+  # bar split across two items would show both of its drawings.
+  flush_stdout <- function(lines = FALSE) {
+    if (isTRUE(self$closed)) return(invisible())
     flush(self$out)
     size <- file.info(self$path)$size
     if (is.na(size) || size <= self$read_pos) return(invisible())
@@ -2992,16 +3030,31 @@ console_collector <- function(cell, token) {
     on.exit(close(con))
     seek(con, self$read_pos)
     raw_bytes <- readBin(con, "raw", n = size - self$read_pos)
-    self$read_pos <- size
+    if (lines) {
+      nl <- which(raw_bytes == as.raw(10L))
+      if (length(nl) == 0) return(invisible())
+      raw_bytes <- raw_bytes[seq_len(nl[length(nl)])]
+    }
+    self$read_pos <- self$read_pos + length(raw_bytes)
     # The sink file is in text mode, which writes "\r\n" on Windows.
     txt <- gsub("\r\n", "\n", rawToChar(raw_bytes), fixed = TRUE)
     txt <- apply_carriage_returns(txt)
     if (nzchar(txt)) add_item("stdout", txt)
   }
 
-  self$flush <- flush_stdout
-  self$message <- function(m) { flush_stdout(); add_item("message", conditionMessage(m)) }
-  self$warning <- function(w) {
+  # `busy` while a method below reads the file or adds an item, so
+  # console_tick() doesn't read the same bytes again or send an item in
+  # the middle of another.
+  self$busy <- FALSE
+  guarded <- function(f) function(...) {
+    self$busy <- TRUE
+    on.exit(self$busy <- FALSE)
+    f(...)
+  }
+  self$flush <- guarded(function() flush_stdout())
+  self$flush_lines <- guarded(function() flush_stdout(lines = TRUE))
+  self$message <- guarded(function(m) { flush_stdout(); add_item("message", conditionMessage(m)) })
+  self$warning <- guarded(function(w) {
     flush_stdout()
     call <- conditionCall(w)
     call_text <- if (is.null(call)) NULL else deparse_one_line(call)
@@ -3012,13 +3065,13 @@ console_collector <- function(cell, token) {
     # eval() calls are checked.
     if (is_loop_eval_text(call_text)) call_text <- NULL
     add_item("warning", conditionMessage(w), call = call_text)
-  }
-  self$print <- function(v) {
+  })
+  self$print <- guarded(function(v) {
     flush_stdout()
     txt <- paste(capture_lines(eval_in_notebook(quote(print(v)), v)), collapse = "\n")
     add_item("stdout", txt)
-  }
-  self$finish <- function() {
+  })
+  self$finish <- guarded(function() {
     flush_stdout()
     # The cell's own code may have called sink() (removing our diversion,
     # or pushing and popping its own on top of it): pop back down to
@@ -3027,7 +3080,8 @@ console_collector <- function(cell, token) {
     while (sink.number() > self$base_sink_level) sink(type = "output")
     close(self$out)
     unlink(self$path)
-  }
+    self$closed <- TRUE
+  })
   self
 }
 
@@ -3886,6 +3940,76 @@ mask_active_bindings <- function(envir) {
   }
 }
 
+#' The argument names of every function called `x`, as utils' `argNames()`
+#' finds them through `getAnywhere()`: on the search path, as a registered
+#' S3 method, and in every loaded namespace, each distinct function once.
+#' `getAnywhere()` looks on the search path with `find()`, which lists
+#' every attached environment with `ls()` for each name, and inside a call
+#' utils asks this for the function and each of its S3 methods: 619 names
+#' for `print(` with a Bioconductor stack attached, 8 s (#288). Here each
+#' environment is asked with `exists()`, the environments are listed once
+#' per completion (`envs`), and `base::` is explicit because packages such
+#' as BiocGenerics make `get` an S4 generic. Same names, same order.
+arg_names_anywhere <- function(x, envs) {
+  objs <- list()
+  for (env in envs$search) {
+    if (base::exists(x, envir = env, inherits = FALSE)) objs <- c(objs, list(base::get(x, envir = env, inherits = FALSE)))
+  }
+  if (grepl(".", x, fixed = TRUE)) {
+    parts <- strsplit(x, ".", fixed = TRUE)[[1L]]
+    np <- length(parts)
+    for (i in 2:np) {
+      gen <- paste(parts[1L:(i - 1)], collapse = ".")
+      cl <- paste(parts[i:np], collapse = ".")
+      if (gen == "" || cl == "") next
+      f <- utils::getS3method(gen, cl, TRUE, envir = envs$utils)
+      if (!is.null(f) && !is.null(environment(f))) objs <- c(objs, list(f))
+    }
+  }
+  for (ns in envs$namespaces) {
+    if (base::exists(x, envir = ns, inherits = FALSE)) objs <- c(objs, list(base::get(x, envir = ns, inherits = FALSE)))
+  }
+  n <- length(objs)
+  dups <- logical(n)
+  if (n > 1L) for (i in 2L:n) for (j in 1L:(i - 1L)) if (identical(objs[[i]], objs[[j]], ignore.environment = TRUE)) {
+    dups[i] <- TRUE
+    break
+  }
+  out <- unlist(lapply(objs[!dups], function(f) if (is.function(f)) names(formals(args(f)))))
+  if (is.null(out)) character() else out
+}
+
+#' Before `.completeToken()`: the names whose arguments it will look up
+#' for the call the cursor is in (the function, and its S3 methods when
+#' `rc.settings(S3 = TRUE)`, as `functionArgs()` picks them), put into
+#' `utils:::.FunArgEnv`, the table `argNames()` reads first. Each name is
+#' recorded in `added$names` before it goes in, so `complete_line()` takes
+#' out every one, even after an error or an interrupt part-way, and the
+#' table never answers for a function the notebook has since redefined.
+#' `exists()`, `methods()` and `getS3method()` look from utils' namespace,
+#' where `functionArgs()` and `getAnywhere()` run, not from the worker's
+#' own environment.
+fill_arg_names <- function(added) {
+  env <- utils:::.CompletionEnv
+  if (utils:::isInsideQuotes() || !isTRUE(env$settings[["args"]]) || !isTRUE(env$settings[["argdb"]])) return(invisible())
+  fun <- utils:::inFunction(env[["linebuffer"]], env[["start"]])
+  if (length(fun) < 1L || any(fun == "")) return(invisible())
+  utils_ns <- asNamespace("utils")
+  if (isTRUE(env$settings[["S3"]]) && exists(fun, envir = utils_ns, mode = "function")) {
+    fun <- c(fun, tryCatch(eval(call("methods", fun), utils_ns), warning = function(w) NULL, error = function(e) NULL))
+  }
+  db <- utils:::.FunArgEnv
+  todo <- setdiff(unique(fun), ls(db, all.names = TRUE))
+  if (length(todo) == 0) return(invisible())
+  envs <- list(search = lapply(seq_along(search()), as.environment),
+               namespaces = lapply(loadedNamespaces(), asNamespace), utils = utils_ns)
+  for (name in todo) {
+    added$names <- c(added$names, name)
+    assign(name, arg_names_anywhere(name, envs), envir = db)
+  }
+  invisible()
+}
+
 #' utils' own line completion, as IRkernel does: `.assignLinebuffer()` and
 #' `.assignEnd()` set the line and cursor the internal completer reads,
 #' `.guessTokenFromLine()` finds the token being typed, `.completeToken()`
@@ -3907,6 +4031,10 @@ complete_line <- function(line, cursor) {
     utils:::.assignLinebuffer(line)
     utils:::.assignEnd(cursor)
     utils:::.guessTokenFromLine()
+    added <- new.env(parent = emptyenv())
+    added$names <- character()
+    on.exit(rm(list = intersect(added$names, ls(utils:::.FunArgEnv, all.names = TRUE)), envir = utils:::.FunArgEnv), add = TRUE)
+    tryCatch(fill_arg_names(added), error = function(e) NULL)
     utils:::.completeToken()
     comps <- utils:::.retrieveCompletions()
     token <- tryCatch(utils:::.CompletionEnv$token, error = function(e) NULL) %||% ""

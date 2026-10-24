@@ -255,11 +255,11 @@ test_that("[net] a real htmltools widget's dependency survives export (20)", {
   on.exit(close_notebook(nb), add = TRUE)
   allow_execution(nb)
 
-  res <- run_cells(nb, wait = TRUE, timeout = 120)
+  res <- run_settled(nb)
   # Not skip(): this test only runs at all with EMBER_TEST_NETWORK=1, which
   # CI now sets precisely so a real install-and-run regression is caught
   # rather than silently skipped.
-  if (!res$accepted || res$timed_out) fail("worker did not finish installing/running in time")
+  if (!res$accepted) fail("the run was refused")
   state <- notebook_state(nb)
   w <- state$results[["W"]]
   expect_identical(w$status, "ok")

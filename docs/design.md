@@ -393,7 +393,9 @@ like part of the cell:
   `library()` calls) as the cell's own, following `source()` calls inside it.
 - It watches the file. When the file changes, the cell and its dependents
   rerun or are marked stale, following the notebook's autorun or lazy
-  setting, like marimo's module reloader.
+  setting, like marimo's module reloader. A change while the cell runs,
+  after its `source()` read the file, counts too: the result built from the
+  old text arrives stale, and autorun runs the cell again (#485).
 - A computed path (`source(file.path(dir, "helpers.R"))`, a loop over
   `list.files()`) is learned when the cell runs. The worker traces
   `base::source` and `sys.source`, which also catches `base::source()` and
@@ -427,7 +429,9 @@ jsonlite. A literal path in a file the cell sources counts too.
   counts, so a cell that writes the file it reads doesn't wake itself, and
   a reader that ran after the writer isn't run twice. Comparing versions,
   not times, holds however coarse the file system's clock is. A reader
-  that is queued is left alone: its run reads the new file.
+  that is queued is marked stale with its dependents, and nothing more is
+  queued: its run reads the new file, and if a stop empties the queue
+  first, its old result doesn't look current (#472).
 - The engine checks the files again as each run's result arrives, before
   the notebook can look finished. So running a writer and waiting for the
   notebook (`run_cells(wait = TRUE)`, an agent's execute-and-wait) returns
@@ -726,7 +730,14 @@ The mark is cleared before each top-level expression, so one left by a
 blank a later cell that shows the table, as it would at the console.
 Earlier visible values, `print()`,
 `cat()`, messages and warnings go to a console area below the output, in
-order. A plot drawn with no visible value after it is the output. R
+order. They show while the cell runs, as in an R console: messages and
+warnings at once, and printed text a whole line at a time, a few times a
+second (#470). The worker reads what the cell printed from R's event
+processing, which R reaches wherever it checks for an interrupt; a cell
+inside C code that doesn't check shows its text when that code returns.
+On Windows, where R exports no such hook, a timer that R's event
+processing dispatches does the same (#482). A
+plot drawn with no visible value after it is the output. R
 Markdown instead shows every visible value inline.
 
 **Prompts** (#186). A cell runs as R code does in an R console:
@@ -916,7 +927,12 @@ settings cells' changes, so a deleted setting doesn't linger.
 **Editor services** run in the worker with base R: completion through
 `utils`'s completion functions (as IRkernel does), help pages through
 `tools::Rd2HTML`, signatures through `args()`. These use internal `utils`
-functions, so they're tested on each R release.
+functions, so they're tested on each R release. Inside a call, utils looks
+up the arguments of the function and each of its S3 methods by listing
+every attached package per name, which takes seconds for `print(` with a
+large package stack. The worker finds the same names with `exists()` and
+puts them in utils' argument table for that one completion, so the items
+don't change (#288).
 
 ### Attached packages
 

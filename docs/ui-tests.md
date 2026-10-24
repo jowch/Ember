@@ -137,12 +137,44 @@ the same ones Endeavor relies on (`pluto-cell[id]`, `.running`, `.queued`,
 `.code_differs`, `pluto-output`, `jlerror`), and on the file on disk where
 it matters.
 
+Every wait is for a condition, never for a fixed time (`waitForTimeout`),
+and no wait has a time limit of its own: Playwright's default limit is
+off (`launchBrowser()`), no call passes `timeout`, no test sets one, and
+`startServer()` waits for the server's "listening" line as long as it
+takes. The only bound is run.mjs's `--test-timeout`, which under Node 22
+stops a whole test file. A wait that never ends still says what it was
+waiting for: `waits.mjs` lists every pending Playwright call and every
+wait labelled with `waitingFor(label, promise, state)` or `poll(label,
+check, state)` (a condition outside the page, such as the notebook's
+file), with where the test started it, in `test-results/waiting-<file>.txt`. run.mjs prints a
+list a stopped file leaves behind, with the end of each server's log and,
+except on Windows, what each page showed (its connection, its running
+and queued cells, its focus) and each labelled wait's `state()`. A test
+that ends while one of its waits is still pending prints the same list.
+
+`browser.mjs` has the conditions that are hard to see from the page:
+
+- `roundTrip()`: the server has handled everything the page sent before
+  it. A check that nothing more happened (no second run, nothing undone)
+  waits on this.
+- `layoutSettled()`: no CSS transition running and the layout the same in
+  two frames, after a resize, a scroll or a theme change.
+- `afterSettle()`: a passing state the page held back (`useSettled`) has
+  shown or been dropped. A product timer like it is waited for by setting
+  a timer for as long after it, with the length read from the page's own
+  module (`TEXT_CLICK_MS`, `ACTIVATE_ON_TYPING_MS`).
+- `connectionSettled()`: no connect try and no key check out, for tests
+  that move the page's clock (`page.clock`).
+- `codeSelector()`: a cell's live editor. A cell off screen shows a static
+  copy of its code (`.cm-ssr-fake`), which must not satisfy a wait or take
+  a click.
+
 37. Open: the page loads with every cell, safe preview banner shown, no
     console errors, R code highlighted (a `.cm-keyword` span on `function`).
 38. Run a cell: `[1] 55` appears; its ancestors ran first.
 39. Edit and Shift+Enter: new output; the file on disk has the new code.
-40. Interrupt: a `Sys.sleep(30)` cell loses `.running` within 2 s of
-    clicking stop.
+40. Interrupt: a cell busy in a 60 s loop, once it has said it is inside
+    the loop, loses `.running` after clicking stop and shows "Interrupted".
 41. Add a cell below, type, run; delete it; reload: the order and code
     survive the reload and match the file.
 42. Plot: a `plot(1:10)` cell shows an `<img>` with a blob URL.
@@ -184,6 +216,14 @@ checks, for looking at a change before and after
 `docs/ui-checklist.md`. `node tests/e2e/audit.mjs` walks the main journeys
 with screenshots and measurements for the periodic UI audit
 (`.claude/skills/ui-audit`).
+
+**Known failures**: `tests/e2e/known.mjs` lists failures that come from an
+open issue, each with the exact error it matches. A run whose only
+failures match an entry passes, and each one is printed as a warning that
+names its issue. Any other failure, even in the same test, still fails the
+run, and nothing is skipped. The PR that fixes the issue removes its
+entry. Today it holds only #412's `ERR_NO_BUFFER_SPACE` on Windows, when it
+hits while a notebook opens.
 
 **In CI**: a job `e2e` on ubuntu-latest and macos-latest:
 `r-lib/actions/setup-r` and `setup-r-dependencies`,

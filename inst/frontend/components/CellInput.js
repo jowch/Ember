@@ -438,6 +438,11 @@ export const CellInput = ({
 
         const show = () => {
             static_height_ref.current = node.querySelector(".cm-ssr-fake")?.getBoundingClientRect().height ?? null
+            // Between the static code going and the editor taking its height,
+            // a layout would see the cell without its code. At the end of the
+            // page that pulls the scroll up (#429), so the cell keeps its
+            // height until the editor is in place.
+            node.style.minHeight = `${node.getBoundingClientRect().height}px`
             set_show_static_fake(false)
             observer.disconnect()
             window.removeEventListener("beforeprint", show)
@@ -650,9 +655,9 @@ export const CellInput = ({
         // rendered yet (past its first viewport) too short. The static code
         // renders every line, so its height is the right one at this width.
         // The editor takes it as its height until the first measure, which
-        // ends every guess that's too tall, and then as its minimum until its
-        // last line has been rendered and measured, or its own height reaches
-        // it first, so nothing below moves (#379). An edit, a new width or
+        // ends every guess that's too tall, and then as its minimum until
+        // every line has been rendered and measured, or its own height reaches
+        // it first, so nothing below moves (#379, #429). An edit, a new width or
         // focus (a fold needs it) ends the minimum, since the static height
         // may no longer hold. CodeMirror doesn't measure an editor that is
         // out of view (scrolled past before its first measure), though its
@@ -672,11 +677,20 @@ export const CellInput = ({
                 return
             }
             height_held = false
-            view.dom.style.height = ""
-            // Every guess left is for a line not yet rendered.
-            if (view.contentHeight >= static_height - 0.5 || view.viewport.to === view.state.doc.length) return
+            if (view.contentHeight >= static_height - 0.5) {
+                view.dom.style.height = ""
+                return
+            }
+            // Short of the static code, so some line heights are still
+            // guesses, even with the last line in the viewport: the lines
+            // above the viewport are. The width is read and the floor set
+            // before the height goes, so no layout sees the editor at its
+            // guessed height. At the end of the page, one such layout pulled
+            // the scroll up for good, and the last cell, just scrolled into
+            // view, ended up below it and kept its static code (#429).
             height_floor = { height: static_height, width: view.dom.offsetWidth }
             view.dom.style.minHeight = `${static_height}px`
+            view.dom.style.height = ""
         }
         const newcm = (newcm_ref.current = new EditorView({
             state: make_state({
@@ -701,9 +715,14 @@ export const CellInput = ({
                         if (height_floor == null) return
                         if (update.docChanged || view.hasFocus || view.contentHeight >= height_floor.height - 0.5 || view.dom.offsetWidth !== height_floor.width) {
                             end_height_floor(view)
-                        } else if (view.viewport.to === view.state.doc.length && view.inView) {
-                            // The last line is rendered, and the next measure measures it.
-                            view.requestMeasure({ read: () => null, write: () => end_height_floor(view) })
+                        } else if (view.viewport.from === 0 && view.viewport.to === view.state.doc.length && view.inView) {
+                            // Every line is rendered, and the next measure measures them.
+                            // Lines out of the viewport are only guessed, so the floor
+                            // stays until the editor has been through all of them (#429).
+                            // An editor taller than its viewport never renders every line
+                            // at once, so its floor ends when its height reaches the static
+                            // code's, which relies on the two being equal (#375, #379).
+                            view.requestMeasure({ key: end_height_floor, read: () => null, write: () => end_height_floor(view) })
                         }
                     }),
                     highlightLinePlugin(),
@@ -864,6 +883,7 @@ export const CellInput = ({
         if (returning != null) mark_returned(newcm, returning.record_id)
         // EditorView appends; the run button and ⋯ must follow the code in Tab order.
         dom_node_ref.current.prepend(newcm.dom)
+        dom_node_ref.current.style.minHeight = ""
         if (static_height != null) {
             newcm.dom.style.height = `${static_height}px`
             newcm.requestMeasure({ key: end_height_hold, read: () => null, write: () => end_height_hold(newcm) })

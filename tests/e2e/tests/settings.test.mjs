@@ -6,13 +6,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, cellSelector } from "../browser.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, setCellCode, cellSelector, codeSelector } from "../browser.mjs";
 
 async function openSettings(page) {
   await page.getByRole("button", { name: "More", exact: true }).click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   const dialog = page.locator("dialog.psettings[open]");
-  await dialog.waitFor({ timeout: 5000 });
+  await dialog.waitFor();
   return dialog;
 }
 
@@ -22,14 +22,14 @@ async function pick(dialog, group, option) {
 
 async function closeSettings(page, dialog) {
   await dialog.getByRole("button", { name: "Done", exact: true }).click();
-  await page.locator("dialog.psettings").waitFor({ state: "detached", timeout: 5000 });
+  await page.locator("dialog.psettings").waitFor({ state: "detached" });
 }
 
 /** Type `f <- function() {` and Enter in cell A; returns the new line's text. */
 async function indentAfterBrace(page) {
   await setCellCode(page, "A", "f <- function() {");
   await page.keyboard.press("Enter");
-  return page.locator(`${cellSelector("A")} .cm-line`).nth(1).evaluate((el) => el.textContent);
+  return page.locator(codeSelector("A", ".cm-line")).nth(1).evaluate((el) => el.textContent);
 }
 
 test("settings: opens from ⋯, traps Tab, applies theme, indent and Tab key live (163)", async (t) => {
@@ -50,7 +50,7 @@ test("settings: opens from ⋯, traps Tab, applies theme, indent and Tab key liv
     });
   });
   let dialog = await openSettings(page);
-  await page.waitForFunction(() => document.activeElement?.closest("dialog.psettings") != null, null, { timeout: 2000 });
+  await page.waitForFunction(() => document.activeElement?.closest("dialog.psettings") != null);
   await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   assert.deepEqual(await page.evaluate(() => window.__dialog_focus), ["Done"], "the dialog puts focus on Done in one step");
 
@@ -78,7 +78,7 @@ test("settings: opens from ⋯, traps Tab, applies theme, indent and Tab key liv
 
   const before = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--main-bg-color").trim());
   await pick(dialog, "Theme", "Dark");
-  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark", null, { timeout: 2000 });
+  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "dark");
   const after = await page.evaluate(() => ({
     bg: getComputedStyle(document.documentElement).getPropertyValue("--main-bg-color").trim(),
     navigations: performance.getEntriesByType("navigation").length,
@@ -93,7 +93,7 @@ test("settings: opens from ⋯, traps Tab, applies theme, indent and Tab key liv
 
   dialog = await openSettings(page);
   await dialog.getByRole("button", { name: "Reset to defaults", exact: true }).click();
-  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "light", null, { timeout: 2000 });
+  await page.waitForFunction(() => document.documentElement.getAttribute("data-theme") === "light");
   assert.equal(await page.locator("dialog.psettings[open]").count(), 1, "Reset to defaults leaves Settings open");
   await closeSettings(page, dialog);
   assert.match(await indentAfterBrace(page), /^ {2}(?! )/);
@@ -102,7 +102,7 @@ test("settings: opens from ⋯, traps Tab, applies theme, indent and Tab key liv
   await pick(dialog, "Tab key in code", "Moves focus");
   await pick(dialog, "Theme", "Dark");
   await closeSettings(page, dialog);
-  await page.locator(`${cellSelector("A")} .cm-content`).click();
+  await page.locator(codeSelector("A")).click();
   await page.keyboard.press("Tab");
   assert.equal(await page.evaluate(() => document.activeElement?.closest(".cm-content") == null), true, "Tab moved focus out of the code");
 
@@ -110,7 +110,7 @@ test("settings: opens from ⋯, traps Tab, applies theme, indent and Tab key liv
   await setCellCode(page, "A", "x <- 1:10");
   await page.keyboard.press("Escape");
   await page.reload();
-  await page.waitForSelector("pluto-cell", { timeout: 30000 });
+  await page.waitForSelector("pluto-cell");
   assert.equal(await page.evaluate(() => document.documentElement.getAttribute("data-theme")), "dark");
 
   assertNoProblems(page);
