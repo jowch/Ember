@@ -26,6 +26,13 @@
 # list(act = "run", cell) (a cell id, "all", or "self" for the asking
 # cell), or list(act = "wrong"), an answer naming a question that isn't
 # waiting, which must be refused.
+#
+# With `inputs`, some cells bind an input (docs/inputs.md): a slider,
+# `v<n> <- emberui::input_slider(0L, 60L, k)`, or a list of a slider and a
+# number box, which its readers read as `sum(unlist(v<n>))`. A step can
+# give one a new value: list(op = "set_input", name, value, valid), where
+# `valid` says whether the input allows the value. The reference gives the
+# input the value Ember keeps for it.
 
 # Generating ---------------------------------------------------------------
 
@@ -43,11 +50,18 @@
 #' With `extras = TRUE`, cells write and read data files and define and call
 #' replacement functions (`fuzz_add()`), and about one step in four also
 #' rewrites a file from outside the notebook.
-fuzz_trace <- function(seed, mode, steps = 12, cells = 6, conflicts = FALSE, extras = FALSE, prompts = FALSE) {
+#'
+#' With `inputs = TRUE`, about a third of the cells bind an input, and half
+#' the steps also give one or two of them a new value, after the step's
+#' edits, so the value is checked against the input's code as it is then.
+#' One value in seven isn't one the input allows.
+fuzz_trace <- function(seed, mode, steps = 12, cells = 6, conflicts = FALSE, extras = FALSE, prompts = FALSE,
+                       inputs = FALSE) {
   with_seed(seed, {
     g <- fuzz_gen_new()
     g$extras <- extras
     g$prompts <- prompts
+    g$inputs <- inputs
     g <- fuzz_gen_shape(g, sample(c("chain", "diamond", "fan", "random"), 1), cells)
     initial <- g$cells
     # Cell order in the file doesn't decide run order: shuffle it sometimes.
@@ -57,6 +71,7 @@ fuzz_trace <- function(seed, mode, steps = 12, cells = 6, conflicts = FALSE, ext
                   cells = lapply(initial[order], `[[`, "code"), steps = list())
     if (extras) trace$extras <- TRUE
     if (prompts) trace$prompts <- TRUE
+    if (inputs) trace$inputs <- TRUE
     g$order <- order
     for (s in seq_len(steps)) {
       if (conflicts) {
@@ -79,6 +94,14 @@ fuzz_trace <- function(seed, mode, steps = 12, cells = 6, conflicts = FALSE, ext
       }
       if (extras && length(g$files) && stats::runif(1) < 0.25) {
         ops <- c(ops, list(list(op = "outside", file = sample(names(g$files), 1), value = sample.int(996, 1))))
+      }
+      if (inputs) {
+        bound <- Filter(function(id) !is.null(g$cells[[id]]$input), setdiff(g$order, "S"))
+        if (length(bound) && stats::runif(1) < 0.5) {
+          for (k in seq_len(sample(1:2, 1, prob = c(0.8, 0.2)))) {
+            ops <- c(ops, list(fuzz_gen_set_input(g, bound[sample.int(length(bound), 1)])))
+          }
+        }
       }
       live <- setdiff(g$order, "S")
       # Half the time after an edit, run something that reads the edited
@@ -133,7 +156,53 @@ fuzz_gen_new <- function() {
   list(cells = list(S = list(code = "", rank = 0, defs = character(), refs = character())),
        order = "S", next_name = 1L, next_id = 1L, extras = FALSE,
        files = list(), next_file = 1L, setters = list(), next_setter = 1L,
-       prompts = FALSE, next_ask = 1L)
+       prompts = FALSE, next_ask = 1L, inputs = FALSE, lists = character())
+}
+
+#' A new input for a cell: a slider from 0 to 60, on steps of 5 or none,
+#' or (`kind` "list") that slider and a number box in an input_list().
+fuzz_new_input <- function() {
+  kind <- sample(c("slider", "list"), 1, prob = c(0.65, 0.35))
+  step <- if (stats::runif(1) < 0.5) 5L
+  list(kind = kind, step = step, value = fuzz_input_value(step), b = sample.int(90, 1))
+}
+
+#' A value on the slider's steps.
+fuzz_input_value <- function(step) {
+  steps <- if (is.null(step)) 0:60 else seq(0L, 60L, by = step)
+  as.integer(steps[sample.int(length(steps), 1)])
+}
+
+#' The code of a cell binding `name` to `input`.
+fuzz_input_code <- function(name, input) {
+  slider <- sprintf("emberui::input_slider(0L, 60L, %dL%s)", input$value,
+                    if (is.null(input$step)) "" else sprintf(", step = %dL", input$step))
+  if (identical(input$kind, "slider")) return(sprintf("%s <- %s", name, slider))
+  sprintf("%s <- emberui::input_list(a = %s, b = emberui::input_number(%d))", name, slider, input$b)
+}
+
+#' A set_input op for cell `id`'s input: one in seven values is off the
+#' slider's steps or past its end.
+fuzz_gen_set_input <- function(g, id) {
+  i <- g$cells[[id]]$input
+  valid <- stats::runif(1) < 6 / 7
+  a <- if (valid) fuzz_input_value(i$step)
+    else if (!is.null(i$step) && stats::runif(1) < 0.5) as.integer(sample(setdiff(1:59, seq(0L, 60L, by = i$step)), 1))
+    else as.integer(sample(61:80, 1))
+  value <- if (identical(i$kind, "slider")) a else list(a = a, b = as.numeric(sample.int(90, 1)))
+  list(op = "set_input", name = g$cells[[id]]$defs[1], value = value, valid = valid)
+}
+
+#' Cell `c` as an input cell: its first name bound to a new input, its
+#' other names and what it read dropped. A plain cell's `c$input` is NULL.
+fuzz_make_input <- function(g, c) {
+  c$defs <- c$defs[1]
+  c$refs <- character()
+  c$input <- fuzz_new_input()
+  c$code <- fuzz_input_code(c$defs, c$input)
+  g$lists <- setdiff(g$lists, c$defs)
+  if (identical(c$input$kind, "list")) g$lists <- c(g$lists, c$defs)
+  list(g = g, c = c)
 }
 
 #' A new question for a cell: list(n, kind), kind "readline" or "menu".
@@ -172,9 +241,12 @@ fuzz_fresh_names <- function(g, n) {
 
 #' Code for a cell. One definition `v <- expr`; two, where the second uses
 #' the first; or none, a cell that only shows a value. One cell in ten fails.
-fuzz_code <- function(defs, refs, fail = FALSE, files = character(), ask = NULL) {
+#' A name in `lists` is a list input's, read as `sum(unlist(v))`.
+fuzz_code <- function(defs, refs, fail = FALSE, files = character(), ask = NULL, lists = character()) {
   k <- sample.int(90, 1)
-  reads <- c(refs, sprintf('as.numeric(readLines("%s"))', files), fuzz_ask_term(ask))
+  l <- refs %in% lists
+  refs[l] <- sprintf("sum(unlist(%s))", refs[l])
+  reads <- c(refs,sprintf('as.numeric(readLines("%s"))', files), fuzz_ask_term(ask))
   terms <- if (length(reads)) paste0(seq_along(reads), " * ", reads, collapse = " + ") else NULL
   expr <- if (is.null(terms)) as.character(k) else sprintf("(%d + %s) %%%% 997", k, terms)
   if (fail) expr <- sprintf('stop("fail %d")', k)
@@ -184,8 +256,8 @@ fuzz_code <- function(defs, refs, fail = FALSE, files = character(), ask = NULL)
   paste(lines, collapse = "\n")
 }
 
-fuzz_cell <- function(defs, refs, rank) {
-  list(code = fuzz_code(defs, refs, fail = stats::runif(1) < 0.1),
+fuzz_cell <- function(defs, refs, rank, lists = character()) {
+  list(code = fuzz_code(defs, refs, fail = stats::runif(1) < 0.1, lists = lists),
        rank = rank, defs = defs, refs = refs)
 }
 
@@ -267,7 +339,12 @@ fuzz_add <- function(g, refs, ndefs = sample(0:2, 1, prob = c(0.2, 0.55, 0.25)),
   g$next_id <- g$next_id + 1L
   fresh <- fuzz_fresh_names(g, ndefs)
   g <- fresh$g
-  g$cells[[id]] <- fuzz_cell(fresh$names, refs, rank)
+  g$cells[[id]] <- fuzz_cell(fresh$names, refs, rank, g$lists)
+  if (isTRUE(g$inputs) && length(fresh$names) && stats::runif(1) < 0.3) {
+    out <- fuzz_make_input(g, g$cells[[id]])
+    g <- out$g
+    g$cells[[id]] <- out$c
+  }
   if (isTRUE(g$extras)) {
     # A shape's next cell reads the last one's first name, and a cell that
     # defines a replacement function has none.
@@ -327,6 +404,7 @@ fuzz_gen_op <- function(g) {
   live <- setdiff(g$order, "S")
   kind <- if (!length(live)) "insert" else
     sample(c("edit", "rename", "delete", "insert", "move"), 1, prob = c(0.4, 0.15, 0.15, 0.15, 0.15))
+  # Called before `g` is read for the result, so the edit is in it.
   set <- function(id, c) {
     g$cells[[id]] <<- c
     list(op = "set_code", cell = id, code = c$code)
@@ -342,7 +420,8 @@ fuzz_gen_op <- function(g) {
         c$reads <- if (length(files) && stats::runif(1) < 0.5) sample(files, 1)
       }
       c$code <- fuzz_cell_code(c, fail = stats::runif(1) < 0.1 && is.null(c$setter))
-      return(list(g = g, ops = list(set(id, c))))
+      op <- set(id, c)
+      return(list(g = g, ops = list(op)))
     }
     if (isTRUE(g$prompts)) {
       # It can start or stop asking, and ask a new question.
@@ -355,11 +434,33 @@ fuzz_gen_op <- function(g) {
         }
       }
       c$code <- fuzz_cell_code(c, fail = stats::runif(1) < 0.1)
-      return(list(g = g, ops = list(set(id, c))))
+      op <- set(id, c)
+      return(list(g = g, ops = list(op)))
+    }
+    if (isTRUE(g$inputs)) {
+      # An input gets a new default, a step or none, or becomes a plain
+      # cell; a plain cell sometimes becomes an input.
+      if (!is.null(c$input) && stats::runif(1) < 0.8) {
+        c$input$step <- if (stats::runif(1) < 0.5) 5L
+        c$input$value <- fuzz_input_value(c$input$step)
+        c$input$b <- sample.int(90, 1)
+        c$code <- fuzz_input_code(c$defs, c$input)
+        op <- set(id, c)
+        return(list(g = g, ops = list(op)))
+      }
+      if (is.null(c$input) && length(c$defs) && stats::runif(1) < 0.15) {
+        out <- fuzz_make_input(g, c)
+        g <- out$g
+        op <- set(id, out$c)
+        return(list(g = g, ops = list(op)))
+      }
+      g$lists <- setdiff(g$lists, c$defs)
+      c$input <- NULL
     }
     if (stats::runif(1) < 0.5) c$refs <- fuzz_pick_refs(g, c$rank)
-    c$code <- fuzz_join(fuzz_code(c$defs, c$refs, fail = stats::runif(1) < 0.1), c)
-    return(list(g = g, ops = list(set(id, c))))
+    c$code <- fuzz_join(fuzz_code(c$defs, c$refs, fail = stats::runif(1) < 0.1, lists = g$lists), c)
+    op <- set(id, c)
+    return(list(g = g, ops = list(op)))
   }
   if (kind == "rename") {
     has <- Filter(function(id) length(g$cells[[id]]$defs) > 0, live)
@@ -371,6 +472,7 @@ fuzz_gen_op <- function(g) {
     g <- fresh$g
     new <- fresh$names
     c$defs[c$defs == old] <- new
+    g$lists[g$lists == old] <- new
     c$code <- gsub(paste0("\\b", old, "\\b"), new, c$code)
     c$extra <- gsub(paste0("\\b", old, "\\b"), new, c$extra)
     ops <- list(set(id, c))
@@ -418,8 +520,9 @@ fuzz_join <- function(code, c) {
 #' the same way twice, or undoes one: define another cell's name again
 #' (`v <- k`, or `v[1] <- k`, which also reads it), read a name a
 #' dependent defines (a cycle), leave a bracket open, make a cell's first
-#' line read its own variable (`v <- v + k`), or put a cell back as the
-#' plain generator made it.
+#' line read its own variable (`v <- v + k`), assign rlang's pronoun
+#' `.data` or `.env` (#509), or put a cell back as the plain generator made
+#' it.
 #'
 #' No `rm()` of another cell's variable: Ember runs that cell and then
 #' flags it ("changed a global defined elsewhere"), so what its readers see
@@ -428,8 +531,8 @@ fuzz_gen_conflict_op <- function(g) {
   live <- setdiff(g$order, "S")
   defined <- Filter(function(id) length(g$cells[[id]]$defs) > 0, live)
   if (length(live) < 2 || !length(defined)) return(fuzz_gen_op(g))
-  kind <- sample(c("redefine", "replace", "cycle", "break", "self", "undo"), 1,
-                 prob = c(0.15, 0.15, 0.15, 0.15, 0.15, 0.25))
+  kind <- sample(c("redefine", "replace", "cycle", "break", "self", "undo", "pronoun"), 1,
+                 prob = c(0.13, 0.13, 0.13, 0.13, 0.13, 0.25, 0.1))
   k <- sample.int(90, 1)
   set <- function(id, c) {
     g$cells[[id]] <- c
@@ -445,6 +548,14 @@ fuzz_gen_conflict_op <- function(g) {
     c <- g$cells[[id]]
     c$extra <- character(); c$broken <- FALSE; c$self <- FALSE
     c$code <- fuzz_code(c$defs, c$refs)
+    return(set(id, c))
+  }
+  if (kind == "pronoun") {
+    id <- sample(live, 1)
+    c <- g$cells[[id]]
+    line <- sprintf(sample(c(".data <- %d", ".env <- %d", ".env <<- %d", ".data = %d"), 1), k)
+    c$extra <- c(c$extra, line)
+    c$code <- paste(c(line, c$code), collapse = "\n")
     return(set(id, c))
   }
   if (kind == "break") {
@@ -554,8 +665,9 @@ fuzz_topo <- function(codes) {
 
 #' The cells of `codes` that can't run whatever the order, by why: code
 #' that doesn't parse, a name defined in two cells, or a cell that reads,
-#' through other cells, a name it defines itself (a cycle). A named list,
-#' id -> "parse", "multiple_definitions" or "cycle". A cell that doesn't
+#' through other cells, a name it defines itself (a cycle), or one that
+#' assigns `.data` or `.env` at the top (#509). A named list, id ->
+#' "parse", "private_name", "multiple_definitions" or "cycle". A cell that doesn't
 #' parse defines nothing, as far as the others are concerned.
 fuzz_blocked <- function(codes) {
   out <- list()
@@ -564,6 +676,9 @@ fuzz_blocked <- function(codes) {
   }, TRUE)
   for (id in names(codes)[!parses]) out[[id]] <- "parse"
   codes <- codes[parses]
+  for (id in names(codes)) {
+    if (grepl("(?m)^\\.(data|env) (<<?-|=) ", codes[[id]], perl = TRUE)) out[[id]] <- "private_name"
+  }
   defs <- lapply(codes, fuzz_defs)
   all <- unlist(defs, use.names = FALSE)
   dup <- unique(all[duplicated(all)])
@@ -623,7 +738,11 @@ fuzz_descendants <- function(codes, id) {
 #' Ember doesn't order a writer before its readers (design.md, "Data files
 #' a cell reads"), it reruns or marks a reader once the file changes, so a
 #' reader that isn't stale shows what the file holds. Writes do nothing.
-fuzz_reference <- function(codes, dir = NULL) {
+#'
+#' `kept` is the value Ember keeps for each input, by name:
+#' list(cell, code, value). A cell that binds the input with that code
+#' gives it that value instead of its default (docs/inputs.md).
+fuzz_reference <- function(codes, dir = NULL, kept = list()) {
   env <- new.env(parent = baseenv())
   # A question gets its one answer (fuzz_answer()).
   env$readline <- function(prompt = "") {
@@ -647,6 +766,9 @@ fuzz_reference <- function(codes, dir = NULL) {
     res <- tryCatch({
       val <- NULL
       for (e in parse(text = code, keep.source = FALSE)) val <- suppressWarnings(eval(e, env))
+      for (n in names(kept)) {
+        if (identical(kept[[n]]$cell, id) && identical(kept[[n]]$code, code)) assign(n, kept[[n]]$value, env)
+      }
       list(status = "ok", text = paste(utils::capture.output(print(val)), collapse = "\n"))
     }, error = function(e) {
       rm(list = intersect(fuzz_defs(code), ls(env)), envir = env)
@@ -659,7 +781,7 @@ fuzz_reference <- function(codes, dir = NULL) {
 
 # Replaying and checking ---------------------------------------------------
 
-#' Apply one op. An op naming a cell that isn't there (a shrunk trace can
+#' Apply one op (fuzz_set_input() gives inputs their values). An op naming a cell that isn't there (a shrunk trace can
 #' drop the insert that made it) is skipped, and indexes are clamped.
 fuzz_apply <- function(nb, op) {
   ids <- vapply(notebook_snapshot(nb)$cells, `[[`, "", "id")
@@ -697,8 +819,17 @@ FUZZ_QUIET <- 30
 fuzz_replay <- function(trace) {
   cells <- lapply(trace$cells, cell)
   cells <- c(list(S = cell("")), cells[setdiff(names(cells), "S")])
-  nb <- open_notebook(write_session_notebook(cells, on_cell_change = trace$mode))
+  inputs <- isTRUE(trace$inputs)
+  nb <- if (inputs) {
+    # emberui comes from a stand-in universe, which Ember installs it from
+    # into a cache every replay shares; the reference loads it here.
+    ui <- fuzz_ui()
+    open_notebook(write_session_notebook(cells, on_cell_change = trace$mode, snapshot = ui$date),
+                  repos = ui_repos(ui$root), cache = ui$cache)
+  } else open_notebook(write_session_notebook(cells, on_cell_change = trace$mode))
   on.exit(close_notebook(nb), add = TRUE)
+  # The value Ember keeps for each input (fuzz_set_input()).
+  kept <- list()
   # The code each cell last ran, which is what its output came from, and
   # whether that run succeeded.
   ran <- list()
@@ -709,6 +840,12 @@ fuzz_replay <- function(trace) {
   for (s in seq_along(trace$steps)) {
     step <- trace$steps[[s]]
     for (op in step$ops) {
+      if (identical(op$op, "set_input")) {
+        out <- fuzz_set_input(nb, op, kept)
+        if (length(out$problems)) return(list(step = s, problems = out$problems))
+        kept <- out$kept
+        next
+      }
       before <- notebook_snapshot(nb)
       ok <- tryCatch({ fuzz_apply(nb, op); TRUE }, error = function(e) conditionMessage(e))
       if (!isTRUE(ok)) return(list(step = s, problems = paste("edit refused:", ok)))
@@ -747,7 +884,11 @@ fuzz_replay <- function(trace) {
     last <- stats::setNames(lapply(snap$cells, `[[`, "last_run"), vapply(snap$cells, `[[`, "", "id"))
     ran <- ran[intersect(names(ran), names(last))]
     ran_ok <- ran_ok[intersect(names(ran_ok), names(last))]
-    problems <- fuzz_check(snap, ran, trace$mode, if (!interrupted) step$run, ran_ok, dir)
+    # A cell that ran (and didn't fail) with other code than its input's
+    # value was kept for gave its input the default (keep_input_values()).
+    kept <- Filter(function(k) is.null(ran[[k$cell]]) || !isTRUE(ran_ok[[k$cell]]) ||
+                     identical(ran[[k$cell]], k$code), kept)
+    problems <- fuzz_check(snap, ran, trace$mode, if (!interrupted) step$run, ran_ok, dir, kept)
     if (length(problems)) return(list(step = s, problems = problems))
     # A cell whose result is gone defines nothing as far as Ember's next
     # submit of it goes (drop_graph_error_results() reads `old$defined`
@@ -841,8 +982,9 @@ fuzz_noticed <- function(nb, before, ran, file) {
 }
 
 #' What's wrong with `snap`, as sentences; empty when nothing is.
-#' `dir` is the notebook's folder when cells read data files.
-fuzz_check <- function(snap, ran, mode, run, ran_ok = list(), dir = NULL) {
+#' `dir` is the notebook's folder when cells read data files, and `kept`
+#' the values Ember keeps for inputs (fuzz_reference()).
+fuzz_check <- function(snap, ran, mode, run, ran_ok = list(), dir = NULL, kept = list()) {
   problems <- character()
   say <- function(...) problems <<- c(problems, paste0(...))
   views <- stats::setNames(snap$cells, vapply(snap$cells, `[[`, "", "id"))
@@ -852,7 +994,7 @@ fuzz_check <- function(snap, ran, mode, run, ran_ok = list(), dir = NULL) {
 
   # A cell that can't run shows why, and one that can shows no such error.
   blocked <- names(fuzz_blocked(current))
-  graph_kinds <- c("parse", "multiple_definitions", "cycle")
+  graph_kinds <- c("parse", "private_name", "multiple_definitions", "cycle")
   for (id in names(views)) {
     kinds <- vapply(views[[id]]$errors, `[[`, "", "kind")
     if (id %in% blocked && !any(kinds %in% graph_kinds)) say(id, " can't run but shows no graph error")
@@ -868,7 +1010,7 @@ fuzz_check <- function(snap, ran, mode, run, ran_ok = list(), dir = NULL) {
   # outputs from scratch gives, so the reference uses the code each cell
   # ran. A cell edited since it ran keeps its old output, marked as edited.
   shown <- Filter(function(id) has_run(views[[id]]) && !is.null(ran[[id]]), names(views))
-  ref <- fuzz_reference(ran[shown], dir)
+  ref <- fuzz_reference(ran[shown], dir, kept)
   for (id in shown) {
     v <- views[[id]]
     # A cell that can't run now keeps its last output under its graph error
@@ -879,7 +1021,9 @@ fuzz_check <- function(snap, ran, mode, run, ran_ok = list(), dir = NULL) {
     got <- v$output$text
     if (!identical(v$status, want$status)) {
       say(id, " shows ", v$status, " but running from scratch gives ", want$status)
-    } else if (identical(want$status, "ok") && !identical(got, want$text)) {
+    } else if (identical(want$status, "ok") && !identical(got, want$text) &&
+               !(is.null(got) && fuzz_binds_last(ran[[id]]))) {
+      # A bound input on the last line shows its widget, not its value.
       say(id, " shows ", deparse(got), " but running from scratch gives ", deparse(want$text))
     }
     # Nothing it read from may be stale either.
@@ -945,12 +1089,72 @@ fuzz_check <- function(snap, ran, mode, run, ran_ok = list(), dir = NULL) {
   unique(problems)
 }
 
+# Inputs -------------------------------------------------------------------
+
+#' Whether `code`'s last line binds an input (fuzz_input_code()).
+fuzz_binds_last <- function(code) {
+  lines <- strsplit(code, "\n", fixed = TRUE)[[1]]
+  length(lines) > 0 && grepl("^v[0-9]+ <- emberui::input_", lines[length(lines)])
+}
+
+#' The stand-in universe holding emberui (ui_universe()), its date, and a
+#' package cache, made once per R session; emberui is put on this
+#' session's library path for the reference. Ember installs packages
+#' with an installed ember (use_installed_ember()).
+fuzz_ui <- local({
+  ui <- NULL
+  function() {
+    use_installed_ember()
+    if (is.null(ui) || !dir.exists(ui$root)) {
+      date <- "2026-09-01"
+      cache <- tempfile("ember-fuzz-cache-")
+      dir.create(cache)
+      ui <<- list(root = ui_universe(date), date = date, cache = cache)
+      .libPaths(c(fixture_lib(), .libPaths()))
+    }
+    ui
+  }
+})
+
+#' Give an input a new value (`op`, from fuzz_gen_set_input()) as the R API
+#' does, and check the answer: taken when the input's cell has run, is
+#' fresh and can run, and the input allows the value; refused otherwise,
+#' changing nothing. Returns list(problems, kept), `kept` updated as Ember
+#' keeps the value: forgotten when it is the input's default.
+fuzz_set_input <- function(nb, op, kept) {
+  snap <- notebook_snapshot(nb)
+  views <- stats::setNames(snap$cells, vapply(snap$cells, `[[`, "", "id"))
+  current <- lapply(views[names(views) != "S"], `[[`, "code")
+  pattern <- sprintf("(?m)^%s <- emberui::input_", op$name)
+  id <- Find(function(c) grepl(pattern, current[[c]], perl = TRUE), names(current))
+  v <- if (!is.null(id)) views[[id]]
+  fresh <- !is.null(v) && identical(v$status, "ok") && !isTRUE(v$stale) && !isTRUE(v$code_differs) &&
+    !id %in% names(fuzz_blocked(current))
+  res <- tryCatch(set_input(nb, op$name, op$value, wait = TRUE, timeout = Inf), error = function(e) e)
+  what <- paste0("set_input(", op$name, ", ", paste(deparse(op$value), collapse = ""), ")")
+  if (inherits(res, "error")) {
+    if (fresh && isTRUE(op$valid)) {
+      return(list(problems = paste0(what, " was refused for a fresh input: ", conditionMessage(res)), kept = kept))
+    }
+    return(list(problems = character(), kept = kept))
+  }
+  if (!fresh) return(list(problems = paste0(what, " was taken, but the input's cell isn't fresh"), kept = kept))
+  if (!isTRUE(op$valid)) return(list(problems = paste0(what, " was taken, but the input doesn't allow it"), kept = kept))
+  if (isTRUE(res$timed_out) || !identical(res$value, op$value)) {
+    return(list(problems = paste0(what, " assigned ", paste(deparse(res$value), collapse = "")), kept = kept))
+  }
+  line <- grep(pattern, strsplit(current[[id]], "\n", fixed = TRUE)[[1]], perl = TRUE, value = TRUE)[1]
+  default <- eval(parse(text = line, keep.source = FALSE)[[1]][[3]], baseenv())
+  kept[[op$name]] <- if (!identical(op$value, default)) list(cell = id, code = current[[id]], value = op$value)
+  list(problems = character(), kept = kept)
+}
+
 # Reporting and shrinking --------------------------------------------------
 
 #' A trace as R code that rebuilds it, for a failure message or a
 #' regression test.
 fuzz_format <- function(trace) {
-  paste(deparse(trace[intersect(c("mode", "extras", "prompts", "cells", "steps"), names(trace))], width.cutoff = 100), collapse = "\n")
+  paste(deparse(trace[intersect(c("mode", "extras", "prompts", "inputs", "cells", "steps"), names(trace))], width.cutoff = 100), collapse = "\n")
 }
 
 #' A problem without its cell ids and values, so shrinking keeps the same

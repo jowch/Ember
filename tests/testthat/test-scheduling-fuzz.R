@@ -74,7 +74,8 @@ for (mode in c("autorun", "lazy")) {
 }
 
 # The same, with edits that break the code too: a name defined in two cells,
-# a cycle, a parse error, a cell reading its own variable, and undoing them.
+# a cycle, a parse error, a cell reading its own variable, an assignment to
+# `.data` or `.env` (#509), and undoing them.
 # Each step is one edit, run as submitted. A cell that can't run must show
 # a graph error, and everything else is checked as above. Known failures
 # here are keyed "conflicts <mode> <seed>".
@@ -116,6 +117,22 @@ for (mode in c("autorun", "lazy")) {
     for (seed in union(fuzz_seeds(), known_seeds(paste("prompts", mode)))) {
       trace <- fuzz_trace(seed, mode, steps = fuzz_steps(), prompts = TRUE)
       known <- fuzz_known[[paste("prompts", mode, seed)]]
+      if (!is.null(known) && fuzz_steps() >= known$step) expect_known_failure(trace, known)
+      else expect_trace_passes(trace)
+    }
+  })
+}
+
+# The same, with inputs (docs/inputs.md): sliders and input_list()s, edited
+# like other cells, and given new values with set_input(). A value must be
+# taken exactly when the input's cell is fresh and the input allows it, and
+# every reader that isn't stale must show it. Known failures here are keyed
+# "inputs <mode> <seed>".
+for (mode in c("autorun", "lazy")) {
+  test_that(paste("random edits and input values match a run from scratch,", mode, "mode"), {
+    for (seed in union(fuzz_seeds(), known_seeds(paste("inputs", mode)))) {
+      trace <- fuzz_trace(seed, mode, steps = fuzz_steps(), inputs = TRUE)
+      known <- fuzz_known[[paste("inputs", mode, seed)]]
       if (!is.null(known) && fuzz_steps() >= known$step) expect_known_failure(trace, known)
       else expect_trace_passes(trace)
     }
