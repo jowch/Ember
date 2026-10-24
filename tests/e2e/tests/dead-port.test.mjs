@@ -84,7 +84,7 @@ async function fastForwardUntil(page, locator, { step = 5000, limit = 120000 } =
   const seen = await page.evaluate(() => JSON.stringify({
     connection: window.ember_connection, dialogs: window.ember_dialogs,
     queue: window.ember_dialog_queue, queue_events: window.ember_dialog_events,
-    in_page: [...document.querySelectorAll("dialog")].map((d) => ({ open: d.open, role: d.getAttribute("role"), title: d.querySelector(".ember-dialog-title")?.textContent ?? null })),
+    in_page: [...document.querySelectorAll("dialog")].map((d) => ({ open: d.open, class: d.className, role: d.getAttribute("role"), title: d.querySelector(".ember-dialog-title")?.textContent ?? null })),
   }, null, 1));
   // A dialog whose showModal() threw is in the page but not open: its error is here.
   throw new Error(`still no ${locator} after moving the clock ${limit} ms; the page's connection: ${seen}; its problems: ${JSON.stringify(page.problems ?? [], null, 1)}`);
