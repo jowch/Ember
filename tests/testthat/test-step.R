@@ -1100,7 +1100,9 @@ test_that("a sourced file that changes while its cell runs, after source() read 
              wk_source(1, tok, "/proj/h.R", "z <- 2", at(12)),
              wk_done(1, tok, report(created = "z"), at(13)))
   expect_false(isTRUE(r$state$results$A$stale))
-  # Nor when it changes back to the text the run read.
+  # A change after source() read it stays counted even if the file then
+  # changes back to the text the run read: the result is marked stale,
+  # which costs at most a rerun.
   r <- drive(r$state, ev_run("A", at(20)))
   tok <- r$state$worker$running$token
   r <- drive(r$state, wk_source(1, tok, "/proj/h.R", "z <- 2", at(31)),
@@ -1116,10 +1118,22 @@ test_that("read_old_source() matches a sourced path by its tail and compares tex
   expect_true(read_old_source(src, "R/h.R", "a\nc\n"))
   expect_true(read_old_source(src, "./R/h.R", "x"))
   expect_true(read_old_source(src, "../proj/R/h.R", "x"))
-  expect_false(read_old_source(src, "S/h.R", "x"))
+  # No file at that tail was read: one of the same name counts, since a
+  # symlink can hide it, which costs at most a rerun.
+  expect_true(read_old_source(src, "S/h.R", "x"))
+  expect_false(read_old_source(src, "R/g.R", "x"))
   expect_false(read_old_source(list(), "R/h.R", "x"))
   expect_false(read_old_source(src, "R/h.R", NA_character_))
   expect_true(read_old_source(list(list(path = "C:\\proj\\h.R", text = "a")), "h.R", "b"))
+  # A path that reads differently once normalized matches by file name.
+  expect_true(read_old_source(list(list(path = "/private/tmp/x/h.R", text = "a")), "/tmp/x/h.R", "b"))
+  expect_false(read_old_source(list(list(path = "/private/tmp/x/h.R", text = "a")), "/tmp/x/h.R", "a\n"))
+  expect_true(read_old_source(list(list(path = "C:\\Users\\me\\h.R", text = "a")), "c:/Users/me/h.R", "b"))
+  expect_true(read_old_source(list(list(path = "/home/me/real/h.R", text = "a")), "link/h.R", "b"))
+  # A file of the same name the run read isn't taken for one at the tail.
+  two <- list(list(path = "/proj/a/h.R", text = "a"), list(path = "/proj/b/h.R", text = "b"))
+  expect_false(read_old_source(two, "b/h.R", "b"))
+  expect_true(read_old_source(two, "a/h.R", "b"))
 })
 
 # ---- Data files a cell reads (#276) -----------------------------------------

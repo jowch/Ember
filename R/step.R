@@ -1713,19 +1713,19 @@ reduce_files_read <- function(state, event) {
 #' Whether a run's `source()` read a version of `path` other than `text`,
 #' its contents now. `sources` is what the run's `wk_source` requests
 #' carried: `list(path, text)` each, the path absolute and normalized.
-#' `path` is as the notebook names it (relative to its folder, or
-#' absolute), so it is matched by its tail, or by its file name when it
-#' climbs out with `..`. A file the run hasn't sourced yet is read new. The
-#' worker's text is `readLines()` joined by newlines and the shell's is the
-#' raw file, so both are compared without line endings or a final newline.
+#' `path` is as the notebook names it, usually relative to its folder, and
+#' is matched by its tail. An absolute path, or one through a symlink, can
+#' read differently once normalized (/tmp is /private/tmp on macOS, `c:/`
+#' is `C:\`), and `..` climbs out of the tail: then the file name
+#' decides. A file the run hasn't sourced yet is read new. The worker's
+#' text is `readLines()` joined by newlines and the shell's is the raw
+#' file, so both are compared without line endings or a final newline.
 read_old_source <- function(sources, path, text) {
   if (length(sources) == 0 || length(text) != 1 || is.na(text)) return(FALSE)
-  tail <- sub("^(\\./)+", "", gsub("\\\\", "/", path))
-  tail <- if (grepl("(^|/)\\.\\.(/|$)", tail)) basename(tail) else tail
-  read <- Filter(function(s) {
-    p <- gsub("\\\\", "/", s$path)
-    identical(p, tail) || endsWith(p, paste0("/", tail))
-  }, sources)
+  slash <- function(p) gsub("\\\\", "/", p)
+  tail <- sub("^(\\./)+", "", slash(path))
+  read <- Filter(function(s) endsWith(slash(s$path), paste0("/", tail)), sources)
+  if (length(read) == 0) read <- Filter(function(s) identical(basename(slash(s$path)), basename(tail)), sources)
   if (length(read) == 0) return(FALSE)
   flat <- function(t) sub("\n+$", "", gsub("\r\n?", "\n", t))
   !any(vapply(read, function(s) identical(flat(s$text), flat(text)), logical(1)))
