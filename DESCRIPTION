@@ -14,5 +14,5 @@ Encoding: UTF-8
 Language: en-GB
 Depends: R (>= 4.1.0)
 Imports: commonmark, httpuv, jsonlite, later (>= 1.4.0), parallel, processx, RcppMsgPack, renv, stats, utils
-Suggests: data.table, ggplot2, gitcreds, htmltools, knitr, readr, testthat (>= 3.0.0), withr
+Suggests: data.table, fst, ggplot2, gitcreds, htmltools, knitr, nanoparquet, qs2, readr, testthat (>= 3.0.0), withr, xml2
 Config/testthat/edition: 3

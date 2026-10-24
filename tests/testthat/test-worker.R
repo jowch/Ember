@@ -3181,53 +3181,65 @@ test_that("a readr reader is learned once readr loads, by :: or attached", {
   expect_identical(names(r2$data_seen), file.path(d, "c.csv"))
 })
 
-test_that("arrow's delimited and JSON readers, nanoparquet, fst, qs2 and xml2 are learned once their package loads", {
-  # None of these is in Suggests, so CI skips each one; run locally with them installed.
-  pkgs <- c("arrow", "nanoparquet", "fst", "qs2", "xml2")
-  have <- pkgs[vapply(pkgs, requireNamespace, NA, quietly = TRUE)]
-  skip_if(length(have) == 0, "none of arrow, nanoparquet, fst, qs2 or xml2 is installed")
+#' Run `code` (with `D` set to a fresh folder that `setup(d)` fills) in a
+#' worker and check that the run learned exactly the files in `want`.
+expect_learns <- function(setup, code, want) {
   h <- worker_harness(extra_libs = .libPaths())
   on.exit(h$close())
   d <- tempfile("ember-pkg-")
   dir.create(d)
   d <- normalizePath(d, winslash = "/")
-  df <- data.frame(x = 1:2, y = c("a", "b"))
-  code <- character()
-  want <- character()
-  if ("arrow" %in% have) {
-    writeLines("x,y\n1,2", file.path(d, "a.csv"))
-    writeLines("x\ty\n1\t2", file.path(d, "a.tsv"))
-    writeLines('{"x":1}', file.path(d, "a.json"))
-    code <- c(code, 'a1 <- arrow::read_delim_arrow(file.path(D, "a.csv"))', 'a2 <- arrow::read_tsv_arrow(file.path(D, "a.tsv"))',
-              'a3 <- arrow::read_json_arrow(file.path(D, "a.json"))')
-    want <- c(want, "a.csv", "a.tsv", "a.json")
-  }
-  if ("nanoparquet" %in% have) {
-    nanoparquet::write_parquet(df, file.path(d, "n.parquet"))
-    code <- c(code, 'n <- nanoparquet::read_parquet(file.path(D, "n.parquet"))')
-    want <- c(want, "n.parquet")
-  }
-  if ("fst" %in% have) {
-    fst::write_fst(df, file.path(d, "f.fst"))
-    code <- c(code, 'f <- fst::read_fst(file.path(D, "f.fst"))')
-    want <- c(want, "f.fst")
-  }
-  if ("qs2" %in% have) {
-    qs2::qs_save(df, file.path(d, "q.qs2"))
-    qs2::qd_save(df, file.path(d, "q.qdata"))
-    code <- c(code, 'q1 <- qs2::qs_read(file.path(D, "q.qs2"))', 'q2 <- qs2::qd_read(file.path(D, "q.qdata"))')
-    want <- c(want, "q.qs2", "q.qdata")
-  }
-  if ("xml2" %in% have) {
-    writeLines("<a><b>1</b></a>", file.path(d, "x.xml"))
-    # Inline XML isn't a file.
-    code <- c(code, 'x1 <- xml2::read_xml(file.path(D, "x.xml"))', 'x2 <- xml2::read_xml("<a/>")')
-    want <- c(want, "x.xml")
-  }
+  setup(d)
   r <- run_and_wait(h, "a", 1L, paste(c(sprintf("D <- %s", deparse(d)), code), collapse = "\n"))
   expect_identical(r$status, "ok", info = r$error$message)
   expect_setequal(names(r$data_seen), file.path(d, want))
   expect_length(r$data_unresolved, 0)
+}
+
+test_that("nanoparquet's read_parquet() is learned once nanoparquet loads", {
+  skip_if_not_installed("nanoparquet")
+  expect_learns(function(d) nanoparquet::write_parquet(data.frame(x = 1:2), file.path(d, "n.parquet")),
+                'n <- nanoparquet::read_parquet(file.path(D, "n.parquet"))', "n.parquet")
+})
+
+test_that("fst's read_fst() is learned once fst loads", {
+  skip_if_not_installed("fst")
+  expect_learns(function(d) fst::write_fst(data.frame(x = 1:2), file.path(d, "f.fst")),
+                'f <- fst::read_fst(file.path(D, "f.fst"))', "f.fst")
+})
+
+test_that("qs2's qs_read() and qd_read() are learned once qs2 loads", {
+  skip_if_not_installed("qs2")
+  expect_learns(function(d) {
+                  qs2::qs_save(data.frame(x = 1:2), file.path(d, "q.qs2"))
+                  qs2::qd_save(data.frame(x = 1:2), file.path(d, "q.qdata"))
+                },
+                c('q1 <- qs2::qs_read(file.path(D, "q.qs2"))', 'q2 <- qs2::qd_read(file.path(D, "q.qdata"))'),
+                c("q.qs2", "q.qdata"))
+})
+
+test_that("xml2's read_xml() and read_html() are learned once xml2 loads, and inline XML isn't", {
+  skip_if_not_installed("xml2")
+  expect_learns(function(d) {
+                  writeLines("<a><b>1</b></a>", file.path(d, "x.xml"))
+                  writeLines("<html><body><p>1</p></body></html>", file.path(d, "x.html"))
+                },
+                c('x1 <- xml2::read_xml(file.path(D, "x.xml"))', 'x2 <- xml2::read_html(file.path(D, "x.html"))',
+                  'x3 <- xml2::read_xml("<a/>")'),
+                c("x.xml", "x.html"))
+})
+
+test_that("arrow's delimited and JSON readers are learned once arrow loads", {
+  # arrow isn't in Suggests (a large install for one test), so CI skips this; run locally with it installed.
+  skip_if_not_installed("arrow")
+  expect_learns(function(d) {
+                  writeLines("x,y\n1,2", file.path(d, "a.csv"))
+                  writeLines("x\ty\n1\t2", file.path(d, "a.tsv"))
+                  writeLines('{"x":1}', file.path(d, "a.json"))
+                },
+                c('a1 <- arrow::read_delim_arrow(file.path(D, "a.csv"))', 'a2 <- arrow::read_tsv_arrow(file.path(D, "a.tsv"))',
+                  'a3 <- arrow::read_json_arrow(file.path(D, "a.json"))'),
+                c("a.csv", "a.tsv", "a.json"))
 })
 
 test_that("the readers the worker traces are rules.R's data_readers", {
