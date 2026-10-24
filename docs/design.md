@@ -432,8 +432,11 @@ the worker traces base R's file connections (`file()`, `gzfile()` and the
 other compressed ones, `unz()`), which every base reader opens, and a fixed
 list of readers (`data_readers` in `rules.R`, `data_reader_args` in the
 worker): base R and utils, readr, vroom, data.table's `fread`, readxl, arrow,
-nanoparquet, haven, jsonlite, qs2 and xml2. A package's readers are
-traced when its namespace loads.
+nanoparquet, haven, jsonlite, qs2, xml2, sf's `st_read()` and `read_sf()`,
+and foreign's `read.dta()`, `read.spss()` and `read.xport()`. A package's
+readers are traced when its namespace loads. A shapefile read with sf is
+watched with the files beside it that hold its attributes, index,
+projection and encoding (`.dbf`, `.shx`, `.prj`, `.cpg`).
 So a read inside a helper function, `lapply(files, read.csv)`, a sourced
 file's read, and any reader built on R connections (`jsonlite::read_json`,
 `Matrix::readMM`) count too. A literal path is also known from the code
@@ -525,10 +528,18 @@ before the cell runs.
   (`read.csv(text = …)`, readr's `I()`), URLs, `textConnection()` and
   `pipe()` read no file, and get no note.
 - Ember can't see a read in compiled code by a reader not on the list
-  (sf, terra, hdf5, a database), or by another process
-  (`system("python prep.py")`). Those get no note: Ember doesn't know they
-  read a file. Nor does it watch a folder: a file added to a folder a cell
-  lists (`list.files("data")`) is read only when the cell runs again.
+  (terra, hdf5), or by another process (`system("python prep.py")`).
+  Those get no note: Ember doesn't know they read a file. terra's `rast()`
+  and `vect()` are S4 generics, and a call put first in a generic's body
+  breaks its dispatch (#563). Nor does Ember watch a folder: a file added
+  to a folder a cell lists (`list.files("data")`) is read only when the
+  cell runs again.
+- Reads through a database connection (DBI, for SQLite, DuckDB or a
+  server) aren't watched either. A cell that writes a table doesn't rerun
+  or mark stale the cells that query it, so run those again by hand. DBI's
+  functions are S4 generics too, and hooking them with `trace()` would
+  stop working, without a word, after a user's own `trace()` on one of
+  them (#563).
 - A connection opened with no mode and then written (`con <- file(p);
   writeLines(x, con)`) counts as a read when the file exists. Its own write
   is in the same expression, so it doesn't rerun itself.
