@@ -375,6 +375,7 @@
     "t_delete": "Delete",
     "t_stop": "Stop",
     "t_move_file_failed": "Couldn't move the file: {{reason}}",
+    "t_ember_connection_lost": "Lost the connection to Ember before it answered. Check whether it went through before you try again.",
     "t_ember_move_title": "Rename or move",
     "t_ember_move_name": "Name",
     "t_ember_move_folder": "Folder",

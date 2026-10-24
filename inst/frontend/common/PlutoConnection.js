@@ -9,6 +9,19 @@ import { t } from "./lang.js"
 
 const reconnect_after_close_delay = 500
 
+/** The error a request fails with when its socket closes before the reply, or is closed when it is sent (#584). */
+export const connection_lost_message = "The connection to Ember was lost before it answered"
+
+// Most requests are sent without waiting on the reply (an edit's
+// update_notebook, a folded cell), so nothing catches this failure. It
+// says only that the reconnect, which resyncs, is under way: not an error
+// to report. The forms that wait on a reply catch it and say so.
+if (typeof window !== "undefined") {
+    window.addEventListener("unhandledrejection", (e) => {
+        if (e.reason?.message === connection_lost_message) e.preventDefault()
+    })
+}
+
 /**
  * After a failed connect the page waits before the next try: 1 s, then
  * twice as long each time, up to 5 s (#33).
@@ -540,14 +553,24 @@ export const create_pluto_connection = async ({
 
         let p = resolvable_promise()
 
-        sent_requests.set(request_id, (response_message) => {
-            p.resolve(response_message)
-            if (no_broadcast === false) {
-                on_unrequested_update(response_message, true)
-            }
+        sent_requests.set(request_id, {
+            type: message_type,
+            answer: (response_message) => {
+                p.resolve(response_message)
+                if (no_broadcast === false) {
+                    on_unrequested_update(response_message, true)
+                }
+            },
+            lose: () => p.reject(new Error(connection_lost_message)),
         })
 
-        ws_connection.send(message)
+        try {
+            ws_connection.send(message)
+        } catch (e) {
+            // The socket closed and the next one isn't open yet.
+            sent_requests.delete(request_id)
+            throw new Error(connection_lost_message)
+        }
         return await p.current
     }
 
@@ -571,7 +594,7 @@ export const create_pluto_connection = async ({
                     if (by_me && request_id) {
                         const request = sent_requests.get(request_id)
                         if (request) {
-                            request(update)
+                            request.answer(update)
                             sent_requests.delete(request_id)
                             return
                         }
@@ -580,6 +603,15 @@ export const create_pluto_connection = async ({
                 },
                 on_socket_close: async (/** @type {CloseEvent=} */ e) => {
                     note_event(`socket lost: ${e ? `close ${e.code}` : "no event"}, said hello: ${said_hello}`)
+                    // No reply comes on a closed socket, so a request still
+                    // waiting for one fails now rather than never settling and
+                    // leaving whatever awaits it (a dialog's Save) stuck (#584).
+                    // Not the hello: this handler reconnects for that one.
+                    for (const [id, request] of sent_requests) {
+                        if (request.type === "connect") continue
+                        sent_requests.delete(id)
+                        request.lose()
+                    }
                     on_connection_status(false, false)
                     if (is_key_refused(e)) {
                         say_key_refused()
