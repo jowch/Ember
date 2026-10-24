@@ -6,6 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { startServer, tempNotebook, tempDir, artifactsDir } from "../server.mjs";
@@ -47,7 +48,10 @@ const uiUniverse = () => {
               list(NeedsCompilation = "no", \`_dependencies\` = list(list(package = "R", version = ">= 4.1.0", role = "Depends"))))
     jsonlite::write_json(info, file.path(api, "emberui"), auto_unbox = TRUE)
   `;
-  const built = spawnSync(rscript, ["-e", code], { encoding: "utf8" });
+  // From a file, not `-e`: Rscript on Windows crashed on the multi-line `-e` argument.
+  const script = path.join(root, "build.R");
+  writeFileSync(script, code);
+  const built = spawnSync(rscript, [script], { encoding: "utf8" });
   assert.equal(built.status, 0, built.stderr);
   return root;
 };
