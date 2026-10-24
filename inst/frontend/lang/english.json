@@ -44,6 +44,7 @@
     "t_ember_r_status_starting": "R starting",
     "t_ember_r_status_ready": "R ready",
     "t_ember_r_status_busy": "Running {{i}} of {{n}} cells",
+    "t_ember_go_to_running_cell": "Go to the running cell",
     "t_ember_r_status_stopped": "R stopped",
     "t_ember_r_status_restart_title": "Restart R to use the new versions of: {{names}}",
     "t_ember_status_r": "R",

@@ -939,6 +939,12 @@ pluto-editor.disconnected > header#pluto-nav {
 #ember-r-status:active {
     background: var(--ember-active);
 }
+/* ↑ or ↓ while the running cell is out of view; the click goes there
+   (#538). Shown at every width, next to the dot on a phone. */
+.ember-r-status-where {
+    color: var(--ember-run);
+    font-weight: 600;
+}
 @media (max-width: 640px) {
     #ember-r-status .ember-r-status-words {
         position: absolute;
@@ -953,6 +959,10 @@ pluto-editor.disconnected > header#pluto-nav {
         width: 20px;
         height: 20px;
         justify-content: center;
+    }
+    #ember-r-status:has(.ember-r-status-where) {
+        width: auto;
+        gap: 3px;
     }
 }
 
@@ -2743,14 +2753,14 @@ pluto-editor.disable_ui [data-cell-variable] {
 }
 pluto-editor:not(.disable_ui) [data-ctrl-down="true"][data-pluto-variable],
 pluto-editor:not(.disable_ui) [data-ctrl-down="true"][data-cell-variable] {
-    text-decoration-color: #d177e6;
+    text-decoration-color: var(--ember-accent);
     cursor: pointer;
 }
 pluto-editor:not(.disable_ui) [data-ctrl-down="true"][data-pluto-variable]:hover,
 pluto-editor:not(.disable_ui) [data-ctrl-down="true"][data-pluto-variable]:hover * {
-    /* This basically `color: #af5bc3`, but it works for emoji too!! */
+    /* The accent as the text colour, in a way that works for emoji too. */
     color: transparent !important;
-    text-shadow: 0 0 #af5bc3;
+    text-shadow: 0 0 var(--ember-accent);
 }
 
 /* Variable that is declared in the same cell */
@@ -2759,9 +2769,9 @@ pluto-editor:not(.disable_ui) [data-ctrl-down="true"][data-pluto-variable]:hover
     text-decoration: none;
 }
 [data-ctrl-down="true"][data-cell-variable]:hover * {
-    /* This basically `color: #af5bc3`, but it works for emoji too!! */
+    /* The accent as the text colour, in a way that works for emoji too. */
     color: transparent !important;
-    text-shadow: 0 0 #af5bc3;
+    text-shadow: 0 0 var(--ember-accent);
 }
 
 /* Lines the label up with the typed text: the list's border and padding

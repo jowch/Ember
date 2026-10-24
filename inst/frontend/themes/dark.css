@@ -34,6 +34,7 @@
     --ember-due-line: #5a4b29;
     --ember-wash: #1e2420;
     --ember-dis-bg: #202522;
+    --ember-stale-opacity: 0.55;
     --ember-syn-kw: #c9a3e0;
     --ember-syn-fn: #6cc7b2;
     --ember-syn-str: #c3cf7a;

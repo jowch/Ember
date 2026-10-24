@@ -129,7 +129,7 @@ pluto-cell[data-rail="run"] > pluto-trafficlight {
         opacity: 1;
     }
     50% {
-        opacity: 0.45;
+        opacity: 0.3;
     }
 }
 
@@ -157,9 +157,25 @@ pluto-cell[data-rail="due"] > pluto-trafficlight:hover ~ ember-rail-tip {
     display: block;
 }
 
+/* The running code box, like the edited one below in blue, so the
+   running cell can be found at a glance; it stays under reduced motion,
+   where the rail doesn't pulse (#538). */
+/* The second selector outranks editor.css's `.cm-editor.cm-focused:not(.__)
+   { outline: none }`, which otherwise hides the outline in the cell being
+   typed in. */
+pluto-cell[data-rail="run"] > pluto-input .cm-editor,
+pluto-cell[data-rail="run"] > pluto-input .cm-editor.cm-focused:not(.__) {
+    outline: 1px solid var(--ember-rail-run);
+    outline-offset: -1px;
+}
+pluto-cell[data-rail="run"] > pluto-input .cm-gutters {
+    background: color-mix(in srgb, var(--ember-rail-run) 14%, var(--ember-code));
+}
+
 /* The edited code box: inset outline and tinted gutter (ui-3.md's rail
-   table, "edited, not run" row). */
-pluto-cell[data-rail="due"] > pluto-input .cm-editor {
+   table, "edited, not run" row), kept while typing in it (#538). */
+pluto-cell[data-rail="due"] > pluto-input .cm-editor,
+pluto-cell[data-rail="due"] > pluto-input .cm-editor.cm-focused:not(.__) {
     outline: 1px solid var(--ember-due-line);
     outline-offset: -1px;
 }
@@ -664,11 +680,21 @@ pluto-cell.stale > pluto-input .cm-editor {
     border-top-right-radius: 0;
 }
 
-pluto-cell.stale > pluto-output,
+/* A disabled cell is switched off on purpose, like commented-out code,
+   and stays faint. A stale output is still the last result and has to be
+   readable: greyed, at 4.5 : 1 (#538). Its console loses its colour too,
+   so the warning's amber doesn't make half the cell look current. */
 pluto-cell.running_disabled > pluto-output,
 pluto-cell.depends_on_disabled_cells > pluto-output {
     filter: grayscale(1);
     opacity: 0.32;
+}
+pluto-cell.stale > pluto-output {
+    filter: grayscale(1);
+    opacity: var(--ember-stale-opacity);
+}
+pluto-cell.stale > pluto-logs-container {
+    filter: grayscale(1);
 }
 pluto-cell.running_disabled > pluto-input .cm-editor {
     background: var(--ember-dis-bg);
