@@ -82,3 +82,11 @@ definitions take part in the multiple-definitions rule and in edges
 exactly like statically read ones; learned references go through the same
 edge resolution as static references.
 }
+\examples{
+g <- notebook_graph(cells = c(a = "x <- 1", b = "y <- x + 1", c = "z <- y * 2"))
+g
+g$edges
+# The worker reports that cell a also defined `w` when it ran.
+g2 <- graph_learn(g, "a", definitions = "w")
+g2$cells$a$learned
+}

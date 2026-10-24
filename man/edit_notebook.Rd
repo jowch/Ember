@@ -68,10 +68,11 @@ signalled; none of the ops take effect.
 list describing the edit; they do nothing on their own.
 }
 \examples{
-\dontrun{
-nb <- open_notebook("growth.R")
-edit_notebook(nb, set_code(2, "deg <- 3"))
-edit_notebook(nb, insert_cell(3, "summary(fit)"), fold_cell(1))
+cache <- file.path(tempdir(), "ember-cache")
+nb <- new_notebook(tempfile(fileext = ".R"), cache = cache)
+edit_notebook(nb, insert_cell(1, "deg <- 2"), insert_cell(2, "deg + 1"))
+edit_notebook(nb, set_code(1, "deg <- 3"), fold_cell(1))
 edit_notebook(nb, disable_cell(2))
-}
+nb
+close_notebook(nb)
 }

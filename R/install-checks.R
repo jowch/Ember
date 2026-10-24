@@ -396,12 +396,13 @@ exit_status_text <- function(status) {
 #' an error there is dropped, so renv's own report always follows.
 #' `FALSE` when this renv has no such function, so a renv that reports
 #' differently still installs; test-install-checks.R checks the installed
-#' renv has it.
+#' renv has it. The tracer holds the function itself, not
+#' `ember:::build_failure_lines`, which `R CMD check` notes.
 trace_renv_build_failures <- function(ns = asNamespace("renv")) {
   if (!exists("renv_graph_install_errors", envir = ns, inherits = FALSE)) return(FALSE)
   suppressMessages(trace("renv_graph_install_errors", where = ns, print = FALSE,
-                         tracer = quote(tryCatch(suppressWarnings(writeLines(ember:::build_failure_lines(errors))),
-                                                 error = function(e) NULL))))
+                         tracer = bquote(tryCatch(suppressWarnings(writeLines(.(build_failure_lines)(errors))),
+                                                  error = function(e) NULL))))
   TRUE
 }
 

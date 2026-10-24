@@ -6,3 +6,9 @@ options(ember.cache_dir = tempfile("ember-test-cache-"))
 # Tests never touch the user's real recent-notebooks file either:
 # tools::R_user_dir("ember", "data") honours this environment variable.
 Sys.setenv(R_USER_DATA_DIR = tempfile("ember-test-data-"))
+
+# An Rscript a test starts (an `open_notebook()` in a child, say) doesn't
+# see the option above, but it inherits this variable, which the default
+# cache_dir(), tools::R_user_dir("ember", "cache"), honours. Without it
+# such a child used the user's real cache, which R CMD check found.
+Sys.setenv(R_USER_CACHE_DIR = tempfile("ember-test-cache-"))
