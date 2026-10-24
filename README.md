@@ -68,7 +68,13 @@ left or ⋯ → **Open another notebook** goes back to the start page.
 
 A notebook you open from a file starts in safe preview: click **Run this
 notebook** to run it. Then write code in the cells. Shift+Enter runs a
-cell, and ⋯ → **Keyboard shortcuts** lists the rest. When you're done:
+cell, and ⋯ → **Keyboard shortcuts** lists the rest.
+
+Notebooks save themselves as you edit. Code runs in the notebook's folder,
+so `read.csv("data.csv")` reads the file next to the notebook, and the cell
+reruns when that file changes. On the start page, the button beside an
+open notebook stops its R; the notebook stays in the list until you click
+**Forget**. When you're done:
 
 ```r
 srv$stop()
