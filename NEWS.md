@@ -11,7 +11,8 @@ The first release.
   those versions into its own library, from CRAN, Bioconductor, GitHub or an
   r-universe. `preview_date()` and `set_date()` move the date when you choose.
   `run()` runs a saved notebook from start to finish with those versions.
-* A notebook opens in safe preview and runs nothing until you allow it.
+* A notebook opened from a file starts in safe preview and runs nothing until
+  you allow it.
 * The browser interface (`start_server()`) is a fork of Pluto.jl's. It shows
   data frames as paged tables, lists as trees, plots at a fixed size that stay
   sharp on high-density screens, and htmlwidgets.
