@@ -86,7 +86,8 @@ async function fastForwardUntil(page, locator, { step = 5000, limit = 120000 } =
     queue: window.ember_dialog_queue, queue_events: window.ember_dialog_events,
     in_page: [...document.querySelectorAll("dialog")].map((d) => ({ open: d.open, role: d.getAttribute("role"), title: d.querySelector(".ember-dialog-title")?.textContent ?? null })),
   }, null, 1));
-  throw new Error(`still no ${locator} after moving the clock ${limit} ms; the page's connection: ${seen}`);
+  // A dialog whose showModal() threw is in the page but not open: its error is here.
+  throw new Error(`still no ${locator} after moving the clock ${limit} ms; the page's connection: ${seen}; its problems: ${JSON.stringify(page.problems ?? [], null, 1)}`);
 }
 
 /** Open the notebook through a forwarder, then take the forwarder away. */
