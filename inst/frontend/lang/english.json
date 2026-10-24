@@ -395,6 +395,7 @@
     "t_ember_start_open_button": "Open",
     "t_copy_cells_failed": "Couldn't copy the cells.",
     "t_copy_output_failed": "Couldn't copy the output.",
+    "t_copy_output_done": "Output copied",
     "t_output_show_failed": "Ember couldn't show this output.",
     "t_shortcuts_esc_closes": "Esc closes",
     "t_shortcuts_running": "Running",
