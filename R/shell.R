@@ -1645,8 +1645,8 @@ data_listing_signature <- function(key) {
 #' folder's, which on a network drive is the server's. `seen_at` is when
 #' the poll first saw the folders' current times: for 2 s after it, a
 #' second change in the same tick of a coarse clock (FAT's 2 s, HFS+'s
-#' 1 s) would leave them as they are, so the poll lists again until then,
-#' as git does for its index. And it lists again every `every` seconds
+#' 1 s) would leave them as they are, so the poll lists again until a
+#' listing starts after then (`listed_from`), as git does for its index. And it lists again every `every` seconds
 #' whatever the times say (10 s, or 100 times the listing's own time,
 #' whichever is longer): a file system that doesn't move a folder's time
 #' when its entries change still has its change found.
@@ -1659,7 +1659,7 @@ data_listing_watch <- function(key, seen_at = as.numeric(Sys.time())) {
   mtimes <- folder_mtimes(dirs)
   sig <- data_listing_signature(key)
   listed_at <- as.numeric(Sys.time())
-  list(dirs = dirs, mtimes = mtimes, sig = sig, seen_at = seen_at,
+  list(dirs = dirs, mtimes = mtimes, sig = sig, seen_at = seen_at, listed_from = start,
        listed_at = listed_at, every = max(10, 100 * (listed_at - start)))
 }
 
@@ -1682,8 +1682,9 @@ folder_mtimes <- function(dirs) {
 
 #' The listings among the watched keys whose names changed (#514), by key
 #' to their new signature, for `check_data_files()`. A listing whose
-#' folders' times moved is listed again, as is one within 2 s of its
-#' `seen_at` or past its `every` (`data_listing_watch()`); only a new
+#' folders' times moved is listed again, as is one whose last listing
+#' began within 2 s of its `seen_at`, or past its `every`
+#' (`data_listing_watch()`); only a new
 #' signature is a change, so a file the listing wouldn't return (an Excel
 #' lock file beside the CSVs) reruns nothing.
 check_data_listings <- function(nb, listings) {
@@ -1699,7 +1700,7 @@ check_data_listings <- function(nb, listings) {
     at <- at + n
     same <- identical(m, w$mtimes)
     t <- as.numeric(Sys.time())
-    if (same && t > w$seen_at + 2 && t <= w$listed_at + w$every) next
+    if (same && w$listed_from > w$seen_at + 2 && t <= w$listed_at + w$every) next
     fresh <- data_listing_watch(k, seen_at = if (same) w$seen_at else t)
     nb$data_watch[[k]] <- fresh
     if (!identical(fresh$sig, w$sig)) changed[[k]] <- fresh$sig

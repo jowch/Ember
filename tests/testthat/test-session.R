@@ -229,12 +229,12 @@ test_that("autorun: a cell that lists a folder reruns when a file it lists appea
   listing <- function() Filter(is_listing_key, names(nb$data_watch))
   settle(nb, function(snap) length(listing()) == 1 && is_idle(snap))
 
-  # A lock file beside the CSVs: the poll lists the folder again, for 2 s
-  # after it sees the folder's new time, and nothing reruns.
+  # A lock file beside the CSVs: the poll lists the folder again until a
+  # listing starts 2 s after it saw the folder's new time, and nothing reruns.
   writeLines("lock", file.path(data, "~$book.xlsx"))
   seen <- function() {
     w <- nb$data_watch[[listing()]]
-    as.numeric(Sys.time()) > w$seen_at + 2 && identical(w$mtimes, folder_mtimes(w$dirs))
+    w$listed_from > w$seen_at + 2 && identical(w$mtimes, folder_mtimes(w$dirs))
   }
   settle(nb, function(snap) seen() && is_idle(snap))
   expect_identical(runs(), 1L)
@@ -1374,6 +1374,26 @@ test_that("the poll lists a watched folder again only when its time moves, and r
   unlink(nb$data, recursive = TRUE)
   check_data_files(nb, nb$send)
   expect_identical(nb$sent[[3]]$files[[key]], "missing")
+})
+
+test_that("a listing that began within the 2 s is followed by one after them (#514)", {
+  # A change in the same tick, after a listing at seen_at + 1.9, is found
+  # by the next poll, not left to the slow relist.
+  nb <- listing_check_nb()
+  sync_data_watch(nb, nb$key)
+  w <- nb$data_watch[[nb$key]]
+  w$seen_at <- as.numeric(Sys.time()) - 2.5
+  w$listed_from <- w$seen_at + 1.9
+  w$sig <- "as recorded"
+  nb$data_watch[[nb$key]] <- w
+  check_data_files(nb, nb$send)
+  expect_length(nb$sent, 1)
+  expect_identical(nb$sent[[1]]$files[[nb$key]], data_listing_signature(nb$key))
+  # That listing began after the 2 s, so the next poll leaves it alone.
+  expect_gt(nb$data_watch[[nb$key]]$listed_from, nb$data_watch[[nb$key]]$seen_at + 2)
+  nb$data_watch[[nb$key]]$sig <- "as recorded"
+  check_data_files(nb, nb$send)
+  expect_length(nb$sent, 1)
 })
 
 test_that("a folder whose time is ahead of this machine's clock is listed again only for 2 s (#514)", {
