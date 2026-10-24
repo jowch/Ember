@@ -151,6 +151,10 @@ list a stopped file leaves behind, with the end of each server's log and,
 except on Windows, what each page showed (its connection, its running
 and queued cells, its focus) and each labelled wait's `state()`. A test
 that ends while one of its waits is still pending prints the same list.
+An `openNotebook()` still under way adds when its socket opened, when the
+page sent its first `update_notebook`, when the server's first
+`notebook_diff` came back, and when the first cell was drawn (#417): a
+slow open says whether the server or the page took the time.
 
 `browser.mjs` has the conditions that are hard to see from the page:
 
