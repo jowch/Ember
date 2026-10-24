@@ -153,3 +153,82 @@ test("undo delete of a disabled cell brings it back disabled, under its short id
   // No "cell id must be a UUID" refusal logged by the page (#27).
   assertNoProblems(page);
 });
+
+test("a disabled cell reads at 3 : 1 or better: its greyed output and its uncoloured code, in both themes (#591)", async (t) => {
+  const notebook = tempNotebook("disabled.R");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "disabled-contrast.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await openNotebook(page, server.origin, server.secret, notebook);
+  await page.locator("#ember-safe-preview button").click();
+  await page.waitForFunction(
+    (sel) => document.querySelector(sel)?.innerText.includes("2"),
+    cellSelector("B") + " pluto-output");
+
+  await page.hover(cellSelector("A"));
+  await page.locator(`${cellSelector("A")} button.input_context_menu`).click();
+  await page.locator(`${cellSelector("A")} button.disable_cell`).click();
+  await page.waitForSelector(`${cellSelector("A")}.running_disabled`);
+  await page.waitForSelector(`${cellSelector("B")}.depends_on_disabled_cells`);
+  await page.keyboard.press("Escape");
+  await page.mouse.move(0, 0);
+
+  const parse = (c) => c.match(/[\d.]+/g).map(Number);
+  const lum = ([r, g, b]) => {
+    const [R, G, B] = [r, g, b].map((v) => v / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * R + 0.7152 * G + 0.0722 * B;
+  };
+  const contrast = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+  // CSS grayscale(1) is the luminance-weighted sum per channel.
+  const grey = ([r, g, b]) => { const y = 0.2126 * r + 0.7152 * g + 0.0722 * b; return [y, y, y]; };
+
+  for (const scheme of ["light", "dark"]) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await page.waitForFunction((scheme) => document.documentElement.dataset.theme === scheme, scheme);
+
+    // B's output, greyed and faded over the page.
+    const out = await page.locator(`${cellSelector("B")} > pluto-output`).evaluate((el) => {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+      const colours = [];
+      for (let n = walker.nextNode(); n != null; n = walker.nextNode()) {
+        if (n.textContent.trim() !== "") colours.push(getComputedStyle(n.parentElement).color);
+      }
+      const style = getComputedStyle(el);
+      return { colours, opacity: style.opacity, filter: style.filter, page: getComputedStyle(document.body).backgroundColor };
+    });
+    assert.ok(out.colours.length > 0, `${scheme}: B's output has text`);
+    assert.match(out.filter, /grayscale\(1\)/, `${scheme}: B's output is greyed`);
+    const a = Number(out.opacity);
+    assert.ok(a < 1, `${scheme}: B's output is faded (${a})`);
+    const under = parse(out.page);
+    for (const c of out.colours) {
+      const seen = grey(parse(c)).map((v, i) => v * a + under[i] * (1 - a));
+      const ratio = contrast(seen, under);
+      assert.ok(ratio >= 3, `${scheme}: B's output text ${c} reads at ${ratio.toFixed(2)} : 1`);
+    }
+
+    // A's code and line numbers on its grey background, at full opacity.
+    const code = await page.locator(`${cellSelector("A")} > pluto-input .cm-editor`).evaluate((ed) => {
+      const texts = [];
+      for (const part of [ed.querySelector(".cm-content"), ed.querySelector(".cm-gutters")]) {
+        const walker = document.createTreeWalker(part, NodeFilter.SHOW_TEXT);
+        for (let n = walker.nextNode(); n != null; n = walker.nextNode()) {
+          if (n.textContent.trim() === "") continue;
+          let opacity = 1;
+          for (let e = n.parentElement; e != null && e !== ed; e = e.parentElement) opacity *= Number(getComputedStyle(e).opacity);
+          texts.push({ text: n.textContent, colour: getComputedStyle(n.parentElement).color, opacity });
+        }
+      }
+      return { texts, bg: getComputedStyle(ed).backgroundColor };
+    });
+    assert.ok(code.texts.some((x) => x.text.includes("x")), `${scheme}: A's code is there`);
+    for (const x of code.texts) {
+      assert.equal(x.opacity, 1, `${scheme}: "${x.text}" in A's code isn't faded`);
+      const ratio = contrast(parse(x.colour), parse(code.bg));
+      assert.ok(ratio >= 3, `${scheme}: "${x.text}" in A's code reads at ${ratio.toFixed(2)} : 1`);
+    }
+  }
+  assertNoProblems(page);
+});

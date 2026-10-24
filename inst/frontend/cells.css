@@ -681,13 +681,14 @@ pluto-cell.stale > pluto-input .cm-editor {
 }
 
 /* A disabled cell is switched off on purpose, like commented-out code,
-   and stays faint. A stale output is still the last result and has to be
+   and looks fainter than a stale one, but its last output still reads at
+   3 : 1 (#591). A stale output is still the last result and has to be
    readable: greyed, at 4.5 : 1 (#538). Its console loses its colour too,
    so the warning's amber doesn't make half the cell look current. */
 pluto-cell.running_disabled > pluto-output,
 pluto-cell.depends_on_disabled_cells > pluto-output {
     filter: grayscale(1);
-    opacity: 0.32;
+    opacity: var(--ember-dis-opacity);
 }
 pluto-cell.stale > pluto-output {
     filter: grayscale(1);
@@ -699,9 +700,11 @@ pluto-cell.stale > pluto-logs-container {
 pluto-cell.running_disabled > pluto-input .cm-editor {
     background: var(--ember-dis-bg);
 }
-pluto-cell.running_disabled > pluto-input .cm-gutters,
-pluto-cell.running_disabled > pluto-input .cm-content {
-    opacity: 0.5;
+/* The code loses its syntax colours instead of its contrast: all of it
+   in the muted grey, at 4.5 : 1 on the grey background (#591). */
+pluto-cell.running_disabled > pluto-input .cm-content,
+pluto-cell.running_disabled > pluto-input .cm-content * {
+    color: var(--ember-muted);
 }
 
 /* ---- Errors (ui-3.md "Errors"; ui-3-plan.md 6.4) ----------------------- */

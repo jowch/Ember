@@ -67,8 +67,9 @@ out of the way of the data, the code and the results.
   icon and its own tint: "Not run yet" (neutral, no output), "Stale · `x`
   changed" (amber tint; lazy mode only; the old output is greyed out on a
   grey wash but still reads at 4.5 : 1, and its console loses its colour,
-  #538), "Disabled" (solid grey; the code sits on a grey background,
-  dimmed). Each name in a chip, or in the "Changed `cnt` in place" note,
+  #538), "Disabled" (solid grey; the code sits on a grey background in
+  plain grey text, without syntax colours, at 4.5 : 1, and the old output is
+  greyed and fainter than a stale one but still reads at 3 : 1, #591). Each name in a chip, or in the "Changed `cnt` in place" note,
   links to the one cell that defines it, and clicking it selects the
   definition there, as go-to-definition does (#285). A name no single cell
   defines stays plain text. Chip text can't be selected.

@@ -43,6 +43,9 @@
     --ember-dis-bg: #e6e9e5;
     /* A stale output, greyed, still reads at 4.5 : 1 on the wash (#538). */
     --ember-stale-opacity: 0.65;
+    /* A disabled output is fainter, but its text still reads at 3 : 1 on
+       the page (#591). */
+    --ember-dis-opacity: 0.55;
     --ember-syn-kw: #7b4a91;
     --ember-syn-fn: #22715f;
     --ember-syn-str: #5d6b12;
