@@ -9,13 +9,13 @@ import { cl } from "../common/ClassTable.js"
 export const toast = (/** @type {string} */ text) => window.dispatchEvent(new CustomEvent("ember_toast", { detail: text }))
 
 export const Toast = () => {
-    const [text, set_text] = useState("")
+    const [note, set_note] = useState({ text: "", n: 0 })
     const [hidden, set_hidden] = useState(true)
     const timer = useRef(/** @type {any} */ (null))
 
     useEffect(() => {
         const on_toast = (/** @type {CustomEvent} */ e) => {
-            set_text(e.detail)
+            set_note(({ n }) => ({ text: e.detail, n: n + 1 }))
             set_hidden(false)
             clearTimeout(timer.current)
             timer.current = setTimeout(() => set_hidden(true), 2500)
@@ -27,6 +27,7 @@ export const Toast = () => {
         }
     }, [])
 
-    // Keeps its text while it fades, as UndoDelete does.
-    return html`<nav id="ember-toast" role="status" class=${cl({ hidden })}>${text}</nav>`
+    // Keeps its text while it fades, as UndoDelete does. Each note is a new
+    // span, so a screen reader announces a second "Output copied" too.
+    return html`<nav id="ember-toast" role="status" class=${cl({ hidden })}><span key=${note.n}>${note.text}</span></nav>`
 }

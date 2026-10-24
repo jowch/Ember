@@ -2589,6 +2589,12 @@ nav#ember-toast {
         0.05s linear opacity;
 }
 
+/* While "Cell deleted · Undo" shows, a note stacks above it rather than
+   covering the way back (#538). */
+nav#undo_delete:not(.hidden) + nav#ember-toast {
+    bottom: 2.5rem;
+}
+
 nav#undo_delete.hidden,
 nav#ember-toast.hidden {
     margin-bottom: 0px;
