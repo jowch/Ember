@@ -17,6 +17,8 @@ import { display_name } from "../common/display_name.js"
 import { useSettled, wait_for_on } from "../common/useSettled.js"
 import { EditorSelection, EditorView } from "../imports/CodemirrorPlutoSetup.js"
 import { ctrl_or_cmd_name } from "../common/KeyboardShortcuts.js"
+import { help_query_of } from "../common/help_query.js"
+import { open_bottom_right_panel } from "./BottomRightPanel.js"
 
 /**
  * The "Stale" chip's text: "Stale" alone when no names are known, else
@@ -318,10 +320,21 @@ export const Cell = ({
     const on_menu_delete = useCallback(() => {
         pluto_actions.delete_and_select_neighbor(pluto_actions.get_selected_cells(cell_id, selected))
     }, [pluto_actions, selected, cell_id])
+    // The code as typed, for on_submit: the editor keeps the on_submit it
+    // was made with, so the code has to be read at the time of the run.
+    const typed_code_ref = useRef(code)
+    typed_code_ref.current = cell_input_local?.code ?? code
     const on_submit = useCallback(async () => {
         set_text_open(false)
         set_remote_replaced(false)
         if (!disable_input_ref.current) {
+            // `?mean` at R's console shows mean's help page: running a cell
+            // that is just that opens the page in the Help panel (#558).
+            const topic = help_query_of(typed_code_ref.current)
+            if (topic != null) {
+                pluto_actions.set_doc_query(topic, true)
+                open_bottom_right_panel("docs", { focus: false })
+            }
             return await pluto_actions.set_and_run_multiple([cell_id])
         }
         return false

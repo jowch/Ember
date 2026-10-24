@@ -793,11 +793,13 @@ export const CellInput = ({
                         pluto_actions,
                         cell_id,
                     }),
-                    // Update live docs when in a cell that starts with `?`
+                    // Update live docs when in a cell that starts with `?`,
+                    // leaving focus in the cell: the rest of `?mean` is still
+                    // being typed here (#558).
                     EditorView.updateListener.of((update) => {
                         if (!update.docChanged) return
                         if (update.state.doc.length > 0 && update.state.sliceDoc(0, 1) === "?") {
-                            open_bottom_right_panel("docs")
+                            open_bottom_right_panel("docs", { focus: false })
                         }
                     }),
                     EditorState.tabSize.of(4),
