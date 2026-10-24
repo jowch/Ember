@@ -1850,6 +1850,9 @@ test_that("Open a file and /open say a path doesn't exist or is a folder, and wh
                    sprintf("%s doesn't exist. Check the spelling, or use New notebook to make one.", full))
   handle_message(server, ws, wire("ember_open_notebook", path = dir))
   expect_identical(ws$last()$message$error, sprintf("%s is a folder, not a notebook file.", normalizePath(dir)))
+  # Open a file submitted with nothing typed.
+  handle_message(server, ws, wire("ember_open_notebook", path = ""))
+  expect_identical(ws$last()$message$error, "No file was given. Type the path of a notebook file.")
 
   resp <- http_call(server, fake_req("/open", sprintf("path=%s&secret=s", utils::URLencode(missing, reserved = TRUE))))
   expect_equal(resp$status, 400L)

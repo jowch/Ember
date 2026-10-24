@@ -86,13 +86,18 @@ open_notebook <- function(path, repos = ember_repos(), cache = cache_dir()) {
 #' when it names a file. Checked before reading, because reading a missing
 #' file or a folder fails with R's generic "cannot open the connection" and
 #' leaves the reason in a warning (#559). Classed `ember_no_file` (with
-#' `kind` "missing" or "folder") so the start page can add what to do there.
+#' `kind` "missing", "folder" or "empty") so the start page can add what to
+#' do there.
 #' The path is shown in full, so the message says which path was tried.
+#' An empty path (Open a file submitted with nothing typed) has none to show.
 open_path_error <- function(path) {
   full <- normalizePath(path, mustWork = FALSE)
-  kind <- if (dir.exists(path)) "folder" else if (!file.exists(path)) "missing" else return(NULL)
-  text <- if (kind == "folder") sprintf("%s is a folder, not a notebook file", full)
-          else sprintf("%s doesn't exist. Check the spelling", full)
+  kind <- if (!nzchar(path)) "empty" else if (dir.exists(path)) "folder"
+          else if (!file.exists(path)) "missing" else return(NULL)
+  text <- switch(kind,
+    empty = "No file was given. Type the path of a notebook file",
+    folder = sprintf("%s is a folder, not a notebook file", full),
+    missing = sprintf("%s doesn't exist. Check the spelling", full))
   structure(class = c("ember_no_file", "error", "condition"),
             list(message = paste0("ember: ", text), call = NULL, text = text, kind = kind))
 }
