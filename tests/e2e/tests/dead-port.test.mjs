@@ -80,7 +80,11 @@ async function fastForwardUntil(page, locator, { step = 5000, limit = 120000 } =
     await connectionSettled(page);
   }
   if (await locator.count() > 0) return;
-  throw new Error(`still no ${locator} after moving the clock ${limit} ms`);
+  // What the page did meanwhile (PlutoConnection.js), to say why (#491).
+  const seen = await page.evaluate(() => JSON.stringify({
+    connection: window.ember_connection, dialogs: window.ember_dialogs?.map((d) => d.title),
+  }, null, 1));
+  throw new Error(`still no ${locator} after moving the clock ${limit} ms; the page's connection: ${seen}`);
 }
 
 /** Open the notebook through a forwarder, then take the forwarder away. */
