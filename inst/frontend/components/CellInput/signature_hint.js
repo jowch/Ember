@@ -4,7 +4,8 @@ import { StateField, StateEffect, ViewPlugin, showTooltip, syntaxTree } from "..
  * The call the cursor is inside, if any: the innermost `Call` whose
  * `ArgList` contains the cursor (the same rule `get_selected_doc_from_state`
  * uses, ui-2.md "4d. Signatures"). `name`/`package` split a `pkg::name` or
- * `pkg:::name` callee; `pos` is where the tooltip anchors: the call's own
+ * `pkg:::name` callee; `from` is the call's start; `pos` is where the
+ * tooltip anchors: the call's own
  * start while the cursor is on the call's first line, so it stays put
  * while the user types arguments, and the start of the cursor's line once
  * the call spans several. CodeMirror puts the tooltip above that line, or
@@ -21,11 +22,16 @@ function call_at_cursor(state) {
             if (callee == null) return null
             let text = state.doc.sliceString(callee.from, callee.to)
             let m = text.match(/^([.\p{L}\p{N}_]+):::?([.\p{L}\p{N}_]+)$/u)
-            let line = state.doc.lineAt(pos)
-            return { name: m ? m[2] : text, package: m ? m[1] : null, pos: call.from >= line.from ? call.from : line.from }
+            return { name: m ? m[2] : text, package: m ? m[1] : null, from: call.from, pos: anchor(state, call.from) }
         }
     }
     return null
+}
+
+/** Where a tooltip for the call starting at `from` anchors, for the cursor as it is in `state` (see `call_at_cursor`). */
+const anchor = (state, from) => {
+    let line = state.doc.lineAt(state.selection.main.head)
+    return from >= line.from ? from : line.from
 }
 
 const set_signature_tooltip = StateEffect.define()
@@ -37,15 +43,17 @@ const signature_tooltip_field = StateField.define({
         // or closes it. Unmapped, an edit that shortens the code (select
         // all and type) leaves it past the end of the document, and
         // CodeMirror's next measure of the tooltip throws (#314).
-        if (value != null && tr.docChanged) value = { ...value, pos: tr.changes.mapPos(value.pos) }
-        // The anchor's line follows the cursor in the same transaction: an
-        // Enter inside a call otherwise leaves it on the line above until
-        // the debounce and the signature request have both come back, and
-        // with no room above, the tooltip covers the new line meanwhile
-        // (#476). The text stays the old call's until then.
-        if (value != null && (tr.docChanged || tr.selection != null)) {
-            let call = call_at_cursor(tr.state)
-            if (call != null && call.pos !== value.pos) value = { ...value, pos: call.pos }
+        if (value != null && tr.docChanged) value = { ...value, from: tr.changes.mapPos(value.from), pos: tr.changes.mapPos(value.pos) }
+        // The anchor's line follows the cursor in the same transaction, by
+        // the shown call's own rule: an Enter inside a call otherwise leaves
+        // it on the line above until the debounce and the signature request
+        // have both come back, and with no room above, the tooltip covers
+        // the new line meanwhile (#476). It stays the shown call's anchor,
+        // not that of a call typed inside it, whose signature isn't shown
+        // yet. A cursor moved before the call leaves it be.
+        if (value != null && (tr.docChanged || tr.selection != null) && tr.state.selection.main.head > value.from) {
+            let pos = anchor(tr.state, value.from)
+            if (pos !== value.pos) value = { ...value, pos }
         }
         for (let e of tr.effects) if (e.is(set_signature_tooltip)) value = e.value
         return value
@@ -78,9 +86,9 @@ const render_tooltip = (text) => ({
 export function signature_hint({ request_signature }) {
     let cache = new Map()
 
-    let dispatch_tooltip = (view, pos, text) => {
+    let dispatch_tooltip = (view, call, text) => {
         view.dispatch({
-            effects: set_signature_tooltip.of(text == null ? null : { pos, above: true, create: render_tooltip(text).create }),
+            effects: set_signature_tooltip.of(text == null ? null : { from: call.from, pos: call.pos, above: true, create: render_tooltip(text).create }),
         })
     }
 
@@ -96,14 +104,14 @@ export function signature_hint({ request_signature }) {
             let call = call_at_cursor(view.state)
             if (call == null) {
                 last_key = null
-                dispatch_tooltip(view, 0, null)
+                dispatch_tooltip(view, null, null)
                 return
             }
             let key = `${call.package ?? ""}::${call.name}`
             last_key = key
 
             if (cache.has(key)) {
-                dispatch_tooltip(view, call.pos, cache.get(key))
+                dispatch_tooltip(view, call, cache.get(key))
                 return
             }
             request_signature({ name: call.name, package: call.package })
@@ -114,7 +122,7 @@ export function signature_hint({ request_signature }) {
                     // and `call.pos` with it: anchor at the call as it is now.
                     let now = call_at_cursor(view.state)
                     if (now == null || `${now.package ?? ""}::${now.name}` !== key) return
-                    dispatch_tooltip(view, now.pos, text)
+                    dispatch_tooltip(view, now, text)
                 })
                 .catch(() => {})
         }
@@ -132,7 +140,7 @@ export function signature_hint({ request_signature }) {
                 timer = null
             }
             last_key = null
-            dispatch_tooltip(view, 0, null)
+            dispatch_tooltip(view, null, null)
         }
         view.dom.addEventListener("blur", on_blur, true)
 
