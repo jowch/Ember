@@ -3236,6 +3236,50 @@ test_that("arrow's delimited and JSON readers are learned once arrow loads", {
                 c("a.csv", "a.tsv", "a.json"))
 })
 
+test_that("foreign's read.dta(), read.spss() and read.xport() are learned once foreign loads", {
+  skip_if_not_installed("foreign")
+  expect_learns(function(d) {
+                  foreign::write.dta(data.frame(x = 1:2), file.path(d, "f.dta"))
+                  file.copy(system.file("files", "electric.sav", package = "foreign"), file.path(d, "f.sav"))
+                },
+                c('f1 <- foreign::read.dta(file.path(D, "f.dta"))',
+                  'f2 <- suppressWarnings(foreign::read.spss(file.path(D, "f.sav"), to.data.frame = TRUE))'),
+                c("f.dta", "f.sav"))
+  # foreign can't write a SAS transport file; haven can.
+  skip_if_not_installed("haven")
+  expect_learns(function(d) haven::write_xpt(data.frame(x = 1:2), file.path(d, "f.xpt"), version = 5),
+                'f3 <- foreign::read.xport(file.path(D, "f.xpt"))', "f.xpt")
+})
+
+test_that("sf's st_read() and read_sf() are learned with a shapefile's other files", {
+  # sf needs GDAL, so it isn't in Suggests and CI skips this; run locally with it installed.
+  skip_if_not_installed("sf")
+  h <- worker_harness(extra_libs = .libPaths())
+  on.exit(h$close())
+  d <- tempfile("ember-pkg-")
+  dir.create(d)
+  d <- normalizePath(d, winslash = "/")
+  pts <- sf::st_sf(a = 1:2, geometry = sf::st_sfc(sf::st_point(c(1, 2)), sf::st_point(c(3, 4)), crs = 4326))
+  sf::st_write(pts, file.path(d, "p.shp"), quiet = TRUE)
+  sf::st_write(pts, file.path(d, "g.gpkg"), quiet = TRUE)
+  shp <- list.files(d, pattern = "^p[.]")
+  expect_true(all(c("p.shp", "p.dbf", "p.shx", "p.prj") %in% shp))
+  r <- run_and_wait(h, "a", 1L, sprintf('D <- %s\np <- sf::st_read(file.path(D, "p.shp"), quiet = TRUE)\ng <- sf::read_sf(file.path(D, "g.gpkg"))',
+                                         deparse(d)))
+  expect_identical(r$status, "ok", info = r$error$message)
+  # A part the shapefile doesn't have (often .cpg) isn't a file read.
+  expect_setequal(names(r$data_seen)[unlist(r$data_seen) != "missing"], file.path(d, c(shp, "g.gpkg")))
+  expect_length(r$data_unresolved, 0)
+})
+
+test_that("a shapefile's other files are read with it, in its case", {
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  expect_identical(e$data_shapefile_parts("a.csv"), "a.csv")
+  expect_identical(e$data_shapefile_parts(c("d/x.shp", "Y.SHP")),
+                   c("d/x.shp", "Y.SHP", "d/x.dbf", "d/x.shx", "d/x.prj", "d/x.cpg", "Y.DBF", "Y.SHX", "Y.PRJ", "Y.CPG"))
+})
+
 test_that("the readers the worker traces are rules.R's data_readers", {
   e <- new.env(parent = baseenv())
   sys.source(worker_script_path(), e)

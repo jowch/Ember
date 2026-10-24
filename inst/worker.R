@@ -1072,7 +1072,10 @@ data_reader_args <- list(
   haven = c(read_sav = "file", read_dta = "file", read_sas = "data_file", read_xpt = "file"),
   jsonlite = c(read_json = "path"),
   qs2 = c(qs_read = "file", qd_read = "file"),
-  xml2 = c(read_xml = "x", read_html = "x"))
+  xml2 = c(read_xml = "x", read_html = "x"),
+  # read_sf() takes `...` and calls st_read(), whose hook sees its file.
+  sf = c(st_read = "dsn", read_sf = "dsn"),
+  foreign = c(read.dta = "file", read.spss = "file", read.xport = "file"))
 
 #' The readers that open their path through a connection, the connections
 #' whose file Ember can watch, and the classes that read no file (text, a
@@ -1211,7 +1214,22 @@ ember_data_read <- function(name, value, alt) {
     # whose hook sees it.
     return(invisible())
   }
+  if (identical(name, "st_read") && is.character(value)) value <- data_shapefile_parts(value)
   data_learn(value, reader = name)
+}
+
+#' `paths` with, for each shapefile among them, the files read with it:
+#' its attributes (.dbf), index (.shx), projection (.prj) and encoding
+#' (.cpg), in the .shp's case.
+data_shapefile_parts <- function(paths) {
+  shp <- paths[grepl("[.]shp$", paths, ignore.case = TRUE)]
+  if (length(shp) == 0) return(paths)
+  parts <- lapply(shp, function(p) {
+    ext <- c(".dbf", ".shx", ".prj", ".cpg")
+    if (endsWith(p, ".SHP")) ext <- toupper(ext)
+    paste0(substr(p, 1L, nchar(p) - 4L), ext)
+  })
+  c(paths, unlist(parts))
 }
 
 #' `fun` with `hook` run first in its body, in its own environment, so
