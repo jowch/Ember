@@ -256,7 +256,7 @@ record_read <- function(acc, scope, name, where = "code", pos = NULL, unmasked =
 #' scoping order-aware (see `walk_function()`): a name is local to the rest
 #' of the body from this point, not from the body's start.
 record_definition <- function(acc, scope, name, kind, pos = NULL) {
-  if (is_ignored(name)) return(invisible())
+  if (is_ignored_definition(name)) return(invisible())
   if (is.null(pos)) pos <- fallback_pos(acc)
   if (identical(scope$kind, "top")) {
     rows_push(acc$def_rows,
@@ -273,7 +273,7 @@ record_definition <- function(acc, scope, name, kind, pos = NULL) {
 #' global environment, unlike an ordinary assignment inside `local()`,
 #' which stays scoped to the block (see `walk_local()`).
 record_top_level_definition <- function(acc, scope, name, kind, pos = NULL) {
-  if (is_ignored(name)) return(invisible())
+  if (is_ignored_definition(name)) return(invisible())
   if (is.null(pos)) pos <- fallback_pos(acc)
   rows_push(acc$def_rows,
             list(name = name, line = pos$line, col = pos$col, end_col = pos$end_col,
@@ -373,4 +373,10 @@ record_note <- function(acc, kind, detail, pos = NULL) {
 is_ignored <- function(name) {
   !is.null(name) && length(name) == 1 && nzchar(name) &&
     (name %in% ignored_names || is_dot_dot_name(name))
+}
+
+#' An ignored name that isn't recorded as a definition either: all but
+#' `pronoun_names`, whose assignment the graph reports (#509).
+is_ignored_definition <- function(name) {
+  is_ignored(name) && !(name %in% pronoun_names)
 }

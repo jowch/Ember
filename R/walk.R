@@ -586,7 +586,7 @@ walk_assignment <- function(e, scope, acc, op, pid = NA_integer_) {
 
   if (op %in% c("<<-", "->>")) {
     target_name <- extract_target_name(raw_target)
-    if (is.null(target_name) || is_ignored(target_name)) return(invisible())
+    if (is.null(target_name) || is_ignored_definition(target_name)) return(invisible())
     tpid <- extract_target_pid(acc$pd, raw_target, raw_target_pid)
     if (is.call(raw_target)) walk_replacement_target(raw_target, scope, acc, raw_target_pid)
     if (in_function(scope)) {
