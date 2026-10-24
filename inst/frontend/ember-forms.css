@@ -39,6 +39,11 @@
         transition: none !important;
         scroll-behavior: auto !important;
     }
+    /* Its own rule: a browser that doesn't know ::backdrop would drop the
+       whole list above. */
+    ::backdrop {
+        animation: none !important;
+    }
 }
 
 /* One focus ring (ui-3.md, Accessibility), on both pages. */

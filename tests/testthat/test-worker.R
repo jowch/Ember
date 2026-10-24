@@ -3149,6 +3149,37 @@ test_that("a missing file a run tried to read is watched, so the cell reruns onc
   expect_identical(r$data_seen[[f]], "missing")
 })
 
+test_that("a package reader's missing file is watched, unless the reader takes it for a command or XML (#564)", {
+  skip_if_not_installed("data.table")
+  skip_if_not_installed("readr")
+  skip_if_not_installed("xml2")
+  h <- worker_harness(extra_libs = .libPaths())
+  on.exit(h$close())
+  d <- normalizePath(tempdir(), winslash = "/")
+  nope <- function(ext) file.path(d, basename(tempfile("ember-missing-", fileext = ext)))
+  f1 <- nope(".csv")
+  f2 <- nope(".csv")
+  f3 <- nope(".csv")
+  f4 <- nope(".xml")
+  r1 <- run_and_wait(h, "a", 1L, sprintf("x <- readr::read_csv(%s, show_col_types = FALSE)", deparse(f1)))
+  expect_identical(r1$status, "error")
+  expect_identical(r1$data_seen[[f1]], "missing")
+  r2 <- run_and_wait(h, "b", 2L, sprintf("x <- data.table::fread(file = %s)", deparse(f2)))
+  expect_identical(r2$status, "error")
+  expect_identical(r2$data_seen[[f2]], "missing")
+  # fread()'s input is a file unless it has a space: then it is a command.
+  r3 <- run_and_wait(h, "c", 3L, sprintf("x <- data.table::fread(%s)", deparse(f3)))
+  expect_identical(r3$status, "error")
+  expect_identical(r3$data_seen[[f3]], "missing")
+  cmd <- paste("cat", f3)
+  r4 <- run_and_wait(h, "d", 4L, sprintf("x <- try(data.table::fread(%s), silent = TRUE)", deparse(cmd)))
+  expect_null(r4$data_seen[[cmd]])
+  expect_null(r4$data_seen[[f3]])
+  r5 <- run_and_wait(h, "e", 5L, sprintf("x <- xml2::read_xml(%s)", deparse(f4)))
+  expect_identical(r5$status, "error")
+  expect_identical(r5$data_seen[[f4]], "missing")
+})
+
 test_that("fread() is learned once data.table loads, by input or file =, and text input isn't", {
   skip_if_not_installed("data.table")
   h <- worker_harness(extra_libs = .libPaths())
@@ -3277,17 +3308,26 @@ test_that("sf's st_read() and read_sf() are learned with a shapefile's other fil
   expect_true(all(c("p.shp", "p.dbf", "p.shx", "p.prj") %in% shp))
   r <- run_and_wait(h, "a", 2L, 'p <- sf::st_read(file.path(D, "p.shp"), quiet = TRUE)\ng <- sf::read_sf(file.path(D, "g.gpkg"))')
   expect_identical(r$status, "ok", info = r$error$message)
-  # A part the shapefile doesn't have (often .cpg) isn't a file read.
-  expect_setequal(names(r$data_seen)[unlist(r$data_seen) != "missing"], file.path(d, c(shp, "g.gpkg")))
+  # A part the shapefile doesn't have (often .cpg) isn't watched.
+  expect_setequal(names(r$data_seen), file.path(d, c(shp, "g.gpkg")))
   expect_length(r$data_unresolved, 0)
 })
 
 test_that("a shapefile's other files are read with it, in its case", {
   e <- new.env(parent = baseenv())
   sys.source(worker_script_path(), e)
-  expect_identical(e$data_shapefile_parts("a.csv"), "a.csv")
+  expect_identical(e$data_shapefile_parts("a.csv"), character())
   expect_identical(e$data_shapefile_parts(c("d/x.shp", "Y.SHP")),
-                   c("d/x.shp", "Y.SHP", "d/x.dbf", "d/x.shx", "d/x.prj", "d/x.cpg", "Y.DBF", "Y.SHX", "Y.PRJ", "Y.CPG"))
+                   c("d/x.dbf", "d/x.shx", "d/x.prj", "d/x.cpg", "Y.DBF", "Y.SHX", "Y.PRJ", "Y.CPG"))
+})
+
+test_that("sf's dsn is a file unless it is a GDAL driver string or virtual path", {
+  e <- new.env(parent = baseenv())
+  sys.source(worker_script_path(), e)
+  expect_true(e$data_reader_takes_file("st_read", "data/x.shp"))
+  expect_true(e$data_reader_takes_file("st_read", "C:/data/x.shp"))
+  expect_false(e$data_reader_takes_file("st_read", "PG:dbname=d"))
+  expect_false(e$data_reader_takes_file("st_read", "/vsizip/a.zip/b.shp"))
 })
 
 test_that("the readers the worker traces are rules.R's data_readers", {

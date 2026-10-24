@@ -1745,6 +1745,8 @@ test_that("ember_new_notebook replies a url starting edit?id=, hosts the file as
   expect_true(isTRUE(hub$owned))
   on.exit(close_notebook(hub$nb), add = TRUE)
   expect_true(normalize_recent_path(target) %in% read_recent())
+  # Made just now from the start page: ready to run, not in safe preview.
+  expect_true(isTRUE(notebook_state(hub$nb)$allowed))
 
   handle_message(server, ws, wire("ember_new_notebook", name = "fit", folder = dir))
   r2 <- ws$last()

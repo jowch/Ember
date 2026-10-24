@@ -1035,8 +1035,18 @@ data_run <- NULL
 data_absolute <- function(p) grepl("^(/|~|[A-Za-z]:|\\\\\\\\)", p)
 
 #' A path with its folder and links resolved and "/" between parts, for
-#' telling two spellings of one file apart.
-data_canon <- function(p) tryCatch(normalizePath(p, winslash = "/", mustWork = FALSE), error = function(e) p)
+#' telling two spellings of one file apart. normalizePath() leaves a
+#' missing file's path as it is ("./later.txt" stays), so for one its
+#' folder is resolved instead (#564).
+data_canon <- function(p) {
+  vapply(p, function(p) {
+    if (!file.exists(p)) {
+      dir <- dirname(p)
+      if (!identical(dir, p) && !identical(dir, ".")) return(file.path(data_canon(dir), basename(p)))
+    }
+    tryCatch(normalizePath(p, winslash = "/", mustWork = FALSE), error = function(e) p)
+  }, "", USE.NAMES = FALSE)
+}
 
 #' The folders whose files are R's or the session's, not the notebook's
 #' data: the libraries (a package reading its own files), R itself, and
@@ -1083,6 +1093,20 @@ data_reader_args <- list(
 #' A reader's second argument that names its file, taken when the first
 #' gives none (rules.R's walker also takes `file` for any reader).
 data_reader_alt <- list(fread = "file")
+#' Whether reader `name` takes `value`, a file it was given that doesn't
+#' exist, for a file: then it is watched, so the cell reruns once the file
+#' appears (#564). The readers' own rules: `fread()` takes an `input` with
+#' a space as a shell command, xml2 takes an `x` with "<" or ">" as XML.
+data_reader_takes_file <- function(name, value) {
+  if (!is.character(value) || length(value) != 1) return(TRUE)
+  switch(name,
+    fread = !grepl(" ", value, fixed = TRUE),
+    read_xml = , read_html = !grepl("<|>", value),
+    # GDAL's own names: a driver prefix ("PG:dbname=d") or a virtual file
+    # system ("/vsizip/a.zip/b.shp"). One letter and a colon is a drive.
+    st_read = !grepl("^[A-Za-z][A-Za-z0-9_]+:|^/vsi", value),
+    TRUE)
+}
 data_connection_readers <- names(c(data_reader_args$base, data_reader_args$utils))
 data_base_hooked <- c("readLines", "readRDS", "load")
 data_file_classes <- c("file", "gzfile", "bzfile", "xzfile", "zstdfile", "unz")
@@ -1105,7 +1129,7 @@ data_no_file_classes <- c("textConnection", "rawConnection", "url", "url-libcurl
 #' sourcing, which Ember already watches. A reader whose argument is
 #' neither a path nor a known connection goes in `unresolved`, for the
 #' note that Ember can't tell which file it read.
-data_learn <- function(value, reader = NULL, mode = "r") {
+data_learn <- function(value, reader = NULL, mode = "r", always_file = FALSE) {
   run <- data_run
   if (is.null(run) || is.null(running) || length(load_stack) > 0) return(invisible())
   write <- startsWith(mode, "w") || startsWith(mode, "a")
@@ -1153,10 +1177,11 @@ data_learn <- function(value, reader = NULL, mode = "r") {
     if (write || full %in% run$sourced || any(startsWith(full, run$skip))) next
     info <- tryCatch(file.info(full, extra_cols = FALSE), error = function(e) NULL)
     if (is.null(info) || isTRUE(info$isdir)) next
-    # A missing file is watched only when a connection was opened to read
-    # it: then the cell reruns once it appears. A package reader's missing
-    # "path" may be a command or data (fread("grep x f.csv")).
-    if (is.na(info$mtime) && (!is.null(reader) || !startsWith(mode, "r"))) next
+    # A missing file is watched when a connection was opened to read it,
+    # or a reader takes it for a file (#564): then the cell reruns once it
+    # appears. A reader may take it for a command or data instead
+    # (fread("grep x f.csv"), read_xml("<a/>")).
+    if (is.na(info$mtime) && ((!is.null(reader) && !always_file) || !startsWith(mode, "r"))) next
     key <- if (startsWith(full, run$home)) substring(full, nchar(run$home) + 1L) else full
     writes <- integer()
     for (w in run$writes) if (is.null(w$full) || identical(w$full, full)) writes <- c(writes, w$index)
@@ -1200,6 +1225,9 @@ ember_data_read <- function(name, value, alt) {
   if (missing(value) || identical(value, "")) {
     if (missing(alt)) return(invisible())
     value <- alt
+    always_file <- TRUE
+  } else {
+    always_file <- data_reader_takes_file(name, value)
   }
   if (inherits(value, "connection")) {
     # read.table() calls scan() on its connection several times: a
@@ -1214,22 +1242,27 @@ ember_data_read <- function(name, value, alt) {
     # whose hook sees it.
     return(invisible())
   }
-  if (identical(name, "st_read") && is.character(value)) value <- data_shapefile_parts(value)
-  data_learn(value, reader = name)
+  data_learn(value, reader = name, always_file = always_file)
+  # A shapefile's other files are watched when it has them: one it lacks
+  # (often .cpg) isn't a file the read tried.
+  if (identical(name, "st_read") && is.character(value) && always_file) {
+    parts <- data_shapefile_parts(value)
+    if (length(parts) > 0) data_learn(parts, reader = name)
+  }
 }
 
-#' `paths` with, for each shapefile among them, the files read with it:
-#' its attributes (.dbf), index (.shx), projection (.prj) and encoding
-#' (.cpg), in the .shp's case.
+#' For each shapefile among `paths`, the files read with it: its
+#' attributes (.dbf), index (.shx), projection (.prj) and encoding (.cpg),
+#' in the .shp's case.
 data_shapefile_parts <- function(paths) {
   shp <- paths[grepl("[.]shp$", paths, ignore.case = TRUE)]
-  if (length(shp) == 0) return(paths)
+  if (length(shp) == 0) return(character())
   parts <- lapply(shp, function(p) {
     ext <- c(".dbf", ".shx", ".prj", ".cpg")
     if (endsWith(p, ".SHP")) ext <- toupper(ext)
     paste0(substr(p, 1L, nchar(p) - 4L), ext)
   })
-  c(paths, unlist(parts))
+  unlist(parts)
 }
 
 #' `fun` with `hook` run first in its body, in its own environment, so

@@ -156,7 +156,7 @@ test("a run started while another is going is announced, even when its cells sho
   assertNoProblems(page);
 });
 
-test("reduced motion: the running rail is still and the menu doesn't move (170)", async (t) => {
+test("reduced motion: the running rail is still and menus, dialogs and the panel don't move (170)", async (t) => {
   const notebook = tempNotebook("basic.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "a11y-170.server.log") });
   const browser = await launchBrowser();
@@ -184,6 +184,18 @@ test("reduced motion: the running rail is still and the menu doesn't move (170)"
       .filter((s) => s.animationName !== "none" || s.transitionDuration.split(",").some((d) => parseFloat(d) > 0))
       .length);
   assert.equal(motion, 0, "nothing in the menu animates or transitions");
+
+  // Nor do the dialogs and the side panel, which rise and slide in
+  // without the preference (#538).
+  await page.getByRole("menuitem", { name: "Keyboard shortcuts", exact: true }).click();
+  await page.waitForSelector("dialog.ember-shortcuts[open]");
+  assert.deepEqual(await page.locator("dialog.ember-shortcuts[open]").evaluate((el) =>
+    [getComputedStyle(el).animationName, getComputedStyle(el, "::backdrop").animationName]), ["none", "none"]);
+  await page.keyboard.press("Escape");
+  await page.locator("dialog.ember-shortcuts").waitFor({ state: "detached" });
+  await page.locator('header#pluto-nav button[aria-label="Variables"]').click();
+  await page.waitForSelector("#helpbox-wrapper.open");
+  assert.equal(await page.locator("#helpbox-wrapper.open").evaluate((el) => getComputedStyle(el).animationName), "none");
   assertNoProblems(page);
 });
 
@@ -192,6 +204,12 @@ test("reduced motion: the running rail is still and the menu doesn't move (170)"
  * aria-describedby or aria-labelledby naming an id that isn't on the page
  * (axe only lists those as "needs review"). */
 async function axeFindings(page, label) {
+  // Scanned once everything has settled: a dialog fading in (#538) has
+  // its text below full contrast for 130 ms. The rail's endless pulse is
+  // left out, since it never finishes.
+  await page.evaluate(() => Promise.all(document.getAnimations()
+    .filter((a) => a.effect?.getComputedTiming().endTime !== Infinity)
+    .map((a) => a.finished.catch(() => {}))));
   const { violations } = await new AxeBuilder({ page }).analyze();
   const dangling = await page.evaluate(() =>
     [...document.querySelectorAll("[aria-describedby], [aria-labelledby]")].flatMap((el) =>

@@ -27,7 +27,7 @@ let next_dialog_id = 1
  *   on_close: () => void,
  *   role?: "dialog" | "alertdialog",
  *   described?: boolean,
- *   render: (ctx: { close: () => void, describedby_id: string }) => import("../imports/Preact.js").ReactElement,
+ *   render: (ctx: { close: () => void, is_open: () => boolean, describedby_id: string }) => import("../imports/Preact.js").ReactElement,
  * }} props
  */
 export const Dialog = ({ title, title_note, class_name, on_close, role = "dialog", described = false, render: render_body }) => {
@@ -46,6 +46,7 @@ export const Dialog = ({ title, title_note, class_name, on_close, role = "dialog
         opener_ref.current = document.activeElement
 
         const handle_close = () => {
+            note_queue(`close event: ${title ?? ""}`)
             on_close()
             // Deferred a frame: Chromium's own post-close focus handling can
             // still be in flight when `close` fires, and races this.
@@ -74,6 +75,7 @@ export const Dialog = ({ title, title_note, class_name, on_close, role = "dialog
         const first = dialog_el?.querySelector(".primary") ?? dialog_el?.querySelector("button, input, textarea, select, a[href]")
         first?.setAttribute("autofocus", "")
         open()
+        note_queue(`shown: ${title ?? ""}, open: ${dialog_el?.open}`)
         // @ts-ignore
         first?.focus?.()
 
@@ -97,13 +99,13 @@ export const Dialog = ({ title, title_note, class_name, on_close, role = "dialog
                       ${title_note != null ? html`<span class="ember-dialog-title-note">${title_note}</span>` : null}
                   </header>`
                 : null}
-            <div class="ember-dialog-body">${render_body({ close, describedby_id: ids_ref.current.body })}</div>
+            <div class="ember-dialog-body">${render_body({ close, is_open: () => dialog_ref.current?.open === true, describedby_id: ids_ref.current.body })}</div>
         </dialog>
     `
 }
 
 /** One queued dialog request: `render_body` and `on_close` as `Dialog` expects, plus a stable `id` used as the Preact key so the next item in the queue mounts fresh. */
-let queue = /** @type {Array<{ id: number, key: string?, title?: string, role?: string, handle?: { close?: () => void }, on_close: () => void, render: (ctx: { close: () => void, describedby_id: string }) => any }>} */ ([])
+let queue = /** @type {Array<{ id: number, key: string?, title?: string, role?: string, handle?: { close?: () => void, is_open?: () => boolean }, on_close: () => void, render: (ctx: { close: () => void, is_open: () => boolean, describedby_id: string }) => any }>} */ ([])
 let listeners = /** @type {Set<(q: typeof queue) => void>} */ (new Set())
 let host_mounted = false
 let next_id = 1
@@ -126,12 +128,14 @@ const DialogHost = () => {
 }
 
 const dequeue = (/** @type {{ id: number }} */ item) => {
+    note_queue(`dequeue ${item.id}`)
     queue = queue.filter((x) => x.id !== item.id)
     publish()
 }
 
 const enqueue = (/** @type {Omit<typeof queue[0], "id">} */ item_without_id) => {
     const item = { ...item_without_id, id: next_id++ }
+    note_queue(`enqueue ${item.id} ${item.key ?? item.title ?? ""}`)
     queue = [...queue, item]
     if (!host_mounted) {
         host_mounted = true
@@ -153,6 +157,21 @@ const enqueue = (/** @type {Omit<typeof queue[0], "id">} */ item_without_id) => 
  */
 const dialog_log = /** @type {Array<{ title: string?, body: string?, answer: string? | undefined }>} */ ([])
 Object.defineProperty(window, "ember_dialogs", { value: dialog_log })
+
+/**
+ * What the queue did, oldest first, each `"<Date.now()> <what>"`, at most
+ * the last 100: for a test that gives up waiting for a dialog to say why
+ * (#491). `window.ember_dialog_queue` is the queue as it stands.
+ */
+const queue_log = /** @type {string[]} */ ([])
+const note_queue = (/** @type {string} */ what) => {
+    queue_log.push(`${Date.now()} ${what}`)
+    if (queue_log.length > 100) queue_log.shift()
+}
+Object.defineProperty(window, "ember_dialog_events", { value: queue_log })
+Object.defineProperty(window, "ember_dialog_queue", {
+    get: () => queue.map((x) => ({ key: x.key, title: x.title ?? null, rendered: x.handle?.close != null, open: x.handle?.is_open?.() ?? null })),
+})
 
 /**
  * Show one dialog with named actions and wait for the one the person picks.
@@ -192,15 +211,16 @@ export const ask = ({ title, body, actions, cancel_value = null, role = "alertdi
         }
         // The showing dialog's `close`, for `dismiss()`. Not on `item`: the
         // first dialog renders inside `enqueue()`, before `item` is set.
-        const handle = /** @type {{ close?: () => void }} */ ({})
+        const handle = /** @type {{ close?: () => void, is_open?: () => boolean }} */ ({})
         const item = enqueue({
             key: key ?? null,
             handle,
             title,
             role,
             on_close: () => settle(cancel_value, null),
-            render: ({ close, describedby_id }) => {
+            render: ({ close, is_open, describedby_id }) => {
                 handle.close = close
+                handle.is_open = is_open
                 return html`
                 <p id=${describedby_id} class="ember-dialog-text">${body}</p>
                 <div class="ember-dialog-actions">
@@ -238,6 +258,7 @@ export const ask = ({ title, body, actions, cancel_value = null, role = "alertdi
 export const dismiss = (key) => {
     const item = queue.find((x) => x.key === key)
     if (item == null) return
+    note_queue(`dismiss ${item.id} ${key}: ${item.handle?.close != null ? `closing, open: ${item.handle.is_open?.()}` : "not shown yet"}`)
     if (item.handle?.close != null) item.handle.close()
     else item.on_close()
 }

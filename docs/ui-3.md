@@ -174,7 +174,8 @@ out of the way of the data, the code and the results.
   two together pushed ⋯ off a phone's screen (#501).
 - While R is busy: "Running 2 of 5 cells" and Stop. While the running cell
   is scrolled out of view, the status shows ↑ or ↓ and a click scrolls to
-  the cell instead of opening Status (#538).
+  the cell instead of opening Status (#538). A thin bar along the top of
+  the window, in the running rail's blue, fills as the run goes.
 - Safe preview is one banner with "Run this notebook". Each code cell also
   shows its "Not run yet" chip, as Pluto marks every cell in safe preview,
   so the first view has no unexplained gaps (#298).
@@ -273,8 +274,11 @@ keys for the computer it's on (⌘ and ⌥ on a Mac).
   defining fit, error"), chips and errors carry words.
 - One polite announcement when a run you started ends ("Finished: 3 cells",
   "fit: error"). Inline values read as plain text.
-- Reduced motion: the running rail is solid, menus don't slide. 200% zoom
-  without horizontal scrolling.
+- Motion is short and says where a thing came from: menus and dialogs fade
+  in with a 4 px rise (130 ms), and the side panel slides in from its edge
+  (180 ms) when it covers the notebook. They close at once. Reduced motion
+  turns all of it off: the running rail is solid, nothing slides or fades.
+  200% zoom without horizontal scrolling.
 - Every alert() and confirm() becomes an in-page dialog.
 
 ## Wording
