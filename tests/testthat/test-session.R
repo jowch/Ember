@@ -599,10 +599,9 @@ test_that("a later callback keeps firing during a 2 s busy cell (117)", {
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  # The worker starts on the first run, and starting it holds the server
-  # for as long as the process takes to spawn (about 0.3 s, more on a
-  # loaded machine). That isn't the busy cell this test is about (#490):
-  # start it first.
+  # The worker starts on the first run, and starting it holds the server's
+  # loop while the process spawns (up to 1.4 s measured, #499). That isn't
+  # the busy cell this test is about (#490): start it first.
   run_cells(nb, "S", wait = TRUE, timeout = 20)
 
   # What the server did, so a long gap can say what fell inside it (#490):
@@ -659,7 +658,8 @@ test_that("a later callback keeps firing during a 2 s busy cell (117)", {
   where <- paste(c(
     sprintf("longest gap %.3f s, from %s to %s s", gaps[i], at(from), at(to)),
     "the run:", run_events,
-    "inside the gap:", if (length(in_gap)) in_gap else "  nothing the server recorded"
+    "inside the gap:", if (length(in_gap)) in_gap else "  nothing the server recorded",
+    "max(gaps)"
   ), collapse = "\n")
   # A blocked server would show a gap near the cell's 2 s; shared CI
   # machines show occasional pauses of a few hundred ms.

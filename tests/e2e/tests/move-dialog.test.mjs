@@ -21,6 +21,16 @@ test("header: click the file name, rename and move to a different folder, Save: 
   t.after(async () => { await browser.close(); server.stop(); });
 
   const page = await newPage(browser);
+  // If the dialog stays open after Save, say which of the three ways it
+  // can (#473): it shows a move error, it is still saving with the reply
+  // never come, or the Save click never sent the request. Counted from
+  // before the page opens its socket, which `websocket` reports only once.
+  const asked = sentMessages(page, "ember_move_notebook");
+  const answered = [];
+  page.on("websocket", (ws) => ws.on("framereceived", (frame) => {
+    const payload = frame.payload ?? "";
+    if ((Buffer.isBuffer(payload) ? payload.toString("latin1") : String(payload)).includes("ember_move_notebook")) answered.push(Date.now());
+  }));
   await openNotebook(page, server.origin, server.secret, notebook);
 
   await runCell(page, "B");
@@ -51,15 +61,8 @@ test("header: click the file name, rename and move to a different folder, Save: 
   // whole dialog instead (dialogs.js's own Esc-to-close).
   await nameField.click();
 
-  // If the dialog stays open, say which of the three ways it can (#473):
-  // it shows a move error, it is still saving with the reply never come,
-  // or the Save click never sent the request.
-  const asked = sentMessages(page, "ember_move_notebook");
-  const answered = [];
-  page.on("websocket", (ws) => ws.on("framereceived", (frame) => {
-    const payload = frame.payload ?? "";
-    if ((Buffer.isBuffer(payload) ? payload.toString("latin1") : String(payload)).includes("ember_move_notebook")) answered.push(Date.now());
-  }));
+  const sentBefore = asked.length;
+  const answeredBefore = answered.length;
   await dialog.getByRole("button", { name: "Save" }).click();
   await waitingFor("the move dialog closes after Save", dialog.waitFor({ state: "hidden" }), async () => {
     const shown = await page.evaluate(() => {
@@ -73,7 +76,7 @@ test("header: click the file name, rename and move to a different folder, Save: 
         name: d.querySelector("#ember-move-name")?.value, folder: d.querySelector("#ember-move-folder")?.value,
       };
     }).catch((e) => ({ unreadable: String(e) }));
-    return { ...shown, requestsSent: asked.length, repliesReceived: answered.length };
+    return { ...shown, sentSinceSave: asked.length - sentBefore, repliesSinceSave: answered.length - answeredBefore };
   });
 
   await page.waitForFunction(() => document.title === "renamed.R — Ember");
