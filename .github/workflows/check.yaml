@@ -229,6 +229,11 @@ jobs:
         run: |
           netsh int ipv4 show dynamicport tcp
           Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters -ErrorAction SilentlyContinue | Select-Object TcpTimedWaitDelay, MaxUserPort | Format-List
+          # Defender's state, and the network filter drivers that run: the
+          # captures so far show no port or pool shortage at a failure.
+          try { Get-MpComputerStatus | Select-Object AMRunningMode, RealTimeProtectionEnabled, NISEnabled, BehaviorMonitorEnabled, OnAccessProtectionEnabled | Format-List } catch { "Get-MpComputerStatus failed: $_" }
+          try { Get-MpPreference | Select-Object DisableRealtimeMonitoring, EnableNetworkProtection | Format-List } catch { "Get-MpPreference failed: $_" }
+          try { Get-CimInstance Win32_SystemDriver -Filter "State='Running'" | Where-Object Name -match '^(Wd|WFP|NetBT|NetIO|tcpip|afd|ndis|mpsdrv|MsSec|vfp|vms|Wcifs)' | Select-Object Name, DisplayName | Format-Table -AutoSize } catch { "the running drivers query failed: $_" }
           $p = Start-Process pwsh -PassThru -WindowStyle Hidden -ArgumentList "-NoProfile", "-File", "${{ github.workspace }}\.github\windows-sockets\sample.ps1", "-Out", "$env:RUNNER_TEMP\sockets.csv"
           $p.Id | Set-Content "$env:RUNNER_TEMP\sampler.pid"
       - working-directory: tests/e2e
