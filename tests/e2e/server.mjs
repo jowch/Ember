@@ -161,7 +161,7 @@ function serverRscript() {
   return realRscript;
 }
 
-async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port: fixedPort, secret = SECRET, repos, cacheDir, askAbove }) {
+async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port: fixedPort, secret = SECRET, repos, cacheDir, askAbove, probePrelude }) {
   const rscript = serverRscript();
   const quoted = notebookPaths.map((p) => JSON.stringify(p)).join(", ");
   const port = fixedPort ?? await freePort();
@@ -174,6 +174,8 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
   if (cacheDir) prelude += `options(ember.cache_dir = ${JSON.stringify(cacheDir)}); `;
   // Read when each notebook opens (`new_state()`), so set first too.
   if (askAbove != null) prelude += `options(ember.ask_above = ${askAbove}); `;
+  // Temporary, for #417's probe (#533's successor), not to merge.
+  if (probePrelude) prelude += probePrelude;
   let expr;
   let cache = null;
   if (repos) {
@@ -300,11 +302,11 @@ async function startServerOnce(notebookPaths, { timeoutMs, logFile, installerScr
  * `askAbove` sets `options(ember.ask_above)`: the bytes of large downloads
  * an install asks about first (#37). */
 export async function startServer(notebookPaths, opts = {}) {
-  const { timeoutMs = 0, logFile, retries = 3, installerScript, cwd, port, secret, repos, cacheDir, askAbove } = opts;
+  const { timeoutMs = 0, logFile, retries = 3, installerScript, cwd, port, secret, repos, cacheDir, askAbove, probePrelude } = opts;
   let lastErr;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      return await startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port, secret, repos, cacheDir, askAbove });
+      return await startServerOnce(notebookPaths, { timeoutMs, logFile, installerScript, cwd, port, secret, repos, cacheDir, askAbove, probePrelude });
     } catch (err) {
       if (!err.bindFailure || attempt === retries) throw err;
       lastErr = err;
