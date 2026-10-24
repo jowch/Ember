@@ -9,8 +9,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { startServer, tempNotebook, artifactsDir } from "../server.mjs";
-import { launchBrowser, newPage, assertNoProblems, openNotebook, frames } from "../browser.mjs";
+import { writeFileSync } from "node:fs";
+import { startServer, tempNotebook, tempDir, artifactsDir } from "../server.mjs";
+import { launchBrowser, newPage, assertNoProblems, openNotebook, frames, cellSelector, codeSelector } from "../browser.mjs";
 
 // 110. The column at a wide (1440 x 900) viewport, where the panel starts
 // open: the column sits just left of the 400 px panel and its 32 px gap.
@@ -39,6 +40,67 @@ test("layout: the 720px column and sticky header at 1440x900 (110)", async (t) =
   await frames(page);
   const after = await header.boundingBox();
   assert.ok(Math.abs(after.y - 0) <= 1, `expected header.y ~= 0 after scrolling 1000px, got ${after.y}`);
+
+  assertNoProblems(page);
+});
+
+// #586. The header is always in view, so focusing one of its controls
+// never scrolls the page. While it was sticky, html's scroll-padding-top
+// put its band outside what counts as visible, and a Tab into the header
+// (or Playwright's click, which scrolls its target into view first) moved
+// the page half a window. Notebook content still lands below the header
+// when scrolled to or focused.
+test("layout: focusing the header doesn't scroll the page; a cell scrolled to or focused lands below the header (#586)", async (t) => {
+  const notebook = path.join(tempDir("ember-e2e-layout-"), "long.R");
+  writeFileSync(notebook, [
+    "### An Ember notebook ###", "# /// environment", '# ember_version = "0.0.0.9000"', '# r_version = "4.6.1"', '# snapshot = "2026-01-01"', "# ///", "",
+    ...Array.from({ length: 30 }, (_, i) => [`# %% id=C${i}`, `c${i} <- ${i}`, ""]).flat(),
+  ].join("\n"), "utf8");
+  const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "layout-586.server.log") });
+  const browser = await launchBrowser();
+  t.after(async () => { await browser.close(); server.stop(); });
+
+  const page = await newPage(browser);
+  await page.setViewportSize({ width: 1440, height: 700 });
+  await openNotebook(page, server.origin, server.secret, notebook);
+  const header_bottom = await page.evaluate(() => document.querySelector("header#pluto-nav").getBoundingClientRect().bottom);
+
+  await page.evaluate(() => window.scrollTo(0, 600));
+  await frames(page);
+  const y = await page.evaluate(() => window.scrollY);
+  assert.ok(y > 0, "the notebook is long enough to scroll");
+  await page.locator("#ember-file-name").focus();
+  const seen = [];
+  for (let i = 0; i < 4; i++) {
+    await frames(page);
+    seen.push(await page.evaluate(() => [document.activeElement.closest("header#pluto-nav") != null, window.scrollY]));
+    await page.keyboard.press("Tab");
+  }
+  assert.deepEqual(seen, seen.map(() => [true, y]), "Tab through the header leaves the page where it was");
+  await page.locator("#ember-r-status").click();
+  await frames(page);
+  assert.equal(await page.evaluate(() => window.scrollY), y, "a click on the R status doesn't scroll first");
+
+  // A cell scrolled to its start sits just below the header, and its
+  // editor keeps its breathing room below the header too.
+  await page.evaluate((sel) => document.querySelector(sel).scrollIntoView({ block: "start" }), cellSelector("C15"));
+  await frames(page);
+  const cell_top = await page.evaluate((sel) => document.querySelector(sel).getBoundingClientRect().top, cellSelector("C15"));
+  assert.ok(Math.abs(cell_top - header_bottom) <= 1, `cell top ${cell_top}, header bottom ${header_bottom}`);
+  await page.evaluate((sel) => document.querySelector(sel).scrollIntoView({ block: "start" }), `${cellSelector("C20")} .cm-editor:not(.cm-ssr-fake)`);
+  await frames(page);
+  const editor_top = await page.evaluate((sel) => document.querySelector(sel).getBoundingClientRect().top, `${cellSelector("C20")} .cm-editor:not(.cm-ssr-fake)`);
+  assert.ok(Math.abs(editor_top - (header_bottom + 0.2 * 700)) <= 1, `editor top ${editor_top}, expected header bottom + 20vh`);
+
+  // A cell's code above the window, focused, lands below the header.
+  await page.evaluate((sel) => document.querySelector(sel).scrollIntoView({ block: "center" }), cellSelector("C25"));
+  await page.waitForSelector(codeSelector("C25"));
+  await page.evaluate((sel) => window.scrollBy(0, document.querySelector(sel).getBoundingClientRect().bottom + 100), cellSelector("C25"));
+  await frames(page);
+  await page.evaluate((sel) => document.querySelector(sel).focus(), codeSelector("C25"));
+  await frames(page);
+  const code_top = await page.evaluate((sel) => document.querySelector(sel).getBoundingClientRect().top, codeSelector("C25"));
+  assert.ok(code_top >= header_bottom - 1, `focused code top ${code_top}, header bottom ${header_bottom}`);
 
   assertNoProblems(page);
 });
