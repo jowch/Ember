@@ -146,6 +146,12 @@ test_that("an accepted value the same as the input's last one reruns nothing (#5
   r <- drive(r$state, ev_set_input("n", 8.3, at(60)), wk_input_set(1, "I", "n", TRUE, 8, NULL, list(), at(61)))
   expect_length(sent_cells(r), 0)
   expect_identical(r$state$input_values$n$value, 8)
+  # A stale reader (here, after an interrupt) reruns when the value is set
+  # again, as before: setting it is how the user asks for that.
+  r$state$results$B$stale <- TRUE
+  r <- drive(r$state, ev_set_input("n", 8, at(70)), wk_input_set(1, "I", "n", TRUE, 8, NULL, list(), at(71)))
+  expect_identical(sent_cells(r), "B")
+  expect_setequal(r$state$input_outcome$cells, c("B", "D"))
   # In lazy mode it marks nothing stale.
   r <- inputs_ran("lazy")
   r <- drive(r$state, ev_set_input("n", 5, at(20)), wk_input_set(1, "I", "n", TRUE, 5, NULL, list(), at(21)))
