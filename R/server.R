@@ -783,10 +783,34 @@ on_update_notebook <- function(server, cl, hub, req) {
     tryCatch({
       if (length(ed$ops) > 0) do.call(edit_notebook, c(list(hub$nb), ed$ops))
       if (!is.null(ed$move_to)) move_notebook(hub$nb, ed$move_to)
-      list(update_went_well = THUMBS_UP)
+      # Pluto sends the bonds it held back during a run in one patch: one
+      # refused value mustn't stop the others.
+      why <- character()
+      for (i in ed$inputs) {
+        tryCatch(set_page_input(hub$nb, i$name, i$value),
+                 ember_refused = function(e) why <<- c(why, conditionMessage(e)))
+      }
+      if (length(why) > 0) thumbs_down(paste(why, collapse = " ")) else list(update_went_well = THUMBS_UP)
     }, ember_refused = function(e) thumbs_down(conditionMessage(e)))
   }
   flush_clients(server, hub, req, response)
+}
+
+#' A value the page gave an input (`bonds[name]`, pluto_edits()): turned
+#' into the R value with the input's spec (`input_from_page()`) and set as
+#' the latest page value (`reduce_set_input()`). A refusal is an
+#' `ember_refused` error, so the page gets a thumbs-down and the next diff
+#' puts the widget back.
+set_page_input <- function(nb, name, value) {
+  state <- notebook_state(nb)
+  id <- input_cell(state, name)
+  if (is.null(id)) stop(refused(sprintf("No input is bound to `%s`.", name), op = "set_input"))
+  spec <- Find(function(i) isTRUE(i$bound) && identical(i$name, name), state$results[[id]]$inputs)$spec
+  v <- input_from_page(spec, value)
+  if (inherits(v, "ember_page_refusal")) stop(refused(unclass(v)[[1]], op = "set_input"))
+  reply <- dispatch(nb, ev_set_input(name, v, at = Sys.time(), latest = TRUE))
+  if (inherits(reply, "ember_refused")) stop(reply)
+  invisible(reply)
 }
 
 #' run_multiple_cells. Reply "run_feedback" {disabled_cells = {}} first (the

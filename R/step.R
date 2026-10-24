@@ -44,8 +44,11 @@ ev_restart     <- function(at) event("restart", at)
 ev_shutdown    <- function(at) event("shutdown", at)
 ev_move        <- function(path, at) event("move", at, path = path)
 ev_set_mode    <- function(mode, at) event("set_mode", at, mode = mode)
-#' A new value for the input bound to `name` (docs/inputs.md).
-ev_set_input   <- function(name, value, at) event("set_input", at, name = name, value = value)
+#' A new value for the input bound to `name` (docs/inputs.md). `latest`:
+#' the page's value, which waits behind one already with the worker and
+#' replaces an earlier one for the same name that is still waiting
+#' (`reduce_set_input()`); the R API's value is refused instead.
+ev_set_input   <- function(name, value, at, latest = FALSE) event("set_input", at, name = name, value = value, latest = latest)
 #' The answer to the prompt the running cell waits on (#186): `text`, one
 #' string. `cell`: the cell the answer is for, or `NULL` for whichever runs.
 ev_answer_input <- function(text, at, cell = NULL, id = NULL) event("answer_input", at, text = text, cell = cell, id = id)
@@ -266,6 +269,7 @@ schedule <- function(state) {
     state$worker$interrupt <- NULL
     state$worker$restart_offered <- FALSE
     state$worker$input <- NULL
+    state$worker$next_inputs <- NULL
     # The worker that answers `gen` has nothing loaded yet; a stale value
     # here (left by whatever worker just stopped) would read as a version
     # conflict the moment the new one reports anything, restarting it for a
@@ -1548,7 +1552,12 @@ reduce_set_mode <- function(state, event) {
 #' an old spec must not run dependents as if it were current. The worker
 #' checks and assigns the value; its answer (`reduce_wk_input_set()`)
 #' reruns or marks stale the readers. One value at a time: the page holds
-#' back new ones while a run is in progress (Pluto's `set_bond` queue).
+#' back new ones while a run is in progress (Pluto's `set_bond` queue), but
+#' not while a value is with the worker and nothing runs yet, so a page
+#' value (`event$latest`) arriving then waits in `worker$next_inputs`
+#' (name -> value, the latest for each name) and is sent when the worker
+#' answers. An R API value is refused then instead: its caller is told,
+#' where a replaced value would be a silently lost action.
 #' Reply: `list(accepted = TRUE, cell)` or `ember_refused`.
 reduce_set_input <- function(state, event) {
   no <- function(reason) list(state = state, effects = list(), reply = refused(reason, op = "set_input"))
@@ -1557,16 +1566,30 @@ reduce_set_input <- function(state, event) {
   id <- input_cell(state, name)
   if (is.null(id)) return(no(sprintf("No input is bound to `%s`.", name)))
   w <- state$worker
-  if (!is.null(w$input)) return(no("Another input value is still being set."))
+  if (!is.null(w$input) && !isTRUE(event$latest)) return(no("Another input value is still being set."))
   if (!is_fresh(state, id) || id %in% state$pending || identical(w$running$cell, id)) {
     return(no(sprintf("Run the cell of input `%s` before changing its value.", name)))
   }
   if (!(w$status %in% c("ready", "busy"))) return(no("R isn't running."))
-  state$worker$input <- list(cell = id, name = name, value = event$value)
-  state$input_outcome <- NULL
+  # A new page value replaces the note about the last one refused.
+  if (isTRUE(event$latest)) state$input_errors[[name]] <- NULL
+  if (!is.null(w$input)) {
+    nxt <- w$next_inputs %||% list()
+    nxt[[name]] <- list(value = event$value)
+    state$worker$next_inputs <- nxt
+    return(list(state = state, effects = list(), reply = list(accepted = TRUE, cell = id)))
+  }
+  latest <- isTRUE(event$latest)
+  token <- NULL
+  if (!latest) {
+    token <- (state$input_token %||% 0L) + 1L
+    state$input_token <- token
+    state$input_outcome <- NULL
+  }
+  state$worker$input <- list(cell = id, name = name, value = event$value, latest = latest, token = token)
   list(state = state,
        effects = list(fx_send(w$gen, list(type = "set_input", cell = id, name = name, value = event$value))),
-       reply = list(accepted = TRUE, cell = id))
+       reply = list(accepted = TRUE, cell = id, token = token))
 }
 
 #' The cell whose last result binds an input to `name`, or `NULL`.
@@ -1586,6 +1609,29 @@ input_cell <- function(state, name) {
 #' Only readers of this name: a cell reading another input of the same
 #' cell is left alone.
 reduce_wk_input_set <- function(state, event) {
+  out <- answer_set_input(state, event)
+  send_next_input(out$state, out, event$at)
+}
+
+#' The next page value waiting behind the one the worker just answered
+#' (`reduce_set_input()`), sent now, checked again as if it had just
+#' arrived: a value that no longer fits (its cell went stale or was
+#' edited) is dropped, and the page shows the input's real value again.
+send_next_input <- function(state, out, at) {
+  while (length(state$worker$next_inputs) > 0 && is.null(state$worker$input)) {
+    nxt <- state$worker$next_inputs
+    state$worker$next_inputs <- if (length(nxt) > 1) nxt[-1]
+    sent <- reduce_set_input(state, ev_set_input(names(nxt)[[1]], nxt[[1]]$value, at = at, latest = TRUE))
+    if (!inherits(sent$reply, "ember_refused")) {
+      state <- sent$state
+      out$effects <- c(out$effects, sent$effects)
+    }
+  }
+  out$state <- state
+  out
+}
+
+answer_set_input <- function(state, event) {
   nothing <- list(state = state, effects = list(), reply = NULL)
   sent <- state$worker$input
   if (!eq(event$gen, state$worker$gen) || is.null(sent) ||
@@ -1594,9 +1640,19 @@ reduce_wk_input_set <- function(state, event) {
   }
   state$worker$input <- NULL
   name <- event$name
+  # An R API value's outcome is what its set_input() reports; a page
+  # value's refusal is the note under its widget.
+  outcome <- function(state, ok, error = NULL, value = NULL, cells = character()) {
+    if (isTRUE(sent$latest)) {
+      state$input_errors[[name]] <- if (!ok) error
+    } else {
+      state$input_outcome <- list(name = name, ok = ok, error = error, value = value, cells = cells,
+                                  token = sent$token)
+    }
+    state
+  }
   if (!isTRUE(event$ok)) {
-    state$input_outcome <- list(name = name, ok = FALSE, error = event$error %||% "The value was refused.",
-                                value = NULL, cells = character())
+    state <- outcome(state, FALSE, error = event$error %||% "The value was refused.")
     return(list(state = state, effects = list(), reply = NULL))
   }
   id <- event$cell
@@ -1604,8 +1660,7 @@ reduce_wk_input_set <- function(state, event) {
   # The cell was deleted (or its result cleared) while the value was with
   # the worker: there is nothing left to keep the value for.
   if (is.null(r)) {
-    state$input_outcome <- list(name = name, ok = FALSE, error = "The input's cell is gone.",
-                                value = NULL, cells = character())
+    state <- outcome(state, FALSE, error = "The input's cell is gone.")
     return(list(state = state, effects = list(), reply = NULL))
   }
   default <- NULL
@@ -1624,8 +1679,8 @@ reduce_wk_input_set <- function(state, event) {
   g <- run_graph(state)
   dependents <- setdiff(readers_of(state, id, name, g = g), id)
   state <- invalidate_cells(state, id, dependents, g = g)
-  state$input_outcome <- list(name = name, ok = TRUE, error = NULL, value = event$value,
-                              cells = Filter(function(cid) !is.null(state$results[[cid]]), dependents))
+  state <- outcome(state, TRUE, value = event$value,
+                   cells = Filter(function(cid) !is.null(state$results[[cid]]), dependents))
   list(state = state, effects = list(), reply = NULL)
 }
 
@@ -1633,6 +1688,9 @@ reduce_wk_input_set <- function(state, event) {
 #' the new spec still allows, or the default): an input back at its
 #' default has no entry. Entries for the cell's inputs that are gone go too.
 keep_input_values <- function(state, id, code, inputs) {
+  # The cell ran again: a refusal shown under one of its widgets is old.
+  names_here <- unlist(lapply(inputs, function(i) i$name), use.names = FALSE)
+  state$input_errors <- state$input_errors[setdiff(names(state$input_errors), names_here)]
   vals <- Filter(function(v) !identical(v$cell, id), state$input_values)
   for (i in inputs) {
     if (isTRUE(i$bound) && !identical(i$value, i$default)) {
@@ -2433,6 +2491,7 @@ reduce_wk_exited <- function(state, event) {
   state$worker$status <- "stopped"
   state$worker$running <- NULL
   state$worker$input <- NULL
+  state$worker$next_inputs <- NULL
   state$worker$restart_offered <- FALSE
   state$worker$exit <- list(status = event$status, message = event$message)
   # The process that answered `started_at`/`info` (r_version) is gone; a
