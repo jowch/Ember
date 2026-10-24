@@ -452,9 +452,9 @@ project_cell_result <- function(view, known_ids = NULL) {
 #' | text/latex, anything else    | text/plain                                | `text` (the print() form)  |
 #'
 #' The running cell shows its previous output, as the snapshot does. A text
-#' cell's errors (including a parse error: its line numbers are in
-#' `inline_code()`'s analysed code, not the cell's own, so
-#' `project_parse_error()` would misalign them) show as for code, ahead of
+#' cell's errors (including a parse error, which names its inline span
+#' and line, span_parse_error() in state.R: `project_parse_error()` marks
+#' lines of code, and a text cell shows its prose) show as for code, ahead of
 #' `project_text()` -- the one place a text cell without inline values still
 #' takes the early return a code cell never reaches, since it has no
 #' `output` to fall through to.

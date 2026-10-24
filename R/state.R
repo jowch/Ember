@@ -567,6 +567,24 @@ cell_variables <- function(result, off) {
   })
 }
 
+#' A text cell's parse error (`e`, from the graph) told of the inline span
+#' it comes from (#572). The graph parses `inline_code()`, one span per
+#' line, so its line is the span's place in `inline_spans()`; the error
+#' gets the span's line in the cell and a message naming the span, since a
+#' code span that starts with `r ` (`` `r = 0.5` ``) runs as R, as in knitr,
+#' whether or not it was meant to. Unchanged when the span can't be found.
+span_parse_error <- function(e, code) {
+  spans <- inline_spans(code)
+  k <- if (!is.null(e$lines) && nrow(e$lines) > 0) as.integer(e$lines$line[[1]]) else NA_integer_
+  if (is.na(k) && nrow(spans) == 1) k <- 1L
+  if (is.na(k) || k < 1 || k > nrow(spans)) return(e)
+  detail <- sub("^Syntax error: ", "", e$message)
+  e$message <- sprintf("Syntax error in the inline span `r %s` on line %d: %s. A code span that starts with \"r \" runs as R; to show it as text, start it another way.",
+                       trimws(spans$expr[[k]]), spans$line[[k]], detail)
+  e$lines <- data.frame(line = spans$line[[k]])
+  e
+}
+
 #' One cell's `ember_cell_view`, from `state` and the `view_context()` it
 #' belongs to, at position `i` (1-based, `ctx$ids[i]`'s position).
 cell_view <- function(state, ctx, i) {
@@ -577,6 +595,9 @@ cell_view <- function(state, ctx, i) {
   is_running <- !is.na(ctx$running_idx) && ctx$running_idx == i
 
   g_errors <- lapply(ctx$errors_by_cell[[i]], function(e) {
+    # A text cell's parse error is in its inline spans, one per line of
+    # the analysed code (inline_code()): said of the span, on its own line.
+    if (identical(e$kind, "parse") && identical(cell$kind, "markdown")) e <- span_parse_error(e, cell$code)
     # A conflict names its cells, so the page can link the other one.
     conflict <- e$kind %in% c("setting_conflict", "package_conflict")
     list(kind = e$kind, message = e$message, fixes = e$fixes,

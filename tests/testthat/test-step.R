@@ -67,6 +67,29 @@ test_that("running a cell whose code has a parse error shows only the error, not
   expect_equal(vapply(drops, function(e) e$msg$cell, character(1)), id)
 })
 
+test_that("a text cell's parse error names its inline span and points at the span's line (#572)", {
+  view_of <- function(code) {
+    s <- fake_state(list(S = cell(""), T = cell(code, kind = "markdown")))
+    snapshot_of(s)$cells[["T"]]
+  }
+  v <- view_of("#' # Notes\n#'\n#' - fine line\n#' - I used `K = 1`, `r = 0.5` here.")
+  expect_length(v$errors, 1)
+  expect_equal(v$errors[[1]]$kind, "parse")
+  expect_equal(v$errors[[1]]$lines$line, 4L)
+  expect_match(v$errors[[1]]$message, "inline span `r = 0.5` on line 4: unexpected '='", fixed = TRUE)
+  expect_match(v$errors[[1]]$message, "runs as R", fixed = TRUE)
+
+  # The second of two spans: its index (2) becomes its line in the cell (3).
+  v <- view_of("#' Total `r 1 + 1`.\n#'\n#' Then `r )` here.")
+  expect_equal(v$errors[[1]]$lines$line, 3L)
+  expect_match(v$errors[[1]]$message, "inline span `r )` on line 3: unexpected ')'", fixed = TRUE)
+
+  # A span left open: R reports the end of input, still on the span.
+  v <- view_of("#' A\n#' Mean `r mean(c(1, 2)` done.")
+  expect_equal(v$errors[[1]]$lines$line, 2L)
+  expect_match(v$errors[[1]]$message, "inline span `r mean(c(1, 2)` on line 2", fixed = TRUE)
+})
+
 test_that("running a cell with a cycle, double definition or mixed text clears code_differs; an unrun edit keeps it", {
   s <- fake_state(list(S = cell(""), A = cell("a <- 1"), B = cell("b <- 1"),
                        C = cell("c <- 1"), D = cell("d <- 1")))
