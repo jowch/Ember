@@ -1090,11 +1090,17 @@ data_reader_args <- list(
 #' A reader's second argument that names its file, taken when the first
 #' gives none (rules.R's walker also takes `file` for any reader).
 data_reader_alt <- list(fread = "file")
-#' Readers whose first file argument may be something other than a file:
-#' a shell command for `fread()`'s `input`, inline XML for xml2's `x`. A
-#' missing "file" given there isn't watched; given anywhere else it is
-#' (#564), so the cell reruns once the file appears.
-data_reader_maybe_data <- c("fread", "read_xml", "read_html")
+#' Whether reader `name` takes `value`, a file it was given that doesn't
+#' exist, for a file: then it is watched, so the cell reruns once the file
+#' appears (#564). The readers' own rules: `fread()` takes an `input` with
+#' a space as a shell command, xml2 takes an `x` with "<" or ">" as XML.
+data_reader_takes_file <- function(name, value) {
+  if (!is.character(value) || length(value) != 1) return(TRUE)
+  switch(name,
+    fread = !grepl(" ", value, fixed = TRUE),
+    read_xml = , read_html = !grepl("<|>", value),
+    TRUE)
+}
 data_connection_readers <- names(c(data_reader_args$base, data_reader_args$utils))
 data_base_hooked <- c("readLines", "readRDS", "load")
 data_file_classes <- c("file", "gzfile", "bzfile", "xzfile", "zstdfile", "unz")
@@ -1166,9 +1172,9 @@ data_learn <- function(value, reader = NULL, mode = "r", always_file = FALSE) {
     info <- tryCatch(file.info(full, extra_cols = FALSE), error = function(e) NULL)
     if (is.null(info) || isTRUE(info$isdir)) next
     # A missing file is watched when a connection was opened to read it,
-    # or a reader was given it where it can only be a file (#564): then the
-    # cell reruns once it appears. Elsewhere a missing "path" may be a
-    # command or data (fread("grep x f.csv"), read_xml("<a/>")).
+    # or a reader takes it for a file (#564): then the cell reruns once it
+    # appears. A reader may take it for a command or data instead
+    # (fread("grep x f.csv"), read_xml("<a/>")).
     if (is.na(info$mtime) && ((!is.null(reader) && !always_file) || !startsWith(mode, "r"))) next
     key <- if (startsWith(full, run$home)) substring(full, nchar(run$home) + 1L) else full
     writes <- integer()
@@ -1210,11 +1216,12 @@ ember_data_read <- function(name, value, alt) {
   if (is.null(run)) return(invisible())
   # A reader with a second way to name its file (`fread(file = p)`, whose
   # `input` is then "") takes it when the first gives none.
-  always_file <- !(name %in% data_reader_maybe_data)
   if (missing(value) || identical(value, "")) {
     if (missing(alt)) return(invisible())
     value <- alt
     always_file <- TRUE
+  } else {
+    always_file <- data_reader_takes_file(name, value)
   }
   if (inherits(value, "connection")) {
     # read.table() calls scan() on its connection several times: a

@@ -3149,9 +3149,10 @@ test_that("a missing file a run tried to read is watched, so the cell reruns onc
   expect_identical(r$data_seen[[f]], "missing")
 })
 
-test_that("a package reader's missing file is watched too, but not fread's input or inline XML (#564)", {
+test_that("a package reader's missing file is watched, unless the reader takes it for a command or XML (#564)", {
   skip_if_not_installed("data.table")
   skip_if_not_installed("readr")
+  skip_if_not_installed("xml2")
   h <- worker_harness(extra_libs = .libPaths())
   on.exit(h$close())
   d <- normalizePath(tempdir(), winslash = "/")
@@ -3159,15 +3160,24 @@ test_that("a package reader's missing file is watched too, but not fread's input
   f1 <- nope(".csv")
   f2 <- nope(".csv")
   f3 <- nope(".csv")
+  f4 <- nope(".xml")
   r1 <- run_and_wait(h, "a", 1L, sprintf("x <- readr::read_csv(%s, show_col_types = FALSE)", deparse(f1)))
   expect_identical(r1$status, "error")
   expect_identical(r1$data_seen[[f1]], "missing")
   r2 <- run_and_wait(h, "b", 2L, sprintf("x <- data.table::fread(file = %s)", deparse(f2)))
   expect_identical(r2$status, "error")
   expect_identical(r2$data_seen[[f2]], "missing")
-  # fread()'s input may be a command, so a "file" there that doesn't exist isn't watched.
-  r3 <- run_and_wait(h, "c", 3L, sprintf("x <- try(data.table::fread(%s), silent = TRUE)", deparse(f3)))
-  expect_null(r3$data_seen[[f3]])
+  # fread()'s input is a file unless it has a space: then it is a command.
+  r3 <- run_and_wait(h, "c", 3L, sprintf("x <- data.table::fread(%s)", deparse(f3)))
+  expect_identical(r3$status, "error")
+  expect_identical(r3$data_seen[[f3]], "missing")
+  cmd <- paste("cat", f3)
+  r4 <- run_and_wait(h, "d", 4L, sprintf("x <- try(data.table::fread(%s), silent = TRUE)", deparse(cmd)))
+  expect_null(r4$data_seen[[cmd]])
+  expect_null(r4$data_seen[[f3]])
+  r5 <- run_and_wait(h, "e", 5L, sprintf("x <- xml2::read_xml(%s)", deparse(f4)))
+  expect_identical(r5$status, "error")
+  expect_identical(r5$data_seen[[f4]], "missing")
 })
 
 test_that("fread() is learned once data.table loads, by input or file =, and text input isn't", {
