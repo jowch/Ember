@@ -292,7 +292,9 @@ and its `findGlobals()` rules differ from Ember's (it treats `s` in
 - **Private names:** names starting with a dot (`.i`, `.tmp`) are private to
   their cell, like marimo's `_` names (R doesn't allow a leading `_`). R
   already hides dot-names from `ls()`. Using one from another cell is an
-  error that suggests dropping the dot. The user docs also recommend
+  error that suggests dropping the dot. `.x` and `.y` count too; only
+  inside a `~` lambda (`map(xs, ~ .x + 1)`) are they the lambda's own
+  arguments (#507). The user docs also recommend
   `local({ … })`, R's equivalent of Julia's `let`, for a block of private
   work; the engine already treats it as its own scope.
 

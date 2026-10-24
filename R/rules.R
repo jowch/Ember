@@ -419,16 +419,20 @@ data_masking_calls <- list(
 #' Names never recorded as references or definitions.
 #'
 #' `.` is a formula placeholder and the magrittr pipe placeholder.
-#' `.Random.seed` follows the random-numbers decision. `.x`, `.y`, `.data`
-#' and `.env` are purrr/dplyr pronouns and `~` lambda arguments, never a
-#' notebook object. `break` and `next` parse as zero-argument calls
+#' `.Random.seed` follows the random-numbers decision. `.data` and `.env`
+#' are rlang's pronouns in tidy-eval code (`filter(df, .data$x > 1)`), and
+#' Ember can't tell which calls mask data, so they are never a notebook
+#' object. `.x` and `.y` aren't here: they are a `~` lambda's arguments only
+#' inside the lambda (`walk_formula_lambda()` binds them there), and
+#' anywhere else they are a cell's own dot-names like any other (#507).
+#' `break` and `next` parse as zero-argument calls
 #' (`` `break`() ``); listing them here is simpler than special-casing loop
 #' control in the walker. `..1`, `..2`, ... (any `..N`) are purrr's
 #' positional lambda pronouns; matched by `is_dot_dot_name()` since N is
 #' unbounded, not listed here.
 ignored_names <- c(".", ".Random.seed", "T", "F", "TRUE", "FALSE", "NULL",
                    "NA", "Inf", "NaN", "...",
-                   ".x", ".y", ".data", ".env", "break", "next")
+                   ".data", ".env", "break", "next")
 
 #' Is `name` a `..N` positional lambda pronoun (`..1`, `..2`, `..42`, ...)?
 is_dot_dot_name <- function(name) {

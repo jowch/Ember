@@ -114,6 +114,15 @@ test_that("using another cell's private name is an error with no edge", {
   expect_false(any(g$edges$from == "B" & g$edges$to == "A" & g$edges$via == "definition"))
 })
 
+test_that("another cell's .x is a private-name error too; a lambda's .x isn't (#507)", {
+  g <- notebook_graph(c(A = ".x <- 1", B = ".x + 1", C = "map(xs, ~ .x + 1)"))
+  err <- Filter(function(e) e$kind == "private_name", g$errors)
+  expect_length(err, 1)
+  expect_equal(err[[1]]$cells, "B")
+  expect_equal(err[[1]]$fixes, "Drop the dot: x")
+  expect_false(any(g$edges$from == "C"))
+})
+
 test_that("a private-name error's message has no cell id, only the private name", {
   owner_id <- "ca1b0a64-d117-466f-898a-8603bbc24e75"
   reader_id <- "e2f5c0a1-8a8e-4e8e-9a0e-1a2b3c4d5e6f"
