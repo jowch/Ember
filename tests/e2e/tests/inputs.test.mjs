@@ -92,6 +92,17 @@ test("inputs.R: an input on a cell's last line is its output widget, and moving 
   assert.equal(plotBelow, true);
   assert.deepEqual(await placed("P"), [{ cls: "output", n: 1, controls: 1, before_code: true }]);
 
+  // input_list(): one input whose widget shows each part; moving a part sets the list, and its readers rerun.
+  await runCell(page, "D");
+  await waitOutput(page, "D", /"2 u"/);
+  assert.deepEqual(await placed("C"), [{ cls: "output", n: 3, controls: 3, before_code: true }]);
+  await page.locator(`${cellSelector("C")} input[type="range"]`).fill("4");
+  await waitOutput(page, "D", /"4 u"/);
+  await page.locator(`${cellSelector("C")} input[type="radio"]`).nth(1).check();
+  await waitOutput(page, "D", /"4 v"/);
+  await page.locator(`${cellSelector("C")} ember-input.slider.changed`).waitFor();
+  assert.equal(await page.locator(`${cellSelector("C")} input[type="range"]`).inputValue(), "4");
+
   // The slider: B reruns with the new value; N doesn't rerun, and the slider is marked as off its default.
   const slider = page.locator(`${cellSelector("N")} input[type="range"]`);
   assert.equal(await slider.inputValue(), "5");

@@ -37,6 +37,12 @@ round(input_number(2))
 plot(1:3)
 np <- input_slider(1, 3, 2)
 
+# %% id=C
+p <- input_list(a = input_slider(1L, 5L, 2L), b = input_radio(c("u", "v")))
+
+# %% id=D
+paste(p$a, p$b)
+
 # %% id=B
 paste(n, method, show, title, k, pick)
 
@@ -51,5 +57,7 @@ paste(n, method, show, title, k, pick)
 # R
 # X
 # P
+# C
+# D
 # B
 # ///

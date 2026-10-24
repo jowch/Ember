@@ -139,11 +139,29 @@ Any other input in the cell isn't its output, and an interactive widget
 anywhere but the output area would confuse (Jonathan, 2026-10-24). So it
 shows below the cell's code as a read-only line, `n = 8 (slider)`, with a
 note saying how to make it movable. The note for a bound input says to give
-it its own cell, ending with it; for an unbound one, why it isn't bound.
-A cell that needs several widgets together will use a composite,
-`input_list(n = input_slider(...), method = input_select(...))`, as PlutoUI
-combines widgets: one bound value, a named list read as `p$n`, whose widget
-is the cell's output (next increment).
+it its own cell or combine the cell's inputs with `input_list()`; for an
+unbound one, why it isn't bound.
+
+**Several widgets in one cell.** `input_list()` combines inputs into one,
+as PlutoUI's `combine()` does:
+
+```r
+p <- input_list(n = input_slider(1, 10), method = input_select(c("a", "b")))
+```
+
+`p` is a named list, `list(n = 1, method = "a")` under `Rscript`, and other
+cells read `p$n`. It binds by the same rules as any input: one name, one
+value. Its widget, the cell's output, shows each part's widget in order,
+labelled by its own `label` or its name. Moving a part sets the whole of
+`p`, so every cell that reads `p` reruns, whichever part it reads.
+
+Each argument must be named and must be an input call itself
+(`n = input_slider(...)`, not `n = round(input_slider(...))` or a function
+of the user's that calls one), and a list can't hold another list. An
+input nested inside a part's own arguments
+(`input_slider(1, input_number(10))`) is reported on its own, as anywhere
+else. Its check takes a list with every part's name and checks each part,
+naming the part that failed ("`n`: The value must be ...").
 
 ## Under plain `Rscript`
 
@@ -153,6 +171,7 @@ Each function checks its arguments, then returns `value`. That is all.
 - `input_slider(10, 500)` returns `10` (`value` defaults to `min`).
 - `input_select(c("a", "b"))` returns `"a"` (`selected` defaults to the
   first choice).
+- `input_list(n = input_slider(1, 10))` returns `list(n = 1)`.
 - `input_slider(1, 10, value = 20)` is an error, in Ember and in `Rscript`
   alike.
 
@@ -335,7 +354,8 @@ R has no macros, so the binding comes from the assignment instead of from
 
 ## Engine and page changes, in outline
 
-- **The inputs package:** six functions, the hook check, argument checks.
+- **The inputs package:** six functions, the hook check, argument checks;
+  later `input_list()`.
   Base R only. Tests run it with and without the hook.
 - **Worker:** install the hook; for each binding the server found
   (rules 1 and 3), set the expected call before evaluating that top-level
@@ -430,7 +450,8 @@ R API. Nothing shows on the page yet.
   gives the default.
 - **Read-only lines.** An input that isn't the output shows its value and
   type, and a note: "Only the input on the cell's last line can be moved.
-  Give this one its own cell, ending with it." when bound, otherwise
+  Give this one its own cell, or combine the cell's inputs into one with
+  input_list()." when bound, otherwise
   "Assign this input to a name at the top of the cell to use it." or
   "Read `n` in another cell.".
 - **Sending.** A slider sends as it moves; a number box and a text box send
@@ -447,9 +468,20 @@ R API. Nothing shows on the page yet.
   (`c(A = 1, B = 1)`) shows the first as picked whichever was chosen; R
   gets the same value either way.
 
-Next: `input_list()`, the composite, after which the bound-input note
-names it. EndeavorMCP's tool (its `set_input` and `read_cell` text) is
-left to the Endeavor side.
+- **`input_list()`.** emberui's seventh function. While it evaluates its
+  arguments it keeps their calls in `.state$parts`, and an input whose
+  call is one of them hands its spec back instead of reporting; the list
+  then reports once, with type `list`, each part's spec (without its
+  check) under `parts`, and a check made of the parts' checks. The page
+  gets each part's widget fields (`input_widget_fields()`), and its value
+  as an object by part name, each part encoded as its own input's
+  (`input_to_page()`); CellInputs.js draws one widget per part, and moving
+  one sends the whole list with that part changed. A call's srcref is
+  dropped before comparing: with `keep.source` on, as in the worker,
+  `sys.call()` from inside a promise carries the enclosing line's.
+
+Next: EndeavorMCP's tool (its `set_input` and `read_cell` text) is left to
+the Endeavor side.
 
 ## Decided with Jonathan (2026-10-17)
 

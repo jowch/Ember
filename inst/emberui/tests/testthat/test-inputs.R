@@ -129,3 +129,63 @@ test_that("a choice's label is its name, or the element printed", {
   expect_identical(emberui:::choice_labels(c(A = "a", "b")), c("A", "b"))
   expect_identical(emberui:::choice_labels(list(1:3, TRUE)), c("1 2 3", "TRUE"))
 })
+
+test_that("input_list() is a named list of its inputs' values, and reports once, as one input", {
+  p <- input_list(n = input_slider(1L, 10L, 5L), method = input_select(c(A = "a", B = "b")))
+  expect_identical(p, list(n = 5L, method = "a"))
+
+  seen <- list()
+  hook <- function(spec, call) {
+    seen[[length(seen) + 1L]] <<- list(spec = spec, call = call)
+    spec$value
+  }
+  value <- with_hook(hook, input_list(n = input_slider(1L, 10L, 5L), show = input_checkbox(TRUE)))
+  expect_identical(value, list(n = 5L, show = TRUE))
+  expect_length(seen, 1)
+  expect_identical(seen[[1]]$call, quote(input_list(n = input_slider(1L, 10L, 5L), show = input_checkbox(TRUE))))
+  spec <- seen[[1]]$spec
+  expect_identical(spec$type, "list")
+  expect_identical(names(spec$parts), c("n", "show"))
+  expect_identical(spec$parts$n$type, "slider")
+  expect_identical(spec$parts$n[c("min", "max", "value")], list(min = 1L, max = 10L, value = 5L))
+  # The parts carry no function: their checks are in the list's own.
+  expect_false(any(vapply(spec$parts$n, is.function, logical(1))))
+
+  # The check takes a list with every name, checks each part, and says which failed.
+  expect_identical(spec$check(list(show = FALSE, n = 7.4)), list(n = 7L, show = FALSE))
+  expect_error(spec$check(list(n = 20L, show = TRUE)), "`n`: The value must be a whole number from 1 to 10.", fixed = TRUE)
+  expect_error(spec$check(list(n = 2L)), "a list with the names n, show")
+  expect_error(spec$check(c(n = 2L, show = 1L)), "a list with the names n, show")
+
+  # An input inside a part's own arguments reports as usual.
+  seen <- list()
+  with_hook(hook, input_list(n = input_slider(1, input_number(10))))
+  expect_identical(vapply(seen, function(s) s$spec$type, ""), c("number", "list"))
+})
+
+test_that("input_list() needs named input calls, each once, and no list inside", {
+  expect_error(input_list(), "at least one input")
+  expect_error(input_list(input_slider(1, 10)), "needs a name")
+  expect_error(input_list(n = input_slider(1, 10), input_checkbox()), "needs a name")
+  expect_error(input_list(n = input_slider(1, 10), n = input_checkbox()), "`n` is repeated")
+  expect_error(input_list(n = 5), "`n` in `input_list()` must be an input call", fixed = TRUE)
+  my_slider <- function() input_slider(1, 10)
+  expect_error(input_list(n = my_slider()), "must be an input call")
+  expect_error(input_list(p = input_list(n = input_slider(1, 10))), "can't hold another")
+  # A bad part is the part's own error, in Ember and Rscript alike.
+  expect_error(input_list(n = input_slider(1, 10, value = 20)), "from 1 to 10")
+  # Nothing is left over to catch a later input as a part.
+  expect_null(emberui:::.state$parts)
+  expect_identical(input_slider(1, 10), 1)
+})
+
+test_that("the call reaches the hook without a srcref, so it compares equal to the code's own", {
+  # With keep.source on, as in Ember's worker, sys.call() from inside a
+  # promise can carry the enclosing line's srcref.
+  call <- quote(input_slider(1, 3))
+  attr(call, "srcref") <- srcref(srcfilecopy("<text>", "x <- f()"), c(1L, 1L, 1L, 8L))
+  seen <- NULL
+  with_hook(function(spec, call) { seen <<- call; spec$value },
+            emberui:::report(list(type = "slider", value = 1, check = identity), call))
+  expect_identical(seen, quote(input_slider(1, 3)))
+})

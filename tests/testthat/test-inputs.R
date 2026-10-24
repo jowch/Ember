@@ -10,11 +10,12 @@ test_that("a top-level assignment of an input call binds its name, written eithe
   b <- input_bindings(paste(
     "n <- input_slider(10, 500, value = 100)",
     "m = emberui::input_select(c('a', 'b'))",
+    "p <- input_list(k = input_slider(1, 3))",
     "x <- df[, 1]",
     "y <- z$n2",
     sep = "\n"))
-  expect_identical(bound_names(b), c("n", "m"))
-  expect_identical(vapply(b$bind, function(x) x$index, integer(1)), c(1L, 2L))
+  expect_identical(bound_names(b), c("n", "m", "p"))
+  expect_identical(vapply(b$bind, function(x) x$index, integer(1)), c(1L, 2L, 3L))
   expect_length(b$blocked, 0)
 })
 
@@ -323,6 +324,23 @@ test_that("a dropdown's value goes to the page as its choice's position, and com
   expect_identical(input_to_page(list(type = "text"), "hi"), "hi")
 })
 
+test_that("input_list()'s value goes to the page part by part, and comes back the same way", {
+  spec <- list(type = "list", parts = list(
+    n = list(type = "slider", value = 5L, min = 1L, max = 10L),
+    m = list(type = "select", choices = c(A = "a", B = "b"), labels = c("A", "B"), multiple = FALSE)))
+  expect_identical(input_to_page(spec, list(n = 5L, m = "b")), list(n = 5L, m = 1L))
+  expect_identical(input_from_page(spec, list(m = 0L, n = 7L)), list(n = 7L, m = "a"))
+  expect_true(inherits(input_from_page(spec, list(n = 7L)), "ember_page_refusal"))
+  expect_true(inherits(input_from_page(spec, list(n = 7L, m = 5L)), "ember_page_refusal"))
+  expect_true(inherits(input_from_page(spec, 7L), "ember_page_refusal"))
+  # Each part's widget fields, in order, under `parts`.
+  f <- input_widget_fields(spec)
+  expect_identical(f$parts[[1]][c("type", "name", "label", "min", "max", "integer")],
+                   list(type = "slider", name = "n", label = "n", min = 1L, max = 10L, integer = TRUE))
+  expect_identical(f$parts[[2]][c("type", "name", "label", "multiple")],
+                   list(type = "select", name = "m", label = "m", multiple = FALSE))
+})
+
 test_that("the page gets each cell's inputs, disabled while the cell is stale, edited or queued, and greyed when unbound", {
   r <- inputs_ran()
   r$state$results$I$inputs[[2]] <- list(name = NULL, bound = FALSE, reason = "not_assigned",
@@ -471,6 +489,37 @@ test_that("set_input checks the value against the input, assigns it, and answers
   expect_true(reply_of(h, "input_set")$ok)
   h$send(list(type = "set_input", cell = "I", name = "zz", value = 1))
   expect_false(reply_of(h, "input_set")$ok)
+})
+
+test_that("input_list() binds as one input: its parts' values in a named list, set together", {
+  h <- worker_harness(extra_libs = fixture_lib())
+  on.exit(h$close())
+  inputs_run(h, "L", 1L, "library(emberui)")
+  r <- inputs_run(h, "I", 2L, "p <- input_list(n = input_slider(1L, 10L, 5L), m = input_select(c(A = 'a', B = 'b')))")
+  expect_length(r$inputs, 1)
+  i <- r$inputs[[1]]
+  expect_identical(i[c("name", "bound", "output")], list(name = "p", bound = TRUE, output = TRUE))
+  expect_identical(i$value, list(n = 5L, m = "a"))
+  expect_identical(i$spec$type, "list")
+  expect_identical(names(i$spec$parts), c("n", "m"))
+  expect_identical(i$spec$parts$m$labels, c("A", "B"))
+  expect_null(r$output)
+
+  h$send(list(type = "set_input", cell = "I", name = "p", value = list(n = 7.4, m = "b")))
+  a <- reply_of(h, "input_set")
+  expect_true(a$ok)
+  expect_identical(a$value, list(n = 7L, m = "b"))
+  r <- inputs_run(h, "R", 3L, "paste(p$n, p$m)", inputs = NULL)
+  expect_identical(r$output$text, '[1] "7 b"')
+  h$send(list(type = "set_input", cell = "I", name = "p", value = list(n = 70, m = "b")))
+  a <- reply_of(h, "input_set")
+  expect_false(a$ok)
+  expect_identical(a$error, "`n`: The value must be a whole number from 1 to 10.")
+
+  # A kept value goes back in when the cell reruns.
+  r <- inputs_run(h, "I", 4L, "p <- input_list(n = input_slider(1L, 10L, 5L), m = input_select(c(A = 'a', B = 'b')))",
+                  values = list(p = list(n = 9L, m = "b")))
+  expect_identical(r$inputs[[1]]$value, list(n = 9L, m = "b"))
 })
 
 test_that("a failed run leaves no input to set", {

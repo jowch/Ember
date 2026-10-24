@@ -17,11 +17,19 @@
 
 report <- function(spec, call) {
   spec$value <- spec$check(spec$value)
+  # With `keep.source` on (as in Ember's worker), `sys.call()` from inside a
+  # promise can carry the enclosing line's srcref, which would make the
+  # call differ from the code's own; only the call itself counts.
+  attr(call, "srcref") <- NULL
+  # One of input_list()'s parts: input_list() reports it as part of itself.
+  if (any(vapply(.state$parts, identical, logical(1), call))) {
+    return(structure(list(spec = spec), class = "emberui_part"))
+  }
   hook <- .state$hook
   if (is.function(hook)) hook(spec, call) else spec$value
 }
 
-# The six input functions; man/inputs.Rd documents them.
+# The input functions; man/inputs.Rd documents them.
 
 input_slider <- function(min, max, value = min, step = NULL, label = NULL) {
   call <- sys.call()
@@ -91,6 +99,52 @@ input_radio <- function(choices, selected = choices[[1]], label = NULL) {
   report(list(type = "radio", value = selected, choices = choices,
               labels = choice_labels(choices), label = label,
               check = choices_check(choices)), call)
+}
+
+# Several inputs as one: a named list of their values. Each argument must be
+# an input call itself (`n = input_slider(1, 10)`); while input_list()
+# evaluates them, report() hands each back as a part instead of reporting
+# it, by its call, so an input nested inside a part's own arguments still
+# reports as usual. Only the list reports, as one input.
+input_list <- function(...) {
+  call <- sys.call()
+  exprs <- match.call(expand.dots = FALSE)$...
+  nms <- names(exprs)
+  if (length(exprs) == 0) stop("`input_list()` needs at least one input.", call. = FALSE)
+  if (is.null(nms) || any(is.na(nms) | nms == "")) {
+    stop("Every input in `input_list()` needs a name, as in `input_list(n = input_slider(1, 10))`.", call. = FALSE)
+  }
+  if (anyDuplicated(nms)) {
+    stop(sprintf("Each name in `input_list()` must be used once; `%s` is repeated.", nms[anyDuplicated(nms)]), call. = FALSE)
+  }
+  outer <- .state$parts
+  .state$parts <- c(outer, unname(as.list(exprs)))
+  values <- tryCatch(list(...), finally = .state$parts <- outer)
+  bad <- !vapply(values, inherits, logical(1), "emberui_part")
+  if (any(bad)) {
+    stop(sprintf("`%s` in `input_list()` must be an input call, such as `%s = input_slider(1, 10)`.",
+                 nms[bad][1], nms[bad][1]), call. = FALSE)
+  }
+  specs <- lapply(values, `[[`, "spec")
+  if (any(vapply(specs, function(s) identical(s$type, "list"), logical(1)))) {
+    stop("`input_list()` can't hold another `input_list()`.", call. = FALSE)
+  }
+  checks <- lapply(specs, `[[`, "check")
+  check <- function(x) {
+    if (!is.list(x) || is.null(names(x)) || anyDuplicated(names(x)) || !setequal(names(x), nms)) {
+      stop(sprintf("The value must be a list with the names %s.", paste(nms, collapse = ", ")), call. = FALSE)
+    }
+    out <- lapply(nms, function(nm) {
+      tryCatch(checks[[nm]](x[[nm]]),
+               error = function(e) stop(sprintf("`%s`: %s", nm, conditionMessage(e)), call. = FALSE))
+    })
+    names(out) <- nms
+    out
+  }
+  parts <- lapply(specs, function(s) s[names(s) != "check"])
+  names(parts) <- nms
+  report(list(type = "list", value = lapply(parts, `[[`, "value"), parts = parts,
+              check = check), call)
 }
 
 # A number in [min, max] (`NA` is no limit), returned with `value`'s type:
