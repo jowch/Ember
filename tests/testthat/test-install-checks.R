@@ -421,7 +421,7 @@ test_that("ppm_source_only() asks several at a time, with the same answers as on
   serves <- function(url) !grepl("p(03|11|20)_", url)
   one <- ppm_source_only(entries, "https://ppm.example/cran/__linux__/noble/2025-03-20", serves, cores = 1L)
   expect_equal(which(one), c(3L, 11L, 20L))
-  expect_equal(ppm_source_only(entries, "https://ppm.example/cran/__linux__/noble/2025-03-20", serves, cores = 4L), one)
+  expect_equal(ppm_source_only(entries, "https://ppm.example/cran/__linux__/noble/2025-03-20", serves, cores = 2L), one)
 })
 
 test_that("[net] at a date with binaries for this R, the installer's own URLs name no package (#19)", {

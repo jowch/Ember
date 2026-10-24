@@ -310,10 +310,15 @@ ppm_serves_binary <- function(url, timeout = 10L) {
   grepl("binary", type[[length(type)]], ignore.case = TRUE)
 }
 
-#' How many of `ppm_source_only()`'s requests run at a time: eight, or one
-#' on Windows, where `parallel::mclapply()` can't fork (only tests ask
-#' there, for Linux).
-default_cores <- function() if (.Platform$OS.type == "windows") 1L else 8L
+#' How many of `ppm_source_only()`'s requests run at a time: eight; one on
+#' Windows, where `parallel::mclapply()` can't fork (only tests ask there,
+#' for Linux); two under R CMD check, which sets `_R_CHECK_LIMIT_CORES_`
+#' and has `parallel` refuse more.
+default_cores <- function() {
+  if (.Platform$OS.type == "windows") return(1L)
+  limit <- tolower(Sys.getenv("_R_CHECK_LIMIT_CORES_", ""))
+  if (nzchar(limit) && limit != "false") 2L else 8L
+}
 
 #' Which of `entries` (lock rows) Package Manager sends as source from
 #' `repo`, a `__linux__` repository: logical, one per row. Every row is
