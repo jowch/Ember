@@ -530,7 +530,7 @@ test("argument tooltips close when the cursor leaves their cell (alongside 152)"
   assertNoProblems(page);
 });
 
-test("argument tooltips: a reply that arrives after blur (worker busy) doesn't reopen one", async (t) => {
+test("argument tooltips: a reply that arrives after blur doesn't reopen one (#467)", async (t) => {
   const notebook = tempNotebook("cells.R");
   const server = await startServer([notebook], { logFile: path.join(artifactsDir(), "cells-tooltip-slow.server.log") });
   const browser = await launchBrowser();
@@ -538,35 +538,47 @@ test("argument tooltips: a reply that arrives after blur (worker busy) doesn't r
 
   const page = await newPage(browser);
   const asked = sentMessages(page, "ember_signature");
+  // Signature replies from the server, held while `held` is a list, so
+  // one can be made to arrive after the blur.
+  let held = null;
+  let to_page = null;
+  let on_held = null;
+  const reply_held = new Promise((resolve) => (on_held = resolve));
+  await page.routeWebSocket(/.*/, (ws) => {
+    const srv = ws.connectToServer();
+    to_page = ws;
+    ws.onMessage((m) => srv.send(m));
+    srv.onMessage((m) => {
+      if (held != null && Buffer.from(m).includes("ember_signature")) {
+        held.push(m);
+        on_held();
+      } else ws.send(m);
+    });
+  });
   await openNotebook(page, server.origin, server.secret, notebook);
   await page.locator("#ember-safe-preview button").click();
   await page.waitForFunction(
     (sel) => document.querySelector(sel)?.innerText.includes("2"),
     cellSelector("B") + " pluto-output");
 
-  // Start LOOP running, so R is busy for the request from typing in A.
-  // The server answers it at once from its fallback, so the reply comes
-  // before the click on B, and the blur guard for a late reply isn't
-  // exercised here (#467). What is checked: the blur closes the tooltip,
-  // and nothing reopens it.
-  await runCell(page, "LOOP");
-  await page.waitForSelector(`${cellSelector("LOOP")}.running`);
-
   await page.locator(codeSelector("A")).click();
   await page.keyboard.press("End");
   const replies = () => page.evaluate(() => window.pluto_get_message_log().filter((m) => m.type === "ember_signature").length);
   const replied_before = await replies();
   const asked_before = asked.length;
+  held = [];
   await page.keyboard.type("; mean(1:3", { delay: 10 });
-  // Past the 150 ms debounce: the request is in flight.
+  // Past the 150 ms debounce: the request went out, and its reply is held.
   await asked.reach(asked_before + 1);
+  await waitingFor("the signature reply, held", reply_held);
+  assert.equal(await page.locator(".cm-ember-signature-tooltip").count(), 0, "no tooltip before the reply");
 
   await page.locator(codeSelector("B")).click();
-
-  await page.waitForFunction(
-    (sel) => !document.querySelector(sel)?.classList.contains("running"),
-    cellSelector("LOOP"));
-  // The reply to the request has come and been rendered.
+  await frames(page);
+  const late = held;
+  held = null;
+  for (const m of late) to_page.send(m);
+  // The reply has come and been handled.
   await page.waitForFunction((before) => window.pluto_get_message_log().filter((m) => m.type === "ember_signature").length > before,
     replied_before);
   await frames(page);

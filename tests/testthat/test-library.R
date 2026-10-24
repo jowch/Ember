@@ -47,18 +47,21 @@ fake_sub <- function() {
   nb
 }
 
-#' Run `poll_jobs()` until `predicate()` is true or `timeout` seconds pass.
-#' Each iteration waits on the named jobs' own processes for a short slice
-#' with `processx`'s `poll_io()` before checking again: a deadline, not a
-#' bare `Sys.sleep()` loop, and not `socketSelect()`, which a `later` tick
+#' Run `poll_jobs()` until `predicate()` is true, however long the jobs
+#' take, failing as hung after HANG_GUARD seconds (helper-wait.R). Each
+#' iteration waits on the named jobs' own processes for a short slice with
+#' `processx`'s `poll_io()` before checking again: not a bare
+#' `Sys.sleep()` loop, and not `socketSelect()`, which a `later` tick
 #' already run in this process can make return early with nothing to read
 #' (docs/engine.md).
-poll_jobs_until <- function(predicate, keys, timeout = 15) {
-  deadline <- Sys.time() + timeout
+poll_jobs_until <- function(predicate, keys, label) {
+  started <- Sys.time()
   repeat {
     poll_jobs(NULL)
-    if (isTRUE(predicate())) return(TRUE)
-    if (Sys.time() >= deadline) return(FALSE)
+    if (isTRUE(predicate())) return(invisible(TRUE))
+    if (as.numeric(Sys.time() - started, units = "secs") >= HANG_GUARD) {
+      stop(sprintf("hung: waited %d s for %s", HANG_GUARD, label), call. = FALSE)
+    }
     for (key in keys) {
       job <- jobs[[key]]
       if (!is.null(job)) tryCatch(job$proc$poll_io(50), error = function(e) NULL)
@@ -146,11 +149,9 @@ test_that("two installs of one key racing in two processes leave one library and
                           stdout = "|", stderr = "2>&1")
   })
 
-  deadline <- Sys.time() + 60
-  for (p in procs) {
-    remaining <- max(0, as.numeric(deadline - Sys.time(), units = "secs")) * 1000
-    p$wait(remaining)
-  }
+  waiting_for("both racing installs to end", for (p in procs) {
+    while (p$is_alive()) { p$wait(100); later::run_now(timeout = 0) }
+  })
   for (p in procs) {
     status <- tryCatch(p$get_exit_status(), error = function(e) NA_integer_)
     expect_identical(status, 0L, info = tryCatch(p$read_all_output(), error = function(e) ""))
@@ -260,10 +261,9 @@ test_that("two sessions asking for one index share one job and both get the even
            make_done = function(status, output) list(kind = "done", status = status))
   expect_identical(length(ls(jobs, all.names = TRUE)), 1L)
 
-  ok <- poll_jobs_until(function() length(done_of(nb1)) > 0 && length(done_of(nb2)) > 0,
-                        keys = key)
+  poll_jobs_until(function() length(done_of(nb1)) > 0 && length(done_of(nb2)) > 0,
+                  keys = key, "both subscribers to hear the job is done")
 
-  expect_true(ok)
   expect_identical(done_of(nb1)[[1]]$status, 0L)
   expect_identical(done_of(nb2)[[1]]$status, 0L)
 })
@@ -330,12 +330,8 @@ test_that("job_leave by the last subscriber kills the process (63)", {
 
   job_leave(key, nb)
 
-  deadline <- Sys.time() + 5
-  repeat {
-    if (!isTRUE(tryCatch(proc$is_alive(), error = function(e) FALSE))) break
-    if (Sys.time() >= deadline) break
-    tryCatch(proc$poll_io(50), error = function(e) NULL)
-  }
+  wait_until(function() !isTRUE(tryCatch(proc$is_alive(), error = function(e) FALSE)),
+             "the left job's process to end")
   expect_false(isTRUE(tryCatch(proc$is_alive(), error = function(e) FALSE)))
   expect_null(jobs[[key]])
 })

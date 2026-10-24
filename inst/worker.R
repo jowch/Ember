@@ -132,6 +132,7 @@ touched <- list()       # every list(kind, name) any cell has changed this sessi
 search_added <- character()  # every attach() entry any cell has added this session
 running <- NULL        # list(cell, token, console) during a run (for the source
                        # trace and prompts)
+sending <- FALSE       # TRUE while send() writes a frame (console_tick())
 deferred <- list()     # messages read while waiting for a source_reply or input_reply
 prompt_seq <- 0L       # the id of the last `input` request (ask_for_input())
 interrupt_drain <- NULL # Windows: the DLL routine that drops a late interrupt (listen_for_interrupts())
@@ -175,6 +176,38 @@ loaded_namespace_versions <- function() {
   stats::setNames(vapply(ns, function(n) as.character(getNamespaceVersion(n)), character(1)), ns)
 }
 
+#' The package's DLL, loaded by path (`EMBER_DLL`), since the worker
+#' never loads the package; `NULL` when there is none or it doesn't load.
+load_ember_dll <- function() {
+  path <- Sys.getenv("EMBER_DLL")
+  Sys.unsetenv("EMBER_DLL")
+  if (!nzchar(path)) return(NULL)
+  tryCatch(dyn.load(path), error = function(e) NULL)
+}
+
+#' Show what a running cell prints while it runs (#470): R calls
+#' `console_tick()` from its event processing, a few times a second
+#' (src/console.c; on Windows through a timer, #482). Without the DLL,
+#' printed text shows at the next message, warning or prompt, or at the
+#' run's end.
+stream_console <- function(dll) {
+  if (is.null(dll)) return(invisible(FALSE))
+  invisible(tryCatch(isTRUE(.Call(getNativeSymbolInfo("C_console_poll", dll), console_tick, 0.25)),
+                     error = function(e) FALSE))
+}
+
+#' Send the whole lines a running cell has printed since the last ones
+#' sent. Skipped while a frame is being sent or the console is reading
+#' its own file (a message or warning arriving), which this could
+#' otherwise interleave with, and silent: whatever goes wrong here must
+#' not reach the cell or its output.
+console_tick <- function() {
+  console <- running$console
+  if (sending || is.null(console) || isTRUE(console$busy)) return(invisible())
+  tryCatch(suppressWarnings(console$flush_lines()), error = function(e) NULL)
+  invisible()
+}
+
 #' On Windows, start listening for the server's interrupts before the
 #' hello, from the package's DLL (src/interrupt.c, #48): loaded by path
 #' (`EMBER_DLL`), since the worker never loads the package. If that fails,
@@ -183,12 +216,9 @@ loaded_namespace_versions <- function() {
 #' alive past this process (src/children.c, #208). Elsewhere the server
 #' sends SIGINT, those children are in sessions of their own, and this
 #' does nothing.
-listen_for_interrupts <- function() {
-  path <- Sys.getenv("EMBER_DLL")
-  Sys.unsetenv("EMBER_DLL")
-  if (.Platform$OS.type != "windows" || !nzchar(path)) return(invisible(FALSE))
+listen_for_interrupts <- function(dll) {
+  if (.Platform$OS.type != "windows" || is.null(dll)) return(invisible(FALSE))
   invisible(tryCatch({
-    dll <- dyn.load(path)
     interrupt_drain <<- getNativeSymbolInfo("C_interrupt_drain", dll)
     # So a cell's processx and callr children outlive this process, as
     # they do on Unix (src/children.c, #208).
@@ -248,7 +278,9 @@ drop_processx_marker <- function() {
 
 main <- function() {
   drop_processx_marker()
-  listening <- listen_for_interrupts()
+  dll <- load_ember_dll()
+  listening <- listen_for_interrupts(dll)
+  stream_console(dll)
   port <- as.integer(commandArgs(trailingOnly = TRUE)[1])
   # No-delay: see write_frame() in R/shell.R.
   con <<- socketConnection("127.0.0.1", port, blocking = TRUE, open = "r+b",
@@ -422,7 +454,8 @@ send <- function(msg) {
   # stay interruptible.
   force(msg)
   trace_line("send", msg$type)
-  on.exit(trace_line("sent", msg$type))
+  sending <<- TRUE
+  on.exit({ sending <<- FALSE; trace_line("sent", msg$type) })
   uninterrupted({
     payload <- serialize(msg, NULL)
     # One write: see write_frame() in R/shell.R.
@@ -2984,7 +3017,12 @@ console_collector <- function(cell, token) {
     send(list(type = "console", cell = cell, token = token, item = item))
   }
 
-  flush_stdout <- function() {
+  # `lines`: only up to the last newline, for console_tick(), which
+  # reads while the cell is still printing: the rest of a line, or a
+  # progress bar redrawn over it with "\r", comes in a later read, and a
+  # bar split across two items would show both of its drawings.
+  flush_stdout <- function(lines = FALSE) {
+    if (isTRUE(self$closed)) return(invisible())
     flush(self$out)
     size <- file.info(self$path)$size
     if (is.na(size) || size <= self$read_pos) return(invisible())
@@ -2992,16 +3030,31 @@ console_collector <- function(cell, token) {
     on.exit(close(con))
     seek(con, self$read_pos)
     raw_bytes <- readBin(con, "raw", n = size - self$read_pos)
-    self$read_pos <- size
+    if (lines) {
+      nl <- which(raw_bytes == as.raw(10L))
+      if (length(nl) == 0) return(invisible())
+      raw_bytes <- raw_bytes[seq_len(nl[length(nl)])]
+    }
+    self$read_pos <- self$read_pos + length(raw_bytes)
     # The sink file is in text mode, which writes "\r\n" on Windows.
     txt <- gsub("\r\n", "\n", rawToChar(raw_bytes), fixed = TRUE)
     txt <- apply_carriage_returns(txt)
     if (nzchar(txt)) add_item("stdout", txt)
   }
 
-  self$flush <- flush_stdout
-  self$message <- function(m) { flush_stdout(); add_item("message", conditionMessage(m)) }
-  self$warning <- function(w) {
+  # `busy` while a method below reads the file or adds an item, so
+  # console_tick() doesn't read the same bytes again or send an item in
+  # the middle of another.
+  self$busy <- FALSE
+  guarded <- function(f) function(...) {
+    self$busy <- TRUE
+    on.exit(self$busy <- FALSE)
+    f(...)
+  }
+  self$flush <- guarded(function() flush_stdout())
+  self$flush_lines <- guarded(function() flush_stdout(lines = TRUE))
+  self$message <- guarded(function(m) { flush_stdout(); add_item("message", conditionMessage(m)) })
+  self$warning <- guarded(function(w) {
     flush_stdout()
     call <- conditionCall(w)
     call_text <- if (is.null(call)) NULL else deparse_one_line(call)
@@ -3012,13 +3065,13 @@ console_collector <- function(cell, token) {
     # eval() calls are checked.
     if (is_loop_eval_text(call_text)) call_text <- NULL
     add_item("warning", conditionMessage(w), call = call_text)
-  }
-  self$print <- function(v) {
+  })
+  self$print <- guarded(function(v) {
     flush_stdout()
     txt <- paste(capture_lines(eval_in_notebook(quote(print(v)), v)), collapse = "\n")
     add_item("stdout", txt)
-  }
-  self$finish <- function() {
+  })
+  self$finish <- guarded(function() {
     flush_stdout()
     # The cell's own code may have called sink() (removing our diversion,
     # or pushing and popping its own on top of it): pop back down to
@@ -3027,7 +3080,8 @@ console_collector <- function(cell, token) {
     while (sink.number() > self$base_sink_level) sink(type = "output")
     close(self$out)
     unlink(self$path)
-  }
+    self$closed <- TRUE
+  })
   self
 }
 

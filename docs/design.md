@@ -395,7 +395,9 @@ like part of the cell:
   `library()` calls) as the cell's own, following `source()` calls inside it.
 - It watches the file. When the file changes, the cell and its dependents
   rerun or are marked stale, following the notebook's autorun or lazy
-  setting, like marimo's module reloader.
+  setting, like marimo's module reloader. A change while the cell runs,
+  after its `source()` read the file, counts too: the result built from the
+  old text arrives stale, and autorun runs the cell again (#485).
 - A computed path (`source(file.path(dir, "helpers.R"))`, a loop over
   `list.files()`) is learned when the cell runs. The worker traces
   `base::source` and `sys.source`, which also catches `base::source()` and
@@ -730,7 +732,14 @@ The mark is cleared before each top-level expression, so one left by a
 blank a later cell that shows the table, as it would at the console.
 Earlier visible values, `print()`,
 `cat()`, messages and warnings go to a console area below the output, in
-order. A plot drawn with no visible value after it is the output. R
+order. They show while the cell runs, as in an R console: messages and
+warnings at once, and printed text a whole line at a time, a few times a
+second (#470). The worker reads what the cell printed from R's event
+processing, which R reaches wherever it checks for an interrupt; a cell
+inside C code that doesn't check shows its text when that code returns.
+On Windows, where R exports no such hook, a timer that R's event
+processing dispatches does the same (#482). A
+plot drawn with no visible value after it is the output. R
 Markdown instead shows every visible value inline.
 
 **Prompts** (#186). A cell runs as R code does in an R console:

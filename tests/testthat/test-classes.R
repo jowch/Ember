@@ -189,9 +189,8 @@ test_that("a class cell placed last still runs before the cells that use it", {
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 30)
+  res <- run_settled(nb)
 
-  expect_false(res$timed_out)
   snap <- notebook_snapshot(nb)
   for (id in c("G", "M", "U", "C")) expect_equal(snap_view(snap, id)$status, "ok", info = id)
   expect_equal(snap_view(snap, "U")$output$text, "[1] 3")
@@ -206,13 +205,12 @@ test_that("editing the class cell reruns the cells that use the class", {
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, wait = TRUE, timeout = 30)
+  run_settled(nb)
   expect_equal(snap_view(notebook_snapshot(nb), "U")$output$text, "[1] 3")
 
   edit_notebook(nb, set_code("C", "setClass('Ci', representation(r = 'numeric'), prototype(r = 2))"))
-  res <- run_cells(nb, "C", wait = TRUE, timeout = 30)
+  res <- run_settled(nb, "C")
 
-  expect_false(res$timed_out)
   snap <- notebook_snapshot(nb)
   expect_equal(snap_view(snap, "M")$status, "ok")
   expect_equal(snap_view(snap, "U")$output$text, "[1] 12")
@@ -225,13 +223,12 @@ test_that("deleting the class cell removes the class, not only its binding", {
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  run_cells(nb, wait = TRUE, timeout = 30)
+  run_settled(nb)
   expect_equal(snap_view(notebook_snapshot(nb), "U")$output$text, "[1] 1")
 
   edit_notebook(nb, delete_cell("C"))
-  res <- run_cells(nb, "U", wait = TRUE, timeout = 30)
+  res <- run_settled(nb, "U")
 
-  expect_false(res$timed_out)
   expect_equal(snap_view(notebook_snapshot(nb), "U")$output$text, '[1] "no class"')
 })
 
@@ -243,16 +240,14 @@ test_that("a setOldClass() cell placed last runs first, and deleting it removes 
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 30)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
   snap <- notebook_snapshot(nb)
   for (id in c("M", "U", "O")) expect_equal(snap_view(snap, id)$status, "ok", info = id)
   expect_match(snap_view(snap, "U")$output$text, '"lm2"', fixed = TRUE)
 
   edit_notebook(nb, delete_cell("O"))
   edit_notebook(nb, delete_cell("M"))
-  res <- run_cells(nb, "U", wait = TRUE, timeout = 30)
-  expect_false(res$timed_out)
+  res <- run_settled(nb, "U")
   expect_equal(snap_view(notebook_snapshot(nb), "U")$output$text, '[1] "no class"')
 })
 
@@ -266,9 +261,8 @@ test_that("a subclass or union in another cell doesn't count as changing the cla
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 30)
+  res <- run_settled(nb)
 
-  expect_false(res$timed_out)
   snap <- notebook_snapshot(nb)
   for (id in c("A", "B", "N", "V", "U")) expect_equal(snap_view(snap, id)$status, "ok", info = id)
   expect_equal(snap_view(snap, "U")$output$text, "[1] TRUE TRUE")
@@ -282,9 +276,8 @@ test_that("two classes whose slots name each other both run", {
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 30)
+  res <- run_settled(nb)
 
-  expect_false(res$timed_out)
   snap <- notebook_snapshot(nb)
   for (id in c("A", "B", "U")) expect_equal(snap_view(snap, id)$status, "ok", info = id)
   expect_equal(snap_view(snap, "U")$output$text, '[1] "BB"')
@@ -303,14 +296,13 @@ test_that("the trial's shapes notebook runs, and renaming a slot reruns the meth
   path <- write_session_notebook(cells)
   nb <- open_notebook(path)
   on.exit(close_notebook(nb), add = TRUE)
-  res <- run_cells(nb, wait = TRUE, timeout = 60)
-  expect_false(res$timed_out)
+  res <- run_settled(nb)
   snap <- notebook_snapshot(nb)
   for (id in names(cells)[-1]) expect_equal(snap_view(snap, id)$status, "ok", info = id)
   expect_equal(snap_view(snap, "U")$output$text, "[1]  4 12")
 
   edit_notebook(nb, set_code("C", "Circle <- setClass('Circle', contains = 'Shape', representation(diameter = 'numeric'))"))
-  run_cells(nb, "C", wait = TRUE, timeout = 60)
+  run_settled(nb, "C")
   expect_false(snap_view(notebook_snapshot(nb), "MC")$stale %||% FALSE)
   # The method reran with the new class, so a Circle now fails in it, as it
   # would under Rscript: nothing still holds the old slot.

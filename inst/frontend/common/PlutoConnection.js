@@ -453,6 +453,38 @@ export const create_pluto_connection = async ({
         failing_for += Math.max(0, Math.min(Date.now() - started, ms))
     }
 
+    /** The page's key was refused: Ember restarted at this address. Stop retrying and say so. */
+    const say_key_refused = () => {
+        stop_unreachable()
+        connection.state = "key refused"
+        on_key_refused()
+        tell_key_refused()
+    }
+    /**
+     * After a try that failed before Ember's "connect" reply, whether it
+     * failed because the key was refused; otherwise counts the failure and
+     * waits for the next try. A socket that never opened and one that
+     * opened and then dropped are the same failure here: a 4403 close can
+     * reach the page as a 1006 drop either way (#491).
+     *
+     * The key check runs alongside the retry delay, not before it, so a
+     * check that hangs never holds up the retry. If it finds the key
+     * refused before the delay is up, that is the same restart as a 4403
+     * close.
+     */
+    const failed_try_found_key_refused = async (/** @type {any} */ ex) => {
+        if (is_key_refused(ex)) return true
+        note_failure()
+        connection.key_checks_out += 1
+        return await Promise.race([
+            key_check_refused(ws_address, ex)
+                .catch(() => false)
+                .finally(() => (connection.key_checks_out -= 1))
+                .then((r) => (r ? true : new Promise(() => {}))),
+            wait_between_tries().then(() => false),
+        ])
+    }
+
     const client = {
         // send: null,
         // session_options: null,
@@ -527,10 +559,7 @@ export const create_pluto_connection = async ({
                 on_socket_close: async (/** @type {CloseEvent=} */ e) => {
                     on_connection_status(false, false)
                     if (is_key_refused(e)) {
-                        stop_unreachable()
-                        connection.state = "key refused"
-                        on_key_refused()
-                        tell_key_refused()
+                        say_key_refused()
                         return
                     }
                     if (!auto_reconnect) {
@@ -544,11 +573,15 @@ export const create_pluto_connection = async ({
                     if (said_hello) {
                         connection.state = "waiting"
                         await Promises.delay(reconnect_after_close_delay)
-                    } else {
-                        note_failure()
-                        await wait_between_tries()
+                    } else if (await failed_try_found_key_refused(e)) {
+                        say_key_refused()
+                        return
                     }
                     await connect() // reconnect!
+                    // A try that found the key refused ends the reconnect:
+                    // there is no socket to resync on, and sending on the
+                    // one that closed throws (#510).
+                    if (connection.state === "key refused") return
 
                     console.log(`Starting state sync`, new Date().toLocaleTimeString())
                     const accept = await on_reconnect()
@@ -597,33 +630,9 @@ export const create_pluto_connection = async ({
             return u.message
         } catch (ex) {
             console.error("connect() failed", ex)
-            if (is_key_refused(ex)) {
+            if (await failed_try_found_key_refused(ex)) {
                 on_connection_status(false, false)
-                stop_unreachable()
-                connection.state = "key refused"
-                on_key_refused()
-                tell_key_refused()
-                return {}
-            }
-            note_failure()
-            // The key check runs alongside the retry delay, not before it,
-            // so a check that hangs never holds up the retry. If it finds
-            // the key refused before the delay is up, that is the same
-            // restart as a 4403 close: say so and stop retrying.
-            connection.key_checks_out += 1
-            const refused = await Promise.race([
-                key_check_refused(ws_address, ex)
-                    .catch(() => false)
-                    .finally(() => (connection.key_checks_out -= 1))
-                    .then((r) => (r ? true : new Promise(() => {}))),
-                wait_between_tries().then(() => false),
-            ])
-            if (refused) {
-                on_connection_status(false, false)
-                stop_unreachable()
-                connection.state = "key refused"
-                on_key_refused()
-                tell_key_refused()
+                say_key_refused()
                 return {}
             }
             return await connect()
